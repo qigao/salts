@@ -713,4 +713,91 @@ Assert-Throws {
     -Reports @($ioSourceReport, $ioSourceReport) -ExpectedRuns 2
 } "duplicate IO Source benchmark run"
 
+$transportMatrix = Get-CflowTransportBenchmarkMatrix
+$transportCases = @(Get-CflowTransportBenchmarkCases -Matrix $transportMatrix)
+Assert-Equal $transportCases.Count 17 "transport benchmark case count"
+Assert-Equal (Get-CflowTransportSampleCount -PayloadBytes 1024 `
+    -ExchangesPerSample 64 -MaximumSamples 100 `
+    -TargetApplicationBytes 67108864) 100 `
+  "small payload transport sample cap"
+Assert-Equal (Get-CflowTransportSampleCount -PayloadBytes 16384 `
+    -ExchangesPerSample 64 -MaximumSamples 100 `
+    -TargetApplicationBytes 67108864) 64 `
+  "16 KiB byte-bounded transport samples"
+Assert-Equal (Get-CflowTransportSampleCount -PayloadBytes 32768 `
+    -ExchangesPerSample 64 -MaximumSamples 100 `
+    -TargetApplicationBytes 67108864) 32 `
+  "32 KiB byte-bounded transport samples"
+Assert-Equal (Get-CflowTransportSampleCount -PayloadBytes 65507 `
+    -ExchangesPerSample 64 -MaximumSamples 100 `
+    -TargetApplicationBytes 67108864) 16 `
+  "maximum UDP datagram byte-bounded transport samples"
+Assert-Sequence `
+  @($transportCases | Where-Object {
+      $_.protocol -eq "udp" -and $_.payload_bytes -eq 32768
+    } | ForEach-Object { $_.window_capacity }) `
+  @("1", "2") "UDP 32 KiB in-flight-byte-bounded windows"
+Assert-Sequence `
+  @($transportCases | Where-Object {
+      $_.protocol -eq "udp" -and $_.payload_bytes -eq 65507
+    } | ForEach-Object { $_.window_capacity }) `
+  @("1") "UDP maximum datagram boundary window"
+Assert-ThrowsLike {
+  Get-CflowTransportBenchmarkCases -Matrix @{
+    tcp = $transportMatrix.tcp
+    udp = [pscustomobject]@{
+      payload_bytes = [int64[]]@(1024, 65536)
+      throughput_window = [int64]8
+      maximum_payload_bytes = [int64]65507
+      maximum_in_flight_bytes = [int64]65536
+      boundary_payload_bytes = [int64[]]@(65536)
+    }
+  }
+} "*UDP payload 65536 exceeds maximum 65507*" `
+  "invalid UDP payload matrix"
+
+$transportComparisons = @($transportCases | ForEach-Object {
+    [pscustomobject]@{
+      backend = "io_uring"
+      protocol = $_.protocol
+      payload_bytes = $_.payload_bytes
+      window_capacity = $_.window_capacity
+      direct_median_p50_ns = 10000.0
+      direct_median_p99_ns = 20000.0
+      direct_median_echo_per_second = 1000.0
+      direct_median_application_mib_per_second = 10.0
+      actor_median_p50_ns = 30000.0
+      actor_median_p99_ns = 40000.0
+      actor_median_echo_per_second = 800.0
+      actor_median_application_mib_per_second = 8.0
+      source_median_p50_ns = 50000.0
+      source_median_p99_ns = 60000.0
+      source_median_echo_per_second = 700.0
+      source_median_application_mib_per_second = 7.0
+    }
+  })
+$transportReports = Format-CflowTransportReports `
+  -Comparisons $transportComparisons -Backends @("io_uring") `
+  -Matrix $transportMatrix
+Assert-Equal ($transportReports.latency -match
+    '\| 32 KiB \| Direct \| 10\.000 \| 20\.000 \|') $true `
+  "UDP 32 KiB latency row"
+Assert-Equal ($transportReports.latency -match
+    '\| 65,507 B \(max datagram\) \| Direct \| 10\.000 \| 20\.000 \|') `
+  $true "UDP maximum datagram latency row"
+Assert-Equal ($transportReports.throughput -match
+    '\| 32 KiB \| Direct \| 2 \| 1,000\.000 \| 10\.000 \|') $true `
+  "UDP 32 KiB throughput row"
+Assert-Equal ($transportReports.throughput -match
+    '\| 65,507 B \(max datagram\) \| Direct \| 1 \| 1,000\.000 \| 10\.000 \|') `
+  $true "UDP maximum datagram throughput boundary row"
+Assert-Equal ($transportReports.latency -match 'N/A') $false `
+  "transport latency contains no placeholder rows"
+Assert-Equal ($transportReports.throughput -match 'N/A') $false `
+  "transport throughput contains no placeholder rows"
+Assert-Equal ($transportReports.latency -match 'P50/P99') $false `
+  "transport latency uses atomic metric columns"
+Assert-Equal ($transportReports.throughput -match 'Echo/s, MiB/s') $false `
+  "transport throughput uses atomic metric columns"
+
 Write-Output "cflow benchmark stats tests passed"

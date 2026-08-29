@@ -265,18 +265,20 @@ jobs:
           [string[]]$sourcePayloads = @("1024", "65536")
           $stagePayloads = @{
             tcp = [string[]]@("1024", "65536")
-            udp = [string[]]@("1024", "8192")
+            udp = [string[]]@("1024", "32768")
           }
-          $transportPayloads = @{
-            tcp = [string[]]@("1024", "4096", "8192", "16384", "32768", "65536")
-            udp = [string[]]@("1024", "4096", "8192")
-          }
-          $transportWindows = @{
-            tcp = [int64[]]@(1)
-            udp = [int64[]]@(1, 4, 8)
+          $transportMatrix = Get-CflowTransportBenchmarkMatrix
+          $transportCases = @(
+            Get-CflowTransportBenchmarkCases -Matrix $transportMatrix)
+          $transportPayloads = @{}
+          foreach ($protocol in @("tcp", "udp")) {
+            $transportPayloads[$protocol] = [string[]]@(
+              $transportMatrix[$protocol].payload_bytes |
+                ForEach-Object { $_.ToString() })
           }
           $sourceSamples = 100
           $sourceExchanges = 64
+          [int64]$networkTargetApplicationBytes = 67108864
           [int64[]]$sourceControlWindows = @(1, 4, 8, 16, 32, 64)
           $sourceControlSamples = 50
           $sourceControlValues = 4096
@@ -294,12 +296,15 @@ jobs:
             "network_backends=$($networkBackends -join ',')"
             "stage_tcp_payload_bytes=$($stagePayloads.tcp -join ',')"
             "stage_udp_payload_bytes=$($stagePayloads.udp -join ',')"
-            "source_samples=$sourceSamples"
-            "source_exchanges_per_sample=$sourceExchanges"
+            "network_maximum_samples=$sourceSamples"
+            "network_exchanges_per_sample=$sourceExchanges"
             "transport_tcp_payload_bytes=$($transportPayloads.tcp -join ',')"
             "transport_udp_payload_bytes=$($transportPayloads.udp -join ',')"
+            "transport_udp_boundary_payload_bytes=$($transportMatrix.udp.boundary_payload_bytes -join ',')"
+            "transport_udp_maximum_in_flight_bytes=$($transportMatrix.udp.maximum_in_flight_bytes)"
+            "network_target_application_bytes_per_driver=$networkTargetApplicationBytes"
             "direct_baseline_payload_bytes=$($sourcePayloads -join ',')"
-            "direct_baseline_samples=$sourceSamples"
+            "direct_baseline_maximum_samples=$sourceSamples"
             "direct_baseline_exchanges_per_sample=$sourceExchanges"
             "io_source_control_window=$($sourceControlWindows[0])"
             "io_source_control_windows=$($sourceControlWindows -join ',')"
@@ -620,13 +625,18 @@ jobs:
               $env:CFLOW_NETWORK_WAIT_MODE = "blocking"
               $env:CFLOW_NETWORK_PEER = "raw"
               $env:CFLOW_NETWORK_STAGE_TIMING = "0"
-              $env:CFLOW_NETWORK_SAMPLES = $sourceSamples.ToString()
               $env:CFLOW_NETWORK_EXCHANGES = $sourceExchanges.ToString()
               $orderedBaselinePayloads = @(
                 Get-CflowRotatedOrder -Values $sourcePayloads -Run $run)
               foreach ($payloadText in $orderedBaselinePayloads) {
                 $payloadBytes = [int64]$payloadText
                 $payloadIndex = [array]::IndexOf($sourcePayloads, $payloadText)
+                $baselineSamples = Get-CflowTransportSampleCount `
+                  -PayloadBytes $payloadBytes `
+                  -ExchangesPerSample $sourceExchanges `
+                  -MaximumSamples $sourceSamples `
+                  -TargetApplicationBytes $networkTargetApplicationBytes
+                $env:CFLOW_NETWORK_SAMPLES = $baselineSamples.ToString()
                 $env:CFLOW_NETWORK_PAYLOAD = $payloadText
                 $baselineDriverOrder = @(Get-CflowBaselineDriverOrder `
                   -Run $run -BackendIndex $backendIndex -PayloadIndex $payloadIndex)
@@ -649,7 +659,8 @@ jobs:
                   $report = $jsonText | ConvertFrom-Json
                   $expectedBackend = if ($driver -eq "direct") { "socket" } else { $backend }
                   Assert-NetworkMetricFields $report $jsonText $expectedBackend
-                  $expectedAttempts = [int64]$sourceSamples * [int64]$sourceExchanges
+                  $expectedAttempts =
+                    [int64]$baselineSamples * [int64]$sourceExchanges
                   $expectedApplicationBytes = $expectedAttempts * $payloadBytes
                   if ($report.schema -ne "cflow-network-benchmark/v1" -or
                       $report.protocol -ne "tcp" -or
@@ -658,7 +669,7 @@ jobs:
                       $report.peer_mode -ne "raw" -or
                       $report.driver -ne $driver -or
                       [bool]$report.stage_timing -or
-                      [int64]$report.samples -ne $sourceSamples -or
+                      [int64]$report.samples -ne $baselineSamples -or
                       [int64]$report.exchanges_per_sample -ne $sourceExchanges -or
                       [int64]$report.payload_bytes -ne $payloadBytes -or
                       [int64]$report.attempted -ne $expectedAttempts -or
@@ -687,7 +698,6 @@ jobs:
               $env:CFLOW_NETWORK_WORKLOAD = "round-trip"
               $env:CFLOW_NETWORK_PEER = "raw"
               $env:CFLOW_NETWORK_STAGE_TIMING = "1"
-              $env:CFLOW_NETWORK_SAMPLES = $sourceSamples.ToString()
               $env:CFLOW_NETWORK_EXCHANGES = $sourceExchanges.ToString()
               foreach ($protocol in @("tcp", "udp")) {
                 $protocolIndex = [array]::IndexOf(@("tcp", "udp"), $protocol)
@@ -698,6 +708,12 @@ jobs:
                   $payloadBytes = [int64]$payloadText
                   $payloadIndex =
                     [array]::IndexOf($stagePayloads[$protocol], $payloadText)
+                  $stageSamples = Get-CflowTransportSampleCount `
+                    -PayloadBytes $payloadBytes `
+                    -ExchangesPerSample $sourceExchanges `
+                    -MaximumSamples $sourceSamples `
+                    -TargetApplicationBytes $networkTargetApplicationBytes
+                  $env:CFLOW_NETWORK_SAMPLES = $stageSamples.ToString()
                   $env:CFLOW_NETWORK_PAYLOAD = $payloadText
                   $waitMode = "blocking"
                   $env:CFLOW_NETWORK_WAIT_MODE = $waitMode
@@ -742,7 +758,7 @@ jobs:
                     $jsonText = $report | ConvertTo-Json -Compress
                     Assert-NetworkMetricFields $report $jsonText $backend
                     $expectedAttempts =
-                      [int64]$sourceSamples * [int64]$sourceExchanges
+                      [int64]$stageSamples * [int64]$sourceExchanges
                     $admissionMean = [double]$report.admission_mean_ns
                     $completionDriveMean =
                       [double]$report.completion_drive_mean_ns
@@ -764,7 +780,7 @@ jobs:
                           $(if ($driver -eq "source") { 1 } else { 0 }) -or
                         [int64]$report.source_peak_occupied -gt $sourceWindow -or
                         -not [bool]$report.stage_timing -or
-                        [int64]$report.samples -ne $sourceSamples -or
+                        [int64]$report.samples -ne $stageSamples -or
                         [int64]$report.exchanges_per_sample -ne $sourceExchanges -or
                         [int64]$report.payload_bytes -ne $payloadBytes -or
                         [int64]$report.attempted -ne $expectedAttempts -or
@@ -811,12 +827,23 @@ jobs:
                 if ($protocol -eq "udp") { "pipeline" } else { "round-trip" }
               $env:CFLOW_NETWORK_WORKLOAD = $expectedWorkload
               $protocolPayloads = $transportPayloads[$protocol]
-              $protocolWindows = $transportWindows[$protocol]
               $orderedTransportPayloads = @(
                 Get-CflowRotatedOrder -Values $protocolPayloads -Run $run)
               foreach ($payloadText in $orderedTransportPayloads) {
                 $payloadBytes = [int64]$payloadText
                 $payloadIndex = [array]::IndexOf($protocolPayloads, $payloadText)
+                $protocolWindows = [int64[]]@(
+                  $transportCases | Where-Object {
+                    $_.protocol -eq $protocol -and
+                    $_.payload_bytes -eq $payloadBytes
+                  } | ForEach-Object { $_.window_capacity })
+                $transportSamples = Get-CflowTransportSampleCount `
+                  -PayloadBytes $payloadBytes `
+                  -ExchangesPerSample $sourceExchanges `
+                  -MaximumSamples $sourceSamples `
+                  -TargetApplicationBytes $networkTargetApplicationBytes
+                $env:CFLOW_NETWORK_SAMPLES = $transportSamples.ToString()
+                $env:CFLOW_NETWORK_EXCHANGES = $sourceExchanges.ToString()
                 $env:CFLOW_NETWORK_PAYLOAD = $payloadText
                 foreach ($waitMode in @("blocking")) {
                   $env:CFLOW_NETWORK_WAIT_MODE = $waitMode
@@ -861,7 +888,7 @@ jobs:
                       $expectedBackend =
                         if ($driver -eq "direct") { "socket" } else { $backend }
                       Assert-NetworkMetricFields $report $jsonText $expectedBackend
-                      $expectedAttempts = [int64]$sourceSamples *
+                      $expectedAttempts = [int64]$transportSamples *
                         [int64]$sourceExchanges
                       $expectedSourceWindow =
                         if ($driver -eq "source") { $windowCapacity } else { 0 }
@@ -877,7 +904,7 @@ jobs:
                           [int64]$report.source_window_capacity -ne $expectedSourceWindow -or
                           [int64]$report.source_peak_occupied -ne $expectedSourceWindow -or
                           [bool]$report.stage_timing -or
-                          [int64]$report.samples -ne $sourceSamples -or
+                          [int64]$report.samples -ne $transportSamples -or
                           [int64]$report.exchanges_per_sample -ne $sourceExchanges -or
                           [int64]$report.payload_bytes -ne $payloadBytes -or
                           [int64]$report.attempted -ne $expectedAttempts -or
@@ -1190,10 +1217,8 @@ jobs:
           $pipelineGroups = @($pipelineReports |
             Group-Object protocol, comparison_backend, payload_bytes, `
               wait_mode, workload_window_capacity)
-          $expectedPipelineGroups = `
-            ($transportPayloads.tcp.Count * $transportWindows.tcp.Count +
-             $transportPayloads.udp.Count * $transportWindows.udp.Count) * `
-            $networkBackends.Count
+          $expectedPipelineGroups =
+            $transportCases.Count * $networkBackends.Count
           if ($pipelineGroups.Count -ne $expectedPipelineGroups) {
             throw "Expected $expectedPipelineGroups protocol/backend/payload/window transport groups, found $($pipelineGroups.Count)"
           }
@@ -1209,132 +1234,38 @@ jobs:
             Add-Content -LiteralPath $pipelineMedianSummary
           $transportComparisons = @()
           foreach ($backend in $networkBackends) {
-            foreach ($protocol in @("tcp", "udp")) {
-              foreach ($payloadText in $transportPayloads[$protocol]) {
-                foreach ($windowCapacity in $transportWindows[$protocol]) {
-                  $comparison = Get-CflowPairedTransportSummary `
-                    -Reports $pipelineReports -Backend $backend `
-                    -Protocol $protocol -WaitMode blocking `
-                    -PayloadBytes ([int64]$payloadText) `
-                    -WindowCapacity $windowCapacity `
-                    -ExpectedRuns ([int]$env:BENCHMARK_RUNS)
-                  $transportComparisons += $comparison
-                  Add-Content -LiteralPath $pipelineMedianSummary -Value `
-                    ("| {0} | {1} | {2} | {3} | {4} | {5} | {6:N3} | {7:N3} | {8:N3} | {9:N0} | {10:N0} | {11:N0} |" -f `
-                      $comparison.protocol.ToUpperInvariant(),
-                      $comparison.workload, $comparison.backend,
-                      $comparison.payload_bytes, $comparison.window_capacity,
-                      $comparison.runs,
-                      $comparison.direct_median_echo_per_second,
-                      $comparison.actor_median_echo_per_second,
-                      $comparison.source_median_echo_per_second,
-                      $comparison.direct_median_p99_ns,
-                      $comparison.actor_median_p99_ns,
-                      $comparison.source_median_p99_ns)
-                }
-              }
+            foreach ($case in $transportCases) {
+              $comparison = Get-CflowPairedTransportSummary `
+                -Reports $pipelineReports -Backend $backend `
+                -Protocol $case.protocol -WaitMode blocking `
+                -PayloadBytes $case.payload_bytes `
+                -WindowCapacity $case.window_capacity `
+                -ExpectedRuns ([int]$env:BENCHMARK_RUNS)
+              $transportComparisons += $comparison
+              Add-Content -LiteralPath $pipelineMedianSummary -Value `
+                ("| {0} | {1} | {2} | {3} | {4} | {5} | {6:N3} | {7:N3} | {8:N3} | {9:N0} | {10:N0} | {11:N0} |" -f `
+                  $comparison.protocol.ToUpperInvariant(),
+                  $comparison.workload, $comparison.backend,
+                  $comparison.payload_bytes, $comparison.window_capacity,
+                  $comparison.runs,
+                  $comparison.direct_median_echo_per_second,
+                  $comparison.actor_median_echo_per_second,
+                  $comparison.source_median_echo_per_second,
+                  $comparison.direct_median_p99_ns,
+                  $comparison.actor_median_p99_ns,
+                  $comparison.source_median_p99_ns)
             }
           }
 
-          "### 1 KiB transport comparison" |
+          $transportReports = Format-CflowTransportReports `
+            -Comparisons $transportComparisons -Backends $networkBackends `
+            -Matrix $transportMatrix
+          $transportReports.one_kib |
             Set-Content -LiteralPath $transportOneKiBSummary
-          "### Payload latency scaling" |
+          $transportReports.latency |
             Set-Content -LiteralPath $transportLatencySummary
-          "### Payload throughput scaling" |
+          $transportReports.throughput |
             Set-Content -LiteralPath $transportThroughputSummary
-          foreach ($backend in $networkBackends) {
-            foreach ($protocol in @("tcp", "udp")) {
-              $latencyWindow = [int64]1
-              $throughputWindow = [int64](
-                $transportWindows[$protocol] | Measure-Object -Maximum).Maximum
-              $oneKiBLatency = @($transportComparisons | Where-Object {
-                  $_.backend -eq $backend -and $_.protocol -eq $protocol -and
-                  $_.payload_bytes -eq 1024 -and
-                  $_.window_capacity -eq $latencyWindow
-                })[0]
-              $oneKiBThroughput = @($transportComparisons | Where-Object {
-                  $_.backend -eq $backend -and $_.protocol -eq $protocol -and
-                  $_.payload_bytes -eq 1024 -and
-                  $_.window_capacity -eq $throughputWindow
-                })[0]
-              Add-Content -LiteralPath $transportOneKiBSummary -Value `
-                "`n#### $($protocol.ToUpperInvariant()) ($backend)"
-              Add-Content -LiteralPath $transportOneKiBSummary -Value `
-                "`n| Model | P50 us (w1) | P99 us (w1) | Echo/s (w$throughputWindow) | MiB/s (w$throughputWindow) |"
-              Add-Content -LiteralPath $transportOneKiBSummary -Value `
-                "| :--- | ---: | ---: | ---: | ---: |"
-              foreach ($driver in @("Direct", "Actor", "Source")) {
-                $prefix = $driver.ToLowerInvariant()
-                Add-Content -LiteralPath $transportOneKiBSummary -Value `
-                  ("| {0} | {1:N3} | {2:N3} | {3:N3} | {4:N3} |" -f `
-                    $driver,
-                    ([double]$oneKiBLatency."${prefix}_median_p50_ns" / 1000.0),
-                    ([double]$oneKiBLatency."${prefix}_median_p99_ns" / 1000.0),
-                    $oneKiBThroughput."${prefix}_median_echo_per_second",
-                    $oneKiBThroughput."${prefix}_median_application_mib_per_second")
-              }
-
-              Add-Content -LiteralPath $transportLatencySummary -Value `
-                "`n#### $($protocol.ToUpperInvariant()) ($backend), window 1"
-              Add-Content -LiteralPath $transportLatencySummary -Value `
-                "`n| Payload | Direct P50/P99 us | Actor P50/P99 us | Source P50/P99 us |"
-              Add-Content -LiteralPath $transportLatencySummary -Value `
-                "| :--- | ---: | ---: | ---: |"
-              Add-Content -LiteralPath $transportThroughputSummary -Value `
-                "`n#### $($protocol.ToUpperInvariant()) ($backend), window $throughputWindow"
-              Add-Content -LiteralPath $transportThroughputSummary -Value `
-                "`n| Payload | Direct Echo/s, MiB/s | Actor Echo/s, MiB/s | Source Echo/s, MiB/s |"
-              Add-Content -LiteralPath $transportThroughputSummary -Value `
-                "| :--- | ---: | ---: | ---: |"
-              foreach ($payloadText in @($transportPayloads[$protocol] |
-                  Select-Object -Skip 1)) {
-                $payloadBytes = [int64]$payloadText
-                $payloadLabel = switch ($payloadBytes) {
-                  4096 { "4 KiB" }
-                  8192 { "8 KiB" }
-                  16384 { "16 KiB" }
-                  32768 { "32 KiB" }
-                  65536 { "64 KiB" }
-                }
-                $latency = @($transportComparisons | Where-Object {
-                    $_.backend -eq $backend -and $_.protocol -eq $protocol -and
-                    $_.payload_bytes -eq $payloadBytes -and
-                    $_.window_capacity -eq $latencyWindow
-                  })[0]
-                $throughput = @($transportComparisons | Where-Object {
-                    $_.backend -eq $backend -and $_.protocol -eq $protocol -and
-                    $_.payload_bytes -eq $payloadBytes -and
-                    $_.window_capacity -eq $throughputWindow
-                  })[0]
-                Add-Content -LiteralPath $transportLatencySummary -Value `
-                  ("| {0} | {1:N3} / {2:N3} | {3:N3} / {4:N3} | {5:N3} / {6:N3} |" -f `
-                    $payloadLabel,
-                    ([double]$latency.direct_median_p50_ns / 1000.0),
-                    ([double]$latency.direct_median_p99_ns / 1000.0),
-                    ([double]$latency.actor_median_p50_ns / 1000.0),
-                    ([double]$latency.actor_median_p99_ns / 1000.0),
-                    ([double]$latency.source_median_p50_ns / 1000.0),
-                    ([double]$latency.source_median_p99_ns / 1000.0))
-                Add-Content -LiteralPath $transportThroughputSummary -Value `
-                  ("| {0} | {1:N3}, {2:N3} | {3:N3}, {4:N3} | {5:N3}, {6:N3} |" -f `
-                    $payloadLabel,
-                    $throughput.direct_median_echo_per_second,
-                    $throughput.direct_median_application_mib_per_second,
-                    $throughput.actor_median_echo_per_second,
-                    $throughput.actor_median_application_mib_per_second,
-                    $throughput.source_median_echo_per_second,
-                    $throughput.source_median_application_mib_per_second)
-              }
-              if ($protocol -eq "udp") {
-                foreach ($unsupportedPayload in @("16 KiB", "32 KiB", "64 KiB")) {
-                  Add-Content -LiteralPath $transportLatencySummary -Value `
-                    "| $unsupportedPayload | N/A (portable CI limit) | N/A | N/A |"
-                  Add-Content -LiteralPath $transportThroughputSummary -Value `
-                    "| $unsupportedPayload | N/A (portable CI limit) | N/A | N/A |"
-                }
-              }
-            }
-          }
 
           $dualReports = @(Get-Content -LiteralPath $dualNativeJsonl |
             ForEach-Object { $_ | ConvertFrom-Json })
@@ -1371,7 +1302,7 @@ jobs:
           Add-Content -LiteralPath $summary -Value ""
           Add-Content -LiteralPath $summary -Value "$env:BENCHMARK_RUNS raw runs per backend and host/compiler metadata are stored in the job artifact. Requested backends: $($networkBackends -join ', '). Shared-runner throughput is evidence, not a cross-host performance gate."
           Add-Content -LiteralPath $summary -Value ""
-          Add-Content -LiteralPath $summary -Value "TCP uses sequential round-trip at window 1 because it is a byte stream. UDP latency uses bounded pipeline window 1 and throughput uses window 8. The portable UDP CI matrix stops at 8 KiB; 16-64 KiB cells are explicitly N/A instead of relying on host-specific datagram limits."
+          Add-Content -LiteralPath $summary -Value "TCP uses sequential round-trip at window 1 because it is a byte stream. UDP latency uses window 1; throughput is capped at 8 operations and 64 KiB of payload in flight, so 1-8 KiB uses window 8, 16 KiB uses window 4, and 32 KiB uses window 2. The 65,507-byte maximum UDP datagram is a separate window-1 boundary case; 64 KiB is not a valid UDP payload. Each driver/run uses 64 exchanges per sample and at most 100 samples, reduced for large payloads to cap measured application data near 64 MiB."
           Add-Content -LiteralPath $summary -Value ""
           Get-Content -LiteralPath $transportOneKiBSummary |
             Add-Content -LiteralPath $summary
@@ -1435,7 +1366,7 @@ jobs:
           Add-Content -LiteralPath $summary -Value ""
           Add-Content -LiteralPath $summary -Value "### Direct socket versus Actor TCP evidence"
           Add-Content -LiteralPath $summary -Value ""
-          Add-Content -LiteralPath $summary -Value "Each pair uses the same blocking raw echo peer, throughput profile, payload, and fixed $sourceSamples x $sourceExchanges observation budget. Payload order rotates by run and driver order is counterbalanced. Ratios and P99 deltas are medians of same-run Actor-versus-direct pairs; the direct driver initializes no CFlow backend, Actor, Executor, or Source."
+          Add-Content -LiteralPath $summary -Value "Each pair uses the same blocking raw echo peer, throughput profile, payload, and byte-bounded observation budget. Direct and Actor use identical sample counts within each pair. Payload order rotates by run and driver order is counterbalanced. Ratios and P99 deltas are medians of same-run Actor-versus-direct pairs; the direct driver initializes no CFlow backend, Actor, Executor, or Source."
           Add-Content -LiteralPath $summary -Value ""
           Get-Content -LiteralPath $baselineMedianSummary | Add-Content -LiteralPath $summary
           Add-Content -LiteralPath $summary -Value ""
@@ -1447,7 +1378,7 @@ jobs:
           Add-Content -LiteralPath $summary -Value ""
           Add-Content -LiteralPath $summary -Value "### Actor versus Reactive Source TCP/UDP stage diagnostics"
           Add-Content -LiteralPath $summary -Value ""
-          Add-Content -LiteralPath $summary -Value "Within each protocol and backend, both drivers use the same blocking raw loopback round-trip, enabled stage timing, source window 1, and a fixed $sourceSamples x $sourceExchanges observation budget. TCP measures 1/64 KiB; UDP measures the portable 1/8 KiB endpoints. Execution order rotates by run and matrix position."
+          Add-Content -LiteralPath $summary -Value "Within each protocol and backend, both drivers use the same blocking raw loopback round-trip, enabled stage timing, source window 1, and the same byte-bounded observation budget within each pair. TCP measures 1/64 KiB; UDP measures 1/32 KiB representative endpoints. Execution order rotates by run and matrix position."
           Add-Content -LiteralPath $summary -Value ""
           Add-Content -LiteralPath $summary -Value "Admission is API handoff: Actor through try_submit, Source through cflow_run_request; deferred Source Actor submission is included in completion/drive. Combined stage is the comparable external handoff-to-delivery total."
           Add-Content -LiteralPath $summary -Value "Absolute ns/exchange and combined-stage deltas are the payload-scaling evidence; percentages are contextual. The CFlow native operation stores the caller-owned payload pointer, so increasing payload does not add a framework payload copy by contract."
@@ -1463,7 +1394,7 @@ jobs:
           Add-Content -LiteralPath $summary -Value ""
           Add-Content -LiteralPath $summary -Value "### Direct, Actor, and Source TCP/UDP transport layers"
           Add-Content -LiteralPath $summary -Value ""
-          Add-Content -LiteralPath $summary -Value "Each same-run triple executes the same protocol-specific workload through a blocking raw socket baseline, the asynchronous IO Actor API, and the reactive Source API. TCP uses byte-stream-safe sequential round-trip at window 1; UDP uses bounded datagram pipeline at windows $($transportWindows.udp -join ', '). Driver order rotates by run and matrix position. Every record has equal attempted exchanges and no errors, rejections, or stale completions."
+          Add-Content -LiteralPath $summary -Value "Each same-run triple executes the same protocol-specific workload through a blocking raw socket baseline, the asynchronous IO Actor API, and the reactive Source API. TCP uses byte-stream-safe sequential round-trip at window 1. UDP throughput windows are bounded by both operation count and in-flight payload bytes; latency and the 65,507-byte boundary use window 1. Observation count is byte-bounded per payload but identical across Direct, Actor, and Source within each same-run triple. Driver order rotates by run and matrix position. Every record has equal attempted exchanges and no errors, rejections, or stale completions."
           Add-Content -LiteralPath $summary -Value ""
           Get-Content -LiteralPath $pipelineMedianSummary |
             Add-Content -LiteralPath $summary

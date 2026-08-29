@@ -1576,3 +1576,291 @@ function Get-CflowPairedDirectSummary {
     paired_p99_delta_ns = [math]::Round((Get-CflowMedian $p99Deltas), 6)
   }
 }
+
+function Get-CflowTransportSampleCount {
+  param(
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$PayloadBytes,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$ExchangesPerSample,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$MaximumSamples,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$TargetApplicationBytes
+  )
+
+  $bytesPerSample = [decimal]$PayloadBytes * [decimal]$ExchangesPerSample
+  $boundedSamples = [int64][decimal]::Floor(
+    [decimal]$TargetApplicationBytes / $bytesPerSample)
+  if ($boundedSamples -lt 1) {
+    return [int64]1
+  }
+  return [int64][math]::Min($MaximumSamples, $boundedSamples)
+}
+
+function Get-CflowTransportBenchmarkMatrix {
+  return [ordered]@{
+    tcp = [pscustomobject][ordered]@{
+      payload_bytes = [int64[]]@(
+        1024, 4096, 8192, 16384, 32768, 65536)
+      throughput_window = [int64]1
+      maximum_payload_bytes = [int64]65536
+      maximum_in_flight_bytes = [int64]65536
+      boundary_payload_bytes = [int64[]]@()
+    }
+    udp = [pscustomobject][ordered]@{
+      payload_bytes = [int64[]]@(
+        1024, 4096, 8192, 16384, 32768, 65507)
+      throughput_window = [int64]8
+      maximum_payload_bytes = [int64]65507
+      maximum_in_flight_bytes = [int64]65536
+      boundary_payload_bytes = [int64[]]@(65507)
+    }
+  }
+}
+
+function Get-CflowTransportBenchmarkCases {
+  param(
+    [Parameter(Mandatory = $true)]
+    [System.Collections.IDictionary]$Matrix
+  )
+
+  $validated = [ordered]@{}
+  foreach ($protocol in @("tcp", "udp")) {
+    if (-not $Matrix.Contains($protocol)) {
+      throw "Transport matrix is missing protocol $protocol"
+    }
+    $entry = $Matrix[$protocol]
+    $payloads = @($entry.payload_bytes)
+    $boundaries = @($entry.boundary_payload_bytes)
+    $throughputWindow = [int64]$entry.throughput_window
+    $maximumPayload = [int64]$entry.maximum_payload_bytes
+    $maximumInFlightBytes = [int64]$entry.maximum_in_flight_bytes
+    if ($payloads.Count -eq 0 -or
+        @($payloads | Sort-Object -Unique).Count -ne $payloads.Count) {
+      throw "Transport $protocol payloads must be non-empty and unique"
+    }
+    if ($throughputWindow -le 0 -or $maximumPayload -le 0 -or
+        $maximumInFlightBytes -le 0) {
+      throw "Transport $protocol windows and payload limits must be positive"
+    }
+    foreach ($boundary in $boundaries) {
+      if ([int64]$boundary -notin [int64[]]$payloads) {
+        throw "Transport $protocol boundary payload $boundary is not measured"
+      }
+    }
+    foreach ($payload in $payloads) {
+      $payload = [int64]$payload
+      if ($payload -le 0 -or $payload -gt $maximumPayload) {
+        throw "$($protocol.ToUpperInvariant()) payload $payload exceeds maximum $maximumPayload"
+      }
+    }
+    $validated[$protocol] = [pscustomobject]@{
+      payloads = [int64[]]$payloads
+      boundaries = [int64[]]$boundaries
+      throughput_window = $throughputWindow
+      maximum_in_flight_bytes = $maximumInFlightBytes
+    }
+  }
+
+  foreach ($protocol in @("tcp", "udp")) {
+    $entry = $validated[$protocol]
+    for ($payloadIndex = 0; $payloadIndex -lt $entry.payloads.Count;
+         ++$payloadIndex) {
+      $payload = [int64]$entry.payloads[$payloadIndex]
+      $boundaries = [int64[]]$entry.boundaries
+      $windows = if ($payload -in [int64[]]$boundaries) {
+        [int64[]]@(1)
+      } else {
+        $byteBoundedWindow = [int64][decimal]::Floor(
+          [decimal]$entry.maximum_in_flight_bytes / [decimal]$payload)
+        $payloadThroughputWindow = [math]::Max(
+          1, [math]::Min($entry.throughput_window, $byteBoundedWindow))
+        [int64[]]@(1, $payloadThroughputWindow) | Sort-Object -Unique
+      }
+      $windowIndex = 0
+      foreach ($window in $windows) {
+        [pscustomobject][ordered]@{
+          protocol = $protocol
+          protocol_index = [array]::IndexOf(@("tcp", "udp"), $protocol)
+          payload_bytes = $payload
+          payload_index = $payloadIndex
+          window_capacity = [int64]$window
+          window_index = $windowIndex
+          boundary = $payload -in [int64[]]$boundaries
+        }
+        ++$windowIndex
+      }
+    }
+  }
+}
+
+function Get-CflowTransportPayloadLabel {
+  param(
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$PayloadBytes,
+
+    [switch]$Boundary
+  )
+
+  if ($Boundary) {
+    return "$($PayloadBytes.ToString('N0', [cultureinfo]::InvariantCulture)) B (max datagram)"
+  }
+  if ($PayloadBytes % 1024 -eq 0) {
+    return "$([int64]($PayloadBytes / 1024)) KiB"
+  }
+  return "$($PayloadBytes.ToString('N0', [cultureinfo]::InvariantCulture)) B"
+}
+
+function Format-CflowTransportNumber {
+  param(
+    [Parameter(Mandatory = $true)]
+    [double]$Value
+  )
+
+  if ([double]::IsNaN($Value) -or [double]::IsInfinity($Value) -or
+      $Value -le 0.0) {
+    throw "Transport report values must be finite and positive"
+  }
+  return $Value.ToString("N3", [cultureinfo]::InvariantCulture)
+}
+
+function Get-CflowTransportComparison {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object[]]$Comparisons,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Backend,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Protocol,
+
+    [Parameter(Mandatory = $true)]
+    [long]$PayloadBytes,
+
+    [Parameter(Mandatory = $true)]
+    [long]$WindowCapacity
+  )
+
+  $matching = @($Comparisons | Where-Object {
+      $_.backend -eq $Backend -and $_.protocol -eq $Protocol -and
+      [int64]$_.payload_bytes -eq $PayloadBytes -and
+      [int64]$_.window_capacity -eq $WindowCapacity
+    })
+  if ($matching.Count -ne 1) {
+    throw "Expected one $Protocol/$Backend/$PayloadBytes/window=$WindowCapacity transport comparison, found $($matching.Count)"
+  }
+  return $matching[0]
+}
+
+function Format-CflowTransportReports {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object[]]$Comparisons,
+
+    [Parameter(Mandatory = $true)]
+    [string[]]$Backends,
+
+    [Parameter(Mandatory = $true)]
+    [System.Collections.IDictionary]$Matrix
+  )
+
+  if ($Backends.Count -eq 0 -or
+      @($Backends | Sort-Object -Unique).Count -ne $Backends.Count) {
+    throw "Transport report backends must be non-empty and unique"
+  }
+  $cases = @(Get-CflowTransportBenchmarkCases -Matrix $Matrix)
+  $oneKiBLines = @("### 1 KiB transport comparison")
+  $latencyLines = @("### Payload latency scaling")
+  $throughputLines = @("### Payload throughput scaling")
+  foreach ($backend in $Backends) {
+    foreach ($protocol in @("tcp", "udp")) {
+      $entry = $Matrix[$protocol]
+      $throughputWindow = [int64](
+        $cases | Where-Object {
+          $_.protocol -eq $protocol -and $_.payload_bytes -eq 1024
+        } | Measure-Object -Property window_capacity -Maximum).Maximum
+      $oneKiBLatency = Get-CflowTransportComparison `
+        -Comparisons $Comparisons -Backend $backend -Protocol $protocol `
+        -PayloadBytes 1024 -WindowCapacity 1
+      $oneKiBThroughput = Get-CflowTransportComparison `
+        -Comparisons $Comparisons -Backend $backend -Protocol $protocol `
+        -PayloadBytes 1024 -WindowCapacity $throughputWindow
+      $protocolName = $protocol.ToUpperInvariant()
+
+      $oneKiBLines += ""
+      $oneKiBLines += "#### $protocolName ($backend)"
+      $oneKiBLines += ""
+      $oneKiBLines += "Latency window: 1. Throughput window: $throughputWindow."
+      $oneKiBLines += ""
+      $oneKiBLines += "| Model | P50 us | P99 us | Echo/s | MiB/s |"
+      $oneKiBLines += "| :--- | ---: | ---: | ---: | ---: |"
+      foreach ($driver in @("Direct", "Actor", "Source")) {
+        $prefix = $driver.ToLowerInvariant()
+        $oneKiBLines += "| $driver | $(Format-CflowTransportNumber ([double]$oneKiBLatency."${prefix}_median_p50_ns" / 1000.0)) | $(Format-CflowTransportNumber ([double]$oneKiBLatency."${prefix}_median_p99_ns" / 1000.0)) | $(Format-CflowTransportNumber $oneKiBThroughput."${prefix}_median_echo_per_second") | $(Format-CflowTransportNumber $oneKiBThroughput."${prefix}_median_application_mib_per_second") |"
+      }
+
+      $latencyLines += ""
+      $latencyLines += "#### $protocolName ($backend)"
+      $latencyLines += ""
+      if ($protocol -eq "udp") {
+        $latencyLines += "Bounded datagram pipeline with one in flight (window 1)."
+      } else {
+        $latencyLines += "Sequential round trip, window 1."
+      }
+      $latencyLines += ""
+      $latencyLines += "| Payload | Model | P50 us | P99 us |"
+      $latencyLines += "| :--- | :--- | ---: | ---: |"
+      $throughputLines += ""
+      $throughputLines += "#### $protocolName ($backend)"
+      $throughputLines += ""
+      if ($protocol -eq "udp") {
+        $maximumInFlightKiB = [int64]($entry.maximum_in_flight_bytes / 1024)
+        $throughputLines += "Window is capped at $throughputWindow operations and $maximumInFlightKiB KiB of payload in flight; the maximum datagram boundary uses window 1."
+      } else {
+        $throughputLines += "Sequential round trip, window $throughputWindow."
+      }
+      $throughputLines += ""
+      $throughputLines += "| Payload | Model | Window | Echo/s | MiB/s |"
+      $throughputLines += "| :--- | :--- | ---: | ---: | ---: |"
+
+      foreach ($payload in @($entry.payload_bytes | Select-Object -Skip 1)) {
+        $isBoundary = [int64]$payload -in [int64[]]@($entry.boundary_payload_bytes)
+        $payloadLabel = Get-CflowTransportPayloadLabel `
+          -PayloadBytes ([int64]$payload) -Boundary:$isBoundary
+        $latency = Get-CflowTransportComparison `
+          -Comparisons $Comparisons -Backend $backend -Protocol $protocol `
+          -PayloadBytes ([int64]$payload) -WindowCapacity 1
+        $payloadThroughputWindow = [int64](
+          $cases | Where-Object {
+            $_.protocol -eq $protocol -and
+            $_.payload_bytes -eq [int64]$payload
+          } | Measure-Object -Property window_capacity -Maximum).Maximum
+        $throughput = Get-CflowTransportComparison `
+          -Comparisons $Comparisons -Backend $backend -Protocol $protocol `
+          -PayloadBytes ([int64]$payload) `
+          -WindowCapacity $payloadThroughputWindow
+        foreach ($driver in @("Direct", "Actor", "Source")) {
+          $prefix = $driver.ToLowerInvariant()
+          $latencyLines += "| $payloadLabel | $driver | $(Format-CflowTransportNumber ([double]$latency."${prefix}_median_p50_ns" / 1000.0)) | $(Format-CflowTransportNumber ([double]$latency."${prefix}_median_p99_ns" / 1000.0)) |"
+          $throughputLines += "| $payloadLabel | $driver | $payloadThroughputWindow | $(Format-CflowTransportNumber $throughput."${prefix}_median_echo_per_second") | $(Format-CflowTransportNumber $throughput."${prefix}_median_application_mib_per_second") |"
+        }
+      }
+    }
+  }
+
+  return [pscustomobject][ordered]@{
+    one_kib = $oneKiBLines -join "`n"
+    latency = $latencyLines -join "`n"
+    throughput = $throughputLines -join "`n"
+  }
+}
