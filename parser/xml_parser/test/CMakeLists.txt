@@ -1,0 +1,13 @@
+cmake_add_test(xml_parser_test
+  SOURCES xml_parser_test.c
+  LIBS TurboUtils::XmlParser TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  FOLDER "parser/xml_parser/test")
+
+target_include_directories(xml_parser_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/../vendor/cxml/include)
+
+set_target_properties(xml_parser_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
