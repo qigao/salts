@@ -63,6 +63,9 @@ add_library(${TARGET_NAME}
   src/graph.c
   src/interfaces.c
   src/io_actor.c
+  src/io_blocking_driver.c
+  src/io_communication.c
+  src/io_driver.c
   src/io_source.c
   src/io_file.c
   src/io_pipe.c

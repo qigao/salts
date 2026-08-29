@@ -25,7 +25,9 @@
 #include <cflow/statechart_hierarchy_adapter.h>
 #include <cflow/statechart_runtime.h>
 #include <cflow/actor.h>
+#include <cflow/io_communication.h>
 #include <cflow/io_actor.h>
+#include <cflow/io_blocking_driver.h>
 #include <cflow/io_native.h>
 #include <cflow/io_file.h>
 #include <cflow/io_pipe.h>

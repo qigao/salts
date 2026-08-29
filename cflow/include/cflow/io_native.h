@@ -2,6 +2,7 @@
 #define CFLOW_IO_NATIVE_H
 
 #include <cflow/io_actor.h>
+#include <cflow/io_communication.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -186,6 +187,16 @@ typedef struct cflow_io_native_backend_stats {
 
 /** Returns compile-time availability only; runtime kernel policy may still reject init. */
 bool cflow_io_native_backend_supported(cflow_io_native_backend_kind kind);
+
+/**
+ * Classifies a native backend without consulting compile-time availability.
+ * @param kind Backend kind to classify.
+ * @param out Receives the model on success and remains unchanged on failure.
+ * @return true for a known backend kind; false for invalid arguments.
+ */
+bool cflow_io_native_backend_communication_model(
+    cflow_io_native_backend_kind kind,
+    cflow_io_communication_model *out);
 
 /** Returns compile-time pipe capability; per-endpoint checks occur on submit. */
 bool cflow_io_native_backend_pipe_supported(

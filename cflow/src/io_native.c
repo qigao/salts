@@ -140,6 +140,30 @@ bool cflow_io_native_backend_supported(cflow_io_native_backend_kind kind) {
     }
 }
 
+bool cflow_io_native_backend_communication_model(
+    cflow_io_native_backend_kind kind,
+    cflow_io_communication_model *out) {
+    cflow_io_communication_model model;
+
+    if (out == NULL)
+        return false;
+    switch (kind) {
+        case CFLOW_IO_NATIVE_EPOLL:
+        case CFLOW_IO_NATIVE_KQUEUE:
+        case CFLOW_IO_NATIVE_POLL:
+            model = CFLOW_IO_COMMUNICATION_READINESS;
+            break;
+        case CFLOW_IO_NATIVE_IOCP:
+        case CFLOW_IO_NATIVE_IO_URING:
+            model = CFLOW_IO_COMMUNICATION_COMPLETION;
+            break;
+        default:
+            return false;
+    }
+    *out = model;
+    return true;
+}
+
 bool cflow_io_native_backend_pipe_supported(
     cflow_io_native_backend_kind kind) {
     return cflow_io_native_backend_supported(kind);

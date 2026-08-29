@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "io_actor_internal.h"
+#include "io_driver_internal.h"
 
 typedef enum cflow_io_command_kind {
     CFLOW_IO_COMMAND_SUBMIT = 0,
@@ -95,8 +96,7 @@ struct cflow_io_actor_impl {
     atomic_size_t completion_depth;
     atomic_size_t completion_publishers_inflight;
     cflow_executor *executor;
-    cflow_io_backend_ops backend;
-    void *backend_user;
+    cflow_io_driver driver;
     cflow_io_completion_fn completion;
     void *completion_user;
     cflow_io_wake_fn wake;
@@ -594,9 +594,8 @@ static bool io_execute_action(cflow_io_actor_impl *impl,
         case CFLOW_IO_ACTION_STATE_ONLY:
             return true;
         case CFLOW_IO_ACTION_CANCEL_BACKEND:
-            status = impl->backend.cancel != NULL
-                ? impl->backend.cancel(impl->backend_user, action->request_id)
-                : TURBO_OK;
+            status = cflow_io_driver_cancel(
+                &impl->driver, action->request_id);
             if (status != TURBO_OK) {
                 turbo_mutex_lock(&impl->gate);
                 io_counter_increment(&impl->backend_cancel_errors);
@@ -604,8 +603,8 @@ static bool io_execute_action(cflow_io_actor_impl *impl,
             }
             return true;
         case CFLOW_IO_ACTION_SUBMIT_BACKEND:
-            status = impl->backend.submit(
-                impl->backend_user, &impl->backend_actor,
+            status = cflow_io_driver_submit(
+                &impl->driver, &impl->backend_actor,
                 action->request_id, action->lease_id,
                 action->operation_user);
             if (status != TURBO_OK) {
@@ -819,8 +818,19 @@ int cflow_io_actor_init(cflow_io_actor *actor,
     atomic_init(&impl->completion_depth, 0u);
     atomic_init(&impl->completion_publishers_inflight, 0u);
     impl->executor = config->executor;
-    impl->backend = config->backend;
-    impl->backend_user = config->backend_user;
+    if (!cflow_io_driver_init_completion_callbacks(
+            &impl->driver, config->backend, config->backend_user)) {
+        turbo_mutex_destroy(&impl->gate);
+        disruptor_consumer_unregister(
+            impl->completions, &impl->completion_consumer);
+        disruptor_destroy(impl->completions);
+        disruptor_consumer_unregister(
+            impl->commands, &impl->command_consumer);
+        disruptor_destroy(impl->commands);
+        free(impl->requests);
+        free(impl);
+        return TURBO_EINVAL;
+    }
     impl->completion = config->completion;
     impl->completion_user = config->completion_user;
     impl->wake = config->wake;

@@ -2849,6 +2849,32 @@ static void native_check_backend(cflow_io_native_backend_kind kind) {
 }
 
 spec("CFlow native IO backend") {
+    it("classifies each native backend by its communication model") {
+        cflow_io_communication_model model =
+            CFLOW_IO_COMMUNICATION_BLOCKING;
+
+        check_true(cflow_io_native_backend_communication_model(
+            CFLOW_IO_NATIVE_EPOLL, &model));
+        check_equal(model, CFLOW_IO_COMMUNICATION_READINESS);
+        check_true(cflow_io_native_backend_communication_model(
+            CFLOW_IO_NATIVE_KQUEUE, &model));
+        check_equal(model, CFLOW_IO_COMMUNICATION_READINESS);
+        check_true(cflow_io_native_backend_communication_model(
+            CFLOW_IO_NATIVE_POLL, &model));
+        check_equal(model, CFLOW_IO_COMMUNICATION_READINESS);
+        check_true(cflow_io_native_backend_communication_model(
+            CFLOW_IO_NATIVE_IOCP, &model));
+        check_equal(model, CFLOW_IO_COMMUNICATION_COMPLETION);
+        check_true(cflow_io_native_backend_communication_model(
+            CFLOW_IO_NATIVE_IO_URING, &model));
+        check_equal(model, CFLOW_IO_COMMUNICATION_COMPLETION);
+        check_false(cflow_io_native_backend_communication_model(
+            (cflow_io_native_backend_kind)0, &model));
+        check_equal(model, CFLOW_IO_COMMUNICATION_COMPLETION);
+        check_false(cflow_io_native_backend_communication_model(
+            CFLOW_IO_NATIVE_IOCP, NULL));
+    }
+
     it("validates the bounded vectored TCP operation contract") {
         unsigned char bytes[2] = {0};
         cflow_io_native_buffer_span maximum_spans[

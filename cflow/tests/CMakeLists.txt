@@ -150,6 +150,22 @@ cmake_add_test(cflow_io_actor_test
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_io_communication_test
+  SOURCES cflow_io_communication_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_io_driver_test
+  SOURCES cflow_io_driver_test.c
+  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
+  FOLDER "cflow/tests")
+
+cmake_add_test(cflow_io_blocking_driver_test
+  SOURCES cflow_io_blocking_driver_test.c
+  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_io_source_test
   SOURCES cflow_io_source_test.c cflow_io_source_init_failure_test.c
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
@@ -257,6 +273,9 @@ set_target_properties(
   cflow_actor_test
   cflow_statechart_actor_test
   cflow_io_actor_test
+  cflow_io_communication_test
+  cflow_io_driver_test
+  cflow_io_blocking_driver_test
   cflow_io_source_test
   cflow_io_native_test
   cflow_io_file_test
