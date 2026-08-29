@@ -135,7 +135,9 @@ int main(void) {
 }
 
 #elif defined(CONSUME_CFLOW_SCXML)
+#include <cflow/executor.h>
 #include <cflow/scxml.h>
+#include <cflow/statechart_runtime.h>
 
 static bool installed_legacy_action(void *user, cflow_statechart_action_phase phase,
                                     cflow_machine_state_id owner, const void *state,
@@ -177,23 +179,28 @@ int main(void) {
   const cflow_statechart_guard_binding legacy_guard = {
       1u, installed_legacy_guard, NULL};
   cflow_scxml_program program = {0};
+  cflow_executor executor = {0};
+  cflow_statechart_instance instance = {0};
+  cflow_statechart_instance_stats stats = {0};
+  cflow_statechart_instance_config config;
   const cflow_statechart_executable_binding *bindings = NULL;
   const cflow_statechart_guard_binding *guard_bindings = NULL;
   size_t binding_count = 0u;
   size_t guard_count = 0u;
+  bool executor_initialized = false;
+  bool instance_initialized = false;
+  int result = 1;
   cflow_scxml_status status = cflow_scxml_compile(
       &program, source, sizeof(source) - 1u, NULL, NULL);
   if (status == CFLOW_SCXML_OK &&
       !cflow_scxml_program_runtime_bindings(
           &program, &bindings, &binding_count)) {
-    cflow_scxml_program_destroy(&program);
-    return 1;
+    goto cleanup;
   }
   if (status == CFLOW_SCXML_OK &&
       !cflow_scxml_program_guard_bindings(
           &program, &guard_bindings, &guard_count)) {
-    cflow_scxml_program_destroy(&program);
-    return 1;
+    goto cleanup;
   }
   if (status != CFLOW_SCXML_OK || bindings == NULL || binding_count != 1u ||
       bindings[0].fn != NULL || bindings[0].contextual_fn == NULL ||
@@ -202,11 +209,43 @@ int main(void) {
       guard_bindings[0].contextual_fn == NULL ||
       legacy.fn == NULL || legacy.contextual_fn != NULL ||
       legacy_guard.fn == NULL || legacy_guard.contextual_fn != NULL) {
-    cflow_scxml_program_destroy(&program);
-    return 1;
+    goto cleanup;
   }
+  if (!cflow_executor_serial_init(&executor)) goto cleanup;
+  executor_initialized = true;
+  config = (cflow_statechart_instance_config){
+      .statechart = cflow_scxml_program_statechart(&program),
+      .initial_state = cflow_scxml_program_initial_state(&program),
+      .guards = guard_bindings,
+      .guard_count = guard_count,
+      .executables = bindings,
+      .executable_count = binding_count,
+      .external_event_capacity = 2u,
+      .internal_event_capacity = 2u,
+      .completion_capacity = 2u,
+      .microstep_limit = 16u,
+      .executor = &executor};
+  if (cflow_statechart_instance_init(&instance, &config) !=
+      CFLOW_STATECHART_RUNTIME_OK) {
+    goto cleanup;
+  }
+  instance_initialized = true;
+  if (!cflow_executor_wait_idle(&executor) ||
+      !cflow_statechart_instance_get_stats(&instance, &stats) ||
+      !stats.done || stats.errored) {
+    goto cleanup;
+  }
+  result = 0;
+
+cleanup:
+  if (instance_initialized &&
+      cflow_statechart_instance_destroy(&instance) !=
+          CFLOW_STATECHART_RUNTIME_OK) {
+    result = 1;
+  }
+  if (executor_initialized) cflow_executor_destroy(&executor);
   cflow_scxml_program_destroy(&program);
-  return 0;
+  return result;
 }
 
 #elif defined(CONSUME_CFLOW_PROCESS)

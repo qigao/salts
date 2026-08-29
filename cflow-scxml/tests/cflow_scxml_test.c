@@ -33,7 +33,8 @@ static const cflow_statechart_state *find_state(
 }
 
 static bool run_condition_program(const char *source, const char *event_name,
-                                  size_t *out_guard_count, bool *out_done) {
+                                  size_t *out_guard_count, bool *out_done,
+                                  cflow_machine_state_id *out_current_state) {
     cflow_scxml_program program = {0};
     cflow_scxml_diagnostic diagnostic = {0};
     const cflow_statechart_executable_binding *executables = NULL;
@@ -88,6 +89,10 @@ static bool run_condition_program(const char *source, const char *event_name,
     if (!cflow_statechart_instance_get_stats(&instance, &stats)) goto cleanup;
     *out_guard_count = guard_count;
     *out_done = stats.done;
+    if (out_current_state != NULL) {
+        *out_current_state =
+            cflow_statechart_instance_current_state(&instance);
+    }
     succeeded = true;
 
 cleanup:
@@ -338,12 +343,51 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             "target='wrong'/></state></state><state id='other'/>"
             "<final id='done'/><final id='wrong'/></scxml>";
         size_t guard_count = 0u;
+        cflow_machine_state_id done_id = 0u;
+        cflow_machine_state_id current_state = 0u;
         bool done = false;
 
         check_true(run_condition_program(
-            source, "go", &guard_count, &done));
+            source, "go", &guard_count, &done, &current_state));
+        {
+            cflow_scxml_program program = {0};
+            cflow_scxml_diagnostic diagnostic = {0};
+            check_equal(compile_status(source, &program, &diagnostic),
+                        CFLOW_SCXML_OK);
+            check_true(cflow_scxml_program_state_id(
+                &program, "done", 4u, &done_id));
+            cflow_scxml_program_destroy(&program);
+        }
         check_equal(guard_count, (size_t)2u);
         check_true(done);
+        check_equal(current_state, done_id);
+    }
+
+    it("selects the first document-ordered transition whose condition is true") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='start'><state id='start'>"
+            "<transition event='go' cond='In(other)' target='wrong'/>"
+            "<transition event='go' cond='In(start)' target='done'/>"
+            "</state><state id='other'/><final id='wrong'/>"
+            "<final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_machine_state_id done_id = 0u;
+        cflow_machine_state_id current_state = 0u;
+        size_t guard_count = 0u;
+        bool done = false;
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_scxml_program_state_id(
+            &program, "done", 4u, &done_id));
+        cflow_scxml_program_destroy(&program);
+        check_true(run_condition_program(
+            source, "go", &guard_count, &done, &current_state));
+        check_equal(guard_count, (size_t)2u);
+        check_true(done);
+        check_equal(current_state, done_id);
     }
 
     it("stabilizes a true eventless transition condition") {
@@ -356,7 +400,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         bool done = false;
 
         check_true(run_condition_program(
-            source, NULL, &guard_count, &done));
+            source, NULL, &guard_count, &done, NULL));
         check_equal(guard_count, (size_t)1u);
         check_true(done);
     }
@@ -372,7 +416,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         bool done = false;
 
         check_true(run_condition_program(
-            source, NULL, &guard_count, &done));
+            source, NULL, &guard_count, &done, NULL));
         check_equal(guard_count, (size_t)1u);
         check_true(done);
     }
@@ -388,7 +432,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         bool done = false;
 
         check_true(run_condition_program(
-            source, "retry", &guard_count, &done));
+            source, "retry", &guard_count, &done, NULL));
         check_equal(guard_count, (size_t)2u);
         check_true(done);
     }

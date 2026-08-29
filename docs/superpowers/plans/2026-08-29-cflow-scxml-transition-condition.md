@@ -230,7 +230,7 @@ entered the branch.
 Commit native contextual guards separately from SCXML lowering/documentation so
 each review boundary remains testable.
 
-- [ ] **Step 5: Use verification and branch-finishing skills for handoff**
+- [x] **Step 5: Use verification and branch-finishing skills for handoff**
 
 Do not claim completion, create a PR, merge, or update issue #122 until local
 evidence and the selected integration action permit it.
