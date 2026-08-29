@@ -15,6 +15,97 @@ function Get-CflowMedian {
   return ([double]$ordered[$middle - 1] + [double]$ordered[$middle]) / 2.0
 }
 
+function Get-CflowStageTimingVersion {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object]$Report
+  )
+
+  if ($null -eq $Report.PSObject.Properties["stage_timing_version"]) {
+    return 1
+  }
+  return [int]$Report.stage_timing_version
+}
+
+function Assert-CflowStageTimingReport {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object]$Report
+  )
+
+  $version = Get-CflowStageTimingVersion -Report $Report
+  if ($version -eq 1) {
+    return
+  }
+  if ($version -notin @(0, 2)) {
+    throw "Unsupported CFlow stage timing version $version"
+  }
+
+  $commonFields = @(
+    "io_operations", "admission_ns", "completion_drive_ns",
+    "drive_ns", "wait_ns", "completion_process_ns",
+    "completion_residual_ns", "admission_mean_ns",
+    "completion_drive_mean_ns", "drive_mean_ns", "wait_mean_ns",
+    "completion_process_mean_ns", "completion_residual_mean_ns"
+  )
+  foreach ($field in $commonFields) {
+    if ($null -eq $Report.PSObject.Properties[$field]) {
+      throw "Stage timing version $version report is missing $field"
+    }
+  }
+
+  if ($version -eq 0) {
+    if ([bool]$Report.stage_timing) {
+      throw "Stage timing version 0 report must be disabled"
+    }
+    foreach ($field in $commonFields) {
+      if ([decimal]$Report.$field -ne 0) {
+        throw "Disabled stage timing field $field must be zero"
+      }
+    }
+    return
+  }
+
+  if (-not [bool]$Report.stage_timing) {
+    throw "Stage timing version 2 report must be enabled"
+  }
+  foreach ($field in $commonFields) {
+    if ([decimal]$Report.$field -lt 0) {
+      throw "Stage timing field $field must not be negative"
+    }
+  }
+  $operations = [decimal]$Report.io_operations
+  if ($operations -le 0) {
+    throw "Enabled stage timing report must contain operations"
+  }
+  $componentTotal = [decimal]$Report.drive_ns + [decimal]$Report.wait_ns +
+    [decimal]$Report.completion_process_ns
+  $completionTotal = [decimal]$Report.completion_drive_ns
+  if ($componentTotal -gt $completionTotal) {
+    throw "Stage timing components exceed the post-admission interval"
+  }
+  $expectedResidual = $completionTotal - $componentTotal
+  if ([decimal]$Report.completion_residual_ns -ne $expectedResidual) {
+    throw "Stage timing residual does not match the post-admission interval"
+  }
+
+  $meanPairs = @(
+    @("admission_ns", "admission_mean_ns"),
+    @("completion_drive_ns", "completion_drive_mean_ns"),
+    @("drive_ns", "drive_mean_ns"),
+    @("wait_ns", "wait_mean_ns"),
+    @("completion_process_ns", "completion_process_mean_ns"),
+    @("completion_residual_ns", "completion_residual_mean_ns")
+  )
+  foreach ($pair in $meanPairs) {
+    $expectedMean = [math]::Round(
+      [double]([decimal]$Report.($pair[0]) / $operations), 3)
+    if ([math]::Abs([double]$Report.($pair[1]) - $expectedMean) -gt 0.0005) {
+      throw "Stage timing mean $($pair[1]) does not match $($pair[0])"
+    }
+  }
+}
+
 function Get-CflowRotatedOrder {
   param(
     [Parameter(Mandatory = $true)]
@@ -816,6 +907,10 @@ function Get-CflowPairedSourceSummary {
   $wallAbsoluteDeltasPerExchange = @()
   $cpuTimeAbsoluteDeltasPerExchange = @()
   $combinedStageAbsoluteDeltas = @()
+  $driveAbsoluteDeltas = @()
+  $waitAbsoluteDeltas = @()
+  $completionProcessAbsoluteDeltas = @()
+  $completionResidualAbsoluteDeltas = @()
 
   for ($run = 1; $run -le $ExpectedRuns; ++$run) {
     $actor = @($matching | Where-Object {
@@ -830,6 +925,13 @@ function Get-CflowPairedSourceSummary {
 
     $actor = $actor[0]
     $source = $source[0]
+    Assert-CflowStageTimingReport -Report $actor
+    Assert-CflowStageTimingReport -Report $source
+    $actorStageVersion = Get-CflowStageTimingVersion -Report $actor
+    $sourceStageVersion = Get-CflowStageTimingVersion -Report $source
+    if ($actorStageVersion -ne $sourceStageVersion) {
+      throw "Actor and Source stage timing versions must match for $Backend/$PayloadBytes/$WaitMode run $run"
+    }
     $actorAttempts = [int64]$actor.attempted
     $sourceAttempts = [int64]$source.attempted
     if ($actorAttempts -le 0 -or $sourceAttempts -ne $actorAttempts) {
@@ -864,6 +966,18 @@ function Get-CflowPairedSourceSummary {
     $cpuTimeAbsoluteDeltasPerExchange +=
       ([double]$source.process_cpu_ns - [double]$actor.process_cpu_ns) / $actorAttempts
     $combinedStageAbsoluteDeltas += $sourceCombinedStage - $actorCombinedStage
+    if ($actorStageVersion -eq 2) {
+      $driveAbsoluteDeltas +=
+        [double]$source.drive_mean_ns - [double]$actor.drive_mean_ns
+      $waitAbsoluteDeltas +=
+        [double]$source.wait_mean_ns - [double]$actor.wait_mean_ns
+      $completionProcessAbsoluteDeltas +=
+        [double]$source.completion_process_mean_ns -
+        [double]$actor.completion_process_mean_ns
+      $completionResidualAbsoluteDeltas +=
+        [double]$source.completion_residual_mean_ns -
+        [double]$actor.completion_residual_mean_ns
+    }
     $actors += $actor
     $sources += $source
   }
@@ -932,6 +1046,48 @@ function Get-CflowPairedSourceSummary {
       $sources | ForEach-Object {
         [double]$_.admission_mean_ns + [double]$_.completion_drive_mean_ns
       })
+    actor_median_drive_mean_ns = if ($driveAbsoluteDeltas.Count -gt 0) {
+      Get-CflowMedian @($actors.drive_mean_ns)
+    } else { $null }
+    source_median_drive_mean_ns = if ($driveAbsoluteDeltas.Count -gt 0) {
+      Get-CflowMedian @($sources.drive_mean_ns)
+    } else { $null }
+    actor_median_wait_mean_ns = if ($waitAbsoluteDeltas.Count -gt 0) {
+      Get-CflowMedian @($actors.wait_mean_ns)
+    } else { $null }
+    source_median_wait_mean_ns = if ($waitAbsoluteDeltas.Count -gt 0) {
+      Get-CflowMedian @($sources.wait_mean_ns)
+    } else { $null }
+    actor_median_completion_process_mean_ns =
+      if ($completionProcessAbsoluteDeltas.Count -gt 0) {
+        Get-CflowMedian @($actors.completion_process_mean_ns)
+      } else { $null }
+    source_median_completion_process_mean_ns =
+      if ($completionProcessAbsoluteDeltas.Count -gt 0) {
+        Get-CflowMedian @($sources.completion_process_mean_ns)
+      } else { $null }
+    actor_median_completion_residual_mean_ns =
+      if ($completionResidualAbsoluteDeltas.Count -gt 0) {
+        Get-CflowMedian @($actors.completion_residual_mean_ns)
+      } else { $null }
+    source_median_completion_residual_mean_ns =
+      if ($completionResidualAbsoluteDeltas.Count -gt 0) {
+        Get-CflowMedian @($sources.completion_residual_mean_ns)
+      } else { $null }
+    paired_drive_delta_ns = if ($driveAbsoluteDeltas.Count -gt 0) {
+      [math]::Round((Get-CflowMedian $driveAbsoluteDeltas), 6)
+    } else { $null }
+    paired_wait_delta_ns = if ($waitAbsoluteDeltas.Count -gt 0) {
+      [math]::Round((Get-CflowMedian $waitAbsoluteDeltas), 6)
+    } else { $null }
+    paired_completion_process_delta_ns =
+      if ($completionProcessAbsoluteDeltas.Count -gt 0) {
+        [math]::Round((Get-CflowMedian $completionProcessAbsoluteDeltas), 6)
+      } else { $null }
+    paired_completion_residual_delta_ns =
+      if ($completionResidualAbsoluteDeltas.Count -gt 0) {
+        [math]::Round((Get-CflowMedian $completionResidualAbsoluteDeltas), 6)
+      } else { $null }
   }
 }
 
@@ -992,6 +1148,10 @@ function Get-CflowPairedSourceWindowSummary {
   $cpuTimeDeltas = @()
   $cpuEfficiencyDeltas = @()
   $combinedStageDeltas = @()
+  $driveAbsoluteDeltas = @()
+  $waitAbsoluteDeltas = @()
+  $completionProcessAbsoluteDeltas = @()
+  $completionResidualAbsoluteDeltas = @()
 
   for ($run = 1; $run -le $ExpectedRuns; ++$run) {
     $baseline = @($matching | Where-Object {
@@ -1007,6 +1167,13 @@ function Get-CflowPairedSourceWindowSummary {
     }
     $baseline = $baseline[0]
     $source = $source[0]
+    Assert-CflowStageTimingReport -Report $baseline
+    Assert-CflowStageTimingReport -Report $source
+    $baselineStageVersion = Get-CflowStageTimingVersion -Report $baseline
+    $sourceStageVersion = Get-CflowStageTimingVersion -Report $source
+    if ($baselineStageVersion -ne $sourceStageVersion) {
+      throw "Source window stage timing versions must match for $Backend/$PayloadBytes/$WaitMode run $run"
+    }
     $baselineAttempts = [int64]$baseline.attempted
     if ($baselineAttempts -le 0 -or
         [int64]$source.attempted -ne $baselineAttempts) {
@@ -1036,6 +1203,18 @@ function Get-CflowPairedSourceWindowSummary {
       $source.application_mib_per_cpu_second "CPU efficiency"
     $combinedStageDeltas += Get-CflowPercentDelta `
       $baselineCombinedStage $sourceCombinedStage "combined stage"
+    if ($baselineStageVersion -eq 2) {
+      $driveAbsoluteDeltas +=
+        [double]$source.drive_mean_ns - [double]$baseline.drive_mean_ns
+      $waitAbsoluteDeltas +=
+        [double]$source.wait_mean_ns - [double]$baseline.wait_mean_ns
+      $completionProcessAbsoluteDeltas +=
+        [double]$source.completion_process_mean_ns -
+        [double]$baseline.completion_process_mean_ns
+      $completionResidualAbsoluteDeltas +=
+        [double]$source.completion_residual_mean_ns -
+        [double]$baseline.completion_residual_mean_ns
+    }
     $baselines += $baseline
     $sources += $source
   }
@@ -1081,6 +1260,20 @@ function Get-CflowPairedSourceWindowSummary {
       Get-CflowMedian @($baselines.source_peak_occupied)
     source_median_peak_occupied =
       Get-CflowMedian @($sources.source_peak_occupied)
+    paired_drive_delta_ns = if ($driveAbsoluteDeltas.Count -gt 0) {
+      [math]::Round((Get-CflowMedian $driveAbsoluteDeltas), 6)
+    } else { $null }
+    paired_wait_delta_ns = if ($waitAbsoluteDeltas.Count -gt 0) {
+      [math]::Round((Get-CflowMedian $waitAbsoluteDeltas), 6)
+    } else { $null }
+    paired_completion_process_delta_ns =
+      if ($completionProcessAbsoluteDeltas.Count -gt 0) {
+        [math]::Round((Get-CflowMedian $completionProcessAbsoluteDeltas), 6)
+      } else { $null }
+    paired_completion_residual_delta_ns =
+      if ($completionResidualAbsoluteDeltas.Count -gt 0) {
+        [math]::Round((Get-CflowMedian $completionResidualAbsoluteDeltas), 6)
+      } else { $null }
   }
 }
 

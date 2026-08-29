@@ -21,6 +21,34 @@ function Assert-Throws([scriptblock]$Action, [string]$Message) {
   throw "$Message`: expected an exception"
 }
 
+function Add-StageTimingFixture([object]$Report) {
+  $operations = [int64]$Report.attempted
+  $completionTotal = [int64]([double]$Report.completion_drive_mean_ns *
+    $operations)
+  $driveTotal = [int64]($completionTotal / 5)
+  $waitTotal = [int64]($completionTotal / 2)
+  $processTotal = [int64]($completionTotal / 10)
+  $residualTotal = $completionTotal - $driveTotal - $waitTotal - $processTotal
+  $fields = [ordered]@{
+    stage_timing = $true
+    stage_timing_version = 2
+    io_operations = $operations
+    admission_ns = [int64]([double]$Report.admission_mean_ns * $operations)
+    completion_drive_ns = $completionTotal
+    drive_ns = $driveTotal
+    wait_ns = $waitTotal
+    completion_process_ns = $processTotal
+    completion_residual_ns = $residualTotal
+    drive_mean_ns = [double]$driveTotal / $operations
+    wait_mean_ns = [double]$waitTotal / $operations
+    completion_process_mean_ns = [double]$processTotal / $operations
+    completion_residual_mean_ns = [double]$residualTotal / $operations
+  }
+  foreach ($field in $fields.Keys) {
+    $Report | Add-Member -NotePropertyName $field -NotePropertyValue $fields[$field]
+  }
+}
+
 $helperPath = Join-Path (Split-Path -Parent $PSScriptRoot) `
   "scripts/cflow-benchmark-stats.ps1"
 . $helperPath
@@ -30,6 +58,44 @@ Assert-Equal (Get-CflowMedian -Values @(3.0, 1.0, 2.0)) 2.0 `
 Assert-Equal (Get-CflowMedian -Values @(3.0, 1.0)) 2.0 `
   "even median"
 Assert-Throws { Get-CflowMedian -Values @() } "empty median"
+
+$validStageTiming = [pscustomobject]@{
+  stage_timing=$true; stage_timing_version=2; io_operations=4
+  admission_ns=20; completion_drive_ns=100
+  drive_ns=20; wait_ns=50; completion_process_ns=10
+  completion_residual_ns=20; admission_mean_ns=5.0
+  completion_drive_mean_ns=25.0; drive_mean_ns=5.0; wait_mean_ns=12.5
+  completion_process_mean_ns=2.5; completion_residual_mean_ns=5.0
+}
+Assert-CflowStageTimingReport -Report $validStageTiming
+$invalidStageTiming = $validStageTiming.psobject.Copy()
+$invalidStageTiming.completion_residual_ns = 19
+Assert-Throws {
+  Assert-CflowStageTimingReport -Report $invalidStageTiming
+} "stage residual mismatch"
+$negativeStageTiming = $validStageTiming.psobject.Copy()
+$negativeStageTiming.drive_ns = -1
+$negativeStageTiming.completion_residual_ns = 41
+$negativeStageTiming.drive_mean_ns = -0.25
+$negativeStageTiming.completion_residual_mean_ns = 10.25
+Assert-Throws {
+  Assert-CflowStageTimingReport -Report $negativeStageTiming
+} "negative stage component"
+$disabledStageTiming = [pscustomobject]@{
+  stage_timing=$false; stage_timing_version=0; io_operations=0
+  admission_ns=0; completion_drive_ns=0; drive_ns=0; wait_ns=0
+  completion_process_ns=0; completion_residual_ns=0
+  admission_mean_ns=0.0; completion_drive_mean_ns=0.0; drive_mean_ns=0.0
+  wait_mean_ns=0.0; completion_process_mean_ns=0.0
+  completion_residual_mean_ns=0.0
+}
+Assert-CflowStageTimingReport -Report $disabledStageTiming
+$legacyStageTiming = [pscustomobject]@{
+  stage_timing=$true; io_operations=4; admission_ns=20
+  completion_drive_ns=100; admission_mean_ns=5.0
+  completion_drive_mean_ns=25.0
+}
+Assert-CflowStageTimingReport -Report $legacyStageTiming
 
 $backends = @("epoll", "io_uring", "poll")
 Assert-Sequence (Get-CflowRotatedOrder -Values $backends -Run 1) `
@@ -120,6 +186,7 @@ for ($index = 0; $index -lt $reports.Count; ++$index) {
     $reports[$index] | Add-Member -NotePropertyName $field `
       -NotePropertyValue $pairedMetricFixtures[$index][$field]
   }
+  Add-StageTimingFixture $reports[$index]
 }
 
 $summary = Get-CflowPairedSourceSummary -Reports $reports `
@@ -156,6 +223,18 @@ Assert-Equal $summary.paired_cpu_time_delta_ns_per_exchange 10.0 `
   "paired CPU-time absolute delta per exchange"
 Assert-Equal $summary.paired_combined_stage_delta_ns 20.0 `
   "paired combined-stage absolute delta"
+Assert-Equal $summary.actor_median_drive_mean_ns 36.0 `
+  "Actor drive median"
+Assert-Equal $summary.source_median_drive_mean_ns 42.0 `
+  "Source drive median"
+Assert-Equal $summary.paired_drive_delta_ns 6.0 `
+  "paired drive absolute delta"
+Assert-Equal $summary.paired_wait_delta_ns 15.0 `
+  "paired wait absolute delta"
+Assert-Equal $summary.paired_completion_process_delta_ns 3.0 `
+  "paired completion-process absolute delta"
+Assert-Equal $summary.paired_completion_residual_delta_ns 6.0 `
+  "paired completion-residual absolute delta"
 Assert-Equal $summary.source_slower_p50_runs 2 "slower P50 run count"
 Assert-Equal $summary.source_slower_p99_runs 2 "slower P99 run count"
 
@@ -190,6 +269,9 @@ $pipelineReports = @(
   [pscustomobject]@{ benchmark_run=2; backend="epoll"; workload="pipeline"; payload_bytes=64; driver="source"; wait_mode="blocking"; source_window_capacity=1; source_peak_occupied=1; attempted=10; p50_ns=1000; p95_ns=1500; p99_ns=2000; exchanges_per_second=1000; application_mib_per_second=100; wall_ns=2000; process_cpu_ns=1000; process_cpu_pct=50; application_mib_per_cpu_second=100; admission_mean_ns=20; completion_drive_mean_ns=180 },
   [pscustomobject]@{ benchmark_run=2; backend="epoll"; workload="pipeline"; payload_bytes=64; driver="source"; wait_mode="blocking"; source_window_capacity=4; source_peak_occupied=4; attempted=10; p50_ns=900; p95_ns=1200; p99_ns=1800; exchanges_per_second=1500; application_mib_per_second=150; wall_ns=1500; process_cpu_ns=900; process_cpu_pct=60; application_mib_per_cpu_second=150; admission_mean_ns=10; completion_drive_mean_ns=140 }
 )
+foreach ($report in $pipelineReports) {
+  Add-StageTimingFixture $report
+}
 $pipelineSummary = Get-CflowPairedSourceWindowSummary `
   -Reports $pipelineReports -Backend epoll -WaitMode blocking `
   -PayloadBytes 64 -BaselineWindow 1 -SourceWindow 4 -ExpectedRuns 2
@@ -210,6 +292,14 @@ Assert-Equal $pipelineSummary.paired_cpu_time_delta_pct -10.0 `
   "pipeline paired CPU-time delta"
 Assert-Equal $pipelineSummary.source_median_peak_occupied 4.0 `
   "pipeline target peak occupancy"
+Assert-Equal $pipelineSummary.paired_drive_delta_ns -7.5 `
+  "pipeline paired drive absolute delta"
+Assert-Equal $pipelineSummary.paired_wait_delta_ns -18.75 `
+  "pipeline paired wait absolute delta"
+Assert-Equal $pipelineSummary.paired_completion_process_delta_ns -3.75 `
+  "pipeline paired completion-process absolute delta"
+Assert-Equal $pipelineSummary.paired_completion_residual_delta_ns -7.5 `
+  "pipeline paired completion-residual absolute delta"
 Assert-Throws {
   Get-CflowPairedSourceWindowSummary `
     -Reports @($pipelineReports | Select-Object -First 3) `

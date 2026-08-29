@@ -343,9 +343,9 @@ jobs:
           $sourceSummary = Join-Path $sourceDir "reactive-source-summary.md"
           $sourceMedianSummary = Join-Path $sourceDir "reactive-source-medians.md"
           New-Item -ItemType Directory -Force -Path $sourceDir | Out-Null
-          "| Run | Backend | Payload bytes | Source window | Driver | Wait mode | P50 ns | P95 ns | P99 ns | Echo/s | App MiB/s | CPU % | Source peak occupied | IO operations | Admission mean ns | Completion/drive mean ns |" |
+          "| Run | Backend | Payload bytes | Source window | Driver | Wait mode | P50 ns | P95 ns | P99 ns | Echo/s | App MiB/s | CPU % | Source peak occupied | IO operations | Admission mean ns | Post-admission mean ns (legacy) | Drive mean ns | Wait mean ns | Completion process mean ns | Residual mean ns |" |
             Set-Content -LiteralPath $sourceSummary
-          "| ---: | :--- | ---: | ---: | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
+          "| ---: | :--- | ---: | ---: | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
             Add-Content -LiteralPath $sourceSummary
           $pipelineDir = Join-Path $networkDir "pipeline-layers"
           $pipelineJsonl = Join-Path $pipelineDir "pipeline-results.jsonl"
@@ -368,18 +368,24 @@ jobs:
 
           function Assert-NetworkMetricFields($report, $jsonText, $expectedBackend) {
             foreach ($field in @(
-                "backend", "driver", "workload", "stage_timing", "source_window_capacity",
+                "backend", "driver", "workload", "stage_timing",
+                "stage_timing_version", "source_window_capacity",
                 "source_peak_occupied", "workload_window_capacity",
                 "workload_peak_in_flight", "wall_ns", "process_cpu_ns", "process_cpu_pct",
                 "cpu_core_equivalents", "exchanges_per_second",
                 "application_mib_per_second", "application_mib_per_cpu_second",
                 "peak_rss_bytes", "p50_ns", "p95_ns", "p99_ns", "errors",
                 "rejections", "stale_completions", "io_operations", "admission_ns",
-                "completion_drive_ns", "admission_mean_ns", "completion_drive_mean_ns")) {
+                "completion_drive_ns", "drive_ns", "wait_ns",
+                "completion_process_ns", "completion_residual_ns",
+                "admission_mean_ns", "completion_drive_mean_ns", "drive_mean_ns",
+                "wait_mean_ns", "completion_process_mean_ns",
+                "completion_residual_mean_ns")) {
               if ($null -eq $report.$field) {
                 throw "Missing network report field '$field': $jsonText"
               }
             }
+            Assert-CflowStageTimingReport -Report $report
             $cpuPct = [double]$report.process_cpu_pct
             $cpuCores = [double]$report.cpu_core_equivalents
             $throughput = [double]$report.application_mib_per_second
@@ -717,6 +723,12 @@ jobs:
                   $expectedAttempts = [int64]$sourceSamples * [int64]$sourceExchanges
                   $admissionMean = [double]$report.admission_mean_ns
                   $completionDriveMean = [double]$report.completion_drive_mean_ns
+                  $driveMean = [double]$report.drive_mean_ns
+                  $waitMean = [double]$report.wait_mean_ns
+                  $completionProcessMean =
+                    [double]$report.completion_process_mean_ns
+                  $completionResidualMean =
+                    [double]$report.completion_residual_mean_ns
                   if ($report.schema -ne "cflow-network-benchmark/v1" -or
                       $report.protocol -ne "tcp" -or
                       $report.profile -ne "latency" -or
@@ -749,7 +761,7 @@ jobs:
                   }
                   Add-Content -LiteralPath $sourceJsonl -Value $jsonText
                   Add-Content -LiteralPath $sourceSummary -Value `
-                    ("| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9:N3} | {10:N3} | {11:N3} | {12} | {13} | {14:N3} | {15:N3} |" -f `
+                    ("| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9:N3} | {10:N3} | {11:N3} | {12} | {13} | {14:N3} | {15:N3} | {16:N3} | {17:N3} | {18:N3} | {19:N3} |" -f `
                       $run, $report.backend, $report.payload_bytes,
                       $report.source_window_capacity, $report.driver,
                       $report.wait_mode, $report.p50_ns, $report.p95_ns,
@@ -757,7 +769,9 @@ jobs:
                       [double]$report.application_mib_per_second,
                       [double]$report.process_cpu_pct,
                       $report.source_peak_occupied, $report.io_operations,
-                      $admissionMean, $completionDriveMean)
+                      $admissionMean, $completionDriveMean, $driveMean,
+                      $waitMean, $completionProcessMean,
+                      $completionResidualMean)
                 }
               }
               }
@@ -1087,9 +1101,9 @@ jobs:
               throw "Expected $env:BENCHMARK_RUNS reports for $($group.Name), found $($group.Count)"
             }
           }
-          "| Backend | Payload bytes | Wait mode | Source window | Runs | Actor median Echo/s | Source median Echo/s | Median Source/Actor Echo ratio | Actor median App MiB/s | Source median App MiB/s | Median Source/Actor App MiB ratio | Actor median P50 ns | Source median P50 ns | Paired P50 delta ns | Paired P50 delta % | Actor median P95 ns | Source median P95 ns | Paired P95 delta ns | Paired P95 delta % | Actor median P99 ns | Source median P99 ns | Paired P99 delta ns | Paired P99 delta % | Actor median CPU % | Source median CPU % | Source median peak occupied | Paired wall delta ns/exchange | Paired wall delta % | Paired CPU-time delta ns/exchange | Paired CPU-time delta % | Paired CPU-efficiency delta % | Actor median combined stage ns | Source median combined stage ns | Paired combined-stage delta ns | Paired combined-stage delta % |" |
+          "| Backend | Payload bytes | Wait mode | Source window | Runs | Actor median Echo/s | Source median Echo/s | Median Source/Actor Echo ratio | Actor median App MiB/s | Source median App MiB/s | Median Source/Actor App MiB ratio | Actor median P50 ns | Source median P50 ns | Paired P50 delta ns | Paired P50 delta % | Actor median P95 ns | Source median P95 ns | Paired P95 delta ns | Paired P95 delta % | Actor median P99 ns | Source median P99 ns | Paired P99 delta ns | Paired P99 delta % | Actor median CPU % | Source median CPU % | Source median peak occupied | Paired wall delta ns/exchange | Paired wall delta % | Paired CPU-time delta ns/exchange | Paired CPU-time delta % | Paired CPU-efficiency delta % | Actor median combined stage ns | Source median combined stage ns | Paired combined-stage delta ns | Paired combined-stage delta % | Actor drive ns | Source drive ns | Paired drive delta ns | Actor wait ns | Source wait ns | Paired wait delta ns | Actor completion process ns | Source completion process ns | Paired completion process delta ns | Actor residual ns | Source residual ns | Paired residual delta ns |" |
             Set-Content -LiteralPath $sourceMedianSummary
-          "| :--- | ---: | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
+          "| :--- | ---: | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |" |
             Add-Content -LiteralPath $sourceMedianSummary
           foreach ($backend in $networkBackends) {
             foreach ($payloadText in $sourcePayloads) {
@@ -1101,7 +1115,7 @@ jobs:
                 -SourceWindow $sourceWindow `
                 -ExpectedRuns ([int]$env:BENCHMARK_RUNS)
               Add-Content -LiteralPath $sourceMedianSummary -Value `
-                ("| {0} | {1} | {2} | {3} | {4} | {5:N3} | {6:N3} | {7:N3} | {8:N3} | {9:N3} | {10:N3} | {11:N0} | {12:N0} | {13:N3} | {14:N3} | {15:N0} | {16:N0} | {17:N3} | {18:N3} | {19:N0} | {20:N0} | {21:N3} | {22:N3} | {23:N3} | {24:N3} | {25:N3} | {26:N3} | {27:N3} | {28:N3} | {29:N3} | {30:N3} | {31:N3} | {32:N3} | {33:N3} | {34:N3} |" -f `
+                ("| {0} | {1} | {2} | {3} | {4} | {5:N3} | {6:N3} | {7:N3} | {8:N3} | {9:N3} | {10:N3} | {11:N0} | {12:N0} | {13:N3} | {14:N3} | {15:N0} | {16:N0} | {17:N3} | {18:N3} | {19:N0} | {20:N0} | {21:N3} | {22:N3} | {23:N3} | {24:N3} | {25:N3} | {26:N3} | {27:N3} | {28:N3} | {29:N3} | {30:N3} | {31:N3} | {32:N3} | {33:N3} | {34:N3} | {35:N3} | {36:N3} | {37:N3} | {38:N3} | {39:N3} | {40:N3} | {41:N3} | {42:N3} | {43:N3} | {44:N3} | {45:N3} | {46:N3} |" -f `
                   $comparison.backend, $comparison.payload_bytes,
                   $comparison.wait_mode, $comparison.source_window,
                   $comparison.runs,
@@ -1128,7 +1142,19 @@ jobs:
                   $comparison.actor_median_combined_stage_mean_ns,
                   $comparison.source_median_combined_stage_mean_ns,
                   $comparison.paired_combined_stage_delta_ns,
-                  $comparison.paired_combined_stage_delta_pct)
+                  $comparison.paired_combined_stage_delta_pct,
+                  $comparison.actor_median_drive_mean_ns,
+                  $comparison.source_median_drive_mean_ns,
+                  $comparison.paired_drive_delta_ns,
+                  $comparison.actor_median_wait_mean_ns,
+                  $comparison.source_median_wait_mean_ns,
+                  $comparison.paired_wait_delta_ns,
+                  $comparison.actor_median_completion_process_mean_ns,
+                  $comparison.source_median_completion_process_mean_ns,
+                  $comparison.paired_completion_process_delta_ns,
+                  $comparison.actor_median_completion_residual_mean_ns,
+                  $comparison.source_median_completion_residual_mean_ns,
+                  $comparison.paired_completion_residual_delta_ns)
             }
             }
             }
