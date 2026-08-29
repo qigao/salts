@@ -543,6 +543,10 @@ The Event is non-NULL only for Event-triggered selection. Unknown and
 pseudo-state IDs query false, and no context member may be retained. Appending
 the contextual callback changes `sizeof(cflow_statechart_guard_binding)`;
 consumers built against an older header must be rebuilt and relinked.
+`TurboUtils::CFlow` therefore carries component library version `2.0.0` and
+shared-library ABI identity `2`; Windows shared builds use the
+`turbo_cflow-2` basename so an older DLL cannot satisfy the new binding ABI.
+The exported CMake target name remains `TurboUtils::CFlow`.
 
 The CFlow core remains format-neutral and does not parse XML. The optional
 `TurboUtils::CFlowScxml` frontend described below performs bounded SCXML Core

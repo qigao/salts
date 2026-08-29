@@ -77,7 +77,9 @@ typedef bool (*cflow_statechart_contextual_guard_fn)(
 `id`, `fn`, and `user` fields. Admission requires exactly one callback kind.
 Existing three-field source initializers retain their meaning and zero the new
 field, but the row-size change requires every binary consumer to recompile and
-relink.
+relink. The CFlow component library moves to version `2.0.0` / shared ABI
+identity `2`; Windows shared builds include `-2` in the library basename so an
+older DLL cannot be loaded under the new binding layout.
 
 The context and its members are borrowed only for the callback. `state` is the
 published extended-state value. `event` is non-NULL only for an Event trigger.
@@ -139,7 +141,8 @@ syntax/name failures never become runtime false values.
 
 - **HIGH — public ABI:** `sizeof(cflow_statechart_guard_binding)` changes.
   Source initializers remain compatible; previously built consumers must
-  recompile and relink. Verify public headers and installed consumers.
+  recompile and relink. CFlow shared artifacts use ABI identity `2`, including
+  a distinct Windows basename. Verify public headers and installed consumers.
 - **MED — selection semantics:** accepting `In(id)` changes a previously
   rejected SCXML document into an executable program. Verify false guards fall
   through to later candidates and true guards preserve priority.
