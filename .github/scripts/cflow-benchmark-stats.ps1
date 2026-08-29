@@ -67,6 +67,43 @@ function Get-CflowDriverOrder {
   return @("actor", "source")
 }
 
+function Get-CflowSourceWindowOrder {
+  param(
+    [Parameter(Mandatory = $true)]
+    [long[]]$SourceWindows,
+
+    [Parameter(Mandatory = $true)]
+    [int]$Run,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("blocking", "busy")]
+    [string]$WaitMode,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(0, [int]::MaxValue)]
+    [int]$BackendIndex,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(0, [int]::MaxValue)]
+    [int]$PayloadIndex
+  )
+
+  if ($Run -le 0) {
+    throw "Run must be positive"
+  }
+  if ($SourceWindows.Count -eq 0 -or
+      @($SourceWindows | Where-Object { $_ -le 0 }).Count -ne 0 -or
+      @($SourceWindows | Sort-Object -Unique).Count -ne $SourceWindows.Count) {
+    throw "SourceWindows must contain unique positive capacities"
+  }
+  [string[]]$values = @("actor") + @(
+    $SourceWindows | ForEach-Object { "source-$_" })
+  $waitOffset = if ($WaitMode -eq "busy") { 1 } else { 0 }
+  $rotation = 1 + (($Run - 1 + $BackendIndex + $PayloadIndex +
+        $waitOffset) % $values.Count)
+  return Get-CflowRotatedOrder -Values $values -Run $rotation
+}
+
 function Get-CflowBaselineDriverOrder {
   param(
     [Parameter(Mandatory = $true)]
@@ -325,6 +362,9 @@ function Get-CflowPairedSourceSummary {
     [ValidateRange(1, [long]::MaxValue)]
     [long]$PayloadBytes,
 
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$SourceWindow = 1,
+
     [Parameter(Mandatory = $true)]
     [int]$ExpectedRuns
   )
@@ -335,7 +375,14 @@ function Get-CflowPairedSourceSummary {
   $matching = @($Reports | Where-Object {
       $_.backend -eq $Backend -and
       [int64]$_.payload_bytes -eq $PayloadBytes -and
-      $_.wait_mode -eq $WaitMode
+      $_.wait_mode -eq $WaitMode -and
+      ($_.driver -eq "actor" -or
+       ($_.driver -eq "source" -and
+        [int64]$(if ($null -eq $_.source_window_capacity) {
+            1
+          } else {
+            $_.source_window_capacity
+          }) -eq $SourceWindow))
     })
   if ($matching.Count -ne 2 * $ExpectedRuns) {
     throw "Expected $ExpectedRuns Actor/Source pairs for $Backend/$PayloadBytes/$WaitMode, found $($matching.Count) records"
@@ -344,12 +391,16 @@ function Get-CflowPairedSourceSummary {
   $actors = @()
   $sources = @()
   $p50Deltas = @()
+  $p95Deltas = @()
   $p99Deltas = @()
+  $echoRatios = @()
+  $applicationThroughputRatios = @()
   $wallDeltas = @()
   $cpuTimeDeltas = @()
   $cpuEfficiencyDeltas = @()
   $combinedStageDeltas = @()
   $p50AbsoluteDeltas = @()
+  $p95AbsoluteDeltas = @()
   $p99AbsoluteDeltas = @()
   $wallAbsoluteDeltasPerExchange = @()
   $cpuTimeAbsoluteDeltasPerExchange = @()
@@ -379,7 +430,13 @@ function Get-CflowPairedSourceSummary {
       [double]$source.admission_mean_ns + [double]$source.completion_drive_mean_ns
 
     $p50Deltas += Get-CflowPercentDelta $actor.p50_ns $source.p50_ns "P50"
+    $p95Deltas += Get-CflowPercentDelta $actor.p95_ns $source.p95_ns "P95"
     $p99Deltas += Get-CflowPercentDelta $actor.p99_ns $source.p99_ns "P99"
+    $echoRatios += [double]$source.exchanges_per_second /
+      [double]$actor.exchanges_per_second
+    $applicationThroughputRatios +=
+      [double]$source.application_mib_per_second /
+      [double]$actor.application_mib_per_second
     $wallDeltas += Get-CflowPercentDelta $actor.wall_ns $source.wall_ns "wall"
     $cpuTimeDeltas += Get-CflowPercentDelta `
       $actor.process_cpu_ns $source.process_cpu_ns "CPU time"
@@ -389,6 +446,7 @@ function Get-CflowPairedSourceSummary {
     $combinedStageDeltas += Get-CflowPercentDelta `
       $actorCombinedStage $sourceCombinedStage "combined stage"
     $p50AbsoluteDeltas += [double]$source.p50_ns - [double]$actor.p50_ns
+    $p95AbsoluteDeltas += [double]$source.p95_ns - [double]$actor.p95_ns
     $p99AbsoluteDeltas += [double]$source.p99_ns - [double]$actor.p99_ns
     $wallAbsoluteDeltasPerExchange +=
       ([double]$source.wall_ns - [double]$actor.wall_ns) / $actorAttempts
@@ -403,12 +461,26 @@ function Get-CflowPairedSourceSummary {
     backend = $Backend
     payload_bytes = $PayloadBytes
     wait_mode = $WaitMode
+    source_window = $SourceWindow
     runs = $ExpectedRuns
     actor_median_p50_ns = Get-CflowMedian @($actors.p50_ns)
     source_median_p50_ns = Get-CflowMedian @($sources.p50_ns)
+    actor_median_p95_ns = Get-CflowMedian @($actors.p95_ns)
+    source_median_p95_ns = Get-CflowMedian @($sources.p95_ns)
     actor_median_p99_ns = Get-CflowMedian @($actors.p99_ns)
     source_median_p99_ns = Get-CflowMedian @($sources.p99_ns)
+    actor_median_echo_per_second = Get-CflowMedian @($actors.exchanges_per_second)
+    source_median_echo_per_second = Get-CflowMedian @($sources.exchanges_per_second)
+    paired_source_actor_echo_ratio =
+      [math]::Round((Get-CflowMedian $echoRatios), 6)
+    actor_median_application_mib_per_second =
+      Get-CflowMedian @($actors.application_mib_per_second)
+    source_median_application_mib_per_second =
+      Get-CflowMedian @($sources.application_mib_per_second)
+    paired_source_actor_application_mib_ratio =
+      [math]::Round((Get-CflowMedian $applicationThroughputRatios), 6)
     paired_p50_delta_pct = [math]::Round((Get-CflowMedian $p50Deltas), 6)
+    paired_p95_delta_pct = [math]::Round((Get-CflowMedian $p95Deltas), 6)
     paired_p99_delta_pct = [math]::Round((Get-CflowMedian $p99Deltas), 6)
     paired_wall_delta_pct = [math]::Round((Get-CflowMedian $wallDeltas), 6)
     paired_cpu_time_delta_pct =
@@ -418,6 +490,7 @@ function Get-CflowPairedSourceSummary {
     paired_combined_stage_delta_pct =
       [math]::Round((Get-CflowMedian $combinedStageDeltas), 6)
     paired_p50_delta_ns = [math]::Round((Get-CflowMedian $p50AbsoluteDeltas), 6)
+    paired_p95_delta_ns = [math]::Round((Get-CflowMedian $p95AbsoluteDeltas), 6)
     paired_p99_delta_ns = [math]::Round((Get-CflowMedian $p99AbsoluteDeltas), 6)
     paired_wall_delta_ns_per_exchange =
       [math]::Round((Get-CflowMedian $wallAbsoluteDeltasPerExchange), 6)
@@ -429,6 +502,11 @@ function Get-CflowPairedSourceSummary {
     source_slower_p99_runs = @($p99Deltas | Where-Object { $_ -gt 0.0 }).Count
     actor_median_cpu_pct = Get-CflowMedian @($actors.process_cpu_pct)
     source_median_cpu_pct = Get-CflowMedian @($sources.process_cpu_pct)
+    source_median_peak_occupied = Get-CflowMedian @(
+      $sources | ForEach-Object {
+        if ($null -eq $_.source_peak_occupied) { 1.0 }
+        else { [double]$_.source_peak_occupied }
+      })
     actor_median_admission_mean_ns = Get-CflowMedian @($actors.admission_mean_ns)
     source_median_admission_mean_ns = Get-CflowMedian @($sources.admission_mean_ns)
     actor_median_completion_drive_mean_ns =
@@ -443,6 +521,155 @@ function Get-CflowPairedSourceSummary {
       $sources | ForEach-Object {
         [double]$_.admission_mean_ns + [double]$_.completion_drive_mean_ns
       })
+  }
+}
+
+function Get-CflowPairedSourceWindowSummary {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object[]]$Reports,
+
+    [Parameter(Mandatory = $true)]
+    [string]$Backend,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("blocking", "busy")]
+    [string]$WaitMode,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$PayloadBytes,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$BaselineWindow,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$SourceWindow,
+
+    [Parameter(Mandatory = $true)]
+    [int]$ExpectedRuns
+  )
+
+  if ($ExpectedRuns -le 0) {
+    throw "ExpectedRuns must be positive"
+  }
+  if ($BaselineWindow -eq $SourceWindow) {
+    throw "BaselineWindow and SourceWindow must differ"
+  }
+  $matching = @($Reports | Where-Object {
+      $_.backend -eq $Backend -and $_.driver -eq "source" -and
+      $_.workload -eq "pipeline" -and
+      $_.wait_mode -eq $WaitMode -and
+      [int64]$_.payload_bytes -eq $PayloadBytes -and
+      ([int64]$_.source_window_capacity -eq $BaselineWindow -or
+       [int64]$_.source_window_capacity -eq $SourceWindow)
+    })
+  if ($matching.Count -ne 2 * $ExpectedRuns) {
+    throw "Expected $ExpectedRuns Source window pairs for $Backend/$PayloadBytes/$WaitMode, found $($matching.Count) records"
+  }
+
+  $baselines = @()
+  $sources = @()
+  $echoRatios = @()
+  $applicationRatios = @()
+  $p50Deltas = @()
+  $p95Deltas = @()
+  $p99Deltas = @()
+  $wallDeltas = @()
+  $cpuTimeDeltas = @()
+  $cpuEfficiencyDeltas = @()
+  $combinedStageDeltas = @()
+
+  for ($run = 1; $run -le $ExpectedRuns; ++$run) {
+    $baseline = @($matching | Where-Object {
+        [int]$_.benchmark_run -eq $run -and
+        [int64]$_.source_window_capacity -eq $BaselineWindow
+      })
+    $source = @($matching | Where-Object {
+        [int]$_.benchmark_run -eq $run -and
+        [int64]$_.source_window_capacity -eq $SourceWindow
+      })
+    if ($baseline.Count -ne 1 -or $source.Count -ne 1) {
+      throw "Expected one Source window $BaselineWindow and $SourceWindow report for $Backend/$PayloadBytes/$WaitMode run $run, found $($baseline.Count) and $($source.Count)"
+    }
+    $baseline = $baseline[0]
+    $source = $source[0]
+    $baselineAttempts = [int64]$baseline.attempted
+    if ($baselineAttempts -le 0 -or
+        [int64]$source.attempted -ne $baselineAttempts) {
+      throw "Source window attempted counts must be equal and positive for $Backend/$PayloadBytes/$WaitMode run $run"
+    }
+    $baselineCombinedStage = [double]$baseline.admission_mean_ns +
+      [double]$baseline.completion_drive_mean_ns
+    $sourceCombinedStage = [double]$source.admission_mean_ns +
+      [double]$source.completion_drive_mean_ns
+
+    [void](Get-CflowPercentDelta $baseline.exchanges_per_second `
+        $source.exchanges_per_second "Echo/s")
+    [void](Get-CflowPercentDelta $baseline.application_mib_per_second `
+        $source.application_mib_per_second "application throughput")
+    $echoRatios += [double]$source.exchanges_per_second /
+      [double]$baseline.exchanges_per_second
+    $applicationRatios += [double]$source.application_mib_per_second /
+      [double]$baseline.application_mib_per_second
+    $p50Deltas += Get-CflowPercentDelta $baseline.p50_ns $source.p50_ns "P50"
+    $p95Deltas += Get-CflowPercentDelta $baseline.p95_ns $source.p95_ns "P95"
+    $p99Deltas += Get-CflowPercentDelta $baseline.p99_ns $source.p99_ns "P99"
+    $wallDeltas += Get-CflowPercentDelta $baseline.wall_ns $source.wall_ns "wall"
+    $cpuTimeDeltas += Get-CflowPercentDelta $baseline.process_cpu_ns `
+      $source.process_cpu_ns "CPU time"
+    $cpuEfficiencyDeltas += Get-CflowPercentDelta `
+      $baseline.application_mib_per_cpu_second `
+      $source.application_mib_per_cpu_second "CPU efficiency"
+    $combinedStageDeltas += Get-CflowPercentDelta `
+      $baselineCombinedStage $sourceCombinedStage "combined stage"
+    $baselines += $baseline
+    $sources += $source
+  }
+
+  return [pscustomobject][ordered]@{
+    backend = $Backend
+    payload_bytes = $PayloadBytes
+    wait_mode = $WaitMode
+    workload = "pipeline"
+    baseline_window = $BaselineWindow
+    source_window = $SourceWindow
+    runs = $ExpectedRuns
+    baseline_median_echo_per_second =
+      Get-CflowMedian @($baselines.exchanges_per_second)
+    source_median_echo_per_second =
+      Get-CflowMedian @($sources.exchanges_per_second)
+    paired_echo_ratio = [math]::Round((Get-CflowMedian $echoRatios), 6)
+    baseline_median_application_mib_per_second =
+      Get-CflowMedian @($baselines.application_mib_per_second)
+    source_median_application_mib_per_second =
+      Get-CflowMedian @($sources.application_mib_per_second)
+    paired_application_mib_ratio =
+      [math]::Round((Get-CflowMedian $applicationRatios), 6)
+    baseline_median_p50_ns = Get-CflowMedian @($baselines.p50_ns)
+    source_median_p50_ns = Get-CflowMedian @($sources.p50_ns)
+    baseline_median_p95_ns = Get-CflowMedian @($baselines.p95_ns)
+    source_median_p95_ns = Get-CflowMedian @($sources.p95_ns)
+    baseline_median_p99_ns = Get-CflowMedian @($baselines.p99_ns)
+    source_median_p99_ns = Get-CflowMedian @($sources.p99_ns)
+    paired_p50_delta_pct = [math]::Round((Get-CflowMedian $p50Deltas), 6)
+    paired_p95_delta_pct = [math]::Round((Get-CflowMedian $p95Deltas), 6)
+    paired_p99_delta_pct = [math]::Round((Get-CflowMedian $p99Deltas), 6)
+    paired_wall_delta_pct = [math]::Round((Get-CflowMedian $wallDeltas), 6)
+    paired_cpu_time_delta_pct =
+      [math]::Round((Get-CflowMedian $cpuTimeDeltas), 6)
+    paired_cpu_efficiency_delta_pct =
+      [math]::Round((Get-CflowMedian $cpuEfficiencyDeltas), 6)
+    paired_combined_stage_delta_pct =
+      [math]::Round((Get-CflowMedian $combinedStageDeltas), 6)
+    baseline_median_cpu_pct = Get-CflowMedian @($baselines.process_cpu_pct)
+    source_median_cpu_pct = Get-CflowMedian @($sources.process_cpu_pct)
+    baseline_median_peak_occupied =
+      Get-CflowMedian @($baselines.source_peak_occupied)
+    source_median_peak_occupied =
+      Get-CflowMedian @($sources.source_peak_occupied)
   }
 }
 

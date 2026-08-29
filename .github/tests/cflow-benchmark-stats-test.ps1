@@ -55,6 +55,25 @@ Assert-Sequence `
   (Get-CflowDriverOrder -Run 1 -WaitMode blocking -BackendIndex 0 -PayloadIndex 1) `
   @("source", "actor") "next-payload driver order"
 Assert-Sequence `
+  (Get-CflowSourceWindowOrder -SourceWindows @(1, 4, 8) -Run 1 `
+    -WaitMode blocking -BackendIndex 0 -PayloadIndex 0) `
+  @("actor", "source-1", "source-4", "source-8") `
+  "first Source window order"
+Assert-Sequence `
+  (Get-CflowSourceWindowOrder -SourceWindows @(1, 4, 8) -Run 2 `
+    -WaitMode blocking -BackendIndex 0 -PayloadIndex 0) `
+  @("source-1", "source-4", "source-8", "actor") `
+  "next-run Source window order"
+Assert-Sequence `
+  (Get-CflowSourceWindowOrder -SourceWindows @(1, 4, 8) -Run 1 `
+    -WaitMode busy -BackendIndex 0 -PayloadIndex 0) `
+  @("source-1", "source-4", "source-8", "actor") `
+  "busy Source window order"
+Assert-Throws {
+  Get-CflowSourceWindowOrder -SourceWindows @(1, 1) -Run 1 `
+    -WaitMode blocking -BackendIndex 0 -PayloadIndex 0
+} "duplicate Source windows"
+Assert-Sequence `
   (Get-CflowBaselineDriverOrder -Run 1 -BackendIndex 0 -PayloadIndex 0) `
   @("direct", "actor") "first baseline driver order"
 Assert-Sequence `
@@ -74,6 +93,22 @@ $reports = @(
   [pscustomobject]@{ benchmark_run=1; backend="epoll"; payload_bytes=1024; driver="actor"; wait_mode="blocking"; attempted=10; p50_ns=200; p99_ns=400; wall_ns=1000; process_cpu_ns=500; process_cpu_pct=50; application_mib_per_cpu_second=10; admission_mean_ns=10; completion_drive_mean_ns=90 },
   [pscustomobject]@{ benchmark_run=1; backend="epoll"; payload_bytes=1024; driver="source"; wait_mode="blocking"; attempted=10; p50_ns=230; p99_ns=460; wall_ns=1080; process_cpu_ns=560; process_cpu_pct=52; application_mib_per_cpu_second=9; admission_mean_ns=5; completion_drive_mean_ns=125 }
 )
+$pairedMetricFixtures = @(
+  @{ p95_ns=150; exchanges_per_second=100; application_mib_per_second=10 },
+  @{ p95_ns=180; exchanges_per_second=90; application_mib_per_second=9 },
+  @{ p95_ns=1500; exchanges_per_second=1000; application_mib_per_second=100 },
+  @{ p95_ns=2400; exchanges_per_second=800; application_mib_per_second=80 },
+  @{ p95_ns=1650; exchanges_per_second=1100; application_mib_per_second=110 },
+  @{ p95_ns=1485; exchanges_per_second=990; application_mib_per_second=99 },
+  @{ p95_ns=300; exchanges_per_second=200; application_mib_per_second=20 },
+  @{ p95_ns=345; exchanges_per_second=180; application_mib_per_second=18 }
+)
+for ($index = 0; $index -lt $reports.Count; ++$index) {
+  foreach ($field in $pairedMetricFixtures[$index].Keys) {
+    $reports[$index] | Add-Member -NotePropertyName $field `
+      -NotePropertyValue $pairedMetricFixtures[$index][$field]
+  }
+}
 
 $summary = Get-CflowPairedSourceSummary -Reports $reports `
   -Backend epoll -WaitMode blocking -PayloadBytes 64 -ExpectedRuns 3
@@ -83,6 +118,13 @@ Assert-Equal $summary.actor_median_p50_ns 1000.0 "Actor P50 median"
 Assert-Equal $summary.source_median_p50_ns 990.0 "Source P50 median"
 Assert-Equal $summary.actor_median_p99_ns 2000.0 "Actor P99 median"
 Assert-Equal $summary.source_median_p99_ns 1980.0 "Source P99 median"
+Assert-Equal $summary.actor_median_p95_ns 1500.0 "Actor P95 median"
+Assert-Equal $summary.source_median_p95_ns 1485.0 "Source P95 median"
+Assert-Equal $summary.paired_p95_delta_pct 20.0 "paired P95 delta"
+Assert-Equal $summary.paired_source_actor_echo_ratio 0.9 `
+  "paired Source/Actor Echo ratio"
+Assert-Equal $summary.paired_source_actor_application_mib_ratio 0.9 `
+  "paired Source/Actor application throughput ratio"
 Assert-Equal (100.0 * ($summary.source_median_p50_ns -
       $summary.actor_median_p50_ns) / $summary.actor_median_p50_ns) -1.0 `
   "unpaired P50 delta differs from paired delta"
@@ -104,6 +146,64 @@ Assert-Equal $summary.paired_combined_stage_delta_ns 20.0 `
   "paired combined-stage absolute delta"
 Assert-Equal $summary.source_slower_p50_runs 2 "slower P50 run count"
 Assert-Equal $summary.source_slower_p99_runs 2 "slower P99 run count"
+
+$windowedReports = @()
+foreach ($report in @($reports | Where-Object { $_.payload_bytes -eq 64 })) {
+  $copy = $report.psobject.Copy()
+  $copy | Add-Member -NotePropertyName source_window_capacity `
+    -NotePropertyValue $(if ($copy.driver -eq "source") { 1 } else { 0 })
+  $copy | Add-Member -NotePropertyName source_peak_occupied `
+    -NotePropertyValue $(if ($copy.driver -eq "source") { 1 } else { 0 })
+  $windowedReports += $copy
+  if ($copy.driver -eq "source") {
+    $windowFour = $copy.psobject.Copy()
+    $windowFour.source_window_capacity = 4
+    $windowFour.p50_ns = [double]$windowFour.p50_ns + 400.0
+    $windowedReports += $windowFour
+  }
+}
+$windowFourSummary = Get-CflowPairedSourceSummary `
+  -Reports $windowedReports -Backend epoll -WaitMode blocking `
+  -PayloadBytes 64 -SourceWindow 4 -ExpectedRuns 3
+Assert-Equal $windowFourSummary.source_window 4 `
+  "windowed Source summary capacity"
+Assert-Equal $windowFourSummary.source_median_p50_ns 1390.0 `
+  "windowed Source summary filters the requested capacity"
+Assert-Equal $windowFourSummary.source_median_peak_occupied 1.0 `
+  "windowed Source summary peak occupancy"
+
+$pipelineReports = @(
+  [pscustomobject]@{ benchmark_run=1; backend="epoll"; workload="pipeline"; payload_bytes=64; driver="source"; wait_mode="blocking"; source_window_capacity=1; source_peak_occupied=1; attempted=10; p50_ns=100; p95_ns=150; p99_ns=200; exchanges_per_second=100; application_mib_per_second=10; wall_ns=1000; process_cpu_ns=500; process_cpu_pct=50; application_mib_per_cpu_second=20; admission_mean_ns=10; completion_drive_mean_ns=90 },
+  [pscustomobject]@{ benchmark_run=1; backend="epoll"; workload="pipeline"; payload_bytes=64; driver="source"; wait_mode="blocking"; source_window_capacity=4; source_peak_occupied=4; attempted=10; p50_ns=80; p95_ns=120; p99_ns=160; exchanges_per_second=200; application_mib_per_second=20; wall_ns=600; process_cpu_ns=450; process_cpu_pct=75; application_mib_per_cpu_second=30; admission_mean_ns=5; completion_drive_mean_ns=55 },
+  [pscustomobject]@{ benchmark_run=2; backend="epoll"; workload="pipeline"; payload_bytes=64; driver="source"; wait_mode="blocking"; source_window_capacity=1; source_peak_occupied=1; attempted=10; p50_ns=1000; p95_ns=1500; p99_ns=2000; exchanges_per_second=1000; application_mib_per_second=100; wall_ns=2000; process_cpu_ns=1000; process_cpu_pct=50; application_mib_per_cpu_second=100; admission_mean_ns=20; completion_drive_mean_ns=180 },
+  [pscustomobject]@{ benchmark_run=2; backend="epoll"; workload="pipeline"; payload_bytes=64; driver="source"; wait_mode="blocking"; source_window_capacity=4; source_peak_occupied=4; attempted=10; p50_ns=900; p95_ns=1200; p99_ns=1800; exchanges_per_second=1500; application_mib_per_second=150; wall_ns=1500; process_cpu_ns=900; process_cpu_pct=60; application_mib_per_cpu_second=150; admission_mean_ns=10; completion_drive_mean_ns=140 }
+)
+$pipelineSummary = Get-CflowPairedSourceWindowSummary `
+  -Reports $pipelineReports -Backend epoll -WaitMode blocking `
+  -PayloadBytes 64 -BaselineWindow 1 -SourceWindow 4 -ExpectedRuns 2
+Assert-Equal $pipelineSummary.runs 2 "pipeline paired run count"
+Assert-Equal $pipelineSummary.baseline_window 1 "pipeline baseline window"
+Assert-Equal $pipelineSummary.source_window 4 "pipeline target window"
+Assert-Equal $pipelineSummary.paired_echo_ratio 1.75 `
+  "pipeline paired Echo/s ratio"
+Assert-Equal $pipelineSummary.paired_application_mib_ratio 1.75 `
+  "pipeline paired application throughput ratio"
+Assert-Equal $pipelineSummary.paired_p50_delta_pct -15.0 `
+  "pipeline paired P50 delta"
+Assert-Equal $pipelineSummary.paired_p95_delta_pct -20.0 `
+  "pipeline paired P95 delta"
+Assert-Equal $pipelineSummary.paired_p99_delta_pct -15.0 `
+  "pipeline paired P99 delta"
+Assert-Equal $pipelineSummary.paired_cpu_time_delta_pct -10.0 `
+  "pipeline paired CPU-time delta"
+Assert-Equal $pipelineSummary.source_median_peak_occupied 4.0 `
+  "pipeline target peak occupancy"
+Assert-Throws {
+  Get-CflowPairedSourceWindowSummary `
+    -Reports @($pipelineReports | Select-Object -First 3) `
+    -Backend epoll -WaitMode blocking -PayloadBytes 64 `
+    -BaselineWindow 1 -SourceWindow 4 -ExpectedRuns 2
+} "missing pipeline window pair"
 
 $largeSummary = Get-CflowPairedSourceSummary -Reports $reports `
   -Backend epoll -WaitMode blocking -PayloadBytes 1024 -ExpectedRuns 1
