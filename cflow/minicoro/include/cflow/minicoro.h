@@ -1,7 +1,7 @@
 #ifndef CFLOW_MINICORO_H
 #define CFLOW_MINICORO_H
 
-#include <cflow/runtime.h>
+#include <cflow/reactive.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -73,7 +73,7 @@ bool cflow_minicoro_fail(cflow_minicoro *coroutine,
 /* Borrow the exact CFlow resume context supplied to the active resume call.
  * The result is NULL outside the running callback and must not be retained
  * across a suspension point. No fallback scheduler is created. */
-cflow_resume_ctx *cflow_minicoro_resume_context(
+cflow_publish_context *cflow_minicoro_resume_context(
     cflow_minicoro *coroutine);
 
 #ifdef __cplusplus

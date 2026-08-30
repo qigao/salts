@@ -1,6 +1,6 @@
 #include <cflow/scxml.h>
 #include <cflow/executor.h>
-#include <cflow/statechart_runtime.h>
+#include <cflow/statechart_instance.h>
 #include <tlog.h>
 
 #include "tinytest.h"
@@ -89,7 +89,7 @@ static bool run_log_program(const char *source, bool install_logger,
         tlog_set_default(NULL);
     }
     if (compile_status(source, &program, &diagnostic) != CFLOW_SCXML_OK ||
-        !cflow_scxml_program_runtime_bindings(
+        !cflow_scxml_program_instance_bindings(
             &program, &bindings, &binding_count) ||
         !cflow_executor_serial_init(&executor)) {
         goto cleanup;
@@ -106,7 +106,7 @@ static bool run_log_program(const char *source, bool install_logger,
         .microstep_limit = 16u,
         .executor = &executor};
     if (cflow_statechart_instance_init(&instance, &config) !=
-        CFLOW_STATECHART_RUNTIME_OK) {
+        CFLOW_STATECHART_INSTANCE_OK) {
         goto cleanup;
     }
     instance_initialized = true;
@@ -408,7 +408,7 @@ static bool run_condition_program(const char *source, const char *event_name,
 
     if (source == NULL || out_guard_count == NULL || out_done == NULL ||
         compile_status(source, &program, &diagnostic) != CFLOW_SCXML_OK ||
-        !cflow_scxml_program_runtime_bindings(
+        !cflow_scxml_program_instance_bindings(
             &program, &executables, &executable_count) ||
         !cflow_scxml_program_guard_bindings(
             &program, &guards, &guard_count) ||
@@ -429,7 +429,7 @@ static bool run_condition_program(const char *source, const char *event_name,
         .microstep_limit = 32u,
         .executor = &executor};
     if (cflow_statechart_instance_init(&instance, &config) !=
-        CFLOW_STATECHART_RUNTIME_OK) {
+        CFLOW_STATECHART_INSTANCE_OK) {
         goto cleanup;
     }
     instance_initialized = true;
@@ -596,7 +596,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
 
         check_equal(compile_status(source, &program, &diagnostic),
                     CFLOW_SCXML_OK);
-        check_true(cflow_scxml_program_runtime_bindings(
+        check_true(cflow_scxml_program_instance_bindings(
             &program, &bindings, &binding_count));
         check_null(bindings);
         check_equal(binding_count, (size_t)0u);
@@ -604,7 +604,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         bindings =
             (const cflow_statechart_executable_binding *)(uintptr_t)1u;
         binding_count = SIZE_MAX;
-        check_false(cflow_scxml_program_runtime_bindings(
+        check_false(cflow_scxml_program_instance_bindings(
             NULL, &bindings, &binding_count));
         check_true(bindings ==
                    (const cflow_statechart_executable_binding *)(uintptr_t)1u);
@@ -662,13 +662,13 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             .completion_capacity = 2u,
             .microstep_limit = 16u};
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_session_get_stats(&session, &stats));
         check_true(stats.done);
         check_false(stats.errored);
         check_null(cflow_scxml_session_error(&session));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -770,36 +770,36 @@ suite("SCXML Core to native CFlow Statechart compiler") {
 
         adapter.abi_version = 0u;
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         check_null(session.impl);
         adapter.abi_version = CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V1;
         adapter.struct_size = sizeof(adapter) - 1u;
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         adapter.struct_size = sizeof(adapter);
         adapter.prepare_send = NULL;
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         adapter.prepare_send = scxml_adapter_prepare_send;
         adapter.capabilities = UINT64_C(1) << 63u;
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         adapter.capabilities = CFLOW_SCXML_EVENT_IO_CAP_DELAYED_SEND;
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         adapter.capabilities = CFLOW_SCXML_EVENT_IO_CAP_SEND |
             CFLOW_SCXML_EVENT_IO_CAP_DELAYED_SEND |
             CFLOW_SCXML_EVENT_IO_CAP_CANCEL;
 
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_WOULD_BLOCK);
+                    CFLOW_STATECHART_INSTANCE_WOULD_BLOCK);
         check_not_null(session.impl);
         check_equal(probe.close_calls, (size_t)1u);
         probe.quiescent = true;
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_null(session.impl);
         check_equal(probe.close_calls, (size_t)1u);
         cflow_executor_destroy(&executor);
@@ -848,19 +848,19 @@ suite("SCXML Core to native CFlow Statechart compiler") {
 
         config.effect_capacity = 0u;
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         config.effect_capacity = 4u;
         config.adapter_internal_event_capacity = 0u;
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         config.adapter_internal_event_capacity = 2u;
         config.delayed_send_capacity = 0u;
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         config.delayed_send_capacity = 2u;
 
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.prepare_send_calls, (size_t)3u);
         check_equal(probe.prepare_cancel_calls, (size_t)1u);
@@ -878,7 +878,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_false(cflow_scxml_session_report_send_done(
             &session, "survivor", 8u));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -931,7 +931,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                         CFLOW_SCXML_OK);
             check_true(cflow_executor_serial_init(&executor));
             check_equal(cflow_scxml_session_init(&session, &config),
-                        CFLOW_STATECHART_RUNTIME_OK);
+                        CFLOW_STATECHART_INSTANCE_OK);
             check_true(cflow_executor_wait_idle(&executor));
             check_true(cflow_scxml_session_get_stats(&session, &stats));
             check_true(stats.done);
@@ -940,7 +940,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             check_equal(probe.commit_calls, (size_t)0u);
             check_equal(probe.discard_calls, (size_t)0u);
             check_equal(cflow_scxml_session_destroy(&session),
-                        CFLOW_STATECHART_RUNTIME_OK);
+                        CFLOW_STATECHART_INSTANCE_OK);
             cflow_executor_destroy(&executor);
             cflow_scxml_program_destroy(&program);
         }
@@ -990,8 +990,8 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             check_equal(
                 cflow_scxml_session_init(&session, &config),
                 index == 0u
-                    ? CFLOW_STATECHART_RUNTIME_INTERNAL_QUEUE_FULL
-                    : CFLOW_STATECHART_RUNTIME_OK);
+                    ? CFLOW_STATECHART_INSTANCE_INTERNAL_QUEUE_FULL
+                    : CFLOW_STATECHART_INSTANCE_OK);
             check_true(cflow_executor_wait_idle(&executor));
             if (index == 0u) {
                 check_null(session.impl);
@@ -1009,7 +1009,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                 check_false(stats.errored);
             }
             check_equal(cflow_scxml_session_destroy(&session),
-                        CFLOW_STATECHART_RUNTIME_OK);
+                        CFLOW_STATECHART_INSTANCE_OK);
             cflow_executor_destroy(&executor);
             cflow_scxml_program_destroy(&program);
         }
@@ -1224,7 +1224,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
 
         check_equal(compile_status(source, &program, &diagnostic),
                     CFLOW_SCXML_OK);
-        check_true(cflow_scxml_program_runtime_bindings(
+        check_true(cflow_scxml_program_instance_bindings(
             &program, &bindings, &binding_count));
         check_not_null(bindings);
         check_equal(binding_count, (size_t)1u);
@@ -1247,13 +1247,13 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             .microstep_limit = 16u,
             .executor = &executor};
         check_equal(cflow_statechart_instance_init(&instance, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_statechart_instance_get_stats(&instance, &stats));
         check_true(stats.done);
         check_equal(stats.actions, (uint64_t)1u);
 
         check_equal(cflow_statechart_instance_destroy(&instance),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -1490,7 +1490,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(cflow_scxml_compile(&program, source, source_size, NULL,
                                         &diagnostic),
                     CFLOW_SCXML_OK);
-        check_true(cflow_scxml_program_runtime_bindings(
+        check_true(cflow_scxml_program_instance_bindings(
             &program, &bindings, &binding_count));
         check_equal(binding_count, (size_t)3u);
         check_true(cflow_executor_serial_init(&executor));
@@ -1505,7 +1505,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             .microstep_limit = 32u,
             .executor = &executor};
         check_equal(cflow_statechart_instance_init(&instance, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(&program, "go", 2u, &go));
         check_equal(cflow_statechart_instance_try_send(&instance, &go),
                     CFLOW_MAILBOX_OK);
@@ -1519,7 +1519,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(actual, expected);
 
         check_equal(cflow_statechart_instance_destroy(&instance),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
         free(expected);
@@ -1617,7 +1617,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             cflow_event_view trigger = {0};
             check_equal(compile_status(sources[index], &program, &diagnostic),
                         CFLOW_SCXML_OK);
-            check_true(cflow_scxml_program_runtime_bindings(
+            check_true(cflow_scxml_program_instance_bindings(
                 &program, &bindings, &binding_count));
             check_equal(binding_count, (size_t)1u);
             check_true(cflow_executor_serial_init(&executor));
@@ -1632,7 +1632,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                 .microstep_limit = 16u,
                 .executor = &executor};
             check_equal(cflow_statechart_instance_init(&instance, &config),
-                        CFLOW_STATECHART_RUNTIME_OK);
+                        CFLOW_STATECHART_INSTANCE_OK);
             if (trigger_names[index] != NULL) {
                 check_true(cflow_scxml_program_event(
                     &program, trigger_names[index],
@@ -1645,7 +1645,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             check_true(cflow_statechart_instance_get_stats(&instance, &stats));
             check_true(stats.done);
             check_equal(cflow_statechart_instance_destroy(&instance),
-                        CFLOW_STATECHART_RUNTIME_OK);
+                        CFLOW_STATECHART_INSTANCE_OK);
             cflow_executor_destroy(&executor);
             cflow_scxml_program_destroy(&program);
         }
@@ -1675,7 +1675,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
 
         check_equal(compile_status(source, &program, &diagnostic),
                     CFLOW_SCXML_OK);
-        check_true(cflow_scxml_program_runtime_bindings(
+        check_true(cflow_scxml_program_instance_bindings(
             &program, &bindings, &binding_count));
         check_true(cflow_executor_serial_init(&executor));
         config = (cflow_statechart_instance_config){
@@ -1689,7 +1689,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             .microstep_limit = 16u,
             .executor = &executor};
         check_equal(cflow_statechart_instance_init(&instance, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         start = find_state(&program, "start");
         check_not_null(start);
         check_true(cflow_scxml_program_event(&program, "go", 2u, &go));
@@ -1699,7 +1699,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_true(cflow_statechart_instance_get_stats(&instance, &stats));
         check_true(stats.errored);
         check_equal(stats.last_status,
-                    CFLOW_STATECHART_RUNTIME_INTERNAL_QUEUE_FULL);
+                    CFLOW_STATECHART_INSTANCE_INTERNAL_QUEUE_FULL);
         check_equal(stats.internal_pending, (size_t)0u);
         check_equal(cflow_statechart_instance_copy_configuration(
                         &instance, states, 2u, &state_count, &version),
@@ -1708,7 +1708,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(states[state_count - 1u], start->id);
 
         check_equal(cflow_statechart_instance_destroy(&instance),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -1762,7 +1762,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             cflow_statechart_instance_stats stats = {0};
             check_equal(compile_status(sources[index], &program, &diagnostic),
                         CFLOW_SCXML_OK);
-            check_true(cflow_scxml_program_runtime_bindings(&program, &bindings,
+            check_true(cflow_scxml_program_instance_bindings(&program, &bindings,
                                                             &binding_count));
             check_equal(binding_count, (size_t)1u);
             check_true(cflow_executor_serial_init(&executor));
@@ -1777,12 +1777,12 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                 .microstep_limit = 16u,
                 .executor = &executor};
             check_equal(cflow_statechart_instance_init(&instance, &config),
-                        CFLOW_STATECHART_RUNTIME_OK);
+                        CFLOW_STATECHART_INSTANCE_OK);
             check_true(cflow_statechart_instance_get_stats(&instance, &stats));
             check_equal(stats.done, expected_done[index]);
             check_equal(stats.actions, UINT64_C(1));
             check_equal(cflow_statechart_instance_destroy(&instance),
-                        CFLOW_STATECHART_RUNTIME_OK);
+                        CFLOW_STATECHART_INSTANCE_OK);
             cflow_executor_destroy(&executor);
             cflow_scxml_program_destroy(&program);
         }
@@ -1815,7 +1815,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(cflow_scxml_compile(&program, source, source_size, NULL,
                                         &diagnostic),
                     CFLOW_SCXML_OK);
-        check_true(cflow_scxml_program_runtime_bindings(&program, &bindings,
+        check_true(cflow_scxml_program_instance_bindings(&program, &bindings,
                                                         &binding_count));
         check_equal(binding_count, (size_t)6u);
         check_true(cflow_executor_serial_init(&executor));
@@ -1830,7 +1830,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             .microstep_limit = 32u,
             .executor = &executor};
         check_equal(cflow_statechart_instance_init(&instance, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_true(cflow_statechart_instance_get_stats(&instance, &stats));
         actual_size = (size_t)snprintf(
@@ -1839,7 +1839,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(actual_size, expected_size);
         check_equal(actual, expected);
         check_equal(cflow_statechart_instance_destroy(&instance),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
         free(expected);
@@ -1959,7 +1959,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                     CFLOW_SCXML_REQUIREMENT_EVENT_IO |
                         CFLOW_SCXML_REQUIREMENT_DELAYED_SEND |
                         CFLOW_SCXML_REQUIREMENT_CANCEL);
-        check_false(cflow_scxml_program_runtime_bindings(
+        check_false(cflow_scxml_program_instance_bindings(
             &program, &sentinel_bindings, &sentinel_count));
         check_true(
             sentinel_bindings ==
@@ -2028,7 +2028,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                     CFLOW_STATECHART_STATE_ACTION_EXIT);
         check_equal(cflow_statechart_state_action_at(statechart, 3u)->order,
                     (uint32_t)1u);
-        check_false(cflow_scxml_program_runtime_bindings(
+        check_false(cflow_scxml_program_instance_bindings(
             &program, &bindings, &binding_count));
         check_true(bindings ==
                    (const cflow_statechart_executable_binding *)
@@ -2190,20 +2190,20 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_true(cflow_executor_serial_init(&executor));
         config.invocation_capacity = 0u;
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         adapter.abi_version = 0u;
         config.invocation_capacity = 1u;
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         adapter.abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1;
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_WOULD_BLOCK);
+                    CFLOW_STATECHART_INSTANCE_WOULD_BLOCK);
         check_equal(probe.close_calls, (size_t)1u);
         probe.quiescent = true;
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(probe.close_calls, (size_t)1u);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
@@ -2253,7 +2253,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(probe.prepare_start_calls, (size_t)1u);
         check_equal(probe.commit_calls, (size_t)1u);
         check_equal(probe.last_id, "job");
@@ -2280,7 +2280,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(invoke_stats.active, (size_t)0u);
         check_equal(invoke_stats.cancelled, UINT64_C(1));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2325,7 +2325,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(probe.prepare_start_calls, (size_t)1u);
         check_true(cflow_scxml_program_event(
             &program, "swap", 4u, &swap));
@@ -2335,14 +2335,14 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_true(cflow_scxml_session_get_stats(&session, &stats));
         check_true(stats.errored);
         check_equal(stats.last_status,
-                    CFLOW_STATECHART_RUNTIME_EFFECT_JOURNAL_FULL);
+                    CFLOW_STATECHART_INSTANCE_EFFECT_JOURNAL_FULL);
         check_equal(probe.prepare_cancel_calls, (size_t)0u);
         check_equal(probe.prepare_start_calls, (size_t)1u);
         check_true(cflow_scxml_session_get_invoke_stats(
             &session, &invoke_stats));
         check_equal(invoke_stats.active, (size_t)1u);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2410,7 +2410,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(probe.prepare_start_calls, (size_t)2u);
         check_true(cflow_scxml_program_event(&program, "tick", 4u, &tick));
         check_equal(cflow_scxml_session_try_send(&session, &tick),
@@ -2459,7 +2459,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(invoke_stats.active, (size_t)0u);
         check_equal(invoke_stats.cancelled, UINT64_C(0));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
         tlog_set_default(previous_logger);
@@ -2509,7 +2509,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(
             &program, "leave", 5u, &leave));
         atomic_init(&blocker.entered, false);
@@ -2540,7 +2540,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             &session, &invoke_stats));
         check_equal(invoke_stats.returned_rejected, UINT64_C(2));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2590,7 +2590,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(&program, "tick", 4u, &tick));
         check_equal(cflow_scxml_session_try_send(&session, &tick),
                     CFLOW_MAILBOX_OK);
@@ -2604,7 +2604,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(invoke_stats.forwarded, UINT64_C(0));
         check_equal(invoke_stats.forward_failed, UINT64_C(1));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2652,7 +2652,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(
             &program, "leave", 5u, &leave));
         check_equal(cflow_scxml_session_try_send(&session, &leave),
@@ -2667,7 +2667,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(invoke_stats.cancel_failed, UINT64_C(1));
         check_equal(invoke_stats.adapter_error_rejected, UINT64_C(0));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2991,7 +2991,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             .microstep_limit = 64u,
             .executor = &executor};
         check_equal(cflow_statechart_instance_init(&instance, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(cflow_statechart_instance_copy_configuration(
                         &instance, states, 2u, &state_count, &version),
                     CFLOW_STATECHART_SNAPSHOT_OK);
@@ -3023,7 +3023,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(actual, expected);
 
         check_equal(cflow_statechart_instance_destroy(&instance),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
         free(expected);

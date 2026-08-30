@@ -1,14 +1,14 @@
 #ifndef CFLOW_RELATION_EXEC_H
 #define CFLOW_RELATION_EXEC_H
 
-#include <cflow/runtime.h>
+#include <cflow/reactive.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Lower one immutable RELATION node plus the current typed input into a
- * runtime resumable. The generic Run does not interpret coordination/result
+ * Reactive resumable. The generic Subscription does not interpret coordination/result
  * policy; it only drives the returned VALUE/WAIT/DONE/ERROR machine. Current
  * byte storage requires TRIVIAL_COPY and TRIVIAL_DESTROY throughout Graph. */
 bool cflow_resumable_from_relation(cflow_resumable *out,

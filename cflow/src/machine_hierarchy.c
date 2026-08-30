@@ -1,6 +1,6 @@
 #include <cflow/machine_hierarchy.h>
 
-#include "machine_runtime_internal.h"
+#include "machine_instance_internal.h"
 #include "timer_event_internal.h"
 
 #include <turbo/thread.h>
@@ -608,7 +608,7 @@ cflow_machine_hierarchy_instance_init(
     const cflow_machine_hierarchy_instance_config *config) {
     cflow_machine_hierarchy_instance_init_result result = {
         CFLOW_MACHINE_HIERARCHY_INSTANCE_INVALID_ARGUMENT,
-        CFLOW_MACHINE_RUNTIME_OK,
+        CFLOW_MACHINE_INSTANCE_OK,
         CFLOW_TIMER_EVENT_OK
     };
     cflow_machine_hierarchy_instance_impl *impl;
@@ -648,7 +648,7 @@ cflow_machine_hierarchy_instance_init(
     result.machine_status = cflow_machine_instance_init_internal(
         &impl->machine, &machine_config,
         hierarchy_transition_committed, impl, NULL, NULL);
-    if (result.machine_status != CFLOW_MACHINE_RUNTIME_OK) {
+    if (result.machine_status != CFLOW_MACHINE_INSTANCE_OK) {
         result.status = CFLOW_MACHINE_HIERARCHY_INSTANCE_MACHINE_REJECTED;
         hierarchy_instance_impl_destroy(impl);
         return result;
@@ -697,12 +697,12 @@ bool cflow_machine_hierarchy_instance_as_resumable(
            cflow_machine_instance_as_resumable(&impl->machine, out);
 }
 
-bool cflow_machine_hierarchy_instance_as_source(
+bool cflow_machine_hierarchy_instance_as_publisher(
     cflow_machine_hierarchy_instance *instance,
-    cflow_source *out) {
+    cflow_publisher *out) {
     cflow_machine_hierarchy_instance_impl *impl = instance != NULL
         ? (cflow_machine_hierarchy_instance_impl *)instance->impl : NULL;
-    return impl != NULL && cflow_machine_instance_as_source(&impl->machine, out);
+    return impl != NULL && cflow_machine_instance_as_publisher(&impl->machine, out);
 }
 
 static bool hierarchy_instance_scope_active_locked(

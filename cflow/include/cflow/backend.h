@@ -14,8 +14,9 @@ extern "C" {
 /* Backend implementations own every state returned by open() until close().
  * Values passed to insert_if_absent()/append() are borrowed for that call.
  * The interface tables and type descriptors are borrowed and must outlive the
- * Run. Every successful open has exactly one close, including cancellation and
- * execution failure. Implementations are single-Run and need not synchronize. */
+ * Subscription. Every successful open has exactly one close, including
+ * cancellation and execution failure. Implementations are single-Subscription
+ * and need not synchronize. */
 typedef struct cflow_set_state_ops {
     cflow_status (*open)(void **state,
                          const cmeta_type_desc *type,
@@ -36,7 +37,7 @@ typedef struct cflow_sequence_state_ops {
     void (*close)(void *state);
 } cflow_sequence_state_ops;
 
-/* The Run copies this pair of borrowed, immutable interface pointers. */
+/* The Subscription copies this pair of borrowed, immutable interfaces. */
 typedef struct cflow_eval_options {
     const cflow_set_state_ops *set_state;
     const cflow_sequence_state_ops *sequence_state;

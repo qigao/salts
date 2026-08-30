@@ -195,7 +195,7 @@ int cflow_io_actor_init(cflow_io_actor *actor,
  * release obligation to the Actor. Every other status preserves operation
  * unchanged. A nonzero lease_id must be unique among live requests.
  *
- * Thread safety: MPSC; may be called concurrently with other public runtime
+ * Thread safety: MPSC; may be called concurrently with other public execution
  * operations except init/destroy.
  */
 cflow_io_submit_result cflow_io_actor_try_submit(

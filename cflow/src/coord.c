@@ -57,7 +57,7 @@ typedef struct value_state {
     bool emitted;
 } value_state;
 
-static cflow_step value_resume(void *state, cflow_resume_ctx *ctx, void *out) {
+static cflow_step value_resume(void *state, cflow_publish_context *ctx, void *out) {
     (void)ctx;
     value_state *s = (value_state *)state;
     if (!s || !out) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "value machine is invalid" };
@@ -235,7 +235,7 @@ static cflow_step emit_event(coord_state *s, size_t index, bool done, void *out)
 
 static cflow_step resume_child(coord_state *s,
                                size_t idx,
-                               cflow_resume_ctx *ctx,
+                               cflow_publish_context *ctx,
                                bool *produced) {
     coord_child *c = &s->children[idx];
     *produced = false;
@@ -285,7 +285,7 @@ static cflow_step resume_child(coord_state *s,
     return (cflow_step){ CFLOW_STEP_ERROR, {0}, s->error };
 }
 
-static cflow_step coord_resume_all(coord_state *s, cflow_resume_ctx *ctx, void *out) {
+static cflow_step coord_resume_all(coord_state *s, cflow_publish_context *ctx, void *out) {
     if (s->emitted_all) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
     for (;;) {
         if (all_have_value(s)) {
@@ -322,7 +322,7 @@ static cflow_step coord_resume_all(coord_state *s, cflow_resume_ctx *ctx, void *
 }
 
 
-static cflow_step coord_resume_all_done(coord_state *s, cflow_resume_ctx *ctx, void *out) {
+static cflow_step coord_resume_all_done(coord_state *s, cflow_publish_context *ctx, void *out) {
     if (s->emitted_all) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
     for (;;) {
         if (all_done(s)) {
@@ -349,7 +349,7 @@ static cflow_step coord_resume_all_done(coord_state *s, cflow_resume_ctx *ctx, v
     }
 }
 
-static cflow_step coord_resume_any(coord_state *s, cflow_resume_ctx *ctx, void *out) {
+static cflow_step coord_resume_any(coord_state *s, cflow_publish_context *ctx, void *out) {
     for (;;) {
         size_t start = s->cursor;
         for (size_t n = 0; n < s->count; ++n) {
@@ -370,7 +370,7 @@ static cflow_step coord_resume_any(coord_state *s, cflow_resume_ctx *ctx, void *
     }
 }
 
-static cflow_step coord_resume_sequence(coord_state *s, cflow_resume_ctx *ctx, void *out) {
+static cflow_step coord_resume_sequence(coord_state *s, cflow_publish_context *ctx, void *out) {
     while (s->sequence_index < s->count) {
         size_t i = s->sequence_index;
         coord_child *c = &s->children[i];
@@ -393,7 +393,7 @@ static cflow_step coord_resume_sequence(coord_state *s, cflow_resume_ctx *ctx, v
     return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
 }
 
-static cflow_step coord_resume_latest(coord_state *s, cflow_resume_ctx *ctx, void *out) {
+static cflow_step coord_resume_latest(coord_state *s, cflow_publish_context *ctx, void *out) {
     for (;;) {
         if (all_done(s)) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };
         bool progressed = false;
@@ -420,7 +420,7 @@ static cflow_step coord_resume_latest(coord_state *s, cflow_resume_ctx *ctx, voi
     }
 }
 
-static cflow_step coord_resume(void *state, cflow_resume_ctx *ctx, void *out) {
+static cflow_step coord_resume(void *state, cflow_publish_context *ctx, void *out) {
     coord_state *s = (coord_state *)state;
     if (!s || !ctx || !out) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "coordination state is invalid" };
     if (s->cancelled) return (cflow_step){ CFLOW_STEP_DONE, {0}, NULL };

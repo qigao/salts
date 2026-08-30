@@ -47,6 +47,82 @@ static void record_order(void *user) {
 }
 
 spec("CFlow scheduler compatibility") {
+  it("executes zero-delay inline work before admission returns") {
+    cflow_scheduler scheduler = {0};
+    cflow_schedule_result delayed;
+    int value = 17;
+
+    scheduler_order_count = 0u;
+    check_true(cflow_scheduler_inline_init(&scheduler));
+    check_equal(cflow_scheduler_name(&scheduler), "inline_scheduler");
+    check_true((cflow_scheduler_capabilities(&scheduler) &
+                CMETA_SCHED_CAP_CALLER_DRIVEN_ZERO_DELAY) != 0u);
+    check_not_equal(cflow_scheduler_post(
+                        &scheduler, record_order, &value),
+                    (cflow_task_id)0u);
+    check_equal(scheduler_order_count, (size_t)1u);
+    check_equal(scheduler_order[0], 17);
+    check_equal(cflow_scheduler_pending(&scheduler), (size_t)0u);
+    check_equal(cflow_scheduler_run_until_idle(
+                    &scheduler, 0u), (size_t)0u);
+
+    delayed = cflow_scheduler_try_post_after(
+        &scheduler, 1u, record_order, &value);
+    check_equal(delayed.status, CFLOW_ADMISSION_INVALID_ARGUMENT);
+    check_equal(delayed.task_id, (cflow_task_id)0u);
+    check_equal(scheduler_order_count, (size_t)1u);
+
+    check_true(cflow_scheduler_shutdown(&scheduler));
+    check_equal(cflow_scheduler_try_post_after(
+                    &scheduler, 0u, record_order, &value).status,
+                CFLOW_ADMISSION_CLOSED);
+    cflow_scheduler_destroy(&scheduler);
+    check_false(cflow_scheduler_valid(&scheduler));
+  }
+
+  it("bounds caller-driven zero-delay work and reuses capacity") {
+    cflow_scheduler scheduler = {0};
+    cflow_schedule_result first;
+    cflow_schedule_result full;
+    cflow_schedule_result delayed;
+    int value = 23;
+
+    scheduler_order_count = 0u;
+    check_false(cflow_scheduler_manual_init_with_capacity(
+        &scheduler, 0u));
+    check_true(cflow_scheduler_manual_init_with_capacity(
+        &scheduler, 1u));
+    check_true((cflow_scheduler_capabilities(&scheduler) &
+                CMETA_SCHED_CAP_CALLER_DRIVEN_ZERO_DELAY) != 0u);
+    first = cflow_scheduler_try_post_after(
+        &scheduler, 0u, record_order, &value);
+    full = cflow_scheduler_try_post_after(
+        &scheduler, 0u, record_order, &value);
+    delayed = cflow_scheduler_try_post_after(
+        &scheduler, 1u, record_order, &value);
+
+    check_equal(first.status, CFLOW_ADMISSION_ACCEPTED);
+    check_not_equal(first.task_id, (cflow_task_id)0u);
+    check_equal(full.status, CFLOW_ADMISSION_FULL);
+    check_equal(full.task_id, (cflow_task_id)0u);
+    check_equal(delayed.status, CFLOW_ADMISSION_INVALID_ARGUMENT);
+    check_equal(cflow_scheduler_pending(&scheduler), (size_t)1u);
+    check_equal(scheduler_order_count, (size_t)0u);
+    check_equal(cflow_scheduler_run_ready(&scheduler), (size_t)1u);
+    check_equal(scheduler_order_count, (size_t)1u);
+    check_not_equal(cflow_scheduler_post(
+                        &scheduler, record_order, &value),
+                    (cflow_task_id)0u);
+    check_true(cflow_scheduler_shutdown(&scheduler));
+    check_equal(cflow_scheduler_run_ready(&scheduler), (size_t)1u);
+    check_equal(scheduler_order_count, (size_t)2u);
+    check_equal(cflow_scheduler_try_post_after(
+                    &scheduler, 0u, record_order, &value).status,
+                CFLOW_ADMISSION_CLOSED);
+    cflow_scheduler_destroy(&scheduler);
+    check_false(cflow_scheduler_valid(&scheduler));
+  }
+
   it("keeps legacy ticks in milliseconds") {
     cflow_scheduler scheduler = {0};
 

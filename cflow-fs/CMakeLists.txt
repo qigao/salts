@@ -1,7 +1,7 @@
 add_library(turbo_cflow_fs STATIC
   src/fs.c
   src/fs_watch.c
-  src/fs_watch_source.c)
+  src/fs_watch_publisher.c)
 if(WIN32)
   target_sources(turbo_cflow_fs PRIVATE src/fs_watch_windows.c)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")

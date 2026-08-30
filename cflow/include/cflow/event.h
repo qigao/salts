@@ -1,7 +1,7 @@
 #ifndef CFLOW_EVENT_H
 #define CFLOW_EVENT_H
 
-#include <cflow/runtime.h>
+#include <cflow/reactive.h>
 
 #include <stdbool.h>
 #include <stddef.h>

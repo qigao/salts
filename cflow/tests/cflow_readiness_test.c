@@ -98,7 +98,7 @@ typedef struct fake_env {
     const readiness_contract_factory *factory;
     readiness_contract_fixture *fixture;
     turbo_readiness_reactor reactor;
-    cflow_reactor_source_owner owner;
+    cflow_readiness_publisher_owner owner;
 } fake_env;
 
 typedef struct emit_thread_args {
@@ -108,7 +108,7 @@ typedef struct emit_thread_args {
 } emit_thread_args;
 
 typedef struct destroy_thread_args {
-    cflow_source *source;
+    cflow_publisher *source;
     wake_probe *probe;
     bool returned;
 } destroy_thread_args;
@@ -388,7 +388,7 @@ static void emit_thread(void *user) {
 
 static void destroy_thread(void *user) {
     destroy_thread_args *args = (destroy_thread_args *)user;
-    cflow_source_destroy(args->source);
+    cflow_publisher_destroy(args->source);
     turbo_mutex_lock(&args->probe->lock);
     args->returned = true;
     turbo_cond_broadcast(&args->probe->changed);
@@ -397,7 +397,7 @@ static void destroy_thread(void *user) {
 
 static void cancel_thread(void *user) {
     destroy_thread_args *args = (destroy_thread_args *)user;
-    cflow_source_cancel(args->source);
+    cflow_publisher_cancel(args->source);
     turbo_mutex_lock(&args->probe->lock);
     args->returned = true;
     turbo_cond_broadcast(&args->probe->changed);
@@ -405,26 +405,26 @@ static void cancel_thread(void *user) {
 }
 
 static int make_source(fake_env *env, intptr_t resource, read_probe *probe,
-                       cflow_source *source,
+                       cflow_publisher *source,
                        turbo_readiness_registration *registration) {
     int status = turbo_readiness_register(
         &env->reactor, resource, registration);
     if (status != TURBO_OK)
         return status;
-    return cflow_source_from_reactor_registration(
+    return cflow_publisher_from_readiness_registration(
         source, &env->owner, registration, TURBO_READINESS_EVENT_READ,
         "reactor-test", &cmeta_type_int, probe_read, probe_close, probe);
 }
 
 static void capture_observation(differential_observation *out,
                                 const sink_probe *sink,
-                                const cflow_run *run) {
+                                const cflow_subscription *run) {
     memset(out, 0, sizeof(*out));
     out->value_count = sink->value_count;
     out->done_count = sink->done_count;
-    out->outstanding_demand = cflow_run_outstanding_demand(run);
-    out->done = cflow_run_is_done(run);
-    out->errored = sink->error != NULL || cflow_run_error(run) != NULL;
+    out->outstanding_demand = cflow_subscription_outstanding_demand(run);
+    out->done = cflow_subscription_is_done(run);
+    out->errored = sink->error != NULL || cflow_subscription_error(run) != NULL;
     for (size_t index = 0; index < sink->value_count &&
                            index < CFLOW_DIFFERENTIAL_VALUE_COUNT;
          ++index)
@@ -433,26 +433,26 @@ static void capture_observation(differential_observation *out,
 
 static void run_array_differential(const int *values,
                                    differential_observation *out) {
-    cflow_source source = {0};
+    cflow_publisher source = {0};
     cflow_graph graph = {0};
     cflow_scheduler scheduler = {0};
-    cflow_run run = {0};
+    cflow_subscription run = {0};
     sink_probe observed = {0};
-    cflow_sink_callbacks callbacks = {
+    cflow_subscriber_callbacks callbacks = {
         sink_value, sink_error, sink_done, &observed
     };
-    cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+    cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
 
     cflow_graph_init(&graph, &cmeta_type_int);
     check_true(cflow_scheduler_test_init(&scheduler));
-    check_true(cflow_source_from_array(&source, &cmeta_type_int, values,
+    check_true(cflow_publisher_from_array(&source, &cmeta_type_int, values,
                                        CFLOW_DIFFERENTIAL_VALUE_COUNT));
-    check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
-    check_true(cflow_run_request(&run, CFLOW_DIFFERENTIAL_DEMAND));
+    check_true(cflow_subscribe(&run, &graph, &source, &scheduler, &sink));
+    check_true(cflow_subscription_request(&run, CFLOW_DIFFERENTIAL_DEMAND));
     (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
     capture_observation(out, &observed, &run);
 
-    cflow_run_close(&run);
+    cflow_subscription_close(&run);
     cflow_scheduler_destroy(&scheduler);
     cflow_graph_destroy(&graph);
 }
@@ -462,10 +462,10 @@ static void run_fake_readiness_differential(const int *values,
     fake_env env;
     turbo_readiness_registration registration = {0};
     turbo_readiness_stats stats = {0};
-    cflow_source source = {0};
+    cflow_publisher source = {0};
     cflow_graph graph = {0};
     cflow_scheduler scheduler = {0};
-    cflow_run run = {0};
+    cflow_subscription run = {0};
     read_probe read = {
         {CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE,
          CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE,
@@ -473,10 +473,10 @@ static void run_fake_readiness_differential(const int *values,
         {0}, 6u, 0u, 0u, 0u, {NULL}
     };
     sink_probe observed = {0};
-    cflow_sink_callbacks callbacks = {
+    cflow_subscriber_callbacks callbacks = {
         sink_value, sink_error, sink_done, &observed
     };
-    cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+    cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
 
     read.values[1] = values[0];
     read.values[3] = values[1];
@@ -488,8 +488,8 @@ static void run_fake_readiness_differential(const int *values,
     check_not_null(env.owner.impl);
     cflow_graph_init(&graph, &cmeta_type_int);
     check_true(cflow_scheduler_test_init(&scheduler));
-    check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
-    check_true(cflow_run_request(&run, CFLOW_DIFFERENTIAL_DEMAND));
+    check_true(cflow_subscribe(&run, &graph, &source, &scheduler, &sink));
+    check_true(cflow_subscription_request(&run, CFLOW_DIFFERENTIAL_DEMAND));
     (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
 
     for (size_t index = 0; index < CFLOW_DIFFERENTIAL_VALUE_COUNT; ++index) {
@@ -501,13 +501,13 @@ static void run_fake_readiness_differential(const int *values,
     }
     capture_observation(out, &observed, &run);
 
-    cflow_run_close(&run);
+    cflow_subscription_close(&run);
     check_equal(read.closes, (size_t)1u);
     check_equal(turbo_readiness_reactor_stats(&env.reactor, &stats), TURBO_OK);
     check_equal(stats.registered_count, (size_t)0u);
     check_equal(stats.armed_count, (size_t)0u);
     check_equal(stats.callbacks_inflight, (size_t)0u);
-    check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+    check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
     check_null(env.owner.impl);
     cflow_scheduler_destroy(&scheduler);
     cflow_graph_destroy(&graph);
@@ -613,7 +613,7 @@ static int concurrent_sink_wait_done(concurrent_sink_probe *probe) {
 
 static void capture_concurrent_observation(
     differential_observation *out, concurrent_sink_probe *sink,
-    const cflow_run *run) {
+    const cflow_subscription *run) {
     memset(out, 0, sizeof(*out));
     turbo_mutex_lock(&sink->lock);
     out->value_count = sink->value_count;
@@ -622,9 +622,9 @@ static void capture_concurrent_observation(
     for (size_t index = 0; index < sink->value_count; ++index)
         out->values[index] = sink->values[index];
     turbo_mutex_unlock(&sink->lock);
-    out->outstanding_demand = cflow_run_outstanding_demand(run);
-    out->done = cflow_run_is_done(run);
-    out->errored = out->errored || cflow_run_error(run) != NULL;
+    out->outstanding_demand = cflow_subscription_outstanding_demand(run);
+    out->done = cflow_subscription_is_done(run);
+    out->errored = out->errored || cflow_subscription_error(run) != NULL;
 }
 
 static int set_nonblocking_fd(int fd) {
@@ -696,18 +696,18 @@ static void run_native_readiness_differential(
     turbo_readiness_reactor reactor = {0};
     turbo_readiness_registration registration = {0};
     turbo_readiness_stats stats = {0};
-    cflow_reactor_source_owner owner = {0};
-    cflow_source source = {0};
+    cflow_readiness_publisher_owner owner = {0};
+    cflow_publisher source = {0};
     cflow_graph graph = {0};
     cflow_scheduler scheduler = {0};
-    cflow_run run = {0};
+    cflow_subscription run = {0};
     native_pipe_read_probe read = {-1, 0u};
     concurrent_sink_probe observed = {0};
-    cflow_sink_callbacks callbacks = {
+    cflow_subscriber_callbacks callbacks = {
         concurrent_sink_value, concurrent_sink_error,
         concurrent_sink_done, &observed
     };
-    cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+    cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
     int fds[2] = {-1, -1};
 
     check_equal(make_native_pipe(fds), TURBO_OK);
@@ -719,7 +719,7 @@ static void run_native_readiness_differential(
     check_equal(turbo_readiness_reactor_init(&reactor, &config), TURBO_OK);
     check_equal(turbo_readiness_register(&reactor, read.read_fd, &registration),
                 TURBO_OK);
-    check_equal(cflow_source_from_reactor_registration(
+    check_equal(cflow_publisher_from_readiness_registration(
                     &source, &owner, &registration,
                     TURBO_READINESS_EVENT_READ | TURBO_READINESS_EVENT_HANGUP,
                     "native-pipe", &cmeta_type_int, native_pipe_read,
@@ -729,8 +729,8 @@ static void run_native_readiness_differential(
     cflow_graph_init(&graph, &cmeta_type_int);
     check_true(cflow_scheduler_worker_init_with_capacity(
         &scheduler, 1u, 8u, 8u));
-    check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
-    check_true(cflow_run_request(&run, CFLOW_DIFFERENTIAL_DEMAND));
+    check_true(cflow_subscribe(&run, &graph, &source, &scheduler, &sink));
+    check_true(cflow_subscription_request(&run, CFLOW_DIFFERENTIAL_DEMAND));
     check_true(cflow_scheduler_wait_idle(&scheduler));
 
     for (size_t index = 0; index < CFLOW_DIFFERENTIAL_VALUE_COUNT; ++index) {
@@ -758,10 +758,10 @@ static void run_native_readiness_differential(
     capture_concurrent_observation(out, &observed, &run);
 
     check_not_equal(read.read_fd, -1);
-    cflow_run_close(&run);
+    cflow_subscription_close(&run);
     check_equal(read.closes, (size_t)1u);
     check_equal(read.read_fd, -1);
-    check_equal(cflow_reactor_source_owner_close(&owner), TURBO_OK);
+    check_equal(cflow_readiness_publisher_owner_close(&owner), TURBO_OK);
     check_null(owner.impl);
     check_equal(turbo_readiness_reactor_stats(&reactor, &stats), TURBO_OK);
     check_equal(stats.registered_count, (size_t)0u);
@@ -782,7 +782,7 @@ suite("CFlow reactor registration Source") {
     it("keeps caller registration ownership on precise admission failure") {
         fake_env env;
         turbo_readiness_registration registration = {0};
-        cflow_source source = {0};
+        cflow_publisher source = {0};
         read_probe probe = {0};
 
         check_true(fake_env_init(&env, 2u));
@@ -793,20 +793,20 @@ suite("CFlow reactor registration Source") {
         memset(&source, 0xa5, sizeof(source));
         env.owner.impl = (void *)(uintptr_t)1u;
 
-        check_equal(cflow_source_from_reactor_registration(
+        check_equal(cflow_publisher_from_readiness_registration(
                         &source, &env.owner, &registration,
                         TURBO_READINESS_EVENT_READ,
                         "managed", &managed_test_type, probe_read,
                         probe_close, &probe), TURBO_ENOTSUP);
-        check_false(cflow_source_valid(&source));
+        check_false(cflow_publisher_valid(&source));
         check_null(env.owner.impl);
         check_not_null(registration.impl);
-        check_equal(cflow_source_from_reactor_registration(
+        check_equal(cflow_publisher_from_readiness_registration(
                         &source, &env.owner, &registration,
                         TURBO_READINESS_EVENT_READ,
                         "missing-read", &cmeta_type_int, NULL,
                         probe_close, &probe), TURBO_EINVAL);
-        check_false(cflow_source_valid(&source));
+        check_false(cflow_publisher_valid(&source));
         check_null(env.owner.impl);
         check_not_null(registration.impl);
         check_equal(turbo_readiness_close(&registration), TURBO_OK);
@@ -817,7 +817,7 @@ suite("CFlow reactor registration Source") {
     it("keeps external owner live and side-effect free while Source exists") {
         fake_env env;
         turbo_readiness_registration registration = {0};
-        cflow_source source = {0};
+        cflow_publisher source = {0};
         read_probe probe = {0};
         void *owner_impl;
 
@@ -828,16 +828,16 @@ suite("CFlow reactor registration Source") {
         owner_impl = env.owner.impl;
         check_not_null(owner_impl);
 
-        check_equal(cflow_reactor_source_owner_close(&env.owner),
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner),
                     TURBO_EBUSY);
         check_equal(env.owner.impl, owner_impl);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)0u);
         check_equal(probe.closes, (size_t)0u);
 
-        cflow_source_destroy(&source);
+        cflow_publisher_destroy(&source);
         check_equal(probe.closes, (size_t)1u);
-        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
         check_null(env.owner.impl);
         fake_env_destroy(&env);
     }
@@ -845,22 +845,22 @@ suite("CFlow reactor registration Source") {
     it("moves registration only after complete construction") {
         fake_env env;
         turbo_readiness_registration registration = {0};
-        cflow_source source = {0};
+        cflow_publisher source = {0};
         read_probe probe = {0};
 
         check_true(fake_env_init(&env, 2u));
         check_equal(make_source(
                         &env, CFLOW_READINESS_TEST_RESOURCE, &probe,
                         &source, &registration), TURBO_OK);
-        check_true(cflow_source_valid(&source));
+        check_true(cflow_publisher_valid(&source));
         check_not_null(env.owner.impl);
         check_null(registration.impl);
 
-        cflow_source_destroy(&source);
+        cflow_publisher_destroy(&source);
         check_equal(probe.closes, (size_t)1u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)1u);
-        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
         check_null(env.owner.impl);
         fake_env_destroy(&env);
     }
@@ -868,7 +868,7 @@ suite("CFlow reactor registration Source") {
     it("makes cancel terminal and keeps destroy cleanup exactly once") {
         fake_env env;
         turbo_readiness_registration registration = {0};
-        cflow_source source = {0};
+        cflow_publisher source = {0};
         read_probe probe = {0};
 
         check_true(fake_env_init(&env, 2u));
@@ -876,23 +876,23 @@ suite("CFlow reactor registration Source") {
                         &env, CFLOW_READINESS_TEST_RESOURCE, &probe,
                         &source, &registration), TURBO_OK);
 
-        cflow_source_cancel(&source);
+        cflow_publisher_cancel(&source);
         check_equal(probe.closes, (size_t)1u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)1u);
-        cflow_source_destroy(&source);
+        cflow_publisher_destroy(&source);
         check_equal(probe.closes, (size_t)1u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)1u);
-        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
         fake_env_destroy(&env);
     }
 
     it("retains borrowed user after close error and retries on destroy") {
         fake_env env;
         turbo_readiness_registration registration = {0};
-        cflow_source source = {0};
-        cflow_resume_ctx resume = {0};
+        cflow_publisher source = {0};
+        cflow_publish_context resume = {0};
         read_probe probe = {0};
         cflow_step step;
         int output = 0;
@@ -904,18 +904,18 @@ suite("CFlow reactor registration Source") {
         env.factory->fail_hook(env.fixture, READINESS_CONTRACT_HOOK_CLOSE,
                                TURBO_EIO, 1u);
 
-        cflow_source_cancel(&source);
+        cflow_publisher_cancel(&source);
         check_equal(probe.closes, (size_t)0u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)1u);
-        step = cflow_source_resume(&source, &resume, &output);
+        step = cflow_publisher_resume(&source, &resume, &output);
         check_equal(step.kind, CFLOW_STEP_ERROR);
         check_equal(step.error, "reactor readiness close failed: -4017");
-        cflow_source_destroy(&source);
+        cflow_publisher_destroy(&source);
         check_equal(probe.closes, (size_t)1u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)2u);
-        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
         fake_env_destroy(&env);
     }
 
@@ -923,18 +923,18 @@ suite("CFlow reactor registration Source") {
         enum { PERSISTENT_CLOSE_FAILURES = 16 };
         fake_env env;
         turbo_readiness_registration registration = {0};
-        cflow_source source = {0};
+        cflow_publisher source = {0};
         cflow_graph graph = {0};
         cflow_scheduler scheduler = {0};
-        cflow_run run = {0};
+        cflow_subscription run = {0};
         read_probe read = {
             {CFLOW_READ_WOULD_BLOCK}, {0}, 1u, 0u, 0u, 0u, {NULL}
         };
         sink_probe observed = {0};
-        cflow_sink_callbacks callbacks = {
+        cflow_subscriber_callbacks callbacks = {
             sink_value, sink_error, sink_done, &observed
         };
-        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+        cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
         void *owner_impl;
 
         check_true(fake_env_init(&env, 2u));
@@ -946,20 +946,20 @@ suite("CFlow reactor registration Source") {
                                TURBO_EIO, PERSISTENT_CLOSE_FAILURES);
         cflow_graph_init(&graph, &cmeta_type_int);
         check_true(cflow_scheduler_test_init(&scheduler));
-        check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
-        check_true(cflow_run_request(&run, 1u));
+        check_true(cflow_subscribe(&run, &graph, &source, &scheduler, &sink));
+        check_true(cflow_subscription_request(&run, 1u));
         (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
 
-        cflow_run_close(&run);
+        cflow_subscription_close(&run);
         check_equal(env.owner.impl, owner_impl);
         check_equal(read.closes, (size_t)0u);
-        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_EIO);
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_EIO);
         check_equal(env.owner.impl, owner_impl);
         check_equal(read.closes, (size_t)0u);
 
         env.factory->fail_hook(env.fixture, READINESS_CONTRACT_HOOK_CLOSE,
                                TURBO_EIO, 0u);
-        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
         check_null(env.owner.impl);
         check_equal(read.closes, (size_t)1u);
         check_equal(turbo_readiness_reactor_shutdown(&env.reactor), TURBO_OK);
@@ -989,16 +989,16 @@ suite("CFlow reactor registration Source") {
         for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
             fake_env env;
             turbo_readiness_registration registration = {0};
-            cflow_source source = {0};
+            cflow_publisher source = {0};
             cflow_graph graph = {0};
             cflow_scheduler scheduler = {0};
-            cflow_run run = {0};
+            cflow_subscription run = {0};
             read_probe read = {0};
             sink_probe observed = {0};
-            cflow_sink_callbacks callbacks = {
+            cflow_subscriber_callbacks callbacks = {
                 sink_value, sink_error, sink_done, &observed
             };
-            cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+            cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
 
             read.statuses[0] = cases[i].status;
             read.errors[0] = cases[i].read_error;
@@ -1009,9 +1009,9 @@ suite("CFlow reactor registration Source") {
                             &source, &registration), TURBO_OK);
             cflow_graph_init(&graph, &cmeta_type_int);
             check_true(cflow_scheduler_test_init(&scheduler));
-            check_true(cflow_run_open(
+            check_true(cflow_subscribe(
                 &run, &graph, &source, &scheduler, &sink));
-            check_true(cflow_run_request(&run, 1u));
+            check_true(cflow_subscription_request(&run, 1u));
             (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
 
             check_equal(observed.value_count, (size_t)0u);
@@ -1019,17 +1019,17 @@ suite("CFlow reactor registration Source") {
             check_equal(read.reads, (size_t)1u);
             if (cases[i].expected_error) {
                 check_equal(observed.error, cases[i].expected_error);
-                check_equal(cflow_run_error(&run), cases[i].expected_error);
+                check_equal(cflow_subscription_error(&run), cases[i].expected_error);
             } else {
                 check_null(observed.error);
-                check_null(cflow_run_error(&run));
+                check_null(cflow_subscription_error(&run));
             }
-            check_equal(cflow_run_is_done(&run),
+            check_equal(cflow_subscription_is_done(&run),
                         cases[i].expected_error == NULL);
-            cflow_run_close(&run);
+            cflow_subscription_close(&run);
             check_not_null(env.owner.impl);
             check_equal(read.closes, (size_t)1u);
-            check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+            check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
             check_null(env.owner.impl);
             check_equal(read.closes, (size_t)1u);
             cflow_scheduler_destroy(&scheduler);
@@ -1041,20 +1041,20 @@ suite("CFlow reactor registration Source") {
     it("drives Run through WOULD_BLOCK WAIT wake rearm and final value") {
         fake_env env;
         turbo_readiness_registration registration = {0};
-        cflow_source source = {0};
+        cflow_publisher source = {0};
         cflow_graph graph = {0};
         cflow_scheduler scheduler = {0};
-        cflow_run run = {0};
+        cflow_subscription run = {0};
         read_probe read = {
             {CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE,
              CFLOW_READ_WOULD_BLOCK, CFLOW_READ_VALUE_AND_DONE},
             {0, 17, 0, 29}, 4u, 0u, 0u, 0u
         };
         sink_probe observed = {0};
-        cflow_sink_callbacks callbacks = {
+        cflow_subscriber_callbacks callbacks = {
             sink_value, sink_error, sink_done, &observed
         };
-        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+        cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
         turbo_readiness_stats stats = {0};
         uint64_t registration_token;
         uint64_t first_arm_token;
@@ -1067,8 +1067,8 @@ suite("CFlow reactor registration Source") {
             env.fixture, CFLOW_READINESS_TEST_RESOURCE);
         cflow_graph_init(&graph, &cmeta_type_int);
         check_true(cflow_scheduler_test_init(&scheduler));
-        check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
-        check_true(cflow_run_request(&run, 2u));
+        check_true(cflow_subscribe(&run, &graph, &source, &scheduler, &sink));
+        check_true(cflow_subscription_request(&run, 2u));
         (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
         first_arm_token = env.factory->arm_token_for_resource(
             env.fixture, CFLOW_READINESS_TEST_RESOURCE);
@@ -1096,14 +1096,14 @@ suite("CFlow reactor registration Source") {
         check_equal(observed.values[1], 29);
         check_equal(observed.done_count, (size_t)1u);
         check_null(observed.error);
-        check_true(cflow_run_is_done(&run));
+        check_true(cflow_subscription_is_done(&run));
         check_equal(turbo_readiness_reactor_stats(&env.reactor, &stats),
                     TURBO_OK);
         check_equal(stats.duplicate_events, (uint64_t)1u);
         check_equal(stats.stale_events, (uint64_t)1u);
 
-        cflow_run_close(&run);
-        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        cflow_subscription_close(&run);
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&graph);
         fake_env_destroy(&env);
@@ -1112,16 +1112,16 @@ suite("CFlow reactor registration Source") {
     it("turns synchronous arm status into the exact Run error") {
         fake_env env;
         turbo_readiness_registration registration = {0};
-        cflow_source source = {0};
+        cflow_publisher source = {0};
         cflow_graph graph = {0};
         cflow_scheduler scheduler = {0};
-        cflow_run run = {0};
+        cflow_subscription run = {0};
         read_probe read = {{CFLOW_READ_WOULD_BLOCK}, {0}, 1u, 0u, 0u, 0u};
         sink_probe observed = {0};
-        cflow_sink_callbacks callbacks = {
+        cflow_subscriber_callbacks callbacks = {
             sink_value, sink_error, sink_done, &observed
         };
-        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+        cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
 
         check_true(fake_env_init(&env, 2u));
         check_equal(make_source(
@@ -1130,17 +1130,17 @@ suite("CFlow reactor registration Source") {
         env.factory->fail_next_arm(env.fixture, TURBO_EIO);
         cflow_graph_init(&graph, &cmeta_type_int);
         check_true(cflow_scheduler_test_init(&scheduler));
-        check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
-        check_true(cflow_run_request(&run, 1u));
+        check_true(cflow_subscribe(&run, &graph, &source, &scheduler, &sink));
+        check_true(cflow_subscription_request(&run, 1u));
         (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
 
-        check_equal(cflow_run_error(&run),
+        check_equal(cflow_subscription_error(&run),
                     "reactor readiness arm failed: -4017");
         check_equal(observed.error,
                     "reactor readiness arm failed: -4017");
         check_equal(observed.value_count, (size_t)0u);
-        cflow_run_close(&run);
-        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        cflow_subscription_close(&run);
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&graph);
         fake_env_destroy(&env);
@@ -1149,16 +1149,16 @@ suite("CFlow reactor registration Source") {
     it("turns terminal backend status into the exact Run error") {
         fake_env env;
         turbo_readiness_registration registration = {0};
-        cflow_source source = {0};
+        cflow_publisher source = {0};
         cflow_graph graph = {0};
         cflow_scheduler scheduler = {0};
-        cflow_run run = {0};
+        cflow_subscription run = {0};
         read_probe read = {{CFLOW_READ_WOULD_BLOCK}, {0}, 1u, 0u, 0u, 0u};
         sink_probe observed = {0};
-        cflow_sink_callbacks callbacks = {
+        cflow_subscriber_callbacks callbacks = {
             sink_value, sink_error, sink_done, &observed
         };
-        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+        cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
 
         check_true(fake_env_init(&env, 2u));
         check_equal(make_source(
@@ -1166,19 +1166,19 @@ suite("CFlow reactor registration Source") {
                         &source, &registration), TURBO_OK);
         cflow_graph_init(&graph, &cmeta_type_int);
         check_true(cflow_scheduler_test_init(&scheduler));
-        check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
-        check_true(cflow_run_request(&run, 1u));
+        check_true(cflow_subscribe(&run, &graph, &source, &scheduler, &sink));
+        check_true(cflow_subscription_request(&run, 1u));
         (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
         check_equal(env.factory->fail_backend(env.fixture, TURBO_EIO),
                     TURBO_OK);
         (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
 
-        check_equal(cflow_run_error(&run),
+        check_equal(cflow_subscription_error(&run),
                     "reactor readiness backend failed: -4017");
         check_equal(observed.error,
                     "reactor readiness backend failed: -4017");
-        cflow_run_close(&run);
-        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        cflow_subscription_close(&run);
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&graph);
         fake_env_destroy(&env);
@@ -1187,8 +1187,8 @@ suite("CFlow reactor registration Source") {
     it("makes cancel wait until the old callback waker is quiescent") {
         fake_env env;
         turbo_readiness_registration registration = {0};
-        cflow_source source = {0};
-        cflow_resume_ctx resume = {0};
+        cflow_publisher source = {0};
+        cflow_publish_context resume = {0};
         cflow_step step;
         read_probe read = {{CFLOW_READ_WOULD_BLOCK}, {0}, 1u, 0u, 0u, 0u};
         wake_probe wake = {0};
@@ -1209,7 +1209,7 @@ suite("CFlow reactor registration Source") {
         check_equal(make_source(
                         &env, CFLOW_READINESS_TEST_RESOURCE, &read,
                         &source, &registration), TURBO_OK);
-        step = cflow_source_resume(&source, &resume, &output);
+        step = cflow_publisher_resume(&source, &resume, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_true(cflow_waitable_arm(
             &step.waitable, (cflow_waker){blocking_wake, &wake}));
@@ -1243,11 +1243,11 @@ suite("CFlow reactor registration Source") {
         check_equal(emit_args.status, TURBO_OK);
         check_true(cancel_args.returned);
         check_equal(read.closes, (size_t)1u);
-        cflow_source_destroy(&source);
+        cflow_publisher_destroy(&source);
         check_equal(read.closes, (size_t)1u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)1u);
-        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
         turbo_cond_destroy(&wake.changed);
         turbo_mutex_destroy(&wake.lock);
         fake_env_destroy(&env);
@@ -1256,8 +1256,8 @@ suite("CFlow reactor registration Source") {
     it("waits for an inflight callback before user close and free") {
         fake_env env;
         turbo_readiness_registration registration = {0};
-        cflow_source source = {0};
-        cflow_resume_ctx resume = {0};
+        cflow_publisher source = {0};
+        cflow_publish_context resume = {0};
         cflow_step step;
         read_probe read = {{CFLOW_READ_WOULD_BLOCK}, {0}, 1u, 0u, 0u, 0u};
         wake_probe wake = {0};
@@ -1278,7 +1278,7 @@ suite("CFlow reactor registration Source") {
         check_equal(make_source(
                         &env, CFLOW_READINESS_TEST_RESOURCE, &read,
                         &source, &registration), TURBO_OK);
-        step = cflow_source_resume(&source, &resume, &output);
+        step = cflow_publisher_resume(&source, &resume, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_true(cflow_waitable_arm(
             &step.waitable, (cflow_waker){blocking_wake, &wake}));
@@ -1314,7 +1314,7 @@ suite("CFlow reactor registration Source") {
         check_equal(read.closes, (size_t)1u);
         check_equal(env.factory->backend_close_calls(env.fixture),
                     (size_t)1u);
-        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
         turbo_cond_destroy(&wake.changed);
         turbo_mutex_destroy(&wake.lock);
         fake_env_destroy(&env);
@@ -1341,10 +1341,10 @@ suite("CFlow reactor registration Source") {
         fake_env env;
         turbo_readiness_registration registration = {0};
         turbo_readiness_stats stats = {0};
-        cflow_source source = {0};
+        cflow_publisher source = {0};
         cflow_graph graph = {0};
         cflow_scheduler scheduler = {0};
-        cflow_run run = {0};
+        cflow_subscription run = {0};
         arm_observing_scheduler_state scheduler_state;
         turbo_readiness_registration *owner_registration;
         read_probe read = {
@@ -1353,30 +1353,30 @@ suite("CFlow reactor registration Source") {
             {0, 41, 0, 73}, 4u, 0u, 0u, 0u, {NULL}
         };
         sink_probe observed = {0};
-        cflow_sink_callbacks callbacks = {
+        cflow_subscriber_callbacks callbacks = {
             sink_value, sink_error, sink_done, &observed
         };
-        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+        cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
 
         check_true(fake_env_init(&env, 1u));
         check_equal(turbo_readiness_register(
                         &env.reactor, CFLOW_READINESS_TEST_RESOURCE,
                         &registration), TURBO_OK);
-        check_equal(cflow_source_from_reactor_registration(
+        check_equal(cflow_publisher_from_readiness_registration(
                         &source, &env.owner, &registration,
                         TURBO_READINESS_EVENT_READ, "worker-rearm",
                         &cmeta_type_int, probe_read, probe_close, &read),
                     TURBO_OK);
         check_null(registration.impl);
         owner_registration =
-            cflow_reactor_source_owner_observe_registration(&env.owner);
+            cflow_readiness_publisher_owner_observe_registration(&env.owner);
         check_not_null(owner_registration);
         check_not_null(owner_registration->impl);
         check_true(arm_observing_scheduler_init(
             &scheduler_state, owner_registration, &scheduler));
         cflow_graph_init(&graph, &cmeta_type_int);
-        check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
-        check_true(cflow_run_request(&run, 2u));
+        check_true(cflow_subscribe(&run, &graph, &source, &scheduler, &sink));
+        check_true(cflow_subscription_request(&run, 2u));
         check_true(cflow_scheduler_wait_idle(&scheduler));
 
         arm_observing_scheduler_observe_next(&scheduler_state);
@@ -1399,11 +1399,11 @@ suite("CFlow reactor registration Source") {
         check_equal(observed.values[1], 73);
         check_equal(observed.done_count, (size_t)1u);
         check_null(observed.error);
-        check_true(cflow_run_is_done(&run));
+        check_true(cflow_subscription_is_done(&run));
 
-        cflow_run_close(&run);
+        cflow_subscription_close(&run);
         check_equal(read.closes, (size_t)1u);
-        check_equal(cflow_reactor_source_owner_close(&env.owner), TURBO_OK);
+        check_equal(cflow_readiness_publisher_owner_close(&env.owner), TURBO_OK);
         check_equal(turbo_readiness_reactor_stats(&env.reactor, &stats), TURBO_OK);
         check_equal(stats.registered_count, (size_t)0u);
         check_equal(stats.armed_count, (size_t)0u);

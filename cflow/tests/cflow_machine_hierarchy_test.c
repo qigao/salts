@@ -227,7 +227,7 @@ suite("CFlow hierarchical Machine normalization") {
             cflow_executor executor = {0};
             cflow_clock clock = {0};
             cflow_resumable resumable = {0};
-            cflow_resume_ctx resume_context = {0};
+            cflow_publish_context resume_context = {0};
             const int initial_state = 0;
             const bool payload = true;
             const cflow_event_view event = {
@@ -310,7 +310,7 @@ suite("CFlow hierarchical Machine normalization") {
         cflow_executor executor = {0};
         cflow_clock clock = {0};
         cflow_resumable resumable = {0};
-        cflow_resume_ctx resume_context = {0};
+        cflow_publish_context resume_context = {0};
         cflow_machine_hierarchy_instance_stats stats = {0};
         const int initial_state = 0;
         const bool payload = true;
@@ -387,7 +387,7 @@ suite("CFlow hierarchical Machine normalization") {
         cflow_executor executor = {0};
         cflow_clock clock = {0};
         cflow_resumable resumable = {0};
-        cflow_resume_ctx resume_context = {0};
+        cflow_publish_context resume_context = {0};
         cflow_step step;
         const bool payload = true;
         const cflow_event_view event = {10u, &cmeta_type_bool, &payload};

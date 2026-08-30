@@ -914,7 +914,7 @@ static bool run_guarded_transition(
 
     check_true(cflow_executor_serial_init(&executor));
     check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                CFLOW_STATECHART_RUNTIME_OK);
+                CFLOW_STATECHART_INSTANCE_OK);
     initial.enabled = mutate_after_init ? !initial.enabled : initial.enabled;
     check_true(cflow_scxml_program_event(program, "go", 2u, &go));
     check_equal(cflow_scxml_session_try_send(&session, &go),
@@ -923,7 +923,7 @@ static bool run_guarded_transition(
     check_true(cflow_scxml_session_get_stats(&session, &stats));
     done = stats.done;
     check_equal(cflow_scxml_session_destroy(&session),
-                CFLOW_STATECHART_RUNTIME_OK);
+                CFLOW_STATECHART_INSTANCE_OK);
     cflow_executor_destroy(&executor);
     return done;
 }
@@ -950,19 +950,19 @@ static cflow_statechart_instance_stats run_to_idle(
 
     check_true(cflow_executor_serial_init(&executor));
     check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                CFLOW_STATECHART_RUNTIME_OK);
+                CFLOW_STATECHART_INSTANCE_OK);
     check_true(cflow_executor_wait_idle(&executor));
     check_true(cflow_scxml_session_get_stats(&session, &stats));
     check_equal(cflow_scxml_session_destroy(&session),
-                CFLOW_STATECHART_RUNTIME_OK);
+                CFLOW_STATECHART_INSTANCE_OK);
     cflow_executor_destroy(&executor);
     return stats;
 }
 
 static cflow_statechart_instance_stats run_direct_to_idle(
     const cflow_scxml_program *program, scxml_public_data initial,
-    cflow_statechart_runtime_status *out_init_status,
-    cflow_statechart_runtime_status *out_destroy_status) {
+    cflow_statechart_instance_status *out_init_status,
+    cflow_statechart_instance_status *out_destroy_status) {
     const cflow_statechart_guard_binding *guards = NULL;
     size_t guard_count = 0u;
     cflow_executor executor = {0};
@@ -985,8 +985,8 @@ static cflow_statechart_instance_stats run_direct_to_idle(
         .executor = &executor
     };
     *out_init_status = cflow_statechart_instance_init(&instance, &config);
-    if (*out_init_status != CFLOW_STATECHART_RUNTIME_OK) {
-        *out_destroy_status = CFLOW_STATECHART_RUNTIME_OK;
+    if (*out_init_status != CFLOW_STATECHART_INSTANCE_OK) {
+        *out_destroy_status = CFLOW_STATECHART_INSTANCE_OK;
         cflow_executor_destroy(&executor);
         return stats;
     }
@@ -1034,17 +1034,17 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&legacy_executor));
         check_equal(cflow_scxml_session_init(&legacy_session, &legacy_config),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         check_null(legacy_session.impl);
         data.abi_version = 0u;
         check_equal(cflow_scxml_session_init_cmeta(
                         &legacy_session, &legacy_config, &data),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         data.abi_version = CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1;
         data.initial_state = NULL;
         check_equal(cflow_scxml_session_init_cmeta(
                         &legacy_session, &legacy_config, &data),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         cflow_executor_destroy(&legacy_executor);
 
         check_true(run_guarded_transition(
@@ -1558,7 +1558,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(&program, "go", 2u, &go));
         check_equal(cflow_scxml_session_try_send_v2(
                         &session, &go, &metadata),
@@ -1568,7 +1568,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(stats.done);
         check_false(stats.errored);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -1616,7 +1616,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(&program, "go", 2u, &go));
         copies_before_send = atomic_load_explicit(
             &public_data_copy_count, memory_order_relaxed);
@@ -1632,7 +1632,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(stats.done);
         check_false(stats.errored);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -1674,7 +1674,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(&program, "go", 2u, &go));
         check_equal(cflow_scxml_session_try_send_v3(
                         &session, &go, &metadata),
@@ -1683,10 +1683,10 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_scxml_session_get_stats(&session, &stats));
         check_true(stats.done);
         check_true(stats.errored);
-        check_equal(stats.last_status, CFLOW_STATECHART_RUNTIME_GUARD_FAILED);
+        check_equal(stats.last_status, CFLOW_STATECHART_INSTANCE_GUARD_FAILED);
         check_equal(stats.external_failed, UINT64_C(1));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -1727,7 +1727,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(&program, "go", 2u, &go));
         metadata.abi_version = 0u;
         check_equal(cflow_scxml_session_try_send_v3(
@@ -1753,7 +1753,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_MAILBOX_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -1803,7 +1803,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(
             &program, "first", sizeof("first") - 1u, &first));
         check_true(cflow_scxml_program_event(
@@ -1821,7 +1821,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(stats.done);
         check_false(stats.errored);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -1903,14 +1903,14 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(
                         &session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.sends, (size_t)0u);
         check_true(cflow_scxml_session_get_stats(&session, &stats));
         check_true(stats.done);
         check_false(stats.errored);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -1979,7 +1979,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.sends, (size_t)1u);
         check_equal(probe.cancels, (size_t)1u);
@@ -1999,7 +1999,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(stats.done);
         check_equal(probe.invoke_cancels, (size_t)1u);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2095,7 +2095,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.sends, (size_t)1u);
         check_true(probe.generated_send_ids[0][0] != '\0');
@@ -2115,7 +2115,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(stats.done);
         check_false(stats.errored);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2166,7 +2166,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.sends, (size_t)1u);
         check_equal(probe.cancels, (size_t)1u);
@@ -2176,7 +2176,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(stats.done);
         check_false(stats.errored);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2237,7 +2237,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_executor_serial_init(&executor));
         probe.session = &session;
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.sends, (size_t)1u);
         check_true(cflow_scxml_program_event(
@@ -2268,7 +2268,7 @@ spec("CFlow SCXML public CMeta data model") {
             &session, probe.generated_send_ids[1],
             strlen(probe.generated_send_ids[1])));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2429,7 +2429,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta_v2(
                         &session, &config, &data, &adapters),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.sends, (size_t)1u);
         check_equal(probe.kind, CFLOW_SCXML_PAYLOAD_NAMED);
@@ -2452,7 +2452,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_equal(probe.values[5].kind, CFLOW_SCXML_PAYLOAD_VALUE_SINT);
         check_equal(probe.values[5].data.sint, INT64_C(1));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2505,14 +2505,14 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta_v2(
                         &session, &config, &data, &adapters),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.sends, (size_t)0u);
         check_true(cflow_scxml_session_get_stats(&session, &stats));
         check_true(stats.done);
         check_false(stats.errored);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2572,8 +2572,8 @@ spec("CFlow SCXML public CMeta data model") {
             check_equal(cflow_scxml_session_init_cmeta_v2(
                             &session, &config, &data, &adapters),
                         index == 0u
-                            ? CFLOW_STATECHART_RUNTIME_OK
-                            : CFLOW_STATECHART_RUNTIME_ACTION_FAILED);
+                            ? CFLOW_STATECHART_INSTANCE_OK
+                            : CFLOW_STATECHART_INSTANCE_ACTION_FAILED);
             check_true(cflow_executor_wait_idle(&executor));
             check_equal(probe.sends, (size_t)1u);
             if (index == 0u) {
@@ -2581,7 +2581,7 @@ spec("CFlow SCXML public CMeta data model") {
                 check_true(stats.done);
                 check_false(stats.errored);
                 check_equal(cflow_scxml_session_destroy(&session),
-                            CFLOW_STATECHART_RUNTIME_OK);
+                            CFLOW_STATECHART_INSTANCE_OK);
             } else {
                 check_null(session.impl);
             }
@@ -2648,17 +2648,17 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(
                         &session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         config.event_io = NULL;
         config.adapter_user = NULL;
         check_equal(cflow_scxml_session_init_cmeta_v2(
                         &session, &config, &data, &adapters),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         event_io.capabilities |= CFLOW_SCXML_EVENT_IO_CAP_PAYLOAD;
         adapters.abi_version = CFLOW_SCXML_SESSION_ADAPTERS_ABI_V2 + 1u;
         check_equal(cflow_scxml_session_init_cmeta_v2(
                         &session, &config, &data, &adapters),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2715,7 +2715,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta_v2(
                         &session, &config, &data, &adapters),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.starts, (size_t)1u);
         check_equal(probe.kind, CFLOW_SCXML_PAYLOAD_NAMED);
@@ -2732,7 +2732,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.invoke_cancels, (size_t)1u);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2788,7 +2788,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta_v2(
                         &session, &config, &data, &adapters),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.starts, (size_t)1u);
         check_equal(probe.kind, CFLOW_SCXML_PAYLOAD_CONTENT);
@@ -2800,7 +2800,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_MAILBOX_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2865,7 +2865,7 @@ spec("CFlow SCXML public CMeta data model") {
             check_true(cflow_executor_serial_init(&executor));
             check_equal(cflow_scxml_session_init_cmeta_v2(
                             &session, &config, &data, &adapters),
-                        CFLOW_STATECHART_RUNTIME_OK);
+                        CFLOW_STATECHART_INSTANCE_OK);
             check_true(cflow_executor_wait_idle(&executor));
             check_equal(probe.starts, index);
             check_true(cflow_scxml_session_get_stats(&session, &stats));
@@ -2876,7 +2876,7 @@ spec("CFlow SCXML public CMeta data model") {
             check_equal(invoke_stats.start_failed, UINT64_C(1));
             check_equal(invoke_stats.active, (size_t)0u);
             check_equal(cflow_scxml_session_destroy(&session),
-                        CFLOW_STATECHART_RUNTIME_OK);
+                        CFLOW_STATECHART_INSTANCE_OK);
             cflow_executor_destroy(&executor);
             cflow_scxml_program_destroy(&program);
         }
@@ -2916,7 +2916,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(probe.prepare_starts, (size_t)1u);
         check_equal(probe.start_commits, (size_t)1u);
         check_equal(probe.start_discards, (size_t)0u);
@@ -2924,7 +2924,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_equal(probe.start_ids[0], "worker.1", sizeof("worker.1"));
         check_equal(probe.start_types[0], "worker.1", sizeof("worker.1"));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -2962,12 +2962,12 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(probe.prepare_starts, (size_t)0u);
         check_true(cflow_scxml_session_get_stats(&session, &stats));
         check_true(stats.done);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3007,7 +3007,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(&program, "leave", 5u, &leave));
         check_true(cflow_scxml_program_event(&program, "again", 5u, &again));
         check_equal(cflow_scxml_session_try_send(&session, &leave),
@@ -3021,7 +3021,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_equal(probe.start_ids[1], "worker.2", sizeof("worker.2"));
         check_not_equal(probe.start_tokens[0], probe.start_tokens[1]);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3059,13 +3059,13 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(probe.prepare_starts, (size_t)2u);
         check_equal(probe.start_ids[0], "left.1", sizeof("left.1"));
         check_equal(probe.start_ids[1], "right.2", sizeof("right.2"));
         check_equal(probe.start_commits, (size_t)2u);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3107,12 +3107,12 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta_v2(
                         &session, &config, &data, &adapters),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(probe.prepare_starts, (size_t)1u);
         check_equal(probe.start_ids[0], "worker.1", sizeof("worker.1"));
         check_equal(probe.start_commits, (size_t)1u);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3153,7 +3153,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_session_get_stats(&session, &stats));
         check_true(stats.done);
         check_false(stats.errored);
@@ -3166,7 +3166,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_equal(invoke_stats.start_failed, UINT64_C(1));
         check_equal(invoke_stats.active, (size_t)0u);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3204,7 +3204,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_HOOK_FAILED);
+                    CFLOW_STATECHART_INSTANCE_HOOK_FAILED);
         check_null(session.impl);
         check_equal(probe.prepare_starts, (size_t)2u);
         check_equal(probe.start_commits, (size_t)0u);
@@ -3250,13 +3250,13 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_session_get_stats(&session, &stats));
         check_true(stats.done);
         check_false(stats.errored);
         check_equal(probe.prepare_starts, (size_t)0u);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3293,7 +3293,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_EFFECT_JOURNAL_FULL);
+                    CFLOW_STATECHART_INSTANCE_EFFECT_JOURNAL_FULL);
         check_null(session.impl);
         check_equal(probe.prepare_starts, (size_t)0u);
         check_equal(probe.start_commits, (size_t)0u);
@@ -3338,7 +3338,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(
             &program, "overwrite", 9u, &overwrite));
         check_true(cflow_scxml_program_event(&program, "leave", 5u, &leave));
@@ -3353,7 +3353,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_equal(probe.cancel_ids[0], "worker.1", sizeof("worker.1"));
         check_equal(probe.cancel_commits, (size_t)1u);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3393,7 +3393,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         probe.session = &session;
         probe.cancel_during_prepare = true;
         check_true(cflow_scxml_program_event(&program, "go", 2u, &go));
@@ -3406,7 +3406,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_equal(probe.start_discards, (size_t)1u);
         check_equal(probe.close_calls, (size_t)1u);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3442,12 +3442,12 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_scxml_session_close(&session);
         cflow_scxml_session_close(&session);
         check_equal(probe.close_calls, (size_t)1u);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(probe.close_calls, (size_t)1u);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
@@ -3495,7 +3495,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(cflow_scxml_session_report_invoke_done(&session, 0u),
                     CFLOW_MAILBOX_INVALID_ARGUMENT);
         check_equal(cflow_scxml_session_report_invoke_done(
@@ -3514,7 +3514,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_equal(invoke_stats.returned_rejected, UINT64_C(1));
         check_equal(invoke_stats.completed, UINT64_C(1));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3565,14 +3565,14 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta_v2(
                         &session, &config, &data, &adapters),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.sends, (size_t)1u);
         check_equal(probe.kind, CFLOW_SCXML_PAYLOAD_CONTENT);
         check_equal(probe.content.kind, CFLOW_SCXML_PAYLOAD_VALUE_STRING);
         check_equal(probe.content_string, "payload", sizeof("payload"));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3628,10 +3628,10 @@ spec("CFlow SCXML public CMeta data model") {
         incomplete_adapters.event_io = &incomplete_event_io;
         check_equal(cflow_scxml_session_init_cmeta_v3(
                         &session, &config, &data, &incomplete_adapters),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         check_equal(cflow_scxml_session_init_cmeta_v3(
                         &session, &config, &data, &adapters),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.sends, (size_t)1u);
         check_equal(probe.kind, CFLOW_SCXML_CONTENT_XML_UTF8);
@@ -3639,7 +3639,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_scxml_session_report_send_done(
             &session, "later", sizeof("later") - 1u));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3695,8 +3695,8 @@ spec("CFlow SCXML public CMeta data model") {
             check_equal(cflow_scxml_session_init_cmeta_v3(
                             &session, &config, &data, &adapters),
                         index == 0u
-                            ? CFLOW_STATECHART_RUNTIME_OK
-                            : CFLOW_STATECHART_RUNTIME_ACTION_FAILED);
+                            ? CFLOW_STATECHART_INSTANCE_OK
+                            : CFLOW_STATECHART_INSTANCE_ACTION_FAILED);
             check_true(cflow_executor_wait_idle(&executor));
             check_equal(probe.sends, (size_t)1u);
             check_equal(probe.kind, CFLOW_SCXML_CONTENT_TEXT_UTF8);
@@ -3707,7 +3707,7 @@ spec("CFlow SCXML public CMeta data model") {
                 check_true(cflow_scxml_session_get_stats(&session, &stats));
                 check_true(stats.done);
                 check_equal(cflow_scxml_session_destroy(&session),
-                            CFLOW_STATECHART_RUNTIME_OK);
+                            CFLOW_STATECHART_INSTANCE_OK);
             } else {
                 check_null(session.impl);
             }
@@ -3764,7 +3764,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta_v3(
                         &session, &config, &data, &adapters),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(probe.starts, (size_t)1u);
         check_equal(probe.kind, CFLOW_SCXML_CONTENT_CMETA);
@@ -3776,7 +3776,7 @@ spec("CFlow SCXML public CMeta data model") {
         cflow_scxml_session_cancel(&session);
         check_true(cflow_executor_wait_idle(&executor));
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3795,8 +3795,8 @@ spec("CFlow SCXML public CMeta data model") {
         cflow_scxml_program program = {0};
         cflow_scxml_diagnostic diagnostic = {0};
         cflow_statechart_instance_stats stats;
-        cflow_statechart_runtime_status init_status;
-        cflow_statechart_runtime_status destroy_status;
+        cflow_statechart_instance_status init_status;
+        cflow_statechart_instance_status destroy_status;
         const scxml_public_data initial = {
             false, 1, SCXML_PUBLIC_SOURCE_GOOD};
 
@@ -3804,20 +3804,20 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         stats = run_direct_to_idle(
             &program, initial, &init_status, &destroy_status);
-        check_equal(init_status, CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(init_status, CFLOW_STATECHART_INSTANCE_OK);
         check_true(stats.done);
         check_false(stats.errored);
-        check_equal(destroy_status, CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(destroy_status, CFLOW_STATECHART_INSTANCE_OK);
         cflow_scxml_program_destroy(&program);
 
         check_equal(compile_cmeta(session_source, &program, &diagnostic),
                     CFLOW_SCXML_OK);
         stats = run_direct_to_idle(
             &program, initial, &init_status, &destroy_status);
-        check_equal(init_status, CFLOW_STATECHART_RUNTIME_GUARD_FAILED);
+        check_equal(init_status, CFLOW_STATECHART_INSTANCE_GUARD_FAILED);
         check_false(stats.done);
         check_false(stats.errored);
-        check_equal(destroy_status, CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(destroy_status, CFLOW_STATECHART_INSTANCE_OK);
         cflow_scxml_program_destroy(&program);
     }
 
@@ -3902,14 +3902,14 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(
                         &session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&executor));
         check_true(cflow_scxml_session_get_stats(&session, &stats));
         check_true(stats.done);
         check_false(initial.enabled);
         check_equal(initial.count, 9);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -3968,7 +3968,7 @@ spec("CFlow SCXML public CMeta data model") {
             &program, &requirements));
         check_true((requirements &
                     CFLOW_SCXML_REQUIREMENT_LATE_BINDING) != 0u);
-        check_false(cflow_scxml_program_runtime_bindings(
+        check_false(cflow_scxml_program_instance_bindings(
             &program, &bindings, &binding_count));
         stats = run_to_idle(
             &program,
@@ -4041,7 +4041,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(&program, "leave", 5u, &leave));
         check_true(cflow_scxml_program_event(
             &program, "return", 6u, &return_event));
@@ -4059,7 +4059,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(stats.done);
         check_false(stats.errored);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -4132,7 +4132,7 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_scxml_program_event(&program, "leave", 5u, &leave));
         check_true(cflow_scxml_program_event(
             &program, "return", 6u, &return_event));
@@ -4150,7 +4150,7 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(stats.done);
         check_false(stats.errored);
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
     }
@@ -4212,10 +4212,10 @@ spec("CFlow SCXML public CMeta data model") {
                     CFLOW_SCXML_OK);
         check_true(cflow_executor_serial_init(&executor));
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         config.effect_capacity = 1u;
         check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                    CFLOW_STATECHART_RUNTIME_ACTION_FAILED);
+                    CFLOW_STATECHART_INSTANCE_ACTION_FAILED);
         check_null(session.impl);
         check_false(initial.enabled);
         check_equal(initial.count, 9);

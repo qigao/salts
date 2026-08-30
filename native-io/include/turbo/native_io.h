@@ -171,6 +171,9 @@ TURBO_NATIVE_IO_C_API int turbo_io_backend_release_socket(turbo_io_backend *back
  * Associates one connected byte-pipe handle with the backend. The backend
  * borrows the handle and never closes it. flags must be exactly
  * TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE; no worker fallback is selected.
+ * IOCP accepts byte-mode named-pipe handles opened with FILE_FLAG_OVERLAPPED
+ * and rejects synchronous handles. epoll and kqueue accept nonblocking byte
+ * pipe descriptors. The selected backend remains the only progress owner.
  * out_endpoint is cleared on failure.
  */
 TURBO_NATIVE_IO_C_API int turbo_io_backend_attach_pipe(turbo_io_backend *backend,

@@ -1,6 +1,6 @@
 set(TARGET_NAME turbo_cflow)
-set(CFLOW_LIBRARY_VERSION 3.0.0)
-set(CFLOW_ABI_VERSION 3)
+set(CFLOW_LIBRARY_VERSION 4.0.0)
+set(CFLOW_ABI_VERSION 4)
 
 set(CFLOW_MACHINE_MAX_STATES 65536 CACHE STRING
     "Maximum state declarations accepted by one CFlow Machine")
@@ -17,7 +17,7 @@ set(CFLOW_STATECHART_MAX_ACTION_REFS 1048576 CACHE STRING
 set(CFLOW_STATECHART_MAX_INSTANCE_BYTES 67108864 CACHE STRING
     "Maximum dynamically allocated bytes accepted by one Statechart instance")
 set(CFLOW_STATECHART_ERROR_CAPACITY 512 CACHE STRING
-    "Bytes reserved for the first owned Statechart runtime error")
+    "Bytes reserved for the first owned Statechart instance error")
 foreach(machine_limit IN ITEMS
     CFLOW_MACHINE_MAX_STATES
     CFLOW_MACHINE_MAX_EVENTS
@@ -65,33 +65,33 @@ add_library(${TARGET_NAME}
   src/graph.c
   src/interfaces.c
   src/io_actor.c
-  src/io_source.c
+  src/io_native_adapter.c
+  src/io_publisher.c
   src/io_file.c
   src/io_pipe.c
   src/io_native.c
   src/lower.c
   src/machine.c
   src/machine_hierarchy.c
-  src/machine_runtime.c
+  src/machine_instance.c
   src/opt.c
   src/plan_compile.c
   src/plan_exec.c
   src/plan_parallel_reduce.c
   src/property.c
   src/readiness.c
-  src/reactive.c
   src/relation_exec.c
-  src/runtime.c
+  src/subscription.c
   src/scheduler.c
   src/scheduler_worker.c
-  src/sources.c
+  src/publishers.c
   src/statechart.c
   src/statechart_hierarchy_adapter.c
-  src/statechart_runtime.c
+  src/statechart_instance.c
   src/status.c
   src/stream.c
   src/stream_execution.c
-  src/subrun.c
+  src/subflow.c
   src/temporal.c
   src/timer_queue.c
   src/timer_event.c
@@ -147,7 +147,7 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC TurboUtils::CMeta TurboUtils::Platform
+  PUBLIC TurboUtils::CMeta TurboUtils::NativeIO TurboUtils::Platform
   PRIVATE TurboUtils::Concurrency)
 
 install(

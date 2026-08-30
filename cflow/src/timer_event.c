@@ -1,6 +1,6 @@
 #include <cflow/timer_event.h>
 
-#include "machine_runtime_internal.h"
+#include "machine_instance_internal.h"
 #include "timer_event_internal.h"
 #include "timer_queue.h"
 

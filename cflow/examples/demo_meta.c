@@ -1,8 +1,8 @@
 #include <cmeta/meta.h>
 #include "demo_meta_schema.h"
 #include <cflow/graph.h>
-#include <cflow/runtime.h>
-#include <cflow/sources.h>
+#include <cflow/reactive.h>
+#include <cflow/publishers.h>
 #include "ops.h"
 
 #include <stdio.h>

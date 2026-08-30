@@ -229,7 +229,7 @@ static bool plan_path_supported(const cflow_subgraph *subgraph,
         if (++visited > subgraph->node_count) return false;
         node = cflow_subgraph_node(subgraph, id);
         if (!node) return false;
-        if (node->op != CFLOW_OP_SOURCE) {
+        if (node->op != CFLOW_OP_INPUT) {
             cflow_plan_opcode opcode;
             if (opcode_for(inference, node, &opcode) != CMETA_INFER_OK ||
                 node->op == CFLOW_OP_RELATION || node->subgraph_count)
@@ -263,7 +263,7 @@ static bool plan_path_mixes_slices_and_callables(
         if (!node) return false;
         if (node->op == CFLOW_OP_TAKE || node->op == CFLOW_OP_SKIP)
             saw_slice = true;
-        else if (node->op != CFLOW_OP_SOURCE)
+        else if (node->op != CFLOW_OP_INPUT)
             saw_callable = true;
         if (saw_slice && saw_callable) return true;
         if (!cflow_dense_successor_index_successor(index, id, &successor))
@@ -365,7 +365,7 @@ bool cflow_plan_compile(cflow_plan *plan,
         const cflow_node *n = cflow_subgraph_node(sg, id);
         if (!n) return plan_compile_fail(plan, &index, "invalid node id while compiling plan");
         if (stats) ++stats->graph_nodes;
-        if (n->op != CFLOW_OP_SOURCE) {
+        if (n->op != CFLOW_OP_INPUT) {
             cflow_plan_opcode op;
             cmeta_infer_status inference_status =
                 opcode_for(&inference, n, &op);

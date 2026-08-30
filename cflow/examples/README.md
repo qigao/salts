@@ -73,7 +73,7 @@ open facade -> bounded write/read-at -> drive -> terminal callbacks
 
 It requires two accepted and acknowledged operations, zero active requests, and
 zero facade operation slots before close. `destroy` owns the final handle close,
-backend identity forget, and runtime teardown.
+backend identity forget, and execution teardown.
 
 ## Host and backend capability evidence
 
@@ -86,7 +86,7 @@ unsupported contract, not missing fallback work.
 | Windows / IOCP | Example and contract test | Example and contract test using overlapped named pipes | Example and contract tests for `READ_AT`/`WRITE_AT`; flush is unsupported | Windows release job, full CTest, installed-package consumer |
 | Linux / epoll | Contract test | Contract test with nonblocking descriptors | — | Linux release and ASan lifecycle jobs |
 | Linux / poll | Example and contract test | Example and contract test | — | Linux release and ASan lifecycle jobs |
-| Linux / io_uring | Contract test when runtime initialization is permitted | Contract test when runtime initialization is permitted | Example and contract test when runtime initialization is permitted, including native flush coverage in the contract test | Linux release and ASan lifecycle jobs; unavailable kernel/policy is reported without fallback |
+| Linux / io_uring | Contract test when execution initialization is permitted | Contract test when execution initialization is permitted | Example and contract test when execution initialization is permitted, including native flush coverage in the contract test | Linux release and ASan lifecycle jobs; unavailable kernel/policy is reported without fallback |
 | macOS / kqueue | Contract test | Contract test with nonblocking descriptors | — | macOS 15 release job |
 | macOS / poll | Example and contract test | Example and contract test | — | macOS 15 release job and installed-package consumer |
 

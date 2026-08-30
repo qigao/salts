@@ -18,7 +18,7 @@ Issue #177 要求 CMeta profile 支持 SCXML `invoke/@idlocation`：只有 invoc
 
 ## 架构决策
 
-新增 `CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V3`，在 hooks 尾部追加 `on_stable_transaction`。旧 v1/v2 hook 表继续按固定前缀尺寸读取，不能因 C struct 变大而要求旧调用方提供新尾部。
+新增 `CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3`，在 hooks 尾部追加 `on_stable_transaction`。旧 v1/v2 hook 表继续按固定前缀尺寸读取，不能因 C struct 变大而要求旧调用方提供新尾部。
 
 稳定事务 context 提供：
 
@@ -42,8 +42,8 @@ Issue #177 要求 CMeta profile 支持 SCXML `invoke/@idlocation`：只有 invoc
 
 hooks 固定尺寸：
 
-- v1 prefix：`offsetof(cflow_statechart_runtime_hooks, on_event)`；兼容既有短表与旧 full-size 表；
-- v2 prefix：`offsetof(cflow_statechart_runtime_hooks, on_stable_transaction)`；
+- v1 prefix：`offsetof(cflow_statechart_instance_hooks, on_event)`；兼容既有短表与旧 full-size 表；
+- v2 prefix：`offsetof(cflow_statechart_instance_hooks, on_stable_transaction)`；
 - v3：至少为新结构完整尺寸。
 
 runtime 只能读取调用方 `struct_size` 覆盖的字段。稳定事务顺序为：

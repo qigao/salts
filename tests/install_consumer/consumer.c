@@ -147,7 +147,7 @@ int main(void) {
 #elif defined(CONSUME_CFLOW_SCXML)
 #include <cflow/executor.h>
 #include <cflow/scxml.h>
-#include <cflow/statechart_runtime.h>
+#include <cflow/statechart_instance.h>
 
 static bool installed_legacy_action(void *user, cflow_statechart_action_phase phase,
                                     cflow_machine_state_id owner, const void *state,
@@ -189,9 +189,9 @@ int main(void) {
       1u, installed_legacy_action, NULL};
   const cflow_statechart_guard_binding legacy_guard = {
       1u, installed_legacy_guard, NULL};
-  const cflow_statechart_runtime_hooks runtime_hooks = {
-      CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1,
-      sizeof(cflow_statechart_runtime_hooks), NULL, NULL};
+  const cflow_statechart_instance_hooks instance_hooks = {
+      CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1,
+      sizeof(cflow_statechart_instance_hooks), NULL, NULL};
   cflow_mailbox_status (*tagged_send)(
       cflow_statechart_instance *, const cflow_event_view *, uint64_t) =
       cflow_statechart_instance_try_send_tagged;
@@ -212,7 +212,7 @@ int main(void) {
       const cflow_scxml_limits *,
       const cflow_scxml_cmeta_compile_options_v1 *,
       cflow_scxml_diagnostic *) = cflow_scxml_compile_cmeta;
-  cflow_statechart_runtime_status (*init_cmeta)(
+  cflow_statechart_instance_status (*init_cmeta)(
       cflow_scxml_session *, const cflow_scxml_session_config *,
       const cflow_scxml_cmeta_session_options_v1 *) =
       cflow_scxml_session_init_cmeta;
@@ -245,7 +245,7 @@ int main(void) {
   cflow_scxml_status status = cflow_scxml_compile(
       &program, source, sizeof(source) - 1u, NULL, NULL);
   if (status == CFLOW_SCXML_OK &&
-      !cflow_scxml_program_runtime_bindings(
+      !cflow_scxml_program_instance_bindings(
           &program, &bindings, &binding_count)) {
     goto cleanup;
   }
@@ -294,9 +294,9 @@ int main(void) {
       .completion_capacity = 2u,
       .microstep_limit = 16u,
       .executor = &executor,
-      .runtime_hooks = &runtime_hooks};
+      .hooks = &instance_hooks};
   if (cflow_statechart_instance_init(&instance, &config) !=
-      CFLOW_STATECHART_RUNTIME_OK) {
+      CFLOW_STATECHART_INSTANCE_OK) {
     goto cleanup;
   }
   instance_initialized = true;
@@ -314,7 +314,7 @@ int main(void) {
       .microstep_limit = 16u,
       .effect_capacity = 2u};
   if (cflow_scxml_session_init(&session, &session_config) !=
-      CFLOW_STATECHART_RUNTIME_OK) {
+      CFLOW_STATECHART_INSTANCE_OK) {
     goto cleanup;
   }
   session_initialized = true;
@@ -328,12 +328,12 @@ int main(void) {
 cleanup:
   if (session_initialized &&
       cflow_scxml_session_destroy(&session) !=
-          CFLOW_STATECHART_RUNTIME_OK) {
+          CFLOW_STATECHART_INSTANCE_OK) {
     result = 1;
   }
   if (instance_initialized &&
       cflow_statechart_instance_destroy(&instance) !=
-          CFLOW_STATECHART_RUNTIME_OK) {
+          CFLOW_STATECHART_INSTANCE_OK) {
     result = 1;
   }
   if (executor_initialized) cflow_executor_destroy(&executor);
@@ -463,7 +463,7 @@ int main(void) {
 #elif defined(CONSUME_CFLOW_FS)
 #include <cflow/fs.h>
 #include <cflow/fs_watch.h>
-#include <cflow/fs_watch_source.h>
+#include <cflow/fs_watch_publisher.h>
 
 static void fs_complete(void *user, uint64_t request_id,
                         cflow_fs_operation_kind operation, int result) {
@@ -476,7 +476,7 @@ static void fs_complete(void *user, uint64_t request_id,
 int main(void) {
   cflow_fs_service service = {0};
   cflow_fs_watch watch = {0};
-  cflow_fs_watch_source_owner source_owner = {0};
+  cflow_fs_watch_publisher_owner source_owner = {0};
   cflow_fs_config config = {1u, 1u, 64u, fs_complete, NULL};
   if (watch.impl != NULL) return 1;
   if (cflow_fs_service_init(&service, &config) != 0) return 2;
@@ -486,7 +486,7 @@ int main(void) {
     if (cflow_fs_run_ready(&service, 1u, &completed) != 0) return 4;
   }
   if (cflow_fs_destroy(&service) != 0) return 5;
-  return cflow_fs_watch_source_owner_close(&source_owner) == 0 ? 0 : 6;
+  return cflow_fs_watch_publisher_owner_close(&source_owner) == 0 ? 0 : 6;
 }
 
 #elif defined(CONSUME_CFLOW_MINICORO)
@@ -502,7 +502,7 @@ int main(void) {
       "installed-minicoro", &cmeta_type_int, complete, NULL,
       0u, NULL, NULL, NULL};
   cflow_resumable resumable = {0};
-  cflow_resume_ctx context = {0};
+  cflow_publish_context context = {0};
   int output = 0;
   cflow_step step;
 

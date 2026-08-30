@@ -5,7 +5,7 @@
 
 /* Test-only observer; the owner and Source must remain live for the call. */
 turbo_readiness_registration *
-cflow_reactor_source_owner_observe_registration(
-    cflow_reactor_source_owner *owner);
+cflow_readiness_publisher_owner_observe_registration(
+    cflow_readiness_publisher_owner *owner);
 
 #endif /* CFLOW_READINESS_INTERNAL_H */

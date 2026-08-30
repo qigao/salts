@@ -4082,7 +4082,7 @@ static scxml_execute_outcome execute_invocation_lifecycle(
 
 static bool enqueue_invocation_adapter_error(
     cflow_scxml_session_impl *session,
-    const cflow_statechart_runtime_hook_context *context,
+    const cflow_statechart_instance_hook_context *context,
     cflow_scxml_adapter_status status, const char **out_error) {
     const bool null_value = false;
     const cflow_event_id id = status == CFLOW_SCXML_ADAPTER_ERROR_EXECUTION
@@ -4108,8 +4108,8 @@ static bool enqueue_invocation_adapter_error(
 
 static bool evaluate_runtime_hook_active(
     void *user, cflow_machine_state_id state, bool *out_active) {
-    const cflow_statechart_runtime_hook_context *context =
-        (const cflow_statechart_runtime_hook_context *)user;
+    const cflow_statechart_instance_hook_context *context =
+        (const cflow_statechart_instance_hook_context *)user;
     if (context == NULL || context->is_active == NULL ||
         context->configuration_user == NULL || out_active == NULL)
         return false;
@@ -4120,7 +4120,7 @@ static bool evaluate_runtime_hook_active(
 static bool evaluate_invocation_string(
     const cflow_scxml_cmeta_expr_program *program,
     cflow_scxml_session_impl *session,
-    const cflow_statechart_runtime_hook_context *context,
+    const cflow_statechart_instance_hook_context *context,
     const char **out_data, size_t *out_size) {
     cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
     cflow_scxml_cmeta_expr_value value = {0};
@@ -4141,7 +4141,7 @@ static bool evaluate_invocation_string(
 static bool evaluate_invocation_value(
     const cflow_scxml_cmeta_expr_program *program,
     cflow_scxml_session_impl *session,
-    const cflow_statechart_runtime_hook_context *context,
+    const cflow_statechart_instance_hook_context *context,
     cflow_scxml_payload_value *out) {
     cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
     cflow_scxml_cmeta_expr_value value = {0};
@@ -4157,7 +4157,7 @@ static bool evaluate_invocation_value(
 static bool materialize_invocation_payload(
     cflow_scxml_session_impl *session,
     const scxml_invocation_descriptor *invocation,
-    const cflow_statechart_runtime_hook_context *context,
+    const cflow_statechart_instance_hook_context *context,
     cflow_scxml_payload_view *out) {
     size_t index;
     if (session == NULL || session->program == NULL ||
@@ -4199,7 +4199,7 @@ static bool materialize_invocation_payload(
 static bool materialize_invocation_payload_v3(
     cflow_scxml_session_impl *session,
     const scxml_invocation_descriptor *invocation,
-    const cflow_statechart_runtime_hook_context *context,
+    const cflow_statechart_instance_hook_context *context,
     cflow_scxml_payload_view_v3 *out) {
     cflow_scxml_payload_view scalar = {0};
     if (session == NULL || invocation == NULL || context == NULL ||
@@ -4218,7 +4218,7 @@ static bool materialize_invocation_payload_v3(
 }
 
 static bool start_stable_invocations(
-    void *user, const cflow_statechart_runtime_hook_context *context,
+    void *user, const cflow_statechart_instance_hook_context *context,
     const char **out_error) {
     cflow_scxml_session_impl *session = (cflow_scxml_session_impl *)user;
     size_t index;
@@ -4485,7 +4485,7 @@ start_stable_invocations_transaction(
     const cflow_statechart_stable_transaction_context *context,
     const char **out_error) {
     cflow_scxml_session_impl *session = (cflow_scxml_session_impl *)user;
-    cflow_statechart_runtime_hook_context evaluation;
+    cflow_statechart_instance_hook_context evaluation;
     size_t index;
     bool changed = false;
     if (out_error != NULL) *out_error = NULL;
@@ -4498,7 +4498,7 @@ start_stable_invocations_transaction(
             *out_error = "SCXML invocation stable transaction is invalid";
         return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
     }
-    evaluation = (cflow_statechart_runtime_hook_context){
+    evaluation = (cflow_statechart_instance_hook_context){
         .state = context->staged_state,
         .configuration_version = context->configuration_version,
         .is_active = context->is_active,
@@ -4670,7 +4670,7 @@ start_stable_invocations_transaction(
 
 static bool execute_finalize_range(
     const scxml_block *block,
-    const cflow_statechart_runtime_hook_context *context,
+    const cflow_statechart_instance_hook_context *context,
     size_t begin, size_t end, size_t depth, const char **out_error) {
     size_t index = begin;
     if (block == NULL || context == NULL || out_error == NULL ||
@@ -4738,7 +4738,7 @@ static bool execute_finalize_range(
 
 static bool execute_invocation_finalize(
     const scxml_invocation_descriptor *descriptor,
-    const cflow_statechart_runtime_hook_context *context,
+    const cflow_statechart_instance_hook_context *context,
     const char **out_error) {
     const scxml_block *block = descriptor->finalize;
     if (block == NULL) return true;
@@ -4756,7 +4756,7 @@ static bool execute_invocation_finalize(
 
 static bool forward_external_to_invocations(
     cflow_scxml_session_impl *session,
-    const cflow_statechart_runtime_hook_context *context,
+    const cflow_statechart_instance_hook_context *context,
     const cflow_event_view *event, const char **out_error) {
     size_t index;
     for (index = 0u; index < session->program->invocation_count; ++index) {
@@ -4902,7 +4902,7 @@ static bool evaluate_hook_active(
 
 static bool bind_completion_done_data(
     cflow_scxml_session_impl *session,
-    const cflow_statechart_runtime_hook_context *context,
+    const cflow_statechart_instance_hook_context *context,
     cflow_machine_state_id completion, const char **out_error) {
     const scxml_active_query active_query = {
         context != NULL ? context->is_active : NULL,
@@ -4981,7 +4981,7 @@ static bool bind_completion_done_data(
 }
 
 static bool observe_scxml_event(
-    void *user, const cflow_statechart_runtime_hook_context *context,
+    void *user, const cflow_statechart_instance_hook_context *context,
     const cflow_statechart_observed_event *event, const char **out_error) {
     static const char external_type[] = "external";
     static const char internal_type[] = "internal";
@@ -5058,18 +5058,18 @@ static bool observe_scxml_event(
                 internal_type, sizeof(internal_type) - 1u};
     }
 
-    if (event->source_token == 0u ||
+    if (event->origin_token == 0u ||
         (event->kind != CFLOW_STATECHART_OBSERVED_EXTERNAL &&
-         (event->source_token & SCXML_EXTERNAL_METADATA_TOKEN_BIT) == 0u))
+         (event->origin_token & SCXML_EXTERNAL_METADATA_TOKEN_BIT) == 0u))
         return true;
     turbo_mutex_lock(&session->registry_lock);
-    if ((event->source_token & SCXML_EXTERNAL_METADATA_TOKEN_BIT) != 0u) {
+    if ((event->origin_token & SCXML_EXTERNAL_METADATA_TOKEN_BIT) != 0u) {
         scxml_external_event_metadata_row *row = NULL;
         bool row_data_live;
         for (index = 0u; index < session->external_metadata_capacity; ++index) {
             if (session->external_metadata_rows[index].in_use &&
                 session->external_metadata_rows[index].token ==
-                    event->source_token) {
+                    event->origin_token) {
                 row = &session->external_metadata_rows[index];
                 break;
             }
@@ -5132,7 +5132,7 @@ static bool observe_scxml_event(
             if (session->invocation_rows[index].state ==
                     SCXML_INVOCATION_ACTIVE &&
                 session->invocation_rows[index].token ==
-                    event->source_token) {
+                    event->origin_token) {
                 static const char done_prefix[] = "done.invoke.";
                 const scxml_invocation_descriptor *descriptor =
                     &session->program->invocations[index];
@@ -5185,7 +5185,7 @@ static bool observe_scxml_event(
 
 static cflow_statechart_external_preprocess_result
 preprocess_invocation_external(
-    void *user, const cflow_statechart_runtime_hook_context *context,
+    void *user, const cflow_statechart_instance_hook_context *context,
     const cflow_event_view *event, uint64_t source_token,
     const char **out_error) {
     cflow_scxml_session_impl *session = (cflow_scxml_session_impl *)user;
@@ -9282,7 +9282,7 @@ bool cflow_scxml_program_requirements(
     return true;
 }
 
-bool cflow_scxml_program_runtime_bindings(
+bool cflow_scxml_program_instance_bindings(
     const cflow_scxml_program *program,
     const cflow_statechart_executable_binding **out_bindings,
     size_t *out_count) {
@@ -9551,7 +9551,7 @@ static bool initialization_state_is_active(
     return true;
 }
 
-static cflow_statechart_runtime_status initialize_cmeta_state(
+static cflow_statechart_instance_status initialize_cmeta_state(
     const cflow_scxml_program_impl *program, const void *initial_state,
     const cflow_scxml_cmeta_expr_system_values *system_values,
     void **out_state, bool *out_managed) {
@@ -9562,20 +9562,20 @@ static cflow_statechart_runtime_status initialize_cmeta_state(
     if (program == NULL || program->cmeta_root == NULL ||
         program->cmeta_root->storage_type == NULL || initial_state == NULL ||
         system_values == NULL || out_state == NULL || out_managed == NULL)
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     type = program->cmeta_root->storage_type;
     managed = cmeta_type_require_traits(
                   type, CMETA_TRAIT_TRIVIAL_COPY |
                             CMETA_TRAIT_TRIVIAL_DESTROY) != CMETA_OK;
     state = malloc(type->size);
-    if (state == NULL) return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
+    if (state == NULL) return CFLOW_STATECHART_INSTANCE_ALLOCATION_FAILED;
     if (managed) {
         if (cmeta_type_require_traits(
                 type, CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
                           CMETA_TRAIT_DESTROY) != CMETA_OK ||
             !type->traits->copy_construct(state, initial_state)) {
             free(state);
-            return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
+            return CFLOW_STATECHART_INSTANCE_ALLOCATION_FAILED;
         }
     } else {
         memcpy(state, initial_state, type->size);
@@ -9588,12 +9588,12 @@ static cflow_statechart_runtime_status initialize_cmeta_state(
                 &diagnostic) != CFLOW_SCXML_CMETA_EXPR_OK) {
             if (managed) type->traits->destroy(state);
             free(state);
-            return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+            return CFLOW_STATECHART_INSTANCE_INVALID_CONFIGURATION;
         }
     }
     *out_state = state;
     *out_managed = managed;
-    return CFLOW_STATECHART_RUNTIME_OK;
+    return CFLOW_STATECHART_INSTANCE_OK;
 }
 
 static void destroy_initialized_cmeta_state(
@@ -9606,7 +9606,7 @@ static void destroy_initialized_cmeta_state(
     free(state);
 }
 
-static cflow_statechart_runtime_status cflow_scxml_session_init_model(
+static cflow_statechart_instance_status cflow_scxml_session_init_model(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config,
     const cflow_scxml_session_adapters_v2 *adapters,
@@ -9615,8 +9615,8 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
     cflow_scxml_session_impl *impl;
     const cflow_scxml_program_impl *program;
     cflow_statechart_instance_config native_config;
-    cflow_statechart_runtime_hooks runtime_hooks = {0};
-    cflow_statechart_runtime_status status;
+    cflow_statechart_instance_hooks instance_hooks = {0};
+    cflow_statechart_instance_status status;
     turbo_uuid_t session_uuid;
     size_t invocation_effect_capacity = 0u;
     size_t index;
@@ -9636,7 +9636,7 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
         !session_adapters_v2_valid(config, adapters) ||
         !session_adapters_v3_valid(config, adapters_v3) ||
         (adapters != NULL && adapters_v3 != NULL))
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     event_io_v2 = adapters != NULL ? adapters->event_io : NULL;
     invoke_v2 = adapters != NULL ? adapters->invoke : NULL;
     event_io_v3 = adapters_v3 != NULL ? adapters_v3->event_io : NULL;
@@ -9653,11 +9653,11 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
     if (program->data_model != data_model ||
         (data_model == SCXML_DATA_MODEL_CMETA &&
          cmeta_initial_state == NULL)) {
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     }
     if (program->late_initializer_count != 0u &&
         config->effect_capacity == 0u) {
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     }
     if ((program->requirements & CFLOW_SCXML_REQUIREMENT_EVENT_IO) != 0u) {
         if ((config->event_io == NULL && event_io_v2 == NULL &&
@@ -9666,19 +9666,19 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
             config->adapter_internal_event_capacity == 0u ||
             (event_io_capabilities &
              CFLOW_SCXML_EVENT_IO_CAP_SEND) == 0u) {
-            return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+            return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
         }
     }
     if ((program->requirements & CFLOW_SCXML_REQUIREMENT_DELAYED_SEND) != 0u &&
         (config->delayed_send_capacity == 0u ||
          (event_io_capabilities &
           CFLOW_SCXML_EVENT_IO_CAP_DELAYED_SEND) == 0u)) {
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     }
     if ((program->requirements & CFLOW_SCXML_REQUIREMENT_CANCEL) != 0u &&
         (event_io_capabilities &
          CFLOW_SCXML_EVENT_IO_CAP_CANCEL) == 0u) {
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     }
     if ((program->requirements & CFLOW_SCXML_REQUIREMENT_INVOKE) != 0u &&
         ((config->invoke == NULL && invoke_v2 == NULL &&
@@ -9690,7 +9690,7 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
           (CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL)) !=
              (CFLOW_SCXML_INVOKE_CAP_START |
               CFLOW_SCXML_INVOKE_CAP_CANCEL))) {
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     }
     for (index = 0u; index < program->invocation_count; ++index) {
         if (program->invocations[index].autoforward) {
@@ -9700,12 +9700,12 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
     }
     if (requires_forward &&
         (invoke_capabilities & CFLOW_SCXML_INVOKE_CAP_FORWARD) == 0u)
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     if ((config->invoke != NULL || invoke_v2 != NULL ||
          invoke_v3 != NULL) &&
         !checked_add(config->effect_capacity, 1u,
                      &invocation_effect_capacity))
-        return CFLOW_STATECHART_RUNTIME_LIMIT_EXCEEDED;
+        return CFLOW_STATECHART_INSTANCE_LIMIT_EXCEEDED;
     if (((program->requirements & CFLOW_SCXML_REQUIREMENT_PAYLOAD) != 0u &&
          ((event_io_v2 == NULL && event_io_v3 == NULL) ||
           (event_io_capabilities & CFLOW_SCXML_EVENT_IO_CAP_PAYLOAD) == 0u)) ||
@@ -9713,7 +9713,7 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
           CFLOW_SCXML_REQUIREMENT_INVOKE_PAYLOAD) != 0u &&
          ((invoke_v2 == NULL && invoke_v3 == NULL) ||
           (invoke_capabilities & CFLOW_SCXML_INVOKE_CAP_PAYLOAD) == 0u)))
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     if (((program->requirements & CFLOW_SCXML_REQUIREMENT_CONTENT_V3) != 0u &&
          (event_io_v3 == NULL ||
           (event_io_capabilities & CFLOW_SCXML_EVENT_IO_CAP_CONTENT_V3) == 0u)) ||
@@ -9721,9 +9721,9 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
           CFLOW_SCXML_REQUIREMENT_INVOKE_CONTENT_V3) != 0u &&
          (invoke_v3 == NULL ||
           (invoke_capabilities & CFLOW_SCXML_INVOKE_CAP_CONTENT_V3) == 0u)))
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     impl = (cflow_scxml_session_impl *)calloc(1u, sizeof(*impl));
-    if (impl == NULL) return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
+    if (impl == NULL) return CFLOW_STATECHART_INSTANCE_ALLOCATION_FAILED;
     impl->program = program;
     if (turbo_uuid_v4_generate(&session_uuid) != TURBO_OK ||
         turbo_uuid_format(
@@ -9732,7 +9732,7 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
         snprintf(impl->scxml_location, sizeof(impl->scxml_location),
                  "#_scxml_%s", impl->session_id) < 0) {
         free(impl);
-        return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+        return CFLOW_STATECHART_INSTANCE_INVALID_CONFIGURATION;
     }
     impl->system_values.session_id =
         (cflow_scxml_cmeta_expr_string_view){
@@ -9747,7 +9747,7 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
                 (char *)malloc(program->document_name_size);
             if (impl->system_name == NULL) {
                 free(impl);
-                return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
+                return CFLOW_STATECHART_INSTANCE_ALLOCATION_FAILED;
             }
             memcpy(impl->system_name, program->document_name,
                    program->document_name_size);
@@ -9812,7 +9812,7 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
          impl->late_initializers == NULL)) {
         session_free_storage(impl);
         free(impl);
-        return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
+        return CFLOW_STATECHART_INSTANCE_ALLOCATION_FAILED;
     }
     if ((impl->delayed_send_capacity != 0u &&
          impl->delayed_sends == NULL) ||
@@ -9829,13 +9829,13 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
          impl->invocation_effects == NULL)) {
         session_free_storage(impl);
         free(impl);
-        return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
+        return CFLOW_STATECHART_INSTANCE_ALLOCATION_FAILED;
     }
     turbo_mutex_init(&impl->registry_lock);
     if (impl->registry_lock == NULL) {
         session_free_storage(impl);
         free(impl);
-        return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
+        return CFLOW_STATECHART_INSTANCE_ALLOCATION_FAILED;
     }
     for (index = 0u; index < impl->binding_count; ++index) {
         impl->binding_users[index] = (scxml_session_binding_user){
@@ -9891,13 +9891,13 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
         SCXML_EXTERNAL_METADATA_TOKEN_BIT | UINT64_C(1);
     atomic_init(&impl->adapter_close_called, false);
     atomic_init(&impl->invoke_close_called, false);
-    runtime_hooks = (cflow_statechart_runtime_hooks){
+    instance_hooks = (cflow_statechart_instance_hooks){
         .abi_version =
             (program->requirements &
              CFLOW_SCXML_REQUIREMENT_INVOKE_IDLOCATION) != 0u
-                ? CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V3
-                : CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V2,
-        .struct_size = sizeof(runtime_hooks),
+                ? CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3
+                : CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2,
+        .struct_size = sizeof(instance_hooks),
         .on_stable = impl->has_invoke &&
                 (program->requirements &
                  CFLOW_SCXML_REQUIREMENT_INVOKE_IDLOCATION) == 0u
@@ -9914,7 +9914,7 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
         status = initialize_cmeta_state(
             program, cmeta_initial_state, &impl->system_values,
             &initialized_cmeta_state, &initialized_cmeta_state_managed);
-        if (status != CFLOW_STATECHART_RUNTIME_OK) {
+        if (status != CFLOW_STATECHART_INSTANCE_OK) {
             session_close_adapter(impl);
             turbo_mutex_destroy(&impl->registry_lock);
             session_free_storage(impl);
@@ -9947,12 +9947,12 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
         .effect_capacity = config->effect_capacity,
         .adapter_internal_event_capacity =
             config->adapter_internal_event_capacity,
-        .runtime_hooks = &runtime_hooks,
-        .runtime_hook_user = impl};
+        .hooks = &instance_hooks,
+        .hook_user = impl};
     status = cflow_statechart_instance_init(&impl->instance, &native_config);
     destroy_initialized_cmeta_state(
         program, initialized_cmeta_state, initialized_cmeta_state_managed);
-    if (status != CFLOW_STATECHART_RUNTIME_OK) {
+    if (status != CFLOW_STATECHART_INSTANCE_OK) {
         session_close_adapter(impl);
         turbo_mutex_destroy(&impl->registry_lock);
         session_free_storage(impl);
@@ -9960,17 +9960,17 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
         return status;
     }
     session->impl = impl;
-    return CFLOW_STATECHART_RUNTIME_OK;
+    return CFLOW_STATECHART_INSTANCE_OK;
 }
 
-cflow_statechart_runtime_status cflow_scxml_session_init(
+cflow_statechart_instance_status cflow_scxml_session_init(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config) {
     return cflow_scxml_session_init_model(
         session, config, NULL, NULL, SCXML_DATA_MODEL_NULL, NULL);
 }
 
-cflow_statechart_runtime_status cflow_scxml_session_init_cmeta(
+cflow_statechart_instance_status cflow_scxml_session_init_cmeta(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config,
     const cflow_scxml_cmeta_session_options_v1 *options) {
@@ -9979,14 +9979,14 @@ cflow_statechart_runtime_status cflow_scxml_session_init_cmeta(
             CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1 ||
         options->struct_size < sizeof(*options) ||
         options->initial_state == NULL) {
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     }
     return cflow_scxml_session_init_model(
         session, config, NULL, NULL, SCXML_DATA_MODEL_CMETA,
         options->initial_state);
 }
 
-cflow_statechart_runtime_status cflow_scxml_session_init_v2(
+cflow_statechart_instance_status cflow_scxml_session_init_v2(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config,
     const cflow_scxml_session_adapters_v2 *adapters) {
@@ -9994,7 +9994,7 @@ cflow_statechart_runtime_status cflow_scxml_session_init_v2(
         session, config, adapters, NULL, SCXML_DATA_MODEL_NULL, NULL);
 }
 
-cflow_statechart_runtime_status cflow_scxml_session_init_cmeta_v2(
+cflow_statechart_instance_status cflow_scxml_session_init_cmeta_v2(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config,
     const cflow_scxml_cmeta_session_options_v1 *options,
@@ -10004,13 +10004,13 @@ cflow_statechart_runtime_status cflow_scxml_session_init_cmeta_v2(
             CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1 ||
         options->struct_size < sizeof(*options) ||
         options->initial_state == NULL)
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     return cflow_scxml_session_init_model(
         session, config, adapters, NULL, SCXML_DATA_MODEL_CMETA,
         options->initial_state);
 }
 
-cflow_statechart_runtime_status cflow_scxml_session_init_v3(
+cflow_statechart_instance_status cflow_scxml_session_init_v3(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config,
     const cflow_scxml_session_adapters_v3 *adapters) {
@@ -10018,7 +10018,7 @@ cflow_statechart_runtime_status cflow_scxml_session_init_v3(
         session, config, NULL, adapters, SCXML_DATA_MODEL_NULL, NULL);
 }
 
-cflow_statechart_runtime_status cflow_scxml_session_init_cmeta_v3(
+cflow_statechart_instance_status cflow_scxml_session_init_cmeta_v3(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config,
     const cflow_scxml_cmeta_session_options_v1 *options,
@@ -10027,7 +10027,7 @@ cflow_statechart_runtime_status cflow_scxml_session_init_cmeta_v3(
         options->abi_version != CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1 ||
         options->struct_size < sizeof(*options) ||
         options->initial_state == NULL)
-        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+        return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     return cflow_scxml_session_init_model(
         session, config, NULL, adapters, SCXML_DATA_MODEL_CMETA,
         options->initial_state);
@@ -10297,13 +10297,13 @@ const char *cflow_scxml_session_error(
         ? cflow_statechart_instance_error(&impl->instance) : NULL;
 }
 
-cflow_statechart_runtime_status cflow_scxml_session_destroy(
+cflow_statechart_instance_status cflow_scxml_session_destroy(
     cflow_scxml_session *session) {
     cflow_scxml_session_impl *impl;
-    cflow_statechart_runtime_status status;
-    if (session == NULL) return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+    cflow_statechart_instance_status status;
+    if (session == NULL) return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     impl = (cflow_scxml_session_impl *)session->impl;
-    if (impl == NULL) return CFLOW_STATECHART_RUNTIME_OK;
+    if (impl == NULL) return CFLOW_STATECHART_INSTANCE_OK;
     cflow_statechart_instance_close(&impl->instance);
     session_close_adapter(impl);
     if (impl->has_event_io &&
@@ -10313,7 +10313,7 @@ cflow_statechart_runtime_status cflow_scxml_session_destroy(
               ? impl->event_io_v2.is_quiescent
               : impl->event_io.is_quiescent)(
             impl->adapter_user))
-        return CFLOW_STATECHART_RUNTIME_WOULD_BLOCK;
+        return CFLOW_STATECHART_INSTANCE_WOULD_BLOCK;
     if (impl->has_invoke &&
         !(impl->invoke_abi == CFLOW_SCXML_INVOKE_ADAPTER_ABI_V3
               ? impl->invoke_v3.is_quiescent
@@ -10321,14 +10321,14 @@ cflow_statechart_runtime_status cflow_scxml_session_destroy(
               ? impl->invoke_v2.is_quiescent
               : impl->invoke.is_quiescent)(
             impl->invoke_user))
-        return CFLOW_STATECHART_RUNTIME_WOULD_BLOCK;
+        return CFLOW_STATECHART_INSTANCE_WOULD_BLOCK;
     status = cflow_statechart_instance_destroy(&impl->instance);
-    if (status != CFLOW_STATECHART_RUNTIME_OK) return status;
+    if (status != CFLOW_STATECHART_INSTANCE_OK) return status;
     turbo_mutex_destroy(&impl->registry_lock);
     session_free_storage(impl);
     free(impl);
     session->impl = NULL;
-    return CFLOW_STATECHART_RUNTIME_OK;
+    return CFLOW_STATECHART_INSTANCE_OK;
 }
 
 bool cflow_scxml_program_guard_bindings(

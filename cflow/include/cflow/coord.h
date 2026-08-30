@@ -1,7 +1,7 @@
 #ifndef CFLOW_COORD_H
 #define CFLOW_COORD_H
 
-#include <cflow/runtime.h>
+#include <cflow/reactive.h>
 
 #include <stddef.h>
 

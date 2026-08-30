@@ -29,7 +29,7 @@ typedef struct adapter_runtime_fixture {
     cflow_clock statechart_clock;
     cflow_machine_hierarchy_instance machine;
     cflow_resumable machine_resumable;
-    cflow_resume_ctx machine_resume_context;
+    cflow_publish_context machine_resume_context;
     cflow_statechart_instance statechart_instance;
     adapter_callback_probe machine_probe;
     adapter_callback_probe statechart_probe;
@@ -202,13 +202,13 @@ static bool adapter_runtime_init(
         .timer_capacity = 2u};
     return cflow_statechart_instance_init(
                &fixture->statechart_instance, &statechart_config) ==
-        CFLOW_STATECHART_RUNTIME_OK;
+        CFLOW_STATECHART_INSTANCE_OK;
 }
 
 static void adapter_runtime_destroy(adapter_runtime_fixture *fixture) {
     check_equal(cflow_statechart_instance_destroy(
                     &fixture->statechart_instance),
-                CFLOW_STATECHART_RUNTIME_OK);
+                CFLOW_STATECHART_INSTANCE_OK);
     if (fixture->machine_resumable.ops != NULL) {
         fixture->machine_resumable.ops->destroy(
             fixture->machine_resumable.state);

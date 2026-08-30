@@ -15,7 +15,9 @@ extern "C" {
 enum {
     CMETA_SCHED_CAP_DELAYED      = 1u << 0,
     CMETA_SCHED_CAP_MANUAL_CLOCK = 1u << 1,
-    CMETA_SCHED_CAP_CONCURRENT   = 1u << 2
+    CMETA_SCHED_CAP_CONCURRENT   = 1u << 2,
+    /** Admission is zero-delay only and work advances only on the caller. */
+    CMETA_SCHED_CAP_CALLER_DRIVEN_ZERO_DELAY = 1u << 3
 };
 
 typedef struct cflow_scheduler_stats {
@@ -31,7 +33,7 @@ typedef struct cflow_scheduler_stats {
 } cflow_scheduler_stats;
 
 /**
- * Scheduler is a compatibility/runtime facade, not an inheritance hierarchy.
+ * Scheduler is an execution facade, not an inheritance hierarchy.
  *
  * Successful admission returns a nonzero task ID and borrows `fn` plus `user`
  * until `fn` returns or `cancel(id)` returns true. A true cancel result means
@@ -53,7 +55,7 @@ typedef struct cflow_scheduler_stats {
     X(I,R0,size_t,pending,_) \
     X(I,R0,bool,shutdown,_) \
     X(I,R1,bool,get_stats,cflow_scheduler_stats *,out) \
-    X(I,V0,void,destroy,_)
+    X(I,D0,void,destroy,_)
 
 CMETA_INTERFACE(cflow_scheduler, CMETA_SCHEDULER_METHODS);
 
@@ -68,6 +70,28 @@ bool cflow_scheduler_test_init(cflow_scheduler *scheduler);
 bool cflow_scheduler_test_init_with_capacity(cflow_scheduler *scheduler,
                                              size_t ready_capacity,
                                              size_t timer_capacity);
+/**
+ * Initialize an owning zero-delay Inline Scheduler.
+ *
+ * Accepted tasks execute exactly once before admission returns. The Scheduler
+ * has no queue or clock: nonzero delays are rejected, cancel never removes an
+ * accepted task, and drive methods report no queued work. Callers must
+ * serialize access. Task callbacks run on the posting thread and must not
+ * destroy this Scheduler before their admission call returns.
+ */
+bool cflow_scheduler_inline_init(cflow_scheduler *scheduler);
+/**
+ * Initialize an owning bounded, caller-driven, zero-delay Scheduler.
+ *
+ * Accepted tasks remain queued until run_one(), run_ready(), or
+ * run_until_idle() drives them. Nonzero delays are rejected and cancel does not
+ * remove accepted work. Callers must serialize admission, driving, shutdown,
+ * and destroy. Pending tasks are finalized by normal drain or cancelled by
+ * destroy according to the built-in Manual Executor contract.
+ */
+bool cflow_scheduler_manual_init(cflow_scheduler *scheduler);
+bool cflow_scheduler_manual_init_with_capacity(cflow_scheduler *scheduler,
+                                               size_t ready_capacity);
 bool cflow_scheduler_worker_init(cflow_scheduler *scheduler, size_t workers);
 bool cflow_scheduler_worker_init_with_capacity(cflow_scheduler *scheduler,
                                                size_t workers,

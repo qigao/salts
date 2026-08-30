@@ -14,7 +14,7 @@ typedef struct lower_ctx {
 } lower_ctx;
 
 static bool node_is_high_level(const cflow_node *node) {
-    if (!node || node->op == CFLOW_OP_SOURCE || node->op == CFLOW_OP_RELATION) return false;
+    if (!node || node->op == CFLOW_OP_INPUT || node->op == CFLOW_OP_RELATION) return false;
     const cflow_op_schema *schema = cflow_op_schema_get(node->op);
     return schema && schema->semantic && strcmp(schema->semantic, "high_level") == 0;
 }
@@ -123,21 +123,21 @@ static bool lower_zip(lower_ctx *ctx, cflow_subgraph_id *current,
     cflow_subgraph_id right = CMETA_INVALID_ID;
     if (!lower_subgraph(ctx, zip->subgraphs[0], &right)) return false;
 
-    const cmeta_type_desc *source_type = cflow_subgraph_source_type(ctx->dst, *current);
-    if (!source_type || !cmeta_type_equal(source_type,
-                                           cflow_subgraph_source_type(ctx->dst, right))) {
+    const cmeta_type_desc *input_type = cflow_subgraph_input_type(ctx->dst, *current);
+    if (!input_type || !cmeta_type_equal(input_type,
+                                           cflow_subgraph_input_type(ctx->dst, right))) {
         ctx->error = "ZIP branches do not share one root source type";
         return false;
     }
 
-    cflow_subgraph_id combined = cflow_graph_create_subgraph(ctx->dst, source_type);
+    cflow_subgraph_id combined = cflow_graph_create_subgraph(ctx->dst, input_type);
     if (combined == CMETA_INVALID_ID) {
         ctx->error = ctx->dst->error ? ctx->dst->error : "ZIP lowering subgraph allocation failed";
         return false;
     }
     cflow_subgraph_id branches[2] = { *current, right };
     cflow_node_id rel = CMETA_INVALID_ID;
-    if (!cflow_graph_create_relation_node(ctx->dst, combined, source_type,
+    if (!cflow_graph_create_relation_node(ctx->dst, combined, input_type,
                                           branches, 2u,
                                           cflow_relation_all_invoke(), zip->fn,
                                           &rel)) {
@@ -174,7 +174,7 @@ static bool lower_subgraph(lower_ctx *ctx, cflow_subgraph_id src_id,
         return false;
     }
     const cflow_node *entry = cflow_subgraph_node(src_sg, src_sg->entry);
-    if (!entry || entry->op != CFLOW_OP_SOURCE) {
+    if (!entry || entry->op != CFLOW_OP_INPUT) {
         ctx->error = "normalized Subgraph must start at SOURCE";
         return false;
     }
@@ -214,7 +214,7 @@ static bool lower_subgraph(lower_ctx *ctx, cflow_subgraph_id src_id,
             goto done;
         } else if (node->op == CFLOW_OP_RELATION) {
             if (!append_relation_node(ctx, current, node)) goto done;
-        } else if (node->op == CFLOW_OP_SOURCE) {
+        } else if (node->op == CFLOW_OP_INPUT) {
             ctx->error = "SOURCE may only be a Subgraph entry";
             goto done;
         } else {

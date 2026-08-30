@@ -2,7 +2,7 @@
 #define _GNU_SOURCE
 #endif
 
-#include "cflow_native_example_runtime.h"
+#include "cflow_native_example_context.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -172,7 +172,7 @@ static void cflow_pipe_example_release(void *user) {
 
 int main(void) {
     static const unsigned char payload = 0x50u;
-    cflow_native_example_runtime runtime;
+    cflow_native_example_context context;
     cflow_example_pipe pipes[2] = {
         CFLOW_EXAMPLE_INVALID_PIPE, CFLOW_EXAMPLE_INVALID_PIPE};
     cflow_pipe_example_operation read_operation = {0};
@@ -195,8 +195,8 @@ int main(void) {
                 "support; no fallback was attempted\n");
         return CFLOW_PIPE_EXAMPLE_SKIP;
     }
-    status = cflow_native_example_runtime_init(
-        &runtime, cflow_pipe_example_backend(),
+    status = cflow_native_example_context_init(
+        &context, cflow_pipe_example_backend(),
         cflow_io_native_backend_pipe_actor_ops());
     if (status == TURBO_ENOTSUP) {
         fprintf(stderr,
@@ -207,7 +207,7 @@ int main(void) {
     if (status != TURBO_OK) {
         fprintf(stderr, "native pipe example: backend init failed: %d\n",
                 status);
-        (void)cflow_native_example_destroy_runtime(&runtime);
+        (void)cflow_native_example_destroy_context(&context);
         return result;
     }
     status = cflow_pipe_example_pair(pipes);
@@ -234,9 +234,9 @@ int main(void) {
     write_token = (cflow_io_operation){
         &write_operation, cflow_pipe_example_release};
     read_result = cflow_io_actor_try_submit(
-        &runtime.actor, 11u, &read_token);
+        &context.actor, 11u, &read_token);
     write_result = cflow_io_actor_try_submit(
-        &runtime.actor, 12u, &write_token);
+        &context.actor, 12u, &write_token);
     if (read_result.status != CFLOW_IO_SUBMIT_ACCEPTED ||
         write_result.status != CFLOW_IO_SUBMIT_ACCEPTED) {
         fprintf(stderr,
@@ -246,26 +246,26 @@ int main(void) {
         goto cleanup;
     }
     status = cflow_native_example_drive_until(
-        &runtime, CFLOW_NATIVE_EXAMPLE_CAPACITY);
+        &context, CFLOW_NATIVE_EXAMPLE_CAPACITY);
     if (status != TURBO_OK) {
         fprintf(stderr, "native pipe example: completion drain failed: %d\n",
                 status);
         goto cleanup;
     }
-    for (size_t index = 0u; index < runtime.log.count; ++index) {
-        if (runtime.log.completions[index].kind != CFLOW_IO_COMPLETION_OK ||
-            runtime.log.completions[index].bytes != sizeof(payload)) {
+    for (size_t index = 0u; index < context.log.count; ++index) {
+        if (context.log.completions[index].kind != CFLOW_IO_COMPLETION_OK ||
+            context.log.completions[index].bytes != sizeof(payload)) {
             fprintf(stderr,
                     "native pipe example: unexpected completion kind=%d "
                     "bytes=%zu\n",
-                    (int)runtime.log.completions[index].kind,
-                    runtime.log.completions[index].bytes);
+                    (int)context.log.completions[index].kind,
+                    context.log.completions[index].bytes);
             goto cleanup;
         }
     }
     if (received != payload || read_operation.released != 1u ||
         write_operation.released != 1u ||
-        !cflow_io_actor_get_stats(&runtime.actor, &actor_stats) ||
+        !cflow_io_actor_get_stats(&context.actor, &actor_stats) ||
         actor_stats.active_requests != 0u ||
         actor_stats.accepted != actor_stats.acknowledged) {
         fprintf(stderr,
@@ -283,7 +283,7 @@ int main(void) {
 cleanup:
     require_retained_identity = success;
     if (!success) {
-        status = cflow_native_example_close_actor(&runtime);
+        status = cflow_native_example_close_actor(&context);
         if (status != TURBO_OK)
             fprintf(stderr,
                     "native pipe example: Actor cleanup failed: %d\n",
@@ -295,7 +295,7 @@ cleanup:
             cflow_pipe_example_close(pipes[index]);
             pipes[index] = CFLOW_EXAMPLE_INVALID_PIPE;
             status = cflow_io_native_backend_forget_pipe(
-                &runtime.backend, identity);
+                &context.backend, identity);
             if (status != TURBO_OK &&
                 (require_retained_identity || status != TURBO_ENOENT)) {
                 fprintf(stderr,
@@ -305,15 +305,15 @@ cleanup:
             }
         }
     }
-    status = cflow_native_example_close_actor(&runtime);
+    status = cflow_native_example_close_actor(&context);
     if (status != TURBO_OK) {
         fprintf(stderr, "native pipe example: Actor close failed: %d\n",
                 status);
         success = false;
     }
-    status = cflow_native_example_destroy_runtime(&runtime);
+    status = cflow_native_example_destroy_context(&context);
     if (status != TURBO_OK) {
-        fprintf(stderr, "native pipe example: runtime destroy failed: %d\n",
+        fprintf(stderr, "native pipe example: context destroy failed: %d\n",
                 status);
         success = false;
     }

@@ -2,7 +2,7 @@
 #define CFLOW_TIMER_EVENT_H
 
 #include <cflow/clock.h>
-#include <cflow/machine_runtime.h>
+#include <cflow/machine_instance.h>
 
 #include <stdbool.h>
 #include <stddef.h>

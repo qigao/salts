@@ -1,7 +1,7 @@
 #include <cflow/cflow.h>
 #include <turbo/thread.h>
 
-#include "runtime_internal.h"
+#include "subscription_internal.h"
 #include "tinytest.h"
 
 #include <stdatomic.h>
@@ -46,7 +46,7 @@ typedef struct execution_destroy_release_args {
 } execution_destroy_release_args;
 
 typedef struct execution_destroy_probe_source {
-    cflow_run *run;
+    cflow_subscription *run;
     bool active_during_destroy;
 } execution_destroy_probe_source;
 
@@ -70,7 +70,7 @@ static const cmeta_type_desc *execution_destroy_probe_type(void *state) {
 }
 
 static cflow_step execution_destroy_probe_resume(
-    void *state, cflow_resume_ctx *ctx, void *out_value) {
+    void *state, cflow_publish_context *ctx, void *out_value) {
     (void)state;
     (void)ctx;
     (void)out_value;
@@ -86,7 +86,7 @@ static void execution_destroy_probe_destroy(void *state) {
         (execution_destroy_probe_source *)state;
     if (source != NULL)
         source->active_during_destroy =
-            cflow_run_active_on_current_thread(source->run);
+            cflow_subscription_active_on_current_thread(source->run);
 }
 
 static void execution_destroy_probe_bind(void *state, cflow_waker waker) {
@@ -94,14 +94,14 @@ static void execution_destroy_probe_bind(void *state, cflow_waker waker) {
     (void)waker;
 }
 
-static cflow_source_terminal execution_destroy_probe_poll(
+static cflow_publisher_terminal execution_destroy_probe_poll(
     void *state, const char **error) {
     (void)state;
     if (error != NULL) *error = NULL;
-    return CFLOW_SOURCE_OPEN;
+    return CFLOW_PUBLISHER_OPEN;
 }
 
-CMETA_IMPLEMENTS(cflow_source, execution_destroy_probe, 0,
+CMETA_IMPLEMENTS(cflow_publisher, execution_destroy_probe, 0,
     .name = execution_destroy_probe_name,
     .output_type = execution_destroy_probe_type,
     .resume = execution_destroy_probe_resume,
@@ -278,30 +278,30 @@ suite("CFlow Stream execution") {
         cflow_graph surface = {0};
         cflow_graph normalized = {0};
         cflow_scheduler workers = {0};
-        cflow_run run = {0};
+        cflow_subscription run = {0};
         execution_destroy_probe_source source_state = {&run, false};
         execution_destroy_probe_sink sink_state = {0};
-        cflow_source source =
-            execution_destroy_probe_as_cflow_source(&source_state);
-        cflow_sink_callbacks callbacks = {
+        cflow_publisher source =
+            execution_destroy_probe_as_cflow_publisher(&source_state);
+        cflow_subscriber_callbacks callbacks = {
             execution_destroy_probe_value,
             execution_destroy_probe_error,
             execution_destroy_probe_done,
             &sink_state
         };
-        cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+        cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
 
         normalized.root = CMETA_INVALID_ID;
         cflow_graph_init(&surface, &cmeta_type_int);
         check_true(cflow_graph_normalize(&normalized, &surface));
         check_true(cflow_scheduler_worker_init(&workers, 1u));
-        check_true(cflow_run_open(
+        check_true(cflow_subscribe(
             &run, &normalized, &source, &workers, &sink));
-        check_true(cflow_run_request(&run, 1u));
+        check_true(cflow_subscription_request(&run, 1u));
         check_true(cflow_scheduler_wait_idle(&workers));
         check_equal(atomic_load(&sink_state.done), 1);
 
-        cflow_run_close(&run);
+        cflow_subscription_close(&run);
         check_true(source_state.active_during_destroy);
 
         cflow_scheduler_destroy(&workers);

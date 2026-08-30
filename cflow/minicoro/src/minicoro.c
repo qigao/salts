@@ -40,7 +40,7 @@ struct cflow_minicoro {
     const cmeta_type_desc *output_type;
     cflow_minicoro_entry_fn entry;
     void *user;
-    cflow_resume_ctx *resume_context;
+    cflow_publish_context *resume_context;
     const void *pending_value;
     cflow_waitable pending_waitable;
     const char *error;
@@ -129,7 +129,7 @@ static void minicoro_entry(mco_coro *frame) {
 }
 
 static cflow_step minicoro_resume(void *state,
-                                  cflow_resume_ctx *context,
+                                  cflow_publish_context *context,
                                   void *out_value) {
     cflow_minicoro *coroutine = (cflow_minicoro *)state;
     cflow_minicoro_signal signal;
@@ -348,7 +348,7 @@ bool cflow_minicoro_fail(cflow_minicoro *coroutine,
     return minicoro_suspend(coroutine, CFLOW_MINICORO_SIGNAL_ERROR);
 }
 
-cflow_resume_ctx *cflow_minicoro_resume_context(
+cflow_publish_context *cflow_minicoro_resume_context(
     cflow_minicoro *coroutine) {
     return coroutine != NULL && coroutine->running
                ? coroutine->resume_context

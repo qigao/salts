@@ -26,12 +26,12 @@
 ### Task 1: Add native stable transaction hook ABI v3
 
 **Files:**
-- Modify: `cflow/include/cflow/statechart_runtime.h`
-- Modify: `cflow/src/statechart_runtime.c`
-- Modify: `cflow/tests/cflow_statechart_runtime_test.c`
+- Modify: `cflow/include/cflow/statechart_instance.h`
+- Modify: `cflow/src/statechart_instance.c`
+- Modify: `cflow/tests/cflow_statechart_instance_test.c`
 
 1. Add red TinyTest coverage for old v1/v2 prefix compatibility, valid/invalid v3 shapes, NOOP, COMMIT, FATAL, invalid staged work, effect commit/discard order, cancellation winner, and managed-state lifetime.
-2. Append `CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V3`, the stable transaction result/context/callback types, and `on_stable_transaction` without changing existing field order.
+2. Append `CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3`, the stable transaction result/context/callback types, and `on_stable_transaction` without changing existing field order.
 3. Replace `sizeof(current-struct)` validation for old versions with fixed prefix-size validation and field-presence-safe copying.
 4. Implement the stable transaction using existing staging buffers, `stage_internal_event`, `stage_external_effect`, `commit_*`, `discard_*`, and managed-value helpers. Publish under the instance lock; commit tickets after unlock.
 5. Prove old v1/v2 paths do not add copies, version changes, events, or effects.

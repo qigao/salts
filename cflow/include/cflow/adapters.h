@@ -1,7 +1,7 @@
 #ifndef CFLOW_ADAPTERS_H
 #define CFLOW_ADAPTERS_H
 
-#include <cflow/runtime.h>
+#include <cflow/reactive.h>
 #include <cflow/status.h>
 #include <cflow/stream.h>
 #include <cmeta/collector.h>
@@ -29,10 +29,10 @@ typedef struct cflow_find_result {
 /**
  * Allocation-free collection outcome. It owns no resources.
  *
- * status classifies CFlow admission or Runtime execution. collector_status,
+ * status classifies Reactive admission or Subscription execution. collector_status,
  * collector_state, and count are the exact final CMeta transaction snapshot.
- * A Runtime failure can therefore coexist with CMETA_CALLBACK_ERROR after the
- * Runtime aborts an otherwise healthy collector.
+ * A Subscription failure can therefore coexist with CMETA_CALLBACK_ERROR
+ * after Reactive execution aborts an otherwise healthy Collector.
  */
 typedef struct cflow_collect_result {
     cflow_status status;
@@ -48,9 +48,10 @@ bool cflow_collect_result_is_ok(cflow_collect_result result);
  * sequential compiled Plans may additionally return COPY/MOVE/DESTROY values.
  * cflow_result_destroy() applies the result type's lifecycle when required. */
 
-/* Byte collection is a façade over the unified resumable runtime. Structured
- * variants classify source admission, trivial-storage admission, allocation,
- * capacity, and Runtime failure without retaining borrowed diagnostics. They
+/* Byte collection is a façade over Reactive Subscription execution. Structured
+ * variants classify Publisher admission, trivial-storage admission,
+ * allocation, capacity, and Subscription failure without retaining borrowed
+ * diagnostics. They
  * always zero out on entry and transfer owned bytes only on success. */
 cflow_status_result cflow_eval_array_result(
     const cflow_graph *graph,
@@ -89,11 +90,11 @@ bool cflow_eval_stream_limit(const cflow_stream *stream,
 
 /*
  * Evaluate a bound Stream directly into a zero-state transactional CMeta
- * collector. The collector owns its output transaction; any runtime or
+ * collector. The collector owns its output transaction; any Subscription or
  * collector failure aborts it. cflow_eval_collect_result() preserves the
  * CFlow outcome and the exact final Collector transaction as separate status
  * domains. out_error receives a borrowed diagnostic when non-NULL and must
- * not be freed or retained beyond the source's documented lifetime.
+ * not be freed or retained beyond the Publisher's documented lifetime.
  * Deterministic Range admission failures terminate the collector before begin
  * without invoking its abort callback.
  * Interpreted streams may carry managed COPY/MOVE/DESTROY values through their
@@ -114,11 +115,11 @@ bool cflow_eval_collect(const cflow_stream *stream,
 
 /* Synchronous bound-Stream terminals. Scalar outputs are reset to zero on
  * entry and receive their terminal value only on success. any_match/all_match
- * validate their typed predicate before source admission. any_match,
+ * validate their typed predicate before Publisher admission. any_match,
  * all_match, and find_first short-circuit the current
- * Run when their result becomes final. out_error is optional, borrowed, and
+ * Subscription when their result becomes final. out_error is optional, borrowed, and
  * must not be freed; library diagnostics have static storage while source
- * diagnostics retain the source's documented lifetime.
+ * diagnostics retain the Publisher's documented lifetime.
  *
  * stream borrows a reusable bound Stream for the complete call. count returns
  * zero for empty input. any_match returns false and all_match returns true for
@@ -126,7 +127,7 @@ bool cflow_eval_collect(const cflow_stream *stream,
  * receives user and a callback-duration borrowed value. Every function returns
  * true only after a normal terminal result or its own successful short circuit;
  * invalid arguments, type mismatch, unsupported lifecycle, allocation,
- * callback, source, and Runtime errors return false.
+ * callback, Publisher, and Subscription errors return false.
  *
  * Example:
  *   size_t n = 0; const char *error = NULL;
@@ -151,7 +152,7 @@ bool cflow_stream_for_each(const cflow_stream *stream,
                            const char **out_error);
 
 /* Structured terminal variants classify failures without retaining borrowed
- * Runtime diagnostics. Use cflow_status_result_message() for canonical static
+ * Subscription diagnostics. Use cflow_status_result_message() for canonical static
  * text. Value outputs follow the same zero-on-failure contract as the legacy
  * bool variants above. The returned Result owns no resources. */
 cflow_status_result cflow_stream_count_result(

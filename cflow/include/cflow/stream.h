@@ -37,7 +37,7 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
 /* Explicit-self ISO C11 fluent Graph builder for modern typed collection
  * operations. This is not a single-use traversal object or a compatibility
  * implementation of another language's Stream contract. Operators append to
- * this Graph; each evaluation creates independent runtime state. A bound Range
+ * this Graph; each evaluation creates independent execution state. A bound Range
  * may be evaluated repeatedly only when its own REUSABLE contract permits it.
  *
  * Public field policy:
@@ -45,12 +45,12 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
  *   explicit-self invocation fields; initialization owns their values;
  * - graph is read-only advanced introspection, preferably obtained through
  *   cflow_stream_graph();
- * - source_range, has_source_range, eval_options, and failed are internal
+ * - input_range, has_input_range, eval_options, and failed are internal
  *   execution-admission state and must not be read or written directly. */
 struct cflow_stream {
     cflow_graph graph;
-    cmeta_range source_range;
-    bool has_source_range;
+    cmeta_range input_range;
+    bool has_input_range;
     cflow_eval_options eval_options;
     bool failed;
 #define CFLOW_OP_ROW(E, method, margc, fnarg, subgrapharg, farity, p0, p1, p2, ret, out, card, subgraphrule, semantic, intrinsic_effects) \
@@ -63,7 +63,7 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
     cflow_stream_slice_method sorted;
 };
 
-cflow_stream *cflow_stream_init(cflow_stream *s, const cmeta_type_desc *source_type);
+cflow_stream *cflow_stream_init(cflow_stream *s, const cmeta_type_desc *input_type);
 cflow_stream *cflow_stream_from_range(cflow_stream *s, cmeta_range range);
 cflow_stream *cflow_stream_from_range_with_options(
     cflow_stream *s, cmeta_range range, const cflow_eval_options *options);

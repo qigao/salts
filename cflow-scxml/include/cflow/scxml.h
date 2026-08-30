@@ -3,7 +3,7 @@
 
 #include <cflow/event.h>
 #include <cflow/statechart.h>
-#include <cflow/statechart_runtime.h>
+#include <cflow/statechart_instance.h>
 #include <cmeta/data.h>
 #include <xml_parser/xml_parser.h>
 
@@ -617,7 +617,7 @@ const void *cflow_scxml_program_initial_state(
     const cflow_scxml_program *program);
 
 /**
- * Construct a borrowed null-data-model Event view by name. The CFlow runtime
+ * Construct a borrowed null-data-model Event view by name. The Statechart instance
  * copies the payload during successful mailbox admission.
  */
 bool cflow_scxml_program_event(const cflow_scxml_program *program,
@@ -643,7 +643,7 @@ bool cflow_scxml_program_requirements(
  * program-level rows.
  * Invalid arguments return false without modifying either output.
  */
-bool cflow_scxml_program_runtime_bindings(
+bool cflow_scxml_program_instance_bindings(
     const cflow_scxml_program *program,
     const cflow_statechart_executable_binding **out_bindings,
     size_t *out_count);
@@ -673,41 +673,41 @@ bool cflow_scxml_program_guard_bindings(
  * program requirements before attachment. The program, executor, and adapter
  * user remain borrowed until successful session destruction.
  */
-cflow_statechart_runtime_status cflow_scxml_session_init(
+cflow_statechart_instance_status cflow_scxml_session_init(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config);
 
 /**
  * Initialize a CMeta program session from one call-scoped initial object.
  * The session copies the document name and generates an immutable UUID string
- * for `_sessionid` before attaching the native runtime.
+ * for `_sessionid` before attaching the native Statechart instance.
  */
-cflow_statechart_runtime_status cflow_scxml_session_init_cmeta(
+cflow_statechart_instance_status cflow_scxml_session_init_cmeta(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config,
     const cflow_scxml_cmeta_session_options_v1 *options);
 
 /** Initialize a null-data-model session with opt-in payload-aware adapters. */
-cflow_statechart_runtime_status cflow_scxml_session_init_v2(
+cflow_statechart_instance_status cflow_scxml_session_init_v2(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config,
     const cflow_scxml_session_adapters_v2 *adapters);
 
 /** Initialize a CMeta session with opt-in payload-aware adapters. */
-cflow_statechart_runtime_status cflow_scxml_session_init_cmeta_v2(
+cflow_statechart_instance_status cflow_scxml_session_init_cmeta_v2(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config,
     const cflow_scxml_cmeta_session_options_v1 *options,
     const cflow_scxml_session_adapters_v2 *adapters);
 
 /** Initialize a null-data-model session with content-aware adapters. */
-cflow_statechart_runtime_status cflow_scxml_session_init_v3(
+cflow_statechart_instance_status cflow_scxml_session_init_v3(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config,
     const cflow_scxml_session_adapters_v3 *adapters);
 
 /** Initialize a CMeta session with content-aware adapters. */
-cflow_statechart_runtime_status cflow_scxml_session_init_cmeta_v3(
+cflow_statechart_instance_status cflow_scxml_session_init_cmeta_v3(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config,
     const cflow_scxml_cmeta_session_options_v1 *options,
@@ -789,7 +789,7 @@ const char *cflow_scxml_session_error(
  * `WOULD_BLOCK` while the adapter reports non-quiescent and preserves the
  * owning handle for a later retry.
  */
-cflow_statechart_runtime_status cflow_scxml_session_destroy(
+cflow_statechart_instance_status cflow_scxml_session_destroy(
     cflow_scxml_session *session);
 
 #ifdef __cplusplus

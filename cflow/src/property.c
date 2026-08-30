@@ -50,7 +50,7 @@ static cmeta_properties node_props_rec(const cflow_graph *g,
                                         unsigned char *state,
                                         cmeta_properties *memo) {
     if (!g || !node) return CMETA_PROP_NONE;
-    if (node->op == CFLOW_OP_SOURCE)
+    if (node->op == CFLOW_OP_INPUT)
         return CMETA_PROP_DETERMINISTIC | CMETA_PROP_TOTAL | CMETA_PROP_IDEMPOTENT;
 
     if (node->op == CFLOW_OP_RELATION) {
@@ -108,7 +108,7 @@ static cmeta_properties subgraph_props_rec(const cflow_graph *g,
     cmeta_properties sole = CMETA_PROP_NONE;
     for (size_t i = 0; i < sg->node_count; ++i) {
         const cflow_node *n = &sg->nodes[i];
-        if (n->op == CFLOW_OP_SOURCE) continue;
+        if (n->op == CFLOW_OP_INPUT) continue;
         cmeta_properties np = node_props_rec(g, n, state, memo);
         p &= np & COMPOSABLE;
         ++semantic_nodes;

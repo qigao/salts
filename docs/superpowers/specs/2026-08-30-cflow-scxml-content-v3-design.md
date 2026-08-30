@@ -105,4 +105,3 @@ content behavior remains unchanged, and inline/structured programs fail fast
 without v3. This implements the selected bounded SCXML content profile; it
 does not claim arbitrary executable DOM mutation, script objects, or an
 unbounded XML data model.
-

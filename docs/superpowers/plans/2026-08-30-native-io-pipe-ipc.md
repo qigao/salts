@@ -397,7 +397,7 @@ git commit -m "feat(native-io): add bounded IPC rendezvous control plane"
   existing windowed Source drive callback.
 - Produces: one-Actor bounded request bridge and owner-thread observation.
 
-- [ ] **Step 1: Add failing bridge lifecycle tests**
+- [x] **Step 1: Add failing bridge lifecycle tests**
 
 Use a real local socket/pipe fixture and a manual Executor. Cover Actor submit,
 NativeIO submit failure, terminal delivery, cancellation, acknowledgement,
@@ -405,20 +405,20 @@ capacity, stale Actor completion, second-Actor rejection, close/drain, and
 operation release callback count. Assert every accepted operation releases
 exactly once.
 
-- [ ] **Step 2: Add a failing windowed Source integration test**
+- [x] **Step 2: Add a failing windowed Source integration test**
 
 Construct `cflow_source_from_io_actor_windowed()` with an adapter drive callback.
 Request bounded demand, verify WAIT/wake/value/EOF, cancel the Run while native
 I/O is pending, and check shutdown ordering.
 
-- [ ] **Step 3: Implement fixed bridge storage**
+- [x] **Step 3: Implement fixed bridge storage**
 
 At init, allocate exactly `backend.request_capacity` bridge records and one
 completion batch. A bridge stores Actor pointer, Actor request ID, NativeIO
 request handle, original operation pointer, slot generation, and phase. Encode
 `index + 1` in copied NativeIO `user_data`; validate phase before completing.
 
-- [ ] **Step 4: Implement Actor backend strategy**
+- [x] **Step 4: Implement Actor backend strategy**
 
 Submit binds the first Actor and rejects another Actor. It reserves a bridge,
 copies `turbo_io_operation`, replaces only the copied `user_data`, and calls
@@ -426,7 +426,7 @@ NativeIO submit. Failure releases the bridge before returning. Cancel locates
 the bound Actor request and calls NativeIO cancel; terminal status remains
 unknown until observe.
 
-- [ ] **Step 5: Implement observe and lifecycle forwarding**
+- [x] **Step 5: Implement observe and lifecycle forwarding**
 
 Observe a fixed batch, translate each completion to
 `cflow_io_actor_complete()`, update UDP address length when applicable, release
@@ -434,7 +434,7 @@ the bridge once, and count Actor-stale completions. Forward endpoint attach,
 release, close, stats, and destroy while enforcing the same owner-thread
 contract in documentation and tests.
 
-- [ ] **Step 6: Link CFlow publicly to NativeIO and run focused tests**
+- [x] **Step 6: Link CFlow publicly to NativeIO and run focused tests**
 
 Because the public adapter header names NativeIO types, link
 `TurboUtils::CFlow` PUBLIC to `TurboUtils::NativeIO`. Build and run:
@@ -542,7 +542,7 @@ and keep #168 open.
 - Produces: separated Pipe tables, layer ratios, installation evidence, and
   issue checklist evidence.
 
-- [ ] **Step 1: Add correctness gates before timing**
+- [x] **Step 1: Add correctness gates before timing**
 
 Each benchmark validates full payload, byte count, EOF/error semantics,
 completion identity, zero rejections, zero stale completions, and quiescent
@@ -560,7 +560,7 @@ payload through partial one-shot operations. Required columns are p50/p95/p99,
 ops/s, MiB/s, CPU, errors, rejections, stale completions, submit, observe,
 Actor transition, Executor delivery, and acknowledgement time.
 
-- [ ] **Step 3: Gate benchmark CI by affected paths**
+- [x] **Step 3: Gate benchmark CI by affected paths**
 
 Run direct NativeIO rows when `native-io/**` or the benchmark workflow changes.
 Run adapted rows when `native-io/**`, `cflow/**`, or the workflow changes. Do

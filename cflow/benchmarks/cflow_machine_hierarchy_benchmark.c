@@ -82,7 +82,7 @@ suite("CFlow hierarchical Machine Release benchmarks") {
         cflow_clock clock = {0};
         cflow_resumable flat_resumable = {0};
         cflow_resumable hierarchy_resumable = {0};
-        cflow_resume_ctx context = {0};
+        cflow_publish_context context = {0};
         cflow_step step;
         const int initial_state = 0;
         const bool payload = true;
@@ -114,7 +114,7 @@ suite("CFlow hierarchical Machine Release benchmarks") {
         };
         check_equal(cflow_machine_instance_init(
                         &flat_instance, &flat_config),
-                    CFLOW_MACHINE_RUNTIME_OK);
+                    CFLOW_MACHINE_INSTANCE_OK);
         hierarchy_config = (cflow_machine_hierarchy_instance_config){
             &hierarchy, &initial_state, &cmeta_type_int,
             NULL, 0u, NULL, 0u,
@@ -135,7 +135,7 @@ suite("CFlow hierarchical Machine Release benchmarks") {
             hierarchy_resumable.state, &context, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
 
-        benchmark_ops("flat Machine runtime transitions",
+        benchmark_ops("flat Machine instance transitions",
                       CFLOW_HIERARCHY_BENCH_RUN_SAMPLES,
                       CFLOW_HIERARCHY_BENCH_EVENTS) {
             for (index = 0u; index < CFLOW_HIERARCHY_BENCH_EVENTS; ++index) {

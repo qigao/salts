@@ -17,7 +17,7 @@ static const cmeta_type_desc *adapter_source_type(void *state) {
 }
 
 static cflow_step adapter_source_resume(void *state,
-                                        cflow_resume_ctx *context,
+                                        cflow_publish_context *context,
                                         void *out_value) {
     (void)state;
     (void)context;
@@ -37,14 +37,14 @@ static void adapter_source_bind(void *state, cflow_waker waker) {
     (void)waker;
 }
 
-static cflow_source_terminal adapter_source_poll(void *state,
+static cflow_publisher_terminal adapter_source_poll(void *state,
                                                  const char **error) {
     if (error) *error = NULL;
-    return state ? CFLOW_SOURCE_OPEN : CFLOW_SOURCE_ERROR;
+    return state ? CFLOW_PUBLISHER_OPEN : CFLOW_PUBLISHER_ERROR;
 }
 
-CMETA_IMPLEMENTS(cflow_source, adapter_source_probe_interface,
-    CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES,
+CMETA_IMPLEMENTS(cflow_publisher, adapter_source_probe_interface,
+    CFLOW_PUBLISHER_CAP_CONSTRUCTS_VALUES,
     .name = adapter_source_name,
     .output_type = adapter_source_type,
     .resume = adapter_source_resume,
@@ -59,8 +59,8 @@ spec("CFlow synchronous adapter Source ownership") {
         adapter_source_probe probe = {0};
         cflow_graph graph = {0};
         cflow_graph normalized = {0};
-        cflow_source source =
-            adapter_source_probe_interface_as_cflow_source(&probe);
+        cflow_publisher source =
+            adapter_source_probe_interface_as_cflow_publisher(&probe);
         const cflow_graph *executable = &graph;
 
         cflow_graph_init(&graph, &cmeta_type_int);
@@ -70,7 +70,7 @@ spec("CFlow synchronous adapter Source ownership") {
         check_false(cflow_adapter_prepare_owned_source_graph(
             &normalized, &graph, &source, &executable));
         check_equal(probe.destroys, (size_t)1u);
-        check_false(cflow_source_valid(&source));
+        check_false(cflow_publisher_valid(&source));
         check_null(executable);
 
         cflow_graph_destroy(&normalized);

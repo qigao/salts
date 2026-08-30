@@ -272,11 +272,11 @@ static cflow_statechart_instance_stats run_managed_foreach(
     }
     check_true(cflow_executor_serial_init(&executor));
     check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
-                CFLOW_STATECHART_RUNTIME_OK);
+                CFLOW_STATECHART_INSTANCE_OK);
     check_true(cflow_executor_wait_idle(&executor));
     check_true(cflow_scxml_session_get_stats(&session, &stats));
     check_equal(cflow_scxml_session_destroy(&session),
-                CFLOW_STATECHART_RUNTIME_OK);
+                CFLOW_STATECHART_INSTANCE_OK);
     cflow_executor_destroy(&executor);
     managed_root_destroy(&initial);
     return stats;

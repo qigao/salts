@@ -260,7 +260,7 @@ suite("CFlow Direct executor") {
     check_true(cflow_direct_test_pipeline_build(&generated));
     check_true(cflow_aot_pipeline_ir_match_graph(ir, &generated.graph, &witness, &error));
     check_null(error);
-    check_equal(witness.source_graph_version, generated.graph.version);
+    check_equal(witness.input_graph_version, generated.graph.version);
     check_equal(witness.matched_stage_count, (size_t)3u);
 
     check_true(cflow_graph_normalize(&normalized, &generated.graph));
@@ -268,18 +268,18 @@ suite("CFlow Direct executor") {
                                     (cflow_opt_options){CMETA_OPT_DEFAULT}, NULL));
     check_true(cflow_aot_pipeline_ir_match_graph(ir, &optimized, &witness, &error));
     check_null(error);
-    check_equal(witness.source_graph_version, optimized.version);
+    check_equal(witness.input_graph_version, optimized.version);
     check_equal(witness.matched_stage_count, (size_t)3u);
 
     check_not_null(cflow_stream_init(&drifted, &cmeta_type_int));
     check_not_null(drifted.filter(&drifted, cflow_direct_even));
     check_not_null(drifted.map(&drifted, cflow_direct_trap_map));
     check_not_null(drifted.map(&drifted, cflow_direct_half));
-    witness.source_graph_version = 99u;
+    witness.input_graph_version = 99u;
     witness.matched_stage_count = 99u;
     check_false(cflow_aot_pipeline_ir_match_graph(ir, &drifted.graph, &witness, &error));
     check_not_null(error);
-    check_equal(witness.source_graph_version, UINT64_C(0));
+    check_equal(witness.input_graph_version, UINT64_C(0));
     check_equal(witness.matched_stage_count, (size_t)0u);
 
     cflow_graph_destroy(&optimized);
@@ -315,7 +315,7 @@ suite("CFlow Direct executor") {
     check_equal(cflow_opt_trace_count(&trace), (size_t)1u);
     check_true(cflow_opt_trace_event_at(&trace, 0u, &event));
     check_equal(event.rule, CFLOW_OPT_RULE_IDEMPOTENT_MAP_ELIMINATION);
-    check_equal(event.source_subgraph, normalized.root);
+    check_equal(event.input_subgraph, normalized.root);
     check_equal(event.retained_node, (cflow_node_id)1u);
     check_equal(event.retained_callable_index, (size_t)0u);
     check_equal(event.removed_node, (cflow_node_id)2u);
@@ -323,13 +323,13 @@ suite("CFlow Direct executor") {
 
     check_false(cflow_aot_pipeline_ir_match_graph(ir, &optimized, &ordinary, &error));
     check_not_null(error);
-    check_equal(ordinary.source_graph_version, UINT64_C(0));
+    check_equal(ordinary.input_graph_version, UINT64_C(0));
     check_equal(ordinary.matched_stage_count, (size_t)0u);
 
     check_true(cflow_aot_pipeline_ir_match_optimized_graph(
         ir, &normalized, &optimized, &trace, &certified, &error));
     check_null(error);
-    check_equal(certified.source_graph_version, normalized.version);
+    check_equal(certified.input_graph_version, normalized.version);
     check_equal(certified.optimized_graph_version, optimized.version);
     check_equal(certified.matched_stage_count, (size_t)2u);
     check_equal(certified.applied_rewrite_count, (size_t)1u);
@@ -376,7 +376,7 @@ suite("CFlow Direct executor") {
     check_false(cflow_aot_pipeline_ir_match_optimized_graph(
         ir, &normalized, &cloned, &trace, &witness, &error));
     check_not_null(error);
-    check_equal(witness.source_graph_version, UINT64_C(0));
+    check_equal(witness.input_graph_version, UINT64_C(0));
     check_equal(witness.optimized_graph_version, UINT64_C(0));
     check_equal(witness.matched_stage_count, (size_t)0u);
     check_equal(witness.applied_rewrite_count, (size_t)0u);
@@ -418,7 +418,7 @@ suite("CFlow Direct executor") {
     check_false(cflow_aot_pipeline_ir_match_optimized_graph(
         ir, &normalized, &optimized, &trace, &witness, &error));
     check_not_null(error);
-    check_equal(witness.source_graph_version, UINT64_C(0));
+    check_equal(witness.input_graph_version, UINT64_C(0));
     check_equal(witness.optimized_graph_version, UINT64_C(0));
     check_equal(witness.matched_stage_count, (size_t)0u);
     check_equal(witness.applied_rewrite_count, (size_t)0u);

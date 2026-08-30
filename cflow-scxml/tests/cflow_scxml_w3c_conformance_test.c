@@ -1,6 +1,6 @@
 #include <cflow/executor.h>
 #include <cflow/scxml.h>
-#include <cflow/statechart_runtime.h>
+#include <cflow/statechart_instance.h>
 #include <turbo_cmeta_data.h>
 
 #include "tinytest.h"
@@ -474,7 +474,7 @@ static bool run_w3c_fixture(const char *fixture_name,
     bool succeeded = false;
     int path_size;
     cflow_scxml_status compile_status;
-    cflow_statechart_runtime_status runtime_status;
+    cflow_statechart_instance_status runtime_status;
 
     if (fixture_name == NULL || out_result == NULL) {
         return false;
@@ -502,7 +502,7 @@ static bool run_w3c_fixture(const char *fixture_name,
         info("fixture=%s result states missing", fixture_name);
         goto cleanup;
     }
-    if (!cflow_scxml_program_runtime_bindings(
+    if (!cflow_scxml_program_instance_bindings(
             &program, &executables, &executable_count) ||
         !cflow_scxml_program_guard_bindings(&program, &guards, &guard_count)) {
         info("fixture=%s runtime bindings missing", fixture_name);
@@ -526,7 +526,7 @@ static bool run_w3c_fixture(const char *fixture_name,
         .microstep_limit = W3C_MICROSTEP_LIMIT,
         .executor = &executor};
     runtime_status = cflow_statechart_instance_init(&instance, &config);
-    if (runtime_status != CFLOW_STATECHART_RUNTIME_OK) {
+    if (runtime_status != CFLOW_STATECHART_INSTANCE_OK) {
         info("fixture=%s runtime_status=%d", fixture_name,
              (int)runtime_status);
         goto cleanup;
@@ -617,7 +617,7 @@ static bool run_w3c_content_fixture(const char *fixture_name,
         .effect_capacity = 1u,
         .adapter_internal_event_capacity = 1u};
     if (cflow_scxml_session_init_v3(&session, &config, &adapters) !=
-        CFLOW_STATECHART_RUNTIME_OK)
+        CFLOW_STATECHART_INSTANCE_OK)
         goto cleanup;
     session_initialized = true;
     if (!cflow_executor_wait_idle(&executor) ||
@@ -632,7 +632,7 @@ static bool run_w3c_content_fixture(const char *fixture_name,
 cleanup:
     if (session_initialized &&
         cflow_scxml_session_destroy(&session) !=
-            CFLOW_STATECHART_RUNTIME_OK)
+            CFLOW_STATECHART_INSTANCE_OK)
         succeeded = false;
     if (executor_initialized) cflow_executor_destroy(&executor);
     cflow_scxml_program_destroy(&program);
@@ -710,9 +710,9 @@ static bool run_w3c_invoke_idlocation_fixture(const char *fixture_name,
         .invoke = &invoke,
         .invoke_user = &probe};
     {
-        const cflow_statechart_runtime_status init_status =
+        const cflow_statechart_instance_status init_status =
             cflow_scxml_session_init_cmeta(&session, &config, &data);
-        if (init_status != CFLOW_STATECHART_RUNTIME_OK) {
+        if (init_status != CFLOW_STATECHART_INSTANCE_OK) {
             info("fixture=%s session init status=%d error=%s", fixture_name,
                  (int)init_status, cflow_scxml_session_error(&session));
             goto cleanup;
@@ -750,7 +750,7 @@ static bool run_w3c_invoke_idlocation_fixture(const char *fixture_name,
 cleanup:
     if (session_initialized &&
         cflow_scxml_session_destroy(&session) !=
-            CFLOW_STATECHART_RUNTIME_OK)
+            CFLOW_STATECHART_INSTANCE_OK)
         succeeded = false;
     if (executor_initialized) cflow_executor_destroy(&executor);
     cflow_scxml_program_destroy(&program);
@@ -820,7 +820,7 @@ static bool run_w3c_adapter_error_fixture(
         .event_io = &adapter,
         .adapter_user = &probe};
     if (cflow_scxml_session_init(&session, &config) !=
-        CFLOW_STATECHART_RUNTIME_OK) {
+        CFLOW_STATECHART_INSTANCE_OK) {
         info("fixture=%s session initialization failed", fixture_name);
         goto cleanup;
     }
@@ -840,7 +840,7 @@ cleanup:
             (void)cflow_executor_wait_idle(&executor);
         }
         if (cflow_scxml_session_destroy(&session) !=
-            CFLOW_STATECHART_RUNTIME_OK) {
+            CFLOW_STATECHART_INSTANCE_OK) {
             succeeded = false;
         }
     }

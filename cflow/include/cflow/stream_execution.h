@@ -32,7 +32,7 @@ typedef enum cflow_stream_execution_status {
     CFLOW_STREAM_EXECUTION_STREAM_REJECTED,
     CFLOW_STREAM_EXECUTION_COLLECTOR_REJECTED,
     CFLOW_STREAM_EXECUTION_GRAPH_REJECTED,
-    CFLOW_STREAM_EXECUTION_SOURCE_REJECTED,
+    CFLOW_STREAM_EXECUTION_PUBLISHER_REJECTED,
     CFLOW_STREAM_EXECUTION_RUN_REJECTED,
     CFLOW_STREAM_EXECUTION_DEMAND_REJECTED,
     CFLOW_STREAM_EXECUTION_ALLOCATION_FAILED,
@@ -51,7 +51,7 @@ typedef struct cflow_stream_execution_snapshot {
 
 /* Start one asynchronous collection terminal.
  *
- * The execution owns its normalized Graph, Run, and a copy of collector state.
+ * The execution owns its normalized Graph, Subscription, and Collector state.
  * It borrows scheduler, the Range's backing object, collector.context, and
  * collector.zero_output until destroy returns. scheduler must advertise
  * CMETA_SCHED_CAP_CONCURRENT. Admission failure restores execution to ZERO and
@@ -59,7 +59,7 @@ typedef struct cflow_stream_execution_snapshot {
  *
  * One external control owner must serialize cancel/wait/destroy. Snapshot may
  * run concurrently with worker execution. Control calls from any Range,
- * operator, or Collector callback on this execution's active Run fail with
+ * operator, or Collector callback on this execution's active Subscription fail with
  * WOULD_BLOCK. */
 cflow_stream_execution_status cflow_stream_execution_start(
     cflow_stream_execution *execution,
@@ -67,7 +67,7 @@ cflow_stream_execution_status cflow_stream_execution_start(
     cflow_scheduler *scheduler,
     cmeta_collector collector);
 
-/* Synchronously close the Run and abort an uncommitted Collector transaction. */
+/* Synchronously close the Subscription and abort an uncommitted Collector transaction. */
 cflow_stream_execution_status cflow_stream_execution_cancel(
     cflow_stream_execution *execution);
 

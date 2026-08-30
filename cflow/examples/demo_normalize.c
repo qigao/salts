@@ -1,7 +1,7 @@
 #include <cflow/adapters.h>
 #include <cflow/lower.h>
-#include <cflow/runtime.h>
-#include <cflow/sources.h>
+#include <cflow/reactive.h>
+#include <cflow/publishers.h>
 #include <cflow/stream.h>
 #include "ops.h"
 
@@ -48,21 +48,21 @@ int main(void) {
     if (!cflow_stream_ok(&left) || !cflow_stream_ok(&right)) return 1;
     if (cflow_graph_is_normalized(&left.graph) || count_op(&left.graph, CFLOW_OP_ZIP) != 1u) return 2;
 
-    /* Run is deliberately a normalized-IR interpreter, not a surface-IR
+    /* Subscription is deliberately a normalized-IR interpreter, not a surface-IR
      * interpreter. It must reject the high-level ZIP graph. */
     cflow_scheduler loop = {0};
-    cflow_source source = {0};
-    cflow_run run = {0};
+    cflow_publisher publisher = {0};
+    cflow_subscription subscription = {0};
     one_value state = {0};
-    cflow_sink_callbacks observer_cb = { on_value, on_error, on_done, &state };
-    cflow_sink observer = cflow_sink_from_callbacks(&observer_cb);
+    cflow_subscriber_callbacks observer_cb = { on_value, on_error, on_done, &state };
+    cflow_subscriber observer = cflow_subscriber_from_callbacks(&observer_cb);
     int x = 2;
     if (!cflow_scheduler_test_init(&loop)) return 3;
-    if (!cflow_source_from_array(&source, &cmeta_type_int, &x, 1)) return 4;
-    if (cflow_run_open(&run, &left.graph, &source, &loop, &observer)) return 5;
-    cflow_source_destroy(&source);
+    if (!cflow_publisher_from_array(&publisher, &cmeta_type_int, &x, 1)) return 4;
+    if (cflow_subscribe(&subscription, &left.graph, &publisher, &loop, &observer)) return 5;
+    cflow_publisher_destroy(&publisher);
     cflow_scheduler_destroy(&loop);
-    printf("surface IR: ZIP present; generic Run rejects unnormalized graph\n");
+    printf("surface IR: ZIP present; generic Subscription rejects unnormalized graph\n");
 
     cflow_graph normalized = {0};
     normalized.root = CMETA_INVALID_ID;
@@ -83,13 +83,13 @@ int main(void) {
 
     memset(&state, 0, sizeof(state));
     if (!cflow_scheduler_test_init(&loop)) return 11;
-    if (!cflow_source_from_array(&source, &cmeta_type_int, &x, 1)) return 12;
-    if (!cflow_run_open(&run, &normalized, &source, &loop, &observer)) return 13;
-    if (!cflow_run_request(&run, 1)) return 14;
+    if (!cflow_publisher_from_array(&publisher, &cmeta_type_int, &x, 1)) return 12;
+    if (!cflow_subscribe(&subscription, &normalized, &publisher, &loop, &observer)) return 13;
+    if (!cflow_subscription_request(&subscription, 1)) return 14;
     (void)cflow_scheduler_run_until_idle(&loop, 0);
     if (state.errors || !state.done || state.count != 1u || !near(state.value, 6.25)) return 15;
-    printf("normalized Run: value=%.2f\n", state.value);
-    cflow_run_close(&run);
+    printf("normalized Subscription: value=%.2f\n", state.value);
+    cflow_subscription_close(&subscription);
     cflow_scheduler_destroy(&loop);
 
     /* Collection is a façade and may normalize surface IR for convenience. */

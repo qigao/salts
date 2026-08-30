@@ -32,9 +32,9 @@ typedef enum cflow_direct_stage_kind {
 typedef enum cflow_aot_dispatch {
   /** A build-time schema names a C target which source generation calls directly. */
   CFLOW_AOT_DISPATCH_STATIC_TARGET = 0,
-  /** Runtime lowering may invoke the callable's validated canonical raw batch. */
+  /** Execution lowering may invoke the callable's validated canonical raw batch. */
   CFLOW_AOT_DISPATCH_CANONICAL_RAW_BATCH = 1,
-  /** Runtime lowering must preserve the callable invocation adapter. */
+  /** Execution lowering must preserve the callable invocation adapter. */
   CFLOW_AOT_DISPATCH_ADAPTER = 2
 } cflow_aot_dispatch;
 
@@ -60,13 +60,13 @@ typedef struct cflow_aot_pipeline_ir {
 
 /** Result committed only after an exact Stage IR/Graph semantic match. */
 typedef struct cflow_aot_equivalence_witness {
-  uint64_t source_graph_version;
+  uint64_t input_graph_version;
   size_t matched_stage_count;
 } cflow_aot_equivalence_witness;
 
 /** Result committed after source, trace and optimized Graph all match. */
 typedef struct cflow_aot_optimized_equivalence_witness {
-  uint64_t source_graph_version;
+  uint64_t input_graph_version;
   uint64_t optimized_graph_version;
   size_t matched_stage_count;
   size_t applied_rewrite_count;
@@ -110,7 +110,7 @@ bool cflow_aot_pipeline_ir_match_graph(const cflow_aot_pipeline_ir *ir,
  * The trace may justify only rules understood by this checker. All objects are
  * borrowed and must remain unchanged for the call.
  * @param ir Borrowed complete pre-optimization Stage IR.
- * @param normalized_source Exact borrowed source passed to traced optimization.
+ * @param normalized_input Exact borrowed source passed to traced optimization.
  * @param optimized Exact borrowed destination produced by traced optimization.
  * @param trace Borrowed committed optimizer trace bound to both Graph objects.
  * @param witness Optional transactional result, cleared on failure.
@@ -119,7 +119,7 @@ bool cflow_aot_pipeline_ir_match_graph(const cflow_aot_pipeline_ir *ir,
  *         optimized equivalence are independently validated. */
 bool cflow_aot_pipeline_ir_match_optimized_graph(
     const cflow_aot_pipeline_ir *ir,
-    const cflow_graph *normalized_source,
+    const cflow_graph *normalized_input,
     const cflow_graph *optimized,
     const cflow_opt_trace *trace,
     cflow_aot_optimized_equivalence_witness *witness,
@@ -249,7 +249,7 @@ static inline bool cflow_direct_stage_eligible(cmeta_callable callable,
 
   #define CFLOW_DIRECT_VALUE_I(index) _cflow_direct_value_##index
   #define CFLOW_DIRECT_VALUE(index) CFLOW_DIRECT_VALUE_I(index)
-  #define CFLOW_DIRECT_INPUT_0 _cflow_direct_source_value
+  #define CFLOW_DIRECT_INPUT_0 _cflow_direct_input_value
   #define CFLOW_DIRECT_INPUT_1 CFLOW_DIRECT_VALUE(0)
   #define CFLOW_DIRECT_INPUT_2 CFLOW_DIRECT_VALUE(1)
   #define CFLOW_DIRECT_INPUT_3 CFLOW_DIRECT_VALUE(2)
@@ -383,7 +383,7 @@ static inline bool cflow_direct_stage_eligible(cmeta_callable callable,
       if (_cflow_direct_capacity < _cflow_direct_count) return CFLOW_DIRECT_CAPACITY_EXCEEDED;     \
       for (_cflow_direct_index = 0u; _cflow_direct_index < _cflow_direct_count;                    \
            ++_cflow_direct_index) {                                                                \
-        input_type _cflow_direct_source_value = _cflow_direct_inputs[_cflow_direct_index];         \
+        input_type _cflow_direct_input_value = _cflow_direct_inputs[_cflow_direct_index];         \
         Replay(pipeline_schema, CFLOW_DIRECT_EVAL_INDEXED) _Static_assert(                         \
             _Generic(&(CFLOW_DIRECT_VALUE(CFLOW_DIRECT_LAST(stage_count))),                        \
                 output_type *: 1,                                                                  \

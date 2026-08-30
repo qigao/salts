@@ -42,7 +42,7 @@ int main(void) {
     if (!near(v[0], 2.0) || !near(v[1], 8.0) || !near(v[2], 18.0)) return 12;
     cflow_result_destroy(&out);
 
-    printf("edge-driven run: physical nodes SOURCE,half,square; edges execute SOURCE->square->half\n");
+    printf("edge-driven Subscription: physical nodes INPUT,half,square; edges execute INPUT->square->half\n");
     cflow_graph_destroy(&g);
 
     /* The fluent façade composes nested branches by importing them into one

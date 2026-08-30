@@ -6,11 +6,11 @@
 /*
  * CFlow operator universe — single declaration schema.
  *
- * CFlowOperators(M) is the one authoritative operator list. Source rows are
+ * CFlowOperators(M) is the one authoritative operator list. Declaration rows are
  * structured for readability, but Operators normalizes each row back to the
  * existing 15-field consumer signature before M sees it. Consumers continue
  * to use Replay(CFlowOperators, M) to derive enum constants, descriptors,
- * callable wrappers, Stream methods, graph wrappers and runtime dispatch
+ * callable wrappers, Stream methods, graph wrappers and Subscription dispatch
  * tables. No repeatedly-included .def file is involved.
  */
 #define CFlowOperators(M) \
