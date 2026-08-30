@@ -151,6 +151,22 @@ suite("SCXML W3C-derived conformance regression corpus") {
         check_w3c_fixture("test377.scxml");
     }
 
+    it("test 404 executes exits in exit order before transition content") {
+        check_w3c_fixture("test404.scxml");
+    }
+
+    it("test 405 executes selected transition content in document order") {
+        check_w3c_fixture("test405.scxml");
+    }
+
+    it("test 406 executes transition content before entry-order actions") {
+        check_w3c_fixture("test406.scxml");
+    }
+
+    it("test 412 orders parent entry, initial transition, then child entry") {
+        check_w3c_fixture("test412.scxml");
+    }
+
     it("test 416 raises compound state completion") {
         check_w3c_fixture("test416.scxml");
     }
