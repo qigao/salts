@@ -831,7 +831,11 @@ The supported compatibility subset is deliberately strict:
   scalar `content expr`; named payload and content are mutually exclusive.
   `event` is one XML NMTOKEN and literal `id` is an XML NCName. Delay accepts
   unsigned integer milliseconds (`250ms`) or seconds with at most millisecond
-  precision (`1.5s`); a non-zero delay requires a literal `id`. Immediate
+  precision (`1.5s`); a non-zero delay requires either a literal `id` or CMeta
+  `idlocation`. `idlocation` must name a writable owned CMeta string; each
+  execution writes a fresh session-unique ID to staged state and passes that
+  same borrowed ID to the Event I/O adapter. Borrowed/custom strings are
+  rejected so the generated call-scoped buffer cannot escape. Immediate
   `#_internal` and `_internal` sends use the native transactional internal queue
   without an adapter; named internal payload remains unsupported. Other sends
   require a bounded Event I/O adapter, with v2 plus the payload capability for
@@ -858,10 +862,10 @@ The supported compatibility subset is deliberately strict:
 - compile-time rejection of malformed, quoted, unknown, or pseudo-state
   `In(id)` arguments. Null-model system variables remain inaccessible.
 
-Executable elements outside `raise`, literal `send`/`cancel`, label-only
+Executable elements outside `raise`, admitted `send`/`cancel`, label-only
 `log`, CMeta scalar `assign`, admitted conditional partitions, and the
 restricted invocation `finalize` profile; wildcard event descriptors; multiple
-targets; `idlocation`; inline text/XML content; structured payload values; data
+targets; invoke `idlocation`; inline text/XML content; structured payload values; data
 models other than the admitted null and exact CMeta profiles; and other SCXML
 elements outside the profiles above fail during compilation with the first byte
 offset and one-based line/column diagnostic.

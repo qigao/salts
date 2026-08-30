@@ -9,6 +9,7 @@
 #include "cmeta_location.h"
 
 #include <ctype.h>
+#include <inttypes.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -88,6 +89,7 @@ typedef struct scxml_effect_descriptor {
     bool has_delay_expr;
     bool has_send_id_expr;
     bool has_data_expr;
+    bool has_id_location;
     size_t payload_first;
     size_t payload_count;
     cflow_scxml_cmeta_expr_program event_expr;
@@ -96,6 +98,7 @@ typedef struct scxml_effect_descriptor {
     cflow_scxml_cmeta_expr_program delay_expr;
     cflow_scxml_cmeta_expr_program send_id_expr;
     cflow_scxml_cmeta_expr_program data_expr;
+    cflow_scxml_cmeta_location id_location;
     union {
         cflow_scxml_send_request send;
         cflow_scxml_cancel_request cancel;
@@ -375,6 +378,7 @@ typedef enum scxml_delayed_state {
 typedef struct scxml_delayed_send {
     const char *id;
     size_t id_size;
+    char generated_id[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
     scxml_delayed_state state;
     scxml_delayed_state previous_state;
 } scxml_delayed_send;
@@ -487,6 +491,7 @@ struct cflow_scxml_session_impl {
     scxml_invocation_lifecycle_effect *invocation_effects;
     size_t invocation_effect_capacity;
     cflow_scxml_invoke_stats invoke_stats;
+    uint64_t next_send_token;
     uint64_t next_invocation_token;
     scxml_external_event_metadata_row *external_metadata_rows;
     size_t external_metadata_capacity;
@@ -1481,10 +1486,11 @@ static cflow_scxml_status analyze_send(scxml_build *build,
         return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
                           turbo_xml_node_location(node),
                           "send expressions require the CMeta data model");
-    if (idlocation_attribute.impl != NULL)
-        return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
-                          turbo_xml_node_location(node),
-                          "send idlocation is not admitted by this bounded scalar profile");
+    if (idlocation_attribute.impl != NULL &&
+        is_empty_view(turbo_xml_attribute_value(idlocation_attribute)))
+        return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
+                          turbo_xml_attribute_location(idlocation_attribute),
+                          "send idlocation must be non-empty");
     if ((target_attribute.impl != NULL && target.size == 0u) ||
         (type_attribute.impl != NULL && type.size == 0u) ||
         (id_attribute.impl != NULL && !is_xml_ncname(id))) {
@@ -1506,10 +1512,11 @@ static cflow_scxml_status analyze_send(scxml_build *build,
                           turbo_xml_attribute_location(delay_attribute),
                           "send delay must be an unsigned ms or s literal with millisecond precision");
     }
-    if (delay_ms != 0u && id_attribute.impl == NULL) {
+    if (delay_ms != 0u && id_attribute.impl == NULL &&
+        idlocation_attribute.impl == NULL) {
         return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
                           turbo_xml_attribute_location(delay_attribute),
-                          "delayed send requires one literal id");
+                          "delayed send requires id or idlocation");
     }
     status = analyze_send_content(
         build, node, &has_data, &param_count);
@@ -3409,7 +3416,7 @@ static scxml_delayed_send *find_delayed_send_locked(
 
 static scxml_delayed_send *reserve_delayed_send_locked(
     cflow_scxml_session_impl *session, const char *id, size_t id_size,
-    size_t *out_index, bool *out_duplicate) {
+    bool copy_generated_id, size_t *out_index, bool *out_duplicate) {
     size_t index;
     scxml_delayed_send *free_row = NULL;
     size_t free_index = SIZE_MAX;
@@ -3425,9 +3432,20 @@ static scxml_delayed_send *reserve_delayed_send_locked(
             free_index = index;
         }
     }
-    if (free_row == NULL) return NULL;
-    *free_row = (scxml_delayed_send){
-        .id = id, .id_size = id_size, .state = SCXML_DELAYED_RESERVED};
+    if (free_row == NULL || id == NULL || id_size == 0u ||
+        (copy_generated_id &&
+         id_size > CFLOW_SCXML_EVENT_METADATA_CAPACITY))
+        return NULL;
+    *free_row = (scxml_delayed_send){0};
+    if (copy_generated_id) {
+        memcpy(free_row->generated_id, id, id_size);
+        free_row->generated_id[id_size] = '\0';
+        free_row->id = free_row->generated_id;
+    } else {
+        free_row->id = id;
+    }
+    free_row->id_size = id_size;
+    free_row->state = SCXML_DELAYED_RESERVED;
     *out_index = free_index;
     return free_row;
 }
@@ -4559,6 +4577,33 @@ static bool scalar_value_to_text(
     return true;
 }
 
+static bool materialize_send_id_location(
+    cflow_scxml_session_impl *session,
+    const scxml_effect_descriptor *descriptor, void *staged_state,
+    cflow_scxml_send_request *request, char *storage, size_t capacity) {
+    cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
+    uint64_t token;
+    int written;
+    if (!descriptor->has_id_location) return true;
+    if (session == NULL || staged_state == NULL || request == NULL ||
+        storage == NULL || capacity == 0u)
+        return false;
+    token = session->next_send_token;
+    if (token == 0u) return false;
+    written = snprintf(
+        storage, capacity, "send.%s.%" PRIu64, session->session_id, token);
+    if (written < 0 || (size_t)written >= capacity) return false;
+    session->next_send_token = token == UINT64_MAX ? 0u : token + 1u;
+    if (cflow_scxml_cmeta_location_assign_owned_string(
+            &descriptor->id_location, staged_state, storage,
+            (size_t)written, CFLOW_SCXML_EVENT_METADATA_CAPACITY,
+            &diagnostic) != CFLOW_SCXML_CMETA_EXPR_OK)
+        return false;
+    request->id = storage;
+    request->id_size = (size_t)written;
+    return true;
+}
+
 static scxml_execute_outcome execute_send(
     const scxml_block *block,
     cflow_scxml_session_impl *session,
@@ -4574,6 +4619,7 @@ static scxml_execute_outcome execute_send(
     cflow_scxml_cmeta_expr_value value = {0};
     cflow_scxml_event_metadata metadata = {0};
     char data_storage[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
+    char id_storage[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
     const scxml_program_name *dynamic_event = NULL;
     bool internal_target = descriptor->internal_target;
     cflow_statechart_effect_ticket adapter_ticket = {0};
@@ -4661,6 +4707,10 @@ static scxml_execute_outcome execute_send(
     if (descriptor->has_data_expr && internal_target &&
         materialized.delay_ms != 0u)
         return raise_block_execution_error(block, context, out_error);
+    if (!materialize_send_id_location(
+            session, descriptor, context->out_state, &materialized,
+            id_storage, sizeof(id_storage)))
+        return raise_block_execution_error(block, context, out_error);
     if (internal_target && request->delay_ms == 0u) {
         const cflow_event_id event_id = dynamic_event != NULL
             ? (cflow_event_id)dynamic_event->id : descriptor->event_id;
@@ -4709,8 +4759,8 @@ static scxml_execute_outcome execute_send(
     prepared = acquire_prepared_effect_locked(session);
     if (prepared != NULL && request->delay_ms != 0u) {
         delayed = reserve_delayed_send_locked(
-            session, request->id, request->id_size, &registry_index,
-            &duplicate);
+            session, request->id, request->id_size,
+            descriptor->has_id_location, &registry_index, &duplicate);
     }
     if (prepared == NULL || (request->delay_ms != 0u && delayed == NULL)) {
         if (prepared != NULL) prepared->in_use = false;
@@ -5638,6 +5688,51 @@ static cflow_scxml_status compile_cmeta_payload_token(
     return scxml_fail(build, status, location, message);
 }
 
+static cflow_scxml_status compile_cmeta_owned_string_location(
+    scxml_build *build, turbo_xml_attribute attribute,
+    const char *subject, cflow_scxml_cmeta_location *out) {
+    const turbo_xml_string_view source = turbo_xml_attribute_value(attribute);
+    cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
+    cflow_scxml_cmeta_expr_status expression_status;
+    cflow_scxml_status status;
+    const cmeta_data_buffer_ops *ops;
+    char message[CFLOW_SCXML_DIAGNOSTIC_CAPACITY];
+    if (source.size > build->cmeta_expression_limits.max_source_bytes)
+        return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                          turbo_xml_attribute_location(attribute),
+                          "CMeta location byte limit exceeded");
+    expression_status = cflow_scxml_cmeta_location_compile(
+        out, source.data, source.size, build->cmeta_root,
+        build->cmeta_expression_limits.max_path_depth, true, &diagnostic);
+    ops = expression_status == CFLOW_SCXML_CMETA_EXPR_OK &&
+                  out->value->kind == CMETA_DATA_STRING
+        ? cmeta_data_buffer_ops_of(out->value) : NULL;
+    if (expression_status == CFLOW_SCXML_CMETA_EXPR_OK &&
+        (ops == NULL || ops->ownership != CMETA_DATA_BUFFER_OWNED)) {
+        expression_status = CFLOW_SCXML_CMETA_EXPR_TYPE_MISMATCH;
+        diagnostic.status = expression_status;
+        diagnostic.byte_offset = 0u;
+        (void)snprintf(
+            diagnostic.message, sizeof(diagnostic.message),
+            "%s must name a writable owned CMeta string", subject);
+    }
+    if (expression_status == CFLOW_SCXML_CMETA_EXPR_OK)
+        return CFLOW_SCXML_OK;
+    *out = (cflow_scxml_cmeta_location){0};
+    status = expression_status == CFLOW_SCXML_CMETA_EXPR_LIMIT_EXCEEDED
+        ? CFLOW_SCXML_LIMIT_EXCEEDED
+        : expression_status == CFLOW_SCXML_CMETA_EXPR_ALLOCATION_FAILED
+            ? CFLOW_SCXML_ALLOCATION_FAILED
+            : CFLOW_SCXML_INVALID_STRUCTURE;
+    (void)snprintf(
+        message, sizeof(message), "CMeta %s byte %zu: %s", subject,
+        diagnostic.byte_offset,
+        diagnostic.message[0] != '\0'
+            ? diagnostic.message : "location compilation failed");
+    return scxml_fail(build, status,
+                      turbo_xml_attribute_location(attribute), message);
+}
+
 static cflow_scxml_status emit_send_step(scxml_build *build,
                                          turbo_xml_node node) {
     const turbo_xml_attribute event_attribute = find_attribute(node, "event");
@@ -5653,6 +5748,8 @@ static cflow_scxml_status emit_send_step(scxml_build *build,
     const turbo_xml_attribute delay_attribute = find_attribute(node, "delay");
     const turbo_xml_attribute delay_expr_attribute =
         find_attribute(node, "delayexpr");
+    const turbo_xml_attribute idlocation_attribute =
+        find_attribute(node, "idlocation");
     const turbo_xml_attribute namelist_attribute =
         find_attribute(node, "namelist");
     const scxml_name_ref *event = event_attribute.impl != NULL
@@ -5738,6 +5835,13 @@ static cflow_scxml_status emit_send_step(scxml_build *build,
                                   delay_expr_attribute),
                               "send delayexpr must produce an integer millisecond value");
         }
+    }
+    if (idlocation_attribute.impl != NULL) {
+        descriptor->has_id_location = true;
+        status = compile_cmeta_owned_string_location(
+            build, idlocation_attribute, "send idlocation",
+            &descriptor->id_location);
+        if (status != CFLOW_SCXML_OK) return status;
     }
     if (namelist_attribute.impl != NULL) {
         const turbo_xml_string_view namelist =
@@ -8330,6 +8434,7 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
         impl->has_invoke = true;
         impl->invoke_is_v2 = true;
     }
+    impl->next_send_token = UINT64_C(1);
     impl->next_invocation_token = UINT64_C(1);
     impl->next_external_metadata_token =
         SCXML_EXTERNAL_METADATA_TOKEN_BIT | UINT64_C(1);
