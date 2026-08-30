@@ -157,19 +157,34 @@ evaluates to false. Unknown IDs still fail program admission.
 
 ## Current CMeta system-event profile
 
-CMeta expressions admit the read-only string `_event.name` only while the
-native Statechart contextual callback carries the Event that triggered the
-current transition quantum. This covers event transition guards and the
-exit/transition/entry executable content run by that quantum. Initial and
-later eventless work has no `_event` binding.
+CMeta sessions expose the complete read-only `_event` profile from
+[SCXML 1.0 section 5.10.1](https://www.w3.org/TR/2015/REC-scxml-20150901/#InternalStructureofEvents):
+`name`, `type`, `sendid`, `origin`, `origintype`, `invokeid`, and `data`.
+`type` is `internal` for raised, internal-send, and state-completion Events,
+`platform` for processor-generated error Events, and `external` for admitted
+external and invocation-completion Events. Missing optional metadata is the
+empty CMeta string; selecting the next Event clears metadata not supplied by
+that Event instead of retaining stale values.
 
-This is deliberately a partial profile, not the complete `_event` object from
-[SCXML 1.0 section 5.10.1](https://www.w3.org/TR/2015/REC-scxml-20150901/#InternalStructureofEvents).
-The `type`, `sendid`, `origin`, `origintype`, `invokeid`, and `data` fields, as
-well as retention of the last selected Event across later eventless
-microsteps, remain unsupported. Bare `_event`, unsupported fields, and writes
-to `_event` locations fail admission; reading `_event.name` without a current
-Event fails evaluation.
+The selected Event remains current through all eventless microsteps in the
+same run-to-completion cycle. Initial eventless work has no current Event and
+therefore fails evaluation when it reads `_event`. Scalar/text/XML data is
+exposed as a bounded string. `cflow_scxml_session_try_send_v3()` additionally
+copies structured CMeta data whose descriptor is exactly the compiled session
+root, allowing typed paths such as `_event.data.order.count`. The copy is owned
+by the session until the next Event is selected or the session is destroyed.
+Because a structured value is not a string, reading it as bare `_event.data`
+fails evaluation instead of silently substituting an empty value.
+The fixed storage cost is bounded by
+`external_event_capacity * CFLOW_SCXML_EVENT_DATA_CAPACITY`, plus one current
+Event slot and row metadata.
+
+Format parsing remains outside the SCXML runtime. An embedding application may
+use CBind/CSerde to convert JSON, XML, YAML, or another format into the compiled
+root CMeta object, then admit that object through the v3 API. This keeps codecs
+and their errors out of transition selection. Invalid envelopes, unsupported
+content, schema mismatches, bare/unknown `_event` paths, and every write to an
+`_event` location fail fast without a compatibility fallback.
 
 The upstream suite page offers the tests under the
 [W3C Test Suite License](https://www.w3.org/copyright/test-suite/) or the

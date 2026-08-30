@@ -24,6 +24,7 @@ extern "C" {
 #define CFLOW_SCXML_INVOKE_ADAPTER_ABI_V3 3u
 #define CFLOW_SCXML_SESSION_ADAPTERS_ABI_V2 2u
 #define CFLOW_SCXML_SESSION_ADAPTERS_ABI_V3 3u
+#define CFLOW_SCXML_EVENT_METADATA_ABI_V3 3u
 #define CFLOW_SCXML_CMETA_COMPILE_OPTIONS_ABI_V1 1u
 #define CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1 1u
 #define CFLOW_SCXML_CMETA_DEFAULT_MAX_ITERATIONS 65536u
@@ -139,6 +140,10 @@ typedef enum cflow_scxml_adapter_error_kind {
 #define CFLOW_SCXML_EVENT_METADATA_CAPACITY 256u
 #endif
 
+#ifndef CFLOW_SCXML_EVENT_DATA_CAPACITY
+#define CFLOW_SCXML_EVENT_DATA_CAPACITY 4096u
+#endif
+
 /** Borrowed external Event metadata copied by v2 session admission. */
 typedef struct cflow_scxml_event_metadata {
     const char *send_id;
@@ -240,6 +245,19 @@ typedef struct cflow_scxml_content_view {
     const cmeta_data_desc *schema;
     const void *object;
 } cflow_scxml_content_view;
+
+/**
+ * Additive owned-event admission contract. `base.data` must be empty when
+ * `data.kind` is not INVALID. Scalar and UTF-8 content is copied into the
+ * metadata bound. CMETA content must use the session's compiled root schema,
+ * fit `CFLOW_SCXML_EVENT_DATA_CAPACITY`, and provide copy/destroy traits.
+ */
+typedef struct cflow_scxml_event_metadata_v3 {
+    uint32_t abi_version;
+    size_t struct_size;
+    cflow_scxml_event_metadata base;
+    cflow_scxml_content_view data;
+} cflow_scxml_event_metadata_v3;
 
 typedef struct cflow_scxml_payload_entry_v3 {
     const char *name;
@@ -589,9 +607,9 @@ bool cflow_scxml_program_requirements(
  * A structural program succeeds with a NULL view and zero count. The returned
  * rows and their callback user pointers are invalidated by program destruction,
  * so the program must outlive every Statechart instance configured with them.
- * CMeta `_event.name` is a read-only borrowed view while a native contextual
- * callback carries an Event; it is unavailable during initial or later
- * eventless work. The remaining SCXML `_event` fields are not admitted.
+ * CMeta `_event.name` is the only Event field available through these
+ * program-level bindings. Use an owning CMeta session for the complete
+ * read-only `_event` envelope and its run-to-completion lifetime.
  * CMeta expressions that read `_sessionid` require the owning session adapters
  * installed by `cflow_scxml_session_init_cmeta()` and fail through these
  * program-level rows.
@@ -610,9 +628,9 @@ bool cflow_scxml_program_runtime_bindings(
  * program destruction, so the program must outlive every configured
  * Statechart instance. Invalid arguments return false without modifying either
  * output.
- * CMeta `_event.name` is resolved from the current Event for event-triggered
- * guards. Eventless guards have no `_event` binding, and other `_event` fields
- * are not admitted.
+ * CMeta `_event.name` is the only Event field available through these
+ * program-level guards. Use an owning CMeta session for the complete read-only
+ * `_event` envelope and its run-to-completion lifetime.
  * CMeta guards that read `_sessionid` require the owning session adapters
  * installed by `cflow_scxml_session_init_cmeta()`.
  */
@@ -678,6 +696,15 @@ cflow_mailbox_status cflow_scxml_session_try_send(
 cflow_mailbox_status cflow_scxml_session_try_send_v2(
     cflow_scxml_session *session, const cflow_event_view *event,
     const cflow_scxml_event_metadata *metadata);
+/**
+ * Copy one external Event and a format-neutral owned data value atomically.
+ * Invalid ABI, conflicting legacy data, unsupported content, schema mismatch,
+ * lifecycle-trait failure, or capacity overflow returns INVALID_ARGUMENT
+ * without consuming an external Event or metadata row.
+ */
+cflow_mailbox_status cflow_scxml_session_try_send_v3(
+    cflow_scxml_session *session, const cflow_event_view *event,
+    const cflow_scxml_event_metadata_v3 *metadata);
 /**
  * Copy one returned invocation Event into the external FIFO with its live
  * session token. Admission validates the token once; external preprocessing
