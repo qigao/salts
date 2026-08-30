@@ -1,0 +1,21 @@
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0"
+       datamodel="null" initial="active">
+  <state id="active">
+    <onentry>
+      <send event="blocked" target="peer"/>
+      <raise event="same.block.after.error"/>
+    </onentry>
+    <onentry>
+      <raise event="next.block"/>
+    </onentry>
+    <transition event="error.execution" target="observed"/>
+    <transition event="same.block.after.error" target="fail"/>
+    <transition event="next.block" target="fail"/>
+  </state>
+  <state id="observed">
+    <transition event="same.block.after.error" target="fail"/>
+    <transition event="next.block" target="pass"/>
+  </state>
+  <final id="pass"/>
+  <state id="fail"/>
+</scxml>
