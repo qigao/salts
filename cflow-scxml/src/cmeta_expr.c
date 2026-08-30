@@ -56,7 +56,8 @@ typedef enum expr_operand_kind {
     EXPR_OPERAND_STRING,
     EXPR_OPERAND_STATE,
     EXPR_OPERAND_SYSTEM_NAME,
-    EXPR_OPERAND_SYSTEM_SESSION_ID
+    EXPR_OPERAND_SYSTEM_SESSION_ID,
+    EXPR_OPERAND_SYSTEM_EVENT_NAME
 } expr_operand_kind;
 
 typedef struct expr_token {
@@ -623,6 +624,34 @@ static bool parser_parse_primary(expr_parser *parser, uint16_t target,
                parser_emit_instruction(parser, QVM_OP_LOAD_CONST, target,
                                        0u, operand_index, 0u);
     }
+    if (token_text_equal(parser, "_event")) {
+        const size_t event_offset = parser->token.offset;
+        expr_operand operand = {0};
+        uint32_t operand_index;
+        parser_next(parser);
+        if (parser->token.kind != EXPR_TOKEN_DOT) {
+            return parser_fail(
+                parser, CFLOW_SCXML_CMETA_EXPR_UNKNOWN_LOCATION,
+                event_offset,
+                "CMeta expressions support only the _event.name field");
+        }
+        parser_next(parser);
+        if (parser->token.kind != EXPR_TOKEN_IDENT ||
+            !token_text_equal(parser, "name")) {
+            return parser_fail(
+                parser, CFLOW_SCXML_CMETA_EXPR_UNKNOWN_LOCATION,
+                parser->token.offset,
+                "CMeta expressions support only the _event.name field");
+        }
+        operand.kind = EXPR_OPERAND_SYSTEM_EVENT_NAME;
+        operand.value_kind = EXPR_VALUE_STRING;
+        out->kind = EXPR_VALUE_STRING;
+        out->reg = target;
+        parser_next(parser);
+        return parser_add_operand(parser, operand, &operand_index) &&
+               parser_emit_instruction(parser, QVM_OP_LOAD_CONST, target,
+                                       0u, operand_index, 0u);
+    }
     if (token_text_equal(parser, "In")) {
         expr_operand operand = {0};
         uint32_t operand_index;
@@ -1144,15 +1173,20 @@ static int expr_resolve(void *user, uint32_t index, qvm_value_t *out) {
             out->boolean = active;
             return 1;
         case EXPR_OPERAND_SYSTEM_NAME:
-        case EXPR_OPERAND_SYSTEM_SESSION_ID: {
+        case EXPR_OPERAND_SYSTEM_SESSION_ID:
+        case EXPR_OPERAND_SYSTEM_EVENT_NAME: {
             const cflow_scxml_cmeta_expr_string_view *view;
             if (context->system_values == NULL) {
                 context->failed = true;
                 return 0;
             }
-            view = operand->kind == EXPR_OPERAND_SYSTEM_NAME
-                       ? &context->system_values->name
-                       : &context->system_values->session_id;
+            if (operand->kind == EXPR_OPERAND_SYSTEM_NAME) {
+                view = &context->system_values->name;
+            } else if (operand->kind == EXPR_OPERAND_SYSTEM_SESSION_ID) {
+                view = &context->system_values->session_id;
+            } else {
+                view = &context->system_values->event_name;
+            }
             if (view->data == NULL ||
                 view->size > context->program->max_string_bytes) {
                 context->failed = true;

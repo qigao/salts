@@ -344,6 +344,9 @@ bool cflow_scxml_program_requirements(
  * A structural program succeeds with a NULL view and zero count. The returned
  * rows and their callback user pointers are invalidated by program destruction,
  * so the program must outlive every Statechart instance configured with them.
+ * CMeta `_event.name` is a read-only borrowed view while a native contextual
+ * callback carries an Event; it is unavailable during initial or later
+ * eventless work. The remaining SCXML `_event` fields are not admitted.
  * CMeta expressions that read `_sessionid` require the owning session adapters
  * installed by `cflow_scxml_session_init_cmeta()` and fail through these
  * program-level rows.
@@ -362,6 +365,9 @@ bool cflow_scxml_program_runtime_bindings(
  * program destruction, so the program must outlive every configured
  * Statechart instance. Invalid arguments return false without modifying either
  * output.
+ * CMeta `_event.name` is resolved from the current Event for event-triggered
+ * guards. Eventless guards have no `_event` binding, and other `_event` fields
+ * are not admitted.
  * CMeta guards that read `_sessionid` require the owning session adapters
  * installed by `cflow_scxml_session_init_cmeta()`.
  */

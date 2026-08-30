@@ -489,6 +489,55 @@ spec("CFlow SCXML private CMeta expressions") {
     cflow_scxml_cmeta_expr_program_destroy(&program);
   }
 
+  it("resolves only the bounded current SCXML event name") {
+    const cflow_scxml_cmeta_expr_system_values system_values = {
+        .event_name = {"go", 2u}
+    };
+    const cflow_scxml_cmeta_expr_system_values missing_event = {0};
+    cflow_scxml_cmeta_expr_program program = {0};
+    cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
+    cflow_scxml_cmeta_expr_value value = {0};
+    state_fixture states = {false};
+    bool result = false;
+
+    check_equal(compile_expression(
+                    &program, "_event.name == \"go\"", NULL, &diagnostic),
+                CFLOW_SCXML_CMETA_EXPR_OK);
+    check_equal(cflow_scxml_cmeta_expr_evaluate_with_system(
+                    &program, &root, state_is_active, &states,
+                    &system_values, &result, &diagnostic),
+                CFLOW_SCXML_CMETA_EXPR_OK);
+    check_true(result);
+    result = true;
+    check_equal(cflow_scxml_cmeta_expr_evaluate_with_system(
+                    &program, &root, state_is_active, &states,
+                    &missing_event, &result, &diagnostic),
+                CFLOW_SCXML_CMETA_EXPR_EVALUATION_ERROR);
+    check_true(result);
+    cflow_scxml_cmeta_expr_program_destroy(&program);
+
+    check_equal(compile_value_expression(
+                    &program, "_event.name", &diagnostic),
+                CFLOW_SCXML_CMETA_EXPR_OK);
+    check_equal(cflow_scxml_cmeta_expr_evaluate_value_with_system(
+                    &program, &root, state_is_active, &states,
+                    &system_values, &value, &diagnostic),
+                CFLOW_SCXML_CMETA_EXPR_OK);
+    check_equal(value.kind, CFLOW_SCXML_CMETA_EXPR_VALUE_STRING);
+    check_equal(value.data.string.size, (size_t)2u);
+    check_equal(value.data.string.data, "go", (size_t)2u);
+    cflow_scxml_cmeta_expr_program_destroy(&program);
+
+    check_equal(compile_value_expression(
+                    &program, "_event", &diagnostic),
+                CFLOW_SCXML_CMETA_EXPR_UNKNOWN_LOCATION);
+    check_null(program.impl);
+    check_equal(compile_value_expression(
+                    &program, "_event.type", &diagnostic),
+                CFLOW_SCXML_CMETA_EXPR_UNKNOWN_LOCATION);
+    check_null(program.impl);
+  }
+
   it("applies exact reflected assignments and preserves destinations on failure") {
     cflow_scxml_cmeta_assign_program program = {0};
     cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
