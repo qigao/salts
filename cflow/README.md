@@ -745,10 +745,12 @@ boolean `autoforward`; an omitted ID is generated deterministically as
 `<state-id>.invoke.<sibling-ordinal>`. The CMeta profile additionally admits
 `typeexpr`, `srcexpr`, ordered scalar `namelist` or `<param>` input, and one
 scalar `<content expr>` through a payload-capable v2 invocation adapter.
-`idlocation` and inline text/XML content remain unsupported. The null data
-model still has no location/value evaluator. A restricted `finalize` may contain
-only label-only `log` and nested null-model `if` partitions; Event-producing
-or external-effect content is rejected during compilation.
+The CMeta profile also admits `idlocation` when it resolves to a writable,
+owned string and `id` is absent. Inline text/XML content remains unsupported,
+and the null data model has no location/value evaluator. A restricted
+`finalize` may contain only label-only `log` and nested null-model `if`
+partitions; Event-producing or external-effect content is rejected during
+compilation.
 
 Each session owns one fixed invocation row per compiled declaration and a
 bounded lifecycle-ticket pool. `invocation_capacity` must cover every row;
@@ -766,6 +768,22 @@ order and duplicate names. For `send`, `namelist` entries precede child
 Every entry name and scalar value is borrowed only for the callback; an adapter
 that needs either after return must copy it into its reserved ticket.
 
+An admitted invoke `idlocation` receives
+`<owner-state-id>.<unsigned-decimal-token>`. The per-session `uint64_t` token
+sequence starts at one, never wraps or reuses an ID, and reports exhaustion as
+a fatal runtime error. The compiler checks the worst-case 20-digit token and
+`done.invoke.` name against `CFLOW_SCXML_EVENT_METADATA_CAPACITY`; no ID is
+truncated. A transiently entered and exited owner consumes no token. At the
+stable boundary, the runtime copies the published Machine state, assigns every
+ID in document order, evaluates invoke arguments from that staged state, and
+prepares adapter tickets. It then atomically publishes state and staged
+internal Events before committing start tickets. Any fatal assignment,
+contract, journal, copy, or cancellation failure discards all prepared tickets
+and leaves the prior Machine state published. Invocation adapter ABI v1/v2 is
+unchanged. The active invocation row retains the immutable routing ID used by
+cancel, autoforward, returned metadata, and completion even if the document
+later overwrites its `idlocation` value.
+
 `cflow_scxml_session_report_invoke_event()` admits a copied external Event with
 the invocation's nonzero token. The session validates at admission and again
 immediately before transition selection, so a result queued before a committed
@@ -777,6 +795,14 @@ service. Stats distinguish accepted/rejected returns, starts, completions,
 cancellations, forwards, and failures. Adapter `close` is exactly once, and
 session destruction waits for both Event I/O and invocation adapters to report
 quiescence.
+
+`cflow_scxml_session_report_invoke_done(session, token)` maps one live token to
+its finite compiled done Event and uses the same tagged admission/race check.
+For dynamic identity, CMeta observes `_event.name` as
+`done.invoke.<active-row-id>` and `_event.invokeid` as that exact active ID.
+The finite compiled Event remains the selection key, so this addition supports
+exact named transitions only; it does not claim general SCXML prefix or
+wildcard descriptor matching.
 
 The supported compatibility subset is deliberately strict:
 
@@ -855,18 +881,19 @@ The supported compatibility subset is deliberately strict:
   delayed-send registry row through `cflow_scxml_session_report_send_done()`;
 - `invoke` on `state`/`parallel`, deterministic generated IDs, CMeta dynamic
   `typeexpr`/`srcexpr`, ordered scalar input through `namelist`, child `param`,
-  or one `content expr`, `done.invoke.<id>` Events, stable-only activation,
-  committed-exit cancel, declaration-ordered autoforward, and restricted
-  `finalize` preprocessing as described above. Payload input requires an
-  invocation v2 adapter with the payload capability;
+  or one `content expr`, writable owned-string `idlocation`,
+  `done.invoke.<id>` Events, stable-only activation, committed-exit cancel,
+  declaration-ordered autoforward, and restricted `finalize` preprocessing as
+  described above. Payload input requires an invocation v2 adapter with the
+  payload capability;
 - compile-time rejection of malformed, quoted, unknown, or pseudo-state
   `In(id)` arguments. Null-model system variables remain inaccessible.
 
 Executable elements outside `raise`, admitted `send`/`cancel`, label-only
 `log`, CMeta scalar `assign`, admitted conditional partitions, and the
 restricted invocation `finalize` profile; wildcard event descriptors; multiple
-targets; invoke `idlocation`; inline text/XML content; structured payload values; data
-models other than the admitted null and exact CMeta profiles; and other SCXML
+targets; inline text/XML content; structured payload values; data models other
+than the admitted null and exact CMeta profiles; and other SCXML
 elements outside the profiles above fail during compilation with the first byte
 offset and one-based line/column diagnostic.
 There is no fallback or silent feature removal. Configurable hard limits cover

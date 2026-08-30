@@ -103,7 +103,8 @@ typedef enum cflow_scxml_program_requirement {
     CFLOW_SCXML_REQUIREMENT_CANCEL = 1u << 2u,
     CFLOW_SCXML_REQUIREMENT_INVOKE = 1u << 3u,
     CFLOW_SCXML_REQUIREMENT_PAYLOAD = 1u << 4u,
-    CFLOW_SCXML_REQUIREMENT_INVOKE_PAYLOAD = 1u << 5u
+    CFLOW_SCXML_REQUIREMENT_INVOKE_PAYLOAD = 1u << 5u,
+    CFLOW_SCXML_REQUIREMENT_INVOKE_IDLOCATION = 1u << 6u
 } cflow_scxml_program_requirement;
 
 typedef enum cflow_scxml_event_io_capability {
@@ -568,6 +569,14 @@ cflow_mailbox_status cflow_scxml_session_try_send_v2(
 cflow_mailbox_status cflow_scxml_session_report_invoke_event(
     cflow_scxml_session *session, uint64_t token,
     const cflow_event_view *event);
+/**
+ * Admit the compiled done Event for one live invocation token. Dynamic
+ * `idlocation` identity is exposed as `done.invoke.<active-id>` and through
+ * `_event.invokeid`; the finite compiled Event ID remains the routing key.
+ * Zero, stale, completed, or cancelled tokens return `INVALID_ARGUMENT`.
+ */
+cflow_mailbox_status cflow_scxml_session_report_invoke_done(
+    cflow_scxml_session *session, uint64_t token);
 /**
  * Concurrently admit one asynchronous adapter failure to the prioritized
  * bounded internal ingress. The exact mailbox result is returned; there is no

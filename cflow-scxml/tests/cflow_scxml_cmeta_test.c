@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <string.h>
 
 enum { SCXML_TEST_TEXT_CAPACITY = 95u };
@@ -18,6 +19,10 @@ typedef struct scxml_borrowed_text {
     size_t size;
 } scxml_borrowed_text;
 
+Struct(scxml_nested_data,
+    (scxml_owned_text, invoke_id)
+);
+
 Enum(scxml_public_source,
     (SCXML_PUBLIC_SOURCE_GOOD, 1, "good"),
     (SCXML_PUBLIC_SOURCE_FAIL, 2, "fail")
@@ -30,7 +35,11 @@ Struct(scxml_public_data,
     (size_t, total),
     (double, ratio),
     (scxml_owned_text, send_id),
-    (scxml_borrowed_text, borrowed_id)
+    (scxml_borrowed_text, borrowed_id),
+    (scxml_owned_text, custom_id),
+    (scxml_owned_text, readonly_id),
+    (scxml_owned_text, failing_id),
+    (scxml_nested_data, nested)
 );
 
 static const cmeta_type_identity public_data_identity =
@@ -268,6 +277,107 @@ static const cmeta_data_desc borrowed_text_desc = {
     .buffer_ops = &borrowed_text_ops
 };
 
+static const cmeta_data_buffer_ops custom_text_ops = {
+    .struct_size = sizeof(cmeta_data_buffer_ops),
+    .abi_version = CMETA_DATA_BUFFER_OPS_ABI_VERSION,
+    .storage_type = &owned_text_type,
+    .ownership = CMETA_DATA_BUFFER_CUSTOM,
+    .is_zero = owned_text_is_zero,
+    .assign = owned_text_assign,
+    .restore_zero = owned_text_restore_zero,
+    .read = owned_text_read
+};
+
+static const cmeta_data_desc custom_text_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.scxml.custom.text.schema",
+    .display_name = "SCXML custom text",
+    .kind = CMETA_DATA_STRING,
+    .storage_type = &owned_text_type,
+    .shape = &owned_text_shape,
+    .buffer_ops = &custom_text_ops
+};
+
+static const cmeta_data_buffer_ops readonly_text_ops = {
+    .struct_size = sizeof(cmeta_data_buffer_ops),
+    .abi_version = CMETA_DATA_BUFFER_OPS_ABI_VERSION,
+    .storage_type = &owned_text_type,
+    .ownership = CMETA_DATA_BUFFER_OWNED,
+    .is_zero = owned_text_is_zero,
+    .restore_zero = owned_text_restore_zero,
+    .read = owned_text_read
+};
+
+static const cmeta_data_desc readonly_text_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.scxml.readonly.text.schema",
+    .display_name = "SCXML read-only text",
+    .kind = CMETA_DATA_STRING,
+    .storage_type = &owned_text_type,
+    .shape = &owned_text_shape,
+    .buffer_ops = &readonly_text_ops
+};
+
+static cmeta_status failing_text_assign(
+    void *object, const unsigned char *data, size_t size, size_t max_bytes) {
+    if (size == sizeof("old") - 1u && data != NULL &&
+        memcmp(data, "old", sizeof("old") - 1u) == 0)
+        return owned_text_assign(object, data, size, max_bytes);
+    return CMETA_CAPACITY_EXCEEDED;
+}
+
+static const cmeta_data_buffer_ops failing_text_ops = {
+    .struct_size = sizeof(cmeta_data_buffer_ops),
+    .abi_version = CMETA_DATA_BUFFER_OPS_ABI_VERSION,
+    .storage_type = &owned_text_type,
+    .ownership = CMETA_DATA_BUFFER_OWNED,
+    .is_zero = owned_text_is_zero,
+    .assign = failing_text_assign,
+    .restore_zero = owned_text_restore_zero,
+    .read = owned_text_read
+};
+
+static const cmeta_data_desc failing_text_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.scxml.failing.text.schema",
+    .display_name = "SCXML failing text",
+    .kind = CMETA_DATA_STRING,
+    .storage_type = &owned_text_type,
+    .shape = &owned_text_shape,
+    .buffer_ops = &failing_text_ops
+};
+
+static const cmeta_type_desc nested_data_type = {
+    .name = "scxml_nested_data",
+    .size = sizeof(scxml_nested_data),
+    .align = _Alignof(scxml_nested_data),
+    .kind = CMETA_T_OBJECT
+};
+
+static const cmeta_data_field_desc nested_data_fields[] = {
+    {"test.scxml.nested.data.invoke_id", "invoke_id",
+     offsetof(scxml_nested_data, invoke_id), &owned_text_desc}
+};
+
+static const cmeta_data_struct_shape nested_data_shape = {
+    .layout = StructMeta(scxml_nested_data),
+    .fields = nested_data_fields,
+    .field_count = sizeof(nested_data_fields) / sizeof(nested_data_fields[0])
+};
+
+static const cmeta_data_desc nested_data_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.scxml.nested.data.schema",
+    .display_name = "SCXML nested data",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &nested_data_type,
+    .shape = &nested_data_shape
+};
+
 static const cmeta_data_field_desc public_data_fields[] = {
     {"test.scxml.public.data.enabled", "enabled",
      offsetof(scxml_public_data, enabled), &cmeta_data_bool},
@@ -282,7 +392,15 @@ static const cmeta_data_field_desc public_data_fields[] = {
     {"test.scxml.public.data.send_id", "send_id",
      offsetof(scxml_public_data, send_id), &owned_text_desc},
     {"test.scxml.public.data.borrowed_id", "borrowed_id",
-     offsetof(scxml_public_data, borrowed_id), &borrowed_text_desc}
+     offsetof(scxml_public_data, borrowed_id), &borrowed_text_desc},
+    {"test.scxml.public.data.custom_id", "custom_id",
+     offsetof(scxml_public_data, custom_id), &custom_text_desc},
+    {"test.scxml.public.data.readonly_id", "readonly_id",
+     offsetof(scxml_public_data, readonly_id), &readonly_text_desc},
+    {"test.scxml.public.data.failing_id", "failing_id",
+     offsetof(scxml_public_data, failing_id), &failing_text_desc},
+    {"test.scxml.public.data.nested", "nested",
+     offsetof(scxml_public_data, nested), &nested_data_desc}
 };
 
 static const cmeta_data_struct_shape public_data_shape = {
@@ -346,8 +464,55 @@ typedef struct payload_adapter_probe {
     char content_string[32];
 } payload_adapter_probe;
 
+typedef struct invoke_idlocation_probe invoke_idlocation_probe;
+
+typedef struct invoke_idlocation_ticket {
+    invoke_idlocation_probe *probe;
+    size_t index;
+    bool cancel;
+} invoke_idlocation_ticket;
+
+struct invoke_idlocation_probe {
+    cflow_scxml_session *session;
+    size_t prepare_starts;
+    size_t start_commits;
+    size_t start_discards;
+    size_t prepare_cancels;
+    size_t cancel_commits;
+    size_t cancel_discards;
+    size_t close_calls;
+    cflow_scxml_adapter_status start_status[4];
+    bool invalid_start_ticket[4];
+    bool cancel_during_prepare;
+    uint64_t start_tokens[4];
+    char start_ids[4][CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
+    char start_types[4][CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
+    uint64_t cancel_tokens[4];
+    char cancel_ids[4][CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
+    invoke_idlocation_ticket start_tickets[4];
+    invoke_idlocation_ticket cancel_tickets[4];
+};
+
 static void dynamic_ticket_done(void *user) {
     (void)user;
+}
+
+static void invoke_idlocation_ticket_commit(void *user) {
+    invoke_idlocation_ticket *ticket = (invoke_idlocation_ticket *)user;
+    if (ticket == NULL || ticket->probe == NULL) return;
+    if (ticket->cancel)
+        ++ticket->probe->cancel_commits;
+    else
+        ++ticket->probe->start_commits;
+}
+
+static void invoke_idlocation_ticket_discard(void *user) {
+    invoke_idlocation_ticket *ticket = (invoke_idlocation_ticket *)user;
+    if (ticket == NULL || ticket->probe == NULL) return;
+    if (ticket->cancel)
+        ++ticket->probe->cancel_discards;
+    else
+        ++ticket->probe->start_discards;
 }
 
 static bool copy_probe_text(char *destination, size_t capacity,
@@ -358,6 +523,86 @@ static bool copy_probe_text(char *destination, size_t capacity,
     if (size != 0u) memcpy(destination, source, size);
     destination[size] = '\0';
     return true;
+}
+
+static cflow_scxml_adapter_status invoke_idlocation_prepare_start(
+    void *user, const cflow_scxml_invoke_start_request *request,
+    cflow_statechart_effect_ticket *out_ticket, const char **out_error) {
+    invoke_idlocation_probe *probe = (invoke_idlocation_probe *)user;
+    size_t index;
+    if (probe == NULL || request == NULL || out_ticket == NULL ||
+        out_error == NULL || probe->prepare_starts >= 4u)
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    index = probe->prepare_starts++;
+    if (!copy_probe_text(
+            probe->start_ids[index], sizeof(probe->start_ids[index]),
+            request->id, request->id_size) ||
+        !copy_probe_text(
+            probe->start_types[index], sizeof(probe->start_types[index]),
+            request->type, request->type_size))
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    probe->start_tokens[index] = request->token;
+    if (probe->cancel_during_prepare && probe->session != NULL)
+        cflow_scxml_session_cancel(probe->session);
+    if (probe->start_status[index] != CFLOW_SCXML_ADAPTER_ACCEPTED) {
+        *out_error = "injected invoke start rejection";
+        return probe->start_status[index];
+    }
+    if (probe->invalid_start_ticket[index]) {
+        *out_ticket = (cflow_statechart_effect_ticket){0};
+        *out_error = NULL;
+        return CFLOW_SCXML_ADAPTER_ACCEPTED;
+    }
+    probe->start_tickets[index] = (invoke_idlocation_ticket){
+        probe, index, false};
+    *out_ticket = (cflow_statechart_effect_ticket){
+        invoke_idlocation_ticket_commit,
+        invoke_idlocation_ticket_discard,
+        &probe->start_tickets[index]};
+    *out_error = NULL;
+    return CFLOW_SCXML_ADAPTER_ACCEPTED;
+}
+
+static cflow_scxml_adapter_status invoke_idlocation_prepare_start_v2(
+    void *user, const cflow_scxml_invoke_start_request_v2 *request,
+    cflow_statechart_effect_ticket *out_ticket, const char **out_error) {
+    if (request == NULL || request->payload.kind != CFLOW_SCXML_PAYLOAD_NONE)
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    return invoke_idlocation_prepare_start(
+        user, &request->base, out_ticket, out_error);
+}
+
+static cflow_scxml_adapter_status invoke_idlocation_prepare_cancel(
+    void *user, const cflow_scxml_invoke_cancel_request *request,
+    cflow_statechart_effect_ticket *out_ticket, const char **out_error) {
+    invoke_idlocation_probe *probe = (invoke_idlocation_probe *)user;
+    size_t index;
+    if (probe == NULL || request == NULL || out_ticket == NULL ||
+        out_error == NULL || probe->prepare_cancels >= 4u)
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    index = probe->prepare_cancels++;
+    if (!copy_probe_text(
+            probe->cancel_ids[index], sizeof(probe->cancel_ids[index]),
+            request->id, request->id_size))
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    probe->cancel_tokens[index] = request->token;
+    probe->cancel_tickets[index] = (invoke_idlocation_ticket){
+        probe, index, true};
+    *out_ticket = (cflow_statechart_effect_ticket){
+        invoke_idlocation_ticket_commit,
+        invoke_idlocation_ticket_discard,
+        &probe->cancel_tickets[index]};
+    *out_error = NULL;
+    return CFLOW_SCXML_ADAPTER_ACCEPTED;
+}
+
+static void invoke_idlocation_close(void *user) {
+    invoke_idlocation_probe *probe = (invoke_idlocation_probe *)user;
+    if (probe != NULL) ++probe->close_calls;
+}
+
+static bool invoke_idlocation_quiescent(void *user) {
+    return user != NULL;
 }
 
 static bool copy_payload_value(
@@ -754,6 +999,181 @@ spec("CFlow SCXML public CMeta data model") {
                         &program, cmeta_source, strlen(cmeta_source), NULL,
                         &options, &diagnostic),
                     CFLOW_SCXML_INVALID_ARGUMENT);
+        check_null(program.impl);
+    }
+
+    it("admits top-level invoke idlocation owned strings") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'>"
+            "<invoke idlocation='send_id'/></state></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("admits nested invoke idlocation owned strings") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'>"
+            "<invoke idlocation='nested.invoke_id'/></state></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("rejects every unsupported invoke idlocation location class") {
+        static const char empty[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke idlocation=''/>"
+            "</state></scxml>";
+        static const char malformed[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='nested..invoke_id'/></state></scxml>";
+        static const char missing[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='missing'/></state></scxml>";
+        static const char non_string[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='count'/></state></scxml>";
+        static const char borrowed[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='borrowed_id'/></state></scxml>";
+        static const char custom[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='custom_id'/></state></scxml>";
+        static const char readonly[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='readonly_id'/></state></scxml>";
+        static const char system[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='_sessionid'/></state></scxml>";
+        const char *invalid[] = {
+            empty, malformed, missing, non_string, borrowed, custom,
+            readonly, system};
+        size_t index;
+
+        for (index = 0u; index < sizeof(invalid) / sizeof(invalid[0]);
+             ++index) {
+            cflow_scxml_program program = {0};
+            cflow_scxml_diagnostic diagnostic = {0};
+            check_equal(compile_cmeta(invalid[index], &program, &diagnostic),
+                        CFLOW_SCXML_INVALID_STRUCTURE);
+            check_null(program.impl);
+        }
+    }
+
+    it("rejects invoke id and idlocation conflicts before profile checks") {
+        static const char cmeta_source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke id='literal' "
+            "idlocation='send_id'/></state></scxml>";
+        static const char null_source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='worker'><invoke id='literal' "
+            "idlocation='slot'/></state></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+
+        check_equal(compile_cmeta(cmeta_source, &program, &diagnostic),
+                    CFLOW_SCXML_INVALID_STRUCTURE);
+        check_null(program.impl);
+        check_equal(cflow_scxml_compile(
+                        &program, null_source, strlen(null_source), NULL,
+                        &diagnostic),
+                    CFLOW_SCXML_INVALID_STRUCTURE);
+        check_null(program.impl);
+    }
+
+    it("checks invoke idlocation source and depth boundaries") {
+        static const char top_level[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='send_id'/></state></scxml>";
+        static const char nested[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='nested.invoke_id'/></state></scxml>";
+        cflow_scxml_cmeta_compile_options_v1 options =
+            cflow_scxml_cmeta_default_compile_options(&public_data_desc);
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+
+        options.max_source_bytes = sizeof("send_id") - 1u;
+        check_equal(cflow_scxml_compile_cmeta(
+                        &program, top_level, strlen(top_level), NULL,
+                        &options, &diagnostic),
+                    CFLOW_SCXML_OK);
+        cflow_scxml_program_destroy(&program);
+        options.max_source_bytes = sizeof("send_id") - 2u;
+        check_equal(cflow_scxml_compile_cmeta(
+                        &program, top_level, strlen(top_level), NULL,
+                        &options, &diagnostic),
+                    CFLOW_SCXML_LIMIT_EXCEEDED);
+        options = cflow_scxml_cmeta_default_compile_options(
+            &public_data_desc);
+        options.max_path_depth = 2u;
+        check_equal(cflow_scxml_compile_cmeta(
+                        &program, nested, strlen(nested), NULL,
+                        &options, &diagnostic),
+                    CFLOW_SCXML_OK);
+        cflow_scxml_program_destroy(&program);
+        options.max_path_depth = 1u;
+        check_equal(cflow_scxml_compile_cmeta(
+                        &program, nested, strlen(nested), NULL,
+                        &options, &diagnostic),
+                    CFLOW_SCXML_LIMIT_EXCEEDED);
+    }
+
+    it("checks the maximum dynamic done invoke name budget") {
+        enum {
+            TOKEN_DIGITS = 20u,
+            DONE_PREFIX_SIZE = sizeof("done.invoke.") - 1u,
+            OWNER_AT_LIMIT = CFLOW_SCXML_EVENT_METADATA_CAPACITY -
+                TOKEN_DIGITS - DONE_PREFIX_SIZE - 1u
+        };
+        char owner[OWNER_AT_LIMIT + 2u];
+        char source[768];
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        int written;
+
+        owner[0] = 's';
+        memset(owner + 1u, 'a', OWNER_AT_LIMIT - 1u);
+        owner[OWNER_AT_LIMIT] = '\0';
+        written = snprintf(
+            source, sizeof(source),
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='%s'><invoke "
+            "idlocation='send_id'/></state></scxml>", owner);
+        check_true(written > 0 && (size_t)written < sizeof(source));
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        cflow_scxml_program_destroy(&program);
+
+        owner[OWNER_AT_LIMIT] = 'a';
+        owner[OWNER_AT_LIMIT + 1u] = '\0';
+        written = snprintf(
+            source, sizeof(source),
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='%s'><invoke "
+            "idlocation='send_id'/></state></scxml>", owner);
+        check_true(written > 0 && (size_t)written < sizeof(source));
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_LIMIT_EXCEEDED);
         check_null(program.impl);
     }
 
@@ -2102,6 +2522,638 @@ spec("CFlow SCXML public CMeta data model") {
             cflow_executor_destroy(&executor);
             cflow_scxml_program_destroy(&program);
         }
+    }
+
+    it("publishes a stable invoke idlocation before committing a v1 start") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='send_id' typeexpr='send_id'/></state></scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1,
+            .struct_size = sizeof(adapter),
+            .capabilities = CFLOW_SCXML_INVOKE_CAP_START |
+                CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            .prepare_start = invoke_idlocation_prepare_start,
+            .prepare_cancel = invoke_idlocation_prepare_cancel,
+            .close = invoke_idlocation_close,
+            .is_quiescent = invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(probe.prepare_starts, (size_t)1u);
+        check_equal(probe.start_commits, (size_t)1u);
+        check_equal(probe.start_discards, (size_t)0u);
+        check_equal(probe.start_tokens[0], UINT64_C(1));
+        check_equal(probe.start_ids[0], "worker.1", sizeof("worker.1"));
+        check_equal(probe.start_types[0], "worker.1", sizeof("worker.1"));
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("does not evaluate invoke idlocation for a transient state") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='transient'><invoke "
+            "idlocation='send_id'/><transition target='done'/></state>"
+            "<final id='done'/></scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1, sizeof(adapter),
+            CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            invoke_idlocation_prepare_start,
+            invoke_idlocation_prepare_cancel, NULL,
+            invoke_idlocation_close, invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(probe.prepare_starts, (size_t)0u);
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.done);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("allocates a distinct invoke idlocation token on re-entry") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta' initial='worker'><state id='worker'><invoke "
+            "idlocation='send_id'/><transition event='leave' target='idle'/>"
+            "</state><state id='idle'><transition event='again' "
+            "target='worker'/></state></scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1, sizeof(adapter),
+            CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            invoke_idlocation_prepare_start,
+            invoke_idlocation_prepare_cancel, NULL,
+            invoke_idlocation_close, invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_event_view leave = {0};
+        cflow_event_view again = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_scxml_program_event(&program, "leave", 5u, &leave));
+        check_true(cflow_scxml_program_event(&program, "again", 5u, &again));
+        check_equal(cflow_scxml_session_try_send(&session, &leave),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(cflow_scxml_session_try_send(&session, &again),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.prepare_starts, (size_t)2u);
+        check_equal(probe.start_ids[0], "worker.1", sizeof("worker.1"));
+        check_equal(probe.start_ids[1], "worker.2", sizeof("worker.2"));
+        check_not_equal(probe.start_tokens[0], probe.start_tokens[1]);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("prepares parallel invoke idlocations in document order") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><parallel id='both'><state id='left'>"
+            "<invoke idlocation='send_id'/></state><state id='right'>"
+            "<invoke idlocation='nested.invoke_id'/></state></parallel>"
+            "</scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1, sizeof(adapter),
+            CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            invoke_idlocation_prepare_start,
+            invoke_idlocation_prepare_cancel, NULL,
+            invoke_idlocation_close, invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 4u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 2u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(probe.prepare_starts, (size_t)2u);
+        check_equal(probe.start_ids[0], "left.1", sizeof("left.1"));
+        check_equal(probe.start_ids[1], "right.2", sizeof("right.2"));
+        check_equal(probe.start_commits, (size_t)2u);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("starts invoke idlocation through an unchanged v2 adapter") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='send_id'/></state></scxml>";
+        const cflow_scxml_invoke_adapter_v2 adapter = {
+            .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V2,
+            .struct_size = sizeof(adapter),
+            .capabilities = CFLOW_SCXML_INVOKE_CAP_START |
+                CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            .prepare_start = invoke_idlocation_prepare_start_v2,
+            .prepare_cancel = invoke_idlocation_prepare_cancel,
+            .close = invoke_idlocation_close,
+            .is_quiescent = invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u};
+        const cflow_scxml_session_adapters_v2 adapters = {
+            CFLOW_SCXML_SESSION_ADAPTERS_ABI_V2, sizeof(adapters),
+            NULL, NULL, &adapter, &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta_v2(
+                        &session, &config, &data, &adapters),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(probe.prepare_starts, (size_t)1u);
+        check_equal(probe.start_ids[0], "worker.1", sizeof("worker.1"));
+        check_equal(probe.start_commits, (size_t)1u);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("publishes the evaluated id after recoverable adapter rejection") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='send_id'/><transition event='error.execution' "
+            "cond='send_id == &quot;worker.1&quot;' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1, sizeof(adapter),
+            CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            invoke_idlocation_prepare_start,
+            invoke_idlocation_prepare_cancel, NULL,
+            invoke_idlocation_close, invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_statechart_instance_stats stats = {0};
+        cflow_scxml_invoke_stats invoke_stats = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 4u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        probe.start_status[0] = CFLOW_SCXML_ADAPTER_ERROR_EXECUTION;
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        check_equal(probe.prepare_starts, (size_t)1u);
+        check_equal(probe.start_ids[0], "worker.1", sizeof("worker.1"));
+        check_equal(probe.start_commits, (size_t)0u);
+        check_equal(probe.start_discards, (size_t)0u);
+        check_true(cflow_scxml_session_get_invoke_stats(
+            &session, &invoke_stats));
+        check_equal(invoke_stats.start_failed, UINT64_C(1));
+        check_equal(invoke_stats.active, (size_t)0u);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("rolls back all dynamic starts when a later ticket is invalid") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='send_id'/><invoke "
+            "idlocation='nested.invoke_id'/></state></scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1, sizeof(adapter),
+            CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            invoke_idlocation_prepare_start,
+            invoke_idlocation_prepare_cancel, NULL,
+            invoke_idlocation_close, invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 2u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        probe.invalid_start_ticket[1] = true;
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_HOOK_FAILED);
+        check_null(session.impl);
+        check_equal(probe.prepare_starts, (size_t)2u);
+        check_equal(probe.start_commits, (size_t)0u);
+        check_equal(probe.start_discards, (size_t)1u);
+        check_equal(probe.close_calls, (size_t)1u);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("preserves the prior location and raises error on assignment failure") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='failing_id'/><transition event='error.execution' "
+            "cond='failing_id == &quot;old&quot;' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1, sizeof(adapter),
+            CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            invoke_idlocation_prepare_start,
+            invoke_idlocation_prepare_cancel, NULL,
+            invoke_idlocation_close, invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_statechart_instance_stats stats = {0};
+        scxml_public_data initial = {0};
+        cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 4u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        initial.failing_id.size = sizeof("old") - 1u;
+        memcpy(initial.failing_id.data, "old", sizeof("old"));
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        check_equal(probe.prepare_starts, (size_t)0u);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("does not prepare starts when invoke entry exhausts the effect journal") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='send_id'/><invoke "
+            "idlocation='nested.invoke_id'/></state></scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1, sizeof(adapter),
+            CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            invoke_idlocation_prepare_start,
+            invoke_idlocation_prepare_cancel, NULL,
+            invoke_idlocation_close, invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 1u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 2u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_EFFECT_JOURNAL_FULL);
+        check_null(session.impl);
+        check_equal(probe.prepare_starts, (size_t)0u);
+        check_equal(probe.start_commits, (size_t)0u);
+        check_equal(probe.start_discards, (size_t)0u);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("uses the immutable row id for cancellation after location overwrite") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='send_id'/><transition event='overwrite'>"
+            "<assign location='send_id' expr='&quot;changed&quot;'/></transition>"
+            "<transition event='leave' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1, sizeof(adapter),
+            CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            invoke_idlocation_prepare_start,
+            invoke_idlocation_prepare_cancel, NULL,
+            invoke_idlocation_close, invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_event_view overwrite = {0};
+        cflow_event_view leave = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_scxml_program_event(
+            &program, "overwrite", 9u, &overwrite));
+        check_true(cflow_scxml_program_event(&program, "leave", 5u, &leave));
+        check_equal(cflow_scxml_session_try_send(&session, &overwrite),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(cflow_scxml_session_try_send(&session, &leave),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.prepare_cancels, (size_t)1u);
+        check_equal(probe.cancel_tokens[0], probe.start_tokens[0]);
+        check_equal(probe.cancel_ids[0], "worker.1", sizeof("worker.1"));
+        check_equal(probe.cancel_commits, (size_t)1u);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("discards a prepared dynamic start when session cancellation wins") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta' initial='idle'><state id='idle'>"
+            "<transition event='go' target='worker'/></state>"
+            "<state id='worker'><invoke idlocation='send_id'/></state>"
+            "</scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1, sizeof(adapter),
+            CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            invoke_idlocation_prepare_start,
+            invoke_idlocation_prepare_cancel, NULL,
+            invoke_idlocation_close, invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_event_view go = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        probe.session = &session;
+        probe.cancel_during_prepare = true;
+        check_true(cflow_scxml_program_event(&program, "go", 2u, &go));
+        check_equal(cflow_scxml_session_try_send(&session, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.cancelled);
+        check_equal(probe.start_commits, (size_t)0u);
+        check_equal(probe.start_discards, (size_t)1u);
+        check_equal(probe.close_calls, (size_t)1u);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("closes a dynamic invocation adapter exactly once at shutdown") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='send_id'/></state></scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1, sizeof(adapter),
+            CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            invoke_idlocation_prepare_start,
+            invoke_idlocation_prepare_cancel, NULL,
+            invoke_idlocation_close, invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_scxml_session_close(&session);
+        cflow_scxml_session_close(&session);
+        check_equal(probe.close_calls, (size_t)1u);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(probe.close_calls, (size_t)1u);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("reports dynamic done identity through event name and invokeid") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='send_id'/><transition "
+            "event='done.invoke.worker.invoke.1' "
+            "cond='_event.name == &quot;done.invoke.worker.1&quot; "
+            "&amp;&amp; _event.invokeid == &quot;worker.1&quot;' "
+            "target='done'/></state><final id='done'/></scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1, sizeof(adapter),
+            CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            invoke_idlocation_prepare_start,
+            invoke_idlocation_prepare_cancel, NULL,
+            invoke_idlocation_close, invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_statechart_instance_stats stats = {0};
+        cflow_scxml_invoke_stats invoke_stats = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_scxml_session_report_invoke_done(&session, 0u),
+                    CFLOW_MAILBOX_INVALID_ARGUMENT);
+        check_equal(cflow_scxml_session_report_invoke_done(
+                        &session, probe.start_tokens[0]),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.done);
+        check_equal(probe.prepare_cancels, (size_t)0u);
+        check_equal(cflow_scxml_session_report_invoke_done(
+                        &session, probe.start_tokens[0]),
+                    CFLOW_MAILBOX_INVALID_ARGUMENT);
+        check_true(cflow_scxml_session_get_invoke_stats(
+            &session, &invoke_stats));
+        check_equal(invoke_stats.returned_accepted, UINT64_C(1));
+        check_equal(invoke_stats.returned_rejected, UINT64_C(1));
+        check_equal(invoke_stats.completed, UINT64_C(1));
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
     }
 
     it("transports scalar content on a literal external send") {
