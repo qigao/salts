@@ -26,6 +26,32 @@ typedef struct w3c_run_result {
     bool errored;
 } w3c_run_result;
 
+typedef struct w3c_adapter_probe {
+    size_t prepare_send_calls;
+} w3c_adapter_probe;
+
+static cflow_scxml_adapter_status w3c_reject_send(
+    void *user, const cflow_scxml_send_request *request,
+    cflow_statechart_effect_ticket *out_ticket,
+    const char **out_error) {
+    w3c_adapter_probe *probe = (w3c_adapter_probe *)user;
+    if (probe == NULL || request == NULL || out_ticket == NULL ||
+        out_error == NULL) {
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    }
+    ++probe->prepare_send_calls;
+    *out_error = "injected W3C send execution error";
+    return CFLOW_SCXML_ADAPTER_ERROR_EXECUTION;
+}
+
+static void w3c_adapter_close(void *user) {
+    (void)user;
+}
+
+static bool w3c_adapter_is_quiescent(void *user) {
+    return user != NULL;
+}
+
 static bool run_w3c_fixture(const char *fixture_name,
                             w3c_run_result *out_result) {
     char path[W3C_FIXTURE_PATH_CAPACITY];
@@ -134,6 +160,109 @@ static void check_w3c_fixture(const char *fixture_name) {
     check_not_equal(result.current_state, result.fail_state);
 }
 
+static bool run_w3c_adapter_error_fixture(
+    const char *fixture_name, cflow_statechart_instance_stats *out_stats,
+    size_t *out_prepare_send_calls) {
+    char path[W3C_FIXTURE_PATH_CAPACITY];
+    char *source = NULL;
+    size_t source_size = 0u;
+    cflow_scxml_program program = {0};
+    cflow_scxml_diagnostic diagnostic = {0};
+    cflow_executor executor = {0};
+    cflow_scxml_session session = {0};
+    w3c_adapter_probe probe = {0};
+    cflow_scxml_event_io_adapter_v1 adapter = {
+        .abi_version = CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V1,
+        .struct_size = sizeof(cflow_scxml_event_io_adapter_v1),
+        .capabilities = CFLOW_SCXML_EVENT_IO_CAP_SEND,
+        .prepare_send = w3c_reject_send,
+        .close = w3c_adapter_close,
+        .is_quiescent = w3c_adapter_is_quiescent};
+    cflow_scxml_session_config config = {0};
+    bool executor_initialized = false;
+    bool session_initialized = false;
+    bool succeeded = false;
+    int path_size;
+
+    if (fixture_name == NULL || out_stats == NULL ||
+        out_prepare_send_calls == NULL) {
+        return false;
+    }
+    path_size = snprintf(path, sizeof(path), "%s/%s",
+                         CFLOW_SCXML_W3C_FIXTURE_DIR, fixture_name);
+    if (path_size < 0 || (size_t)path_size >= sizeof(path)) return false;
+    memset(out_stats, 0, sizeof(*out_stats));
+    *out_prepare_send_calls = 0u;
+    source = tt_read_file(path, &source_size);
+    if (source == NULL) {
+        info("fixture=%s read failed", fixture_name);
+        goto cleanup;
+    }
+    if (cflow_scxml_compile(
+            &program, source, source_size, NULL, &diagnostic) !=
+        CFLOW_SCXML_OK) {
+        info("fixture=%s compile diagnostic=%s", fixture_name,
+             diagnostic.message);
+        goto cleanup;
+    }
+    if (!cflow_executor_serial_init(&executor)) {
+        info("fixture=%s executor initialization failed", fixture_name);
+        goto cleanup;
+    }
+    executor_initialized = true;
+    config = (cflow_scxml_session_config){
+        .program = &program,
+        .executor = &executor,
+        .external_event_capacity = W3C_EXTERNAL_EVENT_CAPACITY,
+        .internal_event_capacity = W3C_INTERNAL_EVENT_CAPACITY,
+        .completion_capacity = W3C_COMPLETION_CAPACITY,
+        .microstep_limit = W3C_MICROSTEP_LIMIT,
+        .effect_capacity = 1u,
+        .adapter_internal_event_capacity = 1u,
+        .event_io = &adapter,
+        .adapter_user = &probe};
+    if (cflow_scxml_session_init(&session, &config) !=
+        CFLOW_STATECHART_RUNTIME_OK) {
+        info("fixture=%s session initialization failed", fixture_name);
+        goto cleanup;
+    }
+    session_initialized = true;
+    if (!cflow_executor_wait_idle(&executor) ||
+        !cflow_scxml_session_get_stats(&session, out_stats)) {
+        info("fixture=%s executor wait or stats failed", fixture_name);
+        goto cleanup;
+    }
+    *out_prepare_send_calls = probe.prepare_send_calls;
+    succeeded = true;
+
+cleanup:
+    if (session_initialized) {
+        if (!out_stats->done) {
+            cflow_scxml_session_cancel(&session);
+            (void)cflow_executor_wait_idle(&executor);
+        }
+        if (cflow_scxml_session_destroy(&session) !=
+            CFLOW_STATECHART_RUNTIME_OK) {
+            succeeded = false;
+        }
+    }
+    if (executor_initialized) cflow_executor_destroy(&executor);
+    cflow_scxml_program_destroy(&program);
+    free(source);
+    return succeeded;
+}
+
+static void check_w3c_adapter_error_fixture(const char *fixture_name) {
+    cflow_statechart_instance_stats stats = {0};
+    size_t prepare_send_calls = 0u;
+
+    check_true(run_w3c_adapter_error_fixture(
+        fixture_name, &stats, &prepare_send_calls));
+    check_true(stats.done);
+    check_false(stats.errored);
+    check_equal(prepare_send_calls, (size_t)1u);
+}
+
 suite("SCXML W3C-derived conformance regression corpus") {
     it("test 144 preserves raised internal event order") {
         check_w3c_fixture("test144.scxml");
@@ -147,8 +276,20 @@ suite("SCXML W3C-derived conformance regression corpus") {
         check_w3c_fixture("test375.scxml");
     }
 
+    it("test 376 keeps onentry handlers as separate executable blocks") {
+        check_w3c_adapter_error_fixture("test376.scxml");
+    }
+
     it("test 377 executes onexit handlers in document order") {
         check_w3c_fixture("test377.scxml");
+    }
+
+    it("test 378 keeps onexit handlers as separate executable blocks") {
+        check_w3c_adapter_error_fixture("test378.scxml");
+    }
+
+    it("test 387 enters the declared default history configuration") {
+        check_w3c_fixture("test387.scxml");
     }
 
     it("test 403a applies source priority, document order, and guards") {
@@ -165,6 +306,10 @@ suite("SCXML W3C-derived conformance regression corpus") {
 
     it("test 406 executes transition content before entry-order actions") {
         check_w3c_fixture("test406.scxml");
+    }
+
+    it("test 407 executes onexit content when a state exits") {
+        check_w3c_fixture("test407.scxml");
     }
 
     it("test 409 removes exited descendants before ancestor onexit") {
@@ -191,8 +336,16 @@ suite("SCXML W3C-derived conformance regression corpus") {
         check_w3c_fixture("test419.scxml");
     }
 
+    it("test 421 drains unmatched internal events before an enabled one") {
+        check_w3c_fixture("test421.scxml");
+    }
+
     it("test 503 gives targetless transitions an empty exit set") {
         check_w3c_fixture("test503.scxml");
+    }
+
+    it("test 504 exits every active descendant of the external LCCA") {
+        check_w3c_fixture("test504.scxml");
     }
 
     it("test 505 retains a compound source for an internal descendant target") {

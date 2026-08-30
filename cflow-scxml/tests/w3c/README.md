@@ -10,18 +10,24 @@ certification and is not, by itself, a claim of complete SCXML conformance.
 | `test144.scxml` | [test144.txml](https://www.w3.org/Voice/2013/scxml-irp/144/test144.txml) | Events produced by `raise` are appended to the internal queue in execution order. |
 | `test355.scxml` | [test355.txml](https://www.w3.org/Voice/2013/scxml-irp/355/test355.txml) | With no root `initial`, the first child state in document order is selected. |
 | `test375.scxml` | [test375.txml](https://www.w3.org/Voice/2013/scxml-irp/375/test375.txml) | Multiple `onentry` handlers execute in document order. |
+| `test376.scxml` | [test376.txml](https://www.w3.org/Voice/2013/scxml-irp/376/test376.txml) | An execution error aborts only its `onentry` block; a later independent handler still executes. |
 | `test377.scxml` | [test377.txml](https://www.w3.org/Voice/2013/scxml-irp/377/test377.txml) | Multiple `onexit` handlers execute in document order. |
+| `test378.scxml` | [test378.txml](https://www.w3.org/Voice/2013/scxml-irp/378/test378.txml) | An execution error aborts only its `onexit` block; a later independent handler still executes. |
+| `test387.scxml` | [test387.txml](https://www.w3.org/Voice/2013/scxml-irp/387/test387.txml) | An unset shallow or deep history slot enters its declared default stored configuration. |
 | `test403a.scxml` | [test403a.txml](https://www.w3.org/Voice/2013/scxml-irp/403a/test403a.txml) | Transition selection prefers descendant sources, then document order, and falls through disabled conditions. |
 | `test404.scxml` | [test404.txml](https://www.w3.org/Voice/2013/scxml-irp/404/test404.txml) | States execute `onexit` content in exit order before transition content. |
 | `test405.scxml` | [test405.txml](https://www.w3.org/Voice/2013/scxml-irp/405/test405.txml) | Selected transition content executes in document order after all required exits. |
 | `test406.scxml` | [test406.txml](https://www.w3.org/Voice/2013/scxml-irp/406/test406.txml) | Transition content executes before states enter in parent-before-child, document order. |
+| `test407.scxml` | [test407.txml](https://www.w3.org/Voice/2013/scxml-irp/407/test407.txml) | A state's `onexit` content executes when the state leaves the active configuration. |
 | `test409.scxml` | [test409.txml](https://www.w3.org/Voice/2013/scxml-irp/409/test409.txml) | A state leaves the active configuration after its own `onexit` and before an ancestor's `onexit`. |
 | `test411.scxml` | [test411.txml](https://www.w3.org/Voice/2013/scxml-irp/411/test411.txml) | A state enters the active configuration immediately before its own `onentry`. |
 | `test412.scxml` | [test412.txml](https://www.w3.org/Voice/2013/scxml-irp/412/test412.txml) | Initial-transition content executes after the parent's `onentry` and before the child's `onentry`. |
 | `test416.scxml` | [test416.txml](https://www.w3.org/Voice/2013/scxml-irp/416/test416.txml) | Entering a compound state's final child generates `done.state.<id>`. |
 | `test417.scxml` | [test417.txml](https://www.w3.org/Voice/2013/scxml-irp/417/test417.txml) | Completing every region generates the parallel state's `done.state.<id>` event. |
 | `test419.scxml` | [test419.txml](https://www.w3.org/Voice/2013/scxml-irp/419/test419.txml) | An enabled eventless transition is selected before a queued internal event. |
+| `test421.scxml` | [test421.txml](https://www.w3.org/Voice/2013/scxml-irp/421/test421.txml) | Unmatched internal events are removed until one enables a transition or the internal queue is empty. |
 | `test503.scxml` | [test503.txml](https://www.w3.org/Voice/2013/scxml-irp/503/test503.txml) | A targetless transition has an empty exit set. |
+| `test504.scxml` | [test504.txml](https://www.w3.org/Voice/2013/scxml-irp/504/test504.txml) | An external transition exits every active proper descendant of the source/target LCCA. |
 | `test505.scxml` | [test505.txml](https://www.w3.org/Voice/2013/scxml-irp/505/test505.txml) | An internal transition from a compound state to a proper descendant retains the source state. |
 | `test506.scxml` | [test506.txml](https://www.w3.org/Voice/2013/scxml-irp/506/test506.txml) | An internal transition whose target is not a proper descendant uses external transition-domain semantics. |
 | `test533.scxml` | [test533.txml](https://www.w3.org/Voice/2013/scxml-irp/533/test533.txml) | An internal transition from a non-compound source uses external transition-domain semantics. |
@@ -52,6 +58,21 @@ missing, extra, or misordered exit either reaches `fail` or prevents the harness
 from observing completion. Their upstream timeout sends are omitted because the
 local harness already requires each run to terminate in `pass` without a runtime
 error.
+
+Tests 376 and 378 replace the generator counter with a `second.block` event.
+Their test-only owning sessions inject `CFLOW_SCXML_ADAPTER_ERROR_EXECUTION`
+for the first handler's `send`, then require `error.execution` followed by the
+event from the later independent handler. Test 387 preserves both unset-history
+targets and replaces wildcard failures with the finite wrong leaf-entry events;
+its timeout send is omitted because the harness requires terminal completion.
+Test 407 replaces the exit counter with one exact internal exit event. Test 421
+retains the four internal events and matches only the third and fourth, which
+directly observes the named internal-queue draining assertion; the upstream
+external-send failure witness is outside that assertion and is omitted. Test
+504 replaces five counters with the two complete reverse-document exit traces
+produced by its external transitions. Exact observers require both parallel
+regions and their parallel parent to exit twice, and the containing state to
+exit once.
 
 ## Current CMeta system-event profile
 
