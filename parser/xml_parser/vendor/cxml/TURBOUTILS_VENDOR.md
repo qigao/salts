@@ -9,9 +9,10 @@
   imported; the declared version and complete imported sources are retained so
   the provenance gap is explicit rather than guessed.
 
-TurboUtils builds only cxml core, DOM XML, and utility sources. Query, XPath,
-SAX, upstream tests, examples, and tools are retained as source reference where
-present but are not compiled into `turboutils_cxml`.
+TurboUtils builds cxml core, DOM XML, query, XPath, and utility sources. SAX,
+upstream tests, examples, and tools are retained as source reference where
+present but are not compiled into `turboutils_cxml`. Query and XPath remain
+private implementations behind `TurboUtils::XmlParser`.
 
 Local patches:
 

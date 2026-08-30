@@ -57,3 +57,6 @@ add_subdirectory(examples)
 
 # Tests live in test/ and register executable targets and CTest entries.
 add_subdirectory(test)
+
+# JUnit reporting tools are owned alongside the framework that emits JUnit XML.
+add_subdirectory(junit_to_html)

@@ -98,6 +98,15 @@ add_test(
     "-DTRAITS_HEADER=${CMAKE_SOURCE_DIR}/tinytest/include/tinymeta/traits.h"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tinymock_header_structure.cmake")
 
+add_test(
+  NAME tinytest_junit_to_html
+  COMMAND ${CMAKE_COMMAND}
+    "-DJUNIT_TO_HTML_EXECUTABLE=${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/junit_to_html${CMAKE_EXECUTABLE_SUFFIX}"
+    "-DJUNIT_INPUT=${CMAKE_CURRENT_SOURCE_DIR}/junit_to_html_input.xml"
+    "-DJUNIT_TEMPLATE=${CMAKE_SOURCE_DIR}/tinytest/junit_to_html/dashboard.html"
+    "-DHTML_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/junit_to_html_output.html"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/junit_to_html_test.cmake")
+
 cmake_add_test(tinymock_test
   SOURCES tinymock_test.c
   LIBS TurboUtils::TinyTest
