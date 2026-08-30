@@ -1,0 +1,34 @@
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0"
+       datamodel="null" initial="s0">
+  <state id="s0" initial="s01">
+    <state id="s01">
+      <onentry>
+        <raise event="event1"/>
+      </onentry>
+      <initial>
+        <transition target="s011">
+          <raise event="event2"/>
+        </transition>
+      </initial>
+      <state id="s011">
+        <onentry>
+          <raise event="event3"/>
+        </onentry>
+        <transition target="s02"/>
+      </state>
+    </state>
+    <state id="s02">
+      <transition event="event1" target="s03"/>
+      <transition event="event2 event3" target="fail"/>
+    </state>
+    <state id="s03">
+      <transition event="event2" target="s04"/>
+      <transition event="event3" target="fail"/>
+    </state>
+    <state id="s04">
+      <transition event="event3" target="pass"/>
+    </state>
+  </state>
+  <final id="pass"/>
+  <final id="fail"/>
+</scxml>

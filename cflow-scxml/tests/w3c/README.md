@@ -11,6 +11,10 @@ certification and is not, by itself, a claim of complete SCXML conformance.
 | `test355.scxml` | [test355.txml](https://www.w3.org/Voice/2013/scxml-irp/355/test355.txml) | With no root `initial`, the first child state in document order is selected. |
 | `test375.scxml` | [test375.txml](https://www.w3.org/Voice/2013/scxml-irp/375/test375.txml) | Multiple `onentry` handlers execute in document order. |
 | `test377.scxml` | [test377.txml](https://www.w3.org/Voice/2013/scxml-irp/377/test377.txml) | Multiple `onexit` handlers execute in document order. |
+| `test404.scxml` | [test404.txml](https://www.w3.org/Voice/2013/scxml-irp/404/test404.txml) | States execute `onexit` content in exit order before transition content. |
+| `test405.scxml` | [test405.txml](https://www.w3.org/Voice/2013/scxml-irp/405/test405.txml) | Selected transition content executes in document order after all required exits. |
+| `test406.scxml` | [test406.txml](https://www.w3.org/Voice/2013/scxml-irp/406/test406.txml) | Transition content executes before states enter in parent-before-child, document order. |
+| `test412.scxml` | [test412.txml](https://www.w3.org/Voice/2013/scxml-irp/412/test412.txml) | Initial-transition content executes after the parent's `onentry` and before the child's `onentry`. |
 | `test416.scxml` | [test416.txml](https://www.w3.org/Voice/2013/scxml-irp/416/test416.txml) | Entering a compound state's final child generates `done.state.<id>`. |
 | `test417.scxml` | [test417.txml](https://www.w3.org/Voice/2013/scxml-irp/417/test417.txml) | Completing every region generates the parallel state's `done.state.<id>` event. |
 | `test419.scxml` | [test419.txml](https://www.w3.org/Voice/2013/scxml-irp/419/test419.txml) | An enabled eventless transition is selected before a queued internal event. |
@@ -21,14 +25,16 @@ generation pipeline. Every local transformation replaces `conf:pass` and
 test-generation metadata, selects the null datamodel, and keeps the executable
 structure that observes the assertion.
 
-Tests 144, 375, and 377 replace wildcard failure transitions, which are
-outside the current TurboUtils profile, with the finite exact events that
-represent an ordering error at each observation state. Tests 416 and 417 omit
-the upstream one-second timeout `send`; it is only a liveness safety net, while
-the local harness directly fails any run that does not reach `pass`. Test 419
-keeps the queued internal event as the failure witness, replaces the wildcard
-with that exact event, and omits the additional external `send`; the retained
-event is sufficient to distinguish eventless-transition precedence.
+Tests 144, 375, 377, 404, 405, 406, and 412 replace wildcard failure
+transitions, which are outside the current TurboUtils profile, with the finite
+exact events that represent an ordering error at each observation state. Test
+412 also removes redundant generator-level parent sentinels while retaining
+the complete three-event observation chain. Tests 405, 406, 412, 416, and 417
+omit the upstream one-second timeout `send`; it is only a liveness safety net,
+while the local harness directly fails any run that does not reach `pass`.
+Test 419 keeps the queued internal event as the failure witness, replaces the
+wildcard with that exact event, and omits the additional external `send`; the
+retained event is sufficient to distinguish eventless-transition precedence.
 
 ## Current CMeta system-event profile
 
