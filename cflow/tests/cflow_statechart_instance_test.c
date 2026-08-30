@@ -4728,6 +4728,7 @@ struct rtc_fixture {
     int trace[12];
     size_t trace_count;
     bool raise_twice;
+    bool raise_on_final_entry;
     bool close_during_action;
     bool cancel_during_action;
     bool queue_cancel_after_commit;
@@ -4977,6 +4978,15 @@ static bool rtc_action(void *user, cflow_statechart_action_phase phase,
     if (fixture->fail_action) {
         *out_error = "deliberate RTC action failure";
         return false;
+    }
+    if (fixture->raise_on_final_entry &&
+        phase == CFLOW_STATECHART_ACTION_ENTRY && owner == RTC_FINAL) {
+        const int payload = 77;
+        const cflow_event_view raised = {
+            RTC_NEXT, &cmeta_type_int, &payload};
+        if (raise_internal == NULL ||
+            !raise_internal(raise_user, &raised, out_error))
+            return false;
     }
     if (phase == CFLOW_STATECHART_ACTION_TRANSITION && event != NULL &&
         (event->id == RTC_GO ||
@@ -6291,6 +6301,33 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_equal(stats.external_completed, UINT64_C(1));
         check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
                     CFLOW_MAILBOX_CLOSED);
+        rtc_destroy(&fixture);
+    }
+
+    it("halts before selecting an internal event raised by root completion") {
+        rtc_fixture fixture;
+        const cflow_statechart_state_action state_actions[] = {{
+            RTC_FINAL, CFLOW_STATECHART_STATE_ACTION_ENTRY, RTC_EXEC, 0u}};
+        cflow_statechart_instance_stats stats = {0};
+        rtc_definition(&fixture, false, false);
+        fixture.transitions[0].target = RTC_FINAL;
+        fixture.definition.state_actions = state_actions;
+        fixture.definition.state_action_count = 1u;
+        fixture.raise_on_final_entry = true;
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_event = rtc_event_hook};
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        check_equal(fixture.event_hook_calls, (size_t)1u);
+        check_equal(fixture.observed_event_kinds[0],
+                    CFLOW_STATECHART_OBSERVED_COMPLETION);
         rtc_destroy(&fixture);
     }
 
