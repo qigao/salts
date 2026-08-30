@@ -600,7 +600,22 @@ runtime attachment. Both strings remain stable through successful session
 destruction and expression results borrow them only for the enclosing guard or
 executable callback. XML character/entity references in `cond` are decoded
 under the configured source-byte bound before the immutable expression is
-compiled. CMeta `<assign>` admits a non-empty dotted
+compiled. CMeta documents admit both `binding="early"` and `binding="late"`.
+Early declarations initialize the private session copy before native startup.
+Late declarations initialize in document order exactly once, on the first
+entry of their owning `scxml`, `state`, or `parallel`, before that state's
+`onentry` actions and initial/history executable content. Before first entry,
+reads observe the caller-provided initial CMeta object; the frontend never
+synthesizes a zero or fallback value. All late datamodels entered by one
+microstep share one native effect-journal row so their first-entry markers and
+declaration assignments commit or roll back together. Session admission
+therefore requires nonzero `effect_capacity`; other effects in the same
+microstep consume their usual additional rows. Re-entry and history restoration
+preserve the committed value, while initializer evaluation failure terminates
+the owning microstep without publishing partial state. External `<data src>`
+remains unsupported because no resource-loader contract is exposed.
+
+CMeta `<assign>` admits a non-empty dotted
 reflected struct-field `location` and one scalar `expr`. Boolean, signed,
 unsigned, floating-point, enum, and string destinations require an exact
 conversion; string adapters also enforce `max_string_bytes`. Assignment runs
@@ -853,6 +868,14 @@ The supported compatibility subset is deliberately strict:
   the body. `max_iterations` is a positive per-invocation ceiling; an
   allocation, range, limit, or child error queues `error.execution` and rolls
   back the enclosing block. `finalize` iteration remains unsupported;
+- `binding="early"` and transactional `binding="late"` CMeta declarations.
+  Late declarations run once before their containing state's entry and
+  initial/history work. Pre-entry reads retain the supplied initial object,
+  re-entry and history do not rerun initialization, and parallel entry follows
+  document order. Late initialization reserves one effect-journal row per
+  microstep; evaluation or journal failure publishes neither declaration
+  writes nor the initialized marker. External `<data src>` remains fail-fast
+  unsupported;
 - bounded executable blocks containing `raise event="NMTOKEN"` and nested
   `if`/`elseif`/`else` partitions under `onentry`, `onexit`, and
   ordinary/initial/history transitions. The null-model condition grammar is
