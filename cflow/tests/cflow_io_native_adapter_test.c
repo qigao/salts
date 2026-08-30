@@ -2,14 +2,18 @@
 
 #include "tinytest.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #if defined(_WIN32)
   #include <winsock2.h>
   #include <ws2tcpip.h>
+  #include <windows.h>
 typedef SOCKET native_adapter_test_socket;
 typedef int native_adapter_test_socklen;
+typedef HANDLE native_adapter_test_pipe;
   #define NATIVE_ADAPTER_TEST_INVALID_SOCKET INVALID_SOCKET
+  #define NATIVE_ADAPTER_TEST_INVALID_PIPE INVALID_HANDLE_VALUE
 #else
   #include <errno.h>
   #include <fcntl.h>
@@ -18,10 +22,15 @@ typedef int native_adapter_test_socklen;
   #include <unistd.h>
 typedef int native_adapter_test_socket;
 typedef socklen_t native_adapter_test_socklen;
+typedef int native_adapter_test_pipe;
   #define NATIVE_ADAPTER_TEST_INVALID_SOCKET (-1)
+  #define NATIVE_ADAPTER_TEST_INVALID_PIPE (-1)
 #endif
 
-enum { NATIVE_ADAPTER_TEST_TIMEOUT_MS = 5000 };
+enum {
+    NATIVE_ADAPTER_TEST_PIPE_BUFFER_CAPACITY = 4096,
+    NATIVE_ADAPTER_TEST_TIMEOUT_MS = 5000
+};
 
 typedef struct native_adapter_test_operation {
     turbo_io_operation native;
@@ -125,6 +134,99 @@ static int native_adapter_test_make_tcp_pair(
         sockets[1] = NATIVE_ADAPTER_TEST_INVALID_SOCKET;
     }
     return status;
+}
+
+static void native_adapter_test_close_pipe(
+    native_adapter_test_pipe pipe_handle) {
+    if (pipe_handle == NATIVE_ADAPTER_TEST_INVALID_PIPE)
+        return;
+#if defined(_WIN32)
+    (void)CloseHandle(pipe_handle);
+#else
+    (void)close(pipe_handle);
+#endif
+}
+
+static int native_adapter_test_make_pipe_pair(
+    native_adapter_test_pipe pipes[2]) {
+#if defined(_WIN32)
+    static LONG sequence = 0;
+    char name[128];
+    OVERLAPPED connected = {0};
+    HANDLE event = NULL;
+    DWORD error = ERROR_SUCCESS;
+    BOOL pending = FALSE;
+    int name_length;
+
+    pipes[0] = INVALID_HANDLE_VALUE;
+    pipes[1] = INVALID_HANDLE_VALUE;
+    name_length = snprintf(
+        name, sizeof(name), "\\\\.\\pipe\\cflow-native-adapter-%lu-%ld",
+        GetCurrentProcessId(), InterlockedIncrement(&sequence));
+    if (name_length < 0 || (size_t)name_length >= sizeof(name))
+        return TURBO_ERANGE;
+    pipes[0] = CreateNamedPipeA(
+        name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u,
+        NATIVE_ADAPTER_TEST_PIPE_BUFFER_CAPACITY,
+        NATIVE_ADAPTER_TEST_PIPE_BUFFER_CAPACITY, 0u, NULL);
+    if (pipes[0] == INVALID_HANDLE_VALUE)
+        return -(int)GetLastError();
+    event = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (event == NULL) {
+        error = GetLastError();
+        goto failed;
+    }
+    connected.hEvent = event;
+    if (!ConnectNamedPipe(pipes[0], &connected)) {
+        error = GetLastError();
+        if (error == ERROR_IO_PENDING)
+            pending = TRUE;
+        else if (error != ERROR_PIPE_CONNECTED)
+            goto failed;
+    }
+    pipes[1] = CreateFileA(name, GENERIC_READ | GENERIC_WRITE, 0u, NULL,
+                           OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+    if (pipes[1] == INVALID_HANDLE_VALUE) {
+        error = GetLastError();
+        goto failed;
+    }
+    if (pending) {
+        DWORD transferred = 0u;
+        if (!GetOverlappedResult(pipes[0], &connected, &transferred, TRUE)) {
+            error = GetLastError();
+            goto failed;
+        }
+    }
+    (void)CloseHandle(event);
+    return TURBO_OK;
+
+failed:
+    native_adapter_test_close_pipe(pipes[1]);
+    native_adapter_test_close_pipe(pipes[0]);
+    if (event != NULL)
+        (void)CloseHandle(event);
+    pipes[0] = INVALID_HANDLE_VALUE;
+    pipes[1] = INVALID_HANDLE_VALUE;
+    return -(int)error;
+#else
+    int flags;
+    if (pipe(pipes) != 0)
+        return -errno;
+    for (size_t index = 0u; index < 2u; ++index) {
+        flags = fcntl(pipes[index], F_GETFL, 0);
+        if (flags < 0 || fcntl(pipes[index], F_SETFL,
+                               flags | O_NONBLOCK) != 0) {
+            int status = -errno;
+            native_adapter_test_close_pipe(pipes[0]);
+            native_adapter_test_close_pipe(pipes[1]);
+            pipes[0] = -1;
+            pipes[1] = -1;
+            return status;
+        }
+    }
+    return TURBO_OK;
+#endif
 }
 
 static void native_adapter_test_release(void *operation_user) {
@@ -258,36 +360,23 @@ spec("CFlow NativeIO Actor adapter") {
     it("forwards explicit pipe capability without fallback") {
         cflow_io_native_adapter adapter = {0};
         turbo_io_endpoint endpoint = {9u, 9u};
+        native_adapter_test_pipe pipes[2] = {
+            NATIVE_ADAPTER_TEST_INVALID_PIPE,
+            NATIVE_ADAPTER_TEST_INVALID_PIPE};
         const cflow_io_native_adapter_config config = {
             {native_adapter_test_backend(), 1u, 1u, 1u}};
 
         check_equal(cflow_io_native_adapter_init(&adapter, &config), TURBO_OK);
-#if defined(_WIN32)
+        check_equal(native_adapter_test_make_pipe_pair(pipes), TURBO_OK);
         check_equal(cflow_io_native_adapter_attach_pipe(
-                        &adapter, 0u, TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
+                        &adapter, (uintptr_t)pipes[0],
+                        TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
                         &endpoint),
-                    TURBO_ENOTSUP);
-        check_false(turbo_io_endpoint_valid(endpoint));
+                    TURBO_OK);
+        native_adapter_test_close_pipe(pipes[0]);
+        native_adapter_test_close_pipe(pipes[1]);
         check_equal(cflow_io_native_adapter_release_pipe(&adapter, endpoint),
-                    TURBO_EINVAL);
-#else
-        {
-            int descriptors[2] = {-1, -1};
-            int flags;
-            check_equal(pipe(descriptors), 0);
-            flags = fcntl(descriptors[0], F_GETFL, 0);
-            check_true(flags >= 0);
-            check_equal(fcntl(descriptors[0], F_SETFL, flags | O_NONBLOCK), 0);
-            check_equal(cflow_io_native_adapter_attach_pipe(
-                            &adapter, (uintptr_t)descriptors[0],
-                            TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
-                        TURBO_OK);
-            check_equal(close(descriptors[0]), 0);
-            check_equal(close(descriptors[1]), 0);
-            check_equal(cflow_io_native_adapter_release_pipe(&adapter, endpoint),
-                        TURBO_OK);
-        }
-#endif
+                    TURBO_OK);
         check_equal(cflow_io_native_adapter_close(&adapter), TURBO_OK);
         check_equal(cflow_io_native_adapter_destroy(&adapter), TURBO_OK);
     }
@@ -378,6 +467,102 @@ spec("CFlow NativeIO Actor adapter") {
                     TURBO_OK);
         check_equal(cflow_io_native_adapter_release_socket(&adapter,
                                                             endpoints[1]),
+                    TURBO_OK);
+        check_equal(cflow_io_native_adapter_destroy(&adapter), TURBO_OK);
+        check_true(cflow_executor_shutdown(&executor));
+        cflow_executor_destroy(&executor);
+    }
+
+    it("round trips one byte-pipe payload through Actor on the owner thread") {
+        static const unsigned char payload[] = {0x70u, 0x69u, 0x70u, 0x65u};
+        unsigned char received[sizeof(payload)] = {0};
+        native_adapter_test_pipe pipes[2] = {
+            NATIVE_ADAPTER_TEST_INVALID_PIPE,
+            NATIVE_ADAPTER_TEST_INVALID_PIPE};
+        turbo_io_endpoint endpoints[2] = {0};
+        cflow_io_native_adapter adapter = {0};
+        cflow_executor executor = {0};
+        cflow_io_actor actor = {0};
+        native_adapter_test_completions completions = {0};
+        size_t release_count = 0u;
+        size_t observed = 0u;
+        const cflow_io_native_adapter_config adapter_config = {
+            {native_adapter_test_backend(), 2u, 2u, 2u}};
+        cflow_io_actor_config actor_config = {0};
+        native_adapter_test_operation operations[2] = {
+            {{TURBO_IO_PIPE_READ, {0}, received, sizeof(received), 37u,
+              NULL, 0u, 0u}, &release_count},
+            {{TURBO_IO_PIPE_WRITE, {0}, (void *)payload, sizeof(payload), 39u,
+              NULL, 0u, 0u}, &release_count}};
+        cflow_io_operation actor_operations[2] = {
+            {&operations[0], native_adapter_test_release},
+            {&operations[1], native_adapter_test_release}};
+        cflow_io_submit_result submitted[2];
+
+        check_equal(cflow_io_native_adapter_init(&adapter, &adapter_config),
+                    TURBO_OK);
+        check_equal(native_adapter_test_make_pipe_pair(pipes), TURBO_OK);
+        check_equal(cflow_io_native_adapter_attach_pipe(
+                        &adapter, (uintptr_t)pipes[0],
+                        TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoints[0]),
+                    TURBO_OK);
+        check_equal(cflow_io_native_adapter_attach_pipe(
+                        &adapter, (uintptr_t)pipes[1],
+                        TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoints[1]),
+                    TURBO_OK);
+        operations[0].native.endpoint = endpoints[0];
+        operations[1].native.endpoint = endpoints[1];
+
+        check_true(cflow_executor_manual_init_with_capacity(&executor, 2u));
+        actor_config.request_capacity = 2u;
+        actor_config.command_capacity = 2u;
+        actor_config.executor = &executor;
+        actor_config.backend = cflow_io_native_adapter_actor_ops();
+        actor_config.backend_user = &adapter;
+        actor_config.completion = native_adapter_test_complete;
+        actor_config.completion_user = &completions;
+        check_equal(cflow_io_actor_init(&actor, &actor_config), TURBO_OK);
+
+        submitted[0] = cflow_io_actor_try_submit(&actor, 111u,
+                                                  &actor_operations[0]);
+        submitted[1] = cflow_io_actor_try_submit(&actor, 112u,
+                                                  &actor_operations[1]);
+        check_equal(submitted[0].status, CFLOW_IO_SUBMIT_ACCEPTED);
+        check_equal(submitted[1].status, CFLOW_IO_SUBMIT_ACCEPTED);
+        check_equal(cflow_io_actor_run_ready(&actor, 8u).status,
+                    CFLOW_IO_RUN_PROGRESSED);
+
+        while (observed < 2u) {
+            size_t batch = 0u;
+            check_equal(cflow_io_native_adapter_observe(
+                            &adapter, NATIVE_ADAPTER_TEST_TIMEOUT_MS, &batch),
+                        TURBO_OK);
+            observed += batch;
+        }
+        (void)cflow_io_actor_run_ready(&actor, 8u);
+        (void)cflow_executor_run_ready(&executor);
+        check_equal(completions.count, 2u);
+        check_equal(received, payload, sizeof(payload));
+        for (size_t index = 0u; index < completions.count; ++index) {
+            check_equal(completions.values[index].kind,
+                        CFLOW_IO_COMPLETION_OK);
+            check_equal(cflow_io_actor_acknowledge(&actor,
+                                                    completions.ids[index]),
+                        CFLOW_IO_ACK_RELEASED);
+        }
+        check_equal(release_count, 2u);
+
+        check_equal(cflow_io_actor_close(&actor), TURBO_OK);
+        check_true(cflow_io_actor_is_quiescent(&actor));
+        check_equal(cflow_io_actor_destroy(&actor), TURBO_OK);
+        check_equal(cflow_io_native_adapter_close(&adapter), TURBO_OK);
+        native_adapter_test_close_pipe(pipes[0]);
+        native_adapter_test_close_pipe(pipes[1]);
+        check_equal(cflow_io_native_adapter_release_pipe(&adapter,
+                                                          endpoints[0]),
+                    TURBO_OK);
+        check_equal(cflow_io_native_adapter_release_pipe(&adapter,
+                                                          endpoints[1]),
                     TURBO_OK);
         check_equal(cflow_io_native_adapter_destroy(&adapter), TURBO_OK);
         check_true(cflow_executor_shutdown(&executor));
@@ -568,10 +753,12 @@ spec("CFlow NativeIO Actor adapter") {
         cflow_executor_destroy(&executor);
     }
 
-    it("feeds a windowed Source from one owner-driven NativeIO backend") {
+    it("feeds a windowed Source from one owner-driven NativeIO pipe backend") {
         static const unsigned char payload[] = {0x51u, 0x52u, 0x53u, 0x54u};
         unsigned char received[sizeof(payload)] = {0};
-        native_adapter_test_socket sockets[2];
+        native_adapter_test_pipe pipes[2] = {
+            NATIVE_ADAPTER_TEST_INVALID_PIPE,
+            NATIVE_ADAPTER_TEST_INVALID_PIPE};
         turbo_io_endpoint endpoints[2] = {0};
         cflow_io_native_adapter adapter = {0};
         cflow_io_source_owner owner = {0};
@@ -596,21 +783,23 @@ spec("CFlow NativeIO Actor adapter") {
 
         check_equal(cflow_io_native_adapter_init(&adapter, &adapter_config),
                     TURBO_OK);
-        check_equal(native_adapter_test_make_tcp_pair(sockets), TURBO_OK);
-        check_equal(cflow_io_native_adapter_attach_socket(
-                        &adapter, (uintptr_t)sockets[0], &endpoints[0]),
+        check_equal(native_adapter_test_make_pipe_pair(pipes), TURBO_OK);
+        check_equal(cflow_io_native_adapter_attach_pipe(
+                        &adapter, (uintptr_t)pipes[0],
+                        TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoints[0]),
                     TURBO_OK);
-        check_equal(cflow_io_native_adapter_attach_socket(
-                        &adapter, (uintptr_t)sockets[1], &endpoints[1]),
+        check_equal(cflow_io_native_adapter_attach_pipe(
+                        &adapter, (uintptr_t)pipes[1],
+                        TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoints[1]),
                     TURBO_OK);
 
         fixture.operation_count = 2u;
         fixture.operations[0].native = (turbo_io_operation){
-            TURBO_IO_TCP_RECV, endpoints[1], received, sizeof(received), 0u,
+            TURBO_IO_PIPE_READ, endpoints[0], received, sizeof(received), 0u,
             NULL, 0u, 0u};
         fixture.operations[0].release_count = &fixture.release_count;
         fixture.operations[1].native = (turbo_io_operation){
-            TURBO_IO_TCP_SEND, endpoints[0], (void *)payload, sizeof(payload),
+            TURBO_IO_PIPE_WRITE, endpoints[1], (void *)payload, sizeof(payload),
             0u, NULL, 0u, 0u};
         fixture.operations[1].release_count = &fixture.release_count;
         source_config.name = "native-io-windowed-source";
@@ -670,11 +859,11 @@ spec("CFlow NativeIO Actor adapter") {
         cflow_graph_destroy(&surface);
 
         check_equal(cflow_io_native_adapter_close(&adapter), TURBO_OK);
-        native_adapter_test_close_socket(sockets[0]);
-        native_adapter_test_close_socket(sockets[1]);
-        check_equal(cflow_io_native_adapter_release_socket(
+        native_adapter_test_close_pipe(pipes[0]);
+        native_adapter_test_close_pipe(pipes[1]);
+        check_equal(cflow_io_native_adapter_release_pipe(
                         &adapter, endpoints[0]), TURBO_OK);
-        check_equal(cflow_io_native_adapter_release_socket(
+        check_equal(cflow_io_native_adapter_release_pipe(
                         &adapter, endpoints[1]), TURBO_OK);
         check_equal(cflow_io_native_adapter_destroy(&adapter), TURBO_OK);
     }

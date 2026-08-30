@@ -16,7 +16,7 @@ CFlow / Actor / future adapters
       Platform errors and ABI
 ```
 
-当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 TCP recv/send 和 UDP recv_from/send_to。Linux epoll 与 macOS/BSD kqueue 还支持非阻塞 connected byte pipe；IOCP named pipe 与 io_uring pipe 仍显式返回 `TURBO_ENOTSUP`。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `TURBO_ENOTSUP`。CFlow 通过 additive `cflow_io_native_adapter` 把一个 Actor/Source 绑定到调用方驱动的 NativeIO backend；NativeIO 本身仍不依赖或拥有 CFlow 状态。
+当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 TCP recv/send 和 UDP recv_from/send_to。Windows IOCP 支持 overlapped byte-mode named pipe，Linux epoll 与 macOS/BSD kqueue 支持非阻塞 connected byte pipe；io_uring pipe 仍显式返回 `TURBO_ENOTSUP`。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `TURBO_ENOTSUP`。CFlow 通过 additive `cflow_io_native_adapter` 把一个 Actor/Source 绑定到调用方驱动的 NativeIO backend；NativeIO 本身仍不依赖或拥有 CFlow 状态。
 
 ## 数据与状态协议
 
@@ -44,7 +44,7 @@ FREE --submit accepted--> PENDING --observe terminal--> FREE(next generation)
 
 初始化之后，submit/observe 不分配内存。endpoint 与 request 都通过预分配 free stack 以 O(1) 获取：
 
-- IOCP：submit 直接调用 `WSARecv`/`WSASend`，observe 直接读取 completion port。
+- IOCP：socket submit 直接调用 `WSARecv`/`WSASend`，named-pipe submit 直接调用 overlapped `ReadFile`/`WriteFile`，observe 统一读取 completion port。
 - epoll/kqueue：submit 先以单次非阻塞 syscall 尝试；仅在 would-block 时进入每 endpoint 的 FIFO lane，并由 owner 在 observe 中直接等待 readiness 和继续 syscall。
 - io_uring：每个 endpoint 的 read/write lane 各保持至多一个内核 in-flight SQE，其余已接受描述符保留在固定 request 槽位中；observe drain CQ 后推进 lane。ring 由模块映射，但没有 worker、mutex、callback、payload copy 或跨线程 mailbox。
 

@@ -1133,16 +1133,29 @@ if (status != TURBO_OK)
 actor_config.backend = cflow_io_native_adapter_actor_ops();
 actor_config.backend_user = &adapter;
 
-/* Attach caller-owned sockets, drive Actor requests, then observe terminals
+/* Attach caller-owned sockets or async-capable byte pipes, drive Actor requests, then observe terminals
    from this same owner thread. */
 size_t completed = 0u;
 status = cflow_io_native_adapter_observe(
     &adapter, 0u, &completed);
 ```
 
+The binding follows the OS communication fact source; it does not turn one
+model into another:
+
+| OS data path | CFlow binding | Pipe form |
+|---|---|---|
+| readiness (`epoll`/`kqueue`) | Reactor registration Source, or Actor over the explicitly selected NativeIO readiness backend | nonblocking byte-pipe descriptor |
+| completion (`IOCP`) | Actor/Source over `cflow_io_native_adapter` | overlapped byte-mode named-pipe handle |
+| blocking | no implicit Actor/Reactor binding | rejected by the async adapter |
+
+The Reactor registration remains a direct readiness contract; it does not
+poll NativeIO completion state. The NativeIO adapter remains a completion
+correlation bridge; it does not create readiness events or an extra queue.
+
 Shutdown order is: stop Actor/Source admission, cancel or drain accepted
 requests, keep observing and driving until Actor/Source quiescence, close the
-adapter, close caller-owned native sockets, release endpoint metadata, then
+adapter, close caller-owned native sockets/pipes, release endpoint metadata, then
 destroy the adapter. `TURBO_EALREADY` from NativeIO cancellation means a
 terminal is already in progress and is normalized to successful Actor cancel
 dispatch; it does not authorize early payload reuse.
