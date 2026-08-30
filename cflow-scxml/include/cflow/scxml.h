@@ -109,7 +109,8 @@ typedef enum cflow_scxml_program_requirement {
     CFLOW_SCXML_REQUIREMENT_INVOKE_PAYLOAD = 1u << 5u,
     CFLOW_SCXML_REQUIREMENT_INVOKE_IDLOCATION = 1u << 6u,
     CFLOW_SCXML_REQUIREMENT_CONTENT_V3 = 1u << 7u,
-    CFLOW_SCXML_REQUIREMENT_INVOKE_CONTENT_V3 = 1u << 8u
+    CFLOW_SCXML_REQUIREMENT_INVOKE_CONTENT_V3 = 1u << 8u,
+    CFLOW_SCXML_REQUIREMENT_LATE_BINDING = 1u << 9u
 } cflow_scxml_program_requirement;
 
 typedef enum cflow_scxml_event_io_capability {
@@ -492,7 +493,11 @@ typedef struct cflow_scxml_session_config {
     size_t max_storage_bytes;
     cflow_clock *clock;
     size_t timer_capacity;
-    /** Maximum effect tickets staged by one rollback-capable microstep. */
+    /**
+     * Maximum effect tickets staged by one rollback-capable microstep.
+     * A CMeta late-binding session reserves one row while a microstep has
+     * first-entry initializers pending.
+     */
     size_t effect_capacity;
     /** Bounded MPSC ingress for asynchronous adapter error Events. */
     size_t adapter_internal_event_capacity;
