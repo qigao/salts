@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0"
+       datamodel="cmeta"
+       initial="s0">
+  <state id="s0">
+    <invoke type="urn:w3c:test" idlocation="invoke_id"/>
+    <transition event="done.invoke.s0.invoke.1"
+                cond="invoke_id != &quot;&quot;"
+                target="pass"/>
+  </state>
+  <final id="pass"/>
+</scxml>

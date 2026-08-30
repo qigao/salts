@@ -1,16 +1,35 @@
 # W3C-derived SCXML regression fixtures
 
-These fixtures are local transformations of selected documents from the
+These fixtures are local transformations of documents from the
 [W3C SCXML 1.0 Implementation Report test suite](https://www.w3.org/Voice/2013/scxml-irp/).
-They test only the named assertions below. Passing them is not W3C
-certification and is not, by itself, a claim of complete SCXML conformance.
+The inventory follows the upstream 10 March 2015 report: 200 assertions expand
+to 202 test documents because assertion 403 has three starts. Of those
+documents, 168 are mandatory and 34 optional. TurboUtils currently executes 36
+local PASS transformations, records 132 mandatory documents as UNSUPPORTED,
+and records all 34 optional-profile documents as N/A. Passing this corpus is
+not W3C certification and is not, by itself, a claim of complete SCXML
+processor conformance.
 
-`manifest.tsv` is the machine-readable selected-corpus inventory. The harness
-strictly validates its seven tab-separated columns: IDs and fixture paths are
-unique, applicability is `MANDATORY` or `OPTIONAL`, status is `PASS`,
-`UNSUPPORTED`, or `N/A`, every `PASS` fixture exists, and upstream references
-use the official W3C origin. The prose below explains transformations but does
-not override manifest facts.
+`manifest.tsv` is the single machine-readable corpus fact source. Every
+upstream start document has one row. Its nine tab-separated columns record the
+local ID and fixture path, applicability, status, feature, exact upstream
+source, expected result, transformation, and rationale. The harness rejects
+duplicate IDs, fixture paths, and sources; malformed or empty columns;
+applicability/status mismatches; missing PASS fixtures; inconsistent expected
+results; undocumented source origins; and an inventory other than 202 rows,
+168 mandatory rows, and 34 optional rows. The prose below explains PASS
+transformations and profile boundaries but does not override manifest facts.
+
+Status meanings are strict:
+
+- `PASS` means the local fixture is executed and must deterministically reach
+  its `pass` terminal, or the equivalent single-pass terminal checked by a
+  specialized strict adapter harness.
+- `UNSUPPORTED` means a mandatory upstream document remains outside the
+  implemented or testable TurboUtils profile. The row states the missing
+  assertion rather than silently omitting it.
+- `N/A` is reserved for optional profiles that TurboUtils does not claim,
+  currently ECMAScript, XPath, and BasicHTTP-specific behavior.
 
 | Local fixture | Upstream source | Assertion preserved |
 | --- | --- | --- |
@@ -20,6 +39,9 @@ not override manifest facts.
 | `test149.scxml` | [test149.txml](https://www.w3.org/Voice/2013/scxml-irp/149/test149.txml) | An `if` executes no partition when every condition is false and no `else` exists. |
 | `test158.scxml` | [test158.txml](https://www.w3.org/Voice/2013/scxml-irp/158/test158.txml) | Elements in one executable-content block execute in document order. |
 | `test159.scxml` | [test159.txml](https://www.w3.org/Voice/2013/scxml-irp/159/test159.txml) | An execution error prevents the remaining elements of the same block from executing. |
+| `test179.scxml` | [test179.txml](https://www.w3.org/Voice/2013/scxml-irp/179/test179.txml) | Evaluated `send/content` bytes reach the host Event I/O boundary unmodified. |
+| `test223.scxml` | [test223.txml](https://www.w3.org/Voice/2013/scxml-irp/223/test223.txml) | `invoke/@idlocation` receives the generated invocation ID before completion is processed. |
+| `test224.scxml` | [test224.txml](https://www.w3.org/Voice/2013/scxml-irp/224/test224.txml) | The generated invocation ID has `stateid.platformid` form at both the CMeta location and adapter boundary. |
 | `test355.scxml` | [test355.txml](https://www.w3.org/Voice/2013/scxml-irp/355/test355.txml) | With no root `initial`, the first child state in document order is selected. |
 | `test375.scxml` | [test375.txml](https://www.w3.org/Voice/2013/scxml-irp/375/test375.txml) | Multiple `onentry` handlers execute in document order. |
 | `test376.scxml` | [test376.txml](https://www.w3.org/Voice/2013/scxml-irp/376/test376.txml) | An execution error aborts only its `onentry` block; a later independent handler still executes. |
@@ -30,7 +52,7 @@ not override manifest facts.
 | `test579.scxml` | [test579.txml](https://www.w3.org/Voice/2013/scxml-irp/579/test579.txml) | Unset history transition content executes after the parent's `onentry` and initial-transition content. |
 | `test580.scxml` | [test580.txml](https://www.w3.org/Voice/2013/scxml-irp/580/test580.txml) | A history pseudo-state never appears in the active configuration. |
 | `test576.scxml` | [test576.txml](https://www.w3.org/Voice/2013/scxml-irp/576/test576.txml) | Root `initial` IDREFS enter both deeply nested non-default siblings of one parallel state. |
-| `test403a.scxml` | [test403a.txml](https://www.w3.org/Voice/2013/scxml-irp/403a/test403a.txml) | Transition selection prefers descendant sources, then document order, and falls through disabled conditions. |
+| `test403a.scxml` | [test403a.txml](https://www.w3.org/Voice/2013/scxml-irp/403/test403a.txml) | Transition selection prefers descendant sources, then document order, and falls through disabled conditions. |
 | `test404.scxml` | [test404.txml](https://www.w3.org/Voice/2013/scxml-irp/404/test404.txml) | States execute `onexit` content in exit order before transition content. |
 | `test405.scxml` | [test405.txml](https://www.w3.org/Voice/2013/scxml-irp/405/test405.txml) | Selected transition content executes in document order after all required exits. |
 | `test406.scxml` | [test406.txml](https://www.w3.org/Voice/2013/scxml-irp/406/test406.txml) | Transition content executes before states enter in parent-before-child, document order. |
@@ -106,6 +128,24 @@ external-send failure witness is outside that assertion and is omitted. Test
 produced by its external transitions. Exact observers require both parallel
 regions and their parallel parent to exit twice, and the containing state to
 exit once.
+
+Test 179 replaces upstream self-delivery with the versioned v3 host Event I/O
+adapter. The fixture still evaluates literal `content` when `send` executes;
+the adapter is the external-service boundary and requires the exact UTF-8 bytes
+`123` before the only terminal path can complete. Tests 223 and 224 replace the
+invoked child processor with the versioned host invoke adapter. The adapter
+observes the committed generated ID and reports completion through that same
+invocation token. The fixtures independently require the writable CMeta
+`idlocation` to be nonempty and exactly `s0.1`, so removing the generated child
+does not weaken either binding or `stateid.platformid` witness.
+
+The late-binding implementation does not justify weakening upstream test 280:
+TurboUtils uses caller-supplied typed CMeta storage, so a declared field exists
+before its state-local initializer runs. Reads before first entry therefore
+observe the caller value instead of the upstream generated datamodel's
+unbound-location error. Test 280 remains explicitly `UNSUPPORTED`; the local
+late-binding transaction, first-entry, re-entry, history, and rollback tests
+remain implementation tests rather than being relabeled as W3C PASS.
 
 ## Current state-membership profile
 
