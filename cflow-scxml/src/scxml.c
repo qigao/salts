@@ -3456,13 +3456,21 @@ static void rollback_prepared_effect_locked(scxml_prepared_effect *effect) {
         effect->registry_index < session->delayed_send_capacity) {
         scxml_delayed_send *row =
             &session->delayed_sends[effect->registry_index];
-        if (effect->kind == SCXML_PREPARED_DELAYED_SEND &&
-            row->state == SCXML_DELAYED_RESERVED) {
-            *row = (scxml_delayed_send){0};
+        if (effect->kind == SCXML_PREPARED_DELAYED_SEND) {
+            if (row->state == SCXML_DELAYED_RESERVED) {
+                *row = (scxml_delayed_send){0};
+            } else if (row->state == SCXML_DELAYED_CANCEL_RESERVED &&
+                       row->previous_state == SCXML_DELAYED_RESERVED) {
+                row->previous_state = SCXML_DELAYED_FREE;
+            }
         } else if (effect->kind == SCXML_PREPARED_CANCEL &&
                    row->state == SCXML_DELAYED_CANCEL_RESERVED) {
-            row->state = row->previous_state;
-            row->previous_state = SCXML_DELAYED_FREE;
+            if (row->previous_state == SCXML_DELAYED_FREE) {
+                *row = (scxml_delayed_send){0};
+            } else {
+                row->state = row->previous_state;
+                row->previous_state = SCXML_DELAYED_FREE;
+            }
         }
     }
     effect->in_use = false;
@@ -3483,6 +3491,10 @@ static void commit_prepared_effect(void *user) {
         if (effect->kind == SCXML_PREPARED_DELAYED_SEND &&
             row->state == SCXML_DELAYED_RESERVED) {
             row->state = SCXML_DELAYED_ACTIVE;
+        } else if (effect->kind == SCXML_PREPARED_DELAYED_SEND &&
+                   row->state == SCXML_DELAYED_CANCEL_RESERVED &&
+                   row->previous_state == SCXML_DELAYED_RESERVED) {
+            row->previous_state = SCXML_DELAYED_ACTIVE;
         } else if (effect->kind == SCXML_PREPARED_CANCEL &&
                    row->state == SCXML_DELAYED_CANCEL_RESERVED) {
             *row = (scxml_delayed_send){0};
@@ -8662,11 +8674,17 @@ bool cflow_scxml_session_report_send_done(
         return false;
     turbo_mutex_lock(&impl->registry_lock);
     row = find_delayed_send_locked(impl, send_id, send_id_size, NULL);
-    if (row == NULL || row->state != SCXML_DELAYED_ACTIVE) {
+    if (row == NULL ||
+        (row->state != SCXML_DELAYED_ACTIVE &&
+         (row->state != SCXML_DELAYED_CANCEL_RESERVED ||
+          row->previous_state != SCXML_DELAYED_ACTIVE))) {
         turbo_mutex_unlock(&impl->registry_lock);
         return false;
     }
-    *row = (scxml_delayed_send){0};
+    if (row->state == SCXML_DELAYED_CANCEL_RESERVED)
+        row->previous_state = SCXML_DELAYED_FREE;
+    else
+        *row = (scxml_delayed_send){0};
     turbo_mutex_unlock(&impl->registry_lock);
     return true;
 }

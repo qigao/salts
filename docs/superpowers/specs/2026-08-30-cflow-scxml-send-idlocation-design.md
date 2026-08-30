@@ -28,6 +28,20 @@ SCXML 要求没有显式 `id` 的 `<send>` 在执行时生成会话内唯一 ID�
 - Event I/O prepare 回调只在调用期间借用 request；延迟发送注册表改为
   有界复制 ID，使 registry 生命周期不依赖字面量或栈缓冲区。
 
+### 延迟 registry 并发协议
+
+- registry row 是发送存活状态的唯一事实源；SerialExecutor 修改
+  reserve/commit/discard/cancel 状态，adapter completion 可从任意线程调用
+  `cflow_scxml_session_report_send_done()`，所有转换都在 `registry_lock` 下。
+- `CANCEL_RESERVED.previous_state` 为 `RESERVED` 或 `ACTIVE` 时表示 cancel
+  正在保留对应的未发布或已发布 send；值为 `FREE` 时表示底层 send 已在
+  cancel 期间因 rollback 或 completion 到达终态。
+- send commit/discard 必须更新 cancel 所保存的底层状态；cancel commit
+  清除 row，cancel discard 在底层仍存活时恢复它，否则清除 row。由此
+  commit/discard 顺序不影响最终事实。
+- completion 在 `ACTIVE` 清除 row；在 `CANCEL_RESERVED + ACTIVE` 时记录
+  `previous_state=FREE` 并返回成功，确保 cancel 后续失败不会复活已完成 send。
+
 ## 执行顺序与错误语义
 
 1. 先求值 event、target、type、delay 与 payload 等现有参数。

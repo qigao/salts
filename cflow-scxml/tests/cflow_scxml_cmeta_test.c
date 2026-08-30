@@ -324,6 +324,10 @@ typedef struct dynamic_adapter_probe {
     char cancel_id[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
     char generated_send_ids[4][CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
     uint64_t delay_ms;
+    cflow_scxml_session *session;
+    cflow_scxml_adapter_status cancel_status;
+    bool report_done_during_cancel;
+    bool report_done_result;
 } dynamic_adapter_probe;
 
 typedef struct payload_adapter_probe {
@@ -492,6 +496,14 @@ static cflow_scxml_adapter_status dynamic_prepare_cancel(
                          request->send_id, request->send_id_size))
         return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
     ++probe->cancels;
+    if (probe->report_done_during_cancel) {
+        probe->report_done_result = cflow_scxml_session_report_send_done(
+            probe->session, request->send_id, request->send_id_size);
+    }
+    if (probe->cancel_status != CFLOW_SCXML_ADAPTER_ACCEPTED) {
+        *out_error = "injected dynamic cancel failure";
+        return probe->cancel_status;
+    }
     *out_ticket = (cflow_statechart_effect_ticket){
         dynamic_ticket_done, dynamic_ticket_done, probe};
     *out_error = NULL;
@@ -1385,6 +1397,98 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(cflow_scxml_session_get_stats(&session, &stats));
         check_true(stats.done);
         check_false(stats.errored);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("records delayed completion that wins during cancel prepare") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='active'><onentry>"
+            "<send event='out' target='peer' delay='5ms' "
+            "idlocation='send_id'/></onentry>"
+            "<transition event='cancel'><cancel sendidexpr='send_id'/>"
+            "</transition><transition event='retry'>"
+            "<send event='out' target='peer' delay='5ms' "
+            "idlocation='send_id'/></transition>"
+            "<transition event='finish' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        dynamic_adapter_probe probe = {
+            .cancel_status = CFLOW_SCXML_ADAPTER_ERROR_COMMUNICATION,
+            .report_done_during_cancel = true};
+        const cflow_scxml_event_io_adapter_v1 event_io = {
+            .abi_version = CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V1,
+            .struct_size = sizeof(event_io),
+            .capabilities = CFLOW_SCXML_EVENT_IO_CAP_SEND |
+                CFLOW_SCXML_EVENT_IO_CAP_DELAYED_SEND |
+                CFLOW_SCXML_EVENT_IO_CAP_CANCEL,
+            .prepare_send = dynamic_prepare_send,
+            .prepare_cancel = dynamic_prepare_cancel,
+            .close = dynamic_adapter_close,
+            .is_quiescent = dynamic_adapter_quiescent};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_event_view cancel = {0};
+        cflow_event_view retry = {0};
+        cflow_event_view finish = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            .abi_version = CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1,
+            .struct_size = sizeof(data),
+            .initial_state = &initial};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 3u,
+            .internal_event_capacity = 3u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u,
+            .effect_capacity = 2u,
+            .adapter_internal_event_capacity = 2u,
+            .delayed_send_capacity = 1u,
+            .event_io = &event_io,
+            .adapter_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        probe.session = &session;
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.sends, (size_t)1u);
+        check_true(cflow_scxml_program_event(
+            &program, "cancel", sizeof("cancel") - 1u, &cancel));
+        check_equal(cflow_scxml_session_try_send(&session, &cancel),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(probe.report_done_result);
+        check_false(cflow_scxml_session_report_send_done(
+            &session, probe.cancel_id, strlen(probe.cancel_id)));
+        check_true(cflow_scxml_program_event(
+            &program, "retry", sizeof("retry") - 1u, &retry));
+        check_equal(cflow_scxml_session_try_send(&session, &retry),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.sends, (size_t)2u);
+        check_not_equal(strcmp(probe.generated_send_ids[0],
+                               probe.generated_send_ids[1]), 0);
+        check_true(cflow_scxml_program_event(
+            &program, "finish", sizeof("finish") - 1u, &finish));
+        check_equal(cflow_scxml_session_try_send(&session, &finish),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        check_true(cflow_scxml_session_report_send_done(
+            &session, probe.generated_send_ids[1],
+            strlen(probe.generated_send_ids[1])));
         check_equal(cflow_scxml_session_destroy(&session),
                     CFLOW_STATECHART_RUNTIME_OK);
         cflow_executor_destroy(&executor);
