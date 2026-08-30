@@ -10271,6 +10271,24 @@ bool cflow_scxml_session_get_invoke_stats(
     return true;
 }
 
+cflow_scxml_location_status cflow_scxml_session_copy_location(
+    const cflow_scxml_session *session, char *out_location,
+    size_t location_capacity, size_t *out_required_capacity) {
+    const cflow_scxml_session_impl *impl = session != NULL
+        ? (const cflow_scxml_session_impl *)session->impl : NULL;
+    size_t required;
+    if (impl == NULL || out_required_capacity == NULL)
+        return CFLOW_SCXML_LOCATION_INVALID_ARGUMENT;
+    required = impl->system_values.scxml_location.size + 1u;
+    if (out_location == NULL || location_capacity < required) {
+        *out_required_capacity = required;
+        return CFLOW_SCXML_LOCATION_TOO_SMALL;
+    }
+    memcpy(out_location, impl->scxml_location, required);
+    *out_required_capacity = required;
+    return CFLOW_SCXML_LOCATION_OK;
+}
+
 const char *cflow_scxml_session_error(
     const cflow_scxml_session *session) {
     const cflow_scxml_session_impl *impl = session != NULL
