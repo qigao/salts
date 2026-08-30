@@ -1,5 +1,7 @@
 #include <cflow/cflow.h>
 
+#include "../src/io_publisher_internal.h"
+
 #include "tinytest.h"
 
 #include <turbo/clock.h>
@@ -874,7 +876,8 @@ static int adapter_bench_reactive_owner_run(adapter_bench_fixture *fixture, size
         return cflow_io_publisher_owner_run_ready(&fixture->reactive_owner, max_steps, &progressed);
     nested_before = fixture->stages->native_submit_ns;
     started = turbo_hrtime();
-    status = cflow_io_publisher_owner_run_ready(&fixture->reactive_owner, max_steps, &progressed);
+    status = cflow_io_publisher_owner_run_serial_batch_phase_internal(
+        &fixture->reactive_owner, max_steps, &progressed);
     elapsed = turbo_hrtime() - started;
     nested = fixture->stages->native_submit_ns - nested_before;
     adapter_bench_counter_add(&fixture->stages->reactive_owner_ns,

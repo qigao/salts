@@ -672,3 +672,9 @@ bool cflow_scheduler_try_post_task_after_internal(
     return cflow_scheduler_worker_try_post_task_after_internal(
         scheduler, delay_ms, task, out);
 }
+
+bool cflow_scheduler_is_manual_internal(
+    const cflow_scheduler *scheduler) {
+    return scheduler != NULL && scheduler->self != NULL &&
+           scheduler->vtable == &manual_scheduler_vtable;
+}

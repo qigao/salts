@@ -86,7 +86,11 @@ int cflow_io_native_adapter_observe(
  * CMETA_SCHED_CAP_CALLER_DRIVEN_ZERO_DELAY and must not be concurrent. This
  * composition adds no queue, thread, or state mirror; the Publisher config may
  * leave drive NULL when all progress and shutdown use this function. The
- * post-observe phases still run when NativeIO reports an error so already
+ * repository Manual Scheduler plus a NULL drive uses one serialized
+ * ACK/Actor/Executor/post-ACK phase per side of the NativeIO batch. A foreign
+ * or inline Scheduler, or a non-NULL Publisher drive, retains the general
+ * fixed-point drive.
+ * Post-observe phases still run when NativeIO reports an error so already
  * offered Actor completions can settle. Returns the first NativeIO error,
  * otherwise the owner status. out_completed is zeroed before validation.
  */
