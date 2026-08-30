@@ -464,6 +464,19 @@ typedef struct payload_adapter_probe {
     char content_string[32];
 } payload_adapter_probe;
 
+typedef struct content_v3_probe {
+    size_t sends;
+    size_t starts;
+    size_t commits;
+    size_t discards;
+    cflow_scxml_adapter_status send_status;
+    bool invalid_send_ticket;
+    cflow_scxml_content_kind kind;
+    char bytes[256];
+    const cmeta_data_desc *schema;
+    scxml_nested_data nested;
+} content_v3_probe;
+
 typedef struct invoke_idlocation_probe invoke_idlocation_probe;
 
 typedef struct invoke_idlocation_ticket {
@@ -644,6 +657,88 @@ static bool copy_payload(payload_adapter_probe *probe,
     }
     return payload->kind == CFLOW_SCXML_PAYLOAD_NONE ||
            payload->kind == CFLOW_SCXML_PAYLOAD_NAMED;
+}
+
+static bool copy_content_v3(content_v3_probe *probe,
+                            const cflow_scxml_content_view *content) {
+    if (probe == NULL || content == NULL) return false;
+    probe->kind = content->kind;
+    if (content->kind == CFLOW_SCXML_CONTENT_TEXT_UTF8 ||
+        content->kind == CFLOW_SCXML_CONTENT_XML_UTF8) {
+        return copy_probe_text(probe->bytes, sizeof(probe->bytes),
+                               content->bytes, content->byte_count);
+    }
+    if (content->kind == CFLOW_SCXML_CONTENT_CMETA) {
+        if (content->schema != &nested_data_desc || content->object == NULL)
+            return false;
+        probe->schema = content->schema;
+        probe->nested = *(const scxml_nested_data *)content->object;
+        return true;
+    }
+    return content->kind == CFLOW_SCXML_CONTENT_SCALAR;
+}
+
+static void content_v3_ticket_commit(void *user) {
+    content_v3_probe *probe = (content_v3_probe *)user;
+    if (probe != NULL) ++probe->commits;
+}
+
+static void content_v3_ticket_discard(void *user) {
+    content_v3_probe *probe = (content_v3_probe *)user;
+    if (probe != NULL) ++probe->discards;
+}
+
+static cflow_scxml_adapter_status content_v3_prepare_send(
+    void *user, const cflow_scxml_send_request_v3 *request,
+    cflow_statechart_effect_ticket *out_ticket, const char **out_error) {
+    content_v3_probe *probe = (content_v3_probe *)user;
+    if (probe == NULL || request == NULL || out_ticket == NULL ||
+        out_error == NULL || request->payload.kind !=
+            CFLOW_SCXML_PAYLOAD_CONTENT ||
+        !copy_content_v3(probe, &request->payload.content))
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    ++probe->sends;
+    if (probe->send_status != CFLOW_SCXML_ADAPTER_ACCEPTED) {
+        *out_error = "content v3 send rejected by test adapter";
+        return probe->send_status;
+    }
+    if (probe->invalid_send_ticket) {
+        *out_ticket = (cflow_statechart_effect_ticket){0};
+        *out_error = NULL;
+        return CFLOW_SCXML_ADAPTER_ACCEPTED;
+    }
+    *out_ticket = (cflow_statechart_effect_ticket){
+        content_v3_ticket_commit, content_v3_ticket_discard, probe};
+    *out_error = NULL;
+    return CFLOW_SCXML_ADAPTER_ACCEPTED;
+}
+
+static cflow_scxml_adapter_status content_v3_prepare_start(
+    void *user, const cflow_scxml_invoke_start_request_v3 *request,
+    cflow_statechart_effect_ticket *out_ticket, const char **out_error) {
+    content_v3_probe *probe = (content_v3_probe *)user;
+    if (probe == NULL || request == NULL || out_ticket == NULL ||
+        out_error == NULL || request->payload.kind !=
+            CFLOW_SCXML_PAYLOAD_CONTENT ||
+        !copy_content_v3(probe, &request->payload.content))
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    ++probe->starts;
+    *out_ticket = (cflow_statechart_effect_ticket){
+        content_v3_ticket_commit, content_v3_ticket_discard, probe};
+    *out_error = NULL;
+    return CFLOW_SCXML_ADAPTER_ACCEPTED;
+}
+
+static cflow_scxml_adapter_status content_v3_prepare_cancel(
+    void *user, const cflow_scxml_invoke_cancel_request *request,
+    cflow_statechart_effect_ticket *out_ticket, const char **out_error) {
+    if (user == NULL || request == NULL || out_ticket == NULL ||
+        out_error == NULL)
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    *out_ticket = (cflow_statechart_effect_ticket){
+        dynamic_ticket_done, dynamic_ticket_done, user};
+    *out_error = NULL;
+    return CFLOW_SCXML_ADAPTER_ACCEPTED;
 }
 
 static cflow_scxml_adapter_status payload_prepare_send(
@@ -3214,6 +3309,210 @@ spec("CFlow SCXML public CMeta data model") {
         cflow_scxml_program_destroy(&program);
     }
 
+    it("transports bounded mixed XML content through a v3 send adapter") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='armed'><onentry>"
+            "<send event='out' target='peer' id='later' delay='1ms'>"
+            "<content> lead "
+            "<p:item xmlns:p='urn:item'>x&lt;y</p:item><!--note-->"
+            "</content></send></onentry></state></scxml>";
+        static const char expected[] =
+            " lead <p:item xmlns:p=\"urn:item\">x&lt;y</p:item><!--note-->";
+        content_v3_probe probe = {0};
+        const cflow_scxml_event_io_adapter_v3 event_io = {
+            .abi_version = CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V3,
+            .struct_size = sizeof(event_io),
+            .capabilities = CFLOW_SCXML_EVENT_IO_CAP_SEND |
+                CFLOW_SCXML_EVENT_IO_CAP_DELAYED_SEND |
+                CFLOW_SCXML_EVENT_IO_CAP_CONTENT_V3,
+            .prepare_send = content_v3_prepare_send,
+            .close = dynamic_adapter_close,
+            .is_quiescent = dynamic_adapter_quiescent};
+        const cflow_scxml_session_adapters_v3 adapters = {
+            .abi_version = CFLOW_SCXML_SESSION_ADAPTERS_ABI_V3,
+            .struct_size = sizeof(adapters),
+            .event_io = &event_io,
+            .event_io_user = &probe};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        const scxml_public_data initial = {
+            true, 0, SCXML_PUBLIC_SOURCE_GOOD};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1,
+            sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .delayed_send_capacity = 1u};
+        cflow_scxml_event_io_adapter_v3 incomplete_event_io = event_io;
+        cflow_scxml_session_adapters_v3 incomplete_adapters = adapters;
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        incomplete_event_io.capabilities &=
+            ~CFLOW_SCXML_EVENT_IO_CAP_CONTENT_V3;
+        incomplete_adapters.event_io = &incomplete_event_io;
+        check_equal(cflow_scxml_session_init_cmeta_v3(
+                        &session, &config, &data, &incomplete_adapters),
+                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+        check_equal(cflow_scxml_session_init_cmeta_v3(
+                        &session, &config, &data, &adapters),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.sends, (size_t)1u);
+        check_equal(probe.kind, CFLOW_SCXML_CONTENT_XML_UTF8);
+        check_equal(probe.bytes, expected, sizeof(expected));
+        check_true(cflow_scxml_session_report_send_done(
+            &session, "later", sizeof("later") - 1u));
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("rolls back rejected v3 text sends and invalid tickets") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='armed'><onentry>"
+            "<send event='out' target='peer'><content>plain text</content>"
+            "</send></onentry><transition event='error.communication' "
+            "target='done'/></state><final id='done'/></scxml>";
+        const cflow_scxml_event_io_adapter_v3 event_io = {
+            .abi_version = CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V3,
+            .struct_size = sizeof(event_io),
+            .capabilities = CFLOW_SCXML_EVENT_IO_CAP_SEND |
+                CFLOW_SCXML_EVENT_IO_CAP_CONTENT_V3,
+            .prepare_send = content_v3_prepare_send,
+            .close = dynamic_adapter_close,
+            .is_quiescent = dynamic_adapter_quiescent};
+        const scxml_public_data initial = {
+            true, 0, SCXML_PUBLIC_SOURCE_GOOD};
+        size_t index;
+
+        for (index = 0u; index < 2u; ++index) {
+            content_v3_probe probe = {
+                .send_status = index == 0u
+                    ? CFLOW_SCXML_ADAPTER_FULL
+                    : CFLOW_SCXML_ADAPTER_ACCEPTED,
+                .invalid_send_ticket = index != 0u};
+            const cflow_scxml_session_adapters_v3 adapters = {
+                .abi_version = CFLOW_SCXML_SESSION_ADAPTERS_ABI_V3,
+                .struct_size = sizeof(adapters),
+                .event_io = &event_io,
+                .event_io_user = &probe};
+            cflow_scxml_program program = {0};
+            cflow_scxml_diagnostic diagnostic = {0};
+            cflow_scxml_session session = {0};
+            cflow_executor executor = {0};
+            cflow_statechart_instance_stats stats = {0};
+            const cflow_scxml_cmeta_session_options_v1 data = {
+                CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1,
+                sizeof(data), &initial};
+            cflow_scxml_session_config config = {
+                .program = &program, .executor = &executor,
+                .external_event_capacity = 2u, .internal_event_capacity = 2u,
+                .completion_capacity = 2u, .microstep_limit = 16u,
+                .effect_capacity = 2u,
+                .adapter_internal_event_capacity = 2u};
+
+            check_equal(compile_cmeta(source, &program, &diagnostic),
+                        CFLOW_SCXML_OK);
+            check_true(cflow_executor_serial_init(&executor));
+            check_equal(cflow_scxml_session_init_cmeta_v3(
+                            &session, &config, &data, &adapters),
+                        index == 0u
+                            ? CFLOW_STATECHART_RUNTIME_OK
+                            : CFLOW_STATECHART_RUNTIME_ACTION_FAILED);
+            check_true(cflow_executor_wait_idle(&executor));
+            check_equal(probe.sends, (size_t)1u);
+            check_equal(probe.kind, CFLOW_SCXML_CONTENT_TEXT_UTF8);
+            check_equal(probe.bytes, "plain text", sizeof("plain text"));
+            check_equal(probe.commits, (size_t)0u);
+            check_equal(probe.discards, (size_t)0u);
+            if (index == 0u) {
+                check_true(cflow_scxml_session_get_stats(&session, &stats));
+                check_true(stats.done);
+                check_equal(cflow_scxml_session_destroy(&session),
+                            CFLOW_STATECHART_RUNTIME_OK);
+            } else {
+                check_null(session.impl);
+            }
+            cflow_executor_destroy(&executor);
+            cflow_scxml_program_destroy(&program);
+        }
+    }
+
+    it("borrows structured CMeta content through a v3 invoke adapter") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='armed'>"
+            "<invoke id='worker' type='urn:test'>"
+            "<content expr='nested'/></invoke>"
+            "<transition event='finish' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        const cflow_scxml_invoke_adapter_v3 invoke = {
+            .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V3,
+            .struct_size = sizeof(invoke),
+            .capabilities = CFLOW_SCXML_INVOKE_CAP_START |
+                CFLOW_SCXML_INVOKE_CAP_CANCEL |
+                CFLOW_SCXML_INVOKE_CAP_CONTENT_V3,
+            .prepare_start = content_v3_prepare_start,
+            .prepare_cancel = content_v3_prepare_cancel,
+            .close = dynamic_adapter_close,
+            .is_quiescent = dynamic_adapter_quiescent};
+        content_v3_probe probe = {0};
+        const cflow_scxml_session_adapters_v3 adapters = {
+            .abi_version = CFLOW_SCXML_SESSION_ADAPTERS_ABI_V3,
+            .struct_size = sizeof(adapters),
+            .invoke = &invoke,
+            .invoke_user = &probe};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        scxml_public_data initial = {
+            true, 0, SCXML_PUBLIC_SOURCE_GOOD};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1,
+            sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 4u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u};
+
+        initial.nested.invoke_id.size = sizeof("snapshot") - 1u;
+        memcpy(initial.nested.invoke_id.data, "snapshot",
+               sizeof("snapshot"));
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta_v3(
+                        &session, &config, &data, &adapters),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.starts, (size_t)1u);
+        check_equal(probe.kind, CFLOW_SCXML_CONTENT_CMETA);
+        check_true(probe.schema == &nested_data_desc);
+        check_equal(probe.nested.invoke_id.size,
+                    sizeof("snapshot") - 1u);
+        check_equal(probe.nested.invoke_id.data, "snapshot",
+                    sizeof("snapshot"));
+        cflow_scxml_session_cancel(&session);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
     it("keeps session identity unavailable in program-level bindings") {
         static const char name_source[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
@@ -3370,23 +3669,49 @@ spec("CFlow SCXML public CMeta data model") {
         cflow_scxml_program_destroy(&program);
     }
 
-    it("rejects donedata outside final and without scalar content") {
+    it("binds inline XML donedata to the parent completion event") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta' initial='parent'>"
+            "<state id='parent' initial='work'>"
+            "<state id='work'><transition target='childDone'/></state>"
+            "<final id='childDone'><donedata><content>"
+            "<p:value xmlns:p='urn:test'>ready</p:value>"
+            "</content></donedata></final>"
+            "<transition event='done.state.*' "
+            "cond='_event.data != &quot;&quot;' target='success'/></state>"
+            "<final id='success'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_statechart_instance_stats stats;
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        stats = run_to_idle(
+            &program,
+            (scxml_public_data){true, 7, SCXML_PUBLIC_SOURCE_GOOD});
+        check_true(stats.done);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("rejects donedata outside final and expr-child conflicts") {
         static const char wrong_parent[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
             "datamodel='cmeta'><state id='only'><donedata>"
             "<content expr='count'/></donedata></state></scxml>";
-        static const char missing_expression[] =
+        static const char conflicting_content[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
             "datamodel='cmeta'><final id='done'><donedata>"
-            "<content/></donedata></final></scxml>";
+            "<content expr='count'>text</content>"
+            "</donedata></final></scxml>";
         cflow_scxml_program program = {0};
         cflow_scxml_diagnostic diagnostic = {0};
 
         check_equal(compile_cmeta(wrong_parent, &program, &diagnostic),
                     CFLOW_SCXML_INVALID_STRUCTURE);
         check_null(program.impl);
-        check_equal(compile_cmeta(missing_expression, &program, &diagnostic),
-                    CFLOW_SCXML_UNSUPPORTED_FEATURE);
+        check_equal(compile_cmeta(conflicting_content, &program, &diagnostic),
+                    CFLOW_SCXML_INVALID_STRUCTURE);
         check_null(program.impl);
     }
 

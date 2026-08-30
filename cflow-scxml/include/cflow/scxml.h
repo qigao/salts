@@ -18,9 +18,12 @@ extern "C" {
 #define CFLOW_SCXML_DIAGNOSTIC_CAPACITY 256u
 #define CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V1 1u
 #define CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V2 2u
+#define CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V3 3u
 #define CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1 1u
 #define CFLOW_SCXML_INVOKE_ADAPTER_ABI_V2 2u
+#define CFLOW_SCXML_INVOKE_ADAPTER_ABI_V3 3u
 #define CFLOW_SCXML_SESSION_ADAPTERS_ABI_V2 2u
+#define CFLOW_SCXML_SESSION_ADAPTERS_ABI_V3 3u
 #define CFLOW_SCXML_CMETA_COMPILE_OPTIONS_ABI_V1 1u
 #define CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1 1u
 #define CFLOW_SCXML_CMETA_DEFAULT_MAX_ITERATIONS 65536u
@@ -104,14 +107,17 @@ typedef enum cflow_scxml_program_requirement {
     CFLOW_SCXML_REQUIREMENT_INVOKE = 1u << 3u,
     CFLOW_SCXML_REQUIREMENT_PAYLOAD = 1u << 4u,
     CFLOW_SCXML_REQUIREMENT_INVOKE_PAYLOAD = 1u << 5u,
-    CFLOW_SCXML_REQUIREMENT_INVOKE_IDLOCATION = 1u << 6u
+    CFLOW_SCXML_REQUIREMENT_INVOKE_IDLOCATION = 1u << 6u,
+    CFLOW_SCXML_REQUIREMENT_CONTENT_V3 = 1u << 7u,
+    CFLOW_SCXML_REQUIREMENT_INVOKE_CONTENT_V3 = 1u << 8u
 } cflow_scxml_program_requirement;
 
 typedef enum cflow_scxml_event_io_capability {
     CFLOW_SCXML_EVENT_IO_CAP_SEND = UINT64_C(1) << 0u,
     CFLOW_SCXML_EVENT_IO_CAP_DELAYED_SEND = UINT64_C(1) << 1u,
     CFLOW_SCXML_EVENT_IO_CAP_CANCEL = UINT64_C(1) << 2u,
-    CFLOW_SCXML_EVENT_IO_CAP_PAYLOAD = UINT64_C(1) << 3u
+    CFLOW_SCXML_EVENT_IO_CAP_PAYLOAD = UINT64_C(1) << 3u,
+    CFLOW_SCXML_EVENT_IO_CAP_CONTENT_V3 = UINT64_C(1) << 4u
 } cflow_scxml_event_io_capability;
 
 typedef enum cflow_scxml_adapter_status {
@@ -212,6 +218,46 @@ typedef struct cflow_scxml_send_request_v2 {
     cflow_scxml_payload_view payload;
 } cflow_scxml_send_request_v2;
 
+typedef enum cflow_scxml_content_kind {
+    CFLOW_SCXML_CONTENT_INVALID = 0,
+    CFLOW_SCXML_CONTENT_SCALAR,
+    CFLOW_SCXML_CONTENT_TEXT_UTF8,
+    CFLOW_SCXML_CONTENT_XML_UTF8,
+    CFLOW_SCXML_CONTENT_CMETA
+} cflow_scxml_content_kind;
+
+/**
+ * Callback-scoped format-neutral content. UTF-8 bytes are compact immutable
+ * program storage. CMETA borrows one object and its schema from staged state.
+ * No pointer remains valid after the prepare callback returns.
+ */
+typedef struct cflow_scxml_content_view {
+    cflow_scxml_content_kind kind;
+    cflow_scxml_payload_value scalar;
+    const char *bytes;
+    size_t byte_count;
+    const cmeta_data_desc *schema;
+    const void *object;
+} cflow_scxml_content_view;
+
+typedef struct cflow_scxml_payload_entry_v3 {
+    const char *name;
+    size_t name_size;
+    cflow_scxml_content_view value;
+} cflow_scxml_payload_entry_v3;
+
+typedef struct cflow_scxml_payload_view_v3 {
+    cflow_scxml_payload_kind kind;
+    cflow_scxml_content_view content;
+    const cflow_scxml_payload_entry_v3 *entries;
+    size_t entry_count;
+} cflow_scxml_payload_view_v3;
+
+typedef struct cflow_scxml_send_request_v3 {
+    cflow_scxml_send_request base;
+    cflow_scxml_payload_view_v3 payload;
+} cflow_scxml_send_request_v3;
+
 typedef struct cflow_scxml_cancel_request {
     const char *send_id;
     size_t send_id_size;
@@ -263,11 +309,29 @@ typedef struct cflow_scxml_event_io_adapter_v2 {
     bool (*is_quiescent)(void *user);
 } cflow_scxml_event_io_adapter_v2;
 
+/** Content-aware Event I/O adapter; lifecycle ownership matches v1. */
+typedef struct cflow_scxml_event_io_adapter_v3 {
+    uint32_t abi_version;
+    size_t struct_size;
+    uint64_t capabilities;
+    cflow_scxml_adapter_status (*prepare_send)(
+        void *user, const cflow_scxml_send_request_v3 *request,
+        cflow_statechart_effect_ticket *out_ticket,
+        const char **out_error);
+    cflow_scxml_adapter_status (*prepare_cancel)(
+        void *user, const cflow_scxml_cancel_request *request,
+        cflow_statechart_effect_ticket *out_ticket,
+        const char **out_error);
+    void (*close)(void *user);
+    bool (*is_quiescent)(void *user);
+} cflow_scxml_event_io_adapter_v3;
+
 typedef enum cflow_scxml_invoke_capability {
     CFLOW_SCXML_INVOKE_CAP_START = UINT64_C(1) << 0u,
     CFLOW_SCXML_INVOKE_CAP_CANCEL = UINT64_C(1) << 1u,
     CFLOW_SCXML_INVOKE_CAP_FORWARD = UINT64_C(1) << 2u,
-    CFLOW_SCXML_INVOKE_CAP_PAYLOAD = UINT64_C(1) << 3u
+    CFLOW_SCXML_INVOKE_CAP_PAYLOAD = UINT64_C(1) << 3u,
+    CFLOW_SCXML_INVOKE_CAP_CONTENT_V3 = UINT64_C(1) << 4u
 } cflow_scxml_invoke_capability;
 
 /** Borrowed invocation fields valid only during one prepare callback. */
@@ -286,6 +350,11 @@ typedef struct cflow_scxml_invoke_start_request_v2 {
     cflow_scxml_invoke_start_request base;
     cflow_scxml_payload_view payload;
 } cflow_scxml_invoke_start_request_v2;
+
+typedef struct cflow_scxml_invoke_start_request_v3 {
+    cflow_scxml_invoke_start_request base;
+    cflow_scxml_payload_view_v3 payload;
+} cflow_scxml_invoke_start_request_v3;
 
 typedef struct cflow_scxml_invoke_cancel_request {
     uint64_t token;
@@ -351,6 +420,27 @@ typedef struct cflow_scxml_invoke_adapter_v2 {
     bool (*is_quiescent)(void *user);
 } cflow_scxml_invoke_adapter_v2;
 
+/** Content-aware invocation adapter; lifecycle ownership matches v1. */
+typedef struct cflow_scxml_invoke_adapter_v3 {
+    uint32_t abi_version;
+    size_t struct_size;
+    uint64_t capabilities;
+    cflow_scxml_adapter_status (*prepare_start)(
+        void *user, const cflow_scxml_invoke_start_request_v3 *request,
+        cflow_statechart_effect_ticket *out_ticket,
+        const char **out_error);
+    cflow_scxml_adapter_status (*prepare_cancel)(
+        void *user, const cflow_scxml_invoke_cancel_request *request,
+        cflow_statechart_effect_ticket *out_ticket,
+        const char **out_error);
+    cflow_scxml_adapter_status (*prepare_forward)(
+        void *user, const cflow_scxml_invoke_forward_request *request,
+        cflow_statechart_effect_ticket *out_ticket,
+        const char **out_error);
+    void (*close)(void *user);
+    bool (*is_quiescent)(void *user);
+} cflow_scxml_invoke_adapter_v3;
+
 /**
  * Optional v2 adapter injection used with the unchanged base session config.
  * A non-NULL v2 adapter requires the corresponding v1 config field to be
@@ -364,6 +454,16 @@ typedef struct cflow_scxml_session_adapters_v2 {
     const cflow_scxml_invoke_adapter_v2 *invoke;
     void *invoke_user;
 } cflow_scxml_session_adapters_v2;
+
+/** Optional v3 adapter injection; mutually exclusive with v1 config fields. */
+typedef struct cflow_scxml_session_adapters_v3 {
+    uint32_t abi_version;
+    size_t struct_size;
+    const cflow_scxml_event_io_adapter_v3 *event_io;
+    void *event_io_user;
+    const cflow_scxml_invoke_adapter_v3 *invoke;
+    void *invoke_user;
+} cflow_scxml_session_adapters_v3;
 
 typedef struct cflow_scxml_invoke_stats {
     uint64_t started;
@@ -548,6 +648,19 @@ cflow_statechart_runtime_status cflow_scxml_session_init_cmeta_v2(
     const cflow_scxml_session_config *config,
     const cflow_scxml_cmeta_session_options_v1 *options,
     const cflow_scxml_session_adapters_v2 *adapters);
+
+/** Initialize a null-data-model session with content-aware adapters. */
+cflow_statechart_runtime_status cflow_scxml_session_init_v3(
+    cflow_scxml_session *session,
+    const cflow_scxml_session_config *config,
+    const cflow_scxml_session_adapters_v3 *adapters);
+
+/** Initialize a CMeta session with content-aware adapters. */
+cflow_statechart_runtime_status cflow_scxml_session_init_cmeta_v3(
+    cflow_scxml_session *session,
+    const cflow_scxml_session_config *config,
+    const cflow_scxml_cmeta_session_options_v1 *options,
+    const cflow_scxml_session_adapters_v3 *adapters);
 
 cflow_mailbox_status cflow_scxml_session_try_send(
     cflow_scxml_session *session, const cflow_event_view *event);
