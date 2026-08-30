@@ -61,4 +61,4 @@
 - [x] Run adjacent `cflow-scxml` CTest tests.
 - [x] Run the full configured CTest suite.
 - [x] Synchronize CodeGraph, inspect affected files, and review the final diff.
-- [ ] Commit, push, open a pull request, and update issue #122 after verification succeeds.
+- [x] Commit, push, open a pull request, and update issue #122 after verification succeeds.
