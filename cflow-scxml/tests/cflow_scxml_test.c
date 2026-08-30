@@ -533,6 +533,42 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         cflow_scxml_program_destroy(&program);
     }
 
+    it("lowers root initial IDREFS as one ordered multi-target transition") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='left_alt right_alt'>"
+            "<parallel id='both'>"
+            "<state id='left' initial='left_default'>"
+            "<state id='left_default'/><state id='left_alt'/></state>"
+            "<state id='right' initial='right_default'>"
+            "<state id='right_default'/><state id='right_alt'/></state>"
+            "</parallel></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        const cflow_statechart *statechart;
+        const cflow_statechart_state *left_alt;
+        const cflow_statechart_state *right_alt;
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        statechart = cflow_scxml_program_statechart(&program);
+        left_alt = find_state(&program, "left_alt");
+        right_alt = find_state(&program, "right_alt");
+        check_not_null(statechart);
+        check_not_null(left_alt);
+        check_not_null(right_alt);
+        check_equal(cflow_statechart_transition_target_count_at(
+                        statechart, 0u),
+                    (size_t)2u);
+        check_equal(cflow_statechart_transition_target_at(
+                        statechart, 0u, 0u),
+                    left_alt->id);
+        check_equal(cflow_statechart_transition_target_at(
+                        statechart, 0u, 1u),
+                    right_alt->id);
+        cflow_scxml_program_destroy(&program);
+    }
+
     it("admits omitted null datamodel and default initial child") {
         static const char source[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>\n"
@@ -1422,6 +1458,45 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(cflow_statechart_transition_action_count(
                         cflow_scxml_program_statechart(&program)),
                     (size_t)2u);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("expands exact prefix and wildcard descriptors without duplicates") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='start'>"
+            "<state id='start'><transition event='alpha alpha. alpha.*' "
+            "target='done'/></state>"
+            "<state id='catalog'><transition event='alpha.beta'/></state>"
+            "<state id='all'><transition event='*' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        const cflow_statechart *statechart;
+        const cflow_statechart_state *start;
+        const cflow_statechart_state *all;
+        size_t start_events = 0u;
+        size_t all_events = 0u;
+        size_t index;
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        statechart = cflow_scxml_program_statechart(&program);
+        start = find_state(&program, "start");
+        all = find_state(&program, "all");
+        check_not_null(start);
+        check_not_null(all);
+        for (index = 0u;
+             index < cflow_statechart_transition_count(statechart); ++index) {
+            const cflow_statechart_transition *transition =
+                cflow_statechart_transition_at(statechart, index);
+            if (transition->trigger != CFLOW_STATECHART_TRIGGER_EVENT)
+                continue;
+            if (transition->source == start->id) ++start_events;
+            if (transition->source == all->id) ++all_events;
+        }
+        check_equal(start_events, (size_t)2u);
+        check_equal(all_events, (size_t)2u);
         cflow_scxml_program_destroy(&program);
     }
 
@@ -2726,23 +2801,12 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>\n"
             "  <state id='a'><onentry><log expr='x'/></onentry></state>\n"
             "</scxml>";
-        static const char multiple_targets[] =
-            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>\n"
-            "  <state id='a'><transition target='a b'/></state>\n"
-            "  <state id='b'/>\n"
-            "</scxml>";
         cflow_scxml_program program = {0};
         cflow_scxml_diagnostic diagnostic = {0};
 
         check_equal(compile_status(executable, &program, &diagnostic),
                     CFLOW_SCXML_UNSUPPORTED_FEATURE);
         check_equal(diagnostic.location.line, (uint32_t)2u);
-
-        check_equal(compile_status(multiple_targets, &program, &diagnostic),
-                    CFLOW_SCXML_UNSUPPORTED_FEATURE);
-        check_equal(diagnostic.location.byte_offset,
-                    (size_t)(strstr(multiple_targets, "target") -
-                             multiple_targets));
     }
 
     it("rejects an unknown history type at its attribute") {

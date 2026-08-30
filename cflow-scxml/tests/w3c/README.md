@@ -5,6 +5,13 @@ These fixtures are local transformations of selected documents from the
 They test only the named assertions below. Passing them is not W3C
 certification and is not, by itself, a claim of complete SCXML conformance.
 
+`manifest.tsv` is the machine-readable selected-corpus inventory. The harness
+strictly validates its seven tab-separated columns: IDs and fixture paths are
+unique, applicability is `MANDATORY` or `OPTIONAL`, status is `PASS`,
+`UNSUPPORTED`, or `N/A`, every `PASS` fixture exists, and upstream references
+use the official W3C origin. The prose below explains transformations but does
+not override manifest facts.
+
 | Local fixture | Upstream source | Assertion preserved |
 | --- | --- | --- |
 | `test144.scxml` | [test144.txml](https://www.w3.org/Voice/2013/scxml-irp/144/test144.txml) | Events produced by `raise` are appended to the internal queue in execution order. |
@@ -19,8 +26,10 @@ certification and is not, by itself, a claim of complete SCXML conformance.
 | `test377.scxml` | [test377.txml](https://www.w3.org/Voice/2013/scxml-irp/377/test377.txml) | Multiple `onexit` handlers execute in document order. |
 | `test378.scxml` | [test378.txml](https://www.w3.org/Voice/2013/scxml-irp/378/test378.txml) | An execution error aborts only its `onexit` block; a later independent handler still executes. |
 | `test387.scxml` | [test387.txml](https://www.w3.org/Voice/2013/scxml-irp/387/test387.txml) | An unset shallow or deep history slot enters its declared default stored configuration. |
+| `test399.scxml` | [test399.txml](https://www.w3.org/Voice/2013/scxml-irp/399/test399.txml) | Event descriptor unions, token prefixes, token boundaries, `.*`, and `*` select exactly the intended transitions. |
 | `test579.scxml` | [test579.txml](https://www.w3.org/Voice/2013/scxml-irp/579/test579.txml) | Unset history transition content executes after the parent's `onentry` and initial-transition content. |
 | `test580.scxml` | [test580.txml](https://www.w3.org/Voice/2013/scxml-irp/580/test580.txml) | A history pseudo-state never appears in the active configuration. |
+| `test576.scxml` | [test576.txml](https://www.w3.org/Voice/2013/scxml-irp/576/test576.txml) | Root `initial` IDREFS enter both deeply nested non-default siblings of one parallel state. |
 | `test403a.scxml` | [test403a.txml](https://www.w3.org/Voice/2013/scxml-irp/403a/test403a.txml) | Transition selection prefers descendant sources, then document order, and falls through disabled conditions. |
 | `test404.scxml` | [test404.txml](https://www.w3.org/Voice/2013/scxml-irp/404/test404.txml) | States execute `onexit` content in exit order before transition content. |
 | `test405.scxml` | [test405.txml](https://www.w3.org/Voice/2013/scxml-irp/405/test405.txml) | Selected transition content executes in document order after all required exits. |
@@ -45,9 +54,9 @@ generation pipeline. Every local transformation replaces `conf:pass` and
 test-generation metadata, selects the null datamodel, and keeps the executable
 structure that observes the assertion.
 
-Tests 144, 147, 148, 149, 158, 375, 377, 404, 405, 406, and 412 replace wildcard failure
-transitions, which are outside the current TurboUtils profile, with the finite
-exact events that represent an ordering error at each observation state. Test
+Tests 144, 147, 148, 149, 158, 375, 377, 404, 405, 406, and 412 replace wildcard
+failure transitions with finite exact events so the local `pass`/`fail` finals
+observe each expected ordering path directly. Test
 147 and 148 replace generator counters with a post-conditional event that
 observes both the selected partition and the absence of any later partition.
 Test 149 uses the same post-conditional event to prove that no partition ran,
@@ -56,6 +65,9 @@ removes redundant generator-level parent sentinels while retaining the complete
 three-event observation chain. Tests 405, 406, 412, 416, and 417
 omit the upstream one-second timeout `send`; it is only a liveness safety net,
 while the local harness directly fails any run that does not reach `pass`.
+Tests 399 and 576 retain the upstream event-descriptor and root multi-target
+structures respectively; they only remove generator metadata and timeout
+failure sends that the local synchronous harness does not need.
 Test 419 keeps the queued internal event as the failure witness, replaces the
 wildcard with that exact event, and omits the additional external `send`; the
 retained event is sufficient to distinguish eventless-transition precedence.

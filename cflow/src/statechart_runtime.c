@@ -19,6 +19,7 @@ typedef struct statechart_configuration_buffer {
 
 typedef struct statechart_internal_event_slot {
     size_t type_index;
+    uint64_t source_token;
 } statechart_internal_event_slot;
 
 typedef enum statechart_terminal_outcome {
@@ -1024,23 +1025,46 @@ static cflow_statechart_runtime_status build_initial_configuration(
             if (active_child_count == 0u) {
                 const size_t transition =
                     impl->ir->default_transition_indices[initial];
-                const size_t target =
-                    impl->ir->default_target_indices[initial];
-                const cflow_statechart_state_kind target_kind =
-                    target < impl->ir->state_count
-                        ? impl->ir->states[target].kind
-                        : CFLOW_STATECHART_ATOMIC;
-                const size_t configuration_target =
-                    target_kind == CFLOW_STATECHART_HISTORY_SHALLOW ||
-                            target_kind == CFLOW_STATECHART_HISTORY_DEEP
-                        ? impl->ir->default_target_indices[target]
-                        : target;
+                size_t target_cursor;
                 if (transition == SIZE_MAX ||
-                    impl->pseudo_transition_by_state[state] != SIZE_MAX ||
-                    !activate_target_path(
-                        impl, configuration, state, configuration_target,
-                        &stack_count))
+                    impl->pseudo_transition_by_state[state] != SIZE_MAX)
                     return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+                for (target_cursor =
+                         impl->ir->transition_target_offsets[transition];
+                     target_cursor <
+                         impl->ir->transition_target_offsets[transition + 1u];
+                     ++target_cursor) {
+                    const size_t target =
+                        impl->ir->transition_target_indices[target_cursor];
+                    const cflow_statechart_state_kind target_kind =
+                        impl->ir->states[target].kind;
+                    if (target_kind == CFLOW_STATECHART_HISTORY_SHALLOW ||
+                        target_kind == CFLOW_STATECHART_HISTORY_DEEP) {
+                        const size_t history_transition =
+                            impl->ir->default_transition_indices[target];
+                        size_t history_cursor;
+                        if (history_transition == SIZE_MAX)
+                            return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+                        for (history_cursor =
+                                 impl->ir->transition_target_offsets[
+                                     history_transition];
+                             history_cursor <
+                                 impl->ir->transition_target_offsets[
+                                     history_transition + 1u];
+                             ++history_cursor) {
+                            if (!activate_target_path(
+                                    impl, configuration, state,
+                                    impl->ir->transition_target_indices[
+                                        history_cursor],
+                                    &stack_count))
+                                return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+                        }
+                    } else if (!activate_target_path(
+                                   impl, configuration, state, target,
+                                   &stack_count)) {
+                        return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+                    }
+                }
                 impl->pseudo_transition_by_state[state] = transition;
             }
         } else if (kind == CFLOW_STATECHART_PARALLEL) {
@@ -1457,14 +1481,14 @@ static cflow_statechart_runtime_status guard_enabled(
 
 static void compute_exit_set(cflow_statechart_instance_impl *impl,
                              size_t transition_index) {
-    const cflow_statechart_transition *transition =
-        &impl->ir->transitions[transition_index];
     const statechart_configuration_buffer *configuration =
         &impl->configurations[impl->published];
     const size_t domain = impl->ir->transition_domains[transition_index];
     size_t position;
     memset(impl->candidate_exit_set, 0, impl->bitset_bytes);
-    if (transition->target == 0u) return;
+    if (impl->ir->transition_target_offsets[transition_index] ==
+        impl->ir->transition_target_offsets[transition_index + 1u])
+        return;
     for (position = 0u; position < configuration->state_count; ++position) {
         const size_t state = configuration->states[position];
         if (domain == SIZE_MAX ||
@@ -1866,6 +1890,30 @@ run_external_preprocess_runtime_hook(
     return result;
 }
 
+static bool run_event_runtime_hook(
+    cflow_statechart_instance_impl *impl,
+    cflow_statechart_observed_event_kind kind,
+    const cflow_event_view *event, cflow_machine_state_id completion,
+    uint64_t source_token) {
+    statechart_runtime_hook_call call;
+    cflow_statechart_runtime_hook_context context;
+    cflow_statechart_observed_event observed;
+    const char *error = NULL;
+    if (impl->runtime_hooks.on_event == NULL) return true;
+    context = runtime_hook_context(impl, &call);
+    observed = (cflow_statechart_observed_event){
+        kind, event, completion, source_token};
+    if (!impl->runtime_hooks.on_event(
+            impl->runtime_hook_user, &context, &observed, &error) ||
+        error != NULL) {
+        latch_terminal_failure(
+            impl, CFLOW_STATECHART_RUNTIME_HOOK_FAILED,
+            error != NULL ? error : "Statechart Event hook failed");
+        return false;
+    }
+    return true;
+}
+
 typedef struct statechart_action_context {
     cflow_statechart_instance_impl *impl;
     const cflow_event_view *event;
@@ -1895,8 +1943,9 @@ static bool action_configuration_is_active(
            bit_test(context->configuration_bits, state_index);
 }
 
-static bool stage_internal_event(void *user, const cflow_event_view *event,
-                                 const char **out_error) {
+static bool stage_internal_event_tagged(
+    void *user, const cflow_event_view *event, uint64_t source_token,
+    const char **out_error) {
     statechart_action_context *context =
         (statechart_action_context *)user;
     cflow_statechart_instance_impl *impl =
@@ -1945,11 +1994,18 @@ static bool stage_internal_event(void *user, const cflow_event_view *event,
         return false;
     }
     impl->staged_event_slots[impl->staged_event_count].type_index = type_index;
+    impl->staged_event_slots[impl->staged_event_count].source_token =
+        source_token;
     memcpy(impl->staged_event_payloads +
                impl->staged_event_count * impl->event_payload_stride,
            event->payload, type->size);
     ++impl->staged_event_count;
     return true;
+}
+
+static bool stage_internal_event(void *user, const cflow_event_view *event,
+                                 const char **out_error) {
+    return stage_internal_event_tagged(user, event, UINT64_C(0), out_error);
 }
 
 static bool stage_external_effect(
@@ -2026,7 +2082,8 @@ static cflow_statechart_runtime_status invoke_executable(
             .stage_effect = stage_external_effect,
             .effect_user = context,
             .is_active = action_configuration_is_active,
-            .configuration_user = context};
+            .configuration_user = context,
+            .raise_internal_tagged = stage_internal_event_tagged};
         succeeded = binding->contextual_fn(
             binding->user, &executable_context, &callback_error);
     } else {
@@ -2288,24 +2345,32 @@ static bool enter_default_descendants(
             }
             if (active_children > 1u || initial == SIZE_MAX) return false;
             if (active_children == 0u) {
-                const size_t target =
-                    impl->ir->default_target_indices[initial];
-                const cflow_statechart_state_kind target_kind =
-                    target < impl->ir->state_count
-                        ? impl->ir->states[target].kind
-                        : CFLOW_STATECHART_ATOMIC;
+                const size_t transition =
+                    impl->ir->default_transition_indices[initial];
+                size_t target_cursor;
                 if (!collect_pseudo_transition(
                         impl, initial, pseudo_count))
                     return false;
-                if (target_kind == CFLOW_STATECHART_HISTORY_SHALLOW ||
-                    target_kind == CFLOW_STATECHART_HISTORY_DEEP) {
-                    if (!restore_history_target(
-                            impl, configuration, staged, target,
-                            stack_count, pseudo_count, false))
+                for (target_cursor =
+                         impl->ir->transition_target_offsets[transition];
+                     target_cursor <
+                         impl->ir->transition_target_offsets[transition + 1u];
+                     ++target_cursor) {
+                    const size_t target =
+                        impl->ir->transition_target_indices[target_cursor];
+                    const cflow_statechart_state_kind target_kind =
+                        impl->ir->states[target].kind;
+                    if (target_kind == CFLOW_STATECHART_HISTORY_SHALLOW ||
+                        target_kind == CFLOW_STATECHART_HISTORY_DEEP) {
+                        if (!restore_history_target(
+                                impl, configuration, staged, target,
+                                stack_count, pseudo_count, false))
+                            return false;
+                    } else if (!activate_path_to(
+                                   impl, configuration, target,
+                                   stack_count)) {
                         return false;
-                } else if (!activate_path_to(
-                               impl, configuration, target, stack_count)) {
-                    return false;
+                    }
                 }
             }
         } else if (kind == CFLOW_STATECHART_PARALLEL) {
@@ -2338,14 +2403,25 @@ static bool restore_history_target(cflow_statechart_instance_impl *impl,
     if (!activate_path_to(impl, configuration, parent, stack_count))
         return false;
     if (count == 0u) {
+        const size_t transition =
+            impl->ir->default_transition_indices[history];
+        size_t target_cursor;
         if (collect_default_action &&
             !collect_pseudo_transition(impl, history, pseudo_count))
             return false;
-        return activate_path_to(
-            impl, configuration,
-            impl->ir->default_target_indices[history], stack_count) &&
-            enter_default_descendants(
-                impl, configuration, staged, stack_count, pseudo_count);
+        if (transition == SIZE_MAX) return false;
+        for (target_cursor =
+                 impl->ir->transition_target_offsets[transition];
+             target_cursor <
+                 impl->ir->transition_target_offsets[transition + 1u];
+             ++target_cursor) {
+            if (!activate_path_to(
+                    impl, configuration,
+                    impl->ir->transition_target_indices[target_cursor],
+                    stack_count))
+                return false;
+        }
+        return true;
     }
     for (index = 0u; index < impl->ir->state_count; ++index) {
         const size_t state = impl->ir->document_order_indices[index];
@@ -2353,8 +2429,7 @@ static bool restore_history_target(cflow_statechart_instance_impl *impl,
             !activate_path_to(impl, configuration, state, stack_count))
             return false;
     }
-    return enter_default_descendants(
-        impl, configuration, staged, stack_count, pseudo_count);
+    return true;
 }
 
 static bool build_target_configuration(
@@ -2371,28 +2446,33 @@ static bool build_target_configuration(
     }
     for (transition = 0u; transition < impl->request_transition_count;
          ++transition) {
-        const cflow_statechart_transition *row =
-            &impl->ir->transitions[impl->request_transition_indices[transition]];
-        size_t target;
-        if (row->target == 0u) continue;
-        target = find_state_index(impl->ir, row->target);
-        if (target == SIZE_MAX) return false;
-        if (impl->ir->states[target].kind ==
-                CFLOW_STATECHART_HISTORY_SHALLOW ||
-            impl->ir->states[target].kind == CFLOW_STATECHART_HISTORY_DEEP) {
-            if (!restore_history_target(
-                    impl, configuration, staged, target,
-                    &stack_count, &pseudo_count, true))
+        const size_t transition_index =
+            impl->request_transition_indices[transition];
+        size_t target_cursor;
+        for (target_cursor =
+                 impl->ir->transition_target_offsets[transition_index];
+             target_cursor <
+                 impl->ir->transition_target_offsets[transition_index + 1u];
+             ++target_cursor) {
+            const size_t target =
+                impl->ir->transition_target_indices[target_cursor];
+            if (impl->ir->states[target].kind ==
+                    CFLOW_STATECHART_HISTORY_SHALLOW ||
+                impl->ir->states[target].kind ==
+                    CFLOW_STATECHART_HISTORY_DEEP) {
+                if (!restore_history_target(
+                        impl, configuration, staged, target,
+                        &stack_count, &pseudo_count, true))
+                    return false;
+            } else if (!activate_path_to(
+                           impl, configuration, target, &stack_count)) {
                 return false;
-        } else {
-            if (!activate_path_to(
-                    impl, configuration, target, &stack_count) ||
-                !enter_default_descendants(
-                    impl, configuration, staged,
-                    &stack_count, &pseudo_count))
-                return false;
+            }
         }
     }
+    if (!enter_default_descendants(
+            impl, configuration, staged, &stack_count, &pseudo_count))
+        return false;
     configuration->state_count = 0u;
     *out_entry_count = 0u;
     for (index = 0u; index < impl->ir->state_count; ++index) {
@@ -2486,8 +2566,11 @@ run_pseudo_transition_action_chain(
         impl->ir, impl->ir->transitions[transition].source);
     if (source != SIZE_MAX &&
         impl->ir->states[source].kind == CFLOW_STATECHART_INITIAL) {
-        target = find_state_index(
-            impl->ir, impl->ir->transitions[transition].target);
+        const size_t target_begin =
+            impl->ir->transition_target_offsets[transition];
+        if (target_begin <
+            impl->ir->transition_target_offsets[transition + 1u])
+            target = impl->ir->transition_target_indices[target_begin];
         if (target != SIZE_MAX &&
             (impl->ir->states[target].kind ==
                  CFLOW_STATECHART_HISTORY_SHALLOW ||
@@ -2619,6 +2702,8 @@ static void commit_internal_events(cflow_statechart_instance_impl *impl) {
         const size_t type_index = impl->staged_event_slots[index].type_index;
         const cmeta_type_desc *type = impl->ir->events[type_index].payload_type;
         impl->internal_event_slots[tail].type_index = type_index;
+        impl->internal_event_slots[tail].source_token =
+            impl->staged_event_slots[index].source_token;
         memcpy(impl->internal_event_payloads +
                    tail * impl->event_payload_stride,
                impl->staged_event_payloads +
@@ -3056,7 +3141,8 @@ static bool root_configuration_complete(
 }
 
 static bool pop_internal_event(cflow_statechart_instance_impl *impl,
-                               cflow_event_view *out) {
+                               cflow_event_view *out,
+                               uint64_t *out_source_token) {
     size_t slot, type_index;
     const cmeta_type_desc *type;
     turbo_mutex_lock(&impl->lock);
@@ -3076,6 +3162,7 @@ static bool pop_internal_event(cflow_statechart_instance_impl *impl,
     --impl->internal_event_count;
     *out = (cflow_event_view){
         impl->ir->events[type_index].id, type, impl->driver_event_payload};
+    *out_source_token = impl->internal_event_slots[slot].source_token;
     turbo_mutex_unlock(&impl->lock);
     return true;
 }
@@ -3225,7 +3312,11 @@ static void statechart_driver_run(void *user) {
     result = driver_try_trigger(impl, &trigger);
     if (result != 0) return;
 
-    if (pop_internal_event(impl, &event)) {
+    if (pop_internal_event(impl, &event, &source_token)) {
+        if (!run_event_runtime_hook(
+                impl, CFLOW_STATECHART_OBSERVED_INTERNAL, &event, 0u,
+                source_token))
+            return;
         trigger = (cflow_statechart_selection_trigger){
             CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
         result = driver_try_trigger(impl, &trigger);
@@ -3236,6 +3327,9 @@ static void statechart_driver_run(void *user) {
         return;
     }
     if (pop_adapter_internal_event(impl, &event)) {
+        if (!run_event_runtime_hook(
+                impl, CFLOW_STATECHART_OBSERVED_INTERNAL, &event, 0u, 0u))
+            return;
         trigger = (cflow_statechart_selection_trigger){
             CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
         result = driver_try_trigger(impl, &trigger);
@@ -3246,6 +3340,10 @@ static void statechart_driver_run(void *user) {
         return;
     }
     if (pop_completion(impl, &completion)) {
+        if (!run_event_runtime_hook(
+                impl, CFLOW_STATECHART_OBSERVED_COMPLETION, NULL,
+                completion, 0u))
+            return;
         trigger = (cflow_statechart_selection_trigger){
             CFLOW_STATECHART_TRIGGER_COMPLETION, NULL, completion};
         result = driver_try_trigger(impl, &trigger);
@@ -3336,6 +3434,10 @@ external_admission:
     impl->macrostep_has_external = true;
     impl->macrostep_microsteps = 0u;
     turbo_mutex_unlock(&impl->lock);
+    if (!run_event_runtime_hook(
+            impl, CFLOW_STATECHART_OBSERVED_EXTERNAL, &event, 0u,
+            source_token))
+        return;
     preprocess_result = run_external_preprocess_runtime_hook(
         impl, &event, source_token);
     if (preprocess_result ==
@@ -3612,10 +3714,20 @@ static cflow_statechart_runtime_status statechart_instance_init_with_hook(
         ((config->clock == NULL) != (config->timer_capacity == 0u)) ||
         (config->clock != NULL && !cflow_clock_valid(config->clock)) ||
         (config->runtime_hooks != NULL &&
-         (config->runtime_hooks->abi_version !=
-              CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1 ||
-          config->runtime_hooks->struct_size <
-              sizeof(cflow_statechart_runtime_hooks))))
+         ((config->runtime_hooks->abi_version ==
+               CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1 &&
+           config->runtime_hooks->struct_size !=
+               offsetof(cflow_statechart_runtime_hooks, on_event) &&
+           config->runtime_hooks->struct_size <
+               sizeof(cflow_statechart_runtime_hooks)) ||
+          (config->runtime_hooks->abi_version ==
+               CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V2 &&
+           config->runtime_hooks->struct_size <
+               sizeof(cflow_statechart_runtime_hooks)) ||
+          (config->runtime_hooks->abi_version !=
+               CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1 &&
+           config->runtime_hooks->abi_version !=
+               CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V2))))
         return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
     if (!cflow_executor_valid(config->executor) ||
         !cflow_executor_has(config->executor, CMETA_EXEC_CAP_SERIAL) ||
@@ -3643,7 +3755,10 @@ static cflow_statechart_runtime_status statechart_instance_init_with_hook(
     if (status != CFLOW_STATECHART_RUNTIME_OK) return status;
     required_storage = requirements.total_bytes;
     if (config->runtime_hooks != NULL &&
-        config->runtime_hooks->preprocess_external != NULL &&
+        (config->runtime_hooks->preprocess_external != NULL ||
+         (config->runtime_hooks->abi_version ==
+              CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V2 &&
+          config->runtime_hooks->on_event != NULL)) &&
         (!checked_multiply(config->external_event_capacity,
                            sizeof(uint64_t),
                            &external_source_storage_bytes) ||
@@ -3691,8 +3806,20 @@ static cflow_statechart_runtime_status statechart_instance_init_with_hook(
     impl->statechart = config->statechart;
     impl->ir = ir;
     impl->executor = config->executor;
-    if (config->runtime_hooks != NULL)
-        impl->runtime_hooks = *config->runtime_hooks;
+    if (config->runtime_hooks != NULL) {
+        impl->runtime_hooks.abi_version =
+            config->runtime_hooks->abi_version;
+        impl->runtime_hooks.struct_size =
+            config->runtime_hooks->struct_size;
+        impl->runtime_hooks.on_stable =
+            config->runtime_hooks->on_stable;
+        impl->runtime_hooks.preprocess_external =
+            config->runtime_hooks->preprocess_external;
+        if (config->runtime_hooks->abi_version ==
+            CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V2)
+            impl->runtime_hooks.on_event =
+                config->runtime_hooks->on_event;
+    }
     impl->runtime_hook_user = config->runtime_hook_user;
     impl->internal_event_capacity = requirements.internal_event_capacity;
     impl->completion_capacity = requirements.completion_capacity;

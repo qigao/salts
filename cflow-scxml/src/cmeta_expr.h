@@ -51,6 +51,13 @@ typedef struct cflow_scxml_cmeta_expr_system_values {
     cflow_scxml_cmeta_expr_string_view name;
     cflow_scxml_cmeta_expr_string_view session_id;
     cflow_scxml_cmeta_expr_string_view event_name;
+    cflow_scxml_cmeta_expr_string_view event_type;
+    cflow_scxml_cmeta_expr_string_view event_send_id;
+    cflow_scxml_cmeta_expr_string_view event_origin;
+    cflow_scxml_cmeta_expr_string_view event_origin_type;
+    cflow_scxml_cmeta_expr_string_view event_invoke_id;
+    cflow_scxml_cmeta_expr_string_view event_data;
+    cflow_scxml_cmeta_expr_string_view scxml_location;
 } cflow_scxml_cmeta_expr_system_values;
 
 typedef enum cflow_scxml_cmeta_expr_value_kind {

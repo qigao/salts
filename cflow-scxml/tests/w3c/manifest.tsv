@@ -1,0 +1,34 @@
+id	fixture	applicability	status	feature	upstream	rationale
+144	test144.scxml	MANDATORY	PASS	internal-event-fifo	https://www.w3.org/Voice/2013/scxml-irp/144/test144.txml	Preserves the raised internal event FIFO assertion.
+147	test147.scxml	MANDATORY	PASS	if-first-true	https://www.w3.org/Voice/2013/scxml-irp/147/test147.txml	Preserves first-true conditional partition selection.
+148	test148.scxml	MANDATORY	PASS	if-else	https://www.w3.org/Voice/2013/scxml-irp/148/test148.txml	Preserves else selection when every condition is false.
+149	test149.scxml	MANDATORY	PASS	if-no-match	https://www.w3.org/Voice/2013/scxml-irp/149/test149.txml	Preserves no-op behavior when no conditional partition matches.
+158	test158.scxml	MANDATORY	PASS	executable-order	https://www.w3.org/Voice/2013/scxml-irp/158/test158.txml	Preserves document order within one executable block.
+159	test159.scxml	MANDATORY	PASS	executable-error-boundary	https://www.w3.org/Voice/2013/scxml-irp/159/test159.txml	Preserves abortion of the remaining failing executable block.
+355	test355.scxml	MANDATORY	PASS	default-initial	https://www.w3.org/Voice/2013/scxml-irp/355/test355.txml	Preserves first-child selection when initial is omitted.
+375	test375.scxml	MANDATORY	PASS	onentry-order	https://www.w3.org/Voice/2013/scxml-irp/375/test375.txml	Preserves document order across onentry handlers.
+376	test376.scxml	MANDATORY	PASS	onentry-error-isolation	https://www.w3.org/Voice/2013/scxml-irp/376/test376.txml	Preserves separate failure boundaries for onentry handlers.
+377	test377.scxml	MANDATORY	PASS	onexit-order	https://www.w3.org/Voice/2013/scxml-irp/377/test377.txml	Preserves document order across onexit handlers.
+378	test378.scxml	MANDATORY	PASS	onexit-error-isolation	https://www.w3.org/Voice/2013/scxml-irp/378/test378.txml	Preserves separate failure boundaries for onexit handlers.
+387	test387.scxml	MANDATORY	PASS	history-default	https://www.w3.org/Voice/2013/scxml-irp/387/test387.txml	Preserves the declared default history configuration.
+399	test399.scxml	MANDATORY	PASS	event-descriptor-matching	https://www.w3.org/Voice/2013/scxml-irp/399/test399.txml	Preserves descriptor unions token-prefix matching token boundaries dot-star and wildcard matching.
+403a	test403a.scxml	MANDATORY	PASS	transition-selection	https://www.w3.org/Voice/2013/scxml-irp/403a/test403a.txml	Preserves source priority document order and guard selection.
+404	test404.scxml	MANDATORY	PASS	exit-order	https://www.w3.org/Voice/2013/scxml-irp/404/test404.txml	Preserves exits before selected transition content.
+405	test405.scxml	MANDATORY	PASS	transition-content-order	https://www.w3.org/Voice/2013/scxml-irp/405/test405.txml	Preserves document order of selected transition content.
+406	test406.scxml	MANDATORY	PASS	entry-order	https://www.w3.org/Voice/2013/scxml-irp/406/test406.txml	Preserves transition content before entry actions.
+407	test407.scxml	MANDATORY	PASS	onexit-execution	https://www.w3.org/Voice/2013/scxml-irp/407/test407.txml	Preserves onexit execution when a state exits.
+409	test409.scxml	MANDATORY	PASS	exit-configuration-timing	https://www.w3.org/Voice/2013/scxml-irp/409/test409.txml	Preserves descendant removal before ancestor onexit.
+411	test411.scxml	MANDATORY	PASS	entry-configuration-timing	https://www.w3.org/Voice/2013/scxml-irp/411/test411.txml	Preserves state activation before its onentry content.
+412	test412.scxml	MANDATORY	PASS	initial-transition-order	https://www.w3.org/Voice/2013/scxml-irp/412/test412.txml	Preserves parent entry then initial content then child entry.
+416	test416.scxml	MANDATORY	PASS	compound-completion	https://www.w3.org/Voice/2013/scxml-irp/416/test416.txml	Preserves compound state completion event generation.
+417	test417.scxml	MANDATORY	PASS	parallel-completion	https://www.w3.org/Voice/2013/scxml-irp/417/test417.txml	Preserves parallel state completion event generation.
+419	test419.scxml	MANDATORY	PASS	eventless-priority	https://www.w3.org/Voice/2013/scxml-irp/419/test419.txml	Preserves eventless selection before queued events.
+421	test421.scxml	MANDATORY	PASS	internal-queue-drain	https://www.w3.org/Voice/2013/scxml-irp/421/test421.txml	Preserves draining unmatched internal events before an enabled event.
+503	test503.scxml	MANDATORY	PASS	targetless-domain	https://www.w3.org/Voice/2013/scxml-irp/503/test503.txml	Preserves an empty exit set for targetless transitions.
+504	test504.scxml	MANDATORY	PASS	external-lcca-domain	https://www.w3.org/Voice/2013/scxml-irp/504/test504.txml	Preserves exit of every active descendant of the external LCCA.
+505	test505.scxml	MANDATORY	PASS	internal-descendant-domain	https://www.w3.org/Voice/2013/scxml-irp/505/test505.txml	Preserves a compound source for an internal descendant target.
+506	test506.scxml	MANDATORY	PASS	internal-nondescendant-domain	https://www.w3.org/Voice/2013/scxml-irp/506/test506.txml	Preserves external treatment of a non-descendant internal target.
+533	test533.scxml	MANDATORY	PASS	parallel-internal-domain	https://www.w3.org/Voice/2013/scxml-irp/533/test533.txml	Preserves external treatment of an internal transition from parallel.
+576	test576.scxml	MANDATORY	PASS	root-multi-target-initial	https://www.w3.org/Voice/2013/scxml-irp/576/test576.txml	Preserves entry of both deeply nested non-default parallel siblings selected by root initial IDREFS.
+579	test579.scxml	MANDATORY	PASS	history-content-order	https://www.w3.org/Voice/2013/scxml-irp/579/test579.txml	Preserves ordering of initial and default history content.
+580	test580.scxml	MANDATORY	PASS	history-configuration	https://www.w3.org/Voice/2013/scxml-irp/580/test580.txml	Preserves exclusion of history pseudo-states from active configuration.

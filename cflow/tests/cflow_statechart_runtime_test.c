@@ -833,6 +833,83 @@ suite("CFlow Statechart runtime initial configuration") {
         runtime_fixture_destroy(&fixture);
     }
 
+    it("enters every document-ordered target of a root initial transition") {
+        runtime_fixture fixture;
+        cflow_statechart_transition_target targets[] = {
+            {10u, 51u, 0u}, {10u, 81u, 1u}};
+        cflow_statechart_definition_v2 definition;
+        cflow_statechart_instance_config config;
+        cflow_machine_state_id actual[6] = {0};
+        const cflow_machine_state_id expected[] = {
+            1u, 3u, 4u, 51u, 7u, 81u};
+        size_t count = 0u;
+        uint64_t version = 0u;
+
+        memset(&fixture, 0, sizeof(fixture));
+        fixture.states[0] = (cflow_statechart_state){
+            1u, 0u, CFLOW_STATECHART_COMPOUND, 0u};
+        fixture.states[1] = (cflow_statechart_state){
+            2u, 1u, CFLOW_STATECHART_INITIAL, 1u};
+        fixture.states[2] = (cflow_statechart_state){
+            3u, 1u, CFLOW_STATECHART_PARALLEL, 2u};
+        fixture.states[3] = (cflow_statechart_state){
+            4u, 3u, CFLOW_STATECHART_COMPOUND, 3u};
+        fixture.states[4] = (cflow_statechart_state){
+            5u, 4u, CFLOW_STATECHART_INITIAL, 4u};
+        fixture.states[5] = (cflow_statechart_state){
+            50u, 4u, CFLOW_STATECHART_ATOMIC, 5u};
+        fixture.states[6] = (cflow_statechart_state){
+            51u, 4u, CFLOW_STATECHART_ATOMIC, 6u};
+        fixture.states[7] = (cflow_statechart_state){
+            7u, 3u, CFLOW_STATECHART_COMPOUND, 7u};
+        fixture.states[8] = (cflow_statechart_state){
+            8u, 7u, CFLOW_STATECHART_INITIAL, 8u};
+        fixture.states[9] = (cflow_statechart_state){
+            80u, 7u, CFLOW_STATECHART_ATOMIC, 9u};
+        fixture.states[10] = (cflow_statechart_state){
+            81u, 7u, CFLOW_STATECHART_ATOMIC, 10u};
+        fixture.transitions[0] = (cflow_statechart_transition){
+            10u, 2u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 0u,
+            CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u};
+        fixture.transitions[1] = (cflow_statechart_transition){
+            11u, 5u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 50u,
+            CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u};
+        fixture.transitions[2] = (cflow_statechart_transition){
+            12u, 8u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 80u,
+            CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 2u};
+        fixture.definition = (cflow_statechart_definition){
+            &cmeta_type_int, fixture.states, 11u, NULL, 0u, NULL, 0u,
+            NULL, 0u, fixture.transitions, 3u, NULL, 0u, NULL, 0u};
+        definition = (cflow_statechart_definition_v2){
+            .abi_version = CFLOW_STATECHART_DEFINITION_ABI_V2,
+            .struct_size = sizeof(definition),
+            .base = fixture.definition,
+            .transition_targets = targets,
+            .transition_target_count = 2u};
+        fixture.initial_state = 9;
+
+        check_equal(cflow_statechart_build_v2(
+                        &fixture.statechart, &definition),
+                    CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&fixture.executor));
+        config = (cflow_statechart_instance_config){
+            .statechart = &fixture.statechart,
+            .initial_state = &fixture.initial_state,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 4u,
+            .microstep_limit = 64u,
+            .executor = &fixture.executor};
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, actual, 6u, &count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(count, (size_t)6u);
+        check_equal(actual, expected, sizeof(expected));
+        runtime_fixture_destroy(&fixture);
+    }
+
     it("reports required snapshot size without a partial list or version") {
         runtime_fixture fixture;
         cflow_machine_state_id actual[2] = {91u, 92u};
@@ -4512,6 +4589,12 @@ typedef struct rtc_fixture {
     bool enqueue_other_once;
     bool drop_tagged_external;
     bool fail_stable_hook;
+    bool use_contextual_action;
+    bool raise_tagged_internal;
+    uint64_t tagged_internal_token;
+    size_t event_hook_calls;
+    cflow_statechart_observed_event_kind observed_event_kinds[8];
+    uint64_t observed_event_tokens[8];
 } rtc_fixture;
 
 typedef struct rtc_producer_context {
@@ -4585,6 +4668,23 @@ static cflow_statechart_external_preprocess_result rtc_external_preprocess(
         : CFLOW_STATECHART_EXTERNAL_PREPROCESS_CONTINUE;
 }
 
+static bool rtc_event_hook(
+    void *user, const cflow_statechart_runtime_hook_context *context,
+    const cflow_statechart_observed_event *event, const char **out_error) {
+    rtc_fixture *fixture = (rtc_fixture *)user;
+    size_t index;
+    if (fixture == NULL || context == NULL || event == NULL ||
+        out_error == NULL)
+        return false;
+    index = fixture->event_hook_calls++;
+    if (index < 8u) {
+        fixture->observed_event_kinds[index] = event->kind;
+        fixture->observed_event_tokens[index] = event->source_token;
+    }
+    *out_error = NULL;
+    return true;
+}
+
 static void rtc_cancel_instance(void *user) {
     cflow_statechart_instance_cancel((cflow_statechart_instance *)user);
 }
@@ -4626,6 +4726,31 @@ static bool rtc_action(void *user, cflow_statechart_action_phase phase,
                                     &fixture->instance) !=
                 CFLOW_ADMISSION_ACCEPTED)
             return false;
+    }
+    return true;
+}
+
+static bool rtc_contextual_action(
+    void *user, const cflow_statechart_executable_context *context,
+    const char **out_error) {
+    rtc_fixture *fixture = (rtc_fixture *)user;
+    if (fixture == NULL || context == NULL || context->state == NULL ||
+        context->out_state == NULL || out_error == NULL ||
+        fixture->trace_count >= 12u)
+        return false;
+    fixture->trace[fixture->trace_count++] = (int)context->owner;
+    *(int *)context->out_state = *(const int *)context->state + 1;
+    *out_error = NULL;
+    if (fixture->raise_tagged_internal &&
+        context->phase == CFLOW_STATECHART_ACTION_TRANSITION &&
+        context->event != NULL && context->event->id == RTC_GO) {
+        const int payload = 77;
+        const cflow_event_view raised = {
+            RTC_NEXT, &cmeta_type_int, &payload};
+        return context->raise_internal_tagged != NULL &&
+            context->raise_internal_tagged(
+                context->raise_user, &raised,
+                fixture->tagged_internal_token, out_error);
     }
     return true;
 }
@@ -4753,7 +4878,11 @@ static cflow_statechart_runtime_status rtc_init_with_external(
     size_t completion_capacity, size_t microstep_limit,
     size_t executor_capacity) {
     const cflow_statechart_executable_binding binding = {
-        RTC_EXEC, rtc_action, fixture};
+        .id = RTC_EXEC,
+        .fn = fixture->use_contextual_action ? NULL : rtc_action,
+        .user = fixture,
+        .contextual_fn = fixture->use_contextual_action
+            ? rtc_contextual_action : NULL};
     const cflow_statechart_guard_binding guard_binding = {
         RTC_QUEUE_GUARD, rtc_queue_microstep_guard, fixture};
     cflow_statechart_instance_config config = {
@@ -5327,12 +5456,45 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_destroy(&fixture);
     }
 
+    it("observes a transactional tagged internal Event with its source token") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        size_t index;
+        bool found = false;
+        rtc_definition(&fixture, false, false);
+        fixture.use_contextual_action = true;
+        fixture.raise_tagged_internal = true;
+        fixture.tagged_internal_token = UINT64_C(91);
+        fixture.runtime_hooks = (cflow_statechart_runtime_hooks){
+            .abi_version = CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V2,
+            .struct_size = sizeof(cflow_statechart_runtime_hooks),
+            .on_event = rtc_event_hook};
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        for (index = 0u; index < fixture.event_hook_calls && index < 8u;
+             ++index) {
+            if (fixture.observed_event_kinds[index] ==
+                    CFLOW_STATECHART_OBSERVED_INTERNAL &&
+                fixture.observed_event_tokens[index] == UINT64_C(91)) {
+                found = true;
+                break;
+            }
+        }
+        check_true(found);
+        rtc_destroy(&fixture);
+    }
+
     it("rejects incompatible runtime hook ABI shapes") {
         rtc_fixture version_fixture;
         rtc_fixture size_fixture;
         rtc_definition(&version_fixture, true, false);
         version_fixture.runtime_hooks = (cflow_statechart_runtime_hooks){
-            .abi_version = CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1 + 1u,
+            .abi_version = CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V2 + 1u,
             .struct_size = sizeof(cflow_statechart_runtime_hooks),
             .on_stable = rtc_stable_hook};
         check_equal(rtc_init(&version_fixture, 4u, 4u, 16u, 4u),
