@@ -133,8 +133,7 @@ jobs:
       - name: Run NativeIO contract tests
         shell: pwsh
         run: |
-          ctest --test-dir "${{ matrix.build_dir }}" \
-            -R '^native_io_(test|header_cpp_test)$' --output-on-failure
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^native_io_(test|header_cpp_test)$' --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run NativeIO benchmark

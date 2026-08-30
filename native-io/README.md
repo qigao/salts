@@ -77,4 +77,4 @@ if (status != 0)
 
 完整可运行的 TCP/UDP loopback 用法位于 `tests/native_io_test.c`。
 
-`native_io_benchmark` 只比较同模型的原生基线：Windows 为 raw IOCP，Linux 分别为 raw epoll 与 raw io_uring。输出按 backend 和 TCP/UDP 拆分的 payload 延迟、吞吐及 submit/observe 阶段表。TCP 覆盖 1/4/8/16/32/64 KiB；UDP 覆盖到 32 KiB，因 IPv4 UDP 单 datagram 无法承载 64 KiB payload 而明确省略该行。kqueue benchmark 将在有 Apple/BSD 运行环境时补充，不能用 Linux 结果代替其运行证据。
+`native_io_benchmark` 只比较同模型的原生基线：Windows 为 raw IOCP，Linux 分别为 raw epoll 与 raw io_uring，Apple/BSD 为 raw kqueue。输出按 backend 和 TCP/UDP 拆分的 payload 延迟、吞吐及 submit/observe 阶段表。TCP 覆盖 1/4/8/16/32/64 KiB；UDP 覆盖到 32 KiB，因 IPv4 UDP 单 datagram 无法承载 64 KiB payload 而明确省略该行。
