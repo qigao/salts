@@ -4,6 +4,7 @@
 #include <cflow/event.h>
 #include <cflow/statechart.h>
 #include <cflow/statechart_runtime.h>
+#include <cmeta/data.h>
 #include <xml_parser/xml_parser.h>
 
 #include <stdbool.h>
@@ -17,6 +18,9 @@ extern "C" {
 #define CFLOW_SCXML_DIAGNOSTIC_CAPACITY 256u
 #define CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V1 1u
 #define CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1 1u
+#define CFLOW_SCXML_CMETA_COMPILE_OPTIONS_ABI_V1 1u
+#define CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1 1u
+#define CFLOW_SCXML_CMETA_DEFAULT_MAX_ITERATIONS 65536u
 
 typedef enum cflow_scxml_status {
     CFLOW_SCXML_OK = 0,
@@ -51,6 +55,39 @@ typedef struct cflow_scxml_diagnostic {
 typedef struct cflow_scxml_program {
     void *impl;
 } cflow_scxml_program;
+
+/**
+ * Versioned compile-time provider for the opt-in `datamodel="cmeta"` profile.
+ *
+ * `root` and every descriptor reachable from it remain borrowed and immutable
+ * until program destruction. All limits are positive hard bounds; expression
+ * programs are compiled once and owned by the resulting SCXML program.
+ */
+typedef struct cflow_scxml_cmeta_compile_options_v1 {
+    uint32_t abi_version;
+    size_t struct_size;
+    const cmeta_data_desc *root;
+    size_t max_source_bytes;
+    size_t max_instructions;
+    size_t max_operands;
+    size_t max_expression_depth;
+    size_t max_path_depth;
+    size_t max_literal_bytes;
+    size_t max_string_bytes;
+    /** Maximum items visited by one `<foreach>` invocation. */
+    size_t max_iterations;
+} cflow_scxml_cmeta_compile_options_v1;
+
+/**
+ * Versioned per-session state provider for a CMeta-compiled program.
+ * `initial_state` is borrowed only until initialization returns; the native
+ * Statechart copies it using the program root descriptor's storage type.
+ */
+typedef struct cflow_scxml_cmeta_session_options_v1 {
+    uint32_t abi_version;
+    size_t struct_size;
+    const void *initial_state;
+} cflow_scxml_cmeta_session_options_v1;
 
 typedef enum cflow_scxml_program_requirement {
     CFLOW_SCXML_REQUIREMENT_NONE = 0u,
@@ -237,6 +274,10 @@ typedef struct cflow_scxml_session {
 
 cflow_scxml_limits cflow_scxml_default_limits(void);
 
+/** Return v1 bounded defaults with `root` installed as a borrowed schema. */
+cflow_scxml_cmeta_compile_options_v1
+cflow_scxml_cmeta_default_compile_options(const cmeta_data_desc *root);
+
 /**
  * Validate and compile an SCXML Core document into one owning program.
  * `out` must be zero-initialized. Input and temporary XML/IR rows are copied;
@@ -249,6 +290,19 @@ cflow_scxml_status cflow_scxml_compile(
     const char *input,
     size_t input_size,
     const cflow_scxml_limits *limits,
+    cflow_scxml_diagnostic *diagnostic);
+
+/**
+ * Compile an exact `datamodel="cmeta"` document with an explicit provider.
+ * There is no implicit provider fallback. Ownership and failure guarantees
+ * otherwise match `cflow_scxml_compile()`.
+ */
+cflow_scxml_status cflow_scxml_compile_cmeta(
+    cflow_scxml_program *out,
+    const char *input,
+    size_t input_size,
+    const cflow_scxml_limits *limits,
+    const cflow_scxml_cmeta_compile_options_v1 *options,
     cflow_scxml_diagnostic *diagnostic);
 
 /** Destroy a quiescent program and its native Statechart/name mappings. */
@@ -290,6 +344,9 @@ bool cflow_scxml_program_requirements(
  * A structural program succeeds with a NULL view and zero count. The returned
  * rows and their callback user pointers are invalidated by program destruction,
  * so the program must outlive every Statechart instance configured with them.
+ * CMeta expressions that read `_sessionid` require the owning session adapters
+ * installed by `cflow_scxml_session_init_cmeta()` and fail through these
+ * program-level rows.
  * Invalid arguments return false without modifying either output.
  */
 bool cflow_scxml_program_runtime_bindings(
@@ -305,6 +362,8 @@ bool cflow_scxml_program_runtime_bindings(
  * program destruction, so the program must outlive every configured
  * Statechart instance. Invalid arguments return false without modifying either
  * output.
+ * CMeta guards that read `_sessionid` require the owning session adapters
+ * installed by `cflow_scxml_session_init_cmeta()`.
  */
 bool cflow_scxml_program_guard_bindings(
     const cflow_scxml_program *program,
@@ -320,6 +379,16 @@ bool cflow_scxml_program_guard_bindings(
 cflow_statechart_runtime_status cflow_scxml_session_init(
     cflow_scxml_session *session,
     const cflow_scxml_session_config *config);
+
+/**
+ * Initialize a CMeta program session from one call-scoped initial object.
+ * The session copies the document name and generates an immutable UUID string
+ * for `_sessionid` before attaching the native runtime.
+ */
+cflow_statechart_runtime_status cflow_scxml_session_init_cmeta(
+    cflow_scxml_session *session,
+    const cflow_scxml_session_config *config,
+    const cflow_scxml_cmeta_session_options_v1 *options);
 
 cflow_mailbox_status cflow_scxml_session_try_send(
     cflow_scxml_session *session, const cflow_event_view *event);

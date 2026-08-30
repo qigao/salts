@@ -191,6 +191,21 @@ int main(void) {
   const cflow_scxml_invoke_adapter_v1 invoke_adapter_shape = {
       .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1,
       .struct_size = sizeof(cflow_scxml_invoke_adapter_v1)};
+  const cflow_scxml_cmeta_compile_options_v1 cmeta_compile_shape =
+      cflow_scxml_cmeta_default_compile_options(NULL);
+  const cflow_scxml_cmeta_session_options_v1 cmeta_session_shape = {
+      .abi_version = CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1,
+      .struct_size = sizeof(cflow_scxml_cmeta_session_options_v1),
+      .initial_state = NULL};
+  cflow_scxml_status (*compile_cmeta)(
+      cflow_scxml_program *, const char *, size_t,
+      const cflow_scxml_limits *,
+      const cflow_scxml_cmeta_compile_options_v1 *,
+      cflow_scxml_diagnostic *) = cflow_scxml_compile_cmeta;
+  cflow_statechart_runtime_status (*init_cmeta)(
+      cflow_scxml_session *, const cflow_scxml_session_config *,
+      const cflow_scxml_cmeta_session_options_v1 *) =
+      cflow_scxml_session_init_cmeta;
   cflow_scxml_program program = {0};
   cflow_executor executor = {0};
   cflow_statechart_instance instance = {0};
@@ -241,6 +256,16 @@ int main(void) {
           CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1 ||
       invoke_adapter_shape.struct_size !=
           sizeof(cflow_scxml_invoke_adapter_v1) ||
+      cmeta_compile_shape.abi_version !=
+          CFLOW_SCXML_CMETA_COMPILE_OPTIONS_ABI_V1 ||
+      cmeta_compile_shape.struct_size !=
+          sizeof(cflow_scxml_cmeta_compile_options_v1) ||
+      cmeta_compile_shape.root != NULL ||
+      cmeta_session_shape.abi_version !=
+          CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1 ||
+      cmeta_session_shape.struct_size !=
+          sizeof(cflow_scxml_cmeta_session_options_v1) ||
+      compile_cmeta == NULL || init_cmeta == NULL ||
       !cflow_scxml_program_requirements(&program, &requirements) ||
       requirements != CFLOW_SCXML_REQUIREMENT_NONE) {
     goto cleanup;

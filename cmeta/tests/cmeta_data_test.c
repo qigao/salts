@@ -180,6 +180,27 @@ static cmeta_status cmeta_data_test_buffer_assign(
     return size == 13u ? CMETA_CALLBACK_ERROR : CMETA_OK;
 }
 
+static cmeta_status cmeta_data_test_buffer_read(
+    const void *object, const unsigned char **out_data, size_t *out_size) {
+    static const unsigned char bytes[] = {'a', 'b', 'c', 'd'};
+    const int size = object != NULL ? *(const int *)object : -2;
+
+    if (object == NULL || out_data == NULL || out_size == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (size == 13)
+        return CMETA_CALLBACK_ERROR;
+    if (size == -1) {
+        *out_data = NULL;
+        *out_size = 1u;
+        return CMETA_OK;
+    }
+    if (size < 0 || (size_t)size > sizeof(bytes))
+        return CMETA_INVALID_ARGUMENT;
+    *out_data = size == 0 ? NULL : bytes;
+    *out_size = (size_t)size;
+    return CMETA_OK;
+}
+
 static void cmeta_data_test_buffer_restore_zero(void *object) {
     if (object != NULL)
         *(int *)object = 0;
@@ -196,7 +217,8 @@ static const cmeta_data_buffer_ops cmeta_data_test_buffer_ops = {
     .ownership = CMETA_DATA_BUFFER_OWNED,
     .is_zero = cmeta_data_test_buffer_is_zero,
     .assign = cmeta_data_test_buffer_assign,
-    .restore_zero = cmeta_data_test_buffer_restore_zero
+    .restore_zero = cmeta_data_test_buffer_restore_zero,
+    .read = cmeta_data_test_buffer_read
 };
 
 static const cmeta_data_desc cmeta_data_test_buffer_desc = {
@@ -370,6 +392,116 @@ spec("CMeta semantic data descriptors") {
     check_equal(cmeta_data_buffer_restore_zero(&cmeta_data_test_buffer_desc,
                                                &object), CMETA_OK);
     check_equal(object, 0);
+  }
+
+  it("reads a bounded borrowed buffer view") {
+    static const unsigned char expected[] = {'a', 'b', 'c'};
+    const unsigned char *data = NULL;
+    size_t size = 0u;
+    const int object = 3;
+
+    check_equal(cmeta_data_buffer_read(&cmeta_data_test_buffer_desc, &object,
+                                       sizeof(expected), &data, &size),
+                CMETA_OK);
+    check_equal(size, sizeof(expected));
+    check_not_null(data);
+    check_equal(data, expected, sizeof(expected));
+  }
+
+  it("reads an empty buffer as a valid empty view") {
+    static const unsigned char sentinel[] = {'x'};
+    const unsigned char *data = sentinel;
+    size_t size = 9u;
+    const int object = 0;
+
+    check_equal(cmeta_data_buffer_read(&cmeta_data_test_buffer_desc, &object,
+                                       0u, &data, &size),
+                CMETA_OK);
+    check_null(data);
+    check_equal(size, (size_t)0u);
+  }
+
+  it("preserves read outputs when the byte ceiling is exceeded") {
+    static const unsigned char sentinel[] = {'x'};
+    const unsigned char *data = sentinel;
+    size_t size = 9u;
+    const int object = 3;
+
+    check_equal(cmeta_data_buffer_read(&cmeta_data_test_buffer_desc, &object,
+                                       2u, &data, &size),
+                CMETA_CAPACITY_EXCEEDED);
+    check_true(data == sentinel);
+    check_equal(size, (size_t)9u);
+  }
+
+  it("rejects a malformed provider view without publishing it") {
+    static const unsigned char sentinel[] = {'x'};
+    const unsigned char *data = sentinel;
+    size_t size = 9u;
+    const int object = -1;
+
+    check_equal(cmeta_data_buffer_read(&cmeta_data_test_buffer_desc, &object,
+                                       1u, &data, &size),
+                CMETA_CALLBACK_ERROR);
+    check_true(data == sentinel);
+    check_equal(size, (size_t)9u);
+  }
+
+  it("preserves read outputs when the provider fails") {
+    static const unsigned char sentinel[] = {'x'};
+    const unsigned char *data = sentinel;
+    size_t size = 9u;
+    const int object = 13;
+
+    check_equal(cmeta_data_buffer_read(&cmeta_data_test_buffer_desc, &object,
+                                       13u, &data, &size),
+                CMETA_CALLBACK_ERROR);
+    check_true(data == sentinel);
+    check_equal(size, (size_t)9u);
+  }
+
+  it("reports a missing buffer read trait without breaking legacy ops") {
+    static const unsigned char sentinel[] = {'x'};
+    cmeta_data_buffer_ops ops = cmeta_data_test_buffer_ops;
+    cmeta_data_desc desc = cmeta_data_test_buffer_desc;
+    const unsigned char *data = sentinel;
+    size_t size = 9u;
+    const int object = 3;
+
+    ops.struct_size = offsetof(cmeta_data_buffer_ops, read);
+    desc.buffer_ops = &ops;
+    check_true(cmeta_data_buffer_ops_of(&desc) == &ops);
+    check_equal(cmeta_data_buffer_read(&desc, &object, 3u, &data, &size),
+                CMETA_TRAIT_MISSING);
+    check_true(data == sentinel);
+    check_equal(size, (size_t)9u);
+
+    ops = cmeta_data_test_buffer_ops;
+    ops.read = NULL;
+    check_true(cmeta_data_buffer_ops_of(&desc) == &ops);
+    check_equal(cmeta_data_buffer_read(&desc, &object, 3u, &data, &size),
+                CMETA_TRAIT_MISSING);
+  }
+
+  it("rejects invalid buffer read arguments without publishing outputs") {
+    static const unsigned char sentinel[] = {'x'};
+    const unsigned char *data = sentinel;
+    size_t size = 9u;
+    const int object = 3;
+
+    check_equal(cmeta_data_buffer_read(NULL, &object, 3u, &data, &size),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(cmeta_data_buffer_read(&cmeta_data_test_buffer_desc, NULL, 3u,
+                                       &data, &size),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(cmeta_data_buffer_read(&cmeta_data_test_buffer_desc, &object,
+                                       3u, NULL, &size),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(cmeta_data_buffer_read(&cmeta_data_test_buffer_desc, &object,
+                                       3u, &data, NULL),
+                CMETA_INVALID_ARGUMENT);
+    check_true(data == sentinel);
+    check_equal(size, (size_t)9u);
   }
 
   it("rejects invalid buffer assignment without mutating the destination") {
