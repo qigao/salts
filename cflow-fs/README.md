@@ -82,20 +82,20 @@ only when the backend proved the pair with its native correlation mechanism.
 FSEvents can mark rename and unlink observations ambiguously; those observations
 request a rescan rather than fabricating a precise rename or removal event.
 
-## Typed watch Source
+## Typed watch Publisher
 
-`<cflow/fs_watch_source.h>` adapts the same bounded native watcher directly to
-a `cflow_source`. Publication wakes an armed CFlow waitable from the backend
+`<cflow/fs_watch_publisher.h>` adapts the same bounded native watcher directly to
+a `cflow_publisher`. Publication wakes an armed CFlow waitable from the backend
 thread; no polling loop and no per-watch helper thread are introduced. The
-Source can therefore be moved into `cflow_run_open()` and used by identity or
-operator Graphs. A sink may also convert the resulting value to a
+Publisher can therefore be moved into `cflow_subscribe()` and used by identity or
+operator Graphs. A Subscriber may also convert the resulting value to a
 `cflow_event_view` and send it through an existing `cflow_actor_ref`; the Actor
 does not need a second filesystem-specific input implementation.
 
 The output type and encoder are application-defined:
 
 ```c
-#include <cflow/fs_watch_source.h>
+#include <cflow/fs_watch_publisher.h>
 #include <stdio.h>
 
 typedef struct file_change {
@@ -115,17 +115,17 @@ static bool encode_change(void *user, const cflow_fs_watch_event *event,
 ```
 
 `output_type` must advertise trivial copy and trivial destruction. `name`,
-`output_type`, and `encode_user` are borrowed until Source destruction. The
+`output_type`, and `encode_user` are borrowed until Publisher destruction. The
 encoder runs on the CFlow driver thread and must copy every required path because
 the watch event strings expire when it returns. `event_capacity`, `watch_capacity`,
 `path_capacity`, and `native_buffer_capacity` remain hard bounds; overflow is
 still represented by the generation-safe `CFLOW_FS_WATCH_RESCAN_REQUIRED`
 value. After rebuilding its authoritative view, the consumer calls
-`cflow_fs_watch_source_owner_acknowledge_rescan()`.
+`cflow_fs_watch_publisher_owner_acknowledge_rescan()`.
 
-Ownership is deliberately split. Run owns the moved Source, while the caller
-retains `cflow_fs_watch_source_owner`. Close Run (or destroy the standalone
-Source) first, then retry `cflow_fs_watch_source_owner_close()` while it returns
+Ownership is deliberately split. Subscription owns the moved Publisher, while the caller
+retains `cflow_fs_watch_publisher_owner`. Close Subscription (or destroy the standalone
+Publisher) first, then retry `cflow_fs_watch_publisher_owner_close()` while it returns
 `TURBO_EBUSY`; success means the backend stopped, queued events were drained,
 native handles were released, and the owner was cleared. Owner operations are
-control-plane calls and must not race each other or Source destruction.
+control-plane calls and must not race each other or Publisher destruction.

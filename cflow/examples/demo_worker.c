@@ -1,5 +1,5 @@
 #include <cflow/reactive.h>
-#include <cflow/sources.h>
+#include <cflow/publishers.h>
 #include <cflow/stream.h>
 #include <turbo/thread.h>
 #include "ops.h"
@@ -50,12 +50,12 @@ int main(void) {
     if (!cflow_scheduler_worker_init(&workers, 4)) return 1;
     cflow_channel ch = {0};
     if (!cflow_channel_init(&ch, &cmeta_type_int, 1024)) return 2;
-    cflow_source source;
-    if (!cflow_source_from_channel(&source, &ch)) return 3;
+    cflow_publisher source;
+    if (!cflow_publisher_from_channel(&source, &ch)) return 3;
 
     state st = {0};
-    cflow_sink_callbacks obs_cb = { on_value, on_error, on_done, &st };
-    cflow_sink obs = cflow_sink_from_callbacks(&obs_cb);
+    cflow_subscriber_callbacks obs_cb = { on_value, on_error, on_done, &st };
+    cflow_subscriber obs = cflow_subscriber_from_callbacks(&obs_cb);
     cflow_subscription sub;
     if (!cflow_subscribe(&sub, &s.graph, &source, &workers, &obs)) return 4;
 

@@ -354,6 +354,46 @@ int cflow_io_native_adapter_observe(
     return delivery_status;
 }
 
+int cflow_io_native_adapter_drive_reactive(
+    cflow_io_native_adapter *adapter,
+    cflow_io_publisher_owner *owner,
+    cflow_scheduler *scheduler,
+    uint32_t timeout_ms,
+    size_t max_phase_steps,
+    size_t *out_completed) {
+    size_t progressed = 0u;
+    int observe_status;
+    int owner_status;
+
+    if (out_completed != NULL)
+        *out_completed = 0u;
+    if (native_adapter_impl(adapter) == NULL || owner == NULL ||
+        owner->impl == NULL || max_phase_steps == 0u ||
+        !cflow_scheduler_valid(scheduler) || out_completed == NULL)
+        return TURBO_EINVAL;
+    {
+        const unsigned capabilities =
+            cflow_scheduler_capabilities(scheduler);
+        if ((capabilities & CMETA_SCHED_CAP_CALLER_DRIVEN_ZERO_DELAY) == 0u ||
+            (capabilities & CMETA_SCHED_CAP_CONCURRENT) != 0u)
+            return TURBO_EINVAL;
+    }
+
+    (void)cflow_scheduler_run_until_idle(scheduler, max_phase_steps);
+    owner_status = cflow_io_publisher_owner_run_ready(
+        owner, max_phase_steps, &progressed);
+    if (owner_status != TURBO_OK)
+        return owner_status;
+
+    observe_status = cflow_io_native_adapter_observe(
+        adapter, timeout_ms, out_completed);
+    progressed = 0u;
+    owner_status = cflow_io_publisher_owner_run_ready(
+        owner, max_phase_steps, &progressed);
+    (void)cflow_scheduler_run_until_idle(scheduler, max_phase_steps);
+    return observe_status != TURBO_OK ? observe_status : owner_status;
+}
+
 int cflow_io_native_adapter_close(cflow_io_native_adapter *adapter) {
     cflow_io_native_adapter_impl *impl;
 

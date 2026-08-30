@@ -1,8 +1,8 @@
 #ifndef CFLOW_ACTOR_H
 #define CFLOW_ACTOR_H
 
-#include <cflow/machine_runtime.h>
-#include <cflow/statechart_runtime.h>
+#include <cflow/machine_instance.h>
+#include <cflow/statechart_instance.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -49,24 +49,25 @@ typedef enum cflow_actor_send_status {
  * Actor configuration copied during initialization.
  *
  * The Actor owns the resulting Machine instance, its fixed-capacity Mailbox,
- * identity Graph, Run, and lifecycle control block. It borrows the immutable
+ * identity Graph, Subscription, and lifecycle control block. It borrows the immutable
  * Machine declaration, SerialExecutor, concurrent Scheduler, type descriptors,
  * guard/action functions and user data, and sink callback functions/user data.
  * All borrowed objects must remain valid until `cflow_actor_destroy` returns;
- * the executor and scheduler must remain operational through that call. Sink
- * values are borrowed only for the callback duration. Sink callbacks run
+ * the Executor and Scheduler must remain operational through that call.
+ * Subscriber values are borrowed only for the callback duration. Subscriber
+ * callbacks run
  * without the Actor gate held, so self-send and `cflow_actor_request_stop` are
  * permitted; `cflow_actor_wait` and destruction from callbacks are forbidden.
  */
 typedef struct cflow_actor_config {
     cflow_machine_instance_config machine;
     cflow_scheduler *scheduler;
-    cflow_sink_callbacks callbacks;
+    cflow_subscriber_callbacks callbacks;
 } cflow_actor_config;
 
 typedef struct cflow_actor_init_result {
     cflow_actor_status status;
-    cflow_machine_runtime_status machine_status;
+    cflow_machine_instance_status machine_status;
 } cflow_actor_init_result;
 
 typedef struct cflow_actor_stats {
@@ -82,22 +83,23 @@ typedef struct cflow_actor_stats {
 /**
  * Statechart-backed Actor configuration copied during initialization.
  *
- * The Actor owns the resulting Statechart instance, its terminal-only Source,
- * identity Graph, Run, and lifecycle shell. The Statechart declaration,
+ * The Actor owns the resulting Statechart instance, its terminal-only
+ * Publisher, identity Graph, Subscription, and lifecycle shell. The
+ * Statechart declaration,
  * SerialExecutor, optional Clock, concurrent Scheduler, bindings, and callback
  * contexts are borrowed until `cflow_actor_destroy` returns. The terminal
- * Source emits no values: root FINAL or explicit close calls `on_done`, while
- * the stable first runtime error calls `on_error`.
+ * Publisher emits no values: root FINAL or explicit close calls `on_done`,
+ * while the stable first instance error calls `on_error`.
  */
 typedef struct cflow_statechart_actor_config {
     cflow_statechart_instance_config statechart;
     cflow_scheduler *scheduler;
-    cflow_sink_callbacks callbacks;
+    cflow_subscriber_callbacks callbacks;
 } cflow_statechart_actor_config;
 
 typedef struct cflow_statechart_actor_init_result {
     cflow_actor_status status;
-    cflow_statechart_runtime_status statechart_status;
+    cflow_statechart_instance_status statechart_status;
 } cflow_statechart_actor_init_result;
 
 typedef struct cflow_statechart_actor_stats {
@@ -121,9 +123,9 @@ typedef struct cflow_actor_ref {
 } cflow_actor_ref;
 
 /**
- * Initialize an Actor in `START` without starting its Run.
+ * Initialize an Actor in `START` without starting its Subscription.
  *
- * `machine_status` is `CFLOW_MACHINE_RUNTIME_OK` unless the returned status is
+ * `machine_status` is `CFLOW_MACHINE_INSTANCE_OK` unless the returned status is
  * `CFLOW_ACTOR_MACHINE_REJECTED`, when it preserves the exact Machine rejection.
  * The scheduler must be valid and advertise `CMETA_SCHED_CAP_CONCURRENT`.
  */
@@ -133,20 +135,20 @@ cflow_actor_init_result cflow_actor_init(
 /**
  * Initialize a Statechart-backed Actor in `START`.
  *
- * `statechart_status` is `CFLOW_STATECHART_RUNTIME_OK` unless status is
- * `CFLOW_ACTOR_STATECHART_REJECTED`, when the exact runtime rejection is
+ * `statechart_status` is `CFLOW_STATECHART_INSTANCE_OK` unless status is
+ * `CFLOW_ACTOR_STATECHART_REJECTED`, when the exact instance rejection is
  * preserved. The scheduler must be concurrent. Initialization may execute
  * Statechart initial stabilization before returning, as specified by the
- * embedded runtime configuration.
+ * embedded instance configuration.
  */
 cflow_statechart_actor_init_result cflow_statechart_actor_init(
     cflow_actor *actor, const cflow_statechart_actor_config *config);
 
-/** Start the single owned Run and request `SIZE_MAX` downstream demand. */
+/** Start the single owned Subscription and request `SIZE_MAX` demand. */
 cflow_actor_status cflow_actor_start(cflow_actor *actor);
 
 /**
- * Stop admission before closing the owned Machine or Statechart runtime. The
+ * Stop admission before closing the owned Machine or Statechart instance. The
  * first request is successful; later calls report the exact current or
  * terminal lifecycle status.
  */
@@ -197,7 +199,8 @@ cflow_actor_send_status cflow_actor_ref_try_send(
     const cflow_actor_ref *ref, const cflow_event_view *event);
 
 /**
- * Mark producer refs stale, synchronously close the selected runtime and Run,
+ * Mark producer refs stale, synchronously close the selected instance and
+ * Subscription,
  * clear the owner handle, and release the root reference. The small control
  * block is reclaimed after the last producer ref is released. Destruction
  * must not run from callbacks and requires owner-side serialization.

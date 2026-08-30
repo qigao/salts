@@ -19,6 +19,8 @@ typedef struct worker_state {
     size_t ready_capacity;
     size_t timer_capacity;
     size_t dispatching;
+    size_t accepted;
+    size_t settled_before_executor;
     size_t peak_pending;
     size_t rejected_full;
     size_t rejected_closed;
@@ -26,10 +28,23 @@ typedef struct worker_state {
     bool stopping;
 } worker_state;
 
+static size_t worker_logical_pending_locked(worker_state *state) {
+    cflow_executor_protocol_stats stats;
+    size_t settled;
+
+    if (!cflow_executor_control_get_stats(&state->executor_control, &stats))
+        return 0u;
+    if (stats.completed > SIZE_MAX - stats.cancelled)
+        return 0u;
+    settled = stats.completed + stats.cancelled;
+    if (settled > SIZE_MAX - state->settled_before_executor)
+        return 0u;
+    settled += state->settled_before_executor;
+    return settled < state->accepted ? state->accepted - settled : 0u;
+}
+
 static void worker_update_peak_locked(worker_state *state) {
-    size_t pending = cflow_timer_queue_pending(&state->timers) +
-                     state->dispatching +
-                     cflow_executor_pending(&state->executor);
+    size_t pending = worker_logical_pending_locked(state);
     if (pending > state->peak_pending) state->peak_pending = pending;
 }
 
@@ -75,6 +90,7 @@ static void worker_timer_main(void *user) {
         turbo_mutex_lock(&state->mutex);
         --state->dispatching;
         if (admitted != CFLOW_EXECUTOR_POST_ACCEPTED) {
+            ++state->settled_before_executor;
             ++state->cancelled_on_shutdown;
             ++state->rejected_closed;
         }
@@ -105,6 +121,7 @@ static cflow_schedule_result worker_try_post_task_after(
     result = cflow_timer_queue_try_schedule_task(
         &state->timers, deadline, task);
     if (result.status == CFLOW_ADMISSION_ACCEPTED) {
+        ++state->accepted;
         worker_update_peak_locked(state);
         turbo_cond_broadcast(&state->changed);
     } else if (result.status == CFLOW_ADMISSION_FULL) {
@@ -145,7 +162,10 @@ static bool worker_cancel(void *self, cflow_task_id id) {
     turbo_mutex_lock(&state->mutex);
     cancelled = !state->stopping &&
                 cflow_timer_queue_take(&state->timers, id, &timer_task);
-    if (cancelled) turbo_cond_broadcast(&state->changed);
+    if (cancelled) {
+        ++state->settled_before_executor;
+        turbo_cond_broadcast(&state->changed);
+    }
     turbo_mutex_unlock(&state->mutex);
     if (cancelled) {
         task = cflow_timer_task_descriptor(&timer_task);
@@ -216,13 +236,13 @@ static uint64_t worker_now(void *self) {
 
 static size_t worker_pending(void *self) {
     worker_state *state = (worker_state *)self;
-    size_t delayed;
+    size_t pending;
 
     if (!state) return 0u;
     turbo_mutex_lock(&state->mutex);
-    delayed = cflow_timer_queue_pending(&state->timers) + state->dispatching;
+    pending = worker_logical_pending_locked(state);
     turbo_mutex_unlock(&state->mutex);
-    return delayed + cflow_executor_pending(&state->executor);
+    return pending;
 }
 
 static bool worker_shutdown(void *self) {
@@ -239,6 +259,7 @@ static bool worker_shutdown(void *self) {
     while (cflow_timer_queue_take_any(&state->timers, &timer_task)) {
         const cflow_executor_task task =
             cflow_timer_task_descriptor(&timer_task);
+        ++state->settled_before_executor;
         ++state->cancelled_on_shutdown;
         turbo_mutex_unlock(&state->mutex);
         cflow_scheduler_settle_cancelled_task_internal(&task);

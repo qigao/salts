@@ -17,7 +17,7 @@ typedef enum cflow_actor_runtime_kind {
 } cflow_actor_runtime_kind;
 
 typedef struct cflow_actor_runtime_ops {
-    bool (*as_source)(cflow_actor_impl *impl, cflow_source *out);
+    bool (*as_source)(cflow_actor_impl *impl, cflow_publisher *out);
     cflow_mailbox_status (*try_send)(
         cflow_actor_impl *impl, const cflow_event_view *event);
     void (*close)(cflow_actor_impl *impl);
@@ -40,10 +40,10 @@ struct cflow_actor_impl {
     cflow_machine_instance machine;
     cflow_statechart_instance statechart;
     cflow_graph graph;
-    cflow_run run;
+    cflow_subscription run;
     cflow_scheduler *scheduler;
-    cflow_sink_callbacks callbacks;
-    cflow_sink_callbacks bridge_callbacks;
+    cflow_subscriber_callbacks callbacks;
+    cflow_subscriber_callbacks bridge_callbacks;
     char *error;
     uint64_t rejected_not_started;
     uint64_t rejected_stopping;
@@ -57,8 +57,8 @@ static const char actor_unexpected_done[] =
     "Run completed while Actor was RUNNING";
 
 static bool actor_machine_as_source(
-    cflow_actor_impl *impl, cflow_source *out) {
-    return cflow_machine_instance_as_source(&impl->machine, out);
+    cflow_actor_impl *impl, cflow_publisher *out) {
+    return cflow_machine_instance_as_publisher(&impl->machine, out);
 }
 
 static cflow_mailbox_status actor_machine_try_send(
@@ -78,7 +78,7 @@ static void actor_machine_destroy(cflow_actor_impl *impl) {
     cflow_machine_instance_destroy(&impl->machine);
 }
 
-static const cflow_actor_runtime_ops actor_machine_runtime_ops = {
+static const cflow_actor_runtime_ops actor_machine_instance_ops = {
     actor_machine_as_source,
     actor_machine_try_send,
     actor_machine_close,
@@ -89,8 +89,8 @@ static const cflow_actor_runtime_ops actor_machine_runtime_ops = {
 };
 
 static bool actor_statechart_as_source(
-    cflow_actor_impl *impl, cflow_source *out) {
-    return cflow_statechart_instance_as_terminal_source(
+    cflow_actor_impl *impl, cflow_publisher *out) {
+    return cflow_statechart_instance_as_terminal_publisher(
         &impl->statechart, out);
 }
 
@@ -112,7 +112,7 @@ static void actor_statechart_destroy(cflow_actor_impl *impl) {
     (void)cflow_statechart_instance_destroy(&impl->statechart);
 }
 
-static const cflow_actor_runtime_ops actor_statechart_runtime_ops = {
+static const cflow_actor_runtime_ops actor_statechart_instance_ops = {
     actor_statechart_as_source,
     actor_statechart_try_send,
     actor_statechart_close,
@@ -287,7 +287,7 @@ static bool actor_scheduler_is_valid(cflow_scheduler *scheduler) {
 }
 
 static cflow_actor_impl *actor_shell_create(
-    cflow_scheduler *scheduler, cflow_sink_callbacks callbacks) {
+    cflow_scheduler *scheduler, cflow_subscriber_callbacks callbacks) {
     cflow_actor_impl *impl =
         (cflow_actor_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL) return NULL;
@@ -302,7 +302,7 @@ static cflow_actor_impl *actor_shell_create(
         actor_shell_destroy(impl);
         return NULL;
     }
-    impl->bridge_callbacks = (cflow_sink_callbacks){
+    impl->bridge_callbacks = (cflow_subscriber_callbacks){
         actor_sink_value, actor_sink_error, actor_sink_done, impl};
     return impl;
 }
@@ -322,7 +322,7 @@ static bool actor_identity_graph_init(
 cflow_actor_init_result cflow_actor_init(
     cflow_actor *actor, const cflow_actor_config *config) {
     cflow_actor_init_result result = {
-        CFLOW_ACTOR_INVALID_ARGUMENT, CFLOW_MACHINE_RUNTIME_OK};
+        CFLOW_ACTOR_INVALID_ARGUMENT, CFLOW_MACHINE_INSTANCE_OK};
     cflow_actor_impl *impl;
     if (actor == NULL || config == NULL || actor->impl != NULL)
         return result;
@@ -339,13 +339,13 @@ cflow_actor_init_result cflow_actor_init(
 
     result.machine_status = cflow_machine_instance_init(
         &impl->machine, &config->machine);
-    if (result.machine_status != CFLOW_MACHINE_RUNTIME_OK) {
+    if (result.machine_status != CFLOW_MACHINE_INSTANCE_OK) {
         result.status = CFLOW_ACTOR_MACHINE_REJECTED;
         actor_release(impl);
         return result;
     }
     impl->runtime_kind = CFLOW_ACTOR_RUNTIME_MACHINE;
-    impl->runtime_ops = &actor_machine_runtime_ops;
+    impl->runtime_ops = &actor_machine_instance_ops;
 
     if (!actor_identity_graph_init(impl, config->machine.output_type)) {
         impl->runtime_ops->destroy(impl);
@@ -361,7 +361,7 @@ cflow_actor_init_result cflow_actor_init(
 cflow_statechart_actor_init_result cflow_statechart_actor_init(
     cflow_actor *actor, const cflow_statechart_actor_config *config) {
     cflow_statechart_actor_init_result result = {
-        CFLOW_ACTOR_INVALID_ARGUMENT, CFLOW_STATECHART_RUNTIME_OK};
+        CFLOW_ACTOR_INVALID_ARGUMENT, CFLOW_STATECHART_INSTANCE_OK};
     cflow_actor_impl *impl;
     const cmeta_type_desc *state_type;
 
@@ -378,13 +378,13 @@ cflow_statechart_actor_init_result cflow_statechart_actor_init(
     }
     result.statechart_status = cflow_statechart_instance_init(
         &impl->statechart, &config->statechart);
-    if (result.statechart_status != CFLOW_STATECHART_RUNTIME_OK) {
+    if (result.statechart_status != CFLOW_STATECHART_INSTANCE_OK) {
         result.status = CFLOW_ACTOR_STATECHART_REJECTED;
         actor_release(impl);
         return result;
     }
     impl->runtime_kind = CFLOW_ACTOR_RUNTIME_STATECHART;
-    impl->runtime_ops = &actor_statechart_runtime_ops;
+    impl->runtime_ops = &actor_statechart_instance_ops;
     state_type = cflow_statechart_state_type(config->statechart.statechart);
     if (!actor_identity_graph_init(impl, state_type)) {
         impl->runtime_ops->destroy(impl);
@@ -400,8 +400,8 @@ cflow_statechart_actor_init_result cflow_statechart_actor_init(
 cflow_actor_status cflow_actor_start(cflow_actor *actor) {
     cflow_actor_impl *impl = actor != NULL
         ? (cflow_actor_impl *)actor->impl : NULL;
-    cflow_source source = {0};
-    cflow_sink sink;
+    cflow_publisher source = {0};
+    cflow_subscriber sink;
     cflow_actor_status status;
     bool opened = false;
 
@@ -415,18 +415,18 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor) {
         actor_mark_failed(impl, impl->runtime_ops->attach_error);
         return CFLOW_ACTOR_FAILED;
     }
-    sink = cflow_sink_from_callbacks(&impl->bridge_callbacks);
-    opened = cflow_run_open(&impl->run, &impl->graph, &source,
+    sink = cflow_subscriber_from_callbacks(&impl->bridge_callbacks);
+    opened = cflow_subscribe(&impl->run, &impl->graph, &source,
                             impl->scheduler, &sink);
     if (!opened) {
-        if (cflow_source_valid(&source)) cflow_source_destroy(&source);
+        if (cflow_publisher_valid(&source)) cflow_publisher_destroy(&source);
         actor_mark_failed(impl, "actor could not open Run");
         return CFLOW_ACTOR_FAILED;
     }
 
     turbo_mutex_lock(&impl->gate);
     impl->state = CFLOW_ACTOR_STATE_RUNNING;
-    if (!cflow_run_request(&impl->run, SIZE_MAX)) {
+    if (!cflow_subscription_request(&impl->run, SIZE_MAX)) {
         impl->terminal_settled = false;
         impl->state = CFLOW_ACTOR_STATE_FAILED;
         turbo_cond_broadcast(&impl->changed);
@@ -437,7 +437,7 @@ cflow_actor_status cflow_actor_start(cflow_actor *actor) {
     turbo_mutex_unlock(&impl->gate);
     if (status != CFLOW_ACTOR_OK) {
         actor_mark_failed(impl, "actor could not request Run demand");
-        cflow_run_close(&impl->run);
+        cflow_subscription_close(&impl->run);
         turbo_mutex_lock(&impl->gate);
         impl->terminal_settled = true;
         turbo_cond_broadcast(&impl->changed);
@@ -677,7 +677,7 @@ void cflow_actor_destroy(cflow_actor *actor) {
     turbo_mutex_unlock(&impl->gate);
 
     impl->runtime_ops->close(impl);
-    cflow_run_close(&impl->run);
+    cflow_subscription_close(&impl->run);
     impl->runtime_ops->destroy(impl);
     cflow_graph_destroy(&impl->graph);
 

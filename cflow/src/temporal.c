@@ -24,7 +24,7 @@ typedef enum temporal_ready_cause {
 
 typedef struct temporal_state {
     temporal_kind kind;
-    cflow_source inner;
+    cflow_publisher inner;
     const cmeta_type_desc *type;
     cflow_value_slot pending;
     cflow_value_slot scratch;
@@ -298,7 +298,7 @@ static void temporal_mark_error(temporal_state *state, const char *error) {
 }
 
 static cflow_step delay_resume(temporal_state *state,
-                               cflow_resume_ctx *context,
+                               cflow_publish_context *context,
                                void *out_value,
                                temporal_ready_cause cause) {
     cflow_step step;
@@ -313,7 +313,7 @@ static cflow_step delay_resume(temporal_state *state,
         }
         return (cflow_step){CFLOW_STEP_VALUE, {0}, NULL};
     }
-    step = cflow_source_resume(
+    step = cflow_publisher_resume(
         &state->inner, context, state->pending.storage);
     if (step.kind == CFLOW_STEP_VALUE ||
         step.kind == CFLOW_STEP_VALUE_AND_DONE) {
@@ -332,7 +332,7 @@ static cflow_step delay_resume(temporal_state *state,
 }
 
 static cflow_step debounce_resume(temporal_state *state,
-                                  cflow_resume_ctx *context,
+                                  cflow_publish_context *context,
                                   void *out_value,
                                   temporal_ready_cause cause) {
     size_t count;
@@ -342,7 +342,7 @@ static cflow_step debounce_resume(temporal_state *state,
         state->yielding = false;
     }
     for (count = 0u; count < CFLOW_TEMPORAL_RESUME_QUANTUM; ++count) {
-        cflow_step step = cflow_source_resume(
+        cflow_step step = cflow_publisher_resume(
             &state->inner, context, state->scratch.storage);
         if (step.kind == CFLOW_STEP_VALUE ||
             step.kind == CFLOW_STEP_VALUE_AND_DONE) {
@@ -392,11 +392,11 @@ static cflow_step debounce_resume(temporal_state *state,
 }
 
 static cflow_step timeout_resume(temporal_state *state,
-                                 cflow_resume_ctx *context,
+                                 cflow_publish_context *context,
                                  void *out_value,
                                  temporal_ready_cause cause) {
     cflow_step step;
-    step = cflow_source_resume(&state->inner, context, out_value);
+    step = cflow_publisher_resume(&state->inner, context, out_value);
     if (step.kind == CFLOW_STEP_WAIT) {
         if (cause == TEMPORAL_READY_TIMER) {
             temporal_mark_error(state, CFLOW_TEMPORAL_TIMEOUT_ERROR);
@@ -415,7 +415,7 @@ static cflow_step timeout_resume(temporal_state *state,
 }
 
 static cflow_step temporal_resume(void *user,
-                                  cflow_resume_ctx *context,
+                                  cflow_publish_context *context,
                                   void *out_value) {
     temporal_state *state = (temporal_state *)user;
     temporal_ready_cause cause;
@@ -453,7 +453,7 @@ static void temporal_cancel(void *user) {
     state->cancelled = true;
     turbo_mutex_unlock(&state->lock);
     temporal_cancel_active_wait(state);
-    cflow_source_cancel(&state->inner);
+    cflow_publisher_cancel(&state->inner);
 }
 
 static void temporal_destroy(void *user) {
@@ -464,9 +464,9 @@ static void temporal_destroy(void *user) {
     while (state->timer_outstanding || state->timer_arming)
         turbo_cond_wait(&state->timer_changed, &state->lock);
     turbo_mutex_unlock(&state->lock);
-    if (cflow_source_valid(&state->inner)) {
-        cflow_source_bind_terminal_waker(&state->inner, (cflow_waker){0});
-        cflow_source_destroy(&state->inner);
+    if (cflow_publisher_valid(&state->inner)) {
+        cflow_publisher_bind_terminal_waker(&state->inner, (cflow_waker){0});
+        cflow_publisher_destroy(&state->inner);
     }
     cflow_value_slot_destroy(&state->scratch);
     cflow_value_slot_destroy(&state->pending);
@@ -496,11 +496,11 @@ static void temporal_bind_terminal(void *user, cflow_waker waker) {
     state->terminal_waker = waker;
     terminal = state->done || state->error != NULL;
     turbo_mutex_unlock(&state->lock);
-    cflow_source_bind_terminal_waker(&state->inner, waker);
+    cflow_publisher_bind_terminal_waker(&state->inner, waker);
     if (terminal) invoke_waker(waker);
 }
 
-static cflow_source_terminal temporal_poll_terminal(
+static cflow_publisher_terminal temporal_poll_terminal(
     void *user, const char **out_error) {
     temporal_state *state = (temporal_state *)user;
     bool pending;
@@ -508,7 +508,7 @@ static cflow_source_terminal temporal_poll_terminal(
     bool done;
     temporal_ready_cause cause;
     if (out_error != NULL) *out_error = NULL;
-    if (state == NULL) return CFLOW_SOURCE_ERROR;
+    if (state == NULL) return CFLOW_PUBLISHER_ERROR;
     turbo_mutex_lock(&state->lock);
     error = state->error;
     done = state->done;
@@ -517,19 +517,19 @@ static cflow_source_terminal temporal_poll_terminal(
     turbo_mutex_unlock(&state->lock);
     if (error != NULL) {
         if (out_error != NULL) *out_error = error;
-        return CFLOW_SOURCE_ERROR;
+        return CFLOW_PUBLISHER_ERROR;
     }
-    if (done) return CFLOW_SOURCE_DONE;
+    if (done) return CFLOW_PUBLISHER_DONE;
     if (state->kind == TEMPORAL_TIMEOUT &&
         cause == TEMPORAL_READY_TIMER)
-        return CFLOW_SOURCE_OPEN;
+        return CFLOW_PUBLISHER_OPEN;
     if (!pending)
-        return cflow_source_poll_terminal(&state->inner, out_error);
-    return CFLOW_SOURCE_OPEN;
+        return cflow_publisher_poll_terminal(&state->inner, out_error);
+    return CFLOW_PUBLISHER_OPEN;
 }
 
-CMETA_IMPLEMENTS(cflow_source, temporal_source,
-    CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES,
+CMETA_IMPLEMENTS(cflow_publisher, temporal_source,
+    CFLOW_PUBLISHER_CAP_CONSTRUCTS_VALUES,
     .name = temporal_name,
     .output_type = temporal_type,
     .resume = temporal_resume,
@@ -539,19 +539,19 @@ CMETA_IMPLEMENTS(cflow_source, temporal_source,
     .poll_terminal = temporal_poll_terminal
 );
 
-static bool temporal_source_init(cflow_source *out,
-                                 cflow_source *inner,
+static bool temporal_source_init(cflow_publisher *out,
+                                 cflow_publisher *inner,
                                  cflow_duration duration,
                                  temporal_kind kind) {
     temporal_state *state;
     const cmeta_type_desc *type;
-    if (out == NULL || inner == NULL || cflow_source_valid(out) ||
-        !cflow_source_valid(inner))
+    if (out == NULL || inner == NULL || cflow_publisher_valid(out) ||
+        !cflow_publisher_valid(inner))
         return false;
-    type = cflow_source_output_type(inner);
+    type = cflow_publisher_output_type(inner);
     if (!cflow_value_type_supported(type) ||
         (!cflow_value_storage_type_supported(type) &&
-         !cflow_source_has(inner, CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES)))
+         !cflow_publisher_has(inner, CFLOW_PUBLISHER_CAP_CONSTRUCTS_VALUES)))
         return false;
     state = (temporal_state *)calloc(1u, sizeof(*state));
     if (state == NULL) return false;
@@ -575,25 +575,25 @@ static bool temporal_source_init(cflow_source *out,
     }
     state->inner = *inner;
     memset(inner, 0, sizeof(*inner));
-    *out = temporal_source_as_cflow_source(state);
+    *out = temporal_source_as_cflow_publisher(state);
     return true;
 }
 
-bool cflow_source_delay(cflow_source *out,
-                        cflow_source *inner,
+bool cflow_publisher_delay(cflow_publisher *out,
+                        cflow_publisher *inner,
                         cflow_duration delay) {
     return temporal_source_init(out, inner, delay, TEMPORAL_DELAY);
 }
 
-bool cflow_source_debounce(cflow_source *out,
-                           cflow_source *inner,
+bool cflow_publisher_debounce(cflow_publisher *out,
+                           cflow_publisher *inner,
                            cflow_duration quiet_period) {
     return temporal_source_init(
         out, inner, quiet_period, TEMPORAL_DEBOUNCE);
 }
 
-bool cflow_source_timeout(cflow_source *out,
-                          cflow_source *inner,
+bool cflow_publisher_timeout(cflow_publisher *out,
+                          cflow_publisher *inner,
                           cflow_duration timeout) {
     return temporal_source_init(out, inner, timeout, TEMPORAL_TIMEOUT);
 }

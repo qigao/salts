@@ -1,10 +1,10 @@
 #include <cflow/adapters.h>
 #include <cflow/lower.h>
-#include <cflow/sources.h>
+#include <cflow/publishers.h>
 
 #include "adapters_internal.h"
 #include "result_storage.h"
-#include "sources_internal.h"
+#include "publishers_internal.h"
 #include "value_storage.h"
 
 #include <stdint.h>
@@ -19,7 +19,7 @@ typedef struct eval_state {
 } eval_state;
 
 typedef struct eval_control {
-    cflow_run *run;
+    cflow_subscription *run;
     bool stop_requested;
 } eval_control;
 
@@ -85,19 +85,19 @@ static void collect_done(void *user) {
     result_collector *c = (result_collector *)user; c->eval.done = true;
 }
 
-static void adapter_destroy_owned_source(cflow_source *source) {
-    if (!source || !cflow_source_valid(source)) return;
-    cflow_source_destroy(source);
-    *source = (cflow_source){0};
+static void adapter_destroy_owned_source(cflow_publisher *source) {
+    if (!source || !cflow_publisher_valid(source)) return;
+    cflow_publisher_destroy(source);
+    *source = (cflow_publisher){0};
 }
 
 bool cflow_adapter_prepare_owned_source_graph(
     cflow_graph *normalized,
     const cflow_graph *graph,
-    cflow_source *source,
+    cflow_publisher *source,
     const cflow_graph **out_graph) {
     if (out_graph) *out_graph = NULL;
-    if (!normalized || !graph || !source || !cflow_source_valid(source) ||
+    if (!normalized || !graph || !source || !cflow_publisher_valid(source) ||
         !out_graph || normalized->subgraphs || normalized->subgraph_count) {
         adapter_destroy_owned_source(source);
         return false;
@@ -115,8 +115,8 @@ bool cflow_adapter_prepare_owned_source_graph(
 }
 
 static bool cflow_eval_source(const cflow_graph *graph,
-                              cflow_source *source,
-                              const cflow_sink *sink,
+                              cflow_publisher *source,
+                              const cflow_subscriber *sink,
                               eval_state *state,
                               eval_control *control,
                               const cflow_eval_options *options) {
@@ -130,40 +130,40 @@ static bool cflow_eval_source(const cflow_graph *graph,
         return false;
 
     cflow_scheduler scheduler = {0};
-    cflow_run run = {0};
+    cflow_subscription run = {0};
     if (!cflow_scheduler_test_init(&scheduler)) {
         cflow_graph_destroy(&normalized);
-        cflow_source_destroy(source);
+        cflow_publisher_destroy(source);
         return false;
     }
-    cflow_status_result open_result = cflow_run_open_with_options(
+    cflow_status_result open_result = cflow_subscribe_with_options(
         &run, exec_graph, source, &scheduler, sink, options);
     if (!cflow_status_result_is_ok(open_result)) {
         state->status = open_result.status;
         state->error = cflow_status_string(open_result.status);
-        cflow_source_destroy(source);
+        cflow_publisher_destroy(source);
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&normalized);
         return false;
     }
     if (control) control->run = &run;
-    if (!cflow_run_request(&run, SIZE_MAX)) {
+    if (!cflow_subscription_request(&run, SIZE_MAX)) {
         if (control) control->run = NULL;
-        cflow_run_close(&run);
+        cflow_subscription_close(&run);
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&normalized);
         return false;
     }
     (void)cflow_scheduler_run_until_idle(&scheduler, 0);
     state->output_type = cflow_graph_output_type(exec_graph);
-    if (!state->error) state->error = cflow_run_error(&run);
-    state->status = cflow_run_status(&run);
+    if (!state->error) state->error = cflow_subscription_error(&run);
+    state->status = cflow_subscription_status(&run);
     bool ok = !state->error &&
         (state->done ||
          (control && control->stop_requested &&
-          cflow_run_is_cancelled(&run)));
+          cflow_subscription_is_cancelled(&run)));
     if (control) control->run = NULL;
-    cflow_run_close(&run);
+    cflow_subscription_close(&run);
     cflow_scheduler_destroy(&scheduler);
     cflow_graph_destroy(&normalized);
     return ok;
@@ -171,33 +171,33 @@ static bool cflow_eval_source(const cflow_graph *graph,
 
 static cflow_status cflow_eval_result_source(
     const cflow_graph *graph,
-    cflow_source *source,
+    cflow_publisher *source,
     size_t max_items,
     const cflow_eval_options *options,
     cflow_result *out) {
     result_collector c = {
         {false, NULL, NULL, CFLOW_STATUS_OK},
         CFLOW_STATUS_OK, NULL, 0u, 0u, max_items, NULL};
-    cflow_sink_callbacks sink_cb = { collect_value, collect_error, collect_done, &c };
-    cflow_sink sink = cflow_sink_from_callbacks(&sink_cb);
+    cflow_subscriber_callbacks sink_cb = { collect_value, collect_error, collect_done, &c };
+    cflow_subscriber sink = cflow_subscriber_from_callbacks(&sink_cb);
     bool ok;
 
     cflow_status status;
 
     if (!out) {
-        if (source) cflow_source_destroy(source);
+        if (source) cflow_publisher_destroy(source);
         return CFLOW_STATUS_INVALID_ARGUMENT;
     }
     memset(out, 0, sizeof(*out));
-    if (!graph || !source || !cflow_source_valid(source)) {
+    if (!graph || !source || !cflow_publisher_valid(source)) {
         if (source)
-            cflow_source_destroy(source);
+            cflow_publisher_destroy(source);
         return CFLOW_STATUS_INVALID_ARGUMENT;
     }
     if (!cflow_value_storage_type_supported(
-            cflow_source_output_type(source)) ||
+            cflow_publisher_output_type(source)) ||
         !cflow_value_storage_graph_supported(graph)) {
-        cflow_source_destroy(source);
+        cflow_publisher_destroy(source);
         return CFLOW_STATUS_UNSUPPORTED;
     }
     ok = cflow_eval_source(graph, source, &sink, &c.eval, NULL, options);
@@ -220,15 +220,15 @@ cflow_status_result cflow_eval_array_result(
     const void *inputs,
     size_t input_count,
     cflow_result *out) {
-    cflow_source source = {0};
+    cflow_publisher source = {0};
     cmeta_status source_status;
     cflow_status status;
 
     if (out) memset(out, 0, sizeof(*out));
     if (!graph || !out)
         return stream_status_result(CFLOW_STATUS_INVALID_ARGUMENT);
-    source_status = cflow_source_from_array_checked(
-        &source, cflow_graph_source_type(graph), inputs, input_count);
+    source_status = cflow_publisher_from_array_checked(
+        &source, cflow_graph_input_type(graph), inputs, input_count);
     if (source_status != CMETA_OK)
         return stream_status_result(stream_status_from_cmeta(source_status));
     status = cflow_eval_result_source(
@@ -240,15 +240,15 @@ static cflow_status_result cflow_eval_bound_stream_result(
     const cflow_stream *stream,
     size_t max_items,
     cflow_result *out) {
-    cflow_source source = {0};
+    cflow_publisher source = {0};
     cmeta_status source_status;
     cflow_status status;
 
     if (out) memset(out, 0, sizeof(*out));
-    if (!stream || !stream->has_source_range || !out)
+    if (!stream || !stream->has_input_range || !out)
         return stream_status_result(CFLOW_STATUS_INVALID_ARGUMENT);
-    source_status = cflow_source_from_range_checked(
-        &source, stream->source_range, NULL);
+    source_status = cflow_publisher_from_range_checked(
+        &source, stream->input_range, NULL);
     if (source_status != CMETA_OK)
         return stream_status_result(stream_status_from_cmeta(source_status));
     status = cflow_eval_result_source(
@@ -343,18 +343,18 @@ cflow_collect_result cflow_eval_collect_result(
     const char **out_error) {
     cmeta_collector_sink state = {
         {false, NULL, NULL, CFLOW_STATUS_OK}, collector};
-    cflow_sink_callbacks sink_cb = {
+    cflow_subscriber_callbacks sink_cb = {
         cmeta_collect_value, cmeta_collect_error, cmeta_collect_done, &state
     };
-    cflow_sink sink = cflow_sink_from_callbacks(&sink_cb);
-    cflow_source source = {0};
+    cflow_subscriber sink = cflow_subscriber_from_callbacks(&sink_cb);
+    cflow_publisher source = {0};
     const char *source_error = NULL;
     cmeta_status source_status;
     bool ok;
     cflow_status status;
 
     if (out_error) *out_error = NULL;
-    if (!stream || !stream->has_source_range || !collector) {
+    if (!stream || !stream->has_input_range || !collector) {
         if (out_error) *out_error = "invalid stream collection arguments";
         return collect_result_snapshot(CFLOW_STATUS_INVALID_ARGUMENT,
                                        collector);
@@ -364,8 +364,8 @@ cflow_collect_result cflow_eval_collect_result(
         return collect_result_snapshot(CFLOW_STATUS_INVALID_ARGUMENT,
                                        collector);
     }
-    source_status = cflow_source_from_range_checked(
-        &source, stream->source_range, &source_error);
+    source_status = cflow_publisher_from_range_checked(
+        &source, stream->input_range, &source_error);
     if (source_status != CMETA_OK) {
         cmeta_collector_terminate_pre_begin(collector, source_status);
         if (out_error) *out_error = source_error;
@@ -373,7 +373,7 @@ cflow_collect_result cflow_eval_collect_result(
             stream_status_from_cmeta(source_status), collector);
     }
     if (cmeta_collector_begin(collector) != CMETA_OK) {
-        cflow_source_destroy(&source);
+        cflow_publisher_destroy(&source);
         if (out_error) *out_error = "collector begin failed";
         return collect_result_snapshot(
             stream_status_from_cmeta(collector->status), collector);
@@ -438,7 +438,7 @@ typedef struct stream_terminal_state {
 static void stream_terminal_stop(stream_terminal_state *state) {
     if (!state || !state->control.run) return;
     state->control.stop_requested = true;
-    cflow_run_cancel(state->control.run);
+    cflow_subscription_cancel(state->control.run);
 }
 
 static cflow_status stream_terminal_retain_first(
@@ -546,26 +546,26 @@ static cflow_status stream_status_from_cmeta(cmeta_status status) {
 static cflow_status stream_terminal_eval(const cflow_stream *stream,
                                          stream_terminal_state *state,
                                          const char **out_error) {
-    cflow_sink_callbacks callbacks = {
+    cflow_subscriber_callbacks callbacks = {
         stream_terminal_value,
         stream_terminal_error,
         stream_terminal_done,
         state
     };
-    cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
-    cflow_source source = {0};
+    cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
+    cflow_publisher source = {0};
     const char *source_error = NULL;
     cmeta_status source_status;
     bool ok;
 
     if (out_error) *out_error = NULL;
-    if (!stream || !state || !stream->has_source_range ||
+    if (!stream || !state || !stream->has_input_range ||
         !cflow_stream_ok(stream)) {
         if (out_error) *out_error = "invalid bound stream";
         return CFLOW_STATUS_INVALID_ARGUMENT;
     }
-    source_status = cflow_source_from_range_checked(
-        &source, stream->source_range, &source_error);
+    source_status = cflow_publisher_from_range_checked(
+        &source, stream->input_range, &source_error);
     if (source_status != CMETA_OK) {
         if (out_error) *out_error = source_error;
         return stream_status_from_cmeta(source_status);

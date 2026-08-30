@@ -35,7 +35,7 @@ typedef enum cflow_opt_rule {
 /** One source-coordinate proof-trace event. */
 typedef struct cflow_opt_rewrite_event {
     cflow_opt_rule rule;
-    cflow_subgraph_id source_subgraph;
+    cflow_subgraph_id input_subgraph;
     cflow_node_id retained_node;
     size_t retained_callable_index;
     cflow_node_id removed_node;

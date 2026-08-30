@@ -81,19 +81,19 @@ suite("CFlow pipeline") {
             &owner, &cmeta_type_int, CMETA_RANGE_NONE, NULL,
             cflow_test_range_next, owner.generation, cflow_test_range_version
         };
-        cflow_source source = {0};
+        cflow_publisher source = {0};
         cflow_step step;
         int output = 0;
 
-        check_true(cflow_source_from_range(&source, range));
-        step = cflow_source_resume(&source, NULL, &output);
+        check_true(cflow_publisher_from_range(&source, range));
+        step = cflow_publisher_resume(&source, NULL, &output);
         check_true(step.kind == CFLOW_STEP_VALUE);
         check_equal(output, 42);
         ++owner.generation;
-        step = cflow_source_resume(&source, NULL, &output);
+        step = cflow_publisher_resume(&source, NULL, &output);
         check_true(step.kind == CFLOW_STEP_ERROR);
         check_equal(step.error, "range owner mutated");
-        cflow_source_destroy(&source);
+        cflow_publisher_destroy(&source);
     }
 
     it("evaluates a typed fluent pipeline") {

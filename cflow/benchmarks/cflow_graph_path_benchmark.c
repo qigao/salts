@@ -157,7 +157,7 @@ static bool cflow_graph_path_observe_node(const cflow_graph_path_fixture *fixtur
     return false;
   node = cflow_subgraph_node(fixture->subgraph, id);
   if (!node) return false;
-  if (node->op == CFLOW_OP_SOURCE)
+  if (node->op == CFLOW_OP_INPUT)
     return observation->operators == 0u && id == fixture->subgraph->entry;
   if (node->op == CFLOW_OP_MAP) tag = CFLOW_GRAPH_PATH_TAG_MAP;
   else if (node->op == CFLOW_OP_FILTER) tag = CFLOW_GRAPH_PATH_TAG_FILTER;

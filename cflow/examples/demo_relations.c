@@ -156,7 +156,7 @@ int main(void) {
     if (!eval_longs(&fork_join, x2, 1, fork_join_expect, 1)) return 24;
     printf("relation ALL_DONE/FOLD (forkJoin): 40\n");
 
-    /* Runtime error branch used to prove error policy is orthogonal. */
+    /* Reactive error branch used to prove error policy is orthogonal. */
     cflow_stream failing;
     cflow_stream_init(&failing, &cmeta_type_int);
     failing.flatMap(&failing, fail_long);

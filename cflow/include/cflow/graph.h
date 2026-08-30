@@ -19,7 +19,7 @@ typedef uint32_t cflow_edge_id;
 typedef uint32_t cflow_subgraph_id;
 
 typedef enum cflow_op {
-    CFLOW_OP_SOURCE = 0,
+    CFLOW_OP_INPUT = 0,
     /* Structural relation nodes are IR primitives, not typed-callable operators. */
     CFLOW_OP_RELATION,
 #define CFLOW_OP_ROW(E, method, margc, fnarg, subgrapharg, farity, p0, p1, p2, ret, out, card, subgraphrule, semantic, intrinsic_effects) CFLOW_OP_##E,
@@ -147,7 +147,7 @@ typedef struct cflow_node {
     cflow_op op;
     cmeta_callable fn;
     bool has_fn;
-    /* Optimizer-owned fused map chain. Empty on ordinary source/surface IR. */
+    /* Optimizer-owned fused map chain. Empty on ordinary input/surface IR. */
     cmeta_callable *fn_chain;
     size_t fn_chain_count;
     bool has_relation;
@@ -201,7 +201,7 @@ const char *cflow_op_name(cflow_op op);
 bool cflow_op_signature_allowed(cflow_op op, cmeta_sig sig);
 
 
-void cflow_graph_init(cflow_graph *g, const cmeta_type_desc *source_type);
+void cflow_graph_init(cflow_graph *g, const cmeta_type_desc *input_type);
 void cflow_graph_destroy(cflow_graph *g);
 bool cflow_graph_clone(cflow_graph *dst, const cflow_graph *src);
 bool cflow_graph_validate(const cflow_graph *g, const char **error);
@@ -210,7 +210,7 @@ bool cflow_graph_validate(const cflow_graph *g, const char **error);
  * primitives. Detached nodes may be created in any physical order, then wired
  * by explicit typed edges. */
 cflow_subgraph_id cflow_graph_create_subgraph(cflow_graph *g,
-                                               const cmeta_type_desc *source_type);
+                                               const cmeta_type_desc *input_type);
 bool cflow_graph_create_node(cflow_graph *g,
                              cflow_subgraph_id subgraph,
                              cflow_op op,
@@ -347,11 +347,11 @@ bool cflow_subgraph_single_successor(const cflow_subgraph *sg,
                                      cflow_node_id node,
                                      cflow_node_id *successor);
 
-const cmeta_type_desc *cflow_subgraph_source_type(const cflow_graph *g, cflow_subgraph_id id);
+const cmeta_type_desc *cflow_subgraph_input_type(const cflow_graph *g, cflow_subgraph_id id);
 const cmeta_type_desc *cflow_subgraph_output_type(const cflow_graph *g, cflow_subgraph_id id);
 bool cflow_subgraph_is_one_to_one(const cflow_graph *g, cflow_subgraph_id id);
 
-const cmeta_type_desc *cflow_graph_source_type(const cflow_graph *g);
+const cmeta_type_desc *cflow_graph_input_type(const cflow_graph *g);
 const cmeta_type_desc *cflow_graph_output_type(const cflow_graph *g);
 bool cflow_graph_is_one_to_one(const cflow_graph *g);
 

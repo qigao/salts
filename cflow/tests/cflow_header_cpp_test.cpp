@@ -3,10 +3,20 @@
 
 #include <type_traits>
 
-static_assert(std::is_standard_layout<cflow_run>::value,
-              "cflow_run must remain a C-compatible handle");
-static_assert(std::is_standard_layout<cflow_resume_ctx>::value,
-              "resume context must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_publisher>::value,
+              "Reactive Publisher must be a C-compatible interface");
+static_assert(std::is_standard_layout<cflow_subscriber>::value,
+              "Reactive Subscriber must be a C-compatible interface");
+static_assert(std::is_standard_layout<cflow_subscription>::value,
+              "Reactive Subscription must be a C-compatible opaque handle");
+static_assert(std::is_standard_layout<cflow_publish_context>::value,
+              "Reactive publish context must be C-compatible");
+using cflow_subscribe_function = bool (*)(
+    cflow_subscription *, const cflow_graph *, cflow_publisher *,
+    cflow_scheduler *, const cflow_subscriber *);
+static_assert(std::is_same<decltype(&cflow_subscribe),
+                           cflow_subscribe_function>::value,
+              "Reactive subscribe must use Publisher and Subscriber roles");
 static_assert(std::is_standard_layout<cflow_find_result>::value,
               "find result must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_status_result>::value,
@@ -60,7 +70,7 @@ static_assert(CFLOW_ACTOR_FAILED == 8,
               "existing Actor status values are ABI-visible");
 static_assert(CFLOW_ACTOR_STATECHART_REJECTED == 9,
               "Statechart rejection must remain appended");
-static_assert(CFLOW_OP_SOURCE == 0 && CFLOW_OP_RELATION == 1 &&
+static_assert(CFLOW_OP_INPUT == 0 && CFLOW_OP_RELATION == 1 &&
                    CFLOW_OP_FILTER == 2 && CFLOW_OP_ZIP == 7 &&
                    CFLOW_OP_TAKE == 8 && CFLOW_OP_SKIP == 9 &&
                    CFLOW_OP_DISTINCT == 10 && CFLOW_OP_SORTED == 11,
@@ -97,13 +107,13 @@ static_assert(std::is_standard_layout<cflow_io_pipe_server_config>::value,
               "IO pipe config must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_pipe_server_stats>::value,
               "IO pipe stats must remain C-compatible");
-static_assert(std::is_standard_layout<cflow_io_source_owner>::value,
+static_assert(std::is_standard_layout<cflow_io_publisher_owner>::value,
               "IO Source owner must remain a C-compatible handle");
-static_assert(std::is_standard_layout<cflow_io_source_config>::value,
+static_assert(std::is_standard_layout<cflow_io_publisher_config>::value,
               "IO Source config must remain C-compatible");
-static_assert(std::is_standard_layout<cflow_io_source_stats>::value,
+static_assert(std::is_standard_layout<cflow_io_publisher_stats>::value,
               "IO Source stats must remain C-compatible");
-static_assert(std::is_standard_layout<cflow_io_source_window_stats>::value,
+static_assert(std::is_standard_layout<cflow_io_publisher_window_stats>::value,
               "windowed IO Source stats must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_timer_event_queue>::value,
               "timer Event queue must remain a C-compatible handle");
@@ -111,38 +121,38 @@ static_assert(std::is_standard_layout<cflow_machine_transition>::value,
               "cflow_machine_transition must remain a C-compatible row");
 static_assert(std::is_standard_layout<turbo_readiness_registration>::value,
               "reactor registration must remain a C-compatible handle");
-static_assert(std::is_standard_layout<cflow_reactor_source_owner>::value,
+static_assert(std::is_standard_layout<cflow_readiness_publisher_owner>::value,
               "reactor Source owner must remain a C-compatible handle");
 
 using cflow_reactor_factory = int (*)(
-    cflow_source *, cflow_reactor_source_owner *,
+    cflow_publisher *, cflow_readiness_publisher_owner *,
     turbo_readiness_registration *, turbo_readiness_events, const char *,
     const cmeta_type_desc *, cflow_read_fn, cflow_resource_close_fn, void *);
 static_assert(std::is_same<
-                  decltype(&cflow_source_from_reactor_registration),
+                  decltype(&cflow_publisher_from_readiness_registration),
                   cflow_reactor_factory>::value,
               "reactor Source factory must keep its C linkage signature");
-using cflow_reactor_owner_close = int (*)(cflow_reactor_source_owner *);
-static_assert(std::is_same<decltype(&cflow_reactor_source_owner_close),
+using cflow_reactor_owner_close = int (*)(cflow_readiness_publisher_owner *);
+static_assert(std::is_same<decltype(&cflow_readiness_publisher_owner_close),
                            cflow_reactor_owner_close>::value,
               "reactor Source owner close must keep its C linkage signature");
-using cflow_io_source_prepare_callback = cflow_io_source_prepare_status (*)(
+using cflow_io_publisher_prepare_callback = cflow_io_publisher_prepare_status (*)(
     void *, cflow_io_operation *, const char **);
-static_assert(std::is_same<cflow_io_source_prepare_fn,
-                           cflow_io_source_prepare_callback>::value,
+static_assert(std::is_same<cflow_io_publisher_prepare_fn,
+                           cflow_io_publisher_prepare_callback>::value,
               "IO Source prepare callback must keep its exact C signature");
-using cflow_io_source_encode_callback = cflow_read_status (*)(
+using cflow_io_publisher_encode_callback = cflow_read_status (*)(
     void *, cflow_io_request_id, cflow_io_lease_id, void *,
     const cflow_io_completion *, void *, const char **);
-static_assert(std::is_same<cflow_io_source_encode_fn,
-                           cflow_io_source_encode_callback>::value,
+static_assert(std::is_same<cflow_io_publisher_encode_fn,
+                           cflow_io_publisher_encode_callback>::value,
               "IO Source encode callback must keep its exact C signature");
-using cflow_io_source_windowed_factory = int (*)(
-    cflow_source *, cflow_io_source_owner *,
-    const cflow_io_source_config *, size_t);
+using cflow_io_publisher_windowed_factory = int (*)(
+    cflow_publisher *, cflow_io_publisher_owner *,
+    const cflow_io_publisher_config *, size_t);
 static_assert(std::is_same<
-                  decltype(&cflow_source_from_io_actor_windowed),
-                  cflow_io_source_windowed_factory>::value,
+                  decltype(&cflow_publisher_from_io_actor_windowed),
+                  cflow_io_publisher_windowed_factory>::value,
               "windowed IO Source factory must keep its exact C signature");
 using cflow_statechart_terminal_resumable_factory = bool (*)(
     cflow_statechart_instance *, cflow_resumable *);
@@ -151,9 +161,9 @@ static_assert(std::is_same<
                   cflow_statechart_terminal_resumable_factory>::value,
               "Statechart Resumable adapter must keep its C signature");
 using cflow_statechart_terminal_source_factory = bool (*)(
-    cflow_statechart_instance *, cflow_source *);
+    cflow_statechart_instance *, cflow_publisher *);
 static_assert(std::is_same<
-                  decltype(&cflow_statechart_instance_as_terminal_source),
+                  decltype(&cflow_statechart_instance_as_terminal_publisher),
                   cflow_statechart_terminal_source_factory>::value,
               "Statechart Source adapter must keep its C signature");
 using cflow_statechart_actor_factory = cflow_statechart_actor_init_result (*)(
@@ -244,11 +254,11 @@ static_assert(std::is_same<decltype(&cflow_stream_for_each_result),
 
 suite("CFlow C++ public header") {
     it("exposes the aggregate API to C++ consumers") {
-        cflow_run run = {};
+        cflow_subscription run = {};
         cflow_scheduler resume_scheduler = {};
-        cflow_resume_ctx resume_context = {};
-        cflow_resume_ctx scheduler_only_context = {&resume_scheduler};
-        cflow_source source = {};
+        cflow_publish_context resume_context = {};
+        cflow_publish_context scheduler_only_context = {&resume_scheduler};
+        cflow_publisher source = {};
         cflow_graph graph = {};
         cflow_stream stream = {};
         cflow_subscription subscription = {};
@@ -267,7 +277,7 @@ suite("CFlow C++ public header") {
         cflow_statechart_definition statechart_definition = {};
         cflow_statechart_instance statechart_instance = {};
         cflow_resumable statechart_terminal_resumable = {};
-        cflow_source statechart_terminal_source = {};
+        cflow_publisher statechart_terminal_source = {};
         cflow_statechart_instance_config statechart_config = {};
         cflow_statechart_instance_stats statechart_stats = {};
         cflow_actor actor = {};
@@ -287,10 +297,10 @@ suite("CFlow C++ public header") {
         cflow_io_file_config io_file_config = {};
         cflow_io_file_stats io_file_stats = {};
         cflow_io_file_submit_result io_file_submit = {};
-        cflow_io_source_owner io_source_owner = {};
-        cflow_io_source_config io_source_config = {};
-        cflow_io_source_stats io_source_stats = {};
-        cflow_io_source_window_stats io_source_window_stats = {};
+        cflow_io_publisher_owner io_source_owner = {};
+        cflow_io_publisher_config io_source_config = {};
+        cflow_io_publisher_stats io_source_stats = {};
+        cflow_io_publisher_window_stats io_source_window_stats = {};
         cflow_io_native_backend_kind native_backend_kind = CFLOW_IO_NATIVE_POLL;
         cflow_io_native_pipe_operation_kind native_pipe_kind =
             CFLOW_IO_NATIVE_PIPE_READ;
@@ -314,10 +324,10 @@ suite("CFlow C++ public header") {
         check_true(resume_context.downstream_demand == 0u);
         check_true(scheduler_only_context.scheduler == &resume_scheduler);
         check_true(scheduler_only_context.downstream_demand == 0u);
-        check_false(cflow_source_valid(&source));
+        check_false(cflow_publisher_valid(&source));
         cflow_graph_init(&graph, &cmeta_type_int);
         check_true(cmeta_type_equal(
-            cflow_graph_source_type(&graph), &cmeta_type_int));
+            cflow_graph_input_type(&graph), &cmeta_type_int));
         check_true(cflow_graph_structural_equal(&graph, &graph));
         cflow_graph_destroy(&graph);
 
@@ -353,10 +363,10 @@ suite("CFlow C++ public header") {
         check_null(statechart_definition.state_type);
         check_null(statechart_instance.impl);
         check_null(statechart_terminal_resumable.ops);
-        check_false(cflow_source_valid(&statechart_terminal_source));
+        check_false(cflow_publisher_valid(&statechart_terminal_source));
         check_null(statechart_config.statechart);
         check_true(statechart_stats.last_status ==
-                   CFLOW_STATECHART_RUNTIME_OK);
+                   CFLOW_STATECHART_INSTANCE_OK);
         cflow_statechart_destroy(&statechart);
         check_null(actor.impl);
         check_null(actor_ref.impl);
@@ -391,9 +401,9 @@ suite("CFlow C++ public header") {
         check_null(io_source_config.prepare);
         check_null(io_source_config.encode);
         check_true(io_source_stats.actor.request_capacity == 0u);
-        check_false(io_source_stats.source_live);
+        check_false(io_source_stats.publisher_live);
         check_true(io_source_window_stats.capacity == 0u);
-        check_true(CFLOW_IO_SOURCE_MAX_WINDOW == 64u);
+        check_true(CFLOW_IO_PUBLISHER_MAX_WINDOW == 64u);
         (void)cflow_io_native_backend_file_operation_supported(
             native_backend_kind, native_file_kind);
         cflow_actor_ref_release(&actor_ref);

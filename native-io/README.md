@@ -16,7 +16,7 @@ CFlow / Actor / future adapters
       Platform errors and ABI
 ```
 
-当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 TCP recv/send 和 UDP recv_from/send_to。Windows IOCP 支持 overlapped byte-mode named pipe，Linux epoll 与 macOS/BSD kqueue 支持非阻塞 connected byte pipe；io_uring pipe 仍显式返回 `TURBO_ENOTSUP`。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `TURBO_ENOTSUP`。CFlow 通过 additive `cflow_io_native_adapter` 把一个 Actor/Source 绑定到调用方驱动的 NativeIO backend；NativeIO 本身仍不依赖或拥有 CFlow 状态。
+当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 TCP recv/send 和 UDP recv_from/send_to。Windows IOCP 支持 overlapped byte-mode named pipe，Linux epoll 与 macOS/BSD kqueue 支持非阻塞 connected byte pipe；io_uring pipe 仍显式返回 `TURBO_ENOTSUP`。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `TURBO_ENOTSUP`。CFlow 通过 `cflow_io_native_adapter` 将 Actor 或 Reactive Publisher 绑定到调用方驱动的 NativeIO backend；NativeIO 本身仍不依赖或拥有 CFlow 状态。
 
 ## 数据与状态协议
 
@@ -41,6 +41,12 @@ FREE --submit accepted--> PENDING --observe terminal--> FREE(next generation)
 每次成功 submit 恰好产生一个可观察终态。submit 原生失败在返回前回滚到 FREE，不产生 completion。destroy 在 admission 未关闭、请求未 drain 或 endpoint 未释放时返回 `TURBO_EBUSY`，并保留所有权供调用者修复。
 
 ## 性能边界
+
+若 byte pipe 的首要目标是最低框架延迟或最高吞吐，并且调用方能够自行管理
+operation、completion、容量与关闭顺序，应直接使用 NativeIO Pipe 接口。
+Actor 与 CFlow Reactive 适用于需要状态隔离、确认协议、demand 或 Graph 操作的
+场景；它们提供额外语义，也会引入相应控制面成本。不要仅为传输数据而把
+NativeIO Pipe 强制包装成 Actor 或 Reactive。
 
 初始化之后，submit/observe 不分配内存。endpoint 与 request 都通过预分配 free stack 以 O(1) 获取：
 
@@ -79,6 +85,6 @@ if (status != 0)
 
 `native_io_benchmark` 只比较同模型的原生基线：Windows 为 raw IOCP，Linux 分别为 raw epoll 与 raw io_uring，Apple/BSD 为 raw kqueue。输出按 backend 和 TCP/UDP 拆分的 payload 延迟、吞吐及 submit/observe 阶段表。TCP 覆盖 1/4/8/16/32/64 KiB；Windows/Linux UDP 覆盖到 32 KiB，因 IPv4 UDP 单 datagram 无法承载 64 KiB payload 而明确省略该行；kqueue UDP 止于 8 KiB，以符合 macOS 默认单 datagram 上限，不通过应用层拆包改变测试口径。
 
-`native_io_pipe_benchmark` 在当前支持 pipe 的 Linux epoll 与 macOS/BSD kqueue 上比较 raw POSIX pipe 调用和 NativeIO。每个样本执行 256 次单向 transfer，覆盖 1/4/8/16/32/64 KiB；应用 payload 每次只计一次，不把读端和写端重复计算为两倍流量。fixture、buffer、descriptor 与 backend 初始化位于计时区外，输出独立的 p50/p95 延迟、吞吐以及 raw syscall、NativeIO submit/observe 阶段表。Windows 和 Linux io_uring 在对应 pipe backend 实现前不生成伪基线。
+`native_io_pipe_benchmark` 在 Windows IOCP 上比较 raw overlapped named-pipe completion 与 NativeIO，在 Linux epoll 和 macOS/BSD kqueue 上比较 raw POSIX pipe 调用与 NativeIO。每个样本执行 256 次单向 transfer，覆盖 1/4/8/16/32/64 KiB；应用 payload 每次只计一次，不把读端和写端重复计算为两倍流量。fixture、buffer、handle/descriptor 与 backend 初始化位于计时区外，输出独立的 p50/p95 延迟、吞吐以及 raw submit、NativeIO submit/observe 阶段表。Linux io_uring 在对应 pipe backend 实现前不生成伪基线。
 
-`cflow_native_io_adapter_benchmark` 位于 CFlow，使用同进程 direct NativeIO 作为唯一分母，额外测量 Actor 与 windowed Source 的控制成本。该依赖方向保持 `CFlow -> NativeIO`，不会把 CFlow benchmark 或类型带入 NativeIO target。
+`cflow_native_io_adapter_benchmark` 位于 CFlow，使用同进程 direct NativeIO 作为唯一分母，额外测量 Actor 与 windowed Reactive Subscription 的控制成本。该依赖方向保持 `CFlow -> NativeIO`，不会把 CFlow benchmark 或类型带入 NativeIO target。

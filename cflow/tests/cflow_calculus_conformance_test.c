@@ -25,10 +25,10 @@ typedef struct cflow_conformance_fixture {
     cflow_result plan_result;
     cflow_result kernel_result;
     cflow_scheduler scheduler;
-    cflow_source source;
-    cflow_run run;
+    cflow_publisher source;
+    cflow_subscription run;
     cflow_conformance_trace trace;
-    cflow_sink_callbacks callbacks;
+    cflow_subscriber_callbacks callbacks;
 } cflow_conformance_fixture;
 
 static cflow_conformance_fixture cflow_conformance_state;
@@ -85,9 +85,9 @@ suite("CFlow calculus conformance") {
     after_each() {
         cflow_conformance_fixture *state = &cflow_conformance_state;
 
-        cflow_run_close(&state->run);
-        if (cflow_source_valid(&state->source))
-            cflow_source_destroy(&state->source);
+        cflow_subscription_close(&state->run);
+        if (cflow_publisher_valid(&state->source))
+            cflow_publisher_destroy(&state->source);
         if (cflow_scheduler_valid(&state->scheduler))
             cflow_scheduler_destroy(&state->scheduler);
         cflow_result_destroy(&state->kernel_result);
@@ -133,31 +133,31 @@ suite("CFlow calculus conformance") {
     group("Kernel WAIT") {
         it("preserves WAIT wake value and done observations") {
             cflow_conformance_fixture *state = &cflow_conformance_state;
-            state->callbacks = (cflow_sink_callbacks){
+            state->callbacks = (cflow_subscriber_callbacks){
                 cflow_conformance_on_size,
                 cflow_conformance_on_error,
                 cflow_conformance_on_done,
                 &state->trace
             };
-            cflow_sink sink = cflow_sink_from_callbacks(&state->callbacks);
+            cflow_subscriber sink = cflow_subscriber_from_callbacks(&state->callbacks);
 
             cflow_graph_init(&state->graph, &cmeta_type_size);
             check_true(cflow_scheduler_test_init(&state->scheduler));
-            check_true(cflow_source_from_timer(&state->source, 1u, 5u));
-            check_true(cflow_run_open(&state->run,
+            check_true(cflow_publisher_from_timer(&state->source, 1u, 5u));
+            check_true(cflow_subscribe(&state->run,
                                       &state->graph,
                                       &state->source,
                                       &state->scheduler,
                                       &sink));
             check_null(state->source.self);
-            check_true(cflow_run_request(&state->run, 1u));
+            check_true(cflow_subscription_request(&state->run, 1u));
 
             (void)cflow_scheduler_run_ready(&state->scheduler);
             check_equal(cflow_scheduler_now(&state->scheduler), (uint64_t)0u);
             check_equal(state->trace.value_count, (size_t)0u);
             check_false(state->trace.done);
             check_null(state->trace.error);
-            check_equal(cflow_run_outstanding_demand(&state->run), (size_t)1u);
+            check_equal(cflow_subscription_outstanding_demand(&state->run), (size_t)1u);
 
             (void)cflow_scheduler_advance(&state->scheduler, 4u);
             check_equal(cflow_scheduler_now(&state->scheduler), (uint64_t)4u);
@@ -173,7 +173,7 @@ suite("CFlow calculus conformance") {
             check_equal(state->trace.event_count, (size_t)2u);
             check_equal(state->trace.events[0], 'V');
             check_equal(state->trace.events[1], 'D');
-            check_equal(cflow_run_outstanding_demand(&state->run), (size_t)0u);
+            check_equal(cflow_subscription_outstanding_demand(&state->run), (size_t)0u);
         }
     }
 

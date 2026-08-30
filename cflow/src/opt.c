@@ -382,7 +382,7 @@ static bool optimize_subgraph(opt_ctx *ctx, cflow_subgraph_id src_id,
         }
         if (node->op == CFLOW_OP_RELATION) {
             if (!append_relation(ctx, dstid, node)) goto done;
-        } else if (node->op == CFLOW_OP_SOURCE) {
+        } else if (node->op == CFLOW_OP_INPUT) {
             ctx->error = "SOURCE may only be a subgraph entry";
             goto done;
         } else {

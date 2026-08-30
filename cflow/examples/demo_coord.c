@@ -1,5 +1,5 @@
 #include <cflow/coord.h>
-#include <cflow/sources.h>
+#include <cflow/publishers.h>
 
 #include <assert.h>
 #include <stdio.h>
@@ -17,7 +17,7 @@ typedef struct script_state {
     size_t index;
 } script_state;
 
-static cflow_step script_resume(void *state, cflow_resume_ctx *ctx, void *out) {
+static cflow_step script_resume(void *state, cflow_publish_context *ctx, void *out) {
     (void)ctx;
     script_state *s = (script_state *)state;
     if (!s || !out) return (cflow_step){ CFLOW_STEP_ERROR, {0}, "script invalid" };
@@ -57,7 +57,7 @@ static void destroy_machine(cflow_resumable *m) {
 int main(void) {
     cflow_scheduler loop;
     assert(cflow_scheduler_test_init(&loop));
-    cflow_resume_ctx ctx = { &loop };
+    cflow_publish_context ctx = { &loop };
 
     /* ALL: heterogeneous children retain their own typed slots. */
     long lv = 7;
@@ -92,13 +92,13 @@ int main(void) {
 
     /* Aggregate WAIT: two independently scheduled children arm through one
      * coordinator waitable. The earlier timer wins ANY. */
-    cflow_source timers[2];
+    cflow_publisher timers[2];
     memset(timers, 0, sizeof timers);
     cflow_resumable wait_children[2] = {{0}, {0}}, wait_any = {0};
-    assert(cflow_source_from_timer(&timers[0], 1, 10));
-    assert(cflow_source_from_timer(&timers[1], 1, 5));
-    assert(cflow_resumable_from_source(&wait_children[0], &timers[0]));
-    assert(cflow_resumable_from_source(&wait_children[1], &timers[1]));
+    assert(cflow_publisher_from_timer(&timers[0], 1, 10));
+    assert(cflow_publisher_from_timer(&timers[1], 1, 5));
+    assert(cflow_resumable_from_publisher(&wait_children[0], &timers[0]));
+    assert(cflow_resumable_from_publisher(&wait_children[1], &timers[1]));
     assert(cflow_resumable_from_coordination(&wait_any, CFLOW_COORD_ANY, wait_children, 2));
     step = wait_any.ops->resume(wait_any.state, &ctx, &event);
     assert(step.kind == CFLOW_STEP_WAIT && cflow_waitable_valid(&step.waitable));
@@ -149,11 +149,11 @@ int main(void) {
     /* LATEST startup fairness: once the fast child has its first value it
      * pauses until the WAITing child establishes its initial value. */
     const int fast_values[] = { 1, 2, 3 };
-    cflow_source slow_timer = {0};
+    cflow_publisher slow_timer = {0};
     cflow_resumable fair_children[2] = {{0}, {0}}, fair = {0};
     assert(script_ints(&fair_children[0], fast_values, 3));
-    assert(cflow_source_from_timer(&slow_timer, 1, 3));
-    assert(cflow_resumable_from_source(&fair_children[1], &slow_timer));
+    assert(cflow_publisher_from_timer(&slow_timer, 1, 3));
+    assert(cflow_resumable_from_publisher(&fair_children[1], &slow_timer));
     assert(cflow_resumable_from_coordination(&fair, CFLOW_COORD_LATEST, fair_children, 2));
     step = fair.ops->resume(fair.state, &ctx, &event);
     assert(step.kind == CFLOW_STEP_WAIT);

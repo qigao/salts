@@ -184,7 +184,7 @@ typedef struct cflow_io_native_backend_stats {
     bool shutdown_complete;
 } cflow_io_native_backend_stats;
 
-/** Returns compile-time availability only; runtime kernel policy may still reject init. */
+/** Returns compile-time availability only; active kernel policy may still reject init. */
 bool cflow_io_native_backend_supported(cflow_io_native_backend_kind kind);
 
 /** Returns compile-time pipe capability; per-endpoint checks occur on submit. */

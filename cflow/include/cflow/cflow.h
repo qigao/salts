@@ -16,14 +16,14 @@
 #include <cflow/plan.h>
 #include <cflow/certificate.h>
 #include <cflow/scheduler.h>
-#include <cflow/runtime.h>
+#include <cflow/reactive.h>
 #include <cflow/event.h>
 #include <cflow/machine.h>
 #include <cflow/machine_hierarchy.h>
-#include <cflow/machine_runtime.h>
+#include <cflow/machine_instance.h>
 #include <cflow/statechart.h>
 #include <cflow/statechart_hierarchy_adapter.h>
-#include <cflow/statechart_runtime.h>
+#include <cflow/statechart_instance.h>
 #include <cflow/actor.h>
 #include <cflow/io_actor.h>
 #include <cflow/io_native_adapter.h>
@@ -31,14 +31,13 @@
 #include <cflow/io_file.h>
 #include <cflow/io_pipe.h>
 #include <cflow/timer_event.h>
-#include <cflow/sources.h>
-#include <cflow/io_source.h>
+#include <cflow/publishers.h>
+#include <cflow/io_publisher.h>
 #include <cflow/readiness.h>
 #include <cflow/temporal.h>
-#include <cflow/reactive.h>
 #include <cflow/adapters.h>
 #include <cflow/coord.h>
-#include <cflow/subrun.h>
+#include <cflow/subflow.h>
 #include <cflow/verify.h>
 
 #endif

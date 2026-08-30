@@ -19,7 +19,7 @@ static cmeta_effects subgraph_effects_rec(const cflow_graph *g,
     const cflow_subgraph *sg = &g->subgraphs[id];
     for (size_t n = 0; n < sg->node_count; ++n) {
         const cflow_node *node = &sg->nodes[n];
-        if (node->op != CFLOW_OP_SOURCE && node->op != CFLOW_OP_RELATION) {
+        if (node->op != CFLOW_OP_INPUT && node->op != CFLOW_OP_RELATION) {
             const cflow_op_schema *schema = cflow_op_schema_get(node->op);
             effects |= schema ? schema->intrinsic_effects : CMETA_EFFECT_UNKNOWN;
         }
@@ -42,7 +42,7 @@ static cmeta_effects subgraph_effects_rec(const cflow_graph *g,
 cmeta_effects cflow_node_effects(const cflow_graph *g, const cflow_node *node) {
     if (!g || !node) return CMETA_EFFECT_UNKNOWN;
     cmeta_effects effects = CMETA_EFFECT_PURE;
-    if (node->op != CFLOW_OP_SOURCE && node->op != CFLOW_OP_RELATION) {
+    if (node->op != CFLOW_OP_INPUT && node->op != CFLOW_OP_RELATION) {
         const cflow_op_schema *schema = cflow_op_schema_get(node->op);
         effects |= schema ? schema->intrinsic_effects : CMETA_EFFECT_UNKNOWN;
     }

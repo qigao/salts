@@ -37,7 +37,7 @@ typedef struct cflow_reactor_adapter_state {
     cflow_waker waker;
     size_t references;
     int exact_status;
-    bool source_live;
+    bool publisher_live;
     bool owner_live;
     bool cancelled;
     bool cleanup_inflight;
@@ -196,7 +196,7 @@ CMETA_IMPLEMENTS(cflow_waitable, cflow_reactor_waitable, 0,
 );
 
 static cflow_step cflow_reactor_resume(void *self,
-                                       cflow_resume_ctx *ctx,
+                                       cflow_publish_context *ctx,
                                        void *out_value) {
     cflow_reactor_adapter_state *state =
         (cflow_reactor_adapter_state *)self;
@@ -267,8 +267,8 @@ static void cflow_reactor_destroy(void *self) {
     (void)cflow_reactor_close(state);
 
     turbo_mutex_lock(&state->lock);
-    if (state->source_live) {
-        state->source_live = false;
+    if (state->publisher_live) {
+        state->publisher_live = false;
         --state->references;
         free_state = state->references == 0u;
         turbo_cond_broadcast(&state->changed);
@@ -299,14 +299,14 @@ static void cflow_reactor_bind_terminal(void *self, cflow_waker waker) {
     (void)waker;
 }
 
-static cflow_source_terminal cflow_reactor_poll_terminal(
+static cflow_publisher_terminal cflow_reactor_poll_terminal(
     void *self, const char **error) {
     (void)self;
     (void)error;
-    return CFLOW_SOURCE_OPEN;
+    return CFLOW_PUBLISHER_OPEN;
 }
 
-CMETA_IMPLEMENTS(cflow_source, cflow_reactor_source, 0,
+CMETA_IMPLEMENTS(cflow_publisher, cflow_reactor_source, 0,
     .name = cflow_reactor_name,
     .output_type = cflow_reactor_type,
     .resume = cflow_reactor_resume,
@@ -316,9 +316,9 @@ CMETA_IMPLEMENTS(cflow_source, cflow_reactor_source, 0,
     .poll_terminal = cflow_reactor_poll_terminal
 );
 
-int cflow_source_from_reactor_registration(
-    cflow_source *out,
-    cflow_reactor_source_owner *owner,
+int cflow_publisher_from_readiness_registration(
+    cflow_publisher *out,
+    cflow_readiness_publisher_owner *owner,
     turbo_readiness_registration *registration,
     turbo_readiness_events events,
     const char *name,
@@ -332,7 +332,7 @@ int cflow_source_from_reactor_registration(
     cflow_reactor_adapter_state *state;
 
     if (out)
-        *out = (cflow_source){0};
+        *out = (cflow_publisher){0};
     if (owner)
         owner->impl = NULL;
 
@@ -363,17 +363,17 @@ int cflow_source_from_reactor_registration(
     state->events = events;
     state->registration = *registration;
     state->references = 2u;
-    state->source_live = true;
+    state->publisher_live = true;
     state->owner_live = true;
     state->phase = CFLOW_REACTOR_ADAPTER_IDLE;
 
-    *out = cflow_reactor_source_as_cflow_source(state);
+    *out = cflow_reactor_source_as_cflow_publisher(state);
     owner->impl = state;
     memset(registration, 0, sizeof(*registration));
     return TURBO_OK;
 }
 
-int cflow_reactor_source_owner_close(cflow_reactor_source_owner *owner) {
+int cflow_readiness_publisher_owner_close(cflow_readiness_publisher_owner *owner) {
     cflow_reactor_adapter_state *state;
     bool free_state;
     int status;
@@ -385,7 +385,7 @@ int cflow_reactor_source_owner_close(cflow_reactor_source_owner *owner) {
     state = (cflow_reactor_adapter_state *)owner->impl;
 
     turbo_mutex_lock(&state->lock);
-    if (state->source_live) {
+    if (state->publisher_live) {
         turbo_mutex_unlock(&state->lock);
         return TURBO_EBUSY;
     }
@@ -415,8 +415,8 @@ int cflow_reactor_source_owner_close(cflow_reactor_source_owner *owner) {
 }
 
 turbo_readiness_registration *
-cflow_reactor_source_owner_observe_registration(
-    cflow_reactor_source_owner *owner) {
+cflow_readiness_publisher_owner_observe_registration(
+    cflow_readiness_publisher_owner *owner) {
     cflow_reactor_adapter_state *state =
         owner ? (cflow_reactor_adapter_state *)owner->impl : NULL;
     return state ? &state->registration : NULL;

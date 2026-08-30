@@ -1,12 +1,12 @@
 #include <cflow/stream_execution.h>
 
 #include <cflow/lower.h>
-#include <cflow/runtime.h>
-#include <cflow/sources.h>
+#include <cflow/reactive.h>
+#include <cflow/publishers.h>
 #include <turbo/thread.h>
 
-#include "sources_internal.h"
-#include "runtime_internal.h"
+#include "publishers_internal.h"
+#include "subscription_internal.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -19,10 +19,10 @@ typedef struct cflow_stream_execution_impl {
     cmeta_status collector_status;
     size_t count;
     cflow_graph graph;
-    cflow_run run;
+    cflow_subscription run;
     cflow_scheduler *scheduler;
     cmeta_collector collector;
-    cflow_sink_callbacks callbacks;
+    cflow_subscriber_callbacks callbacks;
     char *error;
 } cflow_stream_execution_impl;
 
@@ -174,13 +174,13 @@ static void stream_execution_sink_done(void *user) {
 static void stream_execution_rollback(
     cflow_stream_execution *execution,
     cflow_stream_execution_impl *impl,
-    cflow_source *source) {
+    cflow_publisher *source) {
     if (impl == NULL)
         return;
     if (impl->run.impl != NULL)
-        cflow_run_close(&impl->run);
-    if (source != NULL && cflow_source_valid(source))
-        cflow_source_destroy(source);
+        cflow_subscription_close(&impl->run);
+    if (source != NULL && cflow_publisher_valid(source))
+        cflow_publisher_destroy(source);
     stream_execution_collector_abort(impl);
     if (execution != NULL)
         execution->impl = NULL;
@@ -193,8 +193,8 @@ cflow_stream_execution_status cflow_stream_execution_start(
     cflow_scheduler *scheduler,
     cmeta_collector collector) {
     cflow_stream_execution_impl *impl;
-    cflow_source source = {0};
-    cflow_sink sink;
+    cflow_publisher source = {0};
+    cflow_subscriber sink;
     const cmeta_type_desc *output_type;
     const char *source_error = NULL;
     cmeta_status source_status;
@@ -208,7 +208,7 @@ cflow_stream_execution_status cflow_stream_execution_start(
         (cflow_scheduler_capabilities(scheduler) &
          CMETA_SCHED_CAP_CONCURRENT) == 0u)
         return CFLOW_STREAM_EXECUTION_INVALID_SCHEDULER;
-    if (stream == NULL || !stream->has_source_range ||
+    if (stream == NULL || !stream->has_input_range ||
         !cflow_stream_ok(stream))
         return CFLOW_STREAM_EXECUTION_STREAM_REJECTED;
     output_type = cflow_stream_output_type(stream);
@@ -237,14 +237,14 @@ cflow_stream_execution_status cflow_stream_execution_start(
         stream_execution_rollback(execution, impl, &source);
         return CFLOW_STREAM_EXECUTION_GRAPH_REJECTED;
     }
-    source_status = cflow_source_from_range_checked(
-        &source, stream->source_range, &source_error);
+    source_status = cflow_publisher_from_range_checked(
+        &source, stream->input_range, &source_error);
     (void)source_error;
     if (source_status != CMETA_OK) {
         stream_execution_rollback(execution, impl, &source);
         return source_status == CMETA_OUT_OF_MEMORY
             ? CFLOW_STREAM_EXECUTION_ALLOCATION_FAILED
-            : CFLOW_STREAM_EXECUTION_SOURCE_REJECTED;
+            : CFLOW_STREAM_EXECUTION_PUBLISHER_REJECTED;
     }
 
     previous = active_stream_execution;
@@ -255,19 +255,19 @@ cflow_stream_execution_status cflow_stream_execution_start(
         stream_execution_rollback(execution, impl, &source);
         return CFLOW_STREAM_EXECUTION_COLLECTOR_REJECTED;
     }
-    impl->callbacks = (cflow_sink_callbacks){
+    impl->callbacks = (cflow_subscriber_callbacks){
         stream_execution_sink_value,
         stream_execution_sink_error,
         stream_execution_sink_done,
         impl
     };
-    sink = cflow_sink_from_callbacks(&impl->callbacks);
-    if (!cflow_run_open(&impl->run, &impl->graph, &source,
+    sink = cflow_subscriber_from_callbacks(&impl->callbacks);
+    if (!cflow_subscribe(&impl->run, &impl->graph, &source,
                         scheduler, &sink)) {
         stream_execution_rollback(execution, impl, &source);
         return CFLOW_STREAM_EXECUTION_RUN_REJECTED;
     }
-    if (!cflow_run_request(&impl->run, SIZE_MAX)) {
+    if (!cflow_subscription_request(&impl->run, SIZE_MAX)) {
         stream_execution_rollback(execution, impl, &source);
         return CFLOW_STREAM_EXECUTION_DEMAND_REJECTED;
     }
@@ -283,7 +283,7 @@ cflow_stream_execution_status cflow_stream_execution_cancel(
     if (impl == NULL)
         return CFLOW_STREAM_EXECUTION_INVALID_ARGUMENT;
     if (active_stream_execution == impl ||
-        cflow_run_active_on_current_thread(&impl->run))
+        cflow_subscription_active_on_current_thread(&impl->run))
         return CFLOW_STREAM_EXECUTION_WOULD_BLOCK;
 
     turbo_mutex_lock(&impl->gate);
@@ -292,11 +292,11 @@ cflow_stream_execution_status cflow_stream_execution_cancel(
     if (stream_execution_terminal(state)) {
         /* Terminal publication happens inside the pump callback. Close remains
          * the barrier that waits for the pump and releases the moved Source. */
-        cflow_run_close(&impl->run);
+        cflow_subscription_close(&impl->run);
         return CFLOW_STREAM_EXECUTION_TERMINATED;
     }
 
-    cflow_run_close(&impl->run);
+    cflow_subscription_close(&impl->run);
     stream_execution_collector_abort(impl);
 
     turbo_mutex_lock(&impl->gate);
@@ -320,7 +320,7 @@ cflow_stream_execution_status cflow_stream_execution_wait(
     if (impl == NULL)
         return CFLOW_STREAM_EXECUTION_INVALID_ARGUMENT;
     if (active_stream_execution == impl ||
-        cflow_run_active_on_current_thread(&impl->run))
+        cflow_subscription_active_on_current_thread(&impl->run))
         return CFLOW_STREAM_EXECUTION_WOULD_BLOCK;
     turbo_mutex_lock(&impl->gate);
     while (!stream_execution_terminal(impl->state))
@@ -359,7 +359,7 @@ cflow_stream_execution_status cflow_stream_execution_destroy(
     if (impl == NULL)
         return CFLOW_STREAM_EXECUTION_OK;
     if (active_stream_execution == impl ||
-        cflow_run_active_on_current_thread(&impl->run))
+        cflow_subscription_active_on_current_thread(&impl->run))
         return CFLOW_STREAM_EXECUTION_WOULD_BLOCK;
 
     turbo_mutex_lock(&impl->gate);
@@ -369,7 +369,7 @@ cflow_stream_execution_status cflow_stream_execution_destroy(
         (void)cflow_stream_execution_cancel(execution);
     /* cancel may observe a natural terminal transition after the state sample.
      * The idempotent close is still required as the destruction barrier. */
-    cflow_run_close(&impl->run);
+    cflow_subscription_close(&impl->run);
     execution->impl = NULL;
     stream_execution_shell_destroy(impl);
     return CFLOW_STREAM_EXECUTION_OK;

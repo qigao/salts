@@ -40,7 +40,7 @@ static const cmeta_type_desc *slice_probe_type(void *self) {
 }
 
 static cflow_step slice_probe_resume(void *self,
-                                     cflow_resume_ctx *ctx,
+                                     cflow_publish_context *ctx,
                                      void *out_value) {
     slice_probe_source *source = (slice_probe_source *)self;
     (void)ctx;
@@ -69,15 +69,15 @@ static void slice_probe_bind(void *self, cflow_waker waker) {
     (void)self;
     (void)waker;
 }
-static cflow_source_terminal slice_probe_poll(void *self,
+static cflow_publisher_terminal slice_probe_poll(void *self,
                                               const char **error) {
     (void)self;
     if (error) *error = NULL;
-    return CFLOW_SOURCE_OPEN;
+    return CFLOW_PUBLISHER_OPEN;
 }
 
-CMETA_IMPLEMENTS(cflow_source, slice_probe_source_interface,
-    CFLOW_SOURCE_CAP_CONSTRUCTS_VALUES,
+CMETA_IMPLEMENTS(cflow_publisher, slice_probe_source_interface,
+    CFLOW_PUBLISHER_CAP_CONSTRUCTS_VALUES,
     .name = slice_probe_name,
     .output_type = slice_probe_type,
     .resume = slice_probe_resume,
@@ -112,28 +112,28 @@ static void run_take_probe(size_t limit,
                            slice_probe_source *source_state,
                            slice_probe_sink *sink_state) {
     cflow_graph graph = {0};
-    cflow_source source = {0};
+    cflow_publisher source = {0};
     cflow_scheduler scheduler = {0};
-    cflow_run run = {0};
-    cflow_sink_callbacks callbacks = {
+    cflow_subscription run = {0};
+    cflow_subscriber_callbacks callbacks = {
         slice_probe_on_value,
         slice_probe_on_error,
         slice_probe_on_done,
         sink_state
     };
-    cflow_sink sink = cflow_sink_from_callbacks(&callbacks);
+    cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
 
     cflow_graph_init(&graph, &cmeta_type_int);
     check_true(cflow_graph_take(&graph, limit));
-    source = slice_probe_source_interface_as_cflow_source(source_state);
+    source = slice_probe_source_interface_as_cflow_publisher(source_state);
     check_true(cflow_scheduler_test_init(&scheduler));
-    check_true(cflow_run_open(&run, &graph, &source, &scheduler, &sink));
-    check_true(cflow_run_request(&run, SIZE_MAX));
+    check_true(cflow_subscribe(&run, &graph, &source, &scheduler, &sink));
+    check_true(cflow_subscription_request(&run, SIZE_MAX));
     check_greater(cflow_scheduler_run_until_idle(&scheduler, 0u), (size_t)0u);
-    check_true(cflow_run_is_done(&run));
-    check_null(cflow_run_error(&run));
+    check_true(cflow_subscription_is_done(&run));
+    check_null(cflow_subscription_error(&run));
 
-    cflow_run_close(&run);
+    cflow_subscription_close(&run);
     cflow_scheduler_destroy(&scheduler);
     cflow_graph_destroy(&graph);
 }

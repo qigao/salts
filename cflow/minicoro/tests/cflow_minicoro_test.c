@@ -17,7 +17,7 @@ typedef struct step_trace {
 } step_trace;
 
 static cflow_step native_script_resume(void *state,
-                                       cflow_resume_ctx *ctx,
+                                       cflow_publish_context *ctx,
                                        void *out_value) {
     native_script_state *script = (native_script_state *)state;
     (void)ctx;
@@ -109,7 +109,7 @@ static void test_waitable_wake(test_waitable_state *waitable) {
 
 typedef struct wait_script_state {
     test_waitable_state *waitable;
-    cflow_resume_ctx *seen_context;
+    cflow_publish_context *seen_context;
     size_t after_wait;
 } wait_script_state;
 
@@ -186,7 +186,7 @@ static void counting_dealloc(void *pointer,
 
 static step_trace collect_trace(cflow_resumable *resumable) {
     step_trace trace = {0};
-    cflow_resume_ctx context = {0};
+    cflow_publish_context context = {0};
 
     while (trace.step_count < 3u) {
         int value = 0;
@@ -258,7 +258,7 @@ spec("CFlow minicoro Resumable adapter") {
             "complete", &cmeta_type_int, minicoro_complete, NULL,
             0u, NULL, NULL, NULL
         };
-        cflow_resume_ctx context = {0};
+        cflow_publish_context context = {0};
         int output = 17;
         cflow_step step;
 
@@ -276,7 +276,7 @@ spec("CFlow minicoro Resumable adapter") {
             "failure", &cmeta_type_int, minicoro_error, NULL,
             0u, NULL, NULL, NULL
         };
-        cflow_resume_ctx context = {0};
+        cflow_publish_context context = {0};
         int output = 23;
         cflow_step step;
 
@@ -366,7 +366,7 @@ spec("CFlow minicoro Resumable adapter") {
             0u, NULL, NULL, NULL
         };
         cflow_scheduler scheduler = {0};
-        cflow_resume_ctx context = {&scheduler};
+        cflow_publish_context context = {&scheduler};
         int output = 0;
         cflow_step step;
 
@@ -398,7 +398,7 @@ spec("CFlow minicoro Resumable adapter") {
             "cancel", &cmeta_type_int, minicoro_wait_then_value, &script,
             0u, NULL, NULL, NULL
         };
-        cflow_resume_ctx context = {0};
+        cflow_publish_context context = {0};
         int output = 0;
         cflow_step step;
 
@@ -427,7 +427,7 @@ spec("CFlow minicoro Resumable adapter") {
             "stale", &cmeta_type_int, minicoro_wait_then_value, &script,
             0u, NULL, NULL, NULL
         };
-        cflow_resume_ctx context = {0};
+        cflow_publish_context context = {0};
         int output = 0;
         cflow_step step;
 
@@ -457,7 +457,7 @@ spec("CFlow minicoro Resumable adapter") {
             "destroy-stale", &cmeta_type_int, minicoro_wait_then_value, &script,
             0u, NULL, NULL, NULL
         };
-        cflow_resume_ctx context = {0};
+        cflow_publish_context context = {0};
         int output = 0;
         cflow_step step;
 
@@ -485,7 +485,7 @@ spec("CFlow minicoro Resumable adapter") {
             "close", &cmeta_type_int, minicoro_wait_then_value, &script,
             0u, NULL, NULL, NULL
         };
-        cflow_resume_ctx context = {0};
+        cflow_publish_context context = {0};
         int output = 0;
         cflow_step step;
 

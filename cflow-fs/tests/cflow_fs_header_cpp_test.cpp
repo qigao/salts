@@ -1,6 +1,6 @@
 #include <cflow/fs.h>
 #include <cflow/fs_watch.h>
-#include <cflow/fs_watch_source.h>
+#include <cflow/fs_watch_publisher.h>
 #include <tinytest.h>
 
 #include <type_traits>
@@ -18,15 +18,15 @@ spec("CFlow filesystem C++ header") {
             decltype(&cflow_fs_run_ready),
             int (*)(cflow_fs_service *, size_t, size_t *)>);
         static_assert(std::is_same_v<
-            decltype(&cflow_fs_watch_source_open),
-            int (*)(cflow_source *, cflow_fs_watch_source_owner *,
-                    const char *, const cflow_fs_watch_source_config *)>);
+            decltype(&cflow_fs_watch_publisher_open),
+            int (*)(cflow_publisher *, cflow_fs_watch_publisher_owner *,
+                    const char *, const cflow_fs_watch_publisher_config *)>);
         static_assert(std::is_same_v<
-            decltype(&cflow_fs_watch_source_owner_close),
-            int (*)(cflow_fs_watch_source_owner *)>);
+            decltype(&cflow_fs_watch_publisher_owner_close),
+            int (*)(cflow_fs_watch_publisher_owner *)>);
         cflow_fs_service service{};
         cflow_fs_watch watch{};
-        cflow_fs_watch_source_owner source_owner{};
+        cflow_fs_watch_publisher_owner source_owner{};
         check_null(service.impl);
         check_null(watch.impl);
         check_null(source_owner.impl);

@@ -827,6 +827,30 @@ spec("CFlow execution foundation") {
     cflow_scheduler_destroy(&scheduler);
   }
 
+  it("settles an Inline Scheduler descriptor before admission returns") {
+    cflow_scheduler scheduler = {0};
+    cflow_task_lifecycle_probe probe = {0};
+    cflow_executor_task task = {
+        .run = cflow_lifecycle_run,
+        .cancel = cflow_lifecycle_cancel,
+        .finalize = cflow_lifecycle_finalize,
+        .user = &probe,
+    };
+    cflow_schedule_result result = {0};
+
+    check_true(cflow_scheduler_inline_init(&scheduler));
+    check_true(cflow_scheduler_try_post_task_after_internal(
+        &scheduler, 0u, &task, &result));
+    check_equal(result.status, CFLOW_ADMISSION_ACCEPTED);
+    check_not_equal(result.task_id, (cflow_task_id)0u);
+    check_equal(atomic_load(&probe.run_count), 1);
+    check_equal(atomic_load(&probe.cancel_count), 0);
+    check_equal(atomic_load(&probe.finalize_count), 1);
+    check_equal(atomic_load(&probe.run_sequence), 1);
+    check_equal(atomic_load(&probe.finalize_sequence), 2);
+    cflow_scheduler_destroy(&scheduler);
+  }
+
   it("settles a worker Scheduler descriptor exactly once on shutdown") {
     cflow_scheduler scheduler = {0};
     cflow_task_lifecycle_probe probe = {0};

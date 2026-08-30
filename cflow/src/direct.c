@@ -174,7 +174,7 @@ bool cflow_aot_pipeline_ir_match_graph(const cflow_aot_pipeline_ir *ir,
     goto done;
   }
   source = cflow_subgraph_node(root, root->entry);
-  if (source == NULL || source->op != CFLOW_OP_SOURCE || source->has_fn ||
+  if (source == NULL || source->op != CFLOW_OP_INPUT || source->has_fn ||
       source->subgraph_count != 0u ||
       !cmeta_type_equal(source->output_type, ir->input_type)) {
     failure = "AOT Stage IR Graph source differs";
@@ -199,7 +199,7 @@ bool cflow_aot_pipeline_ir_match_graph(const cflow_aot_pipeline_ir *ir,
   }
 
   if (witness != NULL) {
-    witness->source_graph_version = graph->version;
+    witness->input_graph_version = graph->version;
     witness->matched_stage_count = ir->stage_count;
   }
   matched = true;
@@ -267,7 +267,7 @@ static bool aot_find_coordinate(
  * optimized Graph). Both stage arrays are hard-bounded by 16. */
 bool cflow_aot_pipeline_ir_match_optimized_graph(
     const cflow_aot_pipeline_ir *ir,
-    const cflow_graph *normalized_source,
+    const cflow_graph *normalized_input,
     const cflow_graph *optimized,
     const cflow_opt_trace *trace,
     cflow_aot_optimized_equivalence_witness *witness,
@@ -284,15 +284,15 @@ bool cflow_aot_pipeline_ir_match_optimized_graph(
   if (error) *error = NULL;
   if (witness) memset(witness, 0, sizeof(*witness));
   if (!cflow_aot_pipeline_ir_validate(ir, error)) return false;
-  if (!normalized_source || !optimized || !trace ||
-      !cflow_graph_is_normalized(normalized_source))
+  if (!normalized_input || !optimized || !trace ||
+      !cflow_graph_is_normalized(normalized_input))
     return aot_fail(error, "AOT certificate requires a normalized source Graph");
   if (!cflow_aot_pipeline_ir_match_graph(
-          ir, normalized_source, &source_witness, error))
+          ir, normalized_input, &source_witness, error))
     return false;
-  if (!cflow_opt_trace_bound_to(trace, normalized_source, optimized))
+  if (!cflow_opt_trace_bound_to(trace, normalized_input, optimized))
     return aot_fail(error, "AOT optimizer trace Graph binding is stale or different");
-  if (!aot_collect_source_coordinates(ir, normalized_source, coordinates))
+  if (!aot_collect_source_coordinates(ir, normalized_input, coordinates))
     return aot_fail(error, "AOT certificate could not index source stages");
 
   rewrite_count = cflow_opt_trace_count(trace);
@@ -308,7 +308,7 @@ bool cflow_aot_pipeline_ir_match_optimized_graph(
 
     if (!cflow_opt_trace_event_at(trace, index, &event) ||
         event.rule != CFLOW_OPT_RULE_IDEMPOTENT_MAP_ELIMINATION ||
-        event.source_subgraph != normalized_source->root ||
+        event.input_subgraph != normalized_input->root ||
         !aot_find_coordinate(coordinates, ir->stage_count,
                              event.retained_node,
                              event.retained_callable_index,
@@ -353,8 +353,8 @@ bool cflow_aot_pipeline_ir_match_optimized_graph(
     return false;
 
   if (witness) {
-    witness->source_graph_version = source_witness.source_graph_version;
-    witness->optimized_graph_version = optimized_witness.source_graph_version;
+    witness->input_graph_version = source_witness.input_graph_version;
+    witness->optimized_graph_version = optimized_witness.input_graph_version;
     witness->matched_stage_count = ir->stage_count;
     witness->applied_rewrite_count = rewrite_count;
   }

@@ -2,7 +2,7 @@
 #define CFLOW_MACHINE_HIERARCHY_H
 
 #include <cflow/clock.h>
-#include <cflow/machine_runtime.h>
+#include <cflow/machine_instance.h>
 #include <cflow/timer_event.h>
 
 #include <stdbool.h>
@@ -139,7 +139,7 @@ typedef struct cflow_machine_hierarchy_instance_config {
 
 typedef struct cflow_machine_hierarchy_instance_init_result {
     cflow_machine_hierarchy_instance_status status;
-    cflow_machine_runtime_status machine_status;
+    cflow_machine_instance_status machine_status;
     cflow_timer_event_status timer_status;
 } cflow_machine_hierarchy_instance_init_result;
 
@@ -153,7 +153,7 @@ typedef struct cflow_machine_hierarchy_instance {
 } cflow_machine_hierarchy_instance;
 
 /**
- * Initialize one hierarchy runtime transactionally.
+ * Initialize one hierarchy instance transactionally.
  *
  * The instance owns one flat Machine instance, bounded Mailbox, and bounded
  * Timer Event queue. It borrows every object referenced by `config` until
@@ -175,10 +175,10 @@ bool cflow_machine_hierarchy_instance_as_resumable(
     cflow_machine_hierarchy_instance *instance,
     cflow_resumable *out);
 
-/** Attach the single allowed Source adapter to the inner Machine. */
-bool cflow_machine_hierarchy_instance_as_source(
+/** Attach the single allowed Publisher adapter to the inner Machine. */
+bool cflow_machine_hierarchy_instance_as_publisher(
     cflow_machine_hierarchy_instance *instance,
-    cflow_source *out);
+    cflow_publisher *out);
 
 /**
  * Schedule one copied Event in an active state scope at an absolute deadline.
@@ -239,7 +239,7 @@ const char *cflow_machine_hierarchy_instance_error(
     const cflow_machine_hierarchy_instance *instance);
 
 /**
- * Close and destroy a quiescent instance. Attached Source/Resumable adapters
+ * Close and destroy a quiescent instance. Attached Publisher/Resumable adapters
  * and all concurrent callers must already be released/quiescent. The borrowed
  * executor remains operational while destroy waits for any committed hook.
  */

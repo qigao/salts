@@ -72,9 +72,9 @@ cmake_add_test(cflow_backend_test
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
-cmake_add_test(cflow_runtime_test
+cmake_add_test(cflow_reactive_test
   SOURCES
-    cflow_runtime_test.c
+    cflow_reactive_test.c
     ${CFLOW_TEST_SUPPORT}
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
@@ -113,14 +113,14 @@ cmake_add_test(cflow_statechart_test
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
-cmake_add_test(cflow_statechart_runtime_test
-  SOURCES cflow_statechart_runtime_test.c
+cmake_add_test(cflow_statechart_instance_test
+  SOURCES cflow_statechart_instance_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
-cmake_add_test(cflow_statechart_runtime_adapter_test
-  SOURCES cflow_statechart_runtime_adapter_test.c
+cmake_add_test(cflow_statechart_instance_adapter_test
+  SOURCES cflow_statechart_instance_adapter_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
@@ -129,8 +129,8 @@ cmake_add_test(cflow_statechart_hierarchy_adapter_test
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
-cmake_add_test(cflow_machine_runtime_test
-  SOURCES cflow_machine_runtime_test.c
+cmake_add_test(cflow_machine_instance_test
+  SOURCES cflow_machine_instance_test.c
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
@@ -154,8 +154,8 @@ cmake_add_test(cflow_io_native_adapter_test
   LIBS TurboUtils::CFlow TurboUtils::NativeIO TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
-cmake_add_test(cflow_io_source_test
-  SOURCES cflow_io_source_test.c cflow_io_source_init_failure_test.c
+cmake_add_test(cflow_io_publisher_test
+  SOURCES cflow_io_publisher_test.c cflow_io_publisher_init_failure_test.c
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
@@ -248,21 +248,21 @@ set_target_properties(
   cflow_stream_terminal_test
   cflow_status_test
   cflow_backend_test
-  cflow_runtime_test
+  cflow_reactive_test
   cflow_readiness_test
   cflow_event_mailbox_test
   cflow_machine_test
   cflow_machine_hierarchy_test
   cflow_statechart_test
-  cflow_statechart_runtime_test
-  cflow_statechart_runtime_adapter_test
+  cflow_statechart_instance_test
+  cflow_statechart_instance_adapter_test
   cflow_statechart_hierarchy_adapter_test
-  cflow_machine_runtime_test
+  cflow_machine_instance_test
   cflow_actor_test
   cflow_statechart_actor_test
   cflow_io_actor_test
   cflow_io_native_adapter_test
-  cflow_io_source_test
+  cflow_io_publisher_test
   cflow_io_native_test
   cflow_io_file_test
   cflow_io_pipe_test

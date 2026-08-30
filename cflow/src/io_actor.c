@@ -310,50 +310,72 @@ static void io_delivery_task(void *user) {
     }
 }
 
-static bool io_process_command(cflow_io_actor_impl *impl) {
+typedef enum cflow_io_step_kind {
+    CFLOW_IO_STEP_NONE = 0,
+    CFLOW_IO_STEP_INTERNAL,
+    CFLOW_IO_STEP_CANCEL,
+    CFLOW_IO_STEP_SUBMIT,
+    CFLOW_IO_STEP_DISPATCH
+} cflow_io_step_kind;
+
+typedef struct cflow_io_step_plan {
+    cflow_io_step_kind kind;
+    cflow_io_request_slot *slot;
+    cflow_io_request_id request_id;
+    cflow_io_lease_id lease_id;
+    void *operation_user;
+} cflow_io_step_plan;
+
+static bool io_process_command_locked(cflow_io_actor_impl *impl) {
     cflow_io_command command;
     cflow_io_request_slot *slot;
 
-    turbo_mutex_lock(&impl->gate);
-    if (!io_take_command_locked(impl, &command)) {
-        turbo_mutex_unlock(&impl->gate);
+    if (!io_take_command_locked(impl, &command))
         return false;
-    }
     slot = io_find_request_locked(impl, command.request_id);
-    if (slot != NULL) {
-        if (command.kind == CFLOW_IO_COMMAND_SUBMIT &&
-            slot->phase == CFLOW_IO_REQUEST_ADMITTED) {
-            if (impl->lifecycle == CFLOW_IO_CLOSING) {
-                slot->completion = (cflow_io_completion){
-                    CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
-                slot->phase = CFLOW_IO_REQUEST_COMPLETED;
-            } else {
-                slot->phase = CFLOW_IO_REQUEST_READY;
-            }
-        } else if (command.kind == CFLOW_IO_COMMAND_CANCEL) {
-            if (slot->phase == CFLOW_IO_REQUEST_ADMITTED ||
-                slot->phase == CFLOW_IO_REQUEST_READY) {
-                slot->completion = (cflow_io_completion){
-                    CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
-                slot->phase = CFLOW_IO_REQUEST_COMPLETED;
-            } else if (slot->phase == CFLOW_IO_REQUEST_BACKEND_PENDING) {
-                slot->cancel_requested = true;
-            }
+    if (slot == NULL)
+        return true;
+    if (command.kind == CFLOW_IO_COMMAND_SUBMIT &&
+        slot->phase == CFLOW_IO_REQUEST_ADMITTED) {
+        if (impl->lifecycle == CFLOW_IO_CLOSING) {
+            slot->completion = (cflow_io_completion){
+                CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+            slot->phase = CFLOW_IO_REQUEST_COMPLETED;
+        } else {
+            slot->phase = CFLOW_IO_REQUEST_READY;
+        }
+    } else if (command.kind == CFLOW_IO_COMMAND_CANCEL) {
+        if (slot->phase == CFLOW_IO_REQUEST_ADMITTED ||
+            slot->phase == CFLOW_IO_REQUEST_READY) {
+            slot->completion = (cflow_io_completion){
+                CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+            slot->phase = CFLOW_IO_REQUEST_COMPLETED;
+        } else if (slot->phase == CFLOW_IO_REQUEST_BACKEND_PENDING) {
+            slot->cancel_requested = true;
         }
     }
-    turbo_mutex_unlock(&impl->gate);
     return true;
 }
 
-static bool io_begin_backend(cflow_io_actor_impl *impl) {
+static cflow_io_step_plan io_plan_step_locked(cflow_io_actor_impl *impl) {
+    cflow_io_step_plan plan = {0};
     cflow_io_request_slot *slot = NULL;
-    cflow_io_request_id request_id = 0u;
-    cflow_io_lease_id lease_id = 0u;
-    void *operation_user = NULL;
     size_t index;
-    int status;
 
-    turbo_mutex_lock(&impl->gate);
+    if (io_process_command_locked(impl)) {
+        plan.kind = CFLOW_IO_STEP_INTERNAL;
+        return plan;
+    }
+    for (index = 0u; index < impl->request_capacity; ++index) {
+        cflow_io_request_slot *candidate = &impl->requests[index];
+        if (candidate->phase == CFLOW_IO_REQUEST_BACKEND_PENDING &&
+            candidate->cancel_requested && !candidate->cancel_dispatched) {
+            candidate->cancel_dispatched = true;
+            plan.kind = CFLOW_IO_STEP_CANCEL;
+            plan.request_id = candidate->request_id;
+            return plan;
+        }
+    }
     for (index = 0u; index < impl->request_capacity; ++index) {
         cflow_io_request_slot *candidate = &impl->requests[index];
         if (candidate->phase == CFLOW_IO_REQUEST_READY &&
@@ -361,31 +383,56 @@ static bool io_begin_backend(cflow_io_actor_impl *impl) {
             slot = candidate;
     }
     if (slot != NULL) {
+        plan.kind = CFLOW_IO_STEP_INTERNAL;
         if (impl->lifecycle == CFLOW_IO_CLOSING) {
             slot->completion = (cflow_io_completion){
                 CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
             slot->phase = CFLOW_IO_REQUEST_COMPLETED;
         } else {
             slot->phase = CFLOW_IO_REQUEST_BACKEND_PENDING;
-            request_id = slot->request_id;
-            lease_id = slot->lease_id;
-            operation_user = slot->operation.user;
+            plan.kind = CFLOW_IO_STEP_SUBMIT;
+            plan.slot = slot;
+            plan.request_id = slot->request_id;
+            plan.lease_id = slot->lease_id;
+            plan.operation_user = slot->operation.user;
+        }
+        return plan;
+    }
+    for (index = 0u; index < impl->request_capacity; ++index) {
+        if (impl->requests[index].phase == CFLOW_IO_REQUEST_COMPLETED) {
+            plan.kind = CFLOW_IO_STEP_DISPATCH;
+            plan.slot = &impl->requests[index];
+            plan.slot->phase = CFLOW_IO_REQUEST_DISPATCH_QUEUED;
+            return plan;
         }
     }
-    turbo_mutex_unlock(&impl->gate);
-    if (slot == NULL)
-        return false;
-    if (request_id == 0u)
-        return true;
+    return plan;
+}
 
-    status = impl->backend.submit(
-        impl->backend_user, &impl->backend_actor, request_id,
-        lease_id, operation_user);
+static bool io_execute_cancel(cflow_io_actor_impl *impl,
+                              const cflow_io_step_plan *plan) {
+    int status = impl->backend.cancel != NULL
+        ? impl->backend.cancel(impl->backend_user, plan->request_id)
+        : TURBO_OK;
+    if (status != TURBO_OK) {
+        turbo_mutex_lock(&impl->gate);
+        io_counter_increment(&impl->backend_cancel_errors);
+        turbo_mutex_unlock(&impl->gate);
+    }
+    return true;
+}
+
+static bool io_execute_submit(cflow_io_actor_impl *impl,
+                              const cflow_io_step_plan *plan) {
+    int status = impl->backend.submit(
+        impl->backend_user, &impl->backend_actor, plan->request_id,
+        plan->lease_id, plan->operation_user);
     if (status != TURBO_OK) {
         bool completed_failure = false;
+        cflow_io_request_slot *slot;
         turbo_mutex_lock(&impl->gate);
         io_counter_increment(&impl->backend_submit_errors);
-        slot = io_find_request_locked(impl, request_id);
+        slot = io_find_request_locked(impl, plan->request_id);
         if (slot != NULL &&
             slot->phase == CFLOW_IO_REQUEST_BACKEND_PENDING) {
             slot->completion = (cflow_io_completion){
@@ -400,59 +447,16 @@ static bool io_begin_backend(cflow_io_actor_impl *impl) {
     return true;
 }
 
-static bool io_issue_cancel(cflow_io_actor_impl *impl) {
-    cflow_io_request_id request_id = 0u;
-    size_t index;
-    int status = TURBO_OK;
-
-    turbo_mutex_lock(&impl->gate);
-    for (index = 0u; index < impl->request_capacity; ++index) {
-        cflow_io_request_slot *slot = &impl->requests[index];
-        if (slot->phase == CFLOW_IO_REQUEST_BACKEND_PENDING &&
-            slot->cancel_requested && !slot->cancel_dispatched) {
-            slot->cancel_dispatched = true;
-            request_id = slot->request_id;
-            break;
-        }
-    }
-    turbo_mutex_unlock(&impl->gate);
-    if (request_id == 0u)
-        return false;
-    if (impl->backend.cancel != NULL)
-        status = impl->backend.cancel(impl->backend_user, request_id);
-    if (status != TURBO_OK) {
-        turbo_mutex_lock(&impl->gate);
-        io_counter_increment(&impl->backend_cancel_errors);
-        turbo_mutex_unlock(&impl->gate);
-    }
-    return true;
-}
-
-static bool io_dispatch_completion(cflow_io_actor_impl *impl) {
-    cflow_io_request_slot *slot = NULL;
-    cflow_admission_status admitted;
-    size_t index;
-
-    turbo_mutex_lock(&impl->gate);
-    for (index = 0u; index < impl->request_capacity; ++index) {
-        if (impl->requests[index].phase == CFLOW_IO_REQUEST_COMPLETED) {
-            slot = &impl->requests[index];
-            slot->phase = CFLOW_IO_REQUEST_DISPATCH_QUEUED;
-            break;
-        }
-    }
-    turbo_mutex_unlock(&impl->gate);
-    if (slot == NULL)
-        return false;
-
-    admitted = cflow_executor_try_post(
-        impl->executor, io_delivery_task, slot);
+static bool io_execute_dispatch(cflow_io_actor_impl *impl,
+                                const cflow_io_step_plan *plan) {
+    const cflow_admission_status admitted = cflow_executor_try_post(
+        impl->executor, io_delivery_task, plan->slot);
     if (admitted == CFLOW_ADMISSION_ACCEPTED)
         return true;
 
     turbo_mutex_lock(&impl->gate);
-    if (slot->phase == CFLOW_IO_REQUEST_DISPATCH_QUEUED)
-        slot->phase = CFLOW_IO_REQUEST_COMPLETED;
+    if (plan->slot->phase == CFLOW_IO_REQUEST_DISPATCH_QUEUED)
+        plan->slot->phase = CFLOW_IO_REQUEST_COMPLETED;
     if (admitted == CFLOW_ADMISSION_FULL)
         io_counter_increment(&impl->executor_rejected_full);
     else if (admitted == CFLOW_ADMISSION_CLOSED)
@@ -464,13 +468,24 @@ static bool io_dispatch_completion(cflow_io_actor_impl *impl) {
 }
 
 static bool io_run_step(cflow_io_actor_impl *impl) {
-    if (io_process_command(impl))
-        return true;
-    if (io_issue_cancel(impl))
-        return true;
-    if (io_begin_backend(impl))
-        return true;
-    return io_dispatch_completion(impl);
+    cflow_io_step_plan plan;
+
+    turbo_mutex_lock(&impl->gate);
+    plan = io_plan_step_locked(impl);
+    turbo_mutex_unlock(&impl->gate);
+    switch (plan.kind) {
+        case CFLOW_IO_STEP_INTERNAL:
+            return true;
+        case CFLOW_IO_STEP_CANCEL:
+            return io_execute_cancel(impl, &plan);
+        case CFLOW_IO_STEP_SUBMIT:
+            return io_execute_submit(impl, &plan);
+        case CFLOW_IO_STEP_DISPATCH:
+            return io_execute_dispatch(impl, &plan);
+        case CFLOW_IO_STEP_NONE:
+        default:
+            return false;
+    }
 }
 
 static bool io_driver_enter(cflow_io_actor_impl *impl) {

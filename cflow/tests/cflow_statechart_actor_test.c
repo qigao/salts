@@ -161,7 +161,7 @@ static bool statechart_actor_fixture_init(
         .microstep_limit = 16u,
         .executor = &fixture->executor};
     config.scheduler = &fixture->scheduler;
-    config.callbacks = (cflow_sink_callbacks){
+    config.callbacks = (cflow_subscriber_callbacks){
         statechart_actor_on_value,
         statechart_actor_on_error,
         statechart_actor_on_done,
@@ -190,17 +190,17 @@ spec("CFlow Statechart Actor facade") {
             cflow_statechart_actor_init(NULL, &config);
 
         check_equal(result.status, CFLOW_ACTOR_INVALID_ARGUMENT);
-        check_equal(result.statechart_status, CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(result.statechart_status, CFLOW_STATECHART_INSTANCE_OK);
         result = cflow_statechart_actor_init(&actor, NULL);
         check_equal(result.status, CFLOW_ACTOR_INVALID_ARGUMENT);
-        check_equal(result.statechart_status, CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(result.statechart_status, CFLOW_STATECHART_INSTANCE_OK);
 
         check_true(cflow_scheduler_worker_init(&scheduler, 1u));
         config.scheduler = &scheduler;
         result = cflow_statechart_actor_init(&actor, &config);
         check_equal(result.status, CFLOW_ACTOR_STATECHART_REJECTED);
         check_equal(result.statechart_status,
-                    CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         check_null(actor.impl);
         cflow_scheduler_destroy(&scheduler);
 
@@ -222,7 +222,7 @@ spec("CFlow Statechart Actor facade") {
         config.scheduler = &fixture.scheduler;
         result = cflow_statechart_actor_init(&fixture.actor, &config);
         check_equal(result.status, CFLOW_ACTOR_INVALID_SCHEDULER);
-        check_equal(result.statechart_status, CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(result.statechart_status, CFLOW_STATECHART_INSTANCE_OK);
         check_null(fixture.actor.impl);
         statechart_actor_fixture_destroy(&fixture);
     }
@@ -394,7 +394,7 @@ spec("CFlow Statechart Actor facade") {
             &fixture.actor, &stats));
         check_true(stats.statechart.errored);
         check_equal(stats.statechart.last_status,
-                    CFLOW_STATECHART_RUNTIME_EXECUTOR_CLOSED);
+                    CFLOW_STATECHART_INSTANCE_EXECUTOR_CLOSED);
         check_equal(cflow_actor_error(&fixture.actor), first_error);
 
         cflow_actor_ref_release(&ref);

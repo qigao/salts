@@ -23,10 +23,10 @@ static bool validate_callable(cflow_stream *s, cmeta_callable fn, cmeta_callable
     if (!validate_callable((s), (wrapper).fn, &(out))) return (s); \
 } while (0)
 
-cflow_stream *cflow_stream_init(cflow_stream *s, const cmeta_type_desc *source_type) {
-    if (!s || !source_type) return NULL;
+cflow_stream *cflow_stream_init(cflow_stream *s, const cmeta_type_desc *input_type) {
+    if (!s || !input_type) return NULL;
     memset(s, 0, sizeof(*s));
-    cflow_graph_init(&s->graph, source_type);
+    cflow_graph_init(&s->graph, input_type);
     if (s->graph.error) return NULL;
 #define CFLOW_OP_ROW(E, method, margc, fnarg, subgrapharg, farity, p0, p1, p2, ret, out, card, subgraphrule, semantic, intrinsic_effects) \
     s->method = cflow_stream_##method;
@@ -47,8 +47,8 @@ cflow_stream *cflow_stream_from_range_with_options(
     cflow_stream *s, cmeta_range range, const cflow_eval_options *options) {
     if (!range.object || !range.element_type || !range.next) return NULL;
     if (!cflow_stream_init(s, range.element_type)) return NULL;
-    s->source_range = range;
-    s->has_source_range = true;
+    s->input_range = range;
+    s->has_input_range = true;
     if (options) s->eval_options = *options;
     return s;
 }

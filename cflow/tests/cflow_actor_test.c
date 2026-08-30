@@ -339,7 +339,7 @@ static bool actor_edge_fixture_init_with_scheduler_capacity(
         mailbox_capacity,
         &fixture->executor};
     config.scheduler = &fixture->scheduler;
-    config.callbacks = (cflow_sink_callbacks){
+    config.callbacks = (cflow_subscriber_callbacks){
         actor_edge_on_value,
         actor_edge_on_error,
         actor_edge_on_done,
@@ -532,7 +532,7 @@ static bool actor_fixture_init_with_target_kind(
         1u,
         &fixture->executor};
     config.scheduler = &fixture->scheduler;
-    config.callbacks = (cflow_sink_callbacks){
+    config.callbacks = (cflow_subscriber_callbacks){
         actor_on_value, actor_on_error, actor_on_done, &fixture->probe};
     return cflow_actor_init(&fixture->actor, &config).status == CFLOW_ACTOR_OK;
 }
@@ -558,10 +558,10 @@ suite("CFlow Actor lifecycle") {
         cflow_actor_init_result result = cflow_actor_init(NULL, &config);
 
         check_equal(result.status, CFLOW_ACTOR_INVALID_ARGUMENT);
-        check_equal(result.machine_status, CFLOW_MACHINE_RUNTIME_OK);
+        check_equal(result.machine_status, CFLOW_MACHINE_INSTANCE_OK);
         result = cflow_actor_init(&actor, NULL);
         check_equal(result.status, CFLOW_ACTOR_INVALID_ARGUMENT);
-        check_equal(result.machine_status, CFLOW_MACHINE_RUNTIME_OK);
+        check_equal(result.machine_status, CFLOW_MACHINE_INSTANCE_OK);
 
         cflow_scheduler scheduler = {0};
         check_true(cflow_scheduler_worker_init(&scheduler, 1u));
@@ -569,7 +569,7 @@ suite("CFlow Actor lifecycle") {
         result = cflow_actor_init(&actor, &config);
         check_equal(result.status, CFLOW_ACTOR_MACHINE_REJECTED);
         check_equal(result.machine_status,
-                    CFLOW_MACHINE_RUNTIME_INVALID_ARGUMENT);
+                    CFLOW_MACHINE_INSTANCE_INVALID_ARGUMENT);
         check_null(actor.impl);
         cflow_scheduler_destroy(&scheduler);
     }
@@ -596,7 +596,7 @@ suite("CFlow Actor lifecycle") {
         config.scheduler = &manual;
         result = cflow_actor_init(&fixture.actor, &config);
         check_equal(result.status, CFLOW_ACTOR_INVALID_SCHEDULER);
-        check_equal(result.machine_status, CFLOW_MACHINE_RUNTIME_OK);
+        check_equal(result.machine_status, CFLOW_MACHINE_INSTANCE_OK);
         check_null(fixture.actor.impl);
 
         cflow_scheduler_destroy(&manual);

@@ -71,12 +71,12 @@ Replay(CFlowOperators, CFLOW_OP_ROW)
 #undef CMETA_STR_I
 
 const cflow_op_schema *cflow_op_schema_get(cflow_op op) {
-    if (op == CFLOW_OP_SOURCE || op == CFLOW_OP_RELATION || op >= CFLOW_OP_COUNT) return NULL;
+    if (op == CFLOW_OP_INPUT || op == CFLOW_OP_RELATION || op >= CFLOW_OP_COUNT) return NULL;
     return &schemas[op];
 }
 
 const char *cflow_op_name(cflow_op op) {
-    if (op == CFLOW_OP_SOURCE) return "source";
+    if (op == CFLOW_OP_INPUT) return "input";
     if (op == CFLOW_OP_RELATION) return "relation";
     const cflow_op_schema *s = cflow_op_schema_get(op);
     return s ? s->method : "?";
@@ -96,7 +96,7 @@ bool cflow_op_signature_allowed(cflow_op op, cmeta_sig sig) {
             }
 Replay(CFlowOperators, CFLOW_OP_ROW)
 #undef CFLOW_OP_ROW
-        case CFLOW_OP_SOURCE:
+        case CFLOW_OP_INPUT:
         case CFLOW_OP_RELATION:
         case CFLOW_OP_TAKE:
         case CFLOW_OP_SKIP:
@@ -175,16 +175,16 @@ static void truncate_subgraphs(cflow_graph *g, size_t keep) {
 }
 
 static cflow_subgraph_id graph_create_subgraph(cflow_graph *g,
-                                                const cmeta_type_desc *source_type) {
-    if (!g || !source_type || g->subgraph_count >= CMETA_INVALID_ID) return CMETA_INVALID_ID;
+                                                const cmeta_type_desc *input_type) {
+    if (!g || !input_type || g->subgraph_count >= CMETA_INVALID_ID) return CMETA_INVALID_ID;
     if (!reserve_subgraphs(g, g->subgraph_count + 1u)) return CMETA_INVALID_ID;
     cflow_subgraph_id id = (cflow_subgraph_id)g->subgraph_count++;
     cflow_subgraph *sg = &g->subgraphs[id];
     memset(sg, 0, sizeof(*sg));
     sg->entry = CMETA_INVALID_ID;
     sg->tail = CMETA_INVALID_ID;
-    sg->input_type = source_type;
-    sg->output_type = source_type;
+    sg->input_type = input_type;
+    sg->output_type = input_type;
     return id;
 }
 
@@ -358,11 +358,11 @@ void cflow_graph_init(cflow_graph *g, const cmeta_type_desc *source) {
     }
     cflow_subgraph_id root = graph_create_subgraph(g, source);
     if (root == CMETA_INVALID_ID) { g->error = "graph allocation failed"; return; }
-    cflow_node source_node = {0};
-    source_node.op = CFLOW_OP_SOURCE;
-    source_node.input_type = source;
-    source_node.output_type = source;
-    if (subgraph_append_node(&g->subgraphs[root], source_node) == CMETA_INVALID_ID) {
+    cflow_node input_node = {0};
+    input_node.op = CFLOW_OP_INPUT;
+    input_node.input_type = source;
+    input_node.output_type = source;
+    if (subgraph_append_node(&g->subgraphs[root], input_node) == CMETA_INVALID_ID) {
         cflow_graph_destroy(g);
         g->error = "source node allocation failed";
         return;
@@ -371,7 +371,7 @@ void cflow_graph_init(cflow_graph *g, const cmeta_type_desc *source) {
     g->version = version;
 }
 
-const cmeta_type_desc *cflow_subgraph_source_type(const cflow_graph *g, cflow_subgraph_id id) {
+const cmeta_type_desc *cflow_subgraph_input_type(const cflow_graph *g, cflow_subgraph_id id) {
     const cflow_subgraph *sg = cflow_graph_subgraph(g, id);
     return sg ? sg->input_type : NULL;
 }
@@ -386,7 +386,7 @@ bool cflow_subgraph_is_one_to_one(const cflow_graph *g, cflow_subgraph_id id) {
     if (!sg || !sg->node_count) return false;
     for (size_t i = 0; i < sg->node_count; ++i) {
         const cflow_node *node = &sg->nodes[i];
-        if (node->op == CFLOW_OP_SOURCE) continue;
+        if (node->op == CFLOW_OP_INPUT) continue;
         if (node->op == CFLOW_OP_RELATION) {
             if (!node->has_relation) return false;
             if (node->relation.completion == CFLOW_REL_COMPLETE_FIRST_RESULT) continue;
@@ -401,8 +401,8 @@ bool cflow_subgraph_is_one_to_one(const cflow_graph *g, cflow_subgraph_id id) {
     return true;
 }
 
-const cmeta_type_desc *cflow_graph_source_type(const cflow_graph *g) {
-    return g ? cflow_subgraph_source_type(g, g->root) : NULL;
+const cmeta_type_desc *cflow_graph_input_type(const cflow_graph *g) {
+    return g ? cflow_subgraph_input_type(g, g->root) : NULL;
 }
 
 const cmeta_type_desc *cflow_graph_output_type(const cflow_graph *g) {
@@ -456,20 +456,20 @@ static bool check_return_rule(cflow_graph *g,
 static bool relation_schema_valid(cflow_graph *g, cflow_relation_schema schema);
 
 cflow_subgraph_id cflow_graph_create_subgraph(cflow_graph *g,
-                                               const cmeta_type_desc *source_type) {
+                                               const cmeta_type_desc *input_type) {
     uint64_t version;
-    if (!g || !source_type) return CMETA_INVALID_ID;
+    if (!g || !input_type) return CMETA_INVALID_ID;
     if (!cflow_graph_version_acquire(&version)) {
         g->error = "graph version space exhausted";
         return CMETA_INVALID_ID;
     }
-    cflow_subgraph_id id = graph_create_subgraph(g, source_type);
+    cflow_subgraph_id id = graph_create_subgraph(g, input_type);
     if (id == CMETA_INVALID_ID) { g->error = "subgraph allocation failed"; return id; }
-    cflow_node source_node = {0};
-    source_node.op = CFLOW_OP_SOURCE;
-    source_node.input_type = source_type;
-    source_node.output_type = source_type;
-    if (subgraph_append_node(&g->subgraphs[id], source_node) == CMETA_INVALID_ID) {
+    cflow_node input_node = {0};
+    input_node.op = CFLOW_OP_INPUT;
+    input_node.input_type = input_type;
+    input_node.output_type = input_type;
+    if (subgraph_append_node(&g->subgraphs[id], input_node) == CMETA_INVALID_ID) {
         subgraph_destroy(&g->subgraphs[id]);
         --g->subgraph_count;
         g->error = "subgraph source allocation failed";
@@ -706,7 +706,7 @@ bool cflow_graph_create_relation_node(cflow_graph *g,
     const cmeta_type_desc *homogeneous = NULL;
     for (size_t i = 0; i < branch_count; ++i) {
         if (branches[i] >= g->subgraph_count ||
-            !cmeta_type_equal(cflow_subgraph_source_type(g, branches[i]), input_type))
+            !cmeta_type_equal(cflow_subgraph_input_type(g, branches[i]), input_type))
             return fail(g, "relation branch source type mismatch");
         const cmeta_type_desc *bout = cflow_subgraph_output_type(g, branches[i]);
         if (schema.result == CFLOW_REL_RESULT_INVOKE) {
@@ -821,7 +821,7 @@ bool cflow_graph_add(cflow_graph *g, cflow_op op,
         case CFLOW_SUBGRAPH_1TO1:
             if (!nested_graph || nested_graph->root >= nested_graph->subgraph_count)
                 return fail(g, "operator requires a subgraph branch");
-            if (!cmeta_type_equal(root->input_type, cflow_graph_source_type(nested_graph)))
+            if (!cmeta_type_equal(root->input_type, cflow_graph_input_type(nested_graph)))
                 return fail(g, "subgraph branch must have the same source type");
             if (!cflow_subgraph_is_one_to_one(g, g->root) || !cflow_graph_is_one_to_one(nested_graph))
                 return fail(g, "operator requires 1:1 branches");
@@ -1101,7 +1101,7 @@ static bool build_relation(cflow_graph *g,
     for (size_t i = 0; i < branch_count; ++i) {
         const cflow_graph *b = branches[i];
         if (!b || b->root >= b->subgraph_count ||
-            !cmeta_type_equal(cflow_graph_source_type(b), relation_input)) {
+            !cmeta_type_equal(cflow_graph_input_type(b), relation_input)) {
             truncate_subgraphs(g, subgraph_mark);
             free(ids);
             return fail(g, "relation branch source type mismatch");
@@ -1281,7 +1281,7 @@ static bool validate_subgraph_nodes(const cflow_graph *g,
             for (size_t k = 0; k < node->subgraph_count; ++k) {
                 cflow_subgraph_id bid = node->subgraphs[k];
                 if (bid >= g->subgraph_count ||
-                    !cmeta_type_equal(cflow_subgraph_source_type(g, bid), node->input_type)) {
+                    !cmeta_type_equal(cflow_subgraph_input_type(g, bid), node->input_type)) {
                     if (error) *error = "RELATION branch source contract is inconsistent";
                     return false;
                 }
@@ -1365,7 +1365,7 @@ static bool validate_subgraph(const cflow_graph *g, cflow_subgraph_id sgid, cons
         if (error) *error = "subgraph entry/tail is invalid";
         return false;
     }
-    if (sg->nodes[sg->entry].op != CFLOW_OP_SOURCE) {
+    if (sg->nodes[sg->entry].op != CFLOW_OP_INPUT) {
         if (error) *error = "subgraph entry must be SOURCE";
         return false;
     }

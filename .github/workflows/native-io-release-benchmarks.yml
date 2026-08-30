@@ -212,7 +212,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO pipe benchmark
-        if: steps.scope.outputs.native == 'true' && matrix.family != 'windows'
+        if: steps.scope.outputs.native == 'true'
         shell: pwsh
         env:
           PIPE_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_pipe_benchmark
@@ -227,7 +227,7 @@ jobs:
           $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "pipe-benchmark.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "### Anonymous byte pipe"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "### Byte pipe"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 

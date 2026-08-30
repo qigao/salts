@@ -1,4 +1,4 @@
-#include "cflow_native_example_runtime.h"
+#include "cflow_native_example_context.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -141,7 +141,7 @@ static void cflow_socket_example_release(void *user) {
 
 int main(void) {
     static const unsigned char payload = 0x53u;
-    cflow_native_example_runtime runtime;
+    cflow_native_example_context context;
     cflow_example_socket sockets[2] = {
         CFLOW_EXAMPLE_INVALID_SOCKET, CFLOW_EXAMPLE_INVALID_SOCKET};
     cflow_socket_example_operation receive_operation = {0};
@@ -157,8 +157,8 @@ int main(void) {
     bool success = false;
     bool require_retained_identity;
 
-    status = cflow_native_example_runtime_init(
-        &runtime, cflow_socket_example_backend(),
+    status = cflow_native_example_context_init(
+        &context, cflow_socket_example_backend(),
         cflow_io_native_backend_actor_ops());
     if (status == TURBO_ENOTSUP) {
         fprintf(stderr,
@@ -169,7 +169,7 @@ int main(void) {
     if (status != TURBO_OK) {
         fprintf(stderr, "native socket example: backend init failed: %d\n",
                 status);
-        (void)cflow_native_example_destroy_runtime(&runtime);
+        (void)cflow_native_example_destroy_context(&context);
         return result;
     }
     status = cflow_socket_example_pair(sockets);
@@ -196,9 +196,9 @@ int main(void) {
     send_token = (cflow_io_operation){
         &send_operation, cflow_socket_example_release};
     receive_result = cflow_io_actor_try_submit(
-        &runtime.actor, 1u, &receive_token);
+        &context.actor, 1u, &receive_token);
     send_result = cflow_io_actor_try_submit(
-        &runtime.actor, 2u, &send_token);
+        &context.actor, 2u, &send_token);
     if (receive_result.status != CFLOW_IO_SUBMIT_ACCEPTED ||
         send_result.status != CFLOW_IO_SUBMIT_ACCEPTED) {
         fprintf(stderr,
@@ -208,26 +208,26 @@ int main(void) {
         goto cleanup;
     }
     status = cflow_native_example_drive_until(
-        &runtime, CFLOW_NATIVE_EXAMPLE_CAPACITY);
+        &context, CFLOW_NATIVE_EXAMPLE_CAPACITY);
     if (status != TURBO_OK) {
         fprintf(stderr, "native socket example: completion drain failed: %d\n",
                 status);
         goto cleanup;
     }
-    for (size_t index = 0u; index < runtime.log.count; ++index) {
-        if (runtime.log.completions[index].kind != CFLOW_IO_COMPLETION_OK ||
-            runtime.log.completions[index].bytes != sizeof(payload)) {
+    for (size_t index = 0u; index < context.log.count; ++index) {
+        if (context.log.completions[index].kind != CFLOW_IO_COMPLETION_OK ||
+            context.log.completions[index].bytes != sizeof(payload)) {
             fprintf(stderr,
                     "native socket example: unexpected completion kind=%d "
                     "bytes=%zu\n",
-                    (int)runtime.log.completions[index].kind,
-                    runtime.log.completions[index].bytes);
+                    (int)context.log.completions[index].kind,
+                    context.log.completions[index].bytes);
             goto cleanup;
         }
     }
     if (received != payload || receive_operation.released != 1u ||
         send_operation.released != 1u ||
-        !cflow_io_actor_get_stats(&runtime.actor, &actor_stats) ||
+        !cflow_io_actor_get_stats(&context.actor, &actor_stats) ||
         actor_stats.active_requests != 0u ||
         actor_stats.accepted != actor_stats.acknowledged) {
         fprintf(stderr,
@@ -245,7 +245,7 @@ int main(void) {
 cleanup:
     require_retained_identity = success;
     if (!success) {
-        status = cflow_native_example_close_actor(&runtime);
+        status = cflow_native_example_close_actor(&context);
         if (status != TURBO_OK)
             fprintf(stderr,
                     "native socket example: Actor cleanup failed: %d\n",
@@ -257,7 +257,7 @@ cleanup:
             cflow_socket_example_close(sockets[index]);
             sockets[index] = CFLOW_EXAMPLE_INVALID_SOCKET;
             status = cflow_io_native_backend_forget_socket(
-                &runtime.backend, identity);
+                &context.backend, identity);
             if (status != TURBO_OK &&
                 (require_retained_identity || status != TURBO_ENOENT)) {
                 fprintf(stderr,
@@ -267,15 +267,15 @@ cleanup:
             }
         }
     }
-    status = cflow_native_example_close_actor(&runtime);
+    status = cflow_native_example_close_actor(&context);
     if (status != TURBO_OK) {
         fprintf(stderr, "native socket example: Actor close failed: %d\n",
                 status);
         success = false;
     }
-    status = cflow_native_example_destroy_runtime(&runtime);
+    status = cflow_native_example_destroy_context(&context);
     if (status != TURBO_OK) {
-        fprintf(stderr, "native socket example: runtime destroy failed: %d\n",
+        fprintf(stderr, "native socket example: context destroy failed: %d\n",
                 status);
         success = false;
     }

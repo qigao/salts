@@ -1,5 +1,5 @@
 #include <cflow/clock.h>
-#include <cflow/machine_runtime.h>
+#include <cflow/machine_instance.h>
 #include <cflow/timer_event.h>
 #include <turbo/thread.h>
 
@@ -100,7 +100,7 @@ static bool timer_event_fixture_init(timer_event_fixture *fixture,
     const int initial_state = 7;
     cflow_machine_instance_config machine_config;
     cflow_timer_event_queue_config timer_config;
-    cflow_resume_ctx resume_context = {NULL};
+    cflow_publish_context resume_context = {NULL};
     cflow_step step;
     int output = 0;
 
@@ -116,7 +116,7 @@ static bool timer_event_fixture_init(timer_event_fixture *fixture,
         NULL, 0u, action_bindings, 2u, mailbox_capacity, &fixture->executor
     };
     if (cflow_machine_instance_init(&fixture->instance, &machine_config) !=
-        CFLOW_MACHINE_RUNTIME_OK)
+        CFLOW_MACHINE_INSTANCE_OK)
         return false;
     if (arm_runtime) {
         if (!cflow_machine_instance_as_resumable(

@@ -1,5 +1,12 @@
-#if defined(__linux__) && !defined(_POSIX_C_SOURCE)
+#if !defined(_WIN32) && defined(__linux__) && !defined(_POSIX_C_SOURCE)
   #define _POSIX_C_SOURCE 200809L
+#endif
+
+#if defined(_WIN32)
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <windows.h>
 #endif
 
 #include <turbo/clock.h>
@@ -9,23 +16,38 @@
 #include "tinytest.h"
 
 #include <errno.h>
-#include <fcntl.h>
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-#if defined(__linux__)
+#if !defined(_WIN32)
+  #include <fcntl.h>
+  #include <unistd.h>
+#endif
+
+#if defined(_WIN32)
+  #define NATIVE_PIPE_BACKEND_KIND TURBO_IO_BACKEND_IOCP
+  #define NATIVE_PIPE_BACKEND_NAME "IOCP"
+  #define NATIVE_PIPE_RAW_NAME "raw IOCP"
+typedef HANDLE native_pipe_handle;
+  #define NATIVE_PIPE_INVALID_HANDLE INVALID_HANDLE_VALUE
+#elif defined(__linux__)
   #define NATIVE_PIPE_BACKEND_KIND TURBO_IO_BACKEND_EPOLL
   #define NATIVE_PIPE_BACKEND_NAME "epoll"
+  #define NATIVE_PIPE_RAW_NAME "raw POSIX"
+typedef int native_pipe_handle;
+  #define NATIVE_PIPE_INVALID_HANDLE (-1)
 #elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
     defined(__DragonFly__)
   #define NATIVE_PIPE_BACKEND_KIND TURBO_IO_BACKEND_KQUEUE
   #define NATIVE_PIPE_BACKEND_NAME "kqueue"
+  #define NATIVE_PIPE_RAW_NAME "raw POSIX"
+typedef int native_pipe_handle;
+  #define NATIVE_PIPE_INVALID_HANDLE (-1)
 #else
-  #error "NativeIO pipe benchmark requires a supported POSIX readiness backend"
+  #error "NativeIO pipe benchmark requires IOCP, epoll, or kqueue"
 #endif
 
 typedef enum native_pipe_driver { NATIVE_PIPE_RAW = 0, NATIVE_PIPE_NATIVE_IO } native_pipe_driver;
@@ -38,6 +60,7 @@ enum {
   NATIVE_PIPE_ENDPOINT_CAPACITY = 2,
   NATIVE_PIPE_REQUEST_CAPACITY = 4,
   NATIVE_PIPE_BATCH_CAPACITY = 4,
+  NATIVE_PIPE_BUFFER_CAPACITY = 65536,
   NATIVE_PIPE_READ_USER_DATA = 1,
   NATIVE_PIPE_WRITE_USER_DATA = 2
 };
@@ -64,7 +87,10 @@ typedef struct native_pipe_result {
 
 typedef struct native_pipe_fixture {
   native_pipe_driver driver;
-  int descriptors[2];
+  native_pipe_handle handles[2];
+#if defined(_WIN32)
+  HANDLE port;
+#endif
   turbo_io_backend backend;
   turbo_io_endpoint endpoints[2];
   unsigned char *sent;
@@ -76,6 +102,72 @@ static void native_pipe_counter_add(uint64_t *counter, uint64_t value) {
   *counter = UINT64_MAX - *counter < value ? UINT64_MAX : *counter + value;
 }
 
+#if defined(_WIN32)
+static int native_pipe_windows_error(DWORD error) {
+  return error == ERROR_SUCCESS ? TURBO_EIO : -(int)error;
+}
+
+static void native_pipe_close_handle(native_pipe_handle handle) {
+  if (handle != NATIVE_PIPE_INVALID_HANDLE) (void)CloseHandle(handle);
+}
+
+static int native_pipe_make_pair(native_pipe_handle handles[2]) {
+  static LONG sequence = 0;
+  char name[128];
+  OVERLAPPED connected = {0};
+  HANDLE event = NULL;
+  DWORD error = ERROR_SUCCESS;
+  BOOL pending = FALSE;
+  int name_length;
+
+  handles[0] = NATIVE_PIPE_INVALID_HANDLE;
+  handles[1] = NATIVE_PIPE_INVALID_HANDLE;
+  name_length = snprintf(name, sizeof(name), "\\\\.\\pipe\\native-io-benchmark-%lu-%ld",
+                         GetCurrentProcessId(), InterlockedIncrement(&sequence));
+  if (name_length < 0 || (size_t)name_length >= sizeof(name)) return TURBO_ERANGE;
+  handles[1] = CreateNamedPipeA(name, PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
+                                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u,
+                                NATIVE_PIPE_BUFFER_CAPACITY, NATIVE_PIPE_BUFFER_CAPACITY, 0u, NULL);
+  if (handles[1] == NATIVE_PIPE_INVALID_HANDLE) return native_pipe_windows_error(GetLastError());
+  event = CreateEventA(NULL, TRUE, FALSE, NULL);
+  if (event == NULL) {
+    error = GetLastError();
+    goto failed;
+  }
+  connected.hEvent = event;
+  if (!ConnectNamedPipe(handles[1], &connected)) {
+    error = GetLastError();
+    if (error == ERROR_IO_PENDING) pending = TRUE;
+    else if (error != ERROR_PIPE_CONNECTED) goto failed;
+  }
+  handles[0] = CreateFileA(name, GENERIC_READ, 0u, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+  if (handles[0] == NATIVE_PIPE_INVALID_HANDLE) {
+    error = GetLastError();
+    goto failed;
+  }
+  if (pending) {
+    DWORD transferred = 0u;
+    if (!GetOverlappedResult(handles[1], &connected, &transferred, TRUE)) {
+      error = GetLastError();
+      goto failed;
+    }
+  }
+  (void)CloseHandle(event);
+  return TURBO_OK;
+
+failed:
+  native_pipe_close_handle(handles[0]);
+  native_pipe_close_handle(handles[1]);
+  if (event != NULL) (void)CloseHandle(event);
+  handles[0] = NATIVE_PIPE_INVALID_HANDLE;
+  handles[1] = NATIVE_PIPE_INVALID_HANDLE;
+  return native_pipe_windows_error(error);
+}
+#else
+static void native_pipe_close_handle(native_pipe_handle handle) {
+  if (handle >= 0) (void)close(handle);
+}
+
 static int native_pipe_set_nonblocking(int descriptor) {
   const int flags = fcntl(descriptor, F_GETFL, 0);
   if (flags < 0) return -errno;
@@ -83,21 +175,22 @@ static int native_pipe_set_nonblocking(int descriptor) {
   return fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 ? TURBO_OK : -errno;
 }
 
-static int native_pipe_make_pair(int descriptors[2]) {
+static int native_pipe_make_pair(native_pipe_handle handles[2]) {
   int status;
-  descriptors[0] = -1;
-  descriptors[1] = -1;
-  if (pipe(descriptors) != 0) return -errno;
-  status = native_pipe_set_nonblocking(descriptors[0]);
-  if (status == TURBO_OK) status = native_pipe_set_nonblocking(descriptors[1]);
+  handles[0] = NATIVE_PIPE_INVALID_HANDLE;
+  handles[1] = NATIVE_PIPE_INVALID_HANDLE;
+  if (pipe(handles) != 0) return -errno;
+  status = native_pipe_set_nonblocking(handles[0]);
+  if (status == TURBO_OK) status = native_pipe_set_nonblocking(handles[1]);
   if (status != TURBO_OK) {
-    (void)close(descriptors[0]);
-    (void)close(descriptors[1]);
-    descriptors[0] = -1;
-    descriptors[1] = -1;
+    native_pipe_close_handle(handles[0]);
+    native_pipe_close_handle(handles[1]);
+    handles[0] = NATIVE_PIPE_INVALID_HANDLE;
+    handles[1] = NATIVE_PIPE_INVALID_HANDLE;
   }
   return status;
 }
+#endif
 
 static int native_pipe_fixture_init(native_pipe_fixture *fixture, native_pipe_driver driver,
                                     size_t payload_size) {
@@ -106,37 +199,71 @@ static int native_pipe_fixture_init(native_pipe_fixture *fixture, native_pipe_dr
   int status;
   memset(fixture, 0, sizeof(*fixture));
   fixture->driver = driver;
-  fixture->descriptors[0] = -1;
-  fixture->descriptors[1] = -1;
+  fixture->handles[0] = NATIVE_PIPE_INVALID_HANDLE;
+  fixture->handles[1] = NATIVE_PIPE_INVALID_HANDLE;
+#if defined(_WIN32)
+  fixture->port = NULL;
+#endif
   fixture->payload_size = payload_size;
   fixture->sent = (unsigned char *)malloc(payload_size);
   fixture->received = (unsigned char *)malloc(payload_size);
   if (fixture->sent == NULL || fixture->received == NULL) return TURBO_ENOMEM;
   memset(fixture->sent, 0x5a, payload_size);
   memset(fixture->received, 0, payload_size);
-  status = native_pipe_make_pair(fixture->descriptors);
-  if (status != TURBO_OK || driver == NATIVE_PIPE_RAW) return status;
+  status = native_pipe_make_pair(fixture->handles);
+  if (status != TURBO_OK) return status;
+  if (driver == NATIVE_PIPE_RAW) {
+#if defined(_WIN32)
+    fixture->port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0u, 1u);
+    if (fixture->port == NULL) return native_pipe_windows_error(GetLastError());
+    for (size_t index = 0u; index < 2u; ++index) {
+      if (CreateIoCompletionPort(fixture->handles[index], fixture->port, (ULONG_PTR)(index + 1u),
+                                 0u) == NULL)
+        return native_pipe_windows_error(GetLastError());
+    }
+#endif
+    return TURBO_OK;
+  }
   if (!turbo_io_backend_pipe_supported(NATIVE_PIPE_BACKEND_KIND)) return TURBO_ENOTSUP;
   status = turbo_io_backend_init(&fixture->backend, &config);
   if (status == TURBO_OK)
     status =
-        turbo_io_backend_attach_pipe(&fixture->backend, (uintptr_t)fixture->descriptors[0],
+        turbo_io_backend_attach_pipe(&fixture->backend, (uintptr_t)fixture->handles[0],
                                      TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &fixture->endpoints[0]);
   if (status == TURBO_OK)
     status =
-        turbo_io_backend_attach_pipe(&fixture->backend, (uintptr_t)fixture->descriptors[1],
+        turbo_io_backend_attach_pipe(&fixture->backend, (uintptr_t)fixture->handles[1],
                                      TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &fixture->endpoints[1]);
   return status;
 }
 
 static int native_pipe_fixture_destroy(native_pipe_fixture *fixture) {
   int status = TURBO_OK;
+#if defined(_WIN32)
+  int backend_close_status = TURBO_OK;
+  if (fixture->driver == NATIVE_PIPE_NATIVE_IO && fixture->backend.impl != NULL) {
+    backend_close_status = turbo_io_backend_close(&fixture->backend);
+    if (backend_close_status != TURBO_OK) status = backend_close_status;
+  }
+#endif
   for (size_t index = 0u; index < 2u; ++index) {
-    if (fixture->descriptors[index] >= 0) {
-      if (close(fixture->descriptors[index]) != 0 && status == TURBO_OK) status = -errno;
-      fixture->descriptors[index] = -1;
+    if (fixture->handles[index] != NATIVE_PIPE_INVALID_HANDLE) {
+#if defined(_WIN32)
+      if (!CloseHandle(fixture->handles[index]) && status == TURBO_OK)
+        status = native_pipe_windows_error(GetLastError());
+#else
+      if (close(fixture->handles[index]) != 0 && status == TURBO_OK) status = -errno;
+#endif
+      fixture->handles[index] = NATIVE_PIPE_INVALID_HANDLE;
     }
   }
+#if defined(_WIN32)
+  if (fixture->port != NULL) {
+    if (!CloseHandle(fixture->port) && status == TURBO_OK)
+      status = native_pipe_windows_error(GetLastError());
+    fixture->port = NULL;
+  }
+#endif
   if (fixture->driver == NATIVE_PIPE_NATIVE_IO && fixture->backend.impl != NULL) {
     for (size_t index = 0u; index < 2u; ++index) {
       if (turbo_io_endpoint_valid(fixture->endpoints[index])) {
@@ -147,7 +274,11 @@ static int native_pipe_fixture_destroy(native_pipe_fixture *fixture) {
       }
     }
     {
+#if defined(_WIN32)
+      const int close_status = backend_close_status;
+#else
       const int close_status = turbo_io_backend_close(&fixture->backend);
+#endif
       const int destroy_status =
           close_status == TURBO_OK ? turbo_io_backend_destroy(&fixture->backend) : close_status;
       if (status == TURBO_OK && destroy_status != TURBO_OK) status = destroy_status;
@@ -160,6 +291,77 @@ static int native_pipe_fixture_destroy(native_pipe_fixture *fixture) {
   return status;
 }
 
+#if defined(_WIN32)
+typedef struct native_pipe_raw_request {
+  OVERLAPPED overlapped;
+} native_pipe_raw_request;
+
+static int native_pipe_raw_post(native_pipe_fixture *fixture, native_pipe_raw_request *request,
+                                bool read, void *buffer, size_t length,
+                                native_pipe_stages *stages) {
+  DWORD immediate_bytes = 0u;
+  BOOL submitted;
+  DWORD error;
+  uint64_t started;
+  if (length > (size_t)MAXDWORD) return TURBO_ERANGE;
+  memset(request, 0, sizeof(*request));
+  started = turbo_hrtime();
+  submitted = read ? ReadFile(fixture->handles[0], buffer, (DWORD)length, &immediate_bytes,
+                              &request->overlapped)
+                   : WriteFile(fixture->handles[1], buffer, (DWORD)length, &immediate_bytes,
+                               &request->overlapped);
+  native_pipe_counter_add(&stages->submit_ns, turbo_hrtime() - started);
+  ++stages->submits;
+  if (submitted) return TURBO_OK;
+  error = GetLastError();
+  return error == ERROR_IO_PENDING ? TURBO_OK : native_pipe_windows_error(error);
+}
+
+static int native_pipe_raw_transfer(native_pipe_fixture *fixture, native_pipe_stages *stages) {
+  native_pipe_raw_request requests[2];
+  size_t offsets[2] = {0u, 0u};
+  bool pending[2] = {false, false};
+  while (offsets[0] < fixture->payload_size || offsets[1] < fixture->payload_size) {
+    for (size_t role = 0u; role < 2u; ++role) {
+      int status;
+      if (pending[role] || offsets[role] >= fixture->payload_size) continue;
+      status =
+          native_pipe_raw_post(fixture, &requests[role], role == 0u,
+                               (role == 0u ? fixture->received : fixture->sent) + offsets[role],
+                               fixture->payload_size - offsets[role], stages);
+      if (status != TURBO_OK) return status;
+      pending[role] = true;
+    }
+    {
+      DWORD bytes = 0u;
+      ULONG_PTR completion_key = 0u;
+      OVERLAPPED *overlapped = NULL;
+      DWORD error;
+      const uint64_t started = turbo_hrtime();
+      const BOOL completed = GetQueuedCompletionStatus(fixture->port, &bytes, &completion_key,
+                                                       &overlapped, NATIVE_PIPE_TIMEOUT_MS);
+      native_pipe_counter_add(&stages->observe_ns, turbo_hrtime() - started);
+      ++stages->observes;
+      error = completed ? ERROR_SUCCESS : GetLastError();
+      (void)completion_key;
+      if (overlapped == NULL)
+        return error == WAIT_TIMEOUT ? TURBO_ETIMEDOUT : native_pipe_windows_error(error);
+      if (!completed) return native_pipe_windows_error(error);
+      for (size_t role = 0u; role < 2u; ++role) {
+        if (overlapped != &requests[role].overlapped) continue;
+        if (!pending[role] || bytes == 0u || (size_t)bytes > fixture->payload_size - offsets[role])
+          return TURBO_EPROTO;
+        offsets[role] += (size_t)bytes;
+        pending[role] = false;
+        overlapped = NULL;
+        break;
+      }
+      if (overlapped != NULL) return TURBO_EPROTO;
+    }
+  }
+  return TURBO_OK;
+}
+#else
 static int native_pipe_raw_transfer(native_pipe_fixture *fixture, native_pipe_stages *stages) {
   size_t sent_offset = 0u;
   size_t received_offset = 0u;
@@ -167,7 +369,7 @@ static int native_pipe_raw_transfer(native_pipe_fixture *fixture, native_pipe_st
     bool progressed = false;
     if (received_offset < fixture->payload_size) {
       const uint64_t started = turbo_hrtime();
-      const ssize_t bytes = read(fixture->descriptors[0], fixture->received + received_offset,
+      const ssize_t bytes = read(fixture->handles[0], fixture->received + received_offset,
                                  fixture->payload_size - received_offset);
       const int native_error = bytes < 0 ? errno : 0;
       native_pipe_counter_add(&stages->submit_ns, turbo_hrtime() - started);
@@ -183,7 +385,7 @@ static int native_pipe_raw_transfer(native_pipe_fixture *fixture, native_pipe_st
     }
     if (sent_offset < fixture->payload_size) {
       const uint64_t started = turbo_hrtime();
-      const ssize_t bytes = write(fixture->descriptors[1], fixture->sent + sent_offset,
+      const ssize_t bytes = write(fixture->handles[1], fixture->sent + sent_offset,
                                   fixture->payload_size - sent_offset);
       const int native_error = bytes < 0 ? errno : 0;
       native_pipe_counter_add(&stages->submit_ns, turbo_hrtime() - started);
@@ -201,6 +403,7 @@ static int native_pipe_raw_transfer(native_pipe_fixture *fixture, native_pipe_st
   }
   return TURBO_OK;
 }
+#endif
 
 static int native_pipe_submit(native_pipe_fixture *fixture, const turbo_io_operation *operation,
                               turbo_io_request *request, native_pipe_stages *stages) {
@@ -358,7 +561,7 @@ static double native_pipe_stage_mean(uint64_t elapsed, uint64_t operations) {
 
 static void native_pipe_print_tables(const native_pipe_result *raw,
                                      const native_pipe_result *native, size_t count) {
-  printf("\n%s anonymous byte pipe: raw direct vs NativeIO (%d x %d one-way transfers)\n",
+  printf("\n%s byte pipe: raw direct vs NativeIO (%d x %d one-way transfers)\n",
          NATIVE_PIPE_BACKEND_NAME, NATIVE_PIPE_SAMPLES, NATIVE_PIPE_TRANSFERS_PER_SAMPLE);
   printf("Bytes count application payload once per one-way transfer.\n");
   printf("\nPipe one-way latency\n");
@@ -383,7 +586,7 @@ static void native_pipe_print_tables(const native_pipe_result *raw,
            native_throughput, native_pipe_delta(native_throughput, raw_throughput));
   }
   printf("\nPipe stage means\n");
-  printf("| payload | raw syscall ns/call | NativeIO submit ns/call | "
+  printf("| payload | raw submit ns/call | NativeIO submit ns/call | "
          "NativeIO observe ns/call |\n");
   printf("| ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
@@ -395,7 +598,7 @@ static void native_pipe_print_tables(const native_pipe_result *raw,
 }
 
 spec("NativeIO pipe benchmark") {
-  bench("compares bounded one-way pipe transfers with raw POSIX calls") {
+  bench("compares bounded one-way pipe transfers with the native backend") {
     native_pipe_result raw_results[sizeof(NATIVE_PIPE_PAYLOADS) / sizeof(NATIVE_PIPE_PAYLOADS[0])] =
         {0};
     native_pipe_result
@@ -403,14 +606,14 @@ spec("NativeIO pipe benchmark") {
     const size_t payload_count = sizeof(NATIVE_PIPE_PAYLOADS) / sizeof(NATIVE_PIPE_PAYLOADS[0]);
 
     for (size_t index = 0u; index < payload_count; ++index) {
-      native_pipe_fixture fixture = {.descriptors = {-1, -1}};
+      native_pipe_fixture fixture = {0};
       native_pipe_result *result = &raw_results[index];
       char title[96];
       int status = native_pipe_result_prepare(result, NATIVE_PIPE_PAYLOADS[index]);
       if (status == TURBO_OK)
         status = native_pipe_fixture_init(&fixture, NATIVE_PIPE_RAW, NATIVE_PIPE_PAYLOADS[index]);
       if (status == TURBO_OK) status = native_pipe_warmup(&fixture);
-      (void)snprintf(title, sizeof(title), "raw POSIX pipe %zu KiB",
+      (void)snprintf(title, sizeof(title), "%s pipe %zu KiB", NATIVE_PIPE_RAW_NAME,
                      NATIVE_PIPE_PAYLOADS[index] / 1024u);
       benchmark_io(title, NATIVE_PIPE_SAMPLES, NATIVE_PIPE_TRANSFERS_PER_SAMPLE,
                    NATIVE_PIPE_TRANSFERS_PER_SAMPLE * NATIVE_PIPE_PAYLOADS[index]) {
@@ -428,7 +631,7 @@ spec("NativeIO pipe benchmark") {
     }
 
     for (size_t index = 0u; index < payload_count; ++index) {
-      native_pipe_fixture fixture = {.descriptors = {-1, -1}};
+      native_pipe_fixture fixture = {0};
       native_pipe_result *result = &native_results[index];
       char title[96];
       int status = native_pipe_result_prepare(result, NATIVE_PIPE_PAYLOADS[index]);

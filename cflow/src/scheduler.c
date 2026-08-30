@@ -22,6 +22,295 @@ typedef struct cflow_test_loop_state {
     bool stopping;
 } cflow_test_loop_state;
 
+typedef struct cflow_inline_scheduler_state {
+    cflow_task_id next_id;
+    size_t dispatching;
+    size_t peak_dispatching;
+    size_t rejected_closed;
+    bool closed;
+} cflow_inline_scheduler_state;
+
+typedef struct cflow_manual_scheduler_state {
+    cflow_executor executor;
+    cflow_task_id next_id;
+} cflow_manual_scheduler_state;
+
+static cflow_schedule_result inline_try_post_task_after(
+    cflow_inline_scheduler_state *state, uint64_t delay_ticks,
+    const cflow_executor_task *task) {
+    cflow_task_id task_id;
+
+    if (state == NULL || task == NULL || task->run == NULL ||
+        delay_ticks != 0u)
+        return (cflow_schedule_result){
+            CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
+    if (state->closed) {
+        ++state->rejected_closed;
+        return (cflow_schedule_result){CFLOW_ADMISSION_CLOSED, 0u};
+    }
+    if (state->next_id == UINT64_MAX)
+        return (cflow_schedule_result){
+            CFLOW_ADMISSION_ALLOCATION_FAILED, 0u};
+
+    task_id = ++state->next_id;
+    ++state->dispatching;
+    if (state->dispatching > state->peak_dispatching)
+        state->peak_dispatching = state->dispatching;
+    task->run(task->user);
+    if (task->finalize != NULL)
+        task->finalize(task->user);
+    --state->dispatching;
+    return (cflow_schedule_result){CFLOW_ADMISSION_ACCEPTED, task_id};
+}
+
+static cflow_schedule_result inline_try_post_after(
+    void *self, uint64_t delay_ticks, cflow_task_fn fn, void *user) {
+    const cflow_executor_task task = {
+        .run = fn,
+        .cancel = NULL,
+        .finalize = NULL,
+        .user = user
+    };
+    return inline_try_post_task_after(
+        (cflow_inline_scheduler_state *)self, delay_ticks, &task);
+}
+
+static cflow_task_id inline_post_after(
+    void *self, uint64_t delay_ticks, cflow_task_fn fn, void *user) {
+    return inline_try_post_after(self, delay_ticks, fn, user).task_id;
+}
+
+static bool inline_cancel(void *self, cflow_task_id task_id) {
+    (void)self;
+    (void)task_id;
+    return false;
+}
+
+static bool inline_run_one(void *self) {
+    (void)self;
+    return false;
+}
+
+static size_t inline_run_ready(void *self) {
+    (void)self;
+    return 0u;
+}
+
+static size_t inline_advance(void *self, uint64_t ticks) {
+    (void)self;
+    (void)ticks;
+    return 0u;
+}
+
+static size_t inline_run_until_idle(void *self, size_t max_steps) {
+    (void)self;
+    (void)max_steps;
+    return 0u;
+}
+
+static bool inline_wait_idle(void *self) {
+    const cflow_inline_scheduler_state *state =
+        (const cflow_inline_scheduler_state *)self;
+    return state != NULL && state->dispatching == 0u;
+}
+
+static uint64_t inline_now(void *self) {
+    (void)self;
+    return 0u;
+}
+
+static size_t inline_pending(void *self) {
+    (void)self;
+    return 0u;
+}
+
+static bool inline_shutdown(void *self) {
+    cflow_inline_scheduler_state *state =
+        (cflow_inline_scheduler_state *)self;
+    if (state == NULL)
+        return false;
+    state->closed = true;
+    return true;
+}
+
+static bool inline_get_stats(void *self, cflow_scheduler_stats *out) {
+    const cflow_inline_scheduler_state *state =
+        (const cflow_inline_scheduler_state *)self;
+    if (state == NULL || out == NULL)
+        return false;
+    *out = (cflow_scheduler_stats){
+        .dispatching = state->dispatching,
+        .peak_pending = state->peak_dispatching,
+        .rejected_closed = state->rejected_closed
+    };
+    return true;
+}
+
+static void inline_destroy(void *self) {
+    free(self);
+}
+
+CMETA_IMPLEMENTS(cflow_scheduler, inline_scheduler,
+    CMETA_SCHED_CAP_CALLER_DRIVEN_ZERO_DELAY,
+    .try_post_after = inline_try_post_after,
+    .post_after = inline_post_after,
+    .cancel = inline_cancel,
+    .run_one = inline_run_one,
+    .run_ready = inline_run_ready,
+    .advance = inline_advance,
+    .run_until_idle = inline_run_until_idle,
+    .wait_idle = inline_wait_idle,
+    .now = inline_now,
+    .pending = inline_pending,
+    .shutdown = inline_shutdown,
+    .get_stats = inline_get_stats,
+    .destroy = inline_destroy
+);
+
+static cflow_schedule_result manual_scheduler_try_post_task_after(
+    cflow_manual_scheduler_state *state, uint64_t delay_ticks,
+    const cflow_executor_task *task) {
+    cflow_admission_status admitted;
+    cflow_task_id task_id;
+
+    if (state == NULL || task == NULL || task->run == NULL ||
+        delay_ticks != 0u)
+        return (cflow_schedule_result){
+            CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
+    if (state->next_id == UINT64_MAX)
+        return (cflow_schedule_result){
+            CFLOW_ADMISSION_ALLOCATION_FAILED, 0u};
+    admitted = cflow_executor_try_post_task(&state->executor, task);
+    if (admitted != CFLOW_ADMISSION_ACCEPTED)
+        return (cflow_schedule_result){admitted, 0u};
+    task_id = ++state->next_id;
+    return (cflow_schedule_result){CFLOW_ADMISSION_ACCEPTED, task_id};
+}
+
+static cflow_schedule_result manual_scheduler_try_post_after(
+    void *self, uint64_t delay_ticks, cflow_task_fn fn, void *user) {
+    const cflow_executor_task task = {
+        .run = fn,
+        .cancel = NULL,
+        .finalize = NULL,
+        .user = user
+    };
+    return manual_scheduler_try_post_task_after(
+        (cflow_manual_scheduler_state *)self, delay_ticks, &task);
+}
+
+static cflow_task_id manual_scheduler_post_after(
+    void *self, uint64_t delay_ticks, cflow_task_fn fn, void *user) {
+    return manual_scheduler_try_post_after(
+        self, delay_ticks, fn, user).task_id;
+}
+
+static bool manual_scheduler_cancel(void *self, cflow_task_id task_id) {
+    (void)self;
+    (void)task_id;
+    return false;
+}
+
+static bool manual_scheduler_run_one(void *self) {
+    cflow_manual_scheduler_state *state =
+        (cflow_manual_scheduler_state *)self;
+    return state != NULL && cflow_executor_run_one(&state->executor);
+}
+
+static size_t manual_scheduler_run_ready(void *self) {
+    cflow_manual_scheduler_state *state =
+        (cflow_manual_scheduler_state *)self;
+    return state != NULL ? cflow_executor_run_ready(&state->executor) : 0u;
+}
+
+static size_t manual_scheduler_advance(void *self, uint64_t ticks) {
+    (void)self;
+    (void)ticks;
+    return 0u;
+}
+
+static size_t manual_scheduler_run_until_idle(
+    void *self, size_t max_steps) {
+    cflow_manual_scheduler_state *state =
+        (cflow_manual_scheduler_state *)self;
+    size_t count = 0u;
+
+    if (state == NULL)
+        return 0u;
+    while ((max_steps == 0u || count < max_steps) &&
+           cflow_executor_run_one(&state->executor))
+        ++count;
+    return count;
+}
+
+static bool manual_scheduler_wait_idle(void *self) {
+    cflow_manual_scheduler_state *state =
+        (cflow_manual_scheduler_state *)self;
+    return state != NULL && cflow_executor_wait_idle(&state->executor);
+}
+
+static uint64_t manual_scheduler_now(void *self) {
+    (void)self;
+    return 0u;
+}
+
+static size_t manual_scheduler_pending(void *self) {
+    cflow_manual_scheduler_state *state =
+        (cflow_manual_scheduler_state *)self;
+    return state != NULL ? cflow_executor_pending(&state->executor) : 0u;
+}
+
+static bool manual_scheduler_shutdown(void *self) {
+    cflow_manual_scheduler_state *state =
+        (cflow_manual_scheduler_state *)self;
+    return state != NULL && cflow_executor_shutdown(&state->executor);
+}
+
+static bool manual_scheduler_get_stats(
+    void *self, cflow_scheduler_stats *out) {
+    cflow_manual_scheduler_state *state =
+        (cflow_manual_scheduler_state *)self;
+    cflow_executor_stats executor_stats = {0};
+
+    if (state == NULL || out == NULL ||
+        !cflow_executor_get_stats(&state->executor, &executor_stats))
+        return false;
+    *out = (cflow_scheduler_stats){
+        .ready_capacity = executor_stats.capacity,
+        .ready_pending = executor_stats.pending,
+        .peak_pending = executor_stats.peak_pending,
+        .rejected_full = executor_stats.rejected_full,
+        .rejected_closed = executor_stats.rejected_closed
+    };
+    return true;
+}
+
+static void manual_scheduler_destroy(void *self) {
+    cflow_manual_scheduler_state *state =
+        (cflow_manual_scheduler_state *)self;
+    if (state == NULL)
+        return;
+    cflow_executor_destroy(&state->executor);
+    free(state);
+}
+
+CMETA_IMPLEMENTS(cflow_scheduler, manual_scheduler,
+    CMETA_SCHED_CAP_CALLER_DRIVEN_ZERO_DELAY,
+    .try_post_after = manual_scheduler_try_post_after,
+    .post_after = manual_scheduler_post_after,
+    .cancel = manual_scheduler_cancel,
+    .run_one = manual_scheduler_run_one,
+    .run_ready = manual_scheduler_run_ready,
+    .advance = manual_scheduler_advance,
+    .run_until_idle = manual_scheduler_run_until_idle,
+    .wait_idle = manual_scheduler_wait_idle,
+    .now = manual_scheduler_now,
+    .pending = manual_scheduler_pending,
+    .shutdown = manual_scheduler_shutdown,
+    .get_stats = manual_scheduler_get_stats,
+    .destroy = manual_scheduler_destroy
+);
+
 static void test_update_peak_locked(cflow_test_loop_state *state) {
     size_t pending = cflow_timer_queue_pending(&state->timers);
     if (pending > state->peak_pending) state->peak_pending = pending;
@@ -280,6 +569,43 @@ bool cflow_scheduler_test_init(cflow_scheduler *scheduler) {
         CFLOW_TIMER_DEFAULT_CAPACITY);
 }
 
+bool cflow_scheduler_inline_init(cflow_scheduler *scheduler) {
+    cflow_inline_scheduler_state *state;
+
+    if (scheduler == NULL || scheduler->self != NULL ||
+        scheduler->vtable != NULL)
+        return false;
+    state = (cflow_inline_scheduler_state *)calloc(1u, sizeof(*state));
+    if (state == NULL)
+        return false;
+    *scheduler = inline_scheduler_as_cflow_scheduler(state);
+    return true;
+}
+
+bool cflow_scheduler_manual_init(cflow_scheduler *scheduler) {
+    return cflow_scheduler_manual_init_with_capacity(
+        scheduler, CFLOW_EXECUTOR_DEFAULT_CAPACITY);
+}
+
+bool cflow_scheduler_manual_init_with_capacity(
+    cflow_scheduler *scheduler, size_t ready_capacity) {
+    cflow_manual_scheduler_state *state;
+
+    if (scheduler == NULL || scheduler->self != NULL ||
+        scheduler->vtable != NULL || ready_capacity == 0u)
+        return false;
+    state = (cflow_manual_scheduler_state *)calloc(1u, sizeof(*state));
+    if (state == NULL)
+        return false;
+    if (!cflow_executor_manual_init_with_capacity(
+            &state->executor, ready_capacity)) {
+        free(state);
+        return false;
+    }
+    *scheduler = manual_scheduler_as_cflow_scheduler(state);
+    return true;
+}
+
 bool cflow_scheduler_test_init_with_capacity(cflow_scheduler *scheduler,
                                              size_t ready_capacity,
                                              size_t timer_capacity) {
@@ -326,6 +652,18 @@ bool cflow_scheduler_try_post_task_after_internal(
     cflow_scheduler *scheduler, uint64_t delay_ms,
     const cflow_executor_task *task, cflow_schedule_result *out) {
     if (!scheduler || !task || !task->run || !out) return false;
+    if (scheduler->vtable == &manual_scheduler_vtable) {
+        *out = manual_scheduler_try_post_task_after(
+            (cflow_manual_scheduler_state *)scheduler->self,
+            delay_ms, task);
+        return true;
+    }
+    if (scheduler->vtable == &inline_scheduler_vtable) {
+        *out = inline_try_post_task_after(
+            (cflow_inline_scheduler_state *)scheduler->self,
+            delay_ms, task);
+        return true;
+    }
     if (scheduler->vtable == &test_loop_vtable) {
         *out = test_try_post_task_after(
             (cflow_test_loop_state *)scheduler->self, delay_ms, task);

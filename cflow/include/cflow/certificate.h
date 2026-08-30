@@ -46,7 +46,7 @@ typedef struct cflow_plan_certificate_row {
     size_t size_parameter;
 } cflow_plan_certificate_row;
 
-/* Runtime-only witness. Pointer-bearing rows are owned by this instance and
+/* Execution-only witness. Pointer-bearing rows are owned by this instance and
  * are neither a wire format nor stable persistent data. */
 typedef struct cflow_plan_certificate {
     uint32_t version;

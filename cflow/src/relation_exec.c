@@ -1,6 +1,6 @@
 #include <cflow/relation_exec.h>
 #include <cflow/coord.h>
-#include <cflow/subrun.h>
+#include <cflow/subflow.h>
 
 #include "value_storage.h"
 
@@ -22,7 +22,7 @@ typedef struct relation_state {
     cflow_value_slot last_value;
 } relation_state;
 
-static cflow_step child_policy_resume(void *state, cflow_resume_ctx *ctx, void *out) {
+static cflow_step child_policy_resume(void *state, cflow_publish_context *ctx, void *out) {
     relation_child_policy_state *s = (relation_child_policy_state *)state;
     if (!s || !s->inner.ops || !s->inner.ops->resume)
         return (cflow_step){ CFLOW_STEP_ERROR, {0}, "relation child policy state is invalid" };
@@ -140,7 +140,7 @@ static bool relation_result(relation_state *rel, cflow_coord_event event, void *
     return cflow_value_construct(rel->value_type, out, value);
 }
 
-static cflow_step relation_resume(void *state, cflow_resume_ctx *ctx, void *out) {
+static cflow_step relation_resume(void *state, cflow_publish_context *ctx, void *out) {
     relation_state *rel = (relation_state *)state;
     if (!rel || !rel->coord.ops || !rel->coord.ops->resume || !rel->value_type || !out)
         return (cflow_step){ CFLOW_STEP_ERROR, {0}, "relation coordinator is invalid" };

@@ -2,7 +2,7 @@
 #define CFLOW_STATECHART_HIERARCHY_ADAPTER_H
 
 #include <cflow/machine_hierarchy.h>
-#include <cflow/statechart_runtime.h>
+#include <cflow/statechart_instance.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,7 +35,7 @@ typedef struct cflow_statechart_hierarchy_adapter_result {
  * initial leaf that differs from the root's declared initial-child chain.
  * Enabled transition traces are preserved. Unhandled Events retain native
  * Statechart behavior (consume without transition), which differs from the
- * legacy Machine runtime's terminal error and is an explicit proof boundary.
+ * legacy Machine instance's terminal error and is an explicit proof boundary.
  */
 cflow_statechart_hierarchy_adapter_result
 cflow_statechart_hierarchy_adapter_build(

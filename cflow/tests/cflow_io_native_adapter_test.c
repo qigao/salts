@@ -252,17 +252,17 @@ static void native_adapter_test_complete(
     ++probe->count;
 }
 
-static cflow_io_source_prepare_status native_adapter_test_source_prepare(
+static cflow_io_publisher_prepare_status native_adapter_test_source_prepare(
     void *user, cflow_io_operation *operation, const char **error) {
     native_adapter_test_source_fixture *fixture =
         (native_adapter_test_source_fixture *)user;
 
     (void)error;
     if (fixture->prepared >= fixture->operation_count)
-        return CFLOW_IO_SOURCE_PREPARE_DONE;
+        return CFLOW_IO_PUBLISHER_PREPARE_DONE;
     operation->user = &fixture->operations[fixture->prepared++];
     operation->release = native_adapter_test_release;
-    return CFLOW_IO_SOURCE_PREPARE_OPERATION;
+    return CFLOW_IO_PUBLISHER_PREPARE_OPERATION;
 }
 
 static cflow_read_status native_adapter_test_source_encode(
@@ -753,7 +753,7 @@ spec("CFlow NativeIO Actor adapter") {
         cflow_executor_destroy(&executor);
     }
 
-    it("feeds a windowed Source from one owner-driven NativeIO pipe backend") {
+    it("drives a windowed Publisher around one NativeIO completion batch") {
         static const unsigned char payload[] = {0x51u, 0x52u, 0x53u, 0x54u};
         unsigned char received[sizeof(payload)] = {0};
         native_adapter_test_pipe pipes[2] = {
@@ -761,25 +761,25 @@ spec("CFlow NativeIO Actor adapter") {
             NATIVE_ADAPTER_TEST_INVALID_PIPE};
         turbo_io_endpoint endpoints[2] = {0};
         cflow_io_native_adapter adapter = {0};
-        cflow_io_source_owner owner = {0};
-        cflow_source source = {0};
+        cflow_io_publisher_owner owner = {0};
+        cflow_publisher source = {0};
         cflow_graph surface = {0};
         cflow_graph normalized = {0};
         cflow_scheduler scheduler = {0};
-        cflow_run run = {0};
+        cflow_scheduler delayed_scheduler = {0};
+        cflow_subscription run = {0};
         native_adapter_test_source_fixture fixture = {0};
         native_adapter_test_sink_probe sink_probe = {0};
-        cflow_sink_callbacks sink_callbacks = {
+        cflow_subscriber_callbacks sink_callbacks = {
             native_adapter_test_sink_value,
             native_adapter_test_sink_error,
             native_adapter_test_sink_done,
             &sink_probe};
-        cflow_sink sink = cflow_sink_from_callbacks(&sink_callbacks);
+        cflow_subscriber sink = cflow_subscriber_from_callbacks(&sink_callbacks);
         size_t observed = 0u;
-        size_t progressed = 0u;
         const cflow_io_native_adapter_config adapter_config = {
             {native_adapter_test_backend(), 2u, 2u, 2u}};
-        cflow_io_source_config source_config = {0};
+        cflow_io_publisher_config source_config = {0};
 
         check_equal(cflow_io_native_adapter_init(&adapter, &adapter_config),
                     TURBO_OK);
@@ -809,36 +809,37 @@ spec("CFlow NativeIO Actor adapter") {
         source_config.prepare = native_adapter_test_source_prepare;
         source_config.encode = native_adapter_test_source_encode;
         source_config.user = &fixture;
-        source_config.drive = native_adapter_test_source_drive;
-        source_config.drive_user = &fixture;
+        source_config.drive = NULL;
 
         cflow_graph_init(&surface, &cmeta_type_int);
         check_true(cflow_graph_normalize(&normalized, &surface));
-        check_true(cflow_scheduler_test_init(&scheduler));
-        check_equal(cflow_source_from_io_actor_windowed(
+        check_true(cflow_scheduler_manual_init_with_capacity(
+            &scheduler, 2u));
+        check_equal(cflow_publisher_from_io_actor_windowed(
                         &source, &owner, &source_config, 2u),
                     TURBO_OK);
-        check_true(cflow_run_open(
+        check_true(cflow_scheduler_test_init(&delayed_scheduler));
+        observed = 99u;
+        check_equal(cflow_io_native_adapter_drive_reactive(
+                        &adapter, &owner, &delayed_scheduler,
+                        NATIVE_ADAPTER_TEST_TIMEOUT_MS, 64u, &observed),
+                    TURBO_EINVAL);
+        check_equal(observed, (size_t)0u);
+        cflow_scheduler_destroy(&delayed_scheduler);
+        check_true(cflow_subscribe(
             &run, &normalized, &source, &scheduler, &sink));
-        check_true(cflow_run_request(&run, 2u));
-        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
-        check_equal(fixture.prepared, 2u);
-        check_equal(cflow_io_source_owner_run_ready(
-                        &owner, 32u, &progressed), TURBO_OK);
-        check_true(progressed > 0u);
+        check_true(cflow_subscription_request(&run, 2u));
+        check_equal(fixture.prepared, 0u);
 
         while (observed < 2u) {
             size_t batch = 0u;
-            check_equal(cflow_io_native_adapter_observe(
-                            &adapter, NATIVE_ADAPTER_TEST_TIMEOUT_MS, &batch),
+            check_equal(cflow_io_native_adapter_drive_reactive(
+                            &adapter, &owner, &scheduler,
+                            NATIVE_ADAPTER_TEST_TIMEOUT_MS, 64u, &batch),
                         TURBO_OK);
             observed += batch;
         }
-        progressed = 0u;
-        check_equal(cflow_io_source_owner_run_ready(
-                        &owner, 64u, &progressed), TURBO_OK);
-        check_true(progressed > 0u);
-        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+        check_equal(fixture.prepared, 2u);
 
         check_equal(received, payload, sizeof(payload));
         check_equal(sink_probe.value_count, 2u);
@@ -848,12 +849,12 @@ spec("CFlow NativeIO Actor adapter") {
         check_equal(sink_probe.values[0], (int)sizeof(payload));
         check_equal(sink_probe.values[1], (int)sizeof(payload));
 
-        check_true(cflow_run_request(&run, 1u));
-        (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
+        check_true(cflow_subscription_request(&run, 1u));
+        (void)cflow_scheduler_run_until_idle(&scheduler, 64u);
         check_equal(sink_probe.done_count, 1u);
-        check_true(cflow_run_is_done(&run));
-        cflow_run_close(&run);
-        check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
+        check_true(cflow_subscription_is_done(&run));
+        cflow_subscription_close(&run);
+        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
@@ -873,26 +874,26 @@ spec("CFlow NativeIO Actor adapter") {
         native_adapter_test_socket sockets[2];
         turbo_io_endpoint endpoint = {0};
         cflow_io_native_adapter adapter = {0};
-        cflow_io_source_owner owner = {0};
-        cflow_source source = {0};
+        cflow_io_publisher_owner owner = {0};
+        cflow_publisher source = {0};
         cflow_graph surface = {0};
         cflow_graph normalized = {0};
         cflow_scheduler scheduler = {0};
-        cflow_run run = {0};
+        cflow_subscription run = {0};
         native_adapter_test_source_fixture fixture = {0};
         native_adapter_test_sink_probe sink_probe = {0};
-        cflow_sink_callbacks sink_callbacks = {
+        cflow_subscriber_callbacks sink_callbacks = {
             native_adapter_test_sink_value,
             native_adapter_test_sink_error,
             native_adapter_test_sink_done,
             &sink_probe};
-        cflow_sink sink = cflow_sink_from_callbacks(&sink_callbacks);
+        cflow_subscriber sink = cflow_subscriber_from_callbacks(&sink_callbacks);
         cflow_io_native_adapter_stats adapter_stats = {0};
         size_t progressed = 0u;
         size_t observed = 0u;
         const cflow_io_native_adapter_config adapter_config = {
             {native_adapter_test_backend(), 1u, 1u, 1u}};
-        cflow_io_source_config source_config = {0};
+        cflow_io_publisher_config source_config = {0};
 
         check_equal(cflow_io_native_adapter_init(&adapter, &adapter_config),
                     TURBO_OK);
@@ -918,31 +919,31 @@ spec("CFlow NativeIO Actor adapter") {
         cflow_graph_init(&surface, &cmeta_type_int);
         check_true(cflow_graph_normalize(&normalized, &surface));
         check_true(cflow_scheduler_test_init(&scheduler));
-        check_equal(cflow_source_from_io_actor_windowed(
+        check_equal(cflow_publisher_from_io_actor_windowed(
                         &source, &owner, &source_config, 1u),
                     TURBO_OK);
-        check_true(cflow_run_open(
+        check_true(cflow_subscribe(
             &run, &normalized, &source, &scheduler, &sink));
-        check_true(cflow_run_request(&run, 1u));
+        check_true(cflow_subscription_request(&run, 1u));
         (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
-        check_equal(cflow_io_source_owner_run_ready(
+        check_equal(cflow_io_publisher_owner_run_ready(
                         &owner, 32u, &progressed), TURBO_OK);
         check_true(cflow_io_native_adapter_get_stats(&adapter,
                                                       &adapter_stats));
         check_equal(adapter_stats.active_bridges, 1u);
 
-        cflow_run_close(&run);
+        cflow_subscription_close(&run);
         progressed = 0u;
-        check_equal(cflow_io_source_owner_run_ready(
+        check_equal(cflow_io_publisher_owner_run_ready(
                         &owner, 32u, &progressed), TURBO_OK);
         check_true(progressed > 0u);
         check_equal(cflow_io_native_adapter_observe(
                         &adapter, NATIVE_ADAPTER_TEST_TIMEOUT_MS, &observed),
                     TURBO_OK);
         check_equal(observed, 1u);
-        while (!cflow_io_source_owner_is_quiescent(&owner)) {
+        while (!cflow_io_publisher_owner_is_quiescent(&owner)) {
             progressed = 0u;
-            check_equal(cflow_io_source_owner_run_ready(
+            check_equal(cflow_io_publisher_owner_run_ready(
                             &owner, 64u, &progressed), TURBO_OK);
             check_true(progressed > 0u);
         }
@@ -950,7 +951,7 @@ spec("CFlow NativeIO Actor adapter") {
         check_equal(fixture.release_count, 1u);
         check_equal(sink_probe.value_count, 0u);
         check_equal(sink_probe.error_count, 0u);
-        check_equal(cflow_io_source_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
