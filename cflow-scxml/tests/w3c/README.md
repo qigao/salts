@@ -97,11 +97,11 @@ exit once.
 
 ## Current state-membership profile
 
-Null-model and CMeta `In(id)` expressions admit any declared SCXML state ID,
-including initial and history pseudo-state IDs. The native Statechart active
-configuration remains the single fact source: pseudo-states are never active,
-so a declared pseudo-state query evaluates to false. Unknown IDs still fail
-program admission.
+Null-model and CMeta `In(id)` expressions admit any ID-bearing SCXML state,
+including history pseudo-states. The W3C `<initial>` element has no attributes
+and cannot be named. The native Statechart active configuration remains the
+single fact source: pseudo-states are never active, so a declared history query
+evaluates to false. Unknown IDs still fail program admission.
 
 ## Current CMeta system-event profile
 

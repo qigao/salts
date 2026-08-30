@@ -14,7 +14,7 @@
 
 - Preserve every existing accepted Statechart/SCXML behavior and ABI.
 - Keep pseudo-states out of working and published active configurations.
-- Resolve declared pseudo-state IDs in `In(id)` while preserving false runtime membership.
+- Resolve declared history pseudo-state IDs in `In(id)` while preserving false runtime membership.
 - Keep history, extended state, raised events, effects, and configuration in the existing transactional commit boundary.
 - Do not add fallback parsing, interpreter paths, unbounded storage, or new dependencies.
 

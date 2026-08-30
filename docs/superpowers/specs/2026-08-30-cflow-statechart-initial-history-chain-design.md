@@ -41,10 +41,12 @@ This preserves the existing O(states) storage bound and public ABI. Both action
 blocks still use the existing staged extended state, internal-event staging,
 effect journal, first-error ownership, and all-or-nothing microstep commit.
 
-Allow `In(id)` resolution for every declared state ID, including initial and
-history pseudo-states, in both null-model and CMeta expression paths. Unknown IDs
-and malformed expressions remain admission errors. The runtime's single
-configuration query remains the fact source and returns false for pseudo IDs.
+Allow `In(id)` resolution for every ID-bearing SCXML state, including history
+pseudo-states, in both null-model and CMeta expression paths. The W3C `<initial>`
+element has no attributes and therefore cannot be named by an SCXML expression.
+Unknown IDs and malformed expressions remain admission errors. The runtime's
+single configuration query remains the fact source and returns false for
+pseudo IDs.
 
 ## Alternatives
 
@@ -81,7 +83,7 @@ combined callback would duplicate or leak runtime state into the adapter.
   behavior and action ordering.
 - Pseudo-states never enter working or published active configurations and
   remain false through contextual `is_active` / null-model `In(id)` queries.
-- Null-model and CMeta `In(id)` resolve declared pseudo IDs instead of treating
+- Null-model and CMeta `In(id)` resolve declared history IDs instead of treating
   them as unknown or invalid real-state references.
 
 ## Compatibility, performance, and rollback
@@ -91,10 +93,12 @@ combined callback would duplicate or leak runtime state into the adapter.
 - A definition previously rejected as `CFLOW_STATECHART_INVALID_INITIAL` may now
   be accepted only for the specified sibling-history shape. Existing accepted
   definitions retain their transition and action order.
-- An `In(id)` expression naming a declared pseudo-state is newly admitted and
-  deterministically evaluates false; malformed and unknown IDs remain rejected.
-- Resolution adds constant-time kind/parent checks and one history-slot lookup
-  only when an initial target is a history pseudo-state.
+- An `In(id)` expression naming a declared history pseudo-state is newly admitted
+  and deterministically evaluates false; malformed and unknown IDs remain
+  rejected.
+- Resolution adds one O(log states) normalized target lookup plus constant-time
+  kind, parent, and history-slot checks only when an initial target is a history
+  pseudo-state.
 - On any action, queue, effect, allocation, or configuration failure, the
   existing staged transaction is discarded; no new compensation path exists.
 - Rollback is one localized validator rule plus the runtime chain helpers; W3C

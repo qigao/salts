@@ -4025,6 +4025,15 @@ typedef struct history_initial_trace_probe {
     bool pseudo_states_inactive;
 } history_initial_trace_probe;
 
+typedef struct history_chain_failure_probe {
+    int trace[2];
+    size_t calls;
+    size_t prepared;
+    size_t committed;
+    size_t discarded;
+    bool raised;
+} history_chain_failure_probe;
+
 enum {
     HISTORY_ROOT = 100u,
     HISTORY_ROOT_INITIAL = 101u,
@@ -4202,6 +4211,67 @@ static bool history_initial_trace_action(
     return true;
 }
 
+static void history_chain_effect_commit(void *user) {
+    history_chain_failure_probe *probe =
+        (history_chain_failure_probe *)user;
+    if (probe != NULL) ++probe->committed;
+}
+
+static void history_chain_effect_discard(void *user) {
+    history_chain_failure_probe *probe =
+        (history_chain_failure_probe *)user;
+    if (probe != NULL) ++probe->discarded;
+}
+
+static bool history_chain_failure_action(
+    void *user, const cflow_statechart_executable_context *context,
+    const char **out_error) {
+    history_chain_failure_probe *probe =
+        (history_chain_failure_probe *)user;
+    if (probe == NULL || context == NULL || context->event != NULL ||
+        context->state == NULL || context->out_state == NULL ||
+        out_error == NULL ||
+        probe->calls >= sizeof(probe->trace) / sizeof(probe->trace[0]))
+        return false;
+    probe->trace[probe->calls++] =
+        microstep_trace_code(context->phase, context->owner);
+    *(int *)context->out_state = *(const int *)context->state + 1;
+    if (context->phase == CFLOW_STATECHART_ACTION_INITIAL &&
+        context->owner == HISTORY_PARENT_INITIAL) {
+        const int payload = 73;
+        const cflow_event_view event = {
+            HISTORY_MOVE_EVENT, &cmeta_type_int, &payload};
+        const cflow_statechart_effect_ticket ticket = {
+            history_chain_effect_commit,
+            history_chain_effect_discard,
+            probe};
+        const char *stage_error = NULL;
+        ++probe->prepared;
+        if (context->raise_internal == NULL ||
+            !context->raise_internal(
+                context->raise_user, &event, &stage_error)) {
+            *out_error = stage_error;
+            return false;
+        }
+        probe->raised = true;
+        if (context->stage_effect == NULL ||
+            !context->stage_effect(
+                context->effect_user, &ticket, &stage_error)) {
+            ticket.discard(ticket.user);
+            *out_error = stage_error;
+            return false;
+        }
+        *out_error = NULL;
+        return true;
+    }
+    if (context->phase == CFLOW_STATECHART_ACTION_HISTORY &&
+        context->owner == HISTORY_SHALLOW) {
+        *out_error = "history default action failure";
+        return false;
+    }
+    return false;
+}
+
 static void history_fixture_destroy(history_fixture *fixture) {
     check_equal(cflow_statechart_instance_destroy(&fixture->instance),
                 CFLOW_STATECHART_RUNTIME_OK);
@@ -4279,6 +4349,56 @@ suite("CFlow Statechart history restoration") {
         check_equal(probe.trace, expected_trace, sizeof(expected_trace));
         check_true(probe.pseudo_states_inactive);
         history_fixture_destroy(&fixture);
+    }
+
+    it("discards an initial history chain when its second action fails") {
+        history_fixture fixture;
+        history_chain_failure_probe probe = {0};
+        const cflow_statechart_executable_binding binding = {
+            .id = MICRO_EXECUTABLE,
+            .user = &probe,
+            .contextual_fn = history_chain_failure_action};
+        cflow_statechart_instance_config config;
+        const int expected_trace[] = {
+            microstep_trace_code(
+                CFLOW_STATECHART_ACTION_INITIAL, HISTORY_PARENT_INITIAL),
+            microstep_trace_code(
+                CFLOW_STATECHART_ACTION_HISTORY, HISTORY_SHALLOW)};
+        history_fixture_definition(&fixture);
+        fixture.transitions[1].target = HISTORY_SHALLOW;
+        fixture.transition_actions[0] =
+            (cflow_statechart_transition_action){
+                2u, MICRO_EXECUTABLE, 0u};
+        fixture.transition_actions[1] =
+            (cflow_statechart_transition_action){
+                4u, MICRO_EXECUTABLE, 0u};
+        fixture.definition.transition_action_count = 2u;
+        check_equal(cflow_statechart_build(
+                        &fixture.statechart, &fixture.definition),
+                    CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&fixture.executor));
+        config = (cflow_statechart_instance_config){
+            .statechart = &fixture.statechart,
+            .initial_state = &fixture.initial_state,
+            .executables = &binding,
+            .executable_count = 1u,
+            .external_event_capacity = 4u,
+            .internal_event_capacity = 2u,
+            .completion_capacity = 4u,
+            .microstep_limit = 64u,
+            .effect_capacity = 1u,
+            .executor = &fixture.executor};
+        check_equal(cflow_statechart_instance_init(&fixture.instance, &config),
+                    CFLOW_STATECHART_RUNTIME_ACTION_FAILED);
+        check_null(fixture.instance.impl);
+        check_equal(probe.calls, (size_t)2u);
+        check_equal(probe.trace, expected_trace, sizeof(expected_trace));
+        check_true(probe.raised);
+        check_equal(probe.prepared, (size_t)1u);
+        check_equal(probe.committed, (size_t)0u);
+        check_equal(probe.discarded, (size_t)1u);
+        cflow_executor_destroy(&fixture.executor);
+        cflow_statechart_destroy(&fixture.statechart);
     }
 
     it("uses the declared history default when the slot is unset") {

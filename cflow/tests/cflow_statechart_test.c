@@ -96,7 +96,7 @@ suite("CFlow format-neutral Statechart IR") {
         cflow_statechart_destroy(&statechart);
     }
 
-    it("accepts parallel regions and shallow and deep history defaults") {
+    it("bounds initial-to-history targets to sibling pseudo states") {
         cflow_statechart_state states[] = {
             {1u, 0u, CFLOW_STATECHART_PARALLEL, 0u},
             {2u, 1u, CFLOW_STATECHART_COMPOUND, 1u},
@@ -123,6 +123,19 @@ suite("CFlow format-neutral Statechart IR") {
             transitions, 4u, NULL, 0u, NULL, 0u};
 
         check_equal(build_status(&definition), CFLOW_STATECHART_OK);
+
+        transitions[0].target = 5u;
+        transitions[2].target = 9u;
+        check_equal(build_status(&definition), CFLOW_STATECHART_OK);
+
+        transitions[0].target = 9u;
+        check_equal(rejected_build_status(&definition),
+                    CFLOW_STATECHART_INVALID_INITIAL);
+
+        transitions[0].target = 5u;
+        transitions[1].target = 9u;
+        check_equal(rejected_build_status(&definition),
+                    CFLOW_STATECHART_INVALID_HISTORY);
     }
 
     it("rejects invalid input without publishing a partial object") {
