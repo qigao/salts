@@ -39,21 +39,28 @@ typedef enum turbo_io_operation_kind {
   TURBO_IO_TCP_RECV = 1,
   TURBO_IO_TCP_SEND = 2,
   TURBO_IO_UDP_RECV_FROM = 3,
-  TURBO_IO_UDP_SEND_TO = 4
+  TURBO_IO_UDP_SEND_TO = 4,
+  TURBO_IO_PIPE_READ = 5,
+  TURBO_IO_PIPE_WRITE = 6
 } turbo_io_operation_kind;
+
+typedef enum turbo_io_pipe_endpoint_flags {
+  TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE = 1u << 0
+} turbo_io_pipe_endpoint_flags;
 
 /**
  * One caller-owned operation descriptor copied by submit.
  *
- * endpoint is a live handle returned by attach_socket. buffer is borrowed from
- * successful submit until the matching completion is returned by observe.
+ * endpoint is a live handle returned by attach_socket or attach_pipe. buffer
+ * is borrowed from successful submit until the matching completion is
+ * returned by observe.
  * Send storage is immutable during the borrow; receive storage is exclusively
  * mutable by NativeIO. user_data is copied verbatim into the completion.
  *
  * UDP_SEND_TO reads address[0..address_length) as a native sockaddr.
  * UDP_RECV_FROM writes at most address_capacity bytes and publishes the actual
- * length in its completion. TCP operations require all address fields to be
- * zero. Address storage has the same borrow as payload storage.
+ * length in its completion. TCP and pipe operations require all address fields
+ * to be zero. Address storage has the same borrow as payload storage.
  */
 typedef struct turbo_io_operation {
   turbo_io_operation_kind kind;
@@ -115,6 +122,9 @@ TURBO_NATIVE_IO_C_API turbo_io_model turbo_io_backend_model(turbo_io_backend_kin
 /** Returns compile-time availability; no fallback backend is selected. */
 TURBO_NATIVE_IO_C_API bool turbo_io_backend_supported(turbo_io_backend_kind kind);
 
+/** Returns whether kind supports async-capable connected byte pipes. */
+TURBO_NATIVE_IO_C_API bool turbo_io_backend_pipe_supported(turbo_io_backend_kind kind);
+
 TURBO_NATIVE_IO_C_API bool turbo_io_endpoint_valid(turbo_io_endpoint endpoint);
 TURBO_NATIVE_IO_C_API bool turbo_io_request_valid(turbo_io_request request);
 TURBO_NATIVE_IO_C_API bool turbo_io_operation_valid(const turbo_io_operation *operation);
@@ -156,6 +166,21 @@ TURBO_NATIVE_IO_C_API int turbo_io_backend_attach_socket(turbo_io_backend *backe
  */
 TURBO_NATIVE_IO_C_API int turbo_io_backend_release_socket(turbo_io_backend *backend,
                                                           turbo_io_endpoint endpoint);
+
+/**
+ * Associates one connected byte-pipe handle with the backend. The backend
+ * borrows the handle and never closes it. flags must be exactly
+ * TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE; no worker fallback is selected.
+ * out_endpoint is cleared on failure.
+ */
+TURBO_NATIVE_IO_C_API int turbo_io_backend_attach_pipe(turbo_io_backend *backend,
+                                                       uintptr_t native_handle,
+                                                       uint32_t flags,
+                                                       turbo_io_endpoint *out_endpoint);
+
+/** Releases metadata for a drained pipe endpoint without closing its handle. */
+TURBO_NATIVE_IO_C_API int turbo_io_backend_release_pipe(turbo_io_backend *backend,
+                                                        turbo_io_endpoint endpoint);
 
 /**
  * Starts one operation without allocating or copying payload messages. For one

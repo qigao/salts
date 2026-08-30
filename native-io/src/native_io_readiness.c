@@ -35,6 +35,7 @@ typedef struct turbo_io_readiness_endpoint {
   uint32_t interests;
   turbo_io_readiness_lane read_lane;
   turbo_io_readiness_lane write_lane;
+  turbo_io_resource_kind resource_kind;
   bool active;
 } turbo_io_readiness_endpoint;
 
@@ -315,6 +316,7 @@ static int readiness_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
   endpoint->interests = 0u;
   endpoint->read_lane = (turbo_io_readiness_lane){TURBO_IO_INDEX_NONE, TURBO_IO_INDEX_NONE};
   endpoint->write_lane = (turbo_io_readiness_lane){TURBO_IO_INDEX_NONE, TURBO_IO_INDEX_NONE};
+  endpoint->resource_kind = TURBO_IO_RESOURCE_SOCKET;
   endpoint->active = true;
   ++impl->endpoint_count;
   *out_endpoint = (turbo_io_endpoint){index + 1u, endpoint->generation};
@@ -326,10 +328,12 @@ static int readiness_release_socket(turbo_io_impl *base, turbo_io_endpoint endpo
   turbo_io_readiness_endpoint *endpoint = readiness_endpoint(impl, endpoint_handle);
   uint32_t index;
   if (endpoint == NULL) return TURBO_ENOENT;
+  if (endpoint->resource_kind != TURBO_IO_RESOURCE_SOCKET) return TURBO_EINVAL;
   if (endpoint->active_requests != 0u || endpoint->interests != 0u) return TURBO_EBUSY;
   index = endpoint_handle.slot - 1u;
   endpoint->active = false;
   endpoint->fd = -1;
+  endpoint->resource_kind = (turbo_io_resource_kind)0;
   impl->free_endpoints[impl->free_endpoint_count++] = index;
   --impl->endpoint_count;
   return TURBO_OK;
@@ -347,6 +351,8 @@ static int readiness_submit(turbo_io_impl *base, const turbo_io_operation *opera
   if (!impl->admission_open) return TURBO_ESHUTDOWN;
   endpoint = readiness_endpoint(impl, operation->endpoint);
   if (endpoint == NULL) return TURBO_ENOENT;
+  if (turbo_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
+    return TURBO_EINVAL;
   if (impl->free_request_count == 0u) {
     readiness_counter_increment(&impl->rejected_full);
     return TURBO_ENOBUFS;

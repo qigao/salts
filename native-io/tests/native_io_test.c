@@ -450,12 +450,43 @@ static void native_io_test_capacity_and_close(turbo_io_backend_kind kind) {
   check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
 }
 
+static void native_io_test_reject_pipe_operation_on_socket(turbo_io_backend_kind kind) {
+  turbo_io_backend backend = {0};
+  const turbo_io_backend_config config = {kind, 1u, 1u, 1u};
+  native_io_test_socket sockets[2];
+  turbo_io_endpoint endpoint = {0};
+  turbo_io_request request = {0};
+  unsigned char byte = 0u;
+  const turbo_io_operation operation = {.kind = TURBO_IO_PIPE_READ,
+                                        .endpoint = endpoint,
+                                        .buffer = &byte,
+                                        .length = sizeof(byte)};
+  turbo_io_operation submitted = operation;
+
+  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_test_make_tcp_pair(sockets), TURBO_OK);
+  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint),
+              TURBO_OK);
+  submitted.endpoint = endpoint;
+  check_equal(turbo_io_backend_submit(&backend, &submitted, &request), TURBO_EINVAL);
+  check_false(turbo_io_request_valid(request));
+
+  native_io_test_close_socket(sockets[0]);
+  native_io_test_close_endpoint(&backend, endpoint, sockets[1]);
+  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
+  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+}
+
 spec("NativeIO direct backend") {
   it("describes every explicit backend model without fallback") {
     check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_IOCP), TURBO_IO_MODEL_COMPLETION);
     check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_EPOLL), TURBO_IO_MODEL_READINESS);
     check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_IO_URING), TURBO_IO_MODEL_COMPLETION);
     check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_KQUEUE), TURBO_IO_MODEL_READINESS);
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IOCP));
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_EPOLL));
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IO_URING));
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
 #if defined(_WIN32)
     check_true(turbo_io_backend_supported(TURBO_IO_BACKEND_IOCP));
     check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_EPOLL));
@@ -510,6 +541,52 @@ spec("NativeIO direct backend") {
     operation.address_capacity = 0u;
     operation.address_length = 0u;
     check_true(turbo_io_operation_valid(&operation));
+  }
+
+  it("preserves socket operation values and validates byte-pipe shapes") {
+    unsigned char payload = 0u;
+    turbo_io_operation operation = {.kind = TURBO_IO_PIPE_READ,
+                                    .endpoint = {1u, 1u},
+                                    .buffer = &payload,
+                                    .length = sizeof(payload)};
+
+    check_equal(TURBO_IO_TCP_RECV, 1);
+    check_equal(TURBO_IO_TCP_SEND, 2);
+    check_equal(TURBO_IO_UDP_RECV_FROM, 3);
+    check_equal(TURBO_IO_UDP_SEND_TO, 4);
+    check_equal(TURBO_IO_PIPE_READ, 5);
+    check_equal(TURBO_IO_PIPE_WRITE, 6);
+    check_true(turbo_io_operation_valid(&operation));
+
+    operation.address = &payload;
+    check_false(turbo_io_operation_valid(&operation));
+    operation.address = NULL;
+    operation.address_capacity = sizeof(payload);
+    check_false(turbo_io_operation_valid(&operation));
+    operation.address_capacity = 0u;
+    operation.address_length = sizeof(payload);
+    check_false(turbo_io_operation_valid(&operation));
+
+    operation.address_length = 0u;
+    operation.kind = TURBO_IO_PIPE_WRITE;
+    check_true(turbo_io_operation_valid(&operation));
+  }
+
+  it("clears a pipe endpoint when attach arguments are invalid") {
+    turbo_io_endpoint endpoint = {1u, 1u};
+
+    check_equal(turbo_io_backend_attach_pipe(NULL, 0u,
+                                             TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
+                                             &endpoint),
+                TURBO_EINVAL);
+    check_false(turbo_io_endpoint_valid(endpoint));
+  }
+
+  it("rejects a byte-pipe operation on a socket endpoint before native admission") {
+    turbo_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
+    const size_t count = native_io_test_backends(backends);
+    for (size_t index = 0u; index < count; ++index)
+      native_io_test_reject_pipe_operation_on_socket(backends[index]);
   }
 
   it("round trips TCP through every platform backend") {
