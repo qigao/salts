@@ -151,6 +151,10 @@ suite("SCXML W3C-derived conformance regression corpus") {
         check_w3c_fixture("test377.scxml");
     }
 
+    it("test 403a applies source priority, document order, and guards") {
+        check_w3c_fixture("test403a.scxml");
+    }
+
     it("test 404 executes exits in exit order before transition content") {
         check_w3c_fixture("test404.scxml");
     }
@@ -161,6 +165,14 @@ suite("SCXML W3C-derived conformance regression corpus") {
 
     it("test 406 executes transition content before entry-order actions") {
         check_w3c_fixture("test406.scxml");
+    }
+
+    it("test 409 removes exited descendants before ancestor onexit") {
+        check_w3c_fixture("test409.scxml");
+    }
+
+    it("test 411 adds a state before its own onentry") {
+        check_w3c_fixture("test411.scxml");
     }
 
     it("test 412 orders parent entry, initial transition, then child entry") {
@@ -177,5 +189,21 @@ suite("SCXML W3C-derived conformance regression corpus") {
 
     it("test 419 selects eventless transitions before queued events") {
         check_w3c_fixture("test419.scxml");
+    }
+
+    it("test 503 gives targetless transitions an empty exit set") {
+        check_w3c_fixture("test503.scxml");
+    }
+
+    it("test 505 retains a compound source for an internal descendant target") {
+        check_w3c_fixture("test505.scxml");
+    }
+
+    it("test 506 treats a non-descendant internal target as external") {
+        check_w3c_fixture("test506.scxml");
+    }
+
+    it("test 533 treats an internal transition from parallel as external") {
+        check_w3c_fixture("test533.scxml");
     }
 }
