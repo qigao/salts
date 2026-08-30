@@ -16,7 +16,7 @@ CFlow / Actor / future adapters
       Platform errors and ABI
 ```
 
-当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 TCP recv/send 和 UDP recv_from/send_to。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `TURBO_ENOTSUP`。现有 CFlow API 暂不迁移，因此本模块可独立验证和回滚，不改变已有用户行为。
+当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 TCP recv/send 和 UDP recv_from/send_to。Linux epoll 与 macOS/BSD kqueue 还支持非阻塞 connected byte pipe；IOCP named pipe 与 io_uring pipe 仍显式返回 `TURBO_ENOTSUP`。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `TURBO_ENOTSUP`。现有 CFlow API 暂不迁移，因此本模块可独立验证和回滚，不改变已有用户行为。
 
 ## 数据与状态协议
 
@@ -78,3 +78,5 @@ if (status != 0)
 完整可运行的 TCP/UDP loopback 用法位于 `tests/native_io_test.c`。
 
 `native_io_benchmark` 只比较同模型的原生基线：Windows 为 raw IOCP，Linux 分别为 raw epoll 与 raw io_uring，Apple/BSD 为 raw kqueue。输出按 backend 和 TCP/UDP 拆分的 payload 延迟、吞吐及 submit/observe 阶段表。TCP 覆盖 1/4/8/16/32/64 KiB；Windows/Linux UDP 覆盖到 32 KiB，因 IPv4 UDP 单 datagram 无法承载 64 KiB payload 而明确省略该行；kqueue UDP 止于 8 KiB，以符合 macOS 默认单 datagram 上限，不通过应用层拆包改变测试口径。
+
+`native_io_pipe_benchmark` 在当前支持 pipe 的 Linux epoll 与 macOS/BSD kqueue 上比较 raw POSIX pipe 调用和 NativeIO。每个样本执行 256 次单向 transfer，覆盖 1/4/8/16/32/64 KiB；应用 payload 每次只计一次，不把读端和写端重复计算为两倍流量。fixture、buffer、descriptor 与 backend 初始化位于计时区外，输出独立的 p50/p95 延迟、吞吐以及 raw syscall、NativeIO submit/observe 阶段表。Windows 和 Linux io_uring 在对应 pipe backend 实现前不生成伪基线。
