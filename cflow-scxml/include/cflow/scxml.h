@@ -103,7 +103,8 @@ typedef enum cflow_scxml_program_requirement {
     CFLOW_SCXML_REQUIREMENT_CANCEL = 1u << 2u,
     CFLOW_SCXML_REQUIREMENT_INVOKE = 1u << 3u,
     CFLOW_SCXML_REQUIREMENT_PAYLOAD = 1u << 4u,
-    CFLOW_SCXML_REQUIREMENT_INVOKE_PAYLOAD = 1u << 5u
+    CFLOW_SCXML_REQUIREMENT_INVOKE_PAYLOAD = 1u << 5u,
+    CFLOW_SCXML_REQUIREMENT_INVOKE_IDLOCATION = 1u << 6u
 } cflow_scxml_program_requirement;
 
 typedef enum cflow_scxml_event_io_capability {

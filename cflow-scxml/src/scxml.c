@@ -161,6 +161,9 @@ typedef struct scxml_invocation_descriptor {
     cflow_machine_state_id owner;
     const char *id;
     size_t id_size;
+    size_t owner_id_size;
+    size_t dynamic_id_max_size;
+    size_t dynamic_done_name_max_size;
     const char *type;
     size_t type_size;
     const char *src;
@@ -174,11 +177,13 @@ typedef struct scxml_invocation_descriptor {
     bool has_type_expr;
     bool has_src_expr;
     bool has_data_expr;
+    bool has_id_location;
     size_t payload_first;
     size_t payload_count;
     cflow_scxml_cmeta_expr_program type_expr;
     cflow_scxml_cmeta_expr_program src_expr;
     cflow_scxml_cmeta_expr_program data_expr;
+    cflow_scxml_cmeta_location id_location;
 } scxml_invocation_descriptor;
 
 typedef struct scxml_done_data_descriptor {
@@ -400,20 +405,34 @@ typedef struct scxml_prepared_effect {
 typedef enum scxml_invocation_state {
     SCXML_INVOCATION_INACTIVE = 0,
     SCXML_INVOCATION_PENDING,
-    SCXML_INVOCATION_STARTING,
+    SCXML_INVOCATION_START_RESERVED,
+    SCXML_INVOCATION_FAIL_RESERVED,
     SCXML_INVOCATION_ACTIVE,
     SCXML_INVOCATION_FAILED
 } scxml_invocation_state;
 
 typedef struct scxml_invocation_row {
     uint64_t token;
+    const char *id;
+    size_t id_size;
+    char owned_id[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
+    bool owns_id;
     scxml_invocation_state state;
 } scxml_invocation_row;
 
+typedef enum scxml_invocation_effect_kind {
+    SCXML_INVOCATION_EFFECT_ENTER = 1,
+    SCXML_INVOCATION_EFFECT_EXIT,
+    SCXML_INVOCATION_EFFECT_START,
+    SCXML_INVOCATION_EFFECT_FAIL
+} scxml_invocation_effect_kind;
+
 typedef struct scxml_invocation_lifecycle_effect {
     cflow_scxml_session_impl *session;
+    cflow_statechart_effect_ticket adapter_ticket;
+    uint64_t token;
     size_t invocation;
-    bool enter;
+    scxml_invocation_effect_kind kind;
     bool in_use;
 } scxml_invocation_lifecycle_effect;
 
@@ -441,6 +460,10 @@ static cflow_scxml_status compile_cmeta_value_program(
     scxml_build *build, turbo_xml_attribute attribute,
     const char *subject, cflow_scxml_cmeta_expr_program *program,
     cflow_scxml_cmeta_expr_value_kind required_kind);
+
+static cflow_scxml_status compile_cmeta_owned_string_location(
+    scxml_build *build, turbo_xml_attribute attribute,
+    const char *subject, cflow_scxml_cmeta_location *out);
 
 static cflow_scxml_status compile_cmeta_payload_token(
     scxml_build *build, turbo_xml_string_view source,
@@ -2287,6 +2310,8 @@ static cflow_scxml_status analyze_invoke(
         sizeof(".invoke.") - 1u;
     static const size_t done_prefix_size =
         sizeof("done.invoke.") - 1u;
+    static const size_t max_token_digits =
+        sizeof("18446744073709551615") - 1u;
     const turbo_xml_attribute id_attribute = find_attribute(node, "id");
     const turbo_xml_attribute type_attribute = find_attribute(node, "type");
     const turbo_xml_attribute src_attribute = find_attribute(node, "src");
@@ -2311,6 +2336,8 @@ static cflow_scxml_status analyze_invoke(
         : (turbo_xml_string_view){NULL, 0u};
     size_t id_size = id.size;
     size_t done_size;
+    size_t dynamic_id_size = 0u;
+    size_t dynamic_done_size = 0u;
     size_t index;
     size_t finalize_count = 0u;
     size_t content_count = 0u;
@@ -2318,9 +2345,14 @@ static cflow_scxml_status analyze_invoke(
     size_t payload_count = 0u;
     size_t token_cursor = 0u;
     turbo_xml_string_view token;
+    cflow_scxml_cmeta_location compiled_id_location = {0};
     cflow_scxml_status status = validate_element_attributes(
         build, node, SCXML_ELEMENT_INVOKE);
     if (status != CFLOW_SCXML_OK) return status;
+    if (id_attribute.impl != NULL && idlocation_attribute.impl != NULL)
+        return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
+                          turbo_xml_node_location(node),
+                          "invoke id and idlocation are mutually exclusive");
     if ((type_expr_attribute.impl != NULL ||
          src_expr_attribute.impl != NULL ||
          idlocation_attribute.impl != NULL ||
@@ -2329,16 +2361,29 @@ static cflow_scxml_status analyze_invoke(
         return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
                           turbo_xml_node_location(node),
                           "invoke expressions require the CMeta data model");
-    if (idlocation_attribute.impl != NULL)
-        return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
-                          turbo_xml_node_location(node),
-                          "invoke idlocation is not admitted by this bounded scalar profile");
     if ((type_attribute.impl != NULL && type_expr_attribute.impl != NULL) ||
-        (src_attribute.impl != NULL && src_expr_attribute.impl != NULL) ||
-        (id_attribute.impl != NULL && idlocation_attribute.impl != NULL))
+        (src_attribute.impl != NULL && src_expr_attribute.impl != NULL))
         return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
                           turbo_xml_node_location(node),
                           "invoke literal and expression attributes are mutually exclusive");
+    if (idlocation_attribute.impl != NULL) {
+        status = compile_cmeta_owned_string_location(
+            build, idlocation_attribute, "invoke idlocation",
+            &compiled_id_location);
+        if (status != CFLOW_SCXML_OK) return status;
+        if (!checked_add(owner_id.size, 1u, &dynamic_id_size) ||
+            !checked_add(dynamic_id_size, max_token_digits,
+                         &dynamic_id_size) ||
+            dynamic_id_size > CFLOW_SCXML_EVENT_METADATA_CAPACITY ||
+            !checked_add(done_prefix_size, dynamic_id_size,
+                         &dynamic_done_size) ||
+            dynamic_done_size > CFLOW_SCXML_EVENT_METADATA_CAPACITY) {
+            return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                              turbo_xml_attribute_location(
+                                  idlocation_attribute),
+                              "dynamic invoke id or done Event exceeds metadata limit");
+        }
+    }
     if (id_attribute.impl != NULL && !is_xml_ncname(id)) {
         return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
                           turbo_xml_attribute_location(id_attribute),
@@ -2518,6 +2563,8 @@ static cflow_scxml_status analyze_invoke(
                           turbo_xml_node_location(node),
                           "invoke expression count overflow");
     counts->requirements |= CFLOW_SCXML_REQUIREMENT_INVOKE;
+    if (idlocation_attribute.impl != NULL)
+        counts->requirements |= CFLOW_SCXML_REQUIREMENT_INVOKE_IDLOCATION;
     if (content_count != 0u || payload_count != 0u)
         counts->requirements |= CFLOW_SCXML_REQUIREMENT_INVOKE_PAYLOAD;
     return CFLOW_SCXML_OK;
@@ -2981,6 +3028,8 @@ static cflow_scxml_status emit_invocation_declarations(
     scxml_build *build, turbo_xml_node node, size_t node_count) {
     static const char generated_separator[] = ".invoke.";
     static const char done_prefix[] = "done.invoke.";
+    static const size_t max_token_digits =
+        sizeof("18446744073709551615") - 1u;
     const cflow_machine_state_id owner = node_id(build, node, node_count);
     const turbo_xml_attribute owner_id_attribute = find_attribute(node, "id");
     const turbo_xml_string_view owner_id =
@@ -2998,6 +3047,7 @@ static cflow_scxml_status emit_invocation_declarations(
         turbo_xml_attribute type_expr_attribute;
         turbo_xml_attribute src_attribute;
         turbo_xml_attribute src_expr_attribute;
+        turbo_xml_attribute idlocation_attribute;
         turbo_xml_attribute namelist_attribute;
         turbo_xml_attribute autoforward_attribute;
         turbo_xml_location id_location;
@@ -3023,6 +3073,7 @@ static cflow_scxml_status emit_invocation_declarations(
         type_expr_attribute = find_attribute(child, "typeexpr");
         src_attribute = find_attribute(child, "src");
         src_expr_attribute = find_attribute(child, "srcexpr");
+        idlocation_attribute = find_attribute(child, "idlocation");
         namelist_attribute = find_attribute(child, "namelist");
         autoforward_attribute = find_attribute(child, "autoforward");
         if (id_attribute.impl != NULL) {
@@ -3087,6 +3138,7 @@ static cflow_scxml_status emit_invocation_declarations(
                descriptor->id, descriptor->id_size);
         done_name[generated_size] = '\0';
         descriptor->owner = owner;
+        descriptor->owner_id_size = owner_id.size;
         descriptor->payload_first = build->payload_index;
         descriptor->done_name = done_name;
         descriptor->done_name_size = generated_size;
@@ -3095,6 +3147,31 @@ static cflow_scxml_status emit_invocation_declarations(
             autoforward_attribute.impl != NULL &&
             view_equal_raw(
                 turbo_xml_attribute_value(autoforward_attribute), "true");
+        if (idlocation_attribute.impl != NULL) {
+            if (!checked_add(owner_id.size, 1u,
+                             &descriptor->dynamic_id_max_size) ||
+                !checked_add(descriptor->dynamic_id_max_size,
+                             max_token_digits,
+                             &descriptor->dynamic_id_max_size) ||
+                !checked_add(sizeof(done_prefix) - 1u,
+                             descriptor->dynamic_id_max_size,
+                             &descriptor->dynamic_done_name_max_size) ||
+                descriptor->dynamic_id_max_size >
+                    CFLOW_SCXML_EVENT_METADATA_CAPACITY ||
+                descriptor->dynamic_done_name_max_size >
+                    CFLOW_SCXML_EVENT_METADATA_CAPACITY) {
+                return scxml_fail(
+                    build, CFLOW_SCXML_NATIVE_IR_REJECTED,
+                    turbo_xml_attribute_location(idlocation_attribute),
+                    "dynamic invoke id budget mismatched admission");
+            }
+            expression_status = compile_cmeta_owned_string_location(
+                build, idlocation_attribute, "invoke idlocation",
+                &descriptor->id_location);
+            if (expression_status != CFLOW_SCXML_OK)
+                return expression_status;
+            descriptor->has_id_location = true;
+        }
         if (type_expr_attribute.impl != NULL) {
             expression_status = compile_cmeta_value_program(
                 build, type_expr_attribute, "invoke typeexpr",
@@ -3562,41 +3639,73 @@ static void commit_invocation_lifecycle(void *user) {
     scxml_invocation_lifecycle_effect *effect =
         (scxml_invocation_lifecycle_effect *)user;
     cflow_scxml_session_impl *session;
-    const scxml_invocation_descriptor *descriptor;
     cflow_scxml_invoke_cancel_request request;
     cflow_statechart_effect_ticket adapter_ticket = {0};
     cflow_scxml_adapter_status status;
     const char *adapter_error = NULL;
+    scxml_invocation_effect_kind kind;
     uint64_t token = 0u;
+    char id[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u] = {0};
+    const char *cancel_id = id;
+    size_t id_size = 0u;
     bool cancel = false;
+    bool start = false;
     if (effect == NULL || !effect->in_use || effect->session == NULL) return;
     session = effect->session;
     if (effect->invocation >= session->program->invocation_count) return;
-    descriptor = &session->program->invocations[effect->invocation];
+    kind = effect->kind;
+    if (kind == SCXML_INVOCATION_EFFECT_START)
+        adapter_ticket = effect->adapter_ticket;
     turbo_mutex_lock(&session->registry_lock);
     if (effect->invocation < session->invocation_capacity) {
         scxml_invocation_row *row =
             &session->invocation_rows[effect->invocation];
-        if (effect->enter) {
-            row->token = 0u;
-            row->state = SCXML_INVOCATION_PENDING;
-        } else {
+        if (effect->kind == SCXML_INVOCATION_EFFECT_ENTER) {
+            *row = (scxml_invocation_row){
+                .state = SCXML_INVOCATION_PENDING};
+        } else if (effect->kind == SCXML_INVOCATION_EFFECT_EXIT) {
             if (row->state == SCXML_INVOCATION_ACTIVE) {
                 token = row->token;
                 cancel = token != 0u;
+                id_size = row->id_size;
+                if (row->owns_id) {
+                    if (id_size != 0u)
+                        memcpy(id, row->id, id_size + 1u);
+                } else {
+                    cancel_id = row->id;
+                }
                 if (session->invoke_stats.active != 0u)
                     --session->invoke_stats.active;
             }
-            row->token = 0u;
-            row->state = SCXML_INVOCATION_INACTIVE;
+            *row = (scxml_invocation_row){0};
+        } else if (effect->kind == SCXML_INVOCATION_EFFECT_START &&
+                   row->state == SCXML_INVOCATION_START_RESERVED &&
+                   row->token == effect->token) {
+            row->state = SCXML_INVOCATION_ACTIVE;
+            increment_u64(&session->invoke_stats.started);
+            ++session->invoke_stats.active;
+            start = true;
+        } else if (effect->kind == SCXML_INVOCATION_EFFECT_FAIL &&
+                   row->state == SCXML_INVOCATION_FAIL_RESERVED &&
+                   row->token == effect->token) {
+            row->state = SCXML_INVOCATION_FAILED;
+            increment_u64(&session->invoke_stats.start_failed);
         }
     }
     effect->in_use = false;
     turbo_mutex_unlock(&session->registry_lock);
+    if (start) {
+        adapter_ticket.commit(adapter_ticket.user);
+        return;
+    }
+    if (kind == SCXML_INVOCATION_EFFECT_START &&
+        adapter_ticket.discard != NULL) {
+        adapter_ticket.discard(adapter_ticket.user);
+        return;
+    }
     if (!cancel) return;
     request = (cflow_scxml_invoke_cancel_request){
-        .token = token, .id = descriptor->id,
-        .id_size = descriptor->id_size};
+        .token = token, .id = cancel_id, .id_size = id_size};
     status = (session->invoke_is_v2
                   ? session->invoke_v2.prepare_cancel
                   : session->invoke.prepare_cancel)(
@@ -3622,11 +3731,31 @@ static void discard_invocation_lifecycle(void *user) {
     scxml_invocation_lifecycle_effect *effect =
         (scxml_invocation_lifecycle_effect *)user;
     cflow_scxml_session_impl *session;
+    cflow_statechart_effect_ticket adapter_ticket = {0};
+    bool discard_adapter = false;
     if (effect == NULL || !effect->in_use || effect->session == NULL) return;
     session = effect->session;
     turbo_mutex_lock(&session->registry_lock);
+    if (effect->invocation < session->invocation_capacity &&
+        (effect->kind == SCXML_INVOCATION_EFFECT_START ||
+         effect->kind == SCXML_INVOCATION_EFFECT_FAIL)) {
+        scxml_invocation_row *row =
+            &session->invocation_rows[effect->invocation];
+        const scxml_invocation_state reserved =
+            effect->kind == SCXML_INVOCATION_EFFECT_START
+                ? SCXML_INVOCATION_START_RESERVED
+                : SCXML_INVOCATION_FAIL_RESERVED;
+        if (row->state == reserved && row->token == effect->token)
+            *row = (scxml_invocation_row){
+                .state = SCXML_INVOCATION_PENDING};
+        if (effect->kind == SCXML_INVOCATION_EFFECT_START) {
+            adapter_ticket = effect->adapter_ticket;
+            discard_adapter = adapter_ticket.discard != NULL;
+        }
+    }
     effect->in_use = false;
     turbo_mutex_unlock(&session->registry_lock);
+    if (discard_adapter) adapter_ticket.discard(adapter_ticket.user);
 }
 
 static scxml_execute_outcome execute_invocation_lifecycle(
@@ -3648,7 +3777,9 @@ static scxml_execute_outcome execute_invocation_lifecycle(
     effect = acquire_invocation_effect_locked(session);
     if (effect != NULL) {
         effect->invocation = step->invocation;
-        effect->enter = step->kind == SCXML_STEP_INVOKE_ENTER;
+        effect->kind = step->kind == SCXML_STEP_INVOKE_ENTER
+            ? SCXML_INVOCATION_EFFECT_ENTER
+            : SCXML_INVOCATION_EFFECT_EXIT;
     }
     turbo_mutex_unlock(&session->registry_lock);
     if (effect == NULL) {
@@ -3856,7 +3987,10 @@ static bool start_stable_invocations(
         }
         session->next_invocation_token = token == UINT64_MAX ? 0u : token + 1u;
         session->invocation_rows[index] = (scxml_invocation_row){
-            .token = token, .state = SCXML_INVOCATION_STARTING};
+            .token = token,
+            .id = descriptor->id,
+            .id_size = descriptor->id_size,
+            .state = SCXML_INVOCATION_START_RESERVED};
         turbo_mutex_unlock(&session->registry_lock);
 
         request = (cflow_scxml_invoke_start_request){
@@ -3913,6 +4047,294 @@ static bool start_stable_invocations(
             return false;
     }
     return true;
+}
+
+static bool restore_invocation_id_location(
+    const scxml_invocation_descriptor *descriptor,
+    const void *published_state, void *staged_state,
+    const char *id, size_t id_size, bool *out_restored) {
+    cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
+    const unsigned char *previous = NULL;
+    size_t previous_size = 0u;
+    unsigned char *destination;
+    cmeta_status restore_status;
+    if (out_restored != NULL) *out_restored = true;
+    if (descriptor == NULL || published_state == NULL ||
+        staged_state == NULL || id == NULL || out_restored == NULL ||
+        !descriptor->has_id_location ||
+        descriptor->id_location.value == NULL)
+        return false;
+    if (cmeta_data_buffer_read(
+            descriptor->id_location.value,
+            (const unsigned char *)published_state +
+                descriptor->id_location.offset,
+            CFLOW_SCXML_EVENT_METADATA_CAPACITY,
+            &previous, &previous_size) != CMETA_OK)
+        return false;
+    if (cflow_scxml_cmeta_location_assign_owned_string(
+            &descriptor->id_location, staged_state, id, id_size,
+            CFLOW_SCXML_EVENT_METADATA_CAPACITY,
+            &diagnostic) == CFLOW_SCXML_CMETA_EXPR_OK)
+        return true;
+    destination = (unsigned char *)staged_state +
+        descriptor->id_location.offset;
+    if (previous_size == 0u) {
+        restore_status = cmeta_data_buffer_restore_zero(
+            descriptor->id_location.value, destination);
+        *out_restored = restore_status == CMETA_OK;
+    } else {
+        *out_restored =
+            cflow_scxml_cmeta_location_assign_owned_string(
+                &descriptor->id_location, staged_state,
+                (const char *)previous, previous_size,
+                CFLOW_SCXML_EVENT_METADATA_CAPACITY,
+                &diagnostic) == CFLOW_SCXML_CMETA_EXPR_OK;
+    }
+    return false;
+}
+
+static bool stage_invocation_result(
+    cflow_scxml_session_impl *session, size_t invocation,
+    uint64_t token, const char *id, size_t id_size, bool own_id,
+    scxml_invocation_effect_kind kind,
+    const cflow_statechart_effect_ticket *adapter_ticket,
+    const cflow_statechart_stable_transaction_context *context,
+    const char **out_error) {
+    scxml_invocation_lifecycle_effect *effect;
+    cflow_statechart_effect_ticket ticket;
+    scxml_invocation_row *row;
+    const bool owns_adapter_ticket =
+        kind == SCXML_INVOCATION_EFFECT_START && adapter_ticket != NULL &&
+        adapter_ticket->discard != NULL;
+    if (session == NULL || invocation >= session->invocation_capacity ||
+        token == 0u ||
+        (own_id && id_size > CFLOW_SCXML_EVENT_METADATA_CAPACITY) ||
+        (id_size != 0u && id == NULL) ||
+        (kind != SCXML_INVOCATION_EFFECT_START &&
+         kind != SCXML_INVOCATION_EFFECT_FAIL) ||
+        context == NULL || context->stage_effect == NULL ||
+        out_error == NULL) {
+        if (out_error != NULL)
+            *out_error = "SCXML invocation result reservation is invalid";
+        if (owns_adapter_ticket)
+            adapter_ticket->discard(adapter_ticket->user);
+        return false;
+    }
+    turbo_mutex_lock(&session->registry_lock);
+    row = &session->invocation_rows[invocation];
+    effect = row->state == SCXML_INVOCATION_PENDING
+        ? acquire_invocation_effect_locked(session) : NULL;
+    if (effect != NULL) {
+        *row = (scxml_invocation_row){
+            .token = token,
+            .id_size = id_size,
+            .owns_id = own_id,
+            .state = kind == SCXML_INVOCATION_EFFECT_START
+                ? SCXML_INVOCATION_START_RESERVED
+                : SCXML_INVOCATION_FAIL_RESERVED};
+        if (own_id) {
+            if (id_size != 0u) memcpy(row->owned_id, id, id_size);
+            row->owned_id[id_size] = '\0';
+            row->id = row->owned_id;
+        } else {
+            row->id = id;
+        }
+        effect->invocation = invocation;
+        effect->token = token;
+        effect->kind = kind;
+        if (adapter_ticket != NULL)
+            effect->adapter_ticket = *adapter_ticket;
+    }
+    turbo_mutex_unlock(&session->registry_lock);
+    if (effect == NULL) {
+        *out_error = "SCXML invocation effect storage is full";
+        if (owns_adapter_ticket)
+            adapter_ticket->discard(adapter_ticket->user);
+        return false;
+    }
+    ticket = (cflow_statechart_effect_ticket){
+        commit_invocation_lifecycle, discard_invocation_lifecycle, effect};
+    if (!context->stage_effect(context->effect_user, &ticket, out_error)) {
+        discard_invocation_lifecycle(effect);
+        return false;
+    }
+    return true;
+}
+
+static cflow_statechart_stable_transaction_result
+start_stable_invocations_transaction(
+    void *user,
+    const cflow_statechart_stable_transaction_context *context,
+    const char **out_error) {
+    cflow_scxml_session_impl *session = (cflow_scxml_session_impl *)user;
+    cflow_statechart_runtime_hook_context evaluation;
+    size_t index;
+    bool changed = false;
+    if (out_error != NULL) *out_error = NULL;
+    if (session == NULL || context == NULL ||
+        context->published_state == NULL || context->staged_state == NULL ||
+        context->is_active == NULL || context->configuration_user == NULL ||
+        context->raise_internal == NULL || context->stage_effect == NULL ||
+        out_error == NULL) {
+        if (out_error != NULL)
+            *out_error = "SCXML invocation stable transaction is invalid";
+        return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
+    }
+    evaluation = (cflow_statechart_runtime_hook_context){
+        .state = context->staged_state,
+        .configuration_version = context->configuration_version,
+        .is_active = context->is_active,
+        .configuration_user = context->configuration_user,
+        .enqueue_internal = context->raise_internal,
+        .enqueue_user = context->raise_user};
+    for (index = 0u; index < session->program->invocation_count; ++index) {
+        const scxml_invocation_descriptor *descriptor =
+            &session->program->invocations[index];
+        cflow_scxml_invoke_start_request request;
+        cflow_scxml_invoke_start_request_v2 request_v2 = {0};
+        cflow_scxml_payload_view payload = {0};
+        cflow_statechart_effect_ticket adapter_ticket = {0};
+        cflow_scxml_adapter_status status;
+        const char *adapter_error = NULL;
+        const char *dynamic_type = descriptor->type;
+        size_t dynamic_type_size = descriptor->type_size;
+        const char *dynamic_src = descriptor->src;
+        size_t dynamic_src_size = descriptor->src_size;
+        char generated_id[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
+        const char *id = descriptor->id;
+        size_t id_size = descriptor->id_size;
+        uint64_t token;
+        int written;
+        bool restored = true;
+
+        turbo_mutex_lock(&session->registry_lock);
+        if (session->invocation_rows[index].state !=
+                SCXML_INVOCATION_PENDING) {
+            turbo_mutex_unlock(&session->registry_lock);
+            continue;
+        }
+        turbo_mutex_unlock(&session->registry_lock);
+        if (!context->is_active(
+                context->configuration_user, descriptor->owner))
+            continue;
+
+        turbo_mutex_lock(&session->registry_lock);
+        token = session->next_invocation_token;
+        if (token != 0u)
+            session->next_invocation_token =
+                token == UINT64_MAX ? 0u : token + 1u;
+        turbo_mutex_unlock(&session->registry_lock);
+        if (token == 0u) {
+            *out_error = "SCXML invocation token space is exhausted";
+            return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
+        }
+        if (descriptor->has_id_location) {
+            written = snprintf(
+                generated_id, sizeof(generated_id), "%.*s.%" PRIu64,
+                (int)descriptor->owner_id_size, descriptor->id, token);
+            if (written < 0 || (size_t)written >= sizeof(generated_id) ||
+                (size_t)written > descriptor->dynamic_id_max_size) {
+                *out_error = "SCXML dynamic invocation ID exceeds its bound";
+                return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
+            }
+            id = generated_id;
+            id_size = (size_t)written;
+            if (!restore_invocation_id_location(
+                    descriptor, context->published_state,
+                    context->staged_state, id, id_size, &restored)) {
+                if (!restored) {
+                    *out_error =
+                        "SCXML invocation idlocation rollback failed";
+                    return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
+                }
+                if (!stage_invocation_result(
+                        session, index, token, NULL, 0u, true,
+                        SCXML_INVOCATION_EFFECT_FAIL, NULL,
+                        context, out_error) ||
+                    !enqueue_invocation_adapter_error(
+                        session, &evaluation,
+                        CFLOW_SCXML_ADAPTER_ERROR_EXECUTION, out_error))
+                    return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
+                changed = true;
+                continue;
+            }
+        }
+        if ((descriptor->has_type_expr &&
+             !evaluate_invocation_string(
+                 &descriptor->type_expr, session, &evaluation,
+                 &dynamic_type, &dynamic_type_size)) ||
+            (descriptor->has_src_expr &&
+             !evaluate_invocation_string(
+                 &descriptor->src_expr, session, &evaluation,
+                 &dynamic_src, &dynamic_src_size)) ||
+            ((descriptor->has_data_expr || descriptor->payload_count != 0u) &&
+             !materialize_invocation_payload(
+                 session, descriptor, &evaluation, &payload))) {
+            if (!stage_invocation_result(
+                    session, index, token, id, id_size,
+                    descriptor->has_id_location,
+                    SCXML_INVOCATION_EFFECT_FAIL, NULL,
+                    context, out_error) ||
+                !enqueue_invocation_adapter_error(
+                    session, &evaluation,
+                    CFLOW_SCXML_ADAPTER_ERROR_EXECUTION, out_error))
+                return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
+            changed = true;
+            continue;
+        }
+        request = (cflow_scxml_invoke_start_request){
+            .token = token,
+            .id = id,
+            .id_size = id_size,
+            .type = dynamic_type,
+            .type_size = dynamic_type_size,
+            .src = dynamic_src,
+            .src_size = dynamic_src_size,
+            .autoforward = descriptor->autoforward};
+        if (session->invoke_is_v2) {
+            request_v2.base = request;
+            request_v2.payload = payload;
+            status = session->invoke_v2.prepare_start(
+                session->invoke_user, &request_v2, &adapter_ticket,
+                &adapter_error);
+        } else if (payload.kind != CFLOW_SCXML_PAYLOAD_NONE) {
+            status = CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+            adapter_error = "SCXML invocation payload requires a v2 adapter";
+        } else {
+            status = session->invoke.prepare_start(
+                session->invoke_user, &request, &adapter_ticket,
+                &adapter_error);
+        }
+        if (status == CFLOW_SCXML_ADAPTER_ACCEPTED &&
+            adapter_ticket.commit != NULL && adapter_ticket.discard != NULL) {
+            if (!stage_invocation_result(
+                    session, index, token, id, id_size,
+                    descriptor->has_id_location,
+                    SCXML_INVOCATION_EFFECT_START, &adapter_ticket,
+                    context, out_error))
+                return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
+            changed = true;
+            continue;
+        }
+        if (status == CFLOW_SCXML_ADAPTER_INVALID_CONTRACT ||
+            status == CFLOW_SCXML_ADAPTER_ACCEPTED) {
+            *out_error = adapter_error != NULL && adapter_error[0] != '\0'
+                ? adapter_error
+                : "SCXML invocation adapter returned an invalid start ticket";
+            return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
+        }
+        if (!stage_invocation_result(
+                session, index, token, id, id_size,
+                descriptor->has_id_location,
+                SCXML_INVOCATION_EFFECT_FAIL, NULL,
+                context, out_error) ||
+            !enqueue_invocation_adapter_error(
+                session, &evaluation, status, out_error))
+            return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
+        changed = true;
+    }
+    return changed ? CFLOW_STATECHART_STABLE_TRANSACTION_COMMIT
+                   : CFLOW_STATECHART_STABLE_TRANSACTION_NOOP;
 }
 
 static bool execute_finalize_range(
@@ -4014,17 +4436,30 @@ static bool forward_external_to_invocations(
         cflow_scxml_adapter_status status;
         const char *adapter_error = NULL;
         uint64_t token = 0u;
+        char id[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u] = {0};
+        const char *request_id = NULL;
+        size_t id_size = 0u;
         if (!descriptor->autoforward) continue;
         turbo_mutex_lock(&session->registry_lock);
         if (session->invocation_rows[index].state ==
-                SCXML_INVOCATION_ACTIVE)
+                SCXML_INVOCATION_ACTIVE) {
             token = session->invocation_rows[index].token;
+            id_size = session->invocation_rows[index].id_size;
+            if (session->invocation_rows[index].owns_id) {
+                if (id_size != 0u)
+                    memcpy(id, session->invocation_rows[index].id,
+                           id_size + 1u);
+                request_id = id;
+            } else {
+                request_id = session->invocation_rows[index].id;
+            }
+        }
         turbo_mutex_unlock(&session->registry_lock);
         if (token == 0u) continue;
         request = (cflow_scxml_invoke_forward_request){
             .token = token,
-            .id = descriptor->id,
-            .id_size = descriptor->id_size,
+            .id = request_id,
+            .id_size = id_size,
             .event = event};
         status = (session->invoke_is_v2
                       ? session->invoke_v2.prepare_forward
@@ -4260,21 +4695,21 @@ static bool observe_scxml_event(
                     SCXML_INVOCATION_ACTIVE &&
                 session->invocation_rows[index].token ==
                     event->source_token) {
-                const scxml_invocation_descriptor *descriptor =
-                    &session->program->invocations[index];
-                if (descriptor->id_size >
+                const scxml_invocation_row *invocation =
+                    &session->invocation_rows[index];
+                if (invocation->id_size >
                     CFLOW_SCXML_EVENT_METADATA_CAPACITY) {
                     turbo_mutex_unlock(&session->registry_lock);
                     *out_error = "SCXML invoke ID exceeds metadata bound";
                     return false;
                 }
-                memcpy(session->current_event_invoke_id, descriptor->id,
-                       descriptor->id_size);
-                session->current_event_invoke_id[descriptor->id_size] = '\0';
+                memcpy(session->current_event_invoke_id, invocation->id,
+                       invocation->id_size);
+                session->current_event_invoke_id[invocation->id_size] = '\0';
                 session->system_values.event_invoke_id =
                     (cflow_scxml_cmeta_expr_string_view){
                         session->current_event_invoke_id,
-                        descriptor->id_size};
+                        invocation->id_size};
                 break;
             }
         }
@@ -8453,12 +8888,23 @@ static cflow_statechart_runtime_status cflow_scxml_session_init_model(
     atomic_init(&impl->adapter_close_called, false);
     atomic_init(&impl->invoke_close_called, false);
     runtime_hooks = (cflow_statechart_runtime_hooks){
-        .abi_version = CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V2,
+        .abi_version =
+            (program->requirements &
+             CFLOW_SCXML_REQUIREMENT_INVOKE_IDLOCATION) != 0u
+                ? CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V3
+                : CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V2,
         .struct_size = sizeof(runtime_hooks),
-        .on_stable = impl->has_invoke ? start_stable_invocations : NULL,
+        .on_stable = impl->has_invoke &&
+                (program->requirements &
+                 CFLOW_SCXML_REQUIREMENT_INVOKE_IDLOCATION) == 0u
+            ? start_stable_invocations : NULL,
         .preprocess_external =
             impl->has_invoke ? preprocess_invocation_external : NULL,
-        .on_event = observe_scxml_event};
+        .on_event = observe_scxml_event,
+        .on_stable_transaction = impl->has_invoke &&
+                (program->requirements &
+                 CFLOW_SCXML_REQUIREMENT_INVOKE_IDLOCATION) != 0u
+            ? start_stable_invocations_transaction : NULL};
     if (data_model == SCXML_DATA_MODEL_CMETA &&
         program->data_initializer_count != 0u) {
         status = initialize_cmeta_state(
