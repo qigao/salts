@@ -36,21 +36,18 @@ jobs:
             configure_preset: linux-release-user
             build_preset: linux-release-user
             build_dir: build/linux-gcc-release
-            executable: build/linux-gcc-release/bin/native_io_benchmark
           - host: IOCP / Windows 2022 MSVC
             runner: windows-2022
             family: windows
             configure_preset: win-release-user
             build_preset: win-release-user
             build_dir: build/Msvc-Release
-            executable: build/Msvc-Release/bin/native_io_benchmark.exe
           - host: kqueue / macOS 15 AppleClang
             runner: macos-15
             family: mac
             configure_preset: release-mac-ninja
             build_preset: build-default-mac
             build_dir: build/mac-clang-release
-            executable: build/mac-clang-release/bin/native_io_benchmark
 
     steps:
       - uses: actions/checkout@v6
@@ -63,13 +60,11 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $runNative = $true
             $runAdapted = $true
           } else {
             $base = "${{ github.event.pull_request.base.sha || github.event.before }}"
             if ([string]::IsNullOrWhiteSpace($base) -or
                 $base -match '^0+$') {
-              $runNative = $true
               $runAdapted = $true
             } else {
               $changed = @(git diff --name-only $base $env:GITHUB_SHA)
@@ -83,12 +78,10 @@ jobs:
               $cflowChanged = @($changed | Where-Object {
                   $_ -like 'cflow/*'
                 }).Count -gt 0
-              $runNative = $nativeChanged -or $workflowChanged
               $runAdapted = $nativeChanged -or $cflowChanged -or
                 $workflowChanged
             }
           }
-          "native=$($runNative.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "adapted=$($runAdapted.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Setup Linux dependencies
@@ -138,7 +131,7 @@ jobs:
           cmake --preset "${{ matrix.configure_preset }}" \
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
-            --target native_io_test native_io_header_cpp_test native_io_benchmark native_io_pipe_benchmark cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
+            --target native_io_test native_io_header_cpp_test cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
 
       - name: Configure and build Windows Release
         if: matrix.family == 'windows'
@@ -155,7 +148,7 @@ jobs:
 
           cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test native_io_benchmark cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
+          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
           if errorlevel 1 exit /b 1
 
       - name: Configure and build macOS Release
@@ -166,7 +159,7 @@ jobs:
           cmake --preset "${{ matrix.configure_preset }}" \
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
-            --target native_io_test native_io_header_cpp_test native_io_benchmark native_io_pipe_benchmark cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
+            --target native_io_test native_io_header_cpp_test cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
 
       - name: Run NativeIO contract tests
         shell: pwsh
@@ -180,56 +173,6 @@ jobs:
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^cflow_io_native_adapter_test$' --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Run NativeIO socket benchmark
-        if: steps.scope.outputs.native == 'true'
-        shell: pwsh
-        env:
-          BENCHMARK_EXECUTABLE: ${{ matrix.executable }}
-          BENCHMARK_HOST: ${{ matrix.host }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
-          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
-          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:BENCHMARK_EXECUTABLE
-          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
-            throw "NativeIO benchmark executable not found: $benchmark"
-          }
-          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "benchmark.md")
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          @(
-            "host=$env:BENCHMARK_HOST"
-            "commit=$env:GITHUB_SHA"
-            "runner_os=$env:RUNNER_OS"
-            "runner_arch=$env:RUNNER_ARCH"
-            "image_os=$env:ImageOS"
-            "image_version=$env:ImageVersion"
-          ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO: $env:BENCHMARK_HOST"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "### Socket loopback"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-
-      - name: Run NativeIO pipe benchmark
-        if: steps.scope.outputs.native == 'true'
-        shell: pwsh
-        env:
-          PIPE_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_pipe_benchmark
-        run: |
-          $ErrorActionPreference = "Stop"
-          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
-          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
-          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:PIPE_BENCHMARK_EXECUTABLE
-          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
-            throw "NativeIO pipe benchmark executable not found: $benchmark"
-          }
-          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "pipe-benchmark.md")
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "### Byte pipe"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run CFlow NativeIO adapter benchmark
         if: steps.scope.outputs.adapted == 'true'
@@ -248,8 +191,16 @@ jobs:
           }
           $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "cflow-adapter-benchmark.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @(
+            "host=$env:BENCHMARK_HOST"
+            "commit=$env:GITHUB_SHA"
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+            "image_os=$env:ImageOS"
+            "image_version=$env:ImageVersion"
+          ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "### CFlow Actor and Source over NativeIO"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CFlow Actor and Reactive over NativeIO: $env:BENCHMARK_HOST"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 

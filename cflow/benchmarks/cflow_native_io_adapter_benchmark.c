@@ -1107,17 +1107,22 @@ static void adapter_bench_print_tables(adapter_bench_transport transport,
            transport_name, (unsigned)ADAPTER_BENCH_SAMPLES,
            (unsigned)ADAPTER_BENCH_TRANSFERS_PER_SAMPLE);
     printf("\nCFlow NativeIO %s latency (direct is denominator)\n", transport_name);
-    printf("| payload | mode | p50 us | p95 us | p99 us | p50 vs direct |\n");
-    printf("| ---: | :--- | ---: | ---: | ---: | ---: |\n");
+    printf("| payload | mode | p50 us | p50 vs direct | p95 us | "
+           "p95 vs direct | p99 us | p99 vs direct |\n");
+    printf("| ---: | :--- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
     for (size_t payload = 0u; payload < payload_count; ++payload) {
         const adapter_bench_result *direct = &results[payload][ADAPTER_BENCH_DIRECT];
         for (size_t mode = 0u; mode < ADAPTER_BENCH_MODE_COUNT; ++mode) {
             const adapter_bench_result *current = &results[payload][mode];
-            printf("| %zu KiB | %s | %.3f | %.3f | %.3f | %+.2f%% |\n",
+            printf("| %zu KiB | %s | %.3f | %+.2f%% | %.3f | %+.2f%% | "
+                   "%.3f | %+.2f%% |\n",
                    current->payload_size / 1024u, adapter_bench_mode_name((adapter_bench_mode)mode),
-                   (double)current->p50_ns / 1000.0, (double)current->p95_ns / 1000.0,
+                   (double)current->p50_ns / 1000.0,
+                   adapter_bench_delta((double)current->p50_ns, (double)direct->p50_ns),
+                   (double)current->p95_ns / 1000.0,
+                   adapter_bench_delta((double)current->p95_ns, (double)direct->p95_ns),
                    (double)current->p99_ns / 1000.0,
-                   adapter_bench_delta((double)current->p50_ns, (double)direct->p50_ns));
+                   adapter_bench_delta((double)current->p99_ns, (double)direct->p99_ns));
         }
     }
 
