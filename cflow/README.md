@@ -705,6 +705,12 @@ attachment, including an initialization failure;
 `cflow_scxml_session_destroy()` returns
 `CFLOW_STATECHART_RUNTIME_WOULD_BLOCK` until `is_quiescent` confirms that no
 adapter callback can still reach the borrowed session or adapter context.
+The v1 tables remain the payload-free compatibility API. CMeta documents that
+use `namelist`, `<param>`, or external scalar `<content expr>` require the
+independent v2 table and `CFLOW_SCXML_EVENT_IO_CAP_PAYLOAD`.
+`cflow_scxml_session_init_cmeta_v2()` receives that table through an explicit
+`cflow_scxml_session_adapters_v2` bundle; the unchanged base config must not
+also install the corresponding v1 table.
 
 ### SCXML Event I/O processor profile
 
@@ -717,15 +723,16 @@ profile is:
 | --- | --- | --- |
 | `type` omitted | Selects the mandatory SCXML Event Processor semantically. An adapter request represents this with `type_size == 0`; an installed adapter must treat that form as `http://www.w3.org/TR/scxml/#SCXMLEventProcessor`. | Supported within the target rows below. |
 | `target="#_internal"` or compatibility spelling `target="_internal"`, no delay | Delivers transactionally to the session's native internal Event queue without invoking the adapter. Dispatch is selected by the target literal; an explicitly supplied `type` is retained by the compiler but is not consulted on this local path. | Built in. `#_internal` is the canonical target; `_internal` is a documented compatibility extension. Applications should omit `type` or use the canonical SCXML processor URI on this path. |
-| Canonical SCXML processor with another target, including an omitted target, `#_scxml_<sessionid>`, `#_parent`, or `#_<invokeid>` | Passes the literal request to the installed Event I/O adapter v1. The adapter owns target accessibility, routing, payload encoding, and bounded transport capacity. TurboUtils does not bundle a session registry or cross-session transport. | Conditionally supported by an embedding adapter; not a standalone processor implementation. |
+| Canonical SCXML processor with another target, including an omitted target, `#_scxml_<sessionid>`, `#_parent`, or `#_<invokeid>` | Passes the request to the installed Event I/O adapter. Payload-free requests admit v1 or v2; named/scalar payloads require v2. The adapter owns target accessibility, routing, payload encoding, and bounded transport capacity. TurboUtils does not bundle a session registry or cross-session transport. | Conditionally supported by an embedding adapter; not a standalone processor implementation. |
 | `http://www.w3.org/TR/scxml/#BasicHTTPEventProcessor` | Passed to an installed adapter as a literal type. TurboUtils supplies no HTTP POST ingress, location discovery, request decoder, or response behavior. | Optional application extension only; unsupported by the bundled module. |
 | Any other non-empty `type` | Passed unchanged to the installed adapter. If the adapter does not implement that processor, it must return `CFLOW_SCXML_ADAPTER_ERROR_EXECUTION`, which stages `error.execution` and aborts only the current executable block. | Application-defined extension; outside the SCXML conformance claim. |
 
 The adapter capability bits describe reservation operations (`SEND`, delayed
-send, and cancellation), not a registry of processor URIs. `_ioprocessors` is
-not yet exposed by the admitted CMeta system-variable view, so TurboUtils does
-not claim full conformance for either the mandatory SCXML Event Processor or
-the optional Basic HTTP Event Processor. The normative processor definitions
+send, cancellation, and typed payload admission), not a registry of processor
+URIs. `_ioprocessors.scxml` exposes the current session location, but
+TurboUtils supplies no cross-session registry or transport and therefore does
+not claim a standalone implementation of the mandatory SCXML Event Processor
+or the optional Basic HTTP Event Processor. The normative processor definitions
 are in the W3C Recommendation's
 [SCXML Event I/O Processor](https://www.w3.org/TR/scxml/#SCXMLEventProcessor)
 and
@@ -735,9 +742,11 @@ sections.
 Invocation adapters use the same versioned reservation contract. Literal
 `invoke` declarations on `state` or `parallel` accept `id`, `type`, `src`, and
 boolean `autoforward`; an omitted ID is generated deterministically as
-`<state-id>.invoke.<sibling-ordinal>`. `idlocation`, `typeexpr`, `srcexpr`,
-`namelist`, `param`, and `content` remain unsupported because the null data
-model has no location/value evaluator. A restricted `finalize` may contain
+`<state-id>.invoke.<sibling-ordinal>`. The CMeta profile additionally admits
+`typeexpr`, `srcexpr`, ordered scalar `namelist` or `<param>` input, and one
+scalar `<content expr>` through a payload-capable v2 invocation adapter.
+`idlocation` and inline text/XML content remain unsupported. The null data
+model still has no location/value evaluator. A restricted `finalize` may contain
 only label-only `log` and nested null-model `if` partitions; Event-producing
 or external-effect content is rejected during compilation.
 
@@ -751,7 +760,11 @@ committed exit cancels the matching live token; rollback publishes neither
 start nor cancel. Autoforward requires the adapter forward capability and
 visits live declarations in document order. All prepare callbacks receive
 call-scoped borrowed fields outside native and session mutexes and must return
-one valid ticket on acceptance.
+one valid ticket on acceptance. V2 payload entries preserve SCXML document
+order and duplicate names. For `send`, `namelist` entries precede child
+`param` entries; `invoke` admits either `namelist` or child `param`, not both.
+Every entry name and scalar value is borrowed only for the callback; an adapter
+that needs either after return must copy it into its reserved ticket.
 
 `cflow_scxml_session_report_invoke_event()` admits a copied external Event with
 the invocation's nonzero token. The session validates at admission and again
@@ -812,14 +825,20 @@ The supported compatibility subset is deliberately strict:
   never changes Statechart success. The application owns any installed default
   logger and must keep it alive until all executors that may run SCXML log
   actions are quiescent; default-pointer access does not retain the logger;
-- literal `send` and `cancel` in the same executable positions. `event` is one
-  XML NMTOKEN; optional `target`, `type`, and `id` are retained literals, with
-  `id` an XML NCName. Delay accepts unsigned integer milliseconds (`250ms`) or
-  seconds with at most millisecond precision (`1.5s`); a non-zero delay
-  requires a literal `id`. Immediate `#_internal` and `_internal` sends use the
-  native transactional internal queue without an adapter. Other sends require
-  a version-1 Event I/O adapter and bounded `effect_capacity` plus
-  `adapter_internal_event_capacity`; delayed sends additionally require
+- `send` and `cancel` in the same executable positions. The null-model profile
+  admits retained literal fields only. The CMeta profile additionally admits
+  dynamic scalar fields, ordered `namelist` plus child `param` payloads, or one
+  scalar `content expr`; named payload and content are mutually exclusive.
+  `event` is one XML NMTOKEN and literal `id` is an XML NCName. Delay accepts
+  unsigned integer milliseconds (`250ms`) or seconds with at most millisecond
+  precision (`1.5s`); a non-zero delay requires a literal `id`. Immediate
+  `#_internal` and `_internal` sends use the native transactional internal queue
+  without an adapter; named internal payload remains unsupported. Other sends
+  require a bounded Event I/O adapter, with v2 plus the payload capability for
+  named/scalar payload. For compatibility, content paired with `targetexpr`
+  retains the existing adapter-free dynamic internal path; if the expression
+  instead resolves externally under v1, execution raises `error.execution`
+  before the adapter callback. Delayed sends additionally require
   `delayed_send_capacity` and the delayed-send capability. `cancel` is scoped
   to the session registry and is a no-op when delivery or an earlier cancel
   already won;
@@ -830,20 +849,22 @@ The supported compatibility subset is deliberately strict:
   Asynchronous failures enter the prioritized bounded internal ingress through
   `cflow_scxml_session_report_adapter_error()`. Adapters release a completed
   delayed-send registry row through `cflow_scxml_session_report_send_done()`;
-- literal `invoke` on `state`/`parallel`, deterministic generated IDs,
-  `done.invoke.<id>` Events, stable-only activation, committed-exit cancel,
-  declaration-ordered autoforward, and restricted `finalize` preprocessing as
-  described above;
+- `invoke` on `state`/`parallel`, deterministic generated IDs, CMeta dynamic
+  `typeexpr`/`srcexpr`, ordered scalar input through `namelist`, child `param`,
+  or one `content expr`, `done.invoke.<id>` Events, stable-only activation,
+  committed-exit cancel, declaration-ordered autoforward, and restricted
+  `finalize` preprocessing as described above. Payload input requires an
+  invocation v2 adapter with the payload capability;
 - compile-time rejection of malformed, quoted, unknown, or pseudo-state
   `In(id)` arguments. Null-model system variables remain inaccessible.
 
 Executable elements outside `raise`, literal `send`/`cancel`, label-only
 `log`, CMeta scalar `assign`, admitted conditional partitions, and the
 restricted invocation `finalize` profile; wildcard event descriptors; multiple
-targets; dynamic send/invocation expressions, content, or parameters; data
+targets; `idlocation`; inline text/XML content; structured payload values; data
 models other than the admitted null and exact CMeta profiles; and other SCXML
-elements fail during compilation with the first byte offset and one-based
-line/column diagnostic.
+elements outside the profiles above fail during compilation with the first byte
+offset and one-based line/column diagnostic.
 There is no fallback or silent feature removal. Configurable hard limits cover
 XML input, depth, nodes, attributes, states, events, transitions, and action
 references. State/event names plus NUL-terminated log, Event I/O, and
