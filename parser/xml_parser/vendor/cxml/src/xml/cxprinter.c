@@ -855,6 +855,50 @@ char* cxml_document_to_xml_rstring(cxml_root_node *root){
     return cxml_string_as_raw(&str);
 }
 
+char* cxml_element_children_to_xml_rstring(cxml_element_node *node){
+    if (!node) return NULL;
+    cxml_string str = new_cxml_string();
+    cxml_config cfg = cxml_get_config();
+    int level = 0;
+    cfg.print_fancy = false;
+    cfg.show_doc_as_top_level = false;
+    cfg.transpose_text = true;
+    cfg.strict_transpose = false;
+    cfg.indent_space_size = -1;
+    cxml_for_each(child, &node->children)
+    {
+        switch(_cxml_node_type(child))
+        {
+            case CXML_ELEM_NODE:
+                _cxml_node_tostring(&str, child, &level, &cfg);
+                break;
+            case CXML_DTD_NODE:
+                _cxml_print_dtd(&str, child, &level, &cfg);
+                break;
+            case CXML_COMM_NODE:
+                _cxml_print_comm(&str, child, &level, &cfg);
+                break;
+            case CXML_TEXT_NODE:
+                _cxml_print_text(&str, child, &level, &cfg);
+                break;
+            case CXML_PI_NODE:
+                _cxml_print_pi(&str, child, &level, &cfg);
+                break;
+            case CXML_XHDR_NODE:
+                _cxml_print_xhdr(&str, child, &level, &cfg);
+                break;
+            default:
+                break;
+        }
+    }
+    if (!str._cap) {
+        char *empty = malloc(1u);
+        if (empty) empty[0] = '\0';
+        return empty;
+    }
+    return cxml_string_as_raw(&str);
+}
+
 void cxml_node_to_string(void* node, cxml_string *str){
     // dispatcher for _cxml_obj node and other node types - to cxml_string.
     switch(_cxml_get_node_type(node))

@@ -189,7 +189,7 @@ int main(void) {
       1u, installed_legacy_action, NULL};
   const cflow_statechart_guard_binding legacy_guard = {
       1u, installed_legacy_guard, NULL};
-  const cflow_statechart_instance_hooks runtime_hooks = {
+  const cflow_statechart_instance_hooks instance_hooks = {
       CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1,
       sizeof(cflow_statechart_instance_hooks), NULL, NULL};
   cflow_mailbox_status (*tagged_send)(
@@ -245,7 +245,7 @@ int main(void) {
   cflow_scxml_status status = cflow_scxml_compile(
       &program, source, sizeof(source) - 1u, NULL, NULL);
   if (status == CFLOW_SCXML_OK &&
-      !cflow_scxml_program_runtime_bindings(
+      !cflow_scxml_program_instance_bindings(
           &program, &bindings, &binding_count)) {
     goto cleanup;
   }
@@ -294,7 +294,7 @@ int main(void) {
       .completion_capacity = 2u,
       .microstep_limit = 16u,
       .executor = &executor,
-      .runtime_hooks = &runtime_hooks};
+      .hooks = &instance_hooks};
   if (cflow_statechart_instance_init(&instance, &config) !=
       CFLOW_STATECHART_INSTANCE_OK) {
     goto cleanup;

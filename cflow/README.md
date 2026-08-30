@@ -578,8 +578,438 @@ and shared ABI identity `3`; Windows shared builds use the `turbo_cflow-3`
 basename so an older DLL cannot satisfy the new configuration ABI.
 The exported CMake target name remains `TurboUtils::CFlow`.
 
-The optional SCXML frontend remains disabled by default while it is under
-development and is not part of the supported public surface.
+The CFlow core remains format-neutral and does not parse XML. The optional
+`TurboUtils::CFlowScxml` frontend described below performs bounded SCXML Core
+admission and lowering without changing the Statechart core dependency
+surface. CFlow is not a durable workflow engine. The optional frontend
+supports the bounded literal `send`/`cancel` and `invoke`/restricted-`finalize`
+profiles described below, but does not implement persistence, recovery,
+retries, compensation, or distributed coordination.
+
+### Optional SCXML Core frontend
+
+Configure with `-DCFLOW_ENABLE_SCXML=ON` to build and install
+`TurboUtils::CFlowScxml` and `<cflow/scxml.h>`. The option is OFF by default.
+Its public surface depends on `TurboUtils::CFlow`, `TurboUtils::CMeta`, and
+`TurboUtils::XmlParser`; the installed static frontend also carries a
+link-only `TurboUtils::Core` dependency for tlog. CMeta is public because the
+opt-in provider contract exposes `cmeta_data_desc`. CFlow itself has no XML,
+cxml, CSerde, CBind, or tlog dependency. cxml is a private implementation
+detail of XmlParser and is not installed or exported.
+
+`cflow_scxml_compile()` owns the compiled native Statechart and its stable
+state/event name maps, retained literal storage, executable blocks, guard
+users, and native binding rows. Input is borrowed only for the call. The
+returned program must outlive every native instance or `cflow_scxml_session`
+borrowing it and must be destroyed with
+`cflow_scxml_program_destroy()` after those instances are quiescent. The null
+data model is represented by an inert CMeta `bool` value; named event helpers
+produce the matching borrowed false payload, which instance mailbox admission
+copies.
+
+The additive `cflow_scxml_compile_cmeta()` entry admits only exact
+`datamodel="cmeta"` documents. Its versioned options borrow one immutable root
+`cmeta_data_desc` and all reachable descriptors until program destruction;
+the program owns every compiled transition-condition, executable-branch
+condition, and assignment expression. A CMeta
+session is initialized with `cflow_scxml_session_init_cmeta()`: its initial
+object is borrowed only for that call and is copied immediately by the native
+managed-state lifecycle. The legacy compile/session functions remain
+null-model-only, and `cflow_scxml_program_initial_state()` therefore continues
+to return only the null profile's inert value.
+
+The currently admitted CMeta expression slice covers reflected Boolean,
+numeric, enum, and borrowed-string scalar locations, comparisons, logical
+operators, parentheses, `In("state-id")`, and the read-only string variables
+`_name` and `_sessionid`. The optional root `name` must be one XML NMTOKEN and
+shares the existing `max_name_bytes` retained-string budget. Each CMeta session
+copies that name and generates one canonical UUID v4 session ID before native
+instance attachment. Both strings remain stable through successful session
+destruction and expression results borrow them only for the enclosing guard or
+executable callback. XML character/entity references in `cond` are decoded
+under the configured source-byte bound before the immutable expression is
+compiled. CMeta documents admit both `binding="early"` and `binding="late"`.
+Early declarations initialize the private session copy before native startup.
+Late declarations initialize in document order exactly once, on the first
+entry of their owning `scxml`, `state`, or `parallel`, before that state's
+`onentry` actions and initial/history executable content. Before first entry,
+reads observe the caller-provided initial CMeta object; the frontend never
+synthesizes a zero or fallback value. All late datamodels entered by one
+microstep share one native effect-journal row so their first-entry markers and
+declaration assignments commit or roll back together. Session admission
+therefore requires nonzero `effect_capacity`; other effects in the same
+microstep consume their usual additional rows. Re-entry and history restoration
+preserve the committed value, while initializer evaluation failure terminates
+the owning microstep without publishing partial state. External `<data src>`
+remains unsupported because no resource-loader contract is exposed.
+
+CMeta `<assign>` admits a non-empty dotted
+reflected struct-field `location` and one scalar `expr`. Boolean, signed,
+unsigned, floating-point, enum, and string destinations require an exact
+conversion; string adapters also enforce `max_string_bytes`. Assignment runs
+against the native staged state, so later steps observe earlier assignments.
+If evaluation, conversion, or a provider callback fails, the frontend raises
+internal `error.execution`, aborts the remaining executable block, and restores
+the complete staged object to its block-entry value before publication.
+CMeta `<if>`/`<elseif>` conditions use the same compiled Boolean language in
+ordinary onentry, onexit, and transition blocks. Conditions observe the current
+staged state, including earlier assignments in that block, and only the first
+true partition executes. A condition evaluation failure is treated as false
+and queues internal `error.execution`; later `<elseif>` or `<else>` partitions
+remain eligible. Ordinary transactional blocks also support bounded
+`<foreach>` over declared unary CMeta sequences when the element and item use
+the exact same type. Elements may use trivial storage or complete
+`COPY | MOVE | DESTROY` lifecycle traits; an optional index must be exact
+`size_t`. Sequence-index expressions, array literals, `finalize` iteration,
+CMeta conditions inside invocation `<finalize>`, `_ioprocessors`, and scripts
+remain fail-fast unsupported; there is no fallback to the null model or another
+evaluator. Owning CMeta sessions expose the read-only `_event` envelope
+described below. Every system-variable assignment location remains read-only
+and is rejected during compilation.
+
+```c
+#include <cflow/executor.h>
+#include <cflow/scxml.h>
+
+int main(void) {
+    static const char source[] =
+        "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+        "<final id='done'/></scxml>";
+    cflow_scxml_program program = {0};
+    cflow_scxml_diagnostic diagnostic = {0};
+    const cflow_statechart_executable_binding *bindings = NULL;
+    const cflow_statechart_guard_binding *guards = NULL;
+    size_t binding_count = 0u;
+    size_t guard_count = 0u;
+    cflow_executor executor = {0};
+    cflow_statechart_instance instance = {0};
+    cflow_statechart_instance_config config;
+
+    if (cflow_scxml_compile(&program, source, sizeof(source) - 1u, NULL,
+                            &diagnostic) != CFLOW_SCXML_OK) {
+        return 1;
+    }
+    if (!cflow_scxml_program_instance_bindings(
+            &program, &bindings, &binding_count) ||
+        !cflow_scxml_program_guard_bindings(
+            &program, &guards, &guard_count) ||
+        !cflow_executor_serial_init(&executor)) {
+        cflow_scxml_program_destroy(&program);
+        return 1;
+    }
+    config = (cflow_statechart_instance_config){
+        .statechart = cflow_scxml_program_statechart(&program),
+        .initial_state = cflow_scxml_program_initial_state(&program),
+        .guards = guards,
+        .guard_count = guard_count,
+        .executables = bindings,
+        .executable_count = binding_count,
+        .external_event_capacity = 16u,
+        .internal_event_capacity = 16u,
+        .completion_capacity = 16u,
+        .microstep_limit = 256u,
+        .executor = &executor
+    };
+    if (cflow_statechart_instance_init(&instance, &config) !=
+            CFLOW_STATECHART_INSTANCE_OK) {
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+        return 1;
+    }
+    /* Destroy the instance before releasing its borrowed program. */
+    (void)cflow_statechart_instance_destroy(&instance);
+    cflow_executor_destroy(&executor);
+    cflow_scxml_program_destroy(&program);
+    return 0;
+}
+```
+
+`cflow_scxml_program_requirements()` distinguishes programs that can use the
+low-level binding path above from programs that require an owning
+`cflow_scxml_session`. `cflow_scxml_program_instance_bindings()` fails without
+modifying its outputs when Event I/O is required. A session copies its adapter
+operation tables, borrows the adapter contexts and program, owns the native
+Statechart instance plus bounded effect/send/invocation registries, and must be
+destroyed before the program, executor, or adapter context.
+
+For CMeta programs, the low-level program bindings retain `_name` because it is
+program-owned. They do not invent a shared `_sessionid`: evaluating an operand
+that needs it fails explicitly. Use `cflow_scxml_session_init_cmeta()` whenever
+session system-variable semantics are required; its session-specific guard and
+executable adapters inject the immutable per-session strings.
+
+An owning CMeta session also provides the complete read-only `_event` envelope:
+`name`, `type`, `sendid`, `origin`, `origintype`, `invokeid`, and `data`. Raised,
+internal-send, and `done.state` Events use type `internal`; processor-generated
+errors use `platform`; external admission and `done.invoke` use `external`.
+Absent optional metadata is an empty string. The selected Event is retained
+through its complete run-to-completion cycle, including following eventless
+microsteps, and is atomically replaced when the next Event is selected.
+
+`cflow_scxml_session_try_send_v2()` owns bounded string metadata.
+`cflow_scxml_session_try_send_v3()` adds format-neutral structured content:
+scalar/text/XML values are copied to the bounded string representation, while
+CMETA must use the compiled root descriptor, fit
+`CFLOW_SCXML_EVENT_DATA_CAPACITY`, and provide trivial or complete copy/destroy
+traits. The session owns the copy; caller mutation after admission is isolated.
+Structured values are read through typed `_event.data.<path>` operands; a bare
+string read of structured `_event.data` fails evaluation.
+Invalid ABI, conflicting v2/v3 data, schema mismatch, lifecycle failure, and
+capacity overflow reject the entire admission without consuming mailbox or
+metadata capacity. Fixed structured storage is bounded by the configured
+external mailbox capacity plus one current-Event slot.
+
+CBind/CSerde belongs at the format adapter boundary: applications may decode
+JSON/XML/YAML into the compiled root CMeta object, then pass that typed value to
+the v3 API. SCXML does not parse or serialize transport formats, so codec error
+semantics and dependencies do not enter deterministic Statechart execution.
+
+Event I/O adapters use a reservation protocol. `prepare_send` and
+`prepare_cancel` reserve capacity without publishing an external effect and
+copy any request fields needed after the callback returns. On acceptance they
+return a move-only ticket; the session calls exactly one of `commit` after the
+native microstep is published or `discard` when it rolls back. Ticket callbacks
+and adapter `close` must be nonblocking. `close` is called exactly once after
+attachment, including an initialization failure;
+`cflow_scxml_session_destroy()` returns
+`CFLOW_STATECHART_INSTANCE_WOULD_BLOCK` until `is_quiescent` confirms that no
+adapter callback can still reach the borrowed session or adapter context.
+The v1 tables remain the payload-free compatibility API. CMeta documents that
+use `namelist`, `<param>`, or external scalar `<content expr>` require the
+independent v2 table and `CFLOW_SCXML_EVENT_IO_CAP_PAYLOAD`.
+`cflow_scxml_session_init_cmeta_v2()` receives that table through an explicit
+`cflow_scxml_session_adapters_v2` bundle; the unchanged base config must not
+also install the corresponding v1 table. The independent v3 tables add
+`cflow_scxml_content_view`: `SCALAR` preserves the v2 scalar representation,
+`TEXT_UTF8` and `XML_UTF8` borrow compact immutable program bytes, and `CMETA`
+borrows a schema plus an object in staged session state. V3 content requires
+the corresponding `CONTENT_V3` capability and `cflow_scxml_session_init_v3()`
+or `cflow_scxml_session_init_cmeta_v3()`. V1 and v2 table/request layouts are
+unchanged.
+
+Every v3 pointer is callback-scoped. Inline bytes retain child order,
+whitespace, comments, processing instructions, and namespace declarations;
+an empty `<content/>` is an empty text value. `CMETA` is read-only and requires
+one simple dotted CMeta location; arbitrary scalar expressions continue
+through the scalar evaluator. Retained use requires copying into the accepted
+ticket before the prepare callback returns. Inline content is bounded by
+`max_name_bytes` in addition to the XML limits; inline `donedata` must also fit
+`CFLOW_SCXML_EVENT_METADATA_CAPACITY`.
+
+### SCXML Event I/O processor profile
+
+TurboUtils separates the SCXML execution engine from transports and codecs.
+It therefore provides one built-in delivery path plus a versioned adapter
+boundary, rather than a bundled network Event I/O processor. The processor
+profile is:
+
+| SCXML `send` form | TurboUtils behavior | Conformance status |
+| --- | --- | --- |
+| `type` omitted | Selects the mandatory SCXML Event Processor semantically. An adapter request represents this with `type_size == 0`; an installed adapter must treat that form as `http://www.w3.org/TR/scxml/#SCXMLEventProcessor`. | Supported within the target rows below. |
+| `target="#_internal"` or compatibility spelling `target="_internal"`, no delay | Delivers transactionally to the session's native internal Event queue without invoking the adapter. Dispatch is selected by the target literal; an explicitly supplied `type` is retained by the compiler but is not consulted on this local path. | Built in. `#_internal` is the canonical target; `_internal` is a documented compatibility extension. Applications should omit `type` or use the canonical SCXML processor URI on this path. |
+| Canonical SCXML processor with another target, including an omitted target, `#_scxml_<sessionid>`, `#_parent`, or `#_<invokeid>` | Passes the request to the installed Event I/O adapter. Payload-free requests admit v1/v2/v3; named/scalar payloads require v2 or v3, while inline or structured content requires v3. The adapter owns target accessibility, routing, payload encoding, and bounded transport capacity. TurboUtils does not bundle a session registry or cross-session transport. | Conditionally supported by an embedding adapter; not a standalone processor implementation. |
+| `http://www.w3.org/TR/scxml/#BasicHTTPEventProcessor` | Passed to an installed adapter as a literal type. TurboUtils supplies no HTTP POST ingress, location discovery, request decoder, or response behavior. | Optional application extension only; unsupported by the bundled module. |
+| Any other non-empty `type` | Passed unchanged to the installed adapter. If the adapter does not implement that processor, it must return `CFLOW_SCXML_ADAPTER_ERROR_EXECUTION`, which stages `error.execution` and aborts only the current executable block. | Application-defined extension; outside the SCXML conformance claim. |
+
+The adapter capability bits describe reservation operations (`SEND`, delayed
+send, cancellation, and typed payload admission), not a registry of processor
+URIs. `_ioprocessors.scxml` exposes the current session location, but
+TurboUtils supplies no cross-session registry or transport and therefore does
+not claim a standalone implementation of the mandatory SCXML Event Processor
+or the optional Basic HTTP Event Processor. The normative processor definitions
+are in the W3C Recommendation's
+[SCXML Event I/O Processor](https://www.w3.org/TR/scxml/#SCXMLEventProcessor)
+and
+[Basic HTTP Event I/O Processor](https://www.w3.org/TR/scxml/#BasicHTTPEventProcessor)
+sections.
+
+Invocation adapters use the same versioned reservation contract. Literal
+`invoke` declarations on `state` or `parallel` accept `id`, `type`, `src`, and
+boolean `autoforward`; an omitted ID is generated deterministically as
+`<state-id>.invoke.<sibling-ordinal>`. The CMeta profile additionally admits
+`typeexpr`, `srcexpr`, ordered scalar `namelist` or `<param>` input, and one
+scalar `<content expr>` through a payload-capable v2 or v3 invocation adapter.
+The CMeta profile also admits `idlocation` when it resolves to a writable,
+owned string and `id` is absent. A v3 invocation adapter additionally admits
+bounded inline text/mixed XML and structured simple-location CMeta content;
+the null data model admits inline content but has no location/value evaluator.
+A restricted
+`finalize` may contain only label-only `log` and nested null-model `if`
+partitions; Event-producing or external-effect content is rejected during
+compilation.
+
+Each session owns one fixed invocation row per compiled declaration and a
+bounded lifecycle-ticket pool. `invocation_capacity` must cover every row;
+`effect_capacity` bounds rollback-capable enter/exit intents, and
+`adapter_internal_event_capacity` bounds recoverable adapter errors. Entry
+records a pending intent, but `prepare_start` runs only after eventless,
+internal, and completion processing reaches a stable configuration. A
+committed exit cancels the matching live token; rollback publishes neither
+start nor cancel. Autoforward requires the adapter forward capability and
+visits live declarations in document order. All prepare callbacks receive
+call-scoped borrowed fields outside native and session mutexes and must return
+one valid ticket on acceptance. V2 payload entries preserve SCXML document
+order and duplicate names. For `send`, `namelist` entries precede child
+`param` entries; `invoke` admits either `namelist` or child `param`, not both.
+Every entry name and scalar value is borrowed only for the callback; an adapter
+that needs either after return must copy it into its reserved ticket.
+
+An admitted invoke `idlocation` receives
+`<owner-state-id>.<unsigned-decimal-token>`. The per-session `uint64_t` token
+sequence starts at one, never wraps or reuses an ID, and reports exhaustion as
+a fatal execution error. The compiler checks the worst-case 20-digit token and
+`done.invoke.` name against `CFLOW_SCXML_EVENT_METADATA_CAPACITY`; no ID is
+truncated. A transiently entered and exited owner consumes no token. At the
+stable boundary, the Statechart instance copies the published Machine state, assigns every
+ID in document order, evaluates invoke arguments from that staged state, and
+prepares adapter tickets. It then atomically publishes state and staged
+internal Events before committing start tickets. Any fatal assignment,
+contract, journal, copy, or cancellation failure discards all prepared tickets
+and leaves the prior Machine state published. Invocation adapter ABI v1/v2 is
+unchanged and v3 is additive. The active invocation row retains the immutable
+routing ID used by cancel, autoforward, returned metadata, and completion even
+if the document later overwrites its `idlocation` value.
+
+`cflow_scxml_session_report_invoke_event()` admits a copied external Event with
+the invocation's nonzero token. The session validates at admission and again
+immediately before transition selection, so a result queued before a committed
+cancel is dropped as stale and cannot select a parent transition. A live
+returned Event runs only its owning `finalize`, then is forwarded to live
+autoforward declarations, then enters normal selection. Its matching
+`done.invoke.<id>` Event completes the row without canceling that completed
+service. Stats distinguish accepted/rejected returns, starts, completions,
+cancellations, forwards, and failures. Adapter `close` is exactly once, and
+session destruction waits for both Event I/O and invocation adapters to report
+quiescence.
+
+`cflow_scxml_session_report_invoke_done(session, token)` maps one live token to
+its finite compiled done Event and uses the same tagged admission/race check.
+For dynamic identity, CMeta observes `_event.name` as
+`done.invoke.<active-row-id>` and `_event.invokeid` as that exact active ID.
+The finite compiled Event remains the selection key, so this addition supports
+exact named transitions only; it does not claim general SCXML prefix or
+wildcard descriptor matching.
+
+The supported compatibility subset is deliberately strict:
+
+- SCXML namespace `http://www.w3.org/2005/07/scxml`, version `1.0`, and omitted
+  or `null` data model;
+- `scxml`, `state`, `parallel`, `transition`, `initial`, `final`, `history`, and
+  `onentry`/`onexit` elements;
+- default/explicit initial transitions, shallow/deep history defaults,
+  eventless transitions, exact named events, `done.state.<id>` completion
+  events, and internal/external transition kinds;
+- ordinary Event, eventless, and completion transitions may use null-model
+  `cond="In(id)"`. The predicate observes the published selection
+  configuration; malformed, quoted, unknown, or pseudo-state arguments fail
+  during compilation, and initial/history default transitions remain
+  unconditional;
+- exact `datamodel="cmeta"` transition and ordinary executable
+  `<if>`/`<elseif>` conditions, read-only `_name` and `_sessionid` strings, and
+  scalar `<assign>` as described above. Assignment
+  locations cannot target read-only `_` system
+  variables, and malformed or unresolved paths fail during compilation.
+  Recoverable assignment failures stage `error.execution` while publishing no
+  partial assignment mutation. Executable conditions read staged state in
+  document order; evaluation failure queues `error.execution`, treats that
+  condition as false, and continues first-true partition selection. Bounded
+  ordinary `<foreach>` resolves declared `TYPE(Container, Element)` fields,
+  opens an exact `SIZED | ORDERED` borrowed CMeta Range, snapshots its length,
+  writes exact items plus an optional `size_t` index, and executes the child
+  range transactionally. Managed Ranges construct one independently owned
+  element in an invocation-local aligned scratch slot; the session replaces
+  the staged item by move construction and destroys the scratch before running
+  the body. `max_iterations` is a positive per-invocation ceiling; an
+  allocation, range, limit, or child error queues `error.execution` and rolls
+  back the enclosing block. `finalize` iteration remains unsupported;
+- `binding="early"` and transactional `binding="late"` CMeta declarations.
+  Late declarations run once before their containing state's entry and
+  initial/history work. Pre-entry reads retain the supplied initial object,
+  re-entry and history do not rerun initialization, and parallel entry follows
+  document order. Late initialization reserves one effect-journal row per
+  microstep; evaluation or journal failure publishes neither declaration
+  writes nor the initialized marker. External `<data src>` remains fail-fast
+  unsupported;
+- bounded executable blocks containing `raise event="NMTOKEN"` and nested
+  `if`/`elseif`/`else` partitions under `onentry`, `onexit`, and
+  ordinary/initial/history transitions. The null-model condition grammar is
+  exactly `In(id)` with optional XML whitespace around tokens; `id` must name a
+  declared real state. Only the first matching partition executes, empty
+  partitions are legal, document order is retained, and raise failure rolls
+  the whole microstep back transactionally;
+- label-only `log` elements in the same executable positions. Each executed
+  element attempts one tlog DEBUG record with component `cflow.scxml`; a
+  missing label emits an empty message. A present `expr` is unsupported by the
+  null data model and fails during compilation. The frontend does not create,
+  flush, retry, sample, or destroy a logger, and missing or dropped logging
+  never changes Statechart success. The application owns any installed default
+  logger and must keep it alive until all executors that may run SCXML log
+  actions are quiescent; default-pointer access does not retain the logger;
+- `send` and `cancel` in the same executable positions. The null-model profile
+  admits retained literal fields and inline content. The CMeta profile
+  additionally admits dynamic scalar fields, ordered `namelist` plus child
+  `param` payloads, or one
+  scalar/structured `content expr`; both profiles admit bounded inline
+  text/mixed XML, and named payload and content are mutually exclusive.
+  `event` is one XML NMTOKEN and literal `id` is an XML NCName. Delay accepts
+  unsigned integer milliseconds (`250ms`) or seconds with at most millisecond
+  precision (`1.5s`); a non-zero delay requires either a literal `id` or CMeta
+  `idlocation`. `idlocation` must name a writable owned CMeta string; each
+  execution writes a fresh session-unique ID to staged state and passes that
+  same borrowed ID to the Event I/O adapter. Borrowed/custom strings are
+  rejected so the generated call-scoped buffer cannot escape. Immediate
+  `#_internal` and `_internal` sends use the native transactional internal queue
+  without an adapter; named internal payload remains unsupported. Other sends
+  require a bounded Event I/O adapter, with v2 plus the payload capability for
+  named/scalar payload, or v3 plus the content capability for inline/structured
+  content. For compatibility, scalar content paired with `targetexpr`
+  retains the existing adapter-free dynamic internal path; if the expression
+  instead resolves externally under v1, execution raises `error.execution`
+  before the adapter callback. Delayed sends additionally require
+  `delayed_send_capacity` and the delayed-send capability. `cancel` is scoped
+  to the session registry and is a no-op when delivery or an earlier cancel
+  already won;
+- synchronous adapter execution errors and dispatch failures abort only the
+  current executable block and stage `error.execution` or
+  `error.communication` as internal Events. Full and closed adapter outcomes
+  map to `error.communication`; invalid adapter contracts remain fatal.
+  Asynchronous failures enter the prioritized bounded internal ingress through
+  `cflow_scxml_session_report_adapter_error()`. Adapters release a completed
+  delayed-send registry row through `cflow_scxml_session_report_send_done()`;
+- `invoke` on `state`/`parallel`, deterministic generated IDs, CMeta dynamic
+  `typeexpr`/`srcexpr`, ordered scalar input through `namelist`, child `param`,
+  or one scalar/structured `content expr`, bounded inline text/mixed XML,
+  writable owned-string `idlocation`,
+  `done.invoke.<id>` Events, stable-only activation, committed-exit cancel,
+  declaration-ordered autoforward, and restricted `finalize` preprocessing as
+  described above. Named/scalar input requires invocation v2 or v3 with the
+  payload capability; inline/structured content requires v3 with the content
+  capability;
+- compile-time rejection of malformed, quoted, unknown, or pseudo-state
+  `In(id)` arguments. Null-model system variables remain inaccessible.
+
+Executable elements outside `raise`, admitted `send`/`cancel`, label-only
+`log`, CMeta scalar `assign`, admitted conditional partitions, and the
+restricted invocation `finalize` profile; wildcard event descriptors; multiple
+targets; arbitrary non-location structured expressions; structured
+`donedata`; data models other
+than the admitted null and exact CMeta profiles; and other SCXML
+elements outside the profiles above fail during compilation with the first byte
+offset and one-based line/column diagnostic.
+There is no fallback or silent feature removal. Configurable hard limits cover
+XML input, depth, nodes, attributes, states, events, transitions, and action
+references. State/event names plus NUL-terminated log, Event I/O, and
+invocation literals share the bounded `max_name_bytes` retained-string budget;
+a failed compile leaves the output program empty.
+
+The separate `cflow_scxml_w3c_conformance_test` target runs selected,
+documented transformations from the
+[W3C SCXML Implementation Report suite](https://www.w3.org/Voice/2013/scxml-irp/).
+Each fixture records its source, transformation, and exact assertion in
+`cflow-scxml/tests/w3c/README.md`. These cases are regression evidence for
+those named assertions only: the W3C suite is an implementation report, the
+local corpus is not yet complete for the supported profile, and its results
+must not be presented as W3C certification or full SCXML conformance.
 
 ## Bounded Actor lifecycle
 

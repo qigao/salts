@@ -174,6 +174,8 @@ static void latch_terminal_failure(cflow_statechart_instance_impl *impl,
                                    cflow_statechart_instance_status status,
                                    const char *message);
 static void discard_staged_effects(cflow_statechart_instance_impl *impl);
+static bool run_stable_transaction_runtime_hook(
+    cflow_statechart_instance_impl *impl);
 
 static bool acquire_instance_token(uint64_t *out) {
     uint_fast64_t current;
@@ -205,6 +207,28 @@ static bool checked_multiply(size_t left, size_t right, size_t *out) {
 
 static bool checked_accumulate(size_t value, size_t *total) {
     return checked_add(*total, value, total);
+}
+
+static bool instance_hooks_shape_valid(
+    const cflow_statechart_instance_hooks *hooks) {
+    const size_t v1_prefix =
+        offsetof(cflow_statechart_instance_hooks, on_event);
+    const size_t v2_prefix =
+        offsetof(cflow_statechart_instance_hooks, on_stable_transaction);
+    if (hooks == NULL) return true;
+    switch (hooks->abi_version) {
+        case CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1:
+            return hooks->struct_size == v1_prefix ||
+                   hooks->struct_size >= v2_prefix;
+        case CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2:
+            return hooks->struct_size >= v2_prefix;
+        case CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3:
+            return hooks->struct_size >= sizeof(*hooks) &&
+                   (hooks->on_stable == NULL ||
+                    hooks->on_stable_transaction == NULL);
+        default:
+            return false;
+    }
 }
 
 static bool bitset_bytes_for(size_t bit_count, size_t *out) {
@@ -2732,6 +2756,112 @@ static void discard_staged_effects(cflow_statechart_instance_impl *impl) {
             impl->staged_effects[index].user);
 }
 
+static bool run_stable_transaction_runtime_hook(
+    cflow_statechart_instance_impl *impl) {
+    const size_t published = impl->published;
+    const size_t staged = 1u - published;
+    statechart_action_context staging_context;
+    cflow_statechart_stable_transaction_context hook_context;
+    cflow_statechart_stable_transaction_result result;
+    const char *error = NULL;
+    if (impl->hooks.on_stable_transaction == NULL) return true;
+    if (impl->staged_effect_count != 0u) {
+        latch_terminal_failure(
+            impl, CFLOW_STATECHART_INSTANCE_HOOK_FAILED,
+            "Statechart stable transaction journal is not empty");
+        return false;
+    }
+    if (!copy_staging_buffers(impl, staged)) {
+        reset_transaction_state(impl, staged);
+        impl->staged_event_count = 0u;
+        impl->staged_completion_count = 0u;
+        latch_terminal_failure(
+            impl, CFLOW_STATECHART_INSTANCE_ALLOCATION_FAILED,
+            "Statechart stable transaction state copy failed");
+        return false;
+    }
+    staging_context = (statechart_action_context){
+        .impl = impl,
+        .current_state = impl->extended_states[published],
+        .next_state = impl->extended_states[staged],
+        .current_state_live = &impl->extended_state_live[published],
+        .next_state_live = &impl->extended_state_live[staged],
+        .configuration_bits = impl->configurations[published].bits,
+        .raise_status = CFLOW_STATECHART_INSTANCE_OK,
+        .effect_status = CFLOW_STATECHART_INSTANCE_OK};
+    hook_context = (cflow_statechart_stable_transaction_context){
+        .published_state = impl->extended_states[published],
+        .staged_state = impl->extended_states[staged],
+        .configuration_version = impl->configuration_version,
+        .is_active = action_configuration_is_active,
+        .configuration_user = &staging_context,
+        .raise_internal = stage_internal_event,
+        .raise_user = &staging_context,
+        .stage_effect = stage_external_effect,
+        .effect_user = &staging_context};
+    result = impl->hooks.on_stable_transaction(
+        impl->hook_user, &hook_context, &error);
+    if (staging_context.raise_status != CFLOW_STATECHART_INSTANCE_OK) {
+        error = staging_context.raise_error;
+        goto fail;
+    }
+    if (staging_context.effect_status != CFLOW_STATECHART_INSTANCE_OK) {
+        error = staging_context.effect_error;
+        goto fail;
+    }
+    if (result != CFLOW_STATECHART_STABLE_TRANSACTION_NOOP &&
+        result != CFLOW_STATECHART_STABLE_TRANSACTION_COMMIT &&
+        result != CFLOW_STATECHART_STABLE_TRANSACTION_FATAL) {
+        error = "Statechart stable transaction returned an invalid result";
+        goto fail;
+    }
+    if (result == CFLOW_STATECHART_STABLE_TRANSACTION_FATAL) goto fail;
+    if (error != NULL) {
+        error = "Statechart stable transaction returned an error without FATAL";
+        goto fail;
+    }
+    if (result == CFLOW_STATECHART_STABLE_TRANSACTION_NOOP) {
+        if (impl->staged_event_count != 0u ||
+            impl->staged_effect_count != 0u) {
+            error = "Statechart stable transaction staged work before NOOP";
+            goto fail;
+        }
+        reset_transaction_state(impl, staged);
+        impl->staged_completion_count = 0u;
+        return true;
+    }
+
+    turbo_mutex_lock(&impl->lock);
+    if (impl->terminal_outcome != STATECHART_TERMINAL_NONE ||
+        impl->error != NULL) {
+        impl->staged_event_count = 0u;
+        impl->staged_completion_count = 0u;
+        turbo_mutex_unlock(&impl->lock);
+        discard_staged_effects(impl);
+        reset_transaction_state(impl, staged);
+        return false;
+    }
+    commit_internal_events(impl);
+    impl->staged_completion_count = 0u;
+    impl->published = staged;
+    if (impl->configuration_version != UINT64_MAX)
+        ++impl->configuration_version;
+    turbo_mutex_unlock(&impl->lock);
+    commit_staged_effects(impl);
+    return true;
+
+fail:
+    impl->staged_event_count = 0u;
+    impl->staged_completion_count = 0u;
+    discard_staged_effects(impl);
+    reset_transaction_state(impl, staged);
+    latch_terminal_failure(
+        impl, CFLOW_STATECHART_INSTANCE_HOOK_FAILED,
+        error != NULL && error[0] != '\0'
+            ? error : "Statechart stable transaction failed");
+    return false;
+}
+
 static cflow_statechart_instance_status execute_initial_entry_actions(
     cflow_statechart_instance_impl *impl) {
     const size_t staged = 1u;
@@ -3358,7 +3488,9 @@ static void statechart_driver_run(void *user) {
     terminal = impl->macrostep_active;
     turbo_mutex_unlock(&impl->lock);
     if (terminal) {
-        if (!run_stable_runtime_hook(impl)) return;
+        if (!run_stable_runtime_hook(impl) ||
+            !run_stable_transaction_runtime_hook(impl))
+            return;
         turbo_mutex_lock(&impl->lock);
         internal_work = impl->internal_event_count != 0u ||
             impl->adapter_internal_pending != 0u;
@@ -3713,21 +3845,7 @@ static cflow_statechart_instance_status statechart_instance_init_with_hook(
         config->microstep_limit == 0u ||
         ((config->clock == NULL) != (config->timer_capacity == 0u)) ||
         (config->clock != NULL && !cflow_clock_valid(config->clock)) ||
-        (config->hooks != NULL &&
-         ((config->hooks->abi_version ==
-               CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1 &&
-           config->hooks->struct_size !=
-               offsetof(cflow_statechart_instance_hooks, on_event) &&
-           config->hooks->struct_size <
-               sizeof(cflow_statechart_instance_hooks)) ||
-          (config->hooks->abi_version ==
-               CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2 &&
-           config->hooks->struct_size <
-               sizeof(cflow_statechart_instance_hooks)) ||
-          (config->hooks->abi_version !=
-               CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1 &&
-           config->hooks->abi_version !=
-               CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2))))
+        !instance_hooks_shape_valid(config->hooks))
         return CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT;
     if (!cflow_executor_valid(config->executor) ||
         !cflow_executor_has(config->executor, CMETA_EXEC_CAP_SERIAL) ||
@@ -3756,8 +3874,10 @@ static cflow_statechart_instance_status statechart_instance_init_with_hook(
     required_storage = requirements.total_bytes;
     if (config->hooks != NULL &&
         (config->hooks->preprocess_external != NULL ||
-         (config->hooks->abi_version ==
-              CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2 &&
+         ((config->hooks->abi_version ==
+               CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2 ||
+           config->hooks->abi_version ==
+               CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3) &&
           config->hooks->on_event != NULL)) &&
         (!checked_multiply(config->external_event_capacity,
                            sizeof(uint64_t),
@@ -3807,18 +3927,17 @@ static cflow_statechart_instance_status statechart_instance_init_with_hook(
     impl->ir = ir;
     impl->executor = config->executor;
     if (config->hooks != NULL) {
-        impl->hooks.abi_version =
-            config->hooks->abi_version;
-        impl->hooks.struct_size =
-            config->hooks->struct_size;
-        impl->hooks.on_stable =
-            config->hooks->on_stable;
-        impl->hooks.preprocess_external =
-            config->hooks->preprocess_external;
+        const size_t copy_size = config->hooks->struct_size <
+            sizeof(impl->hooks)
+            ? config->hooks->struct_size
+            : sizeof(impl->hooks);
+        memcpy(&impl->hooks, config->hooks, copy_size);
         if (config->hooks->abi_version ==
-            CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2)
-            impl->hooks.on_event =
-                config->hooks->on_event;
+            CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1)
+            impl->hooks.on_event = NULL;
+        if (config->hooks->abi_version !=
+            CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3)
+            impl->hooks.on_stable_transaction = NULL;
     }
     impl->hook_user = config->hook_user;
     impl->internal_event_capacity = requirements.internal_event_capacity;

@@ -23,7 +23,7 @@
 ### Task 1: Establish failing native and W3C regressions
 
 **Files:**
-- Modify: `cflow/tests/cflow_statechart_runtime_test.c`
+- Modify: `cflow/tests/cflow_statechart_instance_test.c`
 - Modify: `cflow-scxml/tests/cflow_scxml_w3c_conformance_test.c`
 - Create: `cflow-scxml/tests/w3c/test579.scxml`
 - Create: `cflow-scxml/tests/w3c/test580.scxml`
@@ -74,7 +74,7 @@ registered cases pass.
 - Modify: `cflow/src/statechart.c`
 - Modify: `cflow-scxml/src/scxml.c`
 - Modify: `cflow-scxml/tests/cflow_scxml_test.c`
-- Test: `cflow/tests/cflow_statechart_runtime_test.c`
+- Test: `cflow/tests/cflow_statechart_instance_test.c`
 
 **Interfaces:**
 - Consumes: `validate_default_transitions`, normalized parent and state-kind tables.
@@ -101,8 +101,8 @@ is added.
 ### Task 3: Resolve and execute initial-to-history chains
 
 **Files:**
-- Modify: `cflow/src/statechart_runtime.c`
-- Test: `cflow/tests/cflow_statechart_runtime_test.c`
+- Modify: `cflow/src/statechart_instance.c`
+- Test: `cflow/tests/cflow_statechart_instance_test.c`
 - Test: `cflow-scxml/tests/cflow_scxml_w3c_conformance_test.c`
 
 **Interfaces:**

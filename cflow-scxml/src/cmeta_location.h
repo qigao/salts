@@ -17,4 +17,10 @@ cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_location_compile(
     bool writable,
     cflow_scxml_cmeta_expr_diagnostic *diagnostic);
 
+cflow_scxml_cmeta_expr_status
+cflow_scxml_cmeta_location_assign_owned_string(
+    const cflow_scxml_cmeta_location *location, void *root,
+    const char *data, size_t size, size_t max_bytes,
+    cflow_scxml_cmeta_expr_diagnostic *diagnostic);
+
 #endif

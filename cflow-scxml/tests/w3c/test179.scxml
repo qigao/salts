@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0"
+       datamodel="null"
+       initial="send-content">
+  <state id="send-content">
+    <onentry>
+      <send event="event1" target="peer">
+        <content>123</content>
+      </send>
+    </onentry>
+    <transition target="pass"/>
+  </state>
+  <final id="pass"/>
+</scxml>

@@ -563,6 +563,46 @@ spec("CFlow SCXML private CMeta expressions") {
     check_null(program.impl);
   }
 
+  it("reads structured current event data through the compiled CMeta schema") {
+    scxml_expr_root event_data = root;
+    cflow_scxml_cmeta_expr_system_values system_values = {
+        .event_name = {"structured", sizeof("structured") - 1u},
+        .event_type = {"external", sizeof("external") - 1u},
+        .event_send_id = {"", 0u},
+        .event_origin = {"", 0u},
+        .event_origin_type = {"", 0u},
+        .event_invoke_id = {"", 0u},
+        .event_data = {"", 0u},
+        .event_data_schema = &root_data,
+        .event_data_object = &event_data
+    };
+    cflow_scxml_cmeta_expr_program program = {0};
+    cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
+    state_fixture states = {false};
+    bool result = false;
+
+    event_data.order.count = 42;
+    event_data.order.ready = false;
+    check_equal(compile_expression(
+                    &program,
+                    "_event.data.order.count == 42 && "
+                    "_event.data.order.ready == false",
+                    NULL, &diagnostic),
+                CFLOW_SCXML_CMETA_EXPR_OK);
+    check_equal(cflow_scxml_cmeta_expr_evaluate_with_system(
+                    &program, &root, state_is_active, &states,
+                    &system_values, &result, &diagnostic),
+                CFLOW_SCXML_CMETA_EXPR_OK);
+    check_true(result);
+    system_values.event_data_schema = NULL;
+    system_values.event_data_object = NULL;
+    check_equal(cflow_scxml_cmeta_expr_evaluate_with_system(
+                    &program, &root, state_is_active, &states,
+                    &system_values, &result, &diagnostic),
+                CFLOW_SCXML_CMETA_EXPR_EVALUATION_ERROR);
+    cflow_scxml_cmeta_expr_program_destroy(&program);
+  }
+
   it("applies exact reflected assignments and preserves destinations on failure") {
     cflow_scxml_cmeta_assign_program program = {0};
     cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
