@@ -520,4 +520,51 @@ suite("bounded XML parser facade") {
         check_null(document.impl);
         check_contains(diagnostic.message, "max_nodes");
     }
+
+    it("builds and serializes a document through opaque handles") {
+        turbo_xml_document document = {0};
+        turbo_xml_node root;
+        turbo_xml_node name = {0};
+        char *serialized;
+        size_t serialized_size = 0u;
+
+        check_equal(turbo_xml_document_create(&document, "Item"), TURBO_XML_OK);
+        root = turbo_xml_document_root(&document);
+        check_equal(turbo_xml_node_add_element(root, "name", &name), TURBO_XML_OK);
+        check_equal(turbo_xml_node_set_text(name, "turbo & utils"), TURBO_XML_OK);
+        serialized = turbo_xml_document_serialize(&document, &serialized_size);
+        check_not_null(serialized);
+        if (serialized) {
+            check_contains(serialized, "<Item>");
+            check_contains(serialized, "turbo &amp; utils");
+            check_equal(serialized_size, strlen(serialized));
+        }
+        turbo_xml_owned_string_free(serialized);
+        turbo_xml_document_destroy(&document);
+    }
+
+    it("returns owned lists of borrowed query and XPath nodes") {
+        static const char xml[] = "<fruit><name>banana</name><name>pear</name></fruit>";
+        turbo_xml_document document = {0};
+        turbo_xml_diagnostic diagnostic = {0};
+        turbo_xml_node_list nodes = {0};
+        turbo_xml_node found;
+
+        check_equal(turbo_xml_parse(&document, xml, sizeof(xml) - 1u, NULL, &diagnostic),
+                    TURBO_XML_OK);
+        found = turbo_xml_node_find(turbo_xml_document_root(&document), "<name>/");
+        check_not_null(found.impl);
+        check_equal(turbo_xml_node_find_all(turbo_xml_document_root(&document), "<name>/", &nodes),
+                    TURBO_XML_OK);
+        check_equal(turbo_xml_node_list_size(&nodes), (size_t)2u);
+        turbo_xml_node_list_destroy(&nodes);
+
+        check_equal(turbo_xml_document_xpath_query(&document, "/fruit/name", &nodes, NULL, NULL),
+                    TURBO_XML_OK);
+        check_equal(turbo_xml_node_list_size(&nodes), (size_t)2u);
+        check_equal(turbo_xml_node_type(turbo_xml_node_list_at(&nodes, 0u)),
+                    TURBO_XML_ELEMENT);
+        turbo_xml_node_list_destroy(&nodes);
+        turbo_xml_document_destroy(&document);
+    }
 }
