@@ -3270,6 +3270,19 @@ static bool root_configuration_complete(
         bit_test(impl->completion_bits[impl->published], impl->ir->root);
 }
 
+static bool root_completion_ready(
+    cflow_statechart_instance_impl *impl) {
+    bool ready;
+    turbo_mutex_lock(&impl->lock);
+    ready = root_configuration_complete(impl) &&
+        (impl->ir->states[impl->ir->root].kind ==
+             CFLOW_STATECHART_FINAL ||
+         (impl->completion_count != 0u &&
+          impl->completion_rows[impl->completion_head] == impl->ir->root));
+    turbo_mutex_unlock(&impl->lock);
+    return ready;
+}
+
 static bool pop_internal_event(cflow_statechart_instance_impl *impl,
                                cflow_event_view *out,
                                uint64_t *out_origin_token) {
@@ -3389,6 +3402,18 @@ static int driver_try_trigger(cflow_statechart_instance_impl *impl,
     return -1;
 }
 
+static int driver_try_completion(
+    cflow_statechart_instance_impl *impl,
+    cflow_machine_state_id completion) {
+    const cflow_statechart_selection_trigger trigger = {
+        CFLOW_STATECHART_TRIGGER_COMPLETION, NULL, completion};
+    if (!run_event_runtime_hook(
+            impl, CFLOW_STATECHART_OBSERVED_COMPLETION, NULL,
+            completion, 0u))
+        return -1;
+    return driver_try_trigger(impl, &trigger);
+}
+
 static void settle_quiescent_macrostep(cflow_statechart_instance_impl *impl) {
     cflow_waker waker = {0};
     turbo_mutex_lock(&impl->lock);
@@ -3442,6 +3467,24 @@ static void statechart_driver_run(void *user) {
     result = driver_try_trigger(impl, &trigger);
     if (result != 0) return;
 
+    /* Root completion may transition away; otherwise it is a hard boundary
+     * that entry-raised Events must not cross. */
+    if (root_completion_ready(impl)) {
+        if (impl->ir->states[impl->ir->root].kind !=
+            CFLOW_STATECHART_FINAL) {
+            if (!pop_completion(impl, &completion)) {
+                latch_terminal_failure(
+                    impl, CFLOW_STATECHART_INSTANCE_INVALID_CONFIGURATION,
+                    "Statechart root completion queue is inconsistent");
+                return;
+            }
+            result = driver_try_completion(impl, completion);
+            if (result != 0) return;
+        }
+        settle_quiescent_macrostep(impl);
+        return;
+    }
+
     if (pop_internal_event(impl, &event, &origin_token)) {
         if (!run_event_runtime_hook(
                 impl, CFLOW_STATECHART_OBSERVED_INTERNAL, &event, 0u,
@@ -3470,13 +3513,7 @@ static void statechart_driver_run(void *user) {
         return;
     }
     if (pop_completion(impl, &completion)) {
-        if (!run_event_runtime_hook(
-                impl, CFLOW_STATECHART_OBSERVED_COMPLETION, NULL,
-                completion, 0u))
-            return;
-        trigger = (cflow_statechart_selection_trigger){
-            CFLOW_STATECHART_TRIGGER_COMPLETION, NULL, completion};
-        result = driver_try_trigger(impl, &trigger);
+        result = driver_try_completion(impl, completion);
         if (result != 0) return;
         turbo_mutex_lock(&impl->lock);
         impl->driver_repost = true;
