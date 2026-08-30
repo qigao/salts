@@ -7,6 +7,7 @@
 
 #include "value_storage.h"
 
+#include <stdatomic.h>
 #include <stdint.h>
 
 typedef struct cflow_io_publisher_entry {
@@ -35,6 +36,7 @@ typedef struct cflow_io_publisher_state {
     cflow_waker source_waker;
     cflow_io_request_id request_id;
     size_t wake_inflight;
+    size_t wake_waiters;
     size_t drive_inflight;
     size_t window_capacity;
     size_t window_occupied;
@@ -46,7 +48,7 @@ typedef struct cflow_io_publisher_state {
     bool publisher_live;
     bool owner_live;
     bool close_requested;
-    bool driver_active;
+    atomic_bool driver_active;
     bool drive_pending;
     bool submission_in_progress;
     bool result_encoding;
@@ -67,6 +69,15 @@ typedef struct cflow_io_publisher_state {
     cflow_publisher_terminal terminal;
     const char *terminal_error;
 } cflow_io_publisher_state;
+
+/* NativeIO manual-batch fast path. The caller must serialize NativeIO
+   observation, use a Manual Scheduler, and configure no Publisher drive
+   callback, so one ACK/Actor/Executor/post-ACK phase cannot receive a
+   reentrant or concurrent backend edge. */
+int cflow_io_publisher_owner_run_serial_batch_phase_internal(
+    cflow_io_publisher_owner *owner,
+    size_t max_steps,
+    size_t *progressed);
 
 /* Test-only seam for placing the deterministic Executor barrier in the
    adapter-driver tail window while the owner remains live. */

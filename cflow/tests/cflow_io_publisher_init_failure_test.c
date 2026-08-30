@@ -53,6 +53,8 @@ static int io_source_init_failure_actor_init(cflow_io_actor *actor,
 #define cflow_publisher_from_io_actor cflow_publisher_from_io_actor_with_init_failure
 #define cflow_publisher_from_io_actor_windowed cflow_publisher_from_io_actor_windowed_with_init_failure
 #define cflow_io_publisher_owner_run_ready cflow_io_publisher_owner_run_ready_with_init_failure
+#define cflow_io_publisher_owner_run_serial_batch_phase_internal                                  \
+  cflow_io_publisher_owner_run_serial_batch_phase_internal_with_init_failure
 #define cflow_io_publisher_owner_is_quiescent cflow_io_publisher_owner_is_quiescent_with_init_failure
 #define cflow_io_publisher_owner_get_stats cflow_io_publisher_owner_get_stats_with_init_failure
 #define cflow_io_publisher_owner_get_window_stats                                                     \
@@ -64,6 +66,7 @@ static int io_source_init_failure_actor_init(cflow_io_actor *actor,
 #undef cflow_io_publisher_owner_get_stats
 #undef cflow_io_publisher_owner_is_quiescent
 #undef cflow_io_publisher_owner_run_ready
+#undef cflow_io_publisher_owner_run_serial_batch_phase_internal
 #undef cflow_publisher_from_io_actor_windowed
 #undef cflow_publisher_from_io_actor
 #undef cflow_io_actor_init

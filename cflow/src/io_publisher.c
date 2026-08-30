@@ -196,7 +196,8 @@ static void io_source_wake(
     io_source_wake_stack = frame.previous;
     turbo_mutex_lock(&state->gate);
     --state->wake_inflight;
-    turbo_cond_broadcast(&state->changed);
+    if (state->wake_waiters != 0u)
+        turbo_cond_broadcast(&state->changed);
     turbo_mutex_unlock(&state->gate);
 }
 
@@ -211,8 +212,11 @@ static void io_source_wait_wakers_locked(
         frame = frame->previous;
     }
     /* These frames cannot return their credits until cancel unwinds. */
-    while (state->wake_inflight > current_thread_credits)
+    while (state->wake_inflight > current_thread_credits) {
+        ++state->wake_waiters;
         turbo_cond_wait(&state->changed, &state->gate);
+        --state->wake_waiters;
+    }
 }
 
 static bool io_source_record_drive_locked(
@@ -248,7 +252,6 @@ static void io_source_invoke_drive(
     drive(drive_user);
     turbo_mutex_lock(&state->gate);
     --state->drive_inflight;
-    turbo_cond_broadcast(&state->changed);
     turbo_mutex_unlock(&state->gate);
 }
 
@@ -260,8 +263,12 @@ static void io_source_actor_drive(void *user) {
 
     if (state == NULL)
         return;
+    if (state->drive == NULL &&
+        !atomic_load_explicit(&state->driver_active, memory_order_acquire))
+        return;
     turbo_mutex_lock(&state->gate);
-    if (io_source_record_drive_locked(state) && !state->driver_active)
+    if (io_source_record_drive_locked(state) &&
+        !atomic_load_explicit(&state->driver_active, memory_order_relaxed))
         (void)io_source_retain_drive_locked(
             state, &drive, &drive_user);
     turbo_mutex_unlock(&state->gate);
@@ -950,6 +957,7 @@ static int io_source_construct(
     state = (cflow_io_publisher_state *)calloc(1u, sizeof(*state));
     if (state == NULL)
         goto cleanup;
+    atomic_init(&state->driver_active, false);
     state->window_capacity = window_capacity;
     turbo_mutex_init(&state->gate);
     if (state->gate == NULL)
@@ -1049,10 +1057,70 @@ int cflow_publisher_from_io_actor_windowed(
         out, owner, config, window_capacity);
 }
 
-int cflow_io_publisher_owner_run_ready(
+static void io_source_acknowledge_delivered(
+    cflow_io_publisher_state *state,
+    size_t max_steps,
+    size_t *count,
+    int *status,
+    bool *made_progress) {
+    while (*count < max_steps) {
+        cflow_io_request_id delivered_request_id = 0u;
+        cflow_io_publisher_entry *delivered_entry = NULL;
+        cflow_io_ack_status ack_status;
+
+        turbo_mutex_lock(&state->gate);
+        if (io_source_windowed(state)) {
+            delivered_entry = io_source_window_find_delivered_locked(state);
+            if (delivered_entry != NULL)
+                delivered_request_id = delivered_entry->request_id;
+        } else if (state->completion_delivered && state->request_id != 0u) {
+            delivered_request_id = state->request_id;
+        }
+        turbo_mutex_unlock(&state->gate);
+        if (delivered_request_id == 0u)
+            break;
+
+        ack_status = cflow_io_actor_acknowledge(
+            &state->actor, delivered_request_id);
+        if (ack_status == CFLOW_IO_ACK_RELEASED) {
+            cflow_waker waker = {0};
+
+            turbo_mutex_lock(&state->gate);
+            if (io_source_windowed(state) && delivered_entry != NULL &&
+                delivered_entry->occupied &&
+                delivered_entry->request_id == delivered_request_id &&
+                delivered_entry->completion_delivered) {
+                delivered_entry->acknowledged = true;
+                if (!delivered_entry->result_ready &&
+                    !delivered_entry->demand_reserved)
+                    io_source_window_release_entry_locked(
+                        state, delivered_entry);
+                waker = io_source_take_waker_locked(state);
+            } else if (!io_source_windowed(state) &&
+                       state->request_id == delivered_request_id &&
+                       state->completion_delivered) {
+                state->request_id = 0u;
+                state->completion_delivered = false;
+                state->acknowledged = true;
+                waker = io_source_take_waker_locked(state);
+            }
+            turbo_mutex_unlock(&state->gate);
+            ++*count;
+            *made_progress = true;
+            io_source_wake(state, waker);
+            continue;
+        }
+        *status = ack_status == CFLOW_IO_ACK_BUSY
+            ? TURBO_EBUSY : TURBO_EPROTO;
+        break;
+    }
+}
+
+static int io_source_owner_run_ready_impl(
     cflow_io_publisher_owner *owner,
     size_t max_steps,
-    size_t *progressed) {
+    size_t *progressed,
+    bool serial_batch_phase) {
     cflow_io_publisher_state *state;
     size_t count = 0u;
     uint64_t observed_generation;
@@ -1065,11 +1133,17 @@ int cflow_io_publisher_owner_run_ready(
         return TURBO_EINVAL;
     state = (cflow_io_publisher_state *)owner->impl;
     turbo_mutex_lock(&state->gate);
-    if (state->driver_active || !state->owner_live) {
+    if (serial_batch_phase && state->drive != NULL) {
+        turbo_mutex_unlock(&state->gate);
+        return TURBO_ENOTSUP;
+    }
+    if (atomic_load_explicit(&state->driver_active, memory_order_relaxed) ||
+        !state->owner_live) {
         turbo_mutex_unlock(&state->gate);
         return TURBO_EBUSY;
     }
-    state->driver_active = true;
+    atomic_store_explicit(
+        &state->driver_active, true, memory_order_release);
     state->drive_pending = false;
     observed_generation = state->drive_generation;
     turbo_mutex_unlock(&state->gate);
@@ -1077,65 +1151,11 @@ int cflow_io_publisher_owner_run_ready(
     for (;;) {
         while (count < max_steps) {
             bool made_progress = false;
+            bool executor_progress = false;
             cflow_io_run_result actor_result;
 
-            while (count < max_steps) {
-                cflow_io_request_id delivered_request_id = 0u;
-                cflow_io_publisher_entry *delivered_entry = NULL;
-
-                turbo_mutex_lock(&state->gate);
-                if (io_source_windowed(state)) {
-                    delivered_entry =
-                        io_source_window_find_delivered_locked(state);
-                    if (delivered_entry != NULL)
-                        delivered_request_id = delivered_entry->request_id;
-                } else if (state->completion_delivered &&
-                           state->request_id != 0u) {
-                    delivered_request_id = state->request_id;
-                }
-                turbo_mutex_unlock(&state->gate);
-                if (delivered_request_id == 0u)
-                    break;
-
-                const cflow_io_ack_status ack_status =
-                    cflow_io_actor_acknowledge(
-                        &state->actor, delivered_request_id);
-
-                if (ack_status == CFLOW_IO_ACK_RELEASED) {
-                    cflow_waker waker = {0};
-
-                    turbo_mutex_lock(&state->gate);
-                    if (io_source_windowed(state) &&
-                        delivered_entry != NULL &&
-                        delivered_entry->occupied &&
-                        delivered_entry->request_id ==
-                            delivered_request_id &&
-                        delivered_entry->completion_delivered) {
-                        delivered_entry->acknowledged = true;
-                        if (!delivered_entry->result_ready &&
-                            !delivered_entry->demand_reserved)
-                            io_source_window_release_entry_locked(
-                                state, delivered_entry);
-                        waker = io_source_take_waker_locked(state);
-                    } else if (!io_source_windowed(state) &&
-                               state->request_id ==
-                                   delivered_request_id &&
-                               state->completion_delivered) {
-                        state->request_id = 0u;
-                        state->completion_delivered = false;
-                        state->acknowledged = true;
-                        waker = io_source_take_waker_locked(state);
-                    }
-                    turbo_mutex_unlock(&state->gate);
-                    ++count;
-                    made_progress = true;
-                    io_source_wake(state, waker);
-                    continue;
-                }
-                status = ack_status == CFLOW_IO_ACK_BUSY
-                    ? TURBO_EBUSY : TURBO_EPROTO;
-                break;
-            }
+            io_source_acknowledge_delivered(
+                state, max_steps, &count, &status, &made_progress);
             if (status != TURBO_OK || count >= max_steps)
                 break;
 
@@ -1157,8 +1177,12 @@ int cflow_io_publisher_owner_run_ready(
                    cflow_executor_run_one(&state->executor)) {
                 ++count;
                 made_progress = true;
+                executor_progress = true;
             }
-            if (!made_progress)
+            if (serial_batch_phase && executor_progress && count < max_steps)
+                io_source_acknowledge_delivered(
+                    state, max_steps, &count, &status, &made_progress);
+            if (!made_progress || serial_batch_phase)
                 break;
         }
 
@@ -1173,13 +1197,14 @@ int cflow_io_publisher_owner_run_ready(
             turbo_mutex_lock(&state->gate);
             pending_drive = state->drive_pending ||
                 state->drive_generation != observed_generation;
-            if (pending_drive && status == TURBO_OK &&
+            if (!serial_batch_phase && pending_drive && status == TURBO_OK &&
                 count < max_steps) {
                 state->drive_pending = false;
                 observed_generation = state->drive_generation;
                 continue_draining = true;
             } else {
-                state->driver_active = false;
+                atomic_store_explicit(
+                    &state->driver_active, false, memory_order_release);
                 if (pending_drive) {
                     state->drive_pending = false;
                     (void)io_source_retain_drive_locked(
@@ -1198,6 +1223,22 @@ int cflow_io_publisher_owner_run_ready(
     return status;
 }
 
+int cflow_io_publisher_owner_run_ready(
+    cflow_io_publisher_owner *owner,
+    size_t max_steps,
+    size_t *progressed) {
+    return io_source_owner_run_ready_impl(
+        owner, max_steps, progressed, false);
+}
+
+int cflow_io_publisher_owner_run_serial_batch_phase_internal(
+    cflow_io_publisher_owner *owner,
+    size_t max_steps,
+    size_t *progressed) {
+    return io_source_owner_run_ready_impl(
+        owner, max_steps, progressed, true);
+}
+
 bool cflow_io_publisher_owner_is_quiescent(
     const cflow_io_publisher_owner *owner) {
     cflow_io_publisher_state *state;
@@ -1207,7 +1248,8 @@ bool cflow_io_publisher_owner_is_quiescent(
         return false;
     state = (cflow_io_publisher_state *)owner->impl;
     turbo_mutex_lock(&state->gate);
-    adapter_quiescent = !state->driver_active &&
+    adapter_quiescent =
+        !atomic_load_explicit(&state->driver_active, memory_order_relaxed) &&
         state->wake_inflight == 0u && state->drive_inflight == 0u &&
         (!io_source_windowed(state) ||
          state->window_occupied == 0u);
@@ -1282,7 +1324,8 @@ int cflow_io_publisher_owner_close(cflow_io_publisher_owner *owner) {
         return TURBO_OK;
     state = (cflow_io_publisher_state *)owner->impl;
     turbo_mutex_lock(&state->gate);
-    if (!state->owner_live || state->publisher_live || state->driver_active ||
+    if (!state->owner_live || state->publisher_live ||
+        atomic_load_explicit(&state->driver_active, memory_order_relaxed) ||
         state->wake_inflight != 0u || state->drive_inflight != 0u ||
         (io_source_windowed(state) &&
          state->window_occupied != 0u)) {

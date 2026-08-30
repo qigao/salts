@@ -713,6 +713,27 @@ spec("CFlow reactive IO source") {
         check_null(owner.impl);
     }
 
+    it("rejects the serial batch phase when a drive callback may reenter") {
+        io_source_fixture fixture = {0};
+        io_source_run_fixture run_fixture;
+        size_t progressed = 99u;
+
+        check_true(io_source_run_fixture_init(
+            &run_fixture, &fixture));
+        check_equal(
+            cflow_io_publisher_owner_run_serial_batch_phase_internal(
+                &run_fixture.owner, 8u, &progressed),
+            TURBO_ENOTSUP);
+        check_equal(progressed, (size_t)0u);
+
+        cflow_publisher_destroy(&run_fixture.source);
+        check_equal(cflow_io_publisher_owner_close(
+                        &run_fixture.owner), TURBO_OK);
+        cflow_scheduler_destroy(&run_fixture.scheduler);
+        cflow_graph_destroy(&run_fixture.normalized);
+        cflow_graph_destroy(&run_fixture.surface);
+    }
+
     it("keeps capacity one identical through the windowed constructor") {
         io_source_fixture sequential = {
             .prepare_status = CFLOW_IO_PUBLISHER_PREPARE_OPERATION,

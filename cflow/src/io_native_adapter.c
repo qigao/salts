@@ -1,5 +1,8 @@
 #include <cflow/io_native_adapter.h>
 
+#include "io_publisher_internal.h"
+#include "scheduler_internal.h"
+
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -354,6 +357,24 @@ int cflow_io_native_adapter_observe(
     return delivery_status;
 }
 
+static int native_adapter_run_reactive_owner(
+    cflow_io_publisher_owner *owner,
+    size_t max_phase_steps,
+    bool manual_scheduler,
+    size_t *progressed) {
+    int status;
+
+    if (!manual_scheduler)
+        return cflow_io_publisher_owner_run_ready(
+            owner, max_phase_steps, progressed);
+    status = cflow_io_publisher_owner_run_serial_batch_phase_internal(
+        owner, max_phase_steps, progressed);
+    if (status != TURBO_ENOTSUP)
+        return status;
+    return cflow_io_publisher_owner_run_ready(
+        owner, max_phase_steps, progressed);
+}
+
 int cflow_io_native_adapter_drive_reactive(
     cflow_io_native_adapter *adapter,
     cflow_io_publisher_owner *owner,
@@ -362,6 +383,7 @@ int cflow_io_native_adapter_drive_reactive(
     size_t max_phase_steps,
     size_t *out_completed) {
     size_t progressed = 0u;
+    bool manual_scheduler;
     int observe_status;
     int owner_status;
 
@@ -378,18 +400,19 @@ int cflow_io_native_adapter_drive_reactive(
             (capabilities & CMETA_SCHED_CAP_CONCURRENT) != 0u)
             return TURBO_EINVAL;
     }
+    manual_scheduler = cflow_scheduler_is_manual_internal(scheduler);
 
     (void)cflow_scheduler_run_until_idle(scheduler, max_phase_steps);
-    owner_status = cflow_io_publisher_owner_run_ready(
-        owner, max_phase_steps, &progressed);
+    owner_status = native_adapter_run_reactive_owner(
+        owner, max_phase_steps, manual_scheduler, &progressed);
     if (owner_status != TURBO_OK)
         return owner_status;
 
     observe_status = cflow_io_native_adapter_observe(
         adapter, timeout_ms, out_completed);
     progressed = 0u;
-    owner_status = cflow_io_publisher_owner_run_ready(
-        owner, max_phase_steps, &progressed);
+    owner_status = native_adapter_run_reactive_owner(
+        owner, max_phase_steps, manual_scheduler, &progressed);
     (void)cflow_scheduler_run_until_idle(scheduler, max_phase_steps);
     return observe_status != TURBO_OK ? observe_status : owner_status;
 }
