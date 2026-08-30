@@ -1,4 +1,10 @@
-add_library(cflow_scxml STATIC src/scxml.c src/cmeta_expr.c)
+add_library(cflow_scxml STATIC
+  src/scxml.c
+  src/cmeta_expr.c
+  src/cmeta_assign.c
+  src/cmeta_location.c
+  src/cmeta_sequence.c
+  src/cmeta_foreach.c)
 cmake_config_target(cflow_scxml
   ALIAS TurboUtils::CFlowScxml
   FOLDER "cflow-scxml"
@@ -8,8 +14,8 @@ target_include_directories(cflow_scxml
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(cflow_scxml
-  PUBLIC TurboUtils::CFlow TurboUtils::XmlParser
-  PRIVATE TurboUtils::Core TurboUtils::CMeta TurboUtils::QueryVM)
+  PUBLIC TurboUtils::CFlow TurboUtils::CMeta TurboUtils::XmlParser
+  PRIVATE TurboUtils::Core TurboUtils::QueryVM)
 
 if(BUILD_TESTING)
   get_target_property(CFLOW_PUBLIC_LINKS turbo_cflow INTERFACE_LINK_LIBRARIES)
@@ -20,7 +26,7 @@ if(BUILD_TESTING)
   get_target_property(CFLOW_SCXML_PUBLIC_LINKS
                       cflow_scxml INTERFACE_LINK_LIBRARIES)
   set(CFLOW_SCXML_EXPECTED_LINKS
-      "TurboUtils::CFlow;TurboUtils::XmlParser;$<LINK_ONLY:TurboUtils::Core>;$<LINK_ONLY:TurboUtils::CMeta>;$<LINK_ONLY:TurboUtils::QueryVM>")
+      "TurboUtils::CFlow;TurboUtils::CMeta;TurboUtils::XmlParser;$<LINK_ONLY:TurboUtils::Core>;$<LINK_ONLY:TurboUtils::QueryVM>")
   if(NOT CFLOW_SCXML_PUBLIC_LINKS STREQUAL CFLOW_SCXML_EXPECTED_LINKS)
     message(FATAL_ERROR
       "TurboUtils::CFlowScxml dependency contract changed")

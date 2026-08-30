@@ -562,9 +562,10 @@ retries, compensation, or distributed coordination.
 
 Configure with `-DCFLOW_ENABLE_SCXML=ON` to build and install
 `TurboUtils::CFlowScxml` and `<cflow/scxml.h>`. The option is OFF by default.
-Its public surface depends on `TurboUtils::CFlow` and
+Its public surface depends on `TurboUtils::CFlow`, `TurboUtils::CMeta`, and
 `TurboUtils::XmlParser`; the installed static frontend also carries a
-link-only `TurboUtils::Core` dependency for tlog. CFlow itself has no XML,
+link-only `TurboUtils::Core` dependency for tlog. CMeta is public because the
+opt-in provider contract exposes `cmeta_data_desc`. CFlow itself has no XML,
 cxml, CSerde, CBind, or tlog dependency. cxml is a private implementation
 detail of XmlParser and is not installed or exported.
 
@@ -577,6 +578,51 @@ borrowing it and must be destroyed with
 data model is represented by an inert CMeta `bool` value; named event helpers
 produce the matching borrowed false payload, which runtime mailbox admission
 copies.
+
+The additive `cflow_scxml_compile_cmeta()` entry admits only exact
+`datamodel="cmeta"` documents. Its versioned options borrow one immutable root
+`cmeta_data_desc` and all reachable descriptors until program destruction;
+the program owns every compiled transition-condition, executable-branch
+condition, and assignment expression. A CMeta
+session is initialized with `cflow_scxml_session_init_cmeta()`: its initial
+object is borrowed only for that call and is copied immediately by the native
+managed-state lifecycle. The legacy compile/session functions remain
+null-model-only, and `cflow_scxml_program_initial_state()` therefore continues
+to return only the null profile's inert value.
+
+The currently admitted CMeta expression slice covers reflected Boolean,
+numeric, enum, and borrowed-string scalar locations, comparisons, logical
+operators, parentheses, `In("state-id")`, and the read-only string variables
+`_name` and `_sessionid`. The optional root `name` must be one XML NMTOKEN and
+shares the existing `max_name_bytes` retained-string budget. Each CMeta session
+copies that name and generates one canonical UUID v4 session ID before native
+runtime attachment. Both strings remain stable through successful session
+destruction and expression results borrow them only for the enclosing guard or
+executable callback. XML character/entity references in `cond` are decoded
+under the configured source-byte bound before the immutable expression is
+compiled. CMeta `<assign>` admits a non-empty dotted
+reflected struct-field `location` and one scalar `expr`. Boolean, signed,
+unsigned, floating-point, enum, and string destinations require an exact
+conversion; string adapters also enforce `max_string_bytes`. Assignment runs
+against the native staged state, so later steps observe earlier assignments.
+If evaluation, conversion, or a provider callback fails, the frontend raises
+internal `error.execution`, aborts the remaining executable block, and restores
+the complete staged object to its block-entry value before publication.
+CMeta `<if>`/`<elseif>` conditions use the same compiled Boolean language in
+ordinary onentry, onexit, and transition blocks. Conditions observe the current
+staged state, including earlier assignments in that block, and only the first
+true partition executes. A condition evaluation failure is treated as false
+and queues internal `error.execution`; later `<elseif>` or `<else>` partitions
+remain eligible. Ordinary transactional blocks also support bounded
+`<foreach>` over declared unary CMeta sequences when the element and item use
+the exact same type. Elements may use trivial storage or complete
+`COPY | MOVE | DESTROY` lifecycle traits; an optional index must be exact
+`size_t`. Sequence-index expressions, array literals, `finalize` iteration,
+CMeta conditions inside invocation `<finalize>`, the `_event` and
+`_ioprocessors` system views, structured CBind/CSerde values, and scripts remain
+fail-fast unsupported; there is no fallback to the null model or another
+evaluator. Every system-variable assignment location remains read-only and is
+rejected during compilation.
 
 ```c
 #include <cflow/executor.h>
@@ -643,6 +689,12 @@ operation tables, borrows the adapter contexts and program, owns the native
 Statechart instance plus bounded effect/send/invocation registries, and must be
 destroyed before the program, executor, or adapter context.
 
+For CMeta programs, the low-level program bindings retain `_name` because it is
+program-owned. They do not invent a shared `_sessionid`: evaluating an operand
+that needs it fails explicitly. Use `cflow_scxml_session_init_cmeta()` whenever
+session system-variable semantics are required; its session-specific guard and
+executable adapters inject the immutable per-session strings.
+
 Event I/O adapters use a reservation protocol. `prepare_send` and
 `prepare_cancel` reserve capacity without publishing an external effect and
 copy any request fields needed after the callback returns. On acceptance they
@@ -701,6 +753,24 @@ The supported compatibility subset is deliberately strict:
   configuration; malformed, quoted, unknown, or pseudo-state arguments fail
   during compilation, and initial/history default transitions remain
   unconditional;
+- exact `datamodel="cmeta"` transition and ordinary executable
+  `<if>`/`<elseif>` conditions, read-only `_name` and `_sessionid` strings, and
+  scalar `<assign>` as described above. Assignment
+  locations cannot target read-only `_` system
+  variables, and malformed or unresolved paths fail during compilation.
+  Recoverable assignment failures stage `error.execution` while publishing no
+  partial assignment mutation. Executable conditions read staged state in
+  document order; evaluation failure queues `error.execution`, treats that
+  condition as false, and continues first-true partition selection. Bounded
+  ordinary `<foreach>` resolves declared `TYPE(Container, Element)` fields,
+  opens an exact `SIZED | ORDERED` borrowed CMeta Range, snapshots its length,
+  writes exact items plus an optional `size_t` index, and executes the child
+  range transactionally. Managed Ranges construct one independently owned
+  element in an invocation-local aligned scratch slot; the runtime replaces
+  the staged item by move construction and destroys the scratch before running
+  the body. `max_iterations` is a positive per-invocation ceiling; an
+  allocation, range, limit, or child error queues `error.execution` and rolls
+  back the enclosing block. `finalize` iteration remains unsupported;
 - bounded executable blocks containing `raise event="NMTOKEN"` and nested
   `if`/`elseif`/`else` partitions under `onentry`, `onexit`, and
   ordinary/initial/history transitions. The null-model condition grammar is
@@ -742,11 +812,12 @@ The supported compatibility subset is deliberately strict:
   `In(id)` arguments. Null-model system variables remain inaccessible.
 
 Executable elements outside `raise`, literal `send`/`cancel`, label-only
-`log`, conditional partitions, and the restricted invocation `finalize`
-profile; wildcard event descriptors; multiple targets; dynamic
-send/invocation expressions, content, or parameters; non-null data models; and
-other SCXML elements fail during compilation with the first byte offset and
-one-based line/column diagnostic.
+`log`, CMeta scalar `assign`, admitted conditional partitions, and the
+restricted invocation `finalize` profile; wildcard event descriptors; multiple
+targets; dynamic send/invocation expressions, content, or parameters; data
+models other than the admitted null and exact CMeta profiles; and other SCXML
+elements fail during compilation with the first byte offset and one-based
+line/column diagnostic.
 There is no fallback or silent feature removal. Configurable hard limits cover
 XML input, depth, nodes, attributes, states, events, transitions, and action
 references. State/event names plus NUL-terminated log, Event I/O, and

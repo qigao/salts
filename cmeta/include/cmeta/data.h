@@ -75,6 +75,15 @@ typedef bool (*cmeta_data_buffer_is_zero_fn)(const void *object);
 typedef cmeta_status (*cmeta_data_buffer_assign_fn)(
     void *object, const unsigned char *data, size_t size, size_t max_bytes);
 typedef void (*cmeta_data_buffer_restore_zero_fn)(void *object);
+/**
+ * Return one provider-owned immutable byte span for the callback duration.
+ *
+ * Success initializes both outputs. A non-empty span has non-NULL data. The
+ * provider does not transfer ownership or extend the span lifetime; callers
+ * follow the enclosing object's documented mutation and destruction rules.
+ */
+typedef cmeta_status (*cmeta_data_buffer_read_fn)(
+    const void *object, const unsigned char **out_data, size_t *out_size);
 
 struct cmeta_data_buffer_ops {
     size_t struct_size;
@@ -84,6 +93,8 @@ struct cmeta_data_buffer_ops {
     cmeta_data_buffer_is_zero_fn is_zero;
     cmeta_data_buffer_assign_fn assign;
     cmeta_data_buffer_restore_zero_fn restore_zero;
+    /** Optional borrowed read view appended to the v1 operations prefix. */
+    cmeta_data_buffer_read_fn read;
 };
 
 enum {
@@ -241,6 +252,32 @@ cmeta_status cmeta_data_buffer_assign(
  */
 cmeta_status cmeta_data_buffer_restore_zero(
     const cmeta_data_desc *desc, void *object);
+
+/**
+ * Read one bounded borrowed byte view without mutating the source object.
+ *
+ * The returned view remains provider-owned. It expires when the object is
+ * assigned, restored, destroyed, concurrently mutated, or when the provider
+ * otherwise invalidates its storage. The caller must not retain it across any
+ * such boundary. A zero-length view may have a NULL data pointer.
+ *
+ * Providers compiled without the appended read callback remain valid for the
+ * existing buffer operations; this function returns CMETA_TRAIT_MISSING for
+ * them. Provider errors, malformed non-empty NULL views, and values larger
+ * than max_bytes leave both caller outputs unchanged.
+ *
+ * @param max_bytes Hard per-view byte limit.
+ * @param out_data Receives borrowed bytes only on success.
+ * @param out_size Receives the exact byte count only on success.
+ * @return CMETA_OK, CMETA_TRAIT_MISSING, CMETA_CAPACITY_EXCEEDED,
+ *         CMETA_CALLBACK_ERROR, an exact provider error, or a descriptor/
+ *         argument validation error.
+ *
+ * Example: `cmeta_data_buffer_read(desc, &value, 4096u, &data, &size)`.
+ */
+cmeta_status cmeta_data_buffer_read(
+    const cmeta_data_desc *desc, const void *object, size_t max_bytes,
+    const unsigned char **out_data, size_t *out_size);
 
 /** Return a complete, storage-matching enum adapter, or NULL. */
 const cmeta_data_enum_ops *cmeta_data_enum_ops_of(

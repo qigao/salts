@@ -15,6 +15,8 @@
     CMETA_FIELD_END(cmeta_data_desc, variant_ops)
 #define CMETA_DATA_BUFFER_OPS_PREFIX_SIZE \
     CMETA_FIELD_END(cmeta_data_buffer_ops, restore_zero)
+#define CMETA_DATA_BUFFER_OPS_READ_SIZE \
+    CMETA_FIELD_END(cmeta_data_buffer_ops, read)
 #define CMETA_DATA_ENUM_OPS_PREFIX_SIZE \
     CMETA_FIELD_END(cmeta_data_enum_ops, restore_zero)
 #define CMETA_DATA_VARIANT_OPS_PREFIX_SIZE \
@@ -273,6 +275,36 @@ cmeta_status cmeta_data_buffer_restore_zero(
         return status;
     ops->restore_zero(object);
     return ops->is_zero(object) ? CMETA_OK : CMETA_CALLBACK_ERROR;
+}
+
+cmeta_status cmeta_data_buffer_read(
+    const cmeta_data_desc *desc, const void *object, size_t max_bytes,
+    const unsigned char **out_data, size_t *out_size) {
+    const cmeta_data_buffer_ops *ops = NULL;
+    const unsigned char *data = NULL;
+    size_t size = 0u;
+    cmeta_status status;
+
+    if (object == NULL || out_data == NULL || out_size == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_buffer_ops_status(desc, &ops);
+    if (status != CMETA_OK)
+        return status;
+    if (ops->struct_size < CMETA_DATA_BUFFER_OPS_READ_SIZE ||
+        ops->read == NULL)
+        return CMETA_TRAIT_MISSING;
+
+    status = ops->read(object, &data, &size);
+    if (status != CMETA_OK)
+        return status;
+    if (size != 0u && data == NULL)
+        return CMETA_CALLBACK_ERROR;
+    if (size > max_bytes)
+        return CMETA_CAPACITY_EXCEEDED;
+
+    *out_data = data;
+    *out_size = size;
+    return CMETA_OK;
 }
 
 static cmeta_status cmeta_data_enum_ops_status(
@@ -598,6 +630,7 @@ const cmeta_data_desc cmeta_data_map = {
 
 #undef CMETA_DATA_VARIANT_OPS_PREFIX_SIZE
 #undef CMETA_DATA_ENUM_OPS_PREFIX_SIZE
+#undef CMETA_DATA_BUFFER_OPS_READ_SIZE
 #undef CMETA_DATA_BUFFER_OPS_PREFIX_SIZE
 #undef CMETA_DATA_DESC_VARIANT_OPS_SIZE
 #undef CMETA_DATA_DESC_ENUM_OPS_SIZE

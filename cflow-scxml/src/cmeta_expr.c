@@ -16,6 +16,7 @@
 #define SCXML_EXPR_DEFAULT_DEPTH 64u
 #define SCXML_EXPR_DEFAULT_PATH_DEPTH 32u
 #define SCXML_EXPR_DEFAULT_LITERAL_BYTES (64u * 1024u)
+#define SCXML_EXPR_DEFAULT_STRING_BYTES (64u * 1024u)
 #define SCXML_EXPR_SINT64_UPPER_BOUND 9223372036854775808.0
 #define SCXML_EXPR_UINT64_UPPER_BOUND 18446744073709551616.0
 
@@ -43,7 +44,8 @@ typedef enum expr_value_kind {
     EXPR_VALUE_BOOL = 1,
     EXPR_VALUE_SINT,
     EXPR_VALUE_UINT,
-    EXPR_VALUE_FLOAT
+    EXPR_VALUE_FLOAT,
+    EXPR_VALUE_STRING
 } expr_value_kind;
 
 typedef enum expr_operand_kind {
@@ -51,7 +53,10 @@ typedef enum expr_operand_kind {
     EXPR_OPERAND_SINT,
     EXPR_OPERAND_UINT,
     EXPR_OPERAND_FLOAT,
-    EXPR_OPERAND_STATE
+    EXPR_OPERAND_STRING,
+    EXPR_OPERAND_STATE,
+    EXPR_OPERAND_SYSTEM_NAME,
+    EXPR_OPERAND_SYSTEM_SESSION_ID
 } expr_operand_kind;
 
 typedef struct expr_token {
@@ -69,6 +74,10 @@ typedef struct expr_operand {
         int64_t sint;
         uint64_t uint;
         double number;
+        struct {
+            const char *data;
+            size_t size;
+        } string;
         cflow_machine_state_id state;
     } value;
 } expr_operand;
@@ -77,9 +86,12 @@ typedef struct cflow_scxml_cmeta_expr_program_impl {
     const cmeta_data_desc *root;
     qvm_instruction_t *instructions;
     expr_operand *operands;
+    char *literal_storage;
     uint32_t instruction_count;
     uint32_t operand_count;
     uint32_t register_count;
+    expr_value_kind result_kind;
+    size_t max_string_bytes;
     qvm_limits_t qvm_limits;
 } cflow_scxml_cmeta_expr_program_impl;
 
@@ -103,6 +115,10 @@ typedef struct expr_parser {
     size_t instruction_count;
     size_t operand_count;
     size_t literal_bytes;
+    size_t retained_string_bytes;
+    char *literal_storage;
+    size_t literal_storage_capacity;
+    size_t literal_storage_index;
     size_t expression_depth;
     size_t max_register;
     bool emit;
@@ -114,6 +130,7 @@ typedef struct expr_eval_context {
     const unsigned char *root;
     cflow_scxml_cmeta_expr_is_active_fn is_active;
     void *active_user;
+    const cflow_scxml_cmeta_expr_system_values *system_values;
     bool failed;
 } expr_eval_context;
 
@@ -295,6 +312,38 @@ static bool parser_add_literal_bytes(expr_parser *parser, size_t count) {
     return true;
 }
 
+static bool parser_retain_string(expr_parser *parser, size_t offset,
+                                 size_t size, expr_operand *operand) {
+    if (!parser_add_literal_bytes(parser, size))
+        return false;
+    if (size > SIZE_MAX - parser->retained_string_bytes)
+        return parser_fail(parser,
+                           CFLOW_SCXML_CMETA_EXPR_LIMIT_EXCEEDED,
+                           offset,
+                           "CMeta retained string byte count overflow");
+    operand->kind = EXPR_OPERAND_STRING;
+    operand->value_kind = EXPR_VALUE_STRING;
+    operand->value.string.size = size;
+    if (parser->emit) {
+        if (parser->literal_storage_index > parser->literal_storage_capacity ||
+            size > parser->literal_storage_capacity -
+                       parser->literal_storage_index)
+            return parser_fail(parser,
+                               CFLOW_SCXML_CMETA_EXPR_EVALUATION_ERROR,
+                               offset,
+                               "CMeta string literal storage invariant failed");
+        if (size != 0u) {
+            operand->value.string.data =
+                parser->literal_storage + parser->literal_storage_index;
+            memcpy((char *)operand->value.string.data,
+                   parser->source + offset, size);
+        }
+        parser->literal_storage_index += size;
+    }
+    parser->retained_string_bytes += size;
+    return true;
+}
+
 static bool parser_emit_instruction(expr_parser *parser, qvm_opcode_t op,
                                     uint16_t dst, uint32_t arg,
                                     uint32_t src1, uint32_t src2) {
@@ -350,6 +399,18 @@ static bool desc_scalar_kind(const cmeta_data_desc *desc,
             if (cmeta_data_enum_ops_of(desc) == NULL) return false;
             *out_kind = EXPR_VALUE_SINT;
             return true;
+        case CMETA_DATA_STRING: {
+            const cmeta_data_buffer_ops *ops =
+                cmeta_data_buffer_ops_of(desc);
+            if (ops == NULL ||
+                ops->struct_size <
+                    offsetof(cmeta_data_buffer_ops, read) +
+                        sizeof(ops->read) ||
+                ops->read == NULL)
+                return false;
+            *out_kind = EXPR_VALUE_STRING;
+            return true;
+        }
         default: return false;
     }
 }
@@ -519,6 +580,21 @@ static bool parser_parse_primary(expr_parser *parser, uint16_t target,
         parser_next(parser);
         return true;
     }
+    if (parser->token.kind == EXPR_TOKEN_STRING) {
+        expr_operand operand = {0};
+        uint32_t operand_index;
+        if (!parser_retain_string(parser, parser->token.offset,
+                                  parser->token.size, &operand))
+            return false;
+        out->kind = EXPR_VALUE_STRING;
+        out->reg = target;
+        if (!parser_add_operand(parser, operand, &operand_index) ||
+            !parser_emit_instruction(parser, QVM_OP_LOAD_CONST, target, 0u,
+                                     operand_index, 0u))
+            return false;
+        parser_next(parser);
+        return true;
+    }
     if (parser->token.kind != EXPR_TOKEN_IDENT)
         return parser_fail(parser, CFLOW_SCXML_CMETA_EXPR_SYNTAX_ERROR,
                            parser->token.offset,
@@ -531,6 +607,21 @@ static bool parser_parse_primary(expr_parser *parser, uint16_t target,
         return parser_emit_instruction(parser,
                                        value ? QVM_OP_TRUE : QVM_OP_FALSE,
                                        target, 0u, 0u, 0u);
+    }
+    if (token_text_equal(parser, "_name") ||
+        token_text_equal(parser, "_sessionid")) {
+        expr_operand operand = {0};
+        uint32_t operand_index;
+        operand.kind = token_text_equal(parser, "_name")
+                           ? EXPR_OPERAND_SYSTEM_NAME
+                           : EXPR_OPERAND_SYSTEM_SESSION_ID;
+        operand.value_kind = EXPR_VALUE_STRING;
+        out->kind = EXPR_VALUE_STRING;
+        out->reg = target;
+        parser_next(parser);
+        return parser_add_operand(parser, operand, &operand_index) &&
+               parser_emit_instruction(parser, QVM_OP_LOAD_CONST, target,
+                                       0u, operand_index, 0u);
     }
     if (token_text_equal(parser, "In")) {
         expr_operand operand = {0};
@@ -625,14 +716,19 @@ static bool parser_parse_compare(expr_parser *parser, uint16_t target,
     if (operation == EXPR_TOKEN_EQ || operation == EXPR_TOKEN_NE) {
         if (!((out->kind == EXPR_VALUE_BOOL &&
                right.kind == EXPR_VALUE_BOOL) ||
+              (out->kind == EXPR_VALUE_STRING &&
+               right.kind == EXPR_VALUE_STRING) ||
               (value_is_numeric(out->kind) && value_is_numeric(right.kind))))
             return parser_fail(parser, CFLOW_SCXML_CMETA_EXPR_TYPE_MISMATCH,
                                parser->token.offset,
                                "equality operands have incompatible types");
-    } else if (!value_is_numeric(out->kind) || !value_is_numeric(right.kind)) {
+    } else if (!((out->kind == EXPR_VALUE_STRING &&
+                  right.kind == EXPR_VALUE_STRING) ||
+                 (value_is_numeric(out->kind) &&
+                  value_is_numeric(right.kind)))) {
         return parser_fail(parser, CFLOW_SCXML_CMETA_EXPR_TYPE_MISMATCH,
                            parser->token.offset,
-                           "ordered comparison requires numeric operands");
+                           "ordered comparison requires numeric or string operands");
     }
     comparison = operation == EXPR_TOKEN_EQ ? 0u :
                  operation == EXPR_TOKEN_NE ? 1u :
@@ -710,7 +806,8 @@ static bool parser_parse_or(expr_parser *parser, uint16_t target,
     return true;
 }
 
-static bool parser_run(expr_parser *parser) {
+static bool parser_run(expr_parser *parser, bool require_boolean,
+                       expr_value_kind *out_kind) {
     expr_node root;
     parser_next(parser);
     if (parser->token.kind == EXPR_TOKEN_INVALID)
@@ -722,10 +819,11 @@ static bool parser_run(expr_parser *parser) {
         return parser_fail(parser, CFLOW_SCXML_CMETA_EXPR_SYNTAX_ERROR,
                            parser->token.offset,
                            "CMeta expression has trailing input");
-    if (root.kind != EXPR_VALUE_BOOL)
+    if (require_boolean && root.kind != EXPR_VALUE_BOOL)
         return parser_fail(parser, CFLOW_SCXML_CMETA_EXPR_TYPE_MISMATCH,
                            parser->source_size,
                            "CMeta condition result must be Boolean");
+    if (out_kind != NULL) *out_kind = root.kind;
     return true;
 }
 
@@ -736,12 +834,14 @@ cflow_scxml_cmeta_expr_limits cflow_scxml_cmeta_expr_default_limits(void) {
         SCXML_EXPR_DEFAULT_OPERANDS,
         SCXML_EXPR_DEFAULT_DEPTH,
         SCXML_EXPR_DEFAULT_PATH_DEPTH,
-        SCXML_EXPR_DEFAULT_LITERAL_BYTES};
+        SCXML_EXPR_DEFAULT_LITERAL_BYTES,
+        SCXML_EXPR_DEFAULT_STRING_BYTES};
     return limits;
 }
 
-static bool limits_valid(const cflow_scxml_cmeta_expr_limits *limits) {
-    return limits->max_source_bytes != 0u &&
+bool cflow_scxml_cmeta_expr_limits_valid(
+    const cflow_scxml_cmeta_expr_limits *limits) {
+    return limits != NULL && limits->max_source_bytes != 0u &&
            limits->max_instructions != 0u &&
            limits->max_instructions <= UINT32_MAX &&
            limits->max_operands != 0u &&
@@ -749,7 +849,8 @@ static bool limits_valid(const cflow_scxml_cmeta_expr_limits *limits) {
            limits->max_expression_depth != 0u &&
            limits->max_expression_depth <= QVM_MAX_REGISTERS &&
            limits->max_path_depth != 0u &&
-           limits->max_literal_bytes != 0u;
+           limits->max_literal_bytes != 0u &&
+           limits->max_string_bytes != 0u;
 }
 
 static void expr_program_impl_destroy(
@@ -757,29 +858,34 @@ static void expr_program_impl_destroy(
     if (impl == NULL) return;
     free(impl->instructions);
     free(impl->operands);
+    free(impl->literal_storage);
     free(impl);
 }
 
-cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_compile(
+static cflow_scxml_cmeta_expr_status expr_compile(
     cflow_scxml_cmeta_expr_program *out,
     const char *source, size_t source_size,
     const cmeta_data_desc *root,
     cflow_scxml_cmeta_expr_resolve_state_fn resolve_state,
     void *resolve_user,
     const cflow_scxml_cmeta_expr_limits *limits_or_null,
-    cflow_scxml_cmeta_expr_diagnostic *diagnostic) {
+    cflow_scxml_cmeta_expr_diagnostic *diagnostic,
+    bool require_boolean) {
     const cflow_scxml_cmeta_expr_limits limits =
         limits_or_null != NULL ? *limits_or_null
                                : cflow_scxml_cmeta_expr_default_limits();
     expr_parser parser;
     cflow_scxml_cmeta_expr_program_impl *impl = NULL;
     qvm_diagnostic_t qvm_diagnostic;
+    expr_value_kind admitted_kind = (expr_value_kind)0;
+    expr_value_kind emitted_kind = (expr_value_kind)0;
+    size_t retained_string_bytes;
     int qvm_status;
     expr_clear_diagnostic(diagnostic);
     if (out == NULL || out->impl != NULL || source == NULL || source_size == 0u ||
         !cmeta_data_desc_valid(root) || root->kind != CMETA_DATA_STRUCT ||
         root->storage_type == NULL || resolve_state == NULL ||
-        !limits_valid(&limits))
+        !cflow_scxml_cmeta_expr_limits_valid(&limits))
         return expr_report(diagnostic, CFLOW_SCXML_CMETA_EXPR_INVALID_ARGUMENT,
                            0u, "invalid CMeta expression compile arguments");
     if (source_size > limits.max_source_bytes)
@@ -795,7 +901,9 @@ cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_compile(
     parser.limits = limits;
     parser.diagnostic = diagnostic;
     parser.status = CFLOW_SCXML_CMETA_EXPR_OK;
-    if (!parser_run(&parser)) return parser.status;
+    if (!parser_run(&parser, require_boolean, &admitted_kind))
+        return parser.status;
+    retained_string_bytes = parser.retained_string_bytes;
     if (parser.instruction_count > SIZE_MAX / sizeof(*impl->instructions) ||
         parser.operand_count > SIZE_MAX / sizeof(*impl->operands))
         return expr_report(diagnostic,
@@ -811,8 +919,13 @@ cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_compile(
         parser.instruction_count, sizeof(*impl->instructions));
     impl->operands = (expr_operand *)calloc(
         parser.operand_count, sizeof(*impl->operands));
+    if (retained_string_bytes != 0u)
+        impl->literal_storage =
+            (char *)malloc(retained_string_bytes);
     if (impl->instructions == NULL ||
-        (parser.operand_count != 0u && impl->operands == NULL)) {
+        (parser.operand_count != 0u && impl->operands == NULL) ||
+        (retained_string_bytes != 0u &&
+         impl->literal_storage == NULL)) {
         expr_program_impl_destroy(impl);
         return expr_report(diagnostic,
                            CFLOW_SCXML_CMETA_EXPR_ALLOCATION_FAILED, 0u,
@@ -829,16 +942,27 @@ cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_compile(
     parser.diagnostic = diagnostic;
     parser.instructions = impl->instructions;
     parser.operands = impl->operands;
+    parser.literal_storage = impl->literal_storage;
+    parser.literal_storage_capacity = retained_string_bytes;
     parser.emit = true;
     parser.status = CFLOW_SCXML_CMETA_EXPR_OK;
-    if (!parser_run(&parser)) {
+    if (!parser_run(&parser, require_boolean, &emitted_kind)) {
         expr_program_impl_destroy(impl);
         return parser.status;
+    }
+    if (parser.literal_storage_index != retained_string_bytes ||
+        emitted_kind != admitted_kind) {
+        expr_program_impl_destroy(impl);
+        return expr_report(diagnostic,
+                           CFLOW_SCXML_CMETA_EXPR_EVALUATION_ERROR, 0u,
+                           "CMeta expression emission mismatched admission");
     }
     impl->root = root;
     impl->instruction_count = (uint32_t)parser.instruction_count;
     impl->operand_count = (uint32_t)parser.operand_count;
     impl->register_count = (uint32_t)parser.max_register;
+    impl->result_kind = emitted_kind;
+    impl->max_string_bytes = limits.max_string_bytes;
     impl->qvm_limits = qvm_default_limits();
     impl->qvm_limits.max_instructions = impl->instruction_count;
     impl->qvm_limits.max_operands = impl->operand_count;
@@ -858,6 +982,42 @@ cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_compile(
     out->impl = impl;
     expr_clear_diagnostic(diagnostic);
     return CFLOW_SCXML_CMETA_EXPR_OK;
+}
+
+cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_compile(
+    cflow_scxml_cmeta_expr_program *out,
+    const char *source, size_t source_size,
+    const cmeta_data_desc *root,
+    cflow_scxml_cmeta_expr_resolve_state_fn resolve_state,
+    void *resolve_user,
+    const cflow_scxml_cmeta_expr_limits *limits,
+    cflow_scxml_cmeta_expr_diagnostic *diagnostic) {
+    return expr_compile(out, source, source_size, root, resolve_state,
+                        resolve_user, limits, diagnostic, true);
+}
+
+cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_compile_value(
+    cflow_scxml_cmeta_expr_program *out,
+    const char *source, size_t source_size,
+    const cmeta_data_desc *root,
+    cflow_scxml_cmeta_expr_resolve_state_fn resolve_state,
+    void *resolve_user,
+    const cflow_scxml_cmeta_expr_limits *limits,
+    cflow_scxml_cmeta_expr_diagnostic *diagnostic) {
+    return expr_compile(out, source, source_size, root, resolve_state,
+                        resolve_user, limits, diagnostic, false);
+}
+
+cflow_scxml_cmeta_expr_value_kind
+cflow_scxml_cmeta_expr_program_value_kind(
+    const cflow_scxml_cmeta_expr_program *program) {
+    const cflow_scxml_cmeta_expr_program_impl *impl =
+        program != NULL
+            ? (const cflow_scxml_cmeta_expr_program_impl *)program->impl
+            : NULL;
+    return impl != NULL
+               ? (cflow_scxml_cmeta_expr_value_kind)impl->result_kind
+               : CFLOW_SCXML_CMETA_EXPR_VALUE_INVALID;
 }
 
 static void make_value(qvm_value_t *out, expr_value_kind kind) {
@@ -923,6 +1083,19 @@ static bool read_location(const expr_eval_context *context,
             make_value(out, EXPR_VALUE_SINT);
             return cmeta_data_enum_read(operand->data, object,
                                         &out->integer) == CMETA_OK;
+        case CMETA_DATA_STRING: {
+            const unsigned char *data = NULL;
+            size_t size = 0u;
+            if (cmeta_data_buffer_read(
+                    operand->data, object,
+                    context->program->max_string_bytes,
+                    &data, &size) != CMETA_OK)
+                return false;
+            make_value(out, EXPR_VALUE_STRING);
+            out->str = (const char *)data;
+            out->length = size;
+            return true;
+        }
         default: return false;
     }
 }
@@ -956,6 +1129,11 @@ static int expr_resolve(void *user, uint32_t index, qvm_value_t *out) {
             make_value(out, EXPR_VALUE_FLOAT);
             out->number = operand->value.number;
             return 1;
+        case EXPR_OPERAND_STRING:
+            make_value(out, EXPR_VALUE_STRING);
+            out->str = operand->value.string.data;
+            out->length = operand->value.string.size;
+            return 1;
         case EXPR_OPERAND_STATE:
             if (!context->is_active(context->active_user,
                                     operand->value.state, &active)) {
@@ -965,6 +1143,26 @@ static int expr_resolve(void *user, uint32_t index, qvm_value_t *out) {
             make_value(out, EXPR_VALUE_BOOL);
             out->boolean = active;
             return 1;
+        case EXPR_OPERAND_SYSTEM_NAME:
+        case EXPR_OPERAND_SYSTEM_SESSION_ID: {
+            const cflow_scxml_cmeta_expr_string_view *view;
+            if (context->system_values == NULL) {
+                context->failed = true;
+                return 0;
+            }
+            view = operand->kind == EXPR_OPERAND_SYSTEM_NAME
+                       ? &context->system_values->name
+                       : &context->system_values->session_id;
+            if (view->data == NULL ||
+                view->size > context->program->max_string_bytes) {
+                context->failed = true;
+                return 0;
+            }
+            make_value(out, EXPR_VALUE_STRING);
+            out->str = view->data;
+            out->length = view->size;
+            return 1;
+        }
     }
     context->failed = true;
     return 0;
@@ -1122,6 +1320,14 @@ static int expr_binary(void *user, qvm_opcode_t op, uint32_t arg,
         if (arg > 1u) return 0;
         order = left->boolean == right->boolean ? 0 :
                 left->boolean ? 1 : -1;
+    } else if (left->type == EXPR_VALUE_STRING &&
+               right->type == EXPR_VALUE_STRING) {
+        const size_t common = left->length < right->length
+                                  ? left->length : right->length;
+        order = common != 0u ? memcmp(left->str, right->str, common) : 0;
+        if (order == 0)
+            order = left->length < right->length ? -1 :
+                    left->length > right->length ? 1 : 0;
     } else if (!numeric_compare(left, right, &order, &unordered)) {
         return 0;
     }
@@ -1156,17 +1362,18 @@ static void expr_make_number(void *user, double value, qvm_value_t *out) {
 static void expr_make_string(void *user, const char *value, size_t size,
                              qvm_value_t *out) {
     (void)user;
-    (void)value;
-    (void)size;
-    memset(out, 0, sizeof(*out));
+    make_value(out, EXPR_VALUE_STRING);
+    out->str = value;
+    out->length = size;
 }
 
-cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_evaluate(
+static cflow_scxml_cmeta_expr_status expr_evaluate(
     const cflow_scxml_cmeta_expr_program *program,
     const void *root_object,
     cflow_scxml_cmeta_expr_is_active_fn is_active,
     void *active_user,
-    bool *out_value,
+    const cflow_scxml_cmeta_expr_system_values *system_values,
+    qvm_value_t *out_value,
     cflow_scxml_cmeta_expr_diagnostic *diagnostic) {
     const cflow_scxml_cmeta_expr_program_impl *impl =
         program != NULL
@@ -1177,7 +1384,6 @@ cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_evaluate(
     qvm_value_t result;
     qvm_diagnostic_t qvm_diagnostic;
     int status;
-    bool value;
     expr_clear_diagnostic(diagnostic);
     if (impl == NULL || root_object == NULL || is_active == NULL ||
         out_value == NULL)
@@ -1187,6 +1393,7 @@ cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_evaluate(
     context.root = (const unsigned char *)root_object;
     context.is_active = is_active;
     context.active_user = active_user;
+    context.system_values = system_values;
     context.failed = false;
     ops.resolve = expr_resolve;
     ops.truthy = expr_truthy;
@@ -1199,18 +1406,143 @@ cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_evaluate(
                             0u, impl->instruction_count, &ops, &context,
                             NULL, &result, &impl->qvm_limits, &qvm_diagnostic);
     if (context.failed || status != QVM_STATUS_OK ||
-        result.type != EXPR_VALUE_BOOL)
+        result.type != (int)impl->result_kind)
         return expr_report(diagnostic,
                            CFLOW_SCXML_CMETA_EXPR_EVALUATION_ERROR,
                            qvm_diagnostic.instruction,
                            context.failed
                                ? "CMeta expression operand resolution failed"
                                : status == QVM_STATUS_OK
-                               ? "CMeta expression result is not Boolean"
+                               ? "CMeta expression result type mismatched program"
                                : qvm_diagnostic.message);
+    *out_value = result;
+    return CFLOW_SCXML_CMETA_EXPR_OK;
+}
+
+static cflow_scxml_cmeta_expr_status expr_evaluate_condition(
+    const cflow_scxml_cmeta_expr_program *program,
+    const void *root_object,
+    cflow_scxml_cmeta_expr_is_active_fn is_active,
+    void *active_user,
+    const cflow_scxml_cmeta_expr_system_values *system_values,
+    bool *out_value,
+    cflow_scxml_cmeta_expr_diagnostic *diagnostic) {
+    const cflow_scxml_cmeta_expr_program_impl *impl =
+        program != NULL
+            ? (const cflow_scxml_cmeta_expr_program_impl *)program->impl
+            : NULL;
+    qvm_value_t result;
+    cflow_scxml_cmeta_expr_status status;
+    bool value;
+    if (impl == NULL || impl->result_kind != EXPR_VALUE_BOOL ||
+        out_value == NULL) {
+        expr_clear_diagnostic(diagnostic);
+        return expr_report(diagnostic, CFLOW_SCXML_CMETA_EXPR_INVALID_ARGUMENT,
+                           0u, "invalid CMeta condition evaluation arguments");
+    }
+    status = expr_evaluate(program, root_object, is_active, active_user,
+                           system_values, &result, diagnostic);
+    if (status != CFLOW_SCXML_CMETA_EXPR_OK) return status;
     value = result.boolean != 0;
     *out_value = value;
     return CFLOW_SCXML_CMETA_EXPR_OK;
+}
+
+cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_evaluate(
+    const cflow_scxml_cmeta_expr_program *program,
+    const void *root_object,
+    cflow_scxml_cmeta_expr_is_active_fn is_active,
+    void *active_user,
+    bool *out_value,
+    cflow_scxml_cmeta_expr_diagnostic *diagnostic) {
+    return expr_evaluate_condition(program, root_object, is_active,
+                                   active_user, NULL, out_value, diagnostic);
+}
+
+cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_evaluate_with_system(
+    const cflow_scxml_cmeta_expr_program *program,
+    const void *root_object,
+    cflow_scxml_cmeta_expr_is_active_fn is_active,
+    void *active_user,
+    const cflow_scxml_cmeta_expr_system_values *system_values,
+    bool *out_value,
+    cflow_scxml_cmeta_expr_diagnostic *diagnostic) {
+    return expr_evaluate_condition(program, root_object, is_active,
+                                   active_user, system_values, out_value,
+                                   diagnostic);
+}
+
+static cflow_scxml_cmeta_expr_status expr_evaluate_public_value(
+    const cflow_scxml_cmeta_expr_program *program,
+    const void *root_object,
+    cflow_scxml_cmeta_expr_is_active_fn is_active,
+    void *active_user,
+    const cflow_scxml_cmeta_expr_system_values *system_values,
+    cflow_scxml_cmeta_expr_value *out_value,
+    cflow_scxml_cmeta_expr_diagnostic *diagnostic) {
+    qvm_value_t result;
+    cflow_scxml_cmeta_expr_value value;
+    cflow_scxml_cmeta_expr_status status;
+    if (out_value == NULL) {
+        expr_clear_diagnostic(diagnostic);
+        return expr_report(diagnostic, CFLOW_SCXML_CMETA_EXPR_INVALID_ARGUMENT,
+                           0u, "invalid CMeta value evaluation arguments");
+    }
+    status = expr_evaluate(program, root_object, is_active, active_user,
+                           system_values, &result, diagnostic);
+    if (status != CFLOW_SCXML_CMETA_EXPR_OK) return status;
+    memset(&value, 0, sizeof(value));
+    value.kind = (cflow_scxml_cmeta_expr_value_kind)result.type;
+    switch (value.kind) {
+        case CFLOW_SCXML_CMETA_EXPR_VALUE_BOOL:
+            value.data.boolean = result.boolean != 0;
+            break;
+        case CFLOW_SCXML_CMETA_EXPR_VALUE_SINT:
+            value.data.sint = result.integer;
+            break;
+        case CFLOW_SCXML_CMETA_EXPR_VALUE_UINT:
+            value.data.uint = result.uinteger;
+            break;
+        case CFLOW_SCXML_CMETA_EXPR_VALUE_FLOAT:
+            value.data.number = result.number;
+            break;
+        case CFLOW_SCXML_CMETA_EXPR_VALUE_STRING:
+            value.data.string.data = result.str;
+            value.data.string.size = result.length;
+            break;
+        default:
+            return expr_report(diagnostic,
+                               CFLOW_SCXML_CMETA_EXPR_EVALUATION_ERROR, 0u,
+                               "CMeta expression produced an invalid scalar");
+    }
+    *out_value = value;
+    return CFLOW_SCXML_CMETA_EXPR_OK;
+}
+
+cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_expr_evaluate_value(
+    const cflow_scxml_cmeta_expr_program *program,
+    const void *root_object,
+    cflow_scxml_cmeta_expr_is_active_fn is_active,
+    void *active_user,
+    cflow_scxml_cmeta_expr_value *out_value,
+    cflow_scxml_cmeta_expr_diagnostic *diagnostic) {
+    return expr_evaluate_public_value(program, root_object, is_active,
+                                      active_user, NULL, out_value,
+                                      diagnostic);
+}
+
+cflow_scxml_cmeta_expr_status
+cflow_scxml_cmeta_expr_evaluate_value_with_system(
+    const cflow_scxml_cmeta_expr_program *program,
+    const void *root_object,
+    cflow_scxml_cmeta_expr_is_active_fn is_active,
+    void *active_user,
+    const cflow_scxml_cmeta_expr_system_values *system_values,
+    cflow_scxml_cmeta_expr_value *out_value,
+    cflow_scxml_cmeta_expr_diagnostic *diagnostic) {
+    return expr_evaluate_public_value(program, root_object, is_active,
+                                      active_user, system_values, out_value,
+                                      diagnostic);
 }
 
 void cflow_scxml_cmeta_expr_program_destroy(

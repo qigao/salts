@@ -74,6 +74,16 @@ static inline bool turbo_tstr_cmeta_is_zero(const void *object) {
     return object != NULL && *(const tstr *)object == NULL;
 }
 
+static inline cmeta_status turbo_tstr_cmeta_read(
+    const void *object, const unsigned char **out_data, size_t *out_size) {
+    const tstr value = object != NULL ? *(const tstr *)object : NULL;
+    if (object == NULL || out_data == NULL || out_size == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    *out_data = (const unsigned char *)value;
+    *out_size = tstr_len(value);
+    return CMETA_OK;
+}
+
 static inline cmeta_status turbo_tstr_cmeta_assign(
     void *object, const unsigned char *data, size_t size, size_t max_bytes) {
     tstr value;
@@ -104,6 +114,18 @@ static inline bool turbo_vstr_cmeta_is_zero(const void *object) {
     return value != NULL && value->data == NULL && value->len == 0u;
 }
 
+static inline cmeta_status turbo_vstr_cmeta_read(
+    const void *object, const unsigned char **out_data, size_t *out_size) {
+    const vstr *value = (const vstr *)object;
+    if (value == NULL || out_data == NULL || out_size == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (value->len != 0u && value->data == NULL)
+        return CMETA_CALLBACK_ERROR;
+    *out_data = (const unsigned char *)value->data;
+    *out_size = value->len;
+    return CMETA_OK;
+}
+
 static inline cmeta_status turbo_vstr_cmeta_assign(
     void *object, const unsigned char *data, size_t size, size_t max_bytes) {
     vstr *value = (vstr *)object;
@@ -131,13 +153,15 @@ static inline void turbo_vstr_cmeta_restore_zero(void *object) {
 /**
  * Unique-owned, binary-safe tstr storage adapter.
  *
- * Zero is NULL. Assignment copies exact bytes and restore frees the tstr.
+ * Zero is NULL. Assignment copies exact bytes, read borrows the current byte
+ * span, and restore frees the tstr. The read view expires on any mutation or
+ * restore of the source tstr.
  */
 static const cmeta_data_buffer_ops turbo_tstr_cmeta_buffer_ops = {
     sizeof(cmeta_data_buffer_ops), CMETA_DATA_BUFFER_OPS_ABI_VERSION,
     &turbo_tstr_cmeta_type, CMETA_DATA_BUFFER_OWNED,
     turbo_tstr_cmeta_is_zero, turbo_tstr_cmeta_assign,
-    turbo_tstr_cmeta_restore_zero
+    turbo_tstr_cmeta_restore_zero, turbo_tstr_cmeta_read
 };
 
 /**
@@ -145,12 +169,13 @@ static const cmeta_data_buffer_ops turbo_tstr_cmeta_buffer_ops = {
  *
  * Zero is {NULL, 0}. Assignment stores the address without extending its
  * lifetime; the caller must enforce an appropriate source-lifetime contract.
+ * Read returns that same borrowed span and does not extend its lifetime.
  */
 static const cmeta_data_buffer_ops turbo_vstr_cmeta_buffer_ops = {
     sizeof(cmeta_data_buffer_ops), CMETA_DATA_BUFFER_OPS_ABI_VERSION,
     &turbo_vstr_cmeta_type, CMETA_DATA_BUFFER_BORROWED,
     turbo_vstr_cmeta_is_zero, turbo_vstr_cmeta_assign,
-    turbo_vstr_cmeta_restore_zero
+    turbo_vstr_cmeta_restore_zero, turbo_vstr_cmeta_read
 };
 
 #ifdef __cplusplus

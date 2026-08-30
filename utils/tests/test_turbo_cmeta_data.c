@@ -80,6 +80,8 @@ static const cmeta_data_desc vstr_string = {
 spec("TurboUtils CMeta buffer adapters") {
   it("copies exact owned tstr bytes including embedded NUL") {
     static const unsigned char input[] = {'a', 0, 'b'};
+    const unsigned char *view = NULL;
+    size_t view_size = 0u;
     tstr value = NULL;
     bool is_zero = false;
 
@@ -89,6 +91,12 @@ spec("TurboUtils CMeta buffer adapters") {
     check_not_null(value);
     check_equal(tstr_len(value), sizeof(input));
     check_equal(memcmp(value, input, sizeof(input)), 0);
+    check_equal(cmeta_data_buffer_read(&tstr_bytes, &value, sizeof(input),
+                                       &view, &view_size),
+                CMETA_OK);
+    check_true(view == (const unsigned char *)value);
+    check_equal(view_size, sizeof(input));
+    check_equal(view, input, sizeof(input));
     check_equal(cmeta_data_buffer_is_zero(&tstr_bytes, &value, &is_zero),
                 CMETA_OK);
     check_false(is_zero);
@@ -99,11 +107,18 @@ spec("TurboUtils CMeta buffer adapters") {
 
   it("keeps owned tstr zero for empty input and failed allocation") {
     static const unsigned char byte = 0;
+    const unsigned char *view = &byte;
+    size_t view_size = 1u;
     tstr value = NULL;
 
     check_equal(cmeta_data_buffer_assign(&tstr_bytes, &value, NULL, 0u, 0u),
                 CMETA_OK);
     check_null(value);
+    check_equal(cmeta_data_buffer_read(&tstr_bytes, &value, 0u, &view,
+                                       &view_size),
+                CMETA_OK);
+    check_null(view);
+    check_equal(view_size, (size_t)0u);
 
     check_equal(cmeta_data_buffer_assign(&tstr_bytes, &value, &byte,
                                          SIZE_MAX, SIZE_MAX),
@@ -113,6 +128,8 @@ spec("TurboUtils CMeta buffer adapters") {
 
   it("borrows vstr input without copying and restores canonical zero") {
     static const unsigned char input[] = {'u', 't', 'f', '8'};
+    const unsigned char *view = NULL;
+    size_t view_size = 0u;
     vstr value = {NULL, 0u};
 
     check_equal(cmeta_data_buffer_assign(&vstr_string, &value, input,
@@ -120,6 +137,11 @@ spec("TurboUtils CMeta buffer adapters") {
                 CMETA_OK);
     check_true(value.data == (const char *)input);
     check_equal(value.len, sizeof(input));
+    check_equal(cmeta_data_buffer_read(&vstr_string, &value, sizeof(input),
+                                       &view, &view_size),
+                CMETA_OK);
+    check_true(view == input);
+    check_equal(view_size, sizeof(input));
 
     check_equal(cmeta_data_buffer_restore_zero(&vstr_string, &value),
                 CMETA_OK);
@@ -214,6 +236,21 @@ spec("TurboUtils UUID CMeta adapter") {
                &turbo_uuid_cmeta_shape);
     check_true(turbo_uuid_cmeta_buffer_ops_from_peer() ==
                &turbo_uuid_cmeta_buffer_ops);
+  }
+
+  it("keeps UUID as a valid write-only string adapter") {
+    static const unsigned char sentinel[] = {'x'};
+    const unsigned char *view = sentinel;
+    size_t view_size = 9u;
+    const turbo_uuid_t value = {{0}};
+
+    check_true(turbo_uuid_cmeta_data_valid(&turbo_uuid_cmeta_data));
+    check_equal(cmeta_data_buffer_read(&turbo_uuid_cmeta_data, &value,
+                                       TURBO_UUID_STRING_LENGTH, &view,
+                                       &view_size),
+                CMETA_TRAIT_MISSING);
+    check_true(view == sentinel);
+    check_equal(view_size, (size_t)9u);
   }
 
   it("rejects a replaced callback without candidate-owned authority") {

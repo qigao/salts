@@ -2605,6 +2605,39 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                     (size_t)(strstr(wrong_model, "datamodel") - wrong_model));
     }
 
+    it("admits a bounded SCXML machine name as one XML NMTOKEN") {
+        static const char named[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "name='xy'><state id='s'/></scxml>";
+        static const char invalid_name[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "name='not valid'><state id='s'/></scxml>";
+        cflow_scxml_limits limits = cflow_scxml_default_limits();
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+
+        limits.max_name_bytes = 3u;
+        check_equal(cflow_scxml_compile(
+                        &program, named, strlen(named), &limits, &diagnostic),
+                    CFLOW_SCXML_OK);
+        cflow_scxml_program_destroy(&program);
+
+        limits.max_name_bytes = 2u;
+        check_equal(cflow_scxml_compile(
+                        &program, named, strlen(named), &limits, &diagnostic),
+                    CFLOW_SCXML_LIMIT_EXCEEDED);
+        check_not_null(strstr(diagnostic.message, "max_name_bytes"));
+        check_null(program.impl);
+
+        limits = cflow_scxml_default_limits();
+        check_equal(cflow_scxml_compile(
+                        &program, invalid_name, strlen(invalid_name), &limits,
+                        &diagnostic),
+                    CFLOW_SCXML_INVALID_STRUCTURE);
+        check_not_null(strstr(diagnostic.message, "NMTOKEN"));
+        check_null(program.impl);
+    }
+
     it("rejects duplicate IDs and unknown targets at the owning attribute") {
         static const char duplicate[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>\n"

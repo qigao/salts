@@ -46,15 +46,23 @@ header.
 
 `cmeta/data.h` keeps STRING/BYTES meaning separate from native storage layout.
 A full `cmeta_data_desc` may point at versioned `cmeta_data_buffer_ops` that
-define semantic-zero detection, bounded assignment, and restore-to-zero. The
-checked facade validates adapter ABI, storage identity plus exact physical
-layout, and owned/borrowed agreement before calling it.
+define semantic-zero detection, bounded assignment, restore-to-zero, and an
+optional bounded borrowed read view. The checked facade validates adapter ABI,
+storage identity plus exact physical layout, owned/borrowed agreement, the
+provider's returned pointer/size pair, and the caller's byte ceiling before
+publishing read outputs.
 
 Assignment is single-owner and failure-atomic: the destination must start in
 the provider's semantic zero state, and a failed assignment is restored to
 that state. The adapter is format-neutral and does not interpret UTF-8 or
 source-reader lifetimes. A format binder must enforce those rules before it
 passes a byte slice to CMeta.
+
+A successful read does not copy or extend ownership. Its view expires when the
+source object is mutated, assigned, restored, destroyed, concurrently changed,
+or otherwise invalidated by the provider. Adapters that implement only the
+original v1 prefix remain valid for assignment and return
+`CMETA_TRAIT_MISSING` from the read facade.
 
 TurboUtils Core provides header-local `tstr` and `vstr` adapter metadata in
 `turbo_cmeta_data.h`. As with other header-generated CMeta metadata, descriptor

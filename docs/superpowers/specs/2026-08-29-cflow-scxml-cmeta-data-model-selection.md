@@ -4,19 +4,52 @@ Status: Accepted for Increment C foundation
 
 ## Implementation status
 
-The managed CMeta extended-state lifecycle is implemented in CFlow. The
-private CFlowScxml scalar-expression foundation now compiles Boolean, numeric,
-enum, reflected struct-field, comparison, logical, and `In("state")`
-expressions into bounded immutable QueryVM programs and evaluates them without
-runtime allocation. Logical conjunction and disjunction short circuit.
+The managed CMeta extended-state lifecycle is implemented in CFlow.
+CFlowScxml now publicly admits exact `datamodel="cmeta"` documents through
+versioned compile and session provider structs. The immutable program borrows
+the root schema and owns bounded QueryVM programs for transition `cond`
+expressions; each session's initial object is copied into the native managed
+Statechart state and is not retained. Existing null compile/session entry
+points remain null-only.
 
-This foundation does not yet admit `datamodel="cmeta"` through the public SCXML
-compiler or session API. Public schema/initial-state configuration,
-transactional `<assign>` bindings, system variables, string reads, sequence
-descriptors and indices, `<foreach>`, and structured CBind/CSerde input remain
-separate implementation increments. In particular, string and sequence
-expressions stay rejected until CMeta exposes explicit read/traversal and
-lifetime contracts; no private storage convention is inferred by CFlowScxml.
+The scalar-expression implementation compiles Boolean, numeric, enum,
+borrowed string, reflected struct-field, comparison, logical, and
+`In("state")` expressions and evaluates them without runtime allocation.
+String literals are retained by the compiled program; string locations use the
+public bounded CMeta borrowed-read contract and byte-length-aware comparisons.
+Logical conjunction and disjunction short circuit. SCXML condition attributes
+are decoded from bounded XML entity/character references before compilation.
+
+Transactional `<assign>` now compiles one bounded scalar expression and one
+dotted reflected struct-field destination. It mutates only the native staged
+state, requires exact Boolean/numeric/enum/string conversion, and maps runtime
+evaluation, conversion, or provider failures to internal `error.execution`.
+The enclosing executable block then restores its complete entry snapshot and
+stops, so no earlier assignment in that block is partially published.
+
+CMeta `_name` and `_sessionid` are now implemented as bounded read-only scalar
+strings. Ordinary onentry, onexit, and transition `<if>`/`<elseif>` conditions
+compile through the same bounded Boolean evaluator, observe staged state, and
+select the first true partition. A runtime condition error queues
+`error.execution`, treats that condition as false, and continues selection.
+CMeta conditions inside invocation `<finalize>`, `_event`, `_ioprocessors`,
+sequence-index expressions, array literals, and structured CBind/CSerde input
+remain separate implementation increments and continue to fail fast.
+
+A private reflected-sequence bridge now pairs the abstract CMeta sequence data
+descriptor with the concrete `Struct` layout field generated for
+`TYPE(Container, Element)`. It compiles the root-relative container offset and
+declared element type without retaining location text. Runtime opening requires
+an exact sequence semantic projection, a valid unary container type
+application, the declared element type, and a `SIZED | ORDERED` default Range.
+It snapshots only the reported length; the Range continues to borrow the staged
+root container and detects invalidating mutation through its provider version
+contract. Ordinary CMeta executable blocks now expose that bridge through
+`<foreach>` for exact element/item types with either trivial storage or complete
+`COPY | MOVE | DESTROY` lifecycle traits, plus an optional exact `size_t`
+index. The public positive `max_iterations` option bounds every invocation;
+legacy v1 option prefixes receive the named default. No private TurboSTL
+storage convention is inferred by CFlowScxml.
 
 ## Context
 
@@ -81,21 +114,41 @@ raises internal `error.execution` and aborts the enclosing executable-content
 block without publishing partial state.
 
 `<foreach>` accepts reflected sequence values only. It snapshots the sequence
-length and stable element order at entry, shallow-copies each element into the
-declared item location, writes the optional index location, and executes the
-body transactionally. The configured iteration limit is a hard ceiling. An
-invalid collection, item/index location, or conversion raises
+length and stable element order at entry, replaces the declared item with each
+exact element value, writes the optional index location, and executes the body
+transactionally. Managed Range values are independently constructed in one
+invocation-local aligned scratch slot and moved into staged state before the
+body executes. The configured iteration limit is a hard ceiling. An invalid
+collection, item/index location, allocation, or conversion raises
 `error.execution` and aborts the enclosing block.
+
+The current implementation admits `<foreach>` only in ordinary transactional
+blocks. It resolves array/item/index locations at compile time, validates the
+exact `SIZED | ORDERED` Range and length at invocation entry, assigns each
+trivial or lifecycle-managed element and zero-based optional index into staged
+state, and executes the body in document order. Length overflow, scratch
+allocation, provider failure, or child failure raises `error.execution` and
+rolls back the whole block. `finalize` iteration remains fail-fast.
 
 The SCXML system variables are read-only views owned by the session runtime:
 
 - `_event` is projected from the current borrowed event and is unavailable
   outside event-triggered work.
-- `_sessionid` and `_name` are immutable session strings.
+- `_name` is copied from the optional root `name` NMTOKEN; an omitted name is
+  represented by the empty string. Its source bytes participate in the
+  program's `max_name_bytes` budget.
+- `_sessionid` is one canonical UUID v4 generated before session attachment.
+  UUID provisioning failure aborts initialization without publishing the
+  session handle.
 - `_ioprocessors` is a read-only reflected view of registered I/O processors.
 
 User assignments to system variables are rejected. All borrowed system views
 expire when the enclosing guard or executable callback returns.
+The owning session copies `_name`, stores `_sessionid` inline, and keeps both
+stable until successful destruction. Program-level low-level bindings can read
+the retained `_name`, but do not have an owning session and therefore fail an
+attempt to evaluate `_sessionid`; full system-variable semantics require
+`cflow_scxml_session_init_cmeta()`.
 
 ### CSerde and CBind boundary
 
@@ -149,8 +202,11 @@ already exercised by CFlow streams and compiled plans.
   returns false for managed state. No raw shallow copy of a managed object is
   exposed. A later executor-owned snapshot API requires a separate public API
   decision.
-- CFlowScxml may depend on CMeta, CSerde, and CBind through TurboUtils targets;
-  CFlow and CMeta must not depend on parser modules.
+- CFlowScxml publicly depends on CMeta because `<cflow/scxml.h>` exposes the
+  schema provider type. CSerde/CBind are not part of this provider boundary;
+  CFlow and CMeta do not depend on parser modules.
+- CFlowScxml reuses its existing private TurboUtils Core dependency for UUID
+  generation; no public link dependency is added.
 
 ## Failure and rollback protocol
 

@@ -1,6 +1,11 @@
 #include <cflow/scxml.h>
 #include <tlog.h>
 #include <turbo/thread.h>
+#include <turbo_uuid.h>
+
+#include "cmeta_expr.h"
+#include "cmeta_assign.h"
+#include "cmeta_foreach.h"
 
 #include <ctype.h>
 #include <stdatomic.h>
@@ -16,6 +21,11 @@
 
 static const char SCXML_ERROR_EXECUTION_EVENT[] = "error.execution";
 static const char SCXML_ERROR_COMMUNICATION_EVENT[] = "error.communication";
+
+typedef enum scxml_data_model {
+    SCXML_DATA_MODEL_NULL = 0,
+    SCXML_DATA_MODEL_CMETA
+} scxml_data_model;
 
 typedef struct scxml_name_ref {
     turbo_xml_string_view name;
@@ -46,6 +56,8 @@ typedef enum scxml_step_kind {
     SCXML_STEP_RAISE = 1,
     SCXML_STEP_IF,
     SCXML_STEP_LOG,
+    SCXML_STEP_ASSIGN,
+    SCXML_STEP_FOREACH,
     SCXML_STEP_SEND,
     SCXML_STEP_CANCEL,
     SCXML_STEP_INVOKE_ENTER,
@@ -76,27 +88,43 @@ typedef struct scxml_step {
     const char *label;
     size_t effect;
     size_t invocation;
+    size_t assignment;
+    size_t foreach_descriptor;
 } scxml_step;
+
+typedef struct scxml_foreach_descriptor {
+    cflow_scxml_cmeta_foreach_program program;
+    size_t step_begin;
+    size_t step_end;
+} scxml_foreach_descriptor;
 
 typedef struct scxml_branch {
     cflow_machine_state_id state;
+    cflow_scxml_cmeta_expr_program condition;
     size_t step_begin;
     size_t step_end;
     bool unconditional;
 } scxml_branch;
 
 typedef struct scxml_block {
+    const cmeta_type_desc *state_type;
     const scxml_step *steps;
     const scxml_branch *branches;
     const scxml_effect_descriptor *effects;
+    const cflow_scxml_cmeta_assign_program *assignments;
+    const scxml_foreach_descriptor *foreach_descriptors;
     const struct scxml_invocation_descriptor *invocations;
     size_t step_begin;
     size_t step_end;
     size_t step_storage_count;
     size_t branch_storage_count;
     size_t effect_storage_count;
+    size_t assignment_storage_count;
+    size_t foreach_storage_count;
     size_t invocation_storage_count;
     size_t max_conditional_depth;
+    cflow_event_id execution_error_event;
+    cflow_scxml_cmeta_expr_system_values system_values;
 } scxml_block;
 
 typedef struct scxml_invocation_descriptor {
@@ -116,7 +144,12 @@ typedef struct scxml_invocation_descriptor {
 } scxml_invocation_descriptor;
 
 typedef struct scxml_guard_user {
-    cflow_machine_state_id state;
+    scxml_data_model data_model;
+    union {
+        cflow_machine_state_id state;
+        cflow_scxml_cmeta_expr_program expression;
+    } value;
+    cflow_scxml_cmeta_expr_system_values system_values;
 } scxml_guard_user;
 
 typedef struct scxml_counts {
@@ -132,6 +165,8 @@ typedef struct scxml_counts {
     size_t executable_steps;
     size_t log_label_bytes;
     size_t effect_rows;
+    size_t assignment_rows;
+    size_t foreach_rows;
     size_t effect_string_bytes;
     size_t conditional_branches;
     size_t max_conditional_depth;
@@ -145,6 +180,9 @@ typedef struct scxml_counts {
 typedef struct scxml_build {
     cflow_scxml_limits limits;
     cflow_scxml_diagnostic *diagnostic;
+    scxml_data_model data_model;
+    const cmeta_data_desc *cmeta_root;
+    cflow_scxml_cmeta_expr_limits cmeta_expression_limits;
     cflow_statechart_state *states;
     cflow_statechart_transition *transitions;
     cflow_statechart_guard *guards;
@@ -159,6 +197,8 @@ typedef struct scxml_build {
     scxml_step *steps;
     scxml_branch *branches;
     scxml_effect_descriptor *effects;
+    cflow_scxml_cmeta_assign_program *assignments;
+    scxml_foreach_descriptor *foreach_descriptors;
     scxml_invocation_descriptor *invocations;
     scxml_name_ref *invocation_names;
     char *log_storage;
@@ -182,11 +222,16 @@ typedef struct scxml_build {
     size_t step_index;
     size_t branch_index;
     size_t effect_index;
+    size_t assignment_index;
+    size_t foreach_index;
     size_t log_storage_index;
     size_t effect_storage_index;
     size_t step_capacity;
     size_t branch_capacity;
     size_t effect_capacity;
+    size_t assignment_capacity;
+    size_t foreach_capacity;
+    size_t max_iterations;
     size_t log_storage_capacity;
     size_t effect_storage_capacity;
     size_t guard_capacity;
@@ -199,10 +244,13 @@ typedef struct scxml_build {
     size_t invocation_storage_capacity;
     size_t invocation_capacity;
     uint32_t requirements;
+    cflow_event_id execution_error_event;
 } scxml_build;
 
 typedef struct cflow_scxml_program_impl {
     cflow_statechart statechart;
+    scxml_data_model data_model;
+    const cmeta_data_desc *cmeta_root;
     scxml_program_name *state_names;
     size_t state_name_count;
     scxml_program_name *event_names;
@@ -215,9 +263,16 @@ typedef struct cflow_scxml_program_impl {
     scxml_block *blocks;
     scxml_step *steps;
     scxml_branch *branches;
+    size_t branch_count;
     scxml_effect_descriptor *effects;
+    cflow_scxml_cmeta_assign_program *assignments;
+    size_t assignment_count;
+    scxml_foreach_descriptor *foreach_descriptors;
+    size_t foreach_count;
     scxml_invocation_descriptor *invocations;
     size_t invocation_count;
+    const char *document_name;
+    size_t document_name_size;
     char *name_storage;
     char *log_storage;
     char *effect_storage;
@@ -234,6 +289,11 @@ typedef struct scxml_session_binding_user {
     const scxml_block *block;
     cflow_scxml_session_impl *session;
 } scxml_session_binding_user;
+
+typedef struct scxml_session_guard_user {
+    const scxml_guard_user *guard;
+    cflow_scxml_session_impl *session;
+} scxml_session_guard_user;
 
 typedef enum scxml_delayed_state {
     SCXML_DELAYED_FREE = 0,
@@ -289,6 +349,12 @@ struct cflow_scxml_session_impl {
     cflow_statechart_executable_binding *bindings;
     scxml_session_binding_user *binding_users;
     size_t binding_count;
+    cflow_statechart_guard_binding *guard_bindings;
+    scxml_session_guard_user *guard_users;
+    size_t guard_binding_count;
+    char *system_name;
+    char session_id[TURBO_UUID_STRING_SIZE];
+    cflow_scxml_cmeta_expr_system_values system_values;
     cflow_scxml_event_io_adapter_v1 event_io;
     void *adapter_user;
     turbo_mutex_t registry_lock;
@@ -325,6 +391,8 @@ typedef enum scxml_element_kind {
     SCXML_ELEMENT_SEND,
     SCXML_ELEMENT_CANCEL,
     SCXML_ELEMENT_LOG,
+    SCXML_ELEMENT_ASSIGN,
+    SCXML_ELEMENT_FOREACH,
     SCXML_ELEMENT_IF,
     SCXML_ELEMENT_ELSEIF,
     SCXML_ELEMENT_ELSE,
@@ -596,6 +664,8 @@ static scxml_element_kind element_kind(turbo_xml_node node) {
     if (view_equal_raw(name, "send")) return SCXML_ELEMENT_SEND;
     if (view_equal_raw(name, "cancel")) return SCXML_ELEMENT_CANCEL;
     if (view_equal_raw(name, "log")) return SCXML_ELEMENT_LOG;
+    if (view_equal_raw(name, "assign")) return SCXML_ELEMENT_ASSIGN;
+    if (view_equal_raw(name, "foreach")) return SCXML_ELEMENT_FOREACH;
     if (view_equal_raw(name, "if")) return SCXML_ELEMENT_IF;
     if (view_equal_raw(name, "elseif")) return SCXML_ELEMENT_ELSEIF;
     if (view_equal_raw(name, "else")) return SCXML_ELEMENT_ELSE;
@@ -634,6 +704,7 @@ static bool attribute_allowed(scxml_element_kind kind,
             return view_equal_raw(name, "version") ||
                    view_equal_raw(name, "datamodel") ||
                    view_equal_raw(name, "initial") ||
+                   view_equal_raw(name, "name") ||
                    view_equal_raw(name, "id");
         case SCXML_ELEMENT_STATE:
             return view_equal_raw(name, "id") ||
@@ -662,6 +733,13 @@ static bool attribute_allowed(scxml_element_kind kind,
         case SCXML_ELEMENT_LOG:
             return view_equal_raw(name, "label") ||
                    view_equal_raw(name, "expr");
+        case SCXML_ELEMENT_ASSIGN:
+            return view_equal_raw(name, "location") ||
+                   view_equal_raw(name, "expr");
+        case SCXML_ELEMENT_FOREACH:
+            return view_equal_raw(name, "array") ||
+                   view_equal_raw(name, "item") ||
+                   view_equal_raw(name, "index");
         case SCXML_ELEMENT_IF:
         case SCXML_ELEMENT_ELSEIF:
             return view_equal_raw(name, "cond");
@@ -700,12 +778,12 @@ static cflow_scxml_status validate_element_attributes(
         if (!attribute_allowed(kind, name)) {
             return scxml_fail(
                 build,
-                kind == SCXML_ELEMENT_LOG
+                kind == SCXML_ELEMENT_LOG || kind == SCXML_ELEMENT_ASSIGN
                     ? CFLOW_SCXML_INVALID_STRUCTURE
                     : CFLOW_SCXML_UNSUPPORTED_FEATURE,
                 turbo_xml_attribute_location(attribute),
-                kind == SCXML_ELEMENT_LOG
-                    ? "log has an invalid unqualified attribute"
+                kind == SCXML_ELEMENT_LOG || kind == SCXML_ELEMENT_ASSIGN
+                    ? "executable element has an invalid unqualified attribute"
                     : "unsupported unqualified SCXML attribute");
         }
     }
@@ -1085,10 +1163,121 @@ static cflow_scxml_status analyze_log(scxml_build *build,
     return CFLOW_SCXML_OK;
 }
 
+static cflow_scxml_status analyze_assign(scxml_build *build,
+                                         turbo_xml_node node,
+                                         scxml_counts *counts) {
+    const turbo_xml_attribute location = find_attribute(node, "location");
+    const turbo_xml_attribute expression = find_attribute(node, "expr");
+    size_t index;
+    cflow_scxml_status status = validate_element_attributes(
+        build, node, SCXML_ELEMENT_ASSIGN);
+    if (status != CFLOW_SCXML_OK) return status;
+    if (build->data_model != SCXML_DATA_MODEL_CMETA)
+        return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
+                          turbo_xml_node_location(node),
+                          "assign requires the CMeta data model");
+    if (location.impl == NULL ||
+        is_empty_view(turbo_xml_attribute_value(location)) ||
+        expression.impl == NULL ||
+        is_empty_view(turbo_xml_attribute_value(expression))) {
+        const turbo_xml_location failure_location =
+            location.impl == NULL || expression.impl == NULL
+                ? turbo_xml_node_location(node)
+                : location.impl != NULL &&
+                          is_empty_view(turbo_xml_attribute_value(location))
+                      ? turbo_xml_attribute_location(location)
+                      : turbo_xml_attribute_location(expression);
+        return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
+                          failure_location,
+                          "assign requires non-empty location and expr attributes");
+    }
+    for (index = 0u; index < turbo_xml_node_child_count(node); ++index) {
+        const turbo_xml_node child = turbo_xml_node_child_at(node, index);
+        if (turbo_xml_node_type(child) != TURBO_XML_COMMENT)
+            return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
+                              turbo_xml_node_location(child),
+                              "assign cannot contain child content");
+    }
+    if (!checked_add(counts->executable_steps, 1u,
+                     &counts->executable_steps) ||
+        !checked_add(counts->assignment_rows, 1u,
+                     &counts->assignment_rows))
+        return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                          turbo_xml_node_location(node),
+                          "assignment descriptor count overflow");
+    return CFLOW_SCXML_OK;
+}
+
+static cflow_scxml_status analyze_foreach(
+    scxml_build *build, turbo_xml_node node, scxml_counts *counts,
+    size_t executable_depth, bool finalize_safe) {
+    const turbo_xml_attribute array = find_attribute(node, "array");
+    const turbo_xml_attribute item = find_attribute(node, "item");
+    const turbo_xml_attribute index = find_attribute(node, "index");
+    const size_t first_child_step = counts->executable_steps;
+    cflow_scxml_status status = validate_element_attributes(
+        build, node, SCXML_ELEMENT_FOREACH);
+    if (status != CFLOW_SCXML_OK) return status;
+    if (build->data_model != SCXML_DATA_MODEL_CMETA)
+        return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
+                          turbo_xml_node_location(node),
+                          "foreach requires the CMeta data model");
+    if (finalize_safe)
+        return scxml_fail(build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
+                          turbo_xml_node_location(node),
+                          "CMeta finalize foreach is not supported yet");
+    if (array.impl == NULL ||
+        is_empty_view(turbo_xml_attribute_value(array)) ||
+        item.impl == NULL ||
+        is_empty_view(turbo_xml_attribute_value(item)) ||
+        (index.impl != NULL &&
+         is_empty_view(turbo_xml_attribute_value(index))))
+        return scxml_fail(
+            build, CFLOW_SCXML_INVALID_STRUCTURE,
+            array.impl == NULL || item.impl == NULL
+                ? turbo_xml_node_location(node)
+                : array.impl != NULL &&
+                          is_empty_view(turbo_xml_attribute_value(array))
+                      ? turbo_xml_attribute_location(array)
+                      : item.impl != NULL &&
+                                is_empty_view(turbo_xml_attribute_value(item))
+                            ? turbo_xml_attribute_location(item)
+                            : turbo_xml_attribute_location(index),
+            "foreach requires non-empty array and item, and a non-empty index when present");
+    if (!checked_add(counts->executable_steps, 1u,
+                     &counts->executable_steps) ||
+        !checked_add(counts->foreach_rows, 1u, &counts->foreach_rows))
+        return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                          turbo_xml_node_location(node),
+                          "foreach descriptor count overflow");
+    if (executable_depth > counts->max_conditional_depth)
+        counts->max_conditional_depth = executable_depth;
+    status = analyze_executable_content(
+        build, node, counts, executable_depth, false);
+    if (status != CFLOW_SCXML_OK) return status;
+    if (counts->executable_steps == first_child_step + 1u)
+        return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
+                          turbo_xml_node_location(node),
+                          "foreach requires executable child content");
+    return CFLOW_SCXML_OK;
+}
+
 static cflow_scxml_status validate_condition_attribute(
     scxml_build *build, turbo_xml_node node) {
     const turbo_xml_attribute condition = find_attribute(node, "cond");
     turbo_xml_string_view state;
+    if (build->data_model == SCXML_DATA_MODEL_CMETA) {
+        if (condition.impl == NULL ||
+            is_empty_view(turbo_xml_attribute_value(condition))) {
+            return scxml_fail(
+                build, CFLOW_SCXML_INVALID_STRUCTURE,
+                condition.impl != NULL
+                    ? turbo_xml_attribute_location(condition)
+                    : turbo_xml_node_location(node),
+                "if and elseif require one non-empty CMeta condition");
+        }
+        return CFLOW_SCXML_OK;
+    }
     if (condition.impl == NULL) {
         return scxml_fail(
             build, CFLOW_SCXML_INVALID_STRUCTURE,
@@ -1128,7 +1317,17 @@ static cflow_scxml_status analyze_conditional(
     size_t branch_count = 1u;
     size_t index;
     bool saw_else = false;
-    cflow_scxml_status status = validate_condition_attribute(build, node);
+    cflow_scxml_status status;
+    if (build->data_model == SCXML_DATA_MODEL_CMETA && finalize_safe) {
+        const turbo_xml_attribute condition = find_attribute(node, "cond");
+        return scxml_fail(
+            build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
+            condition.impl != NULL
+                ? turbo_xml_attribute_location(condition)
+                : turbo_xml_node_location(node),
+            "CMeta finalize conditions are not supported yet");
+    }
+    status = validate_condition_attribute(build, node);
     if (status != CFLOW_SCXML_OK) return status;
     if (!checked_add(
             counts->executable_steps, 1u, &counts->executable_steps)) {
@@ -1202,6 +1401,14 @@ static cflow_scxml_status analyze_conditional(
         } else if (child_kind == SCXML_ELEMENT_LOG) {
             status = analyze_log(build, child, counts);
             if (status != CFLOW_SCXML_OK) return status;
+        } else if (child_kind == SCXML_ELEMENT_ASSIGN) {
+            if (finalize_safe)
+                return scxml_fail(
+                    build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
+                    turbo_xml_node_location(child),
+                    "finalize cannot mutate CMeta state");
+            status = analyze_assign(build, child, counts);
+            if (status != CFLOW_SCXML_OK) return status;
         } else if (child_kind == SCXML_ELEMENT_IF) {
             size_t next_depth;
             if (!checked_add(conditional_depth, 1u, &next_depth)) {
@@ -1211,6 +1418,15 @@ static cflow_scxml_status analyze_conditional(
                     "conditional nesting depth overflow");
             }
             status = analyze_conditional(
+                build, child, counts, next_depth, finalize_safe);
+            if (status != CFLOW_SCXML_OK) return status;
+        } else if (child_kind == SCXML_ELEMENT_FOREACH) {
+            size_t next_depth;
+            if (!checked_add(conditional_depth, 1u, &next_depth))
+                return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                                  turbo_xml_node_location(child),
+                                  "foreach nesting depth overflow");
+            status = analyze_foreach(
                 build, child, counts, next_depth, finalize_safe);
             if (status != CFLOW_SCXML_OK) return status;
         } else {
@@ -1272,6 +1488,13 @@ static cflow_scxml_status analyze_executable_content(
             status = analyze_cancel(build, child, counts);
         } else if (child_kind == SCXML_ELEMENT_LOG) {
             status = analyze_log(build, child, counts);
+        } else if (child_kind == SCXML_ELEMENT_ASSIGN) {
+            if (finalize_safe)
+                return scxml_fail(
+                    build, CFLOW_SCXML_UNSUPPORTED_FEATURE,
+                    turbo_xml_node_location(child),
+                    "finalize cannot mutate CMeta state");
+            status = analyze_assign(build, child, counts);
         } else if (child_kind == SCXML_ELEMENT_IF) {
             size_t next_depth;
             if (!checked_add(conditional_depth, 1u, &next_depth)) {
@@ -1281,6 +1504,14 @@ static cflow_scxml_status analyze_executable_content(
                     "conditional nesting depth overflow");
             }
             status = analyze_conditional(
+                build, child, counts, next_depth, finalize_safe);
+        } else if (child_kind == SCXML_ELEMENT_FOREACH) {
+            size_t next_depth;
+            if (!checked_add(conditional_depth, 1u, &next_depth))
+                return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                                  turbo_xml_node_location(child),
+                                  "foreach nesting depth overflow");
+            status = analyze_foreach(
                 build, child, counts, next_depth, finalize_safe);
         } else if (child_kind == SCXML_ELEMENT_ELSEIF ||
                    child_kind == SCXML_ELEMENT_ELSE) {
@@ -1355,7 +1586,8 @@ static cflow_scxml_status analyze_transition(scxml_build *build,
             turbo_xml_attribute_location(condition_attribute),
             "initial and history default transitions cannot have cond");
     }
-    if (condition_attribute.impl != NULL) {
+    if (condition_attribute.impl != NULL &&
+        build->data_model == SCXML_DATA_MODEL_NULL) {
         turbo_xml_string_view state_name;
         if (!parse_null_in_condition(
                 turbo_xml_attribute_value(condition_attribute), &state_name)) {
@@ -2107,7 +2339,8 @@ static cflow_scxml_status collect_transition_events(
                    child_kind == SCXML_ELEMENT_HISTORY ||
                    child_kind == SCXML_ELEMENT_ONENTRY ||
                    child_kind == SCXML_ELEMENT_ONEXIT ||
-                   child_kind == SCXML_ELEMENT_IF) {
+                   child_kind == SCXML_ELEMENT_IF ||
+                   child_kind == SCXML_ELEMENT_FOREACH) {
             cflow_scxml_status status =
                 collect_transition_events(build, child);
             if (status != CFLOW_SCXML_OK) return status;
@@ -2935,11 +3168,53 @@ static scxml_execute_outcome execute_cancel(
     return SCXML_EXECUTE_CONTINUE;
 }
 
+static bool evaluate_cmeta_executable_active(
+    void *user, cflow_machine_state_id state, bool *out_active) {
+    const cflow_statechart_executable_context *context =
+        (const cflow_statechart_executable_context *)user;
+    if (context == NULL || context->is_active == NULL ||
+        context->configuration_user == NULL || out_active == NULL)
+        return false;
+    *out_active = context->is_active(context->configuration_user, state);
+    return true;
+}
+
+static scxml_execute_outcome raise_block_execution_error(
+    const scxml_block *block,
+    const cflow_statechart_executable_context *context,
+    const char **out_error) {
+    const bool null_value = false;
+    const cflow_event_view raised = {
+        block->execution_error_event, &cmeta_type_bool, &null_value};
+    if (block->execution_error_event == 0u ||
+        !context->raise_internal(context->raise_user, &raised, out_error)) {
+        if (block->execution_error_event == 0u)
+            *out_error = "SCXML execution error event is unavailable";
+        return SCXML_EXECUTE_FATAL;
+    }
+    return SCXML_EXECUTE_BLOCK_ABORTED;
+}
+
+static bool enqueue_condition_execution_error(
+    const scxml_block *block,
+    const cflow_statechart_executable_context *context,
+    const char **out_error) {
+    const bool null_value = false;
+    const cflow_event_view raised = {
+        block->execution_error_event, &cmeta_type_bool, &null_value};
+    if (block->execution_error_event == 0u) {
+        *out_error = "SCXML conditional error event is unavailable";
+        return false;
+    }
+    return context->raise_internal(context->raise_user, &raised, out_error);
+}
+
 static scxml_execute_outcome execute_scxml_range(
     const scxml_block *block,
     cflow_scxml_session_impl *session,
     const cflow_statechart_executable_context *context,
-    size_t begin, size_t end, size_t depth, const char **out_error) {
+    size_t begin, size_t end, size_t depth,
+    bool abort_condition_error, const char **out_error) {
     const bool null_value = false;
     size_t index = begin;
     if (depth > block->max_conditional_depth || begin > end ||
@@ -2988,6 +3263,77 @@ static scxml_execute_outcome execute_scxml_range(
             }
             TURBO_LOG_DEBUG(
                 tlog_peek_default(), "cflow.scxml", step->label);
+        } else if (step->kind == SCXML_STEP_ASSIGN) {
+            cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
+            if (block->assignments == NULL ||
+                step->assignment >= block->assignment_storage_count) {
+                *out_error = "SCXML assignment descriptor is invalid";
+                return SCXML_EXECUTE_FATAL;
+            }
+            if (cflow_scxml_cmeta_assign_apply_with_system(
+                    &block->assignments[step->assignment],
+                    context->out_state, evaluate_cmeta_executable_active,
+                    (void *)context,
+                    session != NULL ? &session->system_values
+                                    : &block->system_values,
+                    &diagnostic) !=
+                CFLOW_SCXML_CMETA_EXPR_OK)
+                return raise_block_execution_error(block, context, out_error);
+        } else if (step->kind == SCXML_STEP_FOREACH) {
+            const scxml_foreach_descriptor *descriptor;
+            cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
+            cmeta_range range = {0};
+            cmeta_range_cursor cursor = {0};
+            cflow_scxml_cmeta_foreach_value value = {0};
+            size_t length = 0u;
+            size_t iteration;
+            size_t next_depth;
+            if (block->foreach_descriptors == NULL ||
+                step->foreach_descriptor >= block->foreach_storage_count) {
+                *out_error = "SCXML foreach descriptor is invalid";
+                return SCXML_EXECUTE_FATAL;
+            }
+            descriptor =
+                &block->foreach_descriptors[step->foreach_descriptor];
+            if (descriptor->step_begin != index + 1u ||
+                descriptor->step_begin > descriptor->step_end ||
+                descriptor->step_end > step->next ||
+                !checked_add(depth, 1u, &next_depth)) {
+                *out_error = "SCXML foreach step span is invalid";
+                return SCXML_EXECUTE_FATAL;
+            }
+            if (cflow_scxml_cmeta_foreach_open(
+                    &descriptor->program, context->out_state,
+                    &range, &length, &diagnostic) !=
+                CFLOW_SCXML_CMETA_EXPR_OK)
+                return raise_block_execution_error(block, context, out_error);
+            if (length != 0u &&
+                cflow_scxml_cmeta_foreach_value_init(
+                    &descriptor->program, &value, &diagnostic) !=
+                    CFLOW_SCXML_CMETA_EXPR_OK)
+                return raise_block_execution_error(block, context, out_error);
+            for (iteration = 0u; iteration < length; ++iteration) {
+                scxml_execute_outcome outcome;
+                if (cflow_scxml_cmeta_foreach_next(
+                        &descriptor->program, context->out_state, &range,
+                        &cursor, &value, iteration, length, &diagnostic) !=
+                    CFLOW_SCXML_CMETA_EXPR_OK) {
+                    cflow_scxml_cmeta_foreach_value_destroy(
+                        &descriptor->program, &value);
+                    return raise_block_execution_error(
+                        block, context, out_error);
+                }
+                outcome = execute_scxml_range(
+                    block, session, context, descriptor->step_begin,
+                    descriptor->step_end, next_depth, true, out_error);
+                if (outcome != SCXML_EXECUTE_CONTINUE) {
+                    cflow_scxml_cmeta_foreach_value_destroy(
+                        &descriptor->program, &value);
+                    return outcome;
+                }
+            }
+            cflow_scxml_cmeta_foreach_value_destroy(
+                &descriptor->program, &value);
         } else if (step->kind == SCXML_STEP_IF) {
             size_t branch;
             const scxml_branch *selected = NULL;
@@ -3000,16 +3346,47 @@ static scxml_execute_outcome execute_scxml_range(
             for (branch = 0u; branch < step->branch_count; ++branch) {
                 const scxml_branch *candidate =
                     &block->branches[step->branch_first + branch];
+                const bool has_cmeta_condition =
+                    candidate->condition.impl != NULL;
                 if (candidate->step_begin < index + 1u ||
                     candidate->step_begin > candidate->step_end ||
                     candidate->step_end > step->next ||
-                    (!candidate->unconditional && candidate->state == 0u)) {
+                    (candidate->unconditional &&
+                     (candidate->state != 0u || has_cmeta_condition)) ||
+                    (!candidate->unconditional &&
+                     ((candidate->state == 0u) ==
+                      (candidate->condition.impl == NULL)))) {
                     *out_error = "SCXML conditional branch is invalid";
                     return SCXML_EXECUTE_FATAL;
                 }
-                if (candidate->unconditional ||
-                    context->is_active(
-                        context->configuration_user, candidate->state)) {
+                if (candidate->unconditional) {
+                    selected = candidate;
+                    break;
+                }
+                if (has_cmeta_condition) {
+                    cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
+                    bool enabled = false;
+                    if (cflow_scxml_cmeta_expr_evaluate_with_system(
+                            &candidate->condition, context->out_state,
+                            evaluate_cmeta_executable_active, (void *)context,
+                            session != NULL ? &session->system_values
+                                            : &block->system_values,
+                            &enabled, &diagnostic) !=
+                        CFLOW_SCXML_CMETA_EXPR_OK) {
+                        if (!enqueue_condition_execution_error(
+                                block, context, out_error))
+                            return SCXML_EXECUTE_FATAL;
+                        if (abort_condition_error)
+                            return SCXML_EXECUTE_BLOCK_ABORTED;
+                        continue;
+                    }
+                    if (enabled) {
+                        selected = candidate;
+                        break;
+                    }
+                } else if (context->is_active(
+                               context->configuration_user,
+                               candidate->state)) {
                     selected = candidate;
                     break;
                 }
@@ -3021,7 +3398,8 @@ static scxml_execute_outcome execute_scxml_range(
                     return SCXML_EXECUTE_FATAL;
                 outcome = execute_scxml_range(
                     block, session, context, selected->step_begin,
-                    selected->step_end, next_depth, out_error);
+                    selected->step_end, next_depth,
+                    abort_condition_error, out_error);
                 if (outcome != SCXML_EXECUTE_CONTINUE) return outcome;
             }
         } else {
@@ -3038,9 +3416,17 @@ static bool execute_scxml_block_impl(
     cflow_scxml_session_impl *session,
     const cflow_statechart_executable_context *context,
     const char **out_error) {
+    scxml_execute_outcome outcome;
+    const bool trivial_state =
+        cmeta_type_require_traits(
+            block != NULL ? block->state_type : NULL,
+            CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY) ==
+        CMETA_OK;
     if (out_error != NULL) *out_error = NULL;
     if (block == NULL || block->steps == NULL ||
         (block->branch_storage_count != 0u && block->branches == NULL) ||
+        (block->foreach_storage_count != 0u &&
+         block->foreach_descriptors == NULL) ||
         block->step_begin >= block->step_end ||
         block->step_end > block->step_storage_count || context == NULL ||
         context->state == NULL || context->out_state == NULL ||
@@ -3051,10 +3437,40 @@ static bool execute_scxml_block_impl(
             *out_error = "SCXML executable block context is invalid";
         return false;
     }
-    *(bool *)context->out_state = *(const bool *)context->state;
-    return execute_scxml_range(
-               block, session, context, block->step_begin, block->step_end,
-               0u, out_error) != SCXML_EXECUTE_FATAL;
+    if (trivial_state) {
+        memcpy(context->out_state, context->state, block->state_type->size);
+    } else if (cmeta_type_require_traits(
+                   block->state_type,
+                   CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
+                       CMETA_TRAIT_DESTROY) != CMETA_OK ||
+               !block->state_type->traits->copy_construct(
+                   context->out_state, context->state)) {
+        *out_error = "SCXML state copy construction failed";
+        return false;
+    }
+    outcome = execute_scxml_range(
+        block, session, context, block->step_begin, block->step_end,
+        0u, false, out_error);
+    if (outcome == SCXML_EXECUTE_FATAL) {
+        if (!trivial_state) {
+            block->state_type->traits->destroy(context->out_state);
+        }
+        return false;
+    }
+    if (outcome == SCXML_EXECUTE_BLOCK_ABORTED) {
+        if (trivial_state) {
+            memcpy(context->out_state, context->state,
+                   block->state_type->size);
+        } else {
+            block->state_type->traits->destroy(context->out_state);
+            if (!block->state_type->traits->copy_construct(
+                    context->out_state, context->state)) {
+                *out_error = "SCXML state rollback copy construction failed";
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 static bool execute_scxml_block(
@@ -3122,19 +3538,273 @@ static cflow_scxml_status resolve_condition_state(
     return CFLOW_SCXML_OK;
 }
 
-static bool evaluate_scxml_transition_guard(
-    void *user, const cflow_statechart_guard_context *context,
+static bool resolve_cmeta_condition_state(
+    void *user, const char *name, size_t name_size,
+    cflow_machine_state_id *out_state) {
+    const scxml_build *build = (const scxml_build *)user;
+    const turbo_xml_string_view wanted = {name, name_size};
+    const scxml_name_ref *state;
+    cflow_statechart_state_kind kind;
+    if (build == NULL || name == NULL || name_size == 0u ||
+        out_state == NULL) {
+        return false;
+    }
+    state = find_name_ref(
+        build->state_names, build->state_name_index, wanted);
+    if (state == NULL || state->id == 0u || state->id > build->state_index)
+        return false;
+    kind = build->states[state->id - 1u].kind;
+    if (kind == CFLOW_STATECHART_INITIAL ||
+        kind == CFLOW_STATECHART_HISTORY_SHALLOW ||
+        kind == CFLOW_STATECHART_HISTORY_DEEP) {
+        return false;
+    }
+    *out_state = (cflow_machine_state_id)state->id;
+    return true;
+}
+
+static bool append_utf8_codepoint(
+    char *output, size_t capacity, size_t *size, uint32_t codepoint) {
+    size_t required;
+    if (output == NULL || size == NULL || codepoint == 0u ||
+        codepoint > UINT32_C(0x10ffff) ||
+        (codepoint >= UINT32_C(0xd800) &&
+         codepoint <= UINT32_C(0xdfff))) {
+        return false;
+    }
+    required = codepoint <= UINT32_C(0x7f) ? 1u
+             : codepoint <= UINT32_C(0x7ff) ? 2u
+             : codepoint <= UINT32_C(0xffff) ? 3u
+                                             : 4u;
+    if (*size > capacity || required > capacity - *size) return false;
+    if (required == 1u) {
+        output[(*size)++] = (char)codepoint;
+    } else if (required == 2u) {
+        output[(*size)++] = (char)(UINT32_C(0xc0) | (codepoint >> 6u));
+        output[(*size)++] = (char)(UINT32_C(0x80) | (codepoint & 0x3fu));
+    } else if (required == 3u) {
+        output[(*size)++] = (char)(UINT32_C(0xe0) | (codepoint >> 12u));
+        output[(*size)++] =
+            (char)(UINT32_C(0x80) | ((codepoint >> 6u) & 0x3fu));
+        output[(*size)++] = (char)(UINT32_C(0x80) | (codepoint & 0x3fu));
+    } else {
+        output[(*size)++] = (char)(UINT32_C(0xf0) | (codepoint >> 18u));
+        output[(*size)++] =
+            (char)(UINT32_C(0x80) | ((codepoint >> 12u) & 0x3fu));
+        output[(*size)++] =
+            (char)(UINT32_C(0x80) | ((codepoint >> 6u) & 0x3fu));
+        output[(*size)++] = (char)(UINT32_C(0x80) | (codepoint & 0x3fu));
+    }
+    return true;
+}
+
+static cflow_scxml_status decode_cmeta_attribute_source(
+    scxml_build *build, turbo_xml_attribute attribute,
+    const char *subject, char **out_source, size_t *out_size) {
+    const turbo_xml_string_view source = turbo_xml_attribute_value(attribute);
+    char message[CFLOW_SCXML_DIAGNOSTIC_CAPACITY];
+    char *decoded;
+    size_t input = 0u;
+    size_t output = 0u;
+    if (out_source == NULL || out_size == NULL || source.size == 0u)
+        return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
+                          turbo_xml_attribute_location(attribute),
+                          "CMeta attribute must not be empty");
+    if (source.size > build->cmeta_expression_limits.max_source_bytes)
+        return scxml_fail(build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                          turbo_xml_attribute_location(attribute),
+                          "CMeta attribute source byte limit exceeded");
+    *out_source = NULL;
+    *out_size = 0u;
+    decoded = (char *)malloc(source.size);
+    if (decoded == NULL)
+        return scxml_fail(build, CFLOW_SCXML_ALLOCATION_FAILED,
+                          turbo_xml_attribute_location(attribute),
+                          "unable to decode CMeta attribute");
+    while (input < source.size) {
+        if (source.data[input] != '&') {
+            decoded[output++] = source.data[input++];
+            continue;
+        }
+        if (source.size - input >= 4u &&
+            memcmp(source.data + input, "&lt;", 4u) == 0) {
+            decoded[output++] = '<';
+            input += 4u;
+        } else if (source.size - input >= 4u &&
+                   memcmp(source.data + input, "&gt;", 4u) == 0) {
+            decoded[output++] = '>';
+            input += 4u;
+        } else if (source.size - input >= 5u &&
+                   memcmp(source.data + input, "&amp;", 5u) == 0) {
+            decoded[output++] = '&';
+            input += 5u;
+        } else if (source.size - input >= 6u &&
+                   memcmp(source.data + input, "&quot;", 6u) == 0) {
+            decoded[output++] = '"';
+            input += 6u;
+        } else if (source.size - input >= 6u &&
+                   memcmp(source.data + input, "&apos;", 6u) == 0) {
+            decoded[output++] = '\'';
+            input += 6u;
+        } else if (source.size - input >= 4u &&
+                   source.data[input + 1u] == '#') {
+            const bool hexadecimal =
+                input + 2u < source.size &&
+                (source.data[input + 2u] == 'x' ||
+                 source.data[input + 2u] == 'X');
+            const uint32_t base = hexadecimal ? 16u : 10u;
+            size_t cursor = input + (hexadecimal ? 3u : 2u);
+            uint32_t codepoint = 0u;
+            bool has_digit = false;
+            while (cursor < source.size && source.data[cursor] != ';') {
+                const unsigned char ch =
+                    (unsigned char)source.data[cursor];
+                uint32_t digit;
+                if (ch >= '0' && ch <= '9') digit = ch - '0';
+                else if (hexadecimal && ch >= 'a' && ch <= 'f')
+                    digit = UINT32_C(10) + ch - 'a';
+                else if (hexadecimal && ch >= 'A' && ch <= 'F')
+                    digit = UINT32_C(10) + ch - 'A';
+                else break;
+                if (codepoint > (UINT32_C(0x10ffff) - digit) / base)
+                    break;
+                codepoint = codepoint * base + digit;
+                has_digit = true;
+                ++cursor;
+            }
+            if (!has_digit || cursor >= source.size ||
+                source.data[cursor] != ';' ||
+                !append_utf8_codepoint(
+                    decoded, source.size, &output, codepoint)) {
+                free(decoded);
+                return scxml_fail(
+                    build, CFLOW_SCXML_INVALID_STRUCTURE,
+                    turbo_xml_attribute_location(attribute),
+                    "CMeta attribute has an invalid XML character reference");
+            }
+            input = cursor + 1u;
+        } else {
+            free(decoded);
+            (void)snprintf(message, sizeof(message),
+                           "CMeta %s has an unsupported XML entity reference",
+                           subject != NULL ? subject : "attribute");
+            return scxml_fail(build, CFLOW_SCXML_INVALID_STRUCTURE,
+                              turbo_xml_attribute_location(attribute),
+                              message);
+        }
+    }
+    *out_source = decoded;
+    *out_size = output;
+    return CFLOW_SCXML_OK;
+}
+
+static cflow_scxml_status compile_cmeta_condition_program(
+    scxml_build *build, turbo_xml_attribute condition,
+    cflow_scxml_cmeta_expr_program *program) {
+    cflow_scxml_cmeta_expr_diagnostic expression_diagnostic = {0};
+    cflow_scxml_cmeta_expr_status expression_status;
+    cflow_scxml_status status;
+    char message[CFLOW_SCXML_DIAGNOSTIC_CAPACITY];
+    char *source = NULL;
+    size_t source_size = 0u;
+    status = decode_cmeta_attribute_source(
+        build, condition, "condition", &source, &source_size);
+    if (status != CFLOW_SCXML_OK) return status;
+    expression_status = cflow_scxml_cmeta_expr_compile(
+        program, source, source_size,
+        build->cmeta_root, resolve_cmeta_condition_state, build,
+        &build->cmeta_expression_limits, &expression_diagnostic);
+    free(source);
+    if (expression_status == CFLOW_SCXML_CMETA_EXPR_OK)
+        return CFLOW_SCXML_OK;
+    if (expression_status == CFLOW_SCXML_CMETA_EXPR_LIMIT_EXCEEDED)
+        status = CFLOW_SCXML_LIMIT_EXCEEDED;
+    else if (expression_status == CFLOW_SCXML_CMETA_EXPR_ALLOCATION_FAILED)
+        status = CFLOW_SCXML_ALLOCATION_FAILED;
+    else
+        status = CFLOW_SCXML_INVALID_STRUCTURE;
+    (void)snprintf(
+        message, sizeof(message),
+        "CMeta condition byte %zu: %s", expression_diagnostic.byte_offset,
+        expression_diagnostic.message[0] != '\0'
+            ? expression_diagnostic.message
+            : "expression compilation failed");
+    return scxml_fail(build, status, turbo_xml_attribute_location(condition),
+                      message);
+}
+
+static cflow_scxml_status compile_cmeta_condition(
+    scxml_build *build, turbo_xml_attribute condition,
+    scxml_guard_user *guard) {
+    guard->data_model = SCXML_DATA_MODEL_CMETA;
+    return compile_cmeta_condition_program(
+        build, condition, &guard->value.expression);
+}
+
+static bool evaluate_cmeta_active_state(
+    void *user, cflow_machine_state_id state, bool *out_active) {
+    const cflow_statechart_guard_context *context =
+        (const cflow_statechart_guard_context *)user;
+    if (context == NULL || context->is_active == NULL ||
+        context->configuration_user == NULL || out_active == NULL) {
+        return false;
+    }
+    *out_active = context->is_active(context->configuration_user, state);
+    return true;
+}
+
+static bool evaluate_scxml_transition_guard_impl(
+    const scxml_guard_user *guard,
+    const cflow_scxml_cmeta_expr_system_values *system_values,
+    const cflow_statechart_guard_context *context,
     bool *out_enabled, const char **out_error) {
-    const scxml_guard_user *guard = (const scxml_guard_user *)user;
     if (guard == NULL || context == NULL || context->state == NULL ||
         context->is_active == NULL || context->configuration_user == NULL ||
         out_enabled == NULL || out_error == NULL) {
         return false;
     }
-    *out_enabled = context->is_active(
-        context->configuration_user, guard->state);
     *out_error = NULL;
-    return true;
+    if (guard->data_model == SCXML_DATA_MODEL_NULL) {
+        *out_enabled = context->is_active(
+            context->configuration_user, guard->value.state);
+        return true;
+    }
+    if (guard->data_model == SCXML_DATA_MODEL_CMETA) {
+        cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
+        if (cflow_scxml_cmeta_expr_evaluate_with_system(
+                &guard->value.expression, context->state,
+                evaluate_cmeta_active_state, (void *)context,
+                system_values, out_enabled, &diagnostic) ==
+            CFLOW_SCXML_CMETA_EXPR_OK) {
+            return true;
+        }
+        *out_error = "CMeta transition condition evaluation failed";
+    }
+    return false;
+}
+
+static bool evaluate_scxml_transition_guard(
+    void *user, const cflow_statechart_guard_context *context,
+    bool *out_enabled, const char **out_error) {
+    const scxml_guard_user *guard = (const scxml_guard_user *)user;
+    return evaluate_scxml_transition_guard_impl(
+        guard, guard != NULL ? &guard->system_values : NULL,
+        context, out_enabled, out_error);
+}
+
+static bool evaluate_scxml_session_transition_guard(
+    void *user, const cflow_statechart_guard_context *context,
+    bool *out_enabled, const char **out_error) {
+    const scxml_session_guard_user *binding =
+        (const scxml_session_guard_user *)user;
+    if (binding == NULL || binding->session == NULL) {
+        if (out_error != NULL)
+            *out_error = "SCXML session guard binding is invalid";
+        return false;
+    }
+    return evaluate_scxml_transition_guard_impl(
+        binding->guard, &binding->session->system_values,
+        context, out_enabled, out_error);
 }
 
 static cflow_scxml_status emit_executable_node(scxml_build *build, turbo_xml_node node);
@@ -3277,6 +3947,15 @@ static cflow_scxml_status emit_cancel_step(scxml_build *build,
     return CFLOW_SCXML_OK;
 }
 
+static cflow_scxml_status emit_conditional_branch(
+    scxml_build *build, turbo_xml_node node, scxml_branch *branch) {
+    if (build->data_model == SCXML_DATA_MODEL_CMETA) {
+        return compile_cmeta_condition_program(
+            build, find_attribute(node, "cond"), &branch->condition);
+    }
+    return resolve_condition_state(build, node, &branch->state);
+}
+
 static cflow_scxml_status emit_conditional_step(
     scxml_build *build, turbo_xml_node node) {
     const size_t step = build->step_index;
@@ -3299,8 +3978,8 @@ static cflow_scxml_status emit_conditional_step(
     }
     ++build->step_index;
     build->branch_index += branch_count;
-    status = resolve_condition_state(
-        build, node, &build->branches[current_branch].state);
+    status = emit_conditional_branch(
+        build, node, &build->branches[current_branch]);
     if (status != CFLOW_SCXML_OK) return status;
     build->branches[current_branch].step_begin = build->step_index;
     for (index = 0u; index < turbo_xml_node_child_count(node); ++index) {
@@ -3314,8 +3993,8 @@ static cflow_scxml_status emit_conditional_step(
             if (kind == SCXML_ELEMENT_ELSE) {
                 build->branches[current_branch].unconditional = true;
             } else {
-                status = resolve_condition_state(
-                    build, child, &build->branches[current_branch].state);
+                status = emit_conditional_branch(
+                    build, child, &build->branches[current_branch]);
                 if (status != CFLOW_SCXML_OK) return status;
             }
         } else {
@@ -3367,6 +4046,157 @@ static cflow_scxml_status emit_log_step(scxml_build *build,
     return CFLOW_SCXML_OK;
 }
 
+static cflow_scxml_status emit_assign_step(scxml_build *build,
+                                           turbo_xml_node node) {
+    const turbo_xml_attribute location_attribute =
+        find_attribute(node, "location");
+    const turbo_xml_attribute expression_attribute =
+        find_attribute(node, "expr");
+    const size_t step = build->step_index;
+    const size_t assignment = build->assignment_index;
+    cflow_scxml_cmeta_expr_diagnostic assignment_diagnostic = {0};
+    cflow_scxml_cmeta_expr_status assignment_status;
+    cflow_scxml_status status;
+    char *location = NULL;
+    size_t location_size = 0u;
+    char *expression = NULL;
+    size_t expression_size = 0u;
+    char message[CFLOW_SCXML_DIAGNOSTIC_CAPACITY];
+    if (step >= build->step_capacity ||
+        assignment >= build->assignment_capacity)
+        return scxml_fail(build, CFLOW_SCXML_NATIVE_IR_REJECTED,
+                          turbo_xml_node_location(node),
+                          "assign exceeded admitted descriptor storage");
+    status = decode_cmeta_attribute_source(
+        build, location_attribute, "assignment location",
+        &location, &location_size);
+    if (status != CFLOW_SCXML_OK) return status;
+    status = decode_cmeta_attribute_source(
+        build, expression_attribute, "assignment expression",
+        &expression, &expression_size);
+    if (status != CFLOW_SCXML_OK) {
+        free(location);
+        return status;
+    }
+    assignment_status = cflow_scxml_cmeta_assign_compile(
+        &build->assignments[assignment], location, location_size,
+        expression, expression_size, build->cmeta_root,
+        resolve_cmeta_condition_state, build,
+        &build->cmeta_expression_limits, &assignment_diagnostic);
+    free(location);
+    free(expression);
+    if (assignment_status != CFLOW_SCXML_CMETA_EXPR_OK) {
+        const cflow_scxml_status public_status =
+            assignment_status == CFLOW_SCXML_CMETA_EXPR_LIMIT_EXCEEDED
+                ? CFLOW_SCXML_LIMIT_EXCEEDED
+                : assignment_status ==
+                          CFLOW_SCXML_CMETA_EXPR_ALLOCATION_FAILED
+                      ? CFLOW_SCXML_ALLOCATION_FAILED
+                      : CFLOW_SCXML_INVALID_STRUCTURE;
+        (void)snprintf(
+            message, sizeof(message), "CMeta assignment byte %zu: %s",
+            assignment_diagnostic.byte_offset,
+            assignment_diagnostic.message[0] != '\0'
+                ? assignment_diagnostic.message
+                : "assignment compilation failed");
+        return scxml_fail(build, public_status,
+                          turbo_xml_node_location(node), message);
+    }
+    ++build->assignment_index;
+    ++build->step_index;
+    build->steps[step] = (scxml_step){
+        .kind = SCXML_STEP_ASSIGN,
+        .next = build->step_index,
+        .assignment = assignment};
+    return CFLOW_SCXML_OK;
+}
+
+static cflow_scxml_status emit_foreach_step(scxml_build *build,
+                                            turbo_xml_node node) {
+    const turbo_xml_attribute array_attribute = find_attribute(node, "array");
+    const turbo_xml_attribute item_attribute = find_attribute(node, "item");
+    const turbo_xml_attribute index_attribute = find_attribute(node, "index");
+    const size_t step = build->step_index;
+    const size_t foreach_index = build->foreach_index;
+    scxml_foreach_descriptor *descriptor;
+    cflow_scxml_cmeta_expr_diagnostic foreach_diagnostic = {0};
+    cflow_scxml_cmeta_expr_status foreach_status;
+    char *array = NULL;
+    size_t array_size = 0u;
+    char *item = NULL;
+    size_t item_size = 0u;
+    char *index = NULL;
+    size_t index_size = 0u;
+    size_t child_index;
+    cflow_scxml_status status;
+    char message[CFLOW_SCXML_DIAGNOSTIC_CAPACITY];
+    if (step >= build->step_capacity ||
+        foreach_index >= build->foreach_capacity)
+        return scxml_fail(build, CFLOW_SCXML_NATIVE_IR_REJECTED,
+                          turbo_xml_node_location(node),
+                          "foreach exceeded admitted descriptor storage");
+    status = decode_cmeta_attribute_source(
+        build, array_attribute, "foreach array", &array, &array_size);
+    if (status != CFLOW_SCXML_OK) return status;
+    status = decode_cmeta_attribute_source(
+        build, item_attribute, "foreach item", &item, &item_size);
+    if (status != CFLOW_SCXML_OK) {
+        free(array);
+        return status;
+    }
+    if (index_attribute.impl != NULL) {
+        status = decode_cmeta_attribute_source(
+            build, index_attribute, "foreach index", &index, &index_size);
+        if (status != CFLOW_SCXML_OK) {
+            free(array);
+            free(item);
+            return status;
+        }
+    }
+    descriptor = &build->foreach_descriptors[foreach_index];
+    foreach_status = cflow_scxml_cmeta_foreach_compile(
+        &descriptor->program, array, array_size, item, item_size,
+        index, index_size, build->cmeta_root,
+        build->cmeta_expression_limits.max_path_depth,
+        build->max_iterations, &foreach_diagnostic);
+    free(array);
+    free(item);
+    free(index);
+    if (foreach_status != CFLOW_SCXML_CMETA_EXPR_OK) {
+        const cflow_scxml_status public_status =
+            foreach_status == CFLOW_SCXML_CMETA_EXPR_LIMIT_EXCEEDED
+                ? CFLOW_SCXML_LIMIT_EXCEEDED
+                : foreach_status ==
+                          CFLOW_SCXML_CMETA_EXPR_ALLOCATION_FAILED
+                      ? CFLOW_SCXML_ALLOCATION_FAILED
+                      : CFLOW_SCXML_INVALID_STRUCTURE;
+        (void)snprintf(
+            message, sizeof(message), "CMeta foreach byte %zu: %s",
+            foreach_diagnostic.byte_offset,
+            foreach_diagnostic.message[0] != '\0'
+                ? foreach_diagnostic.message
+                : "foreach compilation failed");
+        return scxml_fail(build, public_status,
+                          turbo_xml_node_location(node), message);
+    }
+    ++build->step_index;
+    ++build->foreach_index;
+    descriptor->step_begin = build->step_index;
+    for (child_index = 0u;
+         child_index < turbo_xml_node_child_count(node); ++child_index) {
+        const turbo_xml_node child = turbo_xml_node_child_at(node, child_index);
+        if (turbo_xml_node_type(child) != TURBO_XML_ELEMENT) continue;
+        status = emit_executable_node(build, child);
+        if (status != CFLOW_SCXML_OK) return status;
+    }
+    descriptor->step_end = build->step_index;
+    build->steps[step] = (scxml_step){
+        .kind = SCXML_STEP_FOREACH,
+        .next = build->step_index,
+        .foreach_descriptor = foreach_index};
+    return CFLOW_SCXML_OK;
+}
+
 static cflow_scxml_status emit_executable_node(
     scxml_build *build, turbo_xml_node node) {
     const scxml_element_kind kind = element_kind(node);
@@ -3374,6 +4204,8 @@ static cflow_scxml_status emit_executable_node(
     if (kind == SCXML_ELEMENT_SEND) return emit_send_step(build, node);
     if (kind == SCXML_ELEMENT_CANCEL) return emit_cancel_step(build, node);
     if (kind == SCXML_ELEMENT_LOG) return emit_log_step(build, node);
+    if (kind == SCXML_ELEMENT_ASSIGN) return emit_assign_step(build, node);
+    if (kind == SCXML_ELEMENT_FOREACH) return emit_foreach_step(build, node);
     if (kind == SCXML_ELEMENT_IF) return emit_conditional_step(build, node);
     return scxml_fail(
         build, CFLOW_SCXML_NATIVE_IR_REJECTED,
@@ -3404,19 +4236,30 @@ static cflow_scxml_status emit_executable_block(
     }
     if (build->step_index == first_step) return CFLOW_SCXML_OK;
     build->blocks[block_index] = (scxml_block){
+        .state_type = build->data_model == SCXML_DATA_MODEL_CMETA
+                          ? build->cmeta_root->storage_type
+                          : &cmeta_type_bool,
         .steps = build->steps,
         .branches = build->branches,
         .effects = build->effects,
+        .assignments = build->assignments,
+        .foreach_descriptors = build->foreach_descriptors,
         .invocations = build->invocations,
         .step_begin = first_step,
         .step_end = build->step_index,
         .step_storage_count = build->step_capacity,
         .branch_storage_count = build->branch_capacity,
         .effect_storage_count = build->effect_capacity,
+        .assignment_storage_count = build->assignment_capacity,
+        .foreach_storage_count = build->foreach_capacity,
         .invocation_storage_count = build->invocation_capacity,
+        .execution_error_event = build->execution_error_event,
         .max_conditional_depth = build->max_conditional_depth};
     build->executables[executable_index] = (cflow_statechart_executable){
-        executable, &cmeta_type_bool,
+        executable,
+        build->data_model == SCXML_DATA_MODEL_CMETA
+            ? build->cmeta_root->storage_type
+            : &cmeta_type_bool,
         CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL |
             (build->log_storage_index != first_log_byte ||
              build->effect_index != first_effect
@@ -3452,19 +4295,30 @@ static cflow_scxml_status emit_invoke_lifecycle_block(
         .next = build->step_index,
         .invocation = invocation};
     build->blocks[block_index] = (scxml_block){
+        .state_type = build->data_model == SCXML_DATA_MODEL_CMETA
+                          ? build->cmeta_root->storage_type
+                          : &cmeta_type_bool,
         .steps = build->steps,
         .branches = build->branches,
         .effects = build->effects,
+        .assignments = build->assignments,
+        .foreach_descriptors = build->foreach_descriptors,
         .invocations = build->invocations,
         .step_begin = step_index,
         .step_end = build->step_index,
         .step_storage_count = build->step_capacity,
         .branch_storage_count = build->branch_capacity,
         .effect_storage_count = build->effect_capacity,
+        .assignment_storage_count = build->assignment_capacity,
+        .foreach_storage_count = build->foreach_capacity,
         .invocation_storage_count = build->invocation_capacity,
+        .execution_error_event = build->execution_error_event,
         .max_conditional_depth = build->max_conditional_depth};
     build->executables[executable_index] = (cflow_statechart_executable){
-        executable, &cmeta_type_bool,
+        executable,
+        build->data_model == SCXML_DATA_MODEL_CMETA
+            ? build->cmeta_root->storage_type
+            : &cmeta_type_bool,
         CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL | CMETA_EFFECT_IO,
         CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
     build->bindings[executable_index] = (cflow_statechart_executable_binding){
@@ -3496,13 +4350,18 @@ static cflow_scxml_status emit_finalize_block(
         .steps = build->steps,
         .branches = build->branches,
         .effects = build->effects,
+        .assignments = build->assignments,
+        .foreach_descriptors = build->foreach_descriptors,
         .invocations = build->invocations,
         .step_begin = first_step,
         .step_end = build->step_index,
         .step_storage_count = build->step_capacity,
         .branch_storage_count = build->branch_capacity,
         .effect_storage_count = build->effect_capacity,
+        .assignment_storage_count = build->assignment_capacity,
+        .foreach_storage_count = build->foreach_capacity,
         .invocation_storage_count = build->invocation_capacity,
+        .execution_error_event = build->execution_error_event,
         .max_conditional_depth = build->max_conditional_depth};
     *out_block = &build->blocks[block_index];
     ++build->block_index;
@@ -3696,22 +4555,35 @@ static cflow_scxml_status emit_transition_token(
         }
     }
     if (condition_attribute.impl != NULL) {
-        cflow_machine_state_id condition_state = 0u;
         const size_t guard_index = build->guard_index;
-        status = resolve_condition_state(
-            build, transition_node, &condition_state);
-        if (status != CFLOW_SCXML_OK) return status;
         if (guard_index >= build->guard_capacity) {
             return scxml_fail(
                 build, CFLOW_SCXML_NATIVE_IR_REJECTED,
                 turbo_xml_attribute_location(condition_attribute),
                 "transition guard storage invariant failed");
         }
+        if (build->data_model == SCXML_DATA_MODEL_CMETA) {
+            status = compile_cmeta_condition(
+                build, condition_attribute, &build->guard_users[guard_index]);
+        } else {
+            cflow_machine_state_id condition_state = 0u;
+            status = resolve_condition_state(
+                build, transition_node, &condition_state);
+            if (status == CFLOW_SCXML_OK) {
+                build->guard_users[guard_index].data_model =
+                    SCXML_DATA_MODEL_NULL;
+                build->guard_users[guard_index].value.state = condition_state;
+            }
+        }
+        if (status != CFLOW_SCXML_OK) return status;
         row.guard = (cflow_statechart_guard_id)(guard_index + 1u);
         build->guards[guard_index] = (cflow_statechart_guard){
-            row.guard, &cmeta_type_bool, CMETA_EFFECT_PURE,
+            row.guard,
+            build->data_model == SCXML_DATA_MODEL_CMETA
+                ? build->cmeta_root->storage_type
+                : &cmeta_type_bool,
+            CMETA_EFFECT_PURE,
             CMETA_PROP_STABLE | CMETA_PROP_NO_ALIAS};
-        build->guard_users[guard_index].state = condition_state;
         build->guard_bindings[guard_index] =
             (cflow_statechart_guard_binding){
                 .id = row.guard,
@@ -3822,6 +4694,32 @@ static cflow_scxml_status emit_transitions(scxml_build *build,
     return CFLOW_SCXML_OK;
 }
 
+static void destroy_guard_users(scxml_guard_user *users, size_t count) {
+    size_t index;
+    if (users == NULL) return;
+    for (index = 0u; index < count; ++index) {
+        if (users[index].data_model == SCXML_DATA_MODEL_CMETA) {
+            cflow_scxml_cmeta_expr_program_destroy(
+                &users[index].value.expression);
+        }
+    }
+}
+
+static void destroy_assignments(
+    cflow_scxml_cmeta_assign_program *assignments, size_t count) {
+    size_t index;
+    if (assignments == NULL) return;
+    for (index = 0u; index < count; ++index)
+        cflow_scxml_cmeta_assign_program_destroy(&assignments[index]);
+}
+
+static void destroy_branches(scxml_branch *branches, size_t count) {
+    size_t index;
+    if (branches == NULL) return;
+    for (index = 0u; index < count; ++index)
+        cflow_scxml_cmeta_expr_program_destroy(&branches[index].condition);
+}
+
 static void free_build(scxml_build *build) {
     free(build->states);
     free(build->transitions);
@@ -3832,11 +4730,16 @@ static void free_build(scxml_build *build) {
     free(build->transition_actions);
     free(build->bindings);
     free(build->guard_bindings);
+    destroy_guard_users(build->guard_users, build->guard_capacity);
     free(build->guard_users);
     free(build->blocks);
     free(build->steps);
+    destroy_branches(build->branches, build->branch_capacity);
     free(build->branches);
     free(build->effects);
+    destroy_assignments(build->assignments, build->assignment_capacity);
+    free(build->assignments);
+    free(build->foreach_descriptors);
     free(build->invocations);
     free(build->invocation_names);
     free(build->log_storage);
@@ -3881,9 +4784,32 @@ cflow_scxml_limits cflow_scxml_default_limits(void) {
     return limits;
 }
 
-cflow_scxml_status cflow_scxml_compile(
+cflow_scxml_cmeta_compile_options_v1
+cflow_scxml_cmeta_default_compile_options(const cmeta_data_desc *root) {
+    const cflow_scxml_cmeta_expr_limits limits =
+        cflow_scxml_cmeta_expr_default_limits();
+    const cflow_scxml_cmeta_compile_options_v1 options = {
+        .abi_version = CFLOW_SCXML_CMETA_COMPILE_OPTIONS_ABI_V1,
+        .struct_size = sizeof(cflow_scxml_cmeta_compile_options_v1),
+        .root = root,
+        .max_source_bytes = limits.max_source_bytes,
+        .max_instructions = limits.max_instructions,
+        .max_operands = limits.max_operands,
+        .max_expression_depth = limits.max_expression_depth,
+        .max_path_depth = limits.max_path_depth,
+        .max_literal_bytes = limits.max_literal_bytes,
+        .max_string_bytes = limits.max_string_bytes,
+        .max_iterations = CFLOW_SCXML_CMETA_DEFAULT_MAX_ITERATIONS
+    };
+    return options;
+}
+
+static cflow_scxml_status compile_scxml_model(
     cflow_scxml_program *out, const char *input, size_t input_size,
     const cflow_scxml_limits *limits_or_null,
+    scxml_data_model data_model, const cmeta_data_desc *cmeta_root,
+    const cflow_scxml_cmeta_expr_limits *cmeta_expression_limits,
+    size_t cmeta_max_iterations,
     cflow_scxml_diagnostic *diagnostic) {
     cflow_scxml_limits limits = limits_or_null != NULL
                                     ? *limits_or_null
@@ -3899,15 +4825,23 @@ cflow_scxml_status cflow_scxml_compile(
     cflow_scxml_status status;
     turbo_xml_attribute version;
     turbo_xml_attribute datamodel;
+    turbo_xml_attribute document_name_attribute;
+    turbo_xml_string_view document_name = {NULL, 0u};
     size_t index;
     size_t name_bytes = 0u;
     size_t retained_string_bytes = 0u;
     size_t action_ref_count = 0u;
     char *name_cursor;
+    bool needs_execution_error = false;
 
     memset(&build, 0, sizeof(build));
     build.limits = limits;
     build.diagnostic = diagnostic;
+    build.data_model = data_model;
+    build.cmeta_root = cmeta_root;
+    build.max_iterations = cmeta_max_iterations;
+    if (cmeta_expression_limits != NULL)
+        build.cmeta_expression_limits = *cmeta_expression_limits;
     if (diagnostic != NULL) memset(diagnostic, 0, sizeof(*diagnostic));
     if (out == NULL || out->impl != NULL || input == NULL || input_size == 0u ||
         limits.max_states == 0u || limits.max_events == 0u ||
@@ -3954,18 +4888,44 @@ cflow_scxml_status cflow_scxml_compile(
         goto cleanup;
     }
     datamodel = find_attribute(root, "datamodel");
-    if (datamodel.impl != NULL &&
+    if (data_model == SCXML_DATA_MODEL_NULL && datamodel.impl != NULL &&
         !view_equal_raw(turbo_xml_attribute_value(datamodel), "null")) {
         status = scxml_fail(&build, CFLOW_SCXML_UNSUPPORTED_DATAMODEL,
                             turbo_xml_attribute_location(datamodel),
                             "only the SCXML null data model is supported");
         goto cleanup;
     }
+    if (data_model == SCXML_DATA_MODEL_CMETA &&
+        (datamodel.impl == NULL ||
+         !view_equal_raw(turbo_xml_attribute_value(datamodel), "cmeta"))) {
+        status = scxml_fail(
+            &build, CFLOW_SCXML_UNSUPPORTED_DATAMODEL,
+            datamodel.impl != NULL ? turbo_xml_attribute_location(datamodel)
+                                   : turbo_xml_node_location(root),
+            "CMeta compilation requires datamodel='cmeta'");
+        goto cleanup;
+    }
+    document_name_attribute = find_attribute(root, "name");
+    if (document_name_attribute.impl != NULL) {
+        document_name = turbo_xml_attribute_value(document_name_attribute);
+        if (!is_xml_nmtoken(document_name)) {
+            status = scxml_fail(
+                &build, CFLOW_SCXML_INVALID_STRUCTURE,
+                turbo_xml_attribute_location(document_name_attribute),
+                "SCXML name must be one XML NMTOKEN");
+            goto cleanup;
+        }
+    }
     status = analyze_state(&build, root, SCXML_ELEMENT_SCXML, true, &counts);
     if (status != CFLOW_SCXML_OK) goto cleanup;
-    if ((counts.requirements &
-         (CFLOW_SCXML_REQUIREMENT_EVENT_IO |
-          CFLOW_SCXML_REQUIREMENT_INVOKE)) != 0u &&
+    needs_execution_error =
+        counts.assignment_rows != 0u || counts.foreach_rows != 0u ||
+        (data_model == SCXML_DATA_MODEL_CMETA &&
+         counts.conditional_branches != 0u);
+    if (((counts.requirements &
+          (CFLOW_SCXML_REQUIREMENT_EVENT_IO |
+           CFLOW_SCXML_REQUIREMENT_INVOKE)) != 0u ||
+         needs_execution_error) &&
         !checked_add(counts.event_occurrences, 2u,
                      &counts.event_occurrences)) {
         status = scxml_fail(&build, CFLOW_SCXML_LIMIT_EXCEEDED,
@@ -4016,6 +4976,10 @@ cflow_scxml_status cflow_scxml_compile(
     build.branches = allocate_rows(
         counts.conditional_branches, sizeof(*build.branches));
     build.effects = allocate_rows(counts.effect_rows, sizeof(*build.effects));
+    build.assignments = allocate_rows(
+        counts.assignment_rows, sizeof(*build.assignments));
+    build.foreach_descriptors = allocate_rows(
+        counts.foreach_rows, sizeof(*build.foreach_descriptors));
     build.invocations = allocate_rows(
         counts.invocation_rows, sizeof(*build.invocations));
     build.invocation_names = allocate_rows(
@@ -4033,6 +4997,8 @@ cflow_scxml_status cflow_scxml_compile(
     build.step_capacity = counts.executable_steps;
     build.branch_capacity = counts.conditional_branches;
     build.effect_capacity = counts.effect_rows;
+    build.assignment_capacity = counts.assignment_rows;
+    build.foreach_capacity = counts.foreach_rows;
     build.log_storage_capacity = counts.log_label_bytes;
     build.effect_storage_capacity = counts.effect_string_bytes;
     build.invocation_storage_capacity = counts.invocation_string_bytes;
@@ -4064,6 +5030,9 @@ cflow_scxml_status cflow_scxml_compile(
         (counts.executable_steps != 0u && build.steps == NULL) ||
         (counts.conditional_branches != 0u && build.branches == NULL) ||
         (counts.effect_rows != 0u && build.effects == NULL) ||
+        (counts.assignment_rows != 0u && build.assignments == NULL) ||
+        (counts.foreach_rows != 0u &&
+         build.foreach_descriptors == NULL) ||
         (counts.invocation_rows != 0u &&
          (build.invocations == NULL || build.invocation_names == NULL)) ||
         (counts.log_label_bytes != 0u && build.log_storage == NULL) ||
@@ -4118,10 +5087,25 @@ cflow_scxml_status cflow_scxml_compile(
     if (status != CFLOW_SCXML_OK) goto cleanup;
     if ((build.requirements &
          (CFLOW_SCXML_REQUIREMENT_EVENT_IO |
-          CFLOW_SCXML_REQUIREMENT_INVOKE)) != 0u)
+          CFLOW_SCXML_REQUIREMENT_INVOKE)) != 0u ||
+        needs_execution_error)
         collect_reserved_error_events(&build, turbo_xml_node_location(root));
     status = build_event_names(&build, build.event_occurrence_index);
     if (status != CFLOW_SCXML_OK) goto cleanup;
+    if (needs_execution_error) {
+        const turbo_xml_string_view execution_name = {
+            SCXML_ERROR_EXECUTION_EVENT,
+            sizeof(SCXML_ERROR_EXECUTION_EVENT) - 1u};
+        const scxml_name_ref *execution = find_name_ref(
+            build.event_names, build.event_name_count, execution_name);
+        if (execution == NULL) {
+            status = scxml_fail(&build, CFLOW_SCXML_NATIVE_IR_REJECTED,
+                                turbo_xml_node_location(root),
+                                "reserved execution error event was not retained");
+            goto cleanup;
+        }
+        build.execution_error_event = (cflow_event_id)execution->id;
+    }
     status = resolve_invocation_events(&build);
     if (status != CFLOW_SCXML_OK) goto cleanup;
     status = emit_state_executables(&build, root, build.node_ref_index);
@@ -4130,6 +5114,8 @@ cflow_scxml_status cflow_scxml_compile(
                               build.synthetic_index);
     if (status != CFLOW_SCXML_OK) goto cleanup;
     if (build.effect_index != counts.effect_rows ||
+        build.assignment_index != counts.assignment_rows ||
+        build.foreach_index != counts.foreach_rows ||
         build.effect_storage_index != counts.effect_string_bytes ||
         build.invocation_index != counts.invocation_rows ||
         build.invocation_emit_index != counts.invocation_rows ||
@@ -4139,6 +5125,12 @@ cflow_scxml_status cflow_scxml_compile(
         status = scxml_fail(&build, CFLOW_SCXML_NATIVE_IR_REJECTED,
                             turbo_xml_node_location(root),
                             "effect descriptor emission mismatched admission");
+        goto cleanup;
+    }
+    if (!checked_add(name_bytes, document_name.size, &name_bytes)) {
+        status = scxml_fail(&build, CFLOW_SCXML_LIMIT_EXCEEDED,
+                            turbo_xml_node_location(root),
+                            "retained SCXML name size overflow");
         goto cleanup;
     }
     for (index = 0u; index < build.state_name_index; ++index) {
@@ -4179,7 +5171,9 @@ cflow_scxml_status cflow_scxml_compile(
     }
 
     memset(&definition, 0, sizeof(definition));
-    definition.state_type = &cmeta_type_bool;
+    definition.state_type = data_model == SCXML_DATA_MODEL_CMETA
+                                ? cmeta_root->storage_type
+                                : &cmeta_type_bool;
     definition.states = build.states;
     definition.state_count = build.state_index;
     definition.events = build.events;
@@ -4229,12 +5223,23 @@ cflow_scxml_status cflow_scxml_compile(
                        build.state_name_index, &name_cursor);
     copy_program_names(impl->event_names, build.event_names,
                        build.event_name_count, &name_cursor);
+    impl->document_name_size = document_name.size;
+    if (document_name.size != 0u) {
+        impl->document_name = name_cursor;
+        memcpy(name_cursor, document_name.data, document_name.size);
+        name_cursor += document_name.size;
+    } else {
+        impl->document_name = "";
+    }
     impl->state_name_count = build.state_name_index;
     impl->event_name_count = build.event_name_count;
+    impl->data_model = data_model;
+    impl->cmeta_root = cmeta_root;
     impl->requirements = build.requirements;
     if ((build.requirements &
          (CFLOW_SCXML_REQUIREMENT_EVENT_IO |
-          CFLOW_SCXML_REQUIREMENT_INVOKE)) != 0u) {
+          CFLOW_SCXML_REQUIREMENT_INVOKE)) != 0u ||
+        needs_execution_error) {
         const turbo_xml_string_view execution_name = {
             SCXML_ERROR_EXECUTION_EVENT,
             sizeof(SCXML_ERROR_EXECUTION_EVENT) - 1u};
@@ -4262,12 +5267,31 @@ cflow_scxml_status cflow_scxml_compile(
     impl->blocks = build.blocks;
     impl->steps = build.steps;
     impl->branches = build.branches;
+    impl->branch_count = build.branch_index;
     impl->effects = build.effects;
+    impl->assignments = build.assignments;
+    impl->assignment_count = build.assignment_index;
+    impl->foreach_descriptors = build.foreach_descriptors;
+    impl->foreach_count = build.foreach_index;
     impl->invocations = build.invocations;
     impl->invocation_count = build.invocation_index;
     impl->log_storage = build.log_storage;
     impl->effect_storage = build.effect_storage;
     impl->invocation_storage = build.invocation_storage;
+    for (index = 0u; index < impl->guard_binding_count; ++index) {
+        impl->guard_users[index].system_values.name =
+            (cflow_scxml_cmeta_expr_string_view){
+                impl->document_name, impl->document_name_size};
+    }
+    for (index = 0u; index < impl->binding_count; ++index) {
+        scxml_block *block =
+            (scxml_block *)impl->bindings[index].user;
+        if (block != NULL) {
+            block->system_values.name =
+                (cflow_scxml_cmeta_expr_string_view){
+                    impl->document_name, impl->document_name_size};
+        }
+    }
     build.bindings = NULL;
     build.guard_bindings = NULL;
     build.guard_users = NULL;
@@ -4275,6 +5299,8 @@ cflow_scxml_status cflow_scxml_compile(
     build.steps = NULL;
     build.branches = NULL;
     build.effects = NULL;
+    build.assignments = NULL;
+    build.foreach_descriptors = NULL;
     build.invocations = NULL;
     build.log_storage = NULL;
     build.effect_storage = NULL;
@@ -4295,11 +5321,16 @@ cleanup:
         free(impl->event_names);
         free(impl->bindings);
         free(impl->guard_bindings);
+        destroy_guard_users(impl->guard_users, impl->guard_binding_count);
         free(impl->guard_users);
         free(impl->blocks);
         free(impl->steps);
+        destroy_branches(impl->branches, impl->branch_count);
         free(impl->branches);
         free(impl->effects);
+        destroy_assignments(impl->assignments, impl->assignment_count);
+        free(impl->assignments);
+        free(impl->foreach_descriptors);
         free(impl->invocations);
         free(impl->name_storage);
         free(impl->log_storage);
@@ -4312,6 +5343,88 @@ cleanup:
     return status;
 }
 
+static cflow_scxml_cmeta_expr_limits cmeta_expression_limits_from_options(
+    const cflow_scxml_cmeta_compile_options_v1 *options) {
+    const cflow_scxml_cmeta_expr_limits limits = {
+        options->max_source_bytes,
+        options->max_instructions,
+        options->max_operands,
+        options->max_expression_depth,
+        options->max_path_depth,
+        options->max_literal_bytes,
+        options->max_string_bytes
+    };
+    return limits;
+}
+
+static bool cmeta_state_type_supported(const cmeta_type_desc *type) {
+    return cmeta_type_require_traits(
+               type,
+               CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY) ==
+               CMETA_OK ||
+           cmeta_type_require_traits(
+               type,
+               CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
+                   CMETA_TRAIT_DESTROY) == CMETA_OK;
+}
+
+cflow_scxml_status cflow_scxml_compile(
+    cflow_scxml_program *out, const char *input, size_t input_size,
+    const cflow_scxml_limits *limits,
+    cflow_scxml_diagnostic *diagnostic) {
+    return compile_scxml_model(
+        out, input, input_size, limits, SCXML_DATA_MODEL_NULL, NULL, NULL,
+        0u, diagnostic);
+}
+
+cflow_scxml_status cflow_scxml_compile_cmeta(
+    cflow_scxml_program *out, const char *input, size_t input_size,
+    const cflow_scxml_limits *limits,
+    const cflow_scxml_cmeta_compile_options_v1 *options,
+    cflow_scxml_diagnostic *diagnostic) {
+    const size_t legacy_size =
+        offsetof(cflow_scxml_cmeta_compile_options_v1, max_iterations);
+    bool has_current_tail;
+    size_t max_iterations;
+    cflow_scxml_cmeta_expr_limits expression_limits;
+    has_current_tail = options != NULL &&
+        options->struct_size >= sizeof(*options);
+    if (options == NULL ||
+        options->abi_version !=
+            CFLOW_SCXML_CMETA_COMPILE_OPTIONS_ABI_V1 ||
+        (options->struct_size != legacy_size && !has_current_tail) ||
+        !cmeta_data_desc_valid(options->root) ||
+        options->root->kind != CMETA_DATA_STRUCT ||
+        options->root->storage_type == NULL ||
+        !cmeta_type_desc_valid(options->root->storage_type) ||
+        !cmeta_state_type_supported(options->root->storage_type)) {
+        if (diagnostic != NULL) {
+            memset(diagnostic, 0, sizeof(*diagnostic));
+            diagnostic->status = CFLOW_SCXML_INVALID_ARGUMENT;
+            (void)snprintf(diagnostic->message, sizeof(diagnostic->message),
+                           "%s", "invalid CMeta compile provider");
+        }
+        return CFLOW_SCXML_INVALID_ARGUMENT;
+    }
+    max_iterations = has_current_tail
+        ? options->max_iterations
+        : CFLOW_SCXML_CMETA_DEFAULT_MAX_ITERATIONS;
+    expression_limits = cmeta_expression_limits_from_options(options);
+    if (!cflow_scxml_cmeta_expr_limits_valid(&expression_limits) ||
+        max_iterations == 0u) {
+        if (diagnostic != NULL) {
+            memset(diagnostic, 0, sizeof(*diagnostic));
+            diagnostic->status = CFLOW_SCXML_INVALID_ARGUMENT;
+            (void)snprintf(diagnostic->message, sizeof(diagnostic->message),
+                           "%s", "invalid CMeta expression limits");
+        }
+        return CFLOW_SCXML_INVALID_ARGUMENT;
+    }
+    return compile_scxml_model(
+        out, input, input_size, limits, SCXML_DATA_MODEL_CMETA,
+        options->root, &expression_limits, max_iterations, diagnostic);
+}
+
 void cflow_scxml_program_destroy(cflow_scxml_program *program) {
     cflow_scxml_program_impl *impl;
     if (program == NULL || program->impl == NULL) return;
@@ -4321,11 +5434,16 @@ void cflow_scxml_program_destroy(cflow_scxml_program *program) {
     free(impl->event_names);
     free(impl->bindings);
     free(impl->guard_bindings);
+    destroy_guard_users(impl->guard_users, impl->guard_binding_count);
     free(impl->guard_users);
     free(impl->blocks);
     free(impl->steps);
+    destroy_branches(impl->branches, impl->branch_count);
     free(impl->branches);
     free(impl->effects);
+    destroy_assignments(impl->assignments, impl->assignment_count);
+    free(impl->assignments);
+    free(impl->foreach_descriptors);
     free(impl->invocations);
     free(impl->name_storage);
     free(impl->log_storage);
@@ -4395,7 +5513,9 @@ const void *cflow_scxml_program_initial_state(
     const cflow_scxml_program *program) {
     const cflow_scxml_program_impl *impl =
         program != NULL ? (const cflow_scxml_program_impl *)program->impl : NULL;
-    return impl != NULL ? &impl->null_value : NULL;
+    return impl != NULL && impl->data_model == SCXML_DATA_MODEL_NULL
+               ? &impl->null_value
+               : NULL;
 }
 
 bool cflow_scxml_program_event(const cflow_scxml_program *program,
@@ -4498,14 +5618,29 @@ static void session_close_adapter(cflow_scxml_session_impl *impl) {
         impl->invoke.close(impl->invoke_user);
 }
 
-cflow_statechart_runtime_status cflow_scxml_session_init(
+static void session_free_storage(cflow_scxml_session_impl *impl) {
+    if (impl == NULL) return;
+    free(impl->prepared_effects);
+    free(impl->invocation_effects);
+    free(impl->invocation_rows);
+    free(impl->delayed_sends);
+    free(impl->guard_users);
+    free(impl->guard_bindings);
+    free(impl->binding_users);
+    free(impl->bindings);
+    free(impl->system_name);
+}
+
+static cflow_statechart_runtime_status cflow_scxml_session_init_model(
     cflow_scxml_session *session,
-    const cflow_scxml_session_config *config) {
+    const cflow_scxml_session_config *config,
+    scxml_data_model data_model, const void *cmeta_initial_state) {
     cflow_scxml_session_impl *impl;
     const cflow_scxml_program_impl *program;
     cflow_statechart_instance_config native_config;
     cflow_statechart_runtime_hooks runtime_hooks = {0};
     cflow_statechart_runtime_status status;
+    turbo_uuid_t session_uuid;
     size_t invocation_effect_capacity = 0u;
     size_t index;
     bool requires_forward = false;
@@ -4515,6 +5650,11 @@ cflow_statechart_runtime_status cflow_scxml_session_init(
         !invoke_adapter_valid(config->invoke))
         return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
     program = (const cflow_scxml_program_impl *)config->program->impl;
+    if (program->data_model != data_model ||
+        (data_model == SCXML_DATA_MODEL_CMETA &&
+         cmeta_initial_state == NULL)) {
+        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+    }
     if ((program->requirements & CFLOW_SCXML_REQUIREMENT_EVENT_IO) != 0u) {
         if (config->event_io == NULL || config->effect_capacity == 0u ||
             config->adapter_internal_event_capacity == 0u ||
@@ -4560,6 +5700,38 @@ cflow_statechart_runtime_status cflow_scxml_session_init(
     impl = (cflow_scxml_session_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL) return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
     impl->program = program;
+    if (data_model == SCXML_DATA_MODEL_CMETA) {
+        if (turbo_uuid_v4_generate(&session_uuid) != TURBO_OK ||
+            turbo_uuid_format(
+                &session_uuid, impl->session_id,
+                sizeof(impl->session_id)) != TURBO_OK) {
+            free(impl);
+            return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+        }
+        if (program->document_name_size != 0u) {
+            impl->system_name =
+                (char *)malloc(program->document_name_size);
+            if (impl->system_name == NULL) {
+                free(impl);
+                return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
+            }
+            memcpy(impl->system_name, program->document_name,
+                   program->document_name_size);
+        }
+        impl->system_values.name =
+            (cflow_scxml_cmeta_expr_string_view){
+                program->document_name_size != 0u ? impl->system_name : "",
+                program->document_name_size};
+        impl->system_values.session_id =
+            (cflow_scxml_cmeta_expr_string_view){
+                impl->session_id, TURBO_UUID_STRING_LENGTH};
+        impl->guard_binding_count = program->guard_binding_count;
+        impl->guard_bindings =
+            (cflow_statechart_guard_binding *)allocate_rows(
+                impl->guard_binding_count, sizeof(*impl->guard_bindings));
+        impl->guard_users = (scxml_session_guard_user *)allocate_rows(
+            impl->guard_binding_count, sizeof(*impl->guard_users));
+    }
     impl->binding_count = program->binding_count;
     impl->bindings = (cflow_statechart_executable_binding *)allocate_rows(
         impl->binding_count, sizeof(*impl->bindings));
@@ -4582,14 +5754,11 @@ cflow_statechart_runtime_status cflow_scxml_session_init(
         (scxml_invocation_lifecycle_effect *)allocate_rows(
             impl->invocation_effect_capacity,
             sizeof(*impl->invocation_effects));
-    if (impl->binding_count != 0u &&
-        (impl->bindings == NULL || impl->binding_users == NULL)) {
-        free(impl->prepared_effects);
-        free(impl->invocation_effects);
-        free(impl->invocation_rows);
-        free(impl->delayed_sends);
-        free(impl->binding_users);
-        free(impl->bindings);
+    if ((impl->binding_count != 0u &&
+         (impl->bindings == NULL || impl->binding_users == NULL)) ||
+        (impl->guard_binding_count != 0u &&
+         (impl->guard_bindings == NULL || impl->guard_users == NULL))) {
+        session_free_storage(impl);
         free(impl);
         return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
     }
@@ -4601,23 +5770,13 @@ cflow_statechart_runtime_status cflow_scxml_session_init(
          impl->invocation_rows == NULL) ||
         (impl->invocation_effect_capacity != 0u &&
          impl->invocation_effects == NULL)) {
-        free(impl->prepared_effects);
-        free(impl->invocation_effects);
-        free(impl->invocation_rows);
-        free(impl->delayed_sends);
-        free(impl->binding_users);
-        free(impl->bindings);
+        session_free_storage(impl);
         free(impl);
         return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
     }
     turbo_mutex_init(&impl->registry_lock);
     if (impl->registry_lock == NULL) {
-        free(impl->prepared_effects);
-        free(impl->invocation_effects);
-        free(impl->invocation_rows);
-        free(impl->delayed_sends);
-        free(impl->binding_users);
-        free(impl->bindings);
+        session_free_storage(impl);
         free(impl);
         return CFLOW_STATECHART_RUNTIME_ALLOCATION_FAILED;
     }
@@ -4628,6 +5787,14 @@ cflow_statechart_runtime_status cflow_scxml_session_init(
             .id = program->bindings[index].id,
             .user = &impl->binding_users[index],
             .contextual_fn = execute_scxml_session_block};
+    }
+    for (index = 0u; index < impl->guard_binding_count; ++index) {
+        impl->guard_users[index] = (scxml_session_guard_user){
+            &program->guard_users[index], impl};
+        impl->guard_bindings[index] = (cflow_statechart_guard_binding){
+            .id = program->guard_bindings[index].id,
+            .user = &impl->guard_users[index],
+            .contextual_fn = evaluate_scxml_session_transition_guard};
     }
     if (config->event_io != NULL) {
         impl->event_io = *config->event_io;
@@ -4651,9 +5818,14 @@ cflow_statechart_runtime_status cflow_scxml_session_init(
     }
     native_config = (cflow_statechart_instance_config){
         .statechart = &program->statechart,
-        .initial_state = &program->null_value,
-        .guards = program->guard_bindings,
-        .guard_count = program->guard_binding_count,
+        .initial_state = data_model == SCXML_DATA_MODEL_CMETA
+                             ? cmeta_initial_state
+                             : &program->null_value,
+        .guards = data_model == SCXML_DATA_MODEL_CMETA
+                      ? impl->guard_bindings : program->guard_bindings,
+        .guard_count = data_model == SCXML_DATA_MODEL_CMETA
+                           ? impl->guard_binding_count
+                           : program->guard_binding_count,
         .executables = impl->bindings,
         .executable_count = impl->binding_count,
         .external_event_capacity = config->external_event_capacity,
@@ -4673,17 +5845,34 @@ cflow_statechart_runtime_status cflow_scxml_session_init(
     if (status != CFLOW_STATECHART_RUNTIME_OK) {
         session_close_adapter(impl);
         turbo_mutex_destroy(&impl->registry_lock);
-        free(impl->prepared_effects);
-        free(impl->invocation_effects);
-        free(impl->invocation_rows);
-        free(impl->delayed_sends);
-        free(impl->binding_users);
-        free(impl->bindings);
+        session_free_storage(impl);
         free(impl);
         return status;
     }
     session->impl = impl;
     return CFLOW_STATECHART_RUNTIME_OK;
+}
+
+cflow_statechart_runtime_status cflow_scxml_session_init(
+    cflow_scxml_session *session,
+    const cflow_scxml_session_config *config) {
+    return cflow_scxml_session_init_model(
+        session, config, SCXML_DATA_MODEL_NULL, NULL);
+}
+
+cflow_statechart_runtime_status cflow_scxml_session_init_cmeta(
+    cflow_scxml_session *session,
+    const cflow_scxml_session_config *config,
+    const cflow_scxml_cmeta_session_options_v1 *options) {
+    if (options == NULL ||
+        options->abi_version !=
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1 ||
+        options->struct_size < sizeof(*options) ||
+        options->initial_state == NULL) {
+        return CFLOW_STATECHART_RUNTIME_INVALID_ARGUMENT;
+    }
+    return cflow_scxml_session_init_model(
+        session, config, SCXML_DATA_MODEL_CMETA, options->initial_state);
 }
 
 cflow_mailbox_status cflow_scxml_session_try_send(
@@ -4840,12 +6029,7 @@ cflow_statechart_runtime_status cflow_scxml_session_destroy(
     status = cflow_statechart_instance_destroy(&impl->instance);
     if (status != CFLOW_STATECHART_RUNTIME_OK) return status;
     turbo_mutex_destroy(&impl->registry_lock);
-    free(impl->prepared_effects);
-    free(impl->invocation_effects);
-    free(impl->invocation_rows);
-    free(impl->delayed_sends);
-    free(impl->binding_users);
-    free(impl->bindings);
+    session_free_storage(impl);
     free(impl);
     session->impl = NULL;
     return CFLOW_STATECHART_RUNTIME_OK;
