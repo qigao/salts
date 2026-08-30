@@ -25,6 +25,10 @@ bool turbo_io_backend_supported(turbo_io_backend_kind kind) {
          turbo_io_platform_backend_supported(kind);
 }
 
+bool turbo_io_backend_pipe_supported(turbo_io_backend_kind kind) {
+  return turbo_io_backend_supported(kind) && turbo_io_platform_pipe_supported(kind);
+}
+
 bool turbo_io_endpoint_valid(turbo_io_endpoint endpoint) {
   return endpoint.slot != 0u && endpoint.generation != 0u;
 }
@@ -38,7 +42,8 @@ bool turbo_io_operation_valid(const turbo_io_operation *operation) {
       operation->buffer == NULL || operation->length == 0u ||
       operation->length > (size_t)UINT32_MAX)
     return false;
-  if (operation->kind == TURBO_IO_TCP_RECV || operation->kind == TURBO_IO_TCP_SEND)
+  if (operation->kind == TURBO_IO_TCP_RECV || operation->kind == TURBO_IO_TCP_SEND ||
+      operation->kind == TURBO_IO_PIPE_READ || operation->kind == TURBO_IO_PIPE_WRITE)
     return operation->address == NULL && operation->address_capacity == 0u &&
            operation->address_length == 0u;
   if (operation->kind == TURBO_IO_UDP_RECV_FROM)
@@ -81,6 +86,26 @@ int turbo_io_backend_release_socket(turbo_io_backend *backend, turbo_io_endpoint
       !turbo_io_endpoint_valid(endpoint))
     return TURBO_EINVAL;
   return impl->ops->release_socket(impl, endpoint);
+}
+
+int turbo_io_backend_attach_pipe(turbo_io_backend *backend, uintptr_t native_handle,
+                                 uint32_t flags, turbo_io_endpoint *out_endpoint) {
+  turbo_io_impl *impl = native_io_impl(backend);
+  if (out_endpoint != NULL) *out_endpoint = (turbo_io_endpoint){0};
+  if (out_endpoint == NULL || native_handle == UINTPTR_MAX ||
+      flags != TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE)
+    return TURBO_EINVAL;
+  if (impl == NULL || impl->ops == NULL) return TURBO_EINVAL;
+  if (impl->ops->attach_pipe == NULL) return TURBO_ENOTSUP;
+  return impl->ops->attach_pipe(impl, native_handle, flags, out_endpoint);
+}
+
+int turbo_io_backend_release_pipe(turbo_io_backend *backend, turbo_io_endpoint endpoint) {
+  turbo_io_impl *impl = native_io_impl(backend);
+  if (impl == NULL || impl->ops == NULL || !turbo_io_endpoint_valid(endpoint))
+    return TURBO_EINVAL;
+  if (impl->ops->release_pipe == NULL) return TURBO_ENOTSUP;
+  return impl->ops->release_pipe(impl, endpoint);
 }
 
 int turbo_io_backend_submit(turbo_io_backend *backend, const turbo_io_operation *operation,

@@ -8,12 +8,15 @@
 #include <turbo/error_codes.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 enum { TURBO_IO_INDEX_NONE = UINT32_MAX };
 
@@ -35,6 +38,7 @@ typedef struct turbo_io_readiness_endpoint {
   uint32_t interests;
   turbo_io_readiness_lane read_lane;
   turbo_io_readiness_lane write_lane;
+  turbo_io_resource_kind resource_kind;
   bool active;
 } turbo_io_readiness_endpoint;
 
@@ -118,10 +122,6 @@ static turbo_io_readiness_request *readiness_request(turbo_io_readiness_impl *im
 }
 
 static int readiness_sigpipe_begin(turbo_io_sigpipe_guard *guard) {
-#if defined(MSG_NOSIGNAL)
-  (void)guard;
-  return TURBO_OK;
-#else
   sigset_t pending;
   int status;
   memset(guard, 0, sizeof(*guard));
@@ -132,13 +132,9 @@ static int readiness_sigpipe_begin(turbo_io_sigpipe_guard *guard) {
   guard->active = true;
   if (sigpending(&pending) == 0) guard->had_pending = sigismember(&pending, SIGPIPE) == 1;
   return TURBO_OK;
-#endif
 }
 
 static void readiness_sigpipe_end(turbo_io_sigpipe_guard *guard) {
-#if defined(MSG_NOSIGNAL)
-  (void)guard;
-#else
   sigset_t pending;
   if (guard == NULL || !guard->active) return;
   if (!guard->had_pending && sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE) == 1) {
@@ -150,11 +146,11 @@ static void readiness_sigpipe_end(turbo_io_sigpipe_guard *guard) {
   }
   (void)pthread_sigmask(SIG_SETMASK, &guard->previous, NULL);
   guard->active = false;
-#endif
 }
 
 static bool readiness_is_write(turbo_io_operation_kind kind) {
-  return kind == TURBO_IO_TCP_SEND || kind == TURBO_IO_UDP_SEND_TO;
+  return kind == TURBO_IO_TCP_SEND || kind == TURBO_IO_UDP_SEND_TO ||
+         kind == TURBO_IO_PIPE_WRITE;
 }
 
 static turbo_io_readiness_lane *readiness_lane(turbo_io_readiness_endpoint *endpoint,
@@ -238,9 +234,9 @@ static void readiness_publish_terminal(turbo_io_readiness_impl *impl,
   if (kind == TURBO_IO_COMPLETION_FAILED) readiness_counter_increment(&impl->failed);
 }
 
-static int readiness_try_operation(turbo_io_readiness_endpoint *endpoint,
-                                   turbo_io_readiness_request *request, size_t *out_bytes,
-                                   size_t *out_address_length) {
+static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
+                                turbo_io_readiness_request *request, size_t *out_bytes,
+                                size_t *out_address_length) {
   turbo_io_sigpipe_guard guard;
   ssize_t result;
   int saved_error = 0;
@@ -250,10 +246,15 @@ static int readiness_try_operation(turbo_io_readiness_endpoint *endpoint,
 #if defined(MSG_NOSIGNAL)
   if (request->write_lane) flags |= MSG_NOSIGNAL;
 #endif
+#if !defined(MSG_NOSIGNAL)
   if (request->write_lane) {
     guard_status = readiness_sigpipe_begin(&guard);
     if (guard_status != TURBO_OK) return guard_status;
   }
+#else
+  (void)guard;
+  (void)guard_status;
+#endif
   do {
     if (request->operation.kind == TURBO_IO_TCP_RECV)
       result = recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
@@ -268,12 +269,48 @@ static int readiness_try_operation(turbo_io_readiness_endpoint *endpoint,
                       (socklen_t)request->operation.address_length);
   } while (result < 0 && errno == EINTR);
   if (result < 0) saved_error = errno;
+#if !defined(MSG_NOSIGNAL)
   if (request->write_lane) readiness_sigpipe_end(&guard);
+#endif
   if (result < 0) return -saved_error;
   *out_bytes = (size_t)result;
   *out_address_length =
       request->operation.kind == TURBO_IO_UDP_RECV_FROM ? (size_t)address_length : 0u;
   return TURBO_OK;
+}
+
+static int readiness_try_pipe(turbo_io_readiness_endpoint *endpoint,
+                              turbo_io_readiness_request *request, size_t *out_bytes) {
+  turbo_io_sigpipe_guard guard;
+  ssize_t result;
+  int saved_error = 0;
+  int guard_status = TURBO_OK;
+  if (request->write_lane) {
+    guard_status = readiness_sigpipe_begin(&guard);
+    if (guard_status != TURBO_OK) return guard_status;
+  }
+  do {
+    result = request->write_lane
+                 ? write(endpoint->fd, request->operation.buffer, request->operation.length)
+                 : read(endpoint->fd, request->operation.buffer, request->operation.length);
+  } while (result < 0 && errno == EINTR);
+  if (result < 0) saved_error = errno;
+  if (request->write_lane) readiness_sigpipe_end(&guard);
+  if (result < 0) return -saved_error;
+  *out_bytes = (size_t)result;
+  return TURBO_OK;
+}
+
+static int readiness_try_operation(turbo_io_readiness_endpoint *endpoint,
+                                   turbo_io_readiness_request *request, size_t *out_bytes,
+                                   size_t *out_address_length) {
+  if (endpoint->resource_kind == TURBO_IO_RESOURCE_SOCKET)
+    return readiness_try_socket(endpoint, request, out_bytes, out_address_length);
+  if (endpoint->resource_kind == TURBO_IO_RESOURCE_BYTE_PIPE) {
+    *out_address_length = 0u;
+    return readiness_try_pipe(endpoint, request, out_bytes);
+  }
+  return TURBO_EINVAL;
 }
 
 static bool readiness_would_block(int status) {
@@ -286,7 +323,9 @@ static void readiness_finish_attempt(turbo_io_readiness_impl *impl,
   if (status < 0) {
     readiness_publish_terminal(impl, request, index, TURBO_IO_COMPLETION_FAILED, 0u, status,
                                (uint32_t)(-status), 0u);
-  } else if (request->operation.kind == TURBO_IO_TCP_RECV && bytes == 0u) {
+  } else if ((request->operation.kind == TURBO_IO_TCP_RECV ||
+              request->operation.kind == TURBO_IO_PIPE_READ) &&
+             bytes == 0u) {
     readiness_publish_terminal(impl, request, index, TURBO_IO_COMPLETION_EOF, 0u, TURBO_EOF, 0u,
                                0u);
   } else {
@@ -295,44 +334,81 @@ static void readiness_finish_attempt(turbo_io_readiness_impl *impl,
   }
 }
 
-static int readiness_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
-                                   turbo_io_endpoint *out_endpoint) {
-  turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
+static int readiness_attach_endpoint(turbo_io_readiness_impl *impl, int fd,
+                                     turbo_io_resource_kind resource_kind,
+                                     turbo_io_endpoint *out_endpoint) {
   turbo_io_readiness_endpoint *endpoint;
   uint32_t index;
   size_t cursor;
   if (!impl->admission_open) return TURBO_ESHUTDOWN;
-  if (native_socket > (uintptr_t)INT_MAX) return TURBO_EINVAL;
   for (cursor = 0u; cursor < impl->endpoint_capacity; ++cursor)
-    if (impl->endpoints[cursor].active && impl->endpoints[cursor].fd == (int)native_socket)
+    if (impl->endpoints[cursor].active && impl->endpoints[cursor].fd == fd)
       return TURBO_EALREADY;
   if (impl->free_endpoint_count == 0u) return TURBO_ENOBUFS;
   index = impl->free_endpoints[--impl->free_endpoint_count];
   endpoint = &impl->endpoints[index];
-  endpoint->fd = (int)native_socket;
+  endpoint->fd = fd;
   endpoint->generation = readiness_next_generation(endpoint->generation);
   endpoint->active_requests = 0u;
   endpoint->interests = 0u;
   endpoint->read_lane = (turbo_io_readiness_lane){TURBO_IO_INDEX_NONE, TURBO_IO_INDEX_NONE};
   endpoint->write_lane = (turbo_io_readiness_lane){TURBO_IO_INDEX_NONE, TURBO_IO_INDEX_NONE};
+  endpoint->resource_kind = resource_kind;
   endpoint->active = true;
   ++impl->endpoint_count;
   *out_endpoint = (turbo_io_endpoint){index + 1u, endpoint->generation};
   return TURBO_OK;
 }
 
-static int readiness_release_socket(turbo_io_impl *base, turbo_io_endpoint endpoint_handle) {
-  turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
+static int readiness_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
+                                   turbo_io_endpoint *out_endpoint) {
+  if (native_socket > (uintptr_t)INT_MAX) return TURBO_EINVAL;
+  return readiness_attach_endpoint((turbo_io_readiness_impl *)base, (int)native_socket,
+                                   TURBO_IO_RESOURCE_SOCKET, out_endpoint);
+}
+
+static int readiness_attach_pipe(turbo_io_impl *base, uintptr_t native_handle, uint32_t flags,
+                                 turbo_io_endpoint *out_endpoint) {
+  struct stat descriptor_stat;
+  int descriptor_flags;
+  int fd;
+  (void)flags;
+  if (native_handle > (uintptr_t)INT_MAX) return TURBO_EINVAL;
+  fd = (int)native_handle;
+  descriptor_flags = fcntl(fd, F_GETFL, 0);
+  if (descriptor_flags < 0) return -errno;
+  if ((descriptor_flags & O_NONBLOCK) == 0) return TURBO_EINVAL;
+  if (fstat(fd, &descriptor_stat) != 0) return -errno;
+  if (!S_ISFIFO(descriptor_stat.st_mode)) return TURBO_EINVAL;
+  return readiness_attach_endpoint((turbo_io_readiness_impl *)base, fd,
+                                   TURBO_IO_RESOURCE_BYTE_PIPE, out_endpoint);
+}
+
+static int readiness_release_endpoint(turbo_io_readiness_impl *impl,
+                                      turbo_io_endpoint endpoint_handle,
+                                      turbo_io_resource_kind resource_kind) {
   turbo_io_readiness_endpoint *endpoint = readiness_endpoint(impl, endpoint_handle);
   uint32_t index;
   if (endpoint == NULL) return TURBO_ENOENT;
+  if (endpoint->resource_kind != resource_kind) return TURBO_EINVAL;
   if (endpoint->active_requests != 0u || endpoint->interests != 0u) return TURBO_EBUSY;
   index = endpoint_handle.slot - 1u;
   endpoint->active = false;
   endpoint->fd = -1;
+  endpoint->resource_kind = (turbo_io_resource_kind)0;
   impl->free_endpoints[impl->free_endpoint_count++] = index;
   --impl->endpoint_count;
   return TURBO_OK;
+}
+
+static int readiness_release_socket(turbo_io_impl *base, turbo_io_endpoint endpoint_handle) {
+  return readiness_release_endpoint((turbo_io_readiness_impl *)base, endpoint_handle,
+                                    TURBO_IO_RESOURCE_SOCKET);
+}
+
+static int readiness_release_pipe(turbo_io_impl *base, turbo_io_endpoint endpoint_handle) {
+  return readiness_release_endpoint((turbo_io_readiness_impl *)base, endpoint_handle,
+                                    TURBO_IO_RESOURCE_BYTE_PIPE);
 }
 
 static int readiness_submit(turbo_io_impl *base, const turbo_io_operation *operation,
@@ -347,6 +423,8 @@ static int readiness_submit(turbo_io_impl *base, const turbo_io_operation *opera
   if (!impl->admission_open) return TURBO_ESHUTDOWN;
   endpoint = readiness_endpoint(impl, operation->endpoint);
   if (endpoint == NULL) return TURBO_ENOENT;
+  if (turbo_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
+    return TURBO_EINVAL;
   if (impl->free_request_count == 0u) {
     readiness_counter_increment(&impl->rejected_full);
     return TURBO_ENOBUFS;
@@ -524,7 +602,8 @@ static bool readiness_get_stats(const turbo_io_impl *base, turbo_io_backend_stat
 
 static const turbo_io_impl_ops readiness_ops = {
     readiness_attach_socket, readiness_release_socket, readiness_submit,  readiness_cancel,
-    readiness_observe,       readiness_close,          readiness_destroy, readiness_get_stats};
+    readiness_observe,       readiness_close,          readiness_destroy, readiness_get_stats,
+    readiness_attach_pipe,   readiness_release_pipe};
 
 static bool readiness_array_fits(size_t count, size_t element_size) {
   return element_size != 0u && count <= SIZE_MAX / element_size;

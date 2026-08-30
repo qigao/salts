@@ -9,6 +9,10 @@ bool turbo_io_platform_backend_supported(turbo_io_backend_kind kind) {
   return kind == TURBO_IO_BACKEND_EPOLL || kind == TURBO_IO_BACKEND_IO_URING;
 }
 
+bool turbo_io_platform_pipe_supported(turbo_io_backend_kind kind) {
+  return kind == TURBO_IO_BACKEND_EPOLL;
+}
+
 int turbo_io_platform_backend_init(turbo_io_backend *backend,
                                    const turbo_io_backend_config *config) {
   if (config->kind == TURBO_IO_BACKEND_EPOLL) return turbo_io_epoll_backend_init(backend, config);

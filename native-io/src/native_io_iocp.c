@@ -22,6 +22,7 @@ typedef struct turbo_iocp_endpoint_record {
   SOCKET socket_value;
   uint32_t generation;
   size_t active_requests;
+  turbo_io_resource_kind resource_kind;
   bool active;
 } turbo_iocp_endpoint_record;
 
@@ -125,6 +126,7 @@ static int iocp_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
   endpoint->generation = iocp_next_generation(endpoint->generation);
   endpoint->socket_value = (SOCKET)native_socket;
   endpoint->active_requests = 0u;
+  endpoint->resource_kind = TURBO_IO_RESOURCE_SOCKET;
   endpoint->active = true;
   ++impl->endpoint_count;
   *out_endpoint = (turbo_io_endpoint){index + 1u, endpoint->generation};
@@ -136,10 +138,12 @@ static int iocp_release_socket(turbo_io_impl *base, turbo_io_endpoint endpoint_h
   turbo_iocp_endpoint_record *endpoint = iocp_endpoint(impl, endpoint_handle);
   uint32_t index;
   if (endpoint == NULL) return TURBO_ENOENT;
+  if (endpoint->resource_kind != TURBO_IO_RESOURCE_SOCKET) return TURBO_EINVAL;
   if (endpoint->active_requests != 0u) return TURBO_EBUSY;
 
   index = endpoint_handle.slot - 1u;
   endpoint->socket_value = INVALID_SOCKET;
+  endpoint->resource_kind = (turbo_io_resource_kind)0;
   endpoint->active = false;
   impl->free_endpoints[impl->free_endpoint_count] = index;
   ++impl->free_endpoint_count;
@@ -176,6 +180,8 @@ static int iocp_submit(turbo_io_impl *base, const turbo_io_operation *operation,
   if (!impl->admission_open) return TURBO_ESHUTDOWN;
   endpoint = iocp_endpoint(impl, operation->endpoint);
   if (endpoint == NULL) return TURBO_ENOENT;
+  if (turbo_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
+    return TURBO_EINVAL;
   if (impl->free_request_count == 0u) {
     iocp_counter_increment(&impl->rejected_full);
     return TURBO_ENOBUFS;
@@ -371,10 +377,16 @@ static bool iocp_get_stats(const turbo_io_impl *base, turbo_io_backend_stats *ou
 
 static const turbo_io_impl_ops iocp_ops = {iocp_attach_socket, iocp_release_socket, iocp_submit,
                                            iocp_cancel,        iocp_observe,        iocp_close,
-                                           iocp_destroy,       iocp_get_stats};
+                                           iocp_destroy,       iocp_get_stats,      NULL,
+                                           NULL};
 
 bool turbo_io_platform_backend_supported(turbo_io_backend_kind kind) {
   return kind == TURBO_IO_BACKEND_IOCP;
+}
+
+bool turbo_io_platform_pipe_supported(turbo_io_backend_kind kind) {
+  (void)kind;
+  return false;
 }
 
 int turbo_io_platform_backend_init(turbo_io_backend *backend,
