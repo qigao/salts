@@ -124,6 +124,8 @@ typedef struct scxml_block {
     size_t invocation_storage_count;
     size_t max_conditional_depth;
     cflow_event_id execution_error_event;
+    const scxml_program_name *const *event_names_by_id;
+    size_t event_name_count;
     cflow_scxml_cmeta_expr_system_values system_values;
 } scxml_block;
 
@@ -149,6 +151,8 @@ typedef struct scxml_guard_user {
         cflow_machine_state_id state;
         cflow_scxml_cmeta_expr_program expression;
     } value;
+    const scxml_program_name *const *event_names_by_id;
+    size_t event_name_count;
     cflow_scxml_cmeta_expr_system_values system_values;
 } scxml_guard_user;
 
@@ -254,6 +258,7 @@ typedef struct cflow_scxml_program_impl {
     scxml_program_name *state_names;
     size_t state_name_count;
     scxml_program_name *event_names;
+    const scxml_program_name **event_names_by_id;
     size_t event_name_count;
     cflow_statechart_executable_binding *bindings;
     size_t binding_count;
@@ -492,6 +497,27 @@ static int compare_program_name(const void *left, const void *right) {
     const turbo_xml_string_view left_view = {left_name->name, left_name->size};
     const turbo_xml_string_view right_view = {right_name->name, right_name->size};
     return compare_view(left_view, right_view);
+}
+
+static bool bind_current_event_system_values(
+    const cflow_scxml_cmeta_expr_system_values *base,
+    const scxml_program_name *const *event_names_by_id,
+    size_t event_name_count,
+    const cflow_event_view *event,
+    cflow_scxml_cmeta_expr_system_values *out) {
+    const scxml_program_name *name;
+    if (base == NULL || out == NULL) return false;
+    *out = *base;
+    out->event_name = (cflow_scxml_cmeta_expr_string_view){NULL, 0u};
+    if (event == NULL) return true;
+    if (event_names_by_id == NULL || event->id == 0u ||
+        event->id > event_name_count)
+        return false;
+    name = event_names_by_id[event->id - 1u];
+    if (name == NULL || name->id != event->id) return false;
+    out->event_name = (cflow_scxml_cmeta_expr_string_view){
+        name->name, name->size};
+    return true;
 }
 
 static cflow_scxml_status scxml_fail(scxml_build *build,
@@ -3213,6 +3239,7 @@ static scxml_execute_outcome execute_scxml_range(
     const scxml_block *block,
     cflow_scxml_session_impl *session,
     const cflow_statechart_executable_context *context,
+    const cflow_scxml_cmeta_expr_system_values *system_values,
     size_t begin, size_t end, size_t depth,
     bool abort_condition_error, const char **out_error) {
     const bool null_value = false;
@@ -3273,9 +3300,7 @@ static scxml_execute_outcome execute_scxml_range(
             if (cflow_scxml_cmeta_assign_apply_with_system(
                     &block->assignments[step->assignment],
                     context->out_state, evaluate_cmeta_executable_active,
-                    (void *)context,
-                    session != NULL ? &session->system_values
-                                    : &block->system_values,
+                    (void *)context, system_values,
                     &diagnostic) !=
                 CFLOW_SCXML_CMETA_EXPR_OK)
                 return raise_block_execution_error(block, context, out_error);
@@ -3324,7 +3349,8 @@ static scxml_execute_outcome execute_scxml_range(
                         block, context, out_error);
                 }
                 outcome = execute_scxml_range(
-                    block, session, context, descriptor->step_begin,
+                    block, session, context, system_values,
+                    descriptor->step_begin,
                     descriptor->step_end, next_depth, true, out_error);
                 if (outcome != SCXML_EXECUTE_CONTINUE) {
                     cflow_scxml_cmeta_foreach_value_destroy(
@@ -3369,8 +3395,7 @@ static scxml_execute_outcome execute_scxml_range(
                     if (cflow_scxml_cmeta_expr_evaluate_with_system(
                             &candidate->condition, context->out_state,
                             evaluate_cmeta_executable_active, (void *)context,
-                            session != NULL ? &session->system_values
-                                            : &block->system_values,
+                            system_values,
                             &enabled, &diagnostic) !=
                         CFLOW_SCXML_CMETA_EXPR_OK) {
                         if (!enqueue_condition_execution_error(
@@ -3397,7 +3422,8 @@ static scxml_execute_outcome execute_scxml_range(
                 if (!checked_add(depth, 1u, &next_depth))
                     return SCXML_EXECUTE_FATAL;
                 outcome = execute_scxml_range(
-                    block, session, context, selected->step_begin,
+                    block, session, context, system_values,
+                    selected->step_begin,
                     selected->step_end, next_depth,
                     abort_condition_error, out_error);
                 if (outcome != SCXML_EXECUTE_CONTINUE) return outcome;
@@ -3417,6 +3443,7 @@ static bool execute_scxml_block_impl(
     const cflow_statechart_executable_context *context,
     const char **out_error) {
     scxml_execute_outcome outcome;
+    cflow_scxml_cmeta_expr_system_values system_values;
     const bool trivial_state =
         cmeta_type_require_traits(
             block != NULL ? block->state_type : NULL,
@@ -3437,6 +3464,14 @@ static bool execute_scxml_block_impl(
             *out_error = "SCXML executable block context is invalid";
         return false;
     }
+    if (!bind_current_event_system_values(
+            session != NULL ? &session->system_values
+                            : &block->system_values,
+            block->event_names_by_id, block->event_name_count,
+            context->event, &system_values)) {
+        *out_error = "SCXML executable Event is not in the program map";
+        return false;
+    }
     if (trivial_state) {
         memcpy(context->out_state, context->state, block->state_type->size);
     } else if (cmeta_type_require_traits(
@@ -3449,7 +3484,8 @@ static bool execute_scxml_block_impl(
         return false;
     }
     outcome = execute_scxml_range(
-        block, session, context, block->step_begin, block->step_end,
+        block, session, context, &system_values,
+        block->step_begin, block->step_end,
         0u, false, out_error);
     if (outcome == SCXML_EXECUTE_FATAL) {
         if (!trivial_state) {
@@ -3771,10 +3807,18 @@ static bool evaluate_scxml_transition_guard_impl(
     }
     if (guard->data_model == SCXML_DATA_MODEL_CMETA) {
         cflow_scxml_cmeta_expr_diagnostic diagnostic = {0};
+        cflow_scxml_cmeta_expr_system_values current_system_values;
+        if (!bind_current_event_system_values(
+                system_values, guard->event_names_by_id,
+                guard->event_name_count, context->event,
+                &current_system_values)) {
+            *out_error = "SCXML guard Event is not in the program map";
+            return false;
+        }
         if (cflow_scxml_cmeta_expr_evaluate_with_system(
                 &guard->value.expression, context->state,
                 evaluate_cmeta_active_state, (void *)context,
-                system_values, out_enabled, &diagnostic) ==
+                &current_system_values, out_enabled, &diagnostic) ==
             CFLOW_SCXML_CMETA_EXPR_OK) {
             return true;
         }
@@ -5209,9 +5253,13 @@ static cflow_scxml_status compile_scxml_model(
                                       sizeof(*impl->state_names));
     impl->event_names = allocate_rows(build.event_name_count,
                                       sizeof(*impl->event_names));
+    impl->event_names_by_id = allocate_rows(
+        build.event_name_count, sizeof(*impl->event_names_by_id));
     impl->name_storage = name_bytes != 0u ? (char *)malloc(name_bytes) : NULL;
     if ((build.state_name_index != 0u && impl->state_names == NULL) ||
         (build.event_name_count != 0u && impl->event_names == NULL) ||
+        (build.event_name_count != 0u &&
+         impl->event_names_by_id == NULL) ||
         (name_bytes != 0u && impl->name_storage == NULL)) {
         status = scxml_fail(&build, CFLOW_SCXML_ALLOCATION_FAILED,
                             turbo_xml_node_location(root),
@@ -5279,6 +5327,9 @@ static cflow_scxml_status compile_scxml_model(
     impl->effect_storage = build.effect_storage;
     impl->invocation_storage = build.invocation_storage;
     for (index = 0u; index < impl->guard_binding_count; ++index) {
+        impl->guard_users[index].event_names_by_id =
+            impl->event_names_by_id;
+        impl->guard_users[index].event_name_count = impl->event_name_count;
         impl->guard_users[index].system_values.name =
             (cflow_scxml_cmeta_expr_string_view){
                 impl->document_name, impl->document_name_size};
@@ -5287,6 +5338,8 @@ static cflow_scxml_status compile_scxml_model(
         scxml_block *block =
             (scxml_block *)impl->bindings[index].user;
         if (block != NULL) {
+            block->event_names_by_id = impl->event_names_by_id;
+            block->event_name_count = impl->event_name_count;
             block->system_values.name =
                 (cflow_scxml_cmeta_expr_string_view){
                     impl->document_name, impl->document_name_size};
@@ -5310,6 +5363,18 @@ static cflow_scxml_status compile_scxml_model(
           sizeof(*impl->state_names), compare_program_name);
     qsort(impl->event_names, impl->event_name_count,
           sizeof(*impl->event_names), compare_program_name);
+    for (index = 0u; index < impl->event_name_count; ++index) {
+        const uint64_t id = impl->event_names[index].id;
+        if (id == 0u || id > impl->event_name_count ||
+            impl->event_names_by_id[id - 1u] != NULL) {
+            status = scxml_fail(
+                &build, CFLOW_SCXML_NATIVE_IR_REJECTED,
+                turbo_xml_node_location(root),
+                "SCXML event ID map invariant failed");
+            goto cleanup;
+        }
+        impl->event_names_by_id[id - 1u] = &impl->event_names[index];
+    }
     out->impl = impl;
     impl = NULL;
     status = CFLOW_SCXML_OK;
@@ -5319,6 +5384,7 @@ cleanup:
         cflow_statechart_destroy(&impl->statechart);
         free(impl->state_names);
         free(impl->event_names);
+        free(impl->event_names_by_id);
         free(impl->bindings);
         free(impl->guard_bindings);
         destroy_guard_users(impl->guard_users, impl->guard_binding_count);
@@ -5432,6 +5498,7 @@ void cflow_scxml_program_destroy(cflow_scxml_program *program) {
     cflow_statechart_destroy(&impl->statechart);
     free(impl->state_names);
     free(impl->event_names);
+    free(impl->event_names_by_id);
     free(impl->bindings);
     free(impl->guard_bindings);
     destroy_guard_users(impl->guard_users, impl->guard_binding_count);

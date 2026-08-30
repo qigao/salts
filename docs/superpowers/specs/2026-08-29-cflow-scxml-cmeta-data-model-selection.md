@@ -130,7 +130,8 @@ state, and executes the body in document order. Length overflow, scratch
 allocation, provider failure, or child failure raises `error.execution` and
 rolls back the whole block. `finalize` iteration remains fail-fast.
 
-The SCXML system variables are read-only views owned by the session runtime:
+The target SCXML system variables are read-only views owned by the session
+runtime:
 
 - `_event` is projected from the current borrowed event and is unavailable
   outside event-triggered work.
@@ -144,6 +145,12 @@ The SCXML system variables are read-only views owned by the session runtime:
 
 User assignments to system variables are rejected. All borrowed system views
 expire when the enclosing guard or executable callback returns.
+
+The current CMeta profile implements `_name`, `_sessionid`, and only the
+`_event.name` string field while a native contextual callback carries an
+Event. It does not yet retain the last Event into later eventless microsteps or
+admit `_event.type`, `sendid`, `origin`, `origintype`, `invokeid`, `data`, or
+`_ioprocessors`.
 The owning session copies `_name`, stores `_sessionid` inline, and keeps both
 stable until successful destruction. Program-level low-level bindings can read
 the retained `_name`, but do not have an owning session and therefore fail an

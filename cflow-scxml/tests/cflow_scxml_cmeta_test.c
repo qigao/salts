@@ -522,6 +522,56 @@ spec("CFlow SCXML public CMeta data model") {
         cflow_scxml_program_destroy(&program);
     }
 
+    it("binds current external and internal event names to CMeta expressions") {
+        static const char external_guard[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='armed'>"
+            "<transition event='go' cond='_event.name == &quot;go&quot;' "
+            "target='done'/></state><final id='done'/></scxml>";
+        static const char internal_guard[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='armed'><onentry>"
+            "<raise event='tick'/></onentry>"
+            "<transition event='tick' "
+            "cond='_event.name == &quot;tick&quot;' target='done'/>"
+            "</state><final id='done'/></scxml>";
+        static const char executable_condition[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='armed'>"
+            "<transition event='go' target='matched'/></state>"
+            "<state id='matched'><onentry>"
+            "<if cond='_event.name == &quot;go&quot;'>"
+            "<assign location='count' expr='7'/></if></onentry>"
+            "<transition cond='count == 7' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_statechart_instance_stats stats;
+
+        check_equal(compile_cmeta(external_guard, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(run_guarded_transition(
+            &program,
+            (scxml_public_data){true, 0, SCXML_PUBLIC_SOURCE_GOOD}, false));
+        cflow_scxml_program_destroy(&program);
+
+        check_equal(compile_cmeta(internal_guard, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        stats = run_to_idle(
+            &program,
+            (scxml_public_data){true, 0, SCXML_PUBLIC_SOURCE_GOOD});
+        check_true(stats.done);
+        check_false(stats.errored);
+        cflow_scxml_program_destroy(&program);
+
+        check_equal(compile_cmeta(executable_condition, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(run_guarded_transition(
+            &program,
+            (scxml_public_data){true, 0, SCXML_PUBLIC_SOURCE_GOOD}, false));
+        cflow_scxml_program_destroy(&program);
+    }
+
     it("keeps session identity unavailable in program-level bindings") {
         static const char name_source[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
@@ -601,6 +651,11 @@ spec("CFlow SCXML public CMeta data model") {
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
             "datamodel='cmeta'><state id='active'><onentry>"
             "<assign location='_event' expr='2'/></onentry></state></scxml>";
+        static const char event_name_location[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='active'><onentry>"
+            "<assign location='_event.name' expr='&quot;x&quot;'/></onentry>"
+            "</state></scxml>";
         static const char name_location[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
             "datamodel='cmeta'><state id='active'><onentry>"
@@ -617,7 +672,7 @@ spec("CFlow SCXML public CMeta data model") {
             "<assign location='count' expr='2'/></onentry></state></scxml>";
         const char *invalid[] = {
             missing_location, missing_expr, unknown_location, system_location,
-            name_location, session_location};
+            event_name_location, name_location, session_location};
         size_t index;
 
         for (index = 0u; index < sizeof(invalid) / sizeof(invalid[0]); ++index) {

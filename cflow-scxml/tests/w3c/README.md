@@ -30,6 +30,22 @@ keeps the queued internal event as the failure witness, replaces the wildcard
 with that exact event, and omits the additional external `send`; the retained
 event is sufficient to distinguish eventless-transition precedence.
 
+## Current CMeta system-event profile
+
+CMeta expressions admit the read-only string `_event.name` only while the
+native Statechart contextual callback carries the Event that triggered the
+current transition quantum. This covers event transition guards and the
+exit/transition/entry executable content run by that quantum. Initial and
+later eventless work has no `_event` binding.
+
+This is deliberately a partial profile, not the complete `_event` object from
+[SCXML 1.0 section 5.10.1](https://www.w3.org/TR/2015/REC-scxml-20150901/#InternalStructureofEvents).
+The `type`, `sendid`, `origin`, `origintype`, `invokeid`, and `data` fields, as
+well as retention of the last selected Event across later eventless
+microsteps, remain unsupported. Bare `_event`, unsupported fields, and writes
+to `_event` locations fail admission; reading `_event.name` without a current
+Event fails evaluation.
+
 The upstream suite page offers the tests under the
 [W3C Test Suite License](https://www.w3.org/copyright/test-suite/) or the
 [W3C 3-clause BSD License](https://www.w3.org/Consortium/Legal/2015/copyright-software-and-document).
