@@ -710,7 +710,22 @@ use `namelist`, `<param>`, or external scalar `<content expr>` require the
 independent v2 table and `CFLOW_SCXML_EVENT_IO_CAP_PAYLOAD`.
 `cflow_scxml_session_init_cmeta_v2()` receives that table through an explicit
 `cflow_scxml_session_adapters_v2` bundle; the unchanged base config must not
-also install the corresponding v1 table.
+also install the corresponding v1 table. The independent v3 tables add
+`cflow_scxml_content_view`: `SCALAR` preserves the v2 scalar representation,
+`TEXT_UTF8` and `XML_UTF8` borrow compact immutable program bytes, and `CMETA`
+borrows a schema plus an object in staged session state. V3 content requires
+the corresponding `CONTENT_V3` capability and `cflow_scxml_session_init_v3()`
+or `cflow_scxml_session_init_cmeta_v3()`. V1 and v2 table/request layouts are
+unchanged.
+
+Every v3 pointer is callback-scoped. Inline bytes retain child order,
+whitespace, comments, processing instructions, and namespace declarations;
+an empty `<content/>` is an empty text value. `CMETA` is read-only and requires
+one simple dotted CMeta location; arbitrary scalar expressions continue
+through the scalar evaluator. Retained use requires copying into the accepted
+ticket before the prepare callback returns. Inline content is bounded by
+`max_name_bytes` in addition to the XML limits; inline `donedata` must also fit
+`CFLOW_SCXML_EVENT_METADATA_CAPACITY`.
 
 ### SCXML Event I/O processor profile
 
@@ -723,7 +738,7 @@ profile is:
 | --- | --- | --- |
 | `type` omitted | Selects the mandatory SCXML Event Processor semantically. An adapter request represents this with `type_size == 0`; an installed adapter must treat that form as `http://www.w3.org/TR/scxml/#SCXMLEventProcessor`. | Supported within the target rows below. |
 | `target="#_internal"` or compatibility spelling `target="_internal"`, no delay | Delivers transactionally to the session's native internal Event queue without invoking the adapter. Dispatch is selected by the target literal; an explicitly supplied `type` is retained by the compiler but is not consulted on this local path. | Built in. `#_internal` is the canonical target; `_internal` is a documented compatibility extension. Applications should omit `type` or use the canonical SCXML processor URI on this path. |
-| Canonical SCXML processor with another target, including an omitted target, `#_scxml_<sessionid>`, `#_parent`, or `#_<invokeid>` | Passes the request to the installed Event I/O adapter. Payload-free requests admit v1 or v2; named/scalar payloads require v2. The adapter owns target accessibility, routing, payload encoding, and bounded transport capacity. TurboUtils does not bundle a session registry or cross-session transport. | Conditionally supported by an embedding adapter; not a standalone processor implementation. |
+| Canonical SCXML processor with another target, including an omitted target, `#_scxml_<sessionid>`, `#_parent`, or `#_<invokeid>` | Passes the request to the installed Event I/O adapter. Payload-free requests admit v1/v2/v3; named/scalar payloads require v2 or v3, while inline or structured content requires v3. The adapter owns target accessibility, routing, payload encoding, and bounded transport capacity. TurboUtils does not bundle a session registry or cross-session transport. | Conditionally supported by an embedding adapter; not a standalone processor implementation. |
 | `http://www.w3.org/TR/scxml/#BasicHTTPEventProcessor` | Passed to an installed adapter as a literal type. TurboUtils supplies no HTTP POST ingress, location discovery, request decoder, or response behavior. | Optional application extension only; unsupported by the bundled module. |
 | Any other non-empty `type` | Passed unchanged to the installed adapter. If the adapter does not implement that processor, it must return `CFLOW_SCXML_ADAPTER_ERROR_EXECUTION`, which stages `error.execution` and aborts only the current executable block. | Application-defined extension; outside the SCXML conformance claim. |
 
@@ -744,10 +759,12 @@ Invocation adapters use the same versioned reservation contract. Literal
 boolean `autoforward`; an omitted ID is generated deterministically as
 `<state-id>.invoke.<sibling-ordinal>`. The CMeta profile additionally admits
 `typeexpr`, `srcexpr`, ordered scalar `namelist` or `<param>` input, and one
-scalar `<content expr>` through a payload-capable v2 invocation adapter.
+scalar `<content expr>` through a payload-capable v2 or v3 invocation adapter.
 The CMeta profile also admits `idlocation` when it resolves to a writable,
-owned string and `id` is absent. Inline text/XML content remains unsupported,
-and the null data model has no location/value evaluator. A restricted
+owned string and `id` is absent. A v3 invocation adapter additionally admits
+bounded inline text/mixed XML and structured simple-location CMeta content;
+the null data model admits inline content but has no location/value evaluator.
+A restricted
 `finalize` may contain only label-only `log` and nested null-model `if`
 partitions; Event-producing or external-effect content is rejected during
 compilation.
@@ -780,9 +797,9 @@ prepares adapter tickets. It then atomically publishes state and staged
 internal Events before committing start tickets. Any fatal assignment,
 contract, journal, copy, or cancellation failure discards all prepared tickets
 and leaves the prior Machine state published. Invocation adapter ABI v1/v2 is
-unchanged. The active invocation row retains the immutable routing ID used by
-cancel, autoforward, returned metadata, and completion even if the document
-later overwrites its `idlocation` value.
+unchanged and v3 is additive. The active invocation row retains the immutable
+routing ID used by cancel, autoforward, returned metadata, and completion even
+if the document later overwrites its `idlocation` value.
 
 `cflow_scxml_session_report_invoke_event()` admits a copied external Event with
 the invocation's nonzero token. The session validates at admission and again
@@ -852,9 +869,11 @@ The supported compatibility subset is deliberately strict:
   logger and must keep it alive until all executors that may run SCXML log
   actions are quiescent; default-pointer access does not retain the logger;
 - `send` and `cancel` in the same executable positions. The null-model profile
-  admits retained literal fields only. The CMeta profile additionally admits
-  dynamic scalar fields, ordered `namelist` plus child `param` payloads, or one
-  scalar `content expr`; named payload and content are mutually exclusive.
+  admits retained literal fields and inline content. The CMeta profile
+  additionally admits dynamic scalar fields, ordered `namelist` plus child
+  `param` payloads, or one
+  scalar/structured `content expr`; both profiles admit bounded inline
+  text/mixed XML, and named payload and content are mutually exclusive.
   `event` is one XML NMTOKEN and literal `id` is an XML NCName. Delay accepts
   unsigned integer milliseconds (`250ms`) or seconds with at most millisecond
   precision (`1.5s`); a non-zero delay requires either a literal `id` or CMeta
@@ -865,7 +884,8 @@ The supported compatibility subset is deliberately strict:
   `#_internal` and `_internal` sends use the native transactional internal queue
   without an adapter; named internal payload remains unsupported. Other sends
   require a bounded Event I/O adapter, with v2 plus the payload capability for
-  named/scalar payload. For compatibility, content paired with `targetexpr`
+  named/scalar payload, or v3 plus the content capability for inline/structured
+  content. For compatibility, scalar content paired with `targetexpr`
   retains the existing adapter-free dynamic internal path; if the expression
   instead resolves externally under v1, execution raises `error.execution`
   before the adapter callback. Delayed sends additionally require
@@ -881,18 +901,21 @@ The supported compatibility subset is deliberately strict:
   delayed-send registry row through `cflow_scxml_session_report_send_done()`;
 - `invoke` on `state`/`parallel`, deterministic generated IDs, CMeta dynamic
   `typeexpr`/`srcexpr`, ordered scalar input through `namelist`, child `param`,
-  or one `content expr`, writable owned-string `idlocation`,
+  or one scalar/structured `content expr`, bounded inline text/mixed XML,
+  writable owned-string `idlocation`,
   `done.invoke.<id>` Events, stable-only activation, committed-exit cancel,
   declaration-ordered autoforward, and restricted `finalize` preprocessing as
-  described above. Payload input requires an invocation v2 adapter with the
-  payload capability;
+  described above. Named/scalar input requires invocation v2 or v3 with the
+  payload capability; inline/structured content requires v3 with the content
+  capability;
 - compile-time rejection of malformed, quoted, unknown, or pseudo-state
   `In(id)` arguments. Null-model system variables remain inaccessible.
 
 Executable elements outside `raise`, admitted `send`/`cancel`, label-only
 `log`, CMeta scalar `assign`, admitted conditional partitions, and the
 restricted invocation `finalize` profile; wildcard event descriptors; multiple
-targets; inline text/XML content; structured payload values; data models other
+targets; arbitrary non-location structured expressions; structured
+`donedata`; data models other
 than the admitted null and exact CMeta profiles; and other SCXML
 elements outside the profiles above fail during compilation with the first byte
 offset and one-based line/column diagnostic.

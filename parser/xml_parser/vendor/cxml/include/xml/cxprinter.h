@@ -48,6 +48,9 @@ char *cxml_document_to_rstring(cxml_root_node *root);
 /* Return a parseable XML document without diagnostic wrapper text. */
 char *cxml_document_to_xml_rstring(cxml_root_node *root);
 
+/* Return every child of an element as one compact XML fragment. */
+char *cxml_element_children_to_xml_rstring(cxml_element_node *node);
+
 void cxml_xhdr_to_string(cxml_xhdr_node *hdr, cxml_string *str);
 
 char *cxml_xhdr_to_rstring(cxml_xhdr_node *xmlhdr);

@@ -1376,6 +1376,33 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_null(program.impl);
     }
 
+    it("admits empty inline content and bounds retained XML fragments") {
+        static const char empty[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='s'><onentry><send target='peer'><content/>"
+            "</send></onentry></state></scxml>";
+        static const char bounded[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='s'><onentry><send target='peer'><content>"
+            "<p:value xmlns:p='urn:test'>payload</p:value>"
+            "</content></send></onentry></state></scxml>";
+        cflow_scxml_limits limits = cflow_scxml_default_limits();
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+
+        check_equal(cflow_scxml_compile(
+                        &program, empty, strlen(empty), NULL, &diagnostic),
+                    CFLOW_SCXML_OK);
+        cflow_scxml_program_destroy(&program);
+
+        limits.max_name_bytes = 16u;
+        check_equal(cflow_scxml_compile(
+                        &program, bounded, strlen(bounded), &limits,
+                        &diagnostic),
+                    CFLOW_SCXML_LIMIT_EXCEEDED);
+        check_null(program.impl);
+    }
+
     it("preserves exit transition entry and in-block raise order") {
         static const char source_path[] =
             CFLOW_SCXML_FIXTURE_DIR "/raise_trace.scxml";
@@ -2010,7 +2037,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             "</invoke></state></scxml>";
         static const char content[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
-            "<state id='worker'><invoke><content>payload</content>"
+            "<state id='worker'><invoke><content expr='payload'/>"
             "</invoke></state></scxml>";
         static const char unsafe_finalize[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"

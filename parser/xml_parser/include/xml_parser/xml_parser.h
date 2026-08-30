@@ -106,6 +106,19 @@ size_t turbo_xml_node_attribute_count(turbo_xml_node node);
 turbo_xml_attribute turbo_xml_node_attribute_at(turbo_xml_node node,
                                                  size_t index);
 
+/**
+ * Serialize every child of one element as a compact UTF-8 XML fragment.
+ * Text, element, comment, and processing-instruction order is preserved,
+ * including whitespace-only text hidden by the semantic child iterator.
+ *
+ * Pass NULL/0 for output/output_capacity to measure. On success out_size is
+ * the byte count excluding NUL. A provided output requires out_size + 1 bytes.
+ * max_bytes is a mandatory hard bound. The facade owns all temporary storage.
+ */
+turbo_xml_status turbo_xml_serialize_children(
+    turbo_xml_node node, char *output, size_t output_capacity,
+    size_t max_bytes, size_t *out_size);
+
 turbo_xml_location turbo_xml_attribute_location(turbo_xml_attribute attribute);
 turbo_xml_string_view turbo_xml_attribute_qualified_name(
     turbo_xml_attribute attribute);
