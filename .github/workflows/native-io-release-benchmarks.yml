@@ -1,0 +1,175 @@
+name: NativeIO release benchmarks
+
+on:
+  pull_request:
+    paths:
+      - "native-io/**"
+      - ".github/workflows/native-io-release-benchmarks.yml"
+  push:
+    branches: [master]
+    paths:
+      - "native-io/**"
+      - ".github/workflows/native-io-release-benchmarks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-io-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: ${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: epoll + io_uring / Ubuntu 24.04 GCC
+            runner: ubuntu-24.04
+            family: linux
+            configure_preset: linux-release-user
+            build_preset: linux-release-user
+            build_dir: build/linux-gcc-release
+            executable: build/linux-gcc-release/bin/native_io_benchmark
+          - host: IOCP / Windows 2022 MSVC
+            runner: windows-2022
+            family: windows
+            configure_preset: win-release-user
+            build_preset: win-release-user
+            build_dir: build/Msvc-Release
+            executable: build/Msvc-Release/bin/native_io_benchmark.exe
+          - host: kqueue / macOS 15 AppleClang
+            runner: macos-15
+            family: mac
+            configure_preset: release-mac-ninja
+            build_preset: build-default-mac
+            build_dir: build/mac-clang-release
+            executable: build/mac-clang-release/bin/native_io_benchmark
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Linux dependencies
+        if: matrix.family == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes ninja-build re2c
+          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
+            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Setup Windows dependencies
+        if: matrix.family == 'windows'
+        shell: powershell
+        run: choco install re2c -y --no-progress
+
+      - name: Setup macOS dependencies
+        if: matrix.family == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install re2c
+          if [ -n "${VCPKG_ROOT:-}" ] &&
+             [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            true
+          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] &&
+               [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          elif [ -f "$(brew --prefix)/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "VCPKG_ROOT=$(brew --prefix)/share/vcpkg" >> "$GITHUB_ENV"
+          else
+            echo "A valid VCPKG_ROOT is unavailable" >&2
+            exit 1
+          fi
+
+      - name: Configure and build Linux Release
+        if: matrix.family == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset "${{ matrix.configure_preset }}" \
+            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
+          cmake --build --preset "${{ matrix.build_preset }}" \
+            --target native_io_test native_io_header_cpp_test native_io_benchmark
+
+      - name: Configure and build Windows Release
+        if: matrix.family == 'windows'
+        shell: cmd
+        run: |
+          set "PROJECT_ROOT=%GITHUB_WORKSPACE%"
+          if defined VCPKG_INSTALLATION_ROOT set "VCPKG_ROOT=%VCPKG_INSTALLATION_ROOT%"
+          if not defined VCPKG_ROOT exit /b 1
+
+          for /f "usebackq tokens=*" %%I in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%I"
+          if not defined VSINSTALL exit /b 1
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+
+          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
+          if errorlevel 1 exit /b 1
+          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test native_io_benchmark
+          if errorlevel 1 exit /b 1
+
+      - name: Configure and build macOS Release
+        if: matrix.family == 'mac'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset "${{ matrix.configure_preset }}" \
+            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
+          cmake --build --preset "${{ matrix.build_preset }}" \
+            --target native_io_test native_io_header_cpp_test native_io_benchmark
+
+      - name: Run NativeIO contract tests
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" \
+            -R '^native_io_(test|header_cpp_test)$' --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run NativeIO benchmark
+        shell: pwsh
+        env:
+          BENCHMARK_EXECUTABLE: ${{ matrix.executable }}
+          BENCHMARK_HOST: ${{ matrix.host }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:BENCHMARK_EXECUTABLE
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "NativeIO benchmark executable not found: $benchmark"
+          }
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "benchmark.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @(
+            "host=$env:BENCHMARK_HOST"
+            "commit=$env:GITHUB_SHA"
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+            "image_os=$env:ImageOS"
+            "image_version=$env:ImageVersion"
+          ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY \
+            -Value "## NativeIO: $env:BENCHMARK_HOST"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload NativeIO benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-io-${{ matrix.family }}
+          path: native-io-results
+          if-no-files-found: error
+          retention-days: 30
