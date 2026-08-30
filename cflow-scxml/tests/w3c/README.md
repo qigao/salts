@@ -186,6 +186,18 @@ and their errors out of transition selection. Invalid envelopes, unsupported
 content, schema mismatches, bare/unknown `_event` paths, and every write to an
 `_event` location fail fast without a compatibility fallback.
 
+## Event I/O conformance boundary
+
+The module deliberately retains a conforming-host adapter boundary instead of
+bundling a cross-session registry or transport. The public location-copy API
+lets a host register the exact address exposed through
+`_ioprocessors.scxml.location`, and
+`cflow_scxml_event_io_contract_test` demonstrates bounded routing and delivery
+through only public APIs. This evidence validates the adapter contract; it does
+not make the library alone a standalone SCXML Event I/O Processor. Accordingly,
+tests 189-192, 347-354, 495-496, and 500-501 remain `UNSUPPORTED` until the W3C
+fixtures are executed with a selected conforming host implementation.
+
 The upstream suite page offers the tests under the
 [W3C Test Suite License](https://www.w3.org/copyright/test-suite/) or the
 [W3C 3-clause BSD License](https://www.w3.org/Consortium/Legal/2015/copyright-software-and-document).

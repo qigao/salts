@@ -795,6 +795,79 @@ and
 [Basic HTTP Event I/O Processor](https://www.w3.org/TR/scxml/#BasicHTTPEventProcessor)
 sections.
 
+#### Conforming host-adapter contract
+
+An embedding that claims the mandatory SCXML Event I/O Processor must provide
+all of the following outside `cflow_scxml_session`:
+
+- **Registration and accessibility:** after session initialization, copy the
+  immutable address with `cflow_scxml_session_copy_location()`, then register
+  that exact `#_scxml_<sessionid>` value in one bounded host registry. Reject
+  duplicate locations and define which registered sessions each sender may
+  access. The registry is the only routing fact source; no mirror is kept in
+  the Statechart runtime.
+- **Initialization:** initial entry executable content runs before the init call
+  returns. A host that admits initial external sends must create an
+  `INITIALIZING` logical endpoint and reply address in the adapter context
+  before init. Prepare/commit may queue bounded rows against that endpoint but
+  dispatch must wait. On success, copy the generated location, add it as an
+  active route, and enable dispatch; on failure, the runtime calls `close` and
+  the host discards the unactivated rows. A host that cannot implement this
+  deferred activation must reject such documents and cannot claim the complete
+  processor profile.
+- **Source-relative routing:** an empty target routes to the sender's external
+  queue; `#_scxml_<sessionid>` uses the accessibility-filtered registry;
+  `#_parent` uses the invocation parent captured by the host; and
+  `#_<invokeid>` uses the sender's live invocation mapping. `#_internal`
+  without delay remains the built-in local path. Missing, stale, or inaccessible
+  routes return `CFLOW_SCXML_ADAPTER_ERROR_COMMUNICATION`; an unsupported
+  nonempty processor type returns `CFLOW_SCXML_ADAPTER_ERROR_EXECUTION`.
+- **Message mapping and isolation:** copy `event`, `target`, `id`, and every
+  payload value during `prepare_send`. On delivery, use `event` as the receiving
+  Event name, the sender's registered location as `origin`, `scxml` as
+  `origintype`, and `id` as `sendid`. Data must be an ownership-isolated copy.
+  CBind/CSerde may decode an external envelope into the receiver's compiled
+  CMeta root before `cflow_scxml_session_try_send_v3()`; codec types and errors
+  remain host-owned.
+- **Transaction and capacity:** `prepare_send` reserves one fixed-capacity host
+  ingress row and publishes nothing. `commit` only makes that row visible;
+  `discard` releases it. Both callbacks are nonblocking and infallible. The
+  dispatcher calls `cflow_scxml_session_try_send_v2()` or `_v3()` outside the
+  registry lock. A full target mailbox retains the bounded host row for later
+  dispatch; it must not drop, overwrite, spin, or allocate an unbounded retry.
+- **Ordering and concurrency:** callbacks for one session execute on its serial
+  executor. A shared host router must synchronize multi-session producers and
+  preserve commit order per source session. Cross-source ordering may be
+  host-defined, but must be deterministic for a stated scheduler policy. Host
+  control-plane registration changes require affected endpoints to be
+  quiescent; locks must not cover session calls, codec work, I/O, or callbacks.
+- **Delayed send and cancellation:** advertise `DELAYED_SEND` or `CANCEL` only
+  when a bounded timer/send-id registry exists. Evaluation-time fields are
+  copied into its row. Exactly one of delivery, successful cancellation, close,
+  or terminal failure releases each row, and a committed delayed row calls
+  `cflow_scxml_session_report_send_done()` exactly once when it wins completion.
+- **Async errors:** malformed inbound data or a target that cannot accept its
+  format is discarded and reported to the intended receiver with
+  `cflow_scxml_session_report_adapter_error(...COMMUNICATION)`. A dispatcher
+  failure should also notify the sender while it remains live. Synchronous
+  prepare failures use the precise adapter status and are converted by the
+  session into `error.execution` or `error.communication`.
+- **Close and destruction:** `close` atomically stops new reservations and
+  starts cancellation/drain without waiting. `is_quiescent` becomes true only
+  after every reserved, ready, in-flight, timer, codec, and transport row that
+  can reference the session or adapter context reaches a terminal state. Only
+  then may session destruction, unregistration, and context release proceed.
+
+`cflow_scxml_event_io_contract_test` implements a fixed-capacity test host
+through public APIs. It proves reservation-before-publication, commit/discard,
+direct/self/parent/invoke routing, per-source queueing, SCXML metadata mapping,
+capacity rejection, inaccessible-target error mapping, and close/quiescence.
+Its endpoint is activated after init, so it does not claim the initial-send
+portion of the contract. It is a contract witness, not a bundled production
+router, transport, HTTP processor, or full W3C conformance claim. The W3C Event I/O rows remain
+`UNSUPPORTED` in the corpus manifest until a selected conforming host profile
+is run against those assertions.
+
 Invocation adapters use the same versioned reservation contract. Literal
 `invoke` declarations on `state` or `parallel` accept `id`, `type`, `src`, and
 boolean `autoforward`; an omitted ID is generated deterministically as

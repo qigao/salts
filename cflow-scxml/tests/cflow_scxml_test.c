@@ -673,6 +673,65 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         cflow_scxml_program_destroy(&program);
     }
 
+    it("copies the stable SCXML Event I/O location without partial output") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
+            "<state id='only'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_session session = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_executor executor = {0};
+        cflow_scxml_session_config config = {0};
+        char location[64] = "unchanged";
+        char repeated[64] = {0};
+        size_t required = 0u;
+        size_t repeated_required = 0u;
+
+        check_equal(compile_status(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        config = (cflow_scxml_session_config){
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 1u,
+            .internal_event_capacity = 1u,
+            .completion_capacity = 1u,
+            .microstep_limit = 8u};
+        check_equal(cflow_scxml_session_init(&session, &config),
+                    CFLOW_STATECHART_RUNTIME_OK);
+
+        check_equal(cflow_scxml_session_copy_location(
+                        &session, NULL, 0u, &required),
+                    CFLOW_SCXML_LOCATION_TOO_SMALL);
+        check_true(required > sizeof("#_scxml_") - 1u);
+        check_true(required <= sizeof(location));
+        check_equal(cflow_scxml_session_copy_location(
+                        &session, location, required - 1u,
+                        &repeated_required),
+                    CFLOW_SCXML_LOCATION_TOO_SMALL);
+        check_equal(repeated_required, required);
+        check_equal(location, "unchanged");
+        check_equal(cflow_scxml_session_copy_location(
+                        &session, location, sizeof(location), &required),
+                    CFLOW_SCXML_LOCATION_OK);
+        check_equal(strncmp(location, "#_scxml_", 8u), 0);
+        check_equal(cflow_scxml_session_copy_location(
+                        &session, repeated, sizeof(repeated),
+                        &repeated_required),
+                    CFLOW_SCXML_LOCATION_OK);
+        check_equal(repeated_required, required);
+        check_equal(repeated, location);
+
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_scxml_session_copy_location(
+                        &session, repeated, sizeof(repeated),
+                        &repeated_required),
+                    CFLOW_SCXML_LOCATION_INVALID_ARGUMENT);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
     it("validates Event I/O ABI and waits for adapter quiescence") {
         static const char source[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"

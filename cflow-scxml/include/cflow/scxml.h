@@ -136,6 +136,12 @@ typedef enum cflow_scxml_adapter_error_kind {
     CFLOW_SCXML_ADAPTER_ERROR_KIND_COMMUNICATION
 } cflow_scxml_adapter_error_kind;
 
+typedef enum cflow_scxml_location_status {
+    CFLOW_SCXML_LOCATION_OK = 0,
+    CFLOW_SCXML_LOCATION_INVALID_ARGUMENT,
+    CFLOW_SCXML_LOCATION_TOO_SMALL
+} cflow_scxml_location_status;
+
 #ifndef CFLOW_SCXML_EVENT_METADATA_CAPACITY
 #define CFLOW_SCXML_EVENT_METADATA_CAPACITY 256u
 #endif
@@ -294,6 +300,28 @@ typedef struct cflow_scxml_cancel_request {
  * `close` is nonblocking and called exactly once after adapter attachment,
  * including initialization failures. Once `is_quiescent` returns true after
  * close, no adapter-owned callback may reach the borrowed session or user.
+ *
+ * A host that implements the SCXML Event I/O Processor owns its session
+ * registry, target-access policy, transport/codec boundary, and bounded
+ * ingress queues. It must treat an empty request type as the canonical SCXML
+ * processor URI, route an empty target back to the source external queue,
+ * resolve `#_scxml_<sessionid>`, `#_parent`, and `#_<invokeid>` in source
+ * context, and reject a missing or inaccessible session with
+ * `ERROR_COMMUNICATION`. Unsupported nonempty processor types return
+ * `ERROR_EXECUTION`. Request order is preserved per source session.
+ *
+ * Prepare must reserve host ingress capacity, not target-session mailbox
+ * capacity that can be lost before commit. Commit publishes only that reserved
+ * host row; a host dispatcher subsequently calls `session_try_send_v2/v3` and
+ * retains the row on `CFLOW_MAILBOX_FULL`. Async decode or delivery failure is
+ * reported with `session_report_adapter_error`. Capabilities are promises:
+ * delayed send and cancellation must not be advertised unless the host owns a
+ * bounded timer/id registry and implements their completion races.
+ * Session initialization executes initial entry work before returning. A host
+ * profile that accepts initial external sends must prepare a source endpoint
+ * before init, queue those committed rows without dispatching to the still
+ * initializing session, and activate/register the generated location only
+ * after init succeeds. Close must discard those rows if init fails.
  */
 typedef struct cflow_scxml_event_io_adapter_v1 {
     uint32_t abi_version;
@@ -744,6 +772,15 @@ bool cflow_scxml_session_get_stats(
 /** Copy the fixed invocation registry counters under the session mutex. */
 bool cflow_scxml_session_get_invoke_stats(
     const cflow_scxml_session *session, cflow_scxml_invoke_stats *out);
+/**
+ * Copy the immutable SCXML Event I/O address used by `_ioprocessors.scxml`.
+ * `out_required_capacity` includes the trailing NUL. A short or NULL output
+ * buffer returns `TOO_SMALL`, reports the required capacity, and writes no
+ * partial string. The address remains stable until successful destruction.
+ */
+cflow_scxml_location_status cflow_scxml_session_copy_location(
+    const cflow_scxml_session *session, char *out_location,
+    size_t location_capacity, size_t *out_required_capacity);
 const char *cflow_scxml_session_error(
     const cflow_scxml_session *session);
 
