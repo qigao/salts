@@ -706,6 +706,32 @@ attachment, including an initialization failure;
 `CFLOW_STATECHART_RUNTIME_WOULD_BLOCK` until `is_quiescent` confirms that no
 adapter callback can still reach the borrowed session or adapter context.
 
+### SCXML Event I/O processor profile
+
+TurboUtils separates the SCXML execution engine from transports and codecs.
+It therefore provides one built-in delivery path plus a versioned adapter
+boundary, rather than a bundled network Event I/O processor. The processor
+profile is:
+
+| SCXML `send` form | TurboUtils behavior | Conformance status |
+| --- | --- | --- |
+| `type` omitted | Selects the mandatory SCXML Event Processor semantically. An adapter request represents this with `type_size == 0`; an installed adapter must treat that form as `http://www.w3.org/TR/scxml/#SCXMLEventProcessor`. | Supported within the target rows below. |
+| `target="#_internal"` or compatibility spelling `target="_internal"`, no delay | Delivers transactionally to the session's native internal Event queue without invoking the adapter. Dispatch is selected by the target literal; an explicitly supplied `type` is retained by the compiler but is not consulted on this local path. | Built in. `#_internal` is the canonical target; `_internal` is a documented compatibility extension. Applications should omit `type` or use the canonical SCXML processor URI on this path. |
+| Canonical SCXML processor with another target, including an omitted target, `#_scxml_<sessionid>`, `#_parent`, or `#_<invokeid>` | Passes the literal request to the installed Event I/O adapter v1. The adapter owns target accessibility, routing, payload encoding, and bounded transport capacity. TurboUtils does not bundle a session registry or cross-session transport. | Conditionally supported by an embedding adapter; not a standalone processor implementation. |
+| `http://www.w3.org/TR/scxml/#BasicHTTPEventProcessor` | Passed to an installed adapter as a literal type. TurboUtils supplies no HTTP POST ingress, location discovery, request decoder, or response behavior. | Optional application extension only; unsupported by the bundled module. |
+| Any other non-empty `type` | Passed unchanged to the installed adapter. If the adapter does not implement that processor, it must return `CFLOW_SCXML_ADAPTER_ERROR_EXECUTION`, which stages `error.execution` and aborts only the current executable block. | Application-defined extension; outside the SCXML conformance claim. |
+
+The adapter capability bits describe reservation operations (`SEND`, delayed
+send, and cancellation), not a registry of processor URIs. `_ioprocessors` is
+not yet exposed by the admitted CMeta system-variable view, so TurboUtils does
+not claim full conformance for either the mandatory SCXML Event Processor or
+the optional Basic HTTP Event Processor. The normative processor definitions
+are in the W3C Recommendation's
+[SCXML Event I/O Processor](https://www.w3.org/TR/scxml/#SCXMLEventProcessor)
+and
+[Basic HTTP Event I/O Processor](https://www.w3.org/TR/scxml/#BasicHTTPEventProcessor)
+sections.
+
 Invocation adapters use the same versioned reservation contract. Literal
 `invoke` declarations on `state` or `parallel` accept `id`, `type`, `src`, and
 boolean `autoforward`; an omitted ID is generated deterministically as
@@ -823,6 +849,15 @@ XML input, depth, nodes, attributes, states, events, transitions, and action
 references. State/event names plus NUL-terminated log, Event I/O, and
 invocation literals share the bounded `max_name_bytes` retained-string budget;
 a failed compile leaves the output program empty.
+
+The separate `cflow_scxml_w3c_conformance_test` target runs selected,
+documented transformations from the
+[W3C SCXML Implementation Report suite](https://www.w3.org/Voice/2013/scxml-irp/).
+Each fixture records its source, transformation, and exact assertion in
+`cflow-scxml/tests/w3c/README.md`. These cases are regression evidence for
+those named assertions only: the W3C suite is an implementation report, the
+local corpus is not yet complete for the supported profile, and its results
+must not be presented as W3C certification or full SCXML conformance.
 
 ## Bounded Actor lifecycle
 
