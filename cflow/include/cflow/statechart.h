@@ -15,6 +15,12 @@ extern "C" {
 #define CFLOW_STATECHART_MAX_ACTION_REFS 1048576u
 #endif
 
+#ifndef CFLOW_STATECHART_MAX_TARGET_REFS
+#define CFLOW_STATECHART_MAX_TARGET_REFS 1048576u
+#endif
+
+#define CFLOW_STATECHART_DEFINITION_ABI_V2 2u
+
 typedef uint32_t cflow_statechart_transition_id;
 typedef uint32_t cflow_statechart_guard_id;
 typedef uint32_t cflow_statechart_executable_id;
@@ -139,6 +145,26 @@ typedef struct cflow_statechart_definition {
     size_t transition_action_count;
 } cflow_statechart_definition;
 
+/** One document-ordered target owned by a transition in a v2 definition. */
+typedef struct cflow_statechart_transition_target {
+    cflow_statechart_transition_id transition;
+    cflow_machine_state_id target;
+    uint32_t order;
+} cflow_statechart_transition_target;
+
+/**
+ * Additive multi-target definition. `base` retains all v1 declarations.
+ * A transition with target rows must set its legacy `target` field to zero;
+ * transitions without target rows retain the v1 zero-or-one target contract.
+ */
+typedef struct cflow_statechart_definition_v2 {
+    uint32_t abi_version;
+    size_t struct_size;
+    cflow_statechart_definition base;
+    const cflow_statechart_transition_target *transition_targets;
+    size_t transition_target_count;
+} cflow_statechart_definition_v2;
+
 typedef struct cflow_statechart {
     void *impl;
 } cflow_statechart;
@@ -152,6 +178,10 @@ typedef struct cflow_statechart {
  */
 cflow_statechart_status cflow_statechart_build(
     cflow_statechart *out, const cflow_statechart_definition *definition);
+
+/** Build a Statechart with optional document-ordered multi-target rows. */
+cflow_statechart_status cflow_statechart_build_v2(
+    cflow_statechart *out, const cflow_statechart_definition_v2 *definition);
 
 /** Destroy a quiescent Statechart and clear its handle. */
 void cflow_statechart_destroy(cflow_statechart *statechart);
@@ -179,6 +209,13 @@ const cflow_statechart_executable *cflow_statechart_executable_at(
     const cflow_statechart *statechart, size_t index);
 const cflow_statechart_transition *cflow_statechart_transition_at(
     const cflow_statechart *statechart, size_t index);
+/** Number of normalized targets for one transition row index. */
+size_t cflow_statechart_transition_target_count_at(
+    const cflow_statechart *statechart, size_t transition_index);
+/** Target ID at one normalized document-order position, or zero if invalid. */
+cflow_machine_state_id cflow_statechart_transition_target_at(
+    const cflow_statechart *statechart, size_t transition_index,
+    size_t target_index);
 const cflow_statechart_state_action *cflow_statechart_state_action_at(
     const cflow_statechart *statechart, size_t index);
 const cflow_statechart_transition_action *

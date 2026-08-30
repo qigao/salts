@@ -679,4 +679,62 @@ suite("CFlow format-neutral Statechart IR") {
         check_equal(impl->transition_action_indices[1], (size_t)1u);
         cflow_statechart_destroy(&statechart);
     }
+
+    it("normalizes versioned multi-target rows without changing v1 rows") {
+        statechart_fixture fixture;
+        cflow_statechart statechart = {0};
+        cflow_statechart_transition_target targets[] = {
+            {11u, 3u, 1u},
+            {11u, 4u, 0u}
+        };
+        cflow_statechart_definition_v2 definition;
+
+        valid_fixture(&fixture);
+        fixture.transitions[1].target = 0u;
+        definition = (cflow_statechart_definition_v2){
+            .abi_version = CFLOW_STATECHART_DEFINITION_ABI_V2,
+            .struct_size = sizeof(definition),
+            .base = fixture.definition,
+            .transition_targets = targets,
+            .transition_target_count = 2u};
+
+        check_equal(cflow_statechart_build_v2(&statechart, &definition),
+                    CFLOW_STATECHART_OK);
+        check_equal(cflow_statechart_transition_at(&statechart, 1u)->target,
+                    (cflow_machine_state_id)4u);
+        check_equal(cflow_statechart_transition_target_count_at(
+                        &statechart, 1u),
+                    (size_t)2u);
+        check_equal(cflow_statechart_transition_target_at(
+                        &statechart, 1u, 0u),
+                    (cflow_machine_state_id)4u);
+        check_equal(cflow_statechart_transition_target_at(
+                        &statechart, 1u, 1u),
+                    (cflow_machine_state_id)3u);
+        cflow_statechart_destroy(&statechart);
+
+        targets[1].order = 1u;
+        check_equal(cflow_statechart_build_v2(&statechart, &definition),
+                    CFLOW_STATECHART_DUPLICATE_ORDER);
+        check_null(statechart.impl);
+
+        targets[1] = (cflow_statechart_transition_target){11u, 4u, 2u};
+        targets[0].target = 4u;
+        check_equal(cflow_statechart_build_v2(&statechart, &definition),
+                    CFLOW_STATECHART_DUPLICATE_ID);
+        check_null(statechart.impl);
+
+        targets[0] = (cflow_statechart_transition_target){11u, 3u, 1u};
+        targets[1] = (cflow_statechart_transition_target){11u, 4u, 0u};
+        fixture.transitions[1].target = 3u;
+        definition.base = fixture.definition;
+        check_equal(cflow_statechart_build_v2(&statechart, &definition),
+                    CFLOW_STATECHART_INVALID_CONTRACT);
+        check_null(statechart.impl);
+
+        definition.abi_version = 0u;
+        check_equal(cflow_statechart_build_v2(&statechart, &definition),
+                    CFLOW_STATECHART_INVALID_ARGUMENT);
+        check_null(statechart.impl);
+    }
 }

@@ -39,6 +39,9 @@ _Static_assert(CFLOW_STATECHART_MAX_ACTION_REFS <=
 _Static_assert(CFLOW_STATECHART_MAX_ACTION_REFS <=
                    SIZE_MAX / sizeof(cflow_statechart_transition_action),
                "configured transition action-ref limit overflows size_t bytes");
+_Static_assert(CFLOW_STATECHART_MAX_TARGET_REFS <=
+                   SIZE_MAX / sizeof(cflow_statechart_transition_target),
+               "configured transition target-ref limit overflows size_t bytes");
 
 static bool checked_bytes(size_t count, size_t width, size_t *out) {
     if (out == NULL || (width != 0u && count > SIZE_MAX / width)) return false;
@@ -77,6 +80,9 @@ static void statechart_impl_destroy(cflow_statechart_impl *impl) {
     free(impl->default_target_indices);
     free(impl->default_transition_indices);
     free(impl->transition_domains);
+    free(impl->transition_target_indices);
+    free(impl->transition_target_offsets);
+    free(impl->transition_target_rows);
     free(impl->transition_indices);
     free(impl->transition_offsets);
     free(impl->transitions);
@@ -90,6 +96,18 @@ static void statechart_impl_destroy(cflow_statechart_impl *impl) {
     free(impl->parents);
     free(impl->states);
     free(impl);
+}
+
+static int compare_transition_target(const void *left, const void *right) {
+    const cflow_statechart_transition_target *a =
+        (const cflow_statechart_transition_target *)left;
+    const cflow_statechart_transition_target *b =
+        (const cflow_statechart_transition_target *)right;
+    if (a->transition != b->transition)
+        return a->transition < b->transition ? -1 : 1;
+    if (a->order != b->order) return a->order < b->order ? -1 : 1;
+    if (a->target != b->target) return a->target < b->target ? -1 : 1;
+    return 0;
 }
 
 static int compare_index_ref(const void *left, const void *right) {
@@ -275,12 +293,37 @@ static bool is_descendant(
     return false;
 }
 
+static size_t transition_target_begin(
+    const cflow_statechart_impl *impl, size_t transition_index) {
+    return impl->transition_target_offsets[transition_index];
+}
+
+static size_t transition_target_end(
+    const cflow_statechart_impl *impl, size_t transition_index) {
+    return impl->transition_target_offsets[transition_index + 1u];
+}
+
+static bool all_transition_targets_descend_from(
+    const cflow_statechart_impl *impl, size_t transition_index,
+    size_t ancestor) {
+    size_t cursor;
+    for (cursor = transition_target_begin(impl, transition_index);
+         cursor < transition_target_end(impl, transition_index); ++cursor) {
+        const size_t target = impl->transition_target_indices[cursor];
+        if (target == ancestor || !is_descendant(impl, target, ancestor))
+            return false;
+    }
+    return true;
+}
+
 static size_t proper_least_common_compound_ancestor(
-    const cflow_statechart_impl *impl, size_t source, size_t target) {
+    const cflow_statechart_impl *impl, size_t source,
+    size_t transition_index) {
     size_t ancestor = impl->parents[source];
     while (ancestor != SIZE_MAX) {
         if (impl->states[ancestor].kind == CFLOW_STATECHART_COMPOUND &&
-            target != ancestor && is_descendant(impl, target, ancestor))
+            all_transition_targets_descend_from(
+                impl, transition_index, ancestor))
             return ancestor;
         ancestor = impl->parents[ancestor];
     }
@@ -669,32 +712,45 @@ static cflow_statechart_status validate_default_transitions(
             &impl->transitions[index];
         const size_t source = find_state_index(impl, transition->source);
         if (source != SIZE_MAX && pseudo_kind(impl->states[source].kind)) {
-            const size_t target = find_state_index(impl, transition->target);
             const size_t parent = impl->parents[source];
-            const bool initial_history_target =
-                target != SIZE_MAX && parent != SIZE_MAX &&
-                impl->states[source].kind == CFLOW_STATECHART_INITIAL &&
-                (impl->states[target].kind ==
-                     CFLOW_STATECHART_HISTORY_SHALLOW ||
-                 impl->states[target].kind ==
-                     CFLOW_STATECHART_HISTORY_DEEP) &&
-                impl->parents[target] == parent;
-            const bool real_descendant_target =
-                target != SIZE_MAX && parent != SIZE_MAX &&
-                !pseudo_kind(impl->states[target].kind) &&
-                target != parent && is_descendant(impl, target, parent);
+            const size_t begin = transition_target_begin(impl, index);
+            const size_t end = transition_target_end(impl, index);
+            size_t cursor;
             ++counts[source];
             if (transition->trigger != CFLOW_STATECHART_TRIGGER_EVENTLESS ||
                 transition->event != 0u || transition->completion != 0u ||
-                transition->guard != 0u || transition->target == 0u ||
+                transition->guard != 0u || begin == end ||
                 transition->kind != CFLOW_STATECHART_TRANSITION_EXTERNAL ||
-                (!real_descendant_target && !initial_history_target)) {
+                parent == SIZE_MAX) {
                 const cflow_statechart_status status =
                     impl->states[source].kind == CFLOW_STATECHART_INITIAL
                     ? CFLOW_STATECHART_INVALID_INITIAL
                     : CFLOW_STATECHART_INVALID_HISTORY;
                 free(counts);
                 return status;
+            }
+            for (cursor = begin; cursor < end; ++cursor) {
+                const size_t target = impl->transition_target_indices[cursor];
+                const bool initial_history_target =
+                    impl->states[source].kind == CFLOW_STATECHART_INITIAL &&
+                    end - begin == 1u &&
+                    (impl->states[target].kind ==
+                         CFLOW_STATECHART_HISTORY_SHALLOW ||
+                     impl->states[target].kind ==
+                         CFLOW_STATECHART_HISTORY_DEEP) &&
+                    impl->parents[target] == parent;
+                const bool real_descendant_target =
+                    !pseudo_kind(impl->states[target].kind) &&
+                    target != parent && is_descendant(impl, target, parent);
+                if (!real_descendant_target && !initial_history_target) {
+                    const cflow_statechart_status status =
+                        impl->states[source].kind ==
+                            CFLOW_STATECHART_INITIAL
+                        ? CFLOW_STATECHART_INVALID_INITIAL
+                        : CFLOW_STATECHART_INVALID_HISTORY;
+                    free(counts);
+                    return status;
+                }
             }
         }
     }
@@ -734,7 +790,7 @@ static cflow_statechart_status validate_transitions(
         const cflow_statechart_transition *transition =
             &impl->transitions[index];
         const size_t source = find_state_index(impl, transition->source);
-        size_t target = SIZE_MAX;
+        size_t cursor;
         cflow_statechart_status status;
         if (transition->id == 0u || transition->source == 0u) {
             free(keys);
@@ -749,12 +805,9 @@ static cflow_statechart_status validate_transitions(
             free(keys);
             return CFLOW_STATECHART_UNKNOWN_STATE;
         }
-        if (transition->target != 0u) {
-            target = find_state_index(impl, transition->target);
-            if (target == SIZE_MAX) {
-                free(keys);
-                return CFLOW_STATECHART_UNKNOWN_STATE;
-            }
+        for (cursor = transition_target_begin(impl, index);
+             cursor < transition_target_end(impl, index); ++cursor) {
+            const size_t target = impl->transition_target_indices[cursor];
             if (impl->states[target].kind == CFLOW_STATECHART_INITIAL) {
                 free(keys);
                 return CFLOW_STATECHART_INVALID_INITIAL;
@@ -929,6 +982,130 @@ static cflow_statechart_status allocate_index_refs(
         ? CFLOW_STATECHART_OK : CFLOW_STATECHART_ALLOCATION_FAILED;
 }
 
+static cflow_statechart_status normalize_transition_targets(
+    cflow_statechart_impl *impl) {
+    size_t *seen_targets = NULL;
+    size_t offset_count;
+    size_t raw_cursor = 0u;
+    size_t flattened_count = 0u;
+    size_t transition_index;
+    cflow_statechart_status status;
+
+    if (!checked_add(impl->transition_count, 1u, &offset_count))
+        return CFLOW_STATECHART_LIMIT_EXCEEDED;
+    status = allocate_indices(offset_count, &impl->transition_target_offsets);
+    if (status != CFLOW_STATECHART_OK) return status;
+    if (impl->transition_target_row_count > 1u)
+        qsort(impl->transition_target_rows,
+              impl->transition_target_row_count,
+              sizeof(*impl->transition_target_rows),
+              compare_transition_target);
+    if (impl->state_count != 0u) {
+        seen_targets = (size_t *)calloc(
+            impl->state_count, sizeof(*seen_targets));
+        if (seen_targets == NULL) return CFLOW_STATECHART_ALLOCATION_FAILED;
+    }
+
+    for (transition_index = 0u;
+         transition_index < impl->transition_count; ++transition_index) {
+        cflow_statechart_transition *transition =
+            &impl->transitions[transition_index];
+        const size_t raw_begin = raw_cursor;
+        uint32_t previous_order = 0u;
+        bool have_previous_order = false;
+
+        if (raw_cursor < impl->transition_target_row_count &&
+            impl->transition_target_rows[raw_cursor].transition <
+                transition->id) {
+            free(seen_targets);
+            return CFLOW_STATECHART_UNKNOWN_TRANSITION;
+        }
+        while (raw_cursor < impl->transition_target_row_count &&
+               impl->transition_target_rows[raw_cursor].transition ==
+                   transition->id) {
+            const cflow_statechart_transition_target *row =
+                &impl->transition_target_rows[raw_cursor];
+            const size_t target = find_state_index(impl, row->target);
+            if (row->transition == 0u || row->target == 0u) {
+                free(seen_targets);
+                return CFLOW_STATECHART_INVALID_ID;
+            }
+            if (have_previous_order && previous_order == row->order) {
+                free(seen_targets);
+                return CFLOW_STATECHART_DUPLICATE_ORDER;
+            }
+            if (target == SIZE_MAX) {
+                free(seen_targets);
+                return CFLOW_STATECHART_UNKNOWN_STATE;
+            }
+            if (seen_targets[target] == transition_index + 1u) {
+                free(seen_targets);
+                return CFLOW_STATECHART_DUPLICATE_ID;
+            }
+            seen_targets[target] = transition_index + 1u;
+            previous_order = row->order;
+            have_previous_order = true;
+            ++raw_cursor;
+        }
+        if (raw_cursor != raw_begin && transition->target != 0u) {
+            free(seen_targets);
+            return CFLOW_STATECHART_INVALID_CONTRACT;
+        }
+        if (raw_cursor != raw_begin) {
+            if (!checked_add(flattened_count, raw_cursor - raw_begin,
+                             &flattened_count)) {
+                free(seen_targets);
+                return CFLOW_STATECHART_LIMIT_EXCEEDED;
+            }
+        } else if (transition->target != 0u) {
+            if (!checked_add(flattened_count, 1u, &flattened_count)) {
+                free(seen_targets);
+                return CFLOW_STATECHART_LIMIT_EXCEEDED;
+            }
+        }
+    }
+    if (raw_cursor != impl->transition_target_row_count) {
+        free(seen_targets);
+        return CFLOW_STATECHART_UNKNOWN_TRANSITION;
+    }
+    free(seen_targets);
+    if (flattened_count > CFLOW_STATECHART_MAX_TARGET_REFS)
+        return CFLOW_STATECHART_LIMIT_EXCEEDED;
+    status = allocate_indices(flattened_count,
+                              &impl->transition_target_indices);
+    if (status != CFLOW_STATECHART_OK) return status;
+
+    raw_cursor = 0u;
+    flattened_count = 0u;
+    for (transition_index = 0u;
+         transition_index < impl->transition_count; ++transition_index) {
+        cflow_statechart_transition *transition =
+            &impl->transitions[transition_index];
+        const size_t raw_begin = raw_cursor;
+        impl->transition_target_offsets[transition_index] = flattened_count;
+        while (raw_cursor < impl->transition_target_row_count &&
+               impl->transition_target_rows[raw_cursor].transition ==
+                   transition->id) {
+            impl->transition_target_indices[flattened_count++] =
+                find_state_index(
+                    impl, impl->transition_target_rows[raw_cursor].target);
+            ++raw_cursor;
+        }
+        if (raw_cursor != raw_begin) {
+            transition->target = impl->states[
+                impl->transition_target_indices[
+                    impl->transition_target_offsets[transition_index]]].id;
+        } else if (transition->target != 0u) {
+            impl->transition_target_indices[flattened_count++] =
+                find_state_index(impl, transition->target);
+        }
+    }
+    impl->transition_target_offsets[impl->transition_count] =
+        flattened_count;
+    impl->transition_target_count = flattened_count;
+    return CFLOW_STATECHART_OK;
+}
+
 static cflow_statechart_status materialize_spans(
     statechart_index_ref *refs, size_t ref_count, size_t bucket_count,
     size_t **out_offsets, size_t **out_indices) {
@@ -1030,17 +1207,17 @@ static cflow_statechart_status normalize_transitions(
         const cflow_statechart_transition *transition =
             &impl->transitions[index];
         const size_t source = find_state_index(impl, transition->source);
-        if (transition->target == 0u) {
+        if (transition_target_begin(impl, index) ==
+            transition_target_end(impl, index)) {
             impl->transition_domains[index] = SIZE_MAX;
         } else {
-            const size_t target = find_state_index(impl, transition->target);
             impl->transition_domains[index] =
                 transition->kind == CFLOW_STATECHART_TRANSITION_INTERNAL &&
                 impl->states[source].kind == CFLOW_STATECHART_COMPOUND &&
-                target != source && is_descendant(impl, target, source)
+                all_transition_targets_descend_from(impl, index, source)
                 ? source
                 : proper_least_common_compound_ancestor(
-                      impl, source, target);
+                      impl, source, index);
         }
     }
     return CFLOW_STATECHART_OK;
@@ -1064,8 +1241,9 @@ static cflow_statechart_status normalize_defaults(
             impl, impl->transitions[index].source);
         if (!pseudo_kind(impl->states[source].kind)) continue;
         impl->default_transition_indices[source] = index;
-        impl->default_target_indices[source] = find_state_index(
-            impl, impl->transitions[index].target);
+        impl->default_target_indices[source] =
+            impl->transition_target_indices[
+                transition_target_begin(impl, index)];
     }
     return CFLOW_STATECHART_OK;
 }
@@ -1150,6 +1328,8 @@ static cflow_statechart_status validate_statechart(
     if (status != CFLOW_STATECHART_OK) return status;
     status = validate_child_kinds(impl);
     if (status != CFLOW_STATECHART_OK) return status;
+    status = normalize_transition_targets(impl);
+    if (status != CFLOW_STATECHART_OK) return status;
     status = validate_events(impl);
     if (status != CFLOW_STATECHART_OK) return status;
     status = validate_guards(impl);
@@ -1195,8 +1375,10 @@ static bool definition_within_limits(
         action_ref_count <= CFLOW_STATECHART_MAX_ACTION_REFS;
 }
 
-cflow_statechart_status cflow_statechart_build(
-    cflow_statechart *out, const cflow_statechart_definition *definition) {
+static cflow_statechart_status statechart_build_common(
+    cflow_statechart *out, const cflow_statechart_definition *definition,
+    const cflow_statechart_transition_target *transition_targets,
+    size_t transition_target_count) {
     cflow_statechart_impl *impl;
     cflow_statechart_status status;
     if (out == NULL || definition == NULL || out->impl != NULL)
@@ -1217,6 +1399,7 @@ cflow_statechart_status cflow_statechart_build(
     impl->guard_count = definition->guard_count;
     impl->executable_count = definition->executable_count;
     impl->transition_count = definition->transition_count;
+    impl->transition_target_row_count = transition_target_count;
     impl->state_action_count = definition->state_action_count;
     impl->transition_action_count = definition->transition_action_count;
     impl->states = (cflow_statechart_state *)copy_rows(
@@ -1234,6 +1417,10 @@ cflow_statechart_status cflow_statechart_build(
     impl->transitions = (cflow_statechart_transition *)copy_rows(
         definition->transitions, definition->transition_count,
         sizeof(*definition->transitions));
+    impl->transition_target_rows =
+        (cflow_statechart_transition_target *)copy_rows(
+            transition_targets, transition_target_count,
+            sizeof(*transition_targets));
     impl->state_actions = (cflow_statechart_state_action *)copy_rows(
         definition->state_actions, definition->state_action_count,
         sizeof(*definition->state_actions));
@@ -1247,6 +1434,8 @@ cflow_statechart_status cflow_statechart_build(
         (impl->guard_count != 0u && impl->guards == NULL) ||
         (impl->executable_count != 0u && impl->executables == NULL) ||
         (impl->transition_count != 0u && impl->transitions == NULL) ||
+        (impl->transition_target_row_count != 0u &&
+         impl->transition_target_rows == NULL) ||
         (impl->state_action_count != 0u && impl->state_actions == NULL) ||
         (impl->transition_action_count != 0u &&
          impl->transition_actions == NULL)) {
@@ -1265,6 +1454,26 @@ cflow_statechart_status cflow_statechart_build(
     }
     out->impl = impl;
     return CFLOW_STATECHART_OK;
+}
+
+cflow_statechart_status cflow_statechart_build(
+    cflow_statechart *out, const cflow_statechart_definition *definition) {
+    return statechart_build_common(out, definition, NULL, 0u);
+}
+
+cflow_statechart_status cflow_statechart_build_v2(
+    cflow_statechart *out, const cflow_statechart_definition_v2 *definition) {
+    if (definition == NULL ||
+        definition->abi_version != CFLOW_STATECHART_DEFINITION_ABI_V2 ||
+        definition->struct_size < sizeof(*definition) ||
+        definition->transition_target_count >
+            CFLOW_STATECHART_MAX_TARGET_REFS ||
+        (definition->transition_target_count != 0u &&
+         definition->transition_targets == NULL))
+        return CFLOW_STATECHART_INVALID_ARGUMENT;
+    return statechart_build_common(
+        out, &definition->base, definition->transition_targets,
+        definition->transition_target_count);
 }
 
 void cflow_statechart_destroy(cflow_statechart *statechart) {
@@ -1329,6 +1538,29 @@ CFLOW_STATECHART_ROW_QUERY(
 CFLOW_STATECHART_ROW_QUERY(
     cflow_statechart_transition, cflow_statechart_transition_at,
     transitions, transition_count)
+
+size_t cflow_statechart_transition_target_count_at(
+    const cflow_statechart *statechart, size_t transition_index) {
+    const cflow_statechart_impl *impl = statechart_impl(statechart);
+    return impl != NULL && transition_index < impl->transition_count
+        ? transition_target_end(impl, transition_index) -
+              transition_target_begin(impl, transition_index)
+        : 0u;
+}
+
+cflow_machine_state_id cflow_statechart_transition_target_at(
+    const cflow_statechart *statechart, size_t transition_index,
+    size_t target_index) {
+    const cflow_statechart_impl *impl = statechart_impl(statechart);
+    size_t begin;
+    if (impl == NULL || transition_index >= impl->transition_count)
+        return 0u;
+    begin = transition_target_begin(impl, transition_index);
+    if (target_index >= transition_target_end(impl, transition_index) - begin)
+        return 0u;
+    return impl->states[impl->transition_target_indices[begin + target_index]].id;
+}
+
 CFLOW_STATECHART_ROW_QUERY(
     cflow_statechart_state_action, cflow_statechart_state_action_at,
     state_actions, state_action_count)

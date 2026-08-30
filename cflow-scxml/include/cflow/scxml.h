@@ -117,6 +117,25 @@ typedef enum cflow_scxml_adapter_error_kind {
     CFLOW_SCXML_ADAPTER_ERROR_KIND_COMMUNICATION
 } cflow_scxml_adapter_error_kind;
 
+#ifndef CFLOW_SCXML_EVENT_METADATA_CAPACITY
+#define CFLOW_SCXML_EVENT_METADATA_CAPACITY 256u
+#endif
+
+/** Borrowed external Event metadata copied by v2 session admission. */
+typedef struct cflow_scxml_event_metadata {
+    const char *send_id;
+    size_t send_id_size;
+    const char *origin;
+    size_t origin_size;
+    const char *origin_type;
+    size_t origin_type_size;
+    const char *invoke_id;
+    size_t invoke_id_size;
+    /** UTF-8 scalar data exposed as `_event.data`. */
+    const char *data;
+    size_t data_size;
+} cflow_scxml_event_metadata;
+
 /** Borrowed literal request fields valid only during one prepare callback. */
 typedef struct cflow_scxml_send_request {
     const char *event;
@@ -398,6 +417,15 @@ cflow_statechart_runtime_status cflow_scxml_session_init_cmeta(
 
 cflow_mailbox_status cflow_scxml_session_try_send(
     cflow_scxml_session *session, const cflow_event_view *event);
+
+/**
+ * Copy one external Event and its bounded metadata atomically. Metadata rows
+ * are capacity-coupled to the configured external mailbox and released before
+ * transition selection. Oversized or partially NULL fields fail admission.
+ */
+cflow_mailbox_status cflow_scxml_session_try_send_v2(
+    cflow_scxml_session *session, const cflow_event_view *event,
+    const cflow_scxml_event_metadata *metadata);
 /**
  * Copy one returned invocation Event into the external FIFO with its live
  * session token. Admission validates the token once; external preprocessing

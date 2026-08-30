@@ -9,6 +9,9 @@
 #include <string.h>
 
 #define W3C_FIXTURE_PATH_CAPACITY 512u
+#define W3C_MANIFEST_ROW_CAPACITY 64u
+#define W3C_MANIFEST_BYTE_CAPACITY 65536u
+#define W3C_MANIFEST_COLUMN_COUNT 7u
 
 enum {
     W3C_EXTERNAL_EVENT_CAPACITY = 2,
@@ -29,6 +32,118 @@ typedef struct w3c_run_result {
 typedef struct w3c_adapter_probe {
     size_t prepare_send_calls;
 } w3c_adapter_probe;
+
+typedef struct w3c_manifest_row {
+    char *columns[W3C_MANIFEST_COLUMN_COUNT];
+} w3c_manifest_row;
+
+static bool split_manifest_row(char *line, w3c_manifest_row *out_row) {
+    size_t column = 0u;
+    char *cursor;
+    if (line == NULL || out_row == NULL || line[0] == '\0') return false;
+    memset(out_row, 0, sizeof(*out_row));
+    out_row->columns[column++] = line;
+    for (cursor = line; *cursor != '\0'; ++cursor) {
+        if (*cursor != '\t') continue;
+        if (column >= W3C_MANIFEST_COLUMN_COUNT) return false;
+        *cursor = '\0';
+        out_row->columns[column++] = cursor + 1;
+    }
+    if (column != W3C_MANIFEST_COLUMN_COUNT) return false;
+    for (column = 0u; column < W3C_MANIFEST_COLUMN_COUNT; ++column) {
+        if (out_row->columns[column][0] == '\0') return false;
+    }
+    return true;
+}
+
+static bool manifest_value_is(const char *value, const char *expected) {
+    return value != NULL && expected != NULL && strcmp(value, expected) == 0;
+}
+
+static bool validate_w3c_manifest(size_t *out_rows) {
+    static const char header[] =
+        "id\tfixture\tapplicability\tstatus\tfeature\tupstream\trationale";
+    char path[W3C_FIXTURE_PATH_CAPACITY];
+    char expected_fixture[64];
+    char *source = NULL;
+    char *cursor;
+    size_t source_size = 0u;
+    size_t row_count = 0u;
+    w3c_manifest_row rows[W3C_MANIFEST_ROW_CAPACITY];
+    bool valid = false;
+    int written;
+    if (out_rows == NULL) return false;
+    *out_rows = 0u;
+    written = snprintf(path, sizeof(path), "%s/manifest.tsv",
+                       CFLOW_SCXML_W3C_FIXTURE_DIR);
+    if (written < 0 || (size_t)written >= sizeof(path)) return false;
+    source = tt_read_file(path, &source_size);
+    if (source == NULL || source_size == 0u ||
+        source_size > W3C_MANIFEST_BYTE_CAPACITY)
+        goto cleanup;
+    cursor = source;
+    {
+        char *newline = strchr(cursor, '\n');
+        if (newline == NULL) goto cleanup;
+        *newline = '\0';
+        if (newline != cursor && newline[-1] == '\r') newline[-1] = '\0';
+        if (strcmp(cursor, header) != 0) goto cleanup;
+        cursor = newline + 1;
+    }
+    while (*cursor != '\0') {
+        char *newline = strchr(cursor, '\n');
+        char *line_end = newline != NULL ? newline : cursor + strlen(cursor);
+        w3c_manifest_row *row;
+        size_t previous;
+        char *fixture_source = NULL;
+        size_t fixture_size = 0u;
+        if (line_end != cursor && line_end[-1] == '\r') line_end[-1] = '\0';
+        if (newline != NULL) *newline = '\0';
+        if (cursor[0] == '\0' || row_count == W3C_MANIFEST_ROW_CAPACITY)
+            goto cleanup;
+        row = &rows[row_count];
+        if (!split_manifest_row(cursor, row)) goto cleanup;
+        if ((!manifest_value_is(row->columns[2], "MANDATORY") &&
+             !manifest_value_is(row->columns[2], "OPTIONAL")) ||
+            (!manifest_value_is(row->columns[3], "PASS") &&
+             !manifest_value_is(row->columns[3], "UNSUPPORTED") &&
+             !manifest_value_is(row->columns[3], "N/A")) ||
+            strncmp(row->columns[5], "https://www.w3.org/",
+                    sizeof("https://www.w3.org/") - 1u) != 0)
+            goto cleanup;
+        for (previous = 0u; previous < row_count; ++previous) {
+            if (strcmp(rows[previous].columns[0], row->columns[0]) == 0 ||
+                strcmp(rows[previous].columns[1], row->columns[1]) == 0)
+                goto cleanup;
+        }
+        written = snprintf(expected_fixture, sizeof(expected_fixture),
+                           "test%s.scxml", row->columns[0]);
+        if (written < 0 || (size_t)written >= sizeof(expected_fixture) ||
+            strcmp(expected_fixture, row->columns[1]) != 0)
+            goto cleanup;
+        if (manifest_value_is(row->columns[3], "PASS")) {
+            written = snprintf(path, sizeof(path), "%s/%s",
+                               CFLOW_SCXML_W3C_FIXTURE_DIR,
+                               row->columns[1]);
+            if (written < 0 || (size_t)written >= sizeof(path)) goto cleanup;
+            fixture_source = tt_read_file(path, &fixture_size);
+            if (fixture_source == NULL || fixture_size == 0u) {
+                free(fixture_source);
+                goto cleanup;
+            }
+            free(fixture_source);
+        }
+        ++row_count;
+        if (newline == NULL) break;
+        cursor = newline + 1;
+    }
+    *out_rows = row_count;
+    valid = row_count != 0u;
+
+cleanup:
+    free(source);
+    return valid;
+}
 
 static cflow_scxml_adapter_status w3c_reject_send(
     void *user, const cflow_scxml_send_request *request,
@@ -264,6 +379,12 @@ static void check_w3c_adapter_error_fixture(const char *fixture_name) {
 }
 
 suite("SCXML W3C-derived conformance regression corpus") {
+    it("validates the strict selected-corpus manifest") {
+        size_t rows = 0u;
+        check_true(validate_w3c_manifest(&rows));
+        check_equal(rows, (size_t)33u);
+    }
+
     it("test 144 preserves raised internal event order") {
         check_w3c_fixture("test144.scxml");
     }
@@ -310,6 +431,10 @@ suite("SCXML W3C-derived conformance regression corpus") {
 
     it("test 387 enters the declared default history configuration") {
         check_w3c_fixture("test387.scxml");
+    }
+
+    it("test 399 applies unions prefixes boundaries and wildcards") {
+        check_w3c_fixture("test399.scxml");
     }
 
     it("test 579 orders initial and default history content") {
@@ -386,5 +511,9 @@ suite("SCXML W3C-derived conformance regression corpus") {
 
     it("test 533 treats an internal transition from parallel as external") {
         check_w3c_fixture("test533.scxml");
+    }
+
+    it("test 576 enters both non-default root initial targets") {
+        check_w3c_fixture("test576.scxml");
     }
 }

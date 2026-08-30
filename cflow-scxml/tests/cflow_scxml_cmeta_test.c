@@ -158,6 +158,112 @@ static cflow_scxml_status compile_cmeta(
         program, source, strlen(source), NULL, &options, diagnostic);
 }
 
+typedef struct dynamic_adapter_probe {
+    size_t sends;
+    size_t cancels;
+    size_t starts;
+    size_t invoke_cancels;
+    char event[32];
+    char target[32];
+    char type[32];
+    char source[32];
+    char send_id[32];
+    uint64_t delay_ms;
+} dynamic_adapter_probe;
+
+static void dynamic_ticket_done(void *user) {
+    (void)user;
+}
+
+static bool copy_probe_text(char *destination, size_t capacity,
+                            const char *source, size_t size) {
+    if (destination == NULL || capacity == 0u || size >= capacity ||
+        (size != 0u && source == NULL))
+        return false;
+    if (size != 0u) memcpy(destination, source, size);
+    destination[size] = '\0';
+    return true;
+}
+
+static cflow_scxml_adapter_status dynamic_prepare_send(
+    void *user, const cflow_scxml_send_request *request,
+    cflow_statechart_effect_ticket *out_ticket, const char **out_error) {
+    dynamic_adapter_probe *probe = (dynamic_adapter_probe *)user;
+    if (probe == NULL || request == NULL || out_ticket == NULL ||
+        out_error == NULL ||
+        !copy_probe_text(probe->event, sizeof(probe->event),
+                         request->event, request->event_size) ||
+        !copy_probe_text(probe->target, sizeof(probe->target),
+                         request->target, request->target_size) ||
+        !copy_probe_text(probe->type, sizeof(probe->type),
+                         request->type, request->type_size) ||
+        !copy_probe_text(probe->send_id, sizeof(probe->send_id),
+                         request->id, request->id_size))
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    ++probe->sends;
+    probe->delay_ms = request->delay_ms;
+    *out_ticket = (cflow_statechart_effect_ticket){
+        dynamic_ticket_done, dynamic_ticket_done, probe};
+    *out_error = NULL;
+    return CFLOW_SCXML_ADAPTER_ACCEPTED;
+}
+
+static cflow_scxml_adapter_status dynamic_prepare_cancel(
+    void *user, const cflow_scxml_cancel_request *request,
+    cflow_statechart_effect_ticket *out_ticket, const char **out_error) {
+    dynamic_adapter_probe *probe = (dynamic_adapter_probe *)user;
+    if (probe == NULL || request == NULL || out_ticket == NULL ||
+        out_error == NULL ||
+        !copy_probe_text(probe->send_id, sizeof(probe->send_id),
+                         request->send_id, request->send_id_size))
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    ++probe->cancels;
+    *out_ticket = (cflow_statechart_effect_ticket){
+        dynamic_ticket_done, dynamic_ticket_done, probe};
+    *out_error = NULL;
+    return CFLOW_SCXML_ADAPTER_ACCEPTED;
+}
+
+static cflow_scxml_adapter_status dynamic_prepare_start(
+    void *user, const cflow_scxml_invoke_start_request *request,
+    cflow_statechart_effect_ticket *out_ticket, const char **out_error) {
+    dynamic_adapter_probe *probe = (dynamic_adapter_probe *)user;
+    if (probe == NULL || request == NULL || out_ticket == NULL ||
+        out_error == NULL ||
+        !copy_probe_text(probe->type, sizeof(probe->type),
+                         request->type, request->type_size) ||
+        !copy_probe_text(probe->source, sizeof(probe->source),
+                         request->src, request->src_size))
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    ++probe->starts;
+    *out_ticket = (cflow_statechart_effect_ticket){
+        dynamic_ticket_done, dynamic_ticket_done, probe};
+    *out_error = NULL;
+    return CFLOW_SCXML_ADAPTER_ACCEPTED;
+}
+
+static cflow_scxml_adapter_status dynamic_prepare_invoke_cancel(
+    void *user, const cflow_scxml_invoke_cancel_request *request,
+    cflow_statechart_effect_ticket *out_ticket, const char **out_error) {
+    dynamic_adapter_probe *probe = (dynamic_adapter_probe *)user;
+    if (probe == NULL || request == NULL || out_ticket == NULL ||
+        out_error == NULL)
+        return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
+    ++probe->invoke_cancels;
+    *out_ticket = (cflow_statechart_effect_ticket){
+        dynamic_ticket_done, dynamic_ticket_done, probe};
+    *out_error = NULL;
+    return CFLOW_SCXML_ADAPTER_ACCEPTED;
+}
+
+static void dynamic_adapter_close(void *user) {
+    (void)user;
+}
+
+static bool dynamic_adapter_quiescent(void *user) {
+    return user != NULL;
+}
+
 static bool run_guarded_transition(
     const cflow_scxml_program *program, scxml_public_data initial,
     bool mutate_after_init) {
@@ -207,7 +313,8 @@ static cflow_statechart_instance_stats run_to_idle(
         .external_event_capacity = 2u,
         .internal_event_capacity = 4u,
         .completion_capacity = 2u,
-        .microstep_limit = 32u
+        .microstep_limit = 32u,
+        .effect_capacity = 2u
     };
     const cflow_scxml_cmeta_session_options_v1 data = {
         .abi_version = CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1,
@@ -595,6 +702,198 @@ spec("CFlow SCXML public CMeta data model") {
         cflow_scxml_program_destroy(&program);
     }
 
+    it("binds one owned external event envelope through eventless stabilization") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='armed'>"
+            "<transition event='go' cond='_event.name == &quot;go&quot; "
+            "&amp;&amp; _event.type == &quot;external&quot; "
+            "&amp;&amp; _event.sendid == &quot;send-7&quot; "
+            "&amp;&amp; _event.origin == &quot;https://origin.example&quot; "
+            "&amp;&amp; _event.origintype == &quot;scxml&quot; "
+            "&amp;&amp; _event.invokeid == &quot;worker&quot; "
+            "&amp;&amp; _event.data == &quot;payload&quot; "
+            "&amp;&amp; _ioprocessors.scxml.location != &quot;&quot;' "
+            "target='matched'/></state><state id='matched'>"
+            "<transition cond='_event.name == &quot;go&quot; "
+            "&amp;&amp; _event.data == &quot;payload&quot;' target='done'/>"
+            "</state><final id='done'/></scxml>";
+        const cflow_scxml_event_metadata metadata = {
+            .send_id = "send-7", .send_id_size = sizeof("send-7") - 1u,
+            .origin = "https://origin.example",
+            .origin_size = sizeof("https://origin.example") - 1u,
+            .origin_type = "scxml",
+            .origin_type_size = sizeof("scxml") - 1u,
+            .invoke_id = "worker",
+            .invoke_id_size = sizeof("worker") - 1u,
+            .data = "payload", .data_size = sizeof("payload") - 1u};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_event_view go = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const scxml_public_data initial = {
+            true, 0, SCXML_PUBLIC_SOURCE_GOOD};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 2u,
+            .internal_event_capacity = 2u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            .abi_version = CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1,
+            .struct_size = sizeof(cflow_scxml_cmeta_session_options_v1),
+            .initial_state = &initial};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_scxml_program_event(&program, "go", 2u, &go));
+        check_equal(cflow_scxml_session_try_send_v2(
+                        &session, &go, &metadata),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("evaluates dynamic internal send attributes and scalar content once") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='armed'><onentry>"
+            "<send eventexpr='&quot;advance&quot;' "
+            "targetexpr='&quot;#_internal&quot;'>"
+            "<content expr='&quot;payload&quot;'/></send></onentry>"
+            "<transition event='advance' "
+            "cond='_event.type == &quot;internal&quot; &amp;&amp; "
+            "_event.data == &quot;payload&quot;' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_statechart_instance_stats stats;
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        stats = run_to_idle(
+            &program,
+            (scxml_public_data){true, 0, SCXML_PUBLIC_SOURCE_GOOD});
+        check_true(stats.done);
+        check_false(stats.errored);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("materializes dynamic send cancel and invoke requests at execution") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='armed'><onentry>"
+            "<send eventexpr='&quot;out&quot;' "
+            "targetexpr='&quot;peer&quot;' typeexpr='&quot;urn:test&quot;' "
+            "id='job' delayexpr='5'/><cancel sendidexpr='&quot;job&quot;'/>"
+            "</onentry><invoke id='worker' "
+            "typeexpr='&quot;worker.type&quot;' "
+            "srcexpr='&quot;worker://one&quot;'/><transition event='out'/>"
+            "<transition event='finish' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        dynamic_adapter_probe probe = {0};
+        const cflow_scxml_event_io_adapter_v1 event_io = {
+            .abi_version = CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V1,
+            .struct_size = sizeof(cflow_scxml_event_io_adapter_v1),
+            .capabilities = CFLOW_SCXML_EVENT_IO_CAP_SEND |
+                CFLOW_SCXML_EVENT_IO_CAP_DELAYED_SEND |
+                CFLOW_SCXML_EVENT_IO_CAP_CANCEL,
+            .prepare_send = dynamic_prepare_send,
+            .prepare_cancel = dynamic_prepare_cancel,
+            .close = dynamic_adapter_close,
+            .is_quiescent = dynamic_adapter_quiescent};
+        const cflow_scxml_invoke_adapter_v1 invoke = {
+            .abi_version = CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1,
+            .struct_size = sizeof(cflow_scxml_invoke_adapter_v1),
+            .capabilities = CFLOW_SCXML_INVOKE_CAP_START |
+                CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            .prepare_start = dynamic_prepare_start,
+            .prepare_cancel = dynamic_prepare_invoke_cancel,
+            .close = dynamic_adapter_close,
+            .is_quiescent = dynamic_adapter_quiescent};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_event_view finish = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const scxml_public_data initial = {
+            true, 0, SCXML_PUBLIC_SOURCE_GOOD};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 2u,
+            .internal_event_capacity = 4u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u,
+            .effect_capacity = 4u,
+            .adapter_internal_event_capacity = 2u,
+            .delayed_send_capacity = 1u,
+            .event_io = &event_io,
+            .adapter_user = &probe,
+            .invocation_capacity = 1u,
+            .invoke = &invoke,
+            .invoke_user = &probe};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            .abi_version = CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1,
+            .struct_size = sizeof(cflow_scxml_cmeta_session_options_v1),
+            .initial_state = &initial};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.sends, (size_t)1u);
+        check_equal(probe.cancels, (size_t)1u);
+        check_equal(probe.starts, (size_t)1u);
+        check_equal(probe.event, "out", sizeof("out"));
+        check_equal(probe.target, "peer", sizeof("peer"));
+        check_equal(probe.type, "worker.type", sizeof("worker.type"));
+        check_equal(probe.source, "worker://one", sizeof("worker://one"));
+        check_equal(probe.send_id, "job", sizeof("job"));
+        check_equal(probe.delay_ms, UINT64_C(5));
+        check_true(cflow_scxml_program_event(&program, "finish", 6u,
+                                             &finish));
+        check_equal(cflow_scxml_session_try_send(&session, &finish),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.done);
+        check_equal(probe.invoke_cancels, (size_t)1u);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("rejects scalar content on a literal external send") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='armed'><onentry>"
+            "<send event='out' target='peer'>"
+            "<content expr='count'/></send></onentry></state></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_UNSUPPORTED_FEATURE);
+        check_null(program.impl);
+    }
+
     it("keeps session identity unavailable in program-level bindings") {
         static const char name_source[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
@@ -655,6 +954,120 @@ spec("CFlow SCXML public CMeta data model") {
         check_true(stats.done);
         check_false(stats.errored);
         cflow_scxml_program_destroy(&program);
+    }
+
+    it("applies early data initializers to a private session copy") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta' binding='early' initial='armed'>"
+            "<datamodel><data id='enabled' expr='true'/>"
+            "<data id='count' expr='2'/></datamodel>"
+            "<state id='armed'><transition cond='enabled &amp;&amp; count == 2' "
+            "target='done'/></state><final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_statechart_instance_stats stats = {0};
+        scxml_public_data initial = {false, 9, SCXML_PUBLIC_SOURCE_GOOD};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 2u,
+            .internal_event_capacity = 2u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            .abi_version = CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1,
+            .struct_size = sizeof(data),
+            .initial_state = &initial};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(
+                        &session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.done);
+        check_false(initial.enabled);
+        check_equal(initial.count, 9);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("rejects late binding and external data sources explicitly") {
+        static const char late[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta' binding='late'><state id='only'/></scxml>";
+        static const char external[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><datamodel>"
+            "<data id='count' src='values.json'/></datamodel>"
+            "<state id='only'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+
+        check_equal(compile_cmeta(late, &program, &diagnostic),
+                    CFLOW_SCXML_UNSUPPORTED_FEATURE);
+        check_null(program.impl);
+        check_equal(compile_cmeta(external, &program, &diagnostic),
+                    CFLOW_SCXML_UNSUPPORTED_FEATURE);
+        check_null(program.impl);
+    }
+
+    it("binds scalar donedata to the parent completion event") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta' initial='parent'>"
+            "<state id='parent' initial='work'>"
+            "<state id='work'><transition target='childDone'/></state>"
+            "<final id='childDone'><donedata>"
+            "<content expr='count'/></donedata></final>"
+            "<transition event='done.state.*' "
+            "cond='_event.data == &quot;7&quot; &amp;&amp; "
+            "_event.type == &quot;internal&quot;' target='success'/></state>"
+            "<final id='success'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_statechart_instance_stats stats;
+        uint64_t matching_microsteps;
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        stats = run_to_idle(
+            &program,
+            (scxml_public_data){true, 7, SCXML_PUBLIC_SOURCE_GOOD});
+        check_true(stats.done);
+        matching_microsteps = stats.microsteps;
+        stats = run_to_idle(
+            &program,
+            (scxml_public_data){true, 6, SCXML_PUBLIC_SOURCE_GOOD});
+        check_greater(matching_microsteps, stats.microsteps);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("rejects donedata outside final and without scalar content") {
+        static const char wrong_parent[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='only'><donedata>"
+            "<content expr='count'/></donedata></state></scxml>";
+        static const char missing_expression[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><final id='done'><donedata>"
+            "<content/></donedata></final></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+
+        check_equal(compile_cmeta(wrong_parent, &program, &diagnostic),
+                    CFLOW_SCXML_INVALID_STRUCTURE);
+        check_null(program.impl);
+        check_equal(compile_cmeta(missing_expression, &program, &diagnostic),
+                    CFLOW_SCXML_UNSUPPORTED_FEATURE);
+        check_null(program.impl);
     }
 
     it("rejects invalid and read-only assignment locations during admission") {

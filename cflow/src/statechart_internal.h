@@ -25,11 +25,18 @@ typedef struct cflow_statechart_impl {
     size_t executable_count;
     cflow_statechart_transition *transitions;
     size_t transition_count;
+    cflow_statechart_transition_target *transition_target_rows;
+    size_t transition_target_row_count;
+    /* transition dense index -> document-ordered dense target span */
+    size_t *transition_target_offsets;
+    size_t *transition_target_indices;
+    size_t transition_target_count;
     /* source state dense index -> normalized transition span */
     size_t *transition_offsets;
     size_t *transition_indices;
     size_t *transition_domains;
     size_t *default_transition_indices;
+    /* First normalized default target retained for v1/internal diagnostics. */
     size_t *default_target_indices;
     cflow_statechart_state_action *state_actions;
     size_t state_action_count;

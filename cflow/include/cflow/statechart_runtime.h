@@ -126,6 +126,14 @@ typedef struct cflow_statechart_executable_context {
     /** Valid only until the contextual executable returns. */
     cflow_statechart_is_active_fn is_active;
     void *configuration_user;
+    /**
+     * Stage one internal Event with an opaque source tag. The Event and tag
+     * become visible together only if the owning microstep commits. The
+     * callback and all arguments are call-scoped.
+     */
+    bool (*raise_internal_tagged)(
+        void *user, const cflow_event_view *event, uint64_t source_token,
+        const char **out_error);
 } cflow_statechart_executable_context;
 
 /**
@@ -139,6 +147,7 @@ typedef bool (*cflow_statechart_contextual_executable_fn)(
     const char **out_error);
 
 #define CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V1 1u
+#define CFLOW_STATECHART_RUNTIME_HOOKS_ABI_V2 2u
 
 /** Borrowed published state and configuration access for one runtime hook. */
 typedef struct cflow_statechart_runtime_hook_context {
@@ -170,6 +179,27 @@ typedef cflow_statechart_external_preprocess_result
         const cflow_event_view *event, uint64_t source_token,
         const char **out_error);
 
+typedef enum cflow_statechart_observed_event_kind {
+    CFLOW_STATECHART_OBSERVED_EXTERNAL = 1,
+    CFLOW_STATECHART_OBSERVED_INTERNAL,
+    CFLOW_STATECHART_OBSERVED_COMPLETION
+} cflow_statechart_observed_event_kind;
+
+/** Call-scoped event observation delivered immediately before selection. */
+typedef struct cflow_statechart_observed_event {
+    cflow_statechart_observed_event_kind kind;
+    /** Non-NULL for external/internal Events. */
+    const cflow_event_view *event;
+    /** Nonzero only for a completion observation. */
+    cflow_machine_state_id completion;
+    /** Source tag admitted with an external or tagged internal Event. */
+    uint64_t source_token;
+} cflow_statechart_observed_event;
+
+typedef bool (*cflow_statechart_event_hook_fn)(
+    void *user, const cflow_statechart_runtime_hook_context *context,
+    const cflow_statechart_observed_event *event, const char **out_error);
+
 /**
  * Optional format-neutral runtime boundaries copied during initialization.
  * Callbacks run on the SerialExecutor without the instance mutex held. They
@@ -182,6 +212,8 @@ typedef struct cflow_statechart_runtime_hooks {
     cflow_statechart_stable_hook_fn on_stable;
     /** Runs after external dequeue and before transition selection. */
     cflow_statechart_external_preprocess_hook_fn preprocess_external;
+    /** v2: runs before selecting one external, internal, or completion Event. */
+    cflow_statechart_event_hook_fn on_event;
 } cflow_statechart_runtime_hooks;
 
 typedef struct cflow_statechart_guard_binding {

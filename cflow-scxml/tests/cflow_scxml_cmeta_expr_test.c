@@ -491,7 +491,14 @@ spec("CFlow SCXML private CMeta expressions") {
 
   it("resolves only the bounded current SCXML event name") {
     const cflow_scxml_cmeta_expr_system_values system_values = {
-        .event_name = {"go", 2u}
+        .event_name = {"go", 2u},
+        .event_type = {"external", 8u},
+        .event_send_id = {"s1", 2u},
+        .event_origin = {"peer", 4u},
+        .event_origin_type = {"scxml", 5u},
+        .event_invoke_id = {"job", 3u},
+        .event_data = {"payload", 7u},
+        .scxml_location = {"#_scxml_session", 15u}
     };
     const cflow_scxml_cmeta_expr_system_values missing_event = {0};
     cflow_scxml_cmeta_expr_program program = {0};
@@ -516,6 +523,24 @@ spec("CFlow SCXML private CMeta expressions") {
     check_true(result);
     cflow_scxml_cmeta_expr_program_destroy(&program);
 
+    check_equal(compile_expression(
+                    &program,
+                    "_event.type == \"external\" && "
+                    "_event.sendid == \"s1\" && "
+                    "_event.origin == \"peer\" && "
+                    "_event.origintype == \"scxml\" && "
+                    "_event.invokeid == \"job\" && "
+                    "_event.data == \"payload\" && "
+                    "_ioprocessors.scxml.location == \"#_scxml_session\"",
+                    NULL, &diagnostic),
+                CFLOW_SCXML_CMETA_EXPR_OK);
+    check_equal(cflow_scxml_cmeta_expr_evaluate_with_system(
+                    &program, &root, state_is_active, &states,
+                    &system_values, &result, &diagnostic),
+                CFLOW_SCXML_CMETA_EXPR_OK);
+    check_true(result);
+    cflow_scxml_cmeta_expr_program_destroy(&program);
+
     check_equal(compile_value_expression(
                     &program, "_event.name", &diagnostic),
                 CFLOW_SCXML_CMETA_EXPR_OK);
@@ -533,7 +558,7 @@ spec("CFlow SCXML private CMeta expressions") {
                 CFLOW_SCXML_CMETA_EXPR_UNKNOWN_LOCATION);
     check_null(program.impl);
     check_equal(compile_value_expression(
-                    &program, "_event.type", &diagnostic),
+                    &program, "_event.unknown", &diagnostic),
                 CFLOW_SCXML_CMETA_EXPR_UNKNOWN_LOCATION);
     check_null(program.impl);
   }
