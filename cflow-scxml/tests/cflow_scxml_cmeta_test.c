@@ -6,6 +6,18 @@
 #include <stdatomic.h>
 #include <string.h>
 
+enum { SCXML_TEST_TEXT_CAPACITY = 95u };
+
+typedef struct scxml_owned_text {
+    size_t size;
+    char data[SCXML_TEST_TEXT_CAPACITY + 1u];
+} scxml_owned_text;
+
+typedef struct scxml_borrowed_text {
+    const unsigned char *data;
+    size_t size;
+} scxml_borrowed_text;
+
 Enum(scxml_public_source,
     (SCXML_PUBLIC_SOURCE_GOOD, 1, "good"),
     (SCXML_PUBLIC_SOURCE_FAIL, 2, "fail")
@@ -16,7 +28,9 @@ Struct(scxml_public_data,
     (int, count),
     (scxml_public_source, source),
     (size_t, total),
-    (double, ratio)
+    (double, ratio),
+    (scxml_owned_text, send_id),
+    (scxml_borrowed_text, borrowed_id)
 );
 
 static const cmeta_type_identity public_data_identity =
@@ -125,6 +139,135 @@ static const cmeta_data_desc public_source_desc = {
     .enum_ops = &public_source_ops
 };
 
+static const cmeta_type_desc owned_text_type = {
+    .name = "scxml_owned_text",
+    .size = sizeof(scxml_owned_text),
+    .align = _Alignof(scxml_owned_text),
+    .kind = CMETA_T_OBJECT
+};
+
+static bool owned_text_is_zero(const void *object) {
+    const scxml_owned_text *text = (const scxml_owned_text *)object;
+    return text != NULL && text->size == 0u;
+}
+
+static cmeta_status owned_text_assign(
+    void *object, const unsigned char *data, size_t size, size_t max_bytes) {
+    scxml_owned_text *text = (scxml_owned_text *)object;
+    if (text == NULL || (size != 0u && data == NULL))
+        return CMETA_INVALID_ARGUMENT;
+    if (size > max_bytes || size > SCXML_TEST_TEXT_CAPACITY)
+        return CMETA_CAPACITY_EXCEEDED;
+    if (size != 0u) memcpy(text->data, data, size);
+    text->data[size] = '\0';
+    text->size = size;
+    return CMETA_OK;
+}
+
+static void owned_text_restore_zero(void *object) {
+    if (object != NULL) memset(object, 0, sizeof(scxml_owned_text));
+}
+
+static cmeta_status owned_text_read(
+    const void *object, const unsigned char **out_data, size_t *out_size) {
+    const scxml_owned_text *text = (const scxml_owned_text *)object;
+    if (text == NULL || out_data == NULL || out_size == NULL ||
+        text->size > SCXML_TEST_TEXT_CAPACITY)
+        return CMETA_INVALID_ARGUMENT;
+    *out_data = (const unsigned char *)text->data;
+    *out_size = text->size;
+    return CMETA_OK;
+}
+
+static const cmeta_data_buffer_shape owned_text_shape = {
+    .ownership = CMETA_DATA_BUFFER_OWNED
+};
+
+static const cmeta_data_buffer_ops owned_text_ops = {
+    .struct_size = sizeof(cmeta_data_buffer_ops),
+    .abi_version = CMETA_DATA_BUFFER_OPS_ABI_VERSION,
+    .storage_type = &owned_text_type,
+    .ownership = CMETA_DATA_BUFFER_OWNED,
+    .is_zero = owned_text_is_zero,
+    .assign = owned_text_assign,
+    .restore_zero = owned_text_restore_zero,
+    .read = owned_text_read
+};
+
+static const cmeta_data_desc owned_text_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.scxml.owned.text.schema",
+    .display_name = "SCXML owned text",
+    .kind = CMETA_DATA_STRING,
+    .storage_type = &owned_text_type,
+    .shape = &owned_text_shape,
+    .buffer_ops = &owned_text_ops
+};
+
+static const cmeta_type_desc borrowed_text_type = {
+    .name = "scxml_borrowed_text",
+    .size = sizeof(scxml_borrowed_text),
+    .align = _Alignof(scxml_borrowed_text),
+    .kind = CMETA_T_OBJECT
+};
+
+static bool borrowed_text_is_zero(const void *object) {
+    const scxml_borrowed_text *text = (const scxml_borrowed_text *)object;
+    return text != NULL && text->data == NULL && text->size == 0u;
+}
+
+static cmeta_status borrowed_text_assign(
+    void *object, const unsigned char *data, size_t size, size_t max_bytes) {
+    scxml_borrowed_text *text = (scxml_borrowed_text *)object;
+    if (text == NULL || (size != 0u && data == NULL))
+        return CMETA_INVALID_ARGUMENT;
+    if (size > max_bytes) return CMETA_CAPACITY_EXCEEDED;
+    text->data = data;
+    text->size = size;
+    return CMETA_OK;
+}
+
+static void borrowed_text_restore_zero(void *object) {
+    if (object != NULL) memset(object, 0, sizeof(scxml_borrowed_text));
+}
+
+static cmeta_status borrowed_text_read(
+    const void *object, const unsigned char **out_data, size_t *out_size) {
+    const scxml_borrowed_text *text = (const scxml_borrowed_text *)object;
+    if (text == NULL || out_data == NULL || out_size == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    *out_data = text->data;
+    *out_size = text->size;
+    return CMETA_OK;
+}
+
+static const cmeta_data_buffer_shape borrowed_text_shape = {
+    .ownership = CMETA_DATA_BUFFER_BORROWED
+};
+
+static const cmeta_data_buffer_ops borrowed_text_ops = {
+    .struct_size = sizeof(cmeta_data_buffer_ops),
+    .abi_version = CMETA_DATA_BUFFER_OPS_ABI_VERSION,
+    .storage_type = &borrowed_text_type,
+    .ownership = CMETA_DATA_BUFFER_BORROWED,
+    .is_zero = borrowed_text_is_zero,
+    .assign = borrowed_text_assign,
+    .restore_zero = borrowed_text_restore_zero,
+    .read = borrowed_text_read
+};
+
+static const cmeta_data_desc borrowed_text_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.scxml.borrowed.text.schema",
+    .display_name = "SCXML borrowed text",
+    .kind = CMETA_DATA_STRING,
+    .storage_type = &borrowed_text_type,
+    .shape = &borrowed_text_shape,
+    .buffer_ops = &borrowed_text_ops
+};
+
 static const cmeta_data_field_desc public_data_fields[] = {
     {"test.scxml.public.data.enabled", "enabled",
      offsetof(scxml_public_data, enabled), &cmeta_data_bool},
@@ -135,7 +278,11 @@ static const cmeta_data_field_desc public_data_fields[] = {
     {"test.scxml.public.data.total", "total",
      offsetof(scxml_public_data, total), &cmeta_data_size},
     {"test.scxml.public.data.ratio", "ratio",
-     offsetof(scxml_public_data, ratio), &cmeta_data_double}
+     offsetof(scxml_public_data, ratio), &cmeta_data_double},
+    {"test.scxml.public.data.send_id", "send_id",
+     offsetof(scxml_public_data, send_id), &owned_text_desc},
+    {"test.scxml.public.data.borrowed_id", "borrowed_id",
+     offsetof(scxml_public_data, borrowed_id), &borrowed_text_desc}
 };
 
 static const cmeta_data_struct_shape public_data_shape = {
@@ -173,8 +320,14 @@ typedef struct dynamic_adapter_probe {
     char target[32];
     char type[32];
     char source[32];
-    char send_id[32];
+    char send_id[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
+    char cancel_id[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
+    char generated_send_ids[4][CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
     uint64_t delay_ms;
+    cflow_scxml_session *session;
+    cflow_scxml_adapter_status cancel_status;
+    bool report_done_during_cancel;
+    bool report_done_result;
 } dynamic_adapter_probe;
 
 typedef struct payload_adapter_probe {
@@ -316,7 +469,12 @@ static cflow_scxml_adapter_status dynamic_prepare_send(
         !copy_probe_text(probe->type, sizeof(probe->type),
                          request->type, request->type_size) ||
         !copy_probe_text(probe->send_id, sizeof(probe->send_id),
-                         request->id, request->id_size))
+                         request->id, request->id_size) ||
+        (probe->sends < 4u &&
+         !copy_probe_text(
+             probe->generated_send_ids[probe->sends],
+             sizeof(probe->generated_send_ids[probe->sends]),
+             request->id, request->id_size)))
         return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
     ++probe->sends;
     probe->delay_ms = request->delay_ms;
@@ -333,9 +491,19 @@ static cflow_scxml_adapter_status dynamic_prepare_cancel(
     if (probe == NULL || request == NULL || out_ticket == NULL ||
         out_error == NULL ||
         !copy_probe_text(probe->send_id, sizeof(probe->send_id),
+                         request->send_id, request->send_id_size) ||
+        !copy_probe_text(probe->cancel_id, sizeof(probe->cancel_id),
                          request->send_id, request->send_id_size))
         return CFLOW_SCXML_ADAPTER_INVALID_CONTRACT;
     ++probe->cancels;
+    if (probe->report_done_during_cancel) {
+        probe->report_done_result = cflow_scxml_session_report_send_done(
+            probe->session, request->send_id, request->send_id_size);
+    }
+    if (probe->cancel_status != CFLOW_SCXML_ADAPTER_ACCEPTED) {
+        *out_error = "injected dynamic cancel failure";
+        return probe->cancel_status;
+    }
     *out_ticket = (cflow_statechart_effect_ticket){
         dynamic_ticket_done, dynamic_ticket_done, probe};
     *out_error = NULL;
@@ -1055,6 +1223,295 @@ spec("CFlow SCXML public CMeta data model") {
         check_equal(cflow_scxml_session_destroy(&session),
                     CFLOW_STATECHART_RUNTIME_OK);
         cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("admits send idlocation only for writable owned CMeta strings") {
+        static const char accepted[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='active'><onentry>"
+            "<send event='tick' target='#_internal' idlocation='send_id'/>"
+            "</onentry></state></scxml>";
+        static const char numeric[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='active'><onentry>"
+            "<send event='tick' target='#_internal' idlocation='count'/>"
+            "</onentry></state></scxml>";
+        static const char borrowed[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='active'><onentry>"
+            "<send event='tick' target='#_internal' "
+            "idlocation='borrowed_id'/></onentry></state></scxml>";
+        static const char missing[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='active'><onentry>"
+            "<send event='tick' target='#_internal' idlocation='missing'/>"
+            "</onentry></state></scxml>";
+        static const char system[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='active'><onentry>"
+            "<send event='tick' target='#_internal' idlocation='_sessionid'/>"
+            "</onentry></state></scxml>";
+        static const char conflicting[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='active'><onentry>"
+            "<send event='tick' target='#_internal' id='fixed' "
+            "idlocation='send_id'/></onentry></state></scxml>";
+        const char *invalid[] = {
+            numeric, borrowed, missing, system, conflicting};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        size_t index;
+
+        check_equal(compile_cmeta(accepted, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        cflow_scxml_program_destroy(&program);
+        for (index = 0u; index < sizeof(invalid) / sizeof(invalid[0]); ++index) {
+            check_equal(compile_cmeta(invalid[index], &program, &diagnostic),
+                        CFLOW_SCXML_INVALID_STRUCTURE);
+            check_null(program.impl);
+        }
+    }
+
+    it("writes fresh send ids to staged state and passes them to the adapter") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='active'><onentry>"
+            "<send event='out' target='peer' idlocation='send_id'/>"
+            "</onentry><transition event='again' target='active'/>"
+            "<transition event='finish' cond='send_id != &quot;&quot;' "
+            "target='done'/></state><final id='done'/></scxml>";
+        dynamic_adapter_probe probe = {0};
+        const cflow_scxml_event_io_adapter_v1 event_io = {
+            .abi_version = CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V1,
+            .struct_size = sizeof(event_io),
+            .capabilities = CFLOW_SCXML_EVENT_IO_CAP_SEND,
+            .prepare_send = dynamic_prepare_send,
+            .close = dynamic_adapter_close,
+            .is_quiescent = dynamic_adapter_quiescent};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_event_view again = {0};
+        cflow_event_view finish = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            .abi_version = CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1,
+            .struct_size = sizeof(data),
+            .initial_state = &initial};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 2u,
+            .internal_event_capacity = 2u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u,
+            .effect_capacity = 2u,
+            .adapter_internal_event_capacity = 2u,
+            .event_io = &event_io,
+            .adapter_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.sends, (size_t)1u);
+        check_true(probe.generated_send_ids[0][0] != '\0');
+        check_true(cflow_scxml_program_event(&program, "again", 5u, &again));
+        check_equal(cflow_scxml_session_try_send(&session, &again),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.sends, (size_t)2u);
+        check_not_equal(strcmp(probe.generated_send_ids[0],
+                               probe.generated_send_ids[1]), 0);
+        check_true(cflow_scxml_program_event(&program, "finish", 6u,
+                                             &finish));
+        check_equal(cflow_scxml_session_try_send(&session, &finish),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("uses one generated id for delayed send state and cancellation") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='active'><onentry>"
+            "<send event='out' target='peer' delay='5ms' "
+            "idlocation='send_id'/><cancel sendidexpr='send_id'/>"
+            "</onentry><transition cond='send_id != &quot;&quot;' "
+            "target='done'/></state><final id='done'/></scxml>";
+        dynamic_adapter_probe probe = {0};
+        const cflow_scxml_event_io_adapter_v1 event_io = {
+            .abi_version = CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V1,
+            .struct_size = sizeof(event_io),
+            .capabilities = CFLOW_SCXML_EVENT_IO_CAP_SEND |
+                CFLOW_SCXML_EVENT_IO_CAP_DELAYED_SEND |
+                CFLOW_SCXML_EVENT_IO_CAP_CANCEL,
+            .prepare_send = dynamic_prepare_send,
+            .prepare_cancel = dynamic_prepare_cancel,
+            .close = dynamic_adapter_close,
+            .is_quiescent = dynamic_adapter_quiescent};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            .abi_version = CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1,
+            .struct_size = sizeof(data),
+            .initial_state = &initial};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 2u,
+            .internal_event_capacity = 2u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u,
+            .effect_capacity = 3u,
+            .adapter_internal_event_capacity = 2u,
+            .delayed_send_capacity = 1u,
+            .event_io = &event_io,
+            .adapter_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.sends, (size_t)1u);
+        check_equal(probe.cancels, (size_t)1u);
+        check_equal(probe.generated_send_ids[0], probe.cancel_id,
+                    sizeof(probe.cancel_id));
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("records delayed completion that wins during cancel prepare") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='active'><onentry>"
+            "<send event='out' target='peer' delay='5ms' "
+            "idlocation='send_id'/></onentry>"
+            "<transition event='cancel'><cancel sendidexpr='send_id'/>"
+            "</transition><transition event='retry'>"
+            "<send event='out' target='peer' delay='5ms' "
+            "idlocation='send_id'/></transition>"
+            "<transition event='finish' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        dynamic_adapter_probe probe = {
+            .cancel_status = CFLOW_SCXML_ADAPTER_ERROR_COMMUNICATION,
+            .report_done_during_cancel = true};
+        const cflow_scxml_event_io_adapter_v1 event_io = {
+            .abi_version = CFLOW_SCXML_EVENT_IO_ADAPTER_ABI_V1,
+            .struct_size = sizeof(event_io),
+            .capabilities = CFLOW_SCXML_EVENT_IO_CAP_SEND |
+                CFLOW_SCXML_EVENT_IO_CAP_DELAYED_SEND |
+                CFLOW_SCXML_EVENT_IO_CAP_CANCEL,
+            .prepare_send = dynamic_prepare_send,
+            .prepare_cancel = dynamic_prepare_cancel,
+            .close = dynamic_adapter_close,
+            .is_quiescent = dynamic_adapter_quiescent};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_event_view cancel = {0};
+        cflow_event_view retry = {0};
+        cflow_event_view finish = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            .abi_version = CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1,
+            .struct_size = sizeof(data),
+            .initial_state = &initial};
+        cflow_scxml_session_config config = {
+            .program = &program,
+            .executor = &executor,
+            .external_event_capacity = 3u,
+            .internal_event_capacity = 3u,
+            .completion_capacity = 2u,
+            .microstep_limit = 16u,
+            .effect_capacity = 2u,
+            .adapter_internal_event_capacity = 2u,
+            .delayed_send_capacity = 1u,
+            .event_io = &event_io,
+            .adapter_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        probe.session = &session;
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.sends, (size_t)1u);
+        check_true(cflow_scxml_program_event(
+            &program, "cancel", sizeof("cancel") - 1u, &cancel));
+        check_equal(cflow_scxml_session_try_send(&session, &cancel),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(probe.report_done_result);
+        check_false(cflow_scxml_session_report_send_done(
+            &session, probe.cancel_id, strlen(probe.cancel_id)));
+        check_true(cflow_scxml_program_event(
+            &program, "retry", sizeof("retry") - 1u, &retry));
+        check_equal(cflow_scxml_session_try_send(&session, &retry),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(probe.sends, (size_t)2u);
+        check_not_equal(strcmp(probe.generated_send_ids[0],
+                               probe.generated_send_ids[1]), 0);
+        check_true(cflow_scxml_program_event(
+            &program, "finish", sizeof("finish") - 1u, &finish));
+        check_equal(cflow_scxml_session_try_send(&session, &finish),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        check_true(cflow_scxml_session_report_send_done(
+            &session, probe.generated_send_ids[1],
+            strlen(probe.generated_send_ids[1])));
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
+    it("writes internal send idlocation without an Event IO adapter") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='active'><onentry>"
+            "<send event='tick' target='#_internal' idlocation='send_id'/>"
+            "</onentry><transition event='tick' "
+            "cond='send_id != &quot;&quot;' target='done'/></state>"
+            "<final id='done'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_statechart_instance_stats stats;
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        stats = run_to_idle(&program, (scxml_public_data){0});
+        check_true(stats.done);
+        check_false(stats.errored);
         cflow_scxml_program_destroy(&program);
     }
 

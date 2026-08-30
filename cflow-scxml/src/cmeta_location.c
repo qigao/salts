@@ -200,3 +200,41 @@ cflow_scxml_cmeta_expr_status cflow_scxml_cmeta_location_compile(
     *out = compiled;
     return location_report(diagnostic, CFLOW_SCXML_CMETA_EXPR_OK, 0u, NULL);
 }
+
+cflow_scxml_cmeta_expr_status
+cflow_scxml_cmeta_location_assign_owned_string(
+    const cflow_scxml_cmeta_location *location, void *root,
+    const char *data, size_t size, size_t max_bytes,
+    cflow_scxml_cmeta_expr_diagnostic *diagnostic) {
+    const cmeta_data_buffer_ops *ops;
+    unsigned char *destination;
+    cmeta_status status;
+    if (location == NULL || root == NULL ||
+        (size != 0u && data == NULL) ||
+        !cmeta_data_desc_valid(location->root) ||
+        !cmeta_data_desc_valid(location->value) ||
+        location->value->kind != CMETA_DATA_STRING ||
+        location->offset > location->root->storage_type->size ||
+        location->storage_size >
+            location->root->storage_type->size - location->offset)
+        return location_report(
+            diagnostic, CFLOW_SCXML_CMETA_EXPR_INVALID_ARGUMENT, 0u,
+            "invalid CMeta owned-string location assignment arguments");
+    ops = cmeta_data_buffer_ops_of(location->value);
+    if (ops == NULL || ops->ownership != CMETA_DATA_BUFFER_OWNED)
+        return location_report(
+            diagnostic, CFLOW_SCXML_CMETA_EXPR_TYPE_MISMATCH, 0u,
+            "CMeta location is not an owned string");
+    destination = (unsigned char *)root + location->offset;
+    status = cmeta_data_buffer_restore_zero(location->value, destination);
+    if (status == CMETA_OK)
+        status = cmeta_data_buffer_assign(
+            location->value, destination, (const unsigned char *)data,
+            size, max_bytes);
+    return status == CMETA_OK
+        ? location_report(
+              diagnostic, CFLOW_SCXML_CMETA_EXPR_OK, 0u, NULL)
+        : location_report(
+              diagnostic, CFLOW_SCXML_CMETA_EXPR_EVALUATION_ERROR, 0u,
+              "CMeta owned-string location assignment failed");
+}
