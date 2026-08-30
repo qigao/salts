@@ -64,6 +64,7 @@ typedef enum expr_operand_kind {
     EXPR_OPERAND_SYSTEM_EVENT_ORIGIN_TYPE,
     EXPR_OPERAND_SYSTEM_EVENT_INVOKE_ID,
     EXPR_OPERAND_SYSTEM_EVENT_DATA,
+    EXPR_OPERAND_SYSTEM_EVENT_DATA_LOCATION,
     EXPR_OPERAND_SYSTEM_SCXML_LOCATION
 } expr_operand_kind;
 
@@ -438,8 +439,9 @@ static const cmeta_data_field_desc *find_field_view(
 
 static bool parser_parse_or(expr_parser *, uint16_t, expr_node *);
 
-static bool parser_parse_location(expr_parser *parser, uint16_t target,
-                                  expr_node *out) {
+static bool parser_parse_location_kind(expr_parser *parser, uint16_t target,
+                                       expr_node *out,
+                                       expr_operand_kind operand_kind) {
     const cmeta_data_desc *desc = parser->root;
     size_t offset = 0u;
     size_t depth = 0u;
@@ -495,7 +497,7 @@ static bool parser_parse_location(expr_parser *parser, uint16_t target,
         return parser_fail(parser, CFLOW_SCXML_CMETA_EXPR_TYPE_MISMATCH,
                            parser->token.offset,
                            "CMeta location is not a readable scalar");
-    operand.kind = EXPR_OPERAND_LOCATION;
+    operand.kind = operand_kind;
     operand.value_kind = out->kind;
     operand.data = desc;
     operand.offset = offset;
@@ -505,6 +507,12 @@ static bool parser_parse_location(expr_parser *parser, uint16_t target,
         return false;
     out->reg = target;
     return true;
+}
+
+static bool parser_parse_location(expr_parser *parser, uint16_t target,
+                                  expr_node *out) {
+    return parser_parse_location_kind(
+        parser, target, out, EXPR_OPERAND_LOCATION);
 }
 
 static bool parse_number_operand(expr_parser *parser, expr_operand *operand) {
@@ -671,6 +679,18 @@ static bool parser_parse_primary(expr_parser *parser, uint16_t target,
         out->kind = EXPR_VALUE_STRING;
         out->reg = target;
         parser_next(parser);
+        if (operand.kind == EXPR_OPERAND_SYSTEM_EVENT_DATA &&
+            parser->token.kind == EXPR_TOKEN_DOT) {
+            parser_next(parser);
+            if (parser->token.kind != EXPR_TOKEN_IDENT)
+                return parser_fail(
+                    parser, CFLOW_SCXML_CMETA_EXPR_SYNTAX_ERROR,
+                    parser->token.offset,
+                    "_event.data requires a field after '.'");
+            return parser_parse_location_kind(
+                parser, target, out,
+                EXPR_OPERAND_SYSTEM_EVENT_DATA_LOCATION);
+        }
         return parser_add_operand(parser, operand, &operand_index) &&
                parser_emit_instruction(parser, QVM_OP_LOAD_CONST, target,
                                        0u, operand_index, 0u);
@@ -1143,9 +1163,13 @@ static bool read_integer(const cmeta_data_desc *desc, const void *object,
     return false;
 }
 
-static bool read_location(const expr_eval_context *context,
-                          const expr_operand *operand, qvm_value_t *out) {
-    const void *object = context->root + operand->offset;
+static bool read_location_at(const expr_eval_context *context,
+                             const expr_operand *operand,
+                             const unsigned char *root,
+                             qvm_value_t *out) {
+    const void *object;
+    if (root == NULL) return false;
+    object = root + operand->offset;
     switch (operand->data->kind) {
         case CMETA_DATA_BOOL: {
             bool value;
@@ -1206,7 +1230,20 @@ static int expr_resolve(void *user, uint32_t index, qvm_value_t *out) {
     operand = &context->program->operands[index];
     switch (operand->kind) {
         case EXPR_OPERAND_LOCATION:
-            if (!read_location(context, operand, out)) {
+            if (!read_location_at(context, operand, context->root, out)) {
+                context->failed = true;
+                return 0;
+            }
+            return 1;
+        case EXPR_OPERAND_SYSTEM_EVENT_DATA_LOCATION:
+            if (context->system_values == NULL ||
+                context->system_values->event_data_schema !=
+                    context->program->root ||
+                !read_location_at(
+                    context, operand,
+                    (const unsigned char *)
+                        context->system_values->event_data_object,
+                    out)) {
                 context->failed = true;
                 return 0;
             }

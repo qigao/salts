@@ -461,6 +461,13 @@ typedef struct scxml_invocation_lifecycle_effect {
     bool in_use;
 } scxml_invocation_lifecycle_effect;
 
+typedef union scxml_event_data_storage {
+    long double floating_alignment;
+    void *pointer_alignment;
+    uint64_t integer_alignment;
+    unsigned char bytes[CFLOW_SCXML_EVENT_DATA_CAPACITY];
+} scxml_event_data_storage;
+
 typedef struct scxml_external_event_metadata_row {
     cflow_scxml_session_impl *session;
     uint64_t token;
@@ -470,11 +477,14 @@ typedef struct scxml_external_event_metadata_row {
     size_t origin_type_size;
     size_t invoke_id_size;
     size_t data_size;
+    const cmeta_data_desc *data_schema;
+    bool data_object_live;
     char send_id[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
     char origin[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
     char origin_type[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
     char invoke_id[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
     char data[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
+    scxml_event_data_storage data_object;
 } scxml_external_event_metadata_row;
 
 static const scxml_program_name *find_program_name(
@@ -517,6 +527,10 @@ static bool payload_v2_to_v3(
     const cflow_scxml_payload_view *source,
     cflow_scxml_payload_view_v3 *out);
 
+static bool copy_event_data_object(const cmeta_data_desc *schema,
+                                   void *destination,
+                                   const void *source);
+
 struct cflow_scxml_session_impl {
     const cflow_scxml_program_impl *program;
     cflow_statechart_instance instance;
@@ -539,6 +553,9 @@ struct cflow_scxml_session_impl {
     char current_event_origin_type[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
     char current_event_invoke_id[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
     char current_event_data[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
+    const cmeta_data_desc *current_event_data_schema;
+    bool current_event_data_object_live;
+    scxml_event_data_storage current_event_data_object;
     cflow_scxml_cmeta_expr_system_values system_values;
     cflow_scxml_event_io_adapter_v1 event_io;
     cflow_scxml_event_io_adapter_v2 event_io_v2;
@@ -606,6 +623,81 @@ typedef enum scxml_element_kind {
 static bool checked_add(size_t left, size_t right, size_t *out) {
     if (out == NULL || left > SIZE_MAX - right) return false;
     *out = left + right;
+    return true;
+}
+
+static bool payload_scalar_to_text(
+    const cflow_scxml_payload_value *value, char *storage,
+    size_t capacity, const char **out_data, size_t *out_size) {
+    cflow_scxml_cmeta_expr_value converted = {0};
+    if (value == NULL) return false;
+    switch (value->kind) {
+        case CFLOW_SCXML_PAYLOAD_VALUE_BOOL:
+            converted.kind = CFLOW_SCXML_CMETA_EXPR_VALUE_BOOL;
+            converted.data.boolean = value->data.boolean;
+            break;
+        case CFLOW_SCXML_PAYLOAD_VALUE_SINT:
+            converted.kind = CFLOW_SCXML_CMETA_EXPR_VALUE_SINT;
+            converted.data.sint = value->data.sint;
+            break;
+        case CFLOW_SCXML_PAYLOAD_VALUE_UINT:
+            converted.kind = CFLOW_SCXML_CMETA_EXPR_VALUE_UINT;
+            converted.data.uint = value->data.uint;
+            break;
+        case CFLOW_SCXML_PAYLOAD_VALUE_FLOAT:
+            converted.kind = CFLOW_SCXML_CMETA_EXPR_VALUE_FLOAT;
+            converted.data.number = value->data.number;
+            break;
+        case CFLOW_SCXML_PAYLOAD_VALUE_STRING:
+            converted.kind = CFLOW_SCXML_CMETA_EXPR_VALUE_STRING;
+            converted.data.string.data = value->data.string.data;
+            converted.data.string.size = value->data.string.size;
+            break;
+        default: return false;
+    }
+    return scalar_value_to_text(
+        &converted, storage, capacity, out_data, out_size);
+}
+
+static bool attach_event_content(
+    cflow_scxml_session_impl *session,
+    scxml_external_event_metadata_row *row,
+    const cflow_scxml_content_view *content) {
+    const char *data = NULL;
+    size_t data_size = 0u;
+    if (session == NULL || row == NULL || content == NULL || !row->in_use)
+        return false;
+    if (content->kind == CFLOW_SCXML_CONTENT_INVALID) return true;
+    if (content->kind == CFLOW_SCXML_CONTENT_SCALAR) {
+        if (!payload_scalar_to_text(
+                &content->scalar, row->data, sizeof(row->data),
+                &data, &data_size))
+            return false;
+        if (data_size != 0u) memmove(row->data, data, data_size);
+        row->data[data_size] = '\0';
+        row->data_size = data_size;
+        return true;
+    }
+    if (content->kind == CFLOW_SCXML_CONTENT_TEXT_UTF8 ||
+        content->kind == CFLOW_SCXML_CONTENT_XML_UTF8) {
+        if (content->byte_count > CFLOW_SCXML_EVENT_METADATA_CAPACITY ||
+            (content->byte_count != 0u && content->bytes == NULL))
+            return false;
+        if (content->byte_count != 0u)
+            memcpy(row->data, content->bytes, content->byte_count);
+        row->data[content->byte_count] = '\0';
+        row->data_size = content->byte_count;
+        return true;
+    }
+    if (content->kind != CFLOW_SCXML_CONTENT_CMETA ||
+        session->program->cmeta_root == NULL ||
+        content->schema != session->program->cmeta_root ||
+        content->object == NULL ||
+        !copy_event_data_object(
+            content->schema, row->data_object.bytes, content->object))
+        return false;
+    row->data_schema = content->schema;
+    row->data_object_live = true;
     return true;
 }
 
@@ -4744,8 +4836,49 @@ static const scxml_program_name *find_state_program_name_by_id(
     return NULL;
 }
 
+static bool copy_event_data_object(const cmeta_data_desc *schema,
+                                   void *destination,
+                                   const void *source) {
+    const cmeta_type_desc *type;
+    if (!cmeta_data_desc_valid(schema) || schema->kind != CMETA_DATA_STRUCT ||
+        schema->storage_type == NULL || destination == NULL || source == NULL)
+        return false;
+    type = schema->storage_type;
+    if (type->size > CFLOW_SCXML_EVENT_DATA_CAPACITY ||
+        type->align > _Alignof(scxml_event_data_storage))
+        return false;
+    if (cmeta_type_require_traits(
+            type, CMETA_TRAIT_TRIVIAL_COPY |
+                      CMETA_TRAIT_TRIVIAL_DESTROY) == CMETA_OK) {
+        memcpy(destination, source, type->size);
+        return true;
+    }
+    return cmeta_type_require_traits(
+               type, CMETA_TRAIT_COPY | CMETA_TRAIT_DESTROY) == CMETA_OK &&
+        type->traits->copy_construct(destination, source);
+}
+
+static void destroy_event_data_object(const cmeta_data_desc *schema,
+                                      void *object) {
+    const cmeta_type_desc *type = schema != NULL ? schema->storage_type : NULL;
+    if (type == NULL || object == NULL) return;
+    if (cmeta_type_require_traits(
+            type, CMETA_TRAIT_TRIVIAL_DESTROY) != CMETA_OK &&
+        cmeta_type_require_traits(type, CMETA_TRAIT_DESTROY) == CMETA_OK)
+        type->traits->destroy(object);
+}
+
 static void clear_current_event_metadata(cflow_scxml_session_impl *session) {
     static const cflow_scxml_cmeta_expr_string_view empty = {"", 0u};
+    if (session->current_event_data_object_live) {
+        destroy_event_data_object(
+            session->current_event_data_schema,
+            session->current_event_data_object.bytes);
+        session->current_event_data_object_live = false;
+    }
+    session->current_event_data_schema = NULL;
+    session->system_values.event_data_schema = NULL;
+    session->system_values.event_data_object = NULL;
     session->system_values.event_send_id = empty;
     session->system_values.event_origin = empty;
     session->system_values.event_origin_type = empty;
@@ -4852,6 +4985,7 @@ static bool observe_scxml_event(
     const cflow_statechart_observed_event *event, const char **out_error) {
     static const char external_type[] = "external";
     static const char internal_type[] = "internal";
+    static const char platform_type[] = "platform";
     cflow_scxml_session_impl *session = (cflow_scxml_session_impl *)user;
     const scxml_program_name *name = NULL;
     size_t index;
@@ -4908,12 +5042,21 @@ static bool observe_scxml_event(
     }
     session->system_values.event_name =
         (cflow_scxml_cmeta_expr_string_view){name->name, name->size};
-    session->system_values.event_type =
-        (cflow_scxml_cmeta_expr_string_view){
-            event->kind == CFLOW_STATECHART_OBSERVED_EXTERNAL
-                ? external_type : internal_type,
-            event->kind == CFLOW_STATECHART_OBSERVED_EXTERNAL
-                ? sizeof(external_type) - 1u : sizeof(internal_type) - 1u};
+    if (event->kind == CFLOW_STATECHART_OBSERVED_EXTERNAL) {
+        session->system_values.event_type =
+            (cflow_scxml_cmeta_expr_string_view){
+                external_type, sizeof(external_type) - 1u};
+    } else if (event->event->id == session->program->execution_error_event ||
+               event->event->id ==
+                   session->program->communication_error_event) {
+        session->system_values.event_type =
+            (cflow_scxml_cmeta_expr_string_view){
+                platform_type, sizeof(platform_type) - 1u};
+    } else {
+        session->system_values.event_type =
+            (cflow_scxml_cmeta_expr_string_view){
+                internal_type, sizeof(internal_type) - 1u};
+    }
 
     if (event->source_token == 0u ||
         (event->kind != CFLOW_STATECHART_OBSERVED_EXTERNAL &&
@@ -4922,6 +5065,7 @@ static bool observe_scxml_event(
     turbo_mutex_lock(&session->registry_lock);
     if ((event->source_token & SCXML_EXTERNAL_METADATA_TOKEN_BIT) != 0u) {
         scxml_external_event_metadata_row *row = NULL;
+        bool row_data_live;
         for (index = 0u; index < session->external_metadata_capacity; ++index) {
             if (session->external_metadata_rows[index].in_use &&
                 session->external_metadata_rows[index].token ==
@@ -4951,7 +5095,38 @@ static bool observe_scxml_event(
         SCXML_COPY_CURRENT(invoke_id);
         SCXML_COPY_CURRENT(data);
 #undef SCXML_COPY_CURRENT
+        row_data_live = row->data_object_live;
+        if (!row_data_live) {
+            memset(row, 0, sizeof(*row));
+            turbo_mutex_unlock(&session->registry_lock);
+            return true;
+        }
+        row->in_use = false;
+        turbo_mutex_unlock(&session->registry_lock);
+        if (!copy_event_data_object(
+                row->data_schema,
+                session->current_event_data_object.bytes,
+                row->data_object.bytes)) {
+            destroy_event_data_object(
+                row->data_schema, row->data_object.bytes);
+            turbo_mutex_lock(&session->registry_lock);
+            memset(row, 0, sizeof(*row));
+            turbo_mutex_unlock(&session->registry_lock);
+            *out_error = "SCXML structured Event data copy failed";
+            return false;
+        }
+        session->current_event_data_schema = row->data_schema;
+        session->current_event_data_object_live = true;
+        session->system_values.event_data =
+            (cflow_scxml_cmeta_expr_string_view){NULL, 0u};
+        session->system_values.event_data_schema = row->data_schema;
+        session->system_values.event_data_object =
+            session->current_event_data_object.bytes;
+        destroy_event_data_object(row->data_schema, row->data_object.bytes);
+        turbo_mutex_lock(&session->registry_lock);
         memset(row, 0, sizeof(*row));
+        turbo_mutex_unlock(&session->registry_lock);
+        return true;
     } else {
         for (index = 0u; index < session->program->invocation_count; ++index) {
             if (session->invocation_rows[index].state ==
@@ -5140,7 +5315,8 @@ static scxml_external_event_metadata_row *reserve_event_metadata(
         return NULL;
     turbo_mutex_lock(&session->registry_lock);
     for (index = 0u; index < session->external_metadata_capacity; ++index) {
-        if (!session->external_metadata_rows[index].in_use) {
+        if (!session->external_metadata_rows[index].in_use &&
+            !session->external_metadata_rows[index].data_object_live) {
             row = &session->external_metadata_rows[index];
             break;
         }
@@ -5183,8 +5359,25 @@ static void release_event_metadata(void *user) {
         (scxml_external_event_metadata_row *)user;
     cflow_scxml_session_impl *session = row != NULL ? row->session : NULL;
     if (session == NULL) return;
+    bool data_live;
+    const cmeta_data_desc *schema;
     turbo_mutex_lock(&session->registry_lock);
-    if (row->in_use) memset(row, 0, sizeof(*row));
+    if (!row->in_use) {
+        turbo_mutex_unlock(&session->registry_lock);
+        return;
+    }
+    data_live = row->data_object_live;
+    if (!data_live) {
+        memset(row, 0, sizeof(*row));
+        turbo_mutex_unlock(&session->registry_lock);
+        return;
+    }
+    row->in_use = false;
+    schema = row->data_schema;
+    turbo_mutex_unlock(&session->registry_lock);
+    destroy_event_data_object(schema, row->data_object.bytes);
+    turbo_mutex_lock(&session->registry_lock);
+    memset(row, 0, sizeof(*row));
     turbo_mutex_unlock(&session->registry_lock);
 }
 
@@ -5422,6 +5615,7 @@ static scxml_execute_outcome execute_send(
     cflow_scxml_send_request_v3 request_v3 = {0};
     cflow_scxml_payload_view payload = {0};
     cflow_scxml_payload_view_v3 payload_v3 = {0};
+    cflow_scxml_content_view internal_content = {0};
     cflow_scxml_cmeta_expr_value value = {0};
     cflow_scxml_event_metadata metadata = {0};
     char data_storage[CFLOW_SCXML_EVENT_METADATA_CAPACITY + 1u];
@@ -5504,13 +5698,24 @@ static scxml_execute_outcome execute_send(
         }
     } else if (descriptor->content.kind != CFLOW_SCXML_CONTENT_INVALID) {
         if (internal_target) {
-            if ((descriptor->content.kind != CFLOW_SCXML_CONTENT_TEXT_UTF8 &&
-                 descriptor->content.kind != CFLOW_SCXML_CONTENT_XML_UTF8) ||
-                descriptor->content.byte_count >
-                    CFLOW_SCXML_EVENT_METADATA_CAPACITY)
-                return raise_block_execution_error(block, context, out_error);
-            metadata.data = descriptor->content.bytes;
-            metadata.data_size = descriptor->content.byte_count;
+            if (descriptor->content.kind == CFLOW_SCXML_CONTENT_CMETA) {
+                if (!materialize_content_descriptor(
+                        &descriptor->content, context->out_state,
+                        &internal_content))
+                    return raise_block_execution_error(
+                        block, context, out_error);
+            } else {
+                if ((descriptor->content.kind !=
+                         CFLOW_SCXML_CONTENT_TEXT_UTF8 &&
+                     descriptor->content.kind !=
+                         CFLOW_SCXML_CONTENT_XML_UTF8) ||
+                    descriptor->content.byte_count >
+                        CFLOW_SCXML_EVENT_METADATA_CAPACITY)
+                    return raise_block_execution_error(
+                        block, context, out_error);
+                metadata.data = descriptor->content.bytes;
+                metadata.data_size = descriptor->content.byte_count;
+            }
         } else {
             payload_v3.kind = CFLOW_SCXML_PAYLOAD_CONTENT;
             if (!materialize_content_descriptor(
@@ -5555,6 +5760,13 @@ static scxml_execute_outcome execute_send(
             cflow_statechart_effect_ticket metadata_ticket;
             if (metadata_row == NULL)
                 return raise_block_execution_error(block, context, out_error);
+            if (internal_content.kind != CFLOW_SCXML_CONTENT_INVALID &&
+                !attach_event_content(
+                    session, metadata_row, &internal_content)) {
+                release_event_metadata(metadata_row);
+                return raise_block_execution_error(
+                    block, context, out_error);
+            }
             if (!context->raise_internal_tagged(
                     context->raise_user, &raised, token, out_error)) {
                 release_event_metadata(metadata_row);
@@ -9296,7 +9508,25 @@ static void session_close_adapter(cflow_scxml_session_impl *impl) {
 }
 
 static void session_free_storage(cflow_scxml_session_impl *impl) {
+    size_t index;
     if (impl == NULL) return;
+    if (impl->current_event_data_object_live) {
+        destroy_event_data_object(
+            impl->current_event_data_schema,
+            impl->current_event_data_object.bytes);
+        impl->current_event_data_object_live = false;
+    }
+    if (impl->external_metadata_rows != NULL) {
+        for (index = 0u; index < impl->external_metadata_capacity; ++index) {
+            scxml_external_event_metadata_row *row =
+                &impl->external_metadata_rows[index];
+            if (row->data_object_live) {
+                destroy_event_data_object(
+                    row->data_schema, row->data_object.bytes);
+                row->data_object_live = false;
+            }
+        }
+    }
     free(impl->late_initializers);
     free(impl->prepared_effects);
     free(impl->external_metadata_rows);
@@ -9840,6 +10070,42 @@ cflow_mailbox_status cflow_scxml_session_try_send_v2(
     if (status != CFLOW_MAILBOX_OK) {
         release_event_metadata(row);
     }
+    return status;
+}
+
+cflow_mailbox_status cflow_scxml_session_try_send_v3(
+    cflow_scxml_session *session, const cflow_event_view *event,
+    const cflow_scxml_event_metadata_v3 *metadata) {
+    cflow_scxml_session_impl *impl = session != NULL
+        ? (cflow_scxml_session_impl *)session->impl : NULL;
+    scxml_external_event_metadata_row *row = NULL;
+    uint64_t token = 0u;
+    cflow_mailbox_status status;
+    if (impl == NULL || event == NULL || metadata == NULL ||
+        metadata->abi_version != CFLOW_SCXML_EVENT_METADATA_ABI_V3 ||
+        metadata->struct_size < sizeof(*metadata) ||
+        !scxml_metadata_field_valid(
+            metadata->base.send_id, metadata->base.send_id_size) ||
+        !scxml_metadata_field_valid(
+            metadata->base.origin, metadata->base.origin_size) ||
+        !scxml_metadata_field_valid(
+            metadata->base.origin_type, metadata->base.origin_type_size) ||
+        !scxml_metadata_field_valid(
+            metadata->base.invoke_id, metadata->base.invoke_id_size) ||
+        !scxml_metadata_field_valid(
+            metadata->base.data, metadata->base.data_size) ||
+        (metadata->data.kind != CFLOW_SCXML_CONTENT_INVALID &&
+         metadata->base.data_size != 0u))
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    row = reserve_event_metadata(impl, &metadata->base, &token);
+    if (row == NULL) return CFLOW_MAILBOX_FULL;
+    if (!attach_event_content(impl, row, &metadata->data)) {
+        release_event_metadata(row);
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    }
+    status = cflow_statechart_instance_try_send_tagged(
+        &impl->instance, event, token);
+    if (status != CFLOW_MAILBOX_OK) release_event_metadata(row);
     return status;
 }
 

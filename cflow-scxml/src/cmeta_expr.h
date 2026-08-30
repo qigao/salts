@@ -57,6 +57,9 @@ typedef struct cflow_scxml_cmeta_expr_system_values {
     cflow_scxml_cmeta_expr_string_view event_origin_type;
     cflow_scxml_cmeta_expr_string_view event_invoke_id;
     cflow_scxml_cmeta_expr_string_view event_data;
+    /** Optional owned event object; schema must equal the compiled root. */
+    const cmeta_data_desc *event_data_schema;
+    const void *event_data_object;
     cflow_scxml_cmeta_expr_string_view scxml_location;
 } cflow_scxml_cmeta_expr_system_values;
 

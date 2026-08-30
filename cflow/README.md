@@ -633,11 +633,11 @@ remain eligible. Ordinary transactional blocks also support bounded
 the exact same type. Elements may use trivial storage or complete
 `COPY | MOVE | DESTROY` lifecycle traits; an optional index must be exact
 `size_t`. Sequence-index expressions, array literals, `finalize` iteration,
-CMeta conditions inside invocation `<finalize>`, the `_event` and
-`_ioprocessors` system views, structured CBind/CSerde values, and scripts remain
-fail-fast unsupported; there is no fallback to the null model or another
-evaluator. Every system-variable assignment location remains read-only and is
-rejected during compilation.
+CMeta conditions inside invocation `<finalize>`, `_ioprocessors`, and scripts
+remain fail-fast unsupported; there is no fallback to the null model or another
+evaluator. Owning CMeta sessions expose the read-only `_event` envelope
+described below. Every system-variable assignment location remains read-only
+and is rejected during compilation.
 
 ```c
 #include <cflow/executor.h>
@@ -709,6 +709,32 @@ program-owned. They do not invent a shared `_sessionid`: evaluating an operand
 that needs it fails explicitly. Use `cflow_scxml_session_init_cmeta()` whenever
 session system-variable semantics are required; its session-specific guard and
 executable adapters inject the immutable per-session strings.
+
+An owning CMeta session also provides the complete read-only `_event` envelope:
+`name`, `type`, `sendid`, `origin`, `origintype`, `invokeid`, and `data`. Raised,
+internal-send, and `done.state` Events use type `internal`; processor-generated
+errors use `platform`; external admission and `done.invoke` use `external`.
+Absent optional metadata is an empty string. The selected Event is retained
+through its complete run-to-completion cycle, including following eventless
+microsteps, and is atomically replaced when the next Event is selected.
+
+`cflow_scxml_session_try_send_v2()` owns bounded string metadata.
+`cflow_scxml_session_try_send_v3()` adds format-neutral structured content:
+scalar/text/XML values are copied to the bounded string representation, while
+CMETA must use the compiled root descriptor, fit
+`CFLOW_SCXML_EVENT_DATA_CAPACITY`, and provide trivial or complete copy/destroy
+traits. The session owns the copy; caller mutation after admission is isolated.
+Structured values are read through typed `_event.data.<path>` operands; a bare
+string read of structured `_event.data` fails evaluation.
+Invalid ABI, conflicting v2/v3 data, schema mismatch, lifecycle failure, and
+capacity overflow reject the entire admission without consuming mailbox or
+metadata capacity. Fixed structured storage is bounded by the configured
+external mailbox capacity plus one current-Event slot.
+
+CBind/CSerde belongs at the format adapter boundary: applications may decode
+JSON/XML/YAML into the compiled root CMeta object, then pass that typed value to
+the v3 API. SCXML does not parse or serialize transport formats, so codec error
+semantics and dependencies do not enter the deterministic runtime.
 
 Event I/O adapters use a reservation protocol. `prepare_send` and
 `prepare_cancel` reserve capacity without publishing an external effect and
