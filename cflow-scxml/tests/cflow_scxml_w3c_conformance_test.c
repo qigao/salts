@@ -268,6 +268,26 @@ suite("SCXML W3C-derived conformance regression corpus") {
         check_w3c_fixture("test144.scxml");
     }
 
+    it("test 147 executes only the first true conditional partition") {
+        check_w3c_fixture("test147.scxml");
+    }
+
+    it("test 148 executes else when every condition is false") {
+        check_w3c_fixture("test148.scxml");
+    }
+
+    it("test 149 skips conditional content without a matching partition") {
+        check_w3c_fixture("test149.scxml");
+    }
+
+    it("test 158 executes one content block in document order") {
+        check_w3c_fixture("test158.scxml");
+    }
+
+    it("test 159 aborts the remainder of a failing content block") {
+        check_w3c_adapter_error_fixture("test159.scxml");
+    }
+
     it("test 355 selects the first root child when initial is omitted") {
         check_w3c_fixture("test355.scxml");
     }

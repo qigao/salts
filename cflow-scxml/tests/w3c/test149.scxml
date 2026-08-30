@@ -1,0 +1,19 @@
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0"
+       datamodel="null" initial="active">
+  <state id="active">
+    <onentry>
+      <if cond="In(inactive)">
+        <raise event="if.branch"/>
+        <elseif cond="In(inactive)"/>
+        <raise event="elseif.branch"/>
+      </if>
+      <raise event="block.finished"/>
+    </onentry>
+    <transition event="block.finished" target="pass"/>
+    <transition event="if.branch" target="fail"/>
+    <transition event="elseif.branch" target="fail"/>
+  </state>
+  <state id="inactive"/>
+  <final id="pass"/>
+  <state id="fail"/>
+</scxml>

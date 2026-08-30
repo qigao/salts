@@ -8,6 +8,11 @@ certification and is not, by itself, a claim of complete SCXML conformance.
 | Local fixture | Upstream source | Assertion preserved |
 | --- | --- | --- |
 | `test144.scxml` | [test144.txml](https://www.w3.org/Voice/2013/scxml-irp/144/test144.txml) | Events produced by `raise` are appended to the internal queue in execution order. |
+| `test147.scxml` | [test147.txml](https://www.w3.org/Voice/2013/scxml-irp/147/test147.txml) | An `if` executes only the first partition whose condition is true. |
+| `test148.scxml` | [test148.txml](https://www.w3.org/Voice/2013/scxml-irp/148/test148.txml) | An `if` executes its `else` partition when every condition is false. |
+| `test149.scxml` | [test149.txml](https://www.w3.org/Voice/2013/scxml-irp/149/test149.txml) | An `if` executes no partition when every condition is false and no `else` exists. |
+| `test158.scxml` | [test158.txml](https://www.w3.org/Voice/2013/scxml-irp/158/test158.txml) | Elements in one executable-content block execute in document order. |
+| `test159.scxml` | [test159.txml](https://www.w3.org/Voice/2013/scxml-irp/159/test159.txml) | An execution error prevents the remaining elements of the same block from executing. |
 | `test355.scxml` | [test355.txml](https://www.w3.org/Voice/2013/scxml-irp/355/test355.txml) | With no root `initial`, the first child state in document order is selected. |
 | `test375.scxml` | [test375.txml](https://www.w3.org/Voice/2013/scxml-irp/375/test375.txml) | Multiple `onentry` handlers execute in document order. |
 | `test376.scxml` | [test376.txml](https://www.w3.org/Voice/2013/scxml-irp/376/test376.txml) | An execution error aborts only its `onentry` block; a later independent handler still executes. |
@@ -38,11 +43,15 @@ generation pipeline. Every local transformation replaces `conf:pass` and
 test-generation metadata, selects the null datamodel, and keeps the executable
 structure that observes the assertion.
 
-Tests 144, 375, 377, 404, 405, 406, and 412 replace wildcard failure
+Tests 144, 147, 148, 149, 158, 375, 377, 404, 405, 406, and 412 replace wildcard failure
 transitions, which are outside the current TurboUtils profile, with the finite
 exact events that represent an ordering error at each observation state. Test
-412 also removes redundant generator-level parent sentinels while retaining
-the complete three-event observation chain. Tests 405, 406, 412, 416, and 417
+147 and 148 replace generator counters with a post-conditional event that
+observes both the selected partition and the absence of any later partition.
+Test 149 uses the same post-conditional event to prove that no partition ran,
+and test 158 retains the upstream two-event document-order trace. Test 412 also
+removes redundant generator-level parent sentinels while retaining the complete
+three-event observation chain. Tests 405, 406, 412, 416, and 417
 omit the upstream one-second timeout `send`; it is only a liveness safety net,
 while the local harness directly fails any run that does not reach `pass`.
 Test 419 keeps the queued internal event as the failure witness, replaces the
@@ -62,7 +71,10 @@ error.
 Tests 376 and 378 replace the generator counter with a `second.block` event.
 Their test-only owning sessions inject `CFLOW_SCXML_ADAPTER_ERROR_EXECUTION`
 for the first handler's `send`, then require `error.execution` followed by the
-event from the later independent handler. Test 387 preserves both unset-history
+event from the later independent handler. Test 159 uses the same deterministic
+adapter failure, rejects an event from the remainder of the failing block, and
+accepts only the witness raised by the next independent `onentry` block. Test
+387 preserves both unset-history
 targets and replaces wildcard failures with the finite wrong leaf-entry events;
 its timeout send is omitted because the harness requires terminal completion.
 Test 407 replaces the exit counter with one exact internal exit event. Test 421
