@@ -14,9 +14,10 @@ int main() {
   static_assert(sizeof(turbo_io_endpoint) == sizeof(std::uint32_t) * 2u);
   static_assert(offsetof(turbo_io_endpoint, slot) == 0u);
   static_assert(offsetof(turbo_io_endpoint, generation) == sizeof(std::uint32_t));
+  (void)attach_pipe;
+  (void)release_pipe;
   return turbo_io_endpoint_valid(endpoint) && turbo_io_request_valid(request) &&
                  pipe_read == TURBO_IO_PIPE_READ && TURBO_IO_PIPE_WRITE == 6 &&
-                 attach_pipe != nullptr && release_pipe != nullptr &&
                  turbo_io_backend_model(TURBO_IO_BACKEND_IOCP) == TURBO_IO_MODEL_COMPLETION &&
                  turbo_io_backend_model(TURBO_IO_BACKEND_EPOLL) == TURBO_IO_MODEL_READINESS &&
                  turbo_io_backend_model(TURBO_IO_BACKEND_IO_URING) == TURBO_IO_MODEL_COMPLETION &&

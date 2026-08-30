@@ -579,7 +579,8 @@ static bool uring_get_stats(const turbo_io_impl *base, turbo_io_backend_stats *o
 
 static const turbo_io_impl_ops uring_ops = {uring_attach_socket, uring_release_socket, uring_submit,
                                             uring_cancel,        uring_observe,        uring_close,
-                                            uring_destroy,       uring_get_stats};
+                                            uring_destroy,       uring_get_stats,      NULL,
+                                            NULL};
 
 static bool uring_mapped_extent(size_t offset, size_t count, size_t element_size, size_t *out) {
   if (element_size == 0u || count > (SIZE_MAX - offset) / element_size) return false;

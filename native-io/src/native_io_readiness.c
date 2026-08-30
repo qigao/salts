@@ -530,7 +530,8 @@ static bool readiness_get_stats(const turbo_io_impl *base, turbo_io_backend_stat
 
 static const turbo_io_impl_ops readiness_ops = {
     readiness_attach_socket, readiness_release_socket, readiness_submit,  readiness_cancel,
-    readiness_observe,       readiness_close,          readiness_destroy, readiness_get_stats};
+    readiness_observe,       readiness_close,          readiness_destroy, readiness_get_stats,
+    NULL,                    NULL};
 
 static bool readiness_array_fits(size_t count, size_t element_size) {
   return element_size != 0u && count <= SIZE_MAX / element_size;

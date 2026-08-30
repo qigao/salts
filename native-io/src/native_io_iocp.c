@@ -377,7 +377,8 @@ static bool iocp_get_stats(const turbo_io_impl *base, turbo_io_backend_stats *ou
 
 static const turbo_io_impl_ops iocp_ops = {iocp_attach_socket, iocp_release_socket, iocp_submit,
                                            iocp_cancel,        iocp_observe,        iocp_close,
-                                           iocp_destroy,       iocp_get_stats};
+                                           iocp_destroy,       iocp_get_stats,      NULL,
+                                           NULL};
 
 bool turbo_io_platform_backend_supported(turbo_io_backend_kind kind) {
   return kind == TURBO_IO_BACKEND_IOCP;
