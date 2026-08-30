@@ -158,7 +158,10 @@ TURBO_NATIVE_IO_C_API int turbo_io_backend_release_socket(turbo_io_backend *back
                                                           turbo_io_endpoint endpoint);
 
 /**
- * Starts one operation without allocating or queueing user-space messages.
+ * Starts one operation without allocating or copying payload messages. For one
+ * endpoint, read operations and write operations are admitted in independent
+ * FIFO lanes. A backend may retain the copied descriptor in its fixed request
+ * storage until that operation reaches the head of its lane.
  * The descriptor is copied; its payload remains borrowed until observe returns
  * the matching terminal completion. out_request is cleared on failure.
  *

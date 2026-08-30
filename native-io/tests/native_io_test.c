@@ -287,6 +287,50 @@ static void native_io_test_cancel_pending(turbo_io_backend_kind kind) {
   check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
 }
 
+static void native_io_test_cancel_same_lane(turbo_io_backend_kind kind) {
+  turbo_io_backend backend = {0};
+  const turbo_io_backend_config config = {kind, 1u, 2u, 2u};
+  native_io_test_socket sockets[2];
+  turbo_io_endpoint endpoint = {0};
+  turbo_io_request requests[2] = {0};
+  turbo_io_completion events[2] = {0};
+  unsigned char bytes[2] = {0};
+  turbo_io_operation operations[2];
+  int cancel_status[2];
+  bool saw_first = false;
+  bool saw_second = false;
+
+  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_test_make_tcp_pair(sockets), TURBO_OK);
+  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint), TURBO_OK);
+  for (size_t index = 0u; index < 2u; ++index) {
+    operations[index] = (turbo_io_operation){.kind = TURBO_IO_TCP_RECV,
+                                             .endpoint = endpoint,
+                                             .buffer = &bytes[index],
+                                             .length = 1u,
+                                             .user_data = 61u + index};
+    check_equal(turbo_io_backend_submit(&backend, &operations[index], &requests[index]), TURBO_OK);
+  }
+  cancel_status[1] = turbo_io_backend_cancel(&backend, requests[1]);
+  cancel_status[0] = turbo_io_backend_cancel(&backend, requests[0]);
+  check_true(cancel_status[1] == TURBO_OK || cancel_status[1] == TURBO_EALREADY);
+  check_true(cancel_status[0] == TURBO_OK || cancel_status[0] == TURBO_EALREADY);
+  check_equal(native_io_test_observe_all(&backend, events, 2u), TURBO_OK);
+  for (size_t index = 0u; index < 2u; ++index) {
+    check_equal(events[index].kind, TURBO_IO_COMPLETION_CANCELLED);
+    check_equal(events[index].status, TURBO_ECANCELED);
+    if (events[index].user_data == 61u) saw_first = true;
+    else if (events[index].user_data == 62u) saw_second = true;
+  }
+  check_true(saw_first);
+  check_true(saw_second);
+
+  native_io_test_close_socket(sockets[0]);
+  native_io_test_close_endpoint(&backend, endpoint, sockets[1]);
+  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
+  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+}
+
 static void native_io_test_round_trip_udp(turbo_io_backend_kind kind) {
   static const unsigned char payload[] = {0x41u, 0x42u, 0x43u};
   turbo_io_backend backend = {0};
@@ -487,6 +531,13 @@ spec("NativeIO direct backend") {
     const size_t count = native_io_test_backends(backends);
     for (size_t index = 0u; index < count; ++index)
       native_io_test_cancel_pending(backends[index]);
+  }
+
+  it("cancels both active and queued operations in one lane") {
+    turbo_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
+    const size_t count = native_io_test_backends(backends);
+    for (size_t index = 0u; index < count; ++index)
+      native_io_test_cancel_same_lane(backends[index]);
   }
 
   it("round trips UDP and publishes its peer address") {

@@ -35,7 +35,7 @@ enum {
 };
 
 static const size_t NATIVE_BENCH_TCP_PAYLOADS[] = {1024u, 4096u, 8192u, 16384u, 32768u, 65536u};
-static const size_t NATIVE_BENCH_UDP_PAYLOADS[] = {1024u, 4096u, 8192u, 16384u, 32768u};
+static const size_t NATIVE_BENCH_UDP_PAYLOADS[] = {1024u, 4096u, 8192u};
 
 typedef struct native_bench_stages {
   uint64_t submit_ns;

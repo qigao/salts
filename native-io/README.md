@@ -25,7 +25,7 @@ CFlow / Actor / future adapters
 - 所有权：backend 借用 socket；成功 submit 后借用 payload，直到 observe 返回对应 completion。
 - 拓扑：一个 backend 由一个 owner 线程调用。模块不创建线程、不加锁、不内置跨线程队列。
 - 容量：endpoint、request 和 completion batch 均在 init 时固定；满额返回 `TURBO_ENOBUFS`。
-- 顺序：epoll/kqueue 对每个 endpoint 的 read lane 与 write lane 分别按 FIFO 发起 syscall，lane 之间不排序；IOCP/io_uring 暴露 kernel completion 顺序。request handle 与 `user_data` 用于关联。
+- 顺序：每个 endpoint 的 read lane 与 write lane 分别按 FIFO 向内核发起操作，lane 之间不排序。request handle 与 `user_data` 用于关联；不同 endpoint 的 completion 顺序由内核决定。
 - 取消：cancel 只请求取消。IOCP 的 `ERROR_OPERATION_ABORTED`、io_uring 的 `-ECANCELED` 和 readiness 队列中尚未执行的请求进入 CANCELLED；已经完成的请求不会被改写成取消。
 - 关闭：`close admission -> cancel/drain -> close native sockets -> release endpoints -> destroy`。
 - 等待：`timeout_ms == 0` 为 poll，`UINT32_MAX` 为无限等待，其余值为相对毫秒 deadline；无终态返回 `TURBO_ETIMEDOUT` 且 count 为零。
@@ -46,7 +46,7 @@ FREE --submit accepted--> PENDING --observe terminal--> FREE(next generation)
 
 - IOCP：submit 直接调用 `WSARecv`/`WSASend`，observe 直接读取 completion port。
 - epoll/kqueue：submit 先以单次非阻塞 syscall 尝试；仅在 would-block 时进入每 endpoint 的 FIFO lane，并由 owner 在 observe 中直接等待 readiness 和继续 syscall。
-- io_uring：submit 直接发布 SQE，observe 直接 drain CQ；ring 由模块映射，但没有 worker、mutex、callback 或 mailbox。
+- io_uring：每个 endpoint 的 read/write lane 各保持至多一个内核 in-flight SQE，其余已接受描述符保留在固定 request 槽位中；observe drain CQ 后推进 lane。ring 由模块映射，但没有 worker、mutex、callback、payload copy 或跨线程 mailbox。
 
 readiness 的 kernel interest 是请求 lane 推导出的镜像，不是第二份业务状态。endpoint/request/terminal storage 和 native event batch 均有固定上限。
 
@@ -77,4 +77,4 @@ if (status != 0)
 
 完整可运行的 TCP/UDP loopback 用法位于 `tests/native_io_test.c`。
 
-`native_io_benchmark` 只比较同模型的原生基线：Windows 为 raw IOCP，Linux 分别为 raw epoll 与 raw io_uring，Apple/BSD 为 raw kqueue。输出按 backend 和 TCP/UDP 拆分的 payload 延迟、吞吐及 submit/observe 阶段表。TCP 覆盖 1/4/8/16/32/64 KiB；UDP 覆盖到 32 KiB，因 IPv4 UDP 单 datagram 无法承载 64 KiB payload 而明确省略该行。
+`native_io_benchmark` 只比较同模型的原生基线：Windows 为 raw IOCP，Linux 分别为 raw epoll 与 raw io_uring，Apple/BSD 为 raw kqueue。输出按 backend 和 TCP/UDP 拆分的 payload 延迟、吞吐及 submit/observe 阶段表。TCP 覆盖 1/4/8/16/32/64 KiB；Windows/Linux UDP 覆盖到 32 KiB，因 IPv4 UDP 单 datagram 无法承载 64 KiB payload 而明确省略该行；kqueue UDP 止于 8 KiB，以符合 macOS 默认单 datagram 上限，不通过应用层拆包改变测试口径。

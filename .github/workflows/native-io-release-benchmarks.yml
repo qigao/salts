@@ -159,8 +159,7 @@ jobs:
             "image_os=$env:ImageOS"
             "image_version=$env:ImageVersion"
           ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY \
-            -Value "## NativeIO: $env:BENCHMARK_HOST"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO: $env:BENCHMARK_HOST"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
