@@ -13,6 +13,8 @@ endfunction()
 add_turboutils_consumer(consume_platform TurboUtils::Platform CONSUME_PLATFORM)
 add_turboutils_consumer(consume_concurrency TurboUtils::Concurrency
                        CONSUME_CONCURRENCY)
+add_turboutils_consumer(consume_native_io TurboUtils::NativeIO
+                       CONSUME_NATIVE_IO)
 add_turboutils_consumer(consume_cmeta TurboUtils::CMeta CONSUME_CMETA)
 add_turboutils_consumer(consume_cbind TurboUtils::CBind CONSUME_CBIND)
 add_executable(consume_json_cbind consumer.c)

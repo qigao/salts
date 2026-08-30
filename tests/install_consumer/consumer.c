@@ -13,6 +13,16 @@ int main(void) {
   return 0;
 }
 
+#elif defined(CONSUME_NATIVE_IO)
+#include <turbo/native_io.h>
+
+int main(void) {
+  return turbo_io_backend_model(TURBO_IO_BACKEND_IOCP) ==
+                 TURBO_IO_MODEL_COMPLETION
+             ? 0
+             : 1;
+}
+
 #elif defined(CONSUME_CMETA)
 #include <cmeta/cmeta.h>
 
