@@ -133,7 +133,7 @@ suite("CFlow format-neutral Statechart IR") {
                     CFLOW_STATECHART_INVALID_INITIAL);
 
         transitions[0].target = 5u;
-        transitions[1].target = 9u;
+        transitions[1].target = 5u;
         check_equal(rejected_build_status(&definition),
                     CFLOW_STATECHART_INVALID_HISTORY);
     }

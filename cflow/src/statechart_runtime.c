@@ -2453,13 +2453,12 @@ static cflow_statechart_runtime_status run_transition_action_span(
 
 static cflow_statechart_runtime_status
 run_pseudo_transition_action(
-    statechart_action_context *context, size_t transition,
+    statechart_action_context *context, size_t transition, size_t source,
     const char **out_error) {
     cflow_statechart_instance_impl *impl = context->impl;
-    const size_t source = find_state_index(
-        impl->ir, impl->ir->transitions[transition].source);
     cflow_statechart_action_phase phase;
-    if (source == SIZE_MAX) {
+    if (source >= impl->ir->state_count ||
+        !pseudo_kind(impl->ir->states[source].kind)) {
         if (out_error != NULL)
             *out_error = "Statechart pseudo transition source is invalid";
         return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
@@ -2476,7 +2475,7 @@ run_pseudo_transition_action_chain(
     const char **out_error) {
     cflow_statechart_instance_impl *impl = context->impl;
     size_t history_transition = SIZE_MAX;
-    size_t source, target;
+    size_t source, target = SIZE_MAX;
     cflow_statechart_runtime_status status;
     if (transition >= impl->ir->transition_count) {
         if (out_error != NULL)
@@ -2506,12 +2505,13 @@ run_pseudo_transition_action_chain(
                     impl->ir->default_transition_indices[target];
         }
     }
-    status = run_pseudo_transition_action(context, transition, out_error);
+    status = run_pseudo_transition_action(
+        context, transition, source, out_error);
     if (status != CFLOW_STATECHART_RUNTIME_OK ||
         history_transition == SIZE_MAX)
         return status;
     return run_pseudo_transition_action(
-        context, history_transition, out_error);
+        context, history_transition, target, out_error);
 }
 
 static bool configuration_state_complete(
