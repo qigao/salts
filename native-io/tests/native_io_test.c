@@ -15,6 +15,7 @@ typedef int native_io_test_socklen;
   #define NATIVE_IO_TEST_INVALID_SOCKET INVALID_SOCKET
 #else
   #include <errno.h>
+  #include <fcntl.h>
   #include <netinet/in.h>
   #include <sys/socket.h>
   #include <unistd.h>
@@ -67,6 +68,92 @@ static size_t native_io_test_backends(turbo_io_backend_kind backends[NATIVE_IO_T
   return 0u;
 #endif
 }
+
+#if !defined(_WIN32)
+static size_t
+native_io_test_readiness_backends(turbo_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS]) {
+#if defined(__linux__)
+  backends[0] = TURBO_IO_BACKEND_EPOLL;
+  return 1u;
+#elif (defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
+       defined(__DragonFly__)) && \
+    UINTPTR_MAX > UINT32_MAX
+  backends[0] = TURBO_IO_BACKEND_KQUEUE;
+  return 1u;
+#else
+  (void)backends;
+  return 0u;
+#endif
+}
+
+static int native_io_test_observe_all(turbo_io_backend *backend,
+                                      turbo_io_completion *events, size_t expected);
+
+static int native_io_test_make_pipe(int descriptors[2], bool nonblocking) {
+  int flags;
+  if (pipe(descriptors) != 0) return -errno;
+  if (!nonblocking) return TURBO_OK;
+  flags = fcntl(descriptors[0], F_GETFL, 0);
+  if (flags < 0 || fcntl(descriptors[0], F_SETFL, flags | O_NONBLOCK) != 0) goto failed;
+  flags = fcntl(descriptors[1], F_GETFL, 0);
+  if (flags < 0 || fcntl(descriptors[1], F_SETFL, flags | O_NONBLOCK) != 0) goto failed;
+  return TURBO_OK;
+
+failed:
+  flags = errno;
+  (void)close(descriptors[0]);
+  (void)close(descriptors[1]);
+  descriptors[0] = -1;
+  descriptors[1] = -1;
+  return -flags;
+}
+
+static void native_io_test_readiness_pipe_round_trip(turbo_io_backend_kind kind) {
+  static const unsigned char payload[] = {0x41u, 0x42u, 0x43u, 0x44u};
+  turbo_io_backend backend = {0};
+  const turbo_io_backend_config config = {kind, 2u, 2u, 2u};
+  int descriptors[2] = {-1, -1};
+  turbo_io_endpoint endpoints[2] = {0};
+  turbo_io_request requests[2] = {0};
+  turbo_io_completion events[2] = {0};
+  unsigned char received[sizeof(payload)] = {0};
+  const uint32_t flags = TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE;
+  turbo_io_operation operations[2];
+
+  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_test_make_pipe(descriptors, true), TURBO_OK);
+  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0], flags,
+                                           &endpoints[0]),
+              TURBO_OK);
+  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[1], flags,
+                                           &endpoints[1]),
+              TURBO_OK);
+  operations[0] = (turbo_io_operation){.kind = TURBO_IO_PIPE_READ,
+                                       .endpoint = endpoints[0],
+                                       .buffer = received,
+                                       .length = sizeof(received),
+                                       .user_data = 41u};
+  operations[1] = (turbo_io_operation){.kind = TURBO_IO_PIPE_WRITE,
+                                       .endpoint = endpoints[1],
+                                       .buffer = (void *)payload,
+                                       .length = sizeof(payload),
+                                       .user_data = 42u};
+  check_equal(turbo_io_backend_submit(&backend, &operations[0], &requests[0]), TURBO_OK);
+  check_equal(turbo_io_backend_release_pipe(&backend, endpoints[0]), TURBO_EBUSY);
+  check_equal(turbo_io_backend_submit(&backend, &operations[1], &requests[1]), TURBO_OK);
+  check_equal(native_io_test_observe_all(&backend, events, 2u), TURBO_OK);
+  check_equal(events[0].kind, TURBO_IO_COMPLETION_OK);
+  check_equal(events[1].kind, TURBO_IO_COMPLETION_OK);
+  check_equal(memcmp(received, payload, sizeof(payload)), 0);
+
+  (void)close(descriptors[0]);
+  (void)close(descriptors[1]);
+  check_equal(turbo_io_backend_release_pipe(&backend, endpoints[0]), TURBO_OK);
+  check_equal(turbo_io_backend_release_pipe(&backend, endpoints[1]), TURBO_OK);
+  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
+  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+}
+#endif
 
 static int native_io_test_bind_loopback(native_io_test_socket socket_value,
                                         struct sockaddr_in *address) {
@@ -588,6 +675,38 @@ spec("NativeIO direct backend") {
     for (size_t index = 0u; index < count; ++index)
       native_io_test_reject_pipe_operation_on_socket(backends[index]);
   }
+
+#if !defined(_WIN32)
+  it("rejects blocking byte-pipe descriptors without changing their flags") {
+    turbo_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
+    const size_t count = native_io_test_readiness_backends(backends);
+    for (size_t index = 0u; index < count; ++index) {
+      turbo_io_backend backend = {0};
+      const turbo_io_backend_config config = {backends[index], 1u, 1u, 1u};
+      int descriptors[2] = {-1, -1};
+      turbo_io_endpoint endpoint = {1u, 1u};
+
+      check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+      check_equal(native_io_test_make_pipe(descriptors, false), TURBO_OK);
+      check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0],
+                                               TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
+                  TURBO_EINVAL);
+      check_false(turbo_io_endpoint_valid(endpoint));
+      check_equal(fcntl(descriptors[0], F_GETFL, 0) & O_NONBLOCK, 0);
+      (void)close(descriptors[0]);
+      (void)close(descriptors[1]);
+      check_equal(turbo_io_backend_close(&backend), TURBO_OK);
+      check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+    }
+  }
+
+  it("round trips bytes through readiness pipe endpoints") {
+    turbo_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
+    const size_t count = native_io_test_readiness_backends(backends);
+    for (size_t index = 0u; index < count; ++index)
+      native_io_test_readiness_pipe_round_trip(backends[index]);
+  }
+#endif
 
   it("round trips TCP through every platform backend") {
     turbo_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
