@@ -29,8 +29,18 @@ cmake_add_benchmark(cflow_io_source_benchmark
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/benchmarks")
 
+cmake_add_benchmark(cflow_native_io_adapter_benchmark
+  SOURCES cflow_native_io_adapter_benchmark.c
+  LIBS
+    TurboUtils::CFlow
+    TurboUtils::NativeIO
+    TurboUtils::Platform
+    TurboUtils::TinyTest
+  FOLDER "cflow/benchmarks")
+
 if(WIN32)
   target_link_libraries(cflow_network_benchmark PRIVATE ws2_32 psapi)
+  target_link_libraries(cflow_native_io_adapter_benchmark PRIVATE ws2_32)
   target_compile_definitions(cflow_network_benchmark
     PRIVATE _CRT_SECURE_NO_WARNINGS=1)
 endif()
@@ -59,6 +69,11 @@ set_target_properties(cflow_network_benchmark PROPERTIES
   C_EXTENSIONS OFF)
 
 set_target_properties(cflow_io_source_benchmark PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+set_target_properties(cflow_native_io_adapter_benchmark PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)

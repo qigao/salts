@@ -26,6 +26,7 @@
 #include <cflow/statechart_runtime.h>
 #include <cflow/actor.h>
 #include <cflow/io_actor.h>
+#include <cflow/io_native_adapter.h>
 #include <cflow/io_native.h>
 #include <cflow/io_file.h>
 #include <cflow/io_pipe.h>

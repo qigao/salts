@@ -149,6 +149,11 @@ cmake_add_test(cflow_io_actor_test
   LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_io_native_adapter_test
+  SOURCES cflow_io_native_adapter_test.c
+  LIBS TurboUtils::CFlow TurboUtils::NativeIO TurboUtils::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_io_source_test
   SOURCES cflow_io_source_test.c cflow_io_source_init_failure_test.c
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
@@ -256,6 +261,7 @@ set_target_properties(
   cflow_actor_test
   cflow_statechart_actor_test
   cflow_io_actor_test
+  cflow_io_native_adapter_test
   cflow_io_source_test
   cflow_io_native_test
   cflow_io_file_test

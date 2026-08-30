@@ -33,6 +33,7 @@ include/cflow/
 ├── statechart_hierarchy_adapter.h explicit exclusive compatibility adapter
 ├── actor.h         bounded Actor lifecycle over Machine/Statechart and Run
 ├── io_actor.h      bounded asynchronous operation ownership/runtime
+├── io_native_adapter.h owner-driven Actor strategy over NativeIO
 ├── io_native.h     epoll/kqueue/poll/IOCP/io_uring socket, pipe, and file I/O
 ├── io_pipe.h       named-pipe/FIFO rendezvous and endpoint ownership
 ├── io_source.h     demand-gated IO Actor completion Source adapter
@@ -1099,6 +1100,62 @@ Link the example with `TurboUtils::CFlow`. Supervision, restart, parent/child
 hierarchies, remoting, persistence, and Mailbox resizing are intentionally
 unavailable; there are no placeholder APIs or implicit fallbacks for them.
 
+## Owner-driven NativeIO adapter
+
+`cflow_io_native_adapter` connects one bounded `cflow_io_actor` to one
+caller-driven NativeIO backend without creating a worker thread or a second
+message queue. The first valid submit attempt binds one Actor for the adapter
+lifetime. `turbo_io_operation` borrows its payload until
+`cflow_io_native_adapter_observe()` returns its terminal; the Actor retains the
+operation token until delivery is acknowledged.
+
+The adapter allocates exactly `request_capacity` bridge records and one fixed
+completion batch during init. Full bridge capacity returns `TURBO_ENOBUFS`;
+there is no retry queue, payload copy, hidden blocking path, or backend
+fallback. All adapter and NativeIO methods run on one fixed owner thread:
+
+```c
+cflow_io_native_adapter adapter = {0};
+cflow_io_native_adapter_config config = {{
+#if defined(_WIN32)
+    TURBO_IO_BACKEND_IOCP,
+#elif defined(__linux__)
+    TURBO_IO_BACKEND_EPOLL,
+#else
+    TURBO_IO_BACKEND_KQUEUE,
+#endif
+    16u, 64u, 16u}};
+
+int status = cflow_io_native_adapter_init(&adapter, &config);
+if (status != TURBO_OK)
+    return status;
+
+actor_config.backend = cflow_io_native_adapter_actor_ops();
+actor_config.backend_user = &adapter;
+
+/* Attach caller-owned sockets, drive Actor requests, then observe terminals
+   from this same owner thread. */
+size_t completed = 0u;
+status = cflow_io_native_adapter_observe(
+    &adapter, 0u, &completed);
+```
+
+Shutdown order is: stop Actor/Source admission, cancel or drain accepted
+requests, keep observing and driving until Actor/Source quiescence, close the
+adapter, close caller-owned native sockets, release endpoint metadata, then
+destroy the adapter. `TURBO_EALREADY` from NativeIO cancellation means a
+terminal is already in progress and is normalized to successful Actor cancel
+dispatch; it does not authorize early payload reuse.
+
+`cflow_native_io_adapter_benchmark` uses direct NativeIO from the same process
+as the denominator and reports separate 1/4/8/16/32/64 KiB TCP latency,
+throughput, CPU, and stage tables for direct, Actor, and windowed Source paths.
+The three modes rotate order per sample to limit frequency and scheduling bias;
+CPU and stage probes run in separate passes so their accounting calls do not
+inflate the latency/throughput path. Application payload is counted once per
+transfer. The benchmark fails before publishing a row if payload, completion,
+rejection, stale-completion, acknowledgement, or quiescence checks fail.
+
 ## Reactive I/O Source adapter
 
 Choose the I/O boundary from the fact that makes an item available:
@@ -1108,7 +1165,8 @@ Choose the I/O boundary from the fact that makes an item available:
 | Readiness resource (`read` may report `WOULD_BLOCK`, then arm interest) | `cflow_source_from_reactor_registration()` |
 | One authoritative completion operation per demanded value | `cflow_source_from_io_actor()` |
 | Bounded independent completion operations for throughput | `cflow_source_from_io_actor_windowed()` |
-| Direct multi-request or manually managed I/O lifecycle | `cflow_io_actor` / `cflow_io_file` |
+| Owner-driven native socket/pipe completion | `cflow_io_native_adapter` + `cflow_io_actor` |
+| Direct multi-request or manually managed file lifecycle | `cflow_io_actor` / `cflow_io_file` |
 
 `cflow_source_from_io_actor()` owns a request-capacity-one Actor, a
 capacity-one manual Executor, and one typed completion slot. It prepares

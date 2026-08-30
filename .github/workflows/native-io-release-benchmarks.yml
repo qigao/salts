@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - "native-io/**"
+      - "cflow/**"
       - ".github/workflows/native-io-release-benchmarks.yml"
   push:
     branches: [master]
     paths:
       - "native-io/**"
+      - "cflow/**"
       - ".github/workflows/native-io-release-benchmarks.yml"
   workflow_dispatch:
 
@@ -52,6 +54,42 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Select affected benchmark layers
+        id: scope
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $runNative = $true
+            $runAdapted = $true
+          } else {
+            $base = "${{ github.event.pull_request.base.sha || github.event.before }}"
+            if ([string]::IsNullOrWhiteSpace($base) -or
+                $base -match '^0+$') {
+              $runNative = $true
+              $runAdapted = $true
+            } else {
+              $changed = @(git diff --name-only $base $env:GITHUB_SHA)
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $workflowChanged = @($changed | Where-Object {
+                  $_ -eq '.github/workflows/native-io-release-benchmarks.yml'
+                }).Count -gt 0
+              $nativeChanged = @($changed | Where-Object {
+                  $_ -like 'native-io/*'
+                }).Count -gt 0
+              $cflowChanged = @($changed | Where-Object {
+                  $_ -like 'cflow/*'
+                }).Count -gt 0
+              $runNative = $nativeChanged -or $workflowChanged
+              $runAdapted = $nativeChanged -or $cflowChanged -or
+                $workflowChanged
+            }
+          }
+          "native=$($runNative.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "adapted=$($runAdapted.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Setup Linux dependencies
         if: matrix.family == 'linux'
@@ -100,7 +138,7 @@ jobs:
           cmake --preset "${{ matrix.configure_preset }}" \
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
-            --target native_io_test native_io_header_cpp_test native_io_benchmark native_io_pipe_benchmark
+            --target native_io_test native_io_header_cpp_test native_io_benchmark native_io_pipe_benchmark cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
 
       - name: Configure and build Windows Release
         if: matrix.family == 'windows'
@@ -117,7 +155,7 @@ jobs:
 
           cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test native_io_benchmark
+          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test native_io_benchmark cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
           if errorlevel 1 exit /b 1
 
       - name: Configure and build macOS Release
@@ -128,7 +166,7 @@ jobs:
           cmake --preset "${{ matrix.configure_preset }}" \
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
-            --target native_io_test native_io_header_cpp_test native_io_benchmark native_io_pipe_benchmark
+            --target native_io_test native_io_header_cpp_test native_io_benchmark native_io_pipe_benchmark cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
 
       - name: Run NativeIO contract tests
         shell: pwsh
@@ -136,7 +174,15 @@ jobs:
           ctest --test-dir "${{ matrix.build_dir }}" -R '^native_io_(test|header_cpp_test)$' --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Run CFlow NativeIO adapter contract tests
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^cflow_io_native_adapter_test$' --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run NativeIO socket benchmark
+        if: steps.scope.outputs.native == 'true'
         shell: pwsh
         env:
           BENCHMARK_EXECUTABLE: ${{ matrix.executable }}
@@ -166,7 +212,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO pipe benchmark
-        if: matrix.family != 'windows'
+        if: steps.scope.outputs.native == 'true' && matrix.family != 'windows'
         shell: pwsh
         env:
           PIPE_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_pipe_benchmark
@@ -182,6 +228,28 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "### Anonymous byte pipe"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run CFlow NativeIO adapter benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          ADAPTER_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cflow_native_io_adapter_benchmark
+          BENCHMARK_HOST: ${{ matrix.host }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:ADAPTER_BENCHMARK_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "CFlow NativeIO adapter benchmark executable not found: $benchmark"
+          }
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "cflow-adapter-benchmark.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "### CFlow Actor and Source over NativeIO"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 

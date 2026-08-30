@@ -65,6 +65,7 @@ add_library(${TARGET_NAME}
   src/graph.c
   src/interfaces.c
   src/io_actor.c
+  src/io_native_adapter.c
   src/io_source.c
   src/io_file.c
   src/io_pipe.c
@@ -147,7 +148,7 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC TurboUtils::CMeta TurboUtils::Platform
+  PUBLIC TurboUtils::CMeta TurboUtils::NativeIO TurboUtils::Platform
   PRIVATE TurboUtils::Concurrency)
 
 install(
