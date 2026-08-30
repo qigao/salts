@@ -1024,11 +1024,22 @@ static cflow_statechart_runtime_status build_initial_configuration(
             if (active_child_count == 0u) {
                 const size_t transition =
                     impl->ir->default_transition_indices[initial];
+                const size_t target =
+                    impl->ir->default_target_indices[initial];
+                const cflow_statechart_state_kind target_kind =
+                    target < impl->ir->state_count
+                        ? impl->ir->states[target].kind
+                        : CFLOW_STATECHART_ATOMIC;
+                const size_t configuration_target =
+                    target_kind == CFLOW_STATECHART_HISTORY_SHALLOW ||
+                            target_kind == CFLOW_STATECHART_HISTORY_DEEP
+                        ? impl->ir->default_target_indices[target]
+                        : target;
                 if (transition == SIZE_MAX ||
                     impl->pseudo_transition_by_state[state] != SIZE_MAX ||
                     !activate_target_path(
-                        impl, configuration, state,
-                        impl->ir->default_target_indices[initial], &stack_count))
+                        impl, configuration, state, configuration_target,
+                        &stack_count))
                     return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
                 impl->pseudo_transition_by_state[state] = transition;
             }
@@ -2246,9 +2257,17 @@ static void reset_pseudo_transition_map(cflow_statechart_instance_impl *impl) {
         impl->pseudo_transition_by_state[state] = SIZE_MAX;
 }
 
+static bool restore_history_target(
+    cflow_statechart_instance_impl *impl,
+    statechart_configuration_buffer *configuration,
+    size_t staged, size_t history,
+    size_t *stack_count, size_t *pseudo_count,
+    bool collect_default_action);
+
 static bool enter_default_descendants(
     cflow_statechart_instance_impl *impl,
     statechart_configuration_buffer *configuration,
+    size_t staged,
     size_t *stack_count,
     size_t *pseudo_count) {
     while (*stack_count != 0u) {
@@ -2269,13 +2288,25 @@ static bool enter_default_descendants(
             }
             if (active_children > 1u || initial == SIZE_MAX) return false;
             if (active_children == 0u) {
+                const size_t target =
+                    impl->ir->default_target_indices[initial];
+                const cflow_statechart_state_kind target_kind =
+                    target < impl->ir->state_count
+                        ? impl->ir->states[target].kind
+                        : CFLOW_STATECHART_ATOMIC;
                 if (!collect_pseudo_transition(
-                        impl, initial, pseudo_count) ||
-                    !activate_path_to(
-                        impl, configuration,
-                        impl->ir->default_target_indices[initial],
-                        stack_count))
+                        impl, initial, pseudo_count))
                     return false;
+                if (target_kind == CFLOW_STATECHART_HISTORY_SHALLOW ||
+                    target_kind == CFLOW_STATECHART_HISTORY_DEEP) {
+                    if (!restore_history_target(
+                            impl, configuration, staged, target,
+                            stack_count, pseudo_count, false))
+                        return false;
+                } else if (!activate_path_to(
+                               impl, configuration, target, stack_count)) {
+                    return false;
+                }
             }
         } else if (kind == CFLOW_STATECHART_PARALLEL) {
             child = impl->ir->child_offsets[state + 1u];
@@ -2296,7 +2327,8 @@ static bool restore_history_target(cflow_statechart_instance_impl *impl,
                                    statechart_configuration_buffer *configuration,
                                    size_t staged, size_t history,
                                    size_t *stack_count,
-                                   size_t *pseudo_count) {
+                                   size_t *pseudo_count,
+                                   bool collect_default_action) {
     const size_t parent = impl->ir->parents[history];
     const size_t slot = impl->history_slots[history];
     const size_t count = impl->history_counts[staged][slot];
@@ -2306,13 +2338,14 @@ static bool restore_history_target(cflow_statechart_instance_impl *impl,
     if (!activate_path_to(impl, configuration, parent, stack_count))
         return false;
     if (count == 0u) {
-        if (!collect_pseudo_transition(impl, history, pseudo_count))
+        if (collect_default_action &&
+            !collect_pseudo_transition(impl, history, pseudo_count))
             return false;
         return activate_path_to(
             impl, configuration,
             impl->ir->default_target_indices[history], stack_count) &&
             enter_default_descendants(
-                impl, configuration, stack_count, pseudo_count);
+                impl, configuration, staged, stack_count, pseudo_count);
     }
     for (index = 0u; index < impl->ir->state_count; ++index) {
         const size_t state = impl->ir->document_order_indices[index];
@@ -2321,7 +2354,7 @@ static bool restore_history_target(cflow_statechart_instance_impl *impl,
             return false;
     }
     return enter_default_descendants(
-        impl, configuration, stack_count, pseudo_count);
+        impl, configuration, staged, stack_count, pseudo_count);
 }
 
 static bool build_target_configuration(
@@ -2349,13 +2382,14 @@ static bool build_target_configuration(
             impl->ir->states[target].kind == CFLOW_STATECHART_HISTORY_DEEP) {
             if (!restore_history_target(
                     impl, configuration, staged, target,
-                    &stack_count, &pseudo_count))
+                    &stack_count, &pseudo_count, true))
                 return false;
         } else {
             if (!activate_path_to(
                     impl, configuration, target, &stack_count) ||
                 !enter_default_descendants(
-                    impl, configuration, &stack_count, &pseudo_count))
+                    impl, configuration, staged,
+                    &stack_count, &pseudo_count))
                 return false;
         }
     }
@@ -2419,13 +2453,12 @@ static cflow_statechart_runtime_status run_transition_action_span(
 
 static cflow_statechart_runtime_status
 run_pseudo_transition_action(
-    statechart_action_context *context, size_t transition,
+    statechart_action_context *context, size_t transition, size_t source,
     const char **out_error) {
     cflow_statechart_instance_impl *impl = context->impl;
-    const size_t source = find_state_index(
-        impl->ir, impl->ir->transitions[transition].source);
     cflow_statechart_action_phase phase;
-    if (source == SIZE_MAX) {
+    if (source >= impl->ir->state_count ||
+        !pseudo_kind(impl->ir->states[source].kind)) {
         if (out_error != NULL)
             *out_error = "Statechart pseudo transition source is invalid";
         return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
@@ -2434,6 +2467,51 @@ run_pseudo_transition_action(
         ? CFLOW_STATECHART_ACTION_INITIAL
         : CFLOW_STATECHART_ACTION_HISTORY;
     return run_transition_action_span(context, transition, phase, out_error);
+}
+
+static cflow_statechart_runtime_status
+run_pseudo_transition_action_chain(
+    statechart_action_context *context, size_t staged, size_t transition,
+    const char **out_error) {
+    cflow_statechart_instance_impl *impl = context->impl;
+    size_t history_transition = SIZE_MAX;
+    size_t source, target = SIZE_MAX;
+    cflow_statechart_runtime_status status;
+    if (transition >= impl->ir->transition_count) {
+        if (out_error != NULL)
+            *out_error = "Statechart pseudo transition is invalid";
+        return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+    }
+    source = find_state_index(
+        impl->ir, impl->ir->transitions[transition].source);
+    if (source != SIZE_MAX &&
+        impl->ir->states[source].kind == CFLOW_STATECHART_INITIAL) {
+        target = find_state_index(
+            impl->ir, impl->ir->transitions[transition].target);
+        if (target != SIZE_MAX &&
+            (impl->ir->states[target].kind ==
+                 CFLOW_STATECHART_HISTORY_SHALLOW ||
+             impl->ir->states[target].kind ==
+                 CFLOW_STATECHART_HISTORY_DEEP)) {
+            const size_t slot = impl->history_slots[target];
+            if (slot == SIZE_MAX || slot >= impl->history_count ||
+                impl->ir->default_transition_indices[target] == SIZE_MAX) {
+                if (out_error != NULL)
+                    *out_error = "Statechart initial history chain is invalid";
+                return CFLOW_STATECHART_RUNTIME_INVALID_CONFIGURATION;
+            }
+            if (impl->history_counts[staged][slot] == 0u)
+                history_transition =
+                    impl->ir->default_transition_indices[target];
+        }
+    }
+    status = run_pseudo_transition_action(
+        context, transition, source, out_error);
+    if (status != CFLOW_STATECHART_RUNTIME_OK ||
+        history_transition == SIZE_MAX)
+        return status;
+    return run_pseudo_transition_action(
+        context, history_transition, target, out_error);
 }
 
 static bool configuration_state_complete(
@@ -2604,8 +2682,8 @@ static cflow_statechart_runtime_status execute_initial_entry_actions(
             CFLOW_STATECHART_STATE_ACTION_ENTRY, &error);
         if (status != CFLOW_STATECHART_RUNTIME_OK) goto fail;
         if (transition != SIZE_MAX) {
-            status = run_pseudo_transition_action(
-                &context, transition, &error);
+            status = run_pseudo_transition_action_chain(
+                &context, staged, transition, &error);
             if (status != CFLOW_STATECHART_RUNTIME_OK) goto fail;
         }
     }
@@ -2707,8 +2785,8 @@ static cflow_statechart_runtime_status execute_microstep(
         const size_t owner = pseudo != SIZE_MAX
             ? impl->ir->parents[pseudo] : SIZE_MAX;
         if (owner != SIZE_MAX && bit_test(impl->entry_bits, owner)) continue;
-        status = run_pseudo_transition_action(
-            &context, transition, &error);
+        status = run_pseudo_transition_action_chain(
+            &context, staged, transition, &error);
         if (status != CFLOW_STATECHART_RUNTIME_OK) {
             microstep_fail(impl, status, error);
             return status;
@@ -2726,8 +2804,8 @@ static cflow_statechart_runtime_status execute_microstep(
             return status;
         }
         if (transition != SIZE_MAX) {
-            status = run_pseudo_transition_action(
-                &context, transition, &error);
+            status = run_pseudo_transition_action_chain(
+                &context, staged, transition, &error);
             if (status != CFLOW_STATECHART_RUNTIME_OK) {
                 microstep_fail(impl, status, error);
                 return status;

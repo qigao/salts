@@ -976,12 +976,6 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
             "<state id='a'><transition cond='In(missing)' target='a'/>"
             "</state></scxml>";
-        static const char pseudo[] =
-            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
-            "<state id='a'><history id='memory'>"
-            "<transition target='leaf'/></history>"
-            "<transition cond='In(memory)' target='leaf'/>"
-            "<state id='leaf'/></state></scxml>";
         static const char initial_default[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
             "<initial><transition cond='In(a)' target='a'/></initial>"
@@ -992,12 +986,11 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             "<transition cond='In(a)' target='leaf'/></history>"
             "<state id='leaf'/></state></scxml>";
         const char *invalid[] = {
-            malformed, quoted, unknown, pseudo, initial_default,
-            history_default};
+            malformed, quoted, unknown, initial_default, history_default};
         const cflow_scxml_status expected[] = {
             CFLOW_SCXML_INVALID_STRUCTURE, CFLOW_SCXML_INVALID_STRUCTURE,
             CFLOW_SCXML_UNKNOWN_TARGET, CFLOW_SCXML_INVALID_STRUCTURE,
-            CFLOW_SCXML_INVALID_STRUCTURE, CFLOW_SCXML_INVALID_STRUCTURE};
+            CFLOW_SCXML_INVALID_STRUCTURE};
         size_t index;
 
         for (index = 0u; index < sizeof(invalid) / sizeof(invalid[0]);
@@ -1704,12 +1697,6 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
             "<state id='a'><onentry><if cond='In(missing)'/>"
             "</onentry></state></scxml>";
-        static const char pseudo[] =
-            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
-            "<state id='a'><history id='memory'>"
-            "<transition target='leaf'/></history>"
-            "<onentry><if cond='In(memory)'/></onentry>"
-            "<state id='leaf'/></state></scxml>";
         static const char after_else[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
             "<state id='a'><onentry><if cond='In(a)'><else/>"
@@ -1726,13 +1713,12 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
             "<state id='a'><onentry><if cond='  In ( a )  '/>"
             "</onentry></state></scxml>";
-        const char *invalid[] = {missing,     quoted,     unknown,
-                                 pseudo,      after_else, marker_outside,
-                                 marker_child};
+        const char *invalid[] = {missing, quoted, unknown, after_else,
+                                 marker_outside, marker_child};
         const cflow_scxml_status expected[] = {
             CFLOW_SCXML_INVALID_STRUCTURE, CFLOW_SCXML_INVALID_STRUCTURE,
-            CFLOW_SCXML_UNKNOWN_TARGET,    CFLOW_SCXML_INVALID_STRUCTURE,
-            CFLOW_SCXML_INVALID_STRUCTURE, CFLOW_SCXML_INVALID_STRUCTURE,
+            CFLOW_SCXML_UNKNOWN_TARGET, CFLOW_SCXML_INVALID_STRUCTURE,
+            CFLOW_SCXML_INVALID_STRUCTURE,
             CFLOW_SCXML_INVALID_STRUCTURE};
         size_t index;
         for (index = 0u; index < sizeof(invalid) / sizeof(invalid[0]);
@@ -1750,6 +1736,26 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                         CFLOW_SCXML_OK);
             cflow_scxml_program_destroy(&program);
         }
+    }
+
+    it("treats declared pseudo states as inactive in null conditions") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "initial='a'><state id='a' initial='leaf'>"
+            "<history id='memory'><transition target='leaf'/></history>"
+            "<state id='leaf'><onentry><if cond='In(memory)'>"
+            "<raise event='wrong'/><else/><raise event='advance'/></if>"
+            "</onentry><transition event='advance' cond='In(memory)' "
+            "target='fail'/><transition event='advance' target='pass'/>"
+            "<transition event='wrong' target='fail'/></state></state>"
+            "<final id='pass'/><state id='fail'/></scxml>";
+        size_t guard_count = 0u;
+        bool done = false;
+
+        check_true(run_condition_program(
+            source, NULL, &guard_count, &done, NULL));
+        check_equal(guard_count, (size_t)1u);
+        check_true(done);
     }
 
     it("admits literal send and cancel profiles with deterministic requirements") {

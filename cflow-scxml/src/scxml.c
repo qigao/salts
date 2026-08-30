@@ -3536,7 +3536,6 @@ static cflow_scxml_status resolve_condition_state(
     const turbo_xml_attribute condition = find_attribute(node, "cond");
     turbo_xml_string_view state_name;
     const scxml_name_ref *state;
-    cflow_statechart_state_kind kind;
     if (condition.impl == NULL ||
         !parse_null_in_condition(
             turbo_xml_attribute_value(condition), &state_name)) {
@@ -3561,15 +3560,6 @@ static cflow_scxml_status resolve_condition_state(
             turbo_xml_attribute_location(condition),
             "In(id) resolved outside native state storage");
     }
-    kind = build->states[state->id - 1u].kind;
-    if (kind == CFLOW_STATECHART_INITIAL ||
-        kind == CFLOW_STATECHART_HISTORY_SHALLOW ||
-        kind == CFLOW_STATECHART_HISTORY_DEEP) {
-        return scxml_fail(
-            build, CFLOW_SCXML_INVALID_STRUCTURE,
-            turbo_xml_attribute_location(condition),
-            "In(id) requires a declared real state");
-    }
     *out_state = (cflow_machine_state_id)state->id;
     return CFLOW_SCXML_OK;
 }
@@ -3580,7 +3570,6 @@ static bool resolve_cmeta_condition_state(
     const scxml_build *build = (const scxml_build *)user;
     const turbo_xml_string_view wanted = {name, name_size};
     const scxml_name_ref *state;
-    cflow_statechart_state_kind kind;
     if (build == NULL || name == NULL || name_size == 0u ||
         out_state == NULL) {
         return false;
@@ -3589,12 +3578,6 @@ static bool resolve_cmeta_condition_state(
         build->state_names, build->state_name_index, wanted);
     if (state == NULL || state->id == 0u || state->id > build->state_index)
         return false;
-    kind = build->states[state->id - 1u].kind;
-    if (kind == CFLOW_STATECHART_INITIAL ||
-        kind == CFLOW_STATECHART_HISTORY_SHALLOW ||
-        kind == CFLOW_STATECHART_HISTORY_DEEP) {
-        return false;
-    }
     *out_state = (cflow_machine_state_id)state->id;
     return true;
 }

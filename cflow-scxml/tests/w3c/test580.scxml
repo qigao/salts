@@ -1,0 +1,36 @@
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0"
+       datamodel="null" initial="s1">
+  <state id="s1">
+    <initial>
+      <transition target="sh1"/>
+    </initial>
+    <history id="sh1">
+      <transition target="s11"/>
+    </history>
+    <state id="s11">
+      <onentry>
+        <raise event="first.visit"/>
+      </onentry>
+      <transition cond="In(sh1)" target="fail"/>
+      <transition target="s12"/>
+    </state>
+    <state id="s12">
+      <onentry>
+        <raise event="leaf.entered"/>
+      </onentry>
+      <transition cond="In(sh1)" target="fail"/>
+    </state>
+    <transition cond="In(sh1)" target="fail"/>
+    <transition event="first.visit" target="outside"/>
+    <transition event="leaf.entered" target="pass"/>
+  </state>
+  <state id="outside">
+    <onentry>
+      <raise event="restore"/>
+    </onentry>
+    <transition cond="In(sh1)" target="fail"/>
+    <transition event="restore" target="sh1"/>
+  </state>
+  <final id="pass"/>
+  <state id="fail"/>
+</scxml>
