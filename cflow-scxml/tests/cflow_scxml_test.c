@@ -2269,8 +2269,9 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             "<log label='active'/></if></finalize></invoke>"
             "<invoke id='second' autoforward='true'/>"
             "<transition event='tick'/>"
-            "<transition event='done.invoke.first' target='done'>"
-            "<log label='transition'/></transition></state>"
+            "<transition event='done.invoke.first'>"
+            "<log label='transition'/></transition>"
+            "<transition event='finish' target='done'/></state>"
             "<final id='done'/></scxml>";
         cflow_scxml_program program = {0};
         cflow_scxml_session session = {0};
@@ -2310,6 +2311,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             capture_scxml_log, &capture);
         cflow_event_view tick = {0};
         cflow_event_view done = {0};
+        cflow_event_view finish = {0};
         cflow_statechart_instance_stats runtime_stats = {0};
         cflow_scxml_invoke_stats invoke_stats = {0};
 
@@ -2335,8 +2337,8 @@ suite("SCXML Core to native CFlow Statechart compiler") {
 
         check_true(cflow_scxml_program_event(
             &program, "done.invoke.first", 17u, &done));
-        check_equal(cflow_scxml_session_report_invoke_event(
-                        &session, probe.start_tokens[0], &done),
+        check_equal(cflow_scxml_session_report_invoke_done(
+                        &session, probe.start_tokens[0]),
                     CFLOW_MAILBOX_OK);
         check_true(cflow_executor_wait_idle(&executor));
         tlog_flush(logger);
@@ -2350,17 +2352,26 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(probe.forward_events[2], done.id);
         check_true(probe.forward_types[2] == done.payload_type);
         check_equal(probe.forward_payloads[2], false);
+        check_equal(cflow_scxml_session_report_invoke_done(
+                        &session, probe.start_tokens[1]),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_program_event(
+            &program, "finish", 6u, &finish));
+        check_equal(cflow_scxml_session_try_send(&session, &finish),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
         check_true(cflow_scxml_session_get_stats(
             &session, &runtime_stats));
         check_true(runtime_stats.done);
         check_true(cflow_scxml_session_get_invoke_stats(
             &session, &invoke_stats));
-        check_equal(invoke_stats.returned_accepted, UINT64_C(1));
+        check_equal(invoke_stats.returned_accepted, UINT64_C(2));
         check_equal(invoke_stats.returned_rejected, UINT64_C(0));
-        check_equal(invoke_stats.completed, UINT64_C(1));
+        check_equal(invoke_stats.completed, UINT64_C(2));
         check_equal(invoke_stats.forwarded, UINT64_C(3));
         check_equal(invoke_stats.active, (size_t)0u);
-        check_equal(invoke_stats.cancelled, UINT64_C(1));
+        check_equal(invoke_stats.cancelled, UINT64_C(0));
         check_equal(cflow_scxml_session_destroy(&session),
                     CFLOW_STATECHART_RUNTIME_OK);
         cflow_executor_destroy(&executor);
@@ -2405,7 +2416,6 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             .invoke = &adapter,
             .invoke_user = &probe};
         cflow_event_view leave = {0};
-        cflow_event_view done = {0};
         cflow_statechart_instance_stats runtime_stats = {0};
         cflow_scxml_invoke_stats invoke_stats = {0};
 
@@ -2416,8 +2426,6 @@ suite("SCXML Core to native CFlow Statechart compiler") {
                     CFLOW_STATECHART_RUNTIME_OK);
         check_true(cflow_scxml_program_event(
             &program, "leave", 5u, &leave));
-        check_true(cflow_scxml_program_event(
-            &program, "done.invoke.job", 15u, &done));
         atomic_init(&blocker.entered, false);
         atomic_init(&blocker.release, false);
         check_equal(cflow_executor_try_post(
@@ -2426,8 +2434,8 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         while (!atomic_load(&blocker.entered)) turbo_thread_yield();
         check_equal(cflow_scxml_session_try_send(&session, &leave),
                     CFLOW_MAILBOX_OK);
-        check_equal(cflow_scxml_session_report_invoke_event(
-                        &session, probe.start_tokens[0], &done),
+        check_equal(cflow_scxml_session_report_invoke_done(
+                        &session, probe.start_tokens[0]),
                     CFLOW_MAILBOX_OK);
         atomic_store(&blocker.release, true);
         check_true(cflow_executor_wait_idle(&executor));
@@ -2439,8 +2447,8 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             &session, &invoke_stats));
         check_equal(invoke_stats.returned_accepted, UINT64_C(1));
         check_equal(invoke_stats.returned_rejected, UINT64_C(1));
-        check_equal(cflow_scxml_session_report_invoke_event(
-                        &session, probe.start_tokens[0], &done),
+        check_equal(cflow_scxml_session_report_invoke_done(
+                        &session, probe.start_tokens[0]),
                     CFLOW_MAILBOX_INVALID_ARGUMENT);
         check_true(cflow_scxml_session_get_invoke_stats(
             &session, &invoke_stats));

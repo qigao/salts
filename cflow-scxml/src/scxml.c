@@ -4695,6 +4695,9 @@ static bool observe_scxml_event(
                     SCXML_INVOCATION_ACTIVE &&
                 session->invocation_rows[index].token ==
                     event->source_token) {
+                static const char done_prefix[] = "done.invoke.";
+                const scxml_invocation_descriptor *descriptor =
+                    &session->program->invocations[index];
                 const scxml_invocation_row *invocation =
                     &session->invocation_rows[index];
                 if (invocation->id_size >
@@ -4710,6 +4713,30 @@ static bool observe_scxml_event(
                     (cflow_scxml_cmeta_expr_string_view){
                         session->current_event_invoke_id,
                         invocation->id_size};
+                if (descriptor->has_id_location &&
+                    event->event->id == descriptor->done_event) {
+                    size_t dynamic_name_size;
+                    if (!checked_add(
+                            sizeof(done_prefix) - 1u,
+                            invocation->id_size, &dynamic_name_size) ||
+                        dynamic_name_size >
+                            CFLOW_SCXML_EVENT_METADATA_CAPACITY) {
+                        turbo_mutex_unlock(&session->registry_lock);
+                        *out_error =
+                            "SCXML dynamic done Event exceeds metadata bound";
+                        return false;
+                    }
+                    memcpy(session->current_event_name, done_prefix,
+                           sizeof(done_prefix) - 1u);
+                    memcpy(session->current_event_name +
+                               sizeof(done_prefix) - 1u,
+                           invocation->id, invocation->id_size);
+                    session->current_event_name[dynamic_name_size] = '\0';
+                    session->system_values.event_name =
+                        (cflow_scxml_cmeta_expr_string_view){
+                            session->current_event_name,
+                            dynamic_name_size};
+                }
                 break;
             }
         }
@@ -5616,6 +5643,8 @@ static bool execute_scxml_block_impl(
         *out_error = "SCXML executable Event is not in the program map";
         return false;
     }
+    if (session != NULL)
+        system_values.event_name = session->system_values.event_name;
     if (trivial_state) {
         memcpy(context->out_state, context->state, block->state_type->size);
     } else if (cmeta_type_require_traits(
@@ -5961,6 +5990,7 @@ static bool evaluate_cmeta_active_state(
 static bool evaluate_scxml_transition_guard_impl(
     const scxml_guard_user *guard,
     const cflow_scxml_cmeta_expr_system_values *system_values,
+    bool preserve_observed_event_name,
     const cflow_statechart_guard_context *context,
     bool *out_enabled, const char **out_error) {
     if (guard == NULL || context == NULL || context->state == NULL ||
@@ -5984,6 +6014,8 @@ static bool evaluate_scxml_transition_guard_impl(
             *out_error = "SCXML guard Event is not in the program map";
             return false;
         }
+        if (preserve_observed_event_name)
+            current_system_values.event_name = system_values->event_name;
         if (cflow_scxml_cmeta_expr_evaluate_with_system(
                 &guard->value.expression, context->state,
                 evaluate_cmeta_active_state, (void *)context,
@@ -6002,7 +6034,7 @@ static bool evaluate_scxml_transition_guard(
     const scxml_guard_user *guard = (const scxml_guard_user *)user;
     return evaluate_scxml_transition_guard_impl(
         guard, guard != NULL ? &guard->system_values : NULL,
-        context, out_enabled, out_error);
+        false, context, out_enabled, out_error);
 }
 
 static bool evaluate_scxml_session_transition_guard(
@@ -6017,7 +6049,7 @@ static bool evaluate_scxml_session_transition_guard(
     }
     return evaluate_scxml_transition_guard_impl(
         binding->guard, &binding->session->system_values,
-        context, out_enabled, out_error);
+        true, context, out_enabled, out_error);
 }
 
 static cflow_scxml_status emit_executable_node(scxml_build *build, turbo_xml_node node);
@@ -9072,6 +9104,43 @@ cflow_mailbox_status cflow_scxml_session_report_invoke_event(
     turbo_mutex_unlock(&impl->registry_lock);
     status = cflow_statechart_instance_try_send_tagged(
         &impl->instance, event, token);
+    turbo_mutex_lock(&impl->registry_lock);
+    if (status == CFLOW_MAILBOX_OK)
+        increment_u64(&impl->invoke_stats.returned_accepted);
+    else
+        increment_u64(&impl->invoke_stats.returned_rejected);
+    turbo_mutex_unlock(&impl->registry_lock);
+    return status;
+}
+
+cflow_mailbox_status cflow_scxml_session_report_invoke_done(
+    cflow_scxml_session *session, uint64_t token) {
+    cflow_scxml_session_impl *impl = session != NULL
+        ? (cflow_scxml_session_impl *)session->impl : NULL;
+    const bool null_value = false;
+    cflow_event_view event = {0};
+    cflow_mailbox_status status;
+    size_t index;
+    if (impl == NULL || !impl->has_invoke || token == 0u)
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    turbo_mutex_lock(&impl->registry_lock);
+    for (index = 0u; index < impl->program->invocation_count; ++index) {
+        if (impl->invocation_rows[index].state == SCXML_INVOCATION_ACTIVE &&
+            impl->invocation_rows[index].token == token) {
+            event = (cflow_event_view){
+                impl->program->invocations[index].done_event,
+                &cmeta_type_bool, &null_value};
+            break;
+        }
+    }
+    if (event.id == 0u) {
+        increment_u64(&impl->invoke_stats.returned_rejected);
+        turbo_mutex_unlock(&impl->registry_lock);
+        return CFLOW_MAILBOX_INVALID_ARGUMENT;
+    }
+    turbo_mutex_unlock(&impl->registry_lock);
+    status = cflow_statechart_instance_try_send_tagged(
+        &impl->instance, &event, token);
     turbo_mutex_lock(&impl->registry_lock);
     if (status == CFLOW_MAILBOX_OK)
         increment_u64(&impl->invoke_stats.returned_accepted);

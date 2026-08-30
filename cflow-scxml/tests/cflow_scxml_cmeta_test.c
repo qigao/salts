@@ -3095,6 +3095,67 @@ spec("CFlow SCXML public CMeta data model") {
         cflow_scxml_program_destroy(&program);
     }
 
+    it("reports dynamic done identity through event name and invokeid") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta'><state id='worker'><invoke "
+            "idlocation='send_id'/><transition "
+            "event='done.invoke.worker.invoke.1' "
+            "cond='_event.name == &quot;done.invoke.worker.1&quot; "
+            "&amp;&amp; _event.invokeid == &quot;worker.1&quot;' "
+            "target='done'/></state><final id='done'/></scxml>";
+        const cflow_scxml_invoke_adapter_v1 adapter = {
+            CFLOW_SCXML_INVOKE_ADAPTER_ABI_V1, sizeof(adapter),
+            CFLOW_SCXML_INVOKE_CAP_START | CFLOW_SCXML_INVOKE_CAP_CANCEL,
+            invoke_idlocation_prepare_start,
+            invoke_idlocation_prepare_cancel, NULL,
+            invoke_idlocation_close, invoke_idlocation_quiescent};
+        invoke_idlocation_probe probe = {0};
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_scxml_session session = {0};
+        cflow_executor executor = {0};
+        cflow_statechart_instance_stats stats = {0};
+        cflow_scxml_invoke_stats invoke_stats = {0};
+        const scxml_public_data initial = {0};
+        const cflow_scxml_cmeta_session_options_v1 data = {
+            CFLOW_SCXML_CMETA_SESSION_OPTIONS_ABI_V1, sizeof(data), &initial};
+        cflow_scxml_session_config config = {
+            .program = &program, .executor = &executor,
+            .external_event_capacity = 2u, .internal_event_capacity = 2u,
+            .completion_capacity = 2u, .microstep_limit = 16u,
+            .effect_capacity = 2u, .adapter_internal_event_capacity = 2u,
+            .invocation_capacity = 1u, .invoke = &adapter,
+            .invoke_user = &probe};
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        check_equal(cflow_scxml_session_init_cmeta(&session, &config, &data),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        check_equal(cflow_scxml_session_report_invoke_done(&session, 0u),
+                    CFLOW_MAILBOX_INVALID_ARGUMENT);
+        check_equal(cflow_scxml_session_report_invoke_done(
+                        &session, probe.start_tokens[0]),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_true(cflow_scxml_session_get_stats(&session, &stats));
+        check_true(stats.done);
+        check_equal(probe.prepare_cancels, (size_t)0u);
+        check_equal(cflow_scxml_session_report_invoke_done(
+                        &session, probe.start_tokens[0]),
+                    CFLOW_MAILBOX_INVALID_ARGUMENT);
+        check_true(cflow_scxml_session_get_invoke_stats(
+            &session, &invoke_stats));
+        check_equal(invoke_stats.returned_accepted, UINT64_C(1));
+        check_equal(invoke_stats.returned_rejected, UINT64_C(1));
+        check_equal(invoke_stats.completed, UINT64_C(1));
+        check_equal(cflow_scxml_session_destroy(&session),
+                    CFLOW_STATECHART_RUNTIME_OK);
+        cflow_executor_destroy(&executor);
+        cflow_scxml_program_destroy(&program);
+    }
+
     it("transports scalar content on a literal external send") {
         static const char source[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "

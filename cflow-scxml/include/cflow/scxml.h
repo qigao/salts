@@ -570,6 +570,14 @@ cflow_mailbox_status cflow_scxml_session_report_invoke_event(
     cflow_scxml_session *session, uint64_t token,
     const cflow_event_view *event);
 /**
+ * Admit the compiled done Event for one live invocation token. Dynamic
+ * `idlocation` identity is exposed as `done.invoke.<active-id>` and through
+ * `_event.invokeid`; the finite compiled Event ID remains the routing key.
+ * Zero, stale, completed, or cancelled tokens return `INVALID_ARGUMENT`.
+ */
+cflow_mailbox_status cflow_scxml_session_report_invoke_done(
+    cflow_scxml_session *session, uint64_t token);
+/**
  * Concurrently admit one asynchronous adapter failure to the prioritized
  * bounded internal ingress. The exact mailbox result is returned; there is no
  * retry or external-queue fallback.
