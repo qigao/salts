@@ -388,6 +388,29 @@ spec("CFlow SCXML public CMeta data model") {
         cflow_scxml_program_destroy(&program);
     }
 
+    it("treats declared pseudo states as inactive in CMeta conditions") {
+        static const char source[] =
+            "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "
+            "datamodel='cmeta' initial='active'>"
+            "<state id='active' initial='leaf'>"
+            "<history id='memory'><transition target='leaf'/></history>"
+            "<state id='leaf'><transition cond='In(&quot;memory&quot;)' "
+            "target='fail'/><transition target='done'/></state></state>"
+            "<final id='done'/><state id='fail'/></scxml>";
+        cflow_scxml_program program = {0};
+        cflow_scxml_diagnostic diagnostic = {0};
+        cflow_statechart_instance_stats stats;
+
+        check_equal(compile_cmeta(source, &program, &diagnostic),
+                    CFLOW_SCXML_OK);
+        stats = run_to_idle(
+            &program,
+            (scxml_public_data){true, 0, SCXML_PUBLIC_SOURCE_GOOD});
+        check_true(stats.done);
+        check_false(stats.errored);
+        cflow_scxml_program_destroy(&program);
+    }
+
     it("evaluates nested CMeta partitions with session system strings") {
         static const char source[] =
             "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0' "

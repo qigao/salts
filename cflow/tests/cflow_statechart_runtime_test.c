@@ -4011,13 +4011,19 @@ typedef struct history_fixture {
     cflow_statechart_executable executables[1];
     cflow_statechart_transition transitions[12];
     cflow_statechart_state_action state_actions[1];
-    cflow_statechart_transition_action transition_actions[2];
+    cflow_statechart_transition_action transition_actions[3];
     cflow_statechart_definition definition;
     cflow_statechart statechart;
     cflow_executor executor;
     cflow_statechart_instance instance;
     int initial_state;
 } history_fixture;
+
+typedef struct history_initial_trace_probe {
+    int trace[3];
+    size_t calls;
+    bool pseudo_states_inactive;
+} history_initial_trace_probe;
 
 enum {
     HISTORY_ROOT = 100u,
@@ -4144,14 +4150,13 @@ static void history_fixture_definition(history_fixture *fixture) {
     fixture->initial_state = 17;
 }
 
-static void history_fixture_init(history_fixture *fixture,
-                                 microstep_action_probe *probe) {
-    const cflow_statechart_executable_binding binding = {
-        MICRO_EXECUTABLE, microstep_action, probe};
+static void history_fixture_init_with_binding(
+    history_fixture *fixture,
+    const cflow_statechart_executable_binding *binding) {
     cflow_statechart_instance_config config = {
         .statechart = &fixture->statechart,
         .initial_state = &fixture->initial_state,
-        .executables = &binding,
+        .executables = binding,
         .executable_count = 1u,
         .external_event_capacity = 4u,
         .internal_event_capacity = 2u,
@@ -4162,11 +4167,39 @@ static void history_fixture_init(history_fixture *fixture,
                     &fixture->statechart, &fixture->definition),
                 CFLOW_STATECHART_OK);
     check_true(cflow_executor_serial_init(&fixture->executor));
+    check_equal(cflow_statechart_instance_init(&fixture->instance, &config),
+                CFLOW_STATECHART_RUNTIME_OK);
+}
+
+static void history_fixture_init(history_fixture *fixture,
+                                 microstep_action_probe *probe) {
+    const cflow_statechart_executable_binding binding = {
+        MICRO_EXECUTABLE, microstep_action, probe};
     probe->executor = &fixture->executor;
     probe->executor_only = true;
     probe->no_alias = true;
-    check_equal(cflow_statechart_instance_init(&fixture->instance, &config),
-                CFLOW_STATECHART_RUNTIME_OK);
+    history_fixture_init_with_binding(fixture, &binding);
+}
+
+static bool history_initial_trace_action(
+    void *user, const cflow_statechart_executable_context *context,
+    const char **out_error) {
+    history_initial_trace_probe *probe =
+        (history_initial_trace_probe *)user;
+    if (probe == NULL || context == NULL || context->state == NULL ||
+        context->out_state == NULL || context->is_active == NULL ||
+        context->configuration_user == NULL || out_error == NULL ||
+        probe->calls >= sizeof(probe->trace) / sizeof(probe->trace[0]))
+        return false;
+    probe->trace[probe->calls++] =
+        microstep_trace_code(context->phase, context->owner);
+    probe->pseudo_states_inactive = probe->pseudo_states_inactive &&
+        !context->is_active(
+            context->configuration_user, HISTORY_PARENT_INITIAL) &&
+        !context->is_active(context->configuration_user, HISTORY_SHALLOW);
+    *(int *)context->out_state = *(const int *)context->state;
+    *out_error = NULL;
+    return true;
 }
 
 static void history_fixture_destroy(history_fixture *fixture) {
@@ -4209,6 +4242,45 @@ static void check_history_configuration(
 }
 
 suite("CFlow Statechart history restoration") {
+    it("resolves an initial target through unset sibling history") {
+        history_fixture fixture;
+        history_initial_trace_probe probe = {
+            .pseudo_states_inactive = true};
+        const cflow_statechart_executable_binding binding = {
+            .id = MICRO_EXECUTABLE,
+            .user = &probe,
+            .contextual_fn = history_initial_trace_action};
+        const cflow_machine_state_id expected_configuration[] = {
+            HISTORY_ROOT, HISTORY_PARENT, HISTORY_CHILD, HISTORY_LEAF_ONE};
+        const int expected_trace[] = {
+            microstep_trace_code(
+                CFLOW_STATECHART_ACTION_INITIAL, HISTORY_PARENT_INITIAL),
+            microstep_trace_code(
+                CFLOW_STATECHART_ACTION_HISTORY, HISTORY_SHALLOW),
+            microstep_trace_code(
+                CFLOW_STATECHART_ACTION_INITIAL, HISTORY_CHILD_INITIAL)};
+        history_fixture_definition(&fixture);
+        fixture.transitions[1].target = HISTORY_SHALLOW;
+        fixture.transition_actions[0] =
+            (cflow_statechart_transition_action){
+                2u, MICRO_EXECUTABLE, 0u};
+        fixture.transition_actions[1] =
+            (cflow_statechart_transition_action){
+                4u, MICRO_EXECUTABLE, 0u};
+        fixture.transition_actions[2] =
+            (cflow_statechart_transition_action){
+                3u, MICRO_EXECUTABLE, 0u};
+        fixture.definition.transition_action_count = 3u;
+        history_fixture_init_with_binding(&fixture, &binding);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_history_configuration(
+            &fixture, expected_configuration, 4u, UINT64_C(1));
+        check_equal(probe.calls, (size_t)3u);
+        check_equal(probe.trace, expected_trace, sizeof(expected_trace));
+        check_true(probe.pseudo_states_inactive);
+        history_fixture_destroy(&fixture);
+    }
+
     it("uses the declared history default when the slot is unset") {
         history_fixture fixture;
         microstep_action_probe probe = {0};

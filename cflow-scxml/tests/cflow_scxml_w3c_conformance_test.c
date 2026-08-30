@@ -312,6 +312,14 @@ suite("SCXML W3C-derived conformance regression corpus") {
         check_w3c_fixture("test387.scxml");
     }
 
+    it("test 579 orders initial and default history content") {
+        check_w3c_fixture("test579.scxml");
+    }
+
+    it("test 580 keeps history pseudo states out of the configuration") {
+        check_w3c_fixture("test580.scxml");
+    }
+
     it("test 403a applies source priority, document order, and guards") {
         check_w3c_fixture("test403a.scxml");
     }

@@ -671,14 +671,24 @@ static cflow_statechart_status validate_default_transitions(
         if (source != SIZE_MAX && pseudo_kind(impl->states[source].kind)) {
             const size_t target = find_state_index(impl, transition->target);
             const size_t parent = impl->parents[source];
+            const bool initial_history_target =
+                target != SIZE_MAX && parent != SIZE_MAX &&
+                impl->states[source].kind == CFLOW_STATECHART_INITIAL &&
+                (impl->states[target].kind ==
+                     CFLOW_STATECHART_HISTORY_SHALLOW ||
+                 impl->states[target].kind ==
+                     CFLOW_STATECHART_HISTORY_DEEP) &&
+                impl->parents[target] == parent;
+            const bool real_descendant_target =
+                target != SIZE_MAX && parent != SIZE_MAX &&
+                !pseudo_kind(impl->states[target].kind) &&
+                target != parent && is_descendant(impl, target, parent);
             ++counts[source];
             if (transition->trigger != CFLOW_STATECHART_TRIGGER_EVENTLESS ||
                 transition->event != 0u || transition->completion != 0u ||
                 transition->guard != 0u || transition->target == 0u ||
                 transition->kind != CFLOW_STATECHART_TRANSITION_EXTERNAL ||
-                target == SIZE_MAX || pseudo_kind(impl->states[target].kind) ||
-                parent == SIZE_MAX || target == parent ||
-                !is_descendant(impl, target, parent)) {
+                (!real_descendant_target && !initial_history_target)) {
                 const cflow_statechart_status status =
                     impl->states[source].kind == CFLOW_STATECHART_INITIAL
                     ? CFLOW_STATECHART_INVALID_INITIAL

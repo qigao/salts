@@ -19,6 +19,8 @@ certification and is not, by itself, a claim of complete SCXML conformance.
 | `test377.scxml` | [test377.txml](https://www.w3.org/Voice/2013/scxml-irp/377/test377.txml) | Multiple `onexit` handlers execute in document order. |
 | `test378.scxml` | [test378.txml](https://www.w3.org/Voice/2013/scxml-irp/378/test378.txml) | An execution error aborts only its `onexit` block; a later independent handler still executes. |
 | `test387.scxml` | [test387.txml](https://www.w3.org/Voice/2013/scxml-irp/387/test387.txml) | An unset shallow or deep history slot enters its declared default stored configuration. |
+| `test579.scxml` | [test579.txml](https://www.w3.org/Voice/2013/scxml-irp/579/test579.txml) | Unset history transition content executes after the parent's `onentry` and initial-transition content. |
+| `test580.scxml` | [test580.txml](https://www.w3.org/Voice/2013/scxml-irp/580/test580.txml) | A history pseudo-state never appears in the active configuration. |
 | `test403a.scxml` | [test403a.txml](https://www.w3.org/Voice/2013/scxml-irp/403a/test403a.txml) | Transition selection prefers descendant sources, then document order, and falls through disabled conditions. |
 | `test404.scxml` | [test404.txml](https://www.w3.org/Voice/2013/scxml-irp/404/test404.txml) | States execute `onexit` content in exit order before transition content. |
 | `test405.scxml` | [test405.txml](https://www.w3.org/Voice/2013/scxml-irp/405/test405.txml) | Selected transition content executes in document order after all required exits. |
@@ -74,10 +76,17 @@ for the first handler's `send`, then require `error.execution` followed by the
 event from the later independent handler. Test 159 uses the same deterministic
 adapter failure, rejects an event from the remainder of the failing block, and
 accepts only the witness raised by the next independent `onentry` block. Test
-387 preserves both unset-history
-targets and replaces wildcard failures with the finite wrong leaf-entry events;
-its timeout send is omitted because the harness requires terminal completion.
-Test 407 replaces the exit counter with one exact internal exit event. Test 421
+387 preserves both unset-history targets and replaces wildcard failures with
+the finite wrong leaf-entry events; its timeout send is omitted because the
+harness requires terminal completion. Test 579 replaces the generator counter
+and timeout with a finite two-pass event trace. The first pass requires
+parent-entry `event1`, initial-transition `event2`, and unset-history `event3`
+in order. Stored-history reentry requires `event1`, `event2`, and a leaf-entry
+witness while rejecting `event3`, proving that the history default content is
+suppressed after the slot is set. Test 580 keeps exact `In(sh1)` guards at
+child, parent, exited, and restored observation points, replacing only generator
+pass/fail operations with local terminal states and internal events. Test 407
+replaces the exit counter with one exact internal exit event. Test 421
 retains the four internal events and matches only the third and fourth, which
 directly observes the named internal-queue draining assertion; the upstream
 external-send failure witness is outside that assertion and is omitted. Test
@@ -85,6 +94,14 @@ external-send failure witness is outside that assertion and is omitted. Test
 produced by its external transitions. Exact observers require both parallel
 regions and their parallel parent to exit twice, and the containing state to
 exit once.
+
+## Current state-membership profile
+
+Null-model and CMeta `In(id)` expressions admit any declared SCXML state ID,
+including initial and history pseudo-state IDs. The native Statechart active
+configuration remains the single fact source: pseudo-states are never active,
+so a declared pseudo-state query evaluates to false. Unknown IDs still fail
+program admission.
 
 ## Current CMeta system-event profile
 
