@@ -13,7 +13,8 @@
 enum {
     W3C_EXTERNAL_EVENT_CAPACITY = 2,
     W3C_INTERNAL_EVENT_CAPACITY = 8,
-    W3C_COMPLETION_CAPACITY = 4,
+    /* Test 417 completes two regions, their parallel, its parent, and root. */
+    W3C_COMPLETION_CAPACITY = 5,
     W3C_MICROSTEP_LIMIT = 32
 };
 
@@ -44,6 +45,8 @@ static bool run_w3c_fixture(const char *fixture_name,
     bool instance_initialized = false;
     bool succeeded = false;
     int path_size;
+    cflow_scxml_status compile_status;
+    cflow_statechart_runtime_status runtime_status;
 
     if (fixture_name == NULL || out_result == NULL) {
         return false;
@@ -53,17 +56,32 @@ static bool run_w3c_fixture(const char *fixture_name,
     if (path_size < 0 || (size_t)path_size >= sizeof(path)) return false;
     memset(out_result, 0, sizeof(*out_result));
     source = tt_read_file(path, &source_size);
-    if (source == NULL ||
-        cflow_scxml_compile(&program, source, source_size, NULL, &diagnostic) !=
-            CFLOW_SCXML_OK ||
-        !cflow_scxml_program_state_id(&program, "pass", 4u,
+    if (source == NULL) {
+        info("fixture=%s read failed", fixture_name);
+        goto cleanup;
+    }
+    compile_status =
+        cflow_scxml_compile(&program, source, source_size, NULL, &diagnostic);
+    if (compile_status != CFLOW_SCXML_OK) {
+        info("fixture=%s compile_status=%d diagnostic=%s", fixture_name,
+             (int)compile_status, diagnostic.message);
+        goto cleanup;
+    }
+    if (!cflow_scxml_program_state_id(&program, "pass", 4u,
                                       &out_result->pass_state) ||
         !cflow_scxml_program_state_id(&program, "fail", 4u,
-                                      &out_result->fail_state) ||
-        !cflow_scxml_program_runtime_bindings(
+                                      &out_result->fail_state)) {
+        info("fixture=%s result states missing", fixture_name);
+        goto cleanup;
+    }
+    if (!cflow_scxml_program_runtime_bindings(
             &program, &executables, &executable_count) ||
-        !cflow_scxml_program_guard_bindings(&program, &guards, &guard_count) ||
-        !cflow_executor_serial_init(&executor)) {
+        !cflow_scxml_program_guard_bindings(&program, &guards, &guard_count)) {
+        info("fixture=%s runtime bindings missing", fixture_name);
+        goto cleanup;
+    }
+    if (!cflow_executor_serial_init(&executor)) {
+        info("fixture=%s executor initialization failed", fixture_name);
         goto cleanup;
     }
     executor_initialized = true;
@@ -79,13 +97,16 @@ static bool run_w3c_fixture(const char *fixture_name,
         .completion_capacity = W3C_COMPLETION_CAPACITY,
         .microstep_limit = W3C_MICROSTEP_LIMIT,
         .executor = &executor};
-    if (cflow_statechart_instance_init(&instance, &config) !=
-        CFLOW_STATECHART_RUNTIME_OK) {
+    runtime_status = cflow_statechart_instance_init(&instance, &config);
+    if (runtime_status != CFLOW_STATECHART_RUNTIME_OK) {
+        info("fixture=%s runtime_status=%d", fixture_name,
+             (int)runtime_status);
         goto cleanup;
     }
     instance_initialized = true;
     if (!cflow_executor_wait_idle(&executor) ||
         !cflow_statechart_instance_get_stats(&instance, &stats)) {
+        info("fixture=%s executor wait or stats failed", fixture_name);
         goto cleanup;
     }
     out_result->current_state =
@@ -114,11 +135,31 @@ static void check_w3c_fixture(const char *fixture_name) {
 }
 
 suite("SCXML W3C-derived conformance regression corpus") {
+    it("test 144 preserves raised internal event order") {
+        check_w3c_fixture("test144.scxml");
+    }
+
     it("test 355 selects the first root child when initial is omitted") {
         check_w3c_fixture("test355.scxml");
     }
 
     it("test 375 executes onentry handlers in document order") {
         check_w3c_fixture("test375.scxml");
+    }
+
+    it("test 377 executes onexit handlers in document order") {
+        check_w3c_fixture("test377.scxml");
+    }
+
+    it("test 416 raises compound state completion") {
+        check_w3c_fixture("test416.scxml");
+    }
+
+    it("test 417 raises parallel state completion") {
+        check_w3c_fixture("test417.scxml");
+    }
+
+    it("test 419 selects eventless transitions before queued events") {
+        check_w3c_fixture("test419.scxml");
     }
 }
