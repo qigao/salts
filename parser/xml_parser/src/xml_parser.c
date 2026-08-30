@@ -5,6 +5,7 @@
 #include "core/cxstr.h"
 #include "core/cxtable.h"
 #include "xml/cxparser.h"
+#include "xml/cxprinter.h"
 
 #include <ctype.h>
 #include <stdbool.h>
@@ -413,6 +414,41 @@ turbo_xml_node turbo_xml_document_root(const turbo_xml_document *document) {
         node.impl = impl->root->root_element;
     }
     return node;
+}
+
+turbo_xml_status turbo_xml_serialize_children(
+    turbo_xml_node node, char *output, size_t output_capacity,
+    size_t max_bytes, size_t *out_size) {
+    const cxml_elem_node *element;
+    char *serialized;
+    size_t serialized_size;
+    size_t required_capacity;
+
+    if (turbo_xml_node_type(node) != TURBO_XML_ELEMENT || out_size == NULL ||
+        max_bytes == 0u || (output == NULL) != (output_capacity == 0u)) {
+        return TURBO_XML_INVALID_ARGUMENT;
+    }
+    element = (const cxml_elem_node *)node.impl;
+    if (element->children.head == NULL) {
+        *out_size = 0u;
+        if (output != NULL) output[0] = '\0';
+        return TURBO_XML_OK;
+    }
+
+    serialized = cxml_element_children_to_xml_rstring(
+        (cxml_element_node *)element);
+    if (serialized == NULL) return TURBO_XML_ALLOCATION_FAILED;
+    serialized_size = strlen(serialized);
+    *out_size = serialized_size;
+    if (serialized_size > max_bytes ||
+        !checked_add(serialized_size, 1u, &required_capacity) ||
+        (output != NULL && output_capacity < required_capacity)) {
+        free(serialized);
+        return TURBO_XML_LIMIT_EXCEEDED;
+    }
+    if (output != NULL) memcpy(output, serialized, required_capacity);
+    free(serialized);
+    return TURBO_XML_OK;
 }
 
 turbo_xml_node_kind turbo_xml_node_type(turbo_xml_node node) {

@@ -193,6 +193,71 @@ suite("bounded XML parser facade") {
         turbo_xml_document_destroy(&document);
     }
 
+    it("serializes bounded mixed child fragments without exposing cxml") {
+        static const char xml[] =
+            "<root> lead <p:item xmlns:p='urn:item' p:key='a&amp;b'>"
+            "x&lt;y</p:item> tail <!--note--><?work value?></root>";
+        static const char expected[] =
+            " lead <p:item xmlns:p=\"urn:item\" p:key=\"a&amp;b\">"
+            "x&lt;y</p:item> tail <!--note--><?work value?>";
+        turbo_xml_document document = {0};
+        turbo_xml_diagnostic diagnostic = {0};
+        turbo_xml_node root;
+        char output[256] = {0};
+        size_t size = 0u;
+
+        check_equal(turbo_xml_parse(&document, xml, sizeof(xml) - 1u,
+                                    NULL, &diagnostic),
+                    TURBO_XML_OK);
+        root = turbo_xml_document_root(&document);
+        check_equal(turbo_xml_serialize_children(
+                        root, NULL, 0u, sizeof(output) - 1u, &size),
+                    TURBO_XML_OK);
+        check_equal(size, sizeof(expected) - 1u);
+        check_equal(turbo_xml_serialize_children(
+                        root, output, size + 1u,
+                        sizeof(output) - 1u, &size),
+                    TURBO_XML_OK);
+        check_equal(output, expected, sizeof(expected));
+        check_equal(turbo_xml_serialize_children(
+                        root, output, size, sizeof(output) - 1u, &size),
+                    TURBO_XML_LIMIT_EXCEEDED);
+        check_equal(turbo_xml_serialize_children(
+                        root, NULL, 0u, size - 1u, &size),
+                    TURBO_XML_LIMIT_EXCEEDED);
+        turbo_xml_document_destroy(&document);
+    }
+
+    it("serializes empty and whitespace-only child fragments exactly") {
+        static const char empty_xml[] = "<root/>";
+        static const char whitespace_xml[] = "<root> \n\t </root>";
+        turbo_xml_document document = {0};
+        turbo_xml_diagnostic diagnostic = {0};
+        char output[16] = {0};
+        size_t size = SIZE_MAX;
+
+        check_equal(turbo_xml_parse(&document, empty_xml,
+                                    sizeof(empty_xml) - 1u,
+                                    NULL, &diagnostic), TURBO_XML_OK);
+        check_equal(turbo_xml_serialize_children(
+                        turbo_xml_document_root(&document), output,
+                        sizeof(output), sizeof(output) - 1u, &size),
+                    TURBO_XML_OK);
+        check_equal(size, (size_t)0u);
+        check_equal(output, "", sizeof(""));
+        turbo_xml_document_destroy(&document);
+
+        check_equal(turbo_xml_parse(&document, whitespace_xml,
+                                    sizeof(whitespace_xml) - 1u,
+                                    NULL, &diagnostic), TURBO_XML_OK);
+        check_equal(turbo_xml_serialize_children(
+                        turbo_xml_document_root(&document), output,
+                        sizeof(output), sizeof(output) - 1u, &size),
+                    TURBO_XML_OK);
+        check_equal(output, " \n\t ", sizeof(" \n\t "));
+        turbo_xml_document_destroy(&document);
+    }
+
     it("reports the first malformed token location without publishing") {
         static const char xml[] = "<root>\n  <child>\n</root>";
         turbo_xml_document document = {0};
