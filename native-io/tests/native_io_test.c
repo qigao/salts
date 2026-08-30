@@ -570,16 +570,20 @@ spec("NativeIO direct backend") {
     check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_EPOLL), TURBO_IO_MODEL_READINESS);
     check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_IO_URING), TURBO_IO_MODEL_COMPLETION);
     check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_KQUEUE), TURBO_IO_MODEL_READINESS);
+#if defined(_WIN32)
     check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IOCP));
     check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_EPOLL));
     check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IO_URING));
     check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
-#if defined(_WIN32)
     check_true(turbo_io_backend_supported(TURBO_IO_BACKEND_IOCP));
     check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_EPOLL));
     check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_IO_URING));
     check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_KQUEUE));
 #elif defined(__linux__)
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IOCP));
+    check_true(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_EPOLL));
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IO_URING));
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
     check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_IOCP));
     check_true(turbo_io_backend_supported(TURBO_IO_BACKEND_EPOLL));
     check_true(turbo_io_backend_supported(TURBO_IO_BACKEND_IO_URING));
@@ -587,11 +591,19 @@ spec("NativeIO direct backend") {
 #elif (defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
        defined(__DragonFly__)) && \
     UINTPTR_MAX > UINT32_MAX
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IOCP));
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_EPOLL));
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IO_URING));
+    check_true(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
     check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_IOCP));
     check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_EPOLL));
     check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_IO_URING));
     check_true(turbo_io_backend_supported(TURBO_IO_BACKEND_KQUEUE));
 #else
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IOCP));
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_EPOLL));
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IO_URING));
+    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
     check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_IOCP));
     check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_EPOLL));
     check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_IO_URING));

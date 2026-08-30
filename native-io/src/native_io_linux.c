@@ -10,8 +10,7 @@ bool turbo_io_platform_backend_supported(turbo_io_backend_kind kind) {
 }
 
 bool turbo_io_platform_pipe_supported(turbo_io_backend_kind kind) {
-  (void)kind;
-  return false;
+  return kind == TURBO_IO_BACKEND_EPOLL;
 }
 
 int turbo_io_platform_backend_init(turbo_io_backend *backend,
