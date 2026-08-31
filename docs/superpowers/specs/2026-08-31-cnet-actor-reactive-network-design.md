@@ -213,24 +213,22 @@ typedef struct cnet_client_config {
     size_t command_capacity_per_shard;
     size_t request_capacity_per_shard;
     size_t completion_batch_capacity;
-    size_t data_event_capacity_per_shard;
-    size_t max_command_payload_bytes;
+    size_t event_capacity_per_shard;
+    size_t max_send_bytes;
     size_t receive_buffer_bytes;
-    size_t receive_buffer_count_per_shard;
-    size_t max_message_bytes;
-    size_t max_queued_bytes_per_connection;
     uint32_t connect_timeout_ms;
     uint32_t read_timeout_ms;
     uint32_t write_timeout_ms;
-    uint32_t shutdown_timeout_ms;
 } cnet_client_config;
 ```
 
 Every capacity must be positive and checked for multiplication/addition
-overflow before allocation. The first send API requires `max_message_bytes <=
-max_command_payload_bytes`; receive reassembly has its own explicit message
-budget. CNet fails initialization rather than silently reducing a capacity or
-selecting another backend.
+overflow before allocation. Command and event capacities are powers of two,
+and completion batch capacity cannot exceed request capacity. `max_send_bytes`
+is both the public send limit and the bounded command-copy limit. The base
+transports do not reassemble messages, so they do not expose a misleading
+message or queued-byte budget. CNet fails initialization rather than silently
+reducing a capacity or selecting another backend.
 
 CNet uses TurboUtils `turbo_threadpool` for its configured I/O owner shards and
 callback workers; it does not implement another thread pool. Each I/O shard has
@@ -257,79 +255,34 @@ completions. Once expiration records `TURBO_ETIMEDOUT` as the session's first
 failure, a late successful completion only retires the request: it cannot
 publish `CONNECTED`, deliver receive data, or replace the terminal cause.
 NativeIO cancellation remains asynchronous, so request and session storage are
-recycled only after the terminal completion is observed. Client shutdown uses
-its separate drain deadline and is not modeled as an unimplemented per-request
-owner timer.
+recycled only after the terminal completion is observed. Client shutdown
+receives its drain deadline on each `cnet_client_stop` call and is not modeled
+as an owner configuration field.
 
 Process-global protocol dependencies are initialized by the CNet control plane
 before worker threads start and are reference counted. A live resolver pins the
 module lifetime, so final shutdown returns `TURBO_EBUSY` instead of destroying
 c-ares state beneath an event-thread callback. Resolver and client destruction
 must precede final module shutdown. These functions remain internal while CNet
-is experimental; Task 6 exposes and installs their public declarations together
-with the complete client lifecycle. On Windows, the module owns an explicit
+is experimental; `cnet_client_init` and `cnet_client_destroy` acquire and
+release the process reference. On Windows, the module owns an explicit
 WinSock reference before initializing c-ares; each NativeIO backend owns its own
 independent reference, so neither module borrows the other's socket lifetime.
 
 ### Connection options
 
 ```c
-typedef struct cnet_tls_options {
-    const char *server_name;
-    const char *ca_file;
-    const char *client_certificate_file;
-    const char *client_private_key_file;
-} cnet_tls_options;
-
-typedef struct cnet_websocket_options {
-    const char *subprotocol;
-    size_t max_header_bytes;
-    size_t max_frame_bytes;
-    size_t max_message_bytes;
-} cnet_websocket_options;
-
-enum {
-    CNET_KCP_PSK_BYTES = 32
-};
-
-typedef struct cnet_kcp_fec_options {
-    uint16_t data_shards;
-    uint16_t parity_shards;
-    uint16_t max_payload_bytes;
-    uint16_t receive_group_count;
-} cnet_kcp_fec_options;
-
-typedef struct cnet_kcp_options {
-    uint8_t pre_shared_key[CNET_KCP_PSK_BYTES];
-    uint16_t mtu;
-    uint16_t send_window;
-    uint16_t receive_window;
-    uint16_t interval_ms;
-    uint16_t handshake_retry_ms;
-    uint8_t fast_resend;
-    bool disable_congestion_window;
-    cnet_kcp_fec_options fec;
-} cnet_kcp_options;
-
 typedef struct cnet_connect_options {
     const char *uri;
     cnet_observer observer;
-    cnet_tls_options tls;
-    cnet_websocket_options websocket;
-    cnet_kcp_options kcp;
 } cnet_connect_options;
 ```
 
-Typed option groups avoid an unbounded string-key map. Strings are copied into
-bounded session-owned storage during successful admission; callers may release
-the option structure after `cnet_connect` returns.
-
-TLS verification is enabled by default. An empty `server_name` derives the name
-from the URI host. Disabling certificate or hostname verification is not part
-of the initial API. KCP requires a non-zero 32-byte PSK and valid Reed-Solomon
-dimensions; raw KCP, unauthenticated KCP, and FEC `NONE` are not valid modes.
-`cnet_connect` copies the KCP key into session-owned secret storage and wipes it
-when the session reaches terminal state.
+The URI and observer are copied into bounded client/session-owned storage during
+successful admission; callers may release the option structure after
+`cnet_connect` returns. TLS, WebSocket, and KCP will add typed option groups only
+when those protocol stacks are implemented; the base API does not expose
+partially functional protocol fields.
 
 ### Application operations
 
@@ -382,11 +335,10 @@ first error and moves the connection to `FAILED`. Empty sends are rejected with
 hide connection latency behind an implicit pre-connect queue.
 
 `cnet_receive` adds application receive demand. One unit permits one delivered
-byte chunk or one complete message according to transport semantics. Demand
-uses checked saturating rejection: overflow returns `TURBO_EOVERFLOW` without
-changing prior demand. CNet does not arm another application receive when
-demand is zero, except for bounded protocol-control reads required for
-handshake, ping/pong, close, acknowledgements, or KCP retransmission.
+byte chunk or datagram according to transport semantics. Demand overflow is
+detected by the owner, records `TURBO_ERANGE` as the first read-stage failure,
+and emits `FAILED`; an already copied command is never reported as synchronously
+rejected. CNet does not arm another application receive when demand is zero.
 
 `cnet_close` stops new send and receive admission for the handle. A second close
 while draining returns `TURBO_EALREADY`. A stale or recycled handle returns
@@ -401,15 +353,15 @@ until stop has reached quiescence.
 
 ## Transport Semantics
 
-| URI scheme | Composition | Receive unit | `CONNECTED` means |
-|---|---|---|---|
-| `tcp://host:port` | TCP -> NativeIO | byte chunk | TCP connection completed |
-| `udp://host:port` | connected UDP -> NativeIO | one datagram | local UDP socket is associated with the peer; it does not prove peer reachability |
-| `pipe://name` | platform byte pipe -> NativeIO | byte chunk | named/FIFO endpoint opened |
-| `tls://host:port` | TLS -> TCP -> NativeIO | decrypted byte chunk | TCP and verified TLS handshake completed |
-| `ws://host:port/path` | WebSocket -> TCP -> NativeIO | complete text/binary message | TCP and HTTP Upgrade completed |
-| `wss://host:port/path` | WebSocket -> TLS -> TCP -> NativeIO | complete text/binary message | TCP, verified TLS, and HTTP Upgrade completed |
-| `kcp://host:port` | KCP -> authenticated AEAD record -> Reed-Solomon FEC -> connected UDP -> NativeIO + owner timer | complete KCP message | the authenticated PSK handshake completed, session/FEC keys were derived, and the KCP conversation was created from the session epoch |
+| URI scheme | Availability | Composition | Receive unit | `CONNECTED` means |
+|---|---|---|---|---|
+| `tcp://host:port` | base API | TCP -> NativeIO | byte chunk | TCP connection completed |
+| `udp://host:port` | base API | connected UDP -> NativeIO | one datagram | local UDP socket is associated with the peer; it does not prove peer reachability |
+| `pipe://name` | base API on Pipe-capable backend | platform byte pipe -> NativeIO | byte chunk | named/FIFO endpoint opened |
+| `tls://host:port` | future protocol task | TLS -> TCP -> NativeIO | decrypted byte chunk | TCP and verified TLS handshake completed |
+| `ws://host:port/path` | future protocol task | WebSocket -> TCP -> NativeIO | complete text/binary message | TCP and HTTP Upgrade completed |
+| `wss://host:port/path` | future protocol task | WebSocket -> TLS -> TCP -> NativeIO | complete text/binary message | TCP, verified TLS, and HTTP Upgrade completed |
+| `kcp://host:port` | future protocol task | KCP -> authenticated AEAD record -> Reed-Solomon FEC -> connected UDP -> NativeIO + owner timer | complete KCP message | the authenticated PSK handshake completed, session/FEC keys were derived, and the KCP conversation was created from the session epoch |
 
 TCP, TLS, and Pipe preserve ordered byte-stream semantics but do not promise
 that receive callback boundaries match send call boundaries. UDP preserves one

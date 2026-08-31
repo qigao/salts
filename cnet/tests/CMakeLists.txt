@@ -87,3 +87,21 @@ set_target_properties(cnet_dispatcher_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+cmake_add_test(cnet_api_test
+  SOURCES cnet_api_test.c
+  LIBS turbo_cnet_experimental TurboUtils::TinyTest
+  FOLDER "cnet/tests")
+set_target_properties(cnet_api_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(cnet_header_cpp_test
+  SOURCES cnet_header_cpp_test.cpp
+  LIBS turbo_cnet_experimental
+  FOLDER "cnet/tests")
+set_target_properties(cnet_header_cpp_test PROPERTIES
+  CXX_STANDARD 11
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF)

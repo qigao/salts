@@ -273,16 +273,16 @@ from the public client path.
 - Modify: `cnet/CMakeLists.txt`
 - Modify: `cnet/tests/CMakeLists.txt`
 
-- [ ] Write C and C++ header tests for every public type, enum, callback, and
+- [x] Write C and C++ header tests for every public type, enum, callback, and
   function in the design spec.
-- [ ] Write public API tests showing immediate failure leaves outputs zero,
+- [x] Write public API tests showing immediate failure leaves outputs zero,
   connect options are copied, send success owns one bounded copy, receive
   demand maps one-to-one to values, and stop/destroy follow quiescence.
-- [ ] Expose `cnet_client`, `cnet_connection`, configuration, observer, error,
+- [x] Expose `cnet_client`, `cnet_connection`, configuration, observer, error,
   connect/send/receive/close, and client lifecycle exactly as specified.
 - [ ] Add a complete TCP example whose output and cleanup are asserted by a
   test; do not include unavailable protocol examples.
-- [ ] Keep the target experimental and uninstalled until Task 9.
+- [x] Keep the target experimental and uninstalled until Task 9.
 - [ ] Commit with `feat(cnet): expose complete base client api`.
 
 ## Task 7: Separate CFlow Event, Actor, and Reactive Targets
