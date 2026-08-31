@@ -21,6 +21,7 @@ int main() {
   return native_io_endpoint_valid(endpoint) && native_io_request_valid(request) &&
                  pipe_read == NATIVE_IO_OPERATION_PIPE_READ &&
                  NATIVE_IO_OPERATION_PIPE_WRITE == 6 &&
+                 NATIVE_IO_OPERATION_TCP_CONNECT == 7 &&
                  native_io_backend_kind_model(NATIVE_IO_BACKEND_IOCP) ==
                      NATIVE_IO_MODEL_COMPLETION &&
                  native_io_backend_kind_model(NATIVE_IO_BACKEND_EPOLL) ==

@@ -38,8 +38,14 @@ bool native_io_request_valid(native_io_request request) {
 }
 
 bool native_io_operation_valid(const native_io_operation *operation) {
-  if (operation == NULL || !native_io_endpoint_valid(operation->endpoint) ||
-      operation->buffer == NULL || operation->length == 0u ||
+  if (operation == NULL || !native_io_endpoint_valid(operation->endpoint))
+    return false;
+  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT)
+    return operation->buffer == NULL && operation->length == 0u && operation->address != NULL &&
+           operation->address_length != 0u &&
+           operation->address_length <= operation->address_capacity &&
+           operation->address_length <= (size_t)INT_MAX;
+  if (operation->buffer == NULL || operation->length == 0u ||
       operation->length > (size_t)UINT32_MAX)
     return false;
   if (operation->kind == NATIVE_IO_OPERATION_TCP_RECV || operation->kind == NATIVE_IO_OPERATION_TCP_SEND ||

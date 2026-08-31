@@ -364,6 +364,38 @@ static int native_io_test_make_tcp_pair(native_io_test_socket sockets[2]) {
   return status;
 }
 
+static int native_io_test_make_tcp_connect_fixture(native_io_test_socket *listener,
+                                                   native_io_test_socket *client,
+                                                   struct sockaddr_in *address) {
+  int status;
+  *listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  *client = NATIVE_IO_TEST_INVALID_SOCKET;
+  if (*listener == NATIVE_IO_TEST_INVALID_SOCKET) return native_io_test_last_error();
+  status = native_io_test_bind_loopback(*listener, address);
+  if (status == TURBO_OK && listen(*listener, 1) != 0) status = native_io_test_last_error();
+  if (status == TURBO_OK) {
+#if defined(_WIN32)
+    *client = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0u, WSA_FLAG_OVERLAPPED);
+#else
+    int flags;
+    *client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (*client != NATIVE_IO_TEST_INVALID_SOCKET) {
+      flags = fcntl(*client, F_GETFL, 0);
+      if (flags < 0 || fcntl(*client, F_SETFL, flags | O_NONBLOCK) != 0)
+        status = native_io_test_last_error();
+    }
+#endif
+    if (*client == NATIVE_IO_TEST_INVALID_SOCKET) status = native_io_test_last_error();
+  }
+  if (status != TURBO_OK) {
+    native_io_test_close_socket(*listener);
+    native_io_test_close_socket(*client);
+    *listener = NATIVE_IO_TEST_INVALID_SOCKET;
+    *client = NATIVE_IO_TEST_INVALID_SOCKET;
+  }
+  return status;
+}
+
 static int native_io_test_make_udp_pair(native_io_test_socket sockets[2],
                                         struct sockaddr_in addresses[2]) {
   int status = TURBO_OK;
@@ -509,6 +541,92 @@ static void native_io_test_round_trip_tcp(native_io_backend_kind kind) {
   check_equal(native_io_backend_close(&backend), TURBO_OK);
   check_equal(native_io_backend_destroy(&backend), TURBO_OK);
   check_null(backend.impl);
+}
+
+static void native_io_test_tcp_connect(native_io_backend_kind kind) {
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {kind, 1u, 1u, 1u};
+  native_io_test_socket listener = NATIVE_IO_TEST_INVALID_SOCKET;
+  native_io_test_socket client = NATIVE_IO_TEST_INVALID_SOCKET;
+  native_io_test_socket accepted = NATIVE_IO_TEST_INVALID_SOCKET;
+  struct sockaddr_in address;
+  native_io_endpoint endpoint = {0};
+  native_io_request request = {0};
+  native_io_request rejected_request = {0};
+  native_io_completion event = {0};
+  unsigned char receive_byte = 0u;
+  native_io_operation operation;
+  native_io_operation receive_operation;
+
+  check_equal(native_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_test_make_tcp_connect_fixture(&listener, &client, &address), TURBO_OK);
+  check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)client, &endpoint), TURBO_OK);
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_TCP_CONNECT,
+                                   .endpoint = endpoint,
+                                   .user_data = 13u,
+                                   .address = &address,
+                                   .address_capacity = sizeof(address),
+                                   .address_length = sizeof(address)};
+  check_equal(native_io_backend_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_backend_submit(&backend, &operation, &rejected_request), TURBO_EALREADY);
+  check_false(native_io_request_valid(rejected_request));
+  receive_operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_TCP_RECV,
+                                            .endpoint = endpoint,
+                                            .buffer = &receive_byte,
+                                            .length = sizeof(receive_byte)};
+  check_equal(native_io_backend_submit(&backend, &receive_operation, &rejected_request),
+              TURBO_EBUSY);
+  check_false(native_io_request_valid(rejected_request));
+  check_equal(native_io_test_observe_all(&backend, &event, 1u), TURBO_OK);
+  check_equal(event.kind, NATIVE_IO_COMPLETION_OK);
+  check_equal(event.status, TURBO_OK);
+  check_equal(event.bytes, 0u);
+  check_equal(event.user_data, 13u);
+  accepted = accept(listener, NULL, NULL);
+  check_true(accepted != NATIVE_IO_TEST_INVALID_SOCKET);
+
+  native_io_test_close_socket(accepted);
+  native_io_test_close_socket(listener);
+  native_io_test_close_endpoint(&backend, endpoint, client);
+  check_equal(native_io_backend_close(&backend), TURBO_OK);
+  check_equal(native_io_backend_destroy(&backend), TURBO_OK);
+}
+
+static void native_io_test_tcp_connect_refused(native_io_backend_kind kind) {
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {kind, 1u, 1u, 1u};
+  native_io_test_socket listener = NATIVE_IO_TEST_INVALID_SOCKET;
+  native_io_test_socket client = NATIVE_IO_TEST_INVALID_SOCKET;
+  struct sockaddr_in address;
+  native_io_endpoint endpoint = {0};
+  native_io_request request = {0};
+  native_io_completion event = {0};
+  native_io_operation operation;
+  size_t count = SIZE_MAX;
+
+  check_equal(native_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_test_make_tcp_connect_fixture(&listener, &client, &address), TURBO_OK);
+  native_io_test_close_socket(listener);
+  listener = NATIVE_IO_TEST_INVALID_SOCKET;
+  check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)client, &endpoint), TURBO_OK);
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_TCP_CONNECT,
+                                   .endpoint = endpoint,
+                                   .user_data = 14u,
+                                   .address = &address,
+                                   .address_capacity = sizeof(address),
+                                   .address_length = sizeof(address)};
+  check_equal(native_io_backend_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_test_observe_all(&backend, &event, 1u), TURBO_OK);
+  check_equal(event.kind, NATIVE_IO_COMPLETION_FAILED);
+  check_true(event.status < TURBO_OK);
+  check_true(event.native_status != 0u);
+  check_equal(event.user_data, 14u);
+  check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count), TURBO_ETIMEDOUT);
+  check_equal(count, 0u);
+
+  native_io_test_close_endpoint(&backend, endpoint, client);
+  check_equal(native_io_backend_close(&backend), TURBO_OK);
+  check_equal(native_io_backend_destroy(&backend), TURBO_OK);
 }
 
 static void native_io_test_fifo_tcp_receives(native_io_backend_kind kind) {
@@ -1092,6 +1210,7 @@ spec("NativeIO direct backend") {
     check_equal(NATIVE_IO_OPERATION_UDP_SEND_TO, 4);
     check_equal(NATIVE_IO_OPERATION_PIPE_READ, 5);
     check_equal(NATIVE_IO_OPERATION_PIPE_WRITE, 6);
+    check_equal(NATIVE_IO_OPERATION_TCP_CONNECT, 7);
     check_true(native_io_operation_valid(&operation));
 
     operation.address = &payload;
@@ -1106,6 +1225,27 @@ spec("NativeIO direct backend") {
     operation.address_length = 0u;
     operation.kind = NATIVE_IO_OPERATION_PIPE_WRITE;
     check_true(native_io_operation_valid(&operation));
+  }
+
+  it("validates TCP connect address ownership without a payload borrow") {
+    unsigned char address[32] = {0};
+    native_io_operation operation = {.kind = NATIVE_IO_OPERATION_TCP_CONNECT,
+                                    .endpoint = {1u, 1u},
+                                    .address = address,
+                                    .address_capacity = sizeof(address),
+                                    .address_length = sizeof(address)};
+
+    check_true(native_io_operation_valid(&operation));
+    operation.address_length = 0u;
+    check_false(native_io_operation_valid(&operation));
+    operation.address_length = sizeof(address) + 1u;
+    check_false(native_io_operation_valid(&operation));
+    operation.address_length = sizeof(address);
+    operation.buffer = address;
+    check_false(native_io_operation_valid(&operation));
+    operation.buffer = NULL;
+    operation.length = 1u;
+    check_false(native_io_operation_valid(&operation));
   }
 
   it("clears a pipe endpoint when attach arguments are invalid") {
@@ -1281,6 +1421,20 @@ spec("NativeIO direct backend") {
     const size_t count = native_io_test_backends(backends);
     for (size_t index = 0u; index < count; ++index)
       native_io_test_round_trip_tcp(backends[index]);
+  }
+
+  it("connects TCP through every platform backend") {
+    native_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
+    const size_t count = native_io_test_backends(backends);
+    for (size_t index = 0u; index < count; ++index)
+      native_io_test_tcp_connect(backends[index]);
+  }
+
+  it("publishes one failed completion for a refused TCP connect") {
+    native_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
+    const size_t count = native_io_test_backends(backends);
+    for (size_t index = 0u; index < count; ++index)
+      native_io_test_tcp_connect_refused(backends[index]);
   }
 
   it("preserves FIFO receive lanes on one endpoint") {

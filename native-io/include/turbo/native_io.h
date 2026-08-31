@@ -43,7 +43,8 @@ typedef enum native_io_operation_kind {
   NATIVE_IO_OPERATION_UDP_RECV_FROM = 3,
   NATIVE_IO_OPERATION_UDP_SEND_TO = 4,
   NATIVE_IO_OPERATION_PIPE_READ = 5,
-  NATIVE_IO_OPERATION_PIPE_WRITE = 6
+  NATIVE_IO_OPERATION_PIPE_WRITE = 6,
+  NATIVE_IO_OPERATION_TCP_CONNECT = 7
 } native_io_operation_kind;
 
 typedef enum native_io_pipe_endpoint_flags {
@@ -59,10 +60,13 @@ typedef enum native_io_pipe_endpoint_flags {
  * Send storage is immutable during the borrow; receive storage is exclusively
  * mutable by NativeIO. user_data is copied verbatim into the completion.
  *
- * UDP_SEND_TO reads address[0..address_length) as a native sockaddr.
+ * TCP_CONNECT and UDP_SEND_TO read address[0..address_length) as a native sockaddr.
+ * TCP_CONNECT requires buffer == NULL and length == 0; its address storage is
+ * borrowed until observe returns the matching terminal completion.
  * UDP_RECV_FROM writes at most address_capacity bytes and publishes the actual
- * length in its completion. TCP and pipe operations require all address fields
- * to be zero. Address storage has the same borrow as payload storage.
+ * length in its completion. TCP send/receive and pipe operations require all
+ * address fields to be zero. Address storage has the same borrow as payload
+ * storage.
  */
 typedef struct native_io_operation {
   native_io_operation_kind kind;
@@ -153,7 +157,8 @@ TURBO_NATIVE_IO_C_API int native_io_backend_init(native_io_backend *backend,
  * endpoint type because the address family is independent of transport
  * admission. The backend borrows the socket and never closes it. IOCP requires
  * an overlapped socket; readiness drivers use per-call nonblocking operations
- * and do not change the socket's blocking mode.
+ * and do not change the socket's blocking mode. A socket used with TCP_CONNECT
+ * must already be nonblocking when attached to a readiness backend.
  *
  * The caller must retain the returned endpoint, stop submitting before close,
  * drain every request, close the native socket, and then call release_socket.
@@ -202,8 +207,10 @@ TURBO_NATIVE_IO_C_API int native_io_backend_release_pipe(native_io_backend *back
  *
  * @return TURBO_OK; TURBO_EINVAL for an invalid operation or an endpoint whose
  *         socket transport does not match it; TURBO_ENOENT for a stale
- *         endpoint; TURBO_ESHUTDOWN after close; TURBO_ENOBUFS when all request
- *         slots are retained; or a negative native submission error.
+ *         endpoint; TURBO_EALREADY for duplicate connect; TURBO_EBUSY when
+ *         connect conflicts with retained stream operations; TURBO_ESHUTDOWN
+ *         after close; TURBO_ENOBUFS when all request slots are retained; or a
+ *         negative native submission error.
  */
 TURBO_NATIVE_IO_C_API int native_io_backend_submit(native_io_backend *backend,
                                                   const native_io_operation *operation,

@@ -18,7 +18,8 @@ static inline bool native_io_resource_kind_is_socket(turbo_io_resource_kind kind
 
 static inline turbo_io_resource_kind
 native_io_operation_resource_kind(native_io_operation_kind kind) {
-  if (kind == NATIVE_IO_OPERATION_TCP_RECV || kind == NATIVE_IO_OPERATION_TCP_SEND)
+  if (kind == NATIVE_IO_OPERATION_TCP_RECV || kind == NATIVE_IO_OPERATION_TCP_SEND ||
+      kind == NATIVE_IO_OPERATION_TCP_CONNECT)
     return TURBO_IO_RESOURCE_STREAM_SOCKET;
   if (kind == NATIVE_IO_OPERATION_UDP_RECV_FROM || kind == NATIVE_IO_OPERATION_UDP_SEND_TO)
     return TURBO_IO_RESOURCE_DATAGRAM_SOCKET;
