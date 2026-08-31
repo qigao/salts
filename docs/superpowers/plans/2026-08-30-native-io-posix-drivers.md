@@ -4,7 +4,7 @@
 
 **Goal:** Add direct Linux epoll/io_uring and BSD/macOS kqueue socket drivers to the root NativeIO module while preserving the existing bounded submit/observe contract.
 
-**Architecture:** Keep `turbo_io_backend` as the public bridge and add explicit backend kinds. epoll and kqueue share a single-owner readiness request engine but retain separate syscall adapters; io_uring owns its mapped SQ/CQ and is driven only by submit/observe, with no worker, callback, Actor, Reactor, or CFlow dependency. All drivers use fixed endpoint/request/completion storage allocated at init.
+**Architecture:** Keep `native_io_backend` as the public bridge and add explicit backend kinds. epoll and kqueue share a single-owner readiness request engine but retain separate syscall adapters; io_uring owns its mapped SQ/CQ and is driven only by submit/observe, with no worker, callback, Actor, Reactor, or CFlow dependency. All drivers use fixed endpoint/request/completion storage allocated at init.
 
 **Tech Stack:** C11, POSIX sockets, Linux epoll, Linux raw io_uring ABI, BSD kqueue, TinyTest, CMake presets.
 
@@ -24,7 +24,7 @@
 
 | Item | Contract |
 |---|---|
-| Data unit | One copied `turbo_io_operation`, identified by a generation-checked `turbo_io_request`. |
+| Data unit | One copied `native_io_operation`, identified by a generation-checked `native_io_request`. |
 | Fact source | Backend endpoint/request records; kernel readiness is only a wakeup hint and kernel CQEs are only terminal evidence. |
 | Ownership | Backend borrows native socket and caller buffers. Successful submit starts the borrow; observe of the terminal completion ends it. |
 | Topology | Single producer/consumer owner thread. Control and data methods must not run concurrently. |
@@ -61,18 +61,18 @@ FREE --SQE accepted--> PENDING --original CQE--> TERMINAL --observe--> FREE(next
 - Modify: `native-io/tests/native_io_test.c`
 
 **Interfaces:**
-- Produces enum values `TURBO_IO_BACKEND_EPOLL`, `TURBO_IO_BACKEND_IO_URING`, `TURBO_IO_BACKEND_KQUEUE`.
-- Produces `TURBO_IO_MODEL_READINESS`; IOCP/io_uring map to completion, epoll/kqueue map to readiness.
+- Produces enum values `NATIVE_IO_BACKEND_EPOLL`, `NATIVE_IO_BACKEND_IO_URING`, `NATIVE_IO_BACKEND_KQUEUE`.
+- Produces `NATIVE_IO_MODEL_READINESS`; IOCP/io_uring map to completion, epoll/kqueue map to readiness.
 
 - [x] **Step 1: Write the failing support-matrix test**
 
 ```c
-check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_EPOLL),
-            TURBO_IO_MODEL_READINESS);
-check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_IO_URING),
-            TURBO_IO_MODEL_COMPLETION);
-check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_KQUEUE),
-            TURBO_IO_MODEL_READINESS);
+check_equal(native_io_backend_kind_model(NATIVE_IO_BACKEND_EPOLL),
+            NATIVE_IO_MODEL_READINESS);
+check_equal(native_io_backend_kind_model(NATIVE_IO_BACKEND_IO_URING),
+            NATIVE_IO_MODEL_COMPLETION);
+check_equal(native_io_backend_kind_model(NATIVE_IO_BACKEND_KQUEUE),
+            NATIVE_IO_MODEL_READINESS);
 ```
 
 - [x] **Step 2: Build `native_io_test` and verify RED**
@@ -82,12 +82,12 @@ Run the platform preset target. Expected: compile failure because the three enum
 - [x] **Step 3: Add the enum/model mapping**
 
 ```c
-typedef enum turbo_io_backend_kind {
-  TURBO_IO_BACKEND_IOCP = 1,
-  TURBO_IO_BACKEND_EPOLL,
-  TURBO_IO_BACKEND_IO_URING,
-  TURBO_IO_BACKEND_KQUEUE
-} turbo_io_backend_kind;
+typedef enum native_io_backend_kind {
+  NATIVE_IO_BACKEND_IOCP = 1,
+  NATIVE_IO_BACKEND_EPOLL,
+  NATIVE_IO_BACKEND_IO_URING,
+  NATIVE_IO_BACKEND_KQUEUE
+} native_io_backend_kind;
 ```
 
 - [x] **Step 4: Rebuild and verify the model test is GREEN**

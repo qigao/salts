@@ -14,6 +14,8 @@
 _Static_assert(sizeof(uintptr_t) >= sizeof(uint64_t),
                "NativeIO kqueue endpoint tokens require a 64-bit target");
 
+#define TURBO_IO_KQUEUE_WAKE_IDENT ((uintptr_t)UINTPTR_MAX)
+
 typedef struct turbo_io_kqueue_state {
   int kqueue_fd;
   struct kevent *events;
@@ -45,6 +47,16 @@ static int kqueue_driver_init(void *driver_state, size_t batch_capacity) {
     return TURBO_ERANGE;
   state->kqueue_fd = kqueue();
   if (state->kqueue_fd < 0) return -errno;
+  {
+    struct kevent wake_event;
+    EV_SET(&wake_event, TURBO_IO_KQUEUE_WAKE_IDENT, EVFILT_USER, EV_ADD | EV_CLEAR, 0u, 0, NULL);
+    if (kevent(state->kqueue_fd, &wake_event, 1, NULL, 0, NULL) != 0) {
+      const int saved_error = errno;
+      (void)close(state->kqueue_fd);
+      state->kqueue_fd = -1;
+      return -saved_error;
+    }
+  }
   state->events = (struct kevent *)calloc(batch_capacity, sizeof(*state->events));
   if (state->events == NULL) {
     (void)close(state->kqueue_fd);
@@ -107,6 +119,10 @@ static int kqueue_driver_wait(void *driver_state, turbo_io_ready_event *events,
     const struct kevent *native = &state->events[index];
     uint32_t interests = 0u;
     uint32_t native_status = 0u;
+    if (native->filter == EVFILT_USER && native->ident == TURBO_IO_KQUEUE_WAKE_IDENT) {
+      events[index] = (turbo_io_ready_event){0u, TURBO_IO_READY_WAKE, 0u};
+      continue;
+    }
     if (native->filter == EVFILT_READ) interests |= TURBO_IO_READY_READ;
     if (native->filter == EVFILT_WRITE) interests |= TURBO_IO_READY_WRITE;
     if ((native->flags & EV_EOF) != 0u) interests |= TURBO_IO_READY_ERROR;
@@ -122,6 +138,17 @@ static int kqueue_driver_wait(void *driver_state, turbo_io_ready_event *events,
   return TURBO_OK;
 }
 
+static int kqueue_driver_wake(void *driver_state) {
+  turbo_io_kqueue_state *state = (turbo_io_kqueue_state *)driver_state;
+  struct kevent event;
+  int status;
+  EV_SET(&event, TURBO_IO_KQUEUE_WAKE_IDENT, EVFILT_USER, 0u, NOTE_TRIGGER, 0, NULL);
+  do {
+    status = kevent(state->kqueue_fd, &event, 1, NULL, 0, NULL);
+  } while (status < 0 && errno == EINTR);
+  return status == 0 ? TURBO_OK : -errno;
+}
+
 static void kqueue_driver_destroy(void *driver_state) {
   turbo_io_kqueue_state *state = (turbo_io_kqueue_state *)driver_state;
   free(state->events);
@@ -131,10 +158,11 @@ static void kqueue_driver_destroy(void *driver_state) {
 }
 
 static const turbo_io_readiness_driver_ops kqueue_driver_ops = {
-    kqueue_driver_init, kqueue_driver_update, kqueue_driver_wait, kqueue_driver_destroy};
+    kqueue_driver_init, kqueue_driver_update, kqueue_driver_wait, kqueue_driver_wake,
+    kqueue_driver_destroy};
 
-int turbo_io_kqueue_backend_init(turbo_io_backend *backend, const turbo_io_backend_config *config) {
-  if (config->kind != TURBO_IO_BACKEND_KQUEUE) return TURBO_ENOTSUP;
+int turbo_io_kqueue_backend_init(native_io_backend *backend, const native_io_backend_config *config) {
+  if (config->kind != NATIVE_IO_BACKEND_KQUEUE) return TURBO_ENOTSUP;
   return turbo_io_readiness_backend_init(backend, config, &kqueue_driver_ops,
                                          sizeof(turbo_io_kqueue_state));
 }

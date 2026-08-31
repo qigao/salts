@@ -29,6 +29,7 @@ cmake_add_benchmark(cflow_native_io_adapter_benchmark
   LIBS
     TurboUtils::CFlow
     TurboUtils::NativeIO
+    TurboUtils::Concurrency
     TurboUtils::Platform
     TurboUtils::TinyTest
   FOLDER "cflow/benchmarks")

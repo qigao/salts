@@ -151,7 +151,7 @@ cmake_add_test(cflow_io_actor_test
 
 cmake_add_test(cflow_io_native_adapter_test
   SOURCES cflow_io_native_adapter_test.c
-  LIBS TurboUtils::CFlow TurboUtils::NativeIO TurboUtils::TinyTest
+  LIBS TurboUtils::CFlow TurboUtils::NativeIO TurboUtils::Concurrency TurboUtils::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_io_publisher_test

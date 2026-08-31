@@ -38,29 +38,29 @@ sub-agents while executing this plan.
 
 **Interfaces:**
 
-- Consumes: existing `turbo_io_endpoint`, `turbo_io_operation`, and backend ops.
-- Produces: `TURBO_IO_PIPE_READ`, `TURBO_IO_PIPE_WRITE`,
-  `TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE`,
-  `turbo_io_backend_pipe_supported()`, `attach_pipe()`, and `release_pipe()`.
+- Consumes: existing `native_io_endpoint`, `native_io_operation`, and backend ops.
+- Produces: `NATIVE_IO_OPERATION_PIPE_READ`, `NATIVE_IO_OPERATION_PIPE_WRITE`,
+  `NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE`,
+  `native_io_backend_kind_supports_pipe()`, `attach_pipe()`, and `release_pipe()`.
 
 - [ ] **Step 1: Write failing public validation tests**
 
 Add assertions that preserve numeric socket kinds and define pipe shapes:
 
 ```c
-check_equal(TURBO_IO_TCP_RECV, 1);
-check_equal(TURBO_IO_UDP_SEND_TO, 4);
-check_equal(TURBO_IO_PIPE_READ, 5);
-check_equal(TURBO_IO_PIPE_WRITE, 6);
+check_equal(NATIVE_IO_OPERATION_TCP_RECV, 1);
+check_equal(NATIVE_IO_OPERATION_UDP_SEND_TO, 4);
+check_equal(NATIVE_IO_OPERATION_PIPE_READ, 5);
+check_equal(NATIVE_IO_OPERATION_PIPE_WRITE, 6);
 
-turbo_io_operation pipe = {
-    .kind = TURBO_IO_PIPE_READ,
+native_io_operation pipe = {
+    .kind = NATIVE_IO_OPERATION_PIPE_READ,
     .endpoint = {1u, 1u},
     .buffer = &byte,
     .length = 1u};
-check_true(turbo_io_operation_valid(&pipe));
+check_true(native_io_operation_valid(&pipe));
 pipe.address = &byte;
-check_false(turbo_io_operation_valid(&pipe));
+check_false(native_io_operation_valid(&pipe));
 ```
 
 Extend the C++ header test to construct the new enum and confirm the existing
@@ -80,7 +80,7 @@ unrelated configure error.
 - [ ] **Step 3: Add the public declarations and common validation**
 
 Add the exact declarations from the specification. In
-`turbo_io_operation_valid()`, require non-null, positive-length buffers and
+`native_io_operation_valid()`, require non-null, positive-length buffers and
 zero address fields for both pipe kinds. Validate unknown attach flags before
 calling a platform backend. Clear `out_endpoint` on every attach failure.
 
@@ -90,18 +90,20 @@ Add a private resource kind and strategy callbacks:
 
 ```c
 typedef enum turbo_io_resource_kind {
-  TURBO_IO_RESOURCE_SOCKET = 1,
-  TURBO_IO_RESOURCE_BYTE_PIPE = 2
+  TURBO_IO_RESOURCE_STREAM_SOCKET = 1,
+  TURBO_IO_RESOURCE_DATAGRAM_SOCKET = 2,
+  TURBO_IO_RESOURCE_BYTE_PIPE = 3
 } turbo_io_resource_kind;
 
 int (*attach_pipe)(turbo_io_impl *, uintptr_t, uint32_t,
-                   turbo_io_endpoint *);
-int (*release_pipe)(turbo_io_impl *, turbo_io_endpoint);
+                   native_io_endpoint *);
+int (*release_pipe)(turbo_io_impl *, native_io_endpoint);
 ```
 
-Every backend endpoint record stores the resource kind. Operation admission
-checks kind before retaining a request slot; a mismatch returns
-`TURBO_EINVAL` with no native effect.
+Every backend endpoint record stores the resource kind. Socket attach derives
+stream versus datagram from `SO_TYPE`; IPv4/IPv6 remain an independent address
+dimension. Operation admission checks kind before retaining a request slot; a
+mismatch returns `TURBO_EINVAL` with no native effect.
 
 - [ ] **Step 5: Run focused tests and confirm GREEN**
 
@@ -141,11 +143,11 @@ release while active, stale endpoint, and repeated descriptor reuse.
 Add an explicit blocking-descriptor case:
 
 ```c
-check_equal(turbo_io_backend_attach_pipe(
+check_equal(native_io_backend_attach_pipe(
                 &backend, (uintptr_t)blocking_fd,
-                TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
+                NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
             TURBO_EINVAL);
-check_false(turbo_io_endpoint_valid(endpoint));
+check_false(native_io_endpoint_valid(endpoint));
 ```
 
 - [ ] **Step 2: Run the Linux tests remotely and confirm RED**
@@ -360,7 +362,7 @@ close, and quiescent destroy exactly as the specification state machine.
 
 Perform one `open` with `O_NONBLOCK | O_CLOEXEC`, reject duplex, map writer
 `ENXIO` to `TURBO_EPIPE`, and publish
-`TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE` only on success. Do not create, unlink,
+`NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE` only on success. Do not create, unlink,
 wait, retry, or change permissions.
 
 - [ ] **Step 6: Run NativeIPC and NativeIO tests**
@@ -421,7 +423,7 @@ request handle, original operation pointer, slot generation, and phase. Encode
 - [x] **Step 4: Implement Actor backend strategy**
 
 Submit binds the first Actor and rejects another Actor. It reserves a bridge,
-copies `turbo_io_operation`, replaces only the copied `user_data`, and calls
+copies `native_io_operation`, replaces only the copied `user_data`, and calls
 NativeIO submit. Failure releases the bridge before returning. Cancel locates
 the bound Actor request and calls NativeIO cancel; terminal status remains
 unknown until observe.
@@ -486,7 +488,7 @@ errors, and public layouts.
 - [ ] **Step 3: Migrate the runnable Pipe example and in-tree owner-driven callers**
 
 Replace legacy data-backend construction with `cflow_io_native_adapter`,
-`turbo_io_operation`, explicit adapter `observe`, and existing Actor/Executor
+`native_io_operation`, explicit adapter `observe`, and existing Actor/Executor
 drive. Keep the same byte transfer and shutdown checks. Do not add a
 compatibility queue or allow multiple threads to alternate NativeIO ownership.
 

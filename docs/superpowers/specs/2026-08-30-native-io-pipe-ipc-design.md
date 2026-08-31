@@ -93,7 +93,7 @@ adapter owns only the bounded correlation between them.
   sockets. Their ownership and rendezvous semantics differ.
 - Unix-domain socket naming and lifecycle in this increment. Connected Unix
   stream sockets can be admitted only after a separate additive API gives
-  `TURBO_IO_TCP_RECV/SEND` an honest connected-stream spelling.
+  `NATIVE_IO_OPERATION_TCP_RECV/SEND` an honest connected-stream spelling.
 - Regular files, vectored I/O, TCP accept/connect, or advanced socket messages.
   Existing CFlow implementations remain until root NativeIO has independently
   specified and tested parity for those capabilities.
@@ -106,44 +106,44 @@ Existing socket symbols and numeric enum values remain unchanged. Pipe support
 is additive:
 
 ```c
-typedef enum turbo_io_operation_kind {
-  TURBO_IO_TCP_RECV = 1,
-  TURBO_IO_TCP_SEND = 2,
-  TURBO_IO_UDP_RECV_FROM = 3,
-  TURBO_IO_UDP_SEND_TO = 4,
-  TURBO_IO_PIPE_READ = 5,
-  TURBO_IO_PIPE_WRITE = 6
-} turbo_io_operation_kind;
+typedef enum native_io_operation_kind {
+  NATIVE_IO_OPERATION_TCP_RECV = 1,
+  NATIVE_IO_OPERATION_TCP_SEND = 2,
+  NATIVE_IO_OPERATION_UDP_RECV_FROM = 3,
+  NATIVE_IO_OPERATION_UDP_SEND_TO = 4,
+  NATIVE_IO_OPERATION_PIPE_READ = 5,
+  NATIVE_IO_OPERATION_PIPE_WRITE = 6
+} native_io_operation_kind;
 
-typedef enum turbo_io_pipe_endpoint_flags {
-  TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE = 1u << 0
-} turbo_io_pipe_endpoint_flags;
+typedef enum native_io_pipe_endpoint_flags {
+  NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE = 1u << 0
+} native_io_pipe_endpoint_flags;
 
-bool turbo_io_backend_pipe_supported(turbo_io_backend_kind kind);
+bool native_io_backend_kind_supports_pipe(native_io_backend_kind kind);
 
-int turbo_io_backend_attach_pipe(turbo_io_backend *backend,
+int native_io_backend_attach_pipe(native_io_backend *backend,
                                  uintptr_t native_handle,
                                  uint32_t flags,
-                                 turbo_io_endpoint *out_endpoint);
+                                 native_io_endpoint *out_endpoint);
 
-int turbo_io_backend_release_pipe(turbo_io_backend *backend,
-                                  turbo_io_endpoint endpoint);
+int native_io_backend_release_pipe(native_io_backend *backend,
+                                  native_io_endpoint endpoint);
 ```
 
-Pipe operations reuse `turbo_io_operation` and the existing
-`turbo_io_backend_submit()`/`observe()` functions. Unlike the legacy CFlow
+Pipe operations reuse `native_io_operation` and the existing
+`native_io_backend_submit()`/`observe()` functions. Unlike the legacy CFlow
 descriptor, the NativeIO descriptor already names a generation-checked
 endpoint rather than a raw socket and contains no accept-result ownership.
 For PIPE_READ/PIPE_WRITE, every address field must be zero. This preserves one
 submit/cancel/observe state machine and avoids a parallel pipe request API.
 
-`turbo_io_endpoint` remains the existing two-word `{slot, generation}` public
+`native_io_endpoint` remains the existing two-word `{slot, generation}` public
 handle. Resource kind belongs to the backend endpoint record, so adding pipe
 support does not change the public handle layout. `release_socket` rejects a
 pipe endpoint and `release_pipe` rejects a socket endpoint as stale/resource
 mismatches without releasing either record.
 
-`TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE` is an explicit caller assertion about
+`NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE` is an explicit caller assertion about
 how the native resource was created:
 
 - Windows requires a byte-mode named-pipe handle opened or created with
@@ -167,16 +167,19 @@ Each backend endpoint record adds an internal discriminator:
 
 ```c
 typedef enum turbo_io_resource_kind {
-  TURBO_IO_RESOURCE_SOCKET = 1,
-  TURBO_IO_RESOURCE_BYTE_PIPE = 2
+  TURBO_IO_RESOURCE_STREAM_SOCKET = 1,
+  TURBO_IO_RESOURCE_DATAGRAM_SOCKET = 2,
+  TURBO_IO_RESOURCE_BYTE_PIPE = 3
 } turbo_io_resource_kind;
 ```
 
-The discriminator is not exposed in `turbo_io_endpoint`; it is checked on
-every attach, submit, and release. The same live native identity cannot be
-attached twice, even under different resource kinds. Endpoint generation is
-incremented on reuse, and a stale endpoint never aliases a new descriptor or
-handle that happens to reuse the same numeric value.
+The discriminator is not exposed in `native_io_endpoint`; it is checked on
+every attach, submit, and release. Stream/datagram is derived from `SO_TYPE`;
+IPv4/IPv6 remains address metadata rather than expanding the endpoint kind.
+The same live native identity cannot be attached twice, even under different
+resource kinds. Endpoint generation is incremented on reuse, and a stale
+endpoint never aliases a new descriptor or handle that happens to reuse the
+same numeric value.
 
 The fixed request record copies the operation descriptor and retains the
 endpoint handle. Payload storage is not copied:
@@ -222,12 +225,12 @@ policy. No signal is consumed if it was already pending before the write.
 | endpoint/request capacity exhausted | `TURBO_ENOBUFS` |
 | admission closed | `TURBO_ESHUTDOWN` |
 | observe deadline without terminal packet | `TURBO_ETIMEDOUT`, count zero |
-| pipe read returns positive bytes | `TURBO_IO_COMPLETION_OK` |
-| pipe read returns zero / broken peer read EOF | `TURBO_IO_COMPLETION_EOF` |
-| pipe write transfers a partial positive prefix | `TURBO_IO_COMPLETION_OK` with actual bytes |
-| broken pipe write | `TURBO_IO_COMPLETION_FAILED` with broken-pipe status |
-| authoritative cancellation | `TURBO_IO_COMPLETION_CANCELLED` |
-| other native terminal error | `TURBO_IO_COMPLETION_FAILED` with native status |
+| pipe read returns positive bytes | `NATIVE_IO_COMPLETION_OK` |
+| pipe read returns zero / broken peer read EOF | `NATIVE_IO_COMPLETION_EOF` |
+| pipe write transfers a partial positive prefix | `NATIVE_IO_COMPLETION_OK` with actual bytes |
+| broken pipe write | `NATIVE_IO_COMPLETION_FAILED` with broken-pipe status |
+| authoritative cancellation | `NATIVE_IO_COMPLETION_CANCELLED` |
+| other native terminal error | `NATIVE_IO_COMPLETION_FAILED` with native status |
 
 Submit failure rolls its request slot back to FREE and produces no completion.
 After successful submit, exactly one terminal completion must be observed.
@@ -349,8 +352,8 @@ unlink policy, permissions, and sandbox/security policy remain caller-owned.
 
 The endpoint wrapper is move-only by contract despite C's copy syntax. Close
 first invalidates the wrapper, then closes the native identity. On success,
-`native_io_flags` contains `TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE` and can be
-passed directly to `turbo_io_backend_attach_pipe()`.
+`native_io_flags` contains `NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE` and can be
+passed directly to `native_io_backend_attach_pipe()`.
 
 ## CFlow Actor and Source adapter
 
@@ -363,11 +366,11 @@ typedef struct cflow_io_native_adapter {
 } cflow_io_native_adapter;
 
 typedef struct cflow_io_native_adapter_config {
-  turbo_io_backend_config backend;
+  native_io_backend_config backend;
 } cflow_io_native_adapter_config;
 
 typedef struct cflow_io_native_adapter_stats {
-  turbo_io_backend_stats native;
+  native_io_backend_stats native;
   size_t active_bridges;
   uint64_t actor_completions;
   uint64_t stale_actor_completions;
@@ -382,18 +385,18 @@ cflow_io_backend_ops cflow_io_native_adapter_actor_ops(void);
 int cflow_io_native_adapter_attach_socket(
     cflow_io_native_adapter *adapter,
     uintptr_t native_socket,
-    turbo_io_endpoint *out_endpoint);
+    native_io_endpoint *out_endpoint);
 int cflow_io_native_adapter_attach_pipe(
     cflow_io_native_adapter *adapter,
     uintptr_t native_handle,
     uint32_t flags,
-    turbo_io_endpoint *out_endpoint);
+    native_io_endpoint *out_endpoint);
 int cflow_io_native_adapter_release_socket(
     cflow_io_native_adapter *adapter,
-    turbo_io_endpoint endpoint);
+    native_io_endpoint endpoint);
 int cflow_io_native_adapter_release_pipe(
     cflow_io_native_adapter *adapter,
-    turbo_io_endpoint endpoint);
+    native_io_endpoint endpoint);
 
 int cflow_io_native_adapter_observe(cflow_io_native_adapter *adapter,
                                     uint32_t timeout_ms,
@@ -406,9 +409,9 @@ bool cflow_io_native_adapter_get_stats(
 ```
 
 `cflow_io_native_adapter_stats` embeds a copied
-`turbo_io_backend_stats native`, then reports `active_bridges`,
+`native_io_backend_stats native`, then reports `active_bridges`,
 `actor_completions`, and `stale_actor_completions`. The Actor ops consume a
-caller-owned `turbo_io_operation *` as `operation_user`; the Actor operation
+caller-owned `native_io_operation *` as `operation_user`; the Actor operation
 token retains it through terminal delivery and acknowledgement.
 
 The adapter owns one NativeIO backend plus a fixed bridge table sized from
@@ -419,7 +422,7 @@ Actors would make duplicate per-Actor request IDs ambiguous.
 
 Actor producers continue to publish commands through the Actor's existing
 bounded MPSC Disruptor. The single Actor driver translates one admitted
-`turbo_io_operation` into NativeIO submit. Adapter `observe` maps completion
+`native_io_operation` into NativeIO submit. Adapter `observe` maps completion
 `user_data` back to its bridge slot and calls `cflow_io_actor_complete()`.
 There is no Actor-to-NativeIO queue beyond the Actor mailbox and no
 NativeIO-to-Actor queue beyond NativeIO's bounded completion batch.
@@ -511,12 +514,12 @@ Linearization points:
 Direct NativeIO shutdown is:
 
 1. stop external producers;
-2. call `turbo_io_backend_close()` to stop admission;
+2. call `native_io_backend_close()` to stop admission;
 3. request cancellation or allow accepted requests to finish;
 4. call `observe()` until `active_requests == 0`;
 5. close each caller-owned socket/pipe native identity;
 6. call the matching endpoint release function;
-7. call `turbo_io_backend_destroy()`.
+7. call `native_io_backend_destroy()`.
 
 CFlow shutdown adds delivery acknowledgement:
 
@@ -590,7 +593,7 @@ Rejected. Actor owns admission/delivery and readiness/completion backends own
 mechanics. Separate public APIs would duplicate operation, cancellation, and
 shutdown semantics without adding capability.
 
-### Put rendezvous into `turbo_io_operation`
+### Put rendezvous into `native_io_operation`
 
 Rejected. Windows server accept mutates a pre-created instance, Windows client
 connect creates a handle, and POSIX FIFO has no connection object. A payload

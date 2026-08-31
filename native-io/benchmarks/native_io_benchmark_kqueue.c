@@ -57,8 +57,8 @@ typedef struct native_bench_fixture {
   int sockets[2];
   struct sockaddr_in addresses[2];
   int kqueue_fd;
-  turbo_io_backend backend;
-  turbo_io_endpoint endpoints[2];
+  native_io_backend backend;
+  native_io_endpoint endpoints[2];
 } native_bench_fixture;
 
 static void native_bench_counter_add(uint64_t *counter, uint64_t value) {
@@ -139,7 +139,7 @@ static int native_bench_make_udp_pair(native_bench_fixture *fixture) {
 static int native_bench_fixture_init(native_bench_fixture *fixture,
                                      native_bench_protocol protocol,
                                      native_bench_driver driver) {
-  const turbo_io_backend_config config = {TURBO_IO_BACKEND_KQUEUE,
+  const native_io_backend_config config = {NATIVE_IO_BACKEND_KQUEUE,
                                           NATIVE_BENCH_ENDPOINT_CAPACITY,
                                           NATIVE_BENCH_REQUEST_CAPACITY,
                                           NATIVE_BENCH_BATCH_CAPACITY};
@@ -154,7 +154,7 @@ static int native_bench_fixture_init(native_bench_fixture *fixture,
     fixture->kqueue_fd = kqueue();
     if (fixture->kqueue_fd < 0) return native_bench_error();
   } else {
-    status = turbo_io_backend_init(&fixture->backend, &config);
+    status = native_io_backend_init(&fixture->backend, &config);
     if (status != TURBO_OK) return status;
   }
   status = protocol == NATIVE_BENCH_TCP ? native_bench_make_tcp_pair(fixture)
@@ -162,7 +162,7 @@ static int native_bench_fixture_init(native_bench_fixture *fixture,
   if (status != TURBO_OK) return status;
   if (driver == NATIVE_BENCH_NATIVE_IO) {
     for (size_t index = 0u; index < 2u; ++index) {
-      status = turbo_io_backend_attach_socket(&fixture->backend,
+      status = native_io_backend_attach_socket(&fixture->backend,
                                               (uintptr_t)fixture->sockets[index],
                                               &fixture->endpoints[index]);
       if (status != TURBO_OK) return status;
@@ -179,9 +179,9 @@ static int native_bench_fixture_destroy(native_bench_fixture *fixture) {
         status = native_bench_error();
       fixture->sockets[index] = -1;
       if (fixture->driver == NATIVE_BENCH_NATIVE_IO &&
-          turbo_io_endpoint_valid(fixture->endpoints[index])) {
+          native_io_endpoint_valid(fixture->endpoints[index])) {
         const int release_status =
-            turbo_io_backend_release_socket(&fixture->backend, fixture->endpoints[index]);
+            native_io_backend_release_socket(&fixture->backend, fixture->endpoints[index]);
         if (status == TURBO_OK && release_status != TURBO_OK) status = release_status;
       }
     }
@@ -191,9 +191,9 @@ static int native_bench_fixture_destroy(native_bench_fixture *fixture) {
     fixture->kqueue_fd = -1;
   }
   if (fixture->backend.impl != NULL) {
-    const int close_status = turbo_io_backend_close(&fixture->backend);
+    const int close_status = native_io_backend_close(&fixture->backend);
     const int destroy_status =
-        close_status == TURBO_OK ? turbo_io_backend_destroy(&fixture->backend) : close_status;
+        close_status == TURBO_OK ? native_io_backend_destroy(&fixture->backend) : close_status;
     if (status == TURBO_OK && destroy_status != TURBO_OK) status = destroy_status;
   }
   return status;
@@ -311,12 +311,12 @@ static int native_bench_raw_kqueue_transfer(native_bench_fixture *fixture,
   return TURBO_OK;
 }
 
-static int native_bench_submit_operation(turbo_io_backend *backend,
-                                         const turbo_io_operation *operation,
-                                         turbo_io_request *request,
+static int native_bench_submit_operation(native_io_backend *backend,
+                                         const native_io_operation *operation,
+                                         native_io_request *request,
                                          native_bench_stages *stages) {
   const uint64_t started = turbo_hrtime();
-  const int status = turbo_io_backend_submit(backend, operation, request);
+  const int status = native_io_backend_submit(backend, operation, request);
   native_bench_counter_add(&stages->submit_ns, turbo_hrtime() - started);
   if (status == TURBO_OK) ++stages->operations;
   return status;
@@ -334,19 +334,19 @@ static int native_bench_native_transfer(native_bench_fixture *fixture,
   bool send_pending = false;
   bool receive_pending = false;
   while (sent_offset < length || received_offset < length) {
-    turbo_io_completion events[2];
+    native_io_completion events[2];
     size_t event_count = 0u;
     int status;
     uint64_t started;
     if (!receive_pending && received_offset < length) {
-      turbo_io_operation operation = {
-          .kind = fixture->protocol == NATIVE_BENCH_TCP ? TURBO_IO_TCP_RECV
-                                                        : TURBO_IO_UDP_RECV_FROM,
+      native_io_operation operation = {
+          .kind = fixture->protocol == NATIVE_BENCH_TCP ? NATIVE_IO_OPERATION_TCP_RECV
+                                                        : NATIVE_IO_OPERATION_UDP_RECV_FROM,
           .endpoint = fixture->endpoints[destination_index],
           .buffer = received + received_offset,
           .length = length - received_offset,
           .user_data = 1u};
-      turbo_io_request request;
+      native_io_request request;
       if (fixture->protocol == NATIVE_BENCH_UDP) {
         operation.address = &peer_address;
         operation.address_capacity = sizeof(peer_address);
@@ -357,14 +357,14 @@ static int native_bench_native_transfer(native_bench_fixture *fixture,
       receive_pending = true;
     }
     if (!send_pending && sent_offset < length) {
-      turbo_io_operation operation = {
-          .kind = fixture->protocol == NATIVE_BENCH_TCP ? TURBO_IO_TCP_SEND
-                                                        : TURBO_IO_UDP_SEND_TO,
+      native_io_operation operation = {
+          .kind = fixture->protocol == NATIVE_BENCH_TCP ? NATIVE_IO_OPERATION_TCP_SEND
+                                                        : NATIVE_IO_OPERATION_UDP_SEND_TO,
           .endpoint = fixture->endpoints[source_index],
           .buffer = (void *)(sent + sent_offset),
           .length = length - sent_offset,
           .user_data = 2u};
-      turbo_io_request request;
+      native_io_request request;
       if (fixture->protocol == NATIVE_BENCH_UDP) {
         operation.address = &fixture->addresses[destination_index];
         operation.address_capacity = sizeof(fixture->addresses[0]);
@@ -376,12 +376,12 @@ static int native_bench_native_transfer(native_bench_fixture *fixture,
       send_pending = true;
     }
     started = turbo_hrtime();
-    status = turbo_io_backend_observe(&fixture->backend, events, 2u,
+    status = native_io_backend_observe(&fixture->backend, events, 2u,
                                       NATIVE_BENCH_TIMEOUT_MS, &event_count);
     native_bench_counter_add(&stages->observe_ns, turbo_hrtime() - started);
     if (status != TURBO_OK) return status;
     for (size_t index = 0u; index < event_count; ++index) {
-      if (events[index].kind != TURBO_IO_COMPLETION_OK) return events[index].status;
+      if (events[index].kind != NATIVE_IO_COMPLETION_OK) return events[index].status;
       if (events[index].user_data == 1u) {
         received_offset += events[index].bytes;
         receive_pending = false;

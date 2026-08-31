@@ -10,10 +10,12 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <unistd.h>
 
 typedef struct turbo_io_epoll_state {
   int epoll_fd;
+  int wake_fd;
   struct epoll_event *events;
   size_t event_capacity;
 } turbo_io_epoll_state;
@@ -31,10 +33,32 @@ static int epoll_driver_init(void *driver_state, size_t batch_capacity) {
     return TURBO_ERANGE;
   state->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
   if (state->epoll_fd < 0) return -errno;
+  state->wake_fd = eventfd(0u, EFD_CLOEXEC | EFD_NONBLOCK);
+  if (state->wake_fd < 0) {
+    const int saved_error = errno;
+    (void)close(state->epoll_fd);
+    state->epoll_fd = -1;
+    return -saved_error;
+  }
+  {
+    struct epoll_event wake_event = {0};
+    wake_event.events = EPOLLIN;
+    wake_event.data.u64 = 0u;
+    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, state->wake_fd, &wake_event) != 0) {
+      const int saved_error = errno;
+      (void)close(state->wake_fd);
+      (void)close(state->epoll_fd);
+      state->wake_fd = -1;
+      state->epoll_fd = -1;
+      return -saved_error;
+    }
+  }
   state->events = (struct epoll_event *)calloc(batch_capacity, sizeof(*state->events));
   if (state->events == NULL) {
     const int saved_error = errno;
+    (void)close(state->wake_fd);
     (void)close(state->epoll_fd);
+    state->wake_fd = -1;
     state->epoll_fd = -1;
     return saved_error == 0 ? TURBO_ENOMEM : -saved_error;
   }
@@ -79,6 +103,16 @@ static int epoll_driver_wait(void *driver_state, turbo_io_ready_event *events,
   for (int index = 0; index < count; ++index) {
     const uint32_t native = state->events[index].events;
     uint32_t interests = 0u;
+    if (state->events[index].data.u64 == 0u) {
+      uint64_t wake_count;
+      ssize_t read_status;
+      do {
+        read_status = read(state->wake_fd, &wake_count, sizeof(wake_count));
+      } while (read_status < 0 && errno == EINTR);
+      if (read_status < 0 && errno != EAGAIN) return -errno;
+      events[index] = (turbo_io_ready_event){0u, TURBO_IO_READY_WAKE, native};
+      continue;
+    }
     if ((native & (EPOLLIN | EPOLLPRI | EPOLLRDHUP)) != 0u) interests |= TURBO_IO_READY_READ;
     if ((native & EPOLLOUT) != 0u) interests |= TURBO_IO_READY_WRITE;
     if ((native & (EPOLLERR | EPOLLHUP)) != 0u) interests |= TURBO_IO_READY_ERROR;
@@ -88,19 +122,33 @@ static int epoll_driver_wait(void *driver_state, turbo_io_ready_event *events,
   return TURBO_OK;
 }
 
+static int epoll_driver_wake(void *driver_state) {
+  turbo_io_epoll_state *state = (turbo_io_epoll_state *)driver_state;
+  const uint64_t signal = 1u;
+  ssize_t status;
+  do {
+    status = write(state->wake_fd, &signal, sizeof(signal));
+  } while (status < 0 && errno == EINTR);
+  if (status == (ssize_t)sizeof(signal) || (status < 0 && errno == EAGAIN)) return TURBO_OK;
+  return status < 0 ? -errno : TURBO_EIO;
+}
+
 static void epoll_driver_destroy(void *driver_state) {
   turbo_io_epoll_state *state = (turbo_io_epoll_state *)driver_state;
   free(state->events);
   state->events = NULL;
+  if (state->wake_fd >= 0) (void)close(state->wake_fd);
+  state->wake_fd = -1;
   if (state->epoll_fd >= 0) (void)close(state->epoll_fd);
   state->epoll_fd = -1;
 }
 
 static const turbo_io_readiness_driver_ops epoll_driver_ops = {
-    epoll_driver_init, epoll_driver_update, epoll_driver_wait, epoll_driver_destroy};
+    epoll_driver_init, epoll_driver_update, epoll_driver_wait, epoll_driver_wake,
+    epoll_driver_destroy};
 
-int turbo_io_epoll_backend_init(turbo_io_backend *backend, const turbo_io_backend_config *config) {
-  if (config->kind != TURBO_IO_BACKEND_EPOLL) return TURBO_ENOTSUP;
+int turbo_io_epoll_backend_init(native_io_backend *backend, const native_io_backend_config *config) {
+  if (config->kind != NATIVE_IO_BACKEND_EPOLL) return TURBO_ENOTSUP;
   return turbo_io_readiness_backend_init(backend, config, &epoll_driver_ops,
                                          sizeof(turbo_io_epoll_state));
 }

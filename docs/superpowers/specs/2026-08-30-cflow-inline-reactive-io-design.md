@@ -75,7 +75,7 @@ Driving the owner synchronously for every Actor edge destroys NativeIO batch
 boundaries: each submit and each completion becomes a separate nested owner
 run. The supported NativeIO path therefore uses a caller-driven Publisher
 (`drive == NULL`), a bounded caller-driven Scheduler, and
-`cflow_io_native_adapter_drive_reactive()`. One call drains ready Scheduler
+The later two-worker NativeIO design supersedes this serialized helper. One call drained ready Scheduler
 work, drains the pending submit batch, observes one fixed completion batch,
 drains completion delivery and acknowledgement, then drains newly ready
 Scheduler work. The Scheduler must explicitly advertise the caller-driven,

@@ -17,8 +17,8 @@ int main(void) {
 #include <turbo/native_io.h>
 
 int main(void) {
-  return turbo_io_backend_model(TURBO_IO_BACKEND_IOCP) ==
-                 TURBO_IO_MODEL_COMPLETION
+  return native_io_backend_kind_model(NATIVE_IO_BACKEND_IOCP) ==
+                 NATIVE_IO_MODEL_COMPLETION
              ? 0
              : 1;
 }
