@@ -68,11 +68,13 @@
 - Modify: `C:/projects/cpp/turbonet/scxml/tests/w3c/manifest.tsv`
 - Modify: `C:/projects/cpp/turbonet/scxml/tests/w3c/README.md`
 
-- [ ] Add named harness cases before adding fixtures and confirm RED only because the fixture files are absent.
-- [ ] Add local null-datamodel transformations that preserve the 403b ancestor de-duplication/preemption witness and the 403c targetless/conflicting-descendant/wildcard coexistence witness.
-- [ ] Replace generator-only pass/fail vocabulary and timeout liveness machinery using the established local corpus conventions; do not weaken the transition-selection assertion.
-- [ ] Promote only rows 403b and 403c from `UNSUPPORTED/NOT_RUN/NONE` to `PASS/TERMINAL_PASS` with an exact transformation note and witness.
-- [ ] Document provenance and explicitly retain the non-certification scope statement.
+- [x] Add named harness cases before adding fixtures and confirm RED only because the fixture files are absent.
+- [x] Add local null-datamodel transformations that preserve the 403b ancestor de-duplication/preemption witness and the 403c targetless/conflicting-descendant/wildcard coexistence witness.
+- [x] Replace generator-only pass/fail vocabulary and timeout liveness machinery using the established local corpus conventions; do not weaken the transition-selection assertion.
+- [x] Promote only rows 403b and 403c from `UNSUPPORTED/NOT_RUN/NONE` to `PASS/TERMINAL_PASS` with an exact transformation note and witness.
+- [x] Document provenance and explicitly retain the non-certification scope statement.
+
+**Task 3 evidence (2026-08-31):** On the isolated TurboSCXML branch based at `4776015`, named 403b/403c harness cases were added first and failed only because their fixture files were absent. Commit `a75af9e` then added the two null-datamodel corpus transformations, manifest registrations, and provenance text. Review rejected an initially split 403c wildcard as a weakened witness; commit `2d19ac8` restored the upstream identity property by using one `event="*"` transition with conditional content, and added a structural regression that first failed against the split form and then passed. The final 403b trace proves shared-ancestor candidate de-duplication and descendant priority; the final 403c trace proves targetless coexistence, conflicting descendant priority, and selection of the same wildcard transition in both rounds. Re-review found no remaining HIGH/MED/LOW issue and approved the corpus change. No production source, public API, dependency, or build configuration changed.
 
 ### Task 4: Verify TurboSCXML from a fresh build tree
 
@@ -83,13 +85,15 @@
 - Verify: `C:/projects/cpp/turbonet/scxml/tests/w3c/manifest.tsv`
 - Verify: `C:/projects/cpp/turbonet/scxml/tests/w3c/README.md`
 
-- [ ] Configure TurboSCXML in a fresh build tree against the exact TurboUtils install from Task 2.
-- [ ] Run the two named W3C cases, then the complete W3C conformance test, then adjacent/full CTest as justified by the changed claim.
-- [ ] Confirm manifest accounting changes from 114 mandatory PASS / 54 mandatory UNSUPPORTED to 116 / 52, while 34 optional rows remain N/A.
-- [ ] Synchronize CodeGraph and inspect the affected-file/test report.
+- [x] Configure TurboSCXML in a fresh build tree against the exact TurboUtils install from Task 2B.
+- [x] Run the two named W3C cases, then the complete W3C conformance test, then adjacent/full CTest as justified by the changed claim.
+- [x] Confirm manifest accounting changes from 114 mandatory PASS / 54 mandatory UNSUPPORTED to 116 / 52, while 34 optional rows remain N/A.
+- [x] Synchronize CodeGraph and inspect the affected-file/test report.
+
+**Task 4 evidence (2026-08-31):** The final fresh build tree is `C:/projects/cpp/turbonet/scxml-403bc-worktree/build/Msvc-Release-403bc-final`. Its cache records `TurboUtils_DIR=C:/projects/cpp/turbonet/.integration/cflow-optimal-transition-set-403bc/turboutils/release/lib/cmake/TurboUtils`, and the Ninja link input names the dedicated prefix's `turbo_cflow.lib` whose SHA-256 is `F03B4B17BA408DFCB81EF9B0353D0F5429A9D920451778BF613BD5ECF1B41459`. Four exact filters passed independently: inventory (7 assertions), 403b behavior (1), 403c behavior (1), and the single-wildcard structural test (4). The complete W3C executable passed all 120 TinyTest entries / 286 assertions, including 119 corpus cases; full CTest passed `8/8`. Independent manifest parsing proved only 403b/403c changed, producing 116 mandatory PASS, 52 mandatory UNSUPPORTED, and 34 optional N/A rows. CodeGraph was synchronized and reported no mapped affected tests; direct focused and full-suite execution supplies the behavioral evidence. The first attempted fresh run was discarded because preset environment precedence selected the shared SDK; the valid evidence above came only after a build-tree-local ignored top-level include bound the dedicated prefix, as confirmed by cache and absolute link inputs. Independent review approved the final verification with no HIGH/MED/LOW findings.
 
 ### Task 5: Review and prepare integration
 
-- [ ] Keep any CFlow code/test commit separate from the TurboSCXML corpus commit. If Task 1 is already GREEN, do not create an empty or cosmetic CFlow functionality commit.
+- [x] Keep any CFlow code/test commit separate from the TurboSCXML corpus commit. If Task 1 is already GREEN, do not create an empty or cosmetic CFlow functionality commit.
 - [ ] Run a requirements review followed by a code-quality review over each repository's exact diff.
 - [ ] Use the finishing-development-branch workflow to present integration choices; do not push, open a PR, merge, or update issue #122 without a subsequent explicit user request.
