@@ -20,15 +20,17 @@ CFlow / Actor / future adapters
 
 ## 数据与状态协议
 
-- 数据单元：一个 `turbo_io_operation` 对应恰好一个 terminal `turbo_io_completion`。
+- 数据单元：一个 `native_io_operation` 对应恰好一个 terminal `native_io_completion`。
 - 事实源：backend 固定 endpoint/request 槽位；上层只持有带 generation 的句柄。
+- endpoint 类型：attach 时从 `SO_TYPE` 记录 stream/datagram，分别只接受 TCP/UDP operation；byte pipe 单独记录。IPv4/IPv6 是地址维度，不扩张 endpoint 类型，UDP 地址族仍由 native `sockaddr` 表达。
 - 所有权：backend 借用 socket；成功 submit 后借用 payload，直到 observe 返回对应 completion。
-- 拓扑：一个 backend 由一个 owner 线程调用。模块不创建线程、不加锁、不内置跨线程队列。
+- 拓扑：除 `native_io_backend_wake()` 外，一个 backend 只由一个 owner 线程调用。一个 owner 可在同一 backend 上驱动最多 `endpoint_capacity` 个 TCP/UDP/Pipe endpoint；模块不创建线程、不内置任务队列。需要多核扩展时由上层创建多个 backend 并分片 endpoint，不能让多个线程并发驱动同一 backend。wake 是唯一允许从生产者线程调用的合并式控制边。
 - 容量：endpoint、request 和 completion batch 均在 init 时固定；满额返回 `TURBO_ENOBUFS`。
 - 顺序：每个 endpoint 的 read lane 与 write lane 分别按 FIFO 向内核发起操作，lane 之间不排序。request handle 与 `user_data` 用于关联；不同 endpoint 的 completion 顺序由内核决定。
 - 取消：cancel 只请求取消。IOCP 的 `ERROR_OPERATION_ABORTED`、io_uring 的 `-ECANCELED` 和 readiness 队列中尚未执行的请求进入 CANCELLED；已经完成的请求不会被改写成取消。
 - 关闭：`close admission -> cancel/drain -> close native sockets -> release endpoints -> destroy`。
 - 等待：`timeout_ms == 0` 为 poll，`UINT32_MAX` 为无限等待，其余值为相对毫秒 deadline；无终态返回 `TURBO_ETIMEDOUT` 且 count 为零。
+- 唤醒：生产者先发布上层命令，再调用 wake。多个并发 wake 合并成一个有界 OS 控制信号；纯控制唤醒使 observe 返回 `TURBO_OK` 且 count 为零，不伪造 completion。close/destroy 前必须先停止 wake 调用者。
 
 请求槽位状态机为：
 
@@ -61,23 +63,23 @@ readiness 的 kernel interest 是请求 lane 推导出的镜像，不是第二�
 ```c
 #include <turbo/native_io.h>
 
-turbo_io_backend backend = {0};
-turbo_io_backend_config config = {
+native_io_backend backend = {0};
+native_io_backend_config config = {
 #if defined(_WIN32)
-    TURBO_IO_BACKEND_IOCP,
+    NATIVE_IO_BACKEND_IOCP,
 #elif defined(__linux__)
-    TURBO_IO_BACKEND_EPOLL, /* 或 TURBO_IO_BACKEND_IO_URING */
+    NATIVE_IO_BACKEND_EPOLL, /* 或 NATIVE_IO_BACKEND_IO_URING */
 #else
-    TURBO_IO_BACKEND_KQUEUE,
+    NATIVE_IO_BACKEND_KQUEUE,
 #endif
     16u, 64u, 16u};
 
-int status = native_io_init(&backend, &config);
+int status = native_io_backend_init(&backend, &config);
 if (status != 0)
   return status;
 
 /* Attach an already-created socket, submit operations, then call
-   native_io_observe() from this same owner thread. Windows sockets must
+   native_io_backend_observe() from this same owner thread. Windows sockets must
    have been created for overlapped I/O. */
 ```
 

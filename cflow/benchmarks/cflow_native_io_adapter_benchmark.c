@@ -1,10 +1,10 @@
 #include <cflow/cflow.h>
 
-#include "../src/io_publisher_internal.h"
-
 #include "tinytest.h"
 
 #include <turbo/clock.h>
+#include <turbo/thread.h>
+#include <turbo/thread_pool.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,9 +43,20 @@ enum {
     ADAPTER_BENCH_TIMEOUT_MS = 5000,
     ADAPTER_BENCH_PIPE_BUFFER_CAPACITY = 65536,
     ADAPTER_BENCH_MAX_COMPLETIONS = 2,
-    ADAPTER_BENCH_REACTIVE_SCHEDULER_CAPACITY = 2,
+    ADAPTER_BENCH_REACTIVE_SCHEDULER_CAPACITY = 8,
+    ADAPTER_BENCH_REACTIVE_PUBLISHER_QUEUE_CAPACITY = 16,
+    ADAPTER_BENCH_REACTIVE_WAIT_SLICE_NS = 10000000,
+    ADAPTER_BENCH_REACTIVE_WAIT_LIMIT = 500,
     ADAPTER_BENCH_TOTAL_TRANSFERS = ADAPTER_BENCH_SAMPLES * ADAPTER_BENCH_TRANSFERS_PER_SAMPLE
 };
+
+enum {
+    ADAPTER_BENCH_THREAD_ROLE_NONE = 0,
+    ADAPTER_BENCH_THREAD_ROLE_PUBLISHER,
+    ADAPTER_BENCH_THREAD_ROLE_SUBSCRIBER
+};
+
+static TURBO_THREAD_LOCAL int adapter_bench_thread_role;
 
 static const size_t ADAPTER_BENCH_PAYLOADS[] = {1024u,       4u * 1024u,  8u * 1024u,
                                                 16u * 1024u, 32u * 1024u, 64u * 1024u};
@@ -93,9 +104,11 @@ typedef struct adapter_bench_result {
 } adapter_bench_result;
 
 typedef struct adapter_bench_actor_operation {
-    turbo_io_operation native;
+    native_io_operation native;
     adapter_bench_role role;
     size_t *release_count;
+    turbo_mutex_t *release_gate;
+    turbo_cond_t *release_changed;
 } adapter_bench_actor_operation;
 
 typedef struct adapter_bench_delivery {
@@ -109,8 +122,8 @@ typedef struct adapter_bench_fixture {
     adapter_bench_transport transport;
     adapter_bench_socket sockets[2];
     adapter_bench_pipe pipes[2];
-    turbo_io_endpoint endpoints[2];
-    turbo_io_backend direct;
+    native_io_endpoint endpoints[2];
+    native_io_backend direct;
     cflow_io_native_adapter adapter;
     cflow_executor executor;
     cflow_io_actor actor;
@@ -120,6 +133,9 @@ typedef struct adapter_bench_fixture {
     cflow_publisher publisher;
     cflow_io_publisher_owner reactive_owner;
     cflow_subscription subscription;
+    turbo_threadpool_t *publisher_pool;
+    turbo_mutex_t reactive_gate;
+    turbo_cond_t reactive_changed;
     cflow_subscriber_callbacks subscriber_callbacks;
     cflow_subscriber subscriber;
     cflow_io_backend_ops adapter_ops;
@@ -134,6 +150,14 @@ typedef struct adapter_bench_fixture {
     size_t reactive_subscriber_values;
     uint64_t operation_count;
     const char *reactive_error;
+    int reactive_wake_status;
+    int reactive_drive_status;
+    int reactive_cleanup_status;
+    size_t reactive_observed;
+    size_t reactive_publisher_callbacks;
+    size_t reactive_subscriber_callbacks;
+    size_t reactive_role_collisions;
+    bool reactive_validation_result;
     unsigned char *sent;
     unsigned char *received;
     size_t payload_size;
@@ -145,6 +169,12 @@ typedef struct adapter_bench_fixture {
     bool surface_initialized;
     bool normalized_initialized;
     bool scheduler_initialized;
+    bool reactive_sync_initialized;
+    bool publisher_pool_initialized;
+    bool reactive_drive_pending;
+    bool reactive_stop_requested;
+    bool reactive_loop_started;
+    bool reactive_loop_stopped;
     bool reactive_owner_initialized;
     bool subscription_initialized;
 } adapter_bench_fixture;
@@ -158,13 +188,13 @@ static const char *adapter_bench_mode_name(adapter_bench_mode mode) {
     return mode == ADAPTER_BENCH_ACTOR ? "Actor/NativeIO" : "Reactive(window=2)/NativeIO";
 }
 
-static turbo_io_backend_kind adapter_bench_backend(void) {
+static native_io_backend_kind adapter_bench_backend(void) {
 #if defined(_WIN32)
-    return TURBO_IO_BACKEND_IOCP;
+    return NATIVE_IO_BACKEND_IOCP;
 #elif defined(__linux__)
-    return TURBO_IO_BACKEND_EPOLL;
+    return NATIVE_IO_BACKEND_EPOLL;
 #else
-    return TURBO_IO_BACKEND_KQUEUE;
+    return NATIVE_IO_BACKEND_KQUEUE;
 #endif
 }
 
@@ -339,12 +369,12 @@ static void adapter_bench_counter_add(uint64_t *counter, uint64_t value) {
     *counter = UINT64_MAX - *counter < value ? UINT64_MAX : *counter + value;
 }
 
-static turbo_io_operation adapter_bench_operation(adapter_bench_fixture *fixture, size_t role,
+static native_io_operation adapter_bench_operation(adapter_bench_fixture *fixture, size_t role,
                                                   size_t offset) {
     const bool send = role == ADAPTER_BENCH_SEND;
-    turbo_io_operation operation = {
-        fixture->transport == ADAPTER_BENCH_TCP ? (send ? TURBO_IO_TCP_SEND : TURBO_IO_TCP_RECV)
-                                                : (send ? TURBO_IO_PIPE_WRITE : TURBO_IO_PIPE_READ),
+    native_io_operation operation = {
+        fixture->transport == ADAPTER_BENCH_TCP ? (send ? NATIVE_IO_OPERATION_TCP_SEND : NATIVE_IO_OPERATION_TCP_RECV)
+                                                : (send ? NATIVE_IO_OPERATION_PIPE_WRITE : NATIVE_IO_OPERATION_PIPE_READ),
         fixture->endpoints[fixture->transport == ADAPTER_BENCH_TCP ? (send ? 0u : 1u)
                                                                    : (send ? 1u : 0u)],
         (send ? fixture->sent : fixture->received) + offset,
@@ -364,7 +394,13 @@ static int adapter_bench_compare_u64(const void *left, const void *right) {
 
 static void adapter_bench_release(void *operation_user) {
     adapter_bench_actor_operation *operation = (adapter_bench_actor_operation *)operation_user;
+    if (operation->release_gate != NULL)
+        turbo_mutex_lock(operation->release_gate);
     ++*operation->release_count;
+    if (operation->release_changed != NULL)
+        turbo_cond_broadcast(operation->release_changed);
+    if (operation->release_gate != NULL)
+        turbo_mutex_unlock(operation->release_gate);
 }
 
 static void adapter_bench_complete(void *completion_user, cflow_io_request_id request_id,
@@ -384,8 +420,10 @@ static void adapter_bench_complete(void *completion_user, cflow_io_request_id re
 static cflow_io_publisher_prepare_status
 adapter_bench_reactive_prepare(void *user, cflow_io_operation *operation, const char **error) {
     adapter_bench_fixture *fixture = (adapter_bench_fixture *)user;
+    cflow_io_publisher_prepare_status status = CFLOW_IO_PUBLISHER_PREPARE_DONE;
 
     (void)error;
+    turbo_mutex_lock(&fixture->reactive_gate);
     for (size_t role = 0u; role < 2u; ++role) {
         adapter_bench_actor_operation *prepared;
         if (fixture->reactive_pending[role] || fixture->reactive_offsets[role] >= fixture->payload_size)
@@ -394,14 +432,18 @@ adapter_bench_reactive_prepare(void *user, cflow_io_operation *operation, const 
         prepared->native = adapter_bench_operation(fixture, role, fixture->reactive_offsets[role]);
         prepared->role = (adapter_bench_role)role;
         prepared->release_count = &fixture->release_count;
+        prepared->release_gate = &fixture->reactive_gate;
+        prepared->release_changed = &fixture->reactive_changed;
         fixture->reactive_pending[role] = true;
         operation->user = prepared;
         operation->release = adapter_bench_release;
         ++fixture->operation_count;
         if (fixture->stages != NULL) ++fixture->stages->actor_operations;
-        return CFLOW_IO_PUBLISHER_PREPARE_OPERATION;
+        status = CFLOW_IO_PUBLISHER_PREPARE_OPERATION;
+        break;
     }
-    return CFLOW_IO_PUBLISHER_PREPARE_DONE;
+    turbo_mutex_unlock(&fixture->reactive_gate);
+    return status;
 }
 
 static cflow_read_status adapter_bench_reactive_encode(void *user, cflow_io_request_id request_id,
@@ -416,35 +458,134 @@ static cflow_read_status adapter_bench_reactive_encode(void *user, cflow_io_requ
 
     (void)request_id;
     (void)lease_id;
+    turbo_mutex_lock(&fixture->reactive_gate);
     if (role >= 2u || !fixture->reactive_pending[role] ||
         completion->kind != CFLOW_IO_COMPLETION_OK || completion->bytes == 0u) {
         *error = completion_error;
+        turbo_mutex_unlock(&fixture->reactive_gate);
         return CFLOW_READ_ERROR;
     }
     fixture->reactive_offsets[role] += completion->bytes;
     fixture->reactive_pending[role] = false;
     *(int *)out_value = (int)completion->bytes;
+    turbo_cond_broadcast(&fixture->reactive_changed);
+    turbo_mutex_unlock(&fixture->reactive_gate);
     return CFLOW_READ_VALUE;
 }
 
 static bool adapter_bench_reactive_subscriber_value(void *user, const cmeta_type_desc *type,
-                                            const void *value) {
+                                             const void *value) {
     adapter_bench_fixture *fixture = (adapter_bench_fixture *)user;
     if (!cmeta_type_equal(type, &cmeta_type_int) || value == NULL || *(const int *)value <= 0)
         return false;
+    turbo_mutex_lock(&fixture->reactive_gate);
+    if (adapter_bench_thread_role != ADAPTER_BENCH_THREAD_ROLE_NONE &&
+        adapter_bench_thread_role != ADAPTER_BENCH_THREAD_ROLE_SUBSCRIBER)
+        ++fixture->reactive_role_collisions;
+    adapter_bench_thread_role = ADAPTER_BENCH_THREAD_ROLE_SUBSCRIBER;
+    ++fixture->reactive_subscriber_callbacks;
     ++fixture->reactive_subscriber_values;
+    turbo_cond_broadcast(&fixture->reactive_changed);
+    turbo_mutex_unlock(&fixture->reactive_gate);
     return true;
 }
 
 static void adapter_bench_reactive_subscriber_error(void *user, const char *message) {
     adapter_bench_fixture *fixture = (adapter_bench_fixture *)user;
+    turbo_mutex_lock(&fixture->reactive_gate);
     fixture->reactive_error = message;
+    turbo_cond_broadcast(&fixture->reactive_changed);
+    turbo_mutex_unlock(&fixture->reactive_gate);
 }
 
 static void adapter_bench_reactive_subscriber_done(void *user) {
     adapter_bench_fixture *fixture = (adapter_bench_fixture *)user;
+    turbo_mutex_lock(&fixture->reactive_gate);
     if (fixture->reactive_error == NULL)
         fixture->reactive_error = "Reactive benchmark terminated unexpectedly";
+    turbo_cond_broadcast(&fixture->reactive_changed);
+    turbo_mutex_unlock(&fixture->reactive_gate);
+}
+
+static void adapter_bench_reactive_drive_task(void *user) {
+    adapter_bench_fixture *fixture = (adapter_bench_fixture *)user;
+
+    turbo_mutex_lock(&fixture->reactive_gate);
+    if (adapter_bench_thread_role != ADAPTER_BENCH_THREAD_ROLE_NONE &&
+        adapter_bench_thread_role != ADAPTER_BENCH_THREAD_ROLE_PUBLISHER)
+        ++fixture->reactive_role_collisions;
+    adapter_bench_thread_role = ADAPTER_BENCH_THREAD_ROLE_PUBLISHER;
+    ++fixture->reactive_publisher_callbacks;
+    turbo_mutex_unlock(&fixture->reactive_gate);
+
+    for (;;) {
+        uint64_t started;
+        size_t observed = 0u;
+        int status;
+
+        turbo_mutex_lock(&fixture->reactive_gate);
+        while (!fixture->reactive_drive_pending &&
+               !fixture->reactive_stop_requested)
+            turbo_cond_wait(
+                &fixture->reactive_changed, &fixture->reactive_gate);
+        if (fixture->reactive_stop_requested) {
+            turbo_mutex_unlock(&fixture->reactive_gate);
+            break;
+        }
+        fixture->reactive_drive_pending = false;
+        turbo_mutex_unlock(&fixture->reactive_gate);
+
+        started = fixture->stages != NULL ? turbo_hrtime() : 0u;
+        status = cflow_io_native_adapter_drive_publisher(
+            &fixture->adapter, &fixture->reactive_owner,
+            UINT32_MAX, 64u, &observed);
+
+        turbo_mutex_lock(&fixture->reactive_gate);
+        if (fixture->stages != NULL)
+            adapter_bench_counter_add(
+                &fixture->stages->reactive_owner_ns,
+                turbo_hrtime() - started);
+        if (status != TURBO_OK && fixture->reactive_drive_status == TURBO_OK)
+            fixture->reactive_drive_status = status;
+        fixture->reactive_observed += observed;
+        turbo_cond_broadcast(&fixture->reactive_changed);
+        turbo_mutex_unlock(&fixture->reactive_gate);
+        if (status != TURBO_OK)
+            break;
+    }
+    turbo_mutex_lock(&fixture->reactive_gate);
+    fixture->reactive_loop_stopped = true;
+    turbo_cond_broadcast(&fixture->reactive_changed);
+    turbo_mutex_unlock(&fixture->reactive_gate);
+}
+
+static void adapter_bench_reactive_drive(void *user) {
+    adapter_bench_fixture *fixture = (adapter_bench_fixture *)user;
+    const int status = cflow_io_native_adapter_wake(&fixture->adapter);
+
+    turbo_mutex_lock(&fixture->reactive_gate);
+    fixture->reactive_drive_pending = true;
+    if (status != TURBO_OK && fixture->reactive_wake_status == TURBO_OK)
+        fixture->reactive_wake_status = status;
+    turbo_cond_broadcast(&fixture->reactive_changed);
+    turbo_mutex_unlock(&fixture->reactive_gate);
+}
+
+static int adapter_bench_reactive_stop_owner(adapter_bench_fixture *fixture) {
+    int status;
+    if (!fixture->reactive_loop_started || fixture->reactive_loop_stopped)
+        return TURBO_OK;
+    status = cflow_io_native_adapter_wake(&fixture->adapter);
+    if (status != TURBO_OK)
+        return status;
+    turbo_mutex_lock(&fixture->reactive_gate);
+    fixture->reactive_stop_requested = true;
+    turbo_cond_broadcast(&fixture->reactive_changed);
+    turbo_mutex_unlock(&fixture->reactive_gate);
+    status = turbo_threadpool_wait_status(fixture->publisher_pool);
+    if (status == TURBO_OK && !fixture->reactive_loop_stopped)
+        return TURBO_EPROTO;
+    return status;
 }
 
 static int adapter_bench_timed_submit(void *backend_user, cflow_io_actor *actor,
@@ -473,7 +614,7 @@ static int adapter_bench_timed_cancel(void *backend_user, cflow_io_request_id re
 static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
                                       adapter_bench_transport transport, adapter_bench_mode mode,
                                       size_t payload_size, adapter_bench_stages *stages) {
-    const turbo_io_backend_config backend_config = {adapter_bench_backend(), 2u, 2u, 2u};
+    const native_io_backend_config backend_config = {adapter_bench_backend(), 2u, 2u, 2u};
     int status;
 
     if (fixture == NULL || stages == NULL || payload_size == 0u) return TURBO_EINVAL;
@@ -487,13 +628,15 @@ static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
     fixture->payload_size = payload_size;
     fixture->stages = stages;
     fixture->next_lease = 1u;
+    fixture->reactive_wake_status = TURBO_OK;
+    fixture->reactive_drive_status = TURBO_OK;
     fixture->sent = (unsigned char *)malloc(payload_size);
     fixture->received = (unsigned char *)malloc(payload_size);
     if (fixture->sent == NULL || fixture->received == NULL) return TURBO_ENOMEM;
     memset(fixture->sent, 0x5au, payload_size);
 
     if (mode == ADAPTER_BENCH_DIRECT) {
-        status = native_io_init(&fixture->direct, &backend_config);
+        status = native_io_backend_init(&fixture->direct, &backend_config);
     } else {
         const cflow_io_native_adapter_config adapter_config = {backend_config};
         status = cflow_io_native_adapter_init(&fixture->adapter, &adapter_config);
@@ -511,17 +654,17 @@ static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
                                             : (uintptr_t)fixture->pipes[index];
         if (transport == ADAPTER_BENCH_TCP) {
             status = mode == ADAPTER_BENCH_DIRECT
-                         ? native_io_attach_socket(&fixture->direct, native_handle,
+                         ? native_io_backend_attach_socket(&fixture->direct, native_handle,
                                                           &fixture->endpoints[index])
                          : cflow_io_native_adapter_attach_socket(&fixture->adapter, native_handle,
                                                                  &fixture->endpoints[index]);
         } else {
             status = mode == ADAPTER_BENCH_DIRECT
-                         ? native_io_attach_pipe(&fixture->direct, native_handle,
-                                                        TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
+                         ? native_io_backend_attach_pipe(&fixture->direct, native_handle,
+                                                        NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
                                                         &fixture->endpoints[index])
                          : cflow_io_native_adapter_attach_pipe(&fixture->adapter, native_handle,
-                                                               TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
+                                                               NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
                                                                &fixture->endpoints[index]);
         }
         if (status != TURBO_OK) return status;
@@ -545,15 +688,27 @@ static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
         fixture->actor_initialized = true;
     } else if (mode == ADAPTER_BENCH_REACTIVE) {
         cflow_io_publisher_config reactive_config = {0};
+        const turbo_threadpool_config_t pool_config = {
+            1, ADAPTER_BENCH_REACTIVE_PUBLISHER_QUEUE_CAPACITY};
         fixture->adapter_ops = cflow_io_native_adapter_actor_ops();
+        turbo_mutex_init(&fixture->reactive_gate);
+        turbo_cond_init(&fixture->reactive_changed);
+        if (fixture->reactive_gate == NULL || fixture->reactive_changed == NULL)
+            return TURBO_ENOMEM;
+        fixture->reactive_sync_initialized = true;
+        fixture->publisher_pool =
+            turbo_threadpool_create_with_config(&pool_config);
+        if (fixture->publisher_pool == NULL)
+            return TURBO_ENOMEM;
+        fixture->publisher_pool_initialized = true;
         fixture->normalized.root = CMETA_INVALID_ID;
         cflow_graph_init(&fixture->surface, &cmeta_type_int);
         fixture->surface_initialized = true;
         if (!cflow_graph_normalize(&fixture->normalized, &fixture->surface)) return TURBO_ENOMEM;
         fixture->normalized_initialized = true;
-        if (!cflow_scheduler_manual_init_with_capacity(
-                &fixture->scheduler,
-                ADAPTER_BENCH_REACTIVE_SCHEDULER_CAPACITY))
+        if (!cflow_scheduler_worker_init_with_capacity(
+                &fixture->scheduler, 1u,
+                ADAPTER_BENCH_REACTIVE_SCHEDULER_CAPACITY, 1u))
             return TURBO_ENOMEM;
         fixture->scheduler_initialized = true;
         reactive_config.name = "native-io-adapter-benchmark-publisher";
@@ -564,8 +719,8 @@ static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
         reactive_config.prepare = adapter_bench_reactive_prepare;
         reactive_config.encode = adapter_bench_reactive_encode;
         reactive_config.user = fixture;
-        reactive_config.drive = NULL;
-        reactive_config.drive_user = NULL;
+        reactive_config.drive = adapter_bench_reactive_drive;
+        reactive_config.drive_user = fixture;
         status = cflow_publisher_from_io_actor_windowed(&fixture->publisher, &fixture->reactive_owner,
                                                      &reactive_config, 2u);
         if (status != TURBO_OK) return status;
@@ -578,8 +733,64 @@ static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
                             &fixture->scheduler, &fixture->subscriber))
             return TURBO_EIO;
         fixture->subscription_initialized = true;
+        status = turbo_threadpool_submit(
+            fixture->publisher_pool,
+            adapter_bench_reactive_drive_task,
+            fixture);
+        if (status != TURBO_OK)
+            return status;
+        fixture->reactive_loop_started = true;
     }
     return TURBO_OK;
+}
+
+static void adapter_bench_reactive_cleanup_task(void *user) {
+    adapter_bench_fixture *fixture = (adapter_bench_fixture *)user;
+    int status = TURBO_OK;
+
+    adapter_bench_thread_role = ADAPTER_BENCH_THREAD_ROLE_PUBLISHER;
+    if (fixture->reactive_owner_initialized) {
+        status = cflow_io_publisher_owner_close(
+            &fixture->reactive_owner);
+        if (status == TURBO_OK)
+            fixture->reactive_owner_initialized = false;
+    }
+    if (status == TURBO_OK && fixture->backend_initialized)
+        status = cflow_io_native_adapter_close(&fixture->adapter);
+    if (status == TURBO_OK && fixture->sockets_created) {
+        adapter_bench_close_socket(fixture->sockets[0]);
+        adapter_bench_close_socket(fixture->sockets[1]);
+        fixture->sockets[0] = ADAPTER_BENCH_INVALID_SOCKET;
+        fixture->sockets[1] = ADAPTER_BENCH_INVALID_SOCKET;
+        fixture->sockets_created = false;
+    }
+    if (status == TURBO_OK && fixture->pipes_created) {
+        adapter_bench_close_pipe(fixture->pipes[0]);
+        adapter_bench_close_pipe(fixture->pipes[1]);
+        fixture->pipes[0] = ADAPTER_BENCH_INVALID_PIPE;
+        fixture->pipes[1] = ADAPTER_BENCH_INVALID_PIPE;
+        fixture->pipes_created = false;
+    }
+    if (status == TURBO_OK && fixture->backend_initialized) {
+        for (size_t index = 0u; index < 2u; ++index) {
+            if (!native_io_endpoint_valid(fixture->endpoints[index]))
+                continue;
+            status = fixture->transport == ADAPTER_BENCH_TCP
+                ? cflow_io_native_adapter_release_socket(
+                      &fixture->adapter, fixture->endpoints[index])
+                : cflow_io_native_adapter_release_pipe(
+                      &fixture->adapter, fixture->endpoints[index]);
+            if (status != TURBO_OK)
+                break;
+            fixture->endpoints[index] = (native_io_endpoint){0};
+        }
+    }
+    if (status == TURBO_OK && fixture->backend_initialized) {
+        status = cflow_io_native_adapter_destroy(&fixture->adapter);
+        if (status == TURBO_OK)
+            fixture->backend_initialized = false;
+    }
+    fixture->reactive_cleanup_status = status;
 }
 
 static int adapter_bench_fixture_destroy(adapter_bench_fixture *fixture) {
@@ -592,7 +803,37 @@ static int adapter_bench_fixture_destroy(adapter_bench_fixture *fixture) {
     } else if (cflow_publisher_valid(&fixture->publisher)) {
         cflow_publisher_destroy(&fixture->publisher);
     }
-    if (fixture->reactive_owner_initialized) {
+    if (fixture->mode == ADAPTER_BENCH_REACTIVE &&
+        fixture->publisher_pool_initialized) {
+        int current;
+
+        if (fixture->scheduler_initialized &&
+            !cflow_scheduler_wait_idle(&fixture->scheduler) &&
+            status == TURBO_OK)
+            status = TURBO_EBUSY;
+        current = adapter_bench_reactive_stop_owner(fixture);
+        if (current != TURBO_OK && status == TURBO_OK) status = current;
+        fixture->reactive_cleanup_status = TURBO_EBUSY;
+        current = turbo_threadpool_submit(
+            fixture->publisher_pool,
+            adapter_bench_reactive_cleanup_task,
+            fixture);
+        if (current != TURBO_OK && status == TURBO_OK)
+            status = current;
+        if (current == TURBO_OK) {
+            current = turbo_threadpool_wait_status(
+                fixture->publisher_pool);
+            if (current != TURBO_OK && status == TURBO_OK)
+                status = current;
+            if (fixture->reactive_cleanup_status != TURBO_OK &&
+                status == TURBO_OK)
+                status = fixture->reactive_cleanup_status;
+        }
+        turbo_threadpool_shutdown(fixture->publisher_pool);
+        turbo_threadpool_destroy(fixture->publisher_pool);
+        fixture->publisher_pool = NULL;
+        fixture->publisher_pool_initialized = false;
+    } else if (fixture->reactive_owner_initialized) {
         int current = cflow_io_publisher_owner_close(&fixture->reactive_owner);
         if (current != TURBO_OK && status == TURBO_OK) status = current;
         if (current == TURBO_OK) fixture->reactive_owner_initialized = false;
@@ -600,6 +841,11 @@ static int adapter_bench_fixture_destroy(adapter_bench_fixture *fixture) {
     if (fixture->scheduler_initialized) {
         cflow_scheduler_destroy(&fixture->scheduler);
         fixture->scheduler_initialized = false;
+    }
+    if (fixture->reactive_sync_initialized) {
+        turbo_cond_destroy(&fixture->reactive_changed);
+        turbo_mutex_destroy(&fixture->reactive_gate);
+        fixture->reactive_sync_initialized = false;
     }
     if (fixture->normalized_initialized) {
         cflow_graph_destroy(&fixture->normalized);
@@ -616,49 +862,53 @@ static int adapter_bench_fixture_destroy(adapter_bench_fixture *fixture) {
         if (current != TURBO_OK && status == TURBO_OK) status = current;
         if (current == TURBO_OK) fixture->actor_initialized = false;
     }
-    if (fixture->backend_initialized) {
+    if (fixture->backend_initialized &&
+        fixture->mode != ADAPTER_BENCH_REACTIVE) {
         int current = fixture->mode == ADAPTER_BENCH_DIRECT
-                          ? native_io_close(&fixture->direct)
+                          ? native_io_backend_close(&fixture->direct)
                           : cflow_io_native_adapter_close(&fixture->adapter);
         if (current != TURBO_OK && status == TURBO_OK) status = current;
     }
-    if (fixture->sockets_created) {
+    if (fixture->sockets_created &&
+        fixture->mode != ADAPTER_BENCH_REACTIVE) {
         adapter_bench_close_socket(fixture->sockets[0]);
         adapter_bench_close_socket(fixture->sockets[1]);
         fixture->sockets[0] = ADAPTER_BENCH_INVALID_SOCKET;
         fixture->sockets[1] = ADAPTER_BENCH_INVALID_SOCKET;
         fixture->sockets_created = false;
     }
-    if (fixture->pipes_created) {
+    if (fixture->pipes_created &&
+        fixture->mode != ADAPTER_BENCH_REACTIVE) {
         adapter_bench_close_pipe(fixture->pipes[0]);
         adapter_bench_close_pipe(fixture->pipes[1]);
         fixture->pipes[0] = ADAPTER_BENCH_INVALID_PIPE;
         fixture->pipes[1] = ADAPTER_BENCH_INVALID_PIPE;
         fixture->pipes_created = false;
     }
-    if (fixture->backend_initialized) {
+    if (fixture->backend_initialized &&
+        fixture->mode != ADAPTER_BENCH_REACTIVE) {
         for (size_t index = 0u; index < 2u; ++index) {
             int current;
-            if (!turbo_io_endpoint_valid(fixture->endpoints[index])) continue;
+            if (!native_io_endpoint_valid(fixture->endpoints[index])) continue;
             if (fixture->transport == ADAPTER_BENCH_TCP) {
                 current = fixture->mode == ADAPTER_BENCH_DIRECT
-                              ? native_io_release_socket(&fixture->direct,
+                              ? native_io_backend_release_socket(&fixture->direct,
                                                                 fixture->endpoints[index])
                               : cflow_io_native_adapter_release_socket(&fixture->adapter,
                                                                        fixture->endpoints[index]);
             } else {
                 current =
                     fixture->mode == ADAPTER_BENCH_DIRECT
-                        ? native_io_release_pipe(&fixture->direct, fixture->endpoints[index])
+                        ? native_io_backend_release_pipe(&fixture->direct, fixture->endpoints[index])
                         : cflow_io_native_adapter_release_pipe(&fixture->adapter,
                                                                fixture->endpoints[index]);
             }
             if (current != TURBO_OK && status == TURBO_OK) status = current;
-            if (current == TURBO_OK) fixture->endpoints[index] = (turbo_io_endpoint){0};
+            if (current == TURBO_OK) fixture->endpoints[index] = (native_io_endpoint){0};
         }
         {
             int current = fixture->mode == ADAPTER_BENCH_DIRECT
-                              ? native_io_destroy(&fixture->direct)
+                              ? native_io_backend_destroy(&fixture->direct)
                               : cflow_io_native_adapter_destroy(&fixture->adapter);
             if (current != TURBO_OK && status == TURBO_OK) status = current;
             if (current == TURBO_OK) fixture->backend_initialized = false;
@@ -684,18 +934,18 @@ static int adapter_bench_direct_exchange(adapter_bench_fixture *fixture) {
     memset(fixture->received, 0, fixture->payload_size);
     while (offsets[ADAPTER_BENCH_SEND] < fixture->payload_size ||
            offsets[ADAPTER_BENCH_RECV] < fixture->payload_size) {
-        turbo_io_request requests[2] = {{0}};
-        turbo_io_completion completions[2];
+        native_io_request requests[2] = {{0}};
+        native_io_completion completions[2];
         size_t completion_count = 0u;
         uint64_t started = 0u;
         int status;
 
         for (size_t role = 0u; role < 2u; ++role) {
-            turbo_io_operation operation;
+            native_io_operation operation;
             if (pending[role] || offsets[role] >= fixture->payload_size) continue;
             operation = adapter_bench_operation(fixture, role, offsets[role]);
             if (fixture->stages != NULL) started = turbo_hrtime();
-            status = native_io_submit(&fixture->direct, &operation, &requests[role]);
+            status = native_io_backend_submit(&fixture->direct, &operation, &requests[role]);
             if (fixture->stages != NULL) {
                 adapter_bench_counter_add(&fixture->stages->native_submit_ns,
                                           turbo_hrtime() - started);
@@ -706,7 +956,7 @@ static int adapter_bench_direct_exchange(adapter_bench_fixture *fixture) {
         }
 
         if (fixture->stages != NULL) started = turbo_hrtime();
-        status = native_io_observe(&fixture->direct, completions, 2u,
+        status = native_io_backend_observe(&fixture->direct, completions, 2u,
                                           ADAPTER_BENCH_TIMEOUT_MS, &completion_count);
         if (fixture->stages != NULL) {
             adapter_bench_counter_add(&fixture->stages->observe_ns, turbo_hrtime() - started);
@@ -714,8 +964,8 @@ static int adapter_bench_direct_exchange(adapter_bench_fixture *fixture) {
         }
         if (status != TURBO_OK) return status;
         for (size_t index = 0u; index < completion_count; ++index) {
-            const turbo_io_completion *completion = &completions[index];
-            if (completion->kind != TURBO_IO_COMPLETION_OK || completion->bytes == 0u)
+            const native_io_completion *completion = &completions[index];
+            if (completion->kind != NATIVE_IO_COMPLETION_OK || completion->bytes == 0u)
                 return completion->status != TURBO_OK ? completion->status : TURBO_EPROTO;
             if (completion->user_data == 0u || completion->user_data > 2u) {
                 return TURBO_EPROTO;
@@ -864,106 +1114,101 @@ static int adapter_bench_actor_exchange(adapter_bench_fixture *fixture) {
                                                                                 : TURBO_EPROTO;
 }
 
-static int adapter_bench_reactive_owner_run(adapter_bench_fixture *fixture, size_t max_steps) {
-    size_t progressed = 0u;
-    uint64_t nested_before;
-    uint64_t started = 0u;
-    uint64_t elapsed;
-    uint64_t nested;
-    int status;
+static int adapter_bench_reactive_wait_values(
+    adapter_bench_fixture *fixture,
+    size_t target_values) {
+    size_t waits = 0u;
+    int status = TURBO_OK;
 
-    if (fixture->stages == NULL)
-        return cflow_io_publisher_owner_run_ready(&fixture->reactive_owner, max_steps, &progressed);
-    nested_before = fixture->stages->native_submit_ns;
-    started = turbo_hrtime();
-    status = cflow_io_publisher_owner_run_serial_batch_phase_internal(
-        &fixture->reactive_owner, max_steps, &progressed);
-    elapsed = turbo_hrtime() - started;
-    nested = fixture->stages->native_submit_ns - nested_before;
-    adapter_bench_counter_add(&fixture->stages->reactive_owner_ns,
-                              elapsed > nested ? elapsed - nested : 0u);
-    return status;
-}
-
-static int adapter_bench_reactive_native_batch(
-    adapter_bench_fixture *fixture, size_t *observed) {
-    int status;
-
-    if (fixture->stages == NULL)
-        return cflow_io_native_adapter_drive_reactive(
-            &fixture->adapter, &fixture->reactive_owner,
-            &fixture->scheduler, ADAPTER_BENCH_TIMEOUT_MS, 64u, observed);
-
-    {
-        const uint64_t started = turbo_hrtime();
-        (void)cflow_scheduler_run_until_idle(&fixture->scheduler, 64u);
-        adapter_bench_counter_add(
-            &fixture->stages->reactive_subscription_ns,
-            turbo_hrtime() - started);
+    turbo_mutex_lock(&fixture->reactive_gate);
+    while (fixture->reactive_subscriber_values < target_values &&
+           fixture->reactive_error == NULL &&
+           fixture->reactive_wake_status == TURBO_OK &&
+           fixture->reactive_drive_status == TURBO_OK &&
+           waits < ADAPTER_BENCH_REACTIVE_WAIT_LIMIT) {
+        (void)turbo_cond_timedwait(
+            &fixture->reactive_changed,
+            &fixture->reactive_gate,
+            ADAPTER_BENCH_REACTIVE_WAIT_SLICE_NS);
+        ++waits;
     }
-    status = adapter_bench_reactive_owner_run(fixture, 64u);
-    if (status != TURBO_OK)
-        return status;
-    {
-        const uint64_t started = turbo_hrtime();
-        status = cflow_io_native_adapter_observe(
-            &fixture->adapter, ADAPTER_BENCH_TIMEOUT_MS, observed);
-        adapter_bench_counter_add(
-            &fixture->stages->observe_ns, turbo_hrtime() - started);
-        ++fixture->stages->observe_calls;
-    }
-    {
-        const int owner_status =
-            adapter_bench_reactive_owner_run(fixture, 64u);
-        if (status == TURBO_OK)
-            status = owner_status;
-    }
-    {
-        const uint64_t started = turbo_hrtime();
-        (void)cflow_scheduler_run_until_idle(&fixture->scheduler, 64u);
-        adapter_bench_counter_add(
-            &fixture->stages->reactive_subscription_ns,
-            turbo_hrtime() - started);
-    }
+    if (fixture->reactive_wake_status != TURBO_OK)
+        status = fixture->reactive_wake_status;
+    else if (fixture->reactive_drive_status != TURBO_OK)
+        status = fixture->reactive_drive_status;
+    else if (fixture->reactive_error != NULL)
+        status = TURBO_EIO;
+    else if (fixture->reactive_subscriber_values < target_values)
+        status = TURBO_ETIMEDOUT;
+    turbo_mutex_unlock(&fixture->reactive_gate);
     return status;
 }
 
 static int adapter_bench_reactive_exchange(adapter_bench_fixture *fixture) {
-    const size_t release_before = fixture->release_count;
-    const size_t subscriber_before = fixture->reactive_subscriber_values;
-    const uint64_t operation_before = fixture->operation_count;
+    size_t release_before;
+    size_t subscriber_before;
+    uint64_t operation_before;
 
     memset(fixture->received, 0, fixture->payload_size);
+    turbo_mutex_lock(&fixture->reactive_gate);
+    release_before = fixture->release_count;
+    subscriber_before = fixture->reactive_subscriber_values;
+    operation_before = fixture->operation_count;
     memset(fixture->reactive_offsets, 0, sizeof(fixture->reactive_offsets));
     memset(fixture->reactive_pending, 0, sizeof(fixture->reactive_pending));
-    while (fixture->reactive_offsets[ADAPTER_BENCH_SEND] < fixture->payload_size ||
-           fixture->reactive_offsets[ADAPTER_BENCH_RECV] < fixture->payload_size) {
+    turbo_mutex_unlock(&fixture->reactive_gate);
+    for (;;) {
         size_t requested = 0u;
-        size_t observed = 0u;
+        size_t target_values;
         uint64_t started = 0u;
         int status;
 
+        turbo_mutex_lock(&fixture->reactive_gate);
         for (size_t role = 0u; role < 2u; ++role) {
             if (fixture->reactive_offsets[role] < fixture->payload_size) ++requested;
         }
+        target_values = fixture->reactive_subscriber_values + requested;
+        turbo_mutex_unlock(&fixture->reactive_gate);
+        if (requested == 0u)
+            break;
         if (fixture->stages != NULL) started = turbo_hrtime();
         if (!cflow_subscription_request(&fixture->subscription, requested)) return TURBO_EPROTO;
+        status = adapter_bench_reactive_wait_values(
+            fixture, target_values);
+        if (status == TURBO_OK &&
+            !cflow_scheduler_wait_idle(&fixture->scheduler))
+            status = TURBO_EBUSY;
         if (fixture->stages != NULL)
             adapter_bench_counter_add(&fixture->stages->reactive_subscription_ns,
                                       turbo_hrtime() - started);
-        while (observed < requested) {
-            size_t batch = 0u;
-            status = adapter_bench_reactive_native_batch(fixture, &batch);
-            if (status != TURBO_OK) return status;
-            observed += batch;
+        if (status != TURBO_OK) {
+            return status;
         }
-        if (fixture->reactive_error != NULL) return TURBO_EIO;
     }
-    if (fixture->release_count - release_before != fixture->operation_count - operation_before ||
-        fixture->reactive_subscriber_values - subscriber_before != fixture->operation_count - operation_before)
+    turbo_mutex_lock(&fixture->reactive_gate);
+    {
+        size_t waits = 0u;
+        const uint64_t operations = fixture->operation_count - operation_before;
+        while (fixture->release_count - release_before < operations &&
+               fixture->reactive_wake_status == TURBO_OK &&
+               fixture->reactive_drive_status == TURBO_OK &&
+               waits < ADAPTER_BENCH_REACTIVE_WAIT_LIMIT) {
+            (void)turbo_cond_timedwait(
+                &fixture->reactive_changed, &fixture->reactive_gate,
+                ADAPTER_BENCH_REACTIVE_WAIT_SLICE_NS);
+            ++waits;
+        }
+    }
+    if (fixture->release_count - release_before !=
+            fixture->operation_count - operation_before ||
+        fixture->reactive_subscriber_values - subscriber_before !=
+            fixture->operation_count - operation_before) {
+        turbo_mutex_unlock(&fixture->reactive_gate);
         return TURBO_EPROTO;
-    return memcmp(fixture->sent, fixture->received, fixture->payload_size) == 0 ? TURBO_OK
-                                                                                : TURBO_EPROTO;
+    }
+    turbo_mutex_unlock(&fixture->reactive_gate);
+    return memcmp(fixture->sent, fixture->received, fixture->payload_size) == 0
+        ? TURBO_OK : TURBO_EPROTO;
 }
 
 static int adapter_bench_exchange(adapter_bench_fixture *fixture) {
@@ -972,23 +1217,74 @@ static int adapter_bench_exchange(adapter_bench_fixture *fixture) {
                                                 : adapter_bench_reactive_exchange(fixture);
 }
 
-static bool adapter_bench_validate(adapter_bench_fixture *fixture,
-                                   const adapter_bench_result *result) {
-    turbo_io_backend_stats direct_stats = {0};
+static void adapter_bench_reactive_validate_task(void *user) {
+    adapter_bench_fixture *fixture = (adapter_bench_fixture *)user;
     cflow_io_native_adapter_stats adapter_stats = {0};
-    cflow_io_actor_stats actor_stats = {0};
     cflow_io_publisher_stats reactive_stats = {0};
     cflow_io_publisher_window_stats window_stats = {0};
+
+    adapter_bench_thread_role = ADAPTER_BENCH_THREAD_ROLE_PUBLISHER;
+    fixture->reactive_validation_result =
+        cflow_io_native_adapter_get_stats(&fixture->adapter, &adapter_stats) &&
+        cflow_io_publisher_owner_get_stats(
+            &fixture->reactive_owner, &reactive_stats) &&
+        cflow_io_publisher_owner_get_window_stats(
+            &fixture->reactive_owner, &window_stats) &&
+        adapter_stats.active_bridges == 0u &&
+        adapter_stats.stale_actor_completions == 0u &&
+        adapter_stats.native.active_requests == 0u &&
+        adapter_stats.native.submitted == adapter_stats.native.completed &&
+        adapter_stats.native.cancelled == 0u &&
+        adapter_stats.native.failed == 0u &&
+        adapter_stats.native.rejected_full == 0u &&
+        adapter_stats.native.native_submit_errors == 0u &&
+        adapter_stats.native.native_cancel_errors == 0u &&
+        reactive_stats.actor.active_requests == 0u &&
+        reactive_stats.actor.rejected_request_full == 0u &&
+        reactive_stats.actor.rejected_command_full == 0u &&
+        reactive_stats.actor.stale_completions == 0u &&
+        reactive_stats.actor.backend_submit_errors == 0u &&
+        reactive_stats.actor.executor_rejected_full == 0u &&
+        reactive_stats.actor.acknowledged == reactive_stats.actor.accepted &&
+        fixture->reactive_subscriber_values == reactive_stats.actor.accepted &&
+        fixture->reactive_observed == reactive_stats.actor.accepted &&
+        fixture->release_count == reactive_stats.actor.accepted &&
+        window_stats.occupied == 0u &&
+        window_stats.demand_reserved == 0u &&
+        window_stats.results_ready == 0u &&
+        fixture->reactive_wake_status == TURBO_OK &&
+        fixture->reactive_drive_status == TURBO_OK &&
+        fixture->reactive_publisher_callbacks != 0u &&
+        fixture->reactive_subscriber_callbacks != 0u &&
+        fixture->reactive_role_collisions == 0u;
+}
+
+static bool adapter_bench_validate(adapter_bench_fixture *fixture,
+                                   const adapter_bench_result *result) {
+    native_io_backend_stats direct_stats = {0};
+    cflow_io_native_adapter_stats adapter_stats = {0};
+    cflow_io_actor_stats actor_stats = {0};
 
     if (result->latency_count != ADAPTER_BENCH_TOTAL_TRANSFERS ||
         memcmp(fixture->sent, fixture->received, fixture->payload_size) != 0)
         return false;
     if (fixture->mode == ADAPTER_BENCH_DIRECT) {
-        return native_io_get_stats(&fixture->direct, &direct_stats) &&
+        return native_io_backend_get_stats(&fixture->direct, &direct_stats) &&
                direct_stats.active_requests == 0u &&
                direct_stats.submitted == direct_stats.completed && direct_stats.cancelled == 0u &&
                direct_stats.rejected_full == 0u && direct_stats.failed == 0u &&
                direct_stats.native_submit_errors == 0u && direct_stats.native_cancel_errors == 0u;
+    }
+    if (fixture->mode == ADAPTER_BENCH_REACTIVE) {
+        if (adapter_bench_reactive_stop_owner(fixture) != TURBO_OK)
+            return false;
+        if (turbo_threadpool_submit(
+                fixture->publisher_pool,
+                adapter_bench_reactive_validate_task,
+                fixture) != TURBO_OK ||
+            turbo_threadpool_wait_status(fixture->publisher_pool) != TURBO_OK)
+            return false;
+        return fixture->reactive_validation_result;
     }
     if (!cflow_io_native_adapter_get_stats(&fixture->adapter, &adapter_stats) ||
         adapter_stats.active_bridges != 0u || adapter_stats.stale_actor_completions != 0u ||
@@ -999,21 +1295,6 @@ static bool adapter_bench_validate(adapter_bench_fixture *fixture,
         adapter_stats.native.native_submit_errors != 0u ||
         adapter_stats.native.native_cancel_errors != 0u)
         return false;
-    if (fixture->mode == ADAPTER_BENCH_REACTIVE) {
-        return cflow_io_publisher_owner_get_stats(&fixture->reactive_owner, &reactive_stats) &&
-               cflow_io_publisher_owner_get_window_stats(&fixture->reactive_owner, &window_stats) &&
-               reactive_stats.actor.active_requests == 0u &&
-               reactive_stats.actor.rejected_request_full == 0u &&
-               reactive_stats.actor.rejected_command_full == 0u &&
-               reactive_stats.actor.stale_completions == 0u &&
-               reactive_stats.actor.backend_submit_errors == 0u &&
-               reactive_stats.actor.executor_rejected_full == 0u &&
-               reactive_stats.actor.acknowledged == reactive_stats.actor.accepted &&
-               fixture->reactive_subscriber_values == reactive_stats.actor.accepted &&
-               window_stats.occupied == 0u && window_stats.demand_reserved == 0u &&
-               window_stats.results_ready == 0u &&
-               fixture->release_count == reactive_stats.actor.accepted;
-    }
     return cflow_io_actor_get_stats(&fixture->actor, &actor_stats) &&
            actor_stats.active_requests == 0u && actor_stats.rejected_request_full == 0u &&
            actor_stats.rejected_command_full == 0u && actor_stats.stale_completions == 0u &&

@@ -28,20 +28,20 @@
 #endif
 
 #if defined(_WIN32)
-  #define NATIVE_PIPE_BACKEND_KIND TURBO_IO_BACKEND_IOCP
+  #define NATIVE_PIPE_BACKEND_KIND NATIVE_IO_BACKEND_IOCP
   #define NATIVE_PIPE_BACKEND_NAME "IOCP"
   #define NATIVE_PIPE_RAW_NAME "raw IOCP"
 typedef HANDLE native_pipe_handle;
   #define NATIVE_PIPE_INVALID_HANDLE INVALID_HANDLE_VALUE
 #elif defined(__linux__)
-  #define NATIVE_PIPE_BACKEND_KIND TURBO_IO_BACKEND_EPOLL
+  #define NATIVE_PIPE_BACKEND_KIND NATIVE_IO_BACKEND_EPOLL
   #define NATIVE_PIPE_BACKEND_NAME "epoll"
   #define NATIVE_PIPE_RAW_NAME "raw POSIX"
 typedef int native_pipe_handle;
   #define NATIVE_PIPE_INVALID_HANDLE (-1)
 #elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
     defined(__DragonFly__)
-  #define NATIVE_PIPE_BACKEND_KIND TURBO_IO_BACKEND_KQUEUE
+  #define NATIVE_PIPE_BACKEND_KIND NATIVE_IO_BACKEND_KQUEUE
   #define NATIVE_PIPE_BACKEND_NAME "kqueue"
   #define NATIVE_PIPE_RAW_NAME "raw POSIX"
 typedef int native_pipe_handle;
@@ -91,8 +91,8 @@ typedef struct native_pipe_fixture {
 #if defined(_WIN32)
   HANDLE port;
 #endif
-  turbo_io_backend backend;
-  turbo_io_endpoint endpoints[2];
+  native_io_backend backend;
+  native_io_endpoint endpoints[2];
   unsigned char *sent;
   unsigned char *received;
   size_t payload_size;
@@ -194,7 +194,7 @@ static int native_pipe_make_pair(native_pipe_handle handles[2]) {
 
 static int native_pipe_fixture_init(native_pipe_fixture *fixture, native_pipe_driver driver,
                                     size_t payload_size) {
-  const turbo_io_backend_config config = {NATIVE_PIPE_BACKEND_KIND, NATIVE_PIPE_ENDPOINT_CAPACITY,
+  const native_io_backend_config config = {NATIVE_PIPE_BACKEND_KIND, NATIVE_PIPE_ENDPOINT_CAPACITY,
                                           NATIVE_PIPE_REQUEST_CAPACITY, NATIVE_PIPE_BATCH_CAPACITY};
   int status;
   memset(fixture, 0, sizeof(*fixture));
@@ -224,16 +224,16 @@ static int native_pipe_fixture_init(native_pipe_fixture *fixture, native_pipe_dr
 #endif
     return TURBO_OK;
   }
-  if (!native_io_pipe_supported(NATIVE_PIPE_BACKEND_KIND)) return TURBO_ENOTSUP;
-  status = native_io_init(&fixture->backend, &config);
+  if (!native_io_backend_kind_supports_pipe(NATIVE_PIPE_BACKEND_KIND)) return TURBO_ENOTSUP;
+  status = native_io_backend_init(&fixture->backend, &config);
   if (status == TURBO_OK)
     status =
-        native_io_attach_pipe(&fixture->backend, (uintptr_t)fixture->handles[0],
-                                     TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &fixture->endpoints[0]);
+        native_io_backend_attach_pipe(&fixture->backend, (uintptr_t)fixture->handles[0],
+                                     NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &fixture->endpoints[0]);
   if (status == TURBO_OK)
     status =
-        native_io_attach_pipe(&fixture->backend, (uintptr_t)fixture->handles[1],
-                                     TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &fixture->endpoints[1]);
+        native_io_backend_attach_pipe(&fixture->backend, (uintptr_t)fixture->handles[1],
+                                     NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &fixture->endpoints[1]);
   return status;
 }
 
@@ -242,7 +242,7 @@ static int native_pipe_fixture_destroy(native_pipe_fixture *fixture) {
 #if defined(_WIN32)
   int backend_close_status = TURBO_OK;
   if (fixture->driver == NATIVE_PIPE_NATIVE_IO && fixture->backend.impl != NULL) {
-    backend_close_status = native_io_close(&fixture->backend);
+    backend_close_status = native_io_backend_close(&fixture->backend);
     if (backend_close_status != TURBO_OK) status = backend_close_status;
   }
 #endif
@@ -266,21 +266,21 @@ static int native_pipe_fixture_destroy(native_pipe_fixture *fixture) {
 #endif
   if (fixture->driver == NATIVE_PIPE_NATIVE_IO && fixture->backend.impl != NULL) {
     for (size_t index = 0u; index < 2u; ++index) {
-      if (turbo_io_endpoint_valid(fixture->endpoints[index])) {
+      if (native_io_endpoint_valid(fixture->endpoints[index])) {
         const int release_status =
-            native_io_release_pipe(&fixture->backend, fixture->endpoints[index]);
+            native_io_backend_release_pipe(&fixture->backend, fixture->endpoints[index]);
         if (status == TURBO_OK && release_status != TURBO_OK) status = release_status;
-        fixture->endpoints[index] = (turbo_io_endpoint){0};
+        fixture->endpoints[index] = (native_io_endpoint){0};
       }
     }
     {
 #if defined(_WIN32)
       const int close_status = backend_close_status;
 #else
-      const int close_status = native_io_close(&fixture->backend);
+      const int close_status = native_io_backend_close(&fixture->backend);
 #endif
       const int destroy_status =
-          close_status == TURBO_OK ? native_io_destroy(&fixture->backend) : close_status;
+          close_status == TURBO_OK ? native_io_backend_destroy(&fixture->backend) : close_status;
       if (status == TURBO_OK && destroy_status != TURBO_OK) status = destroy_status;
     }
   }
@@ -405,10 +405,10 @@ static int native_pipe_raw_transfer(native_pipe_fixture *fixture, native_pipe_st
 }
 #endif
 
-static int native_pipe_submit(native_pipe_fixture *fixture, const turbo_io_operation *operation,
-                              turbo_io_request *request, native_pipe_stages *stages) {
+static int native_pipe_submit(native_pipe_fixture *fixture, const native_io_operation *operation,
+                              native_io_request *request, native_pipe_stages *stages) {
   const uint64_t started = turbo_hrtime();
-  const int status = native_io_submit(&fixture->backend, operation, request);
+  const int status = native_io_backend_submit(&fixture->backend, operation, request);
   native_pipe_counter_add(&stages->submit_ns, turbo_hrtime() - started);
   ++stages->submits;
   return status;
@@ -420,34 +420,34 @@ static int native_pipe_native_transfer(native_pipe_fixture *fixture, native_pipe
   bool read_pending = false;
   bool write_pending = false;
   while (sent_offset < fixture->payload_size || received_offset < fixture->payload_size) {
-    turbo_io_completion events[NATIVE_PIPE_BATCH_CAPACITY];
+    native_io_completion events[NATIVE_PIPE_BATCH_CAPACITY];
     size_t event_count = 0u;
     int status;
     if (!read_pending && received_offset < fixture->payload_size) {
-      const turbo_io_operation operation = {.kind = TURBO_IO_PIPE_READ,
+      const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_PIPE_READ,
                                             .endpoint = fixture->endpoints[0],
                                             .buffer = fixture->received + received_offset,
                                             .length = fixture->payload_size - received_offset,
                                             .user_data = NATIVE_PIPE_READ_USER_DATA};
-      turbo_io_request request;
+      native_io_request request;
       status = native_pipe_submit(fixture, &operation, &request, stages);
       if (status != TURBO_OK) return status;
       read_pending = true;
     }
     if (!write_pending && sent_offset < fixture->payload_size) {
-      const turbo_io_operation operation = {.kind = TURBO_IO_PIPE_WRITE,
+      const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_PIPE_WRITE,
                                             .endpoint = fixture->endpoints[1],
                                             .buffer = fixture->sent + sent_offset,
                                             .length = fixture->payload_size - sent_offset,
                                             .user_data = NATIVE_PIPE_WRITE_USER_DATA};
-      turbo_io_request request;
+      native_io_request request;
       status = native_pipe_submit(fixture, &operation, &request, stages);
       if (status != TURBO_OK) return status;
       write_pending = true;
     }
     {
       const uint64_t started = turbo_hrtime();
-      status = native_io_observe(&fixture->backend, events, NATIVE_PIPE_BATCH_CAPACITY,
+      status = native_io_backend_observe(&fixture->backend, events, NATIVE_PIPE_BATCH_CAPACITY,
                                         NATIVE_PIPE_TIMEOUT_MS, &event_count);
       native_pipe_counter_add(&stages->observe_ns, turbo_hrtime() - started);
       ++stages->observes;
@@ -455,8 +455,8 @@ static int native_pipe_native_transfer(native_pipe_fixture *fixture, native_pipe
     if (status != TURBO_OK) return status;
     if (event_count == 0u) return TURBO_EIO;
     for (size_t index = 0u; index < event_count; ++index) {
-      const turbo_io_completion *event = &events[index];
-      if (event->kind != TURBO_IO_COMPLETION_OK)
+      const native_io_completion *event = &events[index];
+      if (event->kind != NATIVE_IO_COMPLETION_OK)
         return event->status != TURBO_OK ? event->status : TURBO_EIO;
       if (event->bytes == 0u) return TURBO_EIO;
       if (event->user_data == NATIVE_PIPE_READ_USER_DATA) {

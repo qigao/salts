@@ -62,10 +62,10 @@ typedef cflow_read_status (*cflow_io_publisher_encode_fn)(
  * TRIVIAL_COPY and TRIVIAL_DESTROY traits. drive is an advisory coalescing
  * edge notification. A serialized backend without an external batch boundary
  * may call owner_run_ready() directly; otherwise drive schedules the owner
- * thread. NativeIO callers should preserve its completion batch with
- * cflow_io_native_adapter_drive_reactive(). Edges
- * raised by an active owner are consumed by that owner without a reentrant
- * callback. NULL drive selects explicit caller-driven progress; callers must
+ * thread. A blocking owner integration must post its bounded backend wake
+ * before signaling the owner runnable condition, so a late control edge cannot
+ * overtake the next submitted batch. Edges raised by an active owner are
+ * consumed by that owner without a reentrant callback. NULL drive selects explicit caller-driven progress; callers must
  * run the owner after demand, completion, and cancellation edges. The callback
  * must not synchronously close or destroy the owner.
  */
