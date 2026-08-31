@@ -3,6 +3,7 @@
 
 #include "cnet_command.h"
 #include "cnet_event.h"
+#include "cnet_resolver.h"
 #include "cnet_transport.h"
 #include "cnet_uri.h"
 
@@ -16,6 +17,8 @@ typedef struct cnet_owner_connect_payload {
   cnet_uri_scheme scheme;
   size_t address_length;
   unsigned char address[CNET_OWNER_ADDRESS_CAPACITY];
+  char host[CNET_RESOLVER_HOST_CAPACITY];
+  uint16_t port;
   uintptr_t pipe_read_handle;
   uintptr_t pipe_write_handle;
 } cnet_owner_connect_payload;

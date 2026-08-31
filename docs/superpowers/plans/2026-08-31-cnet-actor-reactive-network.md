@@ -162,8 +162,10 @@ the process control plane reference-counts c-ares initialization, each resolver
 owns a fixed query/result mailbox, and the c-ares event thread copies one
 address result before issuing a nonblocking owner wake. Query cancellation is
 logical and generation checked because c-ares cancellation is channel-wide.
-The future client still has to drain these results into shard commands and own
-the `RESOLVING -> TRANSPORT_CONNECTING` transition.
+Each owner now drains its resolver mailbox and is the only writer of the
+`RESOLVING -> TRANSPORT_CONNECTING` transition. The future client still has to
+parse public connect options, select a stable shard, and publish the initial
+bounded connect command.
 
 **Files:**
 

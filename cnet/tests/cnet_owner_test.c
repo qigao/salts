@@ -1,3 +1,4 @@
+#include "cnet_module.h"
 #include "cnet_owner.h"
 #include "cnet_test_pipe.h"
 #include "tinytest.h"
@@ -119,7 +120,7 @@ static int cnet_owner_test_drive_to_event(cnet_owner *owner, cnet_event_queue *e
   }
 }
 
-static void cnet_owner_test_tcp(native_io_backend_kind backend_kind) {
+static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolve_host) {
   static const unsigned char payload[] = {1u, 3u, 5u, 7u};
   cnet_session_table sessions = {0};
   cnet_command_queue commands = {0};
@@ -164,8 +165,13 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind) {
   for (event_index = 0u; event_index < event_config.capacity; ++event_index)
     check_equal(cnet_event_queue_publish(&events, &queued_state), TURBO_OK);
   connect_payload.scheme = CNET_URI_TCP;
-  connect_payload.address_length = sizeof(address);
-  memcpy(connect_payload.address, &address, sizeof(address));
+  if (resolve_host) {
+    memcpy(connect_payload.host, "127.0.0.1", sizeof("127.0.0.1"));
+    connect_payload.port = ntohs(address.sin_port);
+  } else {
+    connect_payload.address_length = sizeof(address);
+    memcpy(connect_payload.address, &address, sizeof(address));
+  }
   command =
       (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
@@ -333,6 +339,62 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   check_equal(cnet_session_table_destroy(&sessions), TURBO_OK);
 }
 
+static void cnet_owner_test_resolve_failure(native_io_backend_kind backend_kind) {
+  cnet_session_table sessions = {0};
+  cnet_command_queue commands = {0};
+  cnet_event_queue events = {0};
+  cnet_owner owner = {0};
+  const cnet_command_queue_config command_config = {4u, sizeof(cnet_owner_connect_payload)};
+  const cnet_event_queue_config event_config = {4u, 1u, 64u};
+  const cnet_owner_config owner_config = {.backend_kind = backend_kind,
+                                          .connection_capacity = 1u,
+                                          .request_capacity = 2u,
+                                          .completion_batch_capacity = 2u,
+                                          .receive_buffer_bytes = 64u,
+                                          .receive_buffer_count = 1u,
+                                          .sessions = &sessions,
+                                          .commands = &commands,
+                                          .events = &events};
+  cnet_session_handle session = {0};
+  cnet_owner_connect_payload connect_payload = {0};
+  cnet_command command = {0};
+  cnet_event_view event = {0};
+  cnet_session_terminal terminal = {0};
+
+  check_equal(cnet_session_table_init(&sessions, 1u), TURBO_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), TURBO_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), TURBO_OK);
+  check_equal(cnet_owner_init(&owner, &owner_config), TURBO_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), TURBO_OK);
+
+  connect_payload.scheme = CNET_URI_TCP;
+  memcpy(connect_payload.host, "bad host", sizeof("bad host"));
+  connect_payload.port = 443u;
+  command =
+      (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
+  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+  check_equal(cnet_owner_wake(&owner), TURBO_OK);
+  check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
+              TURBO_OK);
+  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+  check_equal(event.state, CNET_EVENT_STATE_FAILED);
+  check_equal(event.stage, CNET_SESSION_STAGE_RESOLVE);
+  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), TURBO_OK);
+  check_equal(terminal.kind, CNET_SESSION_TERMINAL_FAILED);
+  check_equal(terminal.stage, CNET_SESSION_STAGE_RESOLVE);
+  check_equal(cnet_session_table_recycle(&sessions, session), TURBO_OK);
+  check_equal(cnet_owner_release_session(&owner, session), TURBO_OK);
+
+  check_equal(cnet_command_queue_close(&commands), TURBO_OK);
+  check_equal(cnet_owner_close(&owner), TURBO_OK);
+  check_equal(cnet_owner_destroy(&owner), TURBO_OK);
+  check_equal(cnet_event_queue_close(&events), TURBO_OK);
+  check_equal(cnet_event_queue_destroy(&events), TURBO_OK);
+  check_equal(cnet_command_queue_destroy(&commands), TURBO_OK);
+  check_equal(cnet_session_table_destroy(&sessions), TURBO_OK);
+}
+
 static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
   static const unsigned char outbound[] = {5u, 6u, 7u, 8u};
   static const unsigned char inbound[] = {8u, 3u, 2u, 1u};
@@ -431,24 +493,50 @@ spec("CNet owner shard") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
+    check_equal(cnet_module_init(), TURBO_OK);
     for (index = 0u; index < count; ++index)
-      cnet_owner_test_tcp(backends[index]);
+      cnet_owner_test_tcp(backends[index], false);
+    check_equal(cnet_module_shutdown(), TURBO_OK);
+  }
+
+  it("owns the resolve to TCP connect state transition") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    size_t index;
+    check_equal(cnet_module_init(), TURBO_OK);
+    for (index = 0u; index < count; ++index)
+      cnet_owner_test_tcp(backends[index], true);
+    check_equal(cnet_module_shutdown(), TURBO_OK);
+  }
+
+  it("contains resolver failure in one session and reports its stage") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    size_t index;
+    check_equal(cnet_module_init(), TURBO_OK);
+    for (index = 0u; index < count; ++index)
+      cnet_owner_test_resolve_failure(backends[index]);
+    check_equal(cnet_module_shutdown(), TURBO_OK);
   }
 
   it("owns a connected UDP session through bidirectional datagrams and terminal recycle") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
+    check_equal(cnet_module_init(), TURBO_OK);
     for (index = 0u; index < count; ++index)
       cnet_owner_test_udp(backends[index]);
+    check_equal(cnet_module_shutdown(), TURBO_OK);
   }
 
   it("owns a platform byte-pipe session through bidirectional bytes and terminal recycle") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
+    check_equal(cnet_module_init(), TURBO_OK);
     for (index = 0u; index < count; ++index)
       if (native_io_backend_kind_supports_pipe(backends[index]))
         cnet_owner_test_pipe(backends[index]);
+    check_equal(cnet_module_shutdown(), TURBO_OK);
   }
 }
