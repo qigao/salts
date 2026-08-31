@@ -128,12 +128,12 @@ static void native_io_test_readiness_pipe_round_trip(turbo_io_backend_kind kind)
   const uint32_t flags = TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE;
   turbo_io_operation operations[2];
 
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
   check_equal(native_io_test_make_pipe(descriptors, true), TURBO_OK);
-  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0], flags,
+  check_equal(native_io_attach_pipe(&backend, (uintptr_t)descriptors[0], flags,
                                            &endpoints[0]),
               TURBO_OK);
-  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[1], flags,
+  check_equal(native_io_attach_pipe(&backend, (uintptr_t)descriptors[1], flags,
                                            &endpoints[1]),
               TURBO_OK);
   operations[0] = (turbo_io_operation){.kind = TURBO_IO_PIPE_READ,
@@ -146,9 +146,9 @@ static void native_io_test_readiness_pipe_round_trip(turbo_io_backend_kind kind)
                                        .buffer = (void *)payload,
                                        .length = sizeof(payload),
                                        .user_data = 42u};
-  check_equal(turbo_io_backend_submit(&backend, &operations[0], &requests[0]), TURBO_OK);
-  check_equal(turbo_io_backend_release_pipe(&backend, endpoints[0]), TURBO_EBUSY);
-  check_equal(turbo_io_backend_submit(&backend, &operations[1], &requests[1]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &operations[0], &requests[0]), TURBO_OK);
+  check_equal(native_io_release_pipe(&backend, endpoints[0]), TURBO_EBUSY);
+  check_equal(native_io_submit(&backend, &operations[1], &requests[1]), TURBO_OK);
   check_equal(native_io_test_observe_all(&backend, events, 2u), TURBO_OK);
   check_equal(events[0].kind, TURBO_IO_COMPLETION_OK);
   check_equal(events[1].kind, TURBO_IO_COMPLETION_OK);
@@ -156,10 +156,10 @@ static void native_io_test_readiness_pipe_round_trip(turbo_io_backend_kind kind)
 
   (void)close(descriptors[0]);
   (void)close(descriptors[1]);
-  check_equal(turbo_io_backend_release_pipe(&backend, endpoints[0]), TURBO_OK);
-  check_equal(turbo_io_backend_release_pipe(&backend, endpoints[1]), TURBO_OK);
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_release_pipe(&backend, endpoints[0]), TURBO_OK);
+  check_equal(native_io_release_pipe(&backend, endpoints[1]), TURBO_OK);
+  check_equal(native_io_close(&backend), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
 }
 
 static void native_io_test_readiness_pipe_eof_and_reuse(turbo_io_backend_kind kind) {
@@ -175,9 +175,9 @@ static void native_io_test_readiness_pipe_eof_and_reuse(turbo_io_backend_kind ki
   size_t count = 0u;
   turbo_io_operation operation;
 
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
   check_equal(native_io_test_make_pipe(first, true), TURBO_OK);
-  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)first[0],
+  check_equal(native_io_attach_pipe(&backend, (uintptr_t)first[0],
                                            TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &old_endpoint),
               TURBO_OK);
   (void)close(first[1]);
@@ -187,31 +187,31 @@ static void native_io_test_readiness_pipe_eof_and_reuse(turbo_io_backend_kind ki
                                    .buffer = &byte,
                                    .length = sizeof(byte),
                                    .user_data = 51u};
-  check_equal(turbo_io_backend_submit(&backend, &operation, &request), TURBO_OK);
-  check_equal(turbo_io_backend_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS, &count),
+  check_equal(native_io_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS, &count),
               TURBO_OK);
   check_equal(count, 1u);
   check_equal(event.kind, TURBO_IO_COMPLETION_EOF);
   check_equal(event.status, TURBO_EOF);
   (void)close(first[0]);
   first[0] = -1;
-  check_equal(turbo_io_backend_release_pipe(&backend, old_endpoint), TURBO_OK);
-  check_equal(turbo_io_backend_release_pipe(&backend, old_endpoint), TURBO_ENOENT);
+  check_equal(native_io_release_pipe(&backend, old_endpoint), TURBO_OK);
+  check_equal(native_io_release_pipe(&backend, old_endpoint), TURBO_ENOENT);
 
   check_equal(native_io_test_make_pipe(second, true), TURBO_OK);
-  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)second[0],
+  check_equal(native_io_attach_pipe(&backend, (uintptr_t)second[0],
                                            TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &new_endpoint),
               TURBO_OK);
   check_equal(new_endpoint.slot, old_endpoint.slot);
   check_not_equal(new_endpoint.generation, old_endpoint.generation);
   operation.endpoint = old_endpoint;
-  check_equal(turbo_io_backend_submit(&backend, &operation, &request), TURBO_ENOENT);
+  check_equal(native_io_submit(&backend, &operation, &request), TURBO_ENOENT);
   check_false(turbo_io_request_valid(request));
   (void)close(second[0]);
   (void)close(second[1]);
-  check_equal(turbo_io_backend_release_pipe(&backend, new_endpoint), TURBO_OK);
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_release_pipe(&backend, new_endpoint), TURBO_OK);
+  check_equal(native_io_close(&backend), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
 }
 
 static void native_io_test_readiness_pipe_fifo_and_cancel(turbo_io_backend_kind kind) {
@@ -229,12 +229,12 @@ static void native_io_test_readiness_pipe_fifo_and_cancel(turbo_io_backend_kind 
   size_t read_completion_index = 0u;
   uintptr_t read_order[2] = {0u, 0u};
 
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
   check_equal(native_io_test_make_pipe(descriptors, true), TURBO_OK);
-  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0],
+  check_equal(native_io_attach_pipe(&backend, (uintptr_t)descriptors[0],
                                            TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoints[0]),
               TURBO_OK);
-  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[1],
+  check_equal(native_io_attach_pipe(&backend, (uintptr_t)descriptors[1],
                                            TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoints[1]),
               TURBO_OK);
   read_operation = (turbo_io_operation){.kind = TURBO_IO_PIPE_READ,
@@ -242,20 +242,20 @@ static void native_io_test_readiness_pipe_fifo_and_cancel(turbo_io_backend_kind 
                                         .buffer = &received[0],
                                         .length = 1u,
                                         .user_data = 61u};
-  check_equal(turbo_io_backend_submit(&backend, &read_operation, &reads[0]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &read_operation, &reads[0]), TURBO_OK);
   read_operation.buffer = &received[1];
   read_operation.user_data = 62u;
-  check_equal(turbo_io_backend_submit(&backend, &read_operation, &reads[1]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &read_operation, &reads[1]), TURBO_OK);
   read_operation.buffer = &received[2];
   read_operation.user_data = 63u;
-  check_equal(turbo_io_backend_submit(&backend, &read_operation, &reads[2]), TURBO_OK);
-  check_equal(turbo_io_backend_cancel(&backend, reads[1]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &read_operation, &reads[2]), TURBO_OK);
+  check_equal(native_io_cancel(&backend, reads[1]), TURBO_OK);
   write_operation = (turbo_io_operation){.kind = TURBO_IO_PIPE_WRITE,
                                          .endpoint = endpoints[1],
                                          .buffer = payload,
                                          .length = sizeof(payload),
                                          .user_data = 64u};
-  check_equal(turbo_io_backend_submit(&backend, &write_operation, &write_request), TURBO_OK);
+  check_equal(native_io_submit(&backend, &write_operation, &write_request), TURBO_OK);
   check_equal(native_io_test_observe_all(&backend, events, 4u), TURBO_OK);
   for (size_t index = 0u; index < 4u; ++index) {
     if (events[index].user_data == 62u)
@@ -271,10 +271,10 @@ static void native_io_test_readiness_pipe_fifo_and_cancel(turbo_io_backend_kind 
 
   (void)close(descriptors[0]);
   (void)close(descriptors[1]);
-  check_equal(turbo_io_backend_release_pipe(&backend, endpoints[0]), TURBO_OK);
-  check_equal(turbo_io_backend_release_pipe(&backend, endpoints[1]), TURBO_OK);
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_release_pipe(&backend, endpoints[0]), TURBO_OK);
+  check_equal(native_io_release_pipe(&backend, endpoints[1]), TURBO_OK);
+  check_equal(native_io_close(&backend), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
 }
 
 static void native_io_test_readiness_pipe_capacity_and_broken_peer(
@@ -289,12 +289,12 @@ static void native_io_test_readiness_pipe_capacity_and_broken_peer(
   turbo_io_operation operation;
   sigset_t pending;
 
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
   check_equal(native_io_test_make_pipe(descriptors, true), TURBO_OK);
-  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[1],
+  check_equal(native_io_attach_pipe(&backend, (uintptr_t)descriptors[1],
                                            TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
               TURBO_OK);
-  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0],
+  check_equal(native_io_attach_pipe(&backend, (uintptr_t)descriptors[0],
                                            TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &rejected),
               TURBO_ENOBUFS);
   check_false(turbo_io_endpoint_valid(rejected));
@@ -304,14 +304,14 @@ static void native_io_test_readiness_pipe_capacity_and_broken_peer(
                                    .endpoint = endpoint,
                                    .buffer = &byte,
                                    .length = sizeof(byte)};
-  check_equal(turbo_io_backend_submit(&backend, &operation, &request), -EPIPE);
+  check_equal(native_io_submit(&backend, &operation, &request), -EPIPE);
   check_false(turbo_io_request_valid(request));
   check_equal(sigpending(&pending), 0);
   check_equal(sigismember(&pending, SIGPIPE), 0);
   (void)close(descriptors[1]);
-  check_equal(turbo_io_backend_release_pipe(&backend, endpoint), TURBO_OK);
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_release_pipe(&backend, endpoint), TURBO_OK);
+  check_equal(native_io_close(&backend), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
 }
 #endif
 
@@ -385,7 +385,7 @@ static int native_io_test_observe_all(turbo_io_backend *backend, turbo_io_comple
   size_t total = 0u;
   while (total < expected) {
     size_t count = 0u;
-    int status = turbo_io_backend_observe(backend, events + total, expected - total,
+    int status = native_io_observe(backend, events + total, expected - total,
                                           NATIVE_IO_TEST_TIMEOUT_MS, &count);
     if (status != TURBO_OK) return status;
     total += count;
@@ -396,7 +396,7 @@ static int native_io_test_observe_all(turbo_io_backend *backend, turbo_io_comple
 static void native_io_test_close_endpoint(turbo_io_backend *backend, turbo_io_endpoint endpoint,
                                           native_io_test_socket socket_value) {
   native_io_test_close_socket(socket_value);
-  check_equal(turbo_io_backend_release_socket(backend, endpoint), TURBO_OK);
+  check_equal(native_io_release_socket(backend, endpoint), TURBO_OK);
 }
 
 static void native_io_test_round_trip_tcp(turbo_io_backend_kind kind) {
@@ -414,11 +414,11 @@ static void native_io_test_round_trip_tcp(turbo_io_backend_kind kind) {
   bool saw_send = false;
   bool saw_receive = false;
 
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
   check_equal(native_io_test_make_tcp_pair(sockets), TURBO_OK);
-  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[0], &endpoints[0]),
+  check_equal(native_io_attach_socket(&backend, (uintptr_t)sockets[0], &endpoints[0]),
               TURBO_OK);
-  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoints[1]),
+  check_equal(native_io_attach_socket(&backend, (uintptr_t)sockets[1], &endpoints[1]),
               TURBO_OK);
   operations[0] = (turbo_io_operation){.kind = TURBO_IO_TCP_RECV,
                                        .endpoint = endpoints[1],
@@ -430,8 +430,8 @@ static void native_io_test_round_trip_tcp(turbo_io_backend_kind kind) {
                                        .buffer = (void *)payload,
                                        .length = sizeof(payload),
                                        .user_data = 12u};
-  check_equal(turbo_io_backend_submit(&backend, &operations[0], &requests[0]), TURBO_OK);
-  check_equal(turbo_io_backend_submit(&backend, &operations[1], &requests[1]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &operations[0], &requests[0]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &operations[1], &requests[1]), TURBO_OK);
   check_true(turbo_io_request_valid(requests[0]));
   check_true(turbo_io_request_valid(requests[1]));
   check_equal(native_io_test_observe_all(&backend, events, 2u), TURBO_OK);
@@ -449,8 +449,8 @@ static void native_io_test_round_trip_tcp(turbo_io_backend_kind kind) {
 
   native_io_test_close_endpoint(&backend, endpoints[0], sockets[0]);
   native_io_test_close_endpoint(&backend, endpoints[1], sockets[1]);
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_close(&backend), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
   check_null(backend.impl);
 }
 
@@ -465,11 +465,11 @@ static void native_io_test_fifo_tcp_receives(turbo_io_backend_kind kind) {
   unsigned char received[2] = {0};
   turbo_io_operation operations[3];
 
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
   check_equal(native_io_test_make_tcp_pair(sockets), TURBO_OK);
-  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[0], &endpoints[0]),
+  check_equal(native_io_attach_socket(&backend, (uintptr_t)sockets[0], &endpoints[0]),
               TURBO_OK);
-  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoints[1]),
+  check_equal(native_io_attach_socket(&backend, (uintptr_t)sockets[1], &endpoints[1]),
               TURBO_OK);
   operations[0] = (turbo_io_operation){.kind = TURBO_IO_TCP_RECV,
                                        .endpoint = endpoints[1],
@@ -486,17 +486,17 @@ static void native_io_test_fifo_tcp_receives(turbo_io_backend_kind kind) {
                                        .buffer = (void *)payload,
                                        .length = sizeof(payload),
                                        .user_data = 53u};
-  check_equal(turbo_io_backend_submit(&backend, &operations[0], &requests[0]), TURBO_OK);
-  check_equal(turbo_io_backend_submit(&backend, &operations[1], &requests[1]), TURBO_OK);
-  check_equal(turbo_io_backend_submit(&backend, &operations[2], &requests[2]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &operations[0], &requests[0]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &operations[1], &requests[1]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &operations[2], &requests[2]), TURBO_OK);
   check_equal(native_io_test_observe_all(&backend, events, 3u), TURBO_OK);
   check_equal(received[0], payload[0]);
   check_equal(received[1], payload[1]);
 
   native_io_test_close_endpoint(&backend, endpoints[0], sockets[0]);
   native_io_test_close_endpoint(&backend, endpoints[1], sockets[1]);
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_close(&backend), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
 }
 
 static void native_io_test_cancel_pending(turbo_io_backend_kind kind) {
@@ -510,18 +510,18 @@ static void native_io_test_cancel_pending(turbo_io_backend_kind kind) {
   turbo_io_operation operation;
   size_t count = 0u;
 
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
   check_equal(native_io_test_make_tcp_pair(sockets), TURBO_OK);
-  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint), TURBO_OK);
+  check_equal(native_io_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint), TURBO_OK);
   operation = (turbo_io_operation){.kind = TURBO_IO_TCP_RECV,
                                    .endpoint = endpoint,
                                    .buffer = &byte,
                                    .length = sizeof(byte),
                                    .user_data = 21u};
-  check_equal(turbo_io_backend_submit(&backend, &operation, &request), TURBO_OK);
-  check_equal(turbo_io_backend_cancel(&backend, request), TURBO_OK);
-  check_equal(turbo_io_backend_release_socket(&backend, endpoint), TURBO_EBUSY);
-  check_equal(turbo_io_backend_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS, &count),
+  check_equal(native_io_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_cancel(&backend, request), TURBO_OK);
+  check_equal(native_io_release_socket(&backend, endpoint), TURBO_EBUSY);
+  check_equal(native_io_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS, &count),
               TURBO_OK);
   check_equal(count, 1u);
   check_equal(event.kind, TURBO_IO_COMPLETION_CANCELLED);
@@ -530,8 +530,8 @@ static void native_io_test_cancel_pending(turbo_io_backend_kind kind) {
 
   native_io_test_close_socket(sockets[0]);
   native_io_test_close_endpoint(&backend, endpoint, sockets[1]);
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_close(&backend), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
 }
 
 static void native_io_test_cancel_same_lane(turbo_io_backend_kind kind) {
@@ -547,19 +547,19 @@ static void native_io_test_cancel_same_lane(turbo_io_backend_kind kind) {
   bool saw_first = false;
   bool saw_second = false;
 
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
   check_equal(native_io_test_make_tcp_pair(sockets), TURBO_OK);
-  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint), TURBO_OK);
+  check_equal(native_io_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint), TURBO_OK);
   for (size_t index = 0u; index < 2u; ++index) {
     operations[index] = (turbo_io_operation){.kind = TURBO_IO_TCP_RECV,
                                              .endpoint = endpoint,
                                              .buffer = &bytes[index],
                                              .length = 1u,
                                              .user_data = 61u + index};
-    check_equal(turbo_io_backend_submit(&backend, &operations[index], &requests[index]), TURBO_OK);
+    check_equal(native_io_submit(&backend, &operations[index], &requests[index]), TURBO_OK);
   }
-  cancel_status[1] = turbo_io_backend_cancel(&backend, requests[1]);
-  cancel_status[0] = turbo_io_backend_cancel(&backend, requests[0]);
+  cancel_status[1] = native_io_cancel(&backend, requests[1]);
+  cancel_status[0] = native_io_cancel(&backend, requests[0]);
   check_true(cancel_status[1] == TURBO_OK || cancel_status[1] == TURBO_EALREADY);
   check_true(cancel_status[0] == TURBO_OK || cancel_status[0] == TURBO_EALREADY);
   check_equal(native_io_test_observe_all(&backend, events, 2u), TURBO_OK);
@@ -574,8 +574,8 @@ static void native_io_test_cancel_same_lane(turbo_io_backend_kind kind) {
 
   native_io_test_close_socket(sockets[0]);
   native_io_test_close_endpoint(&backend, endpoint, sockets[1]);
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_close(&backend), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
 }
 
 static void native_io_test_round_trip_udp(turbo_io_backend_kind kind) {
@@ -595,11 +595,11 @@ static void native_io_test_round_trip_udp(turbo_io_backend_kind kind) {
   bool saw_send = false;
 
   memset(&peer_address, 0, sizeof(peer_address));
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
   check_equal(native_io_test_make_udp_pair(sockets, addresses), TURBO_OK);
-  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[0], &endpoints[0]),
+  check_equal(native_io_attach_socket(&backend, (uintptr_t)sockets[0], &endpoints[0]),
               TURBO_OK);
-  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoints[1]),
+  check_equal(native_io_attach_socket(&backend, (uintptr_t)sockets[1], &endpoints[1]),
               TURBO_OK);
   receive_operation = (turbo_io_operation){.kind = TURBO_IO_UDP_RECV_FROM,
                                            .endpoint = endpoints[1],
@@ -616,8 +616,8 @@ static void native_io_test_round_trip_udp(turbo_io_backend_kind kind) {
                                         .address = &addresses[1],
                                         .address_capacity = sizeof(addresses[1]),
                                         .address_length = sizeof(addresses[1])};
-  check_equal(turbo_io_backend_submit(&backend, &receive_operation, &requests[0]), TURBO_OK);
-  check_equal(turbo_io_backend_submit(&backend, &send_operation, &requests[1]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &receive_operation, &requests[0]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &send_operation, &requests[1]), TURBO_OK);
   check_equal(native_io_test_observe_all(&backend, events, 2u), TURBO_OK);
 
   for (size_t index = 0u; index < 2u; ++index) {
@@ -640,8 +640,8 @@ static void native_io_test_round_trip_udp(turbo_io_backend_kind kind) {
 
   native_io_test_close_endpoint(&backend, endpoints[0], sockets[0]);
   native_io_test_close_endpoint(&backend, endpoints[1], sockets[1]);
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_close(&backend), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
 }
 
 static void native_io_test_capacity_and_close(turbo_io_backend_kind kind) {
@@ -658,15 +658,15 @@ static void native_io_test_capacity_and_close(turbo_io_backend_kind kind) {
   turbo_io_operation operation;
   size_t count = 99u;
 
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
   check_equal(native_io_test_make_tcp_pair(sockets), TURBO_OK);
-  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint), TURBO_OK);
-  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &rejected_endpoint),
+  check_equal(native_io_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint), TURBO_OK);
+  check_equal(native_io_attach_socket(&backend, (uintptr_t)sockets[1], &rejected_endpoint),
               TURBO_EALREADY);
   check_false(turbo_io_endpoint_valid(rejected_endpoint));
-  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[0], &rejected_endpoint),
+  check_equal(native_io_attach_socket(&backend, (uintptr_t)sockets[0], &rejected_endpoint),
               TURBO_ENOBUFS);
-  check_equal(turbo_io_backend_observe(&backend, &event, 1u, 0u, &count), TURBO_ETIMEDOUT);
+  check_equal(native_io_observe(&backend, &event, 1u, 0u, &count), TURBO_ETIMEDOUT);
   check_equal(count, 0u);
 
   operation = (turbo_io_operation){.kind = TURBO_IO_TCP_RECV,
@@ -674,27 +674,27 @@ static void native_io_test_capacity_and_close(turbo_io_backend_kind kind) {
                                    .buffer = &byte,
                                    .length = sizeof(byte),
                                    .user_data = 31u};
-  check_equal(turbo_io_backend_submit(&backend, &operation, &request), TURBO_OK);
-  check_equal(turbo_io_backend_submit(&backend, &operation, &rejected_request), TURBO_ENOBUFS);
+  check_equal(native_io_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_submit(&backend, &operation, &rejected_request), TURBO_ENOBUFS);
   check_false(turbo_io_request_valid(rejected_request));
-  check_true(turbo_io_backend_get_stats(&backend, &stats));
+  check_true(native_io_get_stats(&backend, &stats));
   check_equal(stats.endpoint_count, 1u);
   check_equal(stats.active_requests, 1u);
   check_equal(stats.rejected_full, 1u);
 
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-  check_equal(turbo_io_backend_submit(&backend, &operation, &rejected_request), TURBO_ESHUTDOWN);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_EBUSY);
-  check_equal(turbo_io_backend_cancel(&backend, request), TURBO_OK);
-  check_equal(turbo_io_backend_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS, &count),
+  check_equal(native_io_close(&backend), TURBO_OK);
+  check_equal(native_io_submit(&backend, &operation, &rejected_request), TURBO_ESHUTDOWN);
+  check_equal(native_io_destroy(&backend), TURBO_EBUSY);
+  check_equal(native_io_cancel(&backend, request), TURBO_OK);
+  check_equal(native_io_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS, &count),
               TURBO_OK);
   check_equal(count, 1u);
   check_equal(event.kind, TURBO_IO_COMPLETION_CANCELLED);
-  check_equal(turbo_io_backend_cancel(&backend, request), TURBO_ENOENT);
+  check_equal(native_io_cancel(&backend, request), TURBO_ENOENT);
 
   native_io_test_close_socket(sockets[0]);
   native_io_test_close_endpoint(&backend, endpoint, sockets[1]);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
 }
 
 static void native_io_test_reject_pipe_operation_on_socket(turbo_io_backend_kind kind) {
@@ -710,18 +710,18 @@ static void native_io_test_reject_pipe_operation_on_socket(turbo_io_backend_kind
                                         .length = sizeof(byte)};
   turbo_io_operation submitted = operation;
 
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
   check_equal(native_io_test_make_tcp_pair(sockets), TURBO_OK);
-  check_equal(turbo_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint),
+  check_equal(native_io_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint),
               TURBO_OK);
   submitted.endpoint = endpoint;
-  check_equal(turbo_io_backend_submit(&backend, &submitted, &request), TURBO_EINVAL);
+  check_equal(native_io_submit(&backend, &submitted, &request), TURBO_EINVAL);
   check_false(turbo_io_request_valid(request));
 
   native_io_test_close_socket(sockets[0]);
   native_io_test_close_endpoint(&backend, endpoint, sockets[1]);
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_close(&backend), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
 }
 
 #if defined(_WIN32)
@@ -805,16 +805,16 @@ static void native_io_test_iocp_pipe_round_trip(void) {
   size_t count = 0u;
 
   check_equal(native_io_test_make_named_pipe_pair(pipes, false), TURBO_OK);
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
-  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)pipes[0],
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_attach_pipe(&backend, (uintptr_t)pipes[0],
                                            TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
                                            &endpoints[0]),
               TURBO_OK);
-  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)pipes[0],
+  check_equal(native_io_attach_pipe(&backend, (uintptr_t)pipes[0],
                                            TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &duplicate),
               TURBO_EALREADY);
   check_false(turbo_io_endpoint_valid(duplicate));
-  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)pipes[1],
+  check_equal(native_io_attach_pipe(&backend, (uintptr_t)pipes[1],
                                            TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
                                            &endpoints[1]),
               TURBO_OK);
@@ -822,8 +822,8 @@ static void native_io_test_iocp_pipe_round_trip(void) {
                                        sizeof(received), 71u, NULL, 0u, 0u};
   operations[1] = (turbo_io_operation){TURBO_IO_PIPE_WRITE, endpoints[1], (void *)payload,
                                        sizeof(payload), 72u, NULL, 0u, 0u};
-  check_equal(turbo_io_backend_submit(&backend, &operations[0], &requests[0]), TURBO_OK);
-  check_equal(turbo_io_backend_submit(&backend, &operations[1], &requests[1]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &operations[0], &requests[0]), TURBO_OK);
+  check_equal(native_io_submit(&backend, &operations[1], &requests[1]), TURBO_OK);
   check_equal(native_io_test_observe_all(&backend, events, 2u), TURBO_OK);
   for (count = 0u; count < 2u; ++count) {
     check_equal(events[count].kind, TURBO_IO_COMPLETION_OK);
@@ -831,12 +831,12 @@ static void native_io_test_iocp_pipe_round_trip(void) {
   }
   check_equal(received, payload, sizeof(payload));
 
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
+  check_equal(native_io_close(&backend), TURBO_OK);
   native_io_test_close_pipe(pipes[0]);
   native_io_test_close_pipe(pipes[1]);
-  check_equal(turbo_io_backend_release_pipe(&backend, endpoints[0]), TURBO_OK);
-  check_equal(turbo_io_backend_release_pipe(&backend, endpoints[1]), TURBO_OK);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_release_pipe(&backend, endpoints[0]), TURBO_OK);
+  check_equal(native_io_release_pipe(&backend, endpoints[1]), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
 }
 
 static void native_io_test_iocp_pipe_cancel_and_eof(void) {
@@ -851,15 +851,15 @@ static void native_io_test_iocp_pipe_cancel_and_eof(void) {
   size_t count = 0u;
 
   check_equal(native_io_test_make_named_pipe_pair(pipes, false), TURBO_OK);
-  check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
-  check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)pipes[0],
+  check_equal(native_io_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_attach_pipe(&backend, (uintptr_t)pipes[0],
                                            TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
               TURBO_OK);
   operation = (turbo_io_operation){TURBO_IO_PIPE_READ, endpoint, &byte, sizeof(byte),
                                    73u, NULL, 0u, 0u};
-  check_equal(turbo_io_backend_submit(&backend, &operation, &request), TURBO_OK);
-  check_equal(turbo_io_backend_cancel(&backend, request), TURBO_OK);
-  check_equal(turbo_io_backend_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS,
+  check_equal(native_io_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_cancel(&backend, request), TURBO_OK);
+  check_equal(native_io_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS,
                                        &count),
               TURBO_OK);
   check_equal(count, 1u);
@@ -869,74 +869,74 @@ static void native_io_test_iocp_pipe_cancel_and_eof(void) {
   request = (turbo_io_request){0};
   event = (turbo_io_completion){0};
   count = 0u;
-  check_equal(turbo_io_backend_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_submit(&backend, &operation, &request), TURBO_OK);
   native_io_test_close_pipe(pipes[1]);
   pipes[1] = INVALID_HANDLE_VALUE;
-  check_equal(turbo_io_backend_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS,
+  check_equal(native_io_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS,
                                        &count),
               TURBO_OK);
   check_equal(count, 1u);
   check_equal(event.kind, TURBO_IO_COMPLETION_EOF);
   check_equal(event.status, TURBO_EOF);
 
-  check_equal(turbo_io_backend_close(&backend), TURBO_OK);
+  check_equal(native_io_close(&backend), TURBO_OK);
   native_io_test_close_pipe(pipes[0]);
-  check_equal(turbo_io_backend_release_pipe(&backend, endpoint), TURBO_OK);
-  check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_release_pipe(&backend, endpoint), TURBO_OK);
+  check_equal(native_io_destroy(&backend), TURBO_OK);
 }
 #endif
 
 spec("NativeIO direct backend") {
   it("describes every explicit backend model without fallback") {
-    check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_IOCP), TURBO_IO_MODEL_COMPLETION);
-    check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_EPOLL), TURBO_IO_MODEL_READINESS);
-    check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_IO_URING), TURBO_IO_MODEL_COMPLETION);
-    check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_KQUEUE), TURBO_IO_MODEL_READINESS);
+    check_equal(native_io_get_model(TURBO_IO_BACKEND_IOCP), TURBO_IO_MODEL_COMPLETION);
+    check_equal(native_io_get_model(TURBO_IO_BACKEND_EPOLL), TURBO_IO_MODEL_READINESS);
+    check_equal(native_io_get_model(TURBO_IO_BACKEND_IO_URING), TURBO_IO_MODEL_COMPLETION);
+    check_equal(native_io_get_model(TURBO_IO_BACKEND_KQUEUE), TURBO_IO_MODEL_READINESS);
 #if defined(_WIN32)
-    check_true(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IOCP));
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_EPOLL));
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IO_URING));
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
-    check_true(turbo_io_backend_supported(TURBO_IO_BACKEND_IOCP));
-    check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_EPOLL));
-    check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_IO_URING));
-    check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_KQUEUE));
+    check_true(native_io_pipe_supported(TURBO_IO_BACKEND_IOCP));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_EPOLL));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_IO_URING));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
+    check_true(native_io_supported(TURBO_IO_BACKEND_IOCP));
+    check_false(native_io_supported(TURBO_IO_BACKEND_EPOLL));
+    check_false(native_io_supported(TURBO_IO_BACKEND_IO_URING));
+    check_false(native_io_supported(TURBO_IO_BACKEND_KQUEUE));
 #elif defined(__linux__)
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IOCP));
-    check_true(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_EPOLL));
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IO_URING));
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
-    check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_IOCP));
-    check_true(turbo_io_backend_supported(TURBO_IO_BACKEND_EPOLL));
-    check_true(turbo_io_backend_supported(TURBO_IO_BACKEND_IO_URING));
-    check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_KQUEUE));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_IOCP));
+    check_true(native_io_pipe_supported(TURBO_IO_BACKEND_EPOLL));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_IO_URING));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
+    check_false(native_io_supported(TURBO_IO_BACKEND_IOCP));
+    check_true(native_io_supported(TURBO_IO_BACKEND_EPOLL));
+    check_true(native_io_supported(TURBO_IO_BACKEND_IO_URING));
+    check_false(native_io_supported(TURBO_IO_BACKEND_KQUEUE));
 #elif (defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
        defined(__DragonFly__)) && \
     UINTPTR_MAX > UINT32_MAX
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IOCP));
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_EPOLL));
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IO_URING));
-    check_true(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
-    check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_IOCP));
-    check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_EPOLL));
-    check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_IO_URING));
-    check_true(turbo_io_backend_supported(TURBO_IO_BACKEND_KQUEUE));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_IOCP));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_EPOLL));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_IO_URING));
+    check_true(native_io_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
+    check_false(native_io_supported(TURBO_IO_BACKEND_IOCP));
+    check_false(native_io_supported(TURBO_IO_BACKEND_EPOLL));
+    check_false(native_io_supported(TURBO_IO_BACKEND_IO_URING));
+    check_true(native_io_supported(TURBO_IO_BACKEND_KQUEUE));
 #else
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IOCP));
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_EPOLL));
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_IO_URING));
-    check_false(turbo_io_backend_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
-    check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_IOCP));
-    check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_EPOLL));
-    check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_IO_URING));
-    check_false(turbo_io_backend_supported(TURBO_IO_BACKEND_KQUEUE));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_IOCP));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_EPOLL));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_IO_URING));
+    check_false(native_io_pipe_supported(TURBO_IO_BACKEND_KQUEUE));
+    check_false(native_io_supported(TURBO_IO_BACKEND_IOCP));
+    check_false(native_io_supported(TURBO_IO_BACKEND_EPOLL));
+    check_false(native_io_supported(TURBO_IO_BACKEND_IO_URING));
+    check_false(native_io_supported(TURBO_IO_BACKEND_KQUEUE));
 #endif
   }
 
   it("rejects malformed bounded configuration and clears output") {
     turbo_io_backend backend = {(void *)(uintptr_t)1u};
     const turbo_io_backend_config config = {TURBO_IO_BACKEND_IOCP, 0u, 1u, 1u};
-    check_equal(turbo_io_backend_init(&backend, &config), TURBO_EINVAL);
+    check_equal(native_io_init(&backend, &config), TURBO_EINVAL);
     check_null(backend.impl);
   }
 
@@ -996,7 +996,7 @@ spec("NativeIO direct backend") {
   it("clears a pipe endpoint when attach arguments are invalid") {
     turbo_io_endpoint endpoint = {1u, 1u};
 
-    check_equal(turbo_io_backend_attach_pipe(NULL, 0u,
+    check_equal(native_io_attach_pipe(NULL, 0u,
                                              TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
                                              &endpoint),
                 TURBO_EINVAL);
@@ -1018,13 +1018,13 @@ spec("NativeIO direct backend") {
     turbo_io_endpoint endpoint = {0};
 
     check_true(CreatePipe(&descriptors[0], &descriptors[1], NULL, 0u));
-    check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
-    check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0],
+    check_equal(native_io_init(&backend, &config), TURBO_OK);
+    check_equal(native_io_attach_pipe(&backend, (uintptr_t)descriptors[0],
                                              TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
                 TURBO_ENOTSUP);
     check_false(turbo_io_endpoint_valid(endpoint));
-    check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-    check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+    check_equal(native_io_close(&backend), TURBO_OK);
+    check_equal(native_io_destroy(&backend), TURBO_OK);
     native_io_test_close_pipe(descriptors[0]);
     native_io_test_close_pipe(descriptors[1]);
   }
@@ -1047,13 +1047,13 @@ spec("NativeIO direct backend") {
         NATIVE_IO_TEST_PIPE_BUFFER_CAPACITY, NATIVE_IO_TEST_PIPE_BUFFER_CAPACITY,
         0u, NULL);
     check_true(pipe_handle != INVALID_HANDLE_VALUE);
-    check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
-    check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)pipe_handle,
+    check_equal(native_io_init(&backend, &config), TURBO_OK);
+    check_equal(native_io_attach_pipe(&backend, (uintptr_t)pipe_handle,
                                              TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
                 TURBO_EINVAL);
     check_false(turbo_io_endpoint_valid(endpoint));
-    check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-    check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+    check_equal(native_io_close(&backend), TURBO_OK);
+    check_equal(native_io_destroy(&backend), TURBO_OK);
     native_io_test_close_pipe(pipe_handle);
   }
 
@@ -1069,27 +1069,27 @@ spec("NativeIO direct backend") {
     turbo_io_operation operations[2];
 
     check_equal(native_io_test_make_named_pipe_pair(pipes, true), TURBO_OK);
-    check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
-    check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)pipes[0],
+    check_equal(native_io_init(&backend, &config), TURBO_OK);
+    check_equal(native_io_attach_pipe(&backend, (uintptr_t)pipes[0],
                                              TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoints[0]),
                 TURBO_OK);
-    check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)pipes[1],
+    check_equal(native_io_attach_pipe(&backend, (uintptr_t)pipes[1],
                                              TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoints[1]),
                 TURBO_OK);
     operations[0] = (turbo_io_operation){TURBO_IO_PIPE_WRITE, endpoints[0], (void *)payload,
                                          sizeof(payload), 81u, NULL, 0u, 0u};
     operations[1] = (turbo_io_operation){TURBO_IO_PIPE_READ, endpoints[1], received,
                                          sizeof(received), 82u, NULL, 0u, 0u};
-    check_equal(turbo_io_backend_submit(&backend, &operations[0], &requests[0]), TURBO_OK);
-    check_equal(turbo_io_backend_submit(&backend, &operations[1], &requests[1]), TURBO_OK);
+    check_equal(native_io_submit(&backend, &operations[0], &requests[0]), TURBO_OK);
+    check_equal(native_io_submit(&backend, &operations[1], &requests[1]), TURBO_OK);
     check_equal(native_io_test_observe_all(&backend, events, 2u), TURBO_OK);
     check_equal(received, payload, sizeof(payload));
-    check_equal(turbo_io_backend_close(&backend), TURBO_OK);
+    check_equal(native_io_close(&backend), TURBO_OK);
     native_io_test_close_pipe(pipes[0]);
     native_io_test_close_pipe(pipes[1]);
-    check_equal(turbo_io_backend_release_pipe(&backend, endpoints[0]), TURBO_OK);
-    check_equal(turbo_io_backend_release_pipe(&backend, endpoints[1]), TURBO_OK);
-    check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+    check_equal(native_io_release_pipe(&backend, endpoints[0]), TURBO_OK);
+    check_equal(native_io_release_pipe(&backend, endpoints[1]), TURBO_OK);
+    check_equal(native_io_destroy(&backend), TURBO_OK);
   }
 
   it("round trips byte-pipe payloads through IOCP completion") {
@@ -1111,17 +1111,17 @@ spec("NativeIO direct backend") {
       int descriptors[2] = {-1, -1};
       turbo_io_endpoint endpoint = {1u, 1u};
 
-      check_equal(turbo_io_backend_init(&backend, &config), TURBO_OK);
+      check_equal(native_io_init(&backend, &config), TURBO_OK);
       check_equal(native_io_test_make_pipe(descriptors, false), TURBO_OK);
-      check_equal(turbo_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0],
+      check_equal(native_io_attach_pipe(&backend, (uintptr_t)descriptors[0],
                                                TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
                   TURBO_EINVAL);
       check_false(turbo_io_endpoint_valid(endpoint));
       check_equal(fcntl(descriptors[0], F_GETFL, 0) & O_NONBLOCK, 0);
       (void)close(descriptors[0]);
       (void)close(descriptors[1]);
-      check_equal(turbo_io_backend_close(&backend), TURBO_OK);
-      check_equal(turbo_io_backend_destroy(&backend), TURBO_OK);
+      check_equal(native_io_close(&backend), TURBO_OK);
+      check_equal(native_io_destroy(&backend), TURBO_OK);
     }
   }
 

@@ -286,7 +286,7 @@ static int native_bench_fixture_init(native_bench_fixture *fixture, native_bench
     config = (turbo_io_backend_config){
         family == NATIVE_BENCH_EPOLL ? TURBO_IO_BACKEND_EPOLL : TURBO_IO_BACKEND_IO_URING,
         NATIVE_BENCH_ENDPOINT_CAPACITY, NATIVE_BENCH_REQUEST_CAPACITY, NATIVE_BENCH_BATCH_CAPACITY};
-    status = turbo_io_backend_init(&fixture->backend, &config);
+    status = native_io_init(&fixture->backend, &config);
     if (status != TURBO_OK) return status;
   } else if (family == NATIVE_BENCH_EPOLL) {
     fixture->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
@@ -300,7 +300,7 @@ static int native_bench_fixture_init(native_bench_fixture *fixture, native_bench
   if (status != TURBO_OK) return status;
   if (driver == NATIVE_BENCH_NATIVE_IO) {
     for (size_t index = 0u; index < 2u; ++index) {
-      status = turbo_io_backend_attach_socket(&fixture->backend, (uintptr_t)fixture->sockets[index],
+      status = native_io_attach_socket(&fixture->backend, (uintptr_t)fixture->sockets[index],
                                               &fixture->endpoints[index]);
       if (status != TURBO_OK) return status;
     }
@@ -317,7 +317,7 @@ static int native_bench_fixture_destroy(native_bench_fixture *fixture) {
       if (fixture->driver == NATIVE_BENCH_NATIVE_IO &&
           turbo_io_endpoint_valid(fixture->endpoints[index])) {
         const int release_status =
-            turbo_io_backend_release_socket(&fixture->backend, fixture->endpoints[index]);
+            native_io_release_socket(&fixture->backend, fixture->endpoints[index]);
         if (status == TURBO_OK && release_status != TURBO_OK) status = release_status;
       }
     }
@@ -328,9 +328,9 @@ static int native_bench_fixture_destroy(native_bench_fixture *fixture) {
   }
   if (fixture->ring.fd >= 0) native_bench_raw_ring_destroy(&fixture->ring);
   if (fixture->backend.impl != NULL) {
-    const int close_status = turbo_io_backend_close(&fixture->backend);
+    const int close_status = native_io_close(&fixture->backend);
     const int destroy_status =
-        close_status == TURBO_OK ? turbo_io_backend_destroy(&fixture->backend) : close_status;
+        close_status == TURBO_OK ? native_io_destroy(&fixture->backend) : close_status;
     if (status == TURBO_OK && destroy_status != TURBO_OK) status = destroy_status;
   }
   return status;
@@ -565,7 +565,7 @@ static int native_bench_submit_operation(turbo_io_backend *backend,
                                          const turbo_io_operation *operation,
                                          turbo_io_request *request, native_bench_stages *stages) {
   const uint64_t started = turbo_hrtime();
-  const int status = turbo_io_backend_submit(backend, operation, request);
+  const int status = native_io_submit(backend, operation, request);
   native_bench_counter_add(&stages->submit_ns, turbo_hrtime() - started);
   if (status == TURBO_OK) ++stages->operations;
   return status;
@@ -620,7 +620,7 @@ static int native_bench_native_transfer(native_bench_fixture *fixture, size_t so
       send_pending = true;
     }
     started = turbo_hrtime();
-    status = turbo_io_backend_observe(&fixture->backend, events, 2u, NATIVE_BENCH_TIMEOUT_MS,
+    status = native_io_observe(&fixture->backend, events, 2u, NATIVE_BENCH_TIMEOUT_MS,
                                       &event_count);
     native_bench_counter_add(&stages->observe_ns, turbo_hrtime() - started);
     if (status != TURBO_OK) return status;

@@ -493,7 +493,7 @@ static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
     memset(fixture->sent, 0x5au, payload_size);
 
     if (mode == ADAPTER_BENCH_DIRECT) {
-        status = turbo_io_backend_init(&fixture->direct, &backend_config);
+        status = native_io_init(&fixture->direct, &backend_config);
     } else {
         const cflow_io_native_adapter_config adapter_config = {backend_config};
         status = cflow_io_native_adapter_init(&fixture->adapter, &adapter_config);
@@ -511,13 +511,13 @@ static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
                                             : (uintptr_t)fixture->pipes[index];
         if (transport == ADAPTER_BENCH_TCP) {
             status = mode == ADAPTER_BENCH_DIRECT
-                         ? turbo_io_backend_attach_socket(&fixture->direct, native_handle,
+                         ? native_io_attach_socket(&fixture->direct, native_handle,
                                                           &fixture->endpoints[index])
                          : cflow_io_native_adapter_attach_socket(&fixture->adapter, native_handle,
                                                                  &fixture->endpoints[index]);
         } else {
             status = mode == ADAPTER_BENCH_DIRECT
-                         ? turbo_io_backend_attach_pipe(&fixture->direct, native_handle,
+                         ? native_io_attach_pipe(&fixture->direct, native_handle,
                                                         TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
                                                         &fixture->endpoints[index])
                          : cflow_io_native_adapter_attach_pipe(&fixture->adapter, native_handle,
@@ -618,7 +618,7 @@ static int adapter_bench_fixture_destroy(adapter_bench_fixture *fixture) {
     }
     if (fixture->backend_initialized) {
         int current = fixture->mode == ADAPTER_BENCH_DIRECT
-                          ? turbo_io_backend_close(&fixture->direct)
+                          ? native_io_close(&fixture->direct)
                           : cflow_io_native_adapter_close(&fixture->adapter);
         if (current != TURBO_OK && status == TURBO_OK) status = current;
     }
@@ -642,14 +642,14 @@ static int adapter_bench_fixture_destroy(adapter_bench_fixture *fixture) {
             if (!turbo_io_endpoint_valid(fixture->endpoints[index])) continue;
             if (fixture->transport == ADAPTER_BENCH_TCP) {
                 current = fixture->mode == ADAPTER_BENCH_DIRECT
-                              ? turbo_io_backend_release_socket(&fixture->direct,
+                              ? native_io_release_socket(&fixture->direct,
                                                                 fixture->endpoints[index])
                               : cflow_io_native_adapter_release_socket(&fixture->adapter,
                                                                        fixture->endpoints[index]);
             } else {
                 current =
                     fixture->mode == ADAPTER_BENCH_DIRECT
-                        ? turbo_io_backend_release_pipe(&fixture->direct, fixture->endpoints[index])
+                        ? native_io_release_pipe(&fixture->direct, fixture->endpoints[index])
                         : cflow_io_native_adapter_release_pipe(&fixture->adapter,
                                                                fixture->endpoints[index]);
             }
@@ -658,7 +658,7 @@ static int adapter_bench_fixture_destroy(adapter_bench_fixture *fixture) {
         }
         {
             int current = fixture->mode == ADAPTER_BENCH_DIRECT
-                              ? turbo_io_backend_destroy(&fixture->direct)
+                              ? native_io_destroy(&fixture->direct)
                               : cflow_io_native_adapter_destroy(&fixture->adapter);
             if (current != TURBO_OK && status == TURBO_OK) status = current;
             if (current == TURBO_OK) fixture->backend_initialized = false;
@@ -695,7 +695,7 @@ static int adapter_bench_direct_exchange(adapter_bench_fixture *fixture) {
             if (pending[role] || offsets[role] >= fixture->payload_size) continue;
             operation = adapter_bench_operation(fixture, role, offsets[role]);
             if (fixture->stages != NULL) started = turbo_hrtime();
-            status = turbo_io_backend_submit(&fixture->direct, &operation, &requests[role]);
+            status = native_io_submit(&fixture->direct, &operation, &requests[role]);
             if (fixture->stages != NULL) {
                 adapter_bench_counter_add(&fixture->stages->native_submit_ns,
                                           turbo_hrtime() - started);
@@ -706,7 +706,7 @@ static int adapter_bench_direct_exchange(adapter_bench_fixture *fixture) {
         }
 
         if (fixture->stages != NULL) started = turbo_hrtime();
-        status = turbo_io_backend_observe(&fixture->direct, completions, 2u,
+        status = native_io_observe(&fixture->direct, completions, 2u,
                                           ADAPTER_BENCH_TIMEOUT_MS, &completion_count);
         if (fixture->stages != NULL) {
             adapter_bench_counter_add(&fixture->stages->observe_ns, turbo_hrtime() - started);
@@ -984,7 +984,7 @@ static bool adapter_bench_validate(adapter_bench_fixture *fixture,
         memcmp(fixture->sent, fixture->received, fixture->payload_size) != 0)
         return false;
     if (fixture->mode == ADAPTER_BENCH_DIRECT) {
-        return turbo_io_backend_get_stats(&fixture->direct, &direct_stats) &&
+        return native_io_get_stats(&fixture->direct, &direct_stats) &&
                direct_stats.active_requests == 0u &&
                direct_stats.submitted == direct_stats.completed && direct_stats.cancelled == 0u &&
                direct_stats.rejected_full == 0u && direct_stats.failed == 0u &&

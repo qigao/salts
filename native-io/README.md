@@ -72,12 +72,12 @@ turbo_io_backend_config config = {
 #endif
     16u, 64u, 16u};
 
-int status = turbo_io_backend_init(&backend, &config);
+int status = native_io_init(&backend, &config);
 if (status != 0)
   return status;
 
 /* Attach an already-created socket, submit operations, then call
-   turbo_io_backend_observe() from this same owner thread. Windows sockets must
+   native_io_observe() from this same owner thread. Windows sockets must
    have been created for overlapped I/O. */
 ```
 

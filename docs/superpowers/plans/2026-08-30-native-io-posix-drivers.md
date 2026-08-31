@@ -67,11 +67,11 @@ FREE --SQE accepted--> PENDING --original CQE--> TERMINAL --observe--> FREE(next
 - [x] **Step 1: Write the failing support-matrix test**
 
 ```c
-check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_EPOLL),
+check_equal(native_io_get_model(TURBO_IO_BACKEND_EPOLL),
             TURBO_IO_MODEL_READINESS);
-check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_IO_URING),
+check_equal(native_io_get_model(TURBO_IO_BACKEND_IO_URING),
             TURBO_IO_MODEL_COMPLETION);
-check_equal(turbo_io_backend_model(TURBO_IO_BACKEND_KQUEUE),
+check_equal(native_io_get_model(TURBO_IO_BACKEND_KQUEUE),
             TURBO_IO_MODEL_READINESS);
 ```
 
