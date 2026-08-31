@@ -35,10 +35,12 @@
 - Verify: `CMakePresets.json`
 - Verify: `CMakeUserPresets.json`
 
-- [ ] Run the complete `cflow_statechart_instance_test` target.
-- [ ] Run the adjacent CFlow Statechart test set.
-- [ ] Install the verified TurboUtils build into a fresh, explicit integration prefix.
-- [ ] Record the source commit, preset, install prefix, and exact test results so TurboSCXML cannot accidentally link a stale package.
+- [x] Run the complete `cflow_statechart_instance_test` target.
+- [x] Run the adjacent CFlow Statechart test set.
+- [x] Install the verified TurboUtils build into a fresh, explicit integration prefix.
+- [x] Record the source commit, preset, install prefix, and exact test results so TurboSCXML cannot accidentally link a stale package.
+
+**Task 2 evidence (2026-08-31):** In `VsDevCmd.bat` with the documented `win-release-user` preset, `ctest -N -R "^cflow_statechart.*$"` discovered exactly five adjacent tests: `cflow_statechart_test`, `cflow_statechart_instance_test`, `cflow_statechart_instance_adapter_test`, `cflow_statechart_hierarchy_adapter_test`, and `cflow_statechart_actor_test`. The complete instance test passed `1/1` in `0.08 sec`; after a complete Release build, the anchored adjacent set passed `5/5` in `0.19 sec` (both `0 failed`). Source HEAD was `ec7f1b6b0ef2119c0406a5da2e934925d86837cb`. The initially absent dedicated prefix `C:/projects/cpp/turbonet/.integration/cflow-optimal-transition-set-403bc/turboutils/release` was installed with `cmake --install build/Msvc-Release --prefix ... --config Release`; it contains `lib/cmake/TurboUtils/TurboUtilsConfig.cmake` and `lib/turbo_cflow.lib`. `TurboUtilsTargets-release.cmake` imports `TurboUtils::CFlow` from that exact `turbo_cflow.lib`, preventing the Task 4 consumer from selecting a stale TurboUtils package.
 
 ### Task 3: Add TurboSCXML 403b/403c fixtures and registrations
 
