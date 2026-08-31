@@ -302,19 +302,35 @@ static int cnet_dispatcher_request_closes(cnet_dispatcher_impl *impl) {
   size_t index;
   int status = TURBO_OK;
 
-  turbo_mutex_lock(&impl->lock);
   for (index = 0u; index < entry_count; ++index) {
     cnet_dispatch_entry *entry = &impl->entries[index];
+    cnet_shard_connection connection = {0};
+    bool claimed = false;
     int close_status;
-    if (!entry->active || entry->close_requested) continue;
-    close_status = cnet_shards_close(impl->shards, entry->connection);
-    if (close_status == TURBO_OK || close_status == TURBO_EALREADY) {
+
+    turbo_mutex_lock(&impl->lock);
+    if (entry->active && !entry->close_requested) {
+      connection = entry->connection;
       entry->close_requested = true;
-    } else if (close_status != TURBO_ENOBUFS && status == TURBO_OK) {
+      claimed = true;
+    }
+    turbo_mutex_unlock(&impl->lock);
+    if (!claimed) continue;
+
+    close_status = cnet_shards_close(impl->shards, connection);
+    if (close_status == TURBO_OK || close_status == TURBO_EALREADY || close_status == TURBO_ENOENT)
+      continue;
+
+    turbo_mutex_lock(&impl->lock);
+    if (entry->active && entry->connection.shard == connection.shard &&
+        entry->connection.session.slot == connection.session.slot &&
+        entry->connection.session.generation == connection.session.generation)
+      entry->close_requested = false;
+    turbo_mutex_unlock(&impl->lock);
+    if (close_status != TURBO_ENOBUFS && status == TURBO_OK) {
       status = close_status;
     }
   }
-  turbo_mutex_unlock(&impl->lock);
   return status;
 }
 

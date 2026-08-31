@@ -509,6 +509,14 @@ the internal finish hook, then releases the original event slot. Event-slot
 release is atomic and may complete out of claim order on different callback
 workers. The application receive pointer becomes invalid at that release.
 
+The dispatcher mutex protects only observer routing and close claims. It is
+never held while calling a shard command or recycle API. Drain marks one
+generation-checked entry `close_requested` under the dispatcher mutex, releases
+the mutex, and only then publishes CLOSE; a retryable publication failure
+revalidates the generation before clearing the claim. Callback completion may
+therefore recycle through the shard and then retire dispatcher routing without
+forming a `dispatcher -> shard` / `shard -> dispatcher` lock cycle.
+
 The current base implementation stores receive bytes inline in the bounded
 event slot, making that slot the lease owner. Protocol reassembly may later use
 a retained receive-buffer lease, but it must preserve the same move/release
