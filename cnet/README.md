@@ -51,3 +51,14 @@ platform status is normalized to `TURBO_EIO` and retained in
 The executable public contract is in `tests/cnet_api_test.c`; it covers TCP,
 connected UDP, platform Pipe, callback reentrancy, stale handles, live drain,
 and timeout retry without duplicate terminal delivery.
+
+## Benchmark
+
+`cnet_io_benchmark` compares the libuv client API, direct NativeIO, and the CNet
+public byte API against the same dedicated blocking loopback echo peer. Fixture,
+connection, worker, and buffer setup stay outside the timed interval. All three
+clients use identical payloads, warmups, samples, and persistent TCP/UDP
+connections; runner order rotates per payload row. Output separates TCP and UDP
+p50, p95, and round-trips-per-second tables. Every delta uses libuv as its
+denominator. TCP covers 1/4/8/16/32/64 KiB; UDP uses the cross-platform common
+single-datagram sizes 1/4/8 KiB.

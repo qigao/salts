@@ -1,4 +1,4 @@
-name: NativeIO release benchmarks
+name: NativeIO and CNet release benchmarks
 
 on:
   pull_request:
@@ -6,7 +6,6 @@ on:
       - "native-io/**"
       - "coroutine/**"
       - "cnet/**"
-      - "cflow/**"
       - "vcpkg.json"
       - ".github/workflows/native-io-release-benchmarks.yml"
   push:
@@ -15,7 +14,6 @@ on:
       - "native-io/**"
       - "coroutine/**"
       - "cnet/**"
-      - "cflow/**"
       - "vcpkg.json"
       - ".github/workflows/native-io-release-benchmarks.yml"
   workflow_dispatch:
@@ -81,8 +79,8 @@ jobs:
               $nativeChanged = @($changed | Where-Object {
                   $_ -like 'native-io/*'
                 }).Count -gt 0
-              $cflowChanged = @($changed | Where-Object {
-                  $_ -like 'cflow/*'
+              $cnetChanged = @($changed | Where-Object {
+                  $_ -like 'cnet/*'
                 }).Count -gt 0
               $coroutineChanged = @($changed | Where-Object {
                   $_ -like 'coroutine/*'
@@ -90,7 +88,7 @@ jobs:
               $dependencyChanged = @($changed | Where-Object {
                   $_ -eq 'vcpkg.json'
                 }).Count -gt 0
-              $runAdapted = $nativeChanged -or $cflowChanged -or
+              $runAdapted = $nativeChanged -or $cnetChanged -or
                 $coroutineChanged -or $dependencyChanged -or $workflowChanged
             }
           }
@@ -144,13 +142,12 @@ jobs:
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON \
             -DCNET_ENABLE_EXPERIMENTAL=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
-            --target native_io_test native_io_header_cpp_test native_io_benchmark \
+            --target native_io_test native_io_header_cpp_test cnet_io_benchmark \
               cnet_session_test cnet_command_test cnet_uri_test \
               cnet_transport_test cnet_owner_test cnet_event_test \
               cnet_resolver_test cnet_shards_test cnet_callback_test cnet_dispatcher_test \
               cnet_api_test cnet_header_cpp_test \
-              concurrency_deadline_queue_test \
-              cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
+              concurrency_deadline_queue_test
 
       - name: Configure and build Windows Release
         if: matrix.family == 'windows'
@@ -167,7 +164,7 @@ jobs:
 
           cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON -DCNET_ENABLE_EXPERIMENTAL=ON
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test native_io_benchmark cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_callback_test cnet_dispatcher_test cnet_api_test cnet_header_cpp_test concurrency_deadline_queue_test cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
+          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test cnet_io_benchmark cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_callback_test cnet_dispatcher_test cnet_api_test cnet_header_cpp_test concurrency_deadline_queue_test
           if errorlevel 1 exit /b 1
 
       - name: Configure and build macOS Release
@@ -179,13 +176,12 @@ jobs:
             -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON \
             -DCNET_ENABLE_EXPERIMENTAL=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
-            --target native_io_test native_io_header_cpp_test native_io_benchmark \
+            --target native_io_test native_io_header_cpp_test cnet_io_benchmark \
               cnet_session_test cnet_command_test cnet_uri_test \
               cnet_transport_test cnet_owner_test cnet_event_test \
               cnet_resolver_test cnet_shards_test cnet_callback_test cnet_dispatcher_test \
               cnet_api_test cnet_header_cpp_test \
-              concurrency_deadline_queue_test \
-              cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
+              concurrency_deadline_queue_test
 
       - name: Run NativeIO contract tests
         shell: pwsh
@@ -199,51 +195,22 @@ jobs:
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Run CFlow NativeIO adapter contract tests
-        if: steps.scope.outputs.adapted == 'true'
-        shell: pwsh
-        run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^cflow_io_native_adapter_test$' --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Run NativeIO versus libuv benchmark
+      - name: Run libuv versus NativeIO versus CNet benchmark
         if: steps.scope.outputs.adapted == 'true'
         shell: pwsh
         env:
-          NATIVE_IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_benchmark
+          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
           BENCHMARK_HOST: ${{ matrix.host }}
         run: |
           $ErrorActionPreference = "Stop"
           $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
           New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
-          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_BENCHMARK_EXECUTABLE
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:IO_BENCHMARK_EXECUTABLE
           if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
           if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
-            throw "NativeIO benchmark executable not found: $benchmark"
+            throw "I/O benchmark executable not found: $benchmark"
           }
-          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "native-io-libuv-benchmark.md")
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO versus libuv: $env:BENCHMARK_HOST"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-
-      - name: Run CFlow NativeIO adapter benchmark
-        if: steps.scope.outputs.adapted == 'true'
-        shell: pwsh
-        env:
-          ADAPTER_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cflow_native_io_adapter_benchmark
-          BENCHMARK_HOST: ${{ matrix.host }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
-          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
-          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:ADAPTER_BENCHMARK_EXECUTABLE
-          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
-          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
-            throw "CFlow NativeIO adapter benchmark executable not found: $benchmark"
-          }
-          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "cflow-adapter-benchmark.md")
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "libuv-native-io-cnet-benchmark.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           @(
             "host=$env:BENCHMARK_HOST"
@@ -254,15 +221,15 @@ jobs:
             "image_version=$env:ImageVersion"
           ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CFlow Actor and Reactive over NativeIO: $env:BENCHMARK_HOST"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## libuv versus NativeIO versus CNet: $env:BENCHMARK_HOST"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
-      - name: Upload NativeIO benchmark evidence
+      - name: Upload I/O benchmark evidence
         if: always() && steps.scope.outputs.adapted == 'true'
         uses: actions/upload-artifact@v6
         with:
-          name: native-io-${{ matrix.family }}
+          name: io-benchmark-${{ matrix.family }}
           path: native-io-results
           if-no-files-found: error
           retention-days: 30

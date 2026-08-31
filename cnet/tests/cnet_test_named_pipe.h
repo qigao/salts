@@ -72,6 +72,9 @@ static int cnet_shared_test_named_pipe_start(cnet_shared_test_named_pipe *pipe) 
   pipe->pair.peer_read = pipe->pair.peer_write = (uintptr_t)server;
   return TURBO_OK;
 #else
+  int dummy_read;
+  int peer_write;
+  int saved_errno;
   int length;
   pipe->directory = tt_make_temp_dir("cnetpipe");
   if (pipe->directory == NULL) return TURBO_EIO;
@@ -87,6 +90,16 @@ static int cnet_shared_test_named_pipe_start(cnet_shared_test_named_pipe *pipe) 
     pipe->pair.peer_read = UINTPTR_MAX;
     return -errno;
   }
+  dummy_read = open(pipe->read_name, O_RDONLY | O_NONBLOCK);
+  if (dummy_read < 0) return -errno;
+  peer_write = open(pipe->read_name, O_WRONLY | O_NONBLOCK);
+  if (peer_write < 0) {
+    saved_errno = errno;
+    (void)close(dummy_read);
+    return -saved_errno;
+  }
+  (void)close(dummy_read);
+  pipe->pair.peer_write = (uintptr_t)peer_write;
   return TURBO_OK;
 #endif
 }
@@ -103,12 +116,7 @@ static int cnet_shared_test_named_pipe_finish(cnet_shared_test_named_pipe *pipe)
   }
   return TURBO_OK;
 #else
-  pipe->pair.peer_write = (uintptr_t)open(pipe->read_name, O_WRONLY | O_NONBLOCK);
-  if ((int)pipe->pair.peer_write < 0) {
-    pipe->pair.peer_write = UINTPTR_MAX;
-    return -errno;
-  }
-  return TURBO_OK;
+  return pipe->pair.peer_write <= (uintptr_t)INT_MAX ? TURBO_OK : TURBO_EIO;
 #endif
 }
 

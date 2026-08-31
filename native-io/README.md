@@ -108,8 +108,6 @@ if (status != 0)
 
 完整可运行的 TCP/UDP loopback 用法位于 `tests/native_io_test.c`。
 
-`native_io_benchmark` 使用实际 [libuv](https://github.com/libuv/libuv) 作为唯一基线。负载遵循 libuv 的 [TCP ping-pong](https://github.com/libuv/libuv/blob/v1.x/test/benchmark-ping-pongs.c) 与 [UDP ping-pong](https://github.com/libuv/libuv/blob/v1.x/test/benchmark-ping-udp.c) 语义：在 fixture 和连接建立后，以单一 owner/event-loop 在持续 loopback endpoint 上串行往返。libuv 与 NativeIO 使用相同 payload、warmup 和采样次数；每个 payload 交替运行顺序，避免固定的先后偏差。输出按 TCP/UDP 分为 p50/p95 延迟表和 round trips/s、双向应用 goodput 表；delta 始终以 libuv 为分母。TCP 覆盖 1/4/8/16/32/64 KiB，UDP 在所有 CI 平台统一覆盖 1/4/8 KiB 的单 datagram 负载。Windows、Linux、macOS 分别比较 IOCP、epoll、kqueue；Linux 不把 epoll 结果标成 io_uring。`BUILD_BENCHMARKS=ON` 要求可由 `find_package(libuv CONFIG)` 发现的 libuv，仓库 vcpkg manifest 已声明该开发依赖。libuv 仅链接 benchmark executable，不进入 NativeIO 的公开依赖或生产链接面。
+网络性能比较位于 CNet 的 `cnet_io_benchmark`，由依赖 NativeIO 的上层 target 统一比较 libuv、NativeIO 与 CNet，避免 NativeIO 反向依赖 CNet。libuv 只链接 benchmark executable，不进入 NativeIO 的公开依赖或生产链接面。
 
 `native_io_pipe_benchmark` 在 Windows IOCP 上比较 raw overlapped named-pipe completion 与 NativeIO，在 Linux epoll 和 macOS/BSD kqueue 上比较 raw POSIX pipe 调用与 NativeIO。每个样本执行 256 次单向 transfer，覆盖 1/4/8/16/32/64 KiB；应用 payload 每次只计一次，不把读端和写端重复计算为两倍流量。fixture、buffer、handle/descriptor 与 backend 初始化位于计时区外，输出独立的 p50/p95 延迟、吞吐以及 raw submit、NativeIO submit/observe 阶段表。Linux io_uring 在对应 pipe backend 实现前不生成伪基线。
-
-`cflow_native_io_adapter_benchmark` 位于 CFlow，使用同进程 direct NativeIO 作为唯一分母，额外测量 Actor 与 windowed Reactive Subscription 的控制成本。该依赖方向保持 `CFlow -> NativeIO`，不会把 CFlow benchmark 或类型带入 NativeIO target。

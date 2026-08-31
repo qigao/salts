@@ -24,20 +24,6 @@ cmake_add_benchmark(cflow_reactive_benchmark
   LIBS TurboUtils::CFlow TurboUtils::TinyTest
   FOLDER "cflow/benchmarks")
 
-cmake_add_benchmark(cflow_native_io_adapter_benchmark
-  SOURCES cflow_native_io_adapter_benchmark.c
-  LIBS
-    TurboUtils::CFlow
-    TurboUtils::NativeIO
-    TurboUtils::Concurrency
-    TurboUtils::Platform
-    TurboUtils::TinyTest
-  FOLDER "cflow/benchmarks")
-
-if(WIN32)
-  target_link_libraries(cflow_native_io_adapter_benchmark PRIVATE ws2_32)
-endif()
-
 set_target_properties(cflow_direct_benchmark PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
@@ -57,11 +43,6 @@ set_target_properties(cflow_machine_hierarchy_benchmark PROPERTIES
   C_EXTENSIONS OFF)
 
 set_target_properties(cflow_reactive_benchmark PROPERTIES
-  C_STANDARD 11
-  C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF)
-
-set_target_properties(cflow_native_io_adapter_benchmark PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
