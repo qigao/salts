@@ -692,6 +692,164 @@ static bool managed_legacy_stable_hook(
     return true;
 }
 
+typedef struct managed_host_probe {
+    size_t trigger_calls;
+    size_t quiescence_calls;
+    size_t guard_calls;
+    int guard_observed;
+    cflow_statechart_host_result external_result;
+    cflow_statechart_host_result quiescence_result;
+    size_t raise_count;
+    size_t ticket_count;
+    size_t ticket_commits;
+    size_t ticket_discards;
+} managed_host_probe;
+
+static void managed_host_ticket_commit(void *user) {
+    managed_host_probe *probe = (managed_host_probe *)user;
+    if (probe != NULL) ++probe->ticket_commits;
+}
+
+static void managed_host_ticket_discard(void *user) {
+    managed_host_probe *probe = (managed_host_probe *)user;
+    if (probe != NULL) ++probe->ticket_discards;
+}
+
+static cflow_statechart_host_result managed_host_transaction(
+    void *user, cflow_statechart_host_context *context,
+    const char **out_error) {
+    managed_host_probe *probe = (managed_host_probe *)user;
+    const cflow_statechart_host_phase phase =
+        cflow_statechart_host_context_phase(context);
+    if (probe == NULL || context == NULL || out_error == NULL ||
+        cflow_statechart_host_context_state(context) == NULL)
+        return CFLOW_STATECHART_HOST_FATAL;
+    if (phase == CFLOW_STATECHART_HOST_PREPARE_QUIESCENCE) {
+        ++probe->quiescence_calls;
+        *out_error = probe->quiescence_result ==
+                CFLOW_STATECHART_HOST_FATAL
+            ? "deliberate Statechart host quiescence failure" : NULL;
+        return probe->quiescence_result;
+    }
+    if (phase == CFLOW_STATECHART_HOST_PREPARE_TRIGGER) {
+        const cflow_statechart_observed_event *trigger =
+            cflow_statechart_host_context_trigger(context);
+        managed_state_value *state;
+        if (trigger == NULL)
+            return CFLOW_STATECHART_HOST_FATAL;
+        if (trigger->kind != CFLOW_STATECHART_OBSERVED_EXTERNAL) {
+            *out_error = NULL;
+            return CFLOW_STATECHART_HOST_CONTINUE;
+        }
+        if (trigger->event == NULL || trigger->event->id != 7u)
+            return CFLOW_STATECHART_HOST_FATAL;
+        for (size_t index = 0u; index < probe->raise_count; ++index) {
+            if (!cflow_statechart_host_context_raise_internal(
+                    context, trigger->event, UINT64_C(99), out_error))
+                return CFLOW_STATECHART_HOST_FATAL;
+        }
+        for (size_t index = 0u; index < probe->ticket_count; ++index) {
+            const cflow_statechart_effect_ticket ticket = {
+                managed_host_ticket_commit,
+                managed_host_ticket_discard,
+                probe};
+            if (!cflow_statechart_host_context_stage_effect(
+                    context, &ticket, out_error))
+                return CFLOW_STATECHART_HOST_FATAL;
+        }
+        state = (managed_state_value *)
+            cflow_statechart_host_context_edit_state(context, out_error);
+        if (state == NULL || state->resource == NULL)
+            return CFLOW_STATECHART_HOST_FATAL;
+        ++*state->resource;
+        ++probe->trigger_calls;
+        *out_error = probe->external_result ==
+                CFLOW_STATECHART_HOST_FATAL
+            ? "deliberate Statechart host failure" : NULL;
+        return probe->external_result;
+    }
+    *out_error = "unexpected Statechart host phase";
+    return CFLOW_STATECHART_HOST_FATAL;
+}
+
+static bool managed_host_guard(
+    void *user, const void *state, const cflow_event_view *event,
+    bool *out_enabled, const char **out_error) {
+    managed_host_probe *probe = (managed_host_probe *)user;
+    const managed_state_value *value =
+        (const managed_state_value *)state;
+    if (probe == NULL || value == NULL || value->resource == NULL ||
+        event == NULL || event->id != 7u || out_enabled == NULL ||
+        out_error == NULL)
+        return false;
+    ++probe->guard_calls;
+    probe->guard_observed = *value->resource;
+    *out_enabled = probe->guard_observed == 42;
+    *out_error = NULL;
+    return true;
+}
+
+static cflow_statechart_instance_status managed_host_fixture_init(
+    runtime_fixture *fixture, const managed_state_value *initial_state,
+    managed_host_probe *probe) {
+    static const cflow_event_type events[] = {
+        {7u, &cmeta_type_int}};
+    static const cflow_statechart_guard guards[] = {
+        {9u, &managed_state_type,
+         CMETA_EFFECT_MAY_FAIL,
+         CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS}};
+    const cflow_statechart_guard_binding bindings[] = {
+        {9u, managed_host_guard, probe}};
+    const cflow_statechart_instance_hooks hooks = {
+        .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
+        .struct_size = sizeof(cflow_statechart_instance_hooks),
+        .on_host_transaction = managed_host_transaction};
+    cflow_statechart_instance_config config;
+    memset(fixture, 0, sizeof(*fixture));
+    fixture->states[0] = (cflow_statechart_state){
+        1u, 0u, CFLOW_STATECHART_COMPOUND, 0u};
+    fixture->states[1] = (cflow_statechart_state){
+        2u, 1u, CFLOW_STATECHART_INITIAL, 1u};
+    fixture->states[2] = (cflow_statechart_state){
+        3u, 1u, CFLOW_STATECHART_ATOMIC, 2u};
+    fixture->states[3] = (cflow_statechart_state){
+        4u, 1u, CFLOW_STATECHART_FINAL, 3u};
+    fixture->transitions[0] = (cflow_statechart_transition){
+        10u, 2u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 3u,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u};
+    fixture->transitions[1] = (cflow_statechart_transition){
+        11u, 3u, CFLOW_STATECHART_TRIGGER_EVENT, 7u, 0u, 9u, 4u,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u};
+    fixture->definition = (cflow_statechart_definition){
+        .state_type = &managed_state_type,
+        .states = fixture->states,
+        .state_count = 4u,
+        .events = events,
+        .event_count = 1u,
+        .guards = guards,
+        .guard_count = 1u,
+        .transitions = fixture->transitions,
+        .transition_count = 2u};
+    check_equal(cflow_statechart_build(
+                    &fixture->statechart, &fixture->definition),
+                CFLOW_STATECHART_OK);
+    check_true(cflow_executor_serial_init(&fixture->executor));
+    config = (cflow_statechart_instance_config){
+        .statechart = &fixture->statechart,
+        .initial_state = initial_state,
+        .guards = bindings,
+        .guard_count = 1u,
+        .external_event_capacity = 4u,
+        .internal_event_capacity = 4u,
+        .completion_capacity = 4u,
+        .microstep_limit = 64u,
+        .executor = &fixture->executor,
+        .effect_capacity = 2u,
+        .hooks = &hooks,
+        .hook_user = probe};
+    return cflow_statechart_instance_init(&fixture->instance, &config);
+}
+
 static cflow_statechart_instance_status managed_state_fixture_init_with_hooks(
     runtime_fixture *fixture, const managed_state_value *initial_state,
     const cflow_statechart_instance_hooks *hooks,
@@ -1454,6 +1612,289 @@ suite("CFlow Statechart instance initial configuration") {
             &fixture.instance, &stats));
         check_equal(stats.configuration_version, UINT64_C(1));
         check_equal(stats.internal_pending, (size_t)0u);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("commits a lazy host trigger edit before guard selection") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_equal(probe.quiescence_calls, (size_t)1u);
+        check_equal(managed_state_copies, (size_t)2u);
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)1u);
+        check_equal(probe.guard_calls, (size_t)1u);
+        check_equal(probe.guard_observed, 42);
+        check_equal(managed_state_copies, (size_t)4u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("rolls back a dropped external host transaction") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {
+            .external_result = CFLOW_STATECHART_HOST_DROP,
+            .ticket_count = 1u};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)1u);
+        check_equal(probe.guard_calls, (size_t)0u);
+        check_equal(probe.ticket_commits, (size_t)0u);
+        check_equal(probe.ticket_discards, (size_t)1u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_false(stats.done);
+        check_false(stats.errored);
+        check_equal(stats.external_completed, UINT64_C(1));
+
+        probe.external_result = CFLOW_STATECHART_HOST_CONTINUE;
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)2u);
+        check_equal(probe.guard_calls, (size_t)1u);
+        check_equal(probe.guard_observed, 42);
+        check_equal(probe.ticket_commits, (size_t)1u);
+        check_equal(probe.ticket_discards, (size_t)1u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("discards staged host work when a fatal result wins") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {
+            .external_result = CFLOW_STATECHART_HOST_FATAL,
+            .ticket_count = 1u};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)1u);
+        check_equal(probe.guard_calls, (size_t)0u);
+        check_equal(probe.ticket_commits, (size_t)0u);
+        check_equal(probe.ticket_discards, (size_t)1u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_INSTANCE_HOOK_FAILED);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("reports a lazy host state copy failure without calling a guard") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        managed_state_fail_copy_at = managed_state_copy_attempts;
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)0u);
+        check_equal(probe.guard_calls, (size_t)0u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_INSTANCE_ALLOCATION_FAILED);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("fails fast when the host internal Event journal is full") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {.raise_count = 5u};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)0u);
+        check_equal(probe.guard_calls, (size_t)0u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_INSTANCE_INTERNAL_QUEUE_FULL);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("discards earlier tickets when the host effect journal is full") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {.ticket_count = 3u};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)0u);
+        check_equal(probe.ticket_commits, (size_t)0u);
+        check_equal(probe.ticket_discards, (size_t)2u);
+        check_equal(probe.guard_calls, (size_t)0u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_INSTANCE_EFFECT_JOURNAL_FULL);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("rejects a v4 host table mixed with legacy callbacks") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {0};
+        const cflow_statechart_instance_hooks hooks = {
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_stable = managed_legacy_stable_hook,
+            .on_host_transaction = managed_host_transaction};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_state_fixture_init_with_hooks(
+                        &fixture, &initial_state, &hooks, &probe),
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
+        check_null(fixture.instance.impl);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("rejects DROP outside an external trigger phase") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {
+            .quiescence_result = CFLOW_STATECHART_HOST_DROP};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_HOOK_FAILED);
+        check_equal(probe.quiescence_calls, (size_t)1u);
+        check_null(fixture.instance.impl);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("rejects an invalid host transaction result") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {
+            .external_result = (cflow_statechart_host_result)99};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_INSTANCE_HOOK_FAILED);
         runtime_fixture_destroy(&fixture);
         managed_state_destroy(&initial_state);
         check_equal(managed_state_live_resources, (size_t)0u);

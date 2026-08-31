@@ -149,6 +149,7 @@ typedef bool (*cflow_statechart_contextual_executable_fn)(
 #define CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1 1u
 #define CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2 2u
 #define CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3 3u
+#define CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4 4u
 
 /** Borrowed published state and configuration access for one instance hook. */
 typedef struct cflow_statechart_instance_hook_context {
@@ -200,6 +201,71 @@ typedef struct cflow_statechart_observed_event {
 typedef bool (*cflow_statechart_event_hook_fn)(
     void *user, const cflow_statechart_instance_hook_context *context,
     const cflow_statechart_observed_event *event, const char **out_error);
+
+typedef enum cflow_statechart_host_phase {
+    CFLOW_STATECHART_HOST_PREPARE_TRIGGER = 1,
+    CFLOW_STATECHART_HOST_PREPARE_QUIESCENCE
+} cflow_statechart_host_phase;
+
+typedef enum cflow_statechart_host_result {
+    CFLOW_STATECHART_HOST_CONTINUE = 0,
+    CFLOW_STATECHART_HOST_DROP,
+    CFLOW_STATECHART_HOST_FATAL
+} cflow_statechart_host_result;
+
+/** Opaque call-scoped transaction context owned by the Statechart runtime. */
+typedef struct cflow_statechart_host_context
+    cflow_statechart_host_context;
+
+/** Return the current host transaction phase. */
+cflow_statechart_host_phase cflow_statechart_host_context_phase(
+    const cflow_statechart_host_context *context);
+
+/**
+ * Return the call-scoped trigger, or NULL during PREPARE_QUIESCENCE.
+ * Event payload and metadata remain borrowed and must not be retained.
+ */
+const cflow_statechart_observed_event *cflow_statechart_host_context_trigger(
+    const cflow_statechart_host_context *context);
+
+/** Return the immutable currently published managed state. */
+const void *cflow_statechart_host_context_state(
+    const cflow_statechart_host_context *context);
+
+/** Return the current active-configuration version. */
+uint64_t cflow_statechart_host_context_configuration_version(
+    const cflow_statechart_host_context *context);
+
+/** Query call-scoped membership in the current active configuration. */
+bool cflow_statechart_host_context_is_active(
+    const cflow_statechart_host_context *context,
+    cflow_machine_state_id state);
+
+/**
+ * Lazily copy-construct and return the sole writable staged state.
+ * Repeated calls return the same pointer. On failure, NULL is returned and
+ * `out_error` receives a call-scoped deterministic diagnostic.
+ */
+void *cflow_statechart_host_context_edit_state(
+    cflow_statechart_host_context *context, const char **out_error);
+
+/** Copy one Event into the transaction's bounded internal FIFO journal. */
+bool cflow_statechart_host_context_raise_internal(
+    cflow_statechart_host_context *context, const cflow_event_view *event,
+    uint64_t origin_token, const char **out_error);
+
+/** Move one effect ticket into the transaction's bounded effect journal. */
+bool cflow_statechart_host_context_stage_effect(
+    cflow_statechart_host_context *context,
+    const cflow_statechart_effect_ticket *ticket, const char **out_error);
+
+/**
+ * Prepare one format-neutral host transaction on the SerialExecutor.
+ * The context and every borrowed value are invalid after return.
+ */
+typedef cflow_statechart_host_result (*cflow_statechart_host_transaction_fn)(
+    void *user, cflow_statechart_host_context *context,
+    const char **out_error);
 
 typedef enum cflow_statechart_stable_transaction_result {
     CFLOW_STATECHART_STABLE_TRANSACTION_NOOP = 0,
@@ -259,6 +325,8 @@ typedef struct cflow_statechart_instance_hooks {
     cflow_statechart_event_hook_fn on_event;
     /** v3: mutually exclusive with `on_stable`. */
     cflow_statechart_stable_transaction_hook_fn on_stable_transaction;
+    /** v4: sole callback; mutually exclusive with every legacy field. */
+    cflow_statechart_host_transaction_fn on_host_transaction;
 } cflow_statechart_instance_hooks;
 
 typedef struct cflow_statechart_guard_binding {
