@@ -1,4 +1,4 @@
-# CNet Actor/Reactive Network Design
+# CNet Network Design
 
 ## Status
 
@@ -6,8 +6,8 @@
 - Decision scope: a new TurboUtils network module; no production API is added by
   this design change.
 - Public module name: `CNet`
-- Public CMake targets: `TurboUtils::CNet` and `TurboUtils::CNetCFlow`
-- Public C headers: `<cnet/cnet.h>` and `<cnet/cflow.h>`
+- Public CMake target: `TurboUtils::CNet`
+- Public C header: `<cnet/cnet.h>`
 
 ## Background
 
@@ -44,8 +44,6 @@ source, types, ABI, coroutine runtime, or event loop.
 Add an independent `cnet/` root module above NativeIO. CNet owns connections,
 transport composition, protocol state, bounded payload storage, and public
 connection state. NativeIO remains the only owner of native operation progress.
-Optional CFlow adapters expose the same CNet session as Actor control events and
-a demand-aware Reactive receive Publisher.
 
 ```text
 Application
@@ -53,10 +51,7 @@ Application
     +-------------------- connect / send / receive / state
     v
                   CNet session core
-                 /        |         \
-        Actor control   direct      Reactive receive
-          projection   diagnostics    projection
-                 \        |         /
+                               |
                   one authoritative session record
                                |
                       NativeIO operations
@@ -64,8 +59,9 @@ Application
              IOCP / epoll / io_uring / kqueue / blocking
 ```
 
-The direct projection exists for deterministic tests, diagnostics, and the
-performance denominator. It is not a separate network implementation.
+CNet has one direct application API for production, deterministic tests,
+diagnostics, and performance measurement. It has no Actor, Reactive, Graph, or
+CFlow adapter surface.
 
 ## Why This Is Not NativeIO or CFlow
 
@@ -73,20 +69,23 @@ performance denominator. It is not a separate network implementation.
 |---|---|---|
 | Add connection/protocol APIs to NativeIO | Rejected | It would mix OS operation progress with DNS, handshakes, messages, callbacks, and policy. NativeIO would cease to be reusable as a raw backend. |
 | Put network protocols inside CFlow | Rejected | CFlow owns typed execution, Actor, demand, and scheduling. TCP/TLS/WS/KCP semantics are not Graph or Actor semantics and would make CFlow network-specific. |
-| Add CNet above both layers | Selected | It preserves `CNet -> NativeIO`, while the optional `CNetCFlow -> CNet + CFlow` adapter supplies Actor/Reactive projections without a dependency cycle. |
+| Add CNet directly above NativeIO | Selected | It keeps network sessions independent from Graph, Actor, and Reactive execution models. |
 
 The dependency graph is fixed:
 
 ```text
 TurboUtils::CNet       -> TurboUtils::NativeIO
 TurboUtils::CNet       -> TurboUtils::Concurrency
-TurboUtils::CNetCFlow  -> TurboUtils::CNet
-TurboUtils::CNetCFlow  -> TurboUtils::CFlow
-TurboUtils::CFlow      -> TurboUtils::NativeIO
+TurboUtils::CFlow      -> TurboUtils::CMeta
+TurboUtils::CFlowEvent -> TurboUtils::CFlow
+TurboUtils::CFlowActor -> TurboUtils::CFlowEvent + TurboUtils::NativeIO
+TurboUtils::CFlowReactive -> TurboUtils::CFlow + TurboUtils::NativeIO
 TurboUtils::NativeIO   -> TurboUtils::Platform
 ```
 
-NativeIO and CFlow cannot include CNet headers or link CNet targets.
+NativeIO, CFlow, CFlowEvent, CFlowActor, and CFlowReactive cannot include CNet
+headers or link CNet targets. Actor and Reactive use NativeIO directly when
+they need asynchronous I/O; Event remains I/O-neutral.
 
 ## Public Concepts
 
@@ -215,8 +214,9 @@ typedef struct cnet_client_config {
     size_t request_capacity_per_shard;
     size_t completion_batch_capacity;
     size_t data_event_capacity_per_shard;
-    size_t payload_chunk_bytes;
-    size_t payload_chunk_count;
+    size_t max_command_payload_bytes;
+    size_t receive_buffer_bytes;
+    size_t receive_buffer_count_per_shard;
     size_t max_message_bytes;
     size_t max_queued_bytes_per_connection;
     uint32_t connect_timeout_ms;
@@ -225,9 +225,10 @@ typedef struct cnet_client_config {
 ```
 
 Every capacity must be positive and checked for multiplication/addition
-overflow before allocation. `max_message_bytes` cannot exceed the representable
-payload-pool budget. CNet fails initialization rather than silently reducing a
-capacity or selecting another backend.
+overflow before allocation. The first send API requires `max_message_bytes <=
+max_command_payload_bytes`; receive reassembly has its own explicit message
+budget. CNet fails initialization rather than silently reducing a capacity or
+selecting another backend.
 
 CNet uses TurboUtils `turbo_threadpool` for its configured I/O owner shards and
 callback workers; it does not implement another thread pool. Each I/O shard has
@@ -423,36 +424,42 @@ single CNet/NativeIO owner task
         +-> NativeIO submit/observe/cancel
         +-> fixed event ring
                          |
-                    callback workers / CFlow adapter
+                         callback workers
 ```
 
 The command ring uses TurboUtils `disruptor` in an MPSC-to-single-consumer
-topology. It carries descriptors and payload leases, never caller pointers.
+topology. Each fixed entry carries its descriptor and bounded inline payload,
+never a caller pointer.
 Each session has fixed storage for its monotonic public state notifications, so
 event pressure cannot discard a terminal notification. Receive events use a
 separate bounded ring and carry a payload-pool lease. When that ring is full,
 the owner stops arming application reads while continuing the bounded protocol
-control required for shutdown. The owner is the only writer of session and
-protocol state.
+control required for shutdown. An admission producer may perform only the
+bounded `FREE -> RESERVED` claim before publishing CONNECT. Publication
+failure releases that reservation and advances its generation without a
+callback. After successful publication, the assigned shard owner is the only
+writer of lifecycle and protocol state.
 
 The notification paths are not second state machines. Consumers can delay
 delivery but cannot change the authoritative session record. CNet retains the
 session slot until its terminal state notification and all borrowed payload
 leases have been delivered and released.
 
-### Payload pool and copy boundary
+### Command payload and receive-buffer boundary
 
-CNet preallocates fixed payload chunks. A send claim reserves the command slot
-and all required chunks before copying any byte. If either reservation fails,
-the function releases the partial claim and returns `TURBO_ENOBUFS`; no command
-is published. A successful claim copies each application byte exactly once into
-CNet-owned chunks.
+Each command Disruptor entry owns `max_command_payload_bytes` inline bytes. All
+validation happens before claim; after a successful claim the producer only
+copies the descriptor/payload and publishes exactly once. An oversized send
+returns `TURBO_EMSGSIZE`; a full ring returns `TURBO_ENOBUFS`. Resident command
+memory is approximately `command_capacity_per_shard * aligned_entry_bytes` and
+is validated before allocation. This deliberately avoids another allocator,
+payload pool, or `CNet -> Core -> CFlow` dependency.
 
-NativeIO currently accepts one contiguous buffer per operation. The first CNet
-milestone may submit one chunk at a time while preserving per-session write
-lane order. A later NativeIO scatter/gather operation is permitted only as a
-separate raw-operation enhancement with direct NativeIO tests and benchmarks;
-it cannot be simulated by extra CNet payload copies.
+NativeIO accepts the contiguous payload directly from the retained command
+entry. The owner releases that entry only after the matching terminal NativeIO
+completion, so no second send copy is required. A later NativeIO scatter/gather
+operation remains a separate raw-operation enhancement with direct tests and
+benchmarks.
 
 Receive buffers are claimed by the owner before NativeIO submission. NativeIO
 borrows the claimed storage until terminal completion. CNet then feeds protocol
@@ -468,42 +475,21 @@ Every successful claim has exactly one public terminal path:
 |---|---|
 | connection slot | `CLOSED` notification or `FAILED` notification, then recycle |
 | command slot | consumed, rejected with an asynchronous state error, or cancelled during stop |
-| payload lease | submitted then completed/cancelled, or released before publication |
+| receive-buffer lease | completion/event delivered or cancelled, then returned once |
 | NativeIO request | one observed completion, including cancellation |
-| Reactive demand unit | one delivered value, cancellation, or terminal error/completion |
 
 No path can abandon a claimed slot during shutdown.
 
-## Actor and Reactive Projections
+## CFlow Separation
 
-`TurboUtils::CNetCFlow` contains adapters, not another CNet implementation.
+CNet does not participate in CFlow execution. CFlow Graph/Stream remains the
+typed computation core, Event remains the I/O-neutral event contract, and the
+Actor and Reactive modules each depend on NativeIO for their own I/O model.
+They do not wrap, adapt, borrow, or observe a CNet session.
 
-### Actor projection
-
-- Connect, close, timeout, and terminal errors become typed control events.
-- One retained Actor reference is associated with a connection binding.
-- Actor acknowledgement releases only the event token; it does not release the
-  CNet session slot or NativeIO request.
-- Payload chunks are not copied into the Actor mailbox. Actor actions that need
-  data receive a bounded buffer lease or coordinate with the Reactive stream.
-- Actor failure requests CNet close; it cannot mutate CNet state directly.
-
-### Reactive projection
-
-- One connection receive publisher moves into one Subscription.
-- Downstream demand is translated to `cnet_receive` demand; it counts delivered
-  chunks/messages, not NativeIO read attempts or protocol frames.
-- The Publisher owns its adapter state and borrows the CNet client/connection
-  until close.
-- Subscriber operators and callbacks run on a CFlow Worker Scheduler distinct
-  from the CNet/NativeIO owner.
-- Cancellation stops demand, requests connection close only when configured as
-  an owning subscription, drains outstanding delivery, and acknowledges every
-  accepted event exactly once.
-
-Actor and Reactive may observe one connection concurrently. Actor receives the
-control projection and Reactive receives the data projection; neither is a
-second socket driver.
+This separation deliberately permits the same native endpoint to be owned by
+exactly one of CNet, Actor, Reactive, or a direct NativeIO consumer. An endpoint
+cannot be attached to two owners concurrently.
 
 ## Protocol Libraries
 
@@ -611,9 +597,8 @@ logging followed by success.
 This design does not change current NativeIO or CFlow public behavior. CNet is a
 new target, so existing consumers do not link it unless requested. The initial
 implementation remains behind `CNET_ENABLE_EXPERIMENTAL=OFF` and does not add
-installed targets or headers until TCP, connected UDP, Pipe, state/error
-semantics, Actor projection, Reactive projection, and shutdown conformance pass
-on Windows, Linux, and macOS.
+installed targets or headers until TCP, connected UDP, Pipe, state/error, and
+shutdown conformance pass on Windows, Linux, and macOS.
 
 TLS, WS/WSS, and KCP are separately selectable CNet features. Requesting a
 disabled scheme fails during URI admission with `TURBO_ENOTSUP`; CNet never
@@ -664,8 +649,8 @@ pool reuse, and stale handles.
 
 Every benchmark row uses the same OS backend, transport, peer, payload, request
 window, sample count, and thread topology. Direct NativeIO is the raw I/O
-denominator. Direct CNet isolates session/protocol overhead. Actor/CNet and
-Reactive/CNet then isolate their respective control and demand costs.
+denominator and direct CNet isolates session/protocol overhead. Actor/NativeIO
+and Reactive/NativeIO are separate module benchmarks, never CNet variants.
 
 Report separate tables by transport and payload for p50/p95/p99 latency,
 operations per second, MiB/s, CPU time, payload copies, pool high-water marks,
@@ -690,12 +675,13 @@ payload copy for the basic send API, and bounded batch processing.
 - **HIGH — inference:** One authoritative session record prevents Actor,
   Reactive, protocol, and OS completion state from diverging. Correctness still
   depends on enforcing owner-only mutation and exact terminal delivery in code.
-- **MED — computation:** payload memory is approximately
-  `payload_chunk_bytes * payload_chunk_count` plus per-chunk metadata and
-  alignment. Configuration validation must report the complete retained-memory
-  budget before starting workers.
-- **MED — fact:** Actor and Reactive add scheduling and acknowledgement costs.
-  Direct CNet remains measurable so those costs are never attributed to
-  NativeIO or hidden by mismatched benchmarks.
+- **MED — computation:** command memory is approximately
+  `command_capacity_per_shard * aligned(command_header +
+  max_command_payload_bytes)` plus receive buffers, metadata, and alignment.
+  Configuration validation must report the complete retained-memory budget
+  before starting workers.
+- **MED — fact:** CNet callback dispatch adds scheduling cost. Direct NativeIO
+  remains measurable so that cost is not attributed to the backend or hidden
+  by mismatched benchmarks.
 - **LOW — migration:** the new CMake targets and headers are additive. No current
   consumer changes until it opts into CNet.

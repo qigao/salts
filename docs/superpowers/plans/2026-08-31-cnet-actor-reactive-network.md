@@ -1,4 +1,4 @@
-# CNet Actor/Reactive Network Implementation Plan
+# CNet Network Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `superpowers:executing-plans` to implement this plan task-by-task. Steps use
@@ -6,17 +6,16 @@
 > to subagents.
 
 **Goal:** Implement the independent CNet client/session layer described by
-issue #194, backed by NativeIO and exposed through optional CFlow Actor and
-Reactive projections.
+issue #194, backed by NativeIO and unrelated to CFlow Actor or Reactive APIs.
 
 **Architecture:** `TurboUtils::CNet` owns generation-checked sessions,
 protocols, bounded command/payload storage, I/O owner shards, and callback
-dispatch. `TurboUtils::CNetCFlow` adapts the same session records to CFlow; it
-does not implement another socket driver or state machine. NativeIO remains the
-raw operation layer.
+dispatch. NativeIO remains its raw operation dependency. CFlow Graph/Event,
+Actor, and Reactive are separate modules; Actor and Reactive depend on NativeIO
+directly and none of them depends on CNet.
 
 **Tech Stack:** C11, NativeIO, TurboUtils Concurrency (`turbo_threadpool` and
-`disruptor`), CFlow Actor/Reactive, TinyTest, CMake Presets, BoringSSL, c-ares,
+`disruptor`), TinyTest, CMake Presets, BoringSSL, c-ares,
 llhttp, Wslay, and upstream KCP.
 
 **Spec:**
@@ -57,9 +56,9 @@ llhttp, Wslay, and upstream KCP.
 
 - [ ] Add a configure test that proves `CNET_ENABLE_EXPERIMENTAL=OFF` creates no
   `TurboUtils::CNet` target and installs no CNet header.
-- [ ] Add `CNET_ENABLE_EXPERIMENTAL` with default `OFF`; conditionally add the
+- [x] Add `CNET_ENABLE_EXPERIMENTAL` with default `OFF`; conditionally add the
   `cnet/` subdirectory only when enabled.
-- [ ] Create private `turbo_cnet_experimental` and TinyTest targets without an
+- [x] Create private `turbo_cnet_experimental` and TinyTest targets without an
   install rule, export name, or public header.
 - [ ] Configure, build, and run the boundary test with the actual Windows preset
   selected through the `cmake-presets` skill.
@@ -82,39 +81,37 @@ llhttp, Wslay, and upstream KCP.
 - [ ] Write table-driven tests for valid transitions, invalid transitions,
   first-error preservation, one terminal notification, generation reuse, stale
   handles, duplicate close, and stop during every nonterminal state.
-- [ ] Write a Lean transition model proving terminal exclusivity, no transition
+- [x] Write a Lean transition model proving terminal exclusivity, no transition
   out of terminal state, and generation increase before slot reuse. Keep the C
   transition table and Lean constructors one-to-one by name.
-- [ ] Implement a fixed-capacity session table with checked allocation,
+- [x] Implement a fixed-capacity session table with checked allocation,
   owner-only mutation, and a single transition function.
-- [ ] Make failed initialization leave the public/internal destination in zero
+- [x] Make failed initialization leave the public/internal destination in zero
   state and make destroy reject nonterminal sessions.
-- [ ] Run the session TinyTest target and `lake build` from
+- [x] Run the session TinyTest target and `lake build` from
   `formal/cmeta_cflow_calculus`.
 - [ ] Commit with `feat(cnet): add verified session state core`.
 
-## Task 3: Add Bounded Commands and Payload Leases
+## Task 3: Add Bounded Inline-Payload Commands
 
 **Files:**
 
 - Create: `cnet/src/cnet_command.h`
 - Create: `cnet/src/cnet_command.c`
-- Create: `cnet/src/cnet_payload_pool.h`
-- Create: `cnet/src/cnet_payload_pool.c`
 - Create: `cnet/tests/cnet_command_test.c`
-- Create: `cnet/tests/cnet_payload_pool_test.c`
 - Modify: `cnet/CMakeLists.txt`
 - Modify: `cnet/tests/CMakeLists.txt`
 
-- [ ] Write failing tests for MPSC publication order, full-ring rejection,
-  claim-abort cleanup, multi-chunk payloads, byte-budget exhaustion, checked
-  arithmetic, shutdown wake, and exact lease release.
-- [ ] Build the command plane with TurboUtils `disruptor`; one shard has one
-  consumer and any number of producers.
-- [ ] Build a preallocated fixed-chunk pool. Reserve every required chunk before
-  copying; publish only after descriptor and payload are complete.
-- [ ] Add debug counters for live/peak commands, live/peak payload chunks,
-  queued bytes, rejected commands, and rejected bytes.
+- [x] Write failing tests for payload ownership, full-ring rejection,
+  oversize rejection, checked resident-memory arithmetic, close/drain, and
+  exact view release.
+- [x] Build the command plane with TurboUtils `disruptor`; one shard has one
+  consumer and any number of producers. Inline each bounded payload in its
+  claimed entry; validate before claim so every successful claim publishes.
+- [x] Add debug counters for live/peak commands, queued bytes, rejected
+  commands, and rejected bytes.
+- [x] Add a multi-producer stress test that verifies per-producer order and
+  exact-once consumption while close races publication.
 - [ ] Run focused tests under AddressSanitizer and ThreadSanitizer presets where
   supported.
 - [ ] Commit with `feat(cnet): add bounded command and payload protocol`.
@@ -133,17 +130,17 @@ llhttp, Wslay, and upstream KCP.
 - Modify: `native-io/tests/native_io_header_cpp_test.cpp`
 - Modify: `native-io/README.md`
 
-- [ ] Add header-contract tests for `NATIVE_IO_OPERATION_TCP_CONNECT` using a
+- [x] Add header-contract tests for `NATIVE_IO_OPERATION_TCP_CONNECT` using a
   borrowed, already-created stream socket and native peer address.
-- [ ] Append the operation value without renumbering the six installed
+- [x] Append the operation value without renumbering the six installed
   operation constants.
 - [ ] Add backend tests for success, refused connection, cancellation,
   completion exactly once, stale request, and close/drain on IOCP, epoll,
   io_uring, and kqueue.
-- [ ] Implement `ConnectEx` on IOCP, nonblocking `connect` plus `SO_ERROR` on
+- [x] Implement `ConnectEx` on IOCP, nonblocking `connect` plus `SO_ERROR` on
   readiness backends, and `IORING_OP_CONNECT` on io_uring. NativeIO continues to
   borrow and never close the socket.
-- [ ] Update validation and endpoint lane rules so connect is accepted only for
+- [x] Update validation and endpoint lane rules so connect is accepted only for
   an unconnected stream endpoint and cannot race read/write admission.
 - [ ] Run all NativeIO tests and direct TCP benchmark smoke tests on Windows;
   push the branch so Linux and macOS CI exercise their real backends.
@@ -215,32 +212,25 @@ llhttp, Wslay, and upstream KCP.
 - [ ] Keep the target experimental and uninstalled until Task 9.
 - [ ] Commit with `feat(cnet): expose complete base client api`.
 
-## Task 7: Implement CFlow Actor and Reactive Projections
+## Task 7: Separate CFlow Event, Actor, and Reactive Targets
 
 **Files:**
 
-- Create: `cnet/include/cnet/cflow.h`
-- Create: `cnet/src/cnet_cflow_actor.c`
-- Create: `cnet/src/cnet_cflow_reactive.c`
-- Create: `cnet/tests/cnet_cflow_actor_test.c`
-- Create: `cnet/tests/cnet_cflow_reactive_test.c`
-- Modify: `cnet/CMakeLists.txt`
-- Modify: `cnet/tests/CMakeLists.txt`
+- Modify: `cflow/CMakeLists.txt`
+- Modify: `cflow/tests/CMakeLists.txt`
+- Modify: `cmake/TurboUtilsConfig.cmake.in`
+- Modify: `cmake/VerifyInstalledPackage.cmake`
 
-- [ ] Write Actor tests for typed `CONNECTING`, `CONNECTED`, `CLOSING`,
-  `CLOSED`, and `FAILED` events, first-error identity, exact acknowledgement,
-  mailbox full behavior, and Actor cancellation requesting CNet close.
-- [ ] Write Reactive tests for downstream demand, no read delivery at zero
-  demand, window bounds, cancellation, callback-worker identity, borrowed-view
-  lifetime, and terminal completion/error parity with the session record.
-- [ ] Implement the Actor adapter as a control projection only. Do not place
-  payload copies in the Actor mailbox.
-- [ ] Implement the receive Publisher as a moved CFlow Publisher whose demand
-  calls `cnet_receive`; run Subscriber callbacks on a CFlow Worker Scheduler,
-  never the CNet/NativeIO owner.
-- [ ] Test Actor and Reactive bindings concurrently on one connection and prove
-  they observe one terminal session state without double close.
-- [ ] Commit with `feat(cnet): add actor and reactive projections`.
+- [ ] Characterize the current Graph/Stream, Event, Actor, and Reactive public
+  headers and link dependencies before moving sources.
+- [ ] Export I/O-neutral `TurboUtils::CFlow`, `TurboUtils::CFlowEvent`, and the
+  NativeIO-dependent `TurboUtils::CFlowActor` and
+  `TurboUtils::CFlowReactive` targets without compatibility aliases.
+- [ ] Keep Event independent from NativeIO. Actor and Reactive link NativeIO
+  directly and contain no CNet include, type, or session adapter.
+- [ ] Add installed-package C and C++ link tests for all four targets and rerun
+  the existing Actor, Reactive, Event, Graph, and Stream suites.
+- [ ] Commit with `refactor(cflow): split event actor and reactive targets`.
 
 ## Task 8: Add TLS, WebSocket, and KCP Feature Targets
 
@@ -329,11 +319,10 @@ llhttp, Wslay, and upstream KCP.
 - Create: `cmake/verify/cnet_consumer/CMakeLists.txt`
 - Create: `cmake/verify/cnet_consumer/main.c`
 
-- [ ] Add installed-package tests that link `TurboUtils::CNet` and
-  `TurboUtils::CNetCFlow` from C and C++, with every enabled protocol feature
-  represented in package metadata.
-- [ ] Remove the `experimental` target spelling, export `TurboUtils::CNet` and
-  `TurboUtils::CNetCFlow`, and install only complete public headers.
+- [ ] Add installed-package tests that link `TurboUtils::CNet` from C and C++,
+  with every enabled protocol feature represented in package metadata.
+- [ ] Remove the `experimental` target spelling, export `TurboUtils::CNet`, and
+  install only complete public headers.
 - [ ] Remove `CNET_ENABLE_EXPERIMENTAL` and build/install the stable base CNet
   module unconditionally, matching NativeIO and CFlow; preserve explicit
   per-protocol feature options.
@@ -355,7 +344,7 @@ llhttp, Wslay, and upstream KCP.
 - [ ] Write parser tests before the workflow change. Reject missing/nonfinite
   metrics, mismatched transport/payload/window/thread topology, and percentile
   mismatches.
-- [ ] Add direct NativeIO, direct CNet, Actor/CNet, and Reactive/CNet rows using
+- [ ] Add direct NativeIO, direct CNet, Actor/NativeIO, and Reactive/NativeIO rows using
   identical peers and parameters for TCP, UDP, Pipe, TLS, WS/WSS, and KCP where
   supported.
 - [ ] Split tables by transport and payload. Report p50/p95/p99, operations/s,
@@ -377,9 +366,8 @@ llhttp, Wslay, and upstream KCP.
 - [ ] Confirm no public header exposes BoringSSL, llhttp, Wslay, KCP, Monocypher,
   GF256, OS socket, or
   internal pool types.
-- [ ] Confirm every accepted connection, command, payload lease, NativeIO
-  request, Actor event, and Reactive demand unit reaches one documented terminal
-  outcome.
+- [ ] Confirm every accepted connection, command, receive-buffer lease, and NativeIO
+  request reaches one documented terminal outcome.
 - [ ] Run `git diff --check`, focused tests, adjacent NativeIO/CFlow tests,
   installed-package verification, and the platform CI matrix before claiming
   completion.
