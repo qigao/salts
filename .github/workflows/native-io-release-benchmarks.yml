@@ -138,6 +138,7 @@ jobs:
               cnet_session_test cnet_command_test cnet_uri_test \
               cnet_transport_test cnet_owner_test cnet_event_test \
               cnet_resolver_test cnet_shards_test cnet_callback_test cnet_dispatcher_test \
+              cnet_api_test cnet_header_cpp_test \
               concurrency_deadline_queue_test \
               cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
 
@@ -156,7 +157,7 @@ jobs:
 
           cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON -DCNET_ENABLE_EXPERIMENTAL=ON
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_callback_test cnet_dispatcher_test concurrency_deadline_queue_test cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
+          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_callback_test cnet_dispatcher_test cnet_api_test cnet_header_cpp_test concurrency_deadline_queue_test cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
           if errorlevel 1 exit /b 1
 
       - name: Configure and build macOS Release
@@ -172,6 +173,7 @@ jobs:
               cnet_session_test cnet_command_test cnet_uri_test \
               cnet_transport_test cnet_owner_test cnet_event_test \
               cnet_resolver_test cnet_shards_test cnet_callback_test cnet_dispatcher_test \
+              cnet_api_test cnet_header_cpp_test \
               concurrency_deadline_queue_test \
               cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
 
