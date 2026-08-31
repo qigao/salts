@@ -95,5 +95,7 @@
 ### Task 5: Review and prepare integration
 
 - [x] Keep any CFlow code/test commit separate from the TurboSCXML corpus commit. If Task 1 is already GREEN, do not create an empty or cosmetic CFlow functionality commit.
-- [ ] Run a requirements review followed by a code-quality review over each repository's exact diff.
+- [x] Run a requirements review followed by a code-quality review over each repository's exact diff.
 - [ ] Use the finishing-development-branch workflow to present integration choices; do not push, open a PR, merge, or update issue #122 without a subsequent explicit user request.
+
+**Task 5 review evidence (2026-08-31):** Final cross-repository review approved the TurboUtils range `05771504..9cdbe0d4` and the TurboSCXML implementation range `4776015..2d19ac8` with no blocking code finding. It identified one LOW documentation mismatch: the corpus README retained the pre-promotion `114/54` counts. TurboSCXML commit `fa3ea29` corrected only those values to the manifest-derived `116/52`; the exact inventory filter passed `1/1` with 7 assertions, independent accounting remained `202/116/52/34`, and a narrow re-review approved exact final TurboSCXML HEAD `fa3ea29` with the finding closed and no new issue. The known MED shared-SDK installation side effect is environmental rather than a branch diff; final SCXML evidence and integration remain bound to the dedicated prefix.
