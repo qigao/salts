@@ -150,10 +150,12 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   cnet_owner owner = {0};
   const cnet_command_queue_config command_config = {8u, sizeof(cnet_owner_connect_payload)};
   const cnet_event_queue_config event_config = {8u, 2u, 64u};
-  cnet_owner_test_clock clock = {100u, timeout == CNET_OWNER_TEST_CONNECT_TIMEOUT ||
-                                               timeout == CNET_OWNER_TEST_WRITE_TIMEOUT
-                                           ? 111u
-                                           : 100u};
+  cnet_owner_test_clock clock = {.now_ms = 100u,
+                                 .next_ms = timeout == CNET_OWNER_TEST_CONNECT_TIMEOUT ||
+                                                    timeout == CNET_OWNER_TEST_WRITE_TIMEOUT
+                                                ? 111u
+                                                : 100u,
+                                 .calls = 0u};
   const cnet_owner_config owner_config = {
       .backend_kind = backend_kind,
       .connection_capacity = 1u,
