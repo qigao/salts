@@ -60,3 +60,12 @@ set_target_properties(cnet_resolver_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+cmake_add_test(cnet_shards_test
+  SOURCES cnet_shards_test.c
+  LIBS turbo_cnet_experimental TurboUtils::TinyTest
+  FOLDER "cnet/tests")
+set_target_properties(cnet_shards_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)

@@ -9,6 +9,7 @@ add_library(${TARGET_NAME} STATIC
   src/cnet_owner.c
   src/cnet_resolver.c
   src/cnet_session.c
+  src/cnet_shards.c
   src/cnet_transport.c
   src/cnet_uri.c)
 cmake_config_target(${TARGET_NAME} FOLDER "cnet")

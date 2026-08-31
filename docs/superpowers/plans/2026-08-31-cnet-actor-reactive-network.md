@@ -152,9 +152,9 @@ Current internal milestone: one owner shard now exercises TCP and connected UDP
 over every supported NativeIO backend, plus byte-pipe read/write over backends
 whose explicit capability reports Pipe support. Windows uses one duplex named
 pipe handle; POSIX uses separate nonblocking read/write FIFO descriptors. The
-owner accepts only already-resolved socket addresses and already-opened private
-pipe handles at this stage. DNS, `pipe://` platform opening, deadlines,
-long-lived owner tasks, callback dispatch, and the public client remain required
+owner accepts already-resolved socket addresses or bounded host/port input, and
+still accepts only already-opened private pipe handles. `pipe://` platform
+opening, deadlines, callback dispatch, and the public client remain required
 before this task is complete.
 
 The bounded DNS primitive is now implemented behind the experimental target:
@@ -166,6 +166,15 @@ Each owner now drains its resolver mailbox and is the only writer of the
 `RESOLVING -> TRANSPORT_CONNECTING` transition. The future client still has to
 parse public connect options, select a stable shard, and publish the initial
 bounded connect command.
+
+The internal shard set now performs that stable round-robin reservation and
+routing for already-normalized connect payloads. It runs exactly one long-lived
+owner task per shard on `turbo_threadpool`, routes send/receive/close commands
+without migration, propagates the first owner failure, and supports bounded
+quiescent stop. Real TCP tests exercise two independent owner tasks in both
+directions. This is an implementation detail rather than a new user-visible
+runtime concept. Client-driven live-session close, callback workers, and timer
+deadlines remain before the execution checkbox below is complete.
 
 **Files:**
 

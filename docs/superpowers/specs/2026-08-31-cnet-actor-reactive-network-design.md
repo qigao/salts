@@ -243,7 +243,9 @@ module lifetime, so final shutdown returns `TURBO_EBUSY` instead of destroying
 c-ares state beneath an event-thread callback. Resolver and client destruction
 must precede final module shutdown. These functions remain internal while CNet
 is experimental; Task 6 exposes and installs their public declarations together
-with the complete client lifecycle.
+with the complete client lifecycle. On Windows, the module owns an explicit
+WinSock reference before initializing c-ares; each NativeIO backend owns its own
+independent reference, so neither module borrows the other's socket lifetime.
 
 ### Connection options
 

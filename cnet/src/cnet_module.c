@@ -1,5 +1,11 @@
 #include "cnet_module.h"
 
+#if defined(_WIN32)
+// clang-format off
+#include <winsock2.h>
+// clang-format on
+#endif
+
 #include <ares.h>
 #include <turbo/thread.h>
 
@@ -24,6 +30,9 @@ static void cnet_module_lock(void) {
 
 int cnet_module_init(void) {
   int status;
+#if defined(_WIN32)
+  WSADATA winsock_data;
+#endif
 
   cnet_module_lock();
   if (cnet_module_global.references != 0u) {
@@ -36,13 +45,25 @@ int cnet_module_init(void) {
     return TURBO_OK;
   }
 
+#if defined(_WIN32)
+  if (WSAStartup(MAKEWORD(2, 2), &winsock_data) != 0) {
+    turbo_mutex_unlock(&cnet_module_global.lock);
+    return TURBO_EIO;
+  }
+#endif
   status = ares_library_init(ARES_LIB_INIT_ALL);
   if (status != ARES_SUCCESS) {
+#if defined(_WIN32)
+    (void)WSACleanup();
+#endif
     turbo_mutex_unlock(&cnet_module_global.lock);
     return status == ARES_ENOMEM ? TURBO_ENOMEM : TURBO_EAI_FAIL;
   }
   if (ares_threadsafety() != ARES_TRUE) {
     ares_library_cleanup();
+#if defined(_WIN32)
+    (void)WSACleanup();
+#endif
     turbo_mutex_unlock(&cnet_module_global.lock);
     return TURBO_ENOTSUP;
   }
@@ -63,7 +84,12 @@ int cnet_module_shutdown(void) {
     return TURBO_EBUSY;
   }
   --cnet_module_global.references;
-  if (cnet_module_global.references == 0u) ares_library_cleanup();
+  if (cnet_module_global.references == 0u) {
+    ares_library_cleanup();
+#if defined(_WIN32)
+    (void)WSACleanup();
+#endif
+  }
   turbo_mutex_unlock(&cnet_module_global.lock);
   return TURBO_OK;
 }
