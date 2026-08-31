@@ -11,6 +11,7 @@
 
 #include <limits.h>
 #include <stddef.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -31,9 +32,9 @@ typedef struct turbo_iocp_request_record {
   OVERLAPPED overlapped;
   WSABUF buffer;
   turbo_iocp_record_phase phase;
-  turbo_io_request request;
-  turbo_io_endpoint endpoint;
-  turbo_io_operation_kind operation_kind;
+  native_io_request request;
+  native_io_endpoint endpoint;
+  native_io_operation_kind operation_kind;
   uintptr_t native_handle;
   DWORD flags;
   void *address;
@@ -67,6 +68,7 @@ typedef struct turbo_iocp_impl {
   uint64_t native_cancel_errors;
   bool admission_open;
   bool winsock_started;
+  atomic_bool wake_pending;
 } turbo_iocp_impl;
 
 typedef struct turbo_iocp_file_mode_information {
@@ -78,6 +80,8 @@ typedef NTSTATUS(NTAPI *turbo_iocp_query_file_fn)(HANDLE file, PIO_STATUS_BLOCK 
                                                   FILE_INFORMATION_CLASS information_class);
 
 enum { TURBO_IOCP_FILE_MODE_INFORMATION_CLASS = 16 };
+
+#define TURBO_IOCP_WAKE_KEY ((ULONG_PTR)UINTPTR_MAX)
 
 static void iocp_counter_increment(uint64_t *counter) {
   if (*counter != UINT64_MAX) ++*counter;
@@ -94,16 +98,16 @@ static int iocp_native_error(DWORD error) {
 }
 
 static turbo_iocp_endpoint_record *iocp_endpoint(turbo_iocp_impl *impl,
-                                                 turbo_io_endpoint endpoint) {
+                                                 native_io_endpoint endpoint) {
   turbo_iocp_endpoint_record *record;
-  if (!turbo_io_endpoint_valid(endpoint) || endpoint.slot > impl->endpoint_capacity) return NULL;
+  if (!native_io_endpoint_valid(endpoint) || endpoint.slot > impl->endpoint_capacity) return NULL;
   record = &impl->endpoints[endpoint.slot - 1u];
   return record->active && record->generation == endpoint.generation ? record : NULL;
 }
 
-static turbo_iocp_request_record *iocp_request(turbo_iocp_impl *impl, turbo_io_request request) {
+static turbo_iocp_request_record *iocp_request(turbo_iocp_impl *impl, native_io_request request) {
   turbo_iocp_request_record *record;
-  if (!turbo_io_request_valid(request) || request.slot > impl->request_capacity) return NULL;
+  if (!native_io_request_valid(request) || request.slot > impl->request_capacity) return NULL;
   record = &impl->requests[request.slot - 1u];
   return record->phase == TURBO_IOCP_RECORD_PENDING &&
                  record->request.generation == request.generation
@@ -113,7 +117,7 @@ static turbo_iocp_request_record *iocp_request(turbo_iocp_impl *impl, turbo_io_r
 
 static int iocp_attach_endpoint(turbo_iocp_impl *impl, uintptr_t native_handle,
                                 turbo_io_resource_kind resource_kind,
-                                turbo_io_endpoint *out_endpoint) {
+                                native_io_endpoint *out_endpoint) {
   uint32_t index;
   turbo_iocp_endpoint_record *endpoint;
   HANDLE associated;
@@ -139,16 +143,18 @@ static int iocp_attach_endpoint(turbo_iocp_impl *impl, uintptr_t native_handle,
   endpoint->resource_kind = resource_kind;
   endpoint->active = true;
   ++impl->endpoint_count;
-  *out_endpoint = (turbo_io_endpoint){index + 1u, endpoint->generation};
+  *out_endpoint = (native_io_endpoint){index + 1u, endpoint->generation};
   return TURBO_OK;
 }
 
-static int iocp_release_endpoint(turbo_iocp_impl *impl, turbo_io_endpoint endpoint_handle,
-                                 turbo_io_resource_kind resource_kind) {
+static int iocp_release_endpoint(turbo_iocp_impl *impl, native_io_endpoint endpoint_handle,
+                                 bool socket_endpoint) {
   turbo_iocp_endpoint_record *endpoint = iocp_endpoint(impl, endpoint_handle);
   uint32_t index;
   if (endpoint == NULL) return TURBO_ENOENT;
-  if (endpoint->resource_kind != resource_kind) return TURBO_EINVAL;
+  if (socket_endpoint ? !native_io_resource_kind_is_socket(endpoint->resource_kind)
+                      : endpoint->resource_kind != TURBO_IO_RESOURCE_BYTE_PIPE)
+    return TURBO_EINVAL;
   if (endpoint->active_requests != 0u) return TURBO_EBUSY;
 
   index = endpoint_handle.slot - 1u;
@@ -162,13 +168,26 @@ static int iocp_release_endpoint(turbo_iocp_impl *impl, turbo_io_endpoint endpoi
 }
 
 static int iocp_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
-                              turbo_io_endpoint *out_endpoint) {
-  return iocp_attach_endpoint((turbo_iocp_impl *)base, native_socket, TURBO_IO_RESOURCE_SOCKET,
-                              out_endpoint);
+                              native_io_endpoint *out_endpoint) {
+  turbo_iocp_impl *impl = (turbo_iocp_impl *)base;
+  turbo_io_resource_kind resource_kind;
+  int socket_type = 0;
+  int option_length = (int)sizeof(socket_type);
+  if (!impl->admission_open) return TURBO_ESHUTDOWN;
+  if (getsockopt((SOCKET)native_socket, SOL_SOCKET, SO_TYPE, (char *)&socket_type,
+                 &option_length) == SOCKET_ERROR)
+    return iocp_native_error((DWORD)WSAGetLastError());
+  if (socket_type == SOCK_STREAM)
+    resource_kind = TURBO_IO_RESOURCE_STREAM_SOCKET;
+  else if (socket_type == SOCK_DGRAM)
+    resource_kind = TURBO_IO_RESOURCE_DATAGRAM_SOCKET;
+  else
+    return TURBO_ENOTSUP;
+  return iocp_attach_endpoint(impl, native_socket, resource_kind, out_endpoint);
 }
 
-static int iocp_release_socket(turbo_io_impl *base, turbo_io_endpoint endpoint_handle) {
-  return iocp_release_endpoint((turbo_iocp_impl *)base, endpoint_handle, TURBO_IO_RESOURCE_SOCKET);
+static int iocp_release_socket(turbo_io_impl *base, native_io_endpoint endpoint_handle) {
+  return iocp_release_endpoint((turbo_iocp_impl *)base, endpoint_handle, true);
 }
 
 static int iocp_validate_pipe_handle(HANDLE native_handle) {
@@ -202,18 +221,17 @@ static int iocp_validate_pipe_handle(HANDLE native_handle) {
 }
 
 static int iocp_attach_pipe(turbo_io_impl *base, uintptr_t native_handle, uint32_t flags,
-                            turbo_io_endpoint *out_endpoint) {
+                            native_io_endpoint *out_endpoint) {
   int status;
-  if (flags != TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE) return TURBO_EINVAL;
+  if (flags != NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE) return TURBO_EINVAL;
   status = iocp_validate_pipe_handle((HANDLE)native_handle);
   if (status != TURBO_OK) return status;
   return iocp_attach_endpoint((turbo_iocp_impl *)base, native_handle, TURBO_IO_RESOURCE_BYTE_PIPE,
                               out_endpoint);
 }
 
-static int iocp_release_pipe(turbo_io_impl *base, turbo_io_endpoint endpoint_handle) {
-  return iocp_release_endpoint((turbo_iocp_impl *)base, endpoint_handle,
-                               TURBO_IO_RESOURCE_BYTE_PIPE);
+static int iocp_release_pipe(turbo_io_impl *base, native_io_endpoint endpoint_handle) {
+  return iocp_release_endpoint((turbo_iocp_impl *)base, endpoint_handle, false);
 }
 
 static void iocp_release_request(turbo_iocp_impl *impl, turbo_iocp_request_record *request,
@@ -231,8 +249,8 @@ static void iocp_release_request(turbo_iocp_impl *impl, turbo_iocp_request_recor
   --impl->active_requests;
 }
 
-static int iocp_submit(turbo_io_impl *base, const turbo_io_operation *operation,
-                       turbo_io_request *out_request) {
+static int iocp_submit(turbo_io_impl *base, const native_io_operation *operation,
+                       native_io_request *out_request) {
   turbo_iocp_impl *impl = (turbo_iocp_impl *)base;
   turbo_iocp_endpoint_record *endpoint;
   turbo_iocp_request_record *request;
@@ -245,7 +263,7 @@ static int iocp_submit(turbo_io_impl *base, const turbo_io_operation *operation,
   if (!impl->admission_open) return TURBO_ESHUTDOWN;
   endpoint = iocp_endpoint(impl, operation->endpoint);
   if (endpoint == NULL) return TURBO_ENOENT;
-  if (turbo_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
+  if (native_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
     return TURBO_EINVAL;
   if (impl->free_request_count == 0u) {
     iocp_counter_increment(&impl->rejected_full);
@@ -259,13 +277,13 @@ static int iocp_submit(turbo_io_impl *base, const turbo_io_operation *operation,
   request->buffer.buf = (CHAR *)operation->buffer;
   request->buffer.len = (ULONG)operation->length;
   request->phase = TURBO_IOCP_RECORD_PENDING;
-  request->request = (turbo_io_request){index + 1u, generation};
+  request->request = (native_io_request){index + 1u, generation};
   request->endpoint = operation->endpoint;
   request->operation_kind = operation->kind;
   request->native_handle = endpoint->native_handle;
   request->flags = 0u;
   request->address = operation->address;
-  request->address_length = operation->kind == TURBO_IO_UDP_RECV_FROM
+  request->address_length = operation->kind == NATIVE_IO_OPERATION_UDP_RECV_FROM
                                 ? (int)operation->address_capacity
                                 : (int)operation->address_length;
   request->user_data = operation->user_data;
@@ -273,8 +291,8 @@ static int iocp_submit(turbo_io_impl *base, const turbo_io_operation *operation,
   ++endpoint->active_requests;
   ++impl->active_requests;
 
-  if (operation->kind == TURBO_IO_PIPE_READ || operation->kind == TURBO_IO_PIPE_WRITE) {
-    BOOL started = operation->kind == TURBO_IO_PIPE_READ
+  if (operation->kind == NATIVE_IO_OPERATION_PIPE_READ || operation->kind == NATIVE_IO_OPERATION_PIPE_WRITE) {
+    BOOL started = operation->kind == NATIVE_IO_OPERATION_PIPE_READ
                        ? ReadFile((HANDLE)request->native_handle, request->buffer.buf,
                                   request->buffer.len, &immediate_bytes, &request->overlapped)
                        : WriteFile((HANDLE)request->native_handle, request->buffer.buf,
@@ -295,13 +313,13 @@ static int iocp_submit(turbo_io_impl *base, const turbo_io_operation *operation,
     return iocp_native_error(native_error);
   }
 
-  if (operation->kind == TURBO_IO_TCP_RECV) {
+  if (operation->kind == NATIVE_IO_OPERATION_TCP_RECV) {
     native_status = WSARecv((SOCKET)request->native_handle, &request->buffer, 1u, &immediate_bytes,
                             &request->flags, &request->overlapped, NULL);
-  } else if (operation->kind == TURBO_IO_TCP_SEND) {
+  } else if (operation->kind == NATIVE_IO_OPERATION_TCP_SEND) {
     native_status = WSASend((SOCKET)request->native_handle, &request->buffer, 1u, &immediate_bytes,
                             0u, &request->overlapped, NULL);
-  } else if (operation->kind == TURBO_IO_UDP_RECV_FROM) {
+  } else if (operation->kind == NATIVE_IO_OPERATION_UDP_RECV_FROM) {
     native_status = WSARecvFrom((SOCKET)request->native_handle, &request->buffer, 1u,
                                 &immediate_bytes, &request->flags, (SOCKADDR *)request->address,
                                 &request->address_length, &request->overlapped, NULL);
@@ -326,7 +344,7 @@ static int iocp_submit(turbo_io_impl *base, const turbo_io_operation *operation,
   return iocp_native_error(native_error);
 }
 
-static int iocp_cancel(turbo_io_impl *base, turbo_io_request request_handle) {
+static int iocp_cancel(turbo_io_impl *base, native_io_request request_handle) {
   turbo_iocp_impl *impl = (turbo_iocp_impl *)base;
   turbo_iocp_request_record *request = iocp_request(impl, request_handle);
   DWORD error;
@@ -354,32 +372,32 @@ iocp_completed_request(turbo_iocp_impl *impl, OVERLAPPED *overlapped, uint32_t *
 
 static void iocp_make_completion(turbo_iocp_impl *impl, turbo_iocp_request_record *request,
                                  uint32_t request_index, DWORD bytes, DWORD native_error,
-                                 turbo_io_completion *event) {
-  *event = (turbo_io_completion){
-      request->request, request->endpoint,      TURBO_IO_COMPLETION_OK, (size_t)bytes,
+                                 native_io_completion *event) {
+  *event = (native_io_completion){
+      request->request, request->endpoint,      NATIVE_IO_COMPLETION_OK, (size_t)bytes,
       TURBO_OK,         (uint32_t)native_error, request->user_data,     0u};
 
   if (native_error == ERROR_OPERATION_ABORTED) {
-    event->kind = TURBO_IO_COMPLETION_CANCELLED;
+    event->kind = NATIVE_IO_COMPLETION_CANCELLED;
     event->bytes = 0u;
     event->status = TURBO_ECANCELED;
     iocp_counter_increment(&impl->cancelled);
-  } else if (request->operation_kind == TURBO_IO_PIPE_READ &&
+  } else if (request->operation_kind == NATIVE_IO_OPERATION_PIPE_READ &&
              (native_error == ERROR_BROKEN_PIPE || native_error == ERROR_HANDLE_EOF)) {
-    event->kind = TURBO_IO_COMPLETION_EOF;
+    event->kind = NATIVE_IO_COMPLETION_EOF;
     event->bytes = 0u;
     event->status = TURBO_EOF;
   } else if (native_error != ERROR_SUCCESS) {
-    event->kind = TURBO_IO_COMPLETION_FAILED;
+    event->kind = NATIVE_IO_COMPLETION_FAILED;
     event->bytes = 0u;
     event->status = iocp_native_error(native_error);
     iocp_counter_increment(&impl->failed);
-  } else if ((request->operation_kind == TURBO_IO_TCP_RECV ||
-              request->operation_kind == TURBO_IO_PIPE_READ) &&
+  } else if ((request->operation_kind == NATIVE_IO_OPERATION_TCP_RECV ||
+              request->operation_kind == NATIVE_IO_OPERATION_PIPE_READ) &&
              bytes == 0u) {
-    event->kind = TURBO_IO_COMPLETION_EOF;
+    event->kind = NATIVE_IO_COMPLETION_EOF;
     event->status = TURBO_EOF;
-  } else if (request->operation_kind == TURBO_IO_UDP_RECV_FROM) {
+  } else if (request->operation_kind == NATIVE_IO_OPERATION_UDP_RECV_FROM) {
     event->address_length = (size_t)request->address_length;
   }
 
@@ -387,7 +405,7 @@ static void iocp_make_completion(turbo_iocp_impl *impl, turbo_iocp_request_recor
   iocp_release_request(impl, request, request_index);
 }
 
-static int iocp_observe(turbo_io_impl *base, turbo_io_completion *events, size_t event_capacity,
+static int iocp_observe(turbo_io_impl *base, native_io_completion *events, size_t event_capacity,
                         uint32_t timeout_ms, size_t *out_count) {
   turbo_iocp_impl *impl = (turbo_iocp_impl *)base;
   const size_t limit = event_capacity < impl->completion_batch_capacity
@@ -395,7 +413,7 @@ static int iocp_observe(turbo_io_impl *base, turbo_io_completion *events, size_t
                            : impl->completion_batch_capacity;
   size_t count;
 
-  for (count = 0u; count < limit; ++count) {
+  for (count = 0u; count < limit;) {
     DWORD bytes = 0u;
     ULONG_PTR completion_key = 0u;
     OVERLAPPED *overlapped = NULL;
@@ -405,10 +423,12 @@ static int iocp_observe(turbo_io_impl *base, turbo_io_completion *events, size_t
     const DWORD native_error = ok ? ERROR_SUCCESS : GetLastError();
     turbo_iocp_request_record *request;
     uint32_t request_index = 0u;
-    (void)completion_key;
-
     if (overlapped == NULL) {
       *out_count = count;
+      if (ok && completion_key == TURBO_IOCP_WAKE_KEY) {
+        atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
+        return TURBO_OK;
+      }
       if (native_error == WAIT_TIMEOUT) return count == 0u ? TURBO_ETIMEDOUT : TURBO_OK;
       return iocp_native_error(native_error);
     }
@@ -418,9 +438,22 @@ static int iocp_observe(turbo_io_impl *base, turbo_io_completion *events, size_t
       return TURBO_EPROTO;
     }
     iocp_make_completion(impl, request, request_index, bytes, native_error, &events[count]);
+    ++count;
   }
   *out_count = count;
   return TURBO_OK;
+}
+
+static int iocp_wake(turbo_io_impl *base) {
+  turbo_iocp_impl *impl = (turbo_iocp_impl *)base;
+  bool expected = false;
+  if (!impl->admission_open) return TURBO_ESHUTDOWN;
+  if (!atomic_compare_exchange_strong_explicit(&impl->wake_pending, &expected, true,
+                                               memory_order_acq_rel, memory_order_acquire))
+    return TURBO_OK;
+  if (PostQueuedCompletionStatus(impl->port, 0u, TURBO_IOCP_WAKE_KEY, NULL)) return TURBO_OK;
+  atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
+  return iocp_native_error(GetLastError());
 }
 
 static int iocp_close(turbo_io_impl *base) {
@@ -452,9 +485,9 @@ static int iocp_destroy(turbo_io_impl *base) {
   return TURBO_OK;
 }
 
-static bool iocp_get_stats(const turbo_io_impl *base, turbo_io_backend_stats *out_stats) {
+static bool iocp_get_stats(const turbo_io_impl *base, native_io_backend_stats *out_stats) {
   const turbo_iocp_impl *impl = (const turbo_iocp_impl *)base;
-  *out_stats = (turbo_io_backend_stats){impl->endpoint_capacity,
+  *out_stats = (native_io_backend_stats){impl->endpoint_capacity,
                                         impl->endpoint_count,
                                         impl->request_capacity,
                                         impl->active_requests,
@@ -471,18 +504,19 @@ static bool iocp_get_stats(const turbo_io_impl *base, turbo_io_backend_stats *ou
 
 static const turbo_io_impl_ops iocp_ops = {
     iocp_attach_socket, iocp_release_socket, iocp_submit,    iocp_cancel,      iocp_observe,
-    iocp_close,         iocp_destroy,        iocp_get_stats, iocp_attach_pipe, iocp_release_pipe};
+    iocp_wake,          iocp_close,           iocp_destroy,  iocp_get_stats,   iocp_attach_pipe,
+    iocp_release_pipe};
 
-bool turbo_io_platform_backend_supported(turbo_io_backend_kind kind) {
-  return kind == TURBO_IO_BACKEND_IOCP;
+bool native_io_platform_backend_supported(native_io_backend_kind kind) {
+  return kind == NATIVE_IO_BACKEND_IOCP;
 }
 
-bool turbo_io_platform_pipe_supported(turbo_io_backend_kind kind) {
-  return kind == TURBO_IO_BACKEND_IOCP;
+bool native_io_platform_pipe_supported(native_io_backend_kind kind) {
+  return kind == NATIVE_IO_BACKEND_IOCP;
 }
 
-int turbo_io_platform_backend_init(turbo_io_backend *backend,
-                                   const turbo_io_backend_config *config) {
+int native_io_platform_backend_init(native_io_backend *backend,
+                                   const native_io_backend_config *config) {
   turbo_iocp_impl *impl;
   WSADATA winsock_data;
   size_t index;
@@ -543,6 +577,7 @@ int turbo_io_platform_backend_init(turbo_io_backend *backend,
   impl->free_endpoint_count = config->endpoint_capacity;
   impl->free_request_count = config->request_capacity;
   impl->admission_open = true;
+  atomic_init(&impl->wake_pending, false);
   for (index = 0u; index < config->endpoint_capacity; ++index) {
     impl->free_endpoints[index] = (uint32_t)(config->endpoint_capacity - index - 1u);
     impl->endpoints[index].native_handle = UINTPTR_MAX;

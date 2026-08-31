@@ -12,6 +12,7 @@
 #include <limits.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -44,10 +45,10 @@ typedef struct turbo_io_readiness_endpoint {
 
 typedef struct turbo_io_readiness_request {
   turbo_io_readiness_phase phase;
-  turbo_io_request request;
-  turbo_io_endpoint endpoint;
-  turbo_io_operation operation;
-  turbo_io_completion completion;
+  native_io_request request;
+  native_io_endpoint endpoint;
+  native_io_operation operation;
+  native_io_completion completion;
   uint32_t previous;
   uint32_t next;
   bool write_lane;
@@ -80,6 +81,7 @@ typedef struct turbo_io_readiness_impl {
   uint64_t native_submit_errors;
   uint64_t native_cancel_errors;
   bool admission_open;
+  atomic_bool wake_pending;
 } turbo_io_readiness_impl;
 
 typedef struct turbo_io_sigpipe_guard {
@@ -103,17 +105,17 @@ static uint64_t readiness_endpoint_token(uint32_t index, uint32_t generation) {
 }
 
 static turbo_io_readiness_endpoint *readiness_endpoint(turbo_io_readiness_impl *impl,
-                                                       turbo_io_endpoint endpoint) {
+                                                       native_io_endpoint endpoint) {
   turbo_io_readiness_endpoint *record;
-  if (!turbo_io_endpoint_valid(endpoint) || endpoint.slot > impl->endpoint_capacity) return NULL;
+  if (!native_io_endpoint_valid(endpoint) || endpoint.slot > impl->endpoint_capacity) return NULL;
   record = &impl->endpoints[endpoint.slot - 1u];
   return record->active && record->generation == endpoint.generation ? record : NULL;
 }
 
 static turbo_io_readiness_request *readiness_request(turbo_io_readiness_impl *impl,
-                                                     turbo_io_request request) {
+                                                     native_io_request request) {
   turbo_io_readiness_request *record;
-  if (!turbo_io_request_valid(request) || request.slot > impl->request_capacity) return NULL;
+  if (!native_io_request_valid(request) || request.slot > impl->request_capacity) return NULL;
   record = &impl->requests[request.slot - 1u];
   return record->phase != TURBO_IO_READINESS_FREE &&
                  record->request.generation == request.generation
@@ -148,9 +150,9 @@ static void readiness_sigpipe_end(turbo_io_sigpipe_guard *guard) {
   guard->active = false;
 }
 
-static bool readiness_is_write(turbo_io_operation_kind kind) {
-  return kind == TURBO_IO_TCP_SEND || kind == TURBO_IO_UDP_SEND_TO ||
-         kind == TURBO_IO_PIPE_WRITE;
+static bool readiness_is_write(native_io_operation_kind kind) {
+  return kind == NATIVE_IO_OPERATION_TCP_SEND || kind == NATIVE_IO_OPERATION_UDP_SEND_TO ||
+         kind == NATIVE_IO_OPERATION_PIPE_WRITE;
 }
 
 static turbo_io_readiness_lane *readiness_lane(turbo_io_readiness_endpoint *endpoint,
@@ -166,7 +168,7 @@ static uint32_t readiness_derived_interests(const turbo_io_readiness_endpoint *e
 }
 
 static int readiness_update_interests(turbo_io_readiness_impl *impl,
-                                      turbo_io_endpoint endpoint_handle,
+                                      native_io_endpoint endpoint_handle,
                                       turbo_io_readiness_endpoint *endpoint) {
   const uint32_t next = readiness_derived_interests(endpoint);
   int status;
@@ -207,19 +209,19 @@ static void readiness_release_request(turbo_io_readiness_impl *impl,
   turbo_io_readiness_endpoint *endpoint = readiness_endpoint(impl, request->endpoint);
   if (endpoint != NULL && endpoint->active_requests != 0u) --endpoint->active_requests;
   request->phase = TURBO_IO_READINESS_FREE;
-  request->operation = (turbo_io_operation){0};
-  request->completion = (turbo_io_completion){0};
+  request->operation = (native_io_operation){0};
+  request->completion = (native_io_completion){0};
   impl->free_requests[impl->free_request_count++] = index;
   --impl->active_requests;
 }
 
 static void readiness_publish_terminal(turbo_io_readiness_impl *impl,
                                        turbo_io_readiness_request *request, uint32_t index,
-                                       turbo_io_completion_kind kind, size_t bytes, int status,
+                                       native_io_completion_kind kind, size_t bytes, int status,
                                        uint32_t native_status, size_t address_length) {
   const size_t tail = (impl->terminal_head + impl->terminal_count) % impl->request_capacity;
   request->phase = TURBO_IO_READINESS_TERMINAL;
-  request->completion = (turbo_io_completion){request->request,
+  request->completion = (native_io_completion){request->request,
                                               request->endpoint,
                                               kind,
                                               bytes,
@@ -230,8 +232,8 @@ static void readiness_publish_terminal(turbo_io_readiness_impl *impl,
   impl->terminal_requests[tail] = index;
   ++impl->terminal_count;
   readiness_counter_increment(&impl->completed);
-  if (kind == TURBO_IO_COMPLETION_CANCELLED) readiness_counter_increment(&impl->cancelled);
-  if (kind == TURBO_IO_COMPLETION_FAILED) readiness_counter_increment(&impl->failed);
+  if (kind == NATIVE_IO_COMPLETION_CANCELLED) readiness_counter_increment(&impl->cancelled);
+  if (kind == NATIVE_IO_COMPLETION_FAILED) readiness_counter_increment(&impl->failed);
 }
 
 static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
@@ -256,11 +258,11 @@ static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
   (void)guard_status;
 #endif
   do {
-    if (request->operation.kind == TURBO_IO_TCP_RECV)
+    if (request->operation.kind == NATIVE_IO_OPERATION_TCP_RECV)
       result = recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
-    else if (request->operation.kind == TURBO_IO_TCP_SEND)
+    else if (request->operation.kind == NATIVE_IO_OPERATION_TCP_SEND)
       result = send(endpoint->fd, request->operation.buffer, request->operation.length, flags);
-    else if (request->operation.kind == TURBO_IO_UDP_RECV_FROM)
+    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM)
       result = recvfrom(endpoint->fd, request->operation.buffer, request->operation.length, flags,
                         (struct sockaddr *)request->operation.address, &address_length);
     else
@@ -275,7 +277,7 @@ static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
   if (result < 0) return -saved_error;
   *out_bytes = (size_t)result;
   *out_address_length =
-      request->operation.kind == TURBO_IO_UDP_RECV_FROM ? (size_t)address_length : 0u;
+      request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM ? (size_t)address_length : 0u;
   return TURBO_OK;
 }
 
@@ -304,7 +306,7 @@ static int readiness_try_pipe(turbo_io_readiness_endpoint *endpoint,
 static int readiness_try_operation(turbo_io_readiness_endpoint *endpoint,
                                    turbo_io_readiness_request *request, size_t *out_bytes,
                                    size_t *out_address_length) {
-  if (endpoint->resource_kind == TURBO_IO_RESOURCE_SOCKET)
+  if (native_io_resource_kind_is_socket(endpoint->resource_kind))
     return readiness_try_socket(endpoint, request, out_bytes, out_address_length);
   if (endpoint->resource_kind == TURBO_IO_RESOURCE_BYTE_PIPE) {
     *out_address_length = 0u;
@@ -321,22 +323,22 @@ static void readiness_finish_attempt(turbo_io_readiness_impl *impl,
                                      turbo_io_readiness_request *request, uint32_t index,
                                      int status, size_t bytes, size_t address_length) {
   if (status < 0) {
-    readiness_publish_terminal(impl, request, index, TURBO_IO_COMPLETION_FAILED, 0u, status,
+    readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_FAILED, 0u, status,
                                (uint32_t)(-status), 0u);
-  } else if ((request->operation.kind == TURBO_IO_TCP_RECV ||
-              request->operation.kind == TURBO_IO_PIPE_READ) &&
+  } else if ((request->operation.kind == NATIVE_IO_OPERATION_TCP_RECV ||
+              request->operation.kind == NATIVE_IO_OPERATION_PIPE_READ) &&
              bytes == 0u) {
-    readiness_publish_terminal(impl, request, index, TURBO_IO_COMPLETION_EOF, 0u, TURBO_EOF, 0u,
+    readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_EOF, 0u, TURBO_EOF, 0u,
                                0u);
   } else {
-    readiness_publish_terminal(impl, request, index, TURBO_IO_COMPLETION_OK, bytes, TURBO_OK, 0u,
+    readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_OK, bytes, TURBO_OK, 0u,
                                address_length);
   }
 }
 
 static int readiness_attach_endpoint(turbo_io_readiness_impl *impl, int fd,
                                      turbo_io_resource_kind resource_kind,
-                                     turbo_io_endpoint *out_endpoint) {
+                                     native_io_endpoint *out_endpoint) {
   turbo_io_readiness_endpoint *endpoint;
   uint32_t index;
   size_t cursor;
@@ -356,19 +358,31 @@ static int readiness_attach_endpoint(turbo_io_readiness_impl *impl, int fd,
   endpoint->resource_kind = resource_kind;
   endpoint->active = true;
   ++impl->endpoint_count;
-  *out_endpoint = (turbo_io_endpoint){index + 1u, endpoint->generation};
+  *out_endpoint = (native_io_endpoint){index + 1u, endpoint->generation};
   return TURBO_OK;
 }
 
 static int readiness_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
-                                   turbo_io_endpoint *out_endpoint) {
+                                   native_io_endpoint *out_endpoint) {
+  turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
+  turbo_io_resource_kind resource_kind;
+  int socket_type = 0;
+  socklen_t option_length = (socklen_t)sizeof(socket_type);
+  if (!impl->admission_open) return TURBO_ESHUTDOWN;
   if (native_socket > (uintptr_t)INT_MAX) return TURBO_EINVAL;
-  return readiness_attach_endpoint((turbo_io_readiness_impl *)base, (int)native_socket,
-                                   TURBO_IO_RESOURCE_SOCKET, out_endpoint);
+  if (getsockopt((int)native_socket, SOL_SOCKET, SO_TYPE, &socket_type, &option_length) != 0)
+    return -errno;
+  if (socket_type == SOCK_STREAM)
+    resource_kind = TURBO_IO_RESOURCE_STREAM_SOCKET;
+  else if (socket_type == SOCK_DGRAM)
+    resource_kind = TURBO_IO_RESOURCE_DATAGRAM_SOCKET;
+  else
+    return TURBO_ENOTSUP;
+  return readiness_attach_endpoint(impl, (int)native_socket, resource_kind, out_endpoint);
 }
 
 static int readiness_attach_pipe(turbo_io_impl *base, uintptr_t native_handle, uint32_t flags,
-                                 turbo_io_endpoint *out_endpoint) {
+                                 native_io_endpoint *out_endpoint) {
   struct stat descriptor_stat;
   int descriptor_flags;
   int fd;
@@ -385,12 +399,14 @@ static int readiness_attach_pipe(turbo_io_impl *base, uintptr_t native_handle, u
 }
 
 static int readiness_release_endpoint(turbo_io_readiness_impl *impl,
-                                      turbo_io_endpoint endpoint_handle,
-                                      turbo_io_resource_kind resource_kind) {
+                                      native_io_endpoint endpoint_handle,
+                                      bool socket_endpoint) {
   turbo_io_readiness_endpoint *endpoint = readiness_endpoint(impl, endpoint_handle);
   uint32_t index;
   if (endpoint == NULL) return TURBO_ENOENT;
-  if (endpoint->resource_kind != resource_kind) return TURBO_EINVAL;
+  if (socket_endpoint ? !native_io_resource_kind_is_socket(endpoint->resource_kind)
+                      : endpoint->resource_kind != TURBO_IO_RESOURCE_BYTE_PIPE)
+    return TURBO_EINVAL;
   if (endpoint->active_requests != 0u || endpoint->interests != 0u) return TURBO_EBUSY;
   index = endpoint_handle.slot - 1u;
   endpoint->active = false;
@@ -401,18 +417,16 @@ static int readiness_release_endpoint(turbo_io_readiness_impl *impl,
   return TURBO_OK;
 }
 
-static int readiness_release_socket(turbo_io_impl *base, turbo_io_endpoint endpoint_handle) {
-  return readiness_release_endpoint((turbo_io_readiness_impl *)base, endpoint_handle,
-                                    TURBO_IO_RESOURCE_SOCKET);
+static int readiness_release_socket(turbo_io_impl *base, native_io_endpoint endpoint_handle) {
+  return readiness_release_endpoint((turbo_io_readiness_impl *)base, endpoint_handle, true);
 }
 
-static int readiness_release_pipe(turbo_io_impl *base, turbo_io_endpoint endpoint_handle) {
-  return readiness_release_endpoint((turbo_io_readiness_impl *)base, endpoint_handle,
-                                    TURBO_IO_RESOURCE_BYTE_PIPE);
+static int readiness_release_pipe(turbo_io_impl *base, native_io_endpoint endpoint_handle) {
+  return readiness_release_endpoint((turbo_io_readiness_impl *)base, endpoint_handle, false);
 }
 
-static int readiness_submit(turbo_io_impl *base, const turbo_io_operation *operation,
-                            turbo_io_request *out_request) {
+static int readiness_submit(turbo_io_impl *base, const native_io_operation *operation,
+                            native_io_request *out_request) {
   turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
   turbo_io_readiness_endpoint *endpoint;
   turbo_io_readiness_request *request;
@@ -423,7 +437,7 @@ static int readiness_submit(turbo_io_impl *base, const turbo_io_operation *opera
   if (!impl->admission_open) return TURBO_ESHUTDOWN;
   endpoint = readiness_endpoint(impl, operation->endpoint);
   if (endpoint == NULL) return TURBO_ENOENT;
-  if (turbo_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
+  if (native_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
     return TURBO_EINVAL;
   if (impl->free_request_count == 0u) {
     readiness_counter_increment(&impl->rejected_full);
@@ -433,7 +447,7 @@ static int readiness_submit(turbo_io_impl *base, const turbo_io_operation *opera
   request = &impl->requests[index];
   request->phase = TURBO_IO_READINESS_PENDING;
   request->request =
-      (turbo_io_request){index + 1u, readiness_next_generation(request->request.generation)};
+      (native_io_request){index + 1u, readiness_next_generation(request->request.generation)};
   request->endpoint = operation->endpoint;
   request->operation = *operation;
   request->previous = TURBO_IO_INDEX_NONE;
@@ -463,7 +477,7 @@ static int readiness_submit(turbo_io_impl *base, const turbo_io_operation *opera
   return TURBO_OK;
 }
 
-static int readiness_cancel(turbo_io_impl *base, turbo_io_request request_handle) {
+static int readiness_cancel(turbo_io_impl *base, native_io_request request_handle) {
   turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
   turbo_io_readiness_request *request = readiness_request(impl, request_handle);
   turbo_io_readiness_endpoint *endpoint;
@@ -481,12 +495,12 @@ static int readiness_cancel(turbo_io_impl *base, turbo_io_request request_handle
     readiness_counter_increment(&impl->native_cancel_errors);
     return status;
   }
-  readiness_publish_terminal(impl, request, index, TURBO_IO_COMPLETION_CANCELLED, 0u,
+  readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_CANCELLED, 0u,
                              TURBO_ECANCELED, (uint32_t)ECANCELED, 0u);
   return TURBO_OK;
 }
 
-static int readiness_drive_lane(turbo_io_readiness_impl *impl, turbo_io_endpoint endpoint_handle,
+static int readiness_drive_lane(turbo_io_readiness_impl *impl, native_io_endpoint endpoint_handle,
                                 turbo_io_readiness_endpoint *endpoint, bool write_lane) {
   turbo_io_readiness_lane *lane = readiness_lane(endpoint, write_lane);
   while (lane->head != TURBO_IO_INDEX_NONE) {
@@ -502,7 +516,7 @@ static int readiness_drive_lane(turbo_io_readiness_impl *impl, turbo_io_endpoint
   return readiness_update_interests(impl, endpoint_handle, endpoint);
 }
 
-static void readiness_drain_terminals(turbo_io_readiness_impl *impl, turbo_io_completion *events,
+static void readiness_drain_terminals(turbo_io_readiness_impl *impl, native_io_completion *events,
                                       size_t limit, size_t *out_count) {
   while (*out_count < limit && impl->terminal_count != 0u) {
     const uint32_t index = impl->terminal_requests[impl->terminal_head];
@@ -521,7 +535,7 @@ static uint32_t readiness_remaining_timeout(uint64_t started_ms, uint32_t timeou
   return elapsed >= timeout_ms ? 0u : timeout_ms - (uint32_t)elapsed;
 }
 
-static int readiness_observe(turbo_io_impl *base, turbo_io_completion *events,
+static int readiness_observe(turbo_io_impl *base, native_io_completion *events,
                              size_t event_capacity, uint32_t timeout_ms, size_t *out_count) {
   turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
   const size_t limit = event_capacity < impl->completion_batch_capacity
@@ -533,15 +547,21 @@ static int readiness_observe(turbo_io_impl *base, turbo_io_completion *events,
   if (*out_count != 0u) return TURBO_OK;
   for (;;) {
     size_t ready_count = 0u;
+    bool saw_wake = false;
     int status =
         impl->driver_ops->wait(impl->driver_state, impl->ready_events,
                                impl->completion_batch_capacity, wait_timeout, &ready_count);
     if (status != TURBO_OK) return status;
     for (size_t cursor = 0u; cursor < ready_count; ++cursor) {
       const turbo_io_ready_event *ready = &impl->ready_events[cursor];
+      if ((ready->interests & TURBO_IO_READY_WAKE) != 0u) {
+        atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
+        saw_wake = true;
+        continue;
+      }
       const uint32_t slot = (uint32_t)ready->token;
       const uint32_t generation = (uint32_t)(ready->token >> 32u);
-      turbo_io_endpoint handle = {slot, generation};
+      native_io_endpoint handle = {slot, generation};
       turbo_io_readiness_endpoint *endpoint = readiness_endpoint(impl, handle);
       if (endpoint == NULL) continue;
       if ((ready->interests & (TURBO_IO_READY_READ | TURBO_IO_READY_ERROR)) != 0u) {
@@ -555,9 +575,24 @@ static int readiness_observe(turbo_io_impl *base, turbo_io_completion *events,
     }
     readiness_drain_terminals(impl, events, limit, out_count);
     if (*out_count != 0u) return TURBO_OK;
+    if (saw_wake) return TURBO_OK;
     wait_timeout = readiness_remaining_timeout(started_ms, timeout_ms);
     if (wait_timeout == 0u) return TURBO_ETIMEDOUT;
   }
+}
+
+static int readiness_wake(turbo_io_impl *base) {
+  turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
+  bool expected = false;
+  int status;
+  if (!impl->admission_open) return TURBO_ESHUTDOWN;
+  if (!atomic_compare_exchange_strong_explicit(&impl->wake_pending, &expected, true,
+                                               memory_order_acq_rel, memory_order_acquire))
+    return TURBO_OK;
+  status = impl->driver_ops->wake(impl->driver_state);
+  if (status == TURBO_OK) return TURBO_OK;
+  atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
+  return status;
 }
 
 static int readiness_close(turbo_io_impl *base) {
@@ -583,9 +618,9 @@ static int readiness_destroy(turbo_io_impl *base) {
   return TURBO_OK;
 }
 
-static bool readiness_get_stats(const turbo_io_impl *base, turbo_io_backend_stats *out_stats) {
+static bool readiness_get_stats(const turbo_io_impl *base, native_io_backend_stats *out_stats) {
   const turbo_io_readiness_impl *impl = (const turbo_io_readiness_impl *)base;
-  *out_stats = (turbo_io_backend_stats){impl->endpoint_capacity,
+  *out_stats = (native_io_backend_stats){impl->endpoint_capacity,
                                         impl->endpoint_count,
                                         impl->request_capacity,
                                         impl->active_requests,
@@ -602,21 +637,22 @@ static bool readiness_get_stats(const turbo_io_impl *base, turbo_io_backend_stat
 
 static const turbo_io_impl_ops readiness_ops = {
     readiness_attach_socket, readiness_release_socket, readiness_submit,  readiness_cancel,
-    readiness_observe,       readiness_close,          readiness_destroy, readiness_get_stats,
-    readiness_attach_pipe,   readiness_release_pipe};
+    readiness_observe,       readiness_wake,            readiness_close,  readiness_destroy,
+    readiness_get_stats,     readiness_attach_pipe,     readiness_release_pipe};
 
 static bool readiness_array_fits(size_t count, size_t element_size) {
   return element_size != 0u && count <= SIZE_MAX / element_size;
 }
 
-int turbo_io_readiness_backend_init(turbo_io_backend *backend,
-                                    const turbo_io_backend_config *config,
+int turbo_io_readiness_backend_init(native_io_backend *backend,
+                                    const native_io_backend_config *config,
                                     const turbo_io_readiness_driver_ops *driver_ops,
                                     size_t driver_state_size) {
   turbo_io_readiness_impl *impl;
   int status;
   if (driver_ops == NULL || driver_ops->init == NULL || driver_ops->update == NULL ||
-      driver_ops->wait == NULL || driver_ops->destroy == NULL || driver_state_size == 0u ||
+      driver_ops->wait == NULL || driver_ops->wake == NULL || driver_ops->destroy == NULL ||
+      driver_state_size == 0u ||
       !readiness_array_fits(config->endpoint_capacity, sizeof(turbo_io_readiness_endpoint)) ||
       !readiness_array_fits(config->request_capacity, sizeof(turbo_io_readiness_request)) ||
       !readiness_array_fits(config->completion_batch_capacity, sizeof(turbo_io_ready_event)) ||
@@ -650,6 +686,7 @@ int turbo_io_readiness_backend_init(turbo_io_backend *backend,
   impl->free_endpoint_count = config->endpoint_capacity;
   impl->free_request_count = config->request_capacity;
   impl->admission_open = true;
+  atomic_init(&impl->wake_pending, false);
   for (size_t index = 0u; index < config->endpoint_capacity; ++index) {
     impl->free_endpoints[index] = (uint32_t)(config->endpoint_capacity - index - 1u);
     impl->endpoints[index].fd = -1;

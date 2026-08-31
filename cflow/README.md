@@ -1329,24 +1329,25 @@ unavailable; there are no placeholder APIs or implicit fallbacks for them.
 `cflow_io_native_adapter` connects one bounded `cflow_io_actor` to one
 caller-driven NativeIO backend without creating a worker thread or a second
 message queue. The first valid submit attempt binds one Actor for the adapter
-lifetime. `turbo_io_operation` borrows its payload until
+lifetime. `native_io_operation` borrows its payload until
 `cflow_io_native_adapter_observe()` returns its terminal; the Actor retains the
 operation token until delivery is acknowledged.
 
 The adapter allocates exactly `request_capacity` bridge records and one fixed
 completion batch during init. Full bridge capacity returns `TURBO_ENOBUFS`;
 there is no retry queue, payload copy, hidden blocking path, or backend
-fallback. All adapter and NativeIO methods run on one fixed owner thread:
+fallback. 除合并式 `cflow_io_native_adapter_wake()` 外，所有 adapter 与 NativeIO
+方法都在一个固定 owner 线程执行：
 
 ```c
 cflow_io_native_adapter adapter = {0};
 cflow_io_native_adapter_config config = {{
 #if defined(_WIN32)
-    TURBO_IO_BACKEND_IOCP,
+    NATIVE_IO_BACKEND_IOCP,
 #elif defined(__linux__)
-    TURBO_IO_BACKEND_EPOLL,
+    NATIVE_IO_BACKEND_EPOLL,
 #else
-    TURBO_IO_BACKEND_KQUEUE,
+    NATIVE_IO_BACKEND_KQUEUE,
 #endif
     16u, 64u, 16u}};
 
@@ -1461,17 +1462,15 @@ Publisher), then continue owner driving until
 `cflow_io_publisher_owner_close()` while every borrowed config and callback
 context remains alive.
 
-For a caller-driven NativeIO backend, leave `config.drive` NULL and call
-`cflow_io_native_adapter_drive_reactive()` with the Subscription's
-caller-driven Scheduler. Each call drains ready Reactive work, drives pending
-Actor submissions, observes one fixed NativeIO completion batch, drives typed
-delivery and acknowledgement, then drains newly ready Reactive work. Every
-Scheduler and Publisher-owner phase is bounded by `max_phase_steps`. This
-preserves scatter/gather and completion batching while exposing one
-communication operation; it adds no thread, queue, payload copy, or mirrored
-state. A per-edge synchronous drive callback is valid for a serialized backend
-without a batch boundary, but using it around NativeIO splits the batch and
-increases control latency.
+For threaded NativeIO Reactive execution, use one long-lived task on a
+one-worker Turbo thread pool for `cflow_io_native_adapter_drive_publisher()` and
+a separate one-worker CFlow Worker Scheduler for Subscription/Subscriber work.
+The Publisher `drive` callback publishes the coalesced adapter wake first and
+then signals the owner condition; it never queues another task behind the
+blocking owner. The owner polls away that control edge before admitting the
+next operation batch, then observes NativeIO and drives completion delivery and
+acknowledgement. Payload storage remains borrowed by NativeIO/Actor slots and
+is never copied through either control queue.
 
 This complete C11 example uses a synchronous demonstration backend so the
 authoritative `cflow_io_actor_complete()` edge is visible. A real backend may

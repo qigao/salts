@@ -18,11 +18,11 @@ typedef struct cflow_io_native_adapter {
 } cflow_io_native_adapter;
 
 typedef struct cflow_io_native_adapter_config {
-    turbo_io_backend_config backend;
+    native_io_backend_config backend;
 } cflow_io_native_adapter_config;
 
 typedef struct cflow_io_native_adapter_stats {
-    turbo_io_backend_stats native;
+    native_io_backend_stats native;
     size_t active_bridges;
     uint64_t actor_completions;
     uint64_t stale_actor_completions;
@@ -38,7 +38,7 @@ int cflow_io_native_adapter_init(
     const cflow_io_native_adapter_config *config);
 
 /**
- * Returns Actor backend operations for caller-owned turbo_io_operation values.
+ * Returns Actor backend operations for caller-owned native_io_operation values.
  * Use the adapter as backend_user. The first valid submit attempt binds one
  * Actor for the adapter lifetime, even if NativeIO rejects that operation; a
  * different Actor fails fast.
@@ -49,24 +49,24 @@ cflow_io_backend_ops cflow_io_native_adapter_actor_ops(void);
 int cflow_io_native_adapter_attach_socket(
     cflow_io_native_adapter *adapter,
     uintptr_t native_socket,
-    turbo_io_endpoint *out_endpoint);
+    native_io_endpoint *out_endpoint);
 
 /** Associates one async-capable connected byte-pipe endpoint. */
 int cflow_io_native_adapter_attach_pipe(
     cflow_io_native_adapter *adapter,
     uintptr_t native_handle,
     uint32_t flags,
-    turbo_io_endpoint *out_endpoint);
+    native_io_endpoint *out_endpoint);
 
 /** Releases metadata after terminal drain and caller-side socket close. */
 int cflow_io_native_adapter_release_socket(
     cflow_io_native_adapter *adapter,
-    turbo_io_endpoint endpoint);
+    native_io_endpoint endpoint);
 
 /** Releases metadata after terminal drain and caller-side pipe close. */
 int cflow_io_native_adapter_release_pipe(
     cflow_io_native_adapter *adapter,
-    turbo_io_endpoint endpoint);
+    native_io_endpoint endpoint);
 
 /**
  * Observes one fixed completion batch and offers each terminal to the bound
@@ -79,25 +79,33 @@ int cflow_io_native_adapter_observe(
     size_t *out_completed);
 
 /**
- * Runs ready Reactive work, drives one Publisher owner submission phase,
- * observes one fixed NativeIO completion batch, drives completion/acknowledge,
- * then runs newly ready Reactive work. max_phase_steps independently bounds
- * each Scheduler and Publisher-owner phase. scheduler must advertise
- * CMETA_SCHED_CAP_CALLER_DRIVEN_ZERO_DELAY and must not be concurrent. This
- * composition adds no queue, thread, or state mirror; the Publisher config may
- * leave drive NULL when all progress and shutdown use this function. The
- * repository Manual Scheduler plus a NULL drive uses one serialized
- * ACK/Actor/Executor/post-ACK phase per side of the NativeIO batch. A foreign
- * or inline Scheduler, or a non-NULL Publisher drive, retains the general
- * fixed-point drive.
- * Post-observe phases still run when NativeIO reports an error so already
- * offered Actor completions can settle. Returns the first NativeIO error,
- * otherwise the owner status. out_completed is zeroed before validation.
+ * Signals the fixed Publisher/NativeIO owner from another thread.
+ *
+ * This is the adapter's only cross-thread operation. It forwards NativeIO's
+ * bounded, coalesced control wake and does not submit, observe, or publish an
+ * item. Publish the Actor command before calling wake. All wake callers must
+ * quiesce before adapter close/destroy.
  */
-int cflow_io_native_adapter_drive_reactive(
+int cflow_io_native_adapter_wake(cflow_io_native_adapter *adapter);
+
+/**
+ * Drives one Publisher-owner submission phase, observes one fixed NativeIO
+ * completion batch when at least one bridge is active, then drives completion
+ * delivery and acknowledgement. It never runs a Subscription Scheduler.
+ *
+ * Run this function on the fixed Publisher/NativeIO owner worker. Configure
+ * the Subscription with a concurrent Worker Scheduler so Graph operators and
+ * Subscriber callbacks execute on a separate worker. The Publisher drive edge
+ * should call cflow_io_native_adapter_wake before signaling its owner condition;
+ * it must not queue another owner task behind a blocking observe. max_phase_steps
+ * independently bounds each owner phase. Post-observe owner work still runs
+ * when NativeIO reports an error so already offered Actor completions can
+ * settle. Returns the first NativeIO error, otherwise the owner status.
+ * out_completed is zeroed before validation.
+ */
+int cflow_io_native_adapter_drive_publisher(
     cflow_io_native_adapter *adapter,
     cflow_io_publisher_owner *owner,
-    cflow_scheduler *scheduler,
     uint32_t timeout_ms,
     size_t max_phase_steps,
     size_t *out_completed);
