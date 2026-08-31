@@ -117,13 +117,13 @@ typedef struct turbo_io_backend_stats {
 } turbo_io_backend_stats;
 
 /** Returns the communication model represented by kind, or NONE if invalid. */
-TURBO_NATIVE_IO_C_API turbo_io_model turbo_io_backend_model(turbo_io_backend_kind kind);
+TURBO_NATIVE_IO_C_API turbo_io_model native_io_get_model(turbo_io_backend_kind kind);
 
 /** Returns compile-time availability; no fallback backend is selected. */
-TURBO_NATIVE_IO_C_API bool turbo_io_backend_supported(turbo_io_backend_kind kind);
+TURBO_NATIVE_IO_C_API bool native_io_supported(turbo_io_backend_kind kind);
 
 /** Returns whether kind supports async-capable connected byte pipes. */
-TURBO_NATIVE_IO_C_API bool turbo_io_backend_pipe_supported(turbo_io_backend_kind kind);
+TURBO_NATIVE_IO_C_API bool native_io_pipe_supported(turbo_io_backend_kind kind);
 
 TURBO_NATIVE_IO_C_API bool turbo_io_endpoint_valid(turbo_io_endpoint endpoint);
 TURBO_NATIVE_IO_C_API bool turbo_io_request_valid(turbo_io_request request);
@@ -140,7 +140,7 @@ TURBO_NATIVE_IO_C_API bool turbo_io_operation_valid(const turbo_io_operation *op
  *         TURBO_ERANGE for allocation overflow; TURBO_ENOMEM; TURBO_ENOTSUP
  *         when kind is unavailable; otherwise a negative native error code.
  */
-TURBO_NATIVE_IO_C_API int turbo_io_backend_init(turbo_io_backend *backend,
+TURBO_NATIVE_IO_C_API int native_io_init(turbo_io_backend *backend,
                                                 const turbo_io_backend_config *config);
 
 /**
@@ -156,7 +156,7 @@ TURBO_NATIVE_IO_C_API int turbo_io_backend_init(turbo_io_backend *backend,
  *         socket is already attached; TURBO_ENOBUFS at endpoint capacity; or
  *         a negative native association error.
  */
-TURBO_NATIVE_IO_C_API int turbo_io_backend_attach_socket(turbo_io_backend *backend,
+TURBO_NATIVE_IO_C_API int native_io_attach_socket(turbo_io_backend *backend,
                                                          uintptr_t native_socket,
                                                          turbo_io_endpoint *out_endpoint);
 
@@ -164,7 +164,7 @@ TURBO_NATIVE_IO_C_API int turbo_io_backend_attach_socket(turbo_io_backend *backe
  * Releases backend metadata after the caller closed the native socket.
  * TURBO_EBUSY preserves the endpoint while any request remains unobserved.
  */
-TURBO_NATIVE_IO_C_API int turbo_io_backend_release_socket(turbo_io_backend *backend,
+TURBO_NATIVE_IO_C_API int native_io_release_socket(turbo_io_backend *backend,
                                                           turbo_io_endpoint endpoint);
 
 /**
@@ -176,13 +176,13 @@ TURBO_NATIVE_IO_C_API int turbo_io_backend_release_socket(turbo_io_backend *back
  * pipe descriptors. The selected backend remains the only progress owner.
  * out_endpoint is cleared on failure.
  */
-TURBO_NATIVE_IO_C_API int turbo_io_backend_attach_pipe(turbo_io_backend *backend,
+TURBO_NATIVE_IO_C_API int native_io_attach_pipe(turbo_io_backend *backend,
                                                        uintptr_t native_handle,
                                                        uint32_t flags,
                                                        turbo_io_endpoint *out_endpoint);
 
 /** Releases metadata for a drained pipe endpoint without closing its handle. */
-TURBO_NATIVE_IO_C_API int turbo_io_backend_release_pipe(turbo_io_backend *backend,
+TURBO_NATIVE_IO_C_API int native_io_release_pipe(turbo_io_backend *backend,
                                                         turbo_io_endpoint endpoint);
 
 /**
@@ -197,7 +197,7 @@ TURBO_NATIVE_IO_C_API int turbo_io_backend_release_pipe(turbo_io_backend *backen
  *         stale endpoint; TURBO_ESHUTDOWN after close; TURBO_ENOBUFS when all
  *         request slots are retained; or a negative native submission error.
  */
-TURBO_NATIVE_IO_C_API int turbo_io_backend_submit(turbo_io_backend *backend,
+TURBO_NATIVE_IO_C_API int native_io_submit(turbo_io_backend *backend,
                                                   const turbo_io_operation *operation,
                                                   turbo_io_request *out_request);
 
@@ -207,7 +207,7 @@ TURBO_NATIVE_IO_C_API int turbo_io_backend_submit(turbo_io_backend *backend,
  * completion proves cancellation. TURBO_EALREADY means the native operation
  * was already completing; its terminal completion must still be observed.
  */
-TURBO_NATIVE_IO_C_API int turbo_io_backend_cancel(turbo_io_backend *backend,
+TURBO_NATIVE_IO_C_API int native_io_cancel(turbo_io_backend *backend,
                                                   turbo_io_request request);
 
 /**
@@ -218,21 +218,21 @@ TURBO_NATIVE_IO_C_API int turbo_io_backend_cancel(turbo_io_backend *backend,
  * event whose kind/status carry the terminal error. A returned event ends the
  * payload borrow and invalidates that request handle.
  */
-TURBO_NATIVE_IO_C_API int turbo_io_backend_observe(turbo_io_backend *backend,
+TURBO_NATIVE_IO_C_API int native_io_observe(turbo_io_backend *backend,
                                                    turbo_io_completion *events,
                                                    size_t event_capacity, uint32_t timeout_ms,
                                                    size_t *out_count);
 
 /** Closes admission. Accepted requests must still be cancelled or drained. */
-TURBO_NATIVE_IO_C_API int turbo_io_backend_close(turbo_io_backend *backend);
+TURBO_NATIVE_IO_C_API int native_io_close(turbo_io_backend *backend);
 
 /**
  * Destroys a closed, fully drained backend with no retained endpoints.
  * TURBO_EBUSY preserves ownership when those preconditions are not satisfied.
  */
-TURBO_NATIVE_IO_C_API int turbo_io_backend_destroy(turbo_io_backend *backend);
+TURBO_NATIVE_IO_C_API int native_io_destroy(turbo_io_backend *backend);
 
-TURBO_NATIVE_IO_C_API bool turbo_io_backend_get_stats(const turbo_io_backend *backend,
+TURBO_NATIVE_IO_C_API bool native_io_get_stats(const turbo_io_backend *backend,
                                                       turbo_io_backend_stats *out_stats);
 
 #endif /* TURBO_NATIVE_IO_H */

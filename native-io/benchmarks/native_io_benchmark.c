@@ -153,7 +153,7 @@ static int native_bench_fixture_init(native_bench_fixture *fixture, native_bench
     if (status != 0) return native_bench_error(status);
     fixture->winsock_started = true;
   } else {
-    status = turbo_io_backend_init(&fixture->backend, &config);
+    status = native_io_init(&fixture->backend, &config);
     if (status != TURBO_OK) return status;
   }
 
@@ -171,7 +171,7 @@ static int native_bench_fixture_init(native_bench_fixture *fixture, native_bench
     }
   } else {
     for (size_t index = 0u; index < 2u; ++index) {
-      status = turbo_io_backend_attach_socket(&fixture->backend, (uintptr_t)fixture->sockets[index],
+      status = native_io_attach_socket(&fixture->backend, (uintptr_t)fixture->sockets[index],
                                               &fixture->endpoints[index]);
       if (status != TURBO_OK) return status;
     }
@@ -189,7 +189,7 @@ static int native_bench_fixture_destroy(native_bench_fixture *fixture) {
       if (fixture->driver == NATIVE_BENCH_NATIVE_IO &&
           turbo_io_endpoint_valid(fixture->endpoints[index])) {
         const int release_status =
-            turbo_io_backend_release_socket(&fixture->backend, fixture->endpoints[index]);
+            native_io_release_socket(&fixture->backend, fixture->endpoints[index]);
         if (status == TURBO_OK && release_status != TURBO_OK) status = release_status;
         fixture->endpoints[index] = (turbo_io_endpoint){0};
       }
@@ -204,9 +204,9 @@ static int native_bench_fixture_destroy(native_bench_fixture *fixture) {
       fixture->winsock_started = false;
     }
   } else if (fixture->backend.impl != NULL) {
-    int close_status = turbo_io_backend_close(&fixture->backend);
+    int close_status = native_io_close(&fixture->backend);
     int destroy_status =
-        close_status == TURBO_OK ? turbo_io_backend_destroy(&fixture->backend) : close_status;
+        close_status == TURBO_OK ? native_io_destroy(&fixture->backend) : close_status;
     if (status == TURBO_OK && destroy_status != TURBO_OK) status = destroy_status;
   }
   return status;
@@ -317,7 +317,7 @@ static int native_bench_submit_operation(turbo_io_backend *backend,
                                          const turbo_io_operation *operation,
                                          turbo_io_request *request, native_bench_stages *stages) {
   uint64_t started = turbo_hrtime();
-  int status = turbo_io_backend_submit(backend, operation, request);
+  int status = native_io_submit(backend, operation, request);
   native_bench_counter_add(&stages->submit_ns, turbo_hrtime() - started);
   if (status == TURBO_OK) ++stages->operations;
   return status;
@@ -374,7 +374,7 @@ static int native_bench_native_transfer(native_bench_fixture *fixture, size_t so
     }
 
     started = turbo_hrtime();
-    status = turbo_io_backend_observe(&fixture->backend, events, 2u, NATIVE_BENCH_TIMEOUT_MS,
+    status = native_io_observe(&fixture->backend, events, 2u, NATIVE_BENCH_TIMEOUT_MS,
                                       &event_count);
     native_bench_counter_add(&stages->observe_ns, turbo_hrtime() - started);
     if (status != TURBO_OK) return status;

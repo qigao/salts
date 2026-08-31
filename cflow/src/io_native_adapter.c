@@ -160,7 +160,7 @@ static int native_adapter_actor_submit(
 
     submitted = *operation;
     submitted.user_data = (uintptr_t)(index + 1u);
-    status = turbo_io_backend_submit(&impl->backend, &submitted,
+    status = native_io_submit(&impl->backend, &submitted,
                                      &bridge->native_request);
     if (status != TURBO_OK) {
         native_adapter_release_bridge(impl, index);
@@ -184,7 +184,7 @@ static int native_adapter_actor_cancel(
     bridge = native_adapter_find_actor_request(impl, request_id);
     if (bridge == NULL)
         return TURBO_ENOENT;
-    status = turbo_io_backend_cancel(&impl->backend, bridge->native_request);
+    status = native_io_cancel(&impl->backend, bridge->native_request);
     /* NativeIO EALREADY still guarantees a terminal packet to observe. From
      * the Actor's perspective cancellation dispatch therefore succeeded. */
     return status == TURBO_EALREADY ? TURBO_OK : status;
@@ -228,7 +228,7 @@ int cflow_io_native_adapter_init(
         return TURBO_ENOMEM;
     }
 
-    status = turbo_io_backend_init(&impl->backend, &config->backend);
+    status = native_io_init(&impl->backend, &config->backend);
     if (status != TURBO_OK) {
         free(impl->completions);
         free(impl->bridges);
@@ -264,7 +264,7 @@ int cflow_io_native_adapter_attach_socket(
     cflow_io_native_adapter_impl *impl = native_adapter_impl(adapter);
     if (impl == NULL)
         return TURBO_EINVAL;
-    return turbo_io_backend_attach_socket(&impl->backend, native_socket,
+    return native_io_attach_socket(&impl->backend, native_socket,
                                           out_endpoint);
 }
 
@@ -274,7 +274,7 @@ int cflow_io_native_adapter_release_socket(
     cflow_io_native_adapter_impl *impl = native_adapter_impl(adapter);
     if (impl == NULL)
         return TURBO_EINVAL;
-    return turbo_io_backend_release_socket(&impl->backend, endpoint);
+    return native_io_release_socket(&impl->backend, endpoint);
 }
 
 int cflow_io_native_adapter_attach_pipe(
@@ -285,7 +285,7 @@ int cflow_io_native_adapter_attach_pipe(
     cflow_io_native_adapter_impl *impl = native_adapter_impl(adapter);
     if (impl == NULL)
         return TURBO_EINVAL;
-    return turbo_io_backend_attach_pipe(&impl->backend, native_handle, flags,
+    return native_io_attach_pipe(&impl->backend, native_handle, flags,
                                         out_endpoint);
 }
 
@@ -295,7 +295,7 @@ int cflow_io_native_adapter_release_pipe(
     cflow_io_native_adapter_impl *impl = native_adapter_impl(adapter);
     if (impl == NULL)
         return TURBO_EINVAL;
-    return turbo_io_backend_release_pipe(&impl->backend, endpoint);
+    return native_io_release_pipe(&impl->backend, endpoint);
 }
 
 int cflow_io_native_adapter_observe(
@@ -311,7 +311,7 @@ int cflow_io_native_adapter_observe(
     if (impl == NULL || out_completed == NULL)
         return TURBO_EINVAL;
     *out_completed = 0u;
-    status = turbo_io_backend_observe(&impl->backend, impl->completions,
+    status = native_io_observe(&impl->backend, impl->completions,
                                       impl->completion_capacity, timeout_ms,
                                       &count);
     if (status != TURBO_OK)
@@ -423,7 +423,7 @@ int cflow_io_native_adapter_close(cflow_io_native_adapter *adapter) {
     if (adapter == NULL || adapter->impl == NULL)
         return TURBO_EINVAL;
     impl = (cflow_io_native_adapter_impl *)adapter->impl;
-    return turbo_io_backend_close(&impl->backend);
+    return native_io_close(&impl->backend);
 }
 
 int cflow_io_native_adapter_destroy(cflow_io_native_adapter *adapter) {
@@ -433,7 +433,7 @@ int cflow_io_native_adapter_destroy(cflow_io_native_adapter *adapter) {
     if (adapter == NULL || adapter->impl == NULL)
         return TURBO_EINVAL;
     impl = (cflow_io_native_adapter_impl *)adapter->impl;
-    status = turbo_io_backend_destroy(&impl->backend);
+    status = native_io_destroy(&impl->backend);
     if (status != TURBO_OK)
         return status;
 
@@ -453,7 +453,7 @@ bool cflow_io_native_adapter_get_stats(
         return false;
     impl = (const cflow_io_native_adapter_impl *)adapter->impl;
     *out_stats = (cflow_io_native_adapter_stats){0};
-    if (!turbo_io_backend_get_stats(&impl->backend, &out_stats->native))
+    if (!native_io_get_stats(&impl->backend, &out_stats->native))
         return false;
     out_stats->active_bridges = impl->active_bridges;
     out_stats->actor_completions = impl->actor_completions;

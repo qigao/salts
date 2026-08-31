@@ -12,7 +12,7 @@ static const turbo_io_impl *native_io_const_impl(const turbo_io_backend *backend
   return backend != NULL ? (const turbo_io_impl *)backend->impl : NULL;
 }
 
-turbo_io_model turbo_io_backend_model(turbo_io_backend_kind kind) {
+turbo_io_model native_io_get_model(turbo_io_backend_kind kind) {
   if (kind == TURBO_IO_BACKEND_IOCP || kind == TURBO_IO_BACKEND_IO_URING)
     return TURBO_IO_MODEL_COMPLETION;
   if (kind == TURBO_IO_BACKEND_EPOLL || kind == TURBO_IO_BACKEND_KQUEUE)
@@ -20,13 +20,13 @@ turbo_io_model turbo_io_backend_model(turbo_io_backend_kind kind) {
   return TURBO_IO_MODEL_NONE;
 }
 
-bool turbo_io_backend_supported(turbo_io_backend_kind kind) {
-  return turbo_io_backend_model(kind) != TURBO_IO_MODEL_NONE &&
+bool native_io_supported(turbo_io_backend_kind kind) {
+  return native_io_get_model(kind) != TURBO_IO_MODEL_NONE &&
          turbo_io_platform_backend_supported(kind);
 }
 
-bool turbo_io_backend_pipe_supported(turbo_io_backend_kind kind) {
-  return turbo_io_backend_supported(kind) && turbo_io_platform_pipe_supported(kind);
+bool native_io_pipe_supported(turbo_io_backend_kind kind) {
+  return native_io_supported(kind) && turbo_io_platform_pipe_supported(kind);
 }
 
 bool turbo_io_endpoint_valid(turbo_io_endpoint endpoint) {
@@ -56,10 +56,10 @@ bool turbo_io_operation_valid(const turbo_io_operation *operation) {
   return false;
 }
 
-int turbo_io_backend_init(turbo_io_backend *backend, const turbo_io_backend_config *config) {
+int native_io_init(turbo_io_backend *backend, const turbo_io_backend_config *config) {
   if (backend == NULL) return TURBO_EINVAL;
   backend->impl = NULL;
-  if (config == NULL || turbo_io_backend_model(config->kind) == TURBO_IO_MODEL_NONE ||
+  if (config == NULL || native_io_get_model(config->kind) == TURBO_IO_MODEL_NONE ||
       config->endpoint_capacity == 0u || config->request_capacity == 0u ||
       config->completion_batch_capacity == 0u ||
       config->completion_batch_capacity > config->request_capacity)
@@ -70,7 +70,7 @@ int turbo_io_backend_init(turbo_io_backend *backend, const turbo_io_backend_conf
   return turbo_io_platform_backend_init(backend, config);
 }
 
-int turbo_io_backend_attach_socket(turbo_io_backend *backend, uintptr_t native_socket,
+int native_io_attach_socket(turbo_io_backend *backend, uintptr_t native_socket,
                                    turbo_io_endpoint *out_endpoint) {
   turbo_io_impl *impl = native_io_impl(backend);
   if (out_endpoint != NULL) *out_endpoint = (turbo_io_endpoint){0};
@@ -80,7 +80,7 @@ int turbo_io_backend_attach_socket(turbo_io_backend *backend, uintptr_t native_s
   return impl->ops->attach_socket(impl, native_socket, out_endpoint);
 }
 
-int turbo_io_backend_release_socket(turbo_io_backend *backend, turbo_io_endpoint endpoint) {
+int native_io_release_socket(turbo_io_backend *backend, turbo_io_endpoint endpoint) {
   turbo_io_impl *impl = native_io_impl(backend);
   if (impl == NULL || impl->ops == NULL || impl->ops->release_socket == NULL ||
       !turbo_io_endpoint_valid(endpoint))
@@ -88,7 +88,7 @@ int turbo_io_backend_release_socket(turbo_io_backend *backend, turbo_io_endpoint
   return impl->ops->release_socket(impl, endpoint);
 }
 
-int turbo_io_backend_attach_pipe(turbo_io_backend *backend, uintptr_t native_handle,
+int native_io_attach_pipe(turbo_io_backend *backend, uintptr_t native_handle,
                                  uint32_t flags, turbo_io_endpoint *out_endpoint) {
   turbo_io_impl *impl = native_io_impl(backend);
   if (out_endpoint != NULL) *out_endpoint = (turbo_io_endpoint){0};
@@ -100,7 +100,7 @@ int turbo_io_backend_attach_pipe(turbo_io_backend *backend, uintptr_t native_han
   return impl->ops->attach_pipe(impl, native_handle, flags, out_endpoint);
 }
 
-int turbo_io_backend_release_pipe(turbo_io_backend *backend, turbo_io_endpoint endpoint) {
+int native_io_release_pipe(turbo_io_backend *backend, turbo_io_endpoint endpoint) {
   turbo_io_impl *impl = native_io_impl(backend);
   if (impl == NULL || impl->ops == NULL || !turbo_io_endpoint_valid(endpoint))
     return TURBO_EINVAL;
@@ -108,7 +108,7 @@ int turbo_io_backend_release_pipe(turbo_io_backend *backend, turbo_io_endpoint e
   return impl->ops->release_pipe(impl, endpoint);
 }
 
-int turbo_io_backend_submit(turbo_io_backend *backend, const turbo_io_operation *operation,
+int native_io_submit(turbo_io_backend *backend, const turbo_io_operation *operation,
                             turbo_io_request *out_request) {
   turbo_io_impl *impl = native_io_impl(backend);
   if (out_request != NULL) *out_request = (turbo_io_request){0};
@@ -118,7 +118,7 @@ int turbo_io_backend_submit(turbo_io_backend *backend, const turbo_io_operation 
   return impl->ops->submit(impl, operation, out_request);
 }
 
-int turbo_io_backend_cancel(turbo_io_backend *backend, turbo_io_request request) {
+int native_io_cancel(turbo_io_backend *backend, turbo_io_request request) {
   turbo_io_impl *impl = native_io_impl(backend);
   if (impl == NULL || impl->ops == NULL || impl->ops->cancel == NULL ||
       !turbo_io_request_valid(request))
@@ -126,7 +126,7 @@ int turbo_io_backend_cancel(turbo_io_backend *backend, turbo_io_request request)
   return impl->ops->cancel(impl, request);
 }
 
-int turbo_io_backend_observe(turbo_io_backend *backend, turbo_io_completion *events,
+int native_io_observe(turbo_io_backend *backend, turbo_io_completion *events,
                              size_t event_capacity, uint32_t timeout_ms, size_t *out_count) {
   turbo_io_impl *impl = native_io_impl(backend);
   if (out_count != NULL) *out_count = 0u;
@@ -136,13 +136,13 @@ int turbo_io_backend_observe(turbo_io_backend *backend, turbo_io_completion *eve
   return impl->ops->observe(impl, events, event_capacity, timeout_ms, out_count);
 }
 
-int turbo_io_backend_close(turbo_io_backend *backend) {
+int native_io_close(turbo_io_backend *backend) {
   turbo_io_impl *impl = native_io_impl(backend);
   if (impl == NULL || impl->ops == NULL || impl->ops->close == NULL) return TURBO_EINVAL;
   return impl->ops->close(impl);
 }
 
-int turbo_io_backend_destroy(turbo_io_backend *backend) {
+int native_io_destroy(turbo_io_backend *backend) {
   turbo_io_impl *impl = native_io_impl(backend);
   int status;
   if (impl == NULL || impl->ops == NULL || impl->ops->destroy == NULL) return TURBO_EINVAL;
@@ -151,7 +151,7 @@ int turbo_io_backend_destroy(turbo_io_backend *backend) {
   return status;
 }
 
-bool turbo_io_backend_get_stats(const turbo_io_backend *backend,
+bool native_io_get_stats(const turbo_io_backend *backend,
                                 turbo_io_backend_stats *out_stats) {
   const turbo_io_impl *impl = native_io_const_impl(backend);
   if (impl == NULL || impl->ops == NULL || impl->ops->get_stats == NULL || out_stats == NULL)

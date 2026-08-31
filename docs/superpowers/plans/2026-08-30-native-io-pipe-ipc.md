@@ -41,7 +41,7 @@ sub-agents while executing this plan.
 - Consumes: existing `turbo_io_endpoint`, `turbo_io_operation`, and backend ops.
 - Produces: `TURBO_IO_PIPE_READ`, `TURBO_IO_PIPE_WRITE`,
   `TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE`,
-  `turbo_io_backend_pipe_supported()`, `attach_pipe()`, and `release_pipe()`.
+  `native_io_pipe_supported()`, `attach_pipe()`, and `release_pipe()`.
 
 - [ ] **Step 1: Write failing public validation tests**
 
@@ -141,7 +141,7 @@ release while active, stale endpoint, and repeated descriptor reuse.
 Add an explicit blocking-descriptor case:
 
 ```c
-check_equal(turbo_io_backend_attach_pipe(
+check_equal(native_io_attach_pipe(
                 &backend, (uintptr_t)blocking_fd,
                 TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
             TURBO_EINVAL);

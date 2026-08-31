@@ -119,19 +119,19 @@ typedef enum turbo_io_pipe_endpoint_flags {
   TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE = 1u << 0
 } turbo_io_pipe_endpoint_flags;
 
-bool turbo_io_backend_pipe_supported(turbo_io_backend_kind kind);
+bool native_io_pipe_supported(turbo_io_backend_kind kind);
 
-int turbo_io_backend_attach_pipe(turbo_io_backend *backend,
+int native_io_attach_pipe(turbo_io_backend *backend,
                                  uintptr_t native_handle,
                                  uint32_t flags,
                                  turbo_io_endpoint *out_endpoint);
 
-int turbo_io_backend_release_pipe(turbo_io_backend *backend,
+int native_io_release_pipe(turbo_io_backend *backend,
                                   turbo_io_endpoint endpoint);
 ```
 
 Pipe operations reuse `turbo_io_operation` and the existing
-`turbo_io_backend_submit()`/`observe()` functions. Unlike the legacy CFlow
+`native_io_submit()`/`observe()` functions. Unlike the legacy CFlow
 descriptor, the NativeIO descriptor already names a generation-checked
 endpoint rather than a raw socket and contains no accept-result ownership.
 For PIPE_READ/PIPE_WRITE, every address field must be zero. This preserves one
@@ -350,7 +350,7 @@ unlink policy, permissions, and sandbox/security policy remain caller-owned.
 The endpoint wrapper is move-only by contract despite C's copy syntax. Close
 first invalidates the wrapper, then closes the native identity. On success,
 `native_io_flags` contains `TURBO_IO_PIPE_ENDPOINT_ASYNC_CAPABLE` and can be
-passed directly to `turbo_io_backend_attach_pipe()`.
+passed directly to `native_io_attach_pipe()`.
 
 ## CFlow Actor and Source adapter
 
@@ -511,12 +511,12 @@ Linearization points:
 Direct NativeIO shutdown is:
 
 1. stop external producers;
-2. call `turbo_io_backend_close()` to stop admission;
+2. call `native_io_close()` to stop admission;
 3. request cancellation or allow accepted requests to finish;
 4. call `observe()` until `active_requests == 0`;
 5. close each caller-owned socket/pipe native identity;
 6. call the matching endpoint release function;
-7. call `turbo_io_backend_destroy()`.
+7. call `native_io_destroy()`.
 
 CFlow shutdown adds delivery acknowledgement:
 
