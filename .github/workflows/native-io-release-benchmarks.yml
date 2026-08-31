@@ -227,7 +227,7 @@ jobs:
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Upload NativeIO benchmark evidence
-        if: always()
+        if: always() && steps.scope.outputs.adapted == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: native-io-${{ matrix.family }}
