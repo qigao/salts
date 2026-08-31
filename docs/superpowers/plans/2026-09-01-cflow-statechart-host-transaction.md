@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace incremental V1-V3 composition for new callers with one lazy, bounded, transactional V4 Statechart host callback while preserving legacy behavior.
+**Goal:** Replace incremental V1-V3 composition with one lazy, bounded, transactional V4-only Statechart host callback.
 
-**Architecture:** The Statechart instance remains the single owner of state, configuration, queues, and effect tickets. An opaque call-scoped host context exposes read-only trigger/configuration access and lazy transactional writes in trigger and quiescence phases. V1-V3 remain isolated compatibility paths.
+**Architecture:** The Statechart instance remains the single owner of state, configuration, queues, and effect tickets. An opaque call-scoped host context exposes read-only trigger/configuration access and lazy transactional writes in trigger and quiescence phases. The public hook table has one exact V4 shape and no legacy runtime paths.
 
 **Tech Stack:** C11, CMeta managed values, CFlow Statechart, TinyTest, CMake Presets.
 
@@ -18,11 +18,11 @@
 - Modify: `cflow/tests/cflow_header_cpp_test.cpp`
 
 - [x] Declare the phase/result enums, opaque context accessors, callback type,
-  ABI V4 constant, and appended callback field without changing V1-V3 layouts.
+  ABI V4 constant, and the sole V4 callback field.
 - [x] Add a managed-state fixture proving `PREPARE_TRIGGER` commits an edit
   before a guard reads it and receives the exact external trigger metadata.
 - [x] Add fixtures for quiescence, true no-op copy avoidance, external `DROP`,
-  `FATAL` rollback, and rejection of mixed V4/legacy tables.
+  `FATAL` rollback, and rejection of non-V4 hook tables.
 - [x] Build the focused targets and record the expected link/test failures
   before production implementation.
 
@@ -44,14 +44,16 @@
 - [x] Insert `PREPARE_QUIESCENCE` before settlement and retain existing
   internal/Eventless drain ordering.
 
-### Task 3: Preserve and verify the legacy adapter boundary
+### Task 3: Remove and verify the legacy adapter boundary
 
 **Files:**
 - Modify: `cflow/src/statechart_instance.c`
 - Modify: `cflow/tests/cflow_statechart_instance_test.c`
 
-- [x] Extend hook-table shape validation and copying for V4 while leaving all
-  V1-V3 accepted prefixes and callback ordering unchanged.
+- [x] Require the exact V4 hook-table shape and delete V1-V3 prefixes,
+  callback fields, copying logic, and execution branches.
+- [x] Migrate Statechart tests and the installed consumer to V4, and prove
+  every pre-V4 ABI is rejected.
 - [x] Verify invalid result, invalid phase action, state-copy failure, internal
   queue full, and effect journal full fail fast with deterministic status.
 - [x] Run the focused TinyTest filter, full Statechart instance test, C++

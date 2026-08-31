@@ -535,7 +535,7 @@ spec("SCXML host Event I/O adapter contract") {
         receiver_config = host_session_config(
             &receiver_program, &receiver_executor);
         check_equal(cflow_scxml_session_init(&receiver, &receiver_config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(cflow_scxml_session_copy_location(
                         &receiver, receiver_location,
                         sizeof(receiver_location), &receiver_required),
@@ -562,7 +562,7 @@ spec("SCXML host Event I/O adapter contract") {
             .event_io_user = &sender_adapter};
         check_equal(cflow_scxml_session_init_v3(
                         &sender, &sender_config, &adapters),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(host_router_register(
             &router, &sender, &sender_program, true, &sender_adapter,
             &sender_endpoint));
@@ -591,11 +591,11 @@ spec("SCXML host Event I/O adapter contract") {
         check_equal(router.last_delivery.origin_type, HOST_ORIGIN_TYPE);
 
         check_equal(cflow_scxml_session_destroy(&sender),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(host_router_unregister(&router, sender_endpoint));
         check_true(host_router_unregister(&router, receiver_endpoint));
         check_equal(cflow_scxml_session_destroy(&receiver),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&sender_executor);
         cflow_executor_destroy(&receiver_executor);
         cflow_scxml_program_destroy(&sender_program);
@@ -635,7 +635,7 @@ spec("SCXML host Event I/O adapter contract") {
             .event_io_user = &adapter};
         check_equal(cflow_scxml_session_init_v3(
                         &session, &config, &adapters),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(host_router_register(
             &router, &session, &program, true, &adapter, &endpoint));
         check_true(cflow_scxml_program_event(&program, "go", 2u, &go));
@@ -648,7 +648,7 @@ spec("SCXML host Event I/O adapter contract") {
         check_false(stats.errored);
 
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(host_router_unregister(&router, endpoint));
         cflow_executor_destroy(&executor);
         cflow_scxml_program_destroy(&program);
@@ -695,9 +695,9 @@ spec("SCXML host Event I/O adapter contract") {
             .event_io_user = &adapter};
         check_equal(cflow_scxml_session_init_v3(
                         &owner, &owner_config, &adapters),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(cflow_scxml_session_init(&peer, &peer_config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(host_router_register(
             &router, &owner, &owner_program, false, &adapter,
             &owner_endpoint));
@@ -751,11 +751,11 @@ spec("SCXML host Event I/O adapter contract") {
         check_equal(host_router_ready_count(&router), (size_t)0u);
 
         check_equal(cflow_scxml_session_destroy(&owner),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_true(host_router_unregister(&router, owner_endpoint));
         check_true(host_router_unregister(&router, peer_endpoint));
         check_equal(cflow_scxml_session_destroy(&peer),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         cflow_executor_destroy(&owner_executor);
         cflow_executor_destroy(&peer_executor);
         cflow_scxml_program_destroy(&owner_program);

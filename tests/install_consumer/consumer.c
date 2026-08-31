@@ -178,6 +178,15 @@ static bool installed_legacy_guard(void *user, const void *state,
   return true;
 }
 
+static cflow_statechart_host_result installed_host_transaction(
+    void *user, cflow_statechart_host_context *context,
+    const char **out_error) {
+  (void)user;
+  if (context == NULL || out_error == NULL) return CFLOW_STATECHART_HOST_FATAL;
+  *out_error = NULL;
+  return CFLOW_STATECHART_HOST_CONTINUE;
+}
+
 int main(void) {
   static const char source[] =
       "<scxml xmlns='http://www.w3.org/2005/07/scxml' version='1.0'>"
@@ -190,8 +199,9 @@ int main(void) {
   const cflow_statechart_guard_binding legacy_guard = {
       1u, installed_legacy_guard, NULL};
   const cflow_statechart_instance_hooks instance_hooks = {
-      CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1,
-      sizeof(cflow_statechart_instance_hooks), NULL, NULL};
+      .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
+      .struct_size = sizeof(cflow_statechart_instance_hooks),
+      .on_host_transaction = installed_host_transaction};
   cflow_mailbox_status (*tagged_send)(
       cflow_statechart_instance *, const cflow_event_view *, uint64_t) =
       cflow_statechart_instance_try_send_tagged;

@@ -2,22 +2,19 @@
 
 ## Context
 
-The Statechart runtime currently exposes one versioned hook table that grew
-from V1 through V3. The versions describe chronology rather than one stable
-host contract: V1 observes stable boundaries and preprocesses external Events,
-V2 observes all selected triggers, and V3 adds a mutable transaction only at a
-stable boundary. A host that must normalize a trigger and atomically update the
-managed state before transition selection cannot express that operation without
-combining callbacks with different mutability and commit rules.
+The former Statechart hook table accumulated three callback generations with
+different mutability and commit rules. Keeping those layouts made callback
+ordering ambiguous and forced hosts to compose observation, preprocessing, and
+stable-boundary mutation themselves.
 
-This design adds one V4 host transaction callback while retaining V1-V3 as a
-source-compatible migration surface. It does not move SCXML invocation,
-transport, XML, or expression semantics into CFlow.
+This design replaces that surface with one V4-only host transaction callback.
+V1-V3 are intentionally removed; this is a breaking API/ABI cleanup. It does
+not move SCXML invocation, transport, XML, or expression semantics into CFlow.
 
 ## Decision
 
-Add `CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4` with exactly one callback:
-`on_host_transaction`. V4 rejects every legacy callback field. The callback is
+Expose `CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4` with exactly one callback:
+`on_host_transaction`. Any version other than V4 is rejected. The callback is
 invoked in two phases:
 
 - `CFLOW_STATECHART_HOST_PREPARE_TRIGGER`: after a trigger becomes the current
@@ -26,10 +23,10 @@ invoked in two phases:
   eventless work drains and before the macrostep settles.
 
 The context is opaque. Read access never copies state. The first successful
-`cflow_statechart_host_edit_state()` call copy-constructs a staged value and
-returns the sole writable state for the callback. Internal Events and external
-effect tickets are staged through bounded context functions. The callback
-returns `CONTINUE`, `DROP`, or `FATAL`:
+`cflow_statechart_host_context_edit_state()` call copy-constructs a staged
+value and returns the sole writable state for the callback. Internal Events and
+external effect tickets are staged through bounded context functions. The
+callback returns `CONTINUE`, `DROP`, or `FATAL`:
 
 - `CONTINUE` commits a staged state, Events, and tickets as one transaction.
   With no staged work it is a true no-op and does not increment the
@@ -55,8 +52,8 @@ The public header gains:
 - bounded writers for editing state, raising an internal Event, and staging an
   effect ticket
 - `cflow_statechart_host_transaction_fn`
-- an appended `on_host_transaction` field in
-  `cflow_statechart_instance_hooks`
+- the V4-only `cflow_statechart_instance_hooks` table containing
+  `abi_version`, exact `struct_size`, and `on_host_transaction`
 
 Every returned pointer and the context itself are invalid after the callback.
 The callback runs on the instance SerialExecutor without the instance mutex
@@ -76,18 +73,18 @@ not add locks and cannot escape to another thread.
 
 ## Compatibility and Migration
 
-V1-V3 validation and behavior remain unchanged. V4 is mutually exclusive with
-all legacy fields, so there is never ambiguous callback ordering. Existing
-callers continue to compile and run. New callers migrate callback behavior as
-follows:
+There is no runtime fallback or prefix acceptance. A non-null hook table must
+declare V4, use the exact V4 structure size, and provide `on_host_transaction`.
+Callers migrate old behavior as follows:
 
 | Legacy callback | V4 phase |
 | --- | --- |
 | `preprocess_external` and `on_event` | `PREPARE_TRIGGER` |
 | `on_stable` and `on_stable_transaction` | `PREPARE_QUIESCENCE` |
 
-No removal is planned in this change. A later major release may deprecate and
-remove V1-V3 after all first-party callers use V4.
+First-party Statechart and TurboSCXML callers migrate in the same change so no
+repository path depends on the removed layouts. Downstream callers must update
+at source level and rebuild; binaries compiled against V1-V3 are incompatible.
 
 ## Alternatives
 
@@ -103,6 +100,7 @@ The transaction starts with no mutable copy. Any failure discards staged Events
 and tickets, resets a constructed staged state, retains the published state and
 configuration, and prevents transition selection. Focused TinyTest cases must
 prove phase order, visibility before guards, no-op copy avoidance, external
-drop, bounded queue/effect failures, rollback, and V1-V3 compatibility. The
-existing `cflow_statechart_instance_test` and C++ public-header test are the
-minimum regression boundary.
+drop, bounded queue/effect failures, rollback, exact V4 shape validation, and
+rejection of all pre-V4 versions. The existing
+`cflow_statechart_instance_test`, installed consumer, and C++ public-header test
+are the minimum regression boundary.

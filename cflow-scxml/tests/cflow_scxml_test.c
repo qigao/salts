@@ -698,7 +698,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
             .completion_capacity = 1u,
             .microstep_limit = 8u};
         check_equal(cflow_scxml_session_init(&session, &config),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
 
         check_equal(cflow_scxml_session_copy_location(
                         &session, NULL, 0u, &required),
@@ -723,7 +723,7 @@ suite("SCXML Core to native CFlow Statechart compiler") {
         check_equal(repeated, location);
 
         check_equal(cflow_scxml_session_destroy(&session),
-                    CFLOW_STATECHART_RUNTIME_OK);
+                    CFLOW_STATECHART_INSTANCE_OK);
         check_equal(cflow_scxml_session_copy_location(
                         &session, repeated, sizeof(repeated),
                         &repeated_required),
