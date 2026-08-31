@@ -17,11 +17,31 @@ typedef struct cnet_event_release_probe {
   int status;
 } cnet_event_release_probe;
 
+typedef struct cnet_event_wait_probe {
+  cnet_event_queue *queue;
+  cnet_event_view view;
+  atomic_bool running;
+  atomic_bool entered;
+  int status;
+} cnet_event_wait_probe;
+
 static void cnet_event_release_worker(void *context) {
   cnet_event_release_probe *probe = (cnet_event_release_probe *)context;
   while (!atomic_load_explicit(probe->start, memory_order_acquire))
     turbo_thread_yield();
   probe->status = cnet_event_queue_release(probe->queue, probe->view);
+}
+
+static int cnet_event_wait_keep_running(void *context) {
+  cnet_event_wait_probe *probe = (cnet_event_wait_probe *)context;
+  atomic_store_explicit(&probe->entered, true, memory_order_release);
+  return atomic_load_explicit(&probe->running, memory_order_acquire);
+}
+
+static void cnet_event_wait_worker(void *context) {
+  cnet_event_wait_probe *probe = (cnet_event_wait_probe *)context;
+  probe->status =
+      cnet_event_queue_take_wait(probe->queue, &probe->view, cnet_event_wait_keep_running, probe);
 }
 
 spec("CNet bounded callback events") {
@@ -132,5 +152,44 @@ spec("CNet bounded callback events") {
     turbo_thread_destroy(&threads[0]);
     check_equal(probes[0].status, TURBO_OK);
     check_equal(probes[1].status, TURBO_OK);
+  }
+
+  it("blocks without polling and supports an explicit stop wake") {
+    const cnet_event_queue_config config = {4u, 1u, 4u};
+    const cnet_event event = {CNET_EVENT_STATE,
+                              {1u, 1u},
+                              CNET_EVENT_STATE_CONNECTED,
+                              TURBO_OK,
+                              CNET_SESSION_STAGE_NONE,
+                              NULL,
+                              0u};
+    cnet_event_wait_probe probe = {.queue = &events, .status = TURBO_EIO};
+    turbo_thread_t thread = NULL;
+
+    atomic_init(&probe.running, true);
+    atomic_init(&probe.entered, false);
+    check_equal(cnet_event_queue_init(&events, &config), TURBO_OK);
+    check_equal(turbo_thread_create(&thread, cnet_event_wait_worker, &probe), TURBO_OK);
+    while (!atomic_load_explicit(&probe.entered, memory_order_acquire))
+      turbo_thread_yield();
+    check_equal(cnet_event_queue_publish(&events, &event), TURBO_OK);
+    check_equal(turbo_thread_join(&thread), TURBO_OK);
+    turbo_thread_destroy(&thread);
+    check_equal(probe.status, TURBO_OK);
+    check_equal(probe.view.state, CNET_EVENT_STATE_CONNECTED);
+    check_equal(cnet_event_queue_release(&events, &probe.view), TURBO_OK);
+
+    memset(&probe.view, 0, sizeof(probe.view));
+    probe.status = TURBO_EIO;
+    atomic_store_explicit(&probe.entered, false, memory_order_release);
+    check_equal(turbo_thread_create(&thread, cnet_event_wait_worker, &probe), TURBO_OK);
+    while (!atomic_load_explicit(&probe.entered, memory_order_acquire))
+      turbo_thread_yield();
+    atomic_store_explicit(&probe.running, false, memory_order_release);
+    check_equal(cnet_event_queue_wake(&events), TURBO_OK);
+    check_equal(turbo_thread_join(&thread), TURBO_OK);
+    turbo_thread_destroy(&thread);
+    check_equal(probe.status, TURBO_ECANCELED);
+    check_equal(probe.view._sequence, 0u);
   }
 }

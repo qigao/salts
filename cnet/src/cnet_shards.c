@@ -319,6 +319,26 @@ int cnet_shards_take_event(cnet_shards *shards, uint32_t shard, cnet_event_view 
   return record != NULL ? cnet_event_queue_take(&record->events, out_event) : TURBO_EINVAL;
 }
 
+int cnet_shards_take_event_wait(cnet_shards *shards, uint32_t shard, cnet_event_view *out_event,
+                                cnet_event_keep_waiting_fn keep_waiting, void *context) {
+  cnet_shard_record *record = cnet_shards_get_record(cnet_shards_get(shards), shard);
+  return record != NULL
+             ? cnet_event_queue_take_wait(&record->events, out_event, keep_waiting, context)
+             : TURBO_EINVAL;
+}
+
+int cnet_shards_wake_events(cnet_shards *shards) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  size_t index;
+  int status = TURBO_OK;
+  if (impl == NULL) return TURBO_EINVAL;
+  for (index = 0u; index < impl->shard_count; ++index) {
+    const int wake_status = cnet_event_queue_wake(&impl->records[index].events);
+    if (wake_status != TURBO_OK && status == TURBO_OK) status = wake_status;
+  }
+  return status;
+}
+
 int cnet_shards_release_event(cnet_shards *shards, uint32_t shard, cnet_event_view *event) {
   cnet_shard_record *record = cnet_shards_get_record(cnet_shards_get(shards), shard);
   return record != NULL ? cnet_event_queue_release(&record->events, event) : TURBO_EINVAL;

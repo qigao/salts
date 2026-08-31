@@ -56,6 +56,8 @@ typedef struct cnet_event_view {
   uint64_t _sequence;
 } cnet_event_view;
 
+typedef int (*cnet_event_keep_waiting_fn)(void *context);
+
 int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config *config);
 bool cnet_event_queue_get_config(const cnet_event_queue *queue,
                                  cnet_event_queue_config *out_config);
@@ -65,6 +67,11 @@ int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event);
 
 /** Single-consumer take; empty-open returns `TURBO_ETIMEDOUT`. */
 int cnet_event_queue_take(cnet_event_queue *queue, cnet_event_view *out_view);
+/** Sleeps without polling until an event arrives or `keep_waiting` becomes false and wakes. */
+int cnet_event_queue_take_wait(cnet_event_queue *queue, cnet_event_view *out_view,
+                               cnet_event_keep_waiting_fn keep_waiting, void *context);
+/** Wakes blocked takers so they can re-check their stop predicate. */
+int cnet_event_queue_wake(cnet_event_queue *queue);
 /** A taken view may be released exactly once by any callback worker. */
 int cnet_event_queue_release(cnet_event_queue *queue, cnet_event_view *view);
 

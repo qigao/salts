@@ -32,6 +32,12 @@ typedef struct cnet_event_queue_impl {
   atomic_size_t borrowed_count;
 } cnet_event_queue_impl;
 
+typedef struct cnet_event_wait_context {
+  cnet_event_queue_impl *impl;
+  cnet_event_keep_waiting_fn keep_waiting;
+  void *context;
+} cnet_event_wait_context;
+
 static cnet_event_queue_impl *cnet_event_impl(cnet_event_queue *queue) {
   return queue != NULL ? (cnet_event_queue_impl *)queue->impl : NULL;
 }
@@ -164,10 +170,35 @@ int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event) {
   return TURBO_OK;
 }
 
+static int cnet_event_queue_take_claimed(cnet_event_queue_impl *impl,
+                                         const disruptor_cursor_t *cursor,
+                                         cnet_event_view *out_view) {
+  const cnet_event_entry *entry;
+  entry = (const cnet_event_entry *)disruptor_show_entry(impl->ring, cursor);
+  out_view->kind = entry->kind;
+  out_view->session = entry->session;
+  out_view->state = entry->state;
+  out_view->status = entry->status;
+  out_view->stage = entry->stage;
+  out_view->data = entry->size != 0u ? entry->payload : NULL;
+  out_view->size = entry->size;
+  out_view->_sequence = cursor->sequence;
+  atomic_store_explicit(
+      &impl->borrowed_sequences[(size_t)((cursor->sequence - 1u) & (impl->borrowed_capacity - 1u))],
+      cursor->sequence, memory_order_release);
+  atomic_fetch_add_explicit(&impl->borrowed_count, 1u, memory_order_release);
+  return TURBO_OK;
+}
+
+static int cnet_event_wait_keep_running(void *context) {
+  cnet_event_wait_context *wait = (cnet_event_wait_context *)context;
+  return !atomic_load_explicit(&wait->impl->close_complete, memory_order_acquire) &&
+         wait->keep_waiting(wait->context);
+}
+
 int cnet_event_queue_take(cnet_event_queue *queue, cnet_event_view *out_view) {
   cnet_event_queue_impl *impl = cnet_event_impl(queue);
   disruptor_cursor_t cursor = {0};
-  const cnet_event_entry *entry;
 
   if (out_view == NULL) return TURBO_EINVAL;
   memset(out_view, 0, sizeof(*out_view));
@@ -178,20 +209,29 @@ int cnet_event_queue_take(cnet_event_queue *queue, cnet_event_view *out_view) {
       return TURBO_EOF;
     return TURBO_ETIMEDOUT;
   }
+  return cnet_event_queue_take_claimed(impl, &cursor, out_view);
+}
 
-  entry = (const cnet_event_entry *)disruptor_show_entry(impl->ring, &cursor);
-  out_view->kind = entry->kind;
-  out_view->session = entry->session;
-  out_view->state = entry->state;
-  out_view->status = entry->status;
-  out_view->stage = entry->stage;
-  out_view->data = entry->size != 0u ? entry->payload : NULL;
-  out_view->size = entry->size;
-  out_view->_sequence = cursor.sequence;
-  atomic_store_explicit(
-      &impl->borrowed_sequences[(size_t)((cursor.sequence - 1u) & (impl->borrowed_capacity - 1u))],
-      cursor.sequence, memory_order_release);
-  atomic_fetch_add_explicit(&impl->borrowed_count, 1u, memory_order_release);
+int cnet_event_queue_take_wait(cnet_event_queue *queue, cnet_event_view *out_view,
+                               cnet_event_keep_waiting_fn keep_waiting, void *context) {
+  cnet_event_queue_impl *impl = cnet_event_impl(queue);
+  disruptor_cursor_t cursor = {0};
+  cnet_event_wait_context wait;
+
+  if (out_view == NULL) return TURBO_EINVAL;
+  memset(out_view, 0, sizeof(*out_view));
+  if (impl == NULL || keep_waiting == NULL) return TURBO_EINVAL;
+  wait = (cnet_event_wait_context){impl, keep_waiting, context};
+  if (!disruptor_worker_claim_wait(impl->ring, &cursor, cnet_event_wait_keep_running, &wait))
+    return atomic_load_explicit(&impl->close_complete, memory_order_acquire) ? TURBO_EOF
+                                                                             : TURBO_ECANCELED;
+  return cnet_event_queue_take_claimed(impl, &cursor, out_view);
+}
+
+int cnet_event_queue_wake(cnet_event_queue *queue) {
+  cnet_event_queue_impl *impl = cnet_event_impl(queue);
+  if (impl == NULL) return TURBO_EINVAL;
+  disruptor_worker_wake_all(impl->ring);
   return TURBO_OK;
 }
 
@@ -226,6 +266,7 @@ int cnet_event_queue_close(cnet_event_queue *queue) {
     return TURBO_EBUSY;
   if (atomic_exchange_explicit(&impl->close_complete, true, memory_order_acq_rel))
     return TURBO_EALREADY;
+  disruptor_worker_wake_all(impl->ring);
   return TURBO_OK;
 }
 

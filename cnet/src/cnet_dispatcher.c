@@ -226,7 +226,8 @@ int cnet_dispatcher_register(cnet_dispatcher *dispatcher, cnet_shard_connection 
   return status;
 }
 
-int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard) {
+static int cnet_dispatcher_drive_once(cnet_dispatcher *dispatcher, uint32_t shard,
+                                      cnet_dispatcher_keep_running_fn keep_running, void *context) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
   cnet_dispatch_lane *lane;
   cnet_callback_job job = {0};
@@ -236,7 +237,9 @@ int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard) {
   lane = &impl->lanes[shard];
   if (atomic_flag_test_and_set_explicit(&lane->driving, memory_order_acquire)) return TURBO_EBUSY;
   if (!atomic_load_explicit(&lane->pending, memory_order_acquire)) {
-    status = cnet_shards_take_event(impl->shards, shard, &lane->event);
+    status = keep_running != NULL ? cnet_shards_take_event_wait(impl->shards, shard, &lane->event,
+                                                                keep_running, context)
+                                  : cnet_shards_take_event(impl->shards, shard, &lane->event);
     if (status != TURBO_OK) {
       atomic_flag_clear_explicit(&lane->driving, memory_order_release);
       return status;
@@ -254,6 +257,21 @@ int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard) {
   }
   atomic_flag_clear_explicit(&lane->driving, memory_order_release);
   return status;
+}
+
+int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard) {
+  return cnet_dispatcher_drive_once(dispatcher, shard, NULL, NULL);
+}
+
+int cnet_dispatcher_drive_wait(cnet_dispatcher *dispatcher, uint32_t shard,
+                               cnet_dispatcher_keep_running_fn keep_running, void *context) {
+  if (keep_running == NULL) return TURBO_EINVAL;
+  return cnet_dispatcher_drive_once(dispatcher, shard, keep_running, context);
+}
+
+int cnet_dispatcher_wake(cnet_dispatcher *dispatcher) {
+  cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
+  return impl != NULL ? cnet_shards_wake_events(impl->shards) : TURBO_EINVAL;
 }
 
 static bool cnet_dispatcher_is_idle(cnet_dispatcher_impl *impl) {

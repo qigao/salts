@@ -517,6 +517,12 @@ revalidates the generation before clearing the claim. Callback completion may
 therefore recycle through the shard and then retire dispatcher routing without
 forming a `dispatcher -> shard` / `shard -> dispatcher` lock cycle.
 
+Normal dispatcher workers sleep in `disruptor_worker_claim_wait()` on their
+assigned shard ring; they do not poll on a millisecond timer. Stop flips the
+worker predicate and explicitly wakes all rings. A worker retains at most one
+taken event while its callback lane is full, so only the backpressure path
+retries and the event-slot lease remains the payload owner throughout.
+
 The current base implementation stores receive bytes inline in the bounded
 event slot, making that slot the lease owner. Protocol reassembly may later use
 a retained receive-buffer lease, but it must preserve the same move/release

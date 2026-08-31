@@ -207,6 +207,9 @@ every registered connection, continues driving terminal events, and only then
 permits destruction. The dispatcher allocates only during initialization and is
 still an internal, incomplete client primitive; client-level shutdown
 deadlines and the public client remain before the execution task is complete.
+Normal dispatcher workers now block directly on their shard Disruptor ring and
+are explicitly woken for stop, removing the prospective 1 ms polling latency
+from the public client path.
 
 **Files:**
 
