@@ -409,8 +409,8 @@ spec("CNet public client API") {
                                                   .on_receive = cnet_api_test_receive,
                                                   .user = &probe}};
     check_equal(cnet_connect(&client, &options, &connection), TURBO_OK);
-    check_equal(cnet_shared_test_named_pipe_finish(&pipe), TURBO_OK);
     check_equal(cnet_api_test_wait(&probe.connected, 1), TURBO_OK);
+    check_equal(cnet_shared_test_named_pipe_finish(&pipe), TURBO_OK);
     check_equal(cnet_send(&client, connection, &expected_outbound, sizeof(expected_outbound)),
                 TURBO_OK);
     check_equal(cnet_shared_test_named_pipe_peer_read(&pipe, &outbound, sizeof(outbound)),
