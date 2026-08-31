@@ -28,6 +28,8 @@ typedef struct cnet_shards_impl {
   turbo_threadpool_t *owner_pool;
   turbo_mutex_t admission_lock;
   size_t shard_count;
+  size_t connection_capacity_per_shard;
+  size_t max_event_payload_bytes;
   size_t active_connections;
   size_t next_shard;
   size_t max_command_payload_bytes;
@@ -117,6 +119,8 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
     return TURBO_ENOMEM;
   }
   impl->shard_count = config->shard_count;
+  impl->connection_capacity_per_shard = config->connection_capacity_per_shard;
+  impl->max_event_payload_bytes = config->receive_buffer_bytes;
   impl->max_command_payload_bytes = config->max_command_payload_bytes;
   impl->admission_open = true;
   turbo_mutex_init(&impl->admission_lock);
@@ -189,6 +193,14 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
 
   shards->impl = impl;
   return TURBO_OK;
+}
+
+bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_layout) {
+  const cnet_shards_impl *impl = shards != NULL ? (const cnet_shards_impl *)shards->impl : NULL;
+  if (impl == NULL || out_layout == NULL) return false;
+  *out_layout = (cnet_shards_layout){impl->shard_count, impl->connection_capacity_per_shard,
+                                     impl->max_event_payload_bytes};
+  return true;
 }
 
 int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *payload,

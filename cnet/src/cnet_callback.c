@@ -39,6 +39,7 @@ typedef struct cnet_callback_workers_impl {
   cnet_callback_lane *lanes;
   turbo_threadpool_t *pool;
   size_t worker_count;
+  uint64_t capacity_per_worker;
   size_t max_payload_bytes;
   atomic_int first_error;
   bool stopping;
@@ -145,6 +146,7 @@ int cnet_callback_workers_init(cnet_callback_workers *workers,
     return TURBO_ENOMEM;
   }
   impl->worker_count = config->worker_count;
+  impl->capacity_per_worker = config->capacity_per_worker;
   impl->max_payload_bytes = config->max_payload_bytes;
   atomic_init(&impl->first_error, TURBO_OK);
   ring_config =
@@ -191,6 +193,16 @@ int cnet_callback_workers_init(cnet_callback_workers *workers,
   }
   workers->impl = impl;
   return TURBO_OK;
+}
+
+bool cnet_callback_workers_get_config(const cnet_callback_workers *workers,
+                                      cnet_callback_workers_config *out_config) {
+  const cnet_callback_workers_impl *impl =
+      workers != NULL ? (const cnet_callback_workers_impl *)workers->impl : NULL;
+  if (impl == NULL || out_config == NULL) return false;
+  *out_config = (cnet_callback_workers_config){impl->worker_count, impl->capacity_per_worker,
+                                               impl->max_payload_bytes};
+  return true;
 }
 
 int cnet_callback_workers_publish(cnet_callback_workers *workers, const cnet_callback_job *job) {

@@ -183,14 +183,26 @@ bytes again; callback completion releases that slot exactly once, and the event
 queue now supports concurrent out-of-order release by callback workers. Tests
 cover lane serialization, cross-lane progress, MPSC order, full-lane rejection,
 stop retry, exact finish/release, release-error propagation, and pointer-stable
-event handoff. The client-owned event dispatcher, client-driven live-session
-close, and timer deadlines remain before the execution checkbox below is
+event handoff.
+
+The internal client-owned dispatcher now is the sole consumer of each shard
+event ring. It retains at most one borrowed event per shard when a callback lane
+is full, so backpressure remains bounded and the receive payload is not copied a
+second time. The session table remains the state fact source; dispatcher entries
+only derive generation-checked observer routing. A terminal callback must return,
+release its event lease, and successfully recycle the session before that slot
+can be registered again. Drain closes dispatcher admission, requests close for
+every registered connection, continues driving terminal events, and only then
+permits destruction. The dispatcher allocates only during initialization and is
+still an internal, incomplete client primitive; platform `pipe://` opening,
+timer deadlines, and the public client remain before the execution task is
 complete.
 
 **Files:**
 
 - Create: `cnet/src/cnet_client.c`
 - Create: `cnet/src/cnet_callback.c`
+- Create: `cnet/src/cnet_dispatcher.c`
 - Create: `cnet/src/cnet_owner.c`
 - Create: `cnet/src/cnet_uri.c`
 - Create: `cnet/src/cnet_resolver.c`
@@ -200,6 +212,7 @@ complete.
 - Create: `cnet/src/cnet_transport_pipe.c`
 - Create: `cnet/tests/cnet_fake_transport_test.c`
 - Create: `cnet/tests/cnet_callback_test.c`
+- Create: `cnet/tests/cnet_dispatcher_test.c`
 - Create: `cnet/tests/cnet_tcp_test.c`
 - Create: `cnet/tests/cnet_udp_test.c`
 - Create: `cnet/tests/cnet_pipe_test.c`

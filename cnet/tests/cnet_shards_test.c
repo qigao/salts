@@ -120,11 +120,16 @@ spec("CNet long-lived owner shards") {
     cnet_shards_test_socket listener = CNET_SHARDS_TEST_INVALID_SOCKET;
     struct sockaddr_in address;
     uint32_t expected_shard;
+    cnet_shards_layout layout = {0};
 
     check_equal(cnet_shards_init(&shards, &config), TURBO_ESHUTDOWN);
     check_equal(cnet_module_init(), TURBO_OK);
     check_equal(cnet_shards_test_listener(&listener, &address), TURBO_OK);
     check_equal(cnet_shards_init(&shards, &config), TURBO_OK);
+    check_true(cnet_shards_get_layout(&shards, &layout));
+    check_equal(layout.shard_count, config.shard_count);
+    check_equal(layout.connection_capacity_per_shard, config.connection_capacity_per_shard);
+    check_equal(layout.max_event_payload_bytes, config.receive_buffer_bytes);
 
     for (expected_shard = 0u; expected_shard < 2u; ++expected_shard) {
       const unsigned char outbound = (unsigned char)(expected_shard + 1u);

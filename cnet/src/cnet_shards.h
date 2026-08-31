@@ -24,10 +24,17 @@ typedef struct cnet_shards_config {
   size_t max_command_payload_bytes;
 } cnet_shards_config;
 
+typedef struct cnet_shards_layout {
+  size_t shard_count;
+  size_t connection_capacity_per_shard;
+  size_t max_event_payload_bytes;
+} cnet_shards_layout;
+
 bool cnet_shard_connection_valid(cnet_shard_connection connection);
 
 /** Starts exactly one long-lived owner task for each configured shard. */
 int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config);
+bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_layout);
 
 /** Reserves one stable shard/session pair and publishes a copied connect command. */
 int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *payload,

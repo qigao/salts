@@ -50,6 +50,8 @@ typedef struct cnet_callback_job {
 /** Starts exactly one long-lived callback task per configured worker lane. */
 int cnet_callback_workers_init(cnet_callback_workers *workers,
                                const cnet_callback_workers_config *config);
+bool cnet_callback_workers_get_config(const cnet_callback_workers *workers,
+                                      cnet_callback_workers_config *out_config);
 
 /**
  * MPSC and nonblocking. Success moves the data lease and exactly one release

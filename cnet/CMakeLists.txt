@@ -5,6 +5,7 @@ find_package(c-ares CONFIG REQUIRED)
 add_library(${TARGET_NAME} STATIC
   src/cnet_callback.c
   src/cnet_command.c
+  src/cnet_dispatcher.c
   src/cnet_event.c
   src/cnet_module.c
   src/cnet_owner.c

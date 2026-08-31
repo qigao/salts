@@ -245,8 +245,13 @@ spec("CNet callback workers") {
     bool first_started;
     bool other_finished;
     bool all_finished;
+    cnet_callback_workers_config observed_config = {0};
 
     check_equal(cnet_callback_workers_init(&workers, &config), TURBO_OK);
+    check_true(cnet_callback_workers_get_config(&workers, &observed_config));
+    check_equal(observed_config.worker_count, config.worker_count);
+    check_equal(observed_config.capacity_per_worker, config.capacity_per_worker);
+    check_equal(observed_config.max_payload_bytes, config.max_payload_bytes);
     check_equal(cnet_callback_workers_publish(&workers, &first_job), TURBO_OK);
     first_started = cnet_callback_test_wait_at_least(&probe.first_started, 1);
     if (!first_started) atomic_store_explicit(&probe.release_first, true, memory_order_release);
