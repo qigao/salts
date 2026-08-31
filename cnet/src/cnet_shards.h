@@ -30,11 +30,19 @@ typedef struct cnet_shards_layout {
   size_t max_event_payload_bytes;
 } cnet_shards_layout;
 
+typedef int (*cnet_shards_event_sink_fn)(void *context, uint32_t shard);
+
 bool cnet_shard_connection_valid(cnet_shard_connection connection);
 
 /** Starts exactly one long-lived owner task for each configured shard. */
 int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config);
 bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_layout);
+
+/**
+ * Binds the single event sink driven by each shard owner after NativeIO progress.
+ * The sink must be nonblocking and consume at most one leased event per call.
+ */
+int cnet_shards_bind_event_sink(cnet_shards *shards, cnet_shards_event_sink_fn sink, void *context);
 
 /** Reserves one stable shard/session pair and publishes a copied connect command. */
 int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *payload,
@@ -47,9 +55,6 @@ int cnet_shards_close(cnet_shards *shards, cnet_shard_connection connection);
 int cnet_shards_state(cnet_shards *shards, cnet_shard_connection connection,
                       cnet_session_state *out_state);
 int cnet_shards_take_event(cnet_shards *shards, uint32_t shard, cnet_event_view *out_event);
-int cnet_shards_take_event_wait(cnet_shards *shards, uint32_t shard, cnet_event_view *out_event,
-                                cnet_event_keep_waiting_fn keep_waiting, void *context);
-int cnet_shards_wake_events(cnet_shards *shards);
 int cnet_shards_release_event(cnet_shards *shards, uint32_t shard, cnet_event_view *event);
 
 /** Consumes the terminal record and releases the stable shard assignment. */

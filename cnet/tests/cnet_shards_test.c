@@ -5,6 +5,8 @@
 #include <turbo/clock.h>
 #include <turbo/thread.h>
 
+#include <stdatomic.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -97,7 +99,105 @@ static int cnet_shards_test_wait_event(cnet_shards *shards, uint32_t shard,
   }
 }
 
+static int cnet_shards_test_wait_atomic(const atomic_int *value, int expected) {
+  const uint64_t deadline = turbo_monotonic_ms() + CNET_SHARDS_TEST_TIMEOUT_MS;
+  while (atomic_load_explicit(value, memory_order_acquire) != expected) {
+    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
+    turbo_thread_yield();
+  }
+  return TURBO_OK;
+}
+
+typedef struct cnet_shards_test_sink_probe {
+  cnet_shards *shards;
+  atomic_int connected;
+  atomic_int terminal;
+  atomic_int status;
+} cnet_shards_test_sink_probe;
+
+static int cnet_shards_test_sink(void *context, uint32_t shard) {
+  cnet_shards_test_sink_probe *probe = (cnet_shards_test_sink_probe *)context;
+  cnet_event_view event = {0};
+  const int take_status = cnet_shards_take_event(probe->shards, shard, &event);
+  bool terminal_event;
+  cnet_shard_connection connection;
+  int status;
+
+  if (take_status != TURBO_OK) return take_status;
+  terminal_event = event.kind == CNET_EVENT_STATE && (event.state == CNET_EVENT_STATE_CLOSED ||
+                                                      event.state == CNET_EVENT_STATE_FAILED);
+  connection = (cnet_shard_connection){shard, event.session};
+  if (event.kind == CNET_EVENT_STATE && event.state == CNET_EVENT_STATE_CONNECTED)
+    atomic_store_explicit(&probe->connected, 1, memory_order_release);
+  status = cnet_shards_release_event(probe->shards, shard, &event);
+  if (status != TURBO_OK) {
+    atomic_store_explicit(&probe->status, status, memory_order_release);
+    return status;
+  }
+  if (terminal_event) {
+    cnet_session_terminal terminal = {0};
+    status = cnet_shards_recycle(probe->shards, connection, &terminal);
+    atomic_store_explicit(&probe->status, status, memory_order_release);
+    atomic_store_explicit(&probe->terminal, 1, memory_order_release);
+  }
+  return status;
+}
+
 spec("CNet long-lived owner shards") {
+  it("lets an owner drive a bound event sink without a dispatcher thread") {
+    cnet_shards shards = {0};
+    const cnet_shards_config config = {.backend_kind =
+#if defined(_WIN32)
+                                           NATIVE_IO_BACKEND_IOCP,
+#elif defined(__linux__)
+                                           NATIVE_IO_BACKEND_EPOLL,
+#else
+                                           NATIVE_IO_BACKEND_KQUEUE,
+#endif
+                                       .shard_count = 1u,
+                                       .connection_capacity_per_shard = 1u,
+                                       .command_capacity_per_shard = 8u,
+                                       .request_capacity_per_shard = 4u,
+                                       .completion_batch_capacity = 4u,
+                                       .event_capacity_per_shard = 8u,
+                                       .receive_buffer_bytes = 64u,
+                                       .max_command_payload_bytes =
+                                           sizeof(cnet_owner_connect_payload)};
+    cnet_shards_test_sink_probe probe = {.shards = &shards};
+    cnet_shards_test_socket listener = CNET_SHARDS_TEST_INVALID_SOCKET;
+    cnet_shards_test_socket accepted = CNET_SHARDS_TEST_INVALID_SOCKET;
+    struct sockaddr_in address;
+    cnet_owner_connect_payload payload = {0};
+    cnet_shard_connection connection = {0};
+
+    atomic_init(&probe.connected, 0);
+    atomic_init(&probe.terminal, 0);
+    atomic_init(&probe.status, TURBO_OK);
+    check_equal(cnet_module_init(), TURBO_OK);
+    check_equal(cnet_shards_test_listener(&listener, &address), TURBO_OK);
+    check_equal(cnet_shards_init(&shards, &config), TURBO_OK);
+    check_equal(cnet_shards_bind_event_sink(&shards, cnet_shards_test_sink, &probe), TURBO_OK);
+
+    payload.scheme = CNET_URI_TCP;
+    memcpy(payload.host, "127.0.0.1", sizeof("127.0.0.1"));
+    payload.port = ntohs(address.sin_port);
+    check_equal(cnet_shards_connect(&shards, &payload, &connection), TURBO_OK);
+    accepted = accept(listener, NULL, NULL);
+    check_true(accepted != CNET_SHARDS_TEST_INVALID_SOCKET);
+    check_equal(cnet_shards_test_wait_state(&shards, connection, CNET_SESSION_OPEN), TURBO_OK);
+    check_equal(cnet_shards_test_wait_atomic(&probe.connected, 1), TURBO_OK);
+    check_equal(atomic_load_explicit(&probe.connected, memory_order_acquire), 1);
+
+    check_equal(cnet_shards_close(&shards, connection), TURBO_OK);
+    check_equal(cnet_shards_test_wait_atomic(&probe.terminal, 1), TURBO_OK);
+    check_equal(atomic_load_explicit(&probe.status, memory_order_acquire), TURBO_OK);
+    check_equal(cnet_shards_stop(&shards, CNET_SHARDS_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_shards_destroy(&shards), TURBO_OK);
+    cnet_shards_test_close_socket(accepted);
+    cnet_shards_test_close_socket(listener);
+    check_equal(cnet_module_shutdown(), TURBO_OK);
+  }
+
   it("assigns connections once and routes them to independent owner tasks") {
     cnet_shards shards = {0};
     const cnet_shards_config config = {.backend_kind =

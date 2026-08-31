@@ -12,7 +12,10 @@
 
 enum { CNET_SHARDS_OWNER_WAIT_MS = 1000 };
 
+typedef struct cnet_shards_impl cnet_shards_impl;
+
 typedef struct cnet_shard_record {
+  cnet_shards_impl *shards;
   cnet_owner owner;
   cnet_session_table sessions;
   cnet_command_queue commands;
@@ -20,10 +23,11 @@ typedef struct cnet_shard_record {
   atomic_bool stop_requested;
   atomic_bool settled;
   atomic_int drive_status;
+  uint32_t shard;
   bool owner_closed;
 } cnet_shard_record;
 
-typedef struct cnet_shards_impl {
+struct cnet_shards_impl {
   cnet_shard_record *records;
   turbo_threadpool_t *owner_pool;
   turbo_mutex_t admission_lock;
@@ -33,10 +37,12 @@ typedef struct cnet_shards_impl {
   size_t active_connections;
   size_t next_shard;
   size_t max_command_payload_bytes;
+  _Atomic(cnet_shards_event_sink_fn) event_sink;
+  _Atomic(void *) event_sink_context;
   bool admission_open;
   bool stopping;
   bool stopped;
-} cnet_shards_impl;
+};
 
 static cnet_shards_impl *cnet_shards_get(cnet_shards *shards) {
   return shards != NULL ? (cnet_shards_impl *)shards->impl : NULL;
@@ -62,7 +68,31 @@ static void cnet_shards_owner_task(void *context) {
   int status = TURBO_OK;
 
   while (!atomic_load_explicit(&record->stop_requested, memory_order_acquire)) {
+    cnet_shards_event_sink_fn sink;
+    void *sink_context;
+
     status = cnet_owner_drive(&record->owner, CNET_SHARDS_OWNER_WAIT_MS);
+    if (status != TURBO_OK) break;
+    sink = atomic_load_explicit(&record->shards->event_sink, memory_order_acquire);
+    if (sink == NULL) continue;
+    sink_context = atomic_load_explicit(&record->shards->event_sink_context, memory_order_relaxed);
+    for (;;) {
+      status = sink(sink_context, record->shard);
+      if (status == TURBO_OK) continue;
+      if (status == TURBO_ETIMEDOUT) {
+        status = TURBO_OK;
+        break;
+      }
+      if (status == TURBO_ENOBUFS || status == TURBO_EBUSY) {
+        if (atomic_load_explicit(&record->stop_requested, memory_order_acquire)) {
+          status = TURBO_OK;
+          break;
+        }
+        turbo_thread_yield();
+        continue;
+      }
+      break;
+    }
     if (status != TURBO_OK) break;
   }
   atomic_store_explicit(&record->drive_status, status, memory_order_release);
@@ -123,6 +153,8 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
   impl->max_event_payload_bytes = config->receive_buffer_bytes;
   impl->max_command_payload_bytes = config->max_command_payload_bytes;
   impl->admission_open = true;
+  atomic_init(&impl->event_sink, NULL);
+  atomic_init(&impl->event_sink_context, NULL);
   turbo_mutex_init(&impl->admission_lock);
 
   for (index = 0u; index < impl->shard_count; ++index) {
@@ -143,6 +175,8 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
         .commands = &record->commands,
         .events = &record->events};
 
+    record->shards = impl;
+    record->shard = (uint32_t)index;
     atomic_init(&record->stop_requested, false);
     atomic_init(&record->settled, false);
     atomic_init(&record->drive_status, TURBO_OK);
@@ -192,6 +226,27 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
   }
 
   shards->impl = impl;
+  return TURBO_OK;
+}
+
+int cnet_shards_bind_event_sink(cnet_shards *shards, cnet_shards_event_sink_fn sink,
+                                void *context) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  size_t index;
+
+  if (impl == NULL || sink == NULL || context == NULL) return TURBO_EINVAL;
+  turbo_mutex_lock(&impl->admission_lock);
+  if (atomic_load_explicit(&impl->event_sink, memory_order_relaxed) != NULL) {
+    turbo_mutex_unlock(&impl->admission_lock);
+    return TURBO_EALREADY;
+  }
+  atomic_store_explicit(&impl->event_sink_context, context, memory_order_relaxed);
+  atomic_store_explicit(&impl->event_sink, sink, memory_order_release);
+  turbo_mutex_unlock(&impl->admission_lock);
+  for (index = 0u; index < impl->shard_count; ++index) {
+    const int status = cnet_owner_wake(&impl->records[index].owner);
+    if (status != TURBO_OK) return status;
+  }
   return TURBO_OK;
 }
 
@@ -317,26 +372,6 @@ int cnet_shards_state(cnet_shards *shards, cnet_shard_connection connection,
 int cnet_shards_take_event(cnet_shards *shards, uint32_t shard, cnet_event_view *out_event) {
   cnet_shard_record *record = cnet_shards_get_record(cnet_shards_get(shards), shard);
   return record != NULL ? cnet_event_queue_take(&record->events, out_event) : TURBO_EINVAL;
-}
-
-int cnet_shards_take_event_wait(cnet_shards *shards, uint32_t shard, cnet_event_view *out_event,
-                                cnet_event_keep_waiting_fn keep_waiting, void *context) {
-  cnet_shard_record *record = cnet_shards_get_record(cnet_shards_get(shards), shard);
-  return record != NULL
-             ? cnet_event_queue_take_wait(&record->events, out_event, keep_waiting, context)
-             : TURBO_EINVAL;
-}
-
-int cnet_shards_wake_events(cnet_shards *shards) {
-  cnet_shards_impl *impl = cnet_shards_get(shards);
-  size_t index;
-  int status = TURBO_OK;
-  if (impl == NULL) return TURBO_EINVAL;
-  for (index = 0u; index < impl->shard_count; ++index) {
-    const int wake_status = cnet_event_queue_wake(&impl->records[index].events);
-    if (wake_status != TURBO_OK && status == TURBO_OK) status = wake_status;
-  }
-  return status;
 }
 
 int cnet_shards_release_event(cnet_shards *shards, uint32_t shard, cnet_event_view *event) {

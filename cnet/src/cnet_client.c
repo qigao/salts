@@ -8,7 +8,6 @@
 
 #include <turbo/clock.h>
 #include <turbo/thread.h>
-#include <turbo/thread_pool.h>
 
 #include <limits.h>
 #include <stdatomic.h>
@@ -27,18 +26,10 @@ typedef struct cnet_client_record {
   bool active;
 } cnet_client_record;
 
-typedef struct cnet_dispatch_task {
-  cnet_client_impl *client;
-  uint32_t shard;
-  atomic_bool settled;
-} cnet_dispatch_task;
-
 struct cnet_client_impl {
   cnet_shards shards;
   cnet_callback_workers callbacks;
   cnet_dispatcher dispatcher;
-  turbo_threadpool_t *dispatcher_pool;
-  cnet_dispatch_task *dispatch_tasks;
   cnet_client_record *records;
   turbo_mutex_t lock;
   size_t shard_count;
@@ -50,9 +41,7 @@ struct cnet_client_impl {
   uint32_t connect_timeout_ms;
   uint32_t read_timeout_ms;
   uint32_t write_timeout_ms;
-  atomic_bool dispatch_running;
-  atomic_int dispatch_error;
-  bool dispatcher_workers_stopped;
+  atomic_int callback_error;
   bool admission_open;
   bool stop_active;
   bool stopped;
@@ -83,8 +72,7 @@ static bool cnet_client_config_valid(const cnet_client_config *config) {
   if (config->connection_capacity % config->io_shards != 0u) ++capacity_per_shard;
   if (capacity_per_shard == 0u || config->io_shards > SIZE_MAX / capacity_per_shard) return false;
   record_count = config->io_shards * capacity_per_shard;
-  return record_count <= UINT32_MAX && record_count <= SIZE_MAX / sizeof(cnet_client_record) &&
-         config->io_shards <= SIZE_MAX / sizeof(cnet_dispatch_task);
+  return record_count <= UINT32_MAX && record_count <= SIZE_MAX / sizeof(cnet_client_record);
 }
 
 static uint32_t cnet_client_remaining_ms(uint64_t started_ms, uint32_t timeout_ms) {
@@ -94,35 +82,13 @@ static uint32_t cnet_client_remaining_ms(uint64_t started_ms, uint32_t timeout_m
 
 static void cnet_client_record_error(cnet_client_impl *impl, int status) {
   int expected = TURBO_OK;
-  if (status == TURBO_OK || status == TURBO_ECANCELED || status == TURBO_EOF) return;
-  (void)atomic_compare_exchange_strong_explicit(&impl->dispatch_error, &expected, status,
+  if (status == TURBO_OK) return;
+  (void)atomic_compare_exchange_strong_explicit(&impl->callback_error, &expected, status,
                                                 memory_order_acq_rel, memory_order_acquire);
 }
 
-static int cnet_client_dispatch_keep_running(void *context) {
-  cnet_dispatch_task *task = (cnet_dispatch_task *)context;
-  return atomic_load_explicit(&task->client->dispatch_running, memory_order_acquire);
-}
-
-static void cnet_client_dispatch_task(void *context) {
-  cnet_dispatch_task *task = (cnet_dispatch_task *)context;
-  cnet_client_impl *impl = task->client;
-
-  while (atomic_load_explicit(&impl->dispatch_running, memory_order_acquire)) {
-    const int status = cnet_dispatcher_drive_wait(&impl->dispatcher, task->shard,
-                                                  cnet_client_dispatch_keep_running, task);
-    if (status == TURBO_OK) continue;
-    if (status == TURBO_ENOBUFS || status == TURBO_EBUSY) {
-      turbo_thread_yield();
-      continue;
-    }
-    if ((status == TURBO_ECANCELED || status == TURBO_EOF) &&
-        !atomic_load_explicit(&impl->dispatch_running, memory_order_acquire))
-      break;
-    cnet_client_record_error(impl, status);
-    break;
-  }
-  atomic_store_explicit(&task->settled, true, memory_order_release);
+static int cnet_client_dispatch(void *context, uint32_t shard) {
+  return cnet_dispatcher_drive((cnet_dispatcher *)context, shard);
 }
 
 static bool cnet_client_turbo_status(int status) {
@@ -218,48 +184,9 @@ static void cnet_client_observe(void *context, const cnet_callback_view *view) {
   }
 }
 
-static int cnet_client_stop_dispatchers(cnet_client_impl *impl, uint32_t timeout_ms) {
-  const uint64_t started_ms = turbo_monotonic_ms();
-  size_t index;
-  int status;
-  if (impl->dispatcher_workers_stopped) return TURBO_OK;
-  atomic_store_explicit(&impl->dispatch_running, false, memory_order_release);
-  status = cnet_dispatcher_wake(&impl->dispatcher);
-  if (status != TURBO_OK) return status;
-  for (;;) {
-    bool settled = true;
-    for (index = 0u; index < impl->shard_count; ++index) {
-      if (!atomic_load_explicit(&impl->dispatch_tasks[index].settled, memory_order_acquire)) {
-        settled = false;
-        break;
-      }
-    }
-    if (settled) break;
-    if (turbo_monotonic_ms() - started_ms >= timeout_ms) return TURBO_ETIMEDOUT;
-    turbo_thread_yield();
-  }
-  status =
-      turbo_threadpool_shutdown_with_policy(impl->dispatcher_pool, TURBO_THREADPOOL_SHUTDOWN_DRAIN);
-  if (status == TURBO_OK) status = turbo_threadpool_wait_status(impl->dispatcher_pool);
-  if (status != TURBO_OK) return status;
-  impl->dispatcher_workers_stopped = true;
-  return atomic_load_explicit(&impl->dispatch_error, memory_order_acquire);
-}
-
-static void cnet_client_cleanup_init(cnet_client_impl *impl, size_t dispatcher_tasks) {
-  size_t index;
+static void cnet_client_cleanup_init(cnet_client_impl *impl) {
   if (impl == NULL) return;
-  if (impl->dispatcher_pool != NULL) {
-    atomic_store_explicit(&impl->dispatch_running, false, memory_order_release);
-    if (impl->dispatcher.impl != NULL) (void)cnet_dispatcher_wake(&impl->dispatcher);
-    for (index = 0u; index < dispatcher_tasks; ++index)
-      while (!atomic_load_explicit(&impl->dispatch_tasks[index].settled, memory_order_acquire))
-        turbo_thread_yield();
-    (void)turbo_threadpool_shutdown_with_policy(impl->dispatcher_pool,
-                                                TURBO_THREADPOOL_SHUTDOWN_DRAIN);
-    (void)turbo_threadpool_wait_status(impl->dispatcher_pool);
-    turbo_threadpool_destroy(impl->dispatcher_pool);
-  }
+  if (impl->shards.impl != NULL) (void)cnet_shards_stop(&impl->shards, 5000u);
   if (impl->dispatcher.impl != NULL) {
     (void)cnet_dispatcher_drain(&impl->dispatcher, 0u);
     (void)cnet_dispatcher_destroy(&impl->dispatcher);
@@ -268,12 +195,8 @@ static void cnet_client_cleanup_init(cnet_client_impl *impl, size_t dispatcher_t
     (void)cnet_callback_workers_stop(&impl->callbacks, 5000u);
     (void)cnet_callback_workers_destroy(&impl->callbacks);
   }
-  if (impl->shards.impl != NULL) {
-    (void)cnet_shards_stop(&impl->shards, 5000u);
-    (void)cnet_shards_destroy(&impl->shards);
-  }
+  if (impl->shards.impl != NULL) (void)cnet_shards_destroy(&impl->shards);
   turbo_mutex_destroy(&impl->lock);
-  free(impl->dispatch_tasks);
   free(impl->records);
   free(impl);
   (void)cnet_module_shutdown();
@@ -283,8 +206,6 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   cnet_client_impl *impl;
   cnet_shards_config shards_config;
   cnet_callback_workers_config callback_config;
-  turbo_threadpool_config_t pool_config;
-  size_t submitted = 0u;
   size_t index;
   int status;
 
@@ -309,14 +230,11 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   impl->read_timeout_ms = config->read_timeout_ms;
   impl->write_timeout_ms = config->write_timeout_ms;
   impl->admission_open = true;
-  atomic_init(&impl->dispatch_running, true);
-  atomic_init(&impl->dispatch_error, TURBO_OK);
+  atomic_init(&impl->callback_error, TURBO_OK);
   turbo_mutex_init(&impl->lock);
   impl->records = (cnet_client_record *)calloc(impl->record_count, sizeof(*impl->records));
-  impl->dispatch_tasks =
-      (cnet_dispatch_task *)calloc(impl->shard_count, sizeof(*impl->dispatch_tasks));
-  if (impl->records == NULL || impl->dispatch_tasks == NULL) {
-    cnet_client_cleanup_init(impl, 0u);
+  if (impl->records == NULL) {
+    cnet_client_cleanup_init(impl);
     return TURBO_ENOMEM;
   }
   for (index = 0u; index < impl->record_count; ++index)
@@ -336,7 +254,7 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
                                        : sizeof(cnet_owner_connect_payload)};
   status = cnet_shards_init(&impl->shards, &shards_config);
   if (status != TURBO_OK) {
-    cnet_client_cleanup_init(impl, 0u);
+    cnet_client_cleanup_init(impl);
     return status;
   }
   callback_config = (cnet_callback_workers_config){
@@ -344,28 +262,10 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   status = cnet_callback_workers_init(&impl->callbacks, &callback_config);
   if (status == TURBO_OK)
     status = cnet_dispatcher_init(&impl->dispatcher, &impl->shards, &impl->callbacks);
+  if (status == TURBO_OK)
+    status = cnet_shards_bind_event_sink(&impl->shards, cnet_client_dispatch, &impl->dispatcher);
   if (status != TURBO_OK) {
-    cnet_client_cleanup_init(impl, 0u);
-    return status;
-  }
-
-  pool_config = (turbo_threadpool_config_t){(int)impl->shard_count, impl->shard_count};
-  impl->dispatcher_pool = turbo_threadpool_create_with_config(&pool_config);
-  if (impl->dispatcher_pool == NULL) {
-    cnet_client_cleanup_init(impl, 0u);
-    return TURBO_ENOMEM;
-  }
-  for (index = 0u; index < impl->shard_count; ++index) {
-    cnet_dispatch_task *task = &impl->dispatch_tasks[index];
-    task->client = impl;
-    task->shard = (uint32_t)index;
-    atomic_init(&task->settled, false);
-    status = turbo_threadpool_try_submit(impl->dispatcher_pool, cnet_client_dispatch_task, task);
-    if (status != TURBO_OK) break;
-    ++submitted;
-  }
-  if (status != TURBO_OK) {
-    cnet_client_cleanup_init(impl, submitted);
+    cnet_client_cleanup_init(impl);
     return status;
   }
   client->impl = impl;
@@ -514,15 +414,15 @@ int cnet_client_stop(cnet_client *client, uint32_t timeout_ms) {
   impl->admission_open = false;
   turbo_mutex_unlock(&impl->lock);
 
-  status = cnet_client_stop_dispatchers(impl, cnet_client_remaining_ms(started_ms, timeout_ms));
-  if (status == TURBO_OK)
-    status =
-        cnet_dispatcher_drain(&impl->dispatcher, cnet_client_remaining_ms(started_ms, timeout_ms));
+  status =
+      cnet_dispatcher_drain(&impl->dispatcher, cnet_client_remaining_ms(started_ms, timeout_ms));
   if (status == TURBO_EALREADY) status = TURBO_OK;
   if (status == TURBO_OK)
     status = cnet_callback_workers_stop(&impl->callbacks,
                                         cnet_client_remaining_ms(started_ms, timeout_ms));
   if (status == TURBO_EALREADY) status = TURBO_OK;
+  if (status == TURBO_OK)
+    status = atomic_load_explicit(&impl->callback_error, memory_order_acquire);
   if (status == TURBO_OK)
     status = cnet_shards_stop(&impl->shards, cnet_client_remaining_ms(started_ms, timeout_ms));
   if (status == TURBO_EALREADY) status = TURBO_OK;
@@ -553,9 +453,7 @@ int cnet_client_destroy(cnet_client *client) {
   if (status != TURBO_OK) return status;
   status = cnet_shards_destroy(&impl->shards);
   if (status != TURBO_OK) return status;
-  turbo_threadpool_destroy(impl->dispatcher_pool);
   turbo_mutex_destroy(&impl->lock);
-  free(impl->dispatch_tasks);
   free(impl->records);
   free(impl);
   client->impl = NULL;

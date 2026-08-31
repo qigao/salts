@@ -37,13 +37,6 @@ typedef struct cnet_dispatcher_test_probe {
   unsigned char value;
 } cnet_dispatcher_test_probe;
 
-typedef struct cnet_dispatcher_wait_probe {
-  cnet_dispatcher *dispatcher;
-  atomic_bool running;
-  atomic_bool entered;
-  int status;
-} cnet_dispatcher_wait_probe;
-
 static void cnet_dispatcher_test_close_socket(cnet_dispatcher_test_socket socket_value) {
   if (socket_value == CNET_DISPATCHER_TEST_INVALID_SOCKET) return;
 #if defined(_WIN32)
@@ -110,27 +103,6 @@ static void cnet_dispatcher_test_observe(void *context, const cnet_callback_view
     atomic_store_explicit(&probe->order_error, 1, memory_order_release);
 }
 
-static int cnet_dispatcher_test_keep_running(void *context) {
-  cnet_dispatcher_wait_probe *probe = (cnet_dispatcher_wait_probe *)context;
-  atomic_store_explicit(&probe->entered, true, memory_order_release);
-  return atomic_load_explicit(&probe->running, memory_order_acquire);
-}
-
-static void cnet_dispatcher_test_wait_worker(void *context) {
-  cnet_dispatcher_wait_probe *probe = (cnet_dispatcher_wait_probe *)context;
-  probe->status =
-      cnet_dispatcher_drive_wait(probe->dispatcher, 0u, cnet_dispatcher_test_keep_running, probe);
-}
-
-static int cnet_dispatcher_test_wait_value(atomic_int *value, int expected) {
-  const uint64_t deadline = turbo_monotonic_ms() + CNET_DISPATCHER_TEST_TIMEOUT_MS;
-  while (atomic_load_explicit(value, memory_order_acquire) < expected) {
-    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
-    turbo_thread_yield();
-  }
-  return TURBO_OK;
-}
-
 static int cnet_dispatcher_test_drive_until_status(cnet_dispatcher *dispatcher, int expected) {
   const uint64_t deadline = turbo_monotonic_ms() + CNET_DISPATCHER_TEST_TIMEOUT_MS;
   for (;;) {
@@ -190,8 +162,6 @@ spec("CNet event dispatcher") {
     cnet_shard_connection replacement = {0};
     cnet_dispatcher_test_probe probe = {0};
     cnet_dispatcher_test_probe replacement_probe = {0};
-    cnet_dispatcher_wait_probe wait_probe = {.dispatcher = &dispatcher, .status = TURBO_EIO};
-    turbo_thread_t wait_thread = NULL;
     const unsigned char inbound = 23u;
 
     check_equal(cnet_module_init(), TURBO_OK);
@@ -219,16 +189,9 @@ spec("CNet event dispatcher") {
     check_equal(
         cnet_dispatcher_register(&dispatcher, connection, cnet_dispatcher_test_observe, &probe),
         TURBO_EALREADY);
-    atomic_init(&wait_probe.running, true);
-    atomic_init(&wait_probe.entered, false);
-    check_equal(turbo_thread_create(&wait_thread, cnet_dispatcher_test_wait_worker, &wait_probe),
-                TURBO_OK);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CNET_DISPATCHER_TEST_INVALID_SOCKET);
-    check_equal(turbo_thread_join(&wait_thread), TURBO_OK);
-    turbo_thread_destroy(&wait_thread);
-    check_equal(wait_probe.status, TURBO_OK);
-    check_equal(cnet_dispatcher_test_wait_value(&probe.connected, 1), TURBO_OK);
+    check_equal(cnet_dispatcher_test_drive_until(&dispatcher, &probe.connected, 1), TURBO_OK);
 
     check_equal(cnet_shards_receive(&shards, connection, 1u), TURBO_OK);
     check_equal(send(accepted, (const char *)&inbound, (int)sizeof(inbound), 0),
@@ -264,17 +227,6 @@ spec("CNet event dispatcher") {
                 TURBO_ESHUTDOWN);
     check_equal(cnet_dispatcher_drain(&dispatcher, CNET_DISPATCHER_TEST_TIMEOUT_MS),
                 TURBO_EALREADY);
-    wait_probe.status = TURBO_EIO;
-    atomic_store_explicit(&wait_probe.entered, false, memory_order_release);
-    check_equal(turbo_thread_create(&wait_thread, cnet_dispatcher_test_wait_worker, &wait_probe),
-                TURBO_OK);
-    while (!atomic_load_explicit(&wait_probe.entered, memory_order_acquire))
-      turbo_thread_yield();
-    atomic_store_explicit(&wait_probe.running, false, memory_order_release);
-    check_equal(cnet_dispatcher_wake(&dispatcher), TURBO_OK);
-    check_equal(turbo_thread_join(&wait_thread), TURBO_OK);
-    turbo_thread_destroy(&wait_thread);
-    check_equal(wait_probe.status, TURBO_ECANCELED);
     check_equal(cnet_callback_workers_stop(&callbacks, CNET_DISPATCHER_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(cnet_dispatcher_destroy(&dispatcher), TURBO_OK);
     check_equal(cnet_callback_workers_destroy(&callbacks), TURBO_OK);

@@ -655,7 +655,9 @@ static int cnet_owner_complete(cnet_owner_impl *impl, const native_io_completion
         return TURBO_OK;
       }
       if (status != TURBO_OK) return status;
-      return cnet_owner_arm_receive(impl, session);
+      /* A later completion in this observed batch may still own the backend slot
+       * selected by a new request. The next drive rearms after every record settles. */
+      return TURBO_OK;
     }
     if (completion->kind == NATIVE_IO_COMPLETION_EOF) {
       status = cnet_session_table_begin_close(impl->sessions, session->handle);

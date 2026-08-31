@@ -18,12 +18,13 @@ typedef SOCKET cnet_api_test_socket;
 #else
   #include <netinet/in.h>
   #include <sys/socket.h>
+  #include <sys/time.h>
   #include <unistd.h>
 typedef int cnet_api_test_socket;
   #define CNET_API_TEST_INVALID_SOCKET (-1)
 #endif
 
-enum { CNET_API_TEST_TIMEOUT_MS = 5000 };
+enum { CNET_API_TEST_TIMEOUT_MS = 5000, CNET_API_TEST_BATCH_DATAGRAMS = 256 };
 
 typedef struct cnet_api_test_probe {
   cnet_client *client;
@@ -39,12 +40,37 @@ typedef struct cnet_api_test_probe {
   unsigned char received_value;
 } cnet_api_test_probe;
 
+typedef struct cnet_api_test_batch_probe {
+  atomic_int connected;
+  atomic_int received;
+  atomic_int terminal;
+  atomic_int failed;
+  unsigned char received_value;
+} cnet_api_test_batch_probe;
+
 static void cnet_api_test_close_socket(cnet_api_test_socket socket_value) {
   if (socket_value == CNET_API_TEST_INVALID_SOCKET) return;
 #if defined(_WIN32)
   (void)closesocket(socket_value);
 #else
   (void)close(socket_value);
+#endif
+}
+
+static int cnet_api_test_set_receive_timeout(cnet_api_test_socket socket_value) {
+#if defined(_WIN32)
+  const DWORD timeout_ms = CNET_API_TEST_TIMEOUT_MS;
+  return setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms,
+                    (int)sizeof(timeout_ms)) == 0
+             ? TURBO_OK
+             : TURBO_EIO;
+#else
+  const struct timeval timeout = {CNET_API_TEST_TIMEOUT_MS / 1000,
+                                  (CNET_API_TEST_TIMEOUT_MS % 1000) * 1000};
+  return setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, &timeout, (socklen_t)sizeof(timeout)) ==
+                 0
+             ? TURBO_OK
+             : TURBO_EIO;
 #endif
 }
 
@@ -135,6 +161,29 @@ static void cnet_api_test_ignore_state(void *user, cnet_connection connection,
   (void)connection;
   (void)state;
   (void)error;
+}
+
+static void cnet_api_test_batch_state(void *user, cnet_connection connection,
+                                      cnet_connection_state state, const cnet_error *error) {
+  cnet_api_test_batch_probe *probe = (cnet_api_test_batch_probe *)user;
+  (void)connection;
+  if (state == CNET_CONNECTION_CONNECTED)
+    atomic_store_explicit(&probe->connected, 1, memory_order_release);
+  else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
+    if (state == CNET_CONNECTION_FAILED || error != NULL)
+      atomic_store_explicit(&probe->failed, 1, memory_order_release);
+    atomic_store_explicit(&probe->terminal, 1, memory_order_release);
+  }
+}
+
+static void cnet_api_test_batch_receive(void *user, cnet_connection connection,
+                                        const cnet_receive_view *view) {
+  cnet_api_test_batch_probe *probe = (cnet_api_test_batch_probe *)user;
+  (void)connection;
+  if (view->kind != CNET_MESSAGE_DATAGRAM || view->size != 1u)
+    atomic_store_explicit(&probe->failed, 1, memory_order_release);
+  else probe->received_value = *(const unsigned char *)view->data;
+  atomic_fetch_add_explicit(&probe->received, 1, memory_order_release);
 }
 
 static cnet_client_config cnet_api_test_config(void) {
@@ -366,6 +415,7 @@ spec("CNet public client API") {
     check_equal(cnet_client_init(&client, &config), TURBO_OK);
     server = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     check_true(server != CNET_API_TEST_INVALID_SOCKET);
+    check_equal(cnet_api_test_set_receive_timeout(server), TURBO_OK);
     memset(&server_address, 0, sizeof(server_address));
     server_address.sin_family = AF_INET;
     server_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -393,6 +443,81 @@ spec("CNet public client API") {
     check_equal(probe.received_value, expected_inbound);
     check_equal(cnet_api_test_wait(&probe.terminal, 1), TURBO_OK);
     check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    cnet_api_test_close_socket(server);
+  }
+
+  it("delivers every UDP datagram from one bounded receive demand") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_api_test_batch_probe probe;
+    cnet_api_test_socket server = CNET_API_TEST_INVALID_SOCKET;
+    struct sockaddr_in server_address;
+    struct sockaddr_in client_address;
+#if defined(_WIN32)
+    int server_length = (int)sizeof(server_address);
+    int client_length = (int)sizeof(client_address);
+#else
+    socklen_t server_length = (socklen_t)sizeof(server_address);
+    socklen_t client_length = (socklen_t)sizeof(client_address);
+#endif
+    cnet_connection connection = {0};
+    cnet_connect_options options;
+    char uri[64];
+    int exchange_status = TURBO_OK;
+
+    atomic_init(&probe.connected, 0);
+    atomic_init(&probe.received, 0);
+    atomic_init(&probe.terminal, 0);
+    atomic_init(&probe.failed, 0);
+    probe.received_value = 0u;
+    check_equal(cnet_client_init(&client, &config), TURBO_OK);
+    server = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    check_true(server != CNET_API_TEST_INVALID_SOCKET);
+    check_equal(cnet_api_test_set_receive_timeout(server), TURBO_OK);
+    memset(&server_address, 0, sizeof(server_address));
+    server_address.sin_family = AF_INET;
+    server_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    check_equal(bind(server, (const struct sockaddr *)&server_address, (int)sizeof(server_address)),
+                0);
+    check_equal(getsockname(server, (struct sockaddr *)&server_address, &server_length), 0);
+    (void)snprintf(uri, sizeof(uri), "udp://127.0.0.1:%u",
+                   (unsigned int)ntohs(server_address.sin_port));
+    options = (cnet_connect_options){.uri = uri,
+                                     .observer = {.on_state = cnet_api_test_batch_state,
+                                                  .on_receive = cnet_api_test_batch_receive,
+                                                  .user = &probe}};
+    check_equal(cnet_connect(&client, &options, &connection), TURBO_OK);
+    check_equal(cnet_api_test_wait(&probe.connected, 1), TURBO_OK);
+    check_equal(cnet_receive(&client, connection, CNET_API_TEST_BATCH_DATAGRAMS), TURBO_OK);
+
+    for (int index = 0; exchange_status == TURBO_OK && index < CNET_API_TEST_BATCH_DATAGRAMS;
+         ++index) {
+      unsigned char outbound = 0u;
+      const unsigned char expected = (unsigned char)(index + 1);
+      exchange_status = cnet_send(&client, connection, &expected, sizeof(expected));
+      if (exchange_status == TURBO_OK) {
+        const int received = recvfrom(server, (char *)&outbound, (int)sizeof(outbound), 0,
+                                      (struct sockaddr *)&client_address, &client_length);
+        if (received != (int)sizeof(outbound) || outbound != expected) exchange_status = TURBO_EIO;
+      }
+      if (exchange_status == TURBO_OK) {
+        const int sent = sendto(server, (const char *)&expected, (int)sizeof(expected), 0,
+                                (const struct sockaddr *)&client_address, client_length);
+        if (sent != (int)sizeof(expected)) exchange_status = TURBO_EIO;
+      }
+      if (exchange_status == TURBO_OK)
+        exchange_status = cnet_api_test_wait(&probe.received, index + 1);
+      if (exchange_status == TURBO_OK &&
+          (probe.received_value != expected ||
+           atomic_load_explicit(&probe.failed, memory_order_acquire) != 0))
+        exchange_status = TURBO_EIO;
+    }
+    check_equal(exchange_status, TURBO_OK);
+
+    check_equal(cnet_close(&client, connection), TURBO_OK);
+    check_equal(cnet_api_test_wait(&probe.terminal, 1), TURBO_OK);
     check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(cnet_client_destroy(&client), TURBO_OK);
     cnet_api_test_close_socket(server);

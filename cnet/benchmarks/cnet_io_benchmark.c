@@ -43,7 +43,11 @@ typedef socklen_t io_bench_socklen;
 #endif
 
 typedef enum io_bench_protocol { IO_BENCH_TCP = 0, IO_BENCH_UDP } io_bench_protocol;
-typedef enum io_bench_driver { IO_BENCH_LIBUV = 0, IO_BENCH_NATIVE_IO, IO_BENCH_CNET } io_bench_driver;
+typedef enum io_bench_driver {
+  IO_BENCH_LIBUV = 0,
+  IO_BENCH_NATIVE_IO,
+  IO_BENCH_CNET
+} io_bench_driver;
 
 enum {
   IO_BENCH_SAMPLES = 10,
@@ -127,7 +131,9 @@ typedef struct io_bench_fixture {
   bool network_started;
 } io_bench_fixture;
 
-static bool io_bench_socket_valid(io_bench_socket value) { return value != IO_BENCH_INVALID_SOCKET; }
+static bool io_bench_socket_valid(io_bench_socket value) {
+  return value != IO_BENCH_INVALID_SOCKET;
+}
 
 static int io_bench_socket_error(void) {
 #ifdef _WIN32
@@ -173,7 +179,7 @@ static int io_bench_set_option(io_bench_socket value, int level, int option, con
              : io_bench_socket_error();
 #else
   return setsockopt(value, level, option, data, (socklen_t)size) == 0 ? TURBO_OK
-                                                                     : io_bench_socket_error();
+                                                                      : io_bench_socket_error();
 #endif
 }
 
@@ -182,8 +188,7 @@ static int io_bench_set_timeout(io_bench_socket value) {
   const DWORD timeout = IO_BENCH_TIMEOUT_MS;
   return io_bench_set_option(value, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 #else
-  const struct timeval timeout = {IO_BENCH_TIMEOUT_MS / 1000,
-                                  (IO_BENCH_TIMEOUT_MS % 1000) * 1000};
+  const struct timeval timeout = {IO_BENCH_TIMEOUT_MS / 1000, (IO_BENCH_TIMEOUT_MS % 1000) * 1000};
   return io_bench_set_option(value, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 #endif
 }
@@ -275,10 +280,11 @@ static void io_bench_server_entry(void *argument) {
       const int received = recvfrom(active, (char *)buffer, (int)server->payload_size, 0,
                                     (struct sockaddr *)&peer, &peer_length);
 #else
-      const ssize_t received = recvfrom(active, buffer, server->payload_size, 0,
-                                        (struct sockaddr *)&peer, &peer_length);
+      const ssize_t received =
+          recvfrom(active, buffer, server->payload_size, 0, (struct sockaddr *)&peer, &peer_length);
 #endif
-      if (received != (int)server->payload_size) status = received < 0 ? io_bench_socket_error() : TURBO_EIO;
+      if (received != (int)server->payload_size)
+        status = received < 0 ? io_bench_socket_error() : TURBO_EIO;
       if (status == TURBO_OK) {
 #ifdef _WIN32
         const int sent = sendto(active, (const char *)buffer, received, 0,
@@ -385,7 +391,8 @@ static int io_bench_native_init(io_bench_native *fixture, io_bench_protocol prot
   fixture->protocol = protocol;
   fixture->socket_value = IO_BENCH_INVALID_SOCKET;
   status = native_io_backend_init(&fixture->backend, &config);
-  if (status == TURBO_OK) status = io_bench_connect_socket(&fixture->socket_value, protocol, address);
+  if (status == TURBO_OK)
+    status = io_bench_connect_socket(&fixture->socket_value, protocol, address);
   if (status == TURBO_OK) status = io_bench_set_nonblocking(fixture->socket_value);
   if (status == TURBO_OK)
     status = native_io_backend_attach_socket(&fixture->backend, (uintptr_t)fixture->socket_value,
@@ -459,8 +466,8 @@ static int io_bench_native_destroy(io_bench_native *fixture) {
   }
   if (fixture->backend.impl != NULL) {
     const int close_status = native_io_backend_close(&fixture->backend);
-    const int destroy_status = close_status == TURBO_OK ? native_io_backend_destroy(&fixture->backend)
-                                                        : close_status;
+    const int destroy_status =
+        close_status == TURBO_OK ? native_io_backend_destroy(&fixture->backend) : close_status;
     if (status == TURBO_OK) status = destroy_status;
   }
   return status;
@@ -473,9 +480,8 @@ static void io_bench_libuv_fail(io_bench_libuv *fixture, int status) {
 
 static void io_bench_libuv_alloc(uv_handle_t *handle, size_t suggested, uv_buf_t *buffer) {
   io_bench_libuv *fixture = (io_bench_libuv *)handle->data;
-  const size_t remaining = fixture->received < fixture->payload_size
-                               ? fixture->payload_size - fixture->received
-                               : 0u;
+  const size_t remaining =
+      fixture->received < fixture->payload_size ? fixture->payload_size - fixture->received : 0u;
   (void)suggested;
   buffer->base = remaining == 0u ? (char *)&fixture->overflow
                                  : (char *)(fixture->received_data + fixture->received);
@@ -583,8 +589,8 @@ static int io_bench_libuv_exchange(io_bench_libuv *fixture, const unsigned char 
   fixture->done = false;
   fixture->write_pending = true;
   if (fixture->protocol == IO_BENCH_TCP) {
-    status = uv_read_start((uv_stream_t *)&fixture->tcp, io_bench_libuv_alloc,
-                           io_bench_libuv_tcp_read);
+    status =
+        uv_read_start((uv_stream_t *)&fixture->tcp, io_bench_libuv_alloc, io_bench_libuv_tcp_read);
     if (status == 0) {
       fixture->read_active = true;
       fixture->tcp_write.data = fixture;
@@ -638,8 +644,8 @@ static int io_bench_wait_atomic(const atomic_int *value, int expected) {
   return TURBO_OK;
 }
 
-static void io_bench_cnet_state(void *user, cnet_connection connection,
-                                cnet_connection_state state, const cnet_error *error) {
+static void io_bench_cnet_state(void *user, cnet_connection connection, cnet_connection_state state,
+                                const cnet_error *error) {
   io_bench_cnet *fixture = (io_bench_cnet *)user;
   (void)connection;
   if (state == CNET_CONNECTION_CONNECTED)
@@ -656,8 +662,8 @@ static void io_bench_cnet_state(void *user, cnet_connection connection,
 static void io_bench_cnet_receive(void *user, cnet_connection connection,
                                   const cnet_receive_view *view) {
   io_bench_cnet *fixture = (io_bench_cnet *)user;
-  const cnet_message_kind expected = fixture->protocol == IO_BENCH_TCP ? CNET_MESSAGE_BYTES
-                                                                       : CNET_MESSAGE_DATAGRAM;
+  const cnet_message_kind expected =
+      fixture->protocol == IO_BENCH_TCP ? CNET_MESSAGE_BYTES : CNET_MESSAGE_DATAGRAM;
   if (view->kind != expected || view->size > fixture->payload_size - fixture->received ||
       (fixture->protocol == IO_BENCH_UDP && view->size != fixture->payload_size)) {
     atomic_store_explicit(&fixture->status, TURBO_EIO, memory_order_release);
@@ -713,8 +719,11 @@ static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol
 }
 
 static int io_bench_cnet_ready(io_bench_cnet *fixture) {
-  const int status = io_bench_wait_atomic(&fixture->connected, 1);
-  return status == TURBO_OK ? atomic_load_explicit(&fixture->status, memory_order_acquire) : status;
+  int status = io_bench_wait_atomic(&fixture->connected, 1);
+  if (status == TURBO_OK) status = atomic_load_explicit(&fixture->status, memory_order_acquire);
+  if (status == TURBO_OK && fixture->protocol == IO_BENCH_UDP)
+    status = cnet_receive(&fixture->client, fixture->connection, IO_BENCH_ALL_EXCHANGES);
+  return status;
 }
 
 static int io_bench_cnet_exchange(io_bench_cnet *fixture, const unsigned char *sent,
@@ -725,7 +734,9 @@ static int io_bench_cnet_exchange(io_bench_cnet *fixture, const unsigned char *s
   fixture->received = 0u;
   atomic_store_explicit(&fixture->done, 0, memory_order_release);
   atomic_store_explicit(&fixture->status, TURBO_OK, memory_order_release);
-  status = cnet_receive(&fixture->client, fixture->connection, 1u);
+  status = fixture->protocol == IO_BENCH_TCP
+               ? cnet_receive(&fixture->client, fixture->connection, 1u)
+               : TURBO_OK;
   if (status == TURBO_OK) status = cnet_send(&fixture->client, fixture->connection, sent, length);
   if (status == TURBO_OK) status = io_bench_wait_atomic(&fixture->done, 1);
   if (status == TURBO_OK) status = atomic_load_explicit(&fixture->status, memory_order_acquire);
@@ -780,7 +791,8 @@ static int io_bench_fixture_destroy(io_bench_fixture *fixture) {
   int status = io_bench_server_finish(&fixture->server);
   int driver_status;
   if (fixture->driver == IO_BENCH_LIBUV) driver_status = io_bench_libuv_destroy(&fixture->libuv);
-  else if (fixture->driver == IO_BENCH_NATIVE_IO) driver_status = io_bench_native_destroy(&fixture->native);
+  else if (fixture->driver == IO_BENCH_NATIVE_IO)
+    driver_status = io_bench_native_destroy(&fixture->native);
   else driver_status = io_bench_cnet_destroy(&fixture->cnet);
   if (status == TURBO_OK) status = driver_status;
   io_bench_network_stop(fixture);
@@ -863,8 +875,9 @@ static double io_bench_delta(double candidate, double baseline) {
 }
 
 static double io_bench_rate(const io_bench_result *result) {
-  return result->wall_ns == 0u ? 0.0
-                               : (double)result->round_trips * 1000000000.0 / (double)result->wall_ns;
+  return result->wall_ns == 0u
+             ? 0.0
+             : (double)result->round_trips * 1000000000.0 / (double)result->wall_ns;
 }
 
 static void io_bench_print_latency(const char *protocol, const char *percentile,
@@ -901,7 +914,8 @@ static void io_bench_print_rate(const char *protocol, const io_bench_result *lib
 }
 
 static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t row,
-                            io_bench_result *libuv, io_bench_result *native, io_bench_result *cnet) {
+                            io_bench_result *libuv, io_bench_result *native,
+                            io_bench_result *cnet) {
   io_bench_result *results[] = {libuv, native, cnet};
   const io_bench_driver order[][3] = {{IO_BENCH_LIBUV, IO_BENCH_NATIVE_IO, IO_BENCH_CNET},
                                       {IO_BENCH_NATIVE_IO, IO_BENCH_CNET, IO_BENCH_LIBUV},
@@ -918,16 +932,23 @@ spec("libuv versus NativeIO versus CNet benchmark") {
   it("compares persistent TCP and UDP clients against one common echo peer") {
     const size_t tcp_count = sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0]);
     const size_t udp_count = sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0]);
-    io_bench_result libuv_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {0};
-    io_bench_result native_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {0};
-    io_bench_result cnet_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {0};
-    io_bench_result libuv_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {0};
-    io_bench_result native_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {0};
-    io_bench_result cnet_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {0};
+    io_bench_result libuv_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {
+        0};
+    io_bench_result native_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {
+        0};
+    io_bench_result cnet_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {
+        0};
+    io_bench_result libuv_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {
+        0};
+    io_bench_result native_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {
+        0};
+    io_bench_result cnet_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {
+        0};
 
     printf("\nBaseline: libuv %s; NativeIO backend: %s; CNet: public byte API.\n",
            uv_version_string(), io_bench_backend_name());
-    printf("Each client uses the same dedicated blocking echo peer, payloads, warmups, and samples.\n");
+    printf("Each client uses the same dedicated blocking echo peer, payloads, warmups, and "
+           "samples.\n");
     printf("Workload: %d warmups, then %d x %d persistent round trips per row.\n",
            IO_BENCH_WARMUP_EXCHANGES, IO_BENCH_SAMPLES, IO_BENCH_EXCHANGES_PER_SAMPLE);
     printf("Latency delta > 0 is slower; rate delta > 0 is faster. All deltas use libuv.\n");
