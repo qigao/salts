@@ -3,20 +3,7 @@
 #define RING_BUFFER_SPSC_H
 
 #include "platform.h"
-#ifdef __cplusplus
-  #include <atomic>
-  #define ATOMIC_SIZE_T std::atomic<size_t>
-#else
-  #include <stdatomic.h>
-  #define ATOMIC_SIZE_T _Atomic size_t
-#endif
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdlib.h>
-
-#ifndef __cplusplus
-  #include <stdalign.h>
-#endif
+#include <turbo/spsc_ring.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,20 +29,7 @@ extern "C" {
  * - No invalidate index (simplified algorithm)
  * - Cache-line alignment to prevent false sharing
  */
-typedef struct {
-  size_t size;       /**< Size of the data array */
-  size_t mask;       /**< size - 1, for fast modulo (size must be power of 2) */
-  uint8_t *data;     /**< Pointer to the data array */
-
-  /* Cache-line aligned to prevent false sharing */
-  alignas(64) ATOMIC_SIZE_T write_pos;  /**< Write position (producer only) */
-  alignas(64) ATOMIC_SIZE_T read_pos;   /**< Read position (consumer only) */
-
-  /* Producer may reserve a tail padding span when a contiguous write wraps. */
-  alignas(64) ATOMIC_SIZE_T wrap_pos;
-  ATOMIC_SIZE_T wrap_len;
-  size_t pending_wrap_len;
-} ring_spsc_t;
+typedef turbo_spsc_ring ring_spsc_t;
 
 /******************** FUNCTION PROTOTYPES *********************/
 

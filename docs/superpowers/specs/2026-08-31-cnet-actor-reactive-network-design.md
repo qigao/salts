@@ -235,10 +235,11 @@ callback workers; it does not implement another thread pool. Each I/O shard has
 exactly one long-lived owner task and one NativeIO backend. Connections are
 assigned to a shard once and never migrate while live. `callback_workers` are
 separate from I/O owner workers so slow business callbacks cannot stop socket
-progress. A connection's generation-checked identity selects one stable
-callback lane; that lane is a single consumer, so callbacks for the connection
-remain FIFO and non-overlapping. Different lanes run as independent long-lived
-tasks and may execute callbacks concurrently.
+progress. Each shard has one stable SPSC callback channel assigned to exactly
+one callback worker, so callbacks for every connection on that shard remain
+FIFO and non-overlapping. Different shards assigned to different workers may
+execute callbacks concurrently; shards sharing one worker are served in
+bounded round-robin batches.
 
 The owner deadline container is the generic Concurrency
 `turbo_deadline_queue`: a fixed-capacity single-owner min-heap that starts no
@@ -427,39 +428,57 @@ fixed command ring
 single CNet/NativeIO owner task
         |
         +-> session state + protocol codecs + timer heap
-        +-> NativeIO submit/observe/cancel
-        +-> fixed event ring
+        +-> owner-affine NativeIO coroutine await
+        |        |
+        |        +-> NativeIO submit/observe/cancel
+        +-> bounded per-shard SPSC callback channel
                          |
-                         callback workers
+             fixed callback-worker assignment
 ```
 
 The command ring uses TurboUtils `disruptor` in an MPSC-to-single-consumer
 topology. Each fixed entry carries its descriptor and bounded inline payload,
 never a caller pointer.
 Each session has fixed storage for its monotonic public state notifications, so
-event pressure cannot discard a terminal notification. Receive events use a
-separate bounded ring and carry a payload-pool lease. When that ring is full,
-the owner stops arming application reads while continuing the bounded protocol
-control required for shutdown. An admission producer may perform only the
+callback pressure cannot discard a terminal notification. Each owner is the
+single producer of one fixed callback channel. When that channel is full, the
+owner retains the pending event and stops arming application reads while
+continuing the bounded protocol control required for shutdown. An admission producer may perform only the
 bounded `FREE -> RESERVED` claim before publishing CONNECT. Publication
 failure releases that reservation and advances its generation without a
 callback. After successful publication, the assigned shard owner is the only
 writer of lifecycle and protocol state.
+
+Every asynchronous TCP connect, send, and receive is represented by one
+bounded CNet request record and one NativeIO coroutine task. The owner starts
+the frame; `native_io_coroutine_await()` submits the operation and suspends it;
+the same owner's `native_io_backend_observe()` generation-checks the terminal
+completion and resumes that frame. Producer and callback threads never resume
+or destroy frames. The frame stores execution position only: the session table
+remains the connection-state fact source, while the request record owns the
+command lease, deadline, role, and coroutine task handle.
+
+Coroutine tasks and request records share the same hard
+`request_capacity`. NativeIO creates frames lazily and reuses them after a
+terminal completion, so steady state does not allocate after reaching its peak
+concurrent-await watermark. Pool exhaustion is `TURBO_ENOBUFS`; there is no
+heap fallback. Cancellation does not release either record until the terminal
+completion resumes and retires the frame.
 
 The notification paths are not second state machines. Consumers can delay
 delivery but cannot change the authoritative session record. CNet retains the
 session slot until its terminal state notification and all borrowed payload
 leases have been delivered and released.
 
-The client event dispatcher is the sole taker for every shard event ring. It
-moves each taken slot as a lease into the connection's callback lane; it does
-not copy receive bytes into another callback queue. Successful lane publication
-transfers exactly one release obligation. A full lane leaves the lease with the
-dispatcher and applies bounded backpressure; it does not drop or duplicate the
-event. The callback worker invokes the observer without an internal lock, runs
-the internal finish hook, then releases the original event slot. Event-slot
-release is atomic and may complete out of claim order on different callback
-workers. The application receive pointer becomes invalid at that release.
+The client dispatcher is routing state, not a scheduled worker. An owner calls
+it directly with one event. It generation-checks the observer and copies the
+descriptor plus bounded payload into that shard's SPSC callback channel. The
+copy is committed before publication returns, so the owner may reuse its
+NativeIO receive storage while the callback receives a view valid through that
+callback only. Successful publication transfers any terminal recycle
+obligation to the callback worker. A full channel leaves the event with the
+owner and applies bounded backpressure; it does not drop, duplicate, or allocate
+a fallback payload.
 
 The dispatcher mutex protects only observer routing and close claims. It is
 never held while calling a shard command or recycle API. Drain marks one
@@ -469,16 +488,17 @@ revalidates the generation before clearing the claim. Callback completion may
 therefore recycle through the shard and then retire dispatcher routing without
 forming a `dispatcher -> shard` / `shard -> dispatcher` lock cycle.
 
-Normal dispatcher workers sleep in `disruptor_worker_claim_wait()` on their
-assigned shard ring; they do not poll on a millisecond timer. Stop flips the
-worker predicate and explicitly wakes all rings. A worker retains at most one
-taken event while its callback lane is full, so only the backpressure path
-retries and the event-slot lease remains the payload owner throughout.
+Callback workers block on a condition variable after their assigned SPSC
+channels are empty. Publication coalesces wakeups, and stop closes channel
+admission before waking and draining every accepted entry. One worker may own
+several shard channels; it drains a bounded batch from each channel so one busy
+shard cannot starve the others. The owner and callback channel are the exact
+single-producer/single-consumer roles. Public command admission remains MPSC.
 
-The current base implementation stores receive bytes inline in the bounded
-event slot, making that slot the lease owner. Protocol reassembly may later use
-a retained receive-buffer lease, but it must preserve the same move/release
-contract and cannot make callback handoff add another payload copy.
+The current base implementation copies receive bytes once at the
+owner-to-callback lifetime boundary. Protocol reassembly may later use an
+explicit retained receive-buffer lease, but it must preserve the same bounded
+ownership, backpressure, and callback-view lifetime contract.
 
 ### Command payload and receive-buffer boundary
 
@@ -512,6 +532,7 @@ Every successful claim has exactly one public terminal path:
 | command slot | consumed, rejected with an asynchronous state error, or cancelled during stop |
 | receive-buffer lease | completion/event delivered or cancelled, then returned once |
 | NativeIO request | one observed completion, including cancellation |
+| NativeIO coroutine frame | returned to its bounded pool only after its awaited request reaches a terminal completion |
 
 No path can abandon a claimed slot during shutdown.
 

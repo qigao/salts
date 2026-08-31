@@ -20,7 +20,9 @@
 关键事实来源包括：
 
 - `include/disruptor.h` 与 `src/disruptor.c`：Disruptor 的 worker/broadcast/拓扑 API；
-- `include/ring_buffer_spsc.h` 与 `src/ring_buffer_spsc.c`：SPSC 角色和原子游标；
+- `../concurrency/include/turbo/spsc_ring.h` 与
+  `../concurrency/src/spsc_ring.c`：SPSC 角色和原子游标的事实源；
+- `include/ring_buffer_spsc.h` 与 `src/ring_buffer_spsc.c`：旧 Core API 的兼容包装；
 - `include/turbo_buffer.h` 与 `src/turbo_buffer.c`：buffer/slice 引用和 pool 生命周期；
 - `src/bucket_priority_queue_mpmc.c`：优先级队列对 Disruptor 和条件变量的包装。
 - `include/turbo_byte_buffer.h`、`src/turbo_byte_buffer.c` 与 `tests/test_turbo_byte_buffer.c`：单 owner 字节缓冲的游标、容量、view 和错误语义。

@@ -25,6 +25,12 @@ typedef struct cnet_transport {
   bool write_attached;
 } cnet_transport;
 
+/** Creates and attaches a TCP socket, then describes its connect operation. */
+int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_backend *backend,
+                                       native_io_backend_kind backend_kind, const void *address,
+                                       size_t address_length, uintptr_t user_data,
+                                       native_io_operation *out_operation);
+
 /**
  * Creates a CNet-owned stream socket, attaches it to NativeIO, and submits one
  * asynchronous connect. `address` stays borrowed until the request completion.

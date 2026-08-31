@@ -178,6 +178,7 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   cnet_event queued_state = {0};
   cnet_event_view event = {0};
   cnet_session_terminal terminal = {0};
+  native_io_coroutine_stats coroutine_stats = NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
   unsigned char received[sizeof(payload)] = {0};
   size_t event_index;
 
@@ -185,6 +186,10 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   check_equal(cnet_command_queue_init(&commands, &command_config), TURBO_OK);
   check_equal(cnet_event_queue_init(&events, &event_config), TURBO_OK);
   check_equal(cnet_owner_init(&owner, &owner_config), TURBO_OK);
+  check_true(cnet_owner_get_coroutine_stats(&owner, &coroutine_stats));
+  check_equal(coroutine_stats.capacity, owner_config.request_capacity);
+  check_equal(coroutine_stats.active, 0u);
+  check_equal(coroutine_stats.retained_frames, 0u);
   check_equal(cnet_owner_test_listener(&listener, &address), TURBO_OK);
   check_equal(cnet_session_table_reserve(&sessions, &session), TURBO_OK);
   queued_state = (cnet_event){CNET_EVENT_STATE,
@@ -238,6 +243,10 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   }
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
               TURBO_OK);
+  coroutine_stats = (native_io_coroutine_stats)NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
+  check_true(cnet_owner_get_coroutine_stats(&owner, &coroutine_stats));
+  check_equal(coroutine_stats.active, 0u);
+  check_true(coroutine_stats.retained_frames >= 1u);
   for (event_index = 0u; event_index < event_config.capacity; ++event_index) {
     check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
     check_equal(event.state, CNET_EVENT_STATE_CLOSING);
@@ -256,8 +265,11 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
   check_equal(cnet_owner_wake(&owner), TURBO_OK);
+  check_equal(cnet_owner_drive(&owner, 0u), TURBO_OK);
+  coroutine_stats = (native_io_coroutine_stats)NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
+  check_true(cnet_owner_get_coroutine_stats(&owner, &coroutine_stats));
+  check_equal(coroutine_stats.active, 1u);
   if (timeout == CNET_OWNER_TEST_READ_TIMEOUT) {
-    check_equal(cnet_owner_drive(&owner, 0u), TURBO_OK);
     clock.now_ms = 111u;
     clock.next_ms = 111u;
   } else {

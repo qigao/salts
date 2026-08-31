@@ -63,36 +63,25 @@ static int cnet_shards_first_error(cnet_shards_impl *impl) {
   return TURBO_OK;
 }
 
+static int cnet_shards_publish_owner_event(void *context, const cnet_event *event) {
+  cnet_shard_record *record = (cnet_shard_record *)context;
+  cnet_shards_event_sink_fn sink =
+      atomic_load_explicit(&record->shards->event_sink, memory_order_acquire);
+
+  if (sink != NULL) {
+    void *sink_context =
+        atomic_load_explicit(&record->shards->event_sink_context, memory_order_relaxed);
+    return sink(sink_context, record->shard, event);
+  }
+  return cnet_event_queue_publish(&record->events, event);
+}
+
 static void cnet_shards_owner_task(void *context) {
   cnet_shard_record *record = (cnet_shard_record *)context;
   int status = TURBO_OK;
 
   while (!atomic_load_explicit(&record->stop_requested, memory_order_acquire)) {
-    cnet_shards_event_sink_fn sink;
-    void *sink_context;
-
     status = cnet_owner_drive(&record->owner, CNET_SHARDS_OWNER_WAIT_MS);
-    if (status != TURBO_OK) break;
-    sink = atomic_load_explicit(&record->shards->event_sink, memory_order_acquire);
-    if (sink == NULL) continue;
-    sink_context = atomic_load_explicit(&record->shards->event_sink_context, memory_order_relaxed);
-    for (;;) {
-      status = sink(sink_context, record->shard);
-      if (status == TURBO_OK) continue;
-      if (status == TURBO_ETIMEDOUT) {
-        status = TURBO_OK;
-        break;
-      }
-      if (status == TURBO_ENOBUFS || status == TURBO_EBUSY) {
-        if (atomic_load_explicit(&record->stop_requested, memory_order_acquire)) {
-          status = TURBO_OK;
-          break;
-        }
-        turbo_thread_yield();
-        continue;
-      }
-      break;
-    }
     if (status != TURBO_OK) break;
   }
   atomic_store_explicit(&record->drive_status, status, memory_order_release);
@@ -173,7 +162,9 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
         .receive_buffer_count = config->connection_capacity_per_shard,
         .sessions = &record->sessions,
         .commands = &record->commands,
-        .events = &record->events};
+        .events = &record->events,
+        .publish_event = cnet_shards_publish_owner_event,
+        .event_context = record};
 
     record->shards = impl;
     record->shard = (uint32_t)index;

@@ -19,6 +19,10 @@ int cnet_dispatcher_init(cnet_dispatcher *dispatcher, cnet_shards *shards,
 int cnet_dispatcher_register(cnet_dispatcher *dispatcher, cnet_shard_connection connection,
                              cnet_callback_fn observer, void *observer_context);
 
+/** Copies one owner-thread event directly into its shard's SPSC callback channel. */
+int cnet_dispatcher_publish(cnet_dispatcher *dispatcher, uint32_t shard,
+                            const cnet_event *event);
+
 /**
  * Single-consumer, nonblocking drive for one shard. A full callback lane retains
  * exactly one event lease and returns TURBO_ENOBUFS without copying its payload.

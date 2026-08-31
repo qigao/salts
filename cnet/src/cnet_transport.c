@@ -6,11 +6,11 @@
 #include <string.h>
 
 #if defined(_WIN32)
-  // clang-format off
+// clang-format off
   #include <winsock2.h>
   #include <windows.h>
   #include <ws2tcpip.h>
-  // clang-format on
+// clang-format on
 typedef SOCKET cnet_native_socket;
   #define CNET_INVALID_SOCKET INVALID_SOCKET
 #else
@@ -101,18 +101,17 @@ static int cnet_transport_make_socket(native_io_backend_kind backend_kind, int f
 #endif
 }
 
-int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *backend,
-                               native_io_backend_kind backend_kind, const void *address,
-                               size_t address_length, uintptr_t user_data,
-                               native_io_request *out_request) {
+int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_backend *backend,
+                                       native_io_backend_kind backend_kind, const void *address,
+                                       size_t address_length, uintptr_t user_data,
+                                       native_io_operation *out_operation) {
   cnet_native_socket socket_value = CNET_INVALID_SOCKET;
-  native_io_operation operation;
   int family = 0;
   int status;
 
-  if (transport == NULL || out_request == NULL) return TURBO_EINVAL;
+  if (transport == NULL || out_operation == NULL) return TURBO_EINVAL;
   cnet_transport_reset(transport);
-  *out_request = (native_io_request){0};
+  *out_operation = (native_io_operation){0};
   if (backend == NULL) return TURBO_EINVAL;
   status = cnet_transport_address_family(address, address_length, &family);
   if (status != TURBO_OK) return status;
@@ -131,12 +130,27 @@ int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *bac
     return status;
   }
   transport->attached = true;
-  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_TCP_CONNECT,
-                                    .endpoint = transport->endpoint,
-                                    .user_data = user_data,
-                                    .address = (void *)address,
-                                    .address_capacity = address_length,
-                                    .address_length = address_length};
+  *out_operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_TCP_CONNECT,
+                                         .endpoint = transport->endpoint,
+                                         .user_data = user_data,
+                                         .address = (void *)address,
+                                         .address_capacity = address_length,
+                                         .address_length = address_length};
+  return TURBO_OK;
+}
+
+int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *backend,
+                               native_io_backend_kind backend_kind, const void *address,
+                               size_t address_length, uintptr_t user_data,
+                               native_io_request *out_request) {
+  native_io_operation operation;
+  int status;
+
+  if (out_request == NULL) return TURBO_EINVAL;
+  *out_request = (native_io_request){0};
+  status = cnet_transport_tcp_prepare_connect(transport, backend, backend_kind, address,
+                                              address_length, user_data, &operation);
+  if (status != TURBO_OK) return status;
   status = native_io_backend_submit(backend, &operation, out_request);
   if (status != TURBO_OK) {
     cnet_transport_close_native(transport);

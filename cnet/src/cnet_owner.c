@@ -24,6 +24,8 @@ typedef enum cnet_owner_request_role {
   CNET_OWNER_REQUEST_RECEIVE
 } cnet_owner_request_role;
 
+typedef struct cnet_owner_impl cnet_owner_impl;
+
 typedef struct cnet_owner_session {
   cnet_session_handle handle;
   cnet_owner_connect_payload peer;
@@ -42,7 +44,9 @@ typedef struct cnet_owner_session {
 } cnet_owner_session;
 
 typedef struct cnet_owner_request {
-  native_io_request request;
+  cnet_owner_impl *owner;
+  native_io_coroutine_task coroutine;
+  native_io_operation operation;
   cnet_session_handle session;
   cnet_command_view command;
   cnet_owner_request_role role;
@@ -54,7 +58,7 @@ typedef struct cnet_owner_pending_event {
   cnet_event event;
 } cnet_owner_pending_event;
 
-typedef struct cnet_owner_impl {
+struct cnet_owner_impl {
   native_io_backend backend;
   cnet_resolver resolver;
   turbo_deadline_queue deadlines;
@@ -62,8 +66,11 @@ typedef struct cnet_owner_impl {
   cnet_session_table *sessions;
   cnet_command_queue *commands;
   cnet_event_queue *events;
+  cnet_owner_event_publish_fn publish_event;
+  void *event_context;
   cnet_owner_session *session_records;
   cnet_owner_request *request_records;
+  uint32_t *free_requests;
   cnet_owner_pending_event *pending_events;
   unsigned char *receive_storage;
   native_io_completion *completions;
@@ -75,11 +82,13 @@ typedef struct cnet_owner_impl {
   size_t receive_buffer_bytes;
   size_t occupied_sessions;
   size_t active_requests;
+  size_t free_request_count;
   cnet_owner_now_ms_fn now_ms;
   void *clock_context;
   bool closed;
   bool resolver_closed;
-} cnet_owner_impl;
+  int coroutine_status;
+};
 
 static uint64_t cnet_owner_system_now(void *context) {
   (void)context;
@@ -117,6 +126,11 @@ static cnet_owner_impl *cnet_owner_get(cnet_owner *owner) {
   return owner != NULL ? (cnet_owner_impl *)owner->impl : NULL;
 }
 
+static int cnet_owner_publish_event(cnet_owner_impl *impl, const cnet_event *event) {
+  return impl->publish_event != NULL ? impl->publish_event(impl->event_context, event)
+                                     : cnet_event_queue_publish(impl->events, event);
+}
+
 static cnet_owner_session *cnet_owner_find_session(cnet_owner_impl *impl,
                                                    cnet_session_handle handle) {
   cnet_owner_session *record;
@@ -126,17 +140,6 @@ static cnet_owner_session *cnet_owner_find_session(cnet_owner_impl *impl,
   record = &impl->session_records[handle.slot - 1u];
   return record->occupied && record->handle.slot == handle.slot &&
                  record->handle.generation == handle.generation
-             ? record
-             : NULL;
-}
-
-static cnet_owner_request *cnet_owner_find_request(cnet_owner_impl *impl,
-                                                   native_io_request handle) {
-  cnet_owner_request *record;
-  if (!native_io_request_valid(handle) || (size_t)handle.slot > impl->request_capacity) return NULL;
-  record = &impl->request_records[handle.slot - 1u];
-  return record->active && record->request.slot == handle.slot &&
-                 record->request.generation == handle.generation
              ? record
              : NULL;
 }
@@ -161,7 +164,7 @@ static int cnet_owner_queue_state_event(cnet_owner_impl *impl, cnet_session_hand
   int publish_status;
 
   if (impl->pending_event_count == 0u) {
-    publish_status = cnet_event_queue_publish(impl->events, &event);
+    publish_status = cnet_owner_publish_event(impl, &event);
     if (publish_status == TURBO_OK) return TURBO_OK;
     if (publish_status != TURBO_ENOBUFS) return publish_status;
   }
@@ -170,18 +173,20 @@ static int cnet_owner_queue_state_event(cnet_owner_impl *impl, cnet_session_hand
   return TURBO_OK;
 }
 
-static int cnet_owner_store_request(cnet_owner_impl *impl, native_io_request request_handle,
-                                    cnet_session_handle session_handle, cnet_command_view *command,
-                                    cnet_owner_request_role role);
+static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *session,
+                                    cnet_command_view *command, cnet_owner_request_role role,
+                                    const native_io_operation *operation);
 static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *session);
+static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *request,
+                               const native_io_completion *completion);
+static void cnet_owner_coroutine_entry(native_io_coroutine *coroutine, void *user_data);
 
 static int cnet_owner_flush_state_events(cnet_owner_impl *impl, bool *out_blocked) {
   size_t published = 0u;
 
   *out_blocked = false;
   while (published < impl->pending_event_count) {
-    const int status =
-        cnet_event_queue_publish(impl->events, &impl->pending_events[published].event);
+    const int status = cnet_owner_publish_event(impl, &impl->pending_events[published].event);
     if (status == TURBO_ENOBUFS) {
       *out_blocked = true;
       break;
@@ -221,7 +226,7 @@ static int cnet_owner_cancel_session_requests(cnet_owner_impl *impl, cnet_sessio
     if (!request->active || request->session.slot != session.slot ||
         request->session.generation != session.generation)
       continue;
-    status = native_io_backend_cancel(&impl->backend, request->request);
+    status = native_io_backend_cancel_coroutine(&impl->backend, request->coroutine);
     if (status != TURBO_OK && status != TURBO_EALREADY && first_error == TURBO_OK)
       first_error = status;
   }
@@ -256,44 +261,58 @@ static int cnet_owner_finalize_session(cnet_owner_impl *impl, cnet_owner_session
                                       CNET_SESSION_STAGE_NONE);
 }
 
-static int cnet_owner_store_request(cnet_owner_impl *impl, native_io_request request_handle,
-                                    cnet_session_handle session_handle, cnet_command_view *command,
-                                    cnet_owner_request_role role) {
-  cnet_owner_request *record;
-  cnet_owner_session *session = cnet_owner_find_session(impl, session_handle);
-  if (session == NULL || !native_io_request_valid(request_handle) ||
-      (size_t)request_handle.slot > impl->request_capacity)
+static cnet_owner_request *cnet_owner_acquire_request(cnet_owner_impl *impl) {
+  uint32_t index;
+  cnet_owner_request *request;
+  if (impl->free_request_count == 0u) return NULL;
+  index = impl->free_requests[--impl->free_request_count];
+  if ((size_t)index >= impl->request_capacity) return NULL;
+  request = &impl->request_records[index];
+  if (request->active) return NULL;
+  memset(request, 0, sizeof(*request));
+  request->owner = impl;
+  request->active = true;
+  return request;
+}
+
+static int cnet_owner_release_request(cnet_owner_request *request) {
+  cnet_owner_impl *impl;
+  cnet_owner_session *session;
+  cnet_owner_request_role role;
+  size_t index;
+  int status;
+  if (request == NULL || !request->active || request->owner == NULL) return TURBO_EPROTO;
+  impl = request->owner;
+  session = cnet_owner_find_session(impl, request->session);
+  if (session == NULL || session->active_requests == 0u || impl->active_requests == 0u ||
+      impl->free_request_count >= impl->request_capacity)
     return TURBO_EPROTO;
-  record = &impl->request_records[request_handle.slot - 1u];
-  if (record->active) return TURBO_EPROTO;
-  *record = (cnet_owner_request){
-      .request = request_handle, .session = session_handle, .role = role, .active = true};
-  if (command != NULL) {
-    record->command = *command;
-    memset(command, 0, sizeof(*command));
+  index = (size_t)(request - impl->request_records);
+  if (index >= impl->request_capacity) return TURBO_EPROTO;
+  role = request->role;
+  status = cnet_owner_cancel_deadline(impl, &request->deadline);
+  if (status != TURBO_OK) return status;
+  if (request->command._sequence != 0u) {
+    status = cnet_command_queue_release(impl->commands, &request->command);
+    if (status != TURBO_OK) return status;
   }
-  ++session->active_requests;
-  ++impl->active_requests;
-  if (role == CNET_OWNER_REQUEST_RECEIVE) session->read_active = true;
-  {
-    const uint32_t timeout_ms = cnet_owner_request_timeout(session, role);
-    if (timeout_ms != 0u) {
-      const int deadline_status = turbo_deadline_queue_schedule(
-          &impl->deadlines, cnet_owner_deadline_after(impl, timeout_ms), request_handle.slot,
-          &record->deadline);
-      if (deadline_status != TURBO_OK) {
-        cnet_owner_record_failure(session, deadline_status, cnet_owner_request_stage(role));
-        return native_io_backend_cancel(&impl->backend, request_handle);
-      }
-    }
-  }
+  --session->active_requests;
+  --impl->active_requests;
+  if (role == CNET_OWNER_REQUEST_RECEIVE) session->read_active = false;
+  memset(request, 0, sizeof(*request));
+  impl->free_requests[impl->free_request_count++] = (uint32_t)index;
   return TURBO_OK;
+}
+
+static int cnet_owner_take_coroutine_status(cnet_owner_impl *impl) {
+  const int status = impl->coroutine_status;
+  impl->coroutine_status = TURBO_OK;
+  return status;
 }
 
 static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *session) {
   native_io_operation operation;
   native_io_operation_kind operation_kind;
-  native_io_request request = {0};
   int status;
 
   if (session->receive_demand == 0u || session->read_active || session->close_requested)
@@ -305,17 +324,9 @@ static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *ses
                                     .endpoint = cnet_transport_read_endpoint(&session->transport),
                                     .buffer = session->receive_buffer,
                                     .length = impl->receive_buffer_bytes};
-  status = native_io_backend_submit(&impl->backend, &operation, &request);
-  if (status != TURBO_OK) {
-    cnet_owner_record_failure(session, status, CNET_SESSION_STAGE_READ);
-    status = cnet_owner_cancel_session_requests(impl, session->handle);
-    if (status != TURBO_OK) cnet_owner_record_failure(session, status, CNET_SESSION_STAGE_SHUTDOWN);
-    return cnet_owner_finalize_session(impl, session);
-  }
-  status =
-      cnet_owner_store_request(impl, request, session->handle, NULL, CNET_OWNER_REQUEST_RECEIVE);
+  status = cnet_owner_start_request(impl, session, NULL, CNET_OWNER_REQUEST_RECEIVE, &operation);
   if (status != TURBO_OK) return status;
-  --session->receive_demand;
+  if (session->read_active) --session->receive_demand;
   return TURBO_OK;
 }
 
@@ -346,9 +357,71 @@ static int cnet_owner_fail_session(cnet_owner_impl *impl, cnet_owner_session *se
   return cnet_owner_finalize_session(impl, session);
 }
 
+static int cnet_owner_fail_started_request(cnet_owner_request *request, int failure) {
+  cnet_owner_impl *impl;
+  cnet_owner_session *session;
+  cnet_session_stage stage;
+  int status;
+  if (request == NULL || !request->active || request->owner == NULL) return TURBO_EPROTO;
+  impl = request->owner;
+  session = cnet_owner_find_session(impl, request->session);
+  if (session == NULL) return TURBO_EPROTO;
+  stage = cnet_owner_request_stage(request->role);
+  status = cnet_owner_release_request(request);
+  if (status != TURBO_OK) return status;
+  return cnet_owner_fail_session(impl, session, failure, stage);
+}
+
+static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *session,
+                                    cnet_command_view *command, cnet_owner_request_role role,
+                                    const native_io_operation *operation) {
+  cnet_owner_request *request;
+  const uint32_t timeout_ms = cnet_owner_request_timeout(session, role);
+  const cnet_session_stage stage = cnet_owner_request_stage(role);
+  size_t index;
+  int status;
+
+  request = cnet_owner_acquire_request(impl);
+  if (request == NULL)
+    return command != NULL
+               ? cnet_owner_fail_accepted_command(impl, session, command, TURBO_ENOBUFS, stage)
+               : cnet_owner_fail_session(impl, session, TURBO_ENOBUFS, stage);
+  request->session = session->handle;
+  request->operation = *operation;
+  request->role = role;
+  if (command != NULL) {
+    request->command = *command;
+    memset(command, 0, sizeof(*command));
+  }
+  ++session->active_requests;
+  ++impl->active_requests;
+  if (role == CNET_OWNER_REQUEST_RECEIVE) session->read_active = true;
+  status = native_io_backend_spawn_coroutine(&impl->backend, cnet_owner_coroutine_entry, request,
+                                             &request->coroutine);
+  if (status != TURBO_OK) {
+    if (request->active) return cnet_owner_fail_started_request(request, status);
+    return status;
+  }
+  if (!request->active) return cnet_owner_take_coroutine_status(impl);
+  index = (size_t)(request - impl->request_records);
+  if (timeout_ms != 0u) {
+    status =
+        turbo_deadline_queue_schedule(&impl->deadlines, cnet_owner_deadline_after(impl, timeout_ms),
+                                      index + 1u, &request->deadline);
+    if (status != TURBO_OK) {
+      cnet_owner_record_failure(session, status, stage);
+      status = cnet_owner_cancel_session_requests(impl, session->handle);
+      if (status != TURBO_OK)
+        cnet_owner_record_failure(session, status, CNET_SESSION_STAGE_SHUTDOWN);
+      return status;
+    }
+  }
+  return cnet_owner_take_coroutine_status(impl);
+}
+
 static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session *session,
                                       cnet_command_view *command) {
-  native_io_request request = {0};
+  native_io_operation operation;
   int status;
 
   if (session->peer.scheme != CNET_URI_TCP) {
@@ -374,16 +447,15 @@ static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session 
                                         CNET_SESSION_STAGE_NONE);
   }
 
-  status =
-      cnet_transport_tcp_connect(&session->transport, &impl->backend, impl->backend_kind,
-                                 session->peer.address, session->peer.address_length, 0u, &request);
+  status = cnet_transport_tcp_prepare_connect(&session->transport, &impl->backend,
+                                              impl->backend_kind, session->peer.address,
+                                              session->peer.address_length, 0u, &operation);
   if (status != TURBO_OK)
     return command != NULL
                ? cnet_owner_fail_accepted_command(impl, session, command, status,
                                                   CNET_SESSION_STAGE_CONNECT)
                : cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_CONNECT);
-  return cnet_owner_store_request(impl, request, session->handle, command,
-                                  CNET_OWNER_REQUEST_CONNECT);
+  return cnet_owner_start_request(impl, session, command, CNET_OWNER_REQUEST_CONNECT, &operation);
 }
 
 static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command) {
@@ -519,7 +591,6 @@ static int cnet_owner_send(cnet_owner_impl *impl, cnet_command_view *command) {
   cnet_owner_session *session = cnet_owner_find_session(impl, command->connection);
   native_io_operation operation;
   native_io_operation_kind operation_kind;
-  native_io_request request = {0};
   cnet_session_state state = CNET_SESSION_FREE;
   int status;
 
@@ -534,11 +605,7 @@ static int cnet_owner_send(cnet_owner_impl *impl, cnet_command_view *command) {
                                     .endpoint = cnet_transport_write_endpoint(&session->transport),
                                     .buffer = (void *)command->data,
                                     .length = command->size};
-  status = native_io_backend_submit(&impl->backend, &operation, &request);
-  if (status != TURBO_OK)
-    return cnet_owner_fail_accepted_command(impl, session, command, status,
-                                            CNET_SESSION_STAGE_WRITE);
-  return cnet_owner_store_request(impl, request, session->handle, command, CNET_OWNER_REQUEST_SEND);
+  return cnet_owner_start_request(impl, session, command, CNET_OWNER_REQUEST_SEND, &operation);
 }
 
 static int cnet_owner_receive(cnet_owner_impl *impl, cnet_command_view *command) {
@@ -603,27 +670,18 @@ static int cnet_owner_process_commands(cnet_owner_impl *impl, size_t *out_proces
   }
 }
 
-static int cnet_owner_complete(cnet_owner_impl *impl, const native_io_completion *completion) {
-  cnet_owner_request *request = cnet_owner_find_request(impl, completion->request);
+static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *request,
+                               const native_io_completion *completion) {
   cnet_owner_session *session;
   cnet_owner_request_role role;
   int status;
-  if (request == NULL) return TURBO_EPROTO;
+  if (request == NULL || !request->active || request->owner != impl) return TURBO_EPROTO;
   session = cnet_owner_find_session(impl, request->session);
   if (session == NULL || session->active_requests == 0u || impl->active_requests == 0u)
     return TURBO_EPROTO;
   role = request->role;
-  status = cnet_owner_cancel_deadline(impl, &request->deadline);
+  status = cnet_owner_release_request(request);
   if (status != TURBO_OK) return status;
-  if (request->command._sequence != 0u) {
-    status = cnet_command_queue_release(impl->commands, &request->command);
-    if (status != TURBO_OK) return status;
-  }
-  request->active = false;
-  request->role = CNET_OWNER_REQUEST_NONE;
-  --session->active_requests;
-  --impl->active_requests;
-  if (role == CNET_OWNER_REQUEST_RECEIVE) session->read_active = false;
   if (session->pending_status != TURBO_OK) return cnet_owner_finalize_session(impl, session);
 
   if (role == CNET_OWNER_REQUEST_CONNECT) {
@@ -648,7 +706,7 @@ static int cnet_owner_complete(cnet_owner_impl *impl, const native_io_completion
       const cnet_event event = {
           CNET_EVENT_RECEIVE,      session->handle,         CNET_EVENT_STATE_NONE, TURBO_OK,
           CNET_SESSION_STAGE_NONE, session->receive_buffer, completion->bytes};
-      status = cnet_event_queue_publish(impl->events, &event);
+      status = cnet_owner_publish_event(impl, &event);
       if (status == TURBO_ENOBUFS) {
         if (impl->pending_event_count == impl->pending_event_capacity) return TURBO_ENOBUFS;
         impl->pending_events[impl->pending_event_count++].event = event;
@@ -689,6 +747,18 @@ static int cnet_owner_complete(cnet_owner_impl *impl, const native_io_completion
     if (status != TURBO_OK) cnet_owner_record_failure(session, status, CNET_SESSION_STAGE_SHUTDOWN);
   }
   return cnet_owner_finalize_session(impl, session);
+}
+
+static void cnet_owner_coroutine_entry(native_io_coroutine *coroutine, void *user_data) {
+  cnet_owner_request *request = (cnet_owner_request *)user_data;
+  cnet_owner_impl *impl = request != NULL ? request->owner : NULL;
+  native_io_completion completion = {0};
+  int status;
+  if (impl == NULL || !request->active) return;
+  status = native_io_coroutine_await(coroutine, &request->operation, &completion);
+  if (status == TURBO_OK) status = cnet_owner_complete(impl, request, &completion);
+  else status = cnet_owner_fail_started_request(request, status);
+  if (status != TURBO_OK && impl->coroutine_status == TURBO_OK) impl->coroutine_status = status;
 }
 
 static int cnet_owner_process_deadlines(cnet_owner_impl *impl) {
@@ -775,6 +845,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
       config->connection_capacity > SIZE_MAX / sizeof(cnet_owner_session) ||
       config->connection_capacity > SIZE_MAX / config->receive_buffer_bytes ||
       config->request_capacity > SIZE_MAX / sizeof(cnet_owner_request) ||
+      config->request_capacity > SIZE_MAX / sizeof(uint32_t) ||
       config->completion_batch_capacity > SIZE_MAX / sizeof(native_io_completion) ||
       config->completion_batch_capacity + 2u > SIZE_MAX / sizeof(cnet_owner_pending_event))
     return TURBO_ERANGE;
@@ -784,6 +855,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
       (cnet_owner_session *)calloc(config->connection_capacity, sizeof(*impl->session_records));
   impl->request_records =
       (cnet_owner_request *)calloc(config->request_capacity, sizeof(*impl->request_records));
+  impl->free_requests = (uint32_t *)calloc(config->request_capacity, sizeof(*impl->free_requests));
   impl->pending_events = (cnet_owner_pending_event *)calloc(config->completion_batch_capacity + 2u,
                                                             sizeof(*impl->pending_events));
   impl->receive_storage =
@@ -791,10 +863,12 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
   impl->completions =
       (native_io_completion *)calloc(config->completion_batch_capacity, sizeof(*impl->completions));
   if (impl->session_records == NULL || impl->request_records == NULL ||
-      impl->pending_events == NULL || impl->receive_storage == NULL || impl->completions == NULL) {
+      impl->free_requests == NULL || impl->pending_events == NULL ||
+      impl->receive_storage == NULL || impl->completions == NULL) {
     free(impl->completions);
     free(impl->receive_storage);
     free(impl->pending_events);
+    free(impl->free_requests);
     free(impl->request_records);
     free(impl->session_records);
     free(impl);
@@ -808,6 +882,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     free(impl->completions);
     free(impl->receive_storage);
     free(impl->pending_events);
+    free(impl->free_requests);
     free(impl->request_records);
     free(impl->session_records);
     free(impl);
@@ -822,6 +897,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     free(impl->completions);
     free(impl->receive_storage);
     free(impl->pending_events);
+    free(impl->free_requests);
     free(impl->request_records);
     free(impl->session_records);
     free(impl);
@@ -837,6 +913,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     free(impl->completions);
     free(impl->receive_storage);
     free(impl->pending_events);
+    free(impl->free_requests);
     free(impl->request_records);
     free(impl->session_records);
     free(impl);
@@ -846,8 +923,13 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
   impl->sessions = config->sessions;
   impl->commands = config->commands;
   impl->events = config->events;
+  impl->publish_event = config->publish_event;
+  impl->event_context = config->event_context;
   impl->connection_capacity = config->connection_capacity;
   impl->request_capacity = config->request_capacity;
+  impl->free_request_count = config->request_capacity;
+  for (size_t index = 0u; index < config->request_capacity; ++index)
+    impl->free_requests[index] = (uint32_t)(config->request_capacity - index - 1u);
   impl->completion_batch_capacity = config->completion_batch_capacity;
   impl->pending_event_capacity = config->completion_batch_capacity + 2u;
   impl->receive_buffer_bytes = config->receive_buffer_bytes;
@@ -861,7 +943,6 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
   size_t processed = 0u;
   size_t completion_count = 0u;
-  size_t index;
   bool event_blocked = false;
   int status;
   if (impl == NULL || impl->closed) return TURBO_EINVAL;
@@ -883,16 +964,20 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
       cnet_owner_observe_timeout(impl, timeout_ms, processed != 0u), &completion_count);
   if (status == TURBO_ETIMEDOUT) return cnet_owner_process_deadlines(impl);
   if (status != TURBO_OK) return status;
-  for (index = 0u; index < completion_count; ++index) {
-    status = cnet_owner_complete(impl, &impl->completions[index]);
-    if (status != TURBO_OK) return status;
-  }
+  status = cnet_owner_take_coroutine_status(impl);
+  if (status != TURBO_OK) return status;
+  if (completion_count != 0u) return TURBO_EPROTO;
   return cnet_owner_process_deadlines(impl);
 }
 
 int cnet_owner_wake(cnet_owner *owner) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
   return impl != NULL ? native_io_backend_wake(&impl->backend) : TURBO_EINVAL;
+}
+
+bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats) {
+  const cnet_owner_impl *impl = owner != NULL ? (const cnet_owner_impl *)owner->impl : NULL;
+  return impl != NULL && native_io_backend_get_coroutine_stats(&impl->backend, out_stats);
 }
 
 int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session_handle) {
@@ -945,6 +1030,7 @@ int cnet_owner_destroy(cnet_owner *owner) {
   free(impl->completions);
   free(impl->receive_storage);
   free(impl->pending_events);
+  free(impl->free_requests);
   free(impl->request_records);
   free(impl->session_records);
   free(impl);

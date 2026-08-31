@@ -177,15 +177,14 @@ quiescent stop. Real TCP tests exercise two independent owner tasks in both
 directions. This is an implementation detail rather than a new user-visible
 runtime concept.
 
-The callback worker boundary is now implemented as fixed-capacity stable lanes
-on a separate `turbo_threadpool`. The same serialization key always reaches one
-single-consumer lane, while independent lanes may progress concurrently.
-Publication moves the original event-slot lease instead of copying receive
-bytes again; callback completion releases that slot exactly once, and the event
-queue now supports concurrent out-of-order release by callback workers. Tests
-cover lane serialization, cross-lane progress, MPSC order, full-lane rejection,
-stop retry, exact finish/release, release-error propagation, and pointer-stable
-event handoff.
+The callback worker boundary is now implemented as one fixed-capacity SPSC
+channel per I/O shard on a separate `turbo_threadpool`. Each owner is the only
+producer of its channel; a fixed callback worker is its only consumer. The
+channel copies bounded payload bytes before publication returns, preserving the
+callback view while allowing NativeIO receive storage to be reused. Tests cover
+per-shard capacity, FIFO order, bounded cross-shard fairness, full-channel
+rejection, publish-time payload ownership, stop retry, and exact release-error
+propagation.
 
 The owner now uses a generic fixed-capacity Concurrency deadline heap. Connect
 deadlines span resolution and NativeIO connect; accepted read and write
@@ -196,20 +195,22 @@ deliver data. The owner still observes every terminal cancellation completion
 before recycling storage. Shutdown timeout remains a client-level drain
 protocol and is not exposed as a partially implemented owner field.
 
-The internal client-owned dispatcher now is the sole consumer of each shard
-event ring. It retains at most one borrowed event per shard when a callback lane
-is full, so backpressure remains bounded and the receive payload is not copied a
-second time. The session table remains the state fact source; dispatcher entries
-only derive generation-checked observer routing. A terminal callback must return,
-release its event lease, and successfully recycle the session before that slot
-can be registered again. Drain closes dispatcher admission, requests close for
-every registered connection, continues driving terminal events, and only then
-permits destruction. The dispatcher allocates only during initialization and is
-still an internal, incomplete client primitive; client-level shutdown
-deadlines and the public client remain before the execution task is complete.
-Normal dispatcher workers now block directly on their shard Disruptor ring and
-are explicitly woken for stop, removing the prospective 1 ms polling latency
-from the public client path.
+TCP connect, send, and receive now use NativeIO's owner-affine coroutine await
+path. Arbitrary producer threads still publish bounded commands; only the shard
+owner starts a frame, and only that owner's completion observation resumes it.
+CNet request records retain command leases, deadlines, roles, and cancellation
+handles until terminal observation. NativeIO lazily grows and then reuses a
+frame pool capped by the same request capacity; owner tests observe both a
+retained completed connect frame and an active suspended receive frame.
+
+The internal client-owned dispatcher is now an inline routing boundary invoked
+by each shard owner, not a worker or event-ring consumer. It generation-checks
+observer routing and publishes directly to that shard's SPSC callback channel.
+The session table remains the state fact source. A terminal callback must return
+and successfully recycle the session before that slot can be registered again.
+Drain closes dispatcher admission, requests close for every registered
+connection, waits for terminal callback recycle, and only then permits
+destruction.
 
 **Files:**
 
@@ -245,9 +246,9 @@ from the public client path.
   resolver may own only DNS sockets; copy bounded results to the owning shard
   mailbox before calling NativeIO wake, and generation-check late cancellation
   results.
-- [x] Implement bounded stable callback lanes on a separate thread pool. Move
-  event-slot leases into the selected lane, serialize one connection, permit
-  cross-lane concurrency, and release each accepted lease exactly once.
+- [x] Implement bounded per-shard SPSC callback channels on a separate thread
+  pool. Copy payloads at the callback-lifetime boundary, preserve shard FIFO,
+  bound cross-shard batches, and release each accepted obligation exactly once.
 - [ ] Implement one long-lived owner task and NativeIO backend per shard,
   stable connection-to-shard assignment, fixed completion batches, timer
   deadlines, and first-error propagation.

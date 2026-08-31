@@ -115,25 +115,19 @@ typedef struct cnet_shards_test_sink_probe {
   atomic_int status;
 } cnet_shards_test_sink_probe;
 
-static int cnet_shards_test_sink(void *context, uint32_t shard) {
+static int cnet_shards_test_sink(void *context, uint32_t shard, const cnet_event *event) {
   cnet_shards_test_sink_probe *probe = (cnet_shards_test_sink_probe *)context;
-  cnet_event_view event = {0};
-  const int take_status = cnet_shards_take_event(probe->shards, shard, &event);
   bool terminal_event;
   cnet_shard_connection connection;
-  int status;
+  int status = TURBO_OK;
 
-  if (take_status != TURBO_OK) return take_status;
-  terminal_event = event.kind == CNET_EVENT_STATE && (event.state == CNET_EVENT_STATE_CLOSED ||
-                                                      event.state == CNET_EVENT_STATE_FAILED);
-  connection = (cnet_shard_connection){shard, event.session};
-  if (event.kind == CNET_EVENT_STATE && event.state == CNET_EVENT_STATE_CONNECTED)
+  if (event == NULL) return TURBO_EINVAL;
+  terminal_event = event->kind == CNET_EVENT_STATE &&
+                   (event->state == CNET_EVENT_STATE_CLOSED ||
+                    event->state == CNET_EVENT_STATE_FAILED);
+  connection = (cnet_shard_connection){shard, event->session};
+  if (event->kind == CNET_EVENT_STATE && event->state == CNET_EVENT_STATE_CONNECTED)
     atomic_store_explicit(&probe->connected, 1, memory_order_release);
-  status = cnet_shards_release_event(probe->shards, shard, &event);
-  if (status != TURBO_OK) {
-    atomic_store_explicit(&probe->status, status, memory_order_release);
-    return status;
-  }
   if (terminal_event) {
     cnet_session_terminal terminal = {0};
     status = cnet_shards_recycle(probe->shards, connection, &terminal);
@@ -187,6 +181,10 @@ spec("CNet long-lived owner shards") {
     check_equal(cnet_shards_test_wait_state(&shards, connection, CNET_SESSION_OPEN), TURBO_OK);
     check_equal(cnet_shards_test_wait_atomic(&probe.connected, 1), TURBO_OK);
     check_equal(atomic_load_explicit(&probe.connected, memory_order_acquire), 1);
+    {
+      cnet_event_view queued = {0};
+      check_equal(cnet_shards_take_event(&shards, 0u, &queued), TURBO_ETIMEDOUT);
+    }
 
     check_equal(cnet_shards_close(&shards, connection), TURBO_OK);
     check_equal(cnet_shards_test_wait_atomic(&probe.terminal, 1), TURBO_OK);

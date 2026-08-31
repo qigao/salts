@@ -87,8 +87,8 @@ static void cnet_client_record_error(cnet_client_impl *impl, int status) {
                                                 memory_order_acq_rel, memory_order_acquire);
 }
 
-static int cnet_client_dispatch(void *context, uint32_t shard) {
-  return cnet_dispatcher_drive((cnet_dispatcher *)context, shard);
+static int cnet_client_dispatch(void *context, uint32_t shard, const cnet_event *event) {
+  return cnet_dispatcher_publish((cnet_dispatcher *)context, shard, event);
 }
 
 static bool cnet_client_turbo_status(int status) {
@@ -257,8 +257,10 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
     cnet_client_cleanup_init(impl);
     return status;
   }
-  callback_config = (cnet_callback_workers_config){
-      config->callback_workers, config->event_capacity_per_shard, config->receive_buffer_bytes};
+  callback_config = (cnet_callback_workers_config){config->callback_workers,
+                                                   config->io_shards,
+                                                   config->event_capacity_per_shard,
+                                                   config->receive_buffer_bytes};
   status = cnet_callback_workers_init(&impl->callbacks, &callback_config);
   if (status == TURBO_OK)
     status = cnet_dispatcher_init(&impl->dispatcher, &impl->shards, &impl->callbacks);

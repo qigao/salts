@@ -29,6 +29,7 @@ typedef struct cnet_owner_connect_payload {
 } cnet_owner_connect_payload;
 
 typedef uint64_t (*cnet_owner_now_ms_fn)(void *context);
+typedef int (*cnet_owner_event_publish_fn)(void *context, const cnet_event *event);
 
 typedef struct cnet_owner_config {
   native_io_backend_kind backend_kind;
@@ -40,6 +41,9 @@ typedef struct cnet_owner_config {
   cnet_session_table *sessions;
   cnet_command_queue *commands;
   cnet_event_queue *events;
+  /** Optional owner-thread fast path; NULL publishes to events. */
+  cnet_owner_event_publish_fn publish_event;
+  void *event_context;
   /** Optional single-owner monotonic clock seam; NULL uses turbo_monotonic_ms(). */
   cnet_owner_now_ms_fn now_ms;
   void *clock_context;
@@ -52,6 +56,9 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms);
 
 /** The only operation allowed from a producer thread. */
 int cnet_owner_wake(cnet_owner *owner);
+
+/** Reports the bounded NativeIO coroutine state owned by this shard. */
+bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats);
 
 /** Clears owner metadata after the terminal notification recycled the handle. */
 int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session);

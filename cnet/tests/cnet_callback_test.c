@@ -21,9 +21,14 @@ typedef struct cnet_callback_test_probe {
   atomic_int order_error;
   atomic_int observed_second_payload;
   atomic_int release_count;
+  atomic_int finish_count_when_other_started;
 } cnet_callback_test_probe;
 
-enum { CNET_CALLBACK_STRESS_PRODUCERS = 4, CNET_CALLBACK_STRESS_JOBS_PER_PRODUCER = 100 };
+enum {
+  CNET_CALLBACK_FAIRNESS_JOBS = 64,
+  CNET_CALLBACK_STRESS_PRODUCERS = 4,
+  CNET_CALLBACK_STRESS_JOBS_PER_PRODUCER = 100
+};
 
 typedef struct cnet_callback_stress_payload {
   int producer;
@@ -51,9 +56,7 @@ typedef struct cnet_callback_stress_producer {
 
 typedef struct cnet_callback_handoff_probe {
   cnet_event_queue *events;
-  const void *expected_data;
   atomic_int invoked;
-  atomic_int pointer_match;
   atomic_int observed_value;
   atomic_int released;
 } cnet_callback_handoff_probe;
@@ -85,8 +88,12 @@ static void cnet_callback_test_invoke(void *context, const cnet_callback_view *v
     atomic_store_explicit(&probe->second_started, 1, memory_order_release);
     return;
   }
-  if (view->session.slot == 2u && value == 3u)
+  if (view->session.slot == 2u && value == 3u) {
+    atomic_store_explicit(&probe->finish_count_when_other_started,
+                          atomic_load_explicit(&probe->finish_count, memory_order_acquire),
+                          memory_order_release);
     atomic_store_explicit(&probe->other_finished, 1, memory_order_release);
+  }
 }
 
 static void cnet_callback_test_finish(void *context, const cnet_callback_view *view) {
@@ -104,11 +111,10 @@ static int cnet_callback_test_release(void *context, const cnet_callback_view *v
   return TURBO_OK;
 }
 
-static cnet_callback_job cnet_callback_test_receive_job(uint64_t key, cnet_session_handle session,
+static cnet_callback_job cnet_callback_test_receive_job(cnet_session_handle session,
                                                         cnet_callback_test_probe *probe,
                                                         const void *data, size_t size) {
   cnet_callback_job job = {0};
-  job.serialization_key = key;
   job.invoke = cnet_callback_test_invoke;
   job.finish = cnet_callback_test_finish;
   job.context = probe;
@@ -177,7 +183,6 @@ static void cnet_callback_stress_publish(void *context) {
     cnet_callback_job job = {0};
     int status;
     *payload = (cnet_callback_stress_payload){producer->producer, sequence};
-    job.serialization_key = 0u;
     job.invoke = cnet_callback_stress_invoke;
     job.finish = cnet_callback_stress_finish;
     job.context = producer->probe;
@@ -188,7 +193,8 @@ static void cnet_callback_stress_publish(void *context) {
     job.release = cnet_callback_stress_release;
     job.release_context = producer->probe;
     do {
-      status = cnet_callback_workers_publish(producer->workers, &job);
+      status = cnet_callback_workers_publish_from(producer->workers, (uint32_t)producer->producer,
+                                                  &job);
       if (status == TURBO_ENOBUFS) turbo_thread_yield();
     } while (status == TURBO_ENOBUFS);
     if (status != TURBO_OK) {
@@ -200,8 +206,6 @@ static void cnet_callback_stress_publish(void *context) {
 
 static void cnet_callback_handoff_invoke(void *context, const cnet_callback_view *view) {
   cnet_callback_handoff_probe *probe = (cnet_callback_handoff_probe *)context;
-  atomic_store_explicit(&probe->pointer_match, view->data == probe->expected_data,
-                        memory_order_release);
   if (view->size == 1u)
     atomic_store_explicit(&probe->observed_value, *(const unsigned char *)view->data,
                           memory_order_release);
@@ -229,19 +233,54 @@ static int cnet_callback_test_release_error(void *context, const cnet_callback_v
 }
 
 spec("CNet callback workers") {
+  it("keeps each shard capacity independent when workers are shared") {
+    cnet_callback_workers workers = {0};
+    const cnet_callback_workers_config config = {.worker_count = 1u,
+                                                 .producer_count = 2u,
+                                                 .capacity_per_producer = 1u,
+                                                 .max_payload_bytes = 4u};
+    cnet_callback_test_probe probe = {0};
+    unsigned char first = 1u;
+    unsigned char blocked = 2u;
+    unsigned char other = 3u;
+    cnet_callback_job first_job =
+        cnet_callback_test_receive_job((cnet_session_handle){1u, 1u}, &probe, &first, 1u);
+    cnet_callback_job blocked_job =
+        cnet_callback_test_receive_job((cnet_session_handle){1u, 1u}, &probe, &blocked, 1u);
+    cnet_callback_job other_job =
+        cnet_callback_test_receive_job((cnet_session_handle){2u, 1u}, &probe, &other, 1u);
+    bool first_started;
+    bool all_finished;
+
+    check_equal(cnet_callback_workers_init(&workers, &config), TURBO_OK);
+    check_equal(cnet_callback_workers_publish_from(&workers, 0u, &first_job), TURBO_OK);
+    first_started = cnet_callback_test_wait_at_least(&probe.first_started, 1);
+    if (!first_started) atomic_store_explicit(&probe.release_first, true, memory_order_release);
+    check_true(first_started);
+    check_equal(cnet_callback_workers_publish_from(&workers, 0u, &blocked_job), TURBO_ENOBUFS);
+    check_equal(cnet_callback_workers_publish_from(&workers, 1u, &other_job), TURBO_OK);
+
+    atomic_store_explicit(&probe.release_first, true, memory_order_release);
+    all_finished = cnet_callback_test_wait_at_least(&probe.finish_count, 2);
+    check_true(all_finished);
+    check_equal(cnet_callback_workers_stop(&workers, CNET_CALLBACK_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(atomic_load_explicit(&probe.release_count, memory_order_acquire), 2);
+    check_equal(cnet_callback_workers_destroy(&workers), TURBO_OK);
+  }
+
   it("serializes one connection while allowing independent lanes to progress") {
     cnet_callback_workers workers = {0};
-    const cnet_callback_workers_config config = {2u, 4u, 8u};
+    const cnet_callback_workers_config config = {2u, 2u, 4u, 8u};
     cnet_callback_test_probe probe = {0};
     unsigned char first = 1u;
     unsigned char second = 2u;
     unsigned char other = 3u;
     cnet_callback_job first_job =
-        cnet_callback_test_receive_job(0u, (cnet_session_handle){1u, 1u}, &probe, &first, 1u);
+        cnet_callback_test_receive_job((cnet_session_handle){1u, 1u}, &probe, &first, 1u);
     cnet_callback_job second_job =
-        cnet_callback_test_receive_job(0u, (cnet_session_handle){1u, 1u}, &probe, &second, 1u);
+        cnet_callback_test_receive_job((cnet_session_handle){1u, 1u}, &probe, &second, 1u);
     cnet_callback_job other_job =
-        cnet_callback_test_receive_job(1u, (cnet_session_handle){2u, 1u}, &probe, &other, 1u);
+        cnet_callback_test_receive_job((cnet_session_handle){2u, 1u}, &probe, &other, 1u);
     bool first_started;
     bool other_finished;
     bool all_finished;
@@ -250,15 +289,17 @@ spec("CNet callback workers") {
     check_equal(cnet_callback_workers_init(&workers, &config), TURBO_OK);
     check_true(cnet_callback_workers_get_config(&workers, &observed_config));
     check_equal(observed_config.worker_count, config.worker_count);
-    check_equal(observed_config.capacity_per_worker, config.capacity_per_worker);
+    check_equal(observed_config.producer_count, config.producer_count);
+    check_equal(observed_config.capacity_per_producer, config.capacity_per_producer);
     check_equal(observed_config.max_payload_bytes, config.max_payload_bytes);
-    check_equal(cnet_callback_workers_publish(&workers, &first_job), TURBO_OK);
+    check_equal(cnet_callback_workers_publish_from(&workers, 0u, &first_job), TURBO_OK);
     first_started = cnet_callback_test_wait_at_least(&probe.first_started, 1);
     if (!first_started) atomic_store_explicit(&probe.release_first, true, memory_order_release);
     check_true(first_started);
 
-    check_equal(cnet_callback_workers_publish(&workers, &second_job), TURBO_OK);
-    check_equal(cnet_callback_workers_publish(&workers, &other_job), TURBO_OK);
+    check_equal(cnet_callback_workers_publish_from(&workers, 0u, &second_job), TURBO_OK);
+    second = 9u;
+    check_equal(cnet_callback_workers_publish_from(&workers, 1u, &other_job), TURBO_OK);
     other_finished = cnet_callback_test_wait_at_least(&probe.other_finished, 1);
     atomic_store_explicit(&probe.release_first, true, memory_order_release);
     all_finished = cnet_callback_test_wait_at_least(&probe.finish_count, 3);
@@ -274,35 +315,73 @@ spec("CNet callback workers") {
     check_equal(cnet_callback_workers_destroy(&workers), TURBO_OK);
   }
 
+  it("bounds one shard batch before serving another shard on the same worker") {
+    cnet_callback_workers workers = {0};
+    const cnet_callback_workers_config config = {1u, 2u, CNET_CALLBACK_FAIRNESS_JOBS, 1u};
+    cnet_callback_test_probe probe = {0};
+    unsigned char first = 1u;
+    unsigned char queued[CNET_CALLBACK_FAIRNESS_JOBS - 1u];
+    unsigned char other = 3u;
+    cnet_callback_job first_job =
+        cnet_callback_test_receive_job((cnet_session_handle){1u, 1u}, &probe, &first, 1u);
+    cnet_callback_job other_job =
+        cnet_callback_test_receive_job((cnet_session_handle){2u, 1u}, &probe, &other, 1u);
+    size_t index;
+    bool first_started;
+    bool other_finished;
+
+    check_equal(cnet_callback_workers_init(&workers, &config), TURBO_OK);
+    check_equal(cnet_callback_workers_publish_from(&workers, 0u, &first_job), TURBO_OK);
+    first_started = cnet_callback_test_wait_at_least(&probe.first_started, 1);
+    if (!first_started) atomic_store_explicit(&probe.release_first, true, memory_order_release);
+    check_true(first_started);
+    for (index = 0u; index < CNET_CALLBACK_FAIRNESS_JOBS - 1u; ++index) {
+      cnet_callback_job queued_job;
+      queued[index] = 2u;
+      queued_job = cnet_callback_test_receive_job((cnet_session_handle){1u, 1u}, &probe,
+                                                  &queued[index], 1u);
+      check_equal(cnet_callback_workers_publish_from(&workers, 0u, &queued_job), TURBO_OK);
+    }
+    check_equal(cnet_callback_workers_publish_from(&workers, 1u, &other_job), TURBO_OK);
+
+    atomic_store_explicit(&probe.release_first, true, memory_order_release);
+    other_finished = cnet_callback_test_wait_at_least(&probe.other_finished, 1);
+    check_true(other_finished);
+    check_true(atomic_load_explicit(&probe.finish_count_when_other_started, memory_order_acquire) <
+               CNET_CALLBACK_FAIRNESS_JOBS);
+    check_equal(cnet_callback_workers_stop(&workers, CNET_CALLBACK_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_callback_workers_destroy(&workers), TURBO_OK);
+  }
+
   it("applies bounded backpressure and drains accepted callbacks during stop") {
     cnet_callback_workers workers = {0};
-    const cnet_callback_workers_config config = {1u, 2u, 4u};
+    const cnet_callback_workers_config config = {1u, 1u, 2u, 4u};
     cnet_callback_test_probe probe = {0};
     unsigned char first = 1u;
     unsigned char second = 2u;
     unsigned char third = 3u;
     unsigned char oversized[5] = {0};
     cnet_callback_job first_job =
-        cnet_callback_test_receive_job(0u, (cnet_session_handle){1u, 1u}, &probe, &first, 1u);
+        cnet_callback_test_receive_job((cnet_session_handle){1u, 1u}, &probe, &first, 1u);
     cnet_callback_job second_job =
-        cnet_callback_test_receive_job(0u, (cnet_session_handle){1u, 1u}, &probe, &second, 1u);
+        cnet_callback_test_receive_job((cnet_session_handle){1u, 1u}, &probe, &second, 1u);
     cnet_callback_job third_job =
-        cnet_callback_test_receive_job(0u, (cnet_session_handle){1u, 1u}, &probe, &third, 1u);
+        cnet_callback_test_receive_job((cnet_session_handle){1u, 1u}, &probe, &third, 1u);
     cnet_callback_job oversized_job = cnet_callback_test_receive_job(
-        0u, (cnet_session_handle){1u, 1u}, &probe, oversized, sizeof(oversized));
+        (cnet_session_handle){1u, 1u}, &probe, oversized, sizeof(oversized));
     bool first_started;
     bool all_finished;
 
     check_equal(cnet_callback_workers_init(&workers, &config), TURBO_OK);
-    check_equal(cnet_callback_workers_publish(&workers, &oversized_job), TURBO_EMSGSIZE);
-    check_equal(cnet_callback_workers_publish(&workers, &first_job), TURBO_OK);
+    check_equal(cnet_callback_workers_publish_from(&workers, 0u, &oversized_job), TURBO_EMSGSIZE);
+    check_equal(cnet_callback_workers_publish_from(&workers, 0u, &first_job), TURBO_OK);
     first_started = cnet_callback_test_wait_at_least(&probe.first_started, 1);
     if (!first_started) atomic_store_explicit(&probe.release_first, true, memory_order_release);
     check_true(first_started);
-    check_equal(cnet_callback_workers_publish(&workers, &second_job), TURBO_OK);
-    check_equal(cnet_callback_workers_publish(&workers, &third_job), TURBO_ENOBUFS);
+    check_equal(cnet_callback_workers_publish_from(&workers, 0u, &second_job), TURBO_OK);
+    check_equal(cnet_callback_workers_publish_from(&workers, 0u, &third_job), TURBO_ENOBUFS);
     check_equal(cnet_callback_workers_stop(&workers, 0u), TURBO_ETIMEDOUT);
-    check_equal(cnet_callback_workers_publish(&workers, &third_job), TURBO_ESHUTDOWN);
+    check_equal(cnet_callback_workers_publish_from(&workers, 0u, &third_job), TURBO_ESHUTDOWN);
 
     atomic_store_explicit(&probe.release_first, true, memory_order_release);
     all_finished = cnet_callback_test_wait_at_least(&probe.finish_count, 2);
@@ -314,9 +393,9 @@ spec("CNet callback workers") {
     check_equal(cnet_callback_workers_destroy(&workers), TURBO_OK);
   }
 
-  it("preserves every producer order under MPSC contention") {
+  it("preserves every SPSC order when producers share callback workers") {
     cnet_callback_workers workers = {0};
-    const cnet_callback_workers_config config = {2u, 128u, 16u};
+    const cnet_callback_workers_config config = {2u, CNET_CALLBACK_STRESS_PRODUCERS, 128u, 16u};
     cnet_callback_stress_probe probe = {0};
     cnet_callback_stress_producer producers[CNET_CALLBACK_STRESS_PRODUCERS] = {0};
     turbo_thread_t threads[CNET_CALLBACK_STRESS_PRODUCERS] = {0};
@@ -356,11 +435,11 @@ spec("CNet callback workers") {
     check_equal(cnet_callback_workers_destroy(&workers), TURBO_OK);
   }
 
-  it("moves an event queue lease without copying its payload again") {
+  it("releases a fallback event lease after copied callback delivery") {
     cnet_event_queue event_queue = {0};
     cnet_callback_workers workers = {0};
     const cnet_event_queue_config event_config = {4u, 2u, 4u};
-    const cnet_callback_workers_config callback_config = {1u, 2u, 4u};
+    const cnet_callback_workers_config callback_config = {1u, 1u, 2u, 4u};
     const unsigned char source = 7u;
     const cnet_event event = {CNET_EVENT_RECEIVE,      {1u, 1u}, CNET_EVENT_STATE_NONE, TURBO_OK,
                               CNET_SESSION_STAGE_NONE, &source,  sizeof(source)};
@@ -373,8 +452,6 @@ spec("CNet callback workers") {
     check_equal(cnet_event_queue_publish(&event_queue, &event), TURBO_OK);
     check_equal(cnet_event_queue_take(&event_queue, &leased), TURBO_OK);
     probe.events = &event_queue;
-    probe.expected_data = leased.data;
-    job.serialization_key = 0u;
     job.invoke = cnet_callback_handoff_invoke;
     job.context = &probe;
     job.event = (cnet_event){leased.kind,  leased.session, leased.state, leased.status,
@@ -382,10 +459,9 @@ spec("CNet callback workers") {
     job.release = cnet_callback_handoff_release;
     job.release_context = &probe;
     job.release_token = leased._sequence;
-    check_equal(cnet_callback_workers_publish(&workers, &job), TURBO_OK);
+    check_equal(cnet_callback_workers_publish_from(&workers, 0u, &job), TURBO_OK);
     check_equal(cnet_callback_workers_stop(&workers, CNET_CALLBACK_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(atomic_load_explicit(&probe.invoked, memory_order_acquire), 1);
-    check_equal(atomic_load_explicit(&probe.pointer_match, memory_order_acquire), 1);
     check_equal(atomic_load_explicit(&probe.observed_value, memory_order_acquire), 7);
     check_equal(atomic_load_explicit(&probe.released, memory_order_acquire), 1);
     check_equal(cnet_callback_workers_destroy(&workers), TURBO_OK);
@@ -395,15 +471,15 @@ spec("CNet callback workers") {
 
   it("reports the first lease release failure after draining callbacks") {
     cnet_callback_workers workers = {0};
-    const cnet_callback_workers_config config = {1u, 2u, 4u};
+    const cnet_callback_workers_config config = {1u, 1u, 2u, 4u};
     cnet_callback_test_probe probe = {0};
     unsigned char payload = 2u;
     cnet_callback_job job =
-        cnet_callback_test_receive_job(0u, (cnet_session_handle){1u, 1u}, &probe, &payload, 1u);
+        cnet_callback_test_receive_job((cnet_session_handle){1u, 1u}, &probe, &payload, 1u);
     job.release = cnet_callback_test_release_error;
 
     check_equal(cnet_callback_workers_init(&workers, &config), TURBO_OK);
-    check_equal(cnet_callback_workers_publish(&workers, &job), TURBO_OK);
+    check_equal(cnet_callback_workers_publish_from(&workers, 0u, &job), TURBO_OK);
     check_equal(cnet_callback_workers_stop(&workers, CNET_CALLBACK_TEST_TIMEOUT_MS), TURBO_EIO);
     check_equal(atomic_load_explicit(&probe.finish_count, memory_order_acquire), 1);
     check_equal(cnet_callback_workers_destroy(&workers), TURBO_OK);
@@ -411,12 +487,14 @@ spec("CNet callback workers") {
 
   it("rejects invalid and overflowing resident-memory configurations") {
     cnet_callback_workers workers = {0};
-    cnet_callback_workers_config config = {0u, 2u, 8u};
+    cnet_callback_workers_config config = {0u, 1u, 2u, 8u};
 
     check_equal(cnet_callback_workers_init(&workers, &config), TURBO_EINVAL);
-    config = (cnet_callback_workers_config){1u, 3u, 8u};
+    config = (cnet_callback_workers_config){1u, 0u, 2u, 8u};
     check_equal(cnet_callback_workers_init(&workers, &config), TURBO_EINVAL);
-    config = (cnet_callback_workers_config){1u, UINT64_C(1) << 63u, 8u};
+    config = (cnet_callback_workers_config){1u, 1u, 3u, 8u};
+    check_equal(cnet_callback_workers_init(&workers, &config), TURBO_EINVAL);
+    config = (cnet_callback_workers_config){1u, 1u, UINT64_C(1) << 63u, 8u};
     check_equal(cnet_callback_workers_init(&workers, &config), TURBO_ERANGE);
   }
 }

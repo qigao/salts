@@ -30,7 +30,8 @@ typedef struct cnet_shards_layout {
   size_t max_event_payload_bytes;
 } cnet_shards_layout;
 
-typedef int (*cnet_shards_event_sink_fn)(void *context, uint32_t shard);
+typedef int (*cnet_shards_event_sink_fn)(void *context, uint32_t shard,
+                                         const cnet_event *event);
 
 bool cnet_shard_connection_valid(cnet_shard_connection connection);
 
@@ -39,8 +40,8 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config);
 bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_layout);
 
 /**
- * Binds the single event sink driven by each shard owner after NativeIO progress.
- * The sink must be nonblocking and consume at most one leased event per call.
+ * Binds the single event sink called directly by each shard owner. The sink
+ * must copy or retain event data before returning and must never block.
  */
 int cnet_shards_bind_event_sink(cnet_shards *shards, cnet_shards_event_sink_fn sink, void *context);
 

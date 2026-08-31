@@ -152,8 +152,8 @@ spec("CNet event dispatcher") {
                                               .receive_buffer_bytes = 64u,
                                               .max_command_payload_bytes =
                                                   sizeof(cnet_owner_connect_payload)};
-    const cnet_callback_workers_config callback_config = {1u, 1u, 64u};
-    const cnet_callback_workers_config too_small_callback_config = {1u, 1u, 63u};
+    const cnet_callback_workers_config callback_config = {1u, 1u, 1u, 64u};
+    const cnet_callback_workers_config too_small_callback_config = {1u, 1u, 1u, 63u};
     cnet_dispatcher_test_socket listener = CNET_DISPATCHER_TEST_INVALID_SOCKET;
     cnet_dispatcher_test_socket accepted = CNET_DISPATCHER_TEST_INVALID_SOCKET;
     struct sockaddr_in address;

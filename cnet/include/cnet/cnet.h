@@ -84,7 +84,7 @@ typedef struct cnet_client_config {
 } cnet_client_config;
 
 /**
- * Starts NativeIO owner shards, callback lanes, and event dispatch lanes.
+ * Starts NativeIO owner shards and their bounded SPSC callback channels.
  *
  * @param client Zero-initialized output owner.
  * @param config Borrowed configuration copied during initialization.

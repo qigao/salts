@@ -12,7 +12,8 @@ typedef struct cnet_callback_workers {
 
 typedef struct cnet_callback_workers_config {
   size_t worker_count;
-  uint64_t capacity_per_worker;
+  size_t producer_count;
+  uint64_t capacity_per_producer;
   size_t max_payload_bytes;
 } cnet_callback_workers_config;
 
@@ -32,12 +33,11 @@ typedef int (*cnet_callback_release_fn)(void *context, const cnet_callback_view 
                                         uint64_t token);
 
 /**
- * One leased callback job. Jobs with the same serialization key always use
- * the same worker lane and are invoked in accepted publication order. Event
- * data must remain immutable and address-stable until release returns.
+ * One callback job. Jobs from the same producer use the same worker lane and
+ * are invoked in accepted publication order. Publication copies event data
+ * into the bounded producer channel before returning.
  */
 typedef struct cnet_callback_job {
-  uint64_t serialization_key;
   cnet_callback_fn invoke;
   cnet_callback_fn finish;
   void *context;
@@ -54,11 +54,13 @@ bool cnet_callback_workers_get_config(const cnet_callback_workers *workers,
                                       cnet_callback_workers_config *out_config);
 
 /**
- * MPSC and nonblocking. Success moves the data lease and exactly one release
- * obligation to the selected lane; failure leaves both with the caller.
- * Receive jobs therefore require a non-NULL release callback.
+ * SPSC and nonblocking for one fixed producer index. The same owner thread
+ * must perform every publication for that index. Success moves any release
+ * obligation to the assigned callback worker; failure leaves it with the caller.
+ * The optional release callback runs after user delivery.
  */
-int cnet_callback_workers_publish(cnet_callback_workers *workers, const cnet_callback_job *job);
+int cnet_callback_workers_publish_from(cnet_callback_workers *workers, uint32_t producer,
+                                       const cnet_callback_job *job);
 
 /** Stops admission, drains accepted jobs, and waits up to the supplied deadline. */
 int cnet_callback_workers_stop(cnet_callback_workers *workers, uint32_t timeout_ms);
