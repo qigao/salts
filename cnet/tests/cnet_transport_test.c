@@ -1,3 +1,4 @@
+#include "cnet_test_pipe.h"
 #include "cnet_transport.h"
 #include "tinytest.h"
 #include <turbo/native_io.h>
@@ -11,7 +12,6 @@
 typedef SOCKET cnet_test_socket;
   #define CNET_TEST_INVALID_SOCKET INVALID_SOCKET
 #else
-  #include <errno.h>
   #include <netinet/in.h>
   #include <sys/socket.h>
   #include <unistd.h>
@@ -155,6 +155,58 @@ static void cnet_test_udp_transport(native_io_backend_kind kind) {
   check_equal(native_io_backend_destroy(&backend), TURBO_OK);
 }
 
+static void cnet_test_pipe_transport(native_io_backend_kind kind) {
+  static const unsigned char inbound[] = {1u, 2u, 3u, 4u};
+  static const unsigned char outbound[] = {9u, 8u, 7u, 6u};
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {kind, 2u, 1u, 1u};
+  cnet_transport transport = {0};
+  cnet_shared_test_pipe_pair pair;
+  native_io_request request = {0};
+  native_io_completion completion = {0};
+  native_io_operation operation;
+  unsigned char received[sizeof(inbound)] = {0};
+  size_t count = 0u;
+
+  check_equal(cnet_shared_test_make_pipe_pair(&pair), TURBO_OK);
+  check_equal(native_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(cnet_transport_adopt_pipe(&transport, &backend, pair.cnet_read, pair.cnet_write),
+              TURBO_OK);
+  pair.cnet_read = pair.cnet_write = UINTPTR_MAX;
+
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_PIPE_READ,
+                                    .endpoint = cnet_transport_read_endpoint(&transport),
+                                    .buffer = received,
+                                    .length = sizeof(received)};
+  check_equal(native_io_backend_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(cnet_shared_test_pipe_peer_write(pair.peer_write, inbound, sizeof(inbound)),
+              TURBO_OK);
+  check_equal(native_io_backend_observe(&backend, &completion, 1u, CNET_TEST_TIMEOUT_MS, &count),
+              TURBO_OK);
+  check_equal(count, 1u);
+  check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
+  check_equal(received, inbound, sizeof(inbound));
+
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_PIPE_WRITE,
+                                    .endpoint = cnet_transport_write_endpoint(&transport),
+                                    .buffer = (void *)outbound,
+                                    .length = sizeof(outbound)};
+  check_equal(native_io_backend_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_backend_observe(&backend, &completion, 1u, CNET_TEST_TIMEOUT_MS, &count),
+              TURBO_OK);
+  check_equal(count, 1u);
+  check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
+  memset(received, 0, sizeof(received));
+  check_equal(cnet_shared_test_pipe_peer_read(pair.peer_read, received, sizeof(received)),
+              TURBO_OK);
+  check_equal(received, outbound, sizeof(outbound));
+
+  check_equal(cnet_transport_close(&transport, &backend), TURBO_OK);
+  cnet_shared_test_close_pipe_pair(&pair);
+  check_equal(native_io_backend_close(&backend), TURBO_OK);
+  check_equal(native_io_backend_destroy(&backend), TURBO_OK);
+}
+
 spec("CNet NativeIO transport ownership") {
   it("creates owns connects and releases one TCP socket") {
     native_io_backend_kind backends[CNET_TEST_MAX_BACKENDS];
@@ -172,8 +224,21 @@ spec("CNet NativeIO transport ownership") {
       cnet_test_udp_transport(backends[index]);
   }
 
+  it("adopts owns and releases one platform byte-pipe connection") {
+    native_io_backend_kind backends[CNET_TEST_MAX_BACKENDS];
+    const size_t count = cnet_test_backends(backends);
+    size_t index;
+    for (index = 0u; index < count; ++index)
+      if (native_io_backend_kind_supports_pipe(backends[index]))
+        cnet_test_pipe_transport(backends[index]);
+  }
+
   it("clears transport output on invalid admission") {
-    cnet_transport transport = {(uintptr_t)1u, {1u, 1u}, true, true};
+    cnet_transport transport = {.native_handle = (uintptr_t)1u,
+                                .endpoint = {1u, 1u},
+                                .resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET,
+                                .native_open = true,
+                                .attached = true};
     native_io_request request = {1u, 1u};
     check_equal(cnet_transport_tcp_connect(&transport, NULL, NATIVE_IO_BACKEND_IOCP, NULL, 0u, 0u,
                                            &request),

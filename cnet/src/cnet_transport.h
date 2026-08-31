@@ -7,11 +7,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
+typedef enum cnet_transport_resource_kind {
+  CNET_TRANSPORT_RESOURCE_NONE = 0,
+  CNET_TRANSPORT_RESOURCE_SOCKET,
+  CNET_TRANSPORT_RESOURCE_PIPE
+} cnet_transport_resource_kind;
+
 typedef struct cnet_transport {
   uintptr_t native_handle;
   native_io_endpoint endpoint;
+  uintptr_t write_native_handle;
+  native_io_endpoint write_endpoint;
+  cnet_transport_resource_kind resource_kind;
   bool native_open;
   bool attached;
+  bool write_native_open;
+  bool write_attached;
 } cnet_transport;
 
 /**
@@ -28,7 +39,19 @@ int cnet_transport_udp_connect(cnet_transport *transport, native_io_backend *bac
                                native_io_backend_kind backend_kind, const void *address,
                                size_t address_length);
 
-/** Closes the owned socket, then releases drained NativeIO endpoint metadata. */
+/**
+ * Adopts one connected byte-pipe connection. On success CNet owns both native
+ * handles; the read and write handles may be identical for a duplex pipe. On
+ * failure ownership remains with the caller.
+ */
+int cnet_transport_adopt_pipe(cnet_transport *transport, native_io_backend *backend,
+                              uintptr_t read_handle, uintptr_t write_handle);
+
+native_io_endpoint cnet_transport_read_endpoint(const cnet_transport *transport);
+native_io_endpoint cnet_transport_write_endpoint(const cnet_transport *transport);
+bool cnet_transport_active(const cnet_transport *transport);
+
+/** Closes owned native resources, then releases drained NativeIO metadata. */
 int cnet_transport_close(cnet_transport *transport, native_io_backend *backend);
 
 #endif /* CNET_TRANSPORT_H */

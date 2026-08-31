@@ -222,15 +222,17 @@ static int cnet_owner_store_request(cnet_owner_impl *impl, native_io_request req
 
 static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *session) {
   native_io_operation operation;
+  native_io_operation_kind operation_kind;
   native_io_request request = {0};
   int status;
 
   if (session->receive_demand == 0u || session->read_active || session->close_requested)
     return TURBO_OK;
-  operation = (native_io_operation){.kind = session->peer.scheme == CNET_URI_TCP
-                                                ? NATIVE_IO_OPERATION_TCP_RECV
-                                                : NATIVE_IO_OPERATION_UDP_RECV_FROM,
-                                    .endpoint = session->transport.endpoint,
+  operation_kind = session->peer.scheme == CNET_URI_TCP   ? NATIVE_IO_OPERATION_TCP_RECV
+                   : session->peer.scheme == CNET_URI_UDP ? NATIVE_IO_OPERATION_UDP_RECV_FROM
+                                                          : NATIVE_IO_OPERATION_PIPE_READ;
+  operation = (native_io_operation){.kind = operation_kind,
+                                    .endpoint = cnet_transport_read_endpoint(&session->transport),
                                     .buffer = session->receive_buffer,
                                     .length = impl->receive_buffer_bytes};
   status = native_io_backend_submit(&impl->backend, &operation, &request);
@@ -277,8 +279,13 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
                                    CNET_SESSION_STAGE_CONNECT);
   }
   payload = (const cnet_owner_connect_payload *)command->data;
-  if (payload->address_length == 0u || payload->address_length > CNET_OWNER_ADDRESS_CAPACITY ||
-      (payload->scheme != CNET_URI_TCP && payload->scheme != CNET_URI_UDP)) {
+  if ((payload->scheme != CNET_URI_TCP && payload->scheme != CNET_URI_UDP &&
+       payload->scheme != CNET_URI_PIPE) ||
+      (payload->scheme == CNET_URI_PIPE
+           ? payload->address_length != 0u || payload->pipe_read_handle == UINTPTR_MAX ||
+                 payload->pipe_write_handle == UINTPTR_MAX
+           : payload->address_length == 0u ||
+                 payload->address_length > CNET_OWNER_ADDRESS_CAPACITY)) {
     status = cnet_command_queue_release(impl->commands, command);
     if (status != TURBO_OK) return status;
     return cnet_session_table_fail(impl->sessions, handle, TURBO_EINVAL,
@@ -313,9 +320,14 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
     return cnet_owner_fail_accepted_command(impl, session, command, status,
                                             CNET_SESSION_STAGE_CONNECT);
 
-  if (payload->scheme == CNET_URI_UDP) {
-    status = cnet_transport_udp_connect(&session->transport, &impl->backend, impl->backend_kind,
-                                        session->peer.address, session->peer.address_length);
+  if (payload->scheme != CNET_URI_TCP) {
+    status =
+        payload->scheme == CNET_URI_UDP
+            ? cnet_transport_udp_connect(&session->transport, &impl->backend, impl->backend_kind,
+                                         session->peer.address, session->peer.address_length)
+            : cnet_transport_adopt_pipe(&session->transport, &impl->backend,
+                                        session->peer.pipe_read_handle,
+                                        session->peer.pipe_write_handle);
     if (status == TURBO_OK)
       status = cnet_session_table_transition(impl->sessions, session->handle, CNET_SESSION_OPEN);
     if (status != TURBO_OK)
@@ -340,6 +352,7 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
 static int cnet_owner_send(cnet_owner_impl *impl, cnet_command_view *command) {
   cnet_owner_session *session = cnet_owner_find_session(impl, command->connection);
   native_io_operation operation;
+  native_io_operation_kind operation_kind;
   native_io_request request = {0};
   cnet_session_state state = CNET_SESSION_FREE;
   int status;
@@ -348,10 +361,11 @@ static int cnet_owner_send(cnet_owner_impl *impl, cnet_command_view *command) {
   status = cnet_session_table_state(impl->sessions, command->connection, &state);
   if (status != TURBO_OK || state != CNET_SESSION_OPEN)
     return cnet_command_queue_release(impl->commands, command);
-  operation = (native_io_operation){.kind = session->peer.scheme == CNET_URI_TCP
-                                                ? NATIVE_IO_OPERATION_TCP_SEND
-                                                : NATIVE_IO_OPERATION_UDP_SEND_TO,
-                                    .endpoint = session->transport.endpoint,
+  operation_kind = session->peer.scheme == CNET_URI_TCP   ? NATIVE_IO_OPERATION_TCP_SEND
+                   : session->peer.scheme == CNET_URI_UDP ? NATIVE_IO_OPERATION_UDP_SEND_TO
+                                                          : NATIVE_IO_OPERATION_PIPE_WRITE;
+  operation = (native_io_operation){.kind = operation_kind,
+                                    .endpoint = cnet_transport_write_endpoint(&session->transport),
                                     .buffer = (void *)command->data,
                                     .length = command->size};
   status = native_io_backend_submit(&impl->backend, &operation, &request);
@@ -510,7 +524,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
       config->receive_buffer_bytes == 0u ||
       config->receive_buffer_count != config->connection_capacity ||
       config->completion_batch_capacity > config->request_capacity ||
-      config->connection_capacity > UINT32_MAX || config->request_capacity > UINT32_MAX)
+      config->connection_capacity > UINT32_MAX / 2u || config->request_capacity > UINT32_MAX)
     return TURBO_EINVAL;
   if (!cnet_event_queue_get_config(config->events, &event_config) ||
       config->receive_buffer_bytes > event_config.max_payload_bytes)
@@ -545,7 +559,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     return TURBO_ENOMEM;
   }
   backend_config =
-      (native_io_backend_config){config->backend_kind, config->connection_capacity,
+      (native_io_backend_config){config->backend_kind, config->connection_capacity * 2u,
                                  config->request_capacity, config->completion_batch_capacity};
   status = native_io_backend_init(&impl->backend, &backend_config);
   if (status != TURBO_OK) {
@@ -609,8 +623,7 @@ int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session_ha
   cnet_session_state state = CNET_SESSION_FREE;
   int status;
   if (session == NULL) return TURBO_ENOENT;
-  if (session->active_requests != 0u || session->transport.native_open ||
-      session->transport.attached)
+  if (session->active_requests != 0u || cnet_transport_active(&session->transport))
     return TURBO_EBUSY;
   status = cnet_session_table_state(impl->sessions, session_handle, &state);
   if (status != TURBO_ENOENT) return TURBO_EBUSY;

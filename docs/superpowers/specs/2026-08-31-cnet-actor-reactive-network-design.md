@@ -383,6 +383,15 @@ datagram per receive. WebSocket reassembles fragments subject to the configured
 message limit. KCP runs in message mode; stream mode is excluded from the first
 contract.
 
+The private Pipe transport has separate read and write roles. A Windows duplex
+named pipe may bind both roles to one overlapped handle and one NativeIO
+endpoint. POSIX binds them to two nonblocking FIFO descriptors and two NativeIO
+endpoints. CNet owns and closes each distinct native handle after successful
+adoption; NativeIO only borrows the handles and releases its endpoint metadata
+after all requests are observed. Admission failure leaves both handles with the
+caller. A backend whose `native_io_backend_kind_supports_pipe()` result is false
+returns `TURBO_ENOTSUP`; CNet never changes the configured backend.
+
 KCP uses the authenticated wire contract as an explicit CNet protocol, not as
 behavior attributed to upstream KCP. Client/server nonces and a server session
 epoch are authenticated with the configured PSK. Directional AEAD keys and an

@@ -6,8 +6,11 @@
 #include <string.h>
 
 #if defined(_WIN32)
+  // clang-format off
   #include <winsock2.h>
+  #include <windows.h>
   #include <ws2tcpip.h>
+  // clang-format on
 typedef SOCKET cnet_native_socket;
   #define CNET_INVALID_SOCKET INVALID_SOCKET
 #else
@@ -22,7 +25,9 @@ typedef int cnet_native_socket;
 
 static void cnet_transport_reset(cnet_transport *transport) {
   if (transport == NULL) return;
-  *transport = (cnet_transport){UINTPTR_MAX, {0u, 0u}, false, false};
+  *transport = (cnet_transport){.native_handle = UINTPTR_MAX,
+                                .write_native_handle = UINTPTR_MAX,
+                                .resource_kind = CNET_TRANSPORT_RESOURCE_NONE};
 }
 
 static int cnet_transport_native_error(void) {
@@ -35,13 +40,25 @@ static int cnet_transport_native_error(void) {
 }
 
 static void cnet_transport_close_native(cnet_transport *transport) {
-  if (transport == NULL || !transport->native_open) return;
+  if (transport == NULL) return;
+  if (transport->native_open) {
 #if defined(_WIN32)
-  (void)closesocket((SOCKET)transport->native_handle);
+    if (transport->resource_kind == CNET_TRANSPORT_RESOURCE_SOCKET)
+      (void)closesocket((SOCKET)transport->native_handle);
+    else (void)CloseHandle((HANDLE)transport->native_handle);
 #else
-  (void)close((int)transport->native_handle);
+    (void)close((int)transport->native_handle);
 #endif
-  transport->native_open = false;
+    transport->native_open = false;
+  }
+  if (transport->write_native_open) {
+#if defined(_WIN32)
+    (void)CloseHandle((HANDLE)transport->write_native_handle);
+#else
+    (void)close((int)transport->write_native_handle);
+#endif
+    transport->write_native_open = false;
+  }
 }
 
 static int cnet_transport_address_family(const void *address, size_t address_length,
@@ -105,6 +122,7 @@ int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *bac
   if (status != TURBO_OK) return status;
 
   transport->native_handle = (uintptr_t)socket_value;
+  transport->resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET;
   transport->native_open = true;
   status = native_io_backend_attach_socket(backend, transport->native_handle, &transport->endpoint);
   if (status != TURBO_OK) {
@@ -145,6 +163,7 @@ int cnet_transport_udp_connect(cnet_transport *transport, native_io_backend *bac
   if (status != TURBO_OK) return status;
 
   transport->native_handle = (uintptr_t)socket_value;
+  transport->resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET;
   transport->native_open = true;
   if (connect(socket_value, (const struct sockaddr *)address, (int)address_length) != 0) {
     status = cnet_transport_native_error();
@@ -162,17 +181,71 @@ int cnet_transport_udp_connect(cnet_transport *transport, native_io_backend *bac
   return TURBO_OK;
 }
 
+int cnet_transport_adopt_pipe(cnet_transport *transport, native_io_backend *backend,
+                              uintptr_t read_handle, uintptr_t write_handle) {
+  native_io_endpoint read_endpoint = {0};
+  native_io_endpoint write_endpoint = {0};
+  int status;
+  if (transport == NULL) return TURBO_EINVAL;
+  cnet_transport_reset(transport);
+  if (backend == NULL || read_handle == UINTPTR_MAX || write_handle == UINTPTR_MAX)
+    return TURBO_EINVAL;
+  status = native_io_backend_attach_pipe(backend, read_handle,
+                                         NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &read_endpoint);
+  if (status != TURBO_OK) return status;
+  if (write_handle != read_handle) {
+    status = native_io_backend_attach_pipe(backend, write_handle,
+                                           NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &write_endpoint);
+    if (status != TURBO_OK) {
+      (void)native_io_backend_release_pipe(backend, read_endpoint);
+      return status;
+    }
+  } else {
+    write_endpoint = read_endpoint;
+  }
+  transport->native_handle = read_handle;
+  transport->endpoint = read_endpoint;
+  transport->write_native_handle = write_handle != read_handle ? write_handle : UINTPTR_MAX;
+  transport->write_endpoint = write_endpoint;
+  transport->resource_kind = CNET_TRANSPORT_RESOURCE_PIPE;
+  transport->native_open = true;
+  transport->attached = true;
+  transport->write_native_open = write_handle != read_handle;
+  transport->write_attached = write_handle != read_handle;
+  return TURBO_OK;
+}
+
+native_io_endpoint cnet_transport_read_endpoint(const cnet_transport *transport) {
+  return transport != NULL && transport->attached ? transport->endpoint : (native_io_endpoint){0};
+}
+
+native_io_endpoint cnet_transport_write_endpoint(const cnet_transport *transport) {
+  if (transport == NULL || !transport->attached) return (native_io_endpoint){0};
+  return transport->write_attached ? transport->write_endpoint : transport->endpoint;
+}
+
+bool cnet_transport_active(const cnet_transport *transport) {
+  return transport != NULL && (transport->native_open || transport->attached ||
+                               transport->write_native_open || transport->write_attached);
+}
+
 int cnet_transport_close(cnet_transport *transport, native_io_backend *backend) {
   int status;
-  if (transport == NULL || backend == NULL || (!transport->native_open && !transport->attached))
+  if (transport == NULL || backend == NULL || !cnet_transport_active(transport))
     return TURBO_EINVAL;
   cnet_transport_close_native(transport);
-  if (!transport->attached) {
-    cnet_transport_reset(transport);
-    return TURBO_OK;
+  if (transport->attached) {
+    status = transport->resource_kind == CNET_TRANSPORT_RESOURCE_PIPE
+                 ? native_io_backend_release_pipe(backend, transport->endpoint)
+                 : native_io_backend_release_socket(backend, transport->endpoint);
+    if (status != TURBO_OK) return status;
+    transport->attached = false;
   }
-  status = native_io_backend_release_socket(backend, transport->endpoint);
-  if (status != TURBO_OK) return status;
+  if (transport->write_attached) {
+    status = native_io_backend_release_pipe(backend, transport->write_endpoint);
+    if (status != TURBO_OK) return status;
+    transport->write_attached = false;
+  }
   cnet_transport_reset(transport);
   return TURBO_OK;
 }

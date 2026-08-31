@@ -148,6 +148,15 @@ llhttp, Wslay, and upstream KCP.
 
 ## Task 5: Implement Base CNet TCP, UDP, and Pipe Sessions
 
+Current internal milestone: one owner shard now exercises TCP and connected UDP
+over every supported NativeIO backend, plus byte-pipe read/write over backends
+whose explicit capability reports Pipe support. Windows uses one duplex named
+pipe handle; POSIX uses separate nonblocking read/write FIFO descriptors. The
+owner accepts only already-resolved socket addresses and already-opened private
+pipe handles at this stage. DNS, `pipe://` platform opening, deadlines,
+long-lived owner tasks, callback dispatch, and the public client remain required
+before this task is complete.
+
 **Files:**
 
 - Create: `cnet/src/cnet_client.c`
@@ -171,7 +180,7 @@ llhttp, Wslay, and upstream KCP.
   stale completion, and stop retry after timeout.
 - [ ] Write real loopback tests for TCP byte fragmentation/half-close/reset,
   connected UDP datagram boundaries, and platform pipe behavior.
-- [ ] Implement strict URI parsing with bounded copied components and typed
+- [x] Implement strict URI parsing with bounded copied components and typed
   scheme dispatch. Reject unknown fields and unavailable schemes.
 - [ ] Add the pinned c-ares dependency through the repository vcpkg manifest.
 - [ ] Implement hostname resolution with c-ares asynchronous queries. The

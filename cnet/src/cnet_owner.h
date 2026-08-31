@@ -16,6 +16,8 @@ typedef struct cnet_owner_connect_payload {
   cnet_uri_scheme scheme;
   size_t address_length;
   unsigned char address[CNET_OWNER_ADDRESS_CAPACITY];
+  uintptr_t pipe_read_handle;
+  uintptr_t pipe_write_handle;
 } cnet_owner_connect_payload;
 
 typedef struct cnet_owner_config {
