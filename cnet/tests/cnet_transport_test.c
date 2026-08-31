@@ -1,3 +1,4 @@
+#include "cnet_test_named_pipe.h"
 #include "cnet_test_pipe.h"
 #include "cnet_transport.h"
 #include "tinytest.h"
@@ -207,6 +208,55 @@ static void cnet_test_pipe_transport(native_io_backend_kind kind) {
   check_equal(native_io_backend_destroy(&backend), TURBO_OK);
 }
 
+static void cnet_test_named_pipe_transport(native_io_backend_kind kind) {
+  static const unsigned char inbound[] = {3u, 1u, 4u, 1u};
+  static const unsigned char outbound[] = {2u, 7u, 1u, 8u};
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {kind, 2u, 1u, 1u};
+  cnet_transport transport = {0};
+  cnet_shared_test_named_pipe pipe;
+  native_io_request request = {0};
+  native_io_completion completion = {0};
+  native_io_operation operation;
+  unsigned char received[sizeof(inbound)] = {0};
+  size_t count = 0u;
+
+  check_equal(cnet_shared_test_named_pipe_start(&pipe), TURBO_OK);
+  check_equal(native_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(cnet_transport_pipe_connect(&transport, &backend, kind, pipe.name), TURBO_OK);
+  check_equal(cnet_shared_test_named_pipe_finish(&pipe), TURBO_OK);
+
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_PIPE_READ,
+                                    .endpoint = cnet_transport_read_endpoint(&transport),
+                                    .buffer = received,
+                                    .length = sizeof(received)};
+  check_equal(native_io_backend_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(cnet_shared_test_named_pipe_peer_write(&pipe, inbound, sizeof(inbound)), TURBO_OK);
+  check_equal(native_io_backend_observe(&backend, &completion, 1u, CNET_TEST_TIMEOUT_MS, &count),
+              TURBO_OK);
+  check_equal(count, 1u);
+  check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
+  check_equal(received, inbound, sizeof(inbound));
+
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_PIPE_WRITE,
+                                    .endpoint = cnet_transport_write_endpoint(&transport),
+                                    .buffer = (void *)outbound,
+                                    .length = sizeof(outbound)};
+  check_equal(native_io_backend_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_backend_observe(&backend, &completion, 1u, CNET_TEST_TIMEOUT_MS, &count),
+              TURBO_OK);
+  check_equal(count, 1u);
+  check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
+  memset(received, 0, sizeof(received));
+  check_equal(cnet_shared_test_named_pipe_peer_read(&pipe, received, sizeof(received)), TURBO_OK);
+  check_equal(received, outbound, sizeof(outbound));
+
+  check_equal(cnet_transport_close(&transport, &backend), TURBO_OK);
+  cnet_shared_test_named_pipe_close(&pipe);
+  check_equal(native_io_backend_close(&backend), TURBO_OK);
+  check_equal(native_io_backend_destroy(&backend), TURBO_OK);
+}
+
 spec("CNet NativeIO transport ownership") {
   it("creates owns connects and releases one TCP socket") {
     native_io_backend_kind backends[CNET_TEST_MAX_BACKENDS];
@@ -231,6 +281,41 @@ spec("CNet NativeIO transport ownership") {
     for (index = 0u; index < count; ++index)
       if (native_io_backend_kind_supports_pipe(backends[index]))
         cnet_test_pipe_transport(backends[index]);
+  }
+
+  it("opens owns and releases one named platform byte-pipe connection") {
+    native_io_backend_kind backends[CNET_TEST_MAX_BACKENDS];
+    const size_t count = cnet_test_backends(backends);
+    size_t index;
+    for (index = 0u; index < count; ++index)
+      if (native_io_backend_kind_supports_pipe(backends[index]))
+        cnet_test_named_pipe_transport(backends[index]);
+  }
+
+  it("clears transport output when a platform pipe name cannot be opened") {
+    native_io_backend_kind backends[CNET_TEST_MAX_BACKENDS];
+    const size_t count = cnet_test_backends(backends);
+    size_t index;
+    for (index = 0u; index < count; ++index) {
+      native_io_backend backend = {0};
+      const native_io_backend_config config = {backends[index], 2u, 1u, 1u};
+      cnet_transport transport = {.native_handle = 1u,
+                                  .write_native_handle = 2u,
+                                  .resource_kind = CNET_TRANSPORT_RESOURCE_PIPE,
+                                  .native_open = true,
+                                  .attached = true,
+                                  .write_native_open = true,
+                                  .write_attached = true};
+      int status;
+      if (!native_io_backend_kind_supports_pipe(backends[index])) continue;
+      check_equal(native_io_backend_init(&backend, &config), TURBO_OK);
+      status = cnet_transport_pipe_connect(&transport, &backend, backends[index],
+                                           "cnet-missing-platform-pipe");
+      check(status != TURBO_OK);
+      check_false(cnet_transport_active(&transport));
+      check_equal(native_io_backend_close(&backend), TURBO_OK);
+      check_equal(native_io_backend_destroy(&backend), TURBO_OK);
+    }
   }
 
   it("clears transport output on invalid admission") {

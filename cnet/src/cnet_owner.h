@@ -19,8 +19,7 @@ typedef struct cnet_owner_connect_payload {
   unsigned char address[CNET_OWNER_ADDRESS_CAPACITY];
   char host[CNET_RESOLVER_HOST_CAPACITY];
   uint16_t port;
-  uintptr_t pipe_read_handle;
-  uintptr_t pipe_write_handle;
+  char pipe_name[CNET_URI_PATH_CAPACITY];
   /** Zero disables the deadline. Connect covers resolution plus transport admission. */
   uint32_t connect_timeout_ms;
   /** Zero disables the per-accepted-read deadline. */

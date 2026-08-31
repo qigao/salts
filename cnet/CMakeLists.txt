@@ -13,6 +13,7 @@ add_library(${TARGET_NAME} STATIC
   src/cnet_session.c
   src/cnet_shards.c
   src/cnet_transport.c
+  src/cnet_transport_pipe.c
   src/cnet_uri.c)
 cmake_config_target(${TARGET_NAME} FOLDER "cnet")
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)

@@ -47,6 +47,14 @@ int cnet_transport_udp_connect(cnet_transport *transport, native_io_backend *bac
 int cnet_transport_adopt_pipe(cnet_transport *transport, native_io_backend *backend,
                               uintptr_t read_handle, uintptr_t write_handle);
 
+/**
+ * Opens one platform byte-pipe client endpoint and attaches it to NativeIO.
+ * Windows maps `name` to one duplex overlapped named pipe. POSIX maps `name`
+ * to the nonblocking FIFO pair `name.rx` (read) and `name.tx` (write).
+ */
+int cnet_transport_pipe_connect(cnet_transport *transport, native_io_backend *backend,
+                                native_io_backend_kind backend_kind, const char *name);
+
 native_io_endpoint cnet_transport_read_endpoint(const cnet_transport *transport);
 native_io_endpoint cnet_transport_write_endpoint(const cnet_transport *transport);
 bool cnet_transport_active(const cnet_transport *transport);

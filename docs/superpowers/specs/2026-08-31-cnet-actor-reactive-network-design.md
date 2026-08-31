@@ -426,6 +426,17 @@ after all requests are observed. Admission failure leaves both handles with the
 caller. A backend whose `native_io_backend_kind_supports_pipe()` result is false
 returns `TURBO_ENOTSUP`; CNet never changes the configured backend.
 
+`pipe://name` is resolved by a private CNet platform adapter, never by
+NativeIO. On Windows, `name` is relative to `\\.\pipe\` and `/` separators are
+normalized to `\`; CNet opens one byte-mode duplex handle with
+`FILE_FLAG_OVERLAPPED`. On POSIX, `name` is a filesystem base path and CNet
+opens `name.rx` for nonblocking reads and `name.tx` for nonblocking writes; the
+suffix roles are always from the CNet client's perspective. The peer must
+create and make both FIFOs openable before connection admission. A missing,
+busy, malformed, blocking, or unsupported endpoint fails the connect stage
+without retrying, changing backend, or publishing `CONNECTED`. The copied name
+and derived paths are bounded; no data-path allocation is introduced.
+
 KCP uses the authenticated wire contract as an explicit CNet protocol, not as
 behavior attributed to upstream KCP. Client/server nonces and a server session
 epoch are authenticated with the configured PSK. Directional AEAD keys and an

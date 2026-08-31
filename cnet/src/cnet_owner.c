@@ -356,9 +356,8 @@ static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session 
         session->peer.scheme == CNET_URI_UDP
             ? cnet_transport_udp_connect(&session->transport, &impl->backend, impl->backend_kind,
                                          session->peer.address, session->peer.address_length)
-            : cnet_transport_adopt_pipe(&session->transport, &impl->backend,
-                                        session->peer.pipe_read_handle,
-                                        session->peer.pipe_write_handle);
+            : cnet_transport_pipe_connect(&session->transport, &impl->backend, impl->backend_kind,
+                                          session->peer.pipe_name);
     if (status == TURBO_OK)
       status = cnet_session_table_transition(impl->sessions, session->handle, CNET_SESSION_OPEN);
     if (status == TURBO_OK) status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
@@ -395,6 +394,8 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
   bool has_address;
   bool has_host;
   bool host_present;
+  bool has_pipe;
+  bool pipe_present;
   int status;
 
   if (command->size != sizeof(cnet_owner_connect_payload) || command->data == NULL) {
@@ -409,14 +410,15 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
   host_present = payload->host[0] != '\0';
   has_host = host_present && payload->port != 0u &&
              memchr(payload->host, '\0', sizeof(payload->host)) != NULL;
+  pipe_present = payload->pipe_name[0] != '\0';
+  has_pipe = pipe_present && memchr(payload->pipe_name, '\0', sizeof(payload->pipe_name)) != NULL;
   if ((payload->scheme != CNET_URI_TCP && payload->scheme != CNET_URI_UDP &&
        payload->scheme != CNET_URI_PIPE) ||
       (payload->scheme == CNET_URI_PIPE
-           ? payload->address_length != 0u || host_present || payload->port != 0u ||
-                 payload->pipe_read_handle == UINTPTR_MAX ||
-                 payload->pipe_write_handle == UINTPTR_MAX
-       : payload->address_length != 0u ? !has_address || host_present || payload->port != 0u
-                                       : !has_host)) {
+           ? payload->address_length != 0u || host_present || payload->port != 0u || !has_pipe
+           : pipe_present || (payload->address_length != 0u
+                                  ? !has_address || host_present || payload->port != 0u
+                                  : !has_host))) {
     status = cnet_command_queue_release(impl->commands, command);
     if (status != TURBO_OK) return status;
     return cnet_session_table_fail(impl->sessions, handle, TURBO_EINVAL,

@@ -153,9 +153,11 @@ over every supported NativeIO backend, plus byte-pipe read/write over backends
 whose explicit capability reports Pipe support. Windows uses one duplex named
 pipe handle; POSIX uses separate nonblocking read/write FIFO descriptors. The
 owner accepts already-resolved socket addresses or bounded host/port input, and
-still accepts only already-opened private pipe handles. `pipe://` platform
-opening, deadlines, callback dispatch, and the public client remain required
-before this task is complete.
+now accepts a copied bounded Pipe name: the private platform adapter maps it to
+one overlapped Windows named pipe or the POSIX `<base>.rx`/`<base>.tx` FIFO
+pair, owns successful opens, and reports failures at the connect stage. Owner
+deadlines and leased callback dispatch are implemented; the public client and
+client-level shutdown deadline remain required before this task is complete.
 
 The bounded DNS primitive is now implemented behind the experimental target:
 the process control plane reference-counts c-ares initialization, each resolver
@@ -203,9 +205,8 @@ release its event lease, and successfully recycle the session before that slot
 can be registered again. Drain closes dispatcher admission, requests close for
 every registered connection, continues driving terminal events, and only then
 permits destruction. The dispatcher allocates only during initialization and is
-still an internal, incomplete client primitive; platform `pipe://` opening,
-client-level shutdown deadlines, and the public client remain before the
-execution task is complete.
+still an internal, incomplete client primitive; client-level shutdown
+deadlines and the public client remain before the execution task is complete.
 
 **Files:**
 
