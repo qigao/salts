@@ -235,7 +235,10 @@ callback workers; it does not implement another thread pool. Each I/O shard has
 exactly one long-lived owner task and one NativeIO backend. Connections are
 assigned to a shard once and never migrate while live. `callback_workers` are
 separate from I/O owner workers so slow business callbacks cannot stop socket
-progress.
+progress. A connection's generation-checked identity selects one stable
+callback lane; that lane is a single consumer, so callbacks for the connection
+remain FIFO and non-overlapping. Different lanes run as independent long-lived
+tasks and may execute callbacks concurrently.
 
 Process-global protocol dependencies are initialized by the CNet control plane
 before worker threads start and are reference counted. A live resolver pins the
@@ -463,6 +466,21 @@ The notification paths are not second state machines. Consumers can delay
 delivery but cannot change the authoritative session record. CNet retains the
 session slot until its terminal state notification and all borrowed payload
 leases have been delivered and released.
+
+The client event dispatcher is the sole taker for every shard event ring. It
+moves each taken slot as a lease into the connection's callback lane; it does
+not copy receive bytes into another callback queue. Successful lane publication
+transfers exactly one release obligation. A full lane leaves the lease with the
+dispatcher and applies bounded backpressure; it does not drop or duplicate the
+event. The callback worker invokes the observer without an internal lock, runs
+the internal finish hook, then releases the original event slot. Event-slot
+release is atomic and may complete out of claim order on different callback
+workers. The application receive pointer becomes invalid at that release.
+
+The current base implementation stores receive bytes inline in the bounded
+event slot, making that slot the lease owner. Protocol reassembly may later use
+a retained receive-buffer lease, but it must preserve the same move/release
+contract and cannot make callback handoff add another payload copy.
 
 ### Command payload and receive-buffer boundary
 

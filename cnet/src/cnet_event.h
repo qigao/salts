@@ -63,8 +63,9 @@ bool cnet_event_queue_get_config(const cnet_event_queue *queue,
 /** MPSC, nonblocking; data and total capacity exhaustion return `TURBO_ENOBUFS`. */
 int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event);
 
-/** Single-consumer, nonblocking; empty-open returns `TURBO_ETIMEDOUT`. */
+/** Single-consumer take; empty-open returns `TURBO_ETIMEDOUT`. */
 int cnet_event_queue_take(cnet_event_queue *queue, cnet_event_view *out_view);
+/** A taken view may be released exactly once by any callback worker. */
 int cnet_event_queue_release(cnet_event_queue *queue, cnet_event_view *view);
 
 int cnet_event_queue_close(cnet_event_queue *queue);

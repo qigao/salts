@@ -173,12 +173,24 @@ owner task per shard on `turbo_threadpool`, routes send/receive/close commands
 without migration, propagates the first owner failure, and supports bounded
 quiescent stop. Real TCP tests exercise two independent owner tasks in both
 directions. This is an implementation detail rather than a new user-visible
-runtime concept. Client-driven live-session close, callback workers, and timer
-deadlines remain before the execution checkbox below is complete.
+runtime concept.
+
+The callback worker boundary is now implemented as fixed-capacity stable lanes
+on a separate `turbo_threadpool`. The same serialization key always reaches one
+single-consumer lane, while independent lanes may progress concurrently.
+Publication moves the original event-slot lease instead of copying receive
+bytes again; callback completion releases that slot exactly once, and the event
+queue now supports concurrent out-of-order release by callback workers. Tests
+cover lane serialization, cross-lane progress, MPSC order, full-lane rejection,
+stop retry, exact finish/release, release-error propagation, and pointer-stable
+event handoff. The client-owned event dispatcher, client-driven live-session
+close, and timer deadlines remain before the execution checkbox below is
+complete.
 
 **Files:**
 
 - Create: `cnet/src/cnet_client.c`
+- Create: `cnet/src/cnet_callback.c`
 - Create: `cnet/src/cnet_owner.c`
 - Create: `cnet/src/cnet_uri.c`
 - Create: `cnet/src/cnet_resolver.c`
@@ -187,6 +199,7 @@ deadlines remain before the execution checkbox below is complete.
 - Create: `cnet/src/cnet_transport_udp.c`
 - Create: `cnet/src/cnet_transport_pipe.c`
 - Create: `cnet/tests/cnet_fake_transport_test.c`
+- Create: `cnet/tests/cnet_callback_test.c`
 - Create: `cnet/tests/cnet_tcp_test.c`
 - Create: `cnet/tests/cnet_udp_test.c`
 - Create: `cnet/tests/cnet_pipe_test.c`
@@ -206,6 +219,9 @@ deadlines remain before the execution checkbox below is complete.
   resolver may own only DNS sockets; copy bounded results to the owning shard
   mailbox before calling NativeIO wake, and generation-check late cancellation
   results.
+- [x] Implement bounded stable callback lanes on a separate thread pool. Move
+  event-slot leases into the selected lane, serialize one connection, permit
+  cross-lane concurrency, and release each accepted lease exactly once.
 - [ ] Implement one long-lived owner task and NativeIO backend per shard,
   stable connection-to-shard assignment, fixed completion batches, timer
   deadlines, and first-error propagation.

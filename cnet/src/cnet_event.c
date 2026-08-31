@@ -27,9 +27,9 @@ typedef struct cnet_event_queue_impl {
   atomic_size_t publisher_entrants;
   atomic_bool admission_open;
   atomic_bool close_complete;
-  uint64_t *borrowed_sequences;
+  _Atomic uint64_t *borrowed_sequences;
   size_t borrowed_capacity;
-  size_t borrowed_count;
+  atomic_size_t borrowed_count;
 } cnet_event_queue_impl;
 
 static cnet_event_queue_impl *cnet_event_impl(cnet_event_queue *queue) {
@@ -71,6 +71,7 @@ int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config
   cnet_event_queue_impl *impl;
   disruptor_config_t ring_config;
   size_t entry_size;
+  size_t index;
 
   if (queue == NULL) return TURBO_EINVAL;
   if (queue->impl != NULL) return TURBO_EALREADY;
@@ -93,7 +94,8 @@ int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config
     free(impl);
     return TURBO_ENOMEM;
   }
-  impl->borrowed_sequences = (uint64_t *)calloc((size_t)config->capacity, sizeof(uint64_t));
+  impl->borrowed_sequences =
+      (_Atomic uint64_t *)calloc((size_t)config->capacity, sizeof(*impl->borrowed_sequences));
   if (impl->borrowed_sequences == NULL) {
     disruptor_destroy(impl->ring);
     free(impl);
@@ -102,11 +104,14 @@ int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config
   impl->data_capacity = config->data_capacity;
   impl->max_payload_bytes = config->max_payload_bytes;
   impl->borrowed_capacity = (size_t)config->capacity;
+  for (index = 0u; index < impl->borrowed_capacity; ++index)
+    atomic_init(&impl->borrowed_sequences[index], 0u);
   atomic_init(&impl->live_events, 0u);
   atomic_init(&impl->live_data_events, 0u);
   atomic_init(&impl->publisher_entrants, 0u);
   atomic_init(&impl->admission_open, true);
   atomic_init(&impl->close_complete, false);
+  atomic_init(&impl->borrowed_count, 0u);
   queue->impl = impl;
   return TURBO_OK;
 }
@@ -183,9 +188,10 @@ int cnet_event_queue_take(cnet_event_queue *queue, cnet_event_view *out_view) {
   out_view->data = entry->size != 0u ? entry->payload : NULL;
   out_view->size = entry->size;
   out_view->_sequence = cursor.sequence;
-  impl->borrowed_sequences[(size_t)((cursor.sequence - 1u) & (impl->borrowed_capacity - 1u))] =
-      cursor.sequence;
-  ++impl->borrowed_count;
+  atomic_store_explicit(
+      &impl->borrowed_sequences[(size_t)((cursor.sequence - 1u) & (impl->borrowed_capacity - 1u))],
+      cursor.sequence, memory_order_release);
+  atomic_fetch_add_explicit(&impl->borrowed_count, 1u, memory_order_release);
   return TURBO_OK;
 }
 
@@ -193,17 +199,20 @@ int cnet_event_queue_release(cnet_event_queue *queue, cnet_event_view *view) {
   cnet_event_queue_impl *impl = cnet_event_impl(queue);
   disruptor_cursor_t cursor;
   size_t slot;
+  uint64_t expected;
 
   if (impl == NULL || view == NULL || view->_sequence == 0u) return TURBO_EINVAL;
   slot = (size_t)((view->_sequence - 1u) & (impl->borrowed_capacity - 1u));
-  if (impl->borrowed_sequences[slot] != view->_sequence) return TURBO_EINVAL;
+  expected = view->_sequence;
+  if (!atomic_compare_exchange_strong_explicit(&impl->borrowed_sequences[slot], &expected, 0u,
+                                               memory_order_acq_rel, memory_order_acquire))
+    return TURBO_EINVAL;
   cursor.sequence = view->_sequence;
   disruptor_worker_release_entry(impl->ring, &cursor);
   atomic_fetch_sub_explicit(&impl->live_events, 1u, memory_order_release);
   if (view->kind == CNET_EVENT_RECEIVE)
     atomic_fetch_sub_explicit(&impl->live_data_events, 1u, memory_order_release);
-  impl->borrowed_sequences[slot] = 0u;
-  --impl->borrowed_count;
+  atomic_fetch_sub_explicit(&impl->borrowed_count, 1u, memory_order_release);
   memset(view, 0, sizeof(*view));
   return TURBO_OK;
 }
@@ -228,10 +237,10 @@ int cnet_event_queue_destroy(cnet_event_queue *queue) {
   if (!atomic_load_explicit(&impl->close_complete, memory_order_acquire) ||
       atomic_load_explicit(&impl->publisher_entrants, memory_order_acquire) != 0u ||
       atomic_load_explicit(&impl->live_events, memory_order_acquire) != 0u ||
-      impl->borrowed_count != 0u)
+      atomic_load_explicit(&impl->borrowed_count, memory_order_acquire) != 0u)
     return TURBO_EBUSY;
   disruptor_destroy(impl->ring);
-  free(impl->borrowed_sequences);
+  free((void *)impl->borrowed_sequences);
   free(impl);
   queue->impl = NULL;
   return TURBO_OK;
