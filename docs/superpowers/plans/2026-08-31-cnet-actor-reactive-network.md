@@ -157,6 +157,14 @@ pipe handles at this stage. DNS, `pipe://` platform opening, deadlines,
 long-lived owner tasks, callback dispatch, and the public client remain required
 before this task is complete.
 
+The bounded DNS primitive is now implemented behind the experimental target:
+the process control plane reference-counts c-ares initialization, each resolver
+owns a fixed query/result mailbox, and the c-ares event thread copies one
+address result before issuing a nonblocking owner wake. Query cancellation is
+logical and generation checked because c-ares cancellation is channel-wide.
+The future client still has to drain these results into shard commands and own
+the `RESOLVING -> TRANSPORT_CONNECTING` transition.
+
 **Files:**
 
 - Create: `cnet/src/cnet_client.c`
@@ -182,10 +190,11 @@ before this task is complete.
   connected UDP datagram boundaries, and platform pipe behavior.
 - [x] Implement strict URI parsing with bounded copied components and typed
   scheme dispatch. Reject unknown fields and unavailable schemes.
-- [ ] Add the pinned c-ares dependency through the repository vcpkg manifest.
-- [ ] Implement hostname resolution with c-ares asynchronous queries. The
+- [x] Add the pinned c-ares dependency through the repository vcpkg manifest.
+- [x] Implement hostname resolution with c-ares asynchronous queries. The
   resolver may own only DNS sockets; copy bounded results to the owning shard
-  before calling NativeIO wake, and generation-check late cancellation results.
+  mailbox before calling NativeIO wake, and generation-check late cancellation
+  results.
 - [ ] Implement one long-lived owner task and NativeIO backend per shard,
   stable connection-to-shard assignment, fixed completion batches, timer
   deadlines, and first-error propagation.

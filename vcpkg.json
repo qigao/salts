@@ -23,6 +23,9 @@
     },
     {
       "name": "aklomp-base64"
+    },
+    {
+      "name": "c-ares"
     }
   ],
   "features": {
@@ -37,6 +40,11 @@
     {
       "name": "sqlite3",
       "version": "3.50.4",
+      "port-version": 1
+    },
+    {
+      "name": "c-ares",
+      "version": "1.34.5",
       "port-version": 1
     }
   ],

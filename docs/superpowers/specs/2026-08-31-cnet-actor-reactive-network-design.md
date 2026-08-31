@@ -237,6 +237,14 @@ assigned to a shard once and never migrate while live. `callback_workers` are
 separate from I/O owner workers so slow business callbacks cannot stop socket
 progress.
 
+Process-global protocol dependencies are initialized by the CNet control plane
+before worker threads start and are reference counted. A live resolver pins the
+module lifetime, so final shutdown returns `TURBO_EBUSY` instead of destroying
+c-ares state beneath an event-thread callback. Resolver and client destruction
+must precede final module shutdown. These functions remain internal while CNet
+is experimental; Task 6 exposes and installs their public declarations together
+with the complete client lifecycle.
+
 ### Connection options
 
 ```c
@@ -548,10 +556,14 @@ patched behavior passes allocation-exhaustion and upstream conformance tests.
 
 Hostnames use c-ares with its supported asynchronous event-thread mode. That
 resolver owns only DNS query sockets; it never receives a CNet session socket
-or NativeIO endpoint. Resolver completion copies a bounded address result into
-the owning shard's command ring and then calls NativeIO wake. Cancellation
-invalidates the query generation, and late resolver callbacks can only release
-their result. This is a separate resolver fact source, not a second owner of a
+or NativeIO endpoint. Resolver completion copies one bounded address result
+into a fixed per-resolver mailbox and then calls NativeIO wake. The owning shard
+drains that result and performs the authoritative
+`RESOLVING -> TRANSPORT_CONNECTING` transition; a c-ares callback never blocks
+on or mutates the command ring. Per-query cancellation is logical because
+c-ares exposes channel-wide cancellation: a query slot remains stable until its
+callback result is taken, and the generation-checked result is reported as
+canceled. This is a separate resolver fact source, not a second owner of a
 session socket. c-ares also documents an external-event-loop integration for
 applications that later require one: <https://c-ares.org/docs/ares_process_fds.html>.
 

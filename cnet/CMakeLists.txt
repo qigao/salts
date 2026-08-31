@@ -1,9 +1,13 @@
 set(TARGET_NAME turbo_cnet_experimental)
 
+find_package(c-ares CONFIG REQUIRED)
+
 add_library(${TARGET_NAME} STATIC
   src/cnet_command.c
   src/cnet_event.c
+  src/cnet_module.c
   src/cnet_owner.c
+  src/cnet_resolver.c
   src/cnet_session.c
   src/cnet_transport.c
   src/cnet_uri.c)
@@ -14,7 +18,8 @@ target_include_directories(
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC TurboUtils::NativeIO TurboUtils::Concurrency)
+  PUBLIC TurboUtils::NativeIO TurboUtils::Concurrency
+  PRIVATE c-ares::cares)
 
 if(BUILD_TESTS)
   add_subdirectory(tests)
