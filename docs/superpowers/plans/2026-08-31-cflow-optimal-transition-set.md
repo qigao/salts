@@ -42,6 +42,23 @@
 
 **Task 2 evidence (2026-08-31):** In `VsDevCmd.bat` with the documented `win-release-user` preset, `ctest -N -R "^cflow_statechart.*$"` discovered exactly five adjacent tests: `cflow_statechart_test`, `cflow_statechart_instance_test`, `cflow_statechart_instance_adapter_test`, `cflow_statechart_hierarchy_adapter_test`, and `cflow_statechart_actor_test`. The complete instance test passed `1/1` in `0.08 sec`; after a complete Release build, the anchored adjacent set passed `5/5` in `0.19 sec` (both `0 failed`). Source HEAD was `ec7f1b6b0ef2119c0406a5da2e934925d86837cb`. The initially absent dedicated prefix `C:/projects/cpp/turbonet/.integration/cflow-optimal-transition-set-403bc/turboutils/release` was installed with `cmake --install build/Msvc-Release --prefix ... --config Release`; it contains `lib/cmake/TurboUtils/TurboUtilsConfig.cmake` and `lib/turbo_cflow.lib`. `TurboUtilsTargets-release.cmake` imports `TurboUtils::CFlow` from that exact `turbo_cflow.lib`, preventing the Task 4 consumer from selecting a stale TurboUtils package.
 
+### Task 2B: Restore the root-final completion boundary exposed by integration
+
+**Files:**
+- Modify: `cflow/src/statechart_instance.c`
+- Modify: `cflow/tests/cflow_statechart_instance_test.c`
+- Reuse commit: `cb70179fef68209b57f314cf61f73a8bfc02e3f0`
+
+- [x] Preserve the reproduced RED: unchanged TurboSCXML test415 passes with the 2026-08-30 installed SDK but fails with the Task 2 SDK because the final `onentry`-raised internal Event reaches `on_event` before termination.
+- [x] Integrate the existing local CFlow commit that checks root completion before popping internal Events; do not edit or recreate the fix.
+- [x] Run its focused root-final TinyTest, the complete instance test, and the five-test adjacent Statechart set.
+- [x] Reinstall the same dedicated SDK prefix and prove its installed CFlow archive matches the rebuilt archive.
+- [x] Rebuild the unchanged TurboSCXML test executable against that SDK and confirm test415 GREEN before Task 4 begins.
+
+**Root-cause ruling:** The Task 2 source was based on `origin/master` and omitted local commit `cb70179f`, which already contains a failing CFlow regression test and the minimal root-completion boundary fix. A same-binary A/B run proved unchanged TurboSCXML test415 GREEN against the older installed SDK and RED against the Task 2 SDK (`selected=1`). The missing check allowed `statechart_driver_run` to pop and notify an internal Event raised by root-final entry before `settle_quiescent_macrostep` won clean termination. Task 2B is therefore an integration correction, not part of optimal-transition-set selection and not a reason to weaken 403b/403c.
+
+**Task 2B evidence (2026-08-31):** The preserved integration A/B remained the RED characterization: the unchanged TurboSCXML `test415` was GREEN with the 2026-08-30 SDK and RED against the Task 2 SDK with `selected=1`. The exact local commit `cb70179fef68209b57f314cf61f73a8bfc02e3f0` cherry-picked without conflicts as `a21b545758a4b2d73aa2048b90a4e25e436d9e4c`; its source and regression test were not edited. Under `VsDevCmd.bat` and `win-release-user`, the rebuilt focused TinyTest filter `halts` passed `1/1` (10 assertions), the complete instance CTest passed `1/1` in `0.40 sec`, and the full rebuilt adjacent `^cflow_statechart.*$` set passed `5/5` in `0.66 sec` (all `0 failed`). Reinstalling `build/Msvc-Release` into `C:/projects/cpp/turbonet/.integration/cflow-optimal-transition-set-403bc/turboutils/release` produced matching SHA-256 values for built and installed `turbo_cflow.lib`: `F03B4B17BA408DFCB81EF9B0353D0F5429A9D920451778BF613BD5ECF1B41459`. TurboSCXML was fresh-configured in its untracked `build/Msvc-Release-403bc` directory with `TURBOUTILS_ROOT` set to that exact prefix, rebuilt `scxml_w3c_conformance_test`, and ran unchanged test415 GREEN: `1/1`, one assertion, `0 failed`.
+
 ### Task 3: Add TurboSCXML 403b/403c fixtures and registrations
 
 **Files:**
