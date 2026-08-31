@@ -78,8 +78,10 @@ static bool cnet_command_valid(const cnet_command *command) {
 
   if (!cnet_session_handle_valid(command->connection)) return false;
   if (command->kind == CNET_COMMAND_CONNECT || command->kind == CNET_COMMAND_SEND)
-    return command->data != NULL && command->size != 0u;
-  return command->data == NULL && command->size == 0u;
+    return command->data != NULL && command->size != 0u && command->argument == 0u;
+  if (command->kind == CNET_COMMAND_RECEIVE)
+    return command->data == NULL && command->size == 0u && command->argument != 0u;
+  return command->data == NULL && command->size == 0u && command->argument == 0u;
 }
 
 int cnet_command_queue_init(cnet_command_queue *queue, const cnet_command_queue_config *config) {

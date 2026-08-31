@@ -33,3 +33,21 @@ set_target_properties(cnet_transport_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+cmake_add_test(cnet_owner_test
+  SOURCES cnet_owner_test.c
+  LIBS turbo_cnet_experimental TurboUtils::TinyTest
+  FOLDER "cnet/tests")
+set_target_properties(cnet_owner_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(cnet_event_test
+  SOURCES cnet_event_test.c
+  LIBS turbo_cnet_experimental TurboUtils::TinyTest
+  FOLDER "cnet/tests")
+set_target_properties(cnet_event_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)

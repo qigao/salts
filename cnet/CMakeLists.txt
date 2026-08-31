@@ -2,6 +2,8 @@ set(TARGET_NAME turbo_cnet_experimental)
 
 add_library(${TARGET_NAME} STATIC
   src/cnet_command.c
+  src/cnet_event.c
+  src/cnet_owner.c
   src/cnet_session.c
   src/cnet_transport.c
   src/cnet_uri.c)
