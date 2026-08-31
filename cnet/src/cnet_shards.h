@@ -30,17 +30,19 @@ typedef struct cnet_shards_layout {
   size_t max_event_payload_bytes;
 } cnet_shards_layout;
 
-typedef int (*cnet_shards_event_sink_fn)(void *context, uint32_t shard,
-                                         const cnet_event *event);
+typedef int (*cnet_shards_event_sink_fn)(void *context, uint32_t shard, const cnet_event *event);
 
 bool cnet_shard_connection_valid(cnet_shard_connection connection);
 
-/** Starts exactly one long-lived owner task for each configured shard. */
+/** Initializes bounded owners without creating a worker thread. */
 int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config);
 bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_layout);
 
+/** Advances the single owner on the calling thread. */
+int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms);
+
 /**
- * Binds the single event sink called directly by each shard owner. The sink
+ * Binds the single event sink called directly by the caller-owned progress loop. The sink
  * must copy or retain event data before returning and must never block.
  */
 int cnet_shards_bind_event_sink(cnet_shards *shards, cnet_shards_event_sink_fn sink, void *context);
@@ -63,8 +65,8 @@ int cnet_shards_recycle(cnet_shards *shards, cnet_shard_connection connection,
                         cnet_session_terminal *out_terminal);
 
 /**
- * Stops quiescent owner tasks within a bounded deadline. Live connections
- * return TURBO_EBUSY; the future client stop protocol closes them first.
+ * Closes a quiescent owner. Live connections return TURBO_EBUSY; client stop
+ * closes and drives them first.
  */
 int cnet_shards_stop(cnet_shards *shards, uint32_t timeout_ms);
 int cnet_shards_destroy(cnet_shards *shards);

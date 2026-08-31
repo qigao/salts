@@ -184,9 +184,9 @@ typedef struct cnet_observer {
 
 `cnet_error` is non-NULL only for `FAILED`. `stage` is an owned, stable CNet
 constant such as `resolve`, `connect`, `tls-handshake`, `websocket-handshake`,
-`read`, `write`, or `shutdown`. Callbacks are serialized for one connection and
-never run while an internal lock is held. Different connections may run
-callbacks concurrently. The observer and its `user` context must be valid when
+`read`, `write`, or `shutdown`. Callbacks are serialized for the client on its
+poll caller and never run while an internal lock is held. Separate clients may
+be driven concurrently. The observer and its `user` context must be valid when
 `cnet_connect` is called because asynchronous notification may race the caller
 after successful admission.
 
@@ -207,12 +207,11 @@ contract.
 ```c
 typedef struct cnet_client_config {
     native_io_backend_kind backend;
-    size_t io_shards;
     size_t connection_capacity;
-    size_t command_capacity_per_shard;
-    size_t request_capacity_per_shard;
+    size_t command_capacity;
+    size_t request_capacity;
     size_t completion_batch_capacity;
-    size_t event_capacity_per_shard;
+    size_t event_capacity;
     size_t max_send_bytes;
     size_t receive_buffer_bytes;
     uint32_t connect_timeout_ms;
@@ -229,15 +228,17 @@ transports do not reassemble messages, so they do not expose a misleading
 message or queued-byte budget. CNet fails initialization rather than silently
 reducing a capacity or selecting another backend.
 
-CNet uses TurboUtils `turbo_threadpool` only for configured I/O owner shards;
-it does not implement another thread pool. Each I/O shard has exactly one
-long-lived owner task and one NativeIO backend. Connections are assigned to a
-shard once and never migrate while live. A completion resumes its owner-affine
-coroutine, and that owner invokes the observer inline without an event handoff.
-Callbacks for one connection therefore remain FIFO and non-overlapping, while
-different shards may execute callbacks concurrently. Callbacks must not block;
-business-pool dispatch is an explicit application adapter rather than a CNet
-core execution policy.
+CNet creates no I/O worker or thread pool. One client has one caller-driven
+progress owner and one NativeIO backend. `cnet_client_poll()` drains bounded
+commands, observes NativeIO, resumes owner-affine coroutines, and invokes the
+observer before returning. Callbacks for the client are FIFO and
+non-overlapping. They must not block; business-pool dispatch is an explicit
+application adapter rather than a CNet core execution policy.
+
+A blocking poll continues across internal-only completions until at least one
+public callback is delivered or its timeout expires. A zero timeout performs
+one nonblocking progress pass. This prevents backend completion boundaries
+from leaking into the public API while preserving a bounded owner turn.
 
 The owner deadline container is the generic Concurrency
 `turbo_deadline_queue`: a fixed-capacity single-owner min-heap that starts no
@@ -259,10 +260,10 @@ receives its drain deadline on each `cnet_client_stop` call and is not modeled
 as an owner configuration field.
 
 Process-global protocol dependencies are initialized by the CNet control plane
-before worker threads start and are reference counted. A live resolver pins the
+before the client is published and are reference counted. A live resolver pins the
 module lifetime, so final shutdown returns `TURBO_EBUSY` instead of destroying
-c-ares state beneath an event-thread callback. Resolver and client destruction
-must precede final module shutdown. These functions remain internal while CNet
+c-ares state beneath its caller-driven socket callback. Resolver and client
+destruction must precede final module shutdown. These functions remain internal while CNet
 is experimental; `cnet_client_init` and `cnet_client_destroy` acquire and
 release the process reference. On Windows, the module owns an explicit
 WinSock reference before initializing c-ares; each NativeIO backend owns its own
@@ -310,6 +311,11 @@ int cnet_close(
     cnet_client *client,
     cnet_connection connection);
 
+int cnet_client_poll(
+    cnet_client *client,
+    uint32_t timeout_ms,
+    size_t *out_events);
+
 int cnet_client_stop(
     cnet_client *client,
     uint32_t timeout_ms);
@@ -318,8 +324,13 @@ int cnet_client_destroy(cnet_client *client);
 ```
 
 The application data plane remains connect, send, receive, and state
-notification. Client init/stop/destroy are explicit resource lifecycle, not
-additional transport models.
+notification. Poll is explicit progress ownership; client init/stop/destroy are
+resource lifecycle, not additional transport models.
+
+`cnet_client_poll` is single-owner and non-reentrant. It processes a bounded
+turn, invokes state and receive callbacks inline, and reports the number of
+callbacks delivered. A zero timeout is non-blocking. An idle timeout returns
+`TURBO_OK` with zero events rather than treating absence of I/O as a failure.
 
 `cnet_connect` validates and copies the request, reserves a generation handle,
 and publishes one bounded command. `TURBO_OK` means admission succeeded, not
@@ -345,10 +356,10 @@ while draining returns `TURBO_EALREADY`. A stale or recycled handle returns
 failure emits exactly one `FAILED` and never emits `CLOSED` afterward.
 
 `cnet_client_stop` stops new connections, requests close for all live sessions,
-drains or cancels accepted NativeIO requests within the bounded deadline,
-settles callbacks, and stops owner tasks. Timeout returns `TURBO_ETIMEDOUT` and
-preserves the client for another stop attempt. `destroy` returns `TURBO_EBUSY`
-until stop has reached quiescence.
+and drives the same caller-owned progress loop until accepted NativeIO requests
+and callbacks settle within the bounded deadline. Timeout returns
+`TURBO_ETIMEDOUT` and preserves the client for another stop attempt. `destroy`
+returns `TURBO_EBUSY` until stop has reached quiescence.
 
 ## Transport Semantics
 
@@ -412,19 +423,13 @@ tamper rejection so later implementations cannot silently fork the protocol.
 
 ## Execution and Communication Protocol
 
-### Thread topology
-
-For each shard:
+### Progress topology
 
 ```text
-producer threads (MPSC)
+application thread
         |
-        | claim -> copy command/payload -> publish -> native_io_backend_wake
-        v
-fixed command ring
-        |
-single CNet/NativeIO owner task
-        |
+        +-> claim -> copy command/payload -> bounded local command ring
+        +-> cnet_client_poll
         +-> session state + protocol codecs + timer heap
         +-> owner-affine NativeIO coroutine await
         |        |
@@ -432,22 +437,25 @@ single CNet/NativeIO owner task
         +-> inline generation-checked callback
 ```
 
-The command ring uses TurboUtils `disruptor` in an MPSC-to-single-consumer
-topology. Each fixed entry carries its descriptor and bounded inline payload,
-never a caller pointer.
+The core client is single-owner. Each fixed command entry carries its
+descriptor and bounded inline payload, never a caller pointer. Callback-issued
+commands are processed after the current callback without recursive delivery,
+an operating-system wake, or an owner-thread handoff. Cross-thread command
+admission requires a separate bounded mailbox adapter and is not part of the
+core contract.
 Each session has fixed storage for its monotonic public state notifications, so
 callback execution cannot discard a terminal notification. The observer runs
 before the owner reuses its borrowed receive storage. An admission producer may perform only the
 bounded `FREE -> RESERVED` claim before publishing CONNECT. Publication
 failure releases that reservation and advances its generation without a
-callback. After successful publication, the assigned shard owner is the only
+callback. After successful publication, the poll owner is the only
 writer of lifecycle and protocol state.
 
 Every asynchronous TCP connect, send, and receive is represented by one
 bounded CNet request record and one NativeIO coroutine task. The owner starts
 the frame; `native_io_coroutine_await()` submits the operation and suspends it;
 the same owner's `native_io_backend_observe()` generation-checks the terminal
-completion and resumes that frame. Producer threads never resume
+completion and resumes that frame. API calls never resume
 or destroy frames. The frame stores execution position only: the session table
 remains the connection-state fact source, while the request record owns the
 command lease, deadline, role, and coroutine task handle.
@@ -464,9 +472,9 @@ delivery but cannot change the authoritative session record. CNet retains the
 session slot until its terminal state notification and all borrowed payload
 leases have been delivered and released.
 
-The client dispatcher is routing state, not a scheduled worker. An owner calls
-it directly with one event. It generation-checks the observer, invokes it on
-the owner thread, and recycles a terminal session after that callback returns.
+The client dispatcher is routing state, not a scheduled worker. The poll owner
+calls it directly with one event. It generation-checks the observer, invokes it
+on the poll caller, and recycles a terminal session after that callback returns.
 The receive view points at owner storage and is valid only through the callback,
 so this path performs no callback-boundary payload copy and allocates no
 fallback payload.
@@ -479,17 +487,17 @@ revalidates the generation before clearing the claim. Inline callback completion
 therefore recycle through the shard and then retire dispatcher routing without
 forming a `dispatcher -> shard` / `shard -> dispatcher` lock cycle.
 
-Public command admission remains MPSC. Protocol reassembly may later use an
+Public command admission remains caller-owned. Protocol reassembly may later use an
 explicit retained receive-buffer lease, but it must preserve the same bounded
 ownership, backpressure, and callback-view lifetime contract.
 
 ### Command payload and receive-buffer boundary
 
-Each command Disruptor entry owns `max_command_payload_bytes` inline bytes. All
+Each bounded command entry owns `max_send_bytes` inline bytes. All
 validation happens before claim; after a successful claim the producer only
 copies the descriptor/payload and publishes exactly once. An oversized send
 returns `TURBO_EMSGSIZE`; a full ring returns `TURBO_ENOBUFS`. Resident command
-memory is approximately `command_capacity_per_shard * aligned_entry_bytes` and
+memory is approximately `command_capacity * aligned_entry_bytes` and
 is validated before allocation. This deliberately avoids another allocator,
 payload pool, or `CNet -> Core -> CFlow` dependency.
 
@@ -576,18 +584,19 @@ buffers from a session-owned bounded pool. The patch is recorded separately
 from upstream source with its removal condition. KCP is not enabled until the
 patched behavior passes allocation-exhaustion and upstream conformance tests.
 
-Hostnames use c-ares with its supported asynchronous event-thread mode. That
-resolver owns only DNS query sockets; it never receives a CNet session socket
-or NativeIO endpoint. Resolver completion copies one bounded address result
-into a fixed per-resolver mailbox and then calls NativeIO wake. The owning shard
-drains that result and performs the authoritative
+Hostnames use c-ares with its supported external-event-loop integration. The
+poll owner tracks a bounded DNS socket set, performs nonblocking readiness
+checks, and advances c-ares timeouts; no resolver thread or synchronous DNS
+fallback exists. While queries are active, the NativeIO wait is capped to a
+1 ms fairness quantum. Resolver completion copies one bounded address result
+into a fixed per-resolver mailbox. The same poll owner drains that result and performs the authoritative
 `RESOLVING -> TRANSPORT_CONNECTING` transition; a c-ares callback never blocks
 on or mutates the command ring. Per-query cancellation is logical because
 c-ares exposes channel-wide cancellation: a query slot remains stable until its
 callback result is taken, and the generation-checked result is reported as
 canceled. This is a separate resolver fact source, not a second owner of a
-session socket. c-ares also documents an external-event-loop integration for
-applications that later require one: <https://c-ares.org/docs/ares_process_fds.html>.
+session socket. The integration follows c-ares' documented external event-loop
+contract: <https://c-ares.org/docs/ares_process_fds.html>.
 
 BoringSSL and the admitted protocol libraries may allocate inside their private
 implementations. CNet itself performs no owner-hot-path allocation; it bounds
@@ -710,7 +719,7 @@ payload copy for the basic send API, and bounded batch processing.
 
 - **HIGH — fact:** CNet requires NativeIO async connect support or an equally
   explicit CNet platform transport adapter. A synchronous connect on the I/O
-  owner would stall every connection on the shard. The implementation plan adds
+  owner would stall every connection on the client. The implementation plan adds
   raw `TCP_CONNECT` completion support to NativeIO while preserving borrowed
   socket ownership.
 - **HIGH — fact:** TLS, WebSocket, and KCP add supply-chain and security surface.
@@ -719,10 +728,10 @@ payload copy for the basic send API, and bounded batch processing.
   Reactive, protocol, and OS completion state from diverging. Correctness still
   depends on enforcing owner-only mutation and exact terminal delivery in code.
 - **MED — computation:** command memory is approximately
-  `command_capacity_per_shard * aligned(command_header +
+`command_capacity * aligned(command_header +
   max_command_payload_bytes)` plus receive buffers, metadata, and alignment.
   Configuration validation must report the complete retained-memory budget
-  before starting workers.
+  before starting the poll owner.
 - **MED — fact:** CNet callback dispatch adds scheduling cost. Direct NativeIO
   remains measurable so that cost is not attributed to the backend or hidden
   by mismatched benchmarks.

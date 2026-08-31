@@ -76,8 +76,7 @@ static void cnet_dispatcher_record_error(cnet_dispatcher_impl *impl, int status)
                                                 memory_order_acq_rel, memory_order_acquire);
 }
 
-static int cnet_dispatcher_recycle(cnet_dispatch_entry *entry,
-                                   const cnet_dispatch_view *view) {
+static int cnet_dispatcher_recycle(cnet_dispatch_entry *entry, const cnet_dispatch_view *view) {
   cnet_dispatcher_impl *impl = entry->dispatcher;
   cnet_session_terminal terminal = {0};
   bool recycled = false;
@@ -169,14 +168,13 @@ static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
 }
 
 static int cnet_dispatcher_invoke(const cnet_dispatch_job *job) {
-  const cnet_dispatch_view view = {
-      job->event.kind,  job->event.session, job->event.state, job->event.status,
-      job->event.stage, job->event.data,    job->event.size};
+  const cnet_dispatch_view view = {job->event.kind,   job->event.session, job->event.state,
+                                   job->event.status, job->event.stage,   job->event.data,
+                                   job->event.size};
   int status = TURBO_OK;
 
   job->invoke(job->context, &view);
-  if (job->release != NULL)
-    status = job->release(job->release_context, &view, job->release_token);
+  if (job->release != NULL) status = job->release(job->release_context, &view, job->release_token);
   return status;
 }
 
@@ -258,8 +256,7 @@ int cnet_dispatcher_register(cnet_dispatcher *dispatcher, cnet_shard_connection 
   return status;
 }
 
-int cnet_dispatcher_publish(cnet_dispatcher *dispatcher, uint32_t shard,
-                            const cnet_event *event) {
+int cnet_dispatcher_publish(cnet_dispatcher *dispatcher, uint32_t shard, const cnet_event *event) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
   cnet_dispatch_job job = {0};
   cnet_dispatch_release_fn release = NULL;
@@ -292,7 +289,7 @@ int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard) {
   }
 
   if (status == TURBO_OK) {
-    const cnet_event event = {lane->event.kind,  lane->event.session, lane->event.state,
+    const cnet_event event = {lane->event.kind,   lane->event.session, lane->event.state,
                               lane->event.status, lane->event.stage,   lane->event.data,
                               lane->event.size};
     status = cnet_dispatcher_prepare(impl, shard, &event, cnet_dispatcher_release_lease,
@@ -402,13 +399,14 @@ int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms) {
   for (;;) {
     int status = cnet_dispatcher_request_closes(impl);
     if (status != TURBO_OK) return status;
+    status = cnet_shards_poll(impl->shards, 1u);
+    if (status != TURBO_OK && status != TURBO_ETIMEDOUT) return status;
     status = cnet_dispatcher_drive_all(impl);
     if (status != TURBO_OK && status != TURBO_ETIMEDOUT) return status;
     status = atomic_load_explicit(&impl->first_error, memory_order_acquire);
     if (status != TURBO_OK) return status;
     if (cnet_dispatcher_is_idle(impl)) break;
     if (turbo_monotonic_ms() - started_ms >= timeout_ms) return TURBO_ETIMEDOUT;
-    turbo_sleep_ms(1u);
   }
   turbo_mutex_lock(&impl->lock);
   impl->drained = true;

@@ -41,7 +41,7 @@ typedef struct cnet_owner_config {
   cnet_session_table *sessions;
   cnet_command_queue *commands;
   cnet_event_queue *events;
-  /** Optional owner-thread fast path; NULL publishes to events. */
+  /** Optional poll-owner fast path; NULL publishes to events. */
   cnet_owner_event_publish_fn publish_event;
   void *event_context;
   /** Optional single-owner monotonic clock seam; NULL uses turbo_monotonic_ms(). */
@@ -53,9 +53,6 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config);
 
 /** Processes bounded commands and one NativeIO completion batch. */
 int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms);
-
-/** The only operation allowed from a producer thread. */
-int cnet_owner_wake(cnet_owner *owner);
 
 /** Reports the bounded NativeIO coroutine state owned by this shard. */
 bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats);

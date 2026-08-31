@@ -215,7 +215,6 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   command =
       (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
   if (timeout == CNET_OWNER_TEST_CONNECT_TIMEOUT) {
     check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
                 TURBO_OK);
@@ -264,7 +263,6 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
 
   command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
   check_equal(cnet_owner_drive(&owner, 0u), TURBO_OK);
   coroutine_stats = (native_io_coroutine_stats)NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
   check_true(cnet_owner_get_coroutine_stats(&owner, &coroutine_stats));
@@ -287,7 +285,6 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
     }
     command = (cnet_command){CNET_COMMAND_SEND, session, payload, sizeof(payload), 0u};
     check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-    check_equal(cnet_owner_wake(&owner), TURBO_OK);
     if (timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
       check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
                   TURBO_OK);
@@ -299,7 +296,6 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
 
       command = (cnet_command){CNET_COMMAND_CLOSE, session, NULL, 0u, 0u};
       check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-      check_equal(cnet_owner_wake(&owner), TURBO_OK);
     }
   }
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
@@ -387,7 +383,6 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   command =
       (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
               TURBO_OK);
   check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
@@ -399,7 +394,6 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
 
   command = (cnet_command){CNET_COMMAND_SEND, session, outbound, sizeof(outbound), 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
   check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), TURBO_OK);
   check_equal(recvfrom(peer, (char *)received, (int)sizeof(received), 0,
                        (struct sockaddr *)&owner_address, &owner_address_length),
@@ -408,7 +402,6 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
 
   command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
   check_equal(cnet_owner_drive(&owner, 0u), TURBO_OK);
   check_equal(sendto(peer, (const char *)inbound, (int)sizeof(inbound), 0,
                      (const struct sockaddr *)&owner_address, owner_address_length),
@@ -420,7 +413,6 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
 
   command = (cnet_command){CNET_COMMAND_CLOSE, session, NULL, 0u, 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
               TURBO_OK);
   check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
@@ -478,7 +470,6 @@ static void cnet_owner_test_resolve_failure(native_io_backend_kind backend_kind)
   command =
       (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
               TURBO_OK);
   check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
@@ -534,7 +525,6 @@ static void cnet_owner_test_pipe_open_failure(native_io_backend_kind backend_kin
   command =
       (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
               TURBO_OK);
   check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
@@ -595,7 +585,6 @@ static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
   command =
       (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
               TURBO_OK);
   check_equal(cnet_shared_test_named_pipe_finish(&pipe), TURBO_OK);
@@ -606,14 +595,12 @@ static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
 
   command = (cnet_command){CNET_COMMAND_SEND, session, outbound, sizeof(outbound), 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
   check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), TURBO_OK);
   check_equal(cnet_shared_test_named_pipe_peer_read(&pipe, received, sizeof(received)), TURBO_OK);
   check_equal(received, outbound, sizeof(outbound));
 
   command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
   check_equal(cnet_owner_drive(&owner, 0u), TURBO_OK);
   check_equal(cnet_shared_test_named_pipe_peer_write(&pipe, inbound, sizeof(inbound)), TURBO_OK);
   check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), TURBO_OK);
@@ -623,7 +610,6 @@ static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
 
   command = (cnet_command){CNET_COMMAND_CLOSE, session, NULL, 0u, 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
               TURBO_OK);
   check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);

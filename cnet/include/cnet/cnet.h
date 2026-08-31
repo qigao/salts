@@ -69,12 +69,11 @@ typedef struct cnet_connect_options {
  */
 typedef struct cnet_client_config {
   native_io_backend_kind backend;
-  size_t io_shards;
   size_t connection_capacity;
-  size_t command_capacity_per_shard;
-  size_t request_capacity_per_shard;
+  size_t command_capacity;
+  size_t request_capacity;
   size_t completion_batch_capacity;
-  size_t event_capacity_per_shard;
+  size_t event_capacity;
   size_t max_send_bytes;
   size_t receive_buffer_bytes;
   uint32_t connect_timeout_ms;
@@ -83,10 +82,12 @@ typedef struct cnet_client_config {
 } cnet_client_config;
 
 /**
- * Starts NativeIO owner shards. Callbacks execute inline on the owning shard
- * after a coroutine observes its terminal NativeIO completion. Callbacks for
- * one connection are ordered and non-concurrent; different shards may invoke
- * callbacks concurrently. A callback must not block.
+ * Initializes one caller-driven NativeIO owner without creating an I/O worker
+ * thread. Callbacks execute inline from `cnet_client_poll()` after a coroutine
+ * observes its terminal NativeIO completion. All callbacks are ordered and
+ * non-concurrent. After initialization, client operations and progress belong
+ * to one calling thread; cross-thread admission requires an external mailbox.
+ * A callback may issue send/receive/close but must not block.
  *
  * @param client Zero-initialized output owner.
  * @param config Borrowed configuration copied during initialization.
@@ -128,10 +129,30 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
 int cnet_close(cnet_client *client, cnet_connection connection);
 
 /**
- * Closes admission and live connections, delivers terminal callbacks, then
- * joins all workers within `timeout_ms`. Retry after `TURBO_ETIMEDOUT`.
+ * Advances bounded CNet and NativeIO work on the calling thread.
+ *
+ * This client has one progress owner. Calls must not overlap and poll cannot
+ * be entered recursively from a callback. State and receive callbacks execute
+ * inline before this function returns. The call continues through internal
+ * command and completion progress until it delivers at least one callback or
+ * reaches the timeout. `timeout_ms == 0` performs one non-blocking progress
+ * pass. An idle timeout is successful and reports zero events.
+ *
+ * @param client Initialized client owned by the calling progress thread.
+ * @param timeout_ms Maximum time to wait for progress.
+ * @param out_events Receives the number of callbacks delivered by this call.
+ * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_EBUSY` for concurrent or
+ * recursive polling, `TURBO_ESHUTDOWN` after stop begins, or the first owner
+ * progress error.
+ */
+int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_events);
+
+/**
+ * Closes admission and live connections, then drives terminal callbacks and
+ * coroutine completions to quiescence within `timeout_ms`. Retry after
+ * `TURBO_ETIMEDOUT`.
  * Calling from this client's callback returns `TURBO_EBUSY`.
- * @return `TURBO_OK` only after quiescence, or the first drain/worker error.
+ * @return `TURBO_OK` only after quiescence, or the first drain/progress error.
  */
 int cnet_client_stop(cnet_client *client, uint32_t timeout_ms);
 

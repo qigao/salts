@@ -18,12 +18,8 @@ typedef struct cnet_resolver_query {
   uint32_t generation;
 } cnet_resolver_query;
 
-typedef void (*cnet_resolver_wake_fn)(void *context);
-
 typedef struct cnet_resolver_config {
   size_t query_capacity;
-  cnet_resolver_wake_fn wake;
-  void *wake_context;
 } cnet_resolver_config;
 
 typedef struct cnet_resolver_result {
@@ -46,13 +42,19 @@ int cnet_resolver_init(cnet_resolver *resolver, const cnet_resolver_config *conf
 int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t port, int socket_type,
                          uintptr_t user_data, cnet_resolver_query *out_query);
 
+/** Nonblocking caller-owned c-ares socket and timeout progress. */
+int cnet_resolver_poll(cnet_resolver *resolver);
+
+/** True while a query or untaken result retains one bounded slot. */
+bool cnet_resolver_has_pending(cnet_resolver *resolver);
+
 /** Logical per-query cancellation; the stable slot is recycled only by take. */
 int cnet_resolver_cancel(cnet_resolver *resolver, cnet_resolver_query query);
 
 /** Single-owner nonblocking result take; empty-open returns TURBO_ETIMEDOUT. */
 int cnet_resolver_take(cnet_resolver *resolver, cnet_resolver_result *out_result);
 
-/** Stops admission, cancels all channel queries, and waits for callbacks. */
+/** Stops admission and synchronously cancels all c-ares channel queries. */
 int cnet_resolver_close(cnet_resolver *resolver, uint32_t timeout_ms);
 
 /** Requires closed admission and every result to have been taken. */

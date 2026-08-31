@@ -5,7 +5,6 @@
 #include <turbo/clock.h>
 #include <turbo/thread.h>
 
-#include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -19,15 +18,13 @@
 
 enum { CNET_RESOLVER_TEST_TIMEOUT_MS = 5000 };
 
-static void cnet_resolver_test_wake(void *context) { atomic_fetch_add((atomic_uint *)context, 1u); }
-
 static int cnet_resolver_test_wait(cnet_resolver *resolver, cnet_resolver_result *out_result) {
   const uint64_t deadline = turbo_monotonic_ms() + CNET_RESOLVER_TEST_TIMEOUT_MS;
   for (;;) {
     const int status = cnet_resolver_take(resolver, out_result);
     if (status != TURBO_ETIMEDOUT) return status;
     if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
-    turbo_sleep_ms(1u);
+    if (cnet_resolver_poll(resolver) != TURBO_OK) return TURBO_EAI_FAIL;
   }
 }
 
@@ -46,10 +43,8 @@ spec("CNet bounded asynchronous resolver") {
   }
 
   it("copies one localhost result into a generation checked mailbox") {
-    atomic_uint wakes = 0u;
     cnet_resolver resolver = {0};
-    const cnet_resolver_config config = {
-        .query_capacity = 2u, .wake = cnet_resolver_test_wake, .wake_context = &wakes};
+    const cnet_resolver_config config = {.query_capacity = 2u};
     cnet_resolver_query query = {0};
     cnet_resolver_result result = {0};
     struct sockaddr_storage address;
@@ -74,8 +69,6 @@ spec("CNet bounded asynchronous resolver") {
     else if (address.ss_family == AF_INET6)
       port = ntohs(((const struct sockaddr_in6 *)&address)->sin6_port);
     check_equal(port, 443u);
-    check_true(atomic_load(&wakes) >= 1u);
-
     check_equal(cnet_resolver_close(&resolver, CNET_RESOLVER_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(cnet_resolver_take(&resolver, &result), TURBO_EOF);
     check_equal(cnet_resolver_destroy(&resolver), TURBO_OK);
@@ -83,10 +76,8 @@ spec("CNet bounded asynchronous resolver") {
   }
 
   it("preserves cancellation and bounded admission without backend fallback") {
-    atomic_uint wakes = 0u;
     cnet_resolver resolver = {0};
-    const cnet_resolver_config config = {
-        .query_capacity = 1u, .wake = cnet_resolver_test_wake, .wake_context = &wakes};
+    const cnet_resolver_config config = {.query_capacity = 1u};
     cnet_resolver_query query = {0};
     cnet_resolver_query rejected = {9u, 9u};
     cnet_resolver_result result = {0};

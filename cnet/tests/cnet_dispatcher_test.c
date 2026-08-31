@@ -4,7 +4,6 @@
 #include "tinytest.h"
 
 #include <turbo/clock.h>
-#include <turbo/thread.h>
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -96,16 +95,17 @@ static void cnet_dispatcher_test_observe(void *context, const cnet_dispatch_view
     atomic_store_explicit(&probe->order_error, 1, memory_order_release);
 }
 
-static int cnet_dispatcher_test_drive_until(cnet_dispatcher *dispatcher, atomic_int *value,
-                                            int expected) {
+static int cnet_dispatcher_test_drive_until(cnet_shards *shards, cnet_dispatcher *dispatcher,
+                                            atomic_int *value, int expected) {
   const uint64_t deadline = turbo_monotonic_ms() + CNET_DISPATCHER_TEST_TIMEOUT_MS;
   while (atomic_load_explicit(value, memory_order_acquire) < expected) {
-    const int status = cnet_dispatcher_drive(dispatcher, 0u);
+    int status = cnet_shards_poll(shards, 1u);
+    if (status != TURBO_OK) return status;
+    status = cnet_dispatcher_drive(dispatcher, 0u);
     if (status != TURBO_OK && status != TURBO_ETIMEDOUT && status != TURBO_ENOBUFS &&
         status != TURBO_EBUSY)
       return status;
     if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
-    turbo_sleep_ms(1u);
   }
   return TURBO_OK;
 }
@@ -158,18 +158,21 @@ spec("CNet event dispatcher") {
     check_equal(
         cnet_dispatcher_register(&dispatcher, connection, cnet_dispatcher_test_observe, &probe),
         TURBO_EALREADY);
+    check_equal(cnet_dispatcher_test_drive_until(&shards, &dispatcher, &probe.connected, 1),
+                TURBO_OK);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CNET_DISPATCHER_TEST_INVALID_SOCKET);
-    check_equal(cnet_dispatcher_test_drive_until(&dispatcher, &probe.connected, 1), TURBO_OK);
 
     check_equal(cnet_shards_receive(&shards, connection, 1u), TURBO_OK);
     check_equal(send(accepted, (const char *)&inbound, (int)sizeof(inbound), 0),
                 (int)sizeof(inbound));
-    check_equal(cnet_dispatcher_test_drive_until(&dispatcher, &probe.received, 1), TURBO_OK);
+    check_equal(cnet_dispatcher_test_drive_until(&shards, &dispatcher, &probe.received, 1),
+                TURBO_OK);
     check_equal(probe.value, inbound);
 
     check_equal(cnet_shards_close(&shards, connection), TURBO_OK);
-    check_equal(cnet_dispatcher_test_drive_until(&dispatcher, &probe.terminal, 1), TURBO_OK);
+    check_equal(cnet_dispatcher_test_drive_until(&shards, &dispatcher, &probe.terminal, 1),
+                TURBO_OK);
     check_equal(cnet_dispatcher_wait_idle(&dispatcher, CNET_DISPATCHER_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(cnet_shards_connect(&shards, &payload, &replacement), TURBO_OK);
     check_true(replacement.session.generation != connection.session.generation);
@@ -178,8 +181,9 @@ spec("CNet event dispatcher") {
     check_equal(cnet_dispatcher_register(&dispatcher, replacement, cnet_dispatcher_test_observe,
                                          &replacement_probe),
                 TURBO_OK);
-    check_equal(cnet_dispatcher_test_drive_until(&dispatcher, &replacement_probe.connected, 1),
-                TURBO_OK);
+    check_equal(
+        cnet_dispatcher_test_drive_until(&shards, &dispatcher, &replacement_probe.connected, 1),
+        TURBO_OK);
     cnet_dispatcher_test_close_socket(accepted);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CNET_DISPATCHER_TEST_INVALID_SOCKET);

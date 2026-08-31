@@ -40,7 +40,9 @@ struct cnet_client_impl {
   uint32_t read_timeout_ms;
   uint32_t write_timeout_ms;
   atomic_int callback_error;
+  size_t poll_callback_count;
   bool admission_open;
+  bool poll_active;
   bool stop_active;
   bool stopped;
 };
@@ -54,23 +56,15 @@ static cnet_client_impl *cnet_client_get(cnet_client *client) {
 static bool cnet_power_of_two(size_t value) { return value != 0u && (value & (value - 1u)) == 0u; }
 
 static bool cnet_client_config_valid(const cnet_client_config *config) {
-  size_t capacity_per_shard;
-  size_t record_count;
   if (config == NULL || !native_io_backend_kind_supported(config->backend) ||
-      config->io_shards == 0u || config->io_shards > UINT32_MAX ||
-      config->connection_capacity == 0u ||
-      !cnet_power_of_two(config->command_capacity_per_shard) ||
-      config->request_capacity_per_shard == 0u || config->completion_batch_capacity == 0u ||
-      config->completion_batch_capacity > config->request_capacity_per_shard ||
-      !cnet_power_of_two(config->event_capacity_per_shard) ||
-      config->event_capacity_per_shard < 2u || config->max_send_bytes == 0u ||
-      config->receive_buffer_bytes == 0u)
+      config->connection_capacity == 0u || !cnet_power_of_two(config->command_capacity) ||
+      config->request_capacity == 0u || config->completion_batch_capacity == 0u ||
+      config->completion_batch_capacity > config->request_capacity ||
+      !cnet_power_of_two(config->event_capacity) || config->event_capacity < 2u ||
+      config->max_send_bytes == 0u || config->receive_buffer_bytes == 0u)
     return false;
-  capacity_per_shard = config->connection_capacity / config->io_shards;
-  if (config->connection_capacity % config->io_shards != 0u) ++capacity_per_shard;
-  if (capacity_per_shard == 0u || config->io_shards > SIZE_MAX / capacity_per_shard) return false;
-  record_count = config->io_shards * capacity_per_shard;
-  return record_count <= UINT32_MAX && record_count <= SIZE_MAX / sizeof(cnet_client_record);
+  return config->connection_capacity <= UINT32_MAX &&
+         config->connection_capacity <= SIZE_MAX / sizeof(cnet_client_record);
 }
 
 static uint32_t cnet_client_remaining_ms(uint64_t started_ms, uint32_t timeout_ms) {
@@ -154,6 +148,7 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
                                              record->scheme == CNET_URI_UDP ? CNET_MESSAGE_DATAGRAM
                                                                             : CNET_MESSAGE_BYTES};
       record->observer.on_receive(record->observer.user, record->public_handle, &public_view);
+      ++impl->poll_callback_count;
     }
   } else if (view->kind == CNET_EVENT_STATE && record->observer.on_state != NULL) {
     cnet_error error;
@@ -166,6 +161,7 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
     }
     record->observer.on_state(record->observer.user, record->public_handle,
                               cnet_client_state(view->state), error_view);
+    ++impl->poll_callback_count;
   }
   cnet_active_callback_client = previous;
 
@@ -213,10 +209,9 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
     (void)cnet_module_shutdown();
     return TURBO_ENOMEM;
   }
-  impl->shard_count = config->io_shards;
-  impl->capacity_per_shard = config->connection_capacity / config->io_shards;
-  if (config->connection_capacity % config->io_shards != 0u) ++impl->capacity_per_shard;
-  impl->record_count = impl->shard_count * impl->capacity_per_shard;
+  impl->shard_count = 1u;
+  impl->capacity_per_shard = config->connection_capacity;
+  impl->record_count = config->connection_capacity;
   impl->connection_capacity = config->connection_capacity;
   impl->max_send_bytes = config->max_send_bytes;
   impl->connect_timeout_ms = config->connect_timeout_ms;
@@ -235,12 +230,12 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
 
   shards_config = (cnet_shards_config){
       .backend_kind = config->backend,
-      .shard_count = config->io_shards,
+      .shard_count = 1u,
       .connection_capacity_per_shard = impl->capacity_per_shard,
-      .command_capacity_per_shard = config->command_capacity_per_shard,
-      .request_capacity_per_shard = config->request_capacity_per_shard,
+      .command_capacity_per_shard = config->command_capacity,
+      .request_capacity_per_shard = config->request_capacity,
       .completion_batch_capacity = config->completion_batch_capacity,
-      .event_capacity_per_shard = config->event_capacity_per_shard,
+      .event_capacity_per_shard = config->event_capacity,
       .receive_buffer_bytes = config->receive_buffer_bytes,
       .max_command_payload_bytes = config->max_send_bytes > sizeof(cnet_owner_connect_payload)
                                        ? config->max_send_bytes
@@ -382,6 +377,45 @@ int cnet_close(cnet_client *client, cnet_connection connection) {
   cnet_shard_connection internal = {0};
   int status = cnet_client_operation(impl, connection, &internal, false);
   return status == TURBO_OK ? cnet_shards_close(&impl->shards, internal) : status;
+}
+
+int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_events) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  const uint64_t started_ms = turbo_monotonic_ms();
+  uint32_t remaining_ms = timeout_ms;
+  int status;
+  if (out_events == NULL) return TURBO_EINVAL;
+  *out_events = 0u;
+  if (impl == NULL) return TURBO_EINVAL;
+  if (cnet_active_callback_client == impl) return TURBO_EBUSY;
+  turbo_mutex_lock(&impl->lock);
+  if (!impl->admission_open || impl->stopped) status = TURBO_ESHUTDOWN;
+  else if (impl->poll_active || impl->stop_active) status = TURBO_EBUSY;
+  else {
+    impl->poll_active = true;
+    impl->poll_callback_count = 0u;
+    status = TURBO_OK;
+  }
+  turbo_mutex_unlock(&impl->lock);
+  if (status != TURBO_OK) return status;
+
+  for (;;) {
+    status = cnet_shards_poll(&impl->shards, remaining_ms);
+    if (status == TURBO_OK)
+      status = atomic_load_explicit(&impl->callback_error, memory_order_acquire);
+    if (status != TURBO_OK || impl->poll_callback_count != 0u || timeout_ms == 0u) break;
+    {
+      const uint64_t elapsed_ms = turbo_monotonic_ms() - started_ms;
+      if (elapsed_ms >= timeout_ms) break;
+      remaining_ms = timeout_ms - (uint32_t)elapsed_ms;
+    }
+  }
+
+  turbo_mutex_lock(&impl->lock);
+  *out_events = impl->poll_callback_count;
+  impl->poll_active = false;
+  turbo_mutex_unlock(&impl->lock);
+  return status;
 }
 
 int cnet_client_stop(cnet_client *client, uint32_t timeout_ms) {

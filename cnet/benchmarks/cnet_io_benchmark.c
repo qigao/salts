@@ -69,6 +69,14 @@ typedef struct io_bench_result {
   uint64_t wall_ns;
   uint64_t p50_ns;
   uint64_t p95_ns;
+  uint64_t cnet_receive_admission_ns;
+  uint64_t cnet_send_admission_ns;
+  uint64_t cnet_poll_ns;
+  uint64_t cnet_callback_ns;
+  size_t cnet_receive_admission_calls;
+  size_t cnet_send_admission_calls;
+  size_t cnet_poll_calls;
+  size_t cnet_callback_calls;
 } io_bench_result;
 
 typedef struct io_bench_server {
@@ -119,6 +127,15 @@ typedef struct io_bench_cnet {
   atomic_int done;
   atomic_int terminal;
   atomic_int status;
+  uint64_t receive_admission_ns;
+  uint64_t send_admission_ns;
+  uint64_t poll_ns;
+  uint64_t callback_ns;
+  size_t receive_admission_calls;
+  size_t send_admission_calls;
+  size_t poll_calls;
+  size_t callback_calls;
+  bool measuring;
 } io_bench_cnet;
 
 typedef struct io_bench_fixture {
@@ -635,11 +652,18 @@ static int io_bench_libuv_destroy(io_bench_libuv *fixture) {
   return status;
 }
 
-static int io_bench_wait_atomic(const atomic_int *value, int expected) {
+static int io_bench_wait_cnet(io_bench_cnet *fixture, const atomic_int *value, int expected) {
   const uint64_t deadline = turbo_monotonic_ms() + IO_BENCH_TIMEOUT_MS;
   while (atomic_load_explicit(value, memory_order_acquire) != expected) {
+    size_t events = 0u;
+    const uint64_t started = fixture->measuring ? turbo_hrtime() : 0u;
+    const int status = cnet_client_poll(&fixture->client, 1u, &events);
+    if (fixture->measuring) {
+      fixture->poll_ns += turbo_hrtime() - started;
+      ++fixture->poll_calls;
+    }
+    if (status != TURBO_OK) return status;
     if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
-    turbo_thread_yield();
   }
   return TURBO_OK;
 }
@@ -662,12 +686,17 @@ static void io_bench_cnet_state(void *user, cnet_connection connection, cnet_con
 static void io_bench_cnet_receive(void *user, cnet_connection connection,
                                   const cnet_receive_view *view) {
   io_bench_cnet *fixture = (io_bench_cnet *)user;
+  const uint64_t callback_started = fixture->measuring ? turbo_hrtime() : 0u;
   const cnet_message_kind expected =
       fixture->protocol == IO_BENCH_TCP ? CNET_MESSAGE_BYTES : CNET_MESSAGE_DATAGRAM;
   if (view->kind != expected || view->size > fixture->payload_size - fixture->received ||
       (fixture->protocol == IO_BENCH_UDP && view->size != fixture->payload_size)) {
     atomic_store_explicit(&fixture->status, TURBO_EIO, memory_order_release);
     atomic_store_explicit(&fixture->done, 1, memory_order_release);
+    if (fixture->measuring) {
+      fixture->callback_ns += turbo_hrtime() - callback_started;
+      ++fixture->callback_calls;
+    }
     return;
   }
   memcpy(fixture->received_data + fixture->received, view->data, view->size);
@@ -675,23 +704,43 @@ static void io_bench_cnet_receive(void *user, cnet_connection connection,
   if (fixture->received == fixture->payload_size)
     atomic_store_explicit(&fixture->done, 1, memory_order_release);
   else {
+    const uint64_t admission_started = fixture->measuring ? turbo_hrtime() : 0u;
     const int status = cnet_receive(&fixture->client, connection, 1u);
+    if (fixture->measuring) {
+      fixture->receive_admission_ns += turbo_hrtime() - admission_started;
+      ++fixture->receive_admission_calls;
+    }
     if (status != TURBO_OK) {
       atomic_store_explicit(&fixture->status, status, memory_order_release);
       atomic_store_explicit(&fixture->done, 1, memory_order_release);
     }
   }
+  if (fixture->measuring) {
+    fixture->callback_ns += turbo_hrtime() - callback_started;
+    ++fixture->callback_calls;
+  }
+}
+
+static void io_bench_cnet_begin_measurement(io_bench_cnet *fixture) {
+  fixture->receive_admission_ns = 0u;
+  fixture->send_admission_ns = 0u;
+  fixture->poll_ns = 0u;
+  fixture->callback_ns = 0u;
+  fixture->receive_admission_calls = 0u;
+  fixture->send_admission_calls = 0u;
+  fixture->poll_calls = 0u;
+  fixture->callback_calls = 0u;
+  fixture->measuring = true;
 }
 
 static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol,
                               const struct sockaddr_in *address) {
   const cnet_client_config config = {.backend = io_bench_backend_kind(),
-                                     .io_shards = 1u,
                                      .connection_capacity = 1u,
-                                     .command_capacity_per_shard = 8u,
-                                     .request_capacity_per_shard = 4u,
+                                     .command_capacity = 8u,
+                                     .request_capacity = 4u,
                                      .completion_batch_capacity = 4u,
-                                     .event_capacity_per_shard = 8u,
+                                     .event_capacity = 8u,
                                      .max_send_bytes = IO_BENCH_MAX_PAYLOAD,
                                      .receive_buffer_bytes = IO_BENCH_MAX_PAYLOAD,
                                      .connect_timeout_ms = IO_BENCH_TIMEOUT_MS,
@@ -718,7 +767,7 @@ static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol
 }
 
 static int io_bench_cnet_ready(io_bench_cnet *fixture) {
-  int status = io_bench_wait_atomic(&fixture->connected, 1);
+  int status = io_bench_wait_cnet(fixture, &fixture->connected, 1);
   if (status == TURBO_OK) status = atomic_load_explicit(&fixture->status, memory_order_acquire);
   if (status == TURBO_OK && fixture->protocol == IO_BENCH_UDP)
     status = cnet_receive(&fixture->client, fixture->connection, IO_BENCH_ALL_EXCHANGES);
@@ -733,11 +782,24 @@ static int io_bench_cnet_exchange(io_bench_cnet *fixture, const unsigned char *s
   fixture->received = 0u;
   atomic_store_explicit(&fixture->done, 0, memory_order_release);
   atomic_store_explicit(&fixture->status, TURBO_OK, memory_order_release);
-  status = fixture->protocol == IO_BENCH_TCP
-               ? cnet_receive(&fixture->client, fixture->connection, 1u)
-               : TURBO_OK;
-  if (status == TURBO_OK) status = cnet_send(&fixture->client, fixture->connection, sent, length);
-  if (status == TURBO_OK) status = io_bench_wait_atomic(&fixture->done, 1);
+  status = TURBO_OK;
+  if (fixture->protocol == IO_BENCH_TCP) {
+    const uint64_t started = fixture->measuring ? turbo_hrtime() : 0u;
+    status = cnet_receive(&fixture->client, fixture->connection, 1u);
+    if (fixture->measuring) {
+      fixture->receive_admission_ns += turbo_hrtime() - started;
+      ++fixture->receive_admission_calls;
+    }
+  }
+  if (status == TURBO_OK) {
+    const uint64_t started = fixture->measuring ? turbo_hrtime() : 0u;
+    status = cnet_send(&fixture->client, fixture->connection, sent, length);
+    if (fixture->measuring) {
+      fixture->send_admission_ns += turbo_hrtime() - started;
+      ++fixture->send_admission_calls;
+    }
+  }
+  if (status == TURBO_OK) status = io_bench_wait_cnet(fixture, &fixture->done, 1);
   if (status == TURBO_OK) status = atomic_load_explicit(&fixture->status, memory_order_acquire);
   if (status == TURBO_OK && memcmp(sent, received, length) != 0) status = TURBO_EIO;
   return status;
@@ -747,7 +809,7 @@ static int io_bench_cnet_destroy(io_bench_cnet *fixture) {
   int status = TURBO_OK;
   if (fixture->client.impl != NULL) {
     status = cnet_close(&fixture->client, fixture->connection);
-    if (status == TURBO_OK) status = io_bench_wait_atomic(&fixture->terminal, 1);
+    if (status == TURBO_OK) status = io_bench_wait_cnet(fixture, &fixture->terminal, 1);
     if (status == TURBO_OK || status == TURBO_EALREADY || status == TURBO_ENOENT)
       status = cnet_client_stop(&fixture->client, IO_BENCH_TIMEOUT_MS);
     if (status == TURBO_OK) status = cnet_client_destroy(&fixture->client);
@@ -836,6 +898,7 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     status = io_bench_exchange(&fixture, sent, received, payload_size);
     if (status != TURBO_OK) goto cleanup;
   }
+  if (driver == IO_BENCH_CNET) io_bench_cnet_begin_measurement(&fixture.cnet);
   phase = "measure";
   wall_started = turbo_hrtime();
   for (size_t sample = 0u; sample < IO_BENCH_SAMPLES; ++sample) {
@@ -852,6 +915,17 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   qsort(latencies, latency_count, sizeof(latencies[0]), io_bench_u64_compare);
   result->p50_ns = latencies[(latency_count - 1u) * 50u / 100u];
   result->p95_ns = latencies[(latency_count - 1u) * 95u / 100u];
+  if (driver == IO_BENCH_CNET) {
+    result->cnet_receive_admission_ns = fixture.cnet.receive_admission_ns;
+    result->cnet_send_admission_ns = fixture.cnet.send_admission_ns;
+    result->cnet_poll_ns = fixture.cnet.poll_ns;
+    result->cnet_callback_ns = fixture.cnet.callback_ns;
+    result->cnet_receive_admission_calls = fixture.cnet.receive_admission_calls;
+    result->cnet_send_admission_calls = fixture.cnet.send_admission_calls;
+    result->cnet_poll_calls = fixture.cnet.poll_calls;
+    result->cnet_callback_calls = fixture.cnet.callback_calls;
+    fixture.cnet.measuring = false;
+  }
   status = TURBO_OK;
 
 cleanup:
@@ -912,6 +986,28 @@ static void io_bench_print_rate(const char *protocol, const io_bench_result *lib
   }
 }
 
+static double io_bench_mean(uint64_t total, size_t count) {
+  return count == 0u ? 0.0 : (double)total / (double)count;
+}
+
+static void io_bench_print_cnet_stages(const char *protocol, const io_bench_result *cnet,
+                                       size_t count) {
+  printf("\n%s CNet public API stage means\n", protocol);
+  printf("| payload | receive admit ns | send admit ns | poll us | callback us | polls/RT |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  for (size_t index = 0u; index < count; ++index) {
+    const io_bench_result *result = &cnet[index];
+    printf("| %zu KiB | %.1f | %.1f | %.3f | %.3f | %.2f |\n", result->payload_size / 1024u,
+           io_bench_mean(result->cnet_receive_admission_ns, result->cnet_receive_admission_calls),
+           io_bench_mean(result->cnet_send_admission_ns, result->cnet_send_admission_calls),
+           io_bench_mean(result->cnet_poll_ns, result->cnet_poll_calls) / 1000.0,
+           io_bench_mean(result->cnet_callback_ns, result->cnet_callback_calls) / 1000.0,
+           result->round_trips == 0u
+               ? 0.0
+               : (double)result->cnet_poll_calls / (double)result->round_trips);
+  }
+}
+
 static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t row,
                             io_bench_result *libuv, io_bench_result *native,
                             io_bench_result *cnet) {
@@ -964,8 +1060,10 @@ spec("libuv versus NativeIO versus CNet benchmark") {
     io_bench_print_latency("TCP", "p50", libuv_tcp, native_tcp, cnet_tcp, tcp_count, false);
     io_bench_print_latency("TCP", "p95", libuv_tcp, native_tcp, cnet_tcp, tcp_count, true);
     io_bench_print_rate("TCP", libuv_tcp, native_tcp, cnet_tcp, tcp_count);
+    io_bench_print_cnet_stages("TCP", cnet_tcp, tcp_count);
     io_bench_print_latency("UDP", "p50", libuv_udp, native_udp, cnet_udp, udp_count, false);
     io_bench_print_latency("UDP", "p95", libuv_udp, native_udp, cnet_udp, udp_count, true);
     io_bench_print_rate("UDP", libuv_udp, native_udp, cnet_udp, udp_count);
+    io_bench_print_cnet_stages("UDP", cnet_udp, udp_count);
   }
 }

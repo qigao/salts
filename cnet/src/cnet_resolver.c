@@ -12,8 +12,11 @@
 
 #if defined(_WIN32)
   #include <winsock2.h>
+typedef WSAPOLLFD cnet_resolver_pollfd;
 #else
+  #include <poll.h>
   #include <sys/socket.h>
+typedef struct pollfd cnet_resolver_pollfd;
 #endif
 
 typedef enum cnet_resolver_slot_state {
@@ -37,12 +40,22 @@ typedef struct cnet_resolver_slot {
   cnet_resolver_result result;
 } cnet_resolver_slot;
 
+typedef struct cnet_resolver_socket {
+  ares_socket_t descriptor;
+  unsigned int events;
+} cnet_resolver_socket;
+
 typedef struct cnet_resolver_impl {
   ares_channel_t *channel;
   cnet_resolver_slot *slots;
   uint32_t *free_slots;
   uint32_t *ready_slots;
+  cnet_resolver_socket *sockets;
+  cnet_resolver_pollfd *poll_fds;
+  ares_fd_events_t *ready_events;
   size_t capacity;
+  size_t socket_capacity;
+  size_t socket_count;
   size_t free_count;
   size_t ready_head;
   size_t ready_count;
@@ -50,8 +63,7 @@ typedef struct cnet_resolver_impl {
   bool admission_open;
   turbo_mutex_t control_lock;
   turbo_mutex_t state_lock;
-  cnet_resolver_wake_fn wake;
-  void *wake_context;
+  bool socket_overflow;
 } cnet_resolver_impl;
 
 static cnet_resolver_impl *cnet_resolver_get_impl(cnet_resolver *resolver) {
@@ -96,13 +108,37 @@ static cnet_resolver_slot *cnet_resolver_find_slot(cnet_resolver_impl *impl,
   return slot;
 }
 
+static void cnet_resolver_socket_state(void *context, ares_socket_t descriptor, int readable,
+                                       int writable) {
+  cnet_resolver_impl *impl = (cnet_resolver_impl *)context;
+  const unsigned int events =
+      (readable ? ARES_FD_EVENT_READ : 0u) | (writable ? ARES_FD_EVENT_WRITE : 0u);
+  size_t index;
+  for (index = 0u; index < impl->socket_count; ++index)
+    if (impl->sockets[index].descriptor == descriptor) break;
+  if (events == 0u) {
+    if (index < impl->socket_count) {
+      --impl->socket_count;
+      if (index != impl->socket_count) impl->sockets[index] = impl->sockets[impl->socket_count];
+    }
+    return;
+  }
+  if (index < impl->socket_count) {
+    impl->sockets[index].events = events;
+    return;
+  }
+  if (impl->socket_count == impl->socket_capacity) {
+    impl->socket_overflow = true;
+    return;
+  }
+  impl->sockets[impl->socket_count++] = (cnet_resolver_socket){descriptor, events};
+}
+
 static void cnet_resolver_callback(void *argument, int status, int timeouts,
                                    struct ares_addrinfo *addresses) {
   cnet_resolver_slot *slot = (cnet_resolver_slot *)argument;
   cnet_resolver_impl *impl = slot->owner;
   const struct ares_addrinfo_node *node = NULL;
-  cnet_resolver_wake_fn wake = NULL;
-  void *wake_context = NULL;
 
   if (status == ARES_SUCCESS) {
     for (node = addresses != NULL ? addresses->nodes : NULL; node != NULL; node = node->ai_next) {
@@ -131,13 +167,10 @@ static void cnet_resolver_callback(void *argument, int status, int timeouts,
     impl->ready_slots[(impl->ready_head + impl->ready_count) % impl->capacity] =
         slot->result.query.slot - 1u;
     ++impl->ready_count;
-    wake = impl->wake;
-    wake_context = impl->wake_context;
   }
   turbo_mutex_unlock(&impl->state_lock);
 
   if (addresses != NULL) ares_freeaddrinfo(addresses);
-  if (wake != NULL) wake(wake_context);
 }
 
 bool cnet_resolver_query_valid(cnet_resolver_query query) {
@@ -147,6 +180,7 @@ bool cnet_resolver_query_valid(cnet_resolver_query query) {
 int cnet_resolver_init(cnet_resolver *resolver, const cnet_resolver_config *config) {
   cnet_resolver_impl *impl;
   struct ares_options options;
+  size_t socket_capacity;
   int status;
   size_t index;
 
@@ -155,6 +189,12 @@ int cnet_resolver_init(cnet_resolver *resolver, const cnet_resolver_config *conf
   if (config->query_capacity > UINT32_MAX ||
       config->query_capacity > SIZE_MAX / sizeof(cnet_resolver_slot) ||
       config->query_capacity > SIZE_MAX / sizeof(uint32_t))
+    return TURBO_ERANGE;
+  if (config->query_capacity > (SIZE_MAX - ARES_GETSOCK_MAXNUM) / 2u) return TURBO_ERANGE;
+  socket_capacity = config->query_capacity * 2u + ARES_GETSOCK_MAXNUM;
+  if (socket_capacity > SIZE_MAX / sizeof(cnet_resolver_socket) ||
+      socket_capacity > SIZE_MAX / sizeof(cnet_resolver_pollfd) ||
+      socket_capacity > SIZE_MAX / sizeof(ares_fd_events_t))
     return TURBO_ERANGE;
 
   status = cnet_module_acquire_resolver();
@@ -168,7 +208,14 @@ int cnet_resolver_init(cnet_resolver *resolver, const cnet_resolver_config *conf
   impl->slots = (cnet_resolver_slot *)calloc(config->query_capacity, sizeof(*impl->slots));
   impl->free_slots = (uint32_t *)malloc(config->query_capacity * sizeof(*impl->free_slots));
   impl->ready_slots = (uint32_t *)malloc(config->query_capacity * sizeof(*impl->ready_slots));
-  if (impl->slots == NULL || impl->free_slots == NULL || impl->ready_slots == NULL) {
+  impl->sockets = (cnet_resolver_socket *)calloc(socket_capacity, sizeof(*impl->sockets));
+  impl->poll_fds = (cnet_resolver_pollfd *)calloc(socket_capacity, sizeof(*impl->poll_fds));
+  impl->ready_events = (ares_fd_events_t *)calloc(socket_capacity, sizeof(*impl->ready_events));
+  if (impl->slots == NULL || impl->free_slots == NULL || impl->ready_slots == NULL ||
+      impl->sockets == NULL || impl->poll_fds == NULL || impl->ready_events == NULL) {
+    free(impl->ready_events);
+    free(impl->poll_fds);
+    free(impl->sockets);
     free(impl->ready_slots);
     free(impl->free_slots);
     free(impl->slots);
@@ -178,10 +225,9 @@ int cnet_resolver_init(cnet_resolver *resolver, const cnet_resolver_config *conf
   }
 
   impl->capacity = config->query_capacity;
+  impl->socket_capacity = socket_capacity;
   impl->free_count = config->query_capacity;
   impl->admission_open = true;
-  impl->wake = config->wake;
-  impl->wake_context = config->wake_context;
   for (index = 0u; index < impl->capacity; ++index) {
     impl->slots[index].owner = impl;
     impl->free_slots[index] = (uint32_t)(impl->capacity - index - 1u);
@@ -190,11 +236,15 @@ int cnet_resolver_init(cnet_resolver *resolver, const cnet_resolver_config *conf
   turbo_mutex_init(&impl->state_lock);
 
   memset(&options, 0, sizeof(options));
-  options.evsys = ARES_EVSYS_DEFAULT;
-  status = ares_init_options(&impl->channel, &options, ARES_OPT_EVENT_THREAD);
+  options.sock_state_cb = cnet_resolver_socket_state;
+  options.sock_state_cb_data = impl;
+  status = ares_init_options(&impl->channel, &options, ARES_OPT_SOCK_STATE_CB);
   if (status != ARES_SUCCESS) {
     turbo_mutex_destroy(&impl->state_lock);
     turbo_mutex_destroy(&impl->control_lock);
+    free(impl->ready_events);
+    free(impl->poll_fds);
+    free(impl->sockets);
     free(impl->ready_slots);
     free(impl->free_slots);
     free(impl->slots);
@@ -205,6 +255,72 @@ int cnet_resolver_init(cnet_resolver *resolver, const cnet_resolver_config *conf
 
   resolver->impl = impl;
   return TURBO_OK;
+}
+
+int cnet_resolver_poll(cnet_resolver *resolver) {
+  cnet_resolver_impl *impl = cnet_resolver_get_impl(resolver);
+  size_t ready_count = 0u;
+  size_t offset = 0u;
+  int polled;
+  ares_status_t status;
+  if (impl == NULL) return TURBO_EINVAL;
+
+  turbo_mutex_lock(&impl->control_lock);
+  if (impl->socket_overflow) {
+    impl->socket_overflow = false;
+    ares_cancel(impl->channel);
+    turbo_mutex_unlock(&impl->control_lock);
+    return TURBO_ENOBUFS;
+  }
+  while (offset < impl->socket_count) {
+    const size_t batch = impl->socket_count - offset > ARES_GETSOCK_MAXNUM
+                             ? ARES_GETSOCK_MAXNUM
+                             : impl->socket_count - offset;
+    size_t index;
+    for (index = 0u; index < batch; ++index) {
+      const cnet_resolver_socket *socket = &impl->sockets[offset + index];
+      cnet_resolver_pollfd *poll_fd = &impl->poll_fds[index];
+      poll_fd->fd = socket->descriptor;
+      poll_fd->events = 0;
+      poll_fd->revents = 0;
+      if ((socket->events & ARES_FD_EVENT_READ) != 0u) poll_fd->events |= POLLIN;
+      if ((socket->events & ARES_FD_EVENT_WRITE) != 0u) poll_fd->events |= POLLOUT;
+    }
+#if defined(_WIN32)
+    polled = WSAPoll(impl->poll_fds, (ULONG)batch, 0);
+#else
+    polled = poll(impl->poll_fds, (nfds_t)batch, 0);
+#endif
+    if (polled < 0) {
+      turbo_mutex_unlock(&impl->control_lock);
+      return TURBO_EAI_FAIL;
+    }
+    for (index = 0u; polled > 0 && index < batch; ++index) {
+      const short revents = impl->poll_fds[index].revents;
+      unsigned int events = 0u;
+      if ((revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL)) != 0) events |= ARES_FD_EVENT_READ;
+      if ((revents & POLLOUT) != 0) events |= ARES_FD_EVENT_WRITE;
+      if (events != 0u) {
+        impl->ready_events[ready_count++] = (ares_fd_events_t){impl->poll_fds[index].fd, events};
+      }
+    }
+    offset += batch;
+  }
+  status = ares_process_fds(impl->channel, ready_count != 0u ? impl->ready_events : NULL,
+                            ready_count, ARES_PROCESS_FLAG_NONE);
+  turbo_mutex_unlock(&impl->control_lock);
+  if (status == ARES_SUCCESS) return TURBO_OK;
+  return status == ARES_ENOMEM ? TURBO_ENOMEM : TURBO_EAI_FAIL;
+}
+
+bool cnet_resolver_has_pending(cnet_resolver *resolver) {
+  cnet_resolver_impl *impl = cnet_resolver_get_impl(resolver);
+  bool pending;
+  if (impl == NULL) return false;
+  turbo_mutex_lock(&impl->state_lock);
+  pending = impl->active_count != 0u;
+  turbo_mutex_unlock(&impl->state_lock);
+  return pending;
 }
 
 int cnet_resolver_submit(cnet_resolver *resolver, const char *host, uint16_t port, int socket_type,
@@ -312,10 +428,9 @@ int cnet_resolver_take(cnet_resolver *resolver, cnet_resolver_result *out_result
 
 int cnet_resolver_close(cnet_resolver *resolver, uint32_t timeout_ms) {
   cnet_resolver_impl *impl = cnet_resolver_get_impl(resolver);
-  ares_status_t status;
 
   if (impl == NULL) return TURBO_EINVAL;
-  if (timeout_ms > INT_MAX) return TURBO_ERANGE;
+  (void)timeout_ms;
 
   turbo_mutex_lock(&impl->control_lock);
   turbo_mutex_lock(&impl->state_lock);
@@ -327,13 +442,8 @@ int cnet_resolver_close(cnet_resolver *resolver, uint32_t timeout_ms) {
   impl->admission_open = false;
   turbo_mutex_unlock(&impl->state_lock);
   ares_cancel(impl->channel);
-  status = ares_queue_wait_empty(impl->channel, (int)timeout_ms);
   turbo_mutex_unlock(&impl->control_lock);
-
-  if (status == ARES_SUCCESS) return TURBO_OK;
-  if (status == ARES_ETIMEOUT) return TURBO_ETIMEDOUT;
-  if (status == ARES_ENOTIMP) return TURBO_ENOTSUP;
-  return TURBO_EAI_FAIL;
+  return TURBO_OK;
 }
 
 int cnet_resolver_destroy(cnet_resolver *resolver) {
@@ -355,6 +465,9 @@ int cnet_resolver_destroy(cnet_resolver *resolver) {
 
   turbo_mutex_destroy(&impl->state_lock);
   turbo_mutex_destroy(&impl->control_lock);
+  free(impl->ready_events);
+  free(impl->poll_fds);
+  free(impl->sockets);
   free(impl->ready_slots);
   free(impl->free_slots);
   free(impl->slots);

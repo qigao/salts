@@ -58,6 +58,8 @@ typedef struct cnet_owner_pending_event {
   cnet_event event;
 } cnet_owner_pending_event;
 
+enum { CNET_OWNER_RESOLVER_POLL_INTERVAL_MS = 1u };
+
 struct cnet_owner_impl {
   native_io_backend backend;
   cnet_resolver resolver;
@@ -150,11 +152,6 @@ static void cnet_owner_record_failure(cnet_owner_session *session, int status,
     session->pending_status = status;
     session->pending_stage = stage;
   }
-}
-
-static void cnet_owner_resolver_wake(void *context) {
-  cnet_owner_impl *impl = (cnet_owner_impl *)context;
-  (void)native_io_backend_wake(&impl->backend);
 }
 
 static int cnet_owner_queue_state_event(cnet_owner_impl *impl, cnet_session_handle session,
@@ -813,12 +810,17 @@ static uint32_t cnet_owner_observe_timeout(cnet_owner_impl *impl, uint32_t reque
   turbo_deadline_event deadline = {0};
   uint64_t now_ms;
   uint64_t remaining;
+  uint32_t result = requested_ms;
   if (processed) return 0u;
-  if (turbo_deadline_queue_peek(&impl->deadlines, &deadline) != TURBO_OK) return requested_ms;
-  now_ms = impl->now_ms(impl->clock_context);
-  remaining = deadline.deadline_ms > now_ms ? deadline.deadline_ms - now_ms : 0u;
-  if (remaining > UINT32_MAX) remaining = UINT32_MAX;
-  return remaining < requested_ms ? (uint32_t)remaining : requested_ms;
+  if (turbo_deadline_queue_peek(&impl->deadlines, &deadline) == TURBO_OK) {
+    now_ms = impl->now_ms(impl->clock_context);
+    remaining = deadline.deadline_ms > now_ms ? deadline.deadline_ms - now_ms : 0u;
+    if (remaining > UINT32_MAX) remaining = UINT32_MAX;
+    if (remaining < result) result = (uint32_t)remaining;
+  }
+  if (cnet_resolver_has_pending(&impl->resolver) && result > CNET_OWNER_RESOLVER_POLL_INTERVAL_MS)
+    result = CNET_OWNER_RESOLVER_POLL_INTERVAL_MS;
+  return result;
 }
 
 int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
@@ -888,8 +890,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     free(impl);
     return status;
   }
-  resolver_config =
-      (cnet_resolver_config){config->connection_capacity, cnet_owner_resolver_wake, impl};
+  resolver_config = (cnet_resolver_config){config->connection_capacity};
   status = cnet_resolver_init(&impl->resolver, &resolver_config);
   if (status != TURBO_OK) {
     (void)native_io_backend_close(&impl->backend);
@@ -957,22 +958,25 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   status = cnet_owner_process_deadlines(impl);
   if (status != TURBO_OK) return status;
   if (impl->pending_event_count != 0u) return TURBO_OK;
+  status = cnet_resolver_poll(&impl->resolver);
+  if (status != TURBO_OK) return status;
   status = cnet_owner_process_resolver(impl, &processed);
   if (status != TURBO_OK) return status;
   status = native_io_backend_observe(
       &impl->backend, impl->completions, impl->completion_batch_capacity,
       cnet_owner_observe_timeout(impl, timeout_ms, processed != 0u), &completion_count);
-  if (status == TURBO_ETIMEDOUT) return cnet_owner_process_deadlines(impl);
+  if (status == TURBO_ETIMEDOUT) {
+    status = cnet_resolver_poll(&impl->resolver);
+    if (status != TURBO_OK) return status;
+    status = cnet_owner_process_resolver(impl, &processed);
+    if (status != TURBO_OK) return status;
+    return cnet_owner_process_deadlines(impl);
+  }
   if (status != TURBO_OK) return status;
   status = cnet_owner_take_coroutine_status(impl);
   if (status != TURBO_OK) return status;
   if (completion_count != 0u) return TURBO_EPROTO;
   return cnet_owner_process_deadlines(impl);
-}
-
-int cnet_owner_wake(cnet_owner *owner) {
-  cnet_owner_impl *impl = cnet_owner_get(owner);
-  return impl != NULL ? native_io_backend_wake(&impl->backend) : TURBO_EINVAL;
 }
 
 bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats) {
