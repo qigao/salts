@@ -64,9 +64,10 @@ typedef enum native_io_pipe_endpoint_flags {
  * TCP_CONNECT requires buffer == NULL and length == 0; its address storage is
  * borrowed until observe returns the matching terminal completion.
  * UDP_RECV_FROM writes at most address_capacity bytes and publishes the actual
- * length in its completion. TCP send/receive and pipe operations require all
- * address fields to be zero. Address storage has the same borrow as payload
- * storage.
+ * length in its completion. For an OS-connected datagram socket, UDP_RECV_FROM
+ * and UDP_SEND_TO accept all address fields as zero and use connected recv/send
+ * semantics. TCP send/receive and pipe operations require all address fields
+ * to be zero. Address storage has the same borrow as payload storage.
  */
 typedef struct native_io_operation {
   native_io_operation_kind kind;

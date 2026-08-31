@@ -433,14 +433,22 @@ static int iocp_submit(turbo_io_impl *base, const native_io_operation *operation
   } else if (operation->kind == NATIVE_IO_OPERATION_TCP_SEND) {
     native_status = WSASend((SOCKET)request->native_handle, &request->buffer, 1u, &immediate_bytes,
                             0u, &request->overlapped, NULL);
-  } else if (operation->kind == NATIVE_IO_OPERATION_UDP_RECV_FROM) {
+  } else if (operation->kind == NATIVE_IO_OPERATION_UDP_RECV_FROM &&
+             operation->address != NULL) {
     native_status = WSARecvFrom((SOCKET)request->native_handle, &request->buffer, 1u,
                                 &immediate_bytes, &request->flags, (SOCKADDR *)request->address,
                                 &request->address_length, &request->overlapped, NULL);
-  } else {
+  } else if (operation->kind == NATIVE_IO_OPERATION_UDP_SEND_TO &&
+             operation->address != NULL) {
     native_status = WSASendTo((SOCKET)request->native_handle, &request->buffer, 1u,
                               &immediate_bytes, 0u, (const SOCKADDR *)request->address,
                               request->address_length, &request->overlapped, NULL);
+  } else if (operation->kind == NATIVE_IO_OPERATION_UDP_RECV_FROM) {
+    native_status = WSARecv((SOCKET)request->native_handle, &request->buffer, 1u,
+                            &immediate_bytes, &request->flags, &request->overlapped, NULL);
+  } else {
+    native_status = WSASend((SOCKET)request->native_handle, &request->buffer, 1u,
+                            &immediate_bytes, 0u, &request->overlapped, NULL);
   }
   if (native_status == 0) {
     iocp_counter_increment(&impl->submitted);

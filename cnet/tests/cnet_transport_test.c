@@ -140,10 +140,7 @@ static void cnet_test_udp_transport(native_io_backend_kind kind) {
   operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_UDP_SEND_TO,
                                     .endpoint = transport.endpoint,
                                     .buffer = (void *)payload,
-                                    .length = sizeof(payload),
-                                    .address = &address,
-                                    .address_capacity = sizeof(address),
-                                    .address_length = sizeof(address)};
+                                    .length = sizeof(payload)};
   check_equal(native_io_backend_submit(&backend, &operation, &request), TURBO_OK);
   check_equal(native_io_backend_observe(&backend, &completion, 1u, CNET_TEST_TIMEOUT_MS, &count),
               TURBO_OK);

@@ -53,12 +53,16 @@ bool native_io_operation_valid(const native_io_operation *operation) {
     return operation->address == NULL && operation->address_capacity == 0u &&
            operation->address_length == 0u;
   if (operation->kind == NATIVE_IO_OPERATION_UDP_RECV_FROM)
-    return operation->address != NULL && operation->address_capacity != 0u &&
-           operation->address_capacity <= (size_t)INT_MAX && operation->address_length == 0u;
+    return (operation->address == NULL && operation->address_capacity == 0u &&
+            operation->address_length == 0u) ||
+           (operation->address != NULL && operation->address_capacity != 0u &&
+            operation->address_capacity <= (size_t)INT_MAX && operation->address_length == 0u);
   if (operation->kind == NATIVE_IO_OPERATION_UDP_SEND_TO)
-    return operation->address != NULL && operation->address_length != 0u &&
-           operation->address_length <= operation->address_capacity &&
-           operation->address_length <= (size_t)INT_MAX;
+    return (operation->address == NULL && operation->address_capacity == 0u &&
+            operation->address_length == 0u) ||
+           (operation->address != NULL && operation->address_length != 0u &&
+            operation->address_length <= operation->address_capacity &&
+            operation->address_length <= (size_t)INT_MAX);
   return false;
 }
 

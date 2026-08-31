@@ -17,7 +17,6 @@ typedef enum cnet_owner_request_role {
 typedef struct cnet_owner_session {
   cnet_session_handle handle;
   cnet_owner_connect_payload peer;
-  unsigned char receive_address[CNET_OWNER_ADDRESS_CAPACITY];
   cnet_transport transport;
   size_t active_requests;
   int pending_status;
@@ -234,10 +233,6 @@ static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *ses
                                     .endpoint = session->transport.endpoint,
                                     .buffer = session->receive_buffer,
                                     .length = impl->receive_buffer_bytes};
-  if (session->peer.scheme == CNET_URI_UDP) {
-    operation.address = session->receive_address;
-    operation.address_capacity = sizeof(session->receive_address);
-  }
   status = native_io_backend_submit(&impl->backend, &operation, &request);
   if (status != TURBO_OK) {
     cnet_owner_record_failure(session, status, CNET_SESSION_STAGE_READ);
@@ -359,11 +354,6 @@ static int cnet_owner_send(cnet_owner_impl *impl, cnet_command_view *command) {
                                     .endpoint = session->transport.endpoint,
                                     .buffer = (void *)command->data,
                                     .length = command->size};
-  if (session->peer.scheme == CNET_URI_UDP) {
-    operation.address = session->peer.address;
-    operation.address_capacity = session->peer.address_length;
-    operation.address_length = session->peer.address_length;
-  }
   status = native_io_backend_submit(&impl->backend, &operation, &request);
   if (status != TURBO_OK)
     return cnet_owner_fail_accepted_command(impl, session, command, status,

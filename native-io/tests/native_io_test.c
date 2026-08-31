@@ -1173,7 +1173,7 @@ spec("NativeIO direct backend") {
       native_io_test_wake_coalesces(backends[index]);
   }
 
-  it("validates TCP and UDP address ownership shapes") {
+  it("validates addressed and connected UDP ownership shapes") {
     unsigned char payload = 0u;
     unsigned char address[32] = {0};
     native_io_operation operation = {.kind = NATIVE_IO_OPERATION_UDP_RECV_FROM,
@@ -1181,7 +1181,7 @@ spec("NativeIO direct backend") {
                                     .buffer = &payload,
                                     .length = sizeof(payload)};
 
-    check_false(native_io_operation_valid(&operation));
+    check_true(native_io_operation_valid(&operation));
     operation.address = address;
     operation.address_capacity = sizeof(address);
     check_true(native_io_operation_valid(&operation));
@@ -1189,11 +1189,14 @@ spec("NativeIO direct backend") {
     check_false(native_io_operation_valid(&operation));
     operation.address_length = sizeof(address);
     check_true(native_io_operation_valid(&operation));
-    operation.kind = NATIVE_IO_OPERATION_TCP_SEND;
-    check_false(native_io_operation_valid(&operation));
     operation.address = NULL;
     operation.address_capacity = 0u;
     operation.address_length = 0u;
+    check_true(native_io_operation_valid(&operation));
+    operation.kind = NATIVE_IO_OPERATION_TCP_SEND;
+    operation.address_capacity = sizeof(address);
+    check_false(native_io_operation_valid(&operation));
+    operation.address_capacity = 0u;
     check_true(native_io_operation_valid(&operation));
   }
 

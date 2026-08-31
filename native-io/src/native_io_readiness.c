@@ -300,13 +300,19 @@ static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
       result = recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
     else if (request->operation.kind == NATIVE_IO_OPERATION_TCP_SEND)
       result = send(endpoint->fd, request->operation.buffer, request->operation.length, flags);
-    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM)
+    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM &&
+             request->operation.address != NULL)
       result = recvfrom(endpoint->fd, request->operation.buffer, request->operation.length, flags,
                         (struct sockaddr *)request->operation.address, &address_length);
-    else
+    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_SEND_TO &&
+             request->operation.address != NULL)
       result = sendto(endpoint->fd, request->operation.buffer, request->operation.length, flags,
                       (const struct sockaddr *)request->operation.address,
                       (socklen_t)request->operation.address_length);
+    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM)
+      result = recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
+    else
+      result = send(endpoint->fd, request->operation.buffer, request->operation.length, flags);
   } while (result < 0 && errno == EINTR);
   if (result < 0) saved_error = errno;
 #if !defined(MSG_NOSIGNAL)
@@ -315,7 +321,10 @@ static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
   if (result < 0) return -saved_error;
   *out_bytes = (size_t)result;
   *out_address_length =
-      request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM ? (size_t)address_length : 0u;
+      request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM &&
+              request->operation.address != NULL
+          ? (size_t)address_length
+          : 0u;
   return TURBO_OK;
 }
 
