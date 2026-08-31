@@ -49,5 +49,5 @@ platform status is normalized to `TURBO_EIO` and retained in
 `cnet_error.native_status`.
 
 The executable public contract is in `tests/cnet_api_test.c`; it covers TCP,
-connected UDP, callback reentrancy, stale handles, live drain, and timeout
-retry without duplicate terminal delivery.
+connected UDP, platform Pipe, callback reentrancy, stale handles, live drain,
+and timeout retry without duplicate terminal delivery.

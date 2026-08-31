@@ -1,3 +1,4 @@
+#include "cnet_test_named_pipe.h"
 #include "tinytest.h"
 #include <cnet/cnet.h>
 
@@ -376,5 +377,54 @@ spec("CNet public client API") {
     check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(cnet_client_destroy(&client), TURBO_OK);
     cnet_api_test_close_socket(server);
+  }
+
+  it("uses the same public byte API for a platform Pipe endpoint") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_api_test_probe probe = {.client = &client, .expected_kind = CNET_MESSAGE_BYTES};
+    cnet_shared_test_named_pipe pipe;
+    cnet_connection connection = {0};
+    cnet_connect_options options;
+    char uri[CNET_URI_PATH_CAPACITY + 8u];
+    unsigned char outbound = 0u;
+    const unsigned char expected_outbound = 53u;
+    const unsigned char expected_inbound = 89u;
+    int uri_length;
+
+    atomic_init(&probe.connected, 0);
+    atomic_init(&probe.received, 0);
+    atomic_init(&probe.terminal, 0);
+    atomic_init(&probe.callback_stop_status, TURBO_OK);
+    atomic_init(&probe.callback_operation_status, TURBO_EIO);
+    atomic_init(&probe.failed, 0);
+    atomic_init(&probe.block_terminal, 0);
+    atomic_init(&probe.release_terminal, 0);
+    check_equal(cnet_shared_test_named_pipe_start(&pipe), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), TURBO_OK);
+    uri_length = snprintf(uri, sizeof(uri), "pipe://%s", pipe.name);
+    check_true(uri_length > 0 && (size_t)uri_length < sizeof(uri));
+    options = (cnet_connect_options){.uri = uri,
+                                     .observer = {.on_state = cnet_api_test_state,
+                                                  .on_receive = cnet_api_test_receive,
+                                                  .user = &probe}};
+    check_equal(cnet_connect(&client, &options, &connection), TURBO_OK);
+    check_equal(cnet_shared_test_named_pipe_finish(&pipe), TURBO_OK);
+    check_equal(cnet_api_test_wait(&probe.connected, 1), TURBO_OK);
+    check_equal(cnet_send(&client, connection, &expected_outbound, sizeof(expected_outbound)),
+                TURBO_OK);
+    check_equal(cnet_shared_test_named_pipe_peer_read(&pipe, &outbound, sizeof(outbound)),
+                TURBO_OK);
+    check_equal(outbound, expected_outbound);
+    check_equal(
+        cnet_shared_test_named_pipe_peer_write(&pipe, &expected_inbound, sizeof(expected_inbound)),
+        TURBO_OK);
+    check_equal(cnet_api_test_wait(&probe.received, 1), TURBO_OK);
+    check_equal(probe.received_value, expected_inbound);
+    check_equal(cnet_api_test_wait(&probe.terminal, 1), TURBO_OK);
+    check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    cnet_shared_test_named_pipe_close(&pipe);
   }
 }
