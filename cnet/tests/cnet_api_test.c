@@ -5,6 +5,7 @@
 #include <turbo/clock.h>
 #include <turbo/thread.h>
 
+#include <errno.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
@@ -77,6 +78,24 @@ static int cnet_api_test_wait(atomic_int *value, int expected) {
     turbo_thread_yield();
   }
   return TURBO_OK;
+}
+
+static int cnet_api_test_wait_pipe_read(cnet_shared_test_named_pipe *pipe, void *data,
+                                        size_t size) {
+#if !defined(_WIN32)
+  const uint64_t deadline = turbo_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
+#endif
+  for (;;) {
+    const int status = cnet_shared_test_named_pipe_peer_read(pipe, data, size);
+    if (status == TURBO_OK) return TURBO_OK;
+#if defined(_WIN32)
+    return status;
+#else
+    if (status != -EAGAIN && status != -EWOULDBLOCK && status != -EINTR) return status;
+    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
+    turbo_thread_yield();
+#endif
+  }
 }
 
 static void cnet_api_test_state(void *user, cnet_connection connection, cnet_connection_state state,
@@ -413,8 +432,7 @@ spec("CNet public client API") {
     check_equal(cnet_shared_test_named_pipe_finish(&pipe), TURBO_OK);
     check_equal(cnet_send(&client, connection, &expected_outbound, sizeof(expected_outbound)),
                 TURBO_OK);
-    check_equal(cnet_shared_test_named_pipe_peer_read(&pipe, &outbound, sizeof(outbound)),
-                TURBO_OK);
+    check_equal(cnet_api_test_wait_pipe_read(&pipe, &outbound, sizeof(outbound)), TURBO_OK);
     check_equal(outbound, expected_outbound);
     check_equal(
         cnet_shared_test_named_pipe_peer_write(&pipe, &expected_inbound, sizeof(expected_inbound)),
