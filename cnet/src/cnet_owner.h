@@ -21,7 +21,15 @@ typedef struct cnet_owner_connect_payload {
   uint16_t port;
   uintptr_t pipe_read_handle;
   uintptr_t pipe_write_handle;
+  /** Zero disables the deadline. Connect covers resolution plus transport admission. */
+  uint32_t connect_timeout_ms;
+  /** Zero disables the per-accepted-read deadline. */
+  uint32_t read_timeout_ms;
+  /** Zero disables the per-accepted-write deadline. */
+  uint32_t write_timeout_ms;
 } cnet_owner_connect_payload;
+
+typedef uint64_t (*cnet_owner_now_ms_fn)(void *context);
 
 typedef struct cnet_owner_config {
   native_io_backend_kind backend_kind;
@@ -33,6 +41,9 @@ typedef struct cnet_owner_config {
   cnet_session_table *sessions;
   cnet_command_queue *commands;
   cnet_event_queue *events;
+  /** Optional single-owner monotonic clock seam; NULL uses turbo_monotonic_ms(). */
+  cnet_owner_now_ms_fn now_ms;
+  void *clock_context;
 } cnet_owner_config;
 
 int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config);

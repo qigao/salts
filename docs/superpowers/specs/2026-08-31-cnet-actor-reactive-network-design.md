@@ -220,6 +220,8 @@ typedef struct cnet_client_config {
     size_t max_message_bytes;
     size_t max_queued_bytes_per_connection;
     uint32_t connect_timeout_ms;
+    uint32_t read_timeout_ms;
+    uint32_t write_timeout_ms;
     uint32_t shutdown_timeout_ms;
 } cnet_client_config;
 ```
@@ -239,6 +241,25 @@ progress. A connection's generation-checked identity selects one stable
 callback lane; that lane is a single consumer, so callbacks for the connection
 remain FIFO and non-overlapping. Different lanes run as independent long-lived
 tasks and may execute callbacks concurrently.
+
+The owner deadline container is the generic Concurrency
+`turbo_deadline_queue`: a fixed-capacity single-owner min-heap that starts no
+thread, reads no clock, and invokes no callback. CNet allocates exactly
+`connection_capacity + request_capacity` entries during owner initialization.
+The owner is its only mutator; full storage is an invariant violation reported
+immediately rather than an allocation or fallback trigger.
+
+A zero connect/read/write timeout disables that deadline. A connect deadline
+spans hostname resolution and transport admission; read and write deadlines
+begin only after NativeIO accepts the corresponding request. Each owner turn
+processes accepted commands, then expired deadlines, then resolver and NativeIO
+completions. Once expiration records `TURBO_ETIMEDOUT` as the session's first
+failure, a late successful completion only retires the request: it cannot
+publish `CONNECTED`, deliver receive data, or replace the terminal cause.
+NativeIO cancellation remains asynchronous, so request and session storage are
+recycled only after the terminal completion is observed. Client shutdown uses
+its separate drain deadline and is not modeled as an unimplemented per-request
+owner timer.
 
 Process-global protocol dependencies are initialized by the CNet control plane
 before worker threads start and are reference counted. A live resolver pins the

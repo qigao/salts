@@ -185,6 +185,15 @@ cover lane serialization, cross-lane progress, MPSC order, full-lane rejection,
 stop retry, exact finish/release, release-error propagation, and pointer-stable
 event handoff.
 
+The owner now uses a generic fixed-capacity Concurrency deadline heap. Connect
+deadlines span resolution and NativeIO connect; accepted read and write
+requests have independent deadlines. Zero disables each deadline. Expiration
+records the session's first failure before cancellation, so a late successful
+NativeIO completion only retires its request and cannot reopen the session or
+deliver data. The owner still observes every terminal cancellation completion
+before recycling storage. Shutdown timeout remains a client-level drain
+protocol and is not exposed as a partially implemented owner field.
+
 The internal client-owned dispatcher now is the sole consumer of each shard
 event ring. It retains at most one borrowed event per shard when a callback lane
 is full, so backpressure remains bounded and the receive payload is not copied a
@@ -195,8 +204,8 @@ can be registered again. Drain closes dispatcher admission, requests close for
 every registered connection, continues driving terminal events, and only then
 permits destruction. The dispatcher allocates only during initialization and is
 still an internal, incomplete client primitive; platform `pipe://` opening,
-timer deadlines, and the public client remain before the execution task is
-complete.
+client-level shutdown deadlines, and the public client remain before the
+execution task is complete.
 
 **Files:**
 
@@ -238,6 +247,8 @@ complete.
 - [ ] Implement one long-lived owner task and NativeIO backend per shard,
   stable connection-to-shard assignment, fixed completion batches, timer
   deadlines, and first-error propagation.
+- [x] Add a fixed-capacity single-owner deadline heap and enforce connect,
+  read, and write expiration before resolver/NativeIO success observation.
 - [ ] Implement TCP over NativeIO connect/read/write, connected UDP over
   datagram operations, and Pipe over NativeIO pipe operations. Keep OS socket
   creation/close in private per-platform transport adapters.

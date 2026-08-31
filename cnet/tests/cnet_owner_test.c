@@ -22,6 +22,27 @@ typedef int cnet_owner_test_socket;
 
 enum { CNET_OWNER_TEST_TIMEOUT_MS = 5000, CNET_OWNER_TEST_MAX_BACKENDS = 2 };
 
+typedef struct cnet_owner_test_clock {
+  uint64_t now_ms;
+  uint64_t next_ms;
+  size_t calls;
+} cnet_owner_test_clock;
+
+static uint64_t cnet_owner_test_now(void *context) {
+  cnet_owner_test_clock *clock = (cnet_owner_test_clock *)context;
+  const uint64_t now_ms = clock->now_ms;
+  ++clock->calls;
+  clock->now_ms = clock->next_ms;
+  return now_ms;
+}
+
+typedef enum cnet_owner_test_timeout {
+  CNET_OWNER_TEST_NO_TIMEOUT = 0,
+  CNET_OWNER_TEST_CONNECT_TIMEOUT,
+  CNET_OWNER_TEST_READ_TIMEOUT,
+  CNET_OWNER_TEST_WRITE_TIMEOUT
+} cnet_owner_test_timeout;
+
 static size_t
 cnet_owner_test_backends(native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS]) {
 #if defined(_WIN32)
@@ -120,7 +141,8 @@ static int cnet_owner_test_drive_to_event(cnet_owner *owner, cnet_event_queue *e
   }
 }
 
-static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolve_host) {
+static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolve_host,
+                                cnet_owner_test_timeout timeout) {
   static const unsigned char payload[] = {1u, 3u, 5u, 7u};
   cnet_session_table sessions = {0};
   cnet_command_queue commands = {0};
@@ -128,15 +150,22 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   cnet_owner owner = {0};
   const cnet_command_queue_config command_config = {8u, sizeof(cnet_owner_connect_payload)};
   const cnet_event_queue_config event_config = {8u, 2u, 64u};
-  const cnet_owner_config owner_config = {.backend_kind = backend_kind,
-                                          .connection_capacity = 1u,
-                                          .request_capacity = 4u,
-                                          .completion_batch_capacity = 4u,
-                                          .receive_buffer_bytes = 64u,
-                                          .receive_buffer_count = 1u,
-                                          .sessions = &sessions,
-                                          .commands = &commands,
-                                          .events = &events};
+  cnet_owner_test_clock clock = {100u, timeout == CNET_OWNER_TEST_CONNECT_TIMEOUT ||
+                                               timeout == CNET_OWNER_TEST_WRITE_TIMEOUT
+                                           ? 111u
+                                           : 100u};
+  const cnet_owner_config owner_config = {
+      .backend_kind = backend_kind,
+      .connection_capacity = 1u,
+      .request_capacity = 4u,
+      .completion_batch_capacity = 4u,
+      .receive_buffer_bytes = 64u,
+      .receive_buffer_count = 1u,
+      .sessions = &sessions,
+      .commands = &commands,
+      .events = &events,
+      .now_ms = timeout != CNET_OWNER_TEST_NO_TIMEOUT ? cnet_owner_test_now : NULL,
+      .clock_context = timeout != CNET_OWNER_TEST_NO_TIMEOUT ? &clock : NULL};
   cnet_owner_test_socket listener = CNET_OWNER_TEST_INVALID_SOCKET;
   cnet_owner_test_socket accepted = CNET_OWNER_TEST_INVALID_SOCKET;
   struct sockaddr_in address;
@@ -165,6 +194,9 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   for (event_index = 0u; event_index < event_config.capacity; ++event_index)
     check_equal(cnet_event_queue_publish(&events, &queued_state), TURBO_OK);
   connect_payload.scheme = CNET_URI_TCP;
+  connect_payload.connect_timeout_ms = timeout == CNET_OWNER_TEST_CONNECT_TIMEOUT ? 10u : 0u;
+  connect_payload.read_timeout_ms = timeout == CNET_OWNER_TEST_READ_TIMEOUT ? 10u : 0u;
+  connect_payload.write_timeout_ms = timeout == CNET_OWNER_TEST_WRITE_TIMEOUT ? 10u : 0u;
   if (resolve_host) {
     memcpy(connect_payload.host, "127.0.0.1", sizeof("127.0.0.1"));
     connect_payload.port = ntohs(address.sin_port);
@@ -176,6 +208,31 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
       (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
   check_equal(cnet_owner_wake(&owner), TURBO_OK);
+  if (timeout == CNET_OWNER_TEST_CONNECT_TIMEOUT) {
+    check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
+                TURBO_OK);
+    for (event_index = 0u; event_index < event_config.capacity; ++event_index) {
+      check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+      check_equal(event.state, CNET_EVENT_STATE_CLOSING);
+      check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+    }
+    check_equal(cnet_owner_drive(&owner, 0u), TURBO_OK);
+    check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+    check_equal(event.kind, CNET_EVENT_STATE);
+    check_equal(event.state, CNET_EVENT_STATE_FAILED);
+    check_equal(event.status, TURBO_ETIMEDOUT);
+    check_equal(event.stage,
+                resolve_host ? CNET_SESSION_STAGE_RESOLVE : CNET_SESSION_STAGE_CONNECT);
+    check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+    check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), TURBO_OK);
+    check_equal(terminal.kind, CNET_SESSION_TERMINAL_FAILED);
+    check_equal(terminal.status, TURBO_ETIMEDOUT);
+    check_equal(terminal.stage,
+                resolve_host ? CNET_SESSION_STAGE_RESOLVE : CNET_SESSION_STAGE_CONNECT);
+    check_equal(cnet_session_table_recycle(&sessions, session), TURBO_OK);
+    check_equal(cnet_owner_release_session(&owner, session), TURBO_OK);
+    goto cleanup;
+  }
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
               TURBO_OK);
   for (event_index = 0u; event_index < event_config.capacity; ++event_index) {
@@ -193,38 +250,71 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   accepted = accept(listener, NULL, NULL);
   check_true(accepted != CNET_OWNER_TEST_INVALID_SOCKET);
 
-  check_equal(send(accepted, (const char *)payload, (int)sizeof(payload), 0), (int)sizeof(payload));
   command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
   check_equal(cnet_owner_wake(&owner), TURBO_OK);
-  check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), TURBO_OK);
-  check_equal(event.kind, CNET_EVENT_RECEIVE);
-  check_equal(event.data, payload, sizeof(payload));
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+  if (timeout == CNET_OWNER_TEST_READ_TIMEOUT) {
+    check_equal(cnet_owner_drive(&owner, 0u), TURBO_OK);
+    clock.now_ms = 111u;
+    clock.next_ms = 111u;
+  } else {
+    check_equal(send(accepted, (const char *)payload, (int)sizeof(payload), 0),
+                (int)sizeof(payload));
+    check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), TURBO_OK);
+    check_equal(event.kind, CNET_EVENT_RECEIVE);
+    check_equal(event.data, payload, sizeof(payload));
+    check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
 
-  command = (cnet_command){CNET_COMMAND_SEND, session, payload, sizeof(payload), 0u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
-  check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(recv(accepted, (char *)received, (int)sizeof(received), 0), (int)sizeof(received));
-  check_equal(received, payload, sizeof(payload));
+    if (timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
+      check_equal(clock.calls, 0u);
+      clock.now_ms = 100u;
+      clock.next_ms = 111u;
+    }
+    command = (cnet_command){CNET_COMMAND_SEND, session, payload, sizeof(payload), 0u};
+    check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+    check_equal(cnet_owner_wake(&owner), TURBO_OK);
+    if (timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
+      check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
+                  TURBO_OK);
+    } else {
+      check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), TURBO_OK);
+      check_equal(recv(accepted, (char *)received, (int)sizeof(received), 0),
+                  (int)sizeof(received));
+      check_equal(received, payload, sizeof(payload));
 
-  command = (cnet_command){CNET_COMMAND_CLOSE, session, NULL, 0u, 0u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_wake(&owner), TURBO_OK);
+      command = (cnet_command){CNET_COMMAND_CLOSE, session, NULL, 0u, 0u};
+      check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+      check_equal(cnet_owner_wake(&owner), TURBO_OK);
+    }
+  }
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
               TURBO_OK);
   check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
-  check_equal(event.state, CNET_EVENT_STATE_CLOSING);
+  check_equal(event.state, timeout != CNET_OWNER_TEST_NO_TIMEOUT ? CNET_EVENT_STATE_FAILED
+                                                                 : CNET_EVENT_STATE_CLOSING);
+  if (timeout == CNET_OWNER_TEST_READ_TIMEOUT || timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
+    check_equal(event.status, TURBO_ETIMEDOUT);
+    check_equal(event.stage, timeout == CNET_OWNER_TEST_READ_TIMEOUT ? CNET_SESSION_STAGE_READ
+                                                                     : CNET_SESSION_STAGE_WRITE);
+  }
   check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
-  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
-  check_equal(event.state, CNET_EVENT_STATE_CLOSED);
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+  if (timeout == CNET_OWNER_TEST_NO_TIMEOUT) {
+    check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+    check_equal(event.state, CNET_EVENT_STATE_CLOSED);
+    check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+  }
   check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), TURBO_OK);
-  check_equal(terminal.kind, CNET_SESSION_TERMINAL_CLOSED);
+  check_equal(terminal.kind, timeout != CNET_OWNER_TEST_NO_TIMEOUT ? CNET_SESSION_TERMINAL_FAILED
+                                                                   : CNET_SESSION_TERMINAL_CLOSED);
+  if (timeout == CNET_OWNER_TEST_READ_TIMEOUT || timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
+    check_equal(terminal.status, TURBO_ETIMEDOUT);
+    check_equal(terminal.stage, timeout == CNET_OWNER_TEST_READ_TIMEOUT ? CNET_SESSION_STAGE_READ
+                                                                        : CNET_SESSION_STAGE_WRITE);
+  }
   check_equal(cnet_session_table_recycle(&sessions, session), TURBO_OK);
   check_equal(cnet_owner_release_session(&owner, session), TURBO_OK);
 
+cleanup:
   cnet_owner_test_close_socket(accepted);
   cnet_owner_test_close_socket(listener);
   check_equal(cnet_command_queue_close(&commands), TURBO_OK);
@@ -495,7 +585,7 @@ spec("CNet owner shard") {
     size_t index;
     check_equal(cnet_module_init(), TURBO_OK);
     for (index = 0u; index < count; ++index)
-      cnet_owner_test_tcp(backends[index], false);
+      cnet_owner_test_tcp(backends[index], false, CNET_OWNER_TEST_NO_TIMEOUT);
     check_equal(cnet_module_shutdown(), TURBO_OK);
   }
 
@@ -505,7 +595,47 @@ spec("CNet owner shard") {
     size_t index;
     check_equal(cnet_module_init(), TURBO_OK);
     for (index = 0u; index < count; ++index)
-      cnet_owner_test_tcp(backends[index], true);
+      cnet_owner_test_tcp(backends[index], true, CNET_OWNER_TEST_NO_TIMEOUT);
+    check_equal(cnet_module_shutdown(), TURBO_OK);
+  }
+
+  it("times out one pending read through the owner deadline queue") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    size_t index;
+    check_equal(cnet_module_init(), TURBO_OK);
+    for (index = 0u; index < count; ++index)
+      cnet_owner_test_tcp(backends[index], false, CNET_OWNER_TEST_READ_TIMEOUT);
+    check_equal(cnet_module_shutdown(), TURBO_OK);
+  }
+
+  it("keeps an expired connect terminal when a native success is already pending") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    size_t index;
+    check_equal(cnet_module_init(), TURBO_OK);
+    for (index = 0u; index < count; ++index)
+      cnet_owner_test_tcp(backends[index], false, CNET_OWNER_TEST_CONNECT_TIMEOUT);
+    check_equal(cnet_module_shutdown(), TURBO_OK);
+  }
+
+  it("expires resolution before accepting a late resolver result") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    size_t index;
+    check_equal(cnet_module_init(), TURBO_OK);
+    for (index = 0u; index < count; ++index)
+      cnet_owner_test_tcp(backends[index], true, CNET_OWNER_TEST_CONNECT_TIMEOUT);
+    check_equal(cnet_module_shutdown(), TURBO_OK);
+  }
+
+  it("keeps an expired write terminal when a native success is already pending") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    size_t index;
+    check_equal(cnet_module_init(), TURBO_OK);
+    for (index = 0u; index < count; ++index)
+      cnet_owner_test_tcp(backends[index], false, CNET_OWNER_TEST_WRITE_TIMEOUT);
     check_equal(cnet_module_shutdown(), TURBO_OK);
   }
 

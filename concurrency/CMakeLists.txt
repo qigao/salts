@@ -1,6 +1,7 @@
 set(TARGET_NAME turbo_concurrency)
 
 add_library(${TARGET_NAME} STATIC
+  src/deadline_queue.c
   src/disruptor.c
   src/thread_pool.c)
 
