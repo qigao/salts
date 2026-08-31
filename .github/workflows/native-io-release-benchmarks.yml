@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - "native-io/**"
+      - "cnet/**"
       - "cflow/**"
       - ".github/workflows/native-io-release-benchmarks.yml"
   push:
     branches: [master]
     paths:
       - "native-io/**"
+      - "cnet/**"
       - "cflow/**"
       - ".github/workflows/native-io-release-benchmarks.yml"
   workflow_dispatch:
@@ -129,9 +131,13 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset "${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
+            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON \
+            -DCNET_ENABLE_EXPERIMENTAL=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
-            --target native_io_test native_io_header_cpp_test cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
+            --target native_io_test native_io_header_cpp_test \
+              cnet_session_test cnet_command_test cnet_uri_test \
+              cnet_transport_test cnet_owner_test cnet_event_test \
+              cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
 
       - name: Configure and build Windows Release
         if: matrix.family == 'windows'
@@ -146,9 +152,9 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
           if errorlevel 1 exit /b 1
 
-          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
+          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON -DCNET_ENABLE_EXPERIMENTAL=ON
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
+          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_event_test cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
           if errorlevel 1 exit /b 1
 
       - name: Configure and build macOS Release
@@ -157,14 +163,24 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset "${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
+            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON \
+            -DCNET_ENABLE_EXPERIMENTAL=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
-            --target native_io_test native_io_header_cpp_test cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
+            --target native_io_test native_io_header_cpp_test \
+              cnet_session_test cnet_command_test cnet_uri_test \
+              cnet_transport_test cnet_owner_test cnet_event_test \
+              cflow_io_native_adapter_test cflow_native_io_adapter_benchmark
 
       - name: Run NativeIO contract tests
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^native_io_(test|header_cpp_test)$' --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run CNet experimental contract tests
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^cnet_.*_test$' --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run CFlow NativeIO adapter contract tests
