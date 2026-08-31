@@ -26,7 +26,7 @@ typedef struct cnet_shared_test_pipe_pair {
   uintptr_t peer_write;
 } cnet_shared_test_pipe_pair;
 
-static void cnet_shared_test_pipe_reset(cnet_shared_test_pipe_pair *pair) {
+static inline void cnet_shared_test_pipe_reset(cnet_shared_test_pipe_pair *pair) {
 #if defined(_WIN32)
   pair->cnet_read = pair->cnet_write = pair->peer_read = pair->peer_write =
       (uintptr_t)INVALID_HANDLE_VALUE;
@@ -35,7 +35,7 @@ static void cnet_shared_test_pipe_reset(cnet_shared_test_pipe_pair *pair) {
 #endif
 }
 
-static void cnet_shared_test_close_pipe_handle(uintptr_t handle) {
+static inline void cnet_shared_test_close_pipe_handle(uintptr_t handle) {
 #if defined(_WIN32)
   if (handle != (uintptr_t)INVALID_HANDLE_VALUE) (void)CloseHandle((HANDLE)handle);
 #else
@@ -43,7 +43,7 @@ static void cnet_shared_test_close_pipe_handle(uintptr_t handle) {
 #endif
 }
 
-static void cnet_shared_test_close_pipe_pair(cnet_shared_test_pipe_pair *pair) {
+static inline void cnet_shared_test_close_pipe_pair(cnet_shared_test_pipe_pair *pair) {
   uintptr_t handles[4];
   size_t index;
   size_t prior;
@@ -61,7 +61,7 @@ static void cnet_shared_test_close_pipe_pair(cnet_shared_test_pipe_pair *pair) {
   cnet_shared_test_pipe_reset(pair);
 }
 
-static int cnet_shared_test_make_pipe_pair(cnet_shared_test_pipe_pair *pair) {
+static inline int cnet_shared_test_make_pipe_pair(cnet_shared_test_pipe_pair *pair) {
 #if defined(_WIN32)
   static LONG sequence = 0;
   char name[128];
@@ -143,7 +143,8 @@ failed:
 #endif
 }
 
-static int cnet_shared_test_pipe_peer_write(uintptr_t handle, const void *data, size_t size) {
+static inline int cnet_shared_test_pipe_peer_write(uintptr_t handle, const void *data,
+                                                   size_t size) {
 #if defined(_WIN32)
   DWORD written = 0u;
   if (!WriteFile((HANDLE)handle, data, (DWORD)size, &written, NULL)) return -(int)GetLastError();
@@ -154,7 +155,7 @@ static int cnet_shared_test_pipe_peer_write(uintptr_t handle, const void *data, 
 #endif
 }
 
-static int cnet_shared_test_pipe_peer_read(uintptr_t handle, void *data, size_t size) {
+static inline int cnet_shared_test_pipe_peer_read(uintptr_t handle, void *data, size_t size) {
 #if defined(_WIN32)
   DWORD read_bytes = 0u;
   if (!ReadFile((HANDLE)handle, data, (DWORD)size, &read_bytes, NULL)) return -(int)GetLastError();
