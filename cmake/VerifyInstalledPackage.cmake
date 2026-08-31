@@ -36,7 +36,6 @@ execute_process(
           "-DCMAKE_BUILD_TYPE=${BUILD_CONFIG}"
           "-DCMAKE_PREFIX_PATH=${install_prefix}"
           "-DTurboUtils_DIR=${install_prefix}/lib/cmake/TurboUtils"
-          "-DTURBOUTILS_EXPECT_CFLOW_MINICORO=${EXPECT_CFLOW_MINICORO}"
           "-DTURBOUTILS_EXPECT_CFLOW_USB=${EXPECT_CFLOW_USB}"
           "-DTURBOUTILS_EXPECT_CFLOW_SCXML=${EXPECT_CFLOW_SCXML}"
   RESULT_VARIABLE configure_result)

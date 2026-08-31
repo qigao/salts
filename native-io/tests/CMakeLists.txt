@@ -1,6 +1,6 @@
 cmake_add_test(native_io_test
   SOURCES native_io_test.c
-  LIBS TurboUtils::NativeIO TurboUtils::TinyTest TurboUtils::Concurrency
+  LIBS TurboUtils::NativeIO TurboUtils::Coroutine TurboUtils::TinyTest TurboUtils::Concurrency
   FOLDER "native-io/tests")
 set_target_properties(native_io_test PROPERTIES
   C_STANDARD 11

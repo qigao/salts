@@ -11,9 +11,12 @@ CFlow / Actor / future adapters
               |
               v
          NativeIO operations
-              |
-              v
-      Platform errors and ABI
+          /             \
+         v               v
+Coroutine pool       Platform errors/ABI
+         |
+         v
+ vendor/minicoro
 ```
 
 当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 TCP connect/recv/send 和 UDP recv_from/send_to。Windows IOCP 支持 overlapped byte-mode named pipe，Linux epoll 与 macOS/BSD kqueue 支持非阻塞 connected byte pipe；io_uring pipe 仍显式返回 `TURBO_ENOTSUP`。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `TURBO_ENOTSUP`。CFlow Actor 与 Reactive 可直接依赖 NativeIO；NativeIO 本身不依赖或拥有 CFlow/CNet 状态。
@@ -33,6 +36,23 @@ CFlow / Actor / future adapters
 - 等待：`timeout_ms == 0` 为 poll，`UINT32_MAX` 为无限等待，其余值为相对毫秒 deadline；无终态返回 `TURBO_ETIMEDOUT` 且 count 为零。
 - 唤醒：生产者先发布上层命令，再调用 wake。多个并发 wake 合并成一个有界 OS 控制信号；纯控制唤醒使 observe 返回 `TURBO_OK` 且 count 为零，不伪造 completion。close/destroy 前必须先停止 wake 调用者。
 
+### Coroutine owner 路径
+
+`native_io_backend_spawn_coroutine()` 提供同一 owner 线程上的可选结构化路径。entry 立即运行到返回或 `native_io_coroutine_await()`；await 成功提交后挂起，只有匹配的 terminal completion 被 owner observe 后才恢复。NativeIO 不使用 CoroNet context、TLS current-loop、隐式线程或第二套 request 状态机；request 槽位仍是唯一 I/O 事实源，coroutine 只保存执行位置。
+
+coroutine task 数与 request 共用同一硬容量。frame 由 `TurboUtils::Coroutine` 的有界池延迟创建并复用；池满返回 `TURBO_ENOBUFS`。取消 task 只转发为 request cancel，frame 必须等 `CANCELLED`/其他竞态终态被 observe 后才释放。带 ABI 版本与结构大小的 `native_io_coroutine_stats` 公开 `capacity`、`active` 与 `retained_frames`，但不改变既有 `native_io_backend_stats` 布局，也不暴露 minicoro handle。
+
+若 entry 未经 `native_io_coroutine_await()` 直接挂起，则违反 NativeIO coroutine 协议：spawn/resume 返回 `TURBO_EPROTO`，该 suspended frame 被销毁，task slot 立即归还，不把 backend 留在无法 drain 的活动状态。
+
+```text
+spawn -> RUNNING -> await/submit -> SUSPENDED
+                                   |
+                      OS terminal completion
+                                   |
+                                   v
+                              RUNNING -> returned -> pooled
+```
+
 请求槽位状态机为：
 
 ```text
@@ -51,13 +71,15 @@ Actor 与 CFlow Reactive 适用于需要状态隔离、确认协议、demand 或
 场景；它们提供额外语义，也会引入相应控制面成本。不要仅为传输数据而把
 NativeIO Pipe 强制包装成 Actor 或 Reactive。
 
-初始化之后，submit/observe 不分配内存。endpoint 与 request 都通过预分配 free stack 以 O(1) 获取：
+direct backend 初始化时预分配 endpoint/request/native event storage，之后 direct submit/observe 不分配内存。coroutine owner 的 task free stack、request 路由表与 completion batch 在首次 spawn 时一次性延迟创建；frame 随后按同一硬上限延迟创建并复用：
 
 - IOCP：connect 使用 `ConnectEx`，socket 数据 submit 直接调用 `WSARecv`/`WSASend`，named-pipe submit 直接调用 overlapped `ReadFile`/`WriteFile`，observe 统一读取 completion port。
 - epoll/kqueue：connect 使用 nonblocking `connect` 与 `SO_ERROR`；其余 submit 先以单次非阻塞 syscall 尝试，仅在 would-block 时进入每 endpoint 的 FIFO lane，并由 owner 在 observe 中直接等待 readiness 和继续 syscall。
 - io_uring：connect 使用 `IORING_OP_CONNECT`。每个 endpoint 的 read/write lane 各保持至多一个内核 in-flight SQE，其余已接受描述符保留在固定 request 槽位中；observe drain CQ 后推进 lane。ring 由模块映射，但没有 worker、mutex、callback、payload copy 或跨线程 mailbox。
 
 readiness 的 kernel interest 是请求 lane 推导出的镜像，不是第二份业务状态。endpoint/request/terminal storage 和 native event batch 均有固定上限。
+
+从未 spawn coroutine 或当前没有活动 coroutine 时，`native_io_backend_observe()` 直接进入所选 OS driver，不经过 completion 路由缓冲或 coroutine context switch。纯 direct 使用也不会创建 coroutine owner/pool。因此 direct benchmark 仍测量原生 NativeIO 路径；只有显式 spawn coroutine 的调用方承担 owner storage 与 suspend/resume 成本。
 
 ## 最小示例
 
@@ -86,7 +108,7 @@ if (status != 0)
 
 完整可运行的 TCP/UDP loopback 用法位于 `tests/native_io_test.c`。
 
-`native_io_benchmark` 只比较同模型的原生基线：Windows 为 raw IOCP，Linux 分别为 raw epoll 与 raw io_uring，Apple/BSD 为 raw kqueue。输出按 backend 和 TCP/UDP 拆分的 payload 延迟、吞吐及 submit/observe 阶段表。TCP 覆盖 1/4/8/16/32/64 KiB；Windows/Linux UDP 覆盖到 32 KiB，因 IPv4 UDP 单 datagram 无法承载 64 KiB payload 而明确省略该行；kqueue UDP 止于 8 KiB，以符合 macOS 默认单 datagram 上限，不通过应用层拆包改变测试口径。
+`native_io_benchmark` 使用实际 [libuv](https://github.com/libuv/libuv) 作为唯一基线。负载遵循 libuv 的 [TCP ping-pong](https://github.com/libuv/libuv/blob/v1.x/test/benchmark-ping-pongs.c) 与 [UDP ping-pong](https://github.com/libuv/libuv/blob/v1.x/test/benchmark-ping-udp.c) 语义：在 fixture 和连接建立后，以单一 owner/event-loop 在持续 loopback endpoint 上串行往返。libuv 与 NativeIO 使用相同 payload、warmup 和采样次数；每个 payload 交替运行顺序，避免固定的先后偏差。输出按 TCP/UDP 分为 p50/p95 延迟表和 round trips/s、双向应用 goodput 表；delta 始终以 libuv 为分母。TCP 覆盖 1/4/8/16/32/64 KiB，UDP 在所有 CI 平台统一覆盖 1/4/8 KiB 的单 datagram 负载。Windows、Linux、macOS 分别比较 IOCP、epoll、kqueue；Linux 不把 epoll 结果标成 io_uring。`BUILD_BENCHMARKS=ON` 要求可由 `find_package(libuv CONFIG)` 发现的 libuv，仓库 vcpkg manifest 已声明该开发依赖。libuv 仅链接 benchmark executable，不进入 NativeIO 的公开依赖或生产链接面。
 
 `native_io_pipe_benchmark` 在 Windows IOCP 上比较 raw overlapped named-pipe completion 与 NativeIO，在 Linux epoll 和 macOS/BSD kqueue 上比较 raw POSIX pipe 调用与 NativeIO。每个样本执行 256 次单向 transfer，覆盖 1/4/8/16/32/64 KiB；应用 payload 每次只计一次，不把读端和写端重复计算为两倍流量。fixture、buffer、handle/descriptor 与 backend 初始化位于计时区外，输出独立的 p50/p95 延迟、吞吐以及 raw submit、NativeIO submit/observe 阶段表。Linux io_uring 在对应 pipe backend 实现前不生成伪基线。
 

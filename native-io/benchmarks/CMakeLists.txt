@@ -1,21 +1,22 @@
-if(WIN32)
-  set(NATIVE_IO_BENCHMARK_SOURCE native_io_benchmark.c)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  set(NATIVE_IO_BENCHMARK_SOURCE native_io_benchmark_linux.c)
-elseif((APPLE OR CMAKE_SYSTEM_NAME MATCHES "^(FreeBSD|OpenBSD|NetBSD|DragonFly)$")
-       AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-  set(NATIVE_IO_BENCHMARK_SOURCE native_io_benchmark_kqueue.c)
-else()
+if(NOT (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
+        ((APPLE OR CMAKE_SYSTEM_NAME MATCHES "^(FreeBSD|OpenBSD|NetBSD|DragonFly)$")
+         AND CMAKE_SIZEOF_VOID_P EQUAL 8)))
   return()
 endif()
 
-cmake_add_benchmark(native_io_benchmark
-  SOURCES ${NATIVE_IO_BENCHMARK_SOURCE}
-  LIBS TurboUtils::NativeIO TurboUtils::TinyTest
-  FOLDER "native-io/benchmarks")
-if(WIN32)
-  target_link_libraries(native_io_benchmark PRIVATE ws2_32)
+find_package(libuv CONFIG REQUIRED)
+if(TARGET libuv::uv_a)
+  set(NATIVE_IO_LIBUV_TARGET libuv::uv_a)
+elseif(TARGET libuv::uv)
+  set(NATIVE_IO_LIBUV_TARGET libuv::uv)
+else()
+  message(FATAL_ERROR "libuv package did not provide libuv::uv_a or libuv::uv")
 endif()
+
+cmake_add_benchmark(native_io_benchmark
+  SOURCES native_io_benchmark.c
+  LIBS TurboUtils::NativeIO TurboUtils::TinyTest ${NATIVE_IO_LIBUV_TARGET}
+  FOLDER "native-io/benchmarks")
 set_target_properties(native_io_benchmark PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON

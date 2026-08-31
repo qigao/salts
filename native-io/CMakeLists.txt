@@ -39,7 +39,9 @@ target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
-target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::Platform)
+target_link_libraries(${TARGET_NAME}
+  PUBLIC TurboUtils::Platform
+  PRIVATE TurboUtils::Coroutine)
 
 if(WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE ws2_32)

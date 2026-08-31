@@ -37,6 +37,15 @@ typedef struct native_io_request {
   uint32_t generation;
 } native_io_request;
 
+typedef struct native_io_coroutine native_io_coroutine;
+
+typedef struct native_io_coroutine_task {
+  uint32_t slot;
+  uint32_t generation;
+} native_io_coroutine_task;
+
+typedef void (*native_io_coroutine_entry_fn)(native_io_coroutine *coroutine, void *user_data);
+
 typedef enum native_io_operation_kind {
   NATIVE_IO_OPERATION_TCP_RECV = 1,
   NATIVE_IO_OPERATION_TCP_SEND = 2,
@@ -123,6 +132,22 @@ typedef struct native_io_backend_stats {
   bool admission_open;
 } native_io_backend_stats;
 
+enum { NATIVE_IO_COROUTINE_STATS_ABI_V1 = 1u };
+
+typedef struct native_io_coroutine_stats {
+  uint32_t abi_version;
+  size_t struct_size;
+  /** Hard cap shared by coroutine task slots and in-flight requests. */
+  size_t capacity;
+  /** Coroutine entries that have not returned yet. */
+  size_t active;
+  /** Lazily allocated frames retained for bounded reuse. */
+  size_t retained_frames;
+} native_io_coroutine_stats;
+
+#define NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER                                              \
+  {NATIVE_IO_COROUTINE_STATS_ABI_V1, sizeof(native_io_coroutine_stats), 0u, 0u, 0u}
+
 /** Returns the communication model represented by kind, or NONE if invalid. */
 TURBO_NATIVE_IO_C_API native_io_model native_io_backend_kind_model(native_io_backend_kind kind);
 
@@ -134,6 +159,7 @@ TURBO_NATIVE_IO_C_API bool native_io_backend_kind_supports_pipe(native_io_backen
 
 TURBO_NATIVE_IO_C_API bool native_io_endpoint_valid(native_io_endpoint endpoint);
 TURBO_NATIVE_IO_C_API bool native_io_request_valid(native_io_request request);
+TURBO_NATIVE_IO_C_API bool native_io_coroutine_task_valid(native_io_coroutine_task task);
 TURBO_NATIVE_IO_C_API bool native_io_operation_valid(const native_io_operation *operation);
 
 /**
@@ -149,7 +175,7 @@ TURBO_NATIVE_IO_C_API bool native_io_operation_valid(const native_io_operation *
  *         when kind is unavailable; otherwise a negative native error code.
  */
 TURBO_NATIVE_IO_C_API int native_io_backend_init(native_io_backend *backend,
-                                                const native_io_backend_config *config);
+                                                 const native_io_backend_config *config);
 
 /**
  * Associates one native socket with the backend and returns a generation
@@ -170,15 +196,15 @@ TURBO_NATIVE_IO_C_API int native_io_backend_init(native_io_backend *backend,
  *         association error.
  */
 TURBO_NATIVE_IO_C_API int native_io_backend_attach_socket(native_io_backend *backend,
-                                                         uintptr_t native_socket,
-                                                         native_io_endpoint *out_endpoint);
+                                                          uintptr_t native_socket,
+                                                          native_io_endpoint *out_endpoint);
 
 /**
  * Releases backend metadata after the caller closed the native socket.
  * TURBO_EBUSY preserves the endpoint while any request remains unobserved.
  */
 TURBO_NATIVE_IO_C_API int native_io_backend_release_socket(native_io_backend *backend,
-                                                          native_io_endpoint endpoint);
+                                                           native_io_endpoint endpoint);
 
 /**
  * Associates one connected byte-pipe handle with the backend. The backend
@@ -190,13 +216,12 @@ TURBO_NATIVE_IO_C_API int native_io_backend_release_socket(native_io_backend *ba
  * out_endpoint is cleared on failure.
  */
 TURBO_NATIVE_IO_C_API int native_io_backend_attach_pipe(native_io_backend *backend,
-                                                       uintptr_t native_handle,
-                                                       uint32_t flags,
-                                                       native_io_endpoint *out_endpoint);
+                                                        uintptr_t native_handle, uint32_t flags,
+                                                        native_io_endpoint *out_endpoint);
 
 /** Releases metadata for a drained pipe endpoint without closing its handle. */
 TURBO_NATIVE_IO_C_API int native_io_backend_release_pipe(native_io_backend *backend,
-                                                        native_io_endpoint endpoint);
+                                                         native_io_endpoint endpoint);
 
 /**
  * Starts one operation without allocating or copying payload messages. For one
@@ -214,8 +239,39 @@ TURBO_NATIVE_IO_C_API int native_io_backend_release_pipe(native_io_backend *back
  *         negative native submission error.
  */
 TURBO_NATIVE_IO_C_API int native_io_backend_submit(native_io_backend *backend,
-                                                  const native_io_operation *operation,
-                                                  native_io_request *out_request);
+                                                   const native_io_operation *operation,
+                                                   native_io_request *out_request);
+
+/**
+ * Starts one bounded coroutine on the backend owner thread.
+ *
+ * The entry runs immediately until it returns or calls
+ * native_io_coroutine_await. A suspended coroutine is resumed only after the
+ * matching terminal NativeIO completion is observed. The backend owns and
+ * reuses the coroutine frame; entry must not retain coroutine after returning.
+ * The task handle becomes stale when entry returns.
+ */
+TURBO_NATIVE_IO_C_API int native_io_backend_spawn_coroutine(native_io_backend *backend,
+                                                            native_io_coroutine_entry_fn entry,
+                                                            void *user_data,
+                                                            native_io_coroutine_task *out_task);
+
+/**
+ * Submits one operation and suspends the currently running NativeIO coroutine.
+ *
+ * The operation descriptor is copied by the backend. Its borrowed payload and
+ * address storage must remain valid across suspension until this function
+ * returns. TURBO_OK means out_completion contains the terminal result; native
+ * I/O failure remains encoded in completion.kind/status. Submission failures
+ * are returned before suspension and leave out_completion cleared.
+ */
+TURBO_NATIVE_IO_C_API int native_io_coroutine_await(native_io_coroutine *coroutine,
+                                                    const native_io_operation *operation,
+                                                    native_io_completion *out_completion);
+
+/** Requests cancellation of the operation currently awaited by task. */
+TURBO_NATIVE_IO_C_API int native_io_backend_cancel_coroutine(native_io_backend *backend,
+                                                             native_io_coroutine_task task);
 
 /**
  * Requests cancellation of an active operation. TURBO_OK means cancellation
@@ -224,20 +280,22 @@ TURBO_NATIVE_IO_C_API int native_io_backend_submit(native_io_backend *backend,
  * was already completing; its terminal completion must still be observed.
  */
 TURBO_NATIVE_IO_C_API int native_io_backend_cancel(native_io_backend *backend,
-                                                  native_io_request request);
+                                                   native_io_request request);
 
 /**
  * Directly dequeues up to min(event_capacity, configured batch capacity)
- * completion packets on the owner thread. timeout_ms == 0 polls and
+ * completion packets on the owner thread. Completions owned by a coroutine
+ * await resume that coroutine and are not copied to events; processing only
+ * such completions returns TURBO_OK with out_count == 0. timeout_ms == 0 polls and
  * UINT32_MAX waits indefinitely. No packet before the deadline returns
  * TURBO_ETIMEDOUT with out_count == 0. Failed I/O is a successfully observed
  * event whose kind/status carry the terminal error. A returned event ends the
  * payload borrow and invalidates that request handle.
  */
 TURBO_NATIVE_IO_C_API int native_io_backend_observe(native_io_backend *backend,
-                                                   native_io_completion *events,
-                                                   size_t event_capacity, uint32_t timeout_ms,
-                                                   size_t *out_count);
+                                                    native_io_completion *events,
+                                                    size_t event_capacity, uint32_t timeout_ms,
+                                                    size_t *out_count);
 
 /**
  * Wakes an owner blocked in observe without publishing a completion.
@@ -250,16 +308,25 @@ TURBO_NATIVE_IO_C_API int native_io_backend_observe(native_io_backend *backend,
  */
 TURBO_NATIVE_IO_C_API int native_io_backend_wake(native_io_backend *backend);
 
-/** Closes admission. Accepted requests must still be cancelled or drained. */
+/**
+ * Closes admission. Accepted direct and coroutine requests must still be
+ * cancelled or drained.
+ */
 TURBO_NATIVE_IO_C_API int native_io_backend_close(native_io_backend *backend);
 
 /**
- * Destroys a closed, fully drained backend with no retained endpoints.
+ * Destroys a closed, fully drained backend with no retained endpoints or
+ * active coroutine entries. Retained inactive coroutine frames are released.
  * TURBO_EBUSY preserves ownership when those preconditions are not satisfied.
  */
 TURBO_NATIVE_IO_C_API int native_io_backend_destroy(native_io_backend *backend);
 
 TURBO_NATIVE_IO_C_API bool native_io_backend_get_stats(const native_io_backend *backend,
-                                                      native_io_backend_stats *out_stats);
+                                                       native_io_backend_stats *out_stats);
+
+/** Queries versioned coroutine-owner capacity and retention statistics. */
+TURBO_NATIVE_IO_C_API bool
+native_io_backend_get_coroutine_stats(const native_io_backend *backend,
+                                      native_io_coroutine_stats *out_stats);
 
 #endif /* TURBO_NATIVE_IO_H */

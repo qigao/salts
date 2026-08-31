@@ -13,6 +13,8 @@ endfunction()
 add_turboutils_consumer(consume_platform TurboUtils::Platform CONSUME_PLATFORM)
 add_turboutils_consumer(consume_concurrency TurboUtils::Concurrency
                        CONSUME_CONCURRENCY)
+add_turboutils_consumer(consume_coroutine TurboUtils::Coroutine
+                       CONSUME_COROUTINE)
 add_turboutils_consumer(consume_native_io TurboUtils::NativeIO
                        CONSUME_NATIVE_IO)
 add_turboutils_consumer(consume_cmeta TurboUtils::CMeta CONSUME_CMETA)
@@ -59,20 +61,6 @@ if(TURBOUTILS_EXPECT_CAPTURE)
 elseif(TARGET TurboUtils::Capture)
   message(FATAL_ERROR
           "feature-off TurboUtils package unexpectedly exports Capture")
-endif()
-
-if(TURBOUTILS_EXPECT_CFLOW_MINICORO)
-  if(NOT TARGET TurboUtils::CFlowMinicoro)
-    message(FATAL_ERROR
-            "TurboUtils::CFlowMinicoro was requested but is not exported")
-  endif()
-  add_turboutils_consumer(consume_cflow_minicoro
-                         TurboUtils::CFlowMinicoro
-                         CONSUME_CFLOW_MINICORO)
-  target_link_libraries(consume_cflow_minicoro PRIVATE TurboUtils::Core)
-elseif(TARGET TurboUtils::CFlowMinicoro)
-  message(FATAL_ERROR
-          "feature-off TurboUtils package unexpectedly exports CFlowMinicoro")
 endif()
 
 if(TURBOUTILS_EXPECT_CFLOW_USB)

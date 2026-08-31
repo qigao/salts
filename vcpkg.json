@@ -26,6 +26,9 @@
     },
     {
       "name": "c-ares"
+    },
+    {
+      "name": "libuv"
     }
   ],
   "features": {

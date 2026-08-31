@@ -55,9 +55,9 @@ target_link_libraries(
   PUBLIC TurboUtils::CMeta
          TurboUtils::Platform
          TurboUtils::Concurrency
+         TurboUtils::Coroutine
   PRIVATE TurboUtils::STL
           TurboUtils::CFlow
-          TurboUtils::MinicoroVendor
           ${FMT_LEXER_LIBRARY} TurboUtils::SDS # Simple Dynamic Strings
           aklomp::base64 zstd::libzstd
           ${LOG_PATTERN_LEXER_LIBRARY} # Log pattern lexer

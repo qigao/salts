@@ -1,15 +1,15 @@
 /**
  * @file turbo_coro.c
- * @brief Coroutine implementation using minicoro
+ * @brief Coroutine implementation using vendor/minicoro.
  */
 
 #define MINICORO_IMPL
 #include "turbo_coro.h"
 #include "minicoro.h"
 #include <assert.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
 
 // =============================================================================
 // Coroutine
@@ -17,21 +17,21 @@
 
 // Internal coroutine structure
 struct coro_s {
-  mco_coro *mco;               // minicoro handle
-  void *mco_allocation;        // owning allocation for coro shell + minicoro object
-  coro_fn fn;                  // user entry function
-  void *arg;                   // user argument
-  void *user_data;             // user data
-  void *owner_data;            // lifecycle adapter metadata
-  coro_scheduler_t *scheduler; // owning scheduler (if any)
-  coro_t *next;                // linked list for scheduler
-  coro_t *prev;                // doubly linked list for O(1) removal
-  size_t stack_size;           // saved for reset
-  size_t storage_size;         // saved for reset
-  uint8_t waiting_for_io;      // 1 = blocked on I/O, skip in scheduler
-  uint8_t in_ready_queue;      // 1 = already in the ready queue
-  coro_t *ready_next;          // next in ready queue
-  coro_t *ready_prev;          // prev in ready queue (for O(1) removal)
+  mco_coro *mco;                             // minicoro handle
+  void *mco_allocation;                      // owning allocation for coro shell + minicoro object
+  coro_fn fn;                                // user entry function
+  void *arg;                                 // user argument
+  void *user_data;                           // user data
+  void *owner_data;                          // lifecycle adapter metadata
+  coro_scheduler_t *scheduler;               // owning scheduler (if any)
+  coro_t *next;                              // linked list for scheduler
+  coro_t *prev;                              // doubly linked list for O(1) removal
+  size_t stack_size;                         // saved for reset
+  size_t storage_size;                       // saved for reset
+  uint8_t waiting_for_io;                    // 1 = blocked on I/O, skip in scheduler
+  uint8_t in_ready_queue;                    // 1 = already in the ready queue
+  coro_t *ready_next;                        // next in ready queue
+  coro_t *ready_prev;                        // prev in ready queue (for O(1) removal)
   void (*cleanup_fn)(coro_t *co, void *arg); // cleanup callback
   void *cleanup_arg;                         // cleanup argument
   void (*discard_fn)(coro_t *co, void *arg); // force-destroy callback
@@ -43,7 +43,7 @@ struct coro_scheduler_s {
   coro_t *tail;
   coro_t *ready_head; // linked list of READY coroutines
   coro_t *ready_tail;
-  int count; // number of alive coroutines
+  int count;       // number of alive coroutines
   int ready_count; // number of ready coroutines
 };
 
@@ -121,12 +121,12 @@ coro_t *coro_create(coro_fn fn, void *arg, const coro_opts_t *opts) {
   coro_t *co = (coro_t *)block;
   co->mco_allocation = block;
   co->mco = coro_block_to_mco(block);
-    co->fn = fn;
-    co->arg = arg;
-    co->cleanup_fn = NULL;
-    co->cleanup_arg = NULL;
-    co->discard_fn = NULL;
-    co->discard_arg = NULL;
+  co->fn = fn;
+  co->arg = arg;
+  co->cleanup_fn = NULL;
+  co->cleanup_arg = NULL;
+  co->discard_fn = NULL;
+  co->discard_arg = NULL;
   desc.user_data = co;
 
   if (opts) {
@@ -149,14 +149,14 @@ void coro_detach_scheduler(coro_t *co) {
   if (!co || !co->scheduler) return;
 
   coro_scheduler_t *sched = co->scheduler;
-  
+
   /* Remove from main list */
   if (co->prev) co->prev->next = co->next;
   else if (sched->head == co) sched->head = co->next;
-  
+
   if (co->next) co->next->prev = co->prev;
   else if (sched->tail == co) sched->tail = co->prev;
-  
+
   /* Remove from ready list if present */
   if (co->in_ready_queue) {
     if (co->ready_prev) co->ready_prev->ready_next = co->ready_next;
@@ -337,7 +337,7 @@ int coro_scheduler_tick(coro_scheduler_t *sched) {
   coro_scheduler_t *prev_sched = tls_current_scheduler;
   tls_current_scheduler = sched;
 
-  /* Process only the coroutines that were ready at the start of the tick. 
+  /* Process only the coroutines that were ready at the start of the tick.
      We pop from the head to handle deletions robustly during iteration. */
   int to_process = sched->ready_count;
   while (to_process-- > 0 && sched->ready_head) {
@@ -346,7 +346,7 @@ int coro_scheduler_tick(coro_scheduler_t *sched) {
     sched->ready_head = co->ready_next;
     if (sched->ready_head) sched->ready_head->ready_prev = NULL;
     else sched->ready_tail = NULL;
-    
+
     sched->ready_count--;
     co->in_ready_queue = 0;
     co->ready_next = NULL;
@@ -403,7 +403,7 @@ int coro_is_scheduled(coro_t *co) { return (co && co->scheduler) ? 1 : 0; }
 void coro_set_waiting_for_io(coro_t *co, int waiting) {
   if (!co) return;
   co->waiting_for_io = (uint8_t)(waiting ? 1 : 0);
-  
+
   if (!waiting && co->scheduler) {
     /* If this coroutine is the one currently running, don't enqueue it here.
      * The scheduler will decide whether to requeue it when control returns
