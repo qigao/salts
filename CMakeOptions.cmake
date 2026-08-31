@@ -21,6 +21,9 @@ option(CFLOW_ENABLE_MINICORO
 option(CFLOW_ENABLE_SCXML
        "Build the optional XML SCXML Core frontend for CFlow Statechart" OFF)
 
+option(CNET_ENABLE_EXPERIMENTAL
+       "Build the non-installed experimental CNet implementation" OFF)
+
 option(TURBO_ENABLE_EPOLL_READINESS
        "Enable the Linux epoll readiness backend" OFF)
 if(TURBO_ENABLE_EPOLL_READINESS AND
