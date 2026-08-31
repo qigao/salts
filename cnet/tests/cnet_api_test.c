@@ -196,7 +196,6 @@ static cnet_client_config cnet_api_test_config(void) {
                                          NATIVE_IO_BACKEND_KQUEUE,
 #endif
                                      .io_shards = 1u,
-                                     .callback_workers = 1u,
                                      .connection_capacity = 2u,
                                      .command_capacity_per_shard = 8u,
                                      .request_capacity_per_shard = 4u,
@@ -208,6 +207,15 @@ static cnet_client_config cnet_api_test_config(void) {
 }
 
 spec("CNet public client API") {
+  it("initializes without a callback executor") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+
+    check_equal(cnet_client_init(&client, &config), TURBO_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_client_destroy(&client), TURBO_OK);
+  }
+
   it("rejects invalid configuration without publishing a client") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
@@ -237,7 +245,7 @@ spec("CNet public client API") {
     check_null(client.impl);
   }
 
-  it("copies options and supports reentrant TCP operations on callback workers") {
+  it("copies options and supports reentrant TCP operations on the I/O owner") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
     cnet_api_test_probe probe = {.client = &client, .expected_kind = CNET_MESSAGE_BYTES};

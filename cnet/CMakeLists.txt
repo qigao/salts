@@ -3,7 +3,6 @@ set(TARGET_NAME turbo_cnet_experimental)
 find_package(c-ares CONFIG REQUIRED)
 
 add_library(${TARGET_NAME} STATIC
-  src/cnet_callback.c
   src/cnet_client.c
   src/cnet_command.c
   src/cnet_dispatcher.c

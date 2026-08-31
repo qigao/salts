@@ -25,14 +25,11 @@ TLS, WebSocket, and KCP are not exposed by this base header.
 ## Ownership and threads
 
 Each I/O shard has one long-lived owner task and one NativeIO backend. The
-session table is the sole connection-state fact source. Each shard owns one
-SPSC callback channel, and callback workers consume a fixed set of those
-channels. This preserves FIFO delivery for every connection on a shard and
-permits different shards to run callbacks concurrently. After NativeIO
-progress, the owner copies the event descriptor and bounded payload directly
-into its callback channel; CNet does not start a separate dispatcher worker or
-publish the normal path through an intermediate event ring. No user callback
-runs on an I/O owner or while an internal lock is held.
+session table is the sole connection-state fact source. NativeIO completion
+resumes an owner-affine coroutine, and the owner invokes the connection
+callback inline without a callback queue or second worker. Callbacks for one
+connection remain FIFO and non-overlapping; different shards may invoke
+callbacks concurrently. No internal lock is held while user code runs.
 
 TCP connect, send, and receive operations execute as owner-affine NativeIO
 coroutines. A public caller never resumes a frame: it only publishes an MPSC
@@ -50,7 +47,7 @@ returns `TURBO_EBUSY` because either operation would otherwise wait on itself.
 ## Shutdown and errors
 
 `cnet_client_stop(client, timeout_ms)` closes new admission, drains live
-connections and terminal callbacks, and joins callback and owner workers.
+connections and terminal callbacks, and joins the owner workers.
 `TURBO_ETIMEDOUT` is retryable and preserves the client. Destroying a client
 before a successful stop returns `TURBO_EBUSY`.
 
@@ -67,26 +64,22 @@ demand across request-slot reuse.
 
 ## Dispatch topology decision
 
-The previous client used three scheduled stages: NativeIO owner, dispatcher
-worker, then callback worker. The middle worker changed neither connection
-state nor payload ownership; it only moved an event from the shard ring to a
-callback queue. That extra queue and wake applied a fixed cost to every small
-message.
+The previous client moved each owner event through a per-shard SPSC channel to
+a callback worker. That handoff changed neither connection state nor payload
+ownership and applied a fixed queue, wake, scheduling, and payload-copy cost to
+every small message.
 
-The selected topology keeps two execution roles:
+The selected topology keeps one execution role per shard:
 
 - one NativeIO owner per shard owns transport progress, request records,
-  deadlines, and the session state machine;
-- callback workers own user code and preserve per-connection callback order.
+  deadlines, the session state machine, coroutine resumption, and callbacks.
 
-The owner invokes a nonblocking internal event sink after each drive. The sink
-copies the payload once into a fixed-capacity per-shard SPSC channel before
-returning; this copy is the callback-lifetime boundary that lets the owner reuse
-its NativeIO receive storage. A full channel leaves the event pending with the
-owner, stops read rearming, and returns bounded backpressure. Callback workers
-drain at most 32 entries from one shard before checking the next shard assigned
-to that worker. This removes the dispatcher thread and MPSC callback queue
-without moving user callbacks onto the I/O owner.
+The owner invokes its internal dispatcher after a coroutine processes a
+completion. The dispatcher generation-checks the observer, invokes it inline,
+and recycles terminal state after the callback returns. The borrowed receive
+view therefore remains valid without another payload copy and expires when the
+callback returns. User callbacks must not block; applications that need a
+business executor must copy or retain their own data and dispatch explicitly.
 
 Coroutines are an owner-local control-flow tool, not a second CNet execution
 model. CNet keeps the session table as the state fact source and keeps deadline,
@@ -94,15 +87,12 @@ cancel, terminal-record, command ownership, and callback backpressure outside
 the frame. NativeIO allocates frames lazily from a pool bounded by
 `request_capacity` and reuses them after their first terminal completion; peak
 concurrent awaits therefore bound both active and retained coroutine storage.
-The context switch does not remove the required owner-to-callback handoff, so
-benchmark results still include that SPSC publication and callback wake.
-
-This change has no public API migration: applications keep the same callback
-threading, ownership, ordering, error, and shutdown contracts. The tradeoff is
-that a full callback channel temporarily keeps its event pending on the shard
-owner. Capacity remains fixed, payloads have one bounded callback-boundary
-copy, and no fallback allocation is introduced. The MPSC command ring remains
-necessary because public operations may originate from arbitrary threads.
+There is no owner-to-callback handoff. The MPSC command ring remains necessary
+for public operations originating outside the owner thread. This changes the
+experimental callback execution contract: callbacks now run on the owning I/O
+shard and must remain nonblocking. It removes `callback_workers` from client
+configuration and removes one bounded payload copy. No fallback allocation is
+introduced.
 
 ## Benchmark
 

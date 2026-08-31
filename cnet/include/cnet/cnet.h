@@ -70,7 +70,6 @@ typedef struct cnet_connect_options {
 typedef struct cnet_client_config {
   native_io_backend_kind backend;
   size_t io_shards;
-  size_t callback_workers;
   size_t connection_capacity;
   size_t command_capacity_per_shard;
   size_t request_capacity_per_shard;
@@ -84,7 +83,10 @@ typedef struct cnet_client_config {
 } cnet_client_config;
 
 /**
- * Starts NativeIO owner shards and their bounded SPSC callback channels.
+ * Starts NativeIO owner shards. Callbacks execute inline on the owning shard
+ * after a coroutine observes its terminal NativeIO completion. Callbacks for
+ * one connection are ordered and non-concurrent; different shards may invoke
+ * callbacks concurrently. A callback must not block.
  *
  * @param client Zero-initialized output owner.
  * @param config Borrowed configuration copied during initialization.

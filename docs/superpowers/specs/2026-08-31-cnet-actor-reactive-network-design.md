@@ -208,7 +208,6 @@ contract.
 typedef struct cnet_client_config {
     native_io_backend_kind backend;
     size_t io_shards;
-    size_t callback_workers;
     size_t connection_capacity;
     size_t command_capacity_per_shard;
     size_t request_capacity_per_shard;
@@ -230,16 +229,15 @@ transports do not reassemble messages, so they do not expose a misleading
 message or queued-byte budget. CNet fails initialization rather than silently
 reducing a capacity or selecting another backend.
 
-CNet uses TurboUtils `turbo_threadpool` for its configured I/O owner shards and
-callback workers; it does not implement another thread pool. Each I/O shard has
-exactly one long-lived owner task and one NativeIO backend. Connections are
-assigned to a shard once and never migrate while live. `callback_workers` are
-separate from I/O owner workers so slow business callbacks cannot stop socket
-progress. Each shard has one stable SPSC callback channel assigned to exactly
-one callback worker, so callbacks for every connection on that shard remain
-FIFO and non-overlapping. Different shards assigned to different workers may
-execute callbacks concurrently; shards sharing one worker are served in
-bounded round-robin batches.
+CNet uses TurboUtils `turbo_threadpool` only for configured I/O owner shards;
+it does not implement another thread pool. Each I/O shard has exactly one
+long-lived owner task and one NativeIO backend. Connections are assigned to a
+shard once and never migrate while live. A completion resumes its owner-affine
+coroutine, and that owner invokes the observer inline without an event handoff.
+Callbacks for one connection therefore remain FIFO and non-overlapping, while
+different shards may execute callbacks concurrently. Callbacks must not block;
+business-pool dispatch is an explicit application adapter rather than a CNet
+core execution policy.
 
 The owner deadline container is the generic Concurrency
 `turbo_deadline_queue`: a fixed-capacity single-owner min-heap that starts no
@@ -431,19 +429,15 @@ single CNet/NativeIO owner task
         +-> owner-affine NativeIO coroutine await
         |        |
         |        +-> NativeIO submit/observe/cancel
-        +-> bounded per-shard SPSC callback channel
-                         |
-             fixed callback-worker assignment
+        +-> inline generation-checked callback
 ```
 
 The command ring uses TurboUtils `disruptor` in an MPSC-to-single-consumer
 topology. Each fixed entry carries its descriptor and bounded inline payload,
 never a caller pointer.
 Each session has fixed storage for its monotonic public state notifications, so
-callback pressure cannot discard a terminal notification. Each owner is the
-single producer of one fixed callback channel. When that channel is full, the
-owner retains the pending event and stops arming application reads while
-continuing the bounded protocol control required for shutdown. An admission producer may perform only the
+callback execution cannot discard a terminal notification. The observer runs
+before the owner reuses its borrowed receive storage. An admission producer may perform only the
 bounded `FREE -> RESERVED` claim before publishing CONNECT. Publication
 failure releases that reservation and advances its generation without a
 callback. After successful publication, the assigned shard owner is the only
@@ -453,7 +447,7 @@ Every asynchronous TCP connect, send, and receive is represented by one
 bounded CNet request record and one NativeIO coroutine task. The owner starts
 the frame; `native_io_coroutine_await()` submits the operation and suspends it;
 the same owner's `native_io_backend_observe()` generation-checks the terminal
-completion and resumes that frame. Producer and callback threads never resume
+completion and resumes that frame. Producer threads never resume
 or destroy frames. The frame stores execution position only: the session table
 remains the connection-state fact source, while the request record owns the
 command lease, deadline, role, and coroutine task handle.
@@ -471,32 +465,21 @@ session slot until its terminal state notification and all borrowed payload
 leases have been delivered and released.
 
 The client dispatcher is routing state, not a scheduled worker. An owner calls
-it directly with one event. It generation-checks the observer and copies the
-descriptor plus bounded payload into that shard's SPSC callback channel. The
-copy is committed before publication returns, so the owner may reuse its
-NativeIO receive storage while the callback receives a view valid through that
-callback only. Successful publication transfers any terminal recycle
-obligation to the callback worker. A full channel leaves the event with the
-owner and applies bounded backpressure; it does not drop, duplicate, or allocate
-a fallback payload.
+it directly with one event. It generation-checks the observer, invokes it on
+the owner thread, and recycles a terminal session after that callback returns.
+The receive view points at owner storage and is valid only through the callback,
+so this path performs no callback-boundary payload copy and allocates no
+fallback payload.
 
 The dispatcher mutex protects only observer routing and close claims. It is
 never held while calling a shard command or recycle API. Drain marks one
 generation-checked entry `close_requested` under the dispatcher mutex, releases
 the mutex, and only then publishes CLOSE; a retryable publication failure
-revalidates the generation before clearing the claim. Callback completion may
+revalidates the generation before clearing the claim. Inline callback completion may
 therefore recycle through the shard and then retire dispatcher routing without
 forming a `dispatcher -> shard` / `shard -> dispatcher` lock cycle.
 
-Callback workers block on a condition variable after their assigned SPSC
-channels are empty. Publication coalesces wakeups, and stop closes channel
-admission before waking and draining every accepted entry. One worker may own
-several shard channels; it drains a bounded batch from each channel so one busy
-shard cannot starve the others. The owner and callback channel are the exact
-single-producer/single-consumer roles. Public command admission remains MPSC.
-
-The current base implementation copies receive bytes once at the
-owner-to-callback lifetime boundary. Protocol reassembly may later use an
+Public command admission remains MPSC. Protocol reassembly may later use an
 explicit retained receive-buffer lease, but it must preserve the same bounded
 ownership, backpressure, and callback-view lifetime contract.
 

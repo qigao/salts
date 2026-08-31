@@ -1,6 +1,5 @@
 #include <cnet/cnet.h>
 
-#include "cnet_callback.h"
 #include "cnet_dispatcher.h"
 #include "cnet_module.h"
 #include "cnet_shards.h"
@@ -28,7 +27,6 @@ typedef struct cnet_client_record {
 
 struct cnet_client_impl {
   cnet_shards shards;
-  cnet_callback_workers callbacks;
   cnet_dispatcher dispatcher;
   cnet_client_record *records;
   turbo_mutex_t lock;
@@ -59,8 +57,8 @@ static bool cnet_client_config_valid(const cnet_client_config *config) {
   size_t capacity_per_shard;
   size_t record_count;
   if (config == NULL || !native_io_backend_kind_supported(config->backend) ||
-      config->io_shards == 0u || config->io_shards > UINT32_MAX || config->callback_workers == 0u ||
-      config->callback_workers > INT_MAX || config->connection_capacity == 0u ||
+      config->io_shards == 0u || config->io_shards > UINT32_MAX ||
+      config->connection_capacity == 0u ||
       !cnet_power_of_two(config->command_capacity_per_shard) ||
       config->request_capacity_per_shard == 0u || config->completion_batch_capacity == 0u ||
       config->completion_batch_capacity > config->request_capacity_per_shard ||
@@ -144,7 +142,7 @@ static bool cnet_client_terminal(cnet_event_state state) {
   return state == CNET_EVENT_STATE_CLOSED || state == CNET_EVENT_STATE_FAILED;
 }
 
-static void cnet_client_observe(void *context, const cnet_callback_view *view) {
+static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
   cnet_client_record *record = (cnet_client_record *)context;
   cnet_client_impl *impl = record->client;
   cnet_client_impl *previous = cnet_active_callback_client;
@@ -191,10 +189,6 @@ static void cnet_client_cleanup_init(cnet_client_impl *impl) {
     (void)cnet_dispatcher_drain(&impl->dispatcher, 0u);
     (void)cnet_dispatcher_destroy(&impl->dispatcher);
   }
-  if (impl->callbacks.impl != NULL) {
-    (void)cnet_callback_workers_stop(&impl->callbacks, 5000u);
-    (void)cnet_callback_workers_destroy(&impl->callbacks);
-  }
   if (impl->shards.impl != NULL) (void)cnet_shards_destroy(&impl->shards);
   turbo_mutex_destroy(&impl->lock);
   free(impl->records);
@@ -205,7 +199,6 @@ static void cnet_client_cleanup_init(cnet_client_impl *impl) {
 int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   cnet_client_impl *impl;
   cnet_shards_config shards_config;
-  cnet_callback_workers_config callback_config;
   size_t index;
   int status;
 
@@ -257,13 +250,7 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
     cnet_client_cleanup_init(impl);
     return status;
   }
-  callback_config = (cnet_callback_workers_config){config->callback_workers,
-                                                   config->io_shards,
-                                                   config->event_capacity_per_shard,
-                                                   config->receive_buffer_bytes};
-  status = cnet_callback_workers_init(&impl->callbacks, &callback_config);
-  if (status == TURBO_OK)
-    status = cnet_dispatcher_init(&impl->dispatcher, &impl->shards, &impl->callbacks);
+  status = cnet_dispatcher_init(&impl->dispatcher, &impl->shards);
   if (status == TURBO_OK)
     status = cnet_shards_bind_event_sink(&impl->shards, cnet_client_dispatch, &impl->dispatcher);
   if (status != TURBO_OK) {
@@ -420,10 +407,6 @@ int cnet_client_stop(cnet_client *client, uint32_t timeout_ms) {
       cnet_dispatcher_drain(&impl->dispatcher, cnet_client_remaining_ms(started_ms, timeout_ms));
   if (status == TURBO_EALREADY) status = TURBO_OK;
   if (status == TURBO_OK)
-    status = cnet_callback_workers_stop(&impl->callbacks,
-                                        cnet_client_remaining_ms(started_ms, timeout_ms));
-  if (status == TURBO_EALREADY) status = TURBO_OK;
-  if (status == TURBO_OK)
     status = atomic_load_explicit(&impl->callback_error, memory_order_acquire);
   if (status == TURBO_OK)
     status = cnet_shards_stop(&impl->shards, cnet_client_remaining_ms(started_ms, timeout_ms));
@@ -450,8 +433,6 @@ int cnet_client_destroy(cnet_client *client) {
   turbo_mutex_unlock(&impl->lock);
 
   status = cnet_dispatcher_destroy(&impl->dispatcher);
-  if (status != TURBO_OK) return status;
-  status = cnet_callback_workers_destroy(&impl->callbacks);
   if (status != TURBO_OK) return status;
   status = cnet_shards_destroy(&impl->shards);
   if (status != TURBO_OK) return status;

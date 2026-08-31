@@ -125,7 +125,7 @@ spec("CNet bounded callback events") {
     check_equal(cnet_event_queue_take(&events, &view), TURBO_EOF);
   }
 
-  it("allows callback workers to release borrowed views concurrently") {
+  it("allows dispatcher consumers to release borrowed views concurrently") {
     static const uint8_t first[] = {1u};
     static const uint8_t second[] = {2u};
     const cnet_event_queue_config config = {4u, 2u, 4u};

@@ -687,7 +687,6 @@ static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol
                               const struct sockaddr_in *address) {
   const cnet_client_config config = {.backend = io_bench_backend_kind(),
                                      .io_shards = 1u,
-                                     .callback_workers = 1u,
                                      .connection_capacity = 1u,
                                      .command_capacity_per_shard = 8u,
                                      .request_capacity_per_shard = 4u,

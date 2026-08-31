@@ -70,15 +70,6 @@ set_target_properties(cnet_shards_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
-cmake_add_test(cnet_callback_test
-  SOURCES cnet_callback_test.c
-  LIBS turbo_cnet_experimental TurboUtils::TinyTest
-  FOLDER "cnet/tests")
-set_target_properties(cnet_callback_test PROPERTIES
-  C_STANDARD 11
-  C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF)
-
 cmake_add_test(cnet_dispatcher_test
   SOURCES cnet_dispatcher_test.c
   LIBS turbo_cnet_experimental TurboUtils::TinyTest

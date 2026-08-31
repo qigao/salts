@@ -72,7 +72,7 @@ int cnet_event_queue_take_wait(cnet_event_queue *queue, cnet_event_view *out_vie
                                cnet_event_keep_waiting_fn keep_waiting, void *context);
 /** Wakes blocked takers so they can re-check their stop predicate. */
 int cnet_event_queue_wake(cnet_event_queue *queue);
-/** A taken view may be released exactly once by any callback worker. */
+/** A taken view may be released exactly once by its dispatcher consumer. */
 int cnet_event_queue_release(cnet_event_queue *queue, cnet_event_view *view);
 
 int cnet_event_queue_close(cnet_event_queue *queue);

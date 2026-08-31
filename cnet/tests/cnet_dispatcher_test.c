@@ -1,4 +1,3 @@
-#include "cnet_callback.h"
 #include "cnet_dispatcher.h"
 #include "cnet_module.h"
 #include "cnet_shards.h"
@@ -30,8 +29,6 @@ typedef struct cnet_dispatcher_test_probe {
   atomic_int connected;
   atomic_int received;
   atomic_int terminal;
-  atomic_int release_connected;
-  atomic_int release_terminal;
   atomic_int order_error;
   atomic_int last_order;
   unsigned char value;
@@ -68,7 +65,7 @@ static int cnet_dispatcher_test_listener(cnet_dispatcher_test_socket *out_listen
   return TURBO_OK;
 }
 
-static void cnet_dispatcher_test_observe(void *context, const cnet_callback_view *view) {
+static void cnet_dispatcher_test_observe(void *context, const cnet_dispatch_view *view) {
   cnet_dispatcher_test_probe *probe = (cnet_dispatcher_test_probe *)context;
   int expected_order;
   int next_order;
@@ -80,15 +77,11 @@ static void cnet_dispatcher_test_observe(void *context, const cnet_callback_view
   } else if (view->state == CNET_EVENT_STATE_CONNECTED) {
     next_order = 1;
     atomic_fetch_add_explicit(&probe->connected, 1, memory_order_release);
-    while (!atomic_load_explicit(&probe->release_connected, memory_order_acquire))
-      turbo_thread_yield();
   } else if (view->state == CNET_EVENT_STATE_CLOSING) {
     next_order = 3;
   } else {
     next_order = 4;
     atomic_fetch_add_explicit(&probe->terminal, 1, memory_order_release);
-    while (!atomic_load_explicit(&probe->release_terminal, memory_order_acquire))
-      turbo_thread_yield();
   }
   expected_order = atomic_load_explicit(&probe->last_order, memory_order_acquire);
   if (next_order == 3 && expected_order == 1) {
@@ -101,17 +94,6 @@ static void cnet_dispatcher_test_observe(void *context, const cnet_callback_view
   if (!atomic_compare_exchange_strong_explicit(&probe->last_order, &expected_order, next_order,
                                                memory_order_acq_rel, memory_order_acquire))
     atomic_store_explicit(&probe->order_error, 1, memory_order_release);
-}
-
-static int cnet_dispatcher_test_drive_until_status(cnet_dispatcher *dispatcher, int expected) {
-  const uint64_t deadline = turbo_monotonic_ms() + CNET_DISPATCHER_TEST_TIMEOUT_MS;
-  for (;;) {
-    const int status = cnet_dispatcher_drive(dispatcher, 0u);
-    if (status == expected) return TURBO_OK;
-    if (status != TURBO_OK && status != TURBO_ETIMEDOUT && status != TURBO_EBUSY) return status;
-    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
-    turbo_sleep_ms(1u);
-  }
 }
 
 static int cnet_dispatcher_test_drive_until(cnet_dispatcher *dispatcher, atomic_int *value,
@@ -129,12 +111,9 @@ static int cnet_dispatcher_test_drive_until(cnet_dispatcher *dispatcher, atomic_
 }
 
 spec("CNet event dispatcher") {
-  it("hands one shard lease to callbacks and recycles only after terminal completion") {
+  it("invokes callbacks inline and recycles after terminal completion") {
     cnet_shards shards = {0};
-    cnet_callback_workers callbacks = {0};
-    cnet_callback_workers too_small_callbacks = {0};
     cnet_dispatcher dispatcher = {0};
-    cnet_dispatcher rejected_dispatcher = {0};
     const cnet_shards_config shards_config = {.backend_kind =
 #if defined(_WIN32)
                                                   NATIVE_IO_BACKEND_IOCP,
@@ -152,8 +131,6 @@ spec("CNet event dispatcher") {
                                               .receive_buffer_bytes = 64u,
                                               .max_command_payload_bytes =
                                                   sizeof(cnet_owner_connect_payload)};
-    const cnet_callback_workers_config callback_config = {1u, 1u, 1u, 64u};
-    const cnet_callback_workers_config too_small_callback_config = {1u, 1u, 1u, 63u};
     cnet_dispatcher_test_socket listener = CNET_DISPATCHER_TEST_INVALID_SOCKET;
     cnet_dispatcher_test_socket accepted = CNET_DISPATCHER_TEST_INVALID_SOCKET;
     struct sockaddr_in address;
@@ -167,16 +144,8 @@ spec("CNet event dispatcher") {
     check_equal(cnet_module_init(), TURBO_OK);
     check_equal(cnet_dispatcher_test_listener(&listener, &address), TURBO_OK);
     check_equal(cnet_shards_init(&shards, &shards_config), TURBO_OK);
-    check_equal(cnet_callback_workers_init(&too_small_callbacks, &too_small_callback_config),
-                TURBO_OK);
-    check_equal(cnet_dispatcher_init(&rejected_dispatcher, &shards, &too_small_callbacks),
-                TURBO_EMSGSIZE);
-    check_equal(cnet_callback_workers_stop(&too_small_callbacks, CNET_DISPATCHER_TEST_TIMEOUT_MS),
-                TURBO_OK);
-    check_equal(cnet_callback_workers_destroy(&too_small_callbacks), TURBO_OK);
-    check_equal(cnet_callback_workers_init(&callbacks, &callback_config), TURBO_OK);
-    check_equal(cnet_dispatcher_init(&dispatcher, &shards, &callbacks), TURBO_OK);
-    check_equal(cnet_dispatcher_init(&dispatcher, &shards, &callbacks), TURBO_EALREADY);
+    check_equal(cnet_dispatcher_init(&dispatcher, &shards), TURBO_OK);
+    check_equal(cnet_dispatcher_init(&dispatcher, &shards), TURBO_EALREADY);
     check_equal(cnet_dispatcher_destroy(&dispatcher), TURBO_EBUSY);
 
     payload.scheme = CNET_URI_TCP;
@@ -196,15 +165,11 @@ spec("CNet event dispatcher") {
     check_equal(cnet_shards_receive(&shards, connection, 1u), TURBO_OK);
     check_equal(send(accepted, (const char *)&inbound, (int)sizeof(inbound), 0),
                 (int)sizeof(inbound));
-    check_equal(cnet_dispatcher_test_drive_until_status(&dispatcher, TURBO_ENOBUFS), TURBO_OK);
-    atomic_store_explicit(&probe.release_connected, 1, memory_order_release);
     check_equal(cnet_dispatcher_test_drive_until(&dispatcher, &probe.received, 1), TURBO_OK);
     check_equal(probe.value, inbound);
 
     check_equal(cnet_shards_close(&shards, connection), TURBO_OK);
     check_equal(cnet_dispatcher_test_drive_until(&dispatcher, &probe.terminal, 1), TURBO_OK);
-    check_equal(cnet_shards_connect(&shards, &payload, &replacement), TURBO_ENOBUFS);
-    atomic_store_explicit(&probe.release_terminal, 1, memory_order_release);
     check_equal(cnet_dispatcher_wait_idle(&dispatcher, CNET_DISPATCHER_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(cnet_shards_connect(&shards, &payload, &replacement), TURBO_OK);
     check_true(replacement.session.generation != connection.session.generation);
@@ -213,13 +178,11 @@ spec("CNet event dispatcher") {
     check_equal(cnet_dispatcher_register(&dispatcher, replacement, cnet_dispatcher_test_observe,
                                          &replacement_probe),
                 TURBO_OK);
-    atomic_store_explicit(&replacement_probe.release_connected, 1, memory_order_release);
     check_equal(cnet_dispatcher_test_drive_until(&dispatcher, &replacement_probe.connected, 1),
                 TURBO_OK);
     cnet_dispatcher_test_close_socket(accepted);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CNET_DISPATCHER_TEST_INVALID_SOCKET);
-    atomic_store_explicit(&replacement_probe.release_terminal, 1, memory_order_release);
     check_equal(cnet_dispatcher_drain(&dispatcher, CNET_DISPATCHER_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(atomic_load_explicit(&replacement_probe.order_error, memory_order_acquire), 0);
     check_equal(cnet_dispatcher_register(&dispatcher, replacement, cnet_dispatcher_test_observe,
@@ -227,9 +190,7 @@ spec("CNet event dispatcher") {
                 TURBO_ESHUTDOWN);
     check_equal(cnet_dispatcher_drain(&dispatcher, CNET_DISPATCHER_TEST_TIMEOUT_MS),
                 TURBO_EALREADY);
-    check_equal(cnet_callback_workers_stop(&callbacks, CNET_DISPATCHER_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(cnet_dispatcher_destroy(&dispatcher), TURBO_OK);
-    check_equal(cnet_callback_workers_destroy(&callbacks), TURBO_OK);
     check_equal(cnet_shards_stop(&shards, CNET_DISPATCHER_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(cnet_shards_destroy(&shards), TURBO_OK);
     cnet_dispatcher_test_close_socket(accepted);

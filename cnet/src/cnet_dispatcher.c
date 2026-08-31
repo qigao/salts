@@ -9,11 +9,22 @@
 #include <string.h>
 
 typedef struct cnet_dispatcher_impl cnet_dispatcher_impl;
+typedef int (*cnet_dispatch_release_fn)(void *context, const cnet_dispatch_view *view,
+                                        uint64_t token);
+
+typedef struct cnet_dispatch_job {
+  cnet_dispatch_fn invoke;
+  void *context;
+  cnet_event event;
+  cnet_dispatch_release_fn release;
+  void *release_context;
+  uint64_t release_token;
+} cnet_dispatch_job;
 
 typedef struct cnet_dispatch_entry {
   cnet_dispatcher_impl *dispatcher;
   cnet_shard_connection connection;
-  cnet_callback_fn observer;
+  cnet_dispatch_fn observer;
   void *observer_context;
   bool active;
   bool close_requested;
@@ -27,7 +38,6 @@ typedef struct cnet_dispatch_lane {
 
 struct cnet_dispatcher_impl {
   cnet_shards *shards;
-  cnet_callback_workers *callbacks;
   cnet_dispatch_entry *entries;
   cnet_dispatch_lane *lanes;
   turbo_mutex_t lock;
@@ -67,7 +77,7 @@ static void cnet_dispatcher_record_error(cnet_dispatcher_impl *impl, int status)
 }
 
 static int cnet_dispatcher_recycle(cnet_dispatch_entry *entry,
-                                   const cnet_callback_view *view) {
+                                   const cnet_dispatch_view *view) {
   cnet_dispatcher_impl *impl = entry->dispatcher;
   cnet_session_terminal terminal = {0};
   bool recycled = false;
@@ -104,7 +114,7 @@ static int cnet_dispatcher_recycle(cnet_dispatch_entry *entry,
   return status;
 }
 
-static int cnet_dispatcher_release_lease(void *context, const cnet_callback_view *view,
+static int cnet_dispatcher_release_lease(void *context, const cnet_dispatch_view *view,
                                          uint64_t token) {
   cnet_dispatch_entry *entry = (cnet_dispatch_entry *)context;
   cnet_dispatcher_impl *impl;
@@ -126,7 +136,7 @@ static int cnet_dispatcher_release_lease(void *context, const cnet_callback_view
   return cnet_dispatcher_recycle(entry, view);
 }
 
-static int cnet_dispatcher_release_direct(void *context, const cnet_callback_view *view,
+static int cnet_dispatcher_release_direct(void *context, const cnet_dispatch_view *view,
                                           uint64_t token) {
   cnet_dispatch_entry *entry = (cnet_dispatch_entry *)context;
   (void)token;
@@ -135,8 +145,8 @@ static int cnet_dispatcher_release_direct(void *context, const cnet_callback_vie
 }
 
 static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
-                                   const cnet_event *event, cnet_callback_release_fn release,
-                                   uint64_t release_token, cnet_callback_job *out_job) {
+                                   const cnet_event *event, cnet_dispatch_release_fn release,
+                                   uint64_t release_token, cnet_dispatch_job *out_job) {
   const cnet_shard_connection connection = {shard, event->session};
   cnet_dispatch_entry *entry;
 
@@ -147,7 +157,7 @@ static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
     turbo_mutex_unlock(&impl->lock);
     return TURBO_EBUSY;
   }
-  *out_job = (cnet_callback_job){.invoke = entry->observer,
+  *out_job = (cnet_dispatch_job){.invoke = entry->observer,
                                  .context = entry->observer_context,
                                  .event = {event->kind, event->session, event->state, event->status,
                                            event->stage, event->data, event->size},
@@ -158,22 +168,29 @@ static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
   return TURBO_OK;
 }
 
-int cnet_dispatcher_init(cnet_dispatcher *dispatcher, cnet_shards *shards,
-                         cnet_callback_workers *callbacks) {
+static int cnet_dispatcher_invoke(const cnet_dispatch_job *job) {
+  const cnet_dispatch_view view = {
+      job->event.kind,  job->event.session, job->event.state, job->event.status,
+      job->event.stage, job->event.data,    job->event.size};
+  int status = TURBO_OK;
+
+  job->invoke(job->context, &view);
+  if (job->release != NULL)
+    status = job->release(job->release_context, &view, job->release_token);
+  return status;
+}
+
+int cnet_dispatcher_init(cnet_dispatcher *dispatcher, cnet_shards *shards) {
   cnet_dispatcher_impl *impl;
   cnet_shards_layout layout = {0};
-  cnet_callback_workers_config callback_config = {0};
   size_t entry_count;
   size_t index;
 
-  if (dispatcher == NULL || shards == NULL || callbacks == NULL) return TURBO_EINVAL;
+  if (dispatcher == NULL || shards == NULL) return TURBO_EINVAL;
   if (dispatcher->impl != NULL) return TURBO_EALREADY;
   if (!cnet_shards_get_layout(shards, &layout) || layout.shard_count == 0u ||
       layout.connection_capacity_per_shard == 0u)
     return TURBO_EINVAL;
-  if (!cnet_callback_workers_get_config(callbacks, &callback_config)) return TURBO_EINVAL;
-  if (callback_config.producer_count != layout.shard_count) return TURBO_EINVAL;
-  if (callback_config.max_payload_bytes < layout.max_event_payload_bytes) return TURBO_EMSGSIZE;
   if (layout.shard_count > SIZE_MAX / layout.connection_capacity_per_shard) return TURBO_ERANGE;
   entry_count = layout.shard_count * layout.connection_capacity_per_shard;
   if (entry_count > SIZE_MAX / sizeof(cnet_dispatch_entry) ||
@@ -191,7 +208,6 @@ int cnet_dispatcher_init(cnet_dispatcher *dispatcher, cnet_shards *shards,
     return TURBO_ENOMEM;
   }
   impl->shards = shards;
-  impl->callbacks = callbacks;
   impl->shard_count = layout.shard_count;
   impl->connection_capacity_per_shard = layout.connection_capacity_per_shard;
   impl->admission_open = true;
@@ -208,7 +224,7 @@ int cnet_dispatcher_init(cnet_dispatcher *dispatcher, cnet_shards *shards,
 }
 
 int cnet_dispatcher_register(cnet_dispatcher *dispatcher, cnet_shard_connection connection,
-                             cnet_callback_fn observer, void *observer_context) {
+                             cnet_dispatch_fn observer, void *observer_context) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
   cnet_dispatch_entry *entry;
   cnet_session_state state = CNET_SESSION_FREE;
@@ -245,23 +261,22 @@ int cnet_dispatcher_register(cnet_dispatcher *dispatcher, cnet_shard_connection 
 int cnet_dispatcher_publish(cnet_dispatcher *dispatcher, uint32_t shard,
                             const cnet_event *event) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
-  cnet_callback_job job = {0};
-  cnet_callback_release_fn release = NULL;
+  cnet_dispatch_job job = {0};
+  cnet_dispatch_release_fn release = NULL;
   int status;
 
   if (impl == NULL || event == NULL || (size_t)shard >= impl->shard_count) return TURBO_EINVAL;
   if (event->kind == CNET_EVENT_STATE && cnet_dispatcher_terminal_state(event->state))
     release = cnet_dispatcher_release_direct;
   status = cnet_dispatcher_prepare(impl, shard, event, release, 0u, &job);
-  if (status == TURBO_OK)
-    status = cnet_callback_workers_publish_from(impl->callbacks, shard, &job);
+  if (status == TURBO_OK) status = cnet_dispatcher_invoke(&job);
   return status;
 }
 
 int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
   cnet_dispatch_lane *lane;
-  cnet_callback_job job = {0};
+  cnet_dispatch_job job = {0};
   int status = TURBO_OK;
 
   if (impl == NULL || (size_t)shard >= impl->shard_count) return TURBO_EINVAL;
@@ -283,7 +298,7 @@ int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard) {
     status = cnet_dispatcher_prepare(impl, shard, &event, cnet_dispatcher_release_lease,
                                      lane->event._sequence, &job);
   }
-  if (status == TURBO_OK) status = cnet_callback_workers_publish_from(impl->callbacks, shard, &job);
+  if (status == TURBO_OK) status = cnet_dispatcher_invoke(&job);
   if (status == TURBO_OK) {
     memset(&lane->event, 0, sizeof(lane->event));
     atomic_store_explicit(&lane->pending, false, memory_order_release);

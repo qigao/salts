@@ -177,14 +177,12 @@ quiescent stop. Real TCP tests exercise two independent owner tasks in both
 directions. This is an implementation detail rather than a new user-visible
 runtime concept.
 
-The callback worker boundary is now implemented as one fixed-capacity SPSC
-channel per I/O shard on a separate `turbo_threadpool`. Each owner is the only
-producer of its channel; a fixed callback worker is its only consumer. The
-channel copies bounded payload bytes before publication returns, preserving the
-callback view while allowing NativeIO receive storage to be reused. Tests cover
-per-shard capacity, FIFO order, bounded cross-shard fairness, full-channel
-rejection, publish-time payload ownership, stop retry, and exact release-error
-propagation.
+The callback-worker boundary was removed after benchmark evidence showed that
+its queue, payload copy, wake, and scheduling dominated small-message latency.
+Each shard owner now invokes its generation-checked observer inline after the
+NativeIO coroutine handles a completion. The receive view borrows owner storage
+only through that callback. Tests cover FIFO order, terminal recycle, callback
+reentrancy, stop retry, and exact error propagation.
 
 The owner now uses a generic fixed-capacity Concurrency deadline heap. Connect
 deadlines span resolution and NativeIO connect; accepted read and write
@@ -205,7 +203,7 @@ retained completed connect frame and an active suspended receive frame.
 
 The internal client-owned dispatcher is now an inline routing boundary invoked
 by each shard owner, not a worker or event-ring consumer. It generation-checks
-observer routing and publishes directly to that shard's SPSC callback channel.
+observer routing and invokes the callback directly on that shard owner.
 The session table remains the state fact source. A terminal callback must return
 and successfully recycle the session before that slot can be registered again.
 Drain closes dispatcher admission, requests close for every registered
@@ -215,7 +213,6 @@ destruction.
 **Files:**
 
 - Create: `cnet/src/cnet_client.c`
-- Create: `cnet/src/cnet_callback.c`
 - Create: `cnet/src/cnet_dispatcher.c`
 - Create: `cnet/src/cnet_owner.c`
 - Create: `cnet/src/cnet_uri.c`
@@ -225,7 +222,6 @@ destruction.
 - Create: `cnet/src/cnet_transport_udp.c`
 - Create: `cnet/src/cnet_transport_pipe.c`
 - Create: `cnet/tests/cnet_fake_transport_test.c`
-- Create: `cnet/tests/cnet_callback_test.c`
 - Create: `cnet/tests/cnet_dispatcher_test.c`
 - Create: `cnet/tests/cnet_tcp_test.c`
 - Create: `cnet/tests/cnet_udp_test.c`
@@ -246,9 +242,9 @@ destruction.
   resolver may own only DNS sockets; copy bounded results to the owning shard
   mailbox before calling NativeIO wake, and generation-check late cancellation
   results.
-- [x] Implement bounded per-shard SPSC callback channels on a separate thread
-  pool. Copy payloads at the callback-lifetime boundary, preserve shard FIFO,
-  bound cross-shard batches, and release each accepted obligation exactly once.
+- [x] Invoke callbacks inline on the owning shard after coroutine completion;
+  preserve per-connection FIFO, borrow payloads only through the callback, and
+  release each accepted terminal obligation exactly once.
 - [ ] Implement one long-lived owner task and NativeIO backend per shard,
   stable connection-to-shard assignment, fixed completion batches, timer
   deadlines, and first-error propagation.
@@ -257,8 +253,8 @@ destruction.
 - [ ] Implement TCP over NativeIO connect/read/write, connected UDP over
   datagram operations, and Pipe over NativeIO pipe operations. Keep OS socket
   creation/close in private per-platform transport adapters.
-- [ ] Verify no user callback executes on an I/O owner and no allocation occurs
-  in the owner submit/observe hot path after initialization.
+- [ ] Verify callbacks remain nonblocking on the I/O owner and no allocation
+  occurs in the owner submit/observe hot path after initialization.
 - [ ] Commit with `feat(cnet): add tcp udp and pipe sessions`.
 
 ## Task 6: Add the Public Base API and Lifecycle
