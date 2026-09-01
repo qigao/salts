@@ -176,6 +176,23 @@ using cflow_statechart_actor_stats_reader = bool (*)(
 static_assert(std::is_same<decltype(&cflow_statechart_actor_get_stats),
                            cflow_statechart_actor_stats_reader>::value,
               "Statechart Actor stats must keep its C signature");
+using cflow_statechart_host_callback = cflow_statechart_host_result (*)(
+    void *, cflow_statechart_host_context *, const char **);
+static_assert(std::is_same<cflow_statechart_host_transaction_fn,
+                           cflow_statechart_host_callback>::value,
+              "Statechart host callback must keep its C signature");
+using cflow_statechart_host_phase_reader = cflow_statechart_host_phase (*)(
+    const cflow_statechart_host_context *);
+static_assert(std::is_same<
+                  decltype(&cflow_statechart_host_context_phase),
+                  cflow_statechart_host_phase_reader>::value,
+              "Statechart host phase reader must keep its C signature");
+using cflow_statechart_host_state_editor = void *(*)(
+    cflow_statechart_host_context *, const char **);
+static_assert(std::is_same<
+                  decltype(&cflow_statechart_host_context_edit_state),
+                  cflow_statechart_host_state_editor>::value,
+              "Statechart host state editor must keep its C signature");
 using cflow_stream_slice_function = cflow_stream *(*)(cflow_stream *, size_t);
 static_assert(std::is_same<decltype(&cflow_stream_take),
                            cflow_stream_slice_function>::value,

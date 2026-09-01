@@ -1,5 +1,9 @@
 # CFlow SCXML `invoke/@idlocation` 稳定事务设计
 
+> 历史设计：本文记录当时的 V3 实现。当前 Statechart hook 已统一为
+> V4-only `on_host_transaction`，V1-V3 类型、prefix 兼容与运行时分支均已删除；
+> 当前契约以 `2026-09-01-cflow-statechart-host-transaction.md` 为准。
+
 ## 背景与目标
 
 Issue #177 要求 CMeta profile 支持 SCXML `invoke/@idlocation`：只有 invocation 在稳定配置中被实际评估时，才生成新的 `stateid.platformid`，将其写入 Machine 扩展状态，并以同一 ID 启动 adapter。瞬时进入又退出的状态不得写 ID 或启动服务。
