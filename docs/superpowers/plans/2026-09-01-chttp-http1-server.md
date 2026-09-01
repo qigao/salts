@@ -60,4 +60,4 @@
 - [x] Run focused ASan tests through the public development preset.
 - [x] Synchronize CodeGraph, inspect affected callers/tests, and ensure `.codegraph/` is untracked.
 - [x] Review the complete diff for ownership, timeout, shutdown, and public API compatibility.
-- [ ] Commit, push `feat/chttp-server`, create a PR, and report CI/merge status without claiming results not observed.
+- [x] Commit, push `feat/chttp-server`, create a PR, and report CI/merge status without claiming results not observed.
