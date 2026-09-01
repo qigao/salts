@@ -82,11 +82,17 @@ stale handles, live drain, and receive demand across request-slot reuse.
 
 ## Benchmark
 
-`cnet_io_benchmark` compares libuv, direct NativeIO, and the CNet public byte
-API against the same dedicated blocking loopback echo peer. Fixture,
-connection, worker, and buffer setup stay outside the timed interval. All
-clients use identical payloads, warmups, samples, and persistent TCP/UDP
-connections. CNet progress is driven by the benchmark caller, so its timed path
-contains no owner-thread scheduling or wake handoff. Output separates TCP and
-UDP latency and throughput by payload size, then reports CNet receive/send
-admission, poll, callback, and public polls-per-round-trip stage means.
+`cnet_io_benchmark` compares libuv, direct NativeIO, NativeIO coroutines, and
+the CNet public byte API against matched dedicated blocking loopback echo
+peers. Every payload uses five independent repeats. Each repeat recreates its
+client and peer, runs the same warmup and measured round trips, and rotates the
+four driver orders. The report aggregates per-repeat metrics by median and
+reports paired deltas with median absolute deviation (MAD); it never pools
+independent runs into one latency distribution.
+
+CNet progress is driven by the benchmark caller, so its timed path contains no
+owner-thread scheduling or wake handoff. CNet-only stage clocks run in separate
+diagnostic passes and therefore do not bias the direct latency/rate comparison.
+Output separates TCP and UDP p50/p95 latency and throughput by payload size,
+then reports CNet send admission, poll, callback, and public
+polls-per-round-trip medians and MAD.

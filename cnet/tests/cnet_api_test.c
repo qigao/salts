@@ -513,6 +513,7 @@ spec("CNet public client API") {
     atomic_init(&probe.terminal, 0);
     atomic_init(&probe.failed, 0);
     probe.received_value = 0u;
+    config.connection_capacity = 64u;
     check_equal(cnet_client_init(&client, &config), TURBO_OK);
     server = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     check_true(server != CNET_API_TEST_INVALID_SOCKET);

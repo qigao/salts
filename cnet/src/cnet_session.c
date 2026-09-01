@@ -15,8 +15,10 @@ typedef struct cnet_session_entry {
 
 typedef struct cnet_session_table_impl {
   cnet_session_entry *entries;
+  uint32_t *free_slots;
   size_t capacity;
   size_t active;
+  size_t free_count;
   turbo_mutex_t lock;
 } cnet_session_table_impl;
 
@@ -82,13 +84,20 @@ static void cnet_session_set_terminal(cnet_session_entry *entry, cnet_session_te
   entry->terminal_taken = false;
 }
 
-static void cnet_session_advance_generation(cnet_session_entry *entry) {
+static int cnet_session_release_entry(cnet_session_table_impl *impl, cnet_session_entry *entry) {
+  const size_t index = (size_t)(entry - impl->entries);
+  if (impl->active == 0u || index >= impl->capacity ||
+      (entry->generation != UINT32_MAX && impl->free_count >= impl->capacity))
+    return TURBO_EPROTO;
+  --impl->active;
   if (entry->generation == UINT32_MAX) {
     entry->state = CNET_SESSION_RETIRED;
   } else {
     ++entry->generation;
     entry->state = CNET_SESSION_FREE;
+    impl->free_slots[impl->free_count++] = (uint32_t)index;
   }
+  return TURBO_OK;
 }
 
 bool cnet_session_handle_valid(cnet_session_handle handle) {
@@ -101,17 +110,24 @@ int cnet_session_table_init(cnet_session_table *table, size_t capacity) {
   if (table == NULL) return TURBO_EINVAL;
   if (table->impl != NULL) return TURBO_EALREADY;
   if (capacity == 0u) return TURBO_EINVAL;
-  if (capacity > UINT32_MAX || capacity > SIZE_MAX / sizeof(cnet_session_entry))
+  if (capacity > UINT32_MAX || capacity > SIZE_MAX / sizeof(cnet_session_entry) ||
+      capacity > SIZE_MAX / sizeof(uint32_t))
     return TURBO_ERANGE;
 
   impl = (cnet_session_table_impl *)calloc(1u, sizeof(*impl));
   if (impl == NULL) return TURBO_ENOMEM;
   impl->entries = (cnet_session_entry *)calloc(capacity, sizeof(*impl->entries));
-  if (impl->entries == NULL) {
+  impl->free_slots = (uint32_t *)calloc(capacity, sizeof(*impl->free_slots));
+  if (impl->entries == NULL || impl->free_slots == NULL) {
+    free(impl->free_slots);
+    free(impl->entries);
     free(impl);
     return TURBO_ENOMEM;
   }
   impl->capacity = capacity;
+  impl->free_count = capacity;
+  for (size_t index = 0u; index < capacity; ++index)
+    impl->free_slots[index] = (uint32_t)(capacity - index - 1u);
   turbo_mutex_init(&impl->lock);
   table->impl = impl;
   return TURBO_OK;
@@ -129,6 +145,7 @@ int cnet_session_table_destroy(cnet_session_table *table) {
   }
   turbo_mutex_unlock(&impl->lock);
   turbo_mutex_destroy(&impl->lock);
+  free(impl->free_slots);
   free(impl->entries);
   free(impl);
   table->impl = NULL;
@@ -137,6 +154,7 @@ int cnet_session_table_destroy(cnet_session_table *table) {
 
 int cnet_session_table_reserve(cnet_session_table *table, cnet_session_handle *out_handle) {
   cnet_session_table_impl *impl = cnet_session_impl(table);
+  cnet_session_entry *entry;
   size_t index;
 
   if (out_handle == NULL) return TURBO_EINVAL;
@@ -144,21 +162,26 @@ int cnet_session_table_reserve(cnet_session_table *table, cnet_session_handle *o
   if (impl == NULL) return TURBO_EINVAL;
 
   turbo_mutex_lock(&impl->lock);
-  for (index = 0u; index < impl->capacity; ++index) {
-    cnet_session_entry *entry = &impl->entries[index];
-    if (entry->state != CNET_SESSION_FREE) continue;
-    if (entry->generation == 0u) entry->generation = 1u;
-    entry->state = CNET_SESSION_RESERVED;
-    memset(&entry->terminal, 0, sizeof(entry->terminal));
-    entry->terminal_taken = false;
-    ++impl->active;
-    out_handle->slot = (uint32_t)(index + 1u);
-    out_handle->generation = entry->generation;
+  if (impl->free_count == 0u) {
     turbo_mutex_unlock(&impl->lock);
-    return TURBO_OK;
+    return TURBO_ENOBUFS;
   }
+  index = impl->free_slots[impl->free_count - 1u];
+  if (index >= impl->capacity || impl->entries[index].state != CNET_SESSION_FREE) {
+    turbo_mutex_unlock(&impl->lock);
+    return TURBO_EPROTO;
+  }
+  --impl->free_count;
+  entry = &impl->entries[index];
+  if (entry->generation == 0u) entry->generation = 1u;
+  entry->state = CNET_SESSION_RESERVED;
+  memset(&entry->terminal, 0, sizeof(entry->terminal));
+  entry->terminal_taken = false;
+  ++impl->active;
+  out_handle->slot = (uint32_t)(index + 1u);
+  out_handle->generation = entry->generation;
   turbo_mutex_unlock(&impl->lock);
-  return TURBO_ENOBUFS;
+  return TURBO_OK;
 }
 
 int cnet_session_table_release_reservation(cnet_session_table *table,
@@ -177,10 +200,15 @@ int cnet_session_table_release_reservation(cnet_session_table *table,
     turbo_mutex_unlock(&impl->lock);
     return TURBO_EBUSY;
   }
+  {
+    const int status = cnet_session_release_entry(impl, entry);
+    if (status != TURBO_OK) {
+      turbo_mutex_unlock(&impl->lock);
+      return status;
+    }
+  }
   memset(&entry->terminal, 0, sizeof(entry->terminal));
   entry->terminal_taken = false;
-  --impl->active;
-  cnet_session_advance_generation(entry);
   turbo_mutex_unlock(&impl->lock);
   return TURBO_OK;
 }
@@ -341,10 +369,15 @@ int cnet_session_table_recycle(cnet_session_table *table, cnet_session_handle ha
     return TURBO_EBUSY;
   }
 
+  {
+    const int status = cnet_session_release_entry(impl, entry);
+    if (status != TURBO_OK) {
+      turbo_mutex_unlock(&impl->lock);
+      return status;
+    }
+  }
   memset(&entry->terminal, 0, sizeof(entry->terminal));
   entry->terminal_taken = false;
-  --impl->active;
-  cnet_session_advance_generation(entry);
   turbo_mutex_unlock(&impl->lock);
   return TURBO_OK;
 }

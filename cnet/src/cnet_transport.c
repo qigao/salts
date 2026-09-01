@@ -14,6 +14,7 @@
 typedef SOCKET cnet_native_socket;
   #define CNET_INVALID_SOCKET INVALID_SOCKET
 #else
+  #include <arpa/inet.h>
   #include <errno.h>
   #include <fcntl.h>
   #include <netinet/in.h>
@@ -37,6 +38,42 @@ static int cnet_transport_native_error(void) {
   const int error = errno;
 #endif
   return error > 0 ? -error : TURBO_EIO;
+}
+
+int cnet_transport_parse_numeric_address(const char *host, uint16_t port, void *out_address,
+                                         size_t address_capacity, size_t *out_address_length) {
+  struct sockaddr_in address_v4;
+  struct sockaddr_in6 address_v6;
+  int parsed;
+
+  if (out_address_length == NULL) return TURBO_EINVAL;
+  *out_address_length = 0u;
+  if (host == NULL || host[0] == '\0' || port == 0u || out_address == NULL) return TURBO_EINVAL;
+
+  memset(&address_v4, 0, sizeof(address_v4));
+  parsed = inet_pton(AF_INET, host, &address_v4.sin_addr);
+  if (parsed < 0) return cnet_transport_native_error();
+  if (parsed == 1) {
+    if (address_capacity < sizeof(address_v4)) return TURBO_ERANGE;
+    address_v4.sin_family = AF_INET;
+    address_v4.sin_port = htons(port);
+    memcpy(out_address, &address_v4, sizeof(address_v4));
+    *out_address_length = sizeof(address_v4);
+    return TURBO_OK;
+  }
+
+  memset(&address_v6, 0, sizeof(address_v6));
+  parsed = inet_pton(AF_INET6, host, &address_v6.sin6_addr);
+  if (parsed < 0) return cnet_transport_native_error();
+  if (parsed == 1) {
+    if (address_capacity < sizeof(address_v6)) return TURBO_ERANGE;
+    address_v6.sin6_family = AF_INET6;
+    address_v6.sin6_port = htons(port);
+    memcpy(out_address, &address_v6, sizeof(address_v6));
+    *out_address_length = sizeof(address_v6);
+    return TURBO_OK;
+  }
+  return TURBO_ENOENT;
 }
 
 static void cnet_transport_close_native(cnet_transport *transport) {

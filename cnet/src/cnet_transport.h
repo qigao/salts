@@ -25,6 +25,14 @@ typedef struct cnet_transport {
   bool write_attached;
 } cnet_transport;
 
+/**
+ * Converts an IPv4 or IPv6 literal plus host-order port into native sockaddr
+ * storage. Returns `TURBO_ENOENT` for a hostname so the caller can route it to
+ * the resolver. `out_address_length` is cleared on every failure.
+ */
+int cnet_transport_parse_numeric_address(const char *host, uint16_t port, void *out_address,
+                                         size_t address_capacity, size_t *out_address_length);
+
 /** Creates and attaches a TCP socket, then describes its connect operation. */
 int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_backend *backend,
                                        native_io_backend_kind backend_kind, const void *address,

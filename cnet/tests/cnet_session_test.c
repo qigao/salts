@@ -8,7 +8,7 @@
 
 static cnet_session_table table;
 
-enum { TEST_RESERVATION_PRODUCERS = 4 };
+enum { TEST_RESERVATION_PRODUCERS = 4, TEST_RESERVATION_SCALE = 4096 };
 
 typedef struct reservation_context {
   cnet_session_table *table;
@@ -83,6 +83,26 @@ spec("CNet session state core") {
   }
 
   group("reservation") {
+    it("cycles every slot in a large bounded reservation set") {
+      static cnet_session_handle handles[TEST_RESERVATION_SCALE];
+      cnet_session_handle rejected = {UINT32_C(99), UINT32_C(77)};
+
+      check_equal(cnet_session_table_init(&table, TEST_RESERVATION_SCALE), TURBO_OK);
+      for (size_t index = 0u; index < TEST_RESERVATION_SCALE; ++index)
+        check_equal(cnet_session_table_reserve(&table, &handles[index]), TURBO_OK);
+      check_equal(cnet_session_table_reserve(&table, &rejected), TURBO_ENOBUFS);
+      expect_zero_handle(rejected);
+      for (size_t index = 0u; index < TEST_RESERVATION_SCALE; ++index)
+        check_equal(cnet_session_table_release_reservation(&table, handles[index]), TURBO_OK);
+      for (size_t index = 0u; index < TEST_RESERVATION_SCALE; ++index) {
+        const cnet_session_handle previous = handles[index];
+        check_equal(cnet_session_table_reserve(&table, &handles[index]), TURBO_OK);
+        check_not_equal(handles[index].generation, previous.generation);
+      }
+      for (size_t index = 0u; index < TEST_RESERVATION_SCALE; ++index)
+        check_equal(cnet_session_table_release_reservation(&table, handles[index]), TURBO_OK);
+    }
+
     it("assigns unique bounded handles to concurrent admission producers") {
       turbo_thread_t threads[TEST_RESERVATION_PRODUCERS] = {0};
       reservation_context contexts[TEST_RESERVATION_PRODUCERS] = {0};

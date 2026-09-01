@@ -948,6 +948,98 @@ static void native_io_test_coroutine_completion_resume(native_io_backend_kind ki
   check_equal(native_io_backend_destroy(&backend), TURBO_OK);
 }
 
+enum { NATIVE_IO_TEST_COROUTINE_LOOP_COUNT = 8 };
+
+typedef struct native_io_test_coroutine_loop_state {
+  native_io_endpoint endpoint;
+  native_io_operation_kind kind;
+  unsigned char bytes[NATIVE_IO_TEST_COROUTINE_LOOP_COUNT];
+  size_t completed;
+  int await_status;
+  bool done;
+} native_io_test_coroutine_loop_state;
+
+static void native_io_test_coroutine_loop(native_io_coroutine *coroutine, void *user_data) {
+  native_io_test_coroutine_loop_state *state = (native_io_test_coroutine_loop_state *)user_data;
+  state->await_status = TURBO_OK;
+  for (size_t index = 0u;
+       state->await_status == TURBO_OK && index < NATIVE_IO_TEST_COROUTINE_LOOP_COUNT; ++index) {
+    native_io_completion completion = {0};
+    const native_io_operation operation = {.kind = state->kind,
+                                           .endpoint = state->endpoint,
+                                           .buffer = &state->bytes[index],
+                                           .length = 1u,
+                                           .user_data = 90u + index};
+    state->await_status = native_io_coroutine_await(coroutine, &operation, &completion);
+    if (state->await_status != TURBO_OK) break;
+    if (completion.kind != NATIVE_IO_COMPLETION_OK || completion.status != TURBO_OK ||
+        completion.bytes != 1u || completion.user_data != 90u + index) {
+      state->await_status = TURBO_EPROTO;
+      break;
+    }
+    ++state->completed;
+  }
+  state->done = true;
+}
+
+static void native_io_test_coroutine_reawait_batch(native_io_backend_kind kind) {
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {kind, 2u, 3u, 3u};
+  native_io_test_socket sockets[2];
+  native_io_endpoint endpoints[2] = {0};
+  native_io_coroutine_task receive_task = {0};
+  native_io_coroutine_task send_task = {0};
+  native_io_test_coroutine_loop_state receive = {0};
+  native_io_test_coroutine_loop_state send = {0};
+  native_io_completion events[3] = {0};
+  size_t direct_completions = 0u;
+  int observe_status = TURBO_OK;
+
+  memset(send.bytes, 0x5a, sizeof(send.bytes));
+  check_equal(native_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(native_io_test_make_tcp_pair(sockets), TURBO_OK);
+  check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[0], &endpoints[0]),
+              TURBO_OK);
+  check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoints[1]),
+              TURBO_OK);
+  receive.endpoint = endpoints[1];
+  receive.kind = NATIVE_IO_OPERATION_TCP_RECV;
+  send.endpoint = endpoints[0];
+  send.kind = NATIVE_IO_OPERATION_TCP_SEND;
+  check_equal(native_io_backend_spawn_coroutine(&backend, native_io_test_coroutine_loop, &receive,
+                                                &receive_task),
+              TURBO_OK);
+  check_equal(
+      native_io_backend_spawn_coroutine(&backend, native_io_test_coroutine_loop, &send, &send_task),
+      TURBO_OK);
+
+  for (size_t attempt = 0u; observe_status == TURBO_OK && (!receive.done || !send.done) &&
+                            attempt < NATIVE_IO_TEST_COROUTINE_LOOP_COUNT * 4u;
+       ++attempt) {
+    size_t count = 0u;
+    observe_status =
+        native_io_backend_observe(&backend, events, 3u, NATIVE_IO_TEST_TIMEOUT_MS, &count);
+    direct_completions += count;
+  }
+
+  check_equal(observe_status, TURBO_OK);
+  check_true(receive.done);
+  check_true(send.done);
+  check_equal(receive.await_status, TURBO_OK);
+  check_equal(send.await_status, TURBO_OK);
+  check_equal(receive.completed, NATIVE_IO_TEST_COROUTINE_LOOP_COUNT);
+  check_equal(send.completed, NATIVE_IO_TEST_COROUTINE_LOOP_COUNT);
+  check_equal(direct_completions, 0u);
+  check_equal(memcmp(receive.bytes, send.bytes, sizeof(send.bytes)), 0);
+  check_equal(native_io_backend_cancel_coroutine(&backend, receive_task), TURBO_ENOENT);
+  check_equal(native_io_backend_cancel_coroutine(&backend, send_task), TURBO_ENOENT);
+
+  native_io_test_close_endpoint(&backend, endpoints[0], sockets[0]);
+  native_io_test_close_endpoint(&backend, endpoints[1], sockets[1]);
+  check_equal(native_io_backend_close(&backend), TURBO_OK);
+  check_equal(native_io_backend_destroy(&backend), TURBO_OK);
+}
+
 static void native_io_test_coroutine_cancel_drain(native_io_backend_kind kind) {
   native_io_backend backend = {0};
   const native_io_backend_config config = {kind, 1u, 1u, 1u};
@@ -1333,6 +1425,13 @@ spec("NativeIO direct backend") {
     const size_t count = native_io_test_backends(backends);
     for (size_t index = 0u; index < count; ++index)
       native_io_test_coroutine_completion_resume(backends[index]);
+  }
+
+  it("routes a completion batch before looped coroutines reawait reused request slots") {
+    native_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
+    const size_t count = native_io_test_backends(backends);
+    for (size_t index = 0u; index < count; ++index)
+      native_io_test_coroutine_reawait_batch(backends[index]);
   }
 
   it("retains cancelled coroutine frames until the terminal is drained") {

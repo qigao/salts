@@ -88,6 +88,16 @@ set_target_properties(cnet_api_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+cmake_add_test(cnet_benchmark_stats_test
+  SOURCES cnet_benchmark_stats_test.c ../benchmarks/cnet_benchmark_stats.c
+  LIBS TurboUtils::Platform TurboUtils::TinyTest
+  FOLDER "cnet/tests")
+target_include_directories(cnet_benchmark_stats_test PRIVATE ../benchmarks)
+set_target_properties(cnet_benchmark_stats_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 cmake_add_test(cnet_header_cpp_test
   SOURCES cnet_header_cpp_test.cpp
   LIBS turbo_cnet_experimental

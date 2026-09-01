@@ -38,7 +38,7 @@ Coroutine pool       Platform errors/ABI
 
 ### Coroutine owner 路径
 
-`native_io_backend_spawn_coroutine()` 提供同一 owner 线程上的可选结构化路径。entry 立即运行到返回或 `native_io_coroutine_await()`；await 成功提交后挂起，只有匹配的 terminal completion 被 owner observe 后才恢复。NativeIO 不使用 CoroNet context、TLS current-loop、隐式线程或第二套 request 状态机；request 槽位仍是唯一 I/O 事实源，coroutine 只保存执行位置。
+`native_io_backend_spawn_coroutine()` 提供同一 owner 线程上的可选结构化路径。entry 立即运行到返回或 `native_io_coroutine_await()`；await 成功提交后挂起，只有匹配的 terminal completion 被 owner observe 后才恢复。一次 observe 会先完成整批 terminal 的 request 归属解析，再恢复其中的 coroutine；因此恢复后的 entry 可以立即再次 await，不会复用仍被该批后续 packet 引用的 request 槽位。NativeIO 不使用 CoroNet context、TLS current-loop、隐式线程或第二套 request 状态机；request 槽位仍是唯一 I/O 事实源，coroutine 只保存执行位置。
 
 coroutine task 数与 request 共用同一硬容量。frame 由 `TurboUtils::Coroutine` 的有界池延迟创建并复用；池满返回 `TURBO_ENOBUFS`。取消 task 只转发为 request cancel，frame 必须等 `CANCELLED`/其他竞态终态被 observe 后才释放。带 ABI 版本与结构大小的 `native_io_coroutine_stats` 公开 `capacity`、`active` 与 `retained_frames`，但不改变既有 `native_io_backend_stats` 布局，也不暴露 minicoro handle。
 
