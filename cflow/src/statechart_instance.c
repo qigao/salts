@@ -3563,15 +3563,8 @@ external_admission:
         impl->adapter_internal_pending != 0u;
     turbo_mutex_unlock(&impl->lock);
     if (host_result == CFLOW_STATECHART_HOST_DROP) {
-        if (internal_work) {
-            turbo_mutex_lock(&impl->lock);
-            impl->driver_repost = true;
-            turbo_mutex_unlock(&impl->lock);
-            return;
-        }
-        settle_quiescent_macrostep(impl);
         turbo_mutex_lock(&impl->lock);
-        if (!impl->done) impl->driver_repost = true;
+        impl->driver_repost = true;
         turbo_mutex_unlock(&impl->lock);
         return;
     }
@@ -3579,7 +3572,7 @@ external_admission:
         CFLOW_STATECHART_TRIGGER_EVENT, &event, 0u};
     result = driver_try_trigger(impl, &trigger);
     if (result != 0) return;
-    if (internal_work) {
+    if (internal_work || impl->hooks.on_host_transaction != NULL) {
         turbo_mutex_lock(&impl->lock);
         impl->driver_repost = true;
         turbo_mutex_unlock(&impl->lock);

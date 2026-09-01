@@ -1584,6 +1584,7 @@ suite("CFlow Statechart instance initial configuration") {
                     CFLOW_MAILBOX_OK);
         check_true(cflow_executor_wait_idle(&fixture.executor));
         check_equal(probe.trigger_calls, (size_t)1u);
+        check_equal(probe.quiescence_calls, (size_t)2u);
         check_equal(probe.guard_calls, (size_t)0u);
         check_equal(probe.ticket_commits, (size_t)0u);
         check_equal(probe.ticket_discards, (size_t)1u);
@@ -1607,6 +1608,41 @@ suite("CFlow Statechart instance initial configuration") {
             &fixture.instance, &stats));
         check_true(stats.done);
         check_false(stats.errored);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("prepares quiescence after an unhandled external trigger") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
+        managed_state_reset();
+        initial_state = managed_state_make(40);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_equal(probe.quiescence_calls, (size_t)1u);
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)1u);
+        check_equal(probe.quiescence_calls, (size_t)2u);
+        check_equal(probe.guard_calls, (size_t)1u);
+        check_equal(probe.guard_observed, 41);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_false(stats.done);
+        check_false(stats.errored);
+        check_equal(stats.external_completed, UINT64_C(1));
+
         runtime_fixture_destroy(&fixture);
         managed_state_destroy(&initial_state);
         check_equal(managed_state_live_resources, (size_t)0u);
