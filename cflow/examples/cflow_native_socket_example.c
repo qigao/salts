@@ -256,8 +256,8 @@ cleanup:
             const uintptr_t identity = (uintptr_t)sockets[index];
             cflow_socket_example_close(sockets[index]);
             sockets[index] = CFLOW_EXAMPLE_INVALID_SOCKET;
-            status = cflow_io_native_backend_forget_socket(
-                &context.backend, identity);
+            status = cflow_native_example_forget_until_quiescent(
+                &context, identity, cflow_io_native_backend_forget_socket);
             if (status != TURBO_OK &&
                 (require_retained_identity || status != TURBO_ENOENT)) {
                 fprintf(stderr,

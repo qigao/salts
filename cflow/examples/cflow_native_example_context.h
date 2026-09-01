@@ -38,6 +38,26 @@ typedef struct cflow_native_example_context {
     bool actor_initialized;
 } cflow_native_example_context;
 
+typedef int (*cflow_native_example_forget_fn)(
+    cflow_io_native_backend *backend, uintptr_t identity);
+
+static int cflow_native_example_forget_until_quiescent(
+    cflow_native_example_context *context, uintptr_t identity,
+    cflow_native_example_forget_fn forget) {
+    const uint64_t started = turbo_hrtime();
+    int status;
+
+    if (context == NULL || forget == NULL)
+        return TURBO_EINVAL;
+    do {
+        status = forget(&context->backend, identity);
+        if (status != TURBO_EBUSY)
+            return status;
+        turbo_thread_yield();
+    } while (turbo_hrtime() - started < CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS);
+    return TURBO_ETIMEDOUT;
+}
+
 static void cflow_native_example_completed(
     void *user, cflow_io_request_id request_id,
     cflow_io_lease_id lease_id, void *operation_user,
