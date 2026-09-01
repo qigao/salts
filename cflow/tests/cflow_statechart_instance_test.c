@@ -46,6 +46,18 @@ typedef struct contextual_selection_guard_probe {
     size_t calls;
 } contextual_selection_guard_probe;
 
+typedef struct contextual_guard_raise_probe {
+    cflow_event_id event_id;
+    int first_payload;
+    size_t raise_count;
+    bool enabled;
+    bool ignore_raise_failure;
+    cflow_statechart_instance *instance;
+    bool cancel_after_first_raise;
+    size_t calls;
+    size_t raised;
+} contextual_guard_raise_probe;
+
 typedef struct selection_error_reader_probe {
     const cflow_statechart_instance *instance;
     atomic_bool started;
@@ -303,6 +315,36 @@ static bool contextual_selection_guard(
                             probe->pseudo_state) &&
         !context->is_active(context->configuration_user, 999999u);
     ++probe->calls;
+    *out_enabled = probe->enabled;
+    *out_error = NULL;
+    return true;
+}
+
+static bool contextual_guard_raise_internal(
+    void *user, const cflow_statechart_guard_context *context,
+    bool *out_enabled, const char **out_error) {
+    contextual_guard_raise_probe *probe =
+        (contextual_guard_raise_probe *)user;
+    size_t index;
+    if (probe == NULL || context == NULL || out_enabled == NULL ||
+        out_error == NULL) {
+        return false;
+    }
+    ++probe->calls;
+    for (index = 0u; index < probe->raise_count; ++index) {
+        const int payload = probe->first_payload + (int)index;
+        const cflow_event_view event = {
+            probe->event_id, &cmeta_type_int, &payload};
+        if (!cflow_statechart_guard_context_raise_internal(
+                context, &event, UINT64_C(0), out_error)) {
+            if (!probe->ignore_raise_failure) return false;
+            break;
+        }
+        ++probe->raised;
+        if (index == 0u && probe->cancel_after_first_raise &&
+            probe->instance != NULL)
+            cflow_statechart_instance_cancel(probe->instance);
+    }
     *out_enabled = probe->enabled;
     *out_error = NULL;
     return true;
@@ -2244,6 +2286,145 @@ suite("CFlow Statechart instance initial configuration") {
 }
 
 suite("CFlow Statechart deterministic transition selection") {
+    it("commits disabled guard raises in evaluation order") {
+        runtime_fixture fixture;
+        contextual_guard_raise_probe first = {
+            .event_id = 101u, .first_payload = 11, .raise_count = 1u};
+        contextual_guard_raise_probe second = {
+            .event_id = 101u, .first_payload = 22, .raise_count = 1u};
+        const cflow_statechart_guard_binding bindings[] = {
+            {.id = 300u,
+             .user = &first,
+             .contextual_fn = contextual_guard_raise_internal},
+            {.id = 301u,
+             .user = &second,
+             .contextual_fn = contextual_guard_raise_internal}};
+        cflow_statechart_selection_snapshot selected = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const cmeta_type_desc *event_type = NULL;
+        cflow_event_id event_id = 0u;
+        int payload = 0;
+        size_t index;
+        const int expected[] = {11, 22};
+        selection_fixture(&fixture);
+        fixture.events[1] = (cflow_event_type){101u, &cmeta_type_int};
+        fixture.definition.event_count = 2u;
+        fixture.guards[0] = (cflow_statechart_guard){
+            300u, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        fixture.guards[1] = (cflow_statechart_guard){
+            301u, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 2u;
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                             300u, 0u, 0u);
+        add_event_transition(&fixture, 201u, SELECTION_LEFT_LEAF,
+                             301u, 0u, 1u);
+        check_equal(selection_fixture_init(&fixture, bindings, 2u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_equal(selected.transition_count, (size_t)0u);
+        check_equal(first.calls, (size_t)1u);
+        check_equal(second.calls, (size_t)1u);
+        check_equal(first.raised, (size_t)1u);
+        check_equal(second.raised, (size_t)1u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.internal_pending, (size_t)2u);
+        for (index = 0u; index < 2u; ++index) {
+            check_equal(cflow_statechart_instance_copy_internal_event_internal(
+                            &fixture.instance, index, &event_id, &event_type,
+                            &payload, sizeof(payload)),
+                        CFLOW_STATECHART_INSTANCE_OK);
+            check_equal(event_id, (cflow_event_id)101u);
+            check_true(event_type == &cmeta_type_int);
+            check_equal(payload, expected[index]);
+        }
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("rolls back guard raises when the selection journal fills") {
+        runtime_fixture fixture;
+        contextual_guard_raise_probe probe = {
+            .event_id = 101u,
+            .first_payload = 30,
+            .raise_count = 5u,
+            .ignore_raise_failure = true};
+        const cflow_statechart_guard_binding binding = {
+            .id = 300u,
+            .user = &probe,
+            .contextual_fn = contextual_guard_raise_internal};
+        cflow_statechart_selection_snapshot selected = {0};
+        cflow_statechart_instance_stats stats = {0};
+        selection_fixture(&fixture);
+        fixture.events[1] = (cflow_event_type){101u, &cmeta_type_int};
+        fixture.definition.event_count = 2u;
+        fixture.guards[0] = (cflow_statechart_guard){
+            300u, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                             300u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, &binding, 1u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_INSTANCE_GUARD_FAILED);
+        check_equal(selected.transition_count, (size_t)0u);
+        check_equal(probe.calls, (size_t)1u);
+        check_equal(probe.raised, (size_t)4u);
+        check_equal(cflow_statechart_instance_error(&fixture.instance),
+                    "Statechart internal event queue is full");
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.internal_pending, (size_t)0u);
+        runtime_fixture_destroy(&fixture);
+    }
+
+    it("discards a guard raise when its callback cancels selection") {
+        runtime_fixture fixture;
+        contextual_guard_raise_probe probe = {
+            .event_id = 101u,
+            .first_payload = 40,
+            .raise_count = 1u,
+            .enabled = true,
+            .cancel_after_first_raise = true};
+        const cflow_statechart_guard_binding binding = {
+            .id = 300u,
+            .user = &probe,
+            .contextual_fn = contextual_guard_raise_internal};
+        cflow_statechart_selection_snapshot selected = {0};
+        cflow_statechart_instance_stats stats = {0};
+        selection_fixture(&fixture);
+        fixture.events[1] = (cflow_event_type){101u, &cmeta_type_int};
+        fixture.definition.event_count = 2u;
+        fixture.guards[0] = (cflow_statechart_guard){
+            300u, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        add_event_transition(&fixture, 200u, SELECTION_LEFT_LEAF,
+                             300u, 0u, 0u);
+        check_equal(selection_fixture_init(&fixture, &binding, 1u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        probe.instance = &fixture.instance;
+
+        check_equal(select_event(&fixture, &selected),
+                    CFLOW_STATECHART_INSTANCE_TASK_CANCELLED);
+        check_equal(selected.transition_count, (size_t)0u);
+        check_equal(probe.calls, (size_t)1u);
+        check_equal(probe.raised, (size_t)1u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.internal_pending, (size_t)0u);
+        check_true(stats.cancelled);
+        runtime_fixture_destroy(&fixture);
+    }
+
     it("queries the published configuration from an Event contextual guard") {
         runtime_fixture fixture;
         contextual_selection_guard_probe probe = {

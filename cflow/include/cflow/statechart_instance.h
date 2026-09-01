@@ -83,6 +83,21 @@ typedef struct cflow_statechart_guard_context {
 } cflow_statechart_guard_context;
 
 /**
+ * Copy one Event into the current transition-selection transaction.
+ *
+ * The Event is committed after successful selection even when every guard is
+ * disabled and no transition is selected. Selection-raised Events preserve
+ * guard evaluation order and precede Events raised by the selected
+ * microstep's exit, transition, and entry actions. A failed copy makes the
+ * enclosing guard fail even if its callback ignores the returned false.
+ * `context`, `event`, its payload, and `out_error` are call-scoped borrows.
+ */
+bool cflow_statechart_guard_context_raise_internal(
+    const cflow_statechart_guard_context *context,
+    const cflow_event_view *event, uint64_t origin_token,
+    const char **out_error);
+
+/**
  * Evaluate one guard with a call-scoped active-configuration query.
  * State, Event, enabled, error, and no-retention rules are identical to
  * `cflow_statechart_guard_fn`. The context and every borrowed member are
