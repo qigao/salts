@@ -502,6 +502,14 @@ cflow_timer_event_fire_result cflow_statechart_instance_run_one_ready_timer(
  */
 void cflow_statechart_instance_close(cflow_statechart_instance *instance);
 /**
+ * Stop admission and asynchronously execute every active state's exit actions
+ * on the owning SerialExecutor before reaching the cancelled terminal state.
+ * A microstep that has already reached commit remains visible. Repeated calls
+ * and calls after a terminal winner are no-ops.
+ */
+void cflow_statechart_instance_request_exit(
+    cflow_statechart_instance *instance);
+/**
  * Stop admission, cancel all pending timers, and discard a microstep if
  * cancellation wins before commit. Any already claimed timer handoff settles
  * before return. No-op after any terminal outcome already won.
