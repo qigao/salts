@@ -1,5 +1,6 @@
 #include <cnet/cnet.h>
 
+#include "cnet_client_internal.h"
 #include "cnet_dispatcher.h"
 #include "cnet_module.h"
 #include "cnet_shards.h"
@@ -24,6 +25,8 @@ typedef struct cnet_client_record {
   cnet_observer observer;
   cnet_uri_scheme scheme;
   bool active;
+  bool write_pending;
+  bool closing_pending;
 } cnet_client_record;
 
 struct cnet_client_impl {
@@ -151,6 +154,16 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
       record->observer.on_receive(record->observer.user, record->public_handle, &public_view);
       ++impl->poll_callback_count;
     }
+  } else if (view->kind == CNET_EVENT_SEND) {
+    turbo_mutex_lock(&impl->lock);
+    if (record->active && record->internal.session.slot == view->session.slot &&
+        record->internal.session.generation == view->session.generation)
+      record->write_pending = false;
+    turbo_mutex_unlock(&impl->lock);
+    if (record->observer.on_send != NULL) {
+      record->observer.on_send(record->observer.user, record->public_handle, view->argument);
+      ++impl->poll_callback_count;
+    }
   } else if (view->kind == CNET_EVENT_STATE && record->observer.on_state != NULL) {
     cnet_error error;
     const cnet_error *error_view = NULL;
@@ -171,6 +184,8 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
     if (record->active && record->internal.session.slot == view->session.slot &&
         record->internal.session.generation == view->session.generation) {
       record->active = false;
+      record->write_pending = false;
+      record->closing_pending = false;
       record->observer = (cnet_observer){0};
       if (impl->active_count == 0u) cnet_client_record_error(impl, TURBO_EPROTO);
       else --impl->active_count;
@@ -272,14 +287,58 @@ static cnet_client_record *cnet_client_find_record(cnet_client_impl *impl,
   return record;
 }
 
+static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_payload *payload,
+                             cnet_uri_scheme scheme, const cnet_observer *observer,
+                             cnet_connection *out_connection, bool *out_transferred) {
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+  size_t index;
+  int status;
+
+  if (out_transferred != NULL) *out_transferred = false;
+  turbo_mutex_lock(&impl->lock);
+  if (!impl->admission_open) {
+    turbo_mutex_unlock(&impl->lock);
+    return TURBO_ESHUTDOWN;
+  }
+  if (impl->active_count >= impl->connection_capacity) {
+    turbo_mutex_unlock(&impl->lock);
+    return TURBO_ENOBUFS;
+  }
+  status = cnet_shards_connect(&impl->shards, payload, &internal);
+  if (status != TURBO_OK) {
+    turbo_mutex_unlock(&impl->lock);
+    return status;
+  }
+  if (out_transferred != NULL) *out_transferred = true;
+  index = (size_t)internal.shard * impl->capacity_per_shard + (size_t)internal.session.slot - 1u;
+  record = &impl->records[index];
+  record->internal = internal;
+  record->public_handle = (cnet_connection){(uint32_t)(index + 1u), internal.session.generation};
+  record->observer = *observer;
+  record->scheme = scheme;
+  record->active = true;
+  record->write_pending = false;
+  record->closing_pending = false;
+  ++impl->active_count;
+  status = cnet_dispatcher_register(&impl->dispatcher, internal, cnet_client_observe, record);
+  if (status == TURBO_OK) {
+    *out_connection = record->public_handle;
+  } else {
+    record->active = false;
+    record->observer = (cnet_observer){0};
+    --impl->active_count;
+    (void)cnet_shards_close(&impl->shards, internal);
+  }
+  turbo_mutex_unlock(&impl->lock);
+  return status;
+}
+
 int cnet_connect(cnet_client *client, const cnet_connect_options *options,
                  cnet_connection *out_connection) {
   cnet_client_impl *impl = cnet_client_get(client);
   cnet_owner_connect_payload payload = {0};
-  cnet_shard_connection internal = {0};
   cnet_uri uri = {0};
-  cnet_client_record *record;
-  size_t index;
   int status;
 
   if (out_connection == NULL) return TURBO_EINVAL;
@@ -304,38 +363,33 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
     }
   }
 
-  turbo_mutex_lock(&impl->lock);
-  if (!impl->admission_open) {
-    turbo_mutex_unlock(&impl->lock);
-    return TURBO_ESHUTDOWN;
+  return cnet_client_admit(impl, &payload, uri.scheme, &options->observer, out_connection, NULL);
+}
+
+int cnet_client_adopt_tcp(cnet_client *client, uintptr_t native_socket,
+                          const cnet_observer *observer, cnet_connection *out_connection) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_owner_connect_payload payload = {0};
+  bool transferred = false;
+  int status;
+
+  if (out_connection == NULL) {
+    cnet_transport_close_socket(native_socket);
+    return TURBO_EINVAL;
   }
-  if (impl->active_count >= impl->connection_capacity) {
-    turbo_mutex_unlock(&impl->lock);
-    return TURBO_ENOBUFS;
+  *out_connection = (cnet_connection){0};
+  if (impl == NULL || observer == NULL || observer->on_state == NULL ||
+      native_socket == UINTPTR_MAX) {
+    cnet_transport_close_socket(native_socket);
+    return TURBO_EINVAL;
   }
-  status = cnet_shards_connect(&impl->shards, &payload, &internal);
-  if (status != TURBO_OK) {
-    turbo_mutex_unlock(&impl->lock);
-    return status;
-  }
-  index = (size_t)internal.shard * impl->capacity_per_shard + (size_t)internal.session.slot - 1u;
-  record = &impl->records[index];
-  record->internal = internal;
-  record->public_handle = (cnet_connection){(uint32_t)(index + 1u), internal.session.generation};
-  record->observer = options->observer;
-  record->scheme = uri.scheme;
-  record->active = true;
-  ++impl->active_count;
-  status = cnet_dispatcher_register(&impl->dispatcher, internal, cnet_client_observe, record);
-  if (status == TURBO_OK) {
-    *out_connection = record->public_handle;
-  } else {
-    record->active = false;
-    record->observer = (cnet_observer){0};
-    --impl->active_count;
-    (void)cnet_shards_close(&impl->shards, internal);
-  }
-  turbo_mutex_unlock(&impl->lock);
+  payload.scheme = CNET_URI_TCP;
+  payload.adopted_socket = native_socket;
+  payload.read_timeout_ms = impl->read_timeout_ms;
+  payload.write_timeout_ms = impl->write_timeout_ms;
+  payload.adopted = true;
+  status = cnet_client_admit(impl, &payload, CNET_URI_TCP, observer, out_connection, &transferred);
+  if (!transferred) cnet_transport_close_socket(native_socket);
   return status;
 }
 
@@ -358,18 +412,51 @@ static int cnet_client_operation(cnet_client_impl *impl, cnet_connection connect
     turbo_mutex_unlock(&impl->lock);
     return TURBO_EINVAL;
   }
+  if (require_receive_observer && record->closing_pending) {
+    turbo_mutex_unlock(&impl->lock);
+    return TURBO_EBUSY;
+  }
   turbo_mutex_unlock(&impl->lock);
   return TURBO_OK;
 }
 
+static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connection,
+                                  const void *data, size_t size, bool close_after_send) {
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+  int status;
+  turbo_mutex_lock(&impl->lock);
+  if (!impl->admission_open) status = TURBO_ESHUTDOWN;
+  else {
+    record = cnet_client_find_record(impl, connection, &internal);
+    if (record == NULL) status = TURBO_ENOENT;
+    else if (record->write_pending || record->closing_pending) status = TURBO_EBUSY;
+    else {
+      status = close_after_send ? cnet_shards_send_and_close(&impl->shards, internal, data, size)
+                                : cnet_shards_send(&impl->shards, internal, data, size);
+      if (status == TURBO_OK) {
+        record->write_pending = true;
+        record->closing_pending = close_after_send;
+      }
+    }
+  }
+  turbo_mutex_unlock(&impl->lock);
+  return status;
+}
+
 int cnet_send(cnet_client *client, cnet_connection connection, const void *data, size_t size) {
   cnet_client_impl *impl = cnet_client_get(client);
-  cnet_shard_connection internal = {0};
-  int status;
   if (impl == NULL || data == NULL || size == 0u) return TURBO_EINVAL;
   if (size > impl->max_send_bytes) return TURBO_EMSGSIZE;
-  status = cnet_client_operation(impl, connection, &internal, false);
-  return status == TURBO_OK ? cnet_shards_send(&impl->shards, internal, data, size) : status;
+  return cnet_client_send_admit(impl, connection, data, size, false);
+}
+
+int cnet_send_and_close(cnet_client *client, cnet_connection connection, const void *data,
+                        size_t size) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  if (impl == NULL || data == NULL || size == 0u) return TURBO_EINVAL;
+  if (size > impl->max_send_bytes) return TURBO_EMSGSIZE;
+  return cnet_client_send_admit(impl, connection, data, size, true);
 }
 
 int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand) {
@@ -384,8 +471,22 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
 int cnet_close(cnet_client *client, cnet_connection connection) {
   cnet_client_impl *impl = cnet_client_get(client);
   cnet_shard_connection internal = {0};
-  int status = cnet_client_operation(impl, connection, &internal, false);
-  return status == TURBO_OK ? cnet_shards_close(&impl->shards, internal) : status;
+  cnet_client_record *record;
+  int status;
+  if (impl == NULL) return TURBO_EINVAL;
+  turbo_mutex_lock(&impl->lock);
+  if (!impl->admission_open) status = TURBO_ESHUTDOWN;
+  else {
+    record = cnet_client_find_record(impl, connection, &internal);
+    if (record == NULL) status = TURBO_ENOENT;
+    else if (record->closing_pending) status = TURBO_EALREADY;
+    else {
+      status = cnet_shards_close(&impl->shards, internal);
+      if (status == TURBO_OK) record->closing_pending = true;
+    }
+  }
+  turbo_mutex_unlock(&impl->lock);
+  return status;
 }
 
 int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_events) {
@@ -430,6 +531,8 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
 int cnet_client_stop(cnet_client *client, uint32_t timeout_ms) {
   cnet_client_impl *impl = cnet_client_get(client);
   const uint64_t started_ms = turbo_monotonic_ms();
+  bool fully_stopped;
+  int first_status = TURBO_OK;
   int status;
   if (impl == NULL) return TURBO_EINVAL;
   if (cnet_active_callback_client == impl) return TURBO_EBUSY;
@@ -449,17 +552,21 @@ int cnet_client_stop(cnet_client *client, uint32_t timeout_ms) {
   status =
       cnet_dispatcher_drain(&impl->dispatcher, cnet_client_remaining_ms(started_ms, timeout_ms));
   if (status == TURBO_EALREADY) status = TURBO_OK;
-  if (status == TURBO_OK)
-    status = atomic_load_explicit(&impl->callback_error, memory_order_acquire);
-  if (status == TURBO_OK)
+  if (status != TURBO_OK) first_status = status;
+  status = atomic_load_explicit(&impl->callback_error, memory_order_acquire);
+  if (first_status == TURBO_OK && status != TURBO_OK) first_status = status;
+  if (cnet_dispatcher_drained(&impl->dispatcher)) {
     status = cnet_shards_stop(&impl->shards, cnet_client_remaining_ms(started_ms, timeout_ms));
-  if (status == TURBO_EALREADY) status = TURBO_OK;
+    if (status == TURBO_EALREADY) status = TURBO_OK;
+    if (first_status == TURBO_OK && status != TURBO_OK) first_status = status;
+  }
 
+  fully_stopped = cnet_dispatcher_drained(&impl->dispatcher) && cnet_shards_stopped(&impl->shards);
   turbo_mutex_lock(&impl->lock);
   impl->stop_active = false;
-  if (status == TURBO_OK) impl->stopped = true;
+  if (fully_stopped) impl->stopped = true;
   turbo_mutex_unlock(&impl->lock);
-  return status;
+  return first_status;
 }
 
 int cnet_client_destroy(cnet_client *client) {

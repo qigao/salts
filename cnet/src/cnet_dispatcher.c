@@ -124,8 +124,8 @@ static int cnet_dispatcher_release_lease(void *context, const cnet_dispatch_view
   if (entry == NULL || view == NULL || token == 0u) return TURBO_EINVAL;
   impl = entry->dispatcher;
   if (impl == NULL) return TURBO_EINVAL;
-  event = (cnet_event_view){view->kind,  view->session, view->state, view->status,
-                            view->stage, view->data,    view->size,  token};
+  event = (cnet_event_view){view->kind, view->session, view->state,    view->status, view->stage,
+                            view->data, view->size,    view->argument, token};
   terminal_event = view->kind == CNET_EVENT_STATE && cnet_dispatcher_terminal_state(view->state);
   status = cnet_shards_release_event(impl->shards, entry->connection.shard, &event);
   if (status != TURBO_OK || !terminal_event) {
@@ -159,7 +159,7 @@ static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
   *out_job = (cnet_dispatch_job){.invoke = entry->observer,
                                  .context = entry->observer_context,
                                  .event = {event->kind, event->session, event->state, event->status,
-                                           event->stage, event->data, event->size},
+                                           event->stage, event->data, event->size, event->argument},
                                  .release = release,
                                  .release_context = entry,
                                  .release_token = release_token};
@@ -170,7 +170,7 @@ static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
 static int cnet_dispatcher_invoke(const cnet_dispatch_job *job) {
   const cnet_dispatch_view view = {job->event.kind,   job->event.session, job->event.state,
                                    job->event.status, job->event.stage,   job->event.data,
-                                   job->event.size};
+                                   job->event.size,   job->event.argument};
   int status = TURBO_OK;
 
   job->invoke(job->context, &view);
@@ -291,7 +291,7 @@ int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard) {
   if (status == TURBO_OK) {
     const cnet_event event = {lane->event.kind,   lane->event.session, lane->event.state,
                               lane->event.status, lane->event.stage,   lane->event.data,
-                              lane->event.size};
+                              lane->event.size,   lane->event.argument};
     status = cnet_dispatcher_prepare(impl, shard, &event, cnet_dispatcher_release_lease,
                                      lane->event._sequence, &job);
   }
@@ -387,6 +387,7 @@ static int cnet_dispatcher_request_closes(cnet_dispatcher_impl *impl) {
 int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
   const uint64_t started_ms = turbo_monotonic_ms();
+  int first_status;
   if (impl == NULL) return TURBO_EINVAL;
   turbo_mutex_lock(&impl->lock);
   if (impl->drained) {
@@ -395,23 +396,38 @@ int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms) {
   }
   impl->admission_open = false;
   turbo_mutex_unlock(&impl->lock);
+  first_status = atomic_load_explicit(&impl->first_error, memory_order_acquire);
 
   for (;;) {
     int status = cnet_dispatcher_request_closes(impl);
     if (status != TURBO_OK) return status;
     status = cnet_shards_poll(impl->shards, 1u);
-    if (status != TURBO_OK && status != TURBO_ETIMEDOUT) return status;
+    if (status != TURBO_OK && status != TURBO_ETIMEDOUT && first_status == TURBO_OK)
+      first_status = status;
     status = cnet_dispatcher_drive_all(impl);
-    if (status != TURBO_OK && status != TURBO_ETIMEDOUT) return status;
+    if (status != TURBO_OK && status != TURBO_ETIMEDOUT && status != TURBO_ENOBUFS &&
+        status != TURBO_EBUSY && first_status == TURBO_OK)
+      first_status = status;
     status = atomic_load_explicit(&impl->first_error, memory_order_acquire);
-    if (status != TURBO_OK) return status;
+    if (status != TURBO_OK && first_status == TURBO_OK) first_status = status;
     if (cnet_dispatcher_is_idle(impl)) break;
     if (turbo_monotonic_ms() - started_ms >= timeout_ms) return TURBO_ETIMEDOUT;
   }
   turbo_mutex_lock(&impl->lock);
   impl->drained = true;
   turbo_mutex_unlock(&impl->lock);
-  return TURBO_OK;
+  return first_status;
+}
+
+bool cnet_dispatcher_drained(const cnet_dispatcher *dispatcher) {
+  const cnet_dispatcher_impl *impl =
+      dispatcher != NULL ? (const cnet_dispatcher_impl *)dispatcher->impl : NULL;
+  bool drained;
+  if (impl == NULL) return false;
+  turbo_mutex_lock((turbo_mutex_t *)&impl->lock);
+  drained = impl->drained;
+  turbo_mutex_unlock((turbo_mutex_t *)&impl->lock);
+  return drained;
 }
 
 int cnet_dispatcher_destroy(cnet_dispatcher *dispatcher) {

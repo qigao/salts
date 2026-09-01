@@ -15,6 +15,8 @@ Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 
 - `cnet_connect` with `tcp://host:port`, `udp://host:port`, or `pipe://name`;
 - `cnet_send` to transfer one bounded payload copy into CNet;
+- `observer.on_send` to observe completion before admitting the next ordered
+  write on that connection;
 - `cnet_receive` to add explicit receive demand;
 - `cnet_close` for one connection;
 - `cnet_client_poll` to advance I/O and invoke callbacks on the caller;
@@ -55,6 +57,9 @@ The URI, observer, and send bytes are copied before their admitting call returns
 success. A callback may call `cnet_send`, `cnet_receive`, or `cnet_close` for its
 client. Calling `cnet_client_poll`, `cnet_client_stop`, or
 `cnet_client_destroy` recursively from that callback returns `TURBO_EBUSY`.
+Each connection admits one write at a time; another send returns `TURBO_EBUSY`
+until its send event is observed. `cnet_send_and_close()` reserves the final
+write and immediately closes further send/receive admission.
 
 Hostname resolution uses c-ares' external-event-loop integration. The same
 poll owner checks its bounded DNS socket set without blocking and advances
@@ -69,6 +74,11 @@ progress. Numeric TCP/UDP addresses and Pipe endpoints do not enter this path.
 caller-owned loop until connections, NativeIO requests, coroutines, and
 terminal callbacks settle. `TURBO_ETIMEDOUT` is retryable and preserves the
 client. Destroying a client before successful stop returns `TURBO_EBUSY`.
+If progress has already recorded a fatal error, stop keeps that first error as
+its return value while still driving close/recycle to quiescence. The caller
+must still attempt `cnet_client_destroy`; it succeeds when cleanup completed,
+even though stop reported the terminal diagnostic. Listener bind and accept
+failures use portable Turbo status codes such as `TURBO_EADDRINUSE`.
 
 Immediate connect validation failure clears the output handle and emits no
 callback. Asynchronous failures emit exactly one `CNET_CONNECTION_FAILED` with

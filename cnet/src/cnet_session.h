@@ -62,8 +62,7 @@ int cnet_session_table_destroy(cnet_session_table *table);
  */
 int cnet_session_table_reserve(cnet_session_table *table, cnet_session_handle *out_handle);
 /** Rolls back RESERVED admission without emitting a terminal notification. */
-int cnet_session_table_release_reservation(cnet_session_table *table,
-                                           cnet_session_handle handle);
+int cnet_session_table_release_reservation(cnet_session_table *table, cnet_session_handle handle);
 int cnet_session_table_state(const cnet_session_table *table, cnet_session_handle handle,
                              cnet_session_state *out_state);
 int cnet_session_table_transition(cnet_session_table *table, cnet_session_handle handle,

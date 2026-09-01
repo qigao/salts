@@ -6,7 +6,12 @@ add_library(${TARGET_NAME} STATIC
   src/chttp_client.c
   src/chttp_requests.c
   src/chttp_request.c
-  src/chttp_response.c)
+  src/chttp_response.c
+  src/chttp_server.c
+  src/chttp_server_parser.c
+  src/chttp_server_response.c
+  src/chttp_server_route.c
+  src/chttp_session.c)
 cmake_config_target(${TARGET_NAME}
   ALIAS TurboUtils::CHTTP
   FOLDER "chttp"
@@ -20,7 +25,7 @@ target_include_directories(
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC TurboUtils::CNet
-  PRIVATE llhttp::llhttp_static)
+  PRIVATE llhttp::llhttp_static TurboUtils::Platform)
 
 install(TARGETS ${TARGET_NAME} EXPORT TurboUtilsTargets)
 install(

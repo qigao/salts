@@ -52,6 +52,8 @@ int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *p
                         cnet_shard_connection *out_connection);
 int cnet_shards_send(cnet_shards *shards, cnet_shard_connection connection, const void *data,
                      size_t size);
+int cnet_shards_send_and_close(cnet_shards *shards, cnet_shard_connection connection,
+                               const void *data, size_t size);
 int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, size_t demand);
 int cnet_shards_close(cnet_shards *shards, cnet_shard_connection connection);
 
@@ -69,6 +71,7 @@ int cnet_shards_recycle(cnet_shards *shards, cnet_shard_connection connection,
  * closes and drives them first.
  */
 int cnet_shards_stop(cnet_shards *shards, uint32_t timeout_ms);
+bool cnet_shards_stopped(const cnet_shards *shards);
 int cnet_shards_destroy(cnet_shards *shards);
 
 #endif /* CNET_SHARDS_H */

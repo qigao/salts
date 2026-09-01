@@ -6,8 +6,10 @@ int main() {
   crpc_client client{};
   crpc_async_client async_client{};
   crpc_request request{};
+  chttp_server server{};
+  chttp_session session{};
   return client.impl == nullptr && async_client.impl == nullptr && request.slot == 0u &&
-                 request.generation == 0u
+                 request.generation == 0u && server.impl == nullptr && session.impl == nullptr
              ? 0
              : 1;
 }

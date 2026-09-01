@@ -21,6 +21,21 @@ typedef struct chttp_async_client {
   void *impl;
 } chttp_async_client;
 
+/** Background HTTP/1.1 server owner; ordinary callers never drive a poller. */
+typedef struct chttp_server {
+  void *impl;
+} chttp_server;
+
+/** Handler-scoped server-side session. */
+typedef struct chttp_session {
+  void *impl;
+} chttp_session;
+
+/** Handler-scoped continuation for one middleware invocation. */
+typedef struct chttp_server_next {
+  void *impl;
+} chttp_server_next;
+
 /** Generation-checked request handle; never a pointer or CNet handle. */
 typedef struct chttp_request {
   uint32_t slot;
@@ -42,6 +57,106 @@ typedef struct chttp_header {
   const char *name;
   const char *value;
 } chttp_header;
+
+typedef struct chttp_server_param {
+  const char *name;
+  const char *value;
+} chttp_server_param;
+
+/**
+ * Borrowed request view. Every pointer becomes invalid when the route handler
+ * returns; handlers must copy data that outlives the callback.
+ */
+typedef struct chttp_server_request_view {
+  unsigned int http_major;
+  unsigned int http_minor;
+  chttp_method method;
+  const char *target;
+  const char *path;
+  const chttp_header *headers;
+  size_t header_count;
+  const chttp_server_param *params;
+  size_t param_count;
+  const void *body;
+  size_t body_size;
+  int protocol_keep_alive;
+  chttp_session *session;
+} chttp_server_request_view;
+
+/** Handler-scoped response builder. Response data is copied before the handler returns. */
+typedef struct chttp_server_response {
+  void *impl;
+} chttp_server_response;
+
+typedef int (*chttp_server_handler_fn)(void *user, const chttp_server_request_view *request,
+                                       chttp_server_response *response);
+
+typedef int (*chttp_server_middleware_fn)(void *user, const chttp_server_request_view *request,
+                                          chttp_server_response *response, chttp_server_next *next);
+
+typedef struct chttp_server_middleware {
+  chttp_server_middleware_fn handler;
+  void *user;
+} chttp_server_middleware;
+
+typedef struct chttp_server_route_options {
+  chttp_method method;
+  const char *path;
+  const chttp_server_middleware *middleware;
+  size_t middleware_count;
+  chttp_server_handler_fn handler;
+  void *user;
+} chttp_server_route_options;
+
+/**
+ * Every capacity is a hard bound. `network.connection_capacity` bounds active
+ * accepted connections. Routes are origin-form paths, may contain named
+ * `:segment` parameters, and exclude the query string. The server invokes
+ * handlers serially on its owner thread, so a handler must not block or call
+ * stop/destroy. Session capacity zero disables Sessions; otherwise the Cookie
+ * contains only a CSPRNG id and values stay in the bounded in-memory store.
+ */
+typedef struct chttp_server_config {
+  const char *host;
+  uint16_t port;
+  size_t backlog;
+  cnet_client_config network;
+  size_t route_capacity;
+  size_t middleware_capacity;
+  size_t max_route_middleware_count;
+  size_t max_route_param_count;
+  size_t max_route_param_bytes;
+  size_t max_target_bytes;
+  size_t max_header_count;
+  size_t max_header_bytes;
+  size_t max_request_body_bytes;
+  size_t max_response_header_count;
+  size_t max_response_header_bytes;
+  size_t max_response_body_bytes;
+  size_t session_capacity;
+  size_t session_entry_capacity;
+  size_t max_session_key_bytes;
+  size_t max_session_value_bytes;
+  uint32_t session_idle_timeout_ms;
+  const char *session_cookie_name;
+  int session_cookie_secure;
+  uint32_t poll_slice_ms;
+} chttp_server_config;
+
+/** Thread-safe snapshot of server lifecycle and bounded admission counters. */
+typedef struct chttp_server_stats {
+  uint16_t port;
+  size_t active_connections;
+  uint64_t accepted_connections;
+  uint64_t rejected_connections;
+  uint64_t requests;
+  uint64_t responses;
+  uint64_t protocol_errors;
+  uint64_t handler_errors;
+  int running;
+  int stopping;
+  int terminal_status;
+} chttp_server_stats;
 
 /** Borrowed response view valid only for the duration of an advanced completion callback. */
 typedef struct chttp_response_view {
@@ -226,6 +341,94 @@ void chttp_response_destroy(chttp_response *response);
  * preserves the client; successful destroy clears `client->impl`.
  */
 int chttp_client_destroy(chttp_client *client, uint32_t timeout_ms);
+
+/**
+ * Initializes a stopped server and copies configuration and bounded storage.
+ * @return `TURBO_OK`, an invalid/range/aggregate-size error, or `TURBO_ENOMEM`.
+ */
+int chttp_server_init(chttp_server *server, const chttp_server_config *config);
+
+/**
+ * Adds one method/path-pattern route before start. Complete `:name` segments
+ * bind raw, non-percent-decoded params. The user pointer is borrowed through
+ * stop. Returns `TURBO_ENOBUFS` at route/param capacity, `TURBO_EALREADY` for a
+ * duplicate method/pattern, or `TURBO_EBUSY` after start.
+ */
+int chttp_server_route(chttp_server *server, chttp_method method, const char *path,
+                       chttp_server_handler_fn handler, void *user);
+int chttp_server_route_with(chttp_server *server, const chttp_server_route_options *options);
+int chttp_server_get(chttp_server *server, const char *path, chttp_server_handler_fn handler,
+                     void *user);
+int chttp_server_head(chttp_server *server, const char *path, chttp_server_handler_fn handler,
+                      void *user);
+int chttp_server_post(chttp_server *server, const char *path, chttp_server_handler_fn handler,
+                      void *user);
+int chttp_server_put(chttp_server *server, const char *path, chttp_server_handler_fn handler,
+                     void *user);
+int chttp_server_delete(chttp_server *server, const char *path, chttp_server_handler_fn handler,
+                        void *user);
+int chttp_server_patch(chttp_server *server, const char *path, chttp_server_handler_fn handler,
+                       void *user);
+int chttp_server_options(chttp_server *server, const char *path, chttp_server_handler_fn handler,
+                         void *user);
+
+/**
+ * Appends one global middleware before start. Bindings are copied in
+ * registration order. Returns `TURBO_ENOBUFS` at middleware capacity.
+ */
+int chttp_server_use(chttp_server *server, chttp_server_middleware_fn middleware, void *user);
+
+/** Runs the next middleware or terminal dispatch; a second call returns `TURBO_EALREADY`. */
+int chttp_server_next_call(chttp_server_next *next);
+
+/**
+ * Starts the listener and background CNet owner thread. Port zero selects an
+ * ephemeral port. Bind/backend/thread failures are returned before success.
+ */
+int chttp_server_start(chttp_server *server);
+
+/** Returns the bound port after a successful start. */
+int chttp_server_port(const chttp_server *server, uint16_t *out_port);
+
+/** Stops admission and joins the owner thread. Timeout zero waits without a deadline. */
+int chttp_server_stop(chttp_server *server, uint32_t timeout_ms);
+
+/** Releases a stopped server; a zero server is already destroyed. */
+int chttp_server_destroy(chttp_server *server);
+
+/** Returns the first case-insensitive request header, or NULL. */
+const char *chttp_server_request_header(const chttp_server_request_view *request, const char *name);
+
+/** Returns one `:name` route parameter, or NULL. */
+const char *chttp_server_request_param(const chttp_server_request_view *request, const char *name);
+
+/**
+ * Adds or replaces one copied response header within configured count/byte
+ * bounds. Framing headers are framework-owned and return `TURBO_EPERM`.
+ */
+int chttp_server_response_set_header(chttp_server_response *response, const char *name,
+                                     const char *value);
+
+/**
+ * Completes the response with a copied content type and body. A second reply
+ * returns `TURBO_EALREADY`; an oversized body returns `TURBO_EMSGSIZE`.
+ */
+int chttp_server_reply(chttp_server_response *response, unsigned int status_code,
+                       const char *content_type, const void *body, size_t body_size);
+
+/**
+ * Session values are NUL-terminated strings borrowed through the handler and
+ * copied into the bounded store by set. A first set lazily allocates a Session;
+ * a full live-session or entry capacity returns `TURBO_ENOBUFS`.
+ */
+const char *chttp_session_get(const chttp_session *session, const char *key);
+int chttp_session_set(chttp_session *session, const char *key, const char *value);
+int chttp_session_remove(chttp_session *session, const char *key);
+int chttp_session_clear(chttp_session *session);
+int chttp_session_invalidate(chttp_session *session);
+
+/** Obtains a thread-safe stats snapshot without advancing server state. */
+int chttp_server_get_stats(const chttp_server *server, chttp_server_stats *out_stats);
 
 #ifdef __cplusplus
 }

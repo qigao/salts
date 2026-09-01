@@ -15,6 +15,7 @@ typedef struct cnet_event_entry {
   int status;
   cnet_session_stage stage;
   size_t size;
+  size_t argument;
   unsigned char payload[];
 } cnet_event_entry;
 
@@ -55,6 +56,10 @@ static bool cnet_event_valid(const cnet_event *event) {
   if (event->kind == CNET_EVENT_RECEIVE)
     return event->state == CNET_EVENT_STATE_NONE && event->status == TURBO_OK &&
            event->stage == CNET_SESSION_STAGE_NONE && (event->data != NULL || event->size == 0u);
+  if (event->kind == CNET_EVENT_SEND)
+    return event->state == CNET_EVENT_STATE_NONE && event->status == TURBO_OK &&
+           event->stage == CNET_SESSION_STAGE_NONE && event->data == NULL && event->size == 0u &&
+           event->argument != 0u;
   if (event->kind != CNET_EVENT_STATE || event->data != NULL || event->size != 0u) return false;
   if (event->state < CNET_EVENT_STATE_CONNECTED || event->state > CNET_EVENT_STATE_FAILED)
     return false;
@@ -163,6 +168,7 @@ int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event) {
   entry->status = event->status;
   entry->stage = event->stage;
   entry->size = event->size;
+  entry->argument = event->argument;
   if (event->size != 0u) memcpy(entry->payload, event->data, event->size);
   atomic_fetch_add_explicit(&impl->live_events, 1u, memory_order_release);
   (void)disruptor_publisher_publish(impl->ring, &cursor);
@@ -182,6 +188,7 @@ static int cnet_event_queue_take_claimed(cnet_event_queue_impl *impl,
   out_view->stage = entry->stage;
   out_view->data = entry->size != 0u ? entry->payload : NULL;
   out_view->size = entry->size;
+  out_view->argument = entry->argument;
   out_view->_sequence = cursor->sequence;
   atomic_store_explicit(
       &impl->borrowed_sequences[(size_t)((cursor->sequence - 1u) & (impl->borrowed_capacity - 1u))],

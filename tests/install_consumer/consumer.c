@@ -1,7 +1,15 @@
 #if defined(CONSUME_PLATFORM)
   #include <turbo/clock.h>
+  #include <turbo/error_codes.h>
+  #include <turbo/random.h>
 
-int main(void) { return turbo_hrtime() == 0u; }
+int main(void) {
+  unsigned char random_byte = 0u;
+  return turbo_platform_secure_random(&random_byte, sizeof(random_byte)) == TURBO_OK &&
+                 turbo_hrtime() != 0u
+             ? 0
+             : 1;
+}
 
 #elif defined(CONSUME_CONCURRENCY)
   #include <turbo/thread_pool.h>
@@ -46,8 +54,12 @@ int main(void) {
 
 int main(void) {
   cnet_client client = {0};
+  cnet_listener listener = {0};
   cnet_connection connection = {0};
-  return client.impl == NULL && connection.slot == 0u && connection.generation == 0u ? 0 : 1;
+  return client.impl == NULL && listener.impl == NULL && connection.slot == 0u &&
+                 connection.generation == 0u
+             ? 0
+             : 1;
 }
 
 #elif defined(CONSUME_CHTTP)
@@ -55,9 +67,14 @@ int main(void) {
 
 int main(void) {
   chttp_client client = {0};
+  chttp_server server = {0};
+  chttp_session session = {0};
   chttp_response response = {0};
   chttp_response_destroy(&response);
-  return chttp_client_destroy(&client, 0u) == TURBO_OK ? 0 : 1;
+  return chttp_client_destroy(&client, 0u) == TURBO_OK &&
+                 chttp_server_destroy(&server) == TURBO_OK && session.impl == NULL
+             ? 0
+             : 1;
 }
 
 #elif defined(CONSUME_CRPC)

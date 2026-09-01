@@ -11,6 +11,7 @@
 
 #include "turbo_api.h"
 #include <turbo/clock.h>
+#include <turbo/random.h>
 
 #ifdef _WIN32
   #define TURBO_WIN32 1
@@ -20,9 +21,9 @@
   // uv.h includes windows.h, so we might not need to explicit include it,
   // but keeping it for other utils if needed.
   // Since we hid uv.h, we MUST include windows.h now for LONG, etc.
+  #include <windows.h>
   #include <winsock2.h>
   #include <ws2tcpip.h>
-  #include <windows.h>
 
   // Windows doesn't have ssize_t, define it if not already defined by uv
   #ifndef _SSIZE_T_DEFINED
@@ -110,8 +111,7 @@ TURBO_C_API time_t turbo_mktime(struct tm *tm_value);
  * @param buffer_size Size of destination buffer
  * @return Number of bytes written, or negative error code on failure
  */
-TURBO_C_API int turbo_strftime_utc(time_t t, const char *format, char *buffer,
-                                 size_t buffer_size);
+TURBO_C_API int turbo_strftime_utc(time_t t, const char *format, char *buffer, size_t buffer_size);
 
 /**
  * @brief Format local time with strftime semantics.
@@ -122,7 +122,7 @@ TURBO_C_API int turbo_strftime_utc(time_t t, const char *format, char *buffer,
  * @return Number of bytes written, or negative error code on failure
  */
 TURBO_C_API int turbo_strftime_local(time_t t, const char *format, char *buffer,
-                                   size_t buffer_size);
+                                     size_t buffer_size);
 
 /**
  * @brief Fill a buffer with bytes from the operating system CSPRNG.
@@ -235,7 +235,7 @@ TURBO_C_API int turbo_platform_load_average(turbo_platform_load_average_t *info)
  * @return 0 on success, negative error code on failure
  */
 TURBO_C_API int turbo_platform_network_interfaces(turbo_platform_network_interface_t *interfaces,
-                                                size_t max_interfaces, size_t *count);
+                                                  size_t max_interfaces, size_t *count);
 
 // =============================================================================
 // Timer utilities - cross-platform async timers (Native OS backend)
@@ -272,7 +272,7 @@ TURBO_C_API void turbo_timer_destroy(turbo_timer_t *timer);
  * @return 0 on success, error code on failure
  */
 TURBO_C_API int turbo_timer_start(turbo_timer_t *timer, turbo_timer_cb cb, uint64_t timeout,
-                                uint64_t repeat);
+                                  uint64_t repeat);
 
 /**
  * @brief Stop a timer

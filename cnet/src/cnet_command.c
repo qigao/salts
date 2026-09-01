@@ -84,7 +84,8 @@ static bool cnet_command_valid(const cnet_command *command) {
            command->size == 0u;
 
   if (!cnet_session_handle_valid(command->connection)) return false;
-  if (command->kind == CNET_COMMAND_CONNECT || command->kind == CNET_COMMAND_SEND)
+  if (command->kind == CNET_COMMAND_CONNECT || command->kind == CNET_COMMAND_SEND ||
+      command->kind == CNET_COMMAND_SEND_CLOSE)
     return command->data != NULL && command->size != 0u && command->argument == 0u;
   if (command->kind == CNET_COMMAND_RECEIVE)
     return command->data == NULL && command->size == 0u && command->argument != 0u;

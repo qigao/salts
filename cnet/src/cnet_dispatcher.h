@@ -19,6 +19,7 @@ typedef struct cnet_dispatch_view {
   cnet_session_stage stage;
   const void *data;
   size_t size;
+  size_t argument;
 } cnet_dispatch_view;
 
 typedef void (*cnet_dispatch_fn)(void *context, const cnet_dispatch_view *view);
@@ -30,8 +31,7 @@ int cnet_dispatcher_register(cnet_dispatcher *dispatcher, cnet_shard_connection 
                              cnet_dispatch_fn observer, void *observer_context);
 
 /** Invokes one callback synchronously on the publishing NativeIO owner. */
-int cnet_dispatcher_publish(cnet_dispatcher *dispatcher, uint32_t shard,
-                            const cnet_event *event);
+int cnet_dispatcher_publish(cnet_dispatcher *dispatcher, uint32_t shard, const cnet_event *event);
 
 /**
  * Single-consumer, nonblocking drive for one fallback event queue. The callback
@@ -50,6 +50,7 @@ int cnet_dispatcher_wait_idle(cnet_dispatcher *dispatcher, uint32_t timeout_ms);
  * Retry after TURBO_ETIMEDOUT; do not call from an inline callback.
  */
 int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms);
+bool cnet_dispatcher_drained(const cnet_dispatcher *dispatcher);
 
 /** Requires a completed drain and no retained event lease. */
 int cnet_dispatcher_destroy(cnet_dispatcher *dispatcher);
