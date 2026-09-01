@@ -1,4 +1,4 @@
-# CNet (experimental)
+# CNet
 
 CNet is the connection-oriented layer above NativeIO. Applications see a
 client, generation-checked connections, send/receive operations, explicit
@@ -6,8 +6,8 @@ progress polling, and ordered state notifications. NativeIO remains the raw,
 threadless operating-system I/O backend; CFlow Actor and Reactive code continue
 to depend on NativeIO directly.
 
-The target is gated by `CNET_ENABLE_EXPERIMENTAL` and is not installed. Its
-source-tree target is `turbo_cnet_experimental`.
+CNet is built unconditionally. Its source-tree target is `turbo_cnet`; installed
+consumers link `TurboUtils::CNet` and include `<cnet/cnet.h>`.
 
 ## Base API
 

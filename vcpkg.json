@@ -29,16 +29,11 @@
     },
     {
       "name": "libuv"
+    },
+    {
+      "name": "llhttp"
     }
   ],
-  "features": {
-    "usb": {
-      "description": "Build the optional libusb-backed CFlow device adapter",
-      "dependencies": [
-        "libusb"
-      ]
-    }
-  },
   "overrides": [
     {
       "name": "sqlite3",

@@ -58,9 +58,8 @@ add_subdirectory(platform)
 add_subdirectory(concurrency)
 add_subdirectory(coroutine)
 add_subdirectory(native-io)
-if(CNET_ENABLE_EXPERIMENTAL)
-  add_subdirectory(cnet)
-endif()
+add_subdirectory(cnet)
+add_subdirectory(chttp)
 add_subdirectory(cmeta)
 add_subdirectory(cserde)
 add_subdirectory(cbind)
@@ -69,16 +68,16 @@ add_subdirectory(turbostl)
 add_subdirectory(utils)
 add_subdirectory(cflow-process)
 add_subdirectory(parser)
+add_subdirectory(crpc)
 add_subdirectory(cflow-fs)
-if(CFLOW_ENABLE_USB)
-  add_subdirectory(cflow-usb)
-endif()
 
 set(verify_installed_dependencies
     turbo_platform
     turbo_concurrency
     turbo_coroutine
     turbo_native_io
+    turbo_cnet
+    turbo_chttp
     turbo_cmeta
     turbo_cserde
     turbo_cbind
@@ -88,11 +87,9 @@ set(verify_installed_dependencies
     turbo_utils
     turbo_cflow_process
     turbo_cflow_fs
+    turbo_crpc
     xml_parser
     json_cserde_adapter)
-if(CFLOW_ENABLE_USB)
-  list(APPEND verify_installed_dependencies turbo_cflow_usb)
-endif()
 add_custom_target(
   verify_installed_package
   COMMAND
@@ -102,7 +99,7 @@ add_custom_target(
     -DCMAKE_COMMAND_PATH=${CMAKE_COMMAND}
     -DBUILD_CONFIG=$<CONFIG>
     -DBUILD_GENERATOR=${CMAKE_GENERATOR}
-    -DEXPECT_CFLOW_USB=${CFLOW_ENABLE_USB}
+    "-DDEPENDENCY_PREFIX_PATH=${CMAKE_PREFIX_PATH}"
     -P
     ${CMAKE_SOURCE_DIR}/cmake/VerifyInstalledPackage.cmake
   DEPENDS ${verify_installed_dependencies}

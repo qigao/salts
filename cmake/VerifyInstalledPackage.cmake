@@ -3,7 +3,8 @@ foreach(required_var
         BUILD_DIR
         CMAKE_COMMAND_PATH
         BUILD_CONFIG
-        BUILD_GENERATOR)
+        BUILD_GENERATOR
+        DEPENDENCY_PREFIX_PATH)
   if(NOT DEFINED ${required_var} OR "${${required_var}}" STREQUAL "")
     message(FATAL_ERROR "VerifyInstalledPackage requires ${required_var}")
   endif()
@@ -18,6 +19,8 @@ endif()
 
 set(install_prefix "${smoke_root}/install")
 set(consumer_build "${smoke_root}/consumer")
+set(consumer_prefix_path "${install_prefix}")
+list(APPEND consumer_prefix_path ${DEPENDENCY_PREFIX_PATH})
 file(REMOVE_RECURSE "${smoke_root}")
 
 execute_process(
@@ -34,9 +37,8 @@ execute_process(
           -B "${consumer_build}"
           -G "${BUILD_GENERATOR}"
           "-DCMAKE_BUILD_TYPE=${BUILD_CONFIG}"
-          "-DCMAKE_PREFIX_PATH=${install_prefix}"
+          "-DCMAKE_PREFIX_PATH=${consumer_prefix_path}"
           "-DTurboUtils_DIR=${install_prefix}/lib/cmake/TurboUtils"
-          "-DTURBOUTILS_EXPECT_CFLOW_USB=${EXPECT_CFLOW_USB}"
   RESULT_VARIABLE configure_result)
 if(NOT configure_result EQUAL 0)
   message(FATAL_ERROR

@@ -5,9 +5,21 @@
 
 #include "json_parser.h"
 #include "tinytest.h"
+#include <turbo/thread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef struct json_error_thread_probe {
+  int status;
+} json_error_thread_probe;
+
+static void json_parse_success_on_thread(void *user) {
+  json_error_thread_probe *probe = (json_error_thread_probe *)user;
+  json_value_t *value = json_parse("{}", 2u);
+  probe->status = value != NULL && json_get_error() == NULL ? 0 : 1;
+  json_free(value);
+}
 
 typedef struct {
   int null_count;
@@ -2114,6 +2126,22 @@ spec("json_parser") {
     it("should return NULL and set error for invalid JSON") {
       json_value_t *v = json_parse("invalid", 7);
       check_null(v);
+      check_not_null(json_get_error());
+    }
+
+    it("keeps parser diagnostics local to the calling thread") {
+      json_error_thread_probe probe = {0};
+      turbo_thread_t thread = NULL;
+      json_value_t *value = json_parse("invalid", 7u);
+
+      check_null(value);
+      check_not_null(json_get_error());
+      check_equal(turbo_thread_create(&thread, json_parse_success_on_thread,
+                                      &probe),
+                  0);
+      check_equal(turbo_thread_join(&thread), 0);
+      turbo_thread_destroy(&thread);
+      check_equal(probe.status, 0);
       check_not_null(json_get_error());
     }
 
