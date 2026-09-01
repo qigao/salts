@@ -655,41 +655,162 @@ static const cmeta_type_desc managed_state_type = {
     .kind = CMETA_T_OBJECT,
     .traits = &managed_state_traits};
 
-typedef struct managed_stable_transaction_probe {
-    cflow_statechart_stable_transaction_result result;
-    size_t calls;
-    int increment;
-} managed_stable_transaction_probe;
+typedef struct managed_host_probe {
+    size_t trigger_calls;
+    size_t quiescence_calls;
+    size_t guard_calls;
+    int guard_observed;
+    cflow_statechart_host_result external_result;
+    cflow_statechart_host_result quiescence_result;
+    size_t raise_count;
+    size_t ticket_count;
+    size_t ticket_commits;
+    size_t ticket_discards;
+} managed_host_probe;
 
-static cflow_statechart_stable_transaction_result
-managed_stable_transaction_hook(
-    void *user,
-    const cflow_statechart_stable_transaction_context *context,
-    const char **out_error) {
-    managed_stable_transaction_probe *probe =
-        (managed_stable_transaction_probe *)user;
-    managed_state_value *staged;
-    if (probe == NULL || context == NULL || context->published_state == NULL ||
-        context->staged_state == NULL || out_error == NULL)
-        return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
-    ++probe->calls;
-    staged = (managed_state_value *)context->staged_state;
-    if (staged->resource == NULL)
-        return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
-    *staged->resource += probe->increment;
-    *out_error = probe->result == CFLOW_STATECHART_STABLE_TRANSACTION_FATAL
-        ? "deliberate managed stable transaction failure" : NULL;
-    return probe->result;
+static void managed_host_ticket_commit(void *user) {
+    managed_host_probe *probe = (managed_host_probe *)user;
+    if (probe != NULL) ++probe->ticket_commits;
 }
 
-static bool managed_legacy_stable_hook(
-    void *user, const cflow_statechart_instance_hook_context *context,
+static void managed_host_ticket_discard(void *user) {
+    managed_host_probe *probe = (managed_host_probe *)user;
+    if (probe != NULL) ++probe->ticket_discards;
+}
+
+static cflow_statechart_host_result managed_host_transaction(
+    void *user, cflow_statechart_host_context *context,
     const char **out_error) {
-    size_t *calls = (size_t *)user;
-    if (calls == NULL || context == NULL || out_error == NULL) return false;
-    ++*calls;
+    managed_host_probe *probe = (managed_host_probe *)user;
+    const cflow_statechart_host_phase phase =
+        cflow_statechart_host_context_phase(context);
+    if (probe == NULL || context == NULL || out_error == NULL ||
+        cflow_statechart_host_context_state(context) == NULL)
+        return CFLOW_STATECHART_HOST_FATAL;
+    if (phase == CFLOW_STATECHART_HOST_PREPARE_QUIESCENCE) {
+        ++probe->quiescence_calls;
+        *out_error = probe->quiescence_result ==
+                CFLOW_STATECHART_HOST_FATAL
+            ? "deliberate Statechart host quiescence failure" : NULL;
+        return probe->quiescence_result;
+    }
+    if (phase == CFLOW_STATECHART_HOST_PREPARE_TRIGGER) {
+        const cflow_statechart_observed_event *trigger =
+            cflow_statechart_host_context_trigger(context);
+        managed_state_value *state;
+        if (trigger == NULL)
+            return CFLOW_STATECHART_HOST_FATAL;
+        if (trigger->kind != CFLOW_STATECHART_OBSERVED_EXTERNAL) {
+            *out_error = NULL;
+            return CFLOW_STATECHART_HOST_CONTINUE;
+        }
+        if (trigger->event == NULL || trigger->event->id != 7u)
+            return CFLOW_STATECHART_HOST_FATAL;
+        for (size_t index = 0u; index < probe->raise_count; ++index) {
+            if (!cflow_statechart_host_context_raise_internal(
+                    context, trigger->event, UINT64_C(99), out_error))
+                return CFLOW_STATECHART_HOST_FATAL;
+        }
+        for (size_t index = 0u; index < probe->ticket_count; ++index) {
+            const cflow_statechart_effect_ticket ticket = {
+                managed_host_ticket_commit,
+                managed_host_ticket_discard,
+                probe};
+            if (!cflow_statechart_host_context_stage_effect(
+                    context, &ticket, out_error))
+                return CFLOW_STATECHART_HOST_FATAL;
+        }
+        state = (managed_state_value *)
+            cflow_statechart_host_context_edit_state(context, out_error);
+        if (state == NULL || state->resource == NULL)
+            return CFLOW_STATECHART_HOST_FATAL;
+        ++*state->resource;
+        ++probe->trigger_calls;
+        *out_error = probe->external_result ==
+                CFLOW_STATECHART_HOST_FATAL
+            ? "deliberate Statechart host failure" : NULL;
+        return probe->external_result;
+    }
+    *out_error = "unexpected Statechart host phase";
+    return CFLOW_STATECHART_HOST_FATAL;
+}
+
+static bool managed_host_guard(
+    void *user, const void *state, const cflow_event_view *event,
+    bool *out_enabled, const char **out_error) {
+    managed_host_probe *probe = (managed_host_probe *)user;
+    const managed_state_value *value =
+        (const managed_state_value *)state;
+    if (probe == NULL || value == NULL || value->resource == NULL ||
+        event == NULL || event->id != 7u || out_enabled == NULL ||
+        out_error == NULL)
+        return false;
+    ++probe->guard_calls;
+    probe->guard_observed = *value->resource;
+    *out_enabled = probe->guard_observed == 42;
     *out_error = NULL;
     return true;
+}
+
+static cflow_statechart_instance_status managed_host_fixture_init(
+    runtime_fixture *fixture, const managed_state_value *initial_state,
+    managed_host_probe *probe) {
+    static const cflow_event_type events[] = {
+        {7u, &cmeta_type_int}};
+    static const cflow_statechart_guard guards[] = {
+        {9u, &managed_state_type,
+         CMETA_EFFECT_MAY_FAIL,
+         CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS}};
+    const cflow_statechart_guard_binding bindings[] = {
+        {9u, managed_host_guard, probe}};
+    const cflow_statechart_instance_hooks hooks = {
+        .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
+        .struct_size = sizeof(cflow_statechart_instance_hooks),
+        .on_host_transaction = managed_host_transaction};
+    cflow_statechart_instance_config config;
+    memset(fixture, 0, sizeof(*fixture));
+    fixture->states[0] = (cflow_statechart_state){
+        1u, 0u, CFLOW_STATECHART_COMPOUND, 0u};
+    fixture->states[1] = (cflow_statechart_state){
+        2u, 1u, CFLOW_STATECHART_INITIAL, 1u};
+    fixture->states[2] = (cflow_statechart_state){
+        3u, 1u, CFLOW_STATECHART_ATOMIC, 2u};
+    fixture->states[3] = (cflow_statechart_state){
+        4u, 1u, CFLOW_STATECHART_FINAL, 3u};
+    fixture->transitions[0] = (cflow_statechart_transition){
+        10u, 2u, CFLOW_STATECHART_TRIGGER_EVENTLESS, 0u, 0u, 0u, 3u,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u};
+    fixture->transitions[1] = (cflow_statechart_transition){
+        11u, 3u, CFLOW_STATECHART_TRIGGER_EVENT, 7u, 0u, 9u, 4u,
+        CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u};
+    fixture->definition = (cflow_statechart_definition){
+        .state_type = &managed_state_type,
+        .states = fixture->states,
+        .state_count = 4u,
+        .events = events,
+        .event_count = 1u,
+        .guards = guards,
+        .guard_count = 1u,
+        .transitions = fixture->transitions,
+        .transition_count = 2u};
+    check_equal(cflow_statechart_build(
+                    &fixture->statechart, &fixture->definition),
+                CFLOW_STATECHART_OK);
+    check_true(cflow_executor_serial_init(&fixture->executor));
+    config = (cflow_statechart_instance_config){
+        .statechart = &fixture->statechart,
+        .initial_state = initial_state,
+        .guards = bindings,
+        .guard_count = 1u,
+        .external_event_capacity = 4u,
+        .internal_event_capacity = 4u,
+        .completion_capacity = 4u,
+        .microstep_limit = 64u,
+        .executor = &fixture->executor,
+        .effect_capacity = 2u,
+        .hooks = &hooks,
+        .hook_user = probe};
+    return cflow_statechart_instance_init(&fixture->instance, &config);
 }
 
 static cflow_statechart_instance_status managed_state_fixture_init_with_hooks(
@@ -1407,104 +1528,299 @@ suite("CFlow Statechart instance initial configuration") {
         check_equal(managed_state_live_resources, (size_t)0u);
     }
 
-    it("keeps legacy v1 hooks off the managed-state transaction path") {
+    it("commits a lazy host trigger edit before guard selection") {
         runtime_fixture fixture;
         managed_state_value initial_state;
-        size_t calls = 0u;
+        managed_host_probe probe = {0};
         cflow_statechart_instance_stats stats = {0};
-        const cflow_statechart_instance_hooks hooks = {
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1,
-            .struct_size = offsetof(cflow_statechart_instance_hooks, on_event),
-            .on_stable = managed_legacy_stable_hook};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
         managed_state_reset();
-        initial_state = managed_state_make(31);
+        initial_state = managed_state_make(41);
         check_not_null(initial_state.resource);
-        check_equal(managed_state_fixture_init_with_hooks(
-                        &fixture, &initial_state, &hooks, &calls),
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
                     CFLOW_STATECHART_INSTANCE_OK);
-        check_equal(calls, (size_t)1u);
+        check_equal(probe.quiescence_calls, (size_t)1u);
         check_equal(managed_state_copies, (size_t)2u);
-        check_equal(managed_state_live_resources, (size_t)3u);
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)1u);
+        check_equal(probe.guard_calls, (size_t)1u);
+        check_equal(probe.guard_observed, 42);
+        check_equal(managed_state_copies, (size_t)4u);
         check_true(cflow_statechart_instance_get_stats(
             &fixture.instance, &stats));
-        check_equal(stats.configuration_version, UINT64_C(1));
-        check_equal(stats.internal_pending, (size_t)0u);
+        check_true(stats.done);
+        check_false(stats.errored);
         runtime_fixture_destroy(&fixture);
         managed_state_destroy(&initial_state);
         check_equal(managed_state_live_resources, (size_t)0u);
     }
 
-    it("keeps legacy v2 hooks off the managed-state transaction path") {
+    it("rolls back a dropped external host transaction") {
         runtime_fixture fixture;
         managed_state_value initial_state;
+        managed_host_probe probe = {
+            .external_result = CFLOW_STATECHART_HOST_DROP,
+            .ticket_count = 1u};
         cflow_statechart_instance_stats stats = {0};
-        const cflow_statechart_instance_hooks hooks = {
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2,
-            .struct_size = offsetof(
-                cflow_statechart_instance_hooks, on_stable_transaction)};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
         managed_state_reset();
-        initial_state = managed_state_make(37);
+        initial_state = managed_state_make(41);
         check_not_null(initial_state.resource);
-        check_equal(managed_state_fixture_init_with_hooks(
-                        &fixture, &initial_state, &hooks, NULL),
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
                     CFLOW_STATECHART_INSTANCE_OK);
-        check_equal(managed_state_copies, (size_t)2u);
-        check_equal(managed_state_live_resources, (size_t)3u);
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)1u);
+        check_equal(probe.quiescence_calls, (size_t)2u);
+        check_equal(probe.guard_calls, (size_t)0u);
+        check_equal(probe.ticket_commits, (size_t)0u);
+        check_equal(probe.ticket_discards, (size_t)1u);
         check_true(cflow_statechart_instance_get_stats(
             &fixture.instance, &stats));
-        check_equal(stats.configuration_version, UINT64_C(1));
-        check_equal(stats.internal_pending, (size_t)0u);
+        check_false(stats.done);
+        check_false(stats.errored);
+        check_equal(stats.external_completed, UINT64_C(1));
+
+        probe.external_result = CFLOW_STATECHART_HOST_CONTINUE;
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)2u);
+        check_equal(probe.guard_calls, (size_t)1u);
+        check_equal(probe.guard_observed, 42);
+        check_equal(probe.ticket_commits, (size_t)1u);
+        check_equal(probe.ticket_discards, (size_t)1u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
         runtime_fixture_destroy(&fixture);
         managed_state_destroy(&initial_state);
         check_equal(managed_state_live_resources, (size_t)0u);
     }
 
-    it("balances managed-state copies for a committed stable transaction") {
+    it("prepares quiescence after an unhandled external trigger") {
         runtime_fixture fixture;
         managed_state_value initial_state;
-        managed_stable_transaction_probe probe = {
-            CFLOW_STATECHART_STABLE_TRANSACTION_COMMIT, 0u, 5};
+        managed_host_probe probe = {0};
         cflow_statechart_instance_stats stats = {0};
-        const cflow_statechart_instance_hooks hooks = {
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3,
-            .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable_transaction = managed_stable_transaction_hook};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
         managed_state_reset();
-        initial_state = managed_state_make(7);
+        initial_state = managed_state_make(40);
         check_not_null(initial_state.resource);
-        check_equal(managed_state_fixture_init_with_hooks(
-                        &fixture, &initial_state, &hooks, &probe),
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
                     CFLOW_STATECHART_INSTANCE_OK);
-        check_equal(probe.calls, (size_t)1u);
-        check_equal(managed_state_copies, (size_t)3u);
-        check_equal(managed_state_live_resources, (size_t)3u);
+        check_equal(probe.quiescence_calls, (size_t)1u);
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)1u);
+        check_equal(probe.quiescence_calls, (size_t)2u);
+        check_equal(probe.guard_calls, (size_t)1u);
+        check_equal(probe.guard_observed, 41);
         check_true(cflow_statechart_instance_get_stats(
             &fixture.instance, &stats));
-        check_equal(stats.configuration_version, UINT64_C(2));
+        check_false(stats.done);
+        check_false(stats.errored);
+        check_equal(stats.external_completed, UINT64_C(1));
+
         runtime_fixture_destroy(&fixture);
         managed_state_destroy(&initial_state);
         check_equal(managed_state_live_resources, (size_t)0u);
     }
 
-    it("destroys a failed managed stable-transaction copy") {
+    it("discards staged host work when a fatal result wins") {
         runtime_fixture fixture;
         managed_state_value initial_state;
-        managed_stable_transaction_probe probe = {
-            CFLOW_STATECHART_STABLE_TRANSACTION_COMMIT, 0u, 5};
-        const cflow_statechart_instance_hooks hooks = {
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3,
-            .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable_transaction = managed_stable_transaction_hook};
+        managed_host_probe probe = {
+            .external_result = CFLOW_STATECHART_HOST_FATAL,
+            .ticket_count = 1u};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
         managed_state_reset();
-        initial_state = managed_state_make(11);
+        initial_state = managed_state_make(41);
         check_not_null(initial_state.resource);
-        managed_state_fail_copy_at = 2u;
-        check_equal(managed_state_fixture_init_with_hooks(
-                        &fixture, &initial_state, &hooks, &probe),
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)1u);
+        check_equal(probe.guard_calls, (size_t)0u);
+        check_equal(probe.ticket_commits, (size_t)0u);
+        check_equal(probe.ticket_discards, (size_t)1u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_INSTANCE_HOOK_FAILED);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("reports a lazy host state copy failure without calling a guard") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        managed_state_fail_copy_at = managed_state_copy_attempts;
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)0u);
+        check_equal(probe.guard_calls, (size_t)0u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
                     CFLOW_STATECHART_INSTANCE_ALLOCATION_FAILED);
-        check_equal(probe.calls, (size_t)0u);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("fails fast when the host internal Event journal is full") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {.raise_count = 5u};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)0u);
+        check_equal(probe.guard_calls, (size_t)0u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_INSTANCE_INTERNAL_QUEUE_FULL);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("discards earlier tickets when the host effect journal is full") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {.ticket_count = 3u};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(probe.trigger_calls, (size_t)0u);
+        check_equal(probe.ticket_commits, (size_t)0u);
+        check_equal(probe.ticket_discards, (size_t)2u);
+        check_equal(probe.guard_calls, (size_t)0u);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_INSTANCE_EFFECT_JOURNAL_FULL);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("rejects DROP outside an external trigger phase") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {
+            .quiescence_result = CFLOW_STATECHART_HOST_DROP};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_HOOK_FAILED);
+        check_equal(probe.quiescence_calls, (size_t)1u);
         check_null(fixture.instance.impl);
-        check_equal(managed_state_live_resources, (size_t)1u);
+        runtime_fixture_destroy(&fixture);
+        managed_state_destroy(&initial_state);
+        check_equal(managed_state_live_resources, (size_t)0u);
+    }
+
+    it("rejects an invalid host transaction result") {
+        runtime_fixture fixture;
+        managed_state_value initial_state;
+        managed_host_probe probe = {
+            .external_result = (cflow_statechart_host_result)99};
+        cflow_statechart_instance_stats stats = {0};
+        const int payload = 1;
+        const cflow_event_view event = {
+            7u, &cmeta_type_int, &payload};
+        managed_state_reset();
+        initial_state = managed_state_make(41);
+        check_not_null(initial_state.resource);
+        check_equal(managed_host_fixture_init(
+                        &fixture, &initial_state, &probe),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_equal(cflow_statechart_instance_try_send(
+                        &fixture.instance, &event),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.errored);
+        check_equal(stats.last_status,
+                    CFLOW_STATECHART_INSTANCE_HOOK_FAILED);
         runtime_fixture_destroy(&fixture);
         managed_state_destroy(&initial_state);
         check_equal(managed_state_live_resources, (size_t)0u);
@@ -4755,37 +5071,22 @@ struct rtc_fixture {
     cflow_statechart_observed_event_kind observed_event_kinds[8];
     uint64_t observed_event_tokens[8];
     size_t effect_capacity;
-    size_t stable_transaction_calls;
-    size_t stable_transaction_activate_call;
-    cflow_statechart_stable_transaction_result stable_transaction_result;
-    bool stable_transaction_write_state;
-    int stable_transaction_state;
-    bool stable_transaction_raise_event;
-    bool stable_transaction_stage_effects;
-    bool stable_transaction_stage_invalid_effect;
-    bool stable_transaction_cancel;
-    bool stable_transaction_raise_succeeded;
-    bool stable_transaction_effect_succeeded;
-    rtc_effect_probe stable_transaction_effects[2];
-    int stable_transaction_effect_trace[4];
-    size_t stable_transaction_effect_trace_count;
-    bool stable_transaction_effect_observed_published;
+    size_t host_transaction_calls;
+    size_t host_transaction_activate_call;
+    cflow_statechart_host_result host_transaction_result;
+    bool host_transaction_write_state;
+    int host_transaction_state;
+    bool host_transaction_raise_event;
+    bool host_transaction_stage_effects;
+    bool host_transaction_stage_invalid_effect;
+    bool host_transaction_cancel;
+    bool host_transaction_raise_succeeded;
+    bool host_transaction_effect_succeeded;
+    rtc_effect_probe host_transaction_effects[2];
+    int host_transaction_effect_trace[4];
+    size_t host_transaction_effect_trace_count;
+    bool host_transaction_effect_observed_published;
 };
-
-typedef struct rtc_hooks_v1 {
-    uint32_t abi_version;
-    size_t struct_size;
-    cflow_statechart_stable_hook_fn on_stable;
-    cflow_statechart_external_preprocess_hook_fn preprocess_external;
-} rtc_hooks_v1;
-
-typedef struct rtc_hooks_v2 {
-    uint32_t abi_version;
-    size_t struct_size;
-    cflow_statechart_stable_hook_fn on_stable;
-    cflow_statechart_external_preprocess_hook_fn preprocess_external;
-    cflow_statechart_event_hook_fn on_event;
-} rtc_hooks_v2;
 
 typedef struct rtc_producer_context {
     cflow_statechart_instance *instance;
@@ -4807,156 +5108,142 @@ enum {
     RTC_QUEUE_GUARD = 501u
 };
 
-static bool rtc_stable_hook(
-    void *user, const cflow_statechart_instance_hook_context *context,
-    const char **out_error) {
-    rtc_fixture *fixture = (rtc_fixture *)user;
-    const int payload = 1;
-    const cflow_event_view other = {
-        RTC_OTHER, &cmeta_type_int, &payload};
-    if (fixture == NULL || context == NULL || out_error == NULL ||
-        context->is_active == NULL || context->enqueue_internal == NULL)
-        return false;
-    ++fixture->stable_hook_calls;
-    fixture->observed_configuration_version =
-        context->configuration_version;
-    fixture->observed_a_active = context->is_active(
-        context->configuration_user, RTC_A);
-    fixture->observed_d_active = context->is_active(
-        context->configuration_user, RTC_D);
-    *out_error = NULL;
-    if (fixture->fail_stable_hook) {
-        *out_error = "deliberate stable hook failure";
-        return false;
-    }
-    if (fixture->enqueue_other_once) {
-        fixture->enqueue_other_once = false;
-        return context->enqueue_internal(
-            context->enqueue_user, &other, out_error);
-    }
-    return true;
-}
-
-static void rtc_transaction_effect_commit(void *user) {
+static void rtc_host_effect_commit(void *user) {
     rtc_effect_probe *probe = (rtc_effect_probe *)user;
     rtc_fixture *fixture = probe != NULL ? probe->fixture : NULL;
     const cmeta_type_desc *type = NULL;
     int state = 0;
-    if (fixture == NULL ||
-        fixture->stable_transaction_effect_trace_count >= 4u)
+    if (fixture == NULL || fixture->host_transaction_effect_trace_count >= 4u)
         return;
-    fixture->stable_transaction_effect_trace[
-        fixture->stable_transaction_effect_trace_count++] = probe->marker;
+    fixture->host_transaction_effect_trace[
+        fixture->host_transaction_effect_trace_count++] = probe->marker;
     if (fixture->instance.impl != NULL &&
         cflow_statechart_instance_copy_state(
             &fixture->instance, &type, &state, sizeof(state)) &&
         cmeta_type_equal(type, &cmeta_type_int) &&
-        state == fixture->stable_transaction_state)
-        fixture->stable_transaction_effect_observed_published = true;
+        state == fixture->host_transaction_state)
+        fixture->host_transaction_effect_observed_published = true;
 }
 
-static void rtc_transaction_effect_discard(void *user) {
+static void rtc_host_effect_discard(void *user) {
     rtc_effect_probe *probe = (rtc_effect_probe *)user;
     rtc_fixture *fixture = probe != NULL ? probe->fixture : NULL;
-    if (fixture == NULL ||
-        fixture->stable_transaction_effect_trace_count >= 4u)
+    if (fixture == NULL || fixture->host_transaction_effect_trace_count >= 4u)
         return;
-    fixture->stable_transaction_effect_trace[
-        fixture->stable_transaction_effect_trace_count++] = -probe->marker;
+    fixture->host_transaction_effect_trace[
+        fixture->host_transaction_effect_trace_count++] = -probe->marker;
 }
 
-static cflow_statechart_stable_transaction_result rtc_stable_transaction(
-    void *user,
-    const cflow_statechart_stable_transaction_context *context,
+static cflow_statechart_host_result rtc_host_transaction(
+    void *user, cflow_statechart_host_context *context,
     const char **out_error) {
     rtc_fixture *fixture = (rtc_fixture *)user;
     const int payload = 1;
     const cflow_event_view other = {
         RTC_OTHER, &cmeta_type_int, &payload};
-    cflow_statechart_effect_ticket ticket;
+    const cflow_statechart_host_phase phase =
+        cflow_statechart_host_context_phase(context);
+    const cflow_statechart_observed_event *event;
     size_t index;
-    if (fixture == NULL || context == NULL ||
-        context->published_state == NULL || context->staged_state == NULL ||
-        context->is_active == NULL || context->raise_internal == NULL ||
-        context->stage_effect == NULL || out_error == NULL)
-        return CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
-    ++fixture->stable_transaction_calls;
+    if (fixture == NULL || context == NULL || out_error == NULL)
+        return CFLOW_STATECHART_HOST_FATAL;
     *out_error = NULL;
-    if (fixture->stable_transaction_calls !=
-        fixture->stable_transaction_activate_call)
-        return CFLOW_STATECHART_STABLE_TRANSACTION_NOOP;
-    if (fixture->stable_transaction_write_state)
-        *(int *)context->staged_state = fixture->stable_transaction_state;
-    if (fixture->stable_transaction_raise_event)
-        fixture->stable_transaction_raise_succeeded =
-            context->raise_internal(
-                context->raise_user, &other, out_error);
-    if (fixture->stable_transaction_stage_invalid_effect) {
-        ticket = (cflow_statechart_effect_ticket){0};
-        fixture->stable_transaction_effect_succeeded =
-            context->stage_effect(
-                context->effect_user, &ticket, out_error);
-    }
-    if (fixture->stable_transaction_stage_effects) {
-        fixture->stable_transaction_effect_succeeded = true;
-        for (index = 0u; index < 2u; ++index) {
-            fixture->stable_transaction_effects[index] =
-                (rtc_effect_probe){fixture, (int)index + 1};
-            ticket = (cflow_statechart_effect_ticket){
-                rtc_transaction_effect_commit,
-                rtc_transaction_effect_discard,
-                &fixture->stable_transaction_effects[index]};
-            if (!context->stage_effect(
-                    context->effect_user, &ticket, out_error)) {
-                fixture->stable_transaction_effect_succeeded = false;
-                break;
+    if (phase == CFLOW_STATECHART_HOST_PREPARE_QUIESCENCE) {
+        cflow_statechart_effect_ticket ticket;
+        int *staged_state;
+        ++fixture->stable_hook_calls;
+        ++fixture->host_transaction_calls;
+        fixture->observed_configuration_version =
+            cflow_statechart_host_context_configuration_version(context);
+        fixture->observed_a_active =
+            cflow_statechart_host_context_is_active(context, RTC_A);
+        fixture->observed_d_active =
+            cflow_statechart_host_context_is_active(context, RTC_D);
+        if (fixture->fail_stable_hook) {
+            *out_error = "deliberate host quiescence failure";
+            return CFLOW_STATECHART_HOST_FATAL;
+        }
+        if (fixture->enqueue_other_once) {
+            fixture->enqueue_other_once = false;
+            if (!cflow_statechart_host_context_raise_internal(
+                    context, &other, 0u, out_error))
+                return CFLOW_STATECHART_HOST_FATAL;
+        }
+        if (fixture->host_transaction_calls !=
+            fixture->host_transaction_activate_call)
+            return CFLOW_STATECHART_HOST_CONTINUE;
+        if (fixture->host_transaction_write_state) {
+            staged_state = (int *)cflow_statechart_host_context_edit_state(
+                context, out_error);
+            if (staged_state == NULL)
+                return CFLOW_STATECHART_HOST_FATAL;
+            *staged_state = fixture->host_transaction_state;
+        }
+        if (fixture->host_transaction_raise_event) {
+            fixture->host_transaction_raise_succeeded =
+                cflow_statechart_host_context_raise_internal(
+                    context, &other, 0u, out_error);
+            if (!fixture->host_transaction_raise_succeeded)
+                return CFLOW_STATECHART_HOST_FATAL;
+        }
+        if (fixture->host_transaction_stage_invalid_effect) {
+            ticket = (cflow_statechart_effect_ticket){0};
+            fixture->host_transaction_effect_succeeded =
+                cflow_statechart_host_context_stage_effect(
+                    context, &ticket, out_error);
+            if (!fixture->host_transaction_effect_succeeded)
+                return CFLOW_STATECHART_HOST_FATAL;
+        }
+        if (fixture->host_transaction_stage_effects) {
+            fixture->host_transaction_effect_succeeded = true;
+            for (index = 0u; index < 2u; ++index) {
+                fixture->host_transaction_effects[index] =
+                    (rtc_effect_probe){fixture, (int)index + 1};
+                ticket = (cflow_statechart_effect_ticket){
+                    rtc_host_effect_commit,
+                    rtc_host_effect_discard,
+                    &fixture->host_transaction_effects[index]};
+                if (!cflow_statechart_host_context_stage_effect(
+                        context, &ticket, out_error)) {
+                    fixture->host_transaction_effect_succeeded = false;
+                    return CFLOW_STATECHART_HOST_FATAL;
+                }
             }
         }
+        if (fixture->host_transaction_cancel)
+            cflow_statechart_instance_cancel(&fixture->instance);
+        if (fixture->host_transaction_result ==
+            CFLOW_STATECHART_HOST_FATAL)
+            *out_error = "deliberate host transaction failure";
+        return fixture->host_transaction_result;
     }
-    if (fixture->stable_transaction_cancel)
-        cflow_statechart_instance_cancel(&fixture->instance);
-    if (fixture->stable_transaction_result ==
-        CFLOW_STATECHART_STABLE_TRANSACTION_FATAL)
-        *out_error = "deliberate stable transaction failure";
-    return fixture->stable_transaction_result;
-}
-
-static cflow_statechart_external_preprocess_result rtc_external_preprocess(
-    void *user, const cflow_statechart_instance_hook_context *context,
-    const cflow_event_view *event, uint64_t origin_token,
-    const char **out_error) {
-    rtc_fixture *fixture = (rtc_fixture *)user;
-    if (fixture == NULL || context == NULL || event == NULL ||
-        out_error == NULL)
-        return CFLOW_STATECHART_EXTERNAL_PREPROCESS_FATAL;
-    if (fixture->preprocess_hook_calls < 4u)
-        fixture->observed_origin_tokens[
-            fixture->preprocess_hook_calls] = origin_token;
-    ++fixture->preprocess_hook_calls;
-    fixture->observed_origin_token = origin_token;
-    fixture->observed_configuration_version =
-        context->configuration_version;
-    *out_error = NULL;
-    return fixture->drop_tagged_external && origin_token != UINT64_C(0)
-        ? CFLOW_STATECHART_EXTERNAL_PREPROCESS_DROP
-        : CFLOW_STATECHART_EXTERNAL_PREPROCESS_CONTINUE;
-}
-
-static bool rtc_event_hook(
-    void *user, const cflow_statechart_instance_hook_context *context,
-    const cflow_statechart_observed_event *event, const char **out_error) {
-    rtc_fixture *fixture = (rtc_fixture *)user;
-    size_t index;
-    if (fixture == NULL || context == NULL || event == NULL ||
-        out_error == NULL)
-        return false;
+    if (phase != CFLOW_STATECHART_HOST_PREPARE_TRIGGER) {
+        *out_error = "unexpected host transaction phase";
+        return CFLOW_STATECHART_HOST_FATAL;
+    }
+    event = cflow_statechart_host_context_trigger(context);
+    if (event == NULL) {
+        *out_error = "host transaction trigger is unavailable";
+        return CFLOW_STATECHART_HOST_FATAL;
+    }
     index = fixture->event_hook_calls++;
     if (index < 8u) {
         fixture->observed_event_kinds[index] = event->kind;
         fixture->observed_event_tokens[index] = event->origin_token;
     }
-    *out_error = NULL;
-    return true;
+    if (event->kind == CFLOW_STATECHART_OBSERVED_EXTERNAL) {
+        if (fixture->preprocess_hook_calls < 4u)
+            fixture->observed_origin_tokens[
+                fixture->preprocess_hook_calls] = event->origin_token;
+        ++fixture->preprocess_hook_calls;
+        fixture->observed_origin_token = event->origin_token;
+        fixture->observed_configuration_version =
+            cflow_statechart_host_context_configuration_version(context);
+        if (fixture->drop_tagged_external &&
+            event->origin_token != UINT64_C(0))
+            return CFLOW_STATECHART_HOST_DROP;
+    }
+    return CFLOW_STATECHART_HOST_CONTINUE;
 }
 
 static void rtc_cancel_instance(void *user) {
@@ -5672,9 +5959,9 @@ suite("CFlow Statechart public run-to-completion runtime") {
             CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 7u};
         fixture.definition.transition_count = 8u;
         fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable = rtc_stable_hook};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_OK);
         check_equal(fixture.stable_hook_calls, (size_t)1u);
@@ -5698,9 +5985,9 @@ suite("CFlow Statechart public run-to-completion runtime") {
         fixture.definition.transition_count = 8u;
         fixture.enqueue_other_once = true;
         fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable = rtc_stable_hook};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init_with_external(
                         &fixture, 4u, 1u, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_OK);
@@ -5728,9 +6015,9 @@ suite("CFlow Statechart public run-to-completion runtime") {
         fixture.definition.transition_count = 8u;
         fixture.drop_tagged_external = true;
         fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .preprocess_external = rtc_external_preprocess};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_OK);
         atomic_init(&blocker.entered, false);
@@ -5771,9 +6058,9 @@ suite("CFlow Statechart public run-to-completion runtime") {
         fixture.raise_tagged_internal = true;
         fixture.tagged_internal_token = UINT64_C(91);
         fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_event = rtc_event_hook};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_OK);
         check_equal(cflow_statechart_instance_try_send(
@@ -5793,68 +6080,20 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_destroy(&fixture);
     }
 
-    it("accepts the historical v1 and v2 runtime-hook prefixes") {
-        rtc_fixture v1_short_fixture;
-        rtc_fixture v1_full_fixture;
-        rtc_fixture v2_fixture;
-        rtc_hooks_v1 v1_short = {
-            CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1,
-            sizeof(rtc_hooks_v1), rtc_stable_hook, NULL};
-        rtc_hooks_v2 v1_full = {
-            CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1,
-            sizeof(rtc_hooks_v2), rtc_stable_hook, NULL, NULL};
-        rtc_hooks_v2 v2 = {
-            CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2,
-            sizeof(rtc_hooks_v2), NULL, NULL, rtc_event_hook};
-        check_equal(sizeof(rtc_hooks_v1),
-                    offsetof(cflow_statechart_instance_hooks, on_event));
-        check_equal(sizeof(rtc_hooks_v2),
-                    offsetof(cflow_statechart_instance_hooks,
-                             on_stable_transaction));
-
-        rtc_definition(&v1_short_fixture, true, false);
-        v1_short_fixture.hooks_override =
-            (const cflow_statechart_instance_hooks *)&v1_short;
-        check_equal(rtc_init(&v1_short_fixture, 4u, 4u, 16u, 4u),
-                    CFLOW_STATECHART_INSTANCE_OK);
-        check_equal(v1_short_fixture.stable_hook_calls, (size_t)1u);
-        rtc_destroy(&v1_short_fixture);
-
-        rtc_definition(&v1_full_fixture, true, false);
-        v1_full_fixture.hooks_override =
-            (const cflow_statechart_instance_hooks *)&v1_full;
-        check_equal(rtc_init(&v1_full_fixture, 4u, 4u, 16u, 4u),
-                    CFLOW_STATECHART_INSTANCE_OK);
-        check_equal(v1_full_fixture.stable_hook_calls, (size_t)1u);
-        rtc_destroy(&v1_full_fixture);
-
-        rtc_definition(&v2_fixture, true, false);
-        v2_fixture.hooks_override =
-            (const cflow_statechart_instance_hooks *)&v2;
-        check_equal(rtc_init(&v2_fixture, 4u, 4u, 16u, 4u),
-                    CFLOW_STATECHART_INSTANCE_OK);
-        check_equal(v2_fixture.event_hook_calls, (size_t)0u);
-        rtc_destroy(&v2_fixture);
-    }
-
-    it("discards a NOOP stable transaction state copy") {
+    it("avoids a state copy for a no-op host quiescence") {
         rtc_fixture fixture;
         const cmeta_type_desc *type = NULL;
         cflow_statechart_instance_stats stats = {0};
         int state = -1;
         rtc_definition(&fixture, true, false);
-        fixture.stable_transaction_activate_call = 1u;
-        fixture.stable_transaction_result =
-            CFLOW_STATECHART_STABLE_TRANSACTION_NOOP;
-        fixture.stable_transaction_write_state = true;
-        fixture.stable_transaction_state = 91;
+        fixture.host_transaction_activate_call = 2u;
         fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable_transaction = rtc_stable_transaction};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_OK);
-        check_equal(fixture.stable_transaction_calls, (size_t)1u);
+        check_equal(fixture.host_transaction_calls, (size_t)1u);
         check_true(cflow_statechart_instance_copy_state(
             &fixture.instance, &type, &state, sizeof(state)));
         check_equal(state, 0);
@@ -5866,7 +6105,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_destroy(&fixture);
     }
 
-    it("commits stable state Events and effects as one ordered transaction") {
+    it("commits host state Events and effects as one ordered transaction") {
         rtc_fixture fixture;
         const cmeta_type_desc *type = NULL;
         cflow_statechart_instance_stats stats = {0};
@@ -5874,28 +6113,27 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_definition(&fixture, true, false);
         rtc_add_other_transition_to_d(&fixture);
         fixture.effect_capacity = 2u;
-        fixture.stable_transaction_activate_call = 2u;
-        fixture.stable_transaction_result =
-            CFLOW_STATECHART_STABLE_TRANSACTION_COMMIT;
-        fixture.stable_transaction_write_state = true;
-        fixture.stable_transaction_state = 41;
-        fixture.stable_transaction_raise_event = true;
-        fixture.stable_transaction_stage_effects = true;
+        fixture.host_transaction_activate_call = 2u;
+        fixture.host_transaction_result = CFLOW_STATECHART_HOST_CONTINUE;
+        fixture.host_transaction_write_state = true;
+        fixture.host_transaction_state = 41;
+        fixture.host_transaction_raise_event = true;
+        fixture.host_transaction_stage_effects = true;
         fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable_transaction = rtc_stable_transaction};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_OK);
 
         rtc_send_other(&fixture);
-        check_true(fixture.stable_transaction_raise_succeeded);
-        check_true(fixture.stable_transaction_effect_succeeded);
-        check_equal(fixture.stable_transaction_effect_trace_count,
+        check_true(fixture.host_transaction_raise_succeeded);
+        check_true(fixture.host_transaction_effect_succeeded);
+        check_equal(fixture.host_transaction_effect_trace_count,
                     (size_t)2u);
-        check_equal(fixture.stable_transaction_effect_trace[0], 1);
-        check_equal(fixture.stable_transaction_effect_trace[1], 2);
-        check_true(fixture.stable_transaction_effect_observed_published);
+        check_equal(fixture.host_transaction_effect_trace[0], 1);
+        check_equal(fixture.host_transaction_effect_trace[1], 2);
+        check_true(fixture.host_transaction_effect_observed_published);
         check_equal(cflow_statechart_instance_current_state(
                         &fixture.instance), RTC_E);
         check_true(cflow_statechart_instance_copy_state(
@@ -5908,7 +6146,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_destroy(&fixture);
     }
 
-    it("rolls back FATAL stable work and discards effects in order") {
+    it("rolls back FATAL host work and discards effects in order") {
         rtc_fixture fixture;
         const cmeta_type_desc *type = NULL;
         cflow_statechart_instance_stats stats = {0};
@@ -5916,27 +6154,26 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_definition(&fixture, true, false);
         rtc_add_other_transition_to_d(&fixture);
         fixture.effect_capacity = 2u;
-        fixture.stable_transaction_activate_call = 2u;
-        fixture.stable_transaction_result =
-            CFLOW_STATECHART_STABLE_TRANSACTION_FATAL;
-        fixture.stable_transaction_write_state = true;
-        fixture.stable_transaction_state = 99;
-        fixture.stable_transaction_raise_event = true;
-        fixture.stable_transaction_stage_effects = true;
+        fixture.host_transaction_activate_call = 2u;
+        fixture.host_transaction_result = CFLOW_STATECHART_HOST_FATAL;
+        fixture.host_transaction_write_state = true;
+        fixture.host_transaction_state = 99;
+        fixture.host_transaction_raise_event = true;
+        fixture.host_transaction_stage_effects = true;
         fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable_transaction = rtc_stable_transaction};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_OK);
 
         rtc_send_other(&fixture);
         check_equal(cflow_statechart_instance_error(&fixture.instance),
-                    "deliberate stable transaction failure");
-        check_equal(fixture.stable_transaction_effect_trace_count,
+                    "deliberate host transaction failure");
+        check_equal(fixture.host_transaction_effect_trace_count,
                     (size_t)2u);
-        check_equal(fixture.stable_transaction_effect_trace[0], -1);
-        check_equal(fixture.stable_transaction_effect_trace[1], -2);
+        check_equal(fixture.host_transaction_effect_trace[0], -1);
+        check_equal(fixture.host_transaction_effect_trace[1], -2);
         check_equal(cflow_statechart_instance_current_state(
                         &fixture.instance), RTC_D);
         check_true(cflow_statechart_instance_copy_state(
@@ -5949,69 +6186,48 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_destroy(&fixture);
     }
 
-    it("rejects NOOP after staging an internal Event") {
+    it("rejects an invalid host-transaction effect ticket") {
         rtc_fixture fixture;
         rtc_definition(&fixture, true, false);
-        fixture.stable_transaction_activate_call = 1u;
-        fixture.stable_transaction_result =
-            CFLOW_STATECHART_STABLE_TRANSACTION_NOOP;
-        fixture.stable_transaction_raise_event = true;
+        fixture.effect_capacity = 1u;
+        fixture.host_transaction_activate_call = 1u;
+        fixture.host_transaction_result = CFLOW_STATECHART_HOST_CONTINUE;
+        fixture.host_transaction_stage_invalid_effect = true;
         fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable_transaction = rtc_stable_transaction};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
-                    CFLOW_STATECHART_INSTANCE_HOOK_FAILED);
-        check_true(fixture.stable_transaction_raise_succeeded);
+                    CFLOW_STATECHART_INSTANCE_ACTION_FAILED);
+        check_false(fixture.host_transaction_effect_succeeded);
         check_null(fixture.instance.impl);
         cflow_executor_destroy(&fixture.executor);
         cflow_statechart_destroy(&fixture.statechart);
     }
 
-    it("rejects an invalid stable-transaction effect ticket") {
+    it("discards accepted host effects when the journal fills") {
         rtc_fixture fixture;
         rtc_definition(&fixture, true, false);
         fixture.effect_capacity = 1u;
-        fixture.stable_transaction_activate_call = 1u;
-        fixture.stable_transaction_result =
-            CFLOW_STATECHART_STABLE_TRANSACTION_COMMIT;
-        fixture.stable_transaction_stage_invalid_effect = true;
+        fixture.host_transaction_activate_call = 1u;
+        fixture.host_transaction_result = CFLOW_STATECHART_HOST_CONTINUE;
+        fixture.host_transaction_stage_effects = true;
         fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable_transaction = rtc_stable_transaction};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
-                    CFLOW_STATECHART_INSTANCE_HOOK_FAILED);
-        check_false(fixture.stable_transaction_effect_succeeded);
-        check_null(fixture.instance.impl);
-        cflow_executor_destroy(&fixture.executor);
-        cflow_statechart_destroy(&fixture.statechart);
-    }
-
-    it("discards accepted stable effects when the journal fills") {
-        rtc_fixture fixture;
-        rtc_definition(&fixture, true, false);
-        fixture.effect_capacity = 1u;
-        fixture.stable_transaction_activate_call = 1u;
-        fixture.stable_transaction_result =
-            CFLOW_STATECHART_STABLE_TRANSACTION_COMMIT;
-        fixture.stable_transaction_stage_effects = true;
-        fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3,
-            .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable_transaction = rtc_stable_transaction};
-        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
-                    CFLOW_STATECHART_INSTANCE_HOOK_FAILED);
-        check_false(fixture.stable_transaction_effect_succeeded);
-        check_equal(fixture.stable_transaction_effect_trace_count,
+                    CFLOW_STATECHART_INSTANCE_EFFECT_JOURNAL_FULL);
+        check_false(fixture.host_transaction_effect_succeeded);
+        check_equal(fixture.host_transaction_effect_trace_count,
                     (size_t)1u);
-        check_equal(fixture.stable_transaction_effect_trace[0], -1);
+        check_equal(fixture.host_transaction_effect_trace[0], -1);
         check_null(fixture.instance.impl);
         cflow_executor_destroy(&fixture.executor);
         cflow_statechart_destroy(&fixture.statechart);
     }
 
-    it("lets cancellation beat a prepared stable transaction") {
+    it("lets cancellation beat a prepared host transaction") {
         rtc_fixture fixture;
         const cmeta_type_desc *type = NULL;
         cflow_statechart_instance_stats stats = {0};
@@ -6019,27 +6235,26 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_definition(&fixture, true, false);
         rtc_add_other_transition_to_d(&fixture);
         fixture.effect_capacity = 2u;
-        fixture.stable_transaction_activate_call = 2u;
-        fixture.stable_transaction_result =
-            CFLOW_STATECHART_STABLE_TRANSACTION_COMMIT;
-        fixture.stable_transaction_write_state = true;
-        fixture.stable_transaction_state = 77;
-        fixture.stable_transaction_raise_event = true;
-        fixture.stable_transaction_stage_effects = true;
-        fixture.stable_transaction_cancel = true;
+        fixture.host_transaction_activate_call = 2u;
+        fixture.host_transaction_result = CFLOW_STATECHART_HOST_CONTINUE;
+        fixture.host_transaction_write_state = true;
+        fixture.host_transaction_state = 77;
+        fixture.host_transaction_raise_event = true;
+        fixture.host_transaction_stage_effects = true;
+        fixture.host_transaction_cancel = true;
         fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable_transaction = rtc_stable_transaction};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_OK);
 
         rtc_send_other(&fixture);
         check_null(cflow_statechart_instance_error(&fixture.instance));
-        check_equal(fixture.stable_transaction_effect_trace_count,
+        check_equal(fixture.host_transaction_effect_trace_count,
                     (size_t)2u);
-        check_equal(fixture.stable_transaction_effect_trace[0], -1);
-        check_equal(fixture.stable_transaction_effect_trace[1], -2);
+        check_equal(fixture.host_transaction_effect_trace[0], -1);
+        check_equal(fixture.host_transaction_effect_trace[1], -2);
         check_equal(cflow_statechart_instance_current_state(
                         &fixture.instance), RTC_D);
         check_true(cflow_statechart_instance_copy_state(
@@ -6056,12 +6271,12 @@ suite("CFlow Statechart public run-to-completion runtime") {
     it("rejects incompatible runtime hook ABI shapes") {
         rtc_fixture version_fixture;
         rtc_fixture size_fixture;
-        rtc_fixture exclusive_fixture;
+        rtc_fixture missing_callback_fixture;
         rtc_definition(&version_fixture, true, false);
         version_fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3 + 1u,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4 + 1u,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable = rtc_stable_hook};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&version_fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         check_null(version_fixture.instance.impl);
@@ -6070,37 +6285,52 @@ suite("CFlow Statechart public run-to-completion runtime") {
 
         rtc_definition(&size_fixture, true, false);
         size_fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3,
-            .struct_size = offsetof(
-                cflow_statechart_instance_hooks, on_stable_transaction),
-            .on_stable_transaction = rtc_stable_transaction};
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
+            .struct_size = sizeof(cflow_statechart_instance_hooks) - 1u,
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&size_fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
         check_null(size_fixture.instance.impl);
         cflow_executor_destroy(&size_fixture.executor);
         cflow_statechart_destroy(&size_fixture.statechart);
 
-        rtc_definition(&exclusive_fixture, true, false);
-        exclusive_fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3,
-            .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable = rtc_stable_hook,
-            .on_stable_transaction = rtc_stable_transaction};
-        check_equal(rtc_init(&exclusive_fixture, 4u, 4u, 16u, 4u),
+        rtc_definition(&missing_callback_fixture, true, false);
+        missing_callback_fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
+            .struct_size = sizeof(cflow_statechart_instance_hooks)};
+        check_equal(rtc_init(&missing_callback_fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
-        check_null(exclusive_fixture.instance.impl);
-        cflow_executor_destroy(&exclusive_fixture.executor);
-        cflow_statechart_destroy(&exclusive_fixture.statechart);
+        check_null(missing_callback_fixture.instance.impl);
+        cflow_executor_destroy(&missing_callback_fixture.executor);
+        cflow_statechart_destroy(&missing_callback_fixture.statechart);
     }
 
-    it("fails initialization explicitly when the stable hook fails") {
+    it("rejects every pre-transaction runtime hook ABI") {
+        rtc_fixture fixture;
+        cflow_statechart_instance_status status;
+        rtc_definition(&fixture, true, false);
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4 - 1u,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_host_transaction = managed_host_transaction};
+        status = rtc_init(&fixture, 4u, 4u, 16u, 4u);
+        if (status == CFLOW_STATECHART_INSTANCE_OK) {
+            rtc_destroy(&fixture);
+        } else {
+            cflow_executor_destroy(&fixture.executor);
+            cflow_statechart_destroy(&fixture.statechart);
+        }
+        check_equal(status, CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
+    }
+
+    it("fails initialization explicitly when host quiescence fails") {
         rtc_fixture fixture;
         rtc_definition(&fixture, true, false);
         fixture.fail_stable_hook = true;
         fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_stable = rtc_stable_hook};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_HOOK_FAILED);
         check_null(fixture.instance.impl);
@@ -6315,9 +6545,9 @@ suite("CFlow Statechart public run-to-completion runtime") {
         fixture.definition.state_action_count = 1u;
         fixture.raise_on_final_entry = true;
         fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
-            .on_event = rtc_event_hook};
+            .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_OK);
         check_true(cflow_executor_wait_idle(&fixture.executor));

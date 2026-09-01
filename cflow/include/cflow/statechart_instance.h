@@ -146,39 +146,7 @@ typedef bool (*cflow_statechart_contextual_executable_fn)(
     void *user, const cflow_statechart_executable_context *context,
     const char **out_error);
 
-#define CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V1 1u
-#define CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V2 2u
-#define CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V3 3u
-
-/** Borrowed published state and configuration access for one instance hook. */
-typedef struct cflow_statechart_instance_hook_context {
-    const void *state;
-    uint64_t configuration_version;
-    cflow_statechart_is_active_fn is_active;
-    void *configuration_user;
-    /**
-     * Copy one Event into the current macrostep's bounded internal FIFO.
-     * The function, user, Event, payload, and error are call-scoped.
-     */
-    cflow_statechart_raise_fn enqueue_internal;
-    void *enqueue_user;
-} cflow_statechart_instance_hook_context;
-
-typedef enum cflow_statechart_external_preprocess_result {
-    CFLOW_STATECHART_EXTERNAL_PREPROCESS_CONTINUE = 0,
-    CFLOW_STATECHART_EXTERNAL_PREPROCESS_DROP,
-    CFLOW_STATECHART_EXTERNAL_PREPROCESS_FATAL
-} cflow_statechart_external_preprocess_result;
-
-typedef bool (*cflow_statechart_stable_hook_fn)(
-    void *user, const cflow_statechart_instance_hook_context *context,
-    const char **out_error);
-
-typedef cflow_statechart_external_preprocess_result
-    (*cflow_statechart_external_preprocess_hook_fn)(
-        void *user, const cflow_statechart_instance_hook_context *context,
-        const cflow_event_view *event, uint64_t origin_token,
-        const char **out_error);
+#define CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4 4u
 
 typedef enum cflow_statechart_observed_event_kind {
     CFLOW_STATECHART_OBSERVED_EXTERNAL = 1,
@@ -197,68 +165,81 @@ typedef struct cflow_statechart_observed_event {
     uint64_t origin_token;
 } cflow_statechart_observed_event;
 
-typedef bool (*cflow_statechart_event_hook_fn)(
-    void *user, const cflow_statechart_instance_hook_context *context,
-    const cflow_statechart_observed_event *event, const char **out_error);
+typedef enum cflow_statechart_host_phase {
+    CFLOW_STATECHART_HOST_PREPARE_TRIGGER = 1,
+    CFLOW_STATECHART_HOST_PREPARE_QUIESCENCE
+} cflow_statechart_host_phase;
 
-typedef enum cflow_statechart_stable_transaction_result {
-    CFLOW_STATECHART_STABLE_TRANSACTION_NOOP = 0,
-    CFLOW_STATECHART_STABLE_TRANSACTION_COMMIT = 1,
-    CFLOW_STATECHART_STABLE_TRANSACTION_FATAL = 2
-} cflow_statechart_stable_transaction_result;
+typedef enum cflow_statechart_host_result {
+    CFLOW_STATECHART_HOST_CONTINUE = 0,
+    CFLOW_STATECHART_HOST_DROP,
+    CFLOW_STATECHART_HOST_FATAL
+} cflow_statechart_host_result;
+
+/** Opaque call-scoped transaction context owned by the Statechart runtime. */
+typedef struct cflow_statechart_host_context
+    cflow_statechart_host_context;
+
+/** Return the current host transaction phase. */
+cflow_statechart_host_phase cflow_statechart_host_context_phase(
+    const cflow_statechart_host_context *context);
 
 /**
- * Call-scoped stable-boundary transaction over one independent state copy.
- *
- * `published_state` remains the immutable Machine fact source during the call;
- * `staged_state` is a copy-constructed instance-owned mutable value. The hook
- * may mutate that value but must leave it constructed and must not move,
- * destroy, or replace its ownership. Events and effect tickets staged through
- * this context commit only with `staged_state`. Every pointer and callback is
- * invalid after the callback returns and must not be retained.
+ * Return the call-scoped trigger, or NULL during PREPARE_QUIESCENCE.
+ * Event payload and metadata remain borrowed and must not be retained.
  */
-typedef struct cflow_statechart_stable_transaction_context {
-    const void *published_state;
-    void *staged_state;
-    uint64_t configuration_version;
-    cflow_statechart_is_active_fn is_active;
-    void *configuration_user;
-    cflow_statechart_raise_fn raise_internal;
-    void *raise_user;
-    cflow_statechart_stage_effect_fn stage_effect;
-    void *effect_user;
-} cflow_statechart_stable_transaction_context;
+const cflow_statechart_observed_event *cflow_statechart_host_context_trigger(
+    const cflow_statechart_host_context *context);
+
+/** Return the immutable currently published managed state. */
+const void *cflow_statechart_host_context_state(
+    const cflow_statechart_host_context *context);
+
+/** Return the current active-configuration version. */
+uint64_t cflow_statechart_host_context_configuration_version(
+    const cflow_statechart_host_context *context);
+
+/** Query call-scoped membership in the current active configuration. */
+bool cflow_statechart_host_context_is_active(
+    const cflow_statechart_host_context *context,
+    cflow_machine_state_id state);
 
 /**
- * Prepare one stable-boundary transaction on the SerialExecutor.
- *
- * `NOOP` discards the staged state and is invalid after staging an Event or
- * effect. `COMMIT` atomically publishes the complete staged state and Events,
- * then commits effect tickets in staging order after publication. `FATAL`
- * rolls back all staged work and latches `out_error` or an instance default.
+ * Lazily copy-construct and return the sole writable staged state.
+ * Repeated calls return the same pointer. On failure, NULL is returned and
+ * `out_error` receives a call-scoped deterministic diagnostic.
  */
-typedef cflow_statechart_stable_transaction_result
-    (*cflow_statechart_stable_transaction_hook_fn)(
-        void *user,
-        const cflow_statechart_stable_transaction_context *context,
-        const char **out_error);
+void *cflow_statechart_host_context_edit_state(
+    cflow_statechart_host_context *context, const char **out_error);
+
+/** Copy one Event into the transaction's bounded internal FIFO journal. */
+bool cflow_statechart_host_context_raise_internal(
+    cflow_statechart_host_context *context, const cflow_event_view *event,
+    uint64_t origin_token, const char **out_error);
+
+/** Move one effect ticket into the transaction's bounded effect journal. */
+bool cflow_statechart_host_context_stage_effect(
+    cflow_statechart_host_context *context,
+    const cflow_statechart_effect_ticket *ticket, const char **out_error);
 
 /**
- * Optional format-neutral instance boundaries copied during initialization.
+ * Prepare one format-neutral host transaction on the SerialExecutor.
+ * The context and every borrowed value are invalid after return.
+ */
+typedef cflow_statechart_host_result (*cflow_statechart_host_transaction_fn)(
+    void *user, cflow_statechart_host_context *context,
+    const char **out_error);
+
+/**
+ * Optional format-neutral V4 instance boundary copied during initialization.
  * Callbacks run on the SerialExecutor without the instance mutex held. They
  * must not retain any context member, wait on, or destroy the instance.
  */
 typedef struct cflow_statechart_instance_hooks {
     uint32_t abi_version;
     size_t struct_size;
-    /** Runs after internal/eventless/completion work drains, before settle. */
-    cflow_statechart_stable_hook_fn on_stable;
-    /** Runs after external dequeue and before transition selection. */
-    cflow_statechart_external_preprocess_hook_fn preprocess_external;
-    /** v2: runs before selecting one external, internal, or completion Event. */
-    cflow_statechart_event_hook_fn on_event;
-    /** v3: mutually exclusive with `on_stable`. */
-    cflow_statechart_stable_transaction_hook_fn on_stable_transaction;
+    /** Sole callback for trigger preparation and quiescence preparation. */
+    cflow_statechart_host_transaction_fn on_host_transaction;
 } cflow_statechart_instance_hooks;
 
 typedef struct cflow_statechart_guard_binding {

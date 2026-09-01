@@ -65,9 +65,6 @@ add_subdirectory(turbostl)
 add_subdirectory(utils)
 add_subdirectory(cflow-process)
 add_subdirectory(parser)
-if(CFLOW_ENABLE_SCXML)
-  add_subdirectory(cflow-scxml)
-endif()
 add_subdirectory(cflow-fs)
 if(CFLOW_ENABLE_USB)
   add_subdirectory(cflow-usb)
@@ -94,9 +91,6 @@ endif()
 if(CFLOW_ENABLE_USB)
   list(APPEND verify_installed_dependencies turbo_cflow_usb)
 endif()
-if(CFLOW_ENABLE_SCXML)
-  list(APPEND verify_installed_dependencies cflow_scxml)
-endif()
 add_custom_target(
   verify_installed_package
   COMMAND
@@ -108,7 +102,6 @@ add_custom_target(
     -DBUILD_GENERATOR=${CMAKE_GENERATOR}
     -DEXPECT_CFLOW_MINICORO=${CFLOW_ENABLE_MINICORO}
     -DEXPECT_CFLOW_USB=${CFLOW_ENABLE_USB}
-    -DEXPECT_CFLOW_SCXML=${CFLOW_ENABLE_SCXML}
     -P
     ${CMAKE_SOURCE_DIR}/cmake/VerifyInstalledPackage.cmake
   DEPENDS ${verify_installed_dependencies}
