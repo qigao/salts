@@ -61,7 +61,7 @@ typedef struct cnet_command_view {
 
 int cnet_command_queue_init(cnet_command_queue *queue, const cnet_command_queue_config *config);
 
-/** MPSC, nonblocking; full capacity returns `TURBO_ENOBUFS`. */
+/** Single-owner, nonblocking; full capacity returns `TURBO_ENOBUFS`. */
 int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *command);
 
 /** Single-owner, nonblocking; empty-open returns `TURBO_ETIMEDOUT`. */
@@ -69,12 +69,12 @@ int cnet_command_queue_take(cnet_command_queue *queue, cnet_command_view *out_vi
 int cnet_command_queue_release(cnet_command_queue *queue, cnet_command_view *view);
 
 /**
- * Closes admission. Concurrent publishers make the first call return
- * `TURBO_EBUSY`; retry completes close after their accepted/rejected outcome.
+ * Closes admission on the owner thread. A repeated close returns
+ * `TURBO_EALREADY`.
  */
 int cnet_command_queue_close(cnet_command_queue *queue);
 
-/** Returns a thread-safe diagnostic snapshot; fields need not share one instant. */
+/** Returns one owner-thread diagnostic snapshot. */
 bool cnet_command_queue_get_stats(const cnet_command_queue *queue,
                                   cnet_command_queue_stats *out_stats);
 

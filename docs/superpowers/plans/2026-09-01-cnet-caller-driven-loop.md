@@ -133,10 +133,10 @@ reuse through NativeIO and owner tests.
 
 - [x] **Step 2: Measure per-operation pooled coroutine cost**
 
-Compare direct NativeIO with the same CNet workload before changing coroutine
-lifetime. The measured residual is microsecond-scale and includes the required
-public payload copy and session/callback semantics; there is no OS-thread
-handoff.
+Compare Direct NativeIO, the same operations through NativeIO coroutine
+await/resume, and CNet with one common workload before changing coroutine
+lifetime. This separates coroutine scheduling from the required public payload
+copy and session/callback semantics; there is no OS-thread handoff.
 
 - [x] **Step 3: Retain bounded pooled per-operation coroutines**
 

@@ -501,6 +501,13 @@ memory is approximately `command_capacity * aligned_entry_bytes` and
 is validated before allocation. This deliberately avoids another allocator,
 payload pool, or `CNet -> Core -> CFlow` dependency.
 
+The command ring is single-owner, matching the public client contract. A fixed
+free-slot stack and FIFO index ring let a terminal I/O completion release its
+payload slot independently of older in-flight commands. The generic SPSC byte
+ring is not used because its FIFO consume point cannot represent these
+out-of-order payload leases; cross-thread admission remains the responsibility
+of the separate mailbox adapter described above.
+
 NativeIO accepts the contiguous payload directly from the retained command
 entry. The owner releases that entry only after the matching terminal NativeIO
 completion, so no second send copy is required. A later NativeIO scatter/gather
@@ -701,8 +708,13 @@ pool reuse, and stale handles.
 
 Every benchmark row uses the same OS backend, transport, peer, payload, request
 window, sample count, and thread topology. Direct NativeIO is the raw I/O
-denominator and direct CNet isolates session/protocol overhead. Actor/NativeIO
-and Reactive/NativeIO are separate module benchmarks, never CNet variants.
+denominator, NativeIO coroutine mode isolates bounded frame acquire/await/resume
+cost, and direct CNet isolates the remaining command/session/callback overhead.
+Actor/NativeIO and Reactive/NativeIO are separate module benchmarks, never CNet
+variants. Every reported delta uses the matching Direct NativeIO percentile or
+rate as its denominator. The direct comparison disables optional per-I/O CNet
+deadlines because the raw NativeIO and libuv rows do not schedule an equivalent
+timer; deadline-queue behavior remains covered by deterministic contract tests.
 
 Report separate tables by transport and payload for p50/p95/p99 latency,
 operations per second, MiB/s, CPU time, payload copies, pool high-water marks,

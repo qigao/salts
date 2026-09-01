@@ -89,6 +89,7 @@ struct cnet_owner_impl {
   void *clock_context;
   bool closed;
   bool resolver_closed;
+  bool receive_rearm_pending;
   int coroutine_status;
 };
 
@@ -200,8 +201,10 @@ static int cnet_owner_flush_state_events(cnet_owner_impl *impl, bool *out_blocke
   return TURBO_OK;
 }
 
-static int cnet_owner_arm_all_receives(cnet_owner_impl *impl) {
+static int cnet_owner_arm_pending_receives(cnet_owner_impl *impl) {
   size_t index;
+  if (!impl->receive_rearm_pending) return TURBO_OK;
+  impl->receive_rearm_pending = false;
   for (index = 0u; index < impl->connection_capacity; ++index) {
     cnet_owner_session *session = &impl->session_records[index];
     int status;
@@ -703,6 +706,7 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
       const cnet_event event = {
           CNET_EVENT_RECEIVE,      session->handle,         CNET_EVENT_STATE_NONE, TURBO_OK,
           CNET_SESSION_STAGE_NONE, session->receive_buffer, completion->bytes};
+      if (session->receive_demand != 0u) impl->receive_rearm_pending = true;
       status = cnet_owner_publish_event(impl, &event);
       if (status == TURBO_ENOBUFS) {
         if (impl->pending_event_count == impl->pending_event_capacity) return TURBO_ENOBUFS;
@@ -950,7 +954,7 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   status = cnet_owner_flush_state_events(impl, &event_blocked);
   if (status != TURBO_OK) return status;
   if (event_blocked) return TURBO_OK;
-  status = cnet_owner_arm_all_receives(impl);
+  status = cnet_owner_arm_pending_receives(impl);
   if (status != TURBO_OK) return status;
   status = cnet_owner_process_commands(impl, &processed);
   if (status != TURBO_OK) return status;
@@ -958,18 +962,22 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   status = cnet_owner_process_deadlines(impl);
   if (status != TURBO_OK) return status;
   if (impl->pending_event_count != 0u) return TURBO_OK;
-  status = cnet_resolver_poll(&impl->resolver);
-  if (status != TURBO_OK) return status;
-  status = cnet_owner_process_resolver(impl, &processed);
-  if (status != TURBO_OK) return status;
-  status = native_io_backend_observe(
-      &impl->backend, impl->completions, impl->completion_batch_capacity,
-      cnet_owner_observe_timeout(impl, timeout_ms, processed != 0u), &completion_count);
-  if (status == TURBO_ETIMEDOUT) {
+  if (cnet_resolver_has_pending(&impl->resolver)) {
     status = cnet_resolver_poll(&impl->resolver);
     if (status != TURBO_OK) return status;
     status = cnet_owner_process_resolver(impl, &processed);
     if (status != TURBO_OK) return status;
+  }
+  status = native_io_backend_observe(
+      &impl->backend, impl->completions, impl->completion_batch_capacity,
+      cnet_owner_observe_timeout(impl, timeout_ms, processed != 0u), &completion_count);
+  if (status == TURBO_ETIMEDOUT) {
+    if (cnet_resolver_has_pending(&impl->resolver)) {
+      status = cnet_resolver_poll(&impl->resolver);
+      if (status != TURBO_OK) return status;
+      status = cnet_owner_process_resolver(impl, &processed);
+      if (status != TURBO_OK) return status;
+    }
     return cnet_owner_process_deadlines(impl);
   }
   if (status != TURBO_OK) return status;

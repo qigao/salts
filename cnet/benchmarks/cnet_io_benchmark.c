@@ -46,6 +46,7 @@ typedef enum io_bench_protocol { IO_BENCH_TCP = 0, IO_BENCH_UDP } io_bench_proto
 typedef enum io_bench_driver {
   IO_BENCH_LIBUV = 0,
   IO_BENCH_NATIVE_IO,
+  IO_BENCH_NATIVE_IO_COROUTINE,
   IO_BENCH_CNET
 } io_bench_driver;
 
@@ -96,6 +97,16 @@ typedef struct io_bench_native {
   native_io_backend backend;
   native_io_endpoint endpoint;
 } io_bench_native;
+
+typedef struct io_bench_native_coroutine_operation {
+  io_bench_native *fixture;
+  unsigned char *buffer;
+  size_t length;
+  size_t offset;
+  int status;
+  bool send;
+  bool done;
+} io_bench_native_coroutine_operation;
 
 typedef struct io_bench_libuv {
   io_bench_protocol protocol;
@@ -471,6 +482,84 @@ static int io_bench_native_exchange(io_bench_native *fixture, const unsigned cha
   return memcmp(sent, received, length) == 0 ? TURBO_OK : TURBO_EIO;
 }
 
+static void io_bench_native_coroutine_operation_entry(native_io_coroutine *coroutine,
+                                                      void *user_data) {
+  io_bench_native_coroutine_operation *state = (io_bench_native_coroutine_operation *)user_data;
+  while (state->status == TURBO_OK && state->offset < state->length) {
+    native_io_completion completion = {0};
+    native_io_operation operation = {
+        .kind = state->fixture->protocol == IO_BENCH_TCP
+                    ? (state->send ? NATIVE_IO_OPERATION_TCP_SEND : NATIVE_IO_OPERATION_TCP_RECV)
+                    : (state->send ? NATIVE_IO_OPERATION_UDP_SEND_TO
+                                   : NATIVE_IO_OPERATION_UDP_RECV_FROM),
+        .endpoint = state->fixture->endpoint,
+        .buffer = state->buffer + state->offset,
+        .length = state->length - state->offset};
+    state->status = native_io_coroutine_await(coroutine, &operation, &completion);
+    if (state->status != TURBO_OK) break;
+    if (completion.kind != NATIVE_IO_COMPLETION_OK || completion.bytes == 0u ||
+        completion.bytes > state->length - state->offset) {
+      state->status = completion.status == TURBO_OK ? TURBO_EIO : completion.status;
+      break;
+    }
+    state->offset += completion.bytes;
+  }
+  state->done = true;
+}
+
+static int io_bench_native_coroutine_cancel_and_drain(io_bench_native *fixture,
+                                                      native_io_coroutine_task task,
+                                                      io_bench_native_coroutine_operation *state) {
+  native_io_completion events[IO_BENCH_COMPLETION_CAPACITY];
+  int status;
+  if (state->done || !native_io_coroutine_task_valid(task)) return TURBO_OK;
+  status = native_io_backend_cancel_coroutine(&fixture->backend, task);
+  if (status != TURBO_OK && status != TURBO_EALREADY) return status;
+  while (!state->done) {
+    size_t count = 0u;
+    status = native_io_backend_observe(&fixture->backend, events, IO_BENCH_COMPLETION_CAPACITY,
+                                       IO_BENCH_TIMEOUT_MS, &count);
+    if (status != TURBO_OK) return status;
+    if (count != 0u) return TURBO_EPROTO;
+  }
+  return TURBO_OK;
+}
+
+static int io_bench_native_coroutine_exchange(io_bench_native *fixture, const unsigned char *sent,
+                                              unsigned char *received, size_t length) {
+  io_bench_native_coroutine_operation receive = {fixture,  received, length, 0u,
+                                                 TURBO_OK, false,    false};
+  io_bench_native_coroutine_operation send = {
+      fixture, (unsigned char *)sent, length, 0u, TURBO_OK, true, false};
+  native_io_coroutine_task receive_task = {0};
+  native_io_coroutine_task send_task = {0};
+  native_io_completion events[IO_BENCH_COMPLETION_CAPACITY];
+  int status = native_io_backend_spawn_coroutine(
+      &fixture->backend, io_bench_native_coroutine_operation_entry, &receive, &receive_task);
+  if (status == TURBO_OK)
+    status = native_io_backend_spawn_coroutine(
+        &fixture->backend, io_bench_native_coroutine_operation_entry, &send, &send_task);
+  while (status == TURBO_OK && (!receive.done || !send.done)) {
+    size_t count = 0u;
+    status = native_io_backend_observe(&fixture->backend, events, IO_BENCH_COMPLETION_CAPACITY,
+                                       IO_BENCH_TIMEOUT_MS, &count);
+    if (status == TURBO_OK && count != 0u) status = TURBO_EPROTO;
+  }
+  if (status != TURBO_OK) {
+    const int failure = status;
+    const int send_drain_status =
+        io_bench_native_coroutine_cancel_and_drain(fixture, send_task, &send);
+    const int receive_drain_status =
+        io_bench_native_coroutine_cancel_and_drain(fixture, receive_task, &receive);
+    if (send_drain_status != TURBO_OK) return send_drain_status;
+    if (receive_drain_status != TURBO_OK) return receive_drain_status;
+    return failure;
+  }
+  if (send.status != TURBO_OK) return send.status;
+  if (receive.status != TURBO_OK) return receive.status;
+  return memcmp(sent, received, length) == 0 ? TURBO_OK : TURBO_EIO;
+}
+
 static int io_bench_native_destroy(io_bench_native *fixture) {
   int status = TURBO_OK;
   if (native_io_endpoint_valid(fixture->endpoint))
@@ -744,8 +833,8 @@ static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol
                                      .max_send_bytes = IO_BENCH_MAX_PAYLOAD,
                                      .receive_buffer_bytes = IO_BENCH_MAX_PAYLOAD,
                                      .connect_timeout_ms = IO_BENCH_TIMEOUT_MS,
-                                     .read_timeout_ms = IO_BENCH_TIMEOUT_MS,
-                                     .write_timeout_ms = IO_BENCH_TIMEOUT_MS};
+                                     .read_timeout_ms = 0u,
+                                     .write_timeout_ms = 0u};
   cnet_connect_options options;
   char uri[64];
   int status;
@@ -830,7 +919,7 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
   if (status == TURBO_OK) {
     if (driver == IO_BENCH_LIBUV)
       status = io_bench_libuv_init(&fixture->libuv, protocol, &fixture->server.address);
-    else if (driver == IO_BENCH_NATIVE_IO)
+    else if (driver == IO_BENCH_NATIVE_IO || driver == IO_BENCH_NATIVE_IO_COROUTINE)
       status = io_bench_native_init(&fixture->native, protocol, &fixture->server.address);
     else status = io_bench_cnet_init(&fixture->cnet, protocol, &fixture->server.address);
   }
@@ -845,6 +934,8 @@ static int io_bench_exchange(io_bench_fixture *fixture, const unsigned char *sen
     return io_bench_libuv_exchange(&fixture->libuv, sent, received, length);
   if (fixture->driver == IO_BENCH_NATIVE_IO)
     return io_bench_native_exchange(&fixture->native, sent, received, length);
+  if (fixture->driver == IO_BENCH_NATIVE_IO_COROUTINE)
+    return io_bench_native_coroutine_exchange(&fixture->native, sent, received, length);
   return io_bench_cnet_exchange(&fixture->cnet, sent, received, length);
 }
 
@@ -852,7 +943,7 @@ static int io_bench_fixture_destroy(io_bench_fixture *fixture) {
   int status = io_bench_server_finish(&fixture->server);
   int driver_status;
   if (fixture->driver == IO_BENCH_LIBUV) driver_status = io_bench_libuv_destroy(&fixture->libuv);
-  else if (fixture->driver == IO_BENCH_NATIVE_IO)
+  else if (fixture->driver == IO_BENCH_NATIVE_IO || fixture->driver == IO_BENCH_NATIVE_IO_COROUTINE)
     driver_status = io_bench_native_destroy(&fixture->native);
   else driver_status = io_bench_cnet_destroy(&fixture->cnet);
   if (status == TURBO_OK) status = driver_status;
@@ -868,7 +959,8 @@ static int io_bench_u64_compare(const void *left, const void *right) {
 
 static const char *io_bench_driver_name(io_bench_driver driver) {
   if (driver == IO_BENCH_LIBUV) return "libuv";
-  return driver == IO_BENCH_NATIVE_IO ? "NativeIO" : "CNet";
+  if (driver == IO_BENCH_NATIVE_IO) return "NativeIO direct";
+  return driver == IO_BENCH_NATIVE_IO_COROUTINE ? "NativeIO coroutine" : "CNet";
 }
 
 static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size_t payload_size,
@@ -955,34 +1047,60 @@ static double io_bench_rate(const io_bench_result *result) {
 
 static void io_bench_print_latency(const char *protocol, const char *percentile,
                                    const io_bench_result *libuv, const io_bench_result *native,
-                                   const io_bench_result *cnet, size_t count, bool p95) {
+                                   const io_bench_result *coroutine, const io_bench_result *cnet,
+                                   size_t count, bool p95) {
   printf("\n%s %s round-trip latency\n", protocol, percentile);
-  printf("| payload | libuv us | NativeIO us | NativeIO delta | CNet us | CNet delta |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  printf("| payload | NativeIO direct us | NativeIO coroutine us | CNet us | libuv us |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
-    const uint64_t baseline = p95 ? libuv[index].p95_ns : libuv[index].p50_ns;
-    const uint64_t native_value = p95 ? native[index].p95_ns : native[index].p50_ns;
+    const uint64_t baseline = p95 ? native[index].p95_ns : native[index].p50_ns;
+    const uint64_t libuv_value = p95 ? libuv[index].p95_ns : libuv[index].p50_ns;
+    const uint64_t coroutine_value = p95 ? coroutine[index].p95_ns : coroutine[index].p50_ns;
     const uint64_t cnet_value = p95 ? cnet[index].p95_ns : cnet[index].p50_ns;
-    printf("| %zu KiB | %.3f | %.3f | %+.2f%% | %.3f | %+.2f%% |\n",
-           libuv[index].payload_size / 1024u, (double)baseline / 1000.0,
-           (double)native_value / 1000.0, io_bench_delta((double)native_value, (double)baseline),
-           (double)cnet_value / 1000.0, io_bench_delta((double)cnet_value, (double)baseline));
+    printf("| %zu KiB | %.3f | %.3f | %.3f | %.3f |\n", libuv[index].payload_size / 1024u,
+           (double)baseline / 1000.0, (double)coroutine_value / 1000.0, (double)cnet_value / 1000.0,
+           (double)libuv_value / 1000.0);
+  }
+  printf("\n%s %s latency delta versus NativeIO direct\n", protocol, percentile);
+  printf("| payload | NativeIO coroutine | CNet | libuv |\n");
+  printf("| ---: | ---: | ---: | ---: |\n");
+  for (size_t index = 0u; index < count; ++index) {
+    const uint64_t baseline = p95 ? native[index].p95_ns : native[index].p50_ns;
+    const uint64_t libuv_value = p95 ? libuv[index].p95_ns : libuv[index].p50_ns;
+    const uint64_t coroutine_value = p95 ? coroutine[index].p95_ns : coroutine[index].p50_ns;
+    const uint64_t cnet_value = p95 ? cnet[index].p95_ns : cnet[index].p50_ns;
+    printf("| %zu KiB | %+.2f%% | %+.2f%% | %+.2f%% |\n", libuv[index].payload_size / 1024u,
+           io_bench_delta((double)coroutine_value, (double)baseline),
+           io_bench_delta((double)cnet_value, (double)baseline),
+           io_bench_delta((double)libuv_value, (double)baseline));
   }
 }
 
 static void io_bench_print_rate(const char *protocol, const io_bench_result *libuv,
-                                const io_bench_result *native, const io_bench_result *cnet,
-                                size_t count) {
+                                const io_bench_result *native, const io_bench_result *coroutine,
+                                const io_bench_result *cnet, size_t count) {
   printf("\n%s round trips per second\n", protocol);
-  printf("| payload | libuv | NativeIO | NativeIO delta | CNet | CNet delta |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  printf("| payload | NativeIO direct | NativeIO coroutine | CNet | libuv |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
-    const double baseline = io_bench_rate(&libuv[index]);
-    const double native_rate = io_bench_rate(&native[index]);
+    const double baseline = io_bench_rate(&native[index]);
+    const double libuv_rate = io_bench_rate(&libuv[index]);
+    const double coroutine_rate = io_bench_rate(&coroutine[index]);
     const double cnet_rate = io_bench_rate(&cnet[index]);
-    printf("| %zu KiB | %.0f | %.0f | %+.2f%% | %.0f | %+.2f%% |\n",
-           libuv[index].payload_size / 1024u, baseline, native_rate,
-           io_bench_delta(native_rate, baseline), cnet_rate, io_bench_delta(cnet_rate, baseline));
+    printf("| %zu KiB | %.0f | %.0f | %.0f | %.0f |\n", libuv[index].payload_size / 1024u, baseline,
+           coroutine_rate, cnet_rate, libuv_rate);
+  }
+  printf("\n%s rate delta versus NativeIO direct\n", protocol);
+  printf("| payload | NativeIO coroutine | CNet | libuv |\n");
+  printf("| ---: | ---: | ---: | ---: |\n");
+  for (size_t index = 0u; index < count; ++index) {
+    const double baseline = io_bench_rate(&native[index]);
+    const double libuv_rate = io_bench_rate(&libuv[index]);
+    const double coroutine_rate = io_bench_rate(&coroutine[index]);
+    const double cnet_rate = io_bench_rate(&cnet[index]);
+    printf("| %zu KiB | %+.2f%% | %+.2f%% | %+.2f%% |\n", libuv[index].payload_size / 1024u,
+           io_bench_delta(coroutine_rate, baseline), io_bench_delta(cnet_rate, baseline),
+           io_bench_delta(libuv_rate, baseline));
   }
 }
 
@@ -1010,20 +1128,22 @@ static void io_bench_print_cnet_stages(const char *protocol, const io_bench_resu
 
 static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t row,
                             io_bench_result *libuv, io_bench_result *native,
-                            io_bench_result *cnet) {
-  io_bench_result *results[] = {libuv, native, cnet};
-  const io_bench_driver order[][3] = {{IO_BENCH_LIBUV, IO_BENCH_NATIVE_IO, IO_BENCH_CNET},
-                                      {IO_BENCH_NATIVE_IO, IO_BENCH_CNET, IO_BENCH_LIBUV},
-                                      {IO_BENCH_CNET, IO_BENCH_LIBUV, IO_BENCH_NATIVE_IO}};
-  for (size_t index = 0u; index < 3u; ++index) {
-    const io_bench_driver driver = order[row % 3u][index];
+                            io_bench_result *coroutine, io_bench_result *cnet) {
+  io_bench_result *results[] = {libuv, native, coroutine, cnet};
+  const io_bench_driver order[][4] = {
+      {IO_BENCH_LIBUV, IO_BENCH_NATIVE_IO, IO_BENCH_NATIVE_IO_COROUTINE, IO_BENCH_CNET},
+      {IO_BENCH_NATIVE_IO, IO_BENCH_NATIVE_IO_COROUTINE, IO_BENCH_CNET, IO_BENCH_LIBUV},
+      {IO_BENCH_NATIVE_IO_COROUTINE, IO_BENCH_CNET, IO_BENCH_LIBUV, IO_BENCH_NATIVE_IO},
+      {IO_BENCH_CNET, IO_BENCH_LIBUV, IO_BENCH_NATIVE_IO, IO_BENCH_NATIVE_IO_COROUTINE}};
+  for (size_t index = 0u; index < 4u; ++index) {
+    const io_bench_driver driver = order[row % 4u][index];
     const int status = io_bench_run(protocol, driver, payload, results[driver]);
     if (status != TURBO_OK) return status;
   }
   return TURBO_OK;
 }
 
-spec("libuv versus NativeIO versus CNet benchmark") {
+spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchmark") {
   it("compares persistent TCP and UDP clients against one common echo peer") {
     const size_t tcp_count = sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0]);
     const size_t udp_count = sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0]);
@@ -1031,39 +1151,53 @@ spec("libuv versus NativeIO versus CNet benchmark") {
         0};
     io_bench_result native_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {
         0};
+    io_bench_result
+        coroutine_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {0};
     io_bench_result cnet_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {
         0};
     io_bench_result libuv_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {
         0};
     io_bench_result native_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {
         0};
+    io_bench_result
+        coroutine_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {0};
     io_bench_result cnet_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {
         0};
 
-    printf("\nBaseline: libuv %s; NativeIO backend: %s; CNet: public byte API.\n",
+    printf("\nBaseline: NativeIO direct; reference: libuv %s; NativeIO backend: %s; CNet: public "
+           "byte API.\n",
            uv_version_string(), io_bench_backend_name());
     printf("Each client uses the same dedicated blocking echo peer, payloads, warmups, and "
            "samples.\n");
+    printf("Per-I/O deadlines are disabled in the comparison; timeout behavior is covered by "
+           "contract tests.\n");
     printf("Workload: %d warmups, then %d x %d persistent round trips per row.\n",
            IO_BENCH_WARMUP_EXCHANGES, IO_BENCH_SAMPLES, IO_BENCH_EXCHANGES_PER_SAMPLE);
-    printf("Latency delta > 0 is slower; rate delta > 0 is faster. All deltas use libuv.\n");
+    printf("Latency delta > 0 is slower; rate delta > 0 is faster. All deltas use NativeIO "
+           "direct.\n");
 
     for (size_t index = 0u; index < tcp_count; ++index)
       check_equal(io_bench_run_row(IO_BENCH_TCP, IO_BENCH_TCP_PAYLOADS[index], index,
-                                   &libuv_tcp[index], &native_tcp[index], &cnet_tcp[index]),
+                                   &libuv_tcp[index], &native_tcp[index], &coroutine_tcp[index],
+                                   &cnet_tcp[index]),
                   TURBO_OK);
     for (size_t index = 0u; index < udp_count; ++index)
       check_equal(io_bench_run_row(IO_BENCH_UDP, IO_BENCH_UDP_PAYLOADS[index], index,
-                                   &libuv_udp[index], &native_udp[index], &cnet_udp[index]),
+                                   &libuv_udp[index], &native_udp[index], &coroutine_udp[index],
+                                   &cnet_udp[index]),
                   TURBO_OK);
 
-    io_bench_print_latency("TCP", "p50", libuv_tcp, native_tcp, cnet_tcp, tcp_count, false);
-    io_bench_print_latency("TCP", "p95", libuv_tcp, native_tcp, cnet_tcp, tcp_count, true);
-    io_bench_print_rate("TCP", libuv_tcp, native_tcp, cnet_tcp, tcp_count);
+    io_bench_print_latency("TCP", "p50", libuv_tcp, native_tcp, coroutine_tcp, cnet_tcp, tcp_count,
+                           false);
+    io_bench_print_latency("TCP", "p95", libuv_tcp, native_tcp, coroutine_tcp, cnet_tcp, tcp_count,
+                           true);
+    io_bench_print_rate("TCP", libuv_tcp, native_tcp, coroutine_tcp, cnet_tcp, tcp_count);
     io_bench_print_cnet_stages("TCP", cnet_tcp, tcp_count);
-    io_bench_print_latency("UDP", "p50", libuv_udp, native_udp, cnet_udp, udp_count, false);
-    io_bench_print_latency("UDP", "p95", libuv_udp, native_udp, cnet_udp, udp_count, true);
-    io_bench_print_rate("UDP", libuv_udp, native_udp, cnet_udp, udp_count);
+    io_bench_print_latency("UDP", "p50", libuv_udp, native_udp, coroutine_udp, cnet_udp, udp_count,
+                           false);
+    io_bench_print_latency("UDP", "p95", libuv_udp, native_udp, coroutine_udp, cnet_udp, udp_count,
+                           true);
+    io_bench_print_rate("UDP", libuv_udp, native_udp, coroutine_udp, cnet_udp, udp_count);
     io_bench_print_cnet_stages("UDP", cnet_udp, udp_count);
   }
 }
