@@ -8,6 +8,7 @@ endif()
 
 add_library(${TARGET_NAME} STATIC
   src/clock.c
+  src/random.c
   src/readiness.c
   ${TURBO_PLATFORM_THREAD_SOURCE})
 
@@ -40,6 +41,10 @@ target_include_directories(
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(${TARGET_NAME} PUBLIC Threads::Threads)
+
+if(WIN32)
+  target_link_libraries(${TARGET_NAME} PRIVATE bcrypt)
+endif()
 
 if(APPLE)
   target_compile_definitions(${TARGET_NAME} PRIVATE _DARWIN_C_SOURCE=1)

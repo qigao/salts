@@ -55,6 +55,13 @@ static int cnet_shards_first_error(cnet_shards_impl *impl) {
   return TURBO_OK;
 }
 
+static void cnet_shards_record_error(cnet_shard_record *record, int status) {
+  int expected = TURBO_OK;
+  if (record == NULL || status == TURBO_OK || status == TURBO_ETIMEDOUT) return;
+  (void)atomic_compare_exchange_strong_explicit(&record->drive_status, &expected, status,
+                                                memory_order_acq_rel, memory_order_acquire);
+}
+
 static int cnet_shards_publish_owner_event(void *context, const cnet_event *event) {
   cnet_shard_record *record = (cnet_shard_record *)context;
   cnet_shards_event_sink_fn sink =
@@ -169,16 +176,15 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
 int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   cnet_shard_record *record;
+  int first_status;
   int status;
   if (impl == NULL) return TURBO_EINVAL;
   if (impl->stopping || impl->stopped) return TURBO_ESHUTDOWN;
-  status = cnet_shards_first_error(impl);
-  if (status != TURBO_OK) return status;
+  first_status = cnet_shards_first_error(impl);
   record = &impl->records[0];
   status = cnet_owner_drive(&record->owner, timeout_ms);
-  if (status != TURBO_OK)
-    atomic_store_explicit(&record->drive_status, status, memory_order_release);
-  return status;
+  cnet_shards_record_error(record, status);
+  return first_status != TURBO_OK ? first_status : status;
 }
 
 int cnet_shards_bind_event_sink(cnet_shards *shards, cnet_shards_event_sink_fn sink,
@@ -266,9 +272,11 @@ static int cnet_shards_publish(cnet_shards_impl *impl, cnet_shard_connection con
     return TURBO_ESHUTDOWN;
   }
   status = cnet_shards_first_error(impl);
-  if (status == TURBO_OK)
+  if (status == TURBO_OK || kind == CNET_COMMAND_CLOSE)
     status = cnet_session_table_state(&record->sessions, connection.session, &state);
-  if (status == TURBO_OK && (kind == CNET_COMMAND_SEND || kind == CNET_COMMAND_RECEIVE) &&
+  if (status == TURBO_OK &&
+      (kind == CNET_COMMAND_SEND || kind == CNET_COMMAND_SEND_CLOSE ||
+       kind == CNET_COMMAND_RECEIVE) &&
       state != CNET_SESSION_OPEN)
     status = TURBO_EBUSY;
   if (status == TURBO_OK && kind == CNET_COMMAND_CLOSE && state == CNET_SESSION_DRAINING)
@@ -288,6 +296,14 @@ int cnet_shards_send(cnet_shards *shards, cnet_shard_connection connection, cons
   if (impl == NULL || data == NULL || size == 0u) return TURBO_EINVAL;
   if (size > impl->max_command_payload_bytes) return TURBO_EMSGSIZE;
   return cnet_shards_publish(impl, connection, CNET_COMMAND_SEND, data, size, 0u);
+}
+
+int cnet_shards_send_and_close(cnet_shards *shards, cnet_shard_connection connection,
+                               const void *data, size_t size) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  if (impl == NULL || data == NULL || size == 0u) return TURBO_EINVAL;
+  if (size > impl->max_command_payload_bytes) return TURBO_EMSGSIZE;
+  return cnet_shards_publish(impl, connection, CNET_COMMAND_SEND_CLOSE, data, size, 0u);
 }
 
 int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, size_t demand) {
@@ -352,6 +368,7 @@ int cnet_shards_recycle(cnet_shards *shards, cnet_shard_connection connection,
 int cnet_shards_stop(cnet_shards *shards, uint32_t timeout_ms) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   size_t index;
+  int first_status;
   int status;
 
   (void)timeout_ms;
@@ -378,8 +395,7 @@ int cnet_shards_stop(cnet_shards *shards, uint32_t timeout_ms) {
   }
   turbo_mutex_unlock(&impl->admission_lock);
 
-  status = cnet_shards_first_error(impl);
-  if (status != TURBO_OK) return status;
+  first_status = cnet_shards_first_error(impl);
   for (index = 0u; index < impl->shard_count; ++index) {
     cnet_shard_record *record = &impl->records[index];
     if (!record->owner_closed) {
@@ -391,7 +407,12 @@ int cnet_shards_stop(cnet_shards *shards, uint32_t timeout_ms) {
     if (status != TURBO_OK && status != TURBO_EALREADY) return status;
   }
   impl->stopped = true;
-  return TURBO_OK;
+  return first_status;
+}
+
+bool cnet_shards_stopped(const cnet_shards *shards) {
+  const cnet_shards_impl *impl = shards != NULL ? (const cnet_shards_impl *)shards->impl : NULL;
+  return impl != NULL && impl->stopped;
 }
 
 int cnet_shards_destroy(cnet_shards *shards) {

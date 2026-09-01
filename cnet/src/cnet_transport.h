@@ -33,6 +33,10 @@ typedef struct cnet_transport {
 int cnet_transport_parse_numeric_address(const char *host, uint16_t port, void *out_address,
                                          size_t address_capacity, size_t *out_address_length);
 
+/** Listener variant that additionally accepts port zero for ephemeral bind. */
+int cnet_transport_parse_bind_address(const char *host, uint16_t port, void *out_address,
+                                      size_t address_capacity, size_t *out_address_length);
+
 /** Creates and attaches a TCP socket, then describes its connect operation. */
 int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_backend *backend,
                                        native_io_backend_kind backend_kind, const void *address,
@@ -47,6 +51,16 @@ int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *bac
                                native_io_backend_kind backend_kind, const void *address,
                                size_t address_length, uintptr_t user_data,
                                native_io_request *out_request);
+
+/**
+ * Takes ownership of one connected TCP socket and attaches it to NativeIO.
+ * The handle is closed on every failure after argument validation.
+ */
+int cnet_transport_adopt_tcp(cnet_transport *transport, native_io_backend *backend,
+                             uintptr_t native_socket);
+
+/** Closes one unattached native socket transferred through a failed command. */
+void cnet_transport_close_socket(uintptr_t native_socket);
 
 /** Creates, connects, and attaches one CNet-owned datagram socket. */
 int cnet_transport_udp_connect(cnet_transport *transport, native_io_backend *backend,

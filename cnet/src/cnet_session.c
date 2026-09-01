@@ -184,8 +184,7 @@ int cnet_session_table_reserve(cnet_session_table *table, cnet_session_handle *o
   return TURBO_OK;
 }
 
-int cnet_session_table_release_reservation(cnet_session_table *table,
-                                           cnet_session_handle handle) {
+int cnet_session_table_release_reservation(cnet_session_table *table, cnet_session_handle handle) {
   cnet_session_table_impl *impl = cnet_session_impl(table);
   cnet_session_entry *entry;
 

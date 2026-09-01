@@ -268,7 +268,7 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
     check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
                 TURBO_OK);
     for (event_index = 0u; event_index < event_config.capacity; ++event_index) {
-      check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+      check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), TURBO_OK);
       check_equal(event.state, CNET_EVENT_STATE_CLOSING);
       check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
     }
@@ -332,7 +332,9 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
       clock.now_ms = 100u;
       clock.next_ms = 111u;
     }
-    command = (cnet_command){CNET_COMMAND_SEND, session, payload, sizeof(payload), 0u};
+    command = (cnet_command){timeout == CNET_OWNER_TEST_WRITE_TIMEOUT ? CNET_COMMAND_SEND_CLOSE
+                                                                      : CNET_COMMAND_SEND,
+                             session, payload, sizeof(payload), 0u};
     check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
     if (timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
       check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
@@ -342,6 +344,10 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
       check_equal(recv(accepted, (char *)received, (int)sizeof(received), 0),
                   (int)sizeof(received));
       check_equal(received, payload, sizeof(payload));
+      check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+      check_equal(event.kind, CNET_EVENT_SEND);
+      check_equal(event.argument, sizeof(payload));
+      check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
 
       command = (cnet_command){CNET_COMMAND_CLOSE, session, NULL, 0u, 0u};
       check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
@@ -350,6 +356,12 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
               TURBO_OK);
   check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+  if (timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
+    check_equal(event.state, CNET_EVENT_STATE_CLOSING);
+    check_equal(event.status, TURBO_OK);
+    check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+    check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+  }
   check_equal(event.state, timeout != CNET_OWNER_TEST_NO_TIMEOUT ? CNET_EVENT_STATE_FAILED
                                                                  : CNET_EVENT_STATE_CLOSING);
   if (timeout == CNET_OWNER_TEST_READ_TIMEOUT || timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
@@ -442,15 +454,28 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   echo_start_status = turbo_thread_create(&echo_thread, cnet_owner_test_udp_echo_entry, &echo);
   check_equal(echo_start_status, TURBO_OK);
   if (echo_start_status == TURBO_OK) {
+    int send_event_seen = 0;
     command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
     check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
     command = (cnet_command){CNET_COMMAND_SEND, session, outbound, sizeof(outbound), 0u};
     check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
     check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+    if (event.kind == CNET_EVENT_SEND) {
+      check_equal(event.argument, sizeof(outbound));
+      check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+      send_event_seen = 1;
+      check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), TURBO_OK);
+    }
     check_equal(event.kind, CNET_EVENT_RECEIVE);
     check_equal(event.data, inbound, sizeof(inbound));
     check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+    if (!send_event_seen) {
+      check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), TURBO_OK);
+      check_equal(event.kind, CNET_EVENT_SEND);
+      check_equal(event.argument, sizeof(outbound));
+      check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+    }
     check_equal(turbo_thread_join(&echo_thread), TURBO_OK);
     turbo_thread_destroy(&echo_thread);
     check_equal(echo.status, TURBO_OK);
@@ -643,6 +668,10 @@ static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
   check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), TURBO_OK);
   check_equal(cnet_shared_test_named_pipe_peer_read(&pipe, received, sizeof(received)), TURBO_OK);
   check_equal(received, outbound, sizeof(outbound));
+  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+  check_equal(event.kind, CNET_EVENT_SEND);
+  check_equal(event.argument, sizeof(outbound));
+  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
 
   command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);

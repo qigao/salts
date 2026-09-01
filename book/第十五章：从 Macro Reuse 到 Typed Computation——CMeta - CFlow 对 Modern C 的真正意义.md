@@ -2468,8 +2468,9 @@ CHTTP / RPC
 这里的“建立在 CMeta 之上”描述的是共享语义底座和上层复用方向，不意味着每个
 低层模块在链接关系上都直接依赖 CMeta。例如 CSerde 只定义 token protocol，
 Coroutine 只管理 frame，NativeIO 只拥有 native request progress；CBind 和
-CFlow 才直接消费 CMeta 的类型与语义描述。当前 CHTTP 消费 CNet 与 llhttp，并提供有界
-keep-alive pool；CRPC 消费 CHTTP、CSerde 与可选 CMeta callable metadata。自定义二进制 RPC
+CFlow 才直接消费 CMeta 的类型与语义描述。当前 CHTTP 消费 CNet、Platform 与 llhttp，并提供
+client 侧有界 keep-alive pool，以及 server 侧路由、中间件和有界 Session；CRPC 消费 CHTTP、
+CSerde 与可选 CMeta callable metadata。自定义二进制 RPC
 仍可选择独立 framing + CNet；二者都不应绕过连接层把 NativeIO 变成自己的 socket runtime。
 
 这种分层才真正降低 C 开发难度：重复的类型知识、生命周期检查、状态推进、

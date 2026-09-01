@@ -1,6 +1,6 @@
 # CHTTP
 
-CHTTP 是建立在 CNet 之上的有界 HTTP/1 client：
+CHTTP 是建立在 CNet 之上的有界 HTTP/1 client/server：
 
 ```text
 Application / RPC
@@ -25,21 +25,126 @@ feature 控制。
 - TCP 和本地 Pipe ordered byte stream；
 - 同一 `connection_uri + authority` 的有界 HTTP/1.1 keep-alive 连接复用；
 - 供 RPC、Executor 和既有 event loop 集成的高级 submit/cancel/poll 接口；
+- 用户不接触 poller 的后台 HTTP/1.1 server、动态 `:name` 路由与 GET/HEAD/POST/PUT/DELETE/
+  PATCH/OPTIONS handler；
+- 按注册顺序执行的全局/路由 middleware，以及只能调用一次的 `chttp_server_next_call()`；
+- 使用系统 CSPRNG session id 的有界内存 Cookie Session，支持 get/set/remove/clear/invalidate；
 - start-line、header count、header bytes、request body、response body、request count 的硬上限。
 
-当前有意不提供 TLS、HTTP/2/3、server/listen、Upgrade、CONNECT、redirect、compression、
-proxy、pipeline、streaming upload/download 或自动 retry。serializer 发送
+当前有意不提供 TLS、HTTP/2/3、WebSocket/Upgrade、CONNECT、redirect、compression、proxy、
+streaming upload/download、异步悬挂 server response 或自动 retry。client serializer 发送
 `Connection: keep-alive`；final response 只有在 llhttp 判定协议允许持久连接时才回到池中，
 `Connection: close`、EOF framing、解析失败、取消和 shutdown 都会关闭该连接。UDP/datagram 在
 admission 前返回 `TURBO_ENOTSUP`。
+
+当前 server 对 HTTP/1.0 的 `Expect`/`Upgrade` 字段按协议忽略；HTTP/1.1 只处理
+`Expect: 100-continue`。在显式 WebSocket route 尚未实现前，Upgrade invitation 继续按普通
+HTTP 请求路由，不发送缺少可接受协议列表的 426。
+request target 必须是无 fragment 的 origin-form；Transfer-Encoding 仅接受 HTTP/1.1 的精确
+`chunked`，未知 transfer coding 返回 501，HTTP/1.0 的 Transfer-Encoding 返回 400。当前
+request API 不暴露 trailer，因此 server 拒绝任何非空 trailer，避免把尾部 Cookie 或
+Authorization 错当成普通 header。
+
+后续协议路线只计划把 TurboHTTP 的 HTTP/2 引擎导入 CHTTP，并把 S3 作为 CHTTP 上层模块导入；
+HTTP/3 不在范围内。TLS、KCP 与 WebSocket 连接状态归 CNet，CHTTP 只负责 WebSocket Upgrade
+路由和所有权移交。详细阶段与验证门槛见 `../docs/CHTTP_CNET_PROTOCOL_TODO.md`。
 
 这里的 keep-alive 是 HTTP/1.1 在同一 TCP stream 上的持久连接复用，不等于内核
 `SO_KEEPALIVE` 探测参数。TCP keepalive idle/interval/probe count 仍应作为未来 CNet transport
 profile，而不是伪装成 CHTTP pool 配置。
 
-`cnet_send()` 当前只证明请求已复制进有界 command storage，没有公开逐次 write-terminal
-callback。因此 CHTTP 不根据断线猜测请求是否已经上网，也不做隐式 retry。未来若要加入
-streaming/retry，必须先由 CNet 提供 request-id 对应 exactly-once terminal write result。
+`cnet_send()` admission 成功只证明 bytes 已复制进有界 command storage；`observer.on_send`
+在完整 ordered write terminal 后报告一次完成。CHTTP server 只在该 callback 后重新申请 receive，
+因此同一 keep-alive 连接不会重叠写 response。这个完成事实仍不等于应用级 exactly-once，CHTTP
+不会根据断线猜测 peer 是否消费了请求，也不做隐式 retry。
+
+## HTTP Server：路由、中间件与 Session
+
+普通服务端用户只注册 handler/middleware，然后调用 `chttp_server_start()`；后台线程独占 CNet
+poller，业务代码不调用 `cnet_client_poll()`。路由 path 不含 query，可包含完整 segment 参数，
+例如 `/users/:user/posts/:post`。静态路由优先于参数路由，HEAD 在没有显式 HEAD route 时回退
+GET handler，但只发送 headers。
+
+全局 middleware 先于 route middleware 执行。middleware 可以调用一次
+`chttp_server_next_call()`，也可以直接 `chttp_server_reply()` 形成认证、CORS、限流或错误处理中断。
+request、route param、header、body、session value 与 response builder 都是 handler-scoped；不得跨
+callback、线程 handoff 或 coroutine suspension 保存裸指针。
+
+开启 Session 后，Cookie 只保存 128-bit 随机 session id，实际 key/value 留在 server 的固定容量
+存储中。Cookie 默认带 `Path=/; HttpOnly; SameSite=Lax`，可配置 `Secure`；idle timeout 滑动刷新。
+达到 `session_capacity` 时不会驱逐仍有效的会话，新的 `chttp_session_set()` 返回
+`TURBO_ENOBUFS`。当前 store 是进程内内存，不承诺重启持久化、多进程共享或分布式一致性。
+
+```c
+#include <chttp/chttp.h>
+#include <string.h>
+
+static int health(void *user, const chttp_server_request_view *request,
+                  chttp_server_response *response) {
+  const char *name = chttp_server_request_param(request, "name");
+  (void)user;
+  return chttp_server_reply(response, 200, "text/plain", name, name != NULL ? strlen(name) : 0);
+}
+
+static int add_security_headers(void *user, const chttp_server_request_view *request,
+                                chttp_server_response *response, chttp_server_next *next) {
+  int status;
+  (void)user;
+  (void)request;
+  status = chttp_server_response_set_header(response, "X-Content-Type-Options", "nosniff");
+  return status == TURBO_OK ? chttp_server_next_call(next) : status;
+}
+
+int main(void) {
+  chttp_server server = {0};
+  const chttp_server_config config = {
+    .host = "127.0.0.1", .port = 8080, .backlog = 128,
+    .network = {
+      .backend = NATIVE_IO_BACKEND_IOCP,
+      .connection_capacity = 128, .command_capacity = 256,
+      .request_capacity = 256, .completion_batch_capacity = 64,
+      .event_capacity = 256, .max_send_bytes = 64 * 1024,
+      .receive_buffer_bytes = 16 * 1024,
+      .read_timeout_ms = 30000, .write_timeout_ms = 5000,
+    },
+    .route_capacity = 64, .middleware_capacity = 16,
+    .max_route_middleware_count = 8, .max_route_param_count = 8,
+    .max_route_param_bytes = 4096, .max_target_bytes = 4096,
+    .max_header_count = 64, .max_header_bytes = 16 * 1024,
+    .max_request_body_bytes = 32 * 1024,
+    .max_response_header_count = 64, .max_response_header_bytes = 8 * 1024,
+    .max_response_body_bytes = 32 * 1024,
+    .session_capacity = 1024, .session_entry_capacity = 16,
+    .max_session_key_bytes = 64, .max_session_value_bytes = 1024,
+    .session_idle_timeout_ms = 30 * 60 * 1000,
+    .session_cookie_name = "sid", .session_cookie_secure = 0,
+    .poll_slice_ms = 5,
+  };
+  int status = chttp_server_init(&server, &config);
+  int started = 0;
+  if (status == TURBO_OK) status = chttp_server_use(&server, add_security_headers, NULL);
+  if (status == TURBO_OK) status = chttp_server_get(&server, "/health/:name", health, NULL);
+  if (status == TURBO_OK) {
+    status = chttp_server_start(&server);
+    started = status == TURBO_OK;
+  }
+  /* Wait here for the application's shutdown signal. */
+  if (started) {
+    const int stop_status = chttp_server_stop(&server, 0);
+    if (status == TURBO_OK) status = stop_status;
+  }
+  if (server.impl != NULL) {
+    const int destroy_status = chttp_server_destroy(&server);
+    if (status == TURBO_OK) status = destroy_status;
+  }
+  return status == TURBO_OK ? 0 : 1;
+}
+```
+
+非 Windows 平台应把 backend 换成实际支持的 EPOLL 或 KQUEUE。handler 在单一 owner thread 上
+串行执行，不能做阻塞数据库/文件 I/O，也不能从
+handler 调用 stop/destroy。Castle 风格的预加载模板/静态资源可以直接 reply；真正异步数据库、
+文件 streaming 或 Actor continuation 需要未来带 owning request token 的 suspend/resume API。
 
 ## 用户接口：requests-style 调用不暴露 poller
 
@@ -226,8 +331,8 @@ Windows Release：
 ```text
 cmake --fresh --preset win-release-user
 cmake --build --preset win-release-user --target \
-  chttp_request_test chttp_response_test chttp_api_test chttp_requests_test \
-  chttp_header_cpp_test
+  chttp_request_test chttp_response_test chttp_server_parser_test chttp_server_test \
+  chttp_api_test chttp_requests_test chttp_header_cpp_test
 ctest --preset win-release-user -R "^chttp_" --output-on-failure
 ```
 

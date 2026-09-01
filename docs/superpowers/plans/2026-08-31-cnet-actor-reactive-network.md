@@ -30,7 +30,7 @@ llhttp, Wslay, and upstream KCP.
   public boundary before editing.
 - Write the failing focused test first, run it, implement the minimum complete
   behavior, and rerun the focused and adjacent suites.
-- Keep `CNET_ENABLE_EXPERIMENTAL` off by default and exclude CNet from install
+- Keep the temporary experimental gate off by default and exclude CNet from install
   exports until Task 9 completes.
 - Do not expose a partially implemented scheme. Each scheme is compiled only
   when its complete state, error, shutdown, and protocol tests are present.
@@ -54,9 +54,9 @@ llhttp, Wslay, and upstream KCP.
 - Create: `cnet/tests/cnet_build_boundary_test.c`
 - Modify: `cmake/VerifyInstalledPackage.cmake`
 
-- [ ] Add a configure test that proves `CNET_ENABLE_EXPERIMENTAL=OFF` creates no
+- [ ] Add a configure test that proves the disabled experimental gate creates no
   `TurboUtils::CNet` target and installs no CNet header.
-- [x] Add `CNET_ENABLE_EXPERIMENTAL` with default `OFF`; conditionally add the
+- [x] Add a temporary experimental gate defaulting to `OFF`; conditionally add the
   `cnet/` subdirectory only when enabled.
 - [x] Create private `turbo_cnet_experimental` and TinyTest targets without an
   install rule, export name, or public header.
@@ -393,7 +393,7 @@ destruction.
   with every enabled protocol feature represented in package metadata.
 - [ ] Remove the `experimental` target spelling, export `TurboUtils::CNet`, and
   install only complete public headers.
-- [ ] Remove `CNET_ENABLE_EXPERIMENTAL` and build/install the stable base CNet
+- [ ] Remove the temporary experimental gate and build/install the stable base CNet
   module unconditionally, matching NativeIO and CFlow; preserve explicit
   per-protocol feature options.
 - [ ] Build and test Debug, Release, installed-package, ASan, and platform CI on

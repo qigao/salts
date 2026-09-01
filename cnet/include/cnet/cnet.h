@@ -16,6 +16,11 @@ typedef struct cnet_client {
   void *impl;
 } cnet_client;
 
+/** Single-owner nonblocking TCP listener used by CNet-based servers. */
+typedef struct cnet_listener {
+  void *impl;
+} cnet_listener;
+
 /** Generation-checked value handle; never an OS descriptor or pointer. */
 typedef struct cnet_connection {
   uint32_t slot;
@@ -50,11 +55,14 @@ typedef void (*cnet_state_fn)(void *user, cnet_connection connection, cnet_conne
                               const cnet_error *error);
 typedef void (*cnet_receive_fn)(void *user, cnet_connection connection,
                                 const cnet_receive_view *view);
+/** Reports one successfully completed ordered write. */
+typedef void (*cnet_send_fn)(void *user, cnet_connection connection, size_t size);
 
 typedef struct cnet_observer {
   cnet_state_fn on_state;
   cnet_receive_fn on_receive;
   void *user;
+  cnet_send_fn on_send;
 } cnet_observer;
 
 typedef struct cnet_connect_options {
@@ -80,6 +88,18 @@ typedef struct cnet_client_config {
   uint32_t read_timeout_ms;
   uint32_t write_timeout_ms;
 } cnet_client_config;
+
+/**
+ * Listener configuration copied by `cnet_listener_init()`. `host` must be a
+ * numeric IPv4 or IPv6 address. Port zero requests an ephemeral port. Backlog
+ * is a positive hard bound accepted by the platform listener.
+ */
+typedef struct cnet_listener_config {
+  native_io_backend_kind backend;
+  const char *host;
+  uint16_t port;
+  size_t backlog;
+} cnet_listener_config;
 
 /**
  * Initializes one caller-driven NativeIO owner without creating an I/O worker
@@ -109,10 +129,20 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
 
 /**
  * Copies `size` bytes into bounded command storage before returning success.
+ * If `observer.on_send` is present it runs once after the full write completes.
  * @return `TURBO_OK`, `TURBO_EMSGSIZE`, `TURBO_ENOENT` for a stale handle,
- * `TURBO_EBUSY` before connected/while closing, or a bounded queue error.
+ * `TURBO_EBUSY` before connected, while another write is pending, or while
+ * closing, plus a bounded queue error.
  */
 int cnet_send(cnet_client *client, cnet_connection connection, const void *data, size_t size);
+
+/**
+ * Copies one final byte message and closes the stream only after that write
+ * reaches its terminal completion. Once admitted, the connection immediately
+ * rejects further send/receive work.
+ */
+int cnet_send_and_close(cnet_client *client, cnet_connection connection, const void *data,
+                        size_t size);
 
 /**
  * Requests exactly `demand` future receive values. `on_receive` is required.
@@ -153,6 +183,8 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
  * `TURBO_ETIMEDOUT`.
  * Calling from this client's callback returns `TURBO_EBUSY`.
  * @return `TURBO_OK` only after quiescence, or the first drain/progress error.
+ * A non-timeout progress error may be returned after quiescence was reached;
+ * the caller must still attempt `cnet_client_destroy()` to release the client.
  */
 int cnet_client_stop(cnet_client *client, uint32_t timeout_ms);
 
@@ -161,6 +193,37 @@ int cnet_client_stop(cnet_client *client, uint32_t timeout_ms);
  * A NULL internal implementation is already destroyed and returns `TURBO_OK`.
  */
 int cnet_client_destroy(cnet_client *client);
+
+/**
+ * Creates a nonblocking TCP listener. The listener has one owner thread;
+ * ownership may move from initialization to a worker before the first wait or
+ * accept, but calls must not overlap.
+ */
+int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *config);
+
+/** Returns the bound host-order port, including an OS-selected ephemeral port. */
+int cnet_listener_port(const cnet_listener *listener, uint16_t *out_port);
+
+/**
+ * Waits for accept readiness. Timeout is successful with `out_ready == 0`.
+ * This function does not accept or allocate a connection.
+ */
+int cnet_listener_wait(cnet_listener *listener, uint32_t timeout_ms, int *out_ready);
+
+/**
+ * Accepts at most one pending TCP peer and transfers its socket into `client`.
+ * Success publishes a generation-checked handle and guarantees a later state
+ * callback. No pending peer returns `TURBO_ETIMEDOUT`. Admission failure closes
+ * the native peer and leaves `out_connection` zero.
+ */
+int cnet_listener_accept(cnet_listener *listener, cnet_client *client,
+                         const cnet_observer *observer, cnet_connection *out_connection);
+
+/** Closes listener admission. Existing CNet connections are unaffected. */
+int cnet_listener_close(cnet_listener *listener);
+
+/** Requires a closed listener and releases its platform-module reference. */
+int cnet_listener_destroy(cnet_listener *listener);
 
 #ifdef __cplusplus
 }

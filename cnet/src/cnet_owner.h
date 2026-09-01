@@ -15,6 +15,7 @@ typedef struct cnet_owner {
 
 typedef struct cnet_owner_connect_payload {
   cnet_uri_scheme scheme;
+  uintptr_t adopted_socket;
   size_t address_length;
   unsigned char address[CNET_OWNER_ADDRESS_CAPACITY];
   char host[CNET_RESOLVER_HOST_CAPACITY];
@@ -26,6 +27,7 @@ typedef struct cnet_owner_connect_payload {
   uint32_t read_timeout_ms;
   /** Zero disables the per-accepted-write deadline. */
   uint32_t write_timeout_ms;
+  bool adopted;
 } cnet_owner_connect_payload;
 
 typedef uint64_t (*cnet_owner_now_ms_fn)(void *context);

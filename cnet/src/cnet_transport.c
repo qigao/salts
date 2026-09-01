@@ -40,15 +40,17 @@ static int cnet_transport_native_error(void) {
   return error > 0 ? -error : TURBO_EIO;
 }
 
-int cnet_transport_parse_numeric_address(const char *host, uint16_t port, void *out_address,
-                                         size_t address_capacity, size_t *out_address_length) {
+static int cnet_transport_parse_address(const char *host, uint16_t port, bool allow_zero_port,
+                                        void *out_address, size_t address_capacity,
+                                        size_t *out_address_length) {
   struct sockaddr_in address_v4;
   struct sockaddr_in6 address_v6;
   int parsed;
 
   if (out_address_length == NULL) return TURBO_EINVAL;
   *out_address_length = 0u;
-  if (host == NULL || host[0] == '\0' || port == 0u || out_address == NULL) return TURBO_EINVAL;
+  if (host == NULL || host[0] == '\0' || (!allow_zero_port && port == 0u) || out_address == NULL)
+    return TURBO_EINVAL;
 
   memset(&address_v4, 0, sizeof(address_v4));
   parsed = inet_pton(AF_INET, host, &address_v4.sin_addr);
@@ -76,6 +78,18 @@ int cnet_transport_parse_numeric_address(const char *host, uint16_t port, void *
   return TURBO_ENOENT;
 }
 
+int cnet_transport_parse_numeric_address(const char *host, uint16_t port, void *out_address,
+                                         size_t address_capacity, size_t *out_address_length) {
+  return cnet_transport_parse_address(host, port, false, out_address, address_capacity,
+                                      out_address_length);
+}
+
+int cnet_transport_parse_bind_address(const char *host, uint16_t port, void *out_address,
+                                      size_t address_capacity, size_t *out_address_length) {
+  return cnet_transport_parse_address(host, port, true, out_address, address_capacity,
+                                      out_address_length);
+}
+
 static void cnet_transport_close_native(cnet_transport *transport) {
   if (transport == NULL) return;
   if (transport->native_open) {
@@ -96,6 +110,15 @@ static void cnet_transport_close_native(cnet_transport *transport) {
 #endif
     transport->write_native_open = false;
   }
+}
+
+void cnet_transport_close_socket(uintptr_t native_socket) {
+  if (native_socket == UINTPTR_MAX) return;
+#if defined(_WIN32)
+  (void)closesocket((SOCKET)native_socket);
+#else
+  (void)close((int)native_socket);
+#endif
 }
 
 static int cnet_transport_address_family(const void *address, size_t address_length,
@@ -195,6 +218,26 @@ int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *bac
     cnet_transport_reset(transport);
   }
   return status;
+}
+
+int cnet_transport_adopt_tcp(cnet_transport *transport, native_io_backend *backend,
+                             uintptr_t native_socket) {
+  int status;
+  if (transport == NULL) return TURBO_EINVAL;
+  cnet_transport_reset(transport);
+  if (backend == NULL || native_socket == UINTPTR_MAX) return TURBO_EINVAL;
+
+  transport->native_handle = native_socket;
+  transport->resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET;
+  transport->native_open = true;
+  status = native_io_backend_attach_socket(backend, native_socket, &transport->endpoint);
+  if (status != TURBO_OK) {
+    cnet_transport_close_native(transport);
+    cnet_transport_reset(transport);
+    return status;
+  }
+  transport->attached = true;
+  return TURBO_OK;
 }
 
 int cnet_transport_udp_connect(cnet_transport *transport, native_io_backend *backend,

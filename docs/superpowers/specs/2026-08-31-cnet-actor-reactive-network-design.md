@@ -360,6 +360,10 @@ and drives the same caller-owned progress loop until accepted NativeIO requests
 and callbacks settle within the bounded deadline. Timeout returns
 `TURBO_ETIMEDOUT` and preserves the client for another stop attempt. `destroy`
 returns `TURBO_EBUSY` until stop has reached quiescence.
+If progress has already recorded a fatal error, stop preserves that first error
+as its return value but continues close/recycle work. Once dispatcher and shard
+owners are quiescent, destroy is permitted even though stop reported the
+terminal error; diagnostics do not become a permanent ownership leak.
 
 ## Transport Semantics
 
@@ -655,7 +659,7 @@ logging followed by success.
 
 This design does not change current NativeIO or CFlow public behavior. CNet is a
 new target, so existing consumers do not link it unless requested. The initial
-implementation remains behind `CNET_ENABLE_EXPERIMENTAL=OFF` and does not add
+implementation remains behind its temporary experimental build gate and does not add
 installed targets or headers until TCP, connected UDP, Pipe, state/error, and
 shutdown conformance pass on Windows, Linux, and macOS.
 

@@ -15,33 +15,22 @@
 #include <time.h>
 
 #ifdef _WIN32
-  #include <windows.h>
-  #include <bcrypt.h>
   #include <iphlpapi.h>
-  #include <limits.h>
+  #include <windows.h>
   #include <winternl.h>
 #else
   #include <ifaddrs.h>
+  #include <net/if.h>
   #include <pwd.h>
   #include <signal.h>
-  #include <net/if.h>
   #include <sys/utsname.h>
   #include <time.h>
   #include <unistd.h>
   #if defined(__APPLE__)
     #include <mach/mach.h>
     #include <sys/sysctl.h>
-  #elif defined(__ANDROID__)
-    /* arc4random_buf is available on Android API 21+ (Bionic); no additional header needed */
-  #elif defined(__linux__)
-    #include <sys/random.h>
-  #elif !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__OpenBSD__) && \
-      !defined(__NetBSD__) && !defined(__DragonFly__)
-    #include <fcntl.h>
   #endif
 #endif
-
-#define TURBO_SECURE_RANDOM_CHUNK_SIZE 256U
 
 static int turbo_platform_copy_string(char *buffer, size_t buffer_size, const char *value) {
   size_t len;
@@ -93,7 +82,7 @@ static int turbo_platform_is_loopback_address(const char *address) {
 #ifdef _WIN32
 static int turbo_platform_get_windows_version(char *buffer, size_t buffer_size) {
   HMODULE ntdll = GetModuleHandleA("ntdll.dll");
-  typedef LONG (WINAPI *rtl_get_version_fn)(PRTL_OSVERSIONINFOW);
+  typedef LONG(WINAPI * rtl_get_version_fn)(PRTL_OSVERSIONINFOW);
   rtl_get_version_fn rtl_get_version;
   RTL_OSVERSIONINFOW version_info;
   int written;
@@ -113,8 +102,7 @@ static int turbo_platform_get_windows_version(char *buffer, size_t buffer_size) 
     return -EIO;
   }
 
-  written = snprintf(buffer, buffer_size, "%lu.%lu.%lu",
-                     (unsigned long)version_info.dwMajorVersion,
+  written = snprintf(buffer, buffer_size, "%lu.%lu.%lu", (unsigned long)version_info.dwMajorVersion,
                      (unsigned long)version_info.dwMinorVersion,
                      (unsigned long)version_info.dwBuildNumber);
   if (written < 0 || (size_t)written >= buffer_size) {
@@ -155,70 +143,7 @@ int turbo_gettimeofday(turbo_timeval_t *tv, turbo_timezone_t *tz) {
 #endif
 
 int turbo_secure_random(void *buffer, size_t length) {
-  uint8_t *cursor = (uint8_t *)buffer;
-
-  if (length == 0U) return TURBO_OK;
-  if (!buffer) return TURBO_EINVAL;
-
-#ifdef _WIN32
-  while (length > 0U) {
-    ULONG chunk = length > (size_t)ULONG_MAX ? ULONG_MAX : (ULONG)length;
-    NTSTATUS status = BCryptGenRandom(NULL, cursor, chunk, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-    if (!BCRYPT_SUCCESS(status)) return TURBO_EIO;
-    cursor += chunk;
-    length -= chunk;
-  }
-#elif defined(__ANDROID__)
-  /* Android Bionic provides arc4random_buf since API 21 */
-  arc4random_buf(cursor, length);
-#elif defined(__linux__)
-  while (length > 0U) {
-    size_t chunk =
-        length > TURBO_SECURE_RANDOM_CHUNK_SIZE ? TURBO_SECURE_RANDOM_CHUNK_SIZE : length;
-    ssize_t received = getrandom(cursor, chunk, 0);
-    if (received < 0) {
-      if (errno == EINTR) continue;
-      return -errno;
-    }
-    if (received == 0) return TURBO_EIO;
-    cursor += (size_t)received;
-    length -= (size_t)received;
-  }
-#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || \
-    defined(__DragonFly__)
-  arc4random_buf(cursor, length);
-#else
-  {
-    int flags = O_RDONLY;
-    int fd;
-  #ifdef O_CLOEXEC
-    flags |= O_CLOEXEC;
-  #endif
-    fd = open("/dev/urandom", flags);
-    if (fd < 0) return -errno;
-
-    while (length > 0U) {
-      size_t chunk =
-          length > TURBO_SECURE_RANDOM_CHUNK_SIZE ? TURBO_SECURE_RANDOM_CHUNK_SIZE : length;
-      ssize_t received = read(fd, cursor, chunk);
-      if (received < 0) {
-        int error = errno;
-        if (error == EINTR) continue;
-        close(fd);
-        return -error;
-      }
-      if (received == 0) {
-        close(fd);
-        return TURBO_EIO;
-      }
-      cursor += (size_t)received;
-      length -= (size_t)received;
-    }
-    close(fd);
-  }
-#endif
-
-  return TURBO_OK;
+  return turbo_platform_secure_random(buffer, length);
 }
 
 static int turbo_is_leap_year(int year) {
@@ -280,9 +205,8 @@ time_t turbo_timegm(const struct tm *tm_value) {
   month = tm_value->tm_mon + 1;
   day = tm_value->tm_mday;
   if (month < 1 || month > 12 || day < 1 || day > turbo_days_in_month(year, month) ||
-      tm_value->tm_hour < 0 || tm_value->tm_hour > 23 ||
-      tm_value->tm_min < 0 || tm_value->tm_min > 59 ||
-      tm_value->tm_sec < 0 || tm_value->tm_sec > 60) {
+      tm_value->tm_hour < 0 || tm_value->tm_hour > 23 || tm_value->tm_min < 0 ||
+      tm_value->tm_min > 59 || tm_value->tm_sec < 0 || tm_value->tm_sec > 60) {
     errno = EINVAL;
     return (time_t)-1;
   }
@@ -381,20 +305,20 @@ int turbo_platform_arch(char *buffer, size_t buffer_size) {
 
   GetNativeSystemInfo(&system_info);
   switch (system_info.wProcessorArchitecture) {
-    case PROCESSOR_ARCHITECTURE_AMD64:
-      arch = "x86_64";
-      break;
-    case PROCESSOR_ARCHITECTURE_INTEL:
-      arch = "x86";
-      break;
-    case PROCESSOR_ARCHITECTURE_ARM64:
-      arch = "arm64";
-      break;
-    case PROCESSOR_ARCHITECTURE_ARM:
-      arch = "arm";
-      break;
-    default:
-      break;
+  case PROCESSOR_ARCHITECTURE_AMD64:
+    arch = "x86_64";
+    break;
+  case PROCESSOR_ARCHITECTURE_INTEL:
+    arch = "x86";
+    break;
+  case PROCESSOR_ARCHITECTURE_ARM64:
+    arch = "arm64";
+    break;
+  case PROCESSOR_ARCHITECTURE_ARM:
+    arch = "arm";
+    break;
+  default:
+    break;
   }
 
   return turbo_platform_copy_string(buffer, buffer_size, arch);
@@ -605,7 +529,7 @@ int turbo_platform_load_average(turbo_platform_load_average_t *info) {
 }
 
 #ifdef _WIN32
-static void turbo_extract_windows_unicast(IP_ADAPTER_ADDRESSES *adapter, 
+static void turbo_extract_windows_unicast(IP_ADAPTER_ADDRESSES *adapter,
                                           IP_ADAPTER_UNICAST_ADDRESS *unicast,
                                           turbo_platform_network_interface_t *iface) {
   DWORD name_len;
@@ -633,13 +557,11 @@ static void turbo_extract_windows_unicast(IP_ADAPTER_ADDRESSES *adapter,
     turbo_platform_copy_string(iface->netmask, sizeof(iface->netmask), "::");
   }
 
-  iface->is_internal =
-      (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) ||
-      turbo_platform_is_loopback_address(iface->address);
+  iface->is_internal = (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) ||
+                       turbo_platform_is_loopback_address(iface->address);
 }
 #else
-static int turbo_format_sockaddr(const struct sockaddr *address, char *buffer,
-                                 size_t buffer_size) {
+static int turbo_format_sockaddr(const struct sockaddr *address, char *buffer, size_t buffer_size) {
   if (!address || !buffer || buffer_size == 0) return -EINVAL;
 
   if (address->sa_family == AF_INET) {
@@ -825,10 +747,8 @@ int turbo_timer_start(turbo_timer_t *timer, turbo_timer_cb cb, uint64_t timeout,
   timer->timeout = timeout;
   timer->repeat = repeat;
 
-  BOOL result = CreateTimerQueueTimer(&timer->timer_handle,
-                                      NULL,
-                                      native_timer_callback_win32, timer, (DWORD)timeout,
-                                      (DWORD)repeat, WT_EXECUTEDEFAULT);
+  BOOL result = CreateTimerQueueTimer(&timer->timer_handle, NULL, native_timer_callback_win32,
+                                      timer, (DWORD)timeout, (DWORD)repeat, WT_EXECUTEDEFAULT);
 
   if (!result) {
     TLOG_ERRORF("CreateTimerQueueTimer failed: {}", GetLastError());
@@ -1029,8 +949,7 @@ static void turbo_posix_timer_manager_thread(void *arg) {
       }
 
       wait_ms = timer->due_ms - now_ms;
-      if (turbo_cond_timedwait(&g_turbo_posix_timer_manager.cond,
-                               &g_turbo_posix_timer_manager.lock,
+      if (turbo_cond_timedwait(&g_turbo_posix_timer_manager.cond, &g_turbo_posix_timer_manager.lock,
                                wait_ms * 1000000ULL) != 0) {
         continue;
       }
@@ -1088,9 +1007,8 @@ static void turbo_posix_timer_manager_init_once(void) {
 
 static int turbo_posix_timer_manager_ensure_started(void) {
   turbo_once(&g_turbo_posix_timer_manager_once, turbo_posix_timer_manager_init_once);
-  return g_turbo_posix_timer_manager.initialized && !g_turbo_posix_timer_manager.init_failed
-             ? 0
-             : -1;
+  return g_turbo_posix_timer_manager.initialized && !g_turbo_posix_timer_manager.init_failed ? 0
+                                                                                             : -1;
 }
 
 turbo_timer_t *turbo_timer_create(void *loop) {

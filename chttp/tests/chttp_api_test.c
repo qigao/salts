@@ -32,6 +32,13 @@ typedef struct chttp_test_probe {
   size_t body_size;
 } chttp_test_probe;
 
+static int chttp_test_server_handler(void *user, const chttp_server_request_view *request,
+                                     chttp_server_response *response) {
+  (void)user;
+  if (request == NULL || response == NULL) return TURBO_EINVAL;
+  return chttp_server_reply(response, 200u, "text/plain", "ok", 2u);
+}
+
 static void chttp_test_close_socket(chttp_test_socket socket_value) {
   if (socket_value == CHTTP_TEST_INVALID_SOCKET) return;
 #if defined(_WIN32)
@@ -165,6 +172,19 @@ static int chttp_test_poll_until(chttp_async_client *client, chttp_test_probe *p
 }
 
 spec("CHTTP advanced async client API") {
+  it("exposes an explicit no-poll server lifecycle") {
+    chttp_server server = {0};
+    chttp_server_config config = {0};
+    chttp_server_stats stats = {0};
+
+    check_equal(chttp_server_init(NULL, &config), TURBO_EINVAL);
+    check_equal(
+        chttp_server_route(&server, CHTTP_METHOD_GET, "/health", chttp_test_server_handler, NULL),
+        TURBO_EINVAL);
+    check_equal(chttp_server_get_stats(&server, &stats), TURBO_EINVAL);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+  }
+
   it("round-trips one bounded HTTP response over CNet") {
     static const char response[] = "HTTP/1.1 200 OK\r\n"
                                    "Content-Type: text/plain\r\n"

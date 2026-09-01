@@ -19,6 +19,7 @@ typedef struct cnet_event_queue_config {
 typedef enum cnet_event_kind {
   CNET_EVENT_NONE = 0,
   CNET_EVENT_RECEIVE,
+  CNET_EVENT_SEND,
   CNET_EVENT_STATE
 } cnet_event_kind;
 
@@ -42,6 +43,7 @@ typedef struct cnet_event {
   cnet_session_stage stage;
   const void *data;
   size_t size;
+  size_t argument;
 } cnet_event;
 
 /** Single-consumer borrowed view; release invalidates `data`. */
@@ -53,6 +55,7 @@ typedef struct cnet_event_view {
   cnet_session_stage stage;
   const void *data;
   size_t size;
+  size_t argument;
   uint64_t _sequence;
 } cnet_event_view;
 
