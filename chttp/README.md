@@ -1,0 +1,235 @@
+# CHTTP
+
+CHTTP 是建立在 CNet 之上的有界 HTTP/1 client：
+
+```text
+Application / RPC
+    -> CHTTP serializer + llhttp session
+    -> CNet connection
+    -> NativeIO terminal completion
+```
+
+CHTTP 随 TurboUtils 正常构建，source-tree target 是 `turbo_chttp`；安装后通过
+`TurboUtils::CHTTP` 与 `<chttp/chttp.h>` 使用。llhttp 是基础依赖，不再由单独的 manifest
+feature 控制。
+
+## 当前能力与明确边界
+
+当前实现提供：
+
+- 面向普通用户的阻塞 `chttp_get()`、`chttp_head()`、`chttp_post()`、`chttp_put()`、
+  `chttp_delete()` 和 `chttp_patch()`，内部自行推进 I/O；
+- HTTP/1.0、HTTP/1.1 response 的严格增量解析；
+- GET、HEAD、POST、PUT、DELETE、PATCH、OPTIONS request serialization；
+- 固定长度、chunked、EOF-delimited body，以及有界 1xx informational response；
+- TCP 和本地 Pipe ordered byte stream；
+- 同一 `connection_uri + authority` 的有界 HTTP/1.1 keep-alive 连接复用；
+- 供 RPC、Executor 和既有 event loop 集成的高级 submit/cancel/poll 接口；
+- start-line、header count、header bytes、request body、response body、request count 的硬上限。
+
+当前有意不提供 TLS、HTTP/2/3、server/listen、Upgrade、CONNECT、redirect、compression、
+proxy、pipeline、streaming upload/download 或自动 retry。serializer 发送
+`Connection: keep-alive`；final response 只有在 llhttp 判定协议允许持久连接时才回到池中，
+`Connection: close`、EOF framing、解析失败、取消和 shutdown 都会关闭该连接。UDP/datagram 在
+admission 前返回 `TURBO_ENOTSUP`。
+
+这里的 keep-alive 是 HTTP/1.1 在同一 TCP stream 上的持久连接复用，不等于内核
+`SO_KEEPALIVE` 探测参数。TCP keepalive idle/interval/probe count 仍应作为未来 CNet transport
+profile，而不是伪装成 CHTTP pool 配置。
+
+`cnet_send()` 当前只证明请求已复制进有界 command storage，没有公开逐次 write-terminal
+callback。因此 CHTTP 不根据断线猜测请求是否已经上网，也不做隐式 retry。未来若要加入
+streaming/retry，必须先由 CNet 提供 request-id 对应 exactly-once terminal write result。
+
+## 用户接口：requests-style 调用不暴露 poller
+
+普通用户只使用 `chttp_client_init()`、`chttp_get/head/post/put/delete/patch()`、
+`chttp_response_destroy()` 和 `chttp_client_destroy()`。一次调用在当前线程阻塞，内部驱动
+CHTTP → CNet → NativeIO，返回后 `chttp_response` 的 status、reason、headers 和 body 都由
+调用方拥有；用户不创建 poller，也不需要提供 Executor 或 worker thread。
+
+一个 client 同一时刻只允许一个调用，并归一个线程所有。需要并行请求时，可以把多个互不
+共享的 client 交给应用已有的 `turbo_threadpool` 或 Executor；不能让多个 worker 同时推进同一个
+client。CHTTP 不创建隐藏的全局线程池，也不会把阻塞工作转交给不可控的后台线程。
+
+`timeout_ms` 限制等待 HTTP result 的时间。到期后 CHTTP 会取消并等待底层 terminal 状态，再让
+client 恢复到可安全复用或销毁的状态；因此底层 terminal drain 所需时间可能使函数返回略晚于
+该 deadline。错误通过函数返回值与 `chttp_error` 的 status、native_status、stage 一起交付。
+
+## 配置与连接参数
+
+`chttp_client_config.network` 完整承载 CNet owner 的 backend、connection/command/native
+request/event capacity、单次 send/receive bytes 和 connect/read/write timeout。CHTTP 自己只
+增加 HTTP message/session 上限。`network.read_timeout_ms` 也约束 idle 连接等待 peer EOF 的时间；
+零仍表示不设置该 deadline：
+
+| 字段 | 单位与满额行为 |
+|---|---|
+| `request_capacity` | busy + idle + closing 的 HTTP connection slot；满时 `TURBO_ENOBUFS` |
+| `max_start_line_bytes` | request/status line；超限 `TURBO_EMSGSIZE` |
+| `max_header_count` | 包含自动生成的 Host、Content-Length、Connection；超限 `TURBO_EMSGSIZE` |
+| `max_header_bytes` | header line bytes（不含最终空行）；超限 `TURBO_EMSGSIZE` |
+| `max_request_body_bytes` | copied request body；超限 `TURBO_EMSGSIZE` |
+| `max_response_body_bytes` | buffered response body；超限 `TURBO_EMSGSIZE` |
+| `max_informational_responses` | 一个 final response 前允许的 1xx 数量 |
+
+每次 requests-style call 或高级 submit 再提供三项不同事实：
+
+- `connection_uri`：CNet endpoint，例如 `tcp://127.0.0.1:8080`；
+- `authority`：HTTP Host/virtual-host，例如 `api.example.test:8080`；
+- `target`：HTTP origin-form target，例如 `/v1/users?id=7`。
+
+三者不能合并为一个模糊 URL：连接 endpoint、HTTP authority 和 request target 的归属不同，
+Pipe 与 virtual host 也需要能独立组合。TLS/SNI/ALPN 尚未实现，不能把 `https://` 静默降级为
+TCP。
+
+pool key 是经过验证后的 `connection_uri + authority` 精确组合，`target` 不参与。因此同一站点的
+`/users`、`/orders` 与 `/status` 可以顺序复用一条连接，但不同 authority 不做隐式 coalescing。
+每条连接同一时刻最多承载一个 request，不实现 HTTP pipelining。pool 满且没有同 key idle slot
+时，高级 submit 会开始关闭一个不匹配 idle slot，并返回 `TURBO_ENOBUFS`；调用方 poll 后再重试。
+requests-style client 则在本次调用 deadline 内自行推进该关闭并重新提交，因此普通用户切换站点
+仍不需要接触 poller。这里的重新提交发生在新 request admission 之前，不是断线后的 HTTP retry。
+
+## 高级 event-loop 接口
+
+`chttp_async_client_submit()`、`chttp_async_request_cancel()`、`chttp_async_client_poll()`、
+`chttp_async_client_stop()` 和 `chttp_async_client_destroy()` 是供 CRPC、Executor 或已有事件循环
+适配器使用的高级接口，不是普通 HTTP 调用流程。只有这类集成层负责调用
+`chttp_async_client_poll()`；应用业务代码默认使用 requests-style API。
+
+## Ownership、状态与背压
+
+CHTTP 与内嵌 CNet 共享一个 progress owner。`submit/cancel/poll/stop/destroy` 不得并发调用；
+completion callback 在 `chttp_async_client_poll()` 或 `chttp_async_client_stop()` 的调用线程内同步执行。
+callback 可以取消另一条已接受 request，但不能递归 poll/stop/destroy，也不能直接 submit 新
+request；submit 必须等 callback 返回后再进行，否则返回 `TURBO_EBUSY`。
+
+```text
+FREE
+  -> CONNECTING
+  -> BUSY / SEND_ADMITTED
+  -> RECEIVE_ONE (exactly one demand)
+  -> PARSE
+       -> RECEIVE_ONE
+       -> RESULT_DELIVERED
+            -> IDLE -> BUSY (same origin reuse)
+            -> CLOSING
+  -> TRANSPORT_TERMINAL
+  -> RECYCLE
+```
+
+- 新连接 submit 成功前由 CNet 复制 URI，CHTTP 复制 pool key，并由 serializer 复制
+  method/authority/target/headers/body；
+- `options.user` 是 borrowed，必须存活到 completion callback 返回；
+- response、header string 和 body 只在 completion callback 期间有效；需要跨 callback 或协程
+  挂起保留时，调用方必须复制；
+- 每次只调用 `cnet_receive(connection, 1)`；当前 byte chunk 消费并确认 parser/body 仍有容量后
+  才申请下一个 receive value；idle slot 也只保留一个 receive demand，用于观察 EOF/read timeout；
+- idle slot 收到没有对应 request 的 bytes 属于协议异常，该连接直接失效并关闭；
+- cancel/stop 只是关闭请求，资源仍保留到 CNet terminal callback 后才 recycle；
+- submit 成功恰好产生一次 completion callback。立即 admission 失败不产生 callback。
+
+每个 active request 的 retained HTTP 内存上界可按下式复算：
+
+```text
+serialized request <= network.max_send_bytes
++ llhttp/session metadata
++ max_header_count * header metadata
++ max_header_bytes + terminators
++ max_start_line_bytes
++ max_response_body_bytes
+```
+
+总预算还需乘 `request_capacity`，再加每个连接的 URI/authority pool key、CNet
+command/event/native-request 和 receive buffer 预算。idle slot 已释放上一条 response parser 的
+reason/header/body storage，只保留连接、key 和 CNet receive state。
+
+## 普通用户示例
+
+```c
+#include <stdio.h>
+
+#include <chttp/chttp.h>
+
+int main(void) {
+  chttp_client client = {0};
+  chttp_response response = {0};
+  chttp_error error = {0};
+  const chttp_client_config config = {
+    .network = {
+      .backend = NATIVE_IO_BACKEND_IOCP,
+      .connection_capacity = 1,
+      .command_capacity = 8,
+      .request_capacity = 4,
+      .completion_batch_capacity = 4,
+      .event_capacity = 8,
+      .max_send_bytes = 64 * 1024,
+      .receive_buffer_bytes = 16 * 1024,
+      .connect_timeout_ms = 5000,
+      .read_timeout_ms = 30000,
+      .write_timeout_ms = 5000,
+    },
+    .request_capacity = 1,
+    .max_start_line_bytes = 4096,
+    .max_header_count = 64,
+    .max_header_bytes = 32 * 1024,
+    .max_request_body_bytes = 32 * 1024,
+    .max_response_body_bytes = 1024 * 1024,
+    .max_informational_responses = 4,
+  };
+  const chttp_options options = {
+    .connection_uri = "tcp://127.0.0.1:8080",
+    .authority = "api.example.test:8080",
+    .target = "/v1/health",
+    .timeout_ms = 30000,
+  };
+  int status = chttp_client_init(&client, &config);
+
+  if (status == TURBO_OK)
+    status = chttp_get(&client, &options, &response, &error);
+  if (status == TURBO_OK)
+    (void)fwrite(response.body, 1, response.body_size, stdout);
+  else
+    (void)fprintf(stderr, "CHTTP failed: status=%d native=%d stage=%s\n",
+                  error.status, error.native_status,
+                  error.stage != NULL ? error.stage : "unknown");
+
+  chttp_response_destroy(&response);
+  if (client.impl != NULL) {
+    const int destroy_status = chttp_client_destroy(&client, 5000);
+    if (status == TURBO_OK) status = destroy_status;
+  }
+  return status == TURBO_OK ? 0 : 1;
+}
+```
+
+非 Windows 平台应选择实际支持的 NativeIO backend。生产代码必须消费并传播调用返回的
+`error.status`、`error.native_status` 和 `error.stage`。
+
+## 架构决策
+
+候选方案包括直接从 CHTTP 使用 NativeIO、把 llhttp 放进 CNet，以及在 CNet 上建立独立
+CHTTP。选择第三种：NativeIO 只拥有 native operation terminal truth；CNet 拥有 DNS、URI、
+connection handle、receive demand 和 shutdown；CHTTP 拥有 HTTP framing、parser state 与
+message limits；llhttp 是私有 parser adapter。
+
+这一选择增加一个显式层和完整响应 buffering 成本，却避免 HTTP/RPC 重复连接状态机，也避免
+第三方 parser 类型进入 CNet API。当前 keep-alive pool 只复用完整 message 之间的空闲连接；若
+迁移到 streaming、pipelining 或 retry，需保留当前 message API，并先补 CNet write-terminal
+契约。若实现需要回滚，应回退对应提交并恢复上一版安装包；不能依赖运行时 fallback 或已经
+移除的构建开关。
+
+## 构建与验证
+
+Windows Release：
+
+```text
+cmake --fresh --preset win-release-user
+cmake --build --preset win-release-user --target \
+  chttp_request_test chttp_response_test chttp_api_test chttp_requests_test \
+  chttp_header_cpp_test
+ctest --preset win-release-user -R "^chttp_" --output-on-failure
+```
+
+Windows 命令必须先进入 `VsDevCmd.bat` 环境。llhttp 的上游 API 与 strict/lenient 安全说明见
+[nodejs/llhttp](https://github.com/nodejs/llhttp)。

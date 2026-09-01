@@ -3,6 +3,8 @@
 include(CMakeFindDependencyMacro)
 
 find_dependency(Threads)
+find_dependency(c-ares CONFIG)
+find_dependency(llhttp CONFIG)
 
 include("${CMAKE_CURRENT_LIST_DIR}/TurboUtilsTargets.cmake")
 

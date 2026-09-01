@@ -1,4 +1,4 @@
-set(TARGET_NAME turbo_cnet_experimental)
+set(TARGET_NAME turbo_cnet)
 
 find_package(c-ares CONFIG REQUIRED)
 
@@ -15,17 +15,27 @@ add_library(${TARGET_NAME} STATIC
   src/cnet_transport.c
   src/cnet_transport_pipe.c
   src/cnet_uri.c)
-cmake_config_target(${TARGET_NAME} FOLDER "cnet")
+cmake_config_target(${TARGET_NAME}
+  ALIAS TurboUtils::CNet
+  FOLDER "cnet"
+  EXPORT_NAME CNet)
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
 target_include_directories(
   ${TARGET_NAME}
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>)
+    $<INSTALL_INTERFACE:include>
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC TurboUtils::NativeIO TurboUtils::Concurrency
   PRIVATE c-ares::cares)
+
+install(TARGETS ${TARGET_NAME} EXPORT TurboUtilsTargets)
+install(
+  DIRECTORY include/cnet
+  DESTINATION include
+  FILES_MATCHING PATTERN "*.h")
 
 if(BUILD_TESTS)
   add_subdirectory(tests)

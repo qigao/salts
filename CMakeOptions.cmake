@@ -9,18 +9,12 @@ option(ENABLE_TESTS "Enable the tests" ON)
 cmake_dependent_option(ENABLE_ASAN "Enable Address Sanitizer" ON
                        "CMAKE_BUILD_TYPE STREQUAL Debug" OFF)
 
-
-option(CFLOW_ENABLE_USB "Build the optional libusb CFlow adapter" OFF)
-
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_TESTS "Build test suite" ON)
 cmake_dependent_option(BUILD_BENCHMARKS "Build benchmark executables" ON
                        "BUILD_TESTS" OFF)
 option(CFLOW_ENABLE_MINICORO
        "Build the optional minicoro-backed CFlow Resumable adapter" OFF)
-
-option(CNET_ENABLE_EXPERIMENTAL
-       "Build the non-installed experimental CNet implementation" OFF)
 
 option(TURBO_ENABLE_EPOLL_READINESS
        "Enable the Linux epoll readiness backend" OFF)

@@ -72,6 +72,7 @@ bool json_get_bool_v(const json_value_t *obj, vstr key, bool def);
 double json_get_double_v(const json_value_t *obj, vstr key, double def);
 vstr json_get_string_vv(const json_value_t *obj, vstr key);
 
+/** Borrowed diagnostic for the calling thread, invalidated by its next parser call. */
 const char *json_get_error(void);
 char *json_serialize(const json_value_t *value, size_t *out_len);
 char *json_serialize_pretty(const json_value_t *value, size_t *out_len);

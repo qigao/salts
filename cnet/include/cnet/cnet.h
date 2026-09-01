@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-/** Experimental CNet client. Its ABI is not installed while CNet is gated. */
+/** Caller-driven CNet client over NativeIO. */
 typedef struct cnet_client {
   void *impl;
 } cnet_client;

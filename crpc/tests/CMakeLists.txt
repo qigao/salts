@@ -1,0 +1,27 @@
+cmake_add_test(crpc_json_test
+  SOURCES crpc_json_test.c
+  LIBS turbo_crpc TurboUtils::TinyTest
+  INCLUDES ../src
+  FOLDER "crpc/tests")
+set_target_properties(crpc_json_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(crpc_api_test
+  SOURCES crpc_api_test.c
+  LIBS turbo_crpc TurboUtils::TinyTest
+  FOLDER "crpc/tests")
+set_target_properties(crpc_api_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(crpc_header_cpp_test
+  SOURCES crpc_header_cpp_test.cpp
+  LIBS turbo_crpc
+  FOLDER "crpc/tests")
+set_target_properties(crpc_header_cpp_test PROPERTIES
+  CXX_STANDARD 11
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF)

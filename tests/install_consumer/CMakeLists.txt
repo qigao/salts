@@ -17,6 +17,9 @@ add_turboutils_consumer(consume_coroutine TurboUtils::Coroutine
                        CONSUME_COROUTINE)
 add_turboutils_consumer(consume_native_io TurboUtils::NativeIO
                        CONSUME_NATIVE_IO)
+add_turboutils_consumer(consume_cnet TurboUtils::CNet CONSUME_CNET)
+add_turboutils_consumer(consume_chttp TurboUtils::CHTTP CONSUME_CHTTP)
+add_turboutils_consumer(consume_crpc TurboUtils::CRPC CONSUME_CRPC)
 add_turboutils_consumer(consume_cmeta TurboUtils::CMeta CONSUME_CMETA)
 add_turboutils_consumer(consume_cbind TurboUtils::CBind CONSUME_CBIND)
 add_executable(consume_json_cbind consumer.c)
@@ -63,18 +66,11 @@ elseif(TARGET TurboUtils::Capture)
           "feature-off TurboUtils package unexpectedly exports Capture")
 endif()
 
-if(TURBOUTILS_EXPECT_CFLOW_USB)
-  if(NOT TARGET TurboUtils::CFlowUSB)
-    message(FATAL_ERROR "TurboUtils::CFlowUSB was requested but is not exported")
-  endif()
-  add_turboutils_consumer(consume_cflow_usb
-                         TurboUtils::CFlowUSB
-                         CONSUME_CFLOW_USB)
-elseif(TARGET TurboUtils::CFlowUSB)
-  message(FATAL_ERROR
-          "feature-off TurboUtils package unexpectedly exports CFlowUSB")
-endif()
-
 add_executable(consume_stl_cpp consumer.cpp)
 target_compile_features(consume_stl_cpp PRIVATE cxx_std_17)
 target_link_libraries(consume_stl_cpp PRIVATE TurboUtils::STL)
+
+add_executable(consume_network_cpp consumer.cpp)
+target_compile_features(consume_network_cpp PRIVATE cxx_std_17)
+target_compile_definitions(consume_network_cpp PRIVATE CONSUME_NETWORK_CPP=1)
+target_link_libraries(consume_network_cpp PRIVATE TurboUtils::CRPC)

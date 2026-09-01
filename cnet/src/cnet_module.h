@@ -13,7 +13,7 @@
 int cnet_module_init(void);
 int cnet_module_shutdown(void);
 
-/** Internal resolver lifetime pins used by the experimental CNet core. */
+/** Internal resolver lifetime pins used by the CNet core. */
 int cnet_module_acquire_resolver(void);
 void cnet_module_release_resolver(void);
 
