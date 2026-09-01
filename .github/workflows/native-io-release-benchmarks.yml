@@ -139,14 +139,13 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset "${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON \
-            -DCNET_ENABLE_EXPERIMENTAL=ON
+            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
             --target native_io_test native_io_header_cpp_test cnet_io_benchmark \
               cnet_session_test cnet_command_test cnet_uri_test \
               cnet_transport_test cnet_owner_test cnet_event_test \
               cnet_resolver_test cnet_shards_test cnet_dispatcher_test \
-              cnet_api_test cnet_header_cpp_test cnet_benchmark_stats_test \
+              cnet_api_test cnet_header_cpp_test cnet_tls_test cnet_benchmark_stats_test \
               concurrency_deadline_queue_test
 
       - name: Configure and build Windows Release
@@ -162,9 +161,9 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
           if errorlevel 1 exit /b 1
 
-          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON -DCNET_ENABLE_EXPERIMENTAL=ON
+          cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test cnet_io_benchmark cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_header_cpp_test cnet_benchmark_stats_test concurrency_deadline_queue_test
+          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test cnet_io_benchmark cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_header_cpp_test cnet_tls_test cnet_benchmark_stats_test concurrency_deadline_queue_test
           if errorlevel 1 exit /b 1
 
       - name: Configure and build macOS Release
@@ -173,14 +172,13 @@ jobs:
         run: |
           set -euo pipefail
           cmake --preset "${{ matrix.configure_preset }}" \
-            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON \
-            -DCNET_ENABLE_EXPERIMENTAL=ON
+            -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           cmake --build --preset "${{ matrix.build_preset }}" \
             --target native_io_test native_io_header_cpp_test cnet_io_benchmark \
               cnet_session_test cnet_command_test cnet_uri_test \
               cnet_transport_test cnet_owner_test cnet_event_test \
               cnet_resolver_test cnet_shards_test cnet_dispatcher_test \
-              cnet_api_test cnet_header_cpp_test cnet_benchmark_stats_test \
+              cnet_api_test cnet_header_cpp_test cnet_tls_test cnet_benchmark_stats_test \
               concurrency_deadline_queue_test
 
       - name: Run NativeIO contract tests
@@ -189,7 +187,7 @@ jobs:
           ctest --test-dir "${{ matrix.build_dir }}" -R '^native_io_(test|header_cpp_test)$' --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Run CNet experimental contract tests
+      - name: Run CNet contract tests
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --output-on-failure
