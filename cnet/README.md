@@ -1,0 +1,92 @@
+# CNet (experimental)
+
+CNet is the connection-oriented layer above NativeIO. Applications see a
+client, generation-checked connections, send/receive operations, explicit
+progress polling, and ordered state notifications. NativeIO remains the raw,
+threadless operating-system I/O backend; CFlow Actor and Reactive code continue
+to depend on NativeIO directly.
+
+The target is gated by `CNET_ENABLE_EXPERIMENTAL` and is not installed. Its
+source-tree target is `turbo_cnet_experimental`.
+
+## Base API
+
+Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
+
+- `cnet_connect` with `tcp://host:port`, `udp://host:port`, or `pipe://name`;
+- `cnet_send` to transfer one bounded payload copy into CNet;
+- `cnet_receive` to add explicit receive demand;
+- `cnet_close` for one connection;
+- `cnet_client_poll` to advance I/O and invoke callbacks on the caller;
+- `cnet_client_stop` followed by `cnet_client_destroy` for shutdown.
+
+TCP and Pipe deliver byte chunks. Connected UDP delivers one datagram per
+receive callback. A receive view is borrowed only until its callback returns.
+TLS, WebSocket, and KCP are not exposed by this base header.
+
+## Ownership and progress
+
+One client owns one session engine and one NativeIO backend. CNet creates no
+I/O worker thread. The application repeatedly calls `cnet_client_poll`; that
+call drains bounded commands, observes NativeIO, resumes owner-affine
+coroutines, and invokes callbacks before returning. Calls to poll must not
+overlap. Callbacks for the client are FIFO and non-concurrent, and no internal
+lock is held while user code runs.
+
+The core client is single-thread-owned: connect/send/receive/close and poll are
+issued by that owner or by its inline callback. Cross-thread producers use an
+external bounded mailbox and wake policy; CNet does not silently create that
+thread or queue topology.
+
+A blocking poll continues through internal-only send completions until it
+delivers a public callback or reaches its timeout. A zero timeout performs one
+nonblocking progress pass. This keeps completion batching internal instead of
+forcing the application to call poll once per backend completion.
+
+TCP connect, send, and receive currently execute as NativeIO coroutines. The
+poll owner starts `native_io_coroutine_await()`, and the same caller's NativeIO
+observation resumes the frame with its generation-checked terminal completion.
+Callback-issued send/receive/close commands enter the same bounded local queue;
+they require no operating-system wake or owner-thread handoff. Cancellation
+retains the payload, request record, and frame until a terminal completion is
+observed.
+
+The URI, observer, and send bytes are copied before their admitting call returns
+success. A callback may call `cnet_send`, `cnet_receive`, or `cnet_close` for its
+client. Calling `cnet_client_poll`, `cnet_client_stop`, or
+`cnet_client_destroy` recursively from that callback returns `TURBO_EBUSY`.
+
+Hostname resolution uses c-ares' external-event-loop integration. The same
+poll owner checks its bounded DNS socket set without blocking and advances
+c-ares timers; no resolver thread or synchronous DNS fallback is created.
+While at least one hostname query is active, a NativeIO wait is capped to a
+1 ms fairness quantum so DNS and transport completions both make bounded
+progress. Numeric TCP/UDP addresses and Pipe endpoints do not enter this path.
+
+## Shutdown and errors
+
+`cnet_client_stop(client, timeout_ms)` closes admission and drives the same
+caller-owned loop until connections, NativeIO requests, coroutines, and
+terminal callbacks settle. `TURBO_ETIMEDOUT` is retryable and preserves the
+client. Destroying a client before successful stop returns `TURBO_EBUSY`.
+
+Immediate connect validation failure clears the output handle and emits no
+callback. Asynchronous failures emit exactly one `CNET_CONNECTION_FAILED` with
+a stable stage string. TurboUtils status codes use `cnet_error.status`; a raw
+platform status is normalized to `TURBO_EIO` and retained in
+`cnet_error.native_status`.
+
+The executable contract is in `tests/cnet_api_test.c`; it covers caller-owned
+callback execution, TCP, connected UDP, platform Pipe, callback reentrancy,
+stale handles, live drain, and receive demand across request-slot reuse.
+
+## Benchmark
+
+`cnet_io_benchmark` compares libuv, direct NativeIO, and the CNet public byte
+API against the same dedicated blocking loopback echo peer. Fixture,
+connection, worker, and buffer setup stay outside the timed interval. All
+clients use identical payloads, warmups, samples, and persistent TCP/UDP
+connections. CNet progress is driven by the benchmark caller, so its timed path
+contains no owner-thread scheduling or wake handoff. Output separates TCP and
+UDP latency and throughput by payload size, then reports CNet receive/send
+admission, poll, callback, and public polls-per-round-trip stage means.

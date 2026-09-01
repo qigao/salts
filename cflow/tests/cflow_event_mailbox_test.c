@@ -323,6 +323,7 @@ suite("CFlow typed event mailbox") {
         bool seen[MAILBOX_CONCURRENT_EVENT_COUNT] = {false};
         atomic_int finished;
         atomic_int failures;
+        bool producers_quiescent = false;
         size_t received = 0u;
         int producer_index;
 
@@ -358,8 +359,11 @@ suite("CFlow typed event mailbox") {
                 &mailbox, &id, &type, &output, sizeof(output));
 
             if (status == CFLOW_MAILBOX_EMPTY) {
-                if (atomic_load(&finished) == MAILBOX_PRODUCER_COUNT) break;
-                turbo_thread_yield();
+                if (producers_quiescent) break;
+                /* A producer may commit after EMPTY but before this load. */
+                producers_quiescent =
+                    atomic_load(&finished) == MAILBOX_PRODUCER_COUNT;
+                if (!producers_quiescent) turbo_thread_yield();
                 continue;
             }
             if (status != CFLOW_MAILBOX_OK) {

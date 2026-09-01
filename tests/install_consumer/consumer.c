@@ -13,6 +13,27 @@ int main(void) {
   return 0;
 }
 
+#elif defined(CONSUME_COROUTINE)
+#include <turbo_coro.h>
+
+static void complete(coro_t *coroutine, void *user_data) {
+  int *completed = (int *)user_data;
+  (void)coroutine;
+  *completed = 1;
+}
+
+int main(void) {
+  int completed = 0;
+  coro_t *coroutine = coro_create(complete, &completed, NULL);
+  if (coroutine == NULL) return 1;
+  if (coro_resume(coroutine) != 0 || completed != 1 || coro_alive(coroutine)) {
+    coro_destroy(coroutine);
+    return 2;
+  }
+  coro_destroy(coroutine);
+  return 0;
+}
+
 #elif defined(CONSUME_NATIVE_IO)
 #include <turbo/native_io.h>
 
@@ -290,30 +311,6 @@ int main(void) {
   }
   if (cflow_fs_destroy(&service) != 0) return 5;
   return cflow_fs_watch_publisher_owner_close(&source_owner) == 0 ? 0 : 6;
-}
-
-#elif defined(CONSUME_CFLOW_MINICORO)
-#include <cflow/minicoro.h>
-
-static void complete(cflow_minicoro *coroutine, void *user) {
-  (void)coroutine;
-  (void)user;
-}
-
-int main(void) {
-  cflow_minicoro_config config = {
-      "installed-minicoro", &cmeta_type_int, complete, NULL,
-      0u, NULL, NULL, NULL};
-  cflow_resumable resumable = {0};
-  cflow_publish_context context = {0};
-  int output = 0;
-  cflow_step step;
-
-  if (!cflow_resumable_from_minicoro(&resumable, &config)) return 1;
-  step = resumable.ops->resume(resumable.state, &context, &output);
-  if (step.kind != CFLOW_STEP_DONE) return 2;
-  resumable.ops->destroy(resumable.state);
-  return 0;
 }
 
 #elif defined(CONSUME_CFLOW_USB)

@@ -40,6 +40,8 @@ typedef struct turbo_io_readiness_endpoint {
   turbo_io_readiness_lane read_lane;
   turbo_io_readiness_lane write_lane;
   turbo_io_resource_kind resource_kind;
+  bool connected;
+  bool connect_active;
   bool active;
 } turbo_io_readiness_endpoint;
 
@@ -52,6 +54,7 @@ typedef struct turbo_io_readiness_request {
   uint32_t previous;
   uint32_t next;
   bool write_lane;
+  bool connect_started;
 } turbo_io_readiness_request;
 
 typedef struct turbo_io_readiness_impl {
@@ -152,7 +155,7 @@ static void readiness_sigpipe_end(turbo_io_sigpipe_guard *guard) {
 
 static bool readiness_is_write(native_io_operation_kind kind) {
   return kind == NATIVE_IO_OPERATION_TCP_SEND || kind == NATIVE_IO_OPERATION_UDP_SEND_TO ||
-         kind == NATIVE_IO_OPERATION_PIPE_WRITE;
+         kind == NATIVE_IO_OPERATION_PIPE_WRITE || kind == NATIVE_IO_OPERATION_TCP_CONNECT;
 }
 
 static turbo_io_readiness_lane *readiness_lane(turbo_io_readiness_endpoint *endpoint,
@@ -220,6 +223,13 @@ static void readiness_publish_terminal(turbo_io_readiness_impl *impl,
                                        native_io_completion_kind kind, size_t bytes, int status,
                                        uint32_t native_status, size_t address_length) {
   const size_t tail = (impl->terminal_head + impl->terminal_count) % impl->request_capacity;
+  if (request->operation.kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+    turbo_io_readiness_endpoint *endpoint = readiness_endpoint(impl, request->endpoint);
+    if (endpoint != NULL) {
+      endpoint->connect_active = false;
+      endpoint->connected = kind == NATIVE_IO_COMPLETION_OK;
+    }
+  }
   request->phase = TURBO_IO_READINESS_TERMINAL;
   request->completion = (native_io_completion){request->request,
                                               request->endpoint,
@@ -245,6 +255,34 @@ static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
   int flags = MSG_DONTWAIT;
   int guard_status = TURBO_OK;
   socklen_t address_length = (socklen_t)request->operation.address_capacity;
+  if (request->operation.kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+    int connect_error = 0;
+    socklen_t connect_error_length = (socklen_t)sizeof(connect_error);
+    if (!request->connect_started) {
+      do {
+        result = connect(endpoint->fd, (const struct sockaddr *)request->operation.address,
+                         (socklen_t)request->operation.address_length);
+      } while (result < 0 && errno == EINTR);
+      if (result == 0 || (result < 0 && errno == EISCONN)) {
+        *out_bytes = 0u;
+        *out_address_length = 0u;
+        return TURBO_OK;
+      }
+      if (errno != EINPROGRESS && errno != EALREADY && errno != EAGAIN && errno != EWOULDBLOCK)
+        return -errno;
+      request->connect_started = true;
+      return -EAGAIN;
+    }
+    if (getsockopt(endpoint->fd, SOL_SOCKET, SO_ERROR, &connect_error, &connect_error_length) != 0)
+      return -errno;
+    if (connect_error == EINPROGRESS || connect_error == EALREADY || connect_error == EAGAIN ||
+        connect_error == EWOULDBLOCK)
+      return -EAGAIN;
+    if (connect_error != 0) return -connect_error;
+    *out_bytes = 0u;
+    *out_address_length = 0u;
+    return TURBO_OK;
+  }
 #if defined(MSG_NOSIGNAL)
   if (request->write_lane) flags |= MSG_NOSIGNAL;
 #endif
@@ -262,13 +300,19 @@ static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
       result = recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
     else if (request->operation.kind == NATIVE_IO_OPERATION_TCP_SEND)
       result = send(endpoint->fd, request->operation.buffer, request->operation.length, flags);
-    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM)
+    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM &&
+             request->operation.address != NULL)
       result = recvfrom(endpoint->fd, request->operation.buffer, request->operation.length, flags,
                         (struct sockaddr *)request->operation.address, &address_length);
-    else
+    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_SEND_TO &&
+             request->operation.address != NULL)
       result = sendto(endpoint->fd, request->operation.buffer, request->operation.length, flags,
                       (const struct sockaddr *)request->operation.address,
                       (socklen_t)request->operation.address_length);
+    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM)
+      result = recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
+    else
+      result = send(endpoint->fd, request->operation.buffer, request->operation.length, flags);
   } while (result < 0 && errno == EINTR);
   if (result < 0) saved_error = errno;
 #if !defined(MSG_NOSIGNAL)
@@ -277,7 +321,10 @@ static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
   if (result < 0) return -saved_error;
   *out_bytes = (size_t)result;
   *out_address_length =
-      request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM ? (size_t)address_length : 0u;
+      request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM &&
+              request->operation.address != NULL
+          ? (size_t)address_length
+          : 0u;
   return TURBO_OK;
 }
 
@@ -356,6 +403,8 @@ static int readiness_attach_endpoint(turbo_io_readiness_impl *impl, int fd,
   endpoint->read_lane = (turbo_io_readiness_lane){TURBO_IO_INDEX_NONE, TURBO_IO_INDEX_NONE};
   endpoint->write_lane = (turbo_io_readiness_lane){TURBO_IO_INDEX_NONE, TURBO_IO_INDEX_NONE};
   endpoint->resource_kind = resource_kind;
+  endpoint->connected = false;
+  endpoint->connect_active = false;
   endpoint->active = true;
   ++impl->endpoint_count;
   *out_endpoint = (native_io_endpoint){index + 1u, endpoint->generation};
@@ -367,6 +416,10 @@ static int readiness_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
   turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
   turbo_io_resource_kind resource_kind;
   int socket_type = 0;
+  struct sockaddr_storage peer_address;
+  socklen_t peer_address_length = (socklen_t)sizeof(peer_address);
+  bool connected = false;
+  int status;
   socklen_t option_length = (socklen_t)sizeof(socket_type);
   if (!impl->admission_open) return TURBO_ESHUTDOWN;
   if (native_socket > (uintptr_t)INT_MAX) return TURBO_EINVAL;
@@ -378,7 +431,16 @@ static int readiness_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
     resource_kind = TURBO_IO_RESOURCE_DATAGRAM_SOCKET;
   else
     return TURBO_ENOTSUP;
-  return readiness_attach_endpoint(impl, (int)native_socket, resource_kind, out_endpoint);
+  if (resource_kind == TURBO_IO_RESOURCE_STREAM_SOCKET) {
+    if (getpeername((int)native_socket, (struct sockaddr *)&peer_address, &peer_address_length) == 0)
+      connected = true;
+    else if (errno != ENOTCONN)
+      return -errno;
+  }
+  status = readiness_attach_endpoint(impl, (int)native_socket, resource_kind, out_endpoint);
+  if (status == TURBO_OK)
+    impl->endpoints[out_endpoint->slot - 1u].connected = connected;
+  return status;
 }
 
 static int readiness_attach_pipe(turbo_io_impl *base, uintptr_t native_handle, uint32_t flags,
@@ -412,6 +474,8 @@ static int readiness_release_endpoint(turbo_io_readiness_impl *impl,
   endpoint->active = false;
   endpoint->fd = -1;
   endpoint->resource_kind = (turbo_io_resource_kind)0;
+  endpoint->connected = false;
+  endpoint->connect_active = false;
   impl->free_endpoints[impl->free_endpoint_count++] = index;
   --impl->endpoint_count;
   return TURBO_OK;
@@ -439,6 +503,19 @@ static int readiness_submit(turbo_io_impl *base, const native_io_operation *oper
   if (endpoint == NULL) return TURBO_ENOENT;
   if (native_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
     return TURBO_EINVAL;
+  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+    if (endpoint->connected || endpoint->connect_active) return TURBO_EALREADY;
+    if (endpoint->active_requests != 0u) return TURBO_EBUSY;
+  } else if (operation->kind == NATIVE_IO_OPERATION_TCP_RECV ||
+             operation->kind == NATIVE_IO_OPERATION_TCP_SEND) {
+    if (endpoint->connect_active) return TURBO_EBUSY;
+    if (!endpoint->connected) return TURBO_EINVAL;
+  }
+  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+    const int descriptor_flags = fcntl(endpoint->fd, F_GETFL, 0);
+    if (descriptor_flags < 0) return -errno;
+    if ((descriptor_flags & O_NONBLOCK) == 0) return TURBO_EINVAL;
+  }
   if (impl->free_request_count == 0u) {
     readiness_counter_increment(&impl->rejected_full);
     return TURBO_ENOBUFS;
@@ -453,24 +530,27 @@ static int readiness_submit(turbo_io_impl *base, const native_io_operation *oper
   request->previous = TURBO_IO_INDEX_NONE;
   request->next = TURBO_IO_INDEX_NONE;
   request->write_lane = readiness_is_write(operation->kind);
+  request->connect_started = false;
   ++endpoint->active_requests;
   ++impl->active_requests;
+  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) endpoint->connect_active = true;
   status = readiness_try_operation(endpoint, request, &bytes, &address_length);
   if (readiness_would_block(status)) {
     readiness_lane_push(impl, endpoint, index);
     status = readiness_update_interests(impl, operation->endpoint, endpoint);
     if (status != TURBO_OK) {
       readiness_lane_remove(impl, endpoint, index);
+      endpoint->connect_active = false;
       readiness_release_request(impl, request, index);
       readiness_counter_increment(&impl->native_submit_errors);
       return status;
     }
-  } else if (status < 0) {
+  } else if (status < 0 && operation->kind != NATIVE_IO_OPERATION_TCP_CONNECT) {
     readiness_release_request(impl, request, index);
     readiness_counter_increment(&impl->native_submit_errors);
     return status;
   } else {
-    readiness_finish_attempt(impl, request, index, TURBO_OK, bytes, address_length);
+    readiness_finish_attempt(impl, request, index, status, bytes, address_length);
   }
   readiness_counter_increment(&impl->submitted);
   *out_request = request->request;

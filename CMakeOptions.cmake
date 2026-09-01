@@ -18,10 +18,9 @@ cmake_dependent_option(BUILD_BENCHMARKS "Build benchmark executables" ON
                        "BUILD_TESTS" OFF)
 option(CFLOW_ENABLE_MINICORO
        "Build the optional minicoro-backed CFlow Resumable adapter" OFF)
-if(DEFINED CFLOW_ENABLE_SCXML)
-  message(FATAL_ERROR
-          "CFLOW_ENABLE_SCXML was removed; install qigao/turbo-scxml and link TurboSCXML::SCXML")
-endif()
+
+option(CNET_ENABLE_EXPERIMENTAL
+       "Build the non-installed experimental CNet implementation" OFF)
 
 option(TURBO_ENABLE_EPOLL_READINESS
        "Enable the Linux epoll readiness backend" OFF)

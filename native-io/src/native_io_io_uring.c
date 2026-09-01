@@ -41,6 +41,8 @@ typedef struct turbo_io_uring_endpoint {
   turbo_io_uring_lane read_lane;
   turbo_io_uring_lane write_lane;
   turbo_io_resource_kind resource_kind;
+  bool connected;
+  bool connect_active;
   bool active;
 } turbo_io_uring_endpoint;
 
@@ -153,7 +155,8 @@ static turbo_io_uring_request_record *uring_record_for_token(turbo_io_uring_impl
 }
 
 static bool uring_is_write(native_io_operation_kind kind) {
-  return kind == NATIVE_IO_OPERATION_TCP_SEND || kind == NATIVE_IO_OPERATION_UDP_SEND_TO;
+  return kind == NATIVE_IO_OPERATION_TCP_SEND || kind == NATIVE_IO_OPERATION_UDP_SEND_TO ||
+         kind == NATIVE_IO_OPERATION_TCP_CONNECT;
 }
 
 static turbo_io_uring_lane *uring_lane(turbo_io_uring_endpoint *endpoint, bool write_lane) {
@@ -224,6 +227,10 @@ static void uring_prepare_operation(turbo_io_uring_request_record *record, struc
     sqe->addr = (uint64_t)(uintptr_t)record->operation.buffer;
     sqe->len = (uint32_t)record->operation.length;
     sqe->msg_flags = MSG_NOSIGNAL;
+  } else if (record->operation.kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+    sqe->opcode = IORING_OP_CONNECT;
+    sqe->addr = (uint64_t)(uintptr_t)record->operation.address;
+    sqe->off = (uint64_t)record->operation.address_length;
   } else {
     record->vector.iov_base = record->operation.buffer;
     record->vector.iov_len = record->operation.length;
@@ -272,6 +279,13 @@ static void uring_release_request(turbo_io_uring_impl *impl, turbo_io_uring_requ
 static void uring_make_completion(turbo_io_uring_impl *impl, turbo_io_uring_request_record *request,
                                   int result, native_io_completion *completion) {
   const bool cancelled = request->cancel_requested && result == -ECANCELED;
+  if (request->operation.kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+    turbo_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
+    if (endpoint != NULL) {
+      endpoint->connect_active = false;
+      endpoint->connected = result == 0;
+    }
+  }
   *completion = (native_io_completion){request->request,
                                       request->endpoint,
                                       NATIVE_IO_COMPLETION_OK,
@@ -330,6 +344,9 @@ static int uring_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
   turbo_io_uring_impl *impl = (turbo_io_uring_impl *)base;
   turbo_io_uring_endpoint *endpoint;
   turbo_io_resource_kind resource_kind;
+  struct sockaddr_storage peer_address;
+  socklen_t peer_address_length = (socklen_t)sizeof(peer_address);
+  bool connected = false;
   int socket_type = 0;
   socklen_t option_length = (socklen_t)sizeof(socket_type);
   uint32_t index;
@@ -344,6 +361,12 @@ static int uring_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
     resource_kind = TURBO_IO_RESOURCE_DATAGRAM_SOCKET;
   else
     return TURBO_ENOTSUP;
+  if (resource_kind == TURBO_IO_RESOURCE_STREAM_SOCKET) {
+    if (getpeername((int)native_socket, (struct sockaddr *)&peer_address, &peer_address_length) == 0)
+      connected = true;
+    else if (errno != ENOTCONN)
+      return -errno;
+  }
   for (cursor = 0u; cursor < impl->endpoint_capacity; ++cursor)
     if (impl->endpoints[cursor].active && impl->endpoints[cursor].fd == (int)native_socket)
       return TURBO_EALREADY;
@@ -357,6 +380,8 @@ static int uring_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
   endpoint->write_lane =
       (turbo_io_uring_lane){TURBO_IO_URING_INDEX_NONE, TURBO_IO_URING_INDEX_NONE};
   endpoint->resource_kind = resource_kind;
+  endpoint->connected = connected;
+  endpoint->connect_active = false;
   endpoint->active = true;
   ++impl->endpoint_count;
   *out_endpoint = (native_io_endpoint){index + 1u, endpoint->generation};
@@ -374,6 +399,8 @@ static int uring_release_socket(turbo_io_impl *base, native_io_endpoint endpoint
   endpoint->active = false;
   endpoint->fd = -1;
   endpoint->resource_kind = (turbo_io_resource_kind)0;
+  endpoint->connected = false;
+  endpoint->connect_active = false;
   impl->free_endpoints[impl->free_endpoint_count++] = index;
   --impl->endpoint_count;
   return TURBO_OK;
@@ -392,6 +419,14 @@ static int uring_submit(turbo_io_impl *base, const native_io_operation *operatio
   if (endpoint == NULL) return TURBO_ENOENT;
   if (native_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
     return TURBO_EINVAL;
+  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+    if (endpoint->connected || endpoint->connect_active) return TURBO_EALREADY;
+    if (endpoint->active_requests != 0u) return TURBO_EBUSY;
+  } else if (operation->kind == NATIVE_IO_OPERATION_TCP_RECV ||
+             operation->kind == NATIVE_IO_OPERATION_TCP_SEND) {
+    if (endpoint->connect_active) return TURBO_EBUSY;
+    if (!endpoint->connected) return TURBO_EINVAL;
+  }
   if (impl->free_request_count == 0u) {
     uring_counter_increment(&impl->rejected_full);
     return TURBO_ENOBUFS;
@@ -412,12 +447,14 @@ static int uring_submit(turbo_io_impl *base, const native_io_operation *operatio
   request->cancel_requested = false;
   ++endpoint->active_requests;
   ++impl->active_requests;
+  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) endpoint->connect_active = true;
   lane = uring_lane(endpoint, request->write_lane);
   uring_lane_push(impl, endpoint, index);
   if (lane->head == index) {
     status = uring_start_request(impl, request, endpoint->fd);
     if (status != TURBO_OK) {
       uring_lane_remove(impl, endpoint, index);
+      endpoint->connect_active = false;
       uring_release_request(impl, request, index);
       uring_counter_increment(&impl->native_submit_errors);
       return status;

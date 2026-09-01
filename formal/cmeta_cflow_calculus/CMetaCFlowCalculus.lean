@@ -34,6 +34,7 @@ import CMetaCFlowCalculus.CFlow.Certificate
 import CMetaCFlowCalculus.IO.BoundedMpsc
 import CMetaCFlowCalculus.IO.Executor
 import CMetaCFlowCalculus.IO.Actor
+import CMetaCFlowCalculus.CNet.Session
 import CMetaCFlowCalculus.Proofs.Ownership
 import CMetaCFlowCalculus.Proofs.Execution
 import CMetaCFlowCalculus.Proofs.Mailbox
@@ -55,3 +56,4 @@ import CMetaCFlowCalculus.Proofs.Cost
 import CMetaCFlowCalculus.Proofs.IOBoundedMpsc
 import CMetaCFlowCalculus.Proofs.IOExecutor
 import CMetaCFlowCalculus.Proofs.IOActor
+import CMetaCFlowCalculus.Proofs.CNetSession

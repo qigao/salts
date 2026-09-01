@@ -1,0 +1,26 @@
+#ifndef CNET_URI_H
+#define CNET_URI_H
+
+#include <turbo/error_codes.h>
+
+#include <stdint.h>
+
+enum { CNET_URI_MAX_BYTES = 1280, CNET_URI_HOST_CAPACITY = 254, CNET_URI_PATH_CAPACITY = 1025 };
+
+typedef enum cnet_uri_scheme {
+  CNET_URI_NONE = 0,
+  CNET_URI_TCP,
+  CNET_URI_UDP,
+  CNET_URI_PIPE
+} cnet_uri_scheme;
+
+typedef struct cnet_uri {
+  cnet_uri_scheme scheme;
+  char host[CNET_URI_HOST_CAPACITY];
+  char path[CNET_URI_PATH_CAPACITY];
+  uint16_t port;
+} cnet_uri;
+
+int cnet_uri_parse(const char *text, cnet_uri *out_uri);
+
+#endif /* CNET_URI_H */

@@ -56,7 +56,11 @@ add_subdirectory(vendor)
 add_subdirectory(tinytest)
 add_subdirectory(platform)
 add_subdirectory(concurrency)
+add_subdirectory(coroutine)
 add_subdirectory(native-io)
+if(CNET_ENABLE_EXPERIMENTAL)
+  add_subdirectory(cnet)
+endif()
 add_subdirectory(cmeta)
 add_subdirectory(cserde)
 add_subdirectory(cbind)
@@ -73,6 +77,7 @@ endif()
 set(verify_installed_dependencies
     turbo_platform
     turbo_concurrency
+    turbo_coroutine
     turbo_native_io
     turbo_cmeta
     turbo_cserde
@@ -85,9 +90,6 @@ set(verify_installed_dependencies
     turbo_cflow_fs
     xml_parser
     json_cserde_adapter)
-if(CFLOW_ENABLE_MINICORO)
-  list(APPEND verify_installed_dependencies turbo_cflow_minicoro)
-endif()
 if(CFLOW_ENABLE_USB)
   list(APPEND verify_installed_dependencies turbo_cflow_usb)
 endif()
@@ -100,7 +102,6 @@ add_custom_target(
     -DCMAKE_COMMAND_PATH=${CMAKE_COMMAND}
     -DBUILD_CONFIG=$<CONFIG>
     -DBUILD_GENERATOR=${CMAKE_GENERATOR}
-    -DEXPECT_CFLOW_MINICORO=${CFLOW_ENABLE_MINICORO}
     -DEXPECT_CFLOW_USB=${CFLOW_ENABLE_USB}
     -P
     ${CMAKE_SOURCE_DIR}/cmake/VerifyInstalledPackage.cmake

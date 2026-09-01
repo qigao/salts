@@ -7,6 +7,8 @@
 #endif
 #include <windows.h>
 #include <winsock2.h>
+#include <mswsock.h>
+#include <ws2tcpip.h>
 #include <winternl.h>
 
 #include <limits.h>
@@ -25,6 +27,9 @@ typedef struct turbo_iocp_endpoint_record {
   uint32_t generation;
   size_t active_requests;
   turbo_io_resource_kind resource_kind;
+  LPFN_CONNECTEX connect_ex;
+  bool connected;
+  bool connect_active;
   bool active;
 } turbo_iocp_endpoint_record;
 
@@ -141,6 +146,9 @@ static int iocp_attach_endpoint(turbo_iocp_impl *impl, uintptr_t native_handle,
   endpoint->native_handle = native_handle;
   endpoint->active_requests = 0u;
   endpoint->resource_kind = resource_kind;
+  endpoint->connect_ex = NULL;
+  endpoint->connected = false;
+  endpoint->connect_active = false;
   endpoint->active = true;
   ++impl->endpoint_count;
   *out_endpoint = (native_io_endpoint){index + 1u, endpoint->generation};
@@ -160,6 +168,9 @@ static int iocp_release_endpoint(turbo_iocp_impl *impl, native_io_endpoint endpo
   index = endpoint_handle.slot - 1u;
   endpoint->native_handle = UINTPTR_MAX;
   endpoint->resource_kind = (turbo_io_resource_kind)0;
+  endpoint->connect_ex = NULL;
+  endpoint->connected = false;
+  endpoint->connect_active = false;
   endpoint->active = false;
   impl->free_endpoints[impl->free_endpoint_count] = index;
   ++impl->free_endpoint_count;
@@ -171,6 +182,13 @@ static int iocp_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
                               native_io_endpoint *out_endpoint) {
   turbo_iocp_impl *impl = (turbo_iocp_impl *)base;
   turbo_io_resource_kind resource_kind;
+  LPFN_CONNECTEX connect_ex = NULL;
+  GUID connect_ex_id = WSAID_CONNECTEX;
+  DWORD extension_bytes = 0u;
+  SOCKADDR_STORAGE peer_address;
+  int peer_address_length = (int)sizeof(peer_address);
+  bool connected = false;
+  int status;
   int socket_type = 0;
   int option_length = (int)sizeof(socket_type);
   if (!impl->admission_open) return TURBO_ESHUTDOWN;
@@ -183,7 +201,24 @@ static int iocp_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
     resource_kind = TURBO_IO_RESOURCE_DATAGRAM_SOCKET;
   else
     return TURBO_ENOTSUP;
-  return iocp_attach_endpoint(impl, native_socket, resource_kind, out_endpoint);
+  if (resource_kind == TURBO_IO_RESOURCE_STREAM_SOCKET &&
+      WSAIoctl((SOCKET)native_socket, SIO_GET_EXTENSION_FUNCTION_POINTER, &connect_ex_id,
+               (DWORD)sizeof(connect_ex_id), &connect_ex, (DWORD)sizeof(connect_ex),
+               &extension_bytes, NULL, NULL) == SOCKET_ERROR)
+    return iocp_native_error((DWORD)WSAGetLastError());
+  if (resource_kind == TURBO_IO_RESOURCE_STREAM_SOCKET) {
+    if (getpeername((SOCKET)native_socket, (SOCKADDR *)&peer_address, &peer_address_length) == 0)
+      connected = true;
+    else if (WSAGetLastError() != WSAENOTCONN)
+      return iocp_native_error((DWORD)WSAGetLastError());
+  }
+  status = iocp_attach_endpoint(impl, native_socket, resource_kind, out_endpoint);
+  if (status == TURBO_OK) {
+    turbo_iocp_endpoint_record *endpoint = iocp_endpoint(impl, *out_endpoint);
+    endpoint->connect_ex = connect_ex;
+    endpoint->connected = connected;
+  }
+  return status;
 }
 
 static int iocp_release_socket(turbo_io_impl *base, native_io_endpoint endpoint_handle) {
@@ -249,6 +284,38 @@ static void iocp_release_request(turbo_iocp_impl *impl, turbo_iocp_request_recor
   --impl->active_requests;
 }
 
+static int iocp_bind_connect_socket(SOCKET socket_value, const SOCKADDR *remote_address,
+                                    int remote_address_length) {
+  SOCKADDR_STORAGE local_address;
+  SOCKADDR_STORAGE current_address;
+  int local_address_length;
+  int current_address_length = (int)sizeof(current_address);
+  int family;
+
+  if (remote_address == NULL || remote_address_length < (int)sizeof(remote_address->sa_family))
+    return TURBO_EINVAL;
+  family = remote_address->sa_family;
+  memset(&local_address, 0, sizeof(local_address));
+  if (family == AF_INET) {
+    if (remote_address_length < (int)sizeof(SOCKADDR_IN)) return TURBO_EINVAL;
+    ((SOCKADDR_IN *)&local_address)->sin_family = AF_INET;
+    local_address_length = (int)sizeof(SOCKADDR_IN);
+  } else if (family == AF_INET6) {
+    if (remote_address_length < (int)sizeof(SOCKADDR_IN6)) return TURBO_EINVAL;
+    ((SOCKADDR_IN6 *)&local_address)->sin6_family = AF_INET6;
+    local_address_length = (int)sizeof(SOCKADDR_IN6);
+  } else {
+    return TURBO_EINVAL;
+  }
+
+  if (getsockname(socket_value, (SOCKADDR *)&current_address, &current_address_length) == 0)
+    return current_address.ss_family == family ? TURBO_OK : TURBO_EINVAL;
+  if (WSAGetLastError() != WSAEINVAL) return iocp_native_error((DWORD)WSAGetLastError());
+  if (bind(socket_value, (const SOCKADDR *)&local_address, local_address_length) == SOCKET_ERROR)
+    return iocp_native_error((DWORD)WSAGetLastError());
+  return TURBO_OK;
+}
+
 static int iocp_submit(turbo_io_impl *base, const native_io_operation *operation,
                        native_io_request *out_request) {
   turbo_iocp_impl *impl = (turbo_iocp_impl *)base;
@@ -265,6 +332,14 @@ static int iocp_submit(turbo_io_impl *base, const native_io_operation *operation
   if (endpoint == NULL) return TURBO_ENOENT;
   if (native_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
     return TURBO_EINVAL;
+  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+    if (endpoint->connected || endpoint->connect_active) return TURBO_EALREADY;
+    if (endpoint->active_requests != 0u) return TURBO_EBUSY;
+  } else if (operation->kind == NATIVE_IO_OPERATION_TCP_RECV ||
+             operation->kind == NATIVE_IO_OPERATION_TCP_SEND) {
+    if (endpoint->connect_active) return TURBO_EBUSY;
+    if (!endpoint->connected) return TURBO_EINVAL;
+  }
   if (impl->free_request_count == 0u) {
     iocp_counter_increment(&impl->rejected_full);
     return TURBO_ENOBUFS;
@@ -290,6 +365,45 @@ static int iocp_submit(turbo_io_impl *base, const native_io_operation *operation
   --impl->free_request_count;
   ++endpoint->active_requests;
   ++impl->active_requests;
+
+  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+    const int bind_status =
+        iocp_bind_connect_socket((SOCKET)request->native_handle,
+                                 (const SOCKADDR *)request->address, request->address_length);
+    BOOL started;
+    endpoint->connect_active = true;
+    if (bind_status != TURBO_OK) {
+      endpoint->connect_active = false;
+      iocp_release_request(impl, request, index);
+      iocp_counter_increment(&impl->native_submit_errors);
+      return bind_status;
+    }
+    if (endpoint->connect_ex == NULL) {
+      endpoint->connect_active = false;
+      iocp_release_request(impl, request, index);
+      iocp_counter_increment(&impl->native_submit_errors);
+      return TURBO_ENOTSUP;
+    }
+    started = endpoint->connect_ex((SOCKET)request->native_handle,
+                                   (const SOCKADDR *)request->address,
+                                   request->address_length, NULL, 0u, NULL,
+                                   &request->overlapped);
+    if (started) {
+      iocp_counter_increment(&impl->submitted);
+      *out_request = request->request;
+      return TURBO_OK;
+    }
+    native_error = (DWORD)WSAGetLastError();
+    if (native_error == WSA_IO_PENDING) {
+      iocp_counter_increment(&impl->submitted);
+      *out_request = request->request;
+      return TURBO_OK;
+    }
+    iocp_release_request(impl, request, index);
+    endpoint->connect_active = false;
+    iocp_counter_increment(&impl->native_submit_errors);
+    return iocp_native_error(native_error);
+  }
 
   if (operation->kind == NATIVE_IO_OPERATION_PIPE_READ || operation->kind == NATIVE_IO_OPERATION_PIPE_WRITE) {
     BOOL started = operation->kind == NATIVE_IO_OPERATION_PIPE_READ
@@ -319,14 +433,22 @@ static int iocp_submit(turbo_io_impl *base, const native_io_operation *operation
   } else if (operation->kind == NATIVE_IO_OPERATION_TCP_SEND) {
     native_status = WSASend((SOCKET)request->native_handle, &request->buffer, 1u, &immediate_bytes,
                             0u, &request->overlapped, NULL);
-  } else if (operation->kind == NATIVE_IO_OPERATION_UDP_RECV_FROM) {
+  } else if (operation->kind == NATIVE_IO_OPERATION_UDP_RECV_FROM &&
+             operation->address != NULL) {
     native_status = WSARecvFrom((SOCKET)request->native_handle, &request->buffer, 1u,
                                 &immediate_bytes, &request->flags, (SOCKADDR *)request->address,
                                 &request->address_length, &request->overlapped, NULL);
-  } else {
+  } else if (operation->kind == NATIVE_IO_OPERATION_UDP_SEND_TO &&
+             operation->address != NULL) {
     native_status = WSASendTo((SOCKET)request->native_handle, &request->buffer, 1u,
                               &immediate_bytes, 0u, (const SOCKADDR *)request->address,
                               request->address_length, &request->overlapped, NULL);
+  } else if (operation->kind == NATIVE_IO_OPERATION_UDP_RECV_FROM) {
+    native_status = WSARecv((SOCKET)request->native_handle, &request->buffer, 1u,
+                            &immediate_bytes, &request->flags, &request->overlapped, NULL);
+  } else {
+    native_status = WSASend((SOCKET)request->native_handle, &request->buffer, 1u,
+                            &immediate_bytes, 0u, &request->overlapped, NULL);
   }
   if (native_status == 0) {
     iocp_counter_increment(&impl->submitted);
@@ -373,6 +495,18 @@ iocp_completed_request(turbo_iocp_impl *impl, OVERLAPPED *overlapped, uint32_t *
 static void iocp_make_completion(turbo_iocp_impl *impl, turbo_iocp_request_record *request,
                                  uint32_t request_index, DWORD bytes, DWORD native_error,
                                  native_io_completion *event) {
+  if (native_error == ERROR_SUCCESS &&
+      request->operation_kind == NATIVE_IO_OPERATION_TCP_CONNECT &&
+      setsockopt((SOCKET)request->native_handle, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL,
+                 0) == SOCKET_ERROR)
+    native_error = (DWORD)WSAGetLastError();
+  if (request->operation_kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+    turbo_iocp_endpoint_record *endpoint = iocp_endpoint(impl, request->endpoint);
+    if (endpoint != NULL) {
+      endpoint->connect_active = false;
+      endpoint->connected = native_error == ERROR_SUCCESS;
+    }
+  }
   *event = (native_io_completion){
       request->request, request->endpoint,      NATIVE_IO_COMPLETION_OK, (size_t)bytes,
       TURBO_OK,         (uint32_t)native_error, request->user_data,     0u};

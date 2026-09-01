@@ -899,20 +899,6 @@ destroy the adapter. `TURBO_EALREADY` from NativeIO cancellation means a
 terminal is already in progress and is normalized to successful Actor cancel
 dispatch; it does not authorize early payload reuse.
 
-`cflow_native_io_adapter_benchmark` uses direct NativeIO from the same process
-as the denominator and reports separate 1/4/8/16/32/64 KiB TCP and byte-pipe
-latency, throughput, CPU, and stage tables for Direct, Actor, and Reactive
-paths. All three modes prepost receive/read before send/write through
-one shared operation builder, so readiness and completion work are compared
-under the same submission order. The modes rotate order per sample to limit
-frequency and scheduling bias; CPU and stage probes run in separate passes so
-their accounting calls do not inflate the latency/throughput path. The CPU pass
-expands within a fixed eight-pass bound toward 50 ms of process CPU time, which
-reduces Windows accounting-interval quantization without creating an unbounded
-benchmark. Application payload is counted once per transfer. The benchmark
-fails before publishing a row if payload, completion, rejection,
-stale-completion, acknowledgement, or quiescence checks fail.
-
 ## Reactive I/O Publisher adapter
 
 Choose the I/O boundary from the fact that makes an item available:

@@ -33,7 +33,7 @@ static int g_counter = 0;
 static int g_discard_count = 0;
 
 static void counter_coro(coro_t *co, void *arg) {
-    UNUSED(co);
+    (void)co;
     int times = *(int *)arg;
     for (int i = 0; i < times; i++) {
         g_counter++;
@@ -42,7 +42,7 @@ static void counter_coro(coro_t *co, void *arg) {
 }
 
 static void echo_coro(coro_t *co, void *arg) {
-    UNUSED(arg);
+    (void)arg;
     int value = 0;
     while (coro_bytes_stored(co) >= sizeof(int)) {
         coro_pop(co, &value, sizeof(value));
@@ -53,7 +53,7 @@ static void echo_coro(coro_t *co, void *arg) {
 }
 
 static void sched_worker(coro_t *co, void *arg) {
-    UNUSED(co);
+    (void)co;
     int *counter = (int *)arg;
     for (int i = 0; i < 3; i++) {
         (*counter)++;
@@ -62,7 +62,7 @@ static void sched_worker(coro_t *co, void *arg) {
 }
 
 static void sched_fast(coro_t *co, void *arg) {
-    UNUSED(co);
+    (void)co;
     int *counter = (int *)arg;
     (*counter) += 10;
 }
@@ -71,7 +71,7 @@ static void stack_work_coro(coro_t *co, void *arg) {
     coro_stack_work_state_t *state = (coro_stack_work_state_t *)arg;
     uint8_t source[CORO_STACK_WORK_BYTES];
     uint8_t copy[CORO_STACK_WORK_BYTES];
-    UNUSED(co);
+    (void)co;
 
     for (int round = 0; round < CORO_STACK_WORK_ROUNDS; ++round) {
         uint8_t value = (uint8_t)(0x31 + round);
@@ -92,7 +92,7 @@ static void nested_stack_work_coro(coro_t *co, void *arg) {
     coro_nested_stack_state_t *state = (coro_nested_stack_state_t *)arg;
     uint8_t parent_stack[CORO_STACK_WORK_BYTES];
     coro_t *child = NULL;
-    UNUSED(co);
+    (void)co;
 
     memset(parent_stack, 0x5a, sizeof(parent_stack));
     child = coro_create(stack_work_coro, &state->child, NULL);
@@ -120,7 +120,7 @@ static void nested_stack_work_coro(coro_t *co, void *arg) {
 }
 
 static void discard_callback(coro_t *co, void *arg) {
-    UNUSED(co);
+    (void)co;
     int *counter = (int *)arg;
     (*counter)++;
 }
@@ -333,6 +333,32 @@ spec("Turbo Coro Pool") {
         turbo_coro_pool_release(pool, co1);
         turbo_coro_pool_release(pool, co2);
 
+        turbo_coro_pool_destroy(pool);
+    }
+
+    it("abandons a suspended frame without retaining active ownership") {
+        turbo_coro_pool_config_t config = {.initial_capacity = 0, .max_capacity = 1, .stack_size = 0, .storage_size = 0};
+        turbo_coro_pool_t *pool = turbo_coro_pool_create(&config);
+        int counter = 0;
+        coro_t *co = NULL;
+
+        check_not_null(pool);
+        co = turbo_coro_pool_acquire(pool, sched_worker, &counter);
+        check_not_null(co);
+        check_equal(coro_resume(co), 0);
+        check_equal(coro_state(co), coro_SUSPENDED);
+        check_equal(turbo_coro_pool_active_count(pool), 1);
+        check_equal(turbo_coro_pool_retained_count(pool), 1);
+
+        check_equal(turbo_coro_pool_abandon(pool, co), 0);
+        check_equal(turbo_coro_pool_active_count(pool), 0);
+        check_equal(turbo_coro_pool_free_count(pool), 1);
+        check_equal(turbo_coro_pool_retained_count(pool), 0);
+
+        co = turbo_coro_pool_acquire(pool, sched_fast, &counter);
+        check_not_null(co);
+        check_equal(coro_resume(co), 0);
+        turbo_coro_pool_release(pool, co);
         turbo_coro_pool_destroy(pool);
     }
 

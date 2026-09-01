@@ -4,6 +4,7 @@
 #include <turbo/native_io.h>
 
 typedef struct turbo_io_impl turbo_io_impl;
+typedef struct native_io_coroutine_owner native_io_coroutine_owner;
 
 typedef enum turbo_io_resource_kind {
   TURBO_IO_RESOURCE_STREAM_SOCKET = 1,
@@ -12,13 +13,13 @@ typedef enum turbo_io_resource_kind {
 } turbo_io_resource_kind;
 
 static inline bool native_io_resource_kind_is_socket(turbo_io_resource_kind kind) {
-  return kind == TURBO_IO_RESOURCE_STREAM_SOCKET ||
-         kind == TURBO_IO_RESOURCE_DATAGRAM_SOCKET;
+  return kind == TURBO_IO_RESOURCE_STREAM_SOCKET || kind == TURBO_IO_RESOURCE_DATAGRAM_SOCKET;
 }
 
 static inline turbo_io_resource_kind
 native_io_operation_resource_kind(native_io_operation_kind kind) {
-  if (kind == NATIVE_IO_OPERATION_TCP_RECV || kind == NATIVE_IO_OPERATION_TCP_SEND)
+  if (kind == NATIVE_IO_OPERATION_TCP_RECV || kind == NATIVE_IO_OPERATION_TCP_SEND ||
+      kind == NATIVE_IO_OPERATION_TCP_CONNECT)
     return TURBO_IO_RESOURCE_STREAM_SOCKET;
   if (kind == NATIVE_IO_OPERATION_UDP_RECV_FROM || kind == NATIVE_IO_OPERATION_UDP_SEND_TO)
     return TURBO_IO_RESOURCE_DATAGRAM_SOCKET;
@@ -48,11 +49,14 @@ typedef struct turbo_io_impl_ops {
 struct turbo_io_impl {
   const turbo_io_impl_ops *ops;
   native_io_backend_kind kind;
+  native_io_coroutine_owner *coroutine_owner;
+  size_t coroutine_capacity;
+  size_t coroutine_completion_capacity;
 };
 
 bool native_io_platform_backend_supported(native_io_backend_kind kind);
 bool native_io_platform_pipe_supported(native_io_backend_kind kind);
 int native_io_platform_backend_init(native_io_backend *backend,
-                                   const native_io_backend_config *config);
+                                    const native_io_backend_config *config);
 
 #endif /* TURBO_NATIVE_IO_INTERNAL_H */
