@@ -124,6 +124,15 @@ borrowed read-only view for introspection; applications needing advanced Graph
 construction should build and own a Graph directly rather than mutate Stream
 internals.
 
+Statechart shutdown has three explicit policies. `close` preserves a commit
+that already won and stops without executing active exit actions. `cancel` is
+the hard-abort path and may discard an uncommitted microstep.
+`cflow_statechart_instance_request_exit()` closes admission immediately, then
+uses the instance's existing SerialExecutor to execute every active state's
+exit actions transactionally before reaching the cancelled terminal state.
+The controlled form is appropriate when state-exit effects are part of the
+host protocol; it does not synthesize a transition or a normal completion.
+
 ### Public struct field stability
 
 Public visibility does not make every field caller-mutable. CFlow uses three

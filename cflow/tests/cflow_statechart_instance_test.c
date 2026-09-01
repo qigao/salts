@@ -5035,6 +5035,7 @@ struct rtc_fixture {
     cflow_event_type events[3];
     cflow_statechart_executable executables[1];
     cflow_statechart_transition transitions[8];
+    cflow_statechart_state_action state_actions[2];
     cflow_statechart_transition_action actions[5];
     cflow_statechart_definition definition;
     cflow_statechart statechart;
@@ -5047,6 +5048,9 @@ struct rtc_fixture {
     bool raise_on_final_entry;
     bool close_during_action;
     bool cancel_during_action;
+    bool block_transition_action;
+    atomic_bool transition_action_entered;
+    atomic_bool transition_action_release;
     bool queue_cancel_after_commit;
     bool raise_on_other;
     bool fail_action;
@@ -5065,6 +5069,11 @@ struct rtc_fixture {
     bool drop_tagged_external;
     bool fail_stable_hook;
     bool use_contextual_action;
+    bool stage_exit_effect;
+    bool fail_exit_action;
+    size_t exit_effect_commits;
+    size_t exit_effect_discards;
+    bool exit_effect_observed_terminal;
     bool raise_tagged_internal;
     uint64_t tagged_internal_token;
     size_t event_hook_calls;
@@ -5291,6 +5300,11 @@ static bool rtc_action(void *user, cflow_statechart_action_phase phase,
             cflow_statechart_instance_close(&fixture->instance);
         if (event->id == RTC_GO && fixture->cancel_during_action)
             cflow_statechart_instance_cancel(&fixture->instance);
+        if (event->id == RTC_GO && fixture->block_transition_action) {
+            atomic_store(&fixture->transition_action_entered, true);
+            while (!atomic_load(&fixture->transition_action_release))
+                turbo_thread_yield();
+        }
         if (event->id == RTC_GO && fixture->queue_cancel_after_commit &&
             cflow_executor_try_post(&fixture->executor, rtc_cancel_instance,
                                     &fixture->instance) !=
@@ -5298,6 +5312,29 @@ static bool rtc_action(void *user, cflow_statechart_action_phase phase,
             return false;
     }
     return true;
+}
+
+static void rtc_exit_effect_commit(void *user) {
+    rtc_fixture *fixture = (rtc_fixture *)user;
+    cflow_machine_state_id states[2] = {0};
+    cflow_statechart_instance_stats stats = {0};
+    size_t state_count = 0u;
+    uint64_t version = 0u;
+    if (fixture == NULL) return;
+    ++fixture->exit_effect_commits;
+    fixture->exit_effect_observed_terminal =
+        fixture->exit_effect_observed_terminal &&
+        cflow_statechart_instance_copy_configuration(
+            &fixture->instance, states, 2u, &state_count, &version) ==
+            CFLOW_STATECHART_SNAPSHOT_OK &&
+        state_count == 0u &&
+        cflow_statechart_instance_get_stats(&fixture->instance, &stats) &&
+        stats.done && stats.cancelled;
+}
+
+static void rtc_exit_effect_discard(void *user) {
+    rtc_fixture *fixture = (rtc_fixture *)user;
+    if (fixture != NULL) ++fixture->exit_effect_discards;
 }
 
 static bool rtc_contextual_action(
@@ -5311,6 +5348,23 @@ static bool rtc_contextual_action(
     fixture->trace[fixture->trace_count++] = (int)context->owner;
     *(int *)context->out_state = *(const int *)context->state + 1;
     *out_error = NULL;
+    if (fixture->stage_exit_effect &&
+        context->phase == CFLOW_STATECHART_ACTION_EXIT) {
+        const cflow_statechart_effect_ticket ticket = {
+            rtc_exit_effect_commit, rtc_exit_effect_discard, fixture};
+        if (context->stage_effect == NULL ||
+            !context->stage_effect(
+                context->effect_user, &ticket, out_error)) {
+            ticket.discard(ticket.user);
+            return false;
+        }
+    }
+    if (fixture->fail_exit_action &&
+        context->phase == CFLOW_STATECHART_ACTION_EXIT &&
+        context->owner == RTC_ROOT) {
+        *out_error = "deliberate controlled exit failure";
+        return false;
+    }
     if (fixture->raise_tagged_internal &&
         context->phase == CFLOW_STATECHART_ACTION_TRANSITION &&
         context->event != NULL && context->event->id == RTC_GO) {
@@ -5745,6 +5799,162 @@ suite("CFlow Statechart public run-to-completion runtime") {
                         UINT64_C(3), UINT64_C(5), UINT64_C(7),
                         UINT64_C(11), UINT64_C(13)),
                     UINT64_C(39));
+    }
+
+    it("runs active exit actions transactionally before controlled cancellation") {
+        rtc_fixture fixture;
+        cflow_machine_state_id states[2] = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const int expected_trace[] = {RTC_A, RTC_ROOT};
+        const cmeta_type_desc *state_type = NULL;
+        size_t state_count = 0u;
+        uint64_t version = 0u;
+        int state = 0;
+        rtc_definition(&fixture, true, false);
+        fixture.state_actions[0] = (cflow_statechart_state_action){
+            RTC_A, CFLOW_STATECHART_STATE_ACTION_EXIT, RTC_EXEC, 0u};
+        fixture.state_actions[1] = (cflow_statechart_state_action){
+            RTC_ROOT, CFLOW_STATECHART_STATE_ACTION_EXIT, RTC_EXEC, 0u};
+        fixture.definition.state_actions = fixture.state_actions;
+        fixture.definition.state_action_count = 2u;
+        fixture.use_contextual_action = true;
+        fixture.stage_exit_effect = true;
+        fixture.exit_effect_observed_terminal = true;
+        fixture.effect_capacity = 2u;
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        cflow_statechart_instance_request_exit(&fixture.instance);
+        cflow_statechart_instance_request_exit(&fixture.instance);
+        cflow_statechart_instance_close(&fixture.instance);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 2u,
+                        &state_count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(state_count, (size_t)0u);
+        check_equal(version, UINT64_C(2));
+        check_equal(fixture.trace, expected_trace, sizeof(expected_trace));
+        check_equal(fixture.exit_effect_commits, (size_t)2u);
+        check_equal(fixture.exit_effect_discards, (size_t)0u);
+        check_true(fixture.exit_effect_observed_terminal);
+        check_true(cflow_statechart_instance_copy_state(
+            &fixture.instance, &state_type, &state, sizeof(state)));
+        check_equal(state, 2);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.closed);
+        check_true(stats.cancelled);
+        check_true(stats.done);
+        check_false(stats.errored);
+        {
+            const int payload = 1;
+            const cflow_event_view go = {
+                RTC_GO, &cmeta_type_int, &payload};
+            check_equal(cflow_statechart_instance_try_send(
+                            &fixture.instance, &go),
+                        CFLOW_MAILBOX_CANCELLED);
+        }
+        rtc_destroy(&fixture);
+    }
+
+    it("preserves a committing microstep before controlled exit") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const int expected_trace[] = {RTC_A, RTC_B, RTC_ROOT};
+        cflow_machine_state_id states[2] = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const cmeta_type_desc *state_type = NULL;
+        size_t state_count = 0u;
+        uint64_t version = 0u;
+        int state = 0;
+        rtc_definition(&fixture, true, false);
+        fixture.state_actions[0] = (cflow_statechart_state_action){
+            RTC_B, CFLOW_STATECHART_STATE_ACTION_EXIT, RTC_EXEC, 0u};
+        fixture.state_actions[1] = (cflow_statechart_state_action){
+            RTC_ROOT, CFLOW_STATECHART_STATE_ACTION_EXIT, RTC_EXEC, 0u};
+        fixture.definition.state_actions = fixture.state_actions;
+        fixture.definition.state_action_count = 2u;
+        fixture.block_transition_action = true;
+        atomic_init(&fixture.transition_action_entered, false);
+        atomic_init(&fixture.transition_action_release, false);
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        while (!atomic_load(&fixture.transition_action_entered))
+            turbo_thread_yield();
+        cflow_statechart_instance_request_exit(&fixture.instance);
+        atomic_store(&fixture.transition_action_release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 2u,
+                        &state_count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(state_count, (size_t)0u);
+        check_equal(version, UINT64_C(3));
+        check_equal(fixture.trace, expected_trace, sizeof(expected_trace));
+        check_true(cflow_statechart_instance_copy_state(
+            &fixture.instance, &state_type, &state, sizeof(state)));
+        check_equal(state, 3);
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_equal(stats.external_accepted, UINT64_C(1));
+        check_equal(stats.external_completed, UINT64_C(0));
+        check_equal(stats.external_cancelled, UINT64_C(1));
+        check_equal(stats.internal_pending, (size_t)0u);
+        check_true(stats.cancelled);
+        check_true(stats.done);
+        rtc_destroy(&fixture);
+    }
+
+    it("rolls back controlled exit when an exit action fails") {
+        rtc_fixture fixture;
+        const int expected_trace[] = {RTC_A, RTC_ROOT};
+        const cflow_machine_state_id expected_states[] = {
+            RTC_ROOT, RTC_A};
+        cflow_machine_state_id states[2] = {0};
+        cflow_statechart_instance_stats stats = {0};
+        const cmeta_type_desc *state_type = NULL;
+        size_t state_count = 0u;
+        uint64_t version = 0u;
+        int state = -1;
+        rtc_definition(&fixture, true, false);
+        fixture.state_actions[0] = (cflow_statechart_state_action){
+            RTC_A, CFLOW_STATECHART_STATE_ACTION_EXIT, RTC_EXEC, 0u};
+        fixture.state_actions[1] = (cflow_statechart_state_action){
+            RTC_ROOT, CFLOW_STATECHART_STATE_ACTION_EXIT, RTC_EXEC, 0u};
+        fixture.definition.state_actions = fixture.state_actions;
+        fixture.definition.state_action_count = 2u;
+        fixture.use_contextual_action = true;
+        fixture.stage_exit_effect = true;
+        fixture.fail_exit_action = true;
+        fixture.effect_capacity = 2u;
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        cflow_statechart_instance_request_exit(&fixture.instance);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 2u,
+                        &state_count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(states, expected_states, sizeof(expected_states));
+        check_equal(version, UINT64_C(1));
+        check_equal(fixture.trace, expected_trace, sizeof(expected_trace));
+        check_equal(fixture.exit_effect_commits, (size_t)0u);
+        check_equal(fixture.exit_effect_discards, (size_t)2u);
+        check_true(cflow_statechart_instance_copy_state(
+            &fixture.instance, &state_type, &state, sizeof(state)));
+        check_equal(state, 0);
+        check_equal(cflow_statechart_instance_error(&fixture.instance),
+                    "deliberate controlled exit failure");
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.closed);
+        check_true(stats.done);
+        check_true(stats.errored);
+        check_false(stats.cancelled);
+        rtc_destroy(&fixture);
     }
 
     it("reissues compound completion once for each immediate reentry") {

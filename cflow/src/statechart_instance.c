@@ -154,6 +154,7 @@ typedef struct cflow_statechart_instance_impl {
     statechart_terminal_outcome terminal_outcome;
     bool closed;
     bool cancelled;
+    bool exit_requested;
     bool done;
     bool adapter_attached;
     cflow_statechart_instance_hooks hooks;
@@ -2875,6 +2876,106 @@ fail:
     return status;
 }
 
+static cflow_statechart_instance_status execute_controlled_exit(
+    cflow_statechart_instance_impl *impl) {
+    const size_t staged = 1u - impl->published;
+    const statechart_configuration_buffer *published =
+        &impl->configurations[impl->published];
+    statechart_configuration_buffer *next = &impl->configurations[staged];
+    statechart_action_context context;
+    cflow_waker waker = {0};
+    const char *error = NULL;
+    cflow_statechart_instance_status status =
+        CFLOW_STATECHART_INSTANCE_OK;
+    size_t exit_count, position;
+
+    turbo_mutex_lock(&impl->lock);
+    if (!impl->exit_requested ||
+        impl->terminal_outcome != STATECHART_TERMINAL_NONE) {
+        turbo_mutex_unlock(&impl->lock);
+        return CFLOW_STATECHART_INSTANCE_TASK_CANCELLED;
+    }
+    turbo_mutex_unlock(&impl->lock);
+
+    impl->staged_event_count = 0u;
+    impl->staged_completion_count = 0u;
+    impl->staged_effect_count = 0u;
+    if (!copy_staging_buffers(impl, staged)) {
+        status = CFLOW_STATECHART_INSTANCE_ALLOCATION_FAILED;
+        error = "Statechart controlled exit state copy failed";
+        goto fail;
+    }
+    memcpy(impl->action_configuration_bits, published->bits,
+           impl->bitset_bytes);
+    exit_count = published->state_count;
+    for (position = 0u; position < exit_count; ++position)
+        impl->exit_order[position] = published->states[position];
+    stable_order_states(
+        impl->ir, impl->exit_order, exit_count, exit_before);
+    context = (statechart_action_context){
+        .impl = impl,
+        .event = NULL,
+        .current_state = impl->extended_states[staged],
+        .next_state = impl->action_scratch,
+        .current_state_live = &impl->extended_state_live[staged],
+        .next_state_live = &impl->action_scratch_live,
+        .configuration_bits = impl->action_configuration_bits,
+        .raise_status = CFLOW_STATECHART_INSTANCE_OK};
+    for (position = 0u; position < exit_count; ++position) {
+        const size_t state = impl->exit_order[position];
+        status = run_state_action_span(
+            &context, state,
+            CFLOW_STATECHART_STATE_ACTION_EXIT, &error);
+        if (status != CFLOW_STATECHART_INSTANCE_OK) goto fail;
+        bit_clear(impl->action_configuration_bits, state);
+    }
+    impl->staged_event_count = 0u;
+    impl->staged_completion_count = 0u;
+    memset(next->bits, 0, impl->bitset_bytes);
+    next->state_count = 0u;
+    memset(impl->completion_bits[staged], 0, impl->bitset_bytes);
+    if (!finalize_transaction_state(&context, staged)) {
+        status = CFLOW_STATECHART_INSTANCE_ACTION_FAILED;
+        error = "Statechart controlled exit state finalization failed";
+        goto fail;
+    }
+
+    turbo_mutex_lock(&impl->lock);
+    if (impl->terminal_outcome != STATECHART_TERMINAL_NONE) {
+        turbo_mutex_unlock(&impl->lock);
+        reset_transaction_state(impl, staged);
+        discard_staged_effects(impl);
+        return CFLOW_STATECHART_INSTANCE_TASK_CANCELLED;
+    }
+    impl->published = staged;
+    if (impl->configuration_version != UINT64_MAX)
+        ++impl->configuration_version;
+    if (impl->microsteps != UINT64_MAX) ++impl->microsteps;
+    if (UINT64_MAX - impl->actions < (uint64_t)context.invoked)
+        impl->actions = UINT64_MAX;
+    else
+        impl->actions += (uint64_t)context.invoked;
+    (void)win_terminal_locked(
+        impl, STATECHART_TERMINAL_CANCEL,
+        CFLOW_STATECHART_INSTANCE_OK, NULL, true,
+        CFLOW_STATECHART_INSTANCE_TASK_CANCELLED, &waker);
+    turbo_mutex_unlock(&impl->lock);
+    commit_staged_effects(impl);
+    finish_terminal_side_effects(impl, waker);
+    return CFLOW_STATECHART_INSTANCE_OK;
+
+fail:
+    reset_transaction_state(impl, staged);
+    impl->staged_event_count = 0u;
+    impl->staged_completion_count = 0u;
+    discard_staged_effects(impl);
+    latch_terminal_failure(
+        impl, status,
+        error != NULL && error[0] != '\0'
+            ? error : "Statechart controlled exit action failed");
+    return status;
+}
+
 static cflow_statechart_instance_status execute_microstep(
     cflow_statechart_instance_impl *impl) {
     const size_t staged = 1u - impl->published;
@@ -3387,7 +3488,7 @@ static void statechart_driver_run(void *user) {
     uint64_t origin_token = UINT64_C(0);
     cflow_statechart_host_result host_result;
     int result;
-    bool terminal, skip_to_external, internal_work;
+    bool terminal, exit_requested, skip_to_external, internal_work;
     if (impl == NULL) return;
     turbo_mutex_lock(&impl->lock);
     impl->driver_repost = false;
@@ -3400,6 +3501,16 @@ static void statechart_driver_run(void *user) {
         execute_initial_entry_actions(impl) !=
             CFLOW_STATECHART_INSTANCE_OK)
         return;
+
+    turbo_mutex_lock(&impl->lock);
+    terminal = impl->terminal_outcome != STATECHART_TERMINAL_NONE;
+    exit_requested = impl->exit_requested;
+    turbo_mutex_unlock(&impl->lock);
+    if (terminal) return;
+    if (exit_requested) {
+        (void)execute_controlled_exit(impl);
+        return;
+    }
 
     if (skip_to_external) goto external_admission;
 
@@ -4080,7 +4191,7 @@ cflow_mailbox_status cflow_statechart_instance_try_send_tagged(
     if (impl == NULL || !impl->external_mailbox_initialized)
         return CFLOW_MAILBOX_INVALID_ARGUMENT;
     turbo_mutex_lock(&impl->lock);
-    cancelled = impl->cancelled;
+    cancelled = impl->cancelled || impl->exit_requested;
     if (impl->closed || impl->done || impl->error != NULL) {
         turbo_mutex_unlock(&impl->lock);
         return cancelled ? CFLOW_MAILBOX_CANCELLED : CFLOW_MAILBOX_CLOSED;
@@ -4097,7 +4208,7 @@ cflow_mailbox_status cflow_statechart_instance_try_send_tagged(
         counter_increment(&impl->external_accepted);
         ++impl->external_pending;
     }
-    cancelled = impl->cancelled;
+    cancelled = impl->cancelled || impl->exit_requested;
     turbo_mutex_unlock(&impl->lock);
     if (status != CFLOW_MAILBOX_OK) {
         if (status == CFLOW_MAILBOX_CANCELLED)
@@ -4118,7 +4229,7 @@ cflow_mailbox_status cflow_statechart_instance_try_send_internal(
     if (impl == NULL || !impl->adapter_internal_mailbox_initialized)
         return CFLOW_MAILBOX_INVALID_ARGUMENT;
     turbo_mutex_lock(&impl->lock);
-    cancelled = impl->cancelled;
+    cancelled = impl->cancelled || impl->exit_requested;
     if (impl->closed || impl->done || impl->error != NULL) {
         turbo_mutex_unlock(&impl->lock);
         return cancelled ? CFLOW_MAILBOX_CANCELLED : CFLOW_MAILBOX_CLOSED;
@@ -4131,7 +4242,7 @@ cflow_mailbox_status cflow_statechart_instance_try_send_internal(
         impl->macrostep_active = true;
         impl->skip_to_external = false;
     }
-    cancelled = impl->cancelled;
+    cancelled = impl->cancelled || impl->exit_requested;
     turbo_mutex_unlock(&impl->lock);
     if (status != CFLOW_MAILBOX_OK) {
         if (status == CFLOW_MAILBOX_CANCELLED)
@@ -4163,7 +4274,8 @@ cflow_timer_event_schedule_result cflow_statechart_instance_try_schedule_at(
     if (impl == NULL || scope == 0u || !impl->timers_initialized)
         return result;
     turbo_mutex_lock(&impl->lock);
-    if (impl->terminal_outcome != STATECHART_TERMINAL_NONE) {
+    if (impl->closed ||
+        impl->terminal_outcome != STATECHART_TERMINAL_NONE) {
         result.status = CFLOW_TIMER_EVENT_CLOSED;
     } else if (statechart_timer_scope_active_locked(impl, scope)) {
         result = cflow_timer_event_queue_try_schedule_scoped_at(
@@ -4185,7 +4297,8 @@ cflow_timer_event_schedule_result cflow_statechart_instance_try_schedule_after(
     if (impl == NULL || scope == 0u || !impl->timers_initialized)
         return result;
     turbo_mutex_lock(&impl->lock);
-    if (impl->terminal_outcome != STATECHART_TERMINAL_NONE) {
+    if (impl->closed ||
+        impl->terminal_outcome != STATECHART_TERMINAL_NONE) {
         result.status = CFLOW_TIMER_EVENT_CLOSED;
     } else if (statechart_timer_scope_active_locked(impl, scope)) {
         result = cflow_timer_event_queue_try_schedule_scoped_after(
@@ -4204,7 +4317,8 @@ cflow_timer_event_status cflow_statechart_instance_cancel_timer(
     if (impl == NULL || !impl->timers_initialized)
         return CFLOW_TIMER_EVENT_INVALID_ARGUMENT;
     turbo_mutex_lock(&impl->lock);
-    status = impl->terminal_outcome != STATECHART_TERMINAL_NONE
+    status = impl->closed ||
+        impl->terminal_outcome != STATECHART_TERMINAL_NONE
         ? CFLOW_TIMER_EVENT_CLOSED
         : cflow_timer_event_queue_cancel(&impl->timers, timer_id);
     turbo_mutex_unlock(&impl->lock);
@@ -4413,12 +4527,41 @@ void cflow_statechart_instance_close(cflow_statechart_instance *instance) {
     cflow_waker waker = {0};
     if (impl == NULL) return;
     turbo_mutex_lock(&impl->lock);
-    (void)win_terminal_locked(
-        impl, STATECHART_TERMINAL_CLOSE,
-        CFLOW_STATECHART_INSTANCE_OK, NULL, !impl->microstep_pending,
-        CFLOW_STATECHART_INSTANCE_TASK_CANCELLED, &waker);
+    if (!impl->exit_requested) {
+        (void)win_terminal_locked(
+            impl, STATECHART_TERMINAL_CLOSE,
+            CFLOW_STATECHART_INSTANCE_OK, NULL, !impl->microstep_pending,
+            CFLOW_STATECHART_INSTANCE_TASK_CANCELLED, &waker);
+    }
     turbo_mutex_unlock(&impl->lock);
     finish_terminal_side_effects(impl, waker);
+}
+
+void cflow_statechart_instance_request_exit(
+    cflow_statechart_instance *instance) {
+    cflow_statechart_instance_impl *impl = instance != NULL
+        ? (cflow_statechart_instance_impl *)instance->impl : NULL;
+    cflow_waker waker = {0};
+    bool accepted = false;
+    if (impl == NULL) return;
+    turbo_mutex_lock(&impl->lock);
+    if (impl->terminal_outcome == STATECHART_TERMINAL_NONE &&
+        !impl->exit_requested) {
+        impl->exit_requested = true;
+        impl->closed = true;
+        impl->internal_event_head = 0u;
+        impl->internal_event_count = 0u;
+        impl->completion_head = 0u;
+        impl->completion_count = 0u;
+        cancel_external_admission_locked(impl, &waker);
+        if (impl->timers_initialized)
+            (void)cflow_timer_event_queue_close_begin_internal(
+                &impl->timers);
+        accepted = true;
+    }
+    turbo_mutex_unlock(&impl->lock);
+    invoke_detached_waker(waker);
+    if (accepted) (void)schedule_statechart_driver(impl);
 }
 
 void cflow_statechart_instance_cancel(cflow_statechart_instance *instance) {
