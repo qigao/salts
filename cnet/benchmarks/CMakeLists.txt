@@ -14,7 +14,7 @@ else()
 endif()
 
 cmake_add_benchmark(cnet_io_benchmark
-  SOURCES cnet_io_benchmark.c
+  SOURCES cnet_io_benchmark.c cnet_benchmark_stats.c
   LIBS turbo_cnet_experimental TurboUtils::TinyTest ${CNET_LIBUV_TARGET}
   FOLDER "cnet/benchmarks")
 set_target_properties(cnet_io_benchmark PROPERTIES

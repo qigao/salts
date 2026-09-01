@@ -4,7 +4,12 @@
 #include <stdint.h>
 #include <string.h>
 
-enum { TEST_COMMAND_CAPACITY = 2, TEST_PAYLOAD_CAPACITY = 8 };
+enum {
+  TEST_COMMAND_CAPACITY = 2,
+  TEST_COMMAND_SCALE = 4096,
+  TEST_COMMAND_CYCLES = 2,
+  TEST_PAYLOAD_CAPACITY = 8
+};
 
 static cnet_command_queue queue;
 
@@ -48,6 +53,46 @@ spec("CNet bounded command queue") {
   }
 
   group("publication") {
+    it("cycles every slot in a large bounded FIFO") {
+      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_SCALE,
+                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
+      cnet_command_queue_stats stats = {0};
+
+      check_equal(cnet_command_queue_init(&queue, &config), TURBO_OK);
+      for (size_t cycle = 0u; cycle < TEST_COMMAND_CYCLES; ++cycle) {
+        for (size_t index = 0u; index < TEST_COMMAND_SCALE; ++index) {
+          const uint32_t payload = (uint32_t)(cycle * TEST_COMMAND_SCALE + index);
+          const cnet_command command = make_send((uint32_t)index + 1u, &payload, sizeof(payload));
+          check_equal(cnet_command_queue_publish(&queue, &command), TURBO_OK);
+        }
+        {
+          const uint32_t payload = UINT32_MAX;
+          const cnet_command command =
+              make_send((uint32_t)TEST_COMMAND_SCALE + 1u, &payload, sizeof(payload));
+          check_equal(cnet_command_queue_publish(&queue, &command), TURBO_ENOBUFS);
+        }
+        for (size_t index = 0u; index < TEST_COMMAND_SCALE; ++index) {
+          const uint32_t expected_payload = (uint32_t)(cycle * TEST_COMMAND_SCALE + index);
+          cnet_command_view view = {0};
+          check_equal(cnet_command_queue_take(&queue, &view), TURBO_OK);
+          check_equal(view.kind, CNET_COMMAND_SEND);
+          check_equal(view.connection.slot, (uint32_t)index + 1u);
+          check_equal(view.connection.generation, UINT32_C(1));
+          check_equal(view.size, sizeof(expected_payload));
+          check_equal(view.data, &expected_payload, sizeof(expected_payload));
+          check_equal(cnet_command_queue_release(&queue, &view), TURBO_OK);
+        }
+      }
+      check_true(cnet_command_queue_get_stats(&queue, &stats));
+      check_equal(stats.live_commands, 0u);
+      check_equal(stats.peak_commands, (size_t)TEST_COMMAND_SCALE);
+      check_equal(stats.queued_bytes, 0u);
+      check_equal(stats.peak_queued_bytes, (size_t)TEST_COMMAND_SCALE * sizeof(uint32_t));
+      check_equal(stats.rejected_commands, (uint64_t)TEST_COMMAND_CYCLES);
+      check_equal(stats.rejected_bytes, (uint64_t)TEST_COMMAND_CYCLES * sizeof(uint32_t));
+      check_true(stats.admission_open);
+    }
+
     it("reports bounded live peak byte and rejection counters") {
       static const uint8_t first_payload[1] = {1u};
       static const uint8_t second_payload[2] = {2u, 3u};

@@ -31,6 +31,7 @@ struct native_io_coroutine_owner {
   native_io_coroutine *tasks;
   native_io_coroutine_request_owner *request_owners;
   native_io_completion *raw_completions;
+  native_io_coroutine **ready_coroutines;
   uint32_t *free_tasks;
   size_t task_capacity;
   size_t raw_completion_capacity;
@@ -99,12 +100,15 @@ native_io_coroutine_owner_create(turbo_io_impl *impl, size_t task_capacity,
       task_capacity, sizeof(*owner->request_owners));
   owner->raw_completions = (native_io_completion *)calloc(completion_capacity,
                                                           sizeof(*owner->raw_completions));
+  owner->ready_coroutines =
+      (native_io_coroutine **)calloc(completion_capacity, sizeof(*owner->ready_coroutines));
   owner->free_tasks = (uint32_t *)calloc(task_capacity, sizeof(*owner->free_tasks));
   owner->pool = turbo_coro_pool_create(&pool_config);
   if (owner->tasks == NULL || owner->request_owners == NULL || owner->raw_completions == NULL ||
-      owner->free_tasks == NULL || owner->pool == NULL) {
+      owner->ready_coroutines == NULL || owner->free_tasks == NULL || owner->pool == NULL) {
     turbo_coro_pool_destroy(owner->pool);
     free(owner->free_tasks);
+    free(owner->ready_coroutines);
     free(owner->raw_completions);
     free(owner->request_owners);
     free(owner->tasks);
@@ -124,6 +128,7 @@ static void native_io_coroutine_owner_destroy(native_io_coroutine_owner *owner) 
   if (owner == NULL) return;
   turbo_coro_pool_destroy(owner->pool);
   free(owner->free_tasks);
+  free(owner->ready_coroutines);
   free(owner->raw_completions);
   free(owner->request_owners);
   free(owner->tasks);
@@ -141,9 +146,11 @@ static native_io_coroutine *native_io_coroutine_find(native_io_coroutine_owner *
 
 static int native_io_coroutine_route_completion(native_io_coroutine_owner *owner,
                                                 const native_io_completion *completion,
+                                                native_io_coroutine **out_ready,
                                                 bool *out_consumed) {
   native_io_coroutine_request_owner *request_owner;
   native_io_coroutine *coroutine;
+  *out_ready = NULL;
   *out_consumed = false;
   if (!native_io_request_valid(completion->request) ||
       completion->request.slot > owner->task_capacity)
@@ -159,7 +166,8 @@ static int native_io_coroutine_route_completion(native_io_coroutine_owner *owner
   coroutine->completion_ready = true;
   coroutine->waiting = false;
   *out_consumed = true;
-  return native_io_coroutine_resume(coroutine);
+  *out_ready = coroutine;
+  return TURBO_OK;
 }
 
 static turbo_io_impl *native_io_impl(native_io_backend *backend) {
@@ -406,6 +414,7 @@ int native_io_backend_observe(native_io_backend *backend, native_io_completion *
   native_io_coroutine_owner *owner;
   size_t raw_count = 0u;
   size_t direct_count = 0u;
+  size_t ready_count = 0u;
   size_t limit;
   int status;
   if (out_count != NULL) *out_count = 0u;
@@ -420,13 +429,21 @@ int native_io_backend_observe(native_io_backend *backend, native_io_completion *
   status = impl->ops->observe(impl, owner->raw_completions, limit, timeout_ms, &raw_count);
   if (status != TURBO_OK) return status;
   for (size_t index = 0u; index < raw_count; ++index) {
+    native_io_coroutine *ready = NULL;
     bool consumed = false;
-    status = native_io_coroutine_route_completion(owner, &owner->raw_completions[index], &consumed);
+    status = native_io_coroutine_route_completion(owner, &owner->raw_completions[index], &ready,
+                                                  &consumed);
     if (status != TURBO_OK) return status;
+    if (ready != NULL) owner->ready_coroutines[ready_count++] = ready;
     if (!consumed) events[direct_count++] = owner->raw_completions[index];
   }
+  status = TURBO_OK;
+  for (size_t index = 0u; index < ready_count; ++index) {
+    const int resume_status = native_io_coroutine_resume(owner->ready_coroutines[index]);
+    if (status == TURBO_OK && resume_status != TURBO_OK) status = resume_status;
+  }
   *out_count = direct_count;
-  return TURBO_OK;
+  return status;
 }
 
 int native_io_backend_wake(native_io_backend *backend) {

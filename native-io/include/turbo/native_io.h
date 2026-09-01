@@ -286,7 +286,10 @@ TURBO_NATIVE_IO_C_API int native_io_backend_cancel(native_io_backend *backend,
  * Directly dequeues up to min(event_capacity, configured batch capacity)
  * completion packets on the owner thread. Completions owned by a coroutine
  * await resume that coroutine and are not copied to events; processing only
- * such completions returns TURBO_OK with out_count == 0. timeout_ms == 0 polls and
+ * such completions returns TURBO_OK with out_count == 0. NativeIO resolves
+ * ownership for the complete dequeued batch before resuming any coroutine, so
+ * a resumed coroutine may immediately await again without capturing a request
+ * slot still named by a later packet in that batch. timeout_ms == 0 polls and
  * UINT32_MAX waits indefinitely. No packet before the deadline returns
  * TURBO_ETIMEDOUT with out_count == 0. Failed I/O is a successfully observed
  * event whose kind/status carry the terminal error. A returned event ends the

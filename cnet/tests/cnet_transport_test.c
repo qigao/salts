@@ -258,6 +258,44 @@ static void cnet_test_named_pipe_transport(native_io_backend_kind kind) {
 }
 
 spec("CNet NativeIO transport ownership") {
+  it("converts numeric IPv4 and IPv6 endpoints without resolver state") {
+    struct sockaddr_storage address;
+    size_t address_length = SIZE_MAX;
+    const uint16_t port = UINT16_C(43123);
+
+    memset(&address, 0xa5, sizeof(address));
+    check_equal(cnet_transport_parse_numeric_address("127.0.0.1", port, &address, sizeof(address),
+                                                     &address_length),
+                TURBO_OK);
+    check_equal(address_length, sizeof(struct sockaddr_in));
+    check_equal(((const struct sockaddr_in *)&address)->sin_family, AF_INET);
+    check_equal(((const struct sockaddr_in *)&address)->sin_port, htons(port));
+    check_equal(((const struct sockaddr_in *)&address)->sin_addr.s_addr, htonl(INADDR_LOOPBACK));
+
+    memset(&address, 0xa5, sizeof(address));
+    address_length = SIZE_MAX;
+    check_equal(cnet_transport_parse_numeric_address("::1", port, &address, sizeof(address),
+                                                     &address_length),
+                TURBO_OK);
+    check_equal(address_length, sizeof(struct sockaddr_in6));
+    check_equal(((const struct sockaddr_in6 *)&address)->sin6_family, AF_INET6);
+    check_equal(((const struct sockaddr_in6 *)&address)->sin6_port, htons(port));
+    {
+      static const struct in6_addr loopback = IN6ADDR_LOOPBACK_INIT;
+      check_equal(&((const struct sockaddr_in6 *)&address)->sin6_addr, &loopback, sizeof(loopback));
+    }
+  }
+
+  it("leaves hostnames for the resolver and clears the output length") {
+    struct sockaddr_storage address;
+    size_t address_length = SIZE_MAX;
+    memset(&address, 0, sizeof(address));
+    check_equal(cnet_transport_parse_numeric_address("localhost", UINT16_C(443), &address,
+                                                     sizeof(address), &address_length),
+                TURBO_ENOENT);
+    check_equal(address_length, 0u);
+  }
+
   it("creates owns connects and releases one TCP socket") {
     native_io_backend_kind backends[CNET_TEST_MAX_BACKENDS];
     const size_t count = cnet_test_backends(backends);

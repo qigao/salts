@@ -73,6 +73,7 @@ struct cnet_owner_impl {
   cnet_owner_session *session_records;
   cnet_owner_request *request_records;
   uint32_t *free_requests;
+  cnet_session_handle *receive_rearms;
   cnet_owner_pending_event *pending_events;
   unsigned char *receive_storage;
   native_io_completion *completions;
@@ -86,11 +87,12 @@ struct cnet_owner_impl {
   size_t occupied_sessions;
   size_t active_requests;
   size_t free_request_count;
+  size_t receive_rearm_head;
+  size_t receive_rearm_count;
   cnet_owner_now_ms_fn now_ms;
   void *clock_context;
   bool closed;
   bool resolver_closed;
-  bool receive_rearm_pending;
   int coroutine_status;
 };
 
@@ -204,16 +206,28 @@ static int cnet_owner_flush_state_events(cnet_owner_impl *impl, bool *out_blocke
   return TURBO_OK;
 }
 
+static int cnet_owner_queue_receive_rearm(cnet_owner_impl *impl, cnet_session_handle session) {
+  size_t tail;
+  /* One session can own only one active read, so it can contribute at most one
+   * handle before this owner-local queue is drained. */
+  if (impl->receive_rearm_count == impl->connection_capacity) return TURBO_EPROTO;
+  tail = (impl->receive_rearm_head + impl->receive_rearm_count) % impl->connection_capacity;
+  impl->receive_rearms[tail] = session;
+  ++impl->receive_rearm_count;
+  return TURBO_OK;
+}
+
 static int cnet_owner_arm_pending_receives(cnet_owner_impl *impl) {
-  size_t index;
-  if (!impl->receive_rearm_pending) return TURBO_OK;
-  impl->receive_rearm_pending = false;
-  for (index = 0u; index < impl->connection_capacity; ++index) {
-    cnet_owner_session *session = &impl->session_records[index];
+  while (impl->receive_rearm_count != 0u) {
+    const cnet_session_handle handle = impl->receive_rearms[impl->receive_rearm_head];
+    cnet_owner_session *session;
     int status;
-    if (!session->occupied || session->receive_demand == 0u || session->read_active ||
-        session->close_requested)
-      continue;
+    impl->receive_rearms[impl->receive_rearm_head] = (cnet_session_handle){0};
+    impl->receive_rearm_head = (impl->receive_rearm_head + 1u) % impl->connection_capacity;
+    --impl->receive_rearm_count;
+    session = cnet_owner_find_session(impl, handle);
+    if (session == NULL) return TURBO_EPROTO;
+    if (session->receive_demand == 0u || session->read_active || session->close_requested) continue;
     status = cnet_owner_arm_receive(impl, session);
     if (status != TURBO_OK) return status;
   }
@@ -709,7 +723,10 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
       const cnet_event event = {
           CNET_EVENT_RECEIVE,      session->handle,         CNET_EVENT_STATE_NONE, TURBO_OK,
           CNET_SESSION_STAGE_NONE, session->receive_buffer, completion->bytes};
-      if (session->receive_demand != 0u) impl->receive_rearm_pending = true;
+      if (session->receive_demand != 0u) {
+        status = cnet_owner_queue_receive_rearm(impl, session->handle);
+        if (status != TURBO_OK) return status;
+      }
       status = cnet_owner_publish_event(impl, &event);
       if (status == TURBO_ENOBUFS) {
         if (impl->pending_event_count == impl->pending_event_capacity) return TURBO_ENOBUFS;
@@ -852,6 +869,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
   if (config->completion_batch_capacity > SIZE_MAX - 2u ||
       config->connection_capacity > SIZE_MAX - config->request_capacity ||
       config->connection_capacity > SIZE_MAX / sizeof(cnet_owner_session) ||
+      config->connection_capacity > SIZE_MAX / sizeof(cnet_session_handle) ||
       config->connection_capacity > SIZE_MAX / config->receive_buffer_bytes ||
       config->request_capacity > SIZE_MAX / sizeof(cnet_owner_request) ||
       config->request_capacity > SIZE_MAX / sizeof(uint32_t) ||
@@ -865,6 +883,8 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
   impl->request_records =
       (cnet_owner_request *)calloc(config->request_capacity, sizeof(*impl->request_records));
   impl->free_requests = (uint32_t *)calloc(config->request_capacity, sizeof(*impl->free_requests));
+  impl->receive_rearms =
+      (cnet_session_handle *)calloc(config->connection_capacity, sizeof(*impl->receive_rearms));
   impl->pending_events = (cnet_owner_pending_event *)calloc(config->completion_batch_capacity + 2u,
                                                             sizeof(*impl->pending_events));
   impl->receive_storage =
@@ -872,11 +892,12 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
   impl->completions =
       (native_io_completion *)calloc(config->completion_batch_capacity, sizeof(*impl->completions));
   if (impl->session_records == NULL || impl->request_records == NULL ||
-      impl->free_requests == NULL || impl->pending_events == NULL ||
+      impl->free_requests == NULL || impl->receive_rearms == NULL || impl->pending_events == NULL ||
       impl->receive_storage == NULL || impl->completions == NULL) {
     free(impl->completions);
     free(impl->receive_storage);
     free(impl->pending_events);
+    free(impl->receive_rearms);
     free(impl->free_requests);
     free(impl->request_records);
     free(impl->session_records);
@@ -891,6 +912,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     free(impl->completions);
     free(impl->receive_storage);
     free(impl->pending_events);
+    free(impl->receive_rearms);
     free(impl->free_requests);
     free(impl->request_records);
     free(impl->session_records);
@@ -905,6 +927,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     free(impl->completions);
     free(impl->receive_storage);
     free(impl->pending_events);
+    free(impl->receive_rearms);
     free(impl->free_requests);
     free(impl->request_records);
     free(impl->session_records);
@@ -921,6 +944,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     free(impl->completions);
     free(impl->receive_storage);
     free(impl->pending_events);
+    free(impl->receive_rearms);
     free(impl->free_requests);
     free(impl->request_records);
     free(impl->session_records);
@@ -1038,7 +1062,8 @@ int cnet_owner_close(cnet_owner *owner) {
   if (impl == NULL) return TURBO_EINVAL;
   if (impl->closed) return TURBO_EALREADY;
   if (impl->occupied_sessions != 0u || impl->active_requests != 0u ||
-      impl->pending_event_count != 0u || turbo_deadline_queue_size(&impl->deadlines) != 0u)
+      impl->receive_rearm_count != 0u || impl->pending_event_count != 0u ||
+      turbo_deadline_queue_size(&impl->deadlines) != 0u)
     return TURBO_EBUSY;
   if (!impl->resolver_closed) {
     status = cnet_resolver_close(&impl->resolver, 0u);
@@ -1066,6 +1091,7 @@ int cnet_owner_destroy(cnet_owner *owner) {
   free(impl->completions);
   free(impl->receive_storage);
   free(impl->pending_events);
+  free(impl->receive_rearms);
   free(impl->free_requests);
   free(impl->request_records);
   free(impl->session_records);

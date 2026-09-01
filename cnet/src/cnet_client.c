@@ -3,6 +3,7 @@
 #include "cnet_dispatcher.h"
 #include "cnet_module.h"
 #include "cnet_shards.h"
+#include "cnet_transport.h"
 #include "cnet_uri.h"
 
 #include <turbo/clock.h>
@@ -288,12 +289,20 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
   status = cnet_uri_parse(options->uri, &uri);
   if (status != TURBO_OK) return status;
   payload.scheme = uri.scheme;
-  payload.port = uri.port;
   payload.connect_timeout_ms = impl->connect_timeout_ms;
   payload.read_timeout_ms = impl->read_timeout_ms;
   payload.write_timeout_ms = impl->write_timeout_ms;
   if (uri.scheme == CNET_URI_PIPE) memcpy(payload.pipe_name, uri.path, strlen(uri.path) + 1u);
-  else memcpy(payload.host, uri.host, strlen(uri.host) + 1u);
+  else {
+    status = cnet_transport_parse_numeric_address(uri.host, uri.port, payload.address,
+                                                  sizeof(payload.address), &payload.address_length);
+    if (status == TURBO_ENOENT) {
+      memcpy(payload.host, uri.host, strlen(uri.host) + 1u);
+      payload.port = uri.port;
+    } else if (status != TURBO_OK) {
+      return status;
+    }
+  }
 
   turbo_mutex_lock(&impl->lock);
   if (!impl->admission_open) {
