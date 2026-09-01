@@ -32,6 +32,9 @@
     },
     {
       "name": "llhttp"
+    },
+    {
+      "name": "openssl"
     }
   ],
   "overrides": [

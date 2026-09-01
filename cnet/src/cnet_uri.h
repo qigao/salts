@@ -10,6 +10,7 @@ enum { CNET_URI_MAX_BYTES = 1280, CNET_URI_HOST_CAPACITY = 254, CNET_URI_PATH_CA
 typedef enum cnet_uri_scheme {
   CNET_URI_NONE = 0,
   CNET_URI_TCP,
+  CNET_URI_TLS,
   CNET_URI_UDP,
   CNET_URI_PIPE
 } cnet_uri_scheme;

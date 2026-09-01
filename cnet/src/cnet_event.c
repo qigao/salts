@@ -1,5 +1,6 @@
 #include "cnet_event.h"
 
+#include <cnet/cnet.h>
 #include <turbo/disruptor.h>
 
 #include <stdatomic.h>
@@ -60,9 +61,16 @@ static bool cnet_event_valid(const cnet_event *event) {
     return event->state == CNET_EVENT_STATE_NONE && event->status == TURBO_OK &&
            event->stage == CNET_SESSION_STAGE_NONE && event->data == NULL && event->size == 0u &&
            event->argument != 0u;
-  if (event->kind != CNET_EVENT_STATE || event->data != NULL || event->size != 0u) return false;
+  if (event->kind != CNET_EVENT_STATE) return false;
   if (event->state < CNET_EVENT_STATE_CONNECTED || event->state > CNET_EVENT_STATE_FAILED)
     return false;
+  if (event->state == CNET_EVENT_STATE_CONNECTED) {
+    if (event->size > CNET_TLS_ALPN_NAME_MAX_BYTES ||
+        ((event->data == NULL) != (event->size == 0u)))
+      return false;
+  } else if (event->data != NULL || event->size != 0u) {
+    return false;
+  }
   if (event->state == CNET_EVENT_STATE_FAILED)
     return event->status != TURBO_OK && event->stage != CNET_SESSION_STAGE_NONE;
   return event->status == TURBO_OK && event->stage == CNET_SESSION_STAGE_NONE;

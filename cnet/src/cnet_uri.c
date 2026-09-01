@@ -80,6 +80,7 @@ static int cnet_uri_parse_network(const char *authority, size_t length, cnet_uri
 
 int cnet_uri_parse(const char *text, cnet_uri *out_uri) {
   static const char tcp_prefix[] = "tcp://";
+  static const char tls_prefix[] = "tls://";
   static const char udp_prefix[] = "udp://";
   static const char pipe_prefix[] = "pipe://";
   cnet_uri parsed = {0};
@@ -93,6 +94,10 @@ int cnet_uri_parse(const char *text, cnet_uri *out_uri) {
   if (length >= sizeof(tcp_prefix) - 1u && memcmp(text, tcp_prefix, sizeof(tcp_prefix) - 1u) == 0)
     status = cnet_uri_parse_network(text + sizeof(tcp_prefix) - 1u,
                                     length - (sizeof(tcp_prefix) - 1u), CNET_URI_TCP, &parsed);
+  else if (length >= sizeof(tls_prefix) - 1u &&
+           memcmp(text, tls_prefix, sizeof(tls_prefix) - 1u) == 0)
+    status = cnet_uri_parse_network(text + sizeof(tls_prefix) - 1u,
+                                    length - (sizeof(tls_prefix) - 1u), CNET_URI_TLS, &parsed);
   else if (length >= sizeof(udp_prefix) - 1u &&
            memcmp(text, udp_prefix, sizeof(udp_prefix) - 1u) == 0)
     status = cnet_uri_parse_network(text + sizeof(udp_prefix) - 1u,

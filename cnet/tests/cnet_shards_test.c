@@ -147,6 +147,11 @@ spec("CNet long-lived owner shards") {
     check_equal(cnet_module_init(), TURBO_OK);
     check_equal(cnet_shards_test_listener(&listener, &address), TURBO_OK);
     check_equal(cnet_shards_init(&shards, &config), TURBO_OK);
+    {
+      cnet_shards_layout layout = {0};
+      check_true(cnet_shards_get_layout(&shards, &layout));
+      check_equal(layout.max_event_payload_bytes, config.receive_buffer_bytes);
+    }
     check_equal(cnet_shards_bind_event_sink(&shards, cnet_shards_test_sink, &probe), TURBO_OK);
 
     payload.scheme = CNET_URI_TCP;

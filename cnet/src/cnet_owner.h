@@ -4,6 +4,7 @@
 #include "cnet_command.h"
 #include "cnet_event.h"
 #include "cnet_resolver.h"
+#include "cnet_tls.h"
 #include "cnet_transport.h"
 #include "cnet_uri.h"
 
@@ -21,13 +22,18 @@ typedef struct cnet_owner_connect_payload {
   char host[CNET_RESOLVER_HOST_CAPACITY];
   uint16_t port;
   char pipe_name[CNET_URI_PATH_CAPACITY];
+  cnet_tls_context *tls_context;
+  char tls_server_name[CNET_TLS_SERVER_NAME_CAPACITY];
   /** Zero disables the deadline. Connect covers resolution plus transport admission. */
   uint32_t connect_timeout_ms;
   /** Zero disables the per-accepted-read deadline. */
   uint32_t read_timeout_ms;
   /** Zero disables the per-accepted-write deadline. */
   uint32_t write_timeout_ms;
+  uint32_t tls_handshake_timeout_ms;
+  size_t tls_io_buffer_bytes;
   bool adopted;
+  bool tls_server;
 } cnet_owner_connect_payload;
 
 typedef uint64_t (*cnet_owner_now_ms_fn)(void *context);

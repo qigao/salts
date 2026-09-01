@@ -21,6 +21,11 @@ typedef struct cnet_listener {
   void *impl;
 } cnet_listener;
 
+/** Reusable TLS server context. */
+typedef struct cnet_tls_server {
+  void *impl;
+} cnet_tls_server;
+
 /** Generation-checked value handle; never an OS descriptor or pointer. */
 typedef struct cnet_connection {
   uint32_t slot;
@@ -65,9 +70,59 @@ typedef struct cnet_observer {
   cnet_send_fn on_send;
 } cnet_observer;
 
+enum {
+  CNET_TLS_ALPN_NAME_MAX_BYTES = 255,
+  /** Minimum fixed capacity of each TLS network BIO and scratch buffer. */
+  CNET_TLS_MIN_IO_BUFFER_BYTES = 17 * 1024
+};
+
+typedef enum cnet_tls_client_auth {
+  CNET_TLS_CLIENT_AUTH_NONE = 0,
+  CNET_TLS_CLIENT_AUTH_REQUIRED = 1
+} cnet_tls_client_auth;
+
+/**
+ * Per-connection client policy. The configuration is consumed synchronously
+ * by `cnet_connect()` and is not retained. Peer and hostname verification are
+ * always enabled. NULL CA fields select the platform trust store.
+ */
+typedef struct cnet_tls_client_config {
+  size_t size;
+  /** Optional PEM trust file and hashed trust directory. */
+  const char *ca_file;
+  const char *ca_path;
+  /** Optional PEM client certificate chain and private key; configure both or neither. */
+  const char *cert_file;
+  const char *key_file;
+  const char *key_password;
+  /** Optional verified identity and SNI override; NULL uses the URI host. */
+  const char *server_name;
+  /** Optional ordered ALPN offer; each non-empty name is at most 255 bytes. */
+  const char *const *alpn_protocols;
+  size_t alpn_protocol_count;
+} cnet_tls_client_config;
+
+/** Configuration copied into a reusable server context during initialization. */
+typedef struct cnet_tls_server_config {
+  size_t size;
+  /** Required PEM server certificate chain and private key. */
+  const char *cert_file;
+  const char *key_file;
+  const char *key_password;
+  /** Required only when `client_auth` is REQUIRED. */
+  const char *ca_file;
+  const char *ca_path;
+  cnet_tls_client_auth client_auth;
+  /** Optional server-preference ALPN list. */
+  const char *const *alpn_protocols;
+  size_t alpn_protocol_count;
+} cnet_tls_server_config;
+
 typedef struct cnet_connect_options {
   const char *uri;
   cnet_observer observer;
+  /** Optional TLS policy; valid only with `tls://`. NULL selects verified defaults. */
+  const cnet_tls_client_config *tls;
 } cnet_connect_options;
 
 /**
@@ -87,6 +142,10 @@ typedef struct cnet_client_config {
   uint32_t connect_timeout_ms;
   uint32_t read_timeout_ms;
   uint32_t write_timeout_ms;
+  /** Zero disables TLS admission. Otherwise this is each TLS BIO/I/O hard bound. */
+  size_t tls_io_buffer_bytes;
+  /** Required with non-zero TLS storage; bounds only the TLS handshake. */
+  uint32_t tls_handshake_timeout_ms;
 } cnet_client_config;
 
 /**
@@ -195,6 +254,36 @@ int cnet_client_stop(cnet_client *client, uint32_t timeout_ms);
 int cnet_client_destroy(cnet_client *client);
 
 /**
+ * Builds one fail-closed TLS 1.2+ server context. Certificate/key and ALPN
+ * input are copied by OpenSSL or CNet before return. No partial context is
+ * published on failure.
+ *
+ * @param server Zero-initialized reusable output context.
+ * @param config Synchronously consumed certificate, trust, client-auth, and ALPN policy.
+ * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_EALREADY`, `TURBO_ERANGE`,
+ * `TURBO_ENOMEM`, or `TURBO_EIO` for certificate/OpenSSL setup failure.
+ */
+int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *config);
+
+/**
+ * Releases the public context reference. Existing accepted sessions retain
+ * their own reference. This control-plane call must not overlap init or accept
+ * using the same `server` wrapper.
+ * @return `TURBO_OK` (including an already destroyed wrapper), or `TURBO_EINVAL`.
+ */
+int cnet_tls_server_destroy(cnet_tls_server *server);
+
+/**
+ * Copies the negotiated ALPN protocol into `buffer` after a TLS connection is
+ * open. `capacity` includes the trailing NUL and `out_size` excludes it.
+ * Returns `TURBO_ENOENT` when no protocol was negotiated and `TURBO_ENOTSUP`
+ * for a plaintext connection. Other errors are `TURBO_ENOTCONN`,
+ * `TURBO_EMSGSIZE`, and the standard invalid/stale-handle statuses.
+ */
+int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, char *buffer,
+                             size_t capacity, size_t *out_size);
+
+/**
  * Creates a nonblocking TCP listener. The listener has one owner thread;
  * ownership may move from initialization to a worker before the first wait or
  * accept, but calls must not overlap.
@@ -218,6 +307,16 @@ int cnet_listener_wait(cnet_listener *listener, uint32_t timeout_ms, int *out_re
  */
 int cnet_listener_accept(cnet_listener *listener, cnet_client *client,
                          const cnet_observer *observer, cnet_connection *out_connection);
+
+/**
+ * Accepts one TCP peer and begins a server-side TLS handshake before
+ * CONNECTED. The caller must not destroy `server` concurrently with this call.
+ * @return The plaintext accept statuses, plus `TURBO_ENOTSUP` when `client`
+ * has no bounded TLS storage or `TURBO_EINVAL` for an invalid TLS context.
+ */
+int cnet_listener_accept_tls(cnet_listener *listener, cnet_client *client,
+                             const cnet_tls_server *server, const cnet_observer *observer,
+                             cnet_connection *out_connection);
 
 /** Closes listener admission. Existing CNet connections are unaffected. */
 int cnet_listener_close(cnet_listener *listener);

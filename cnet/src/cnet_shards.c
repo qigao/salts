@@ -124,7 +124,9 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
   }
   impl->shard_count = config->shard_count;
   impl->connection_capacity_per_shard = config->connection_capacity_per_shard;
-  impl->max_event_payload_bytes = config->receive_buffer_bytes;
+  impl->max_event_payload_bytes = config->receive_buffer_bytes > config->max_state_payload_bytes
+                                      ? config->receive_buffer_bytes
+                                      : config->max_state_payload_bytes;
   impl->max_command_payload_bytes = config->max_command_payload_bytes;
   impl->admission_open = true;
   atomic_init(&impl->event_sink, NULL);
@@ -137,7 +139,7 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
                                                       config->max_command_payload_bytes};
     const cnet_event_queue_config event_config = {config->event_capacity_per_shard,
                                                   config->event_capacity_per_shard / 2u,
-                                                  config->receive_buffer_bytes};
+                                                  impl->max_event_payload_bytes};
     const cnet_owner_config owner_config = {
         .backend_kind = config->backend_kind,
         .connection_capacity = config->connection_capacity_per_shard,

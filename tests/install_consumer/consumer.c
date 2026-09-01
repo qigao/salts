@@ -55,9 +55,14 @@ int main(void) {
 int main(void) {
   cnet_client client = {0};
   cnet_listener listener = {0};
+  cnet_tls_server tls_server = {0};
+  cnet_tls_client_config tls_client_config = {.size = sizeof(tls_client_config)};
+  cnet_tls_server_config tls_server_config = {.size = sizeof(tls_server_config)};
   cnet_connection connection = {0};
-  return client.impl == NULL && listener.impl == NULL && connection.slot == 0u &&
-                 connection.generation == 0u
+  return client.impl == NULL && listener.impl == NULL && tls_server.impl == NULL &&
+                 tls_client_config.size == sizeof(tls_client_config) &&
+                 tls_server_config.size == sizeof(tls_server_config) && connection.slot == 0u &&
+                 connection.generation == 0u && CNET_TLS_MIN_IO_BUFFER_BYTES >= 16384
              ? 0
              : 1;
 }

@@ -21,7 +21,9 @@ typedef enum cnet_owner_request_role {
   CNET_OWNER_REQUEST_NONE = 0,
   CNET_OWNER_REQUEST_CONNECT,
   CNET_OWNER_REQUEST_SEND,
-  CNET_OWNER_REQUEST_RECEIVE
+  CNET_OWNER_REQUEST_RECEIVE,
+  CNET_OWNER_REQUEST_TLS_READ,
+  CNET_OWNER_REQUEST_TLS_WRITE
 } cnet_owner_request_role;
 
 typedef struct cnet_owner_impl cnet_owner_impl;
@@ -30,10 +32,13 @@ typedef struct cnet_owner_session {
   cnet_session_handle handle;
   cnet_owner_connect_payload peer;
   cnet_transport transport;
+  cnet_tls_state tls;
+  cnet_command_view tls_send_command;
   cnet_resolver_query resolve_query;
   size_t active_requests;
   int pending_status;
   cnet_session_stage pending_stage;
+  cnet_session_stage session_deadline_stage;
   unsigned char *receive_buffer;
   size_t receive_demand;
   bool occupied;
@@ -41,6 +46,9 @@ typedef struct cnet_owner_session {
   bool read_active;
   bool write_active;
   bool resolve_active;
+  bool tls_send_accepted;
+  bool tls_close_after_send;
+  bool tls_shutdown_after_flush;
   turbo_deadline_id connect_deadline;
 } cnet_owner_session;
 
@@ -53,6 +61,7 @@ typedef struct cnet_owner_request {
   cnet_session_handle session;
   cnet_command_view command;
   cnet_owner_request_role role;
+  cnet_session_stage stage;
   bool active;
   bool close_after_send;
   turbo_deadline_id deadline;
@@ -110,9 +119,15 @@ static uint64_t cnet_owner_deadline_after(cnet_owner_impl *impl, uint32_t timeou
   return timeout_ms > UINT64_MAX - now_ms ? UINT64_MAX : now_ms + timeout_ms;
 }
 
-static cnet_session_stage cnet_owner_request_stage(cnet_owner_request_role role) {
+static cnet_session_stage cnet_owner_request_stage(const cnet_owner_session *session,
+                                                   cnet_owner_request_role role) {
   if (role == CNET_OWNER_REQUEST_RECEIVE) return CNET_SESSION_STAGE_READ;
+  if (role == CNET_OWNER_REQUEST_TLS_READ)
+    return session->tls.handshake_complete ? CNET_SESSION_STAGE_READ : CNET_SESSION_STAGE_HANDSHAKE;
   if (role == CNET_OWNER_REQUEST_SEND) return CNET_SESSION_STAGE_WRITE;
+  if (role == CNET_OWNER_REQUEST_TLS_WRITE)
+    return session->tls.handshake_complete ? CNET_SESSION_STAGE_WRITE
+                                           : CNET_SESSION_STAGE_HANDSHAKE;
   return CNET_SESSION_STAGE_CONNECT;
 }
 
@@ -120,6 +135,10 @@ static uint32_t cnet_owner_request_timeout(const cnet_owner_session *session,
                                            cnet_owner_request_role role) {
   if (role == CNET_OWNER_REQUEST_RECEIVE) return session->peer.read_timeout_ms;
   if (role == CNET_OWNER_REQUEST_SEND) return session->peer.write_timeout_ms;
+  if (role == CNET_OWNER_REQUEST_TLS_READ)
+    return session->tls.handshake_complete ? session->peer.read_timeout_ms : 0u;
+  if (role == CNET_OWNER_REQUEST_TLS_WRITE)
+    return session->tls.handshake_complete ? session->peer.write_timeout_ms : 0u;
   return 0u;
 }
 
@@ -180,10 +199,38 @@ static int cnet_owner_queue_state_event(cnet_owner_impl *impl, cnet_session_hand
   return TURBO_OK;
 }
 
+static int cnet_owner_queue_connected_event(cnet_owner_impl *impl, cnet_owner_session *session) {
+  const unsigned char *alpn = NULL;
+  size_t alpn_size = 0u;
+  cnet_event event;
+  int status;
+  if (session->peer.scheme == CNET_URI_TLS) {
+    status = cnet_tls_get_negotiated_alpn(&session->tls, &alpn, &alpn_size);
+    if (status != TURBO_OK && status != TURBO_ENOENT) return status;
+  }
+  event = (cnet_event){CNET_EVENT_STATE,
+                       session->handle,
+                       CNET_EVENT_STATE_CONNECTED,
+                       TURBO_OK,
+                       CNET_SESSION_STAGE_NONE,
+                       alpn,
+                       alpn_size,
+                       0u};
+  if (impl->pending_event_count == 0u) {
+    status = cnet_owner_publish_event(impl, &event);
+    if (status == TURBO_OK) return TURBO_OK;
+    if (status != TURBO_ENOBUFS) return status;
+  }
+  if (impl->pending_event_count == impl->pending_event_capacity) return TURBO_ENOBUFS;
+  impl->pending_events[impl->pending_event_count++].event = event;
+  return TURBO_OK;
+}
+
 static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *session,
                                     cnet_command_view *command, cnet_owner_request_role role,
                                     const native_io_operation *operation, bool close_after_send);
 static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *session);
+static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *session);
 static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *request,
                                const native_io_completion *completion);
 static void cnet_owner_coroutine_entry(native_io_coroutine *coroutine, void *user_data);
@@ -260,7 +307,9 @@ static int cnet_owner_cancel_receive_requests(cnet_owner_impl *impl, cnet_sessio
   for (index = 0u; index < impl->request_capacity; ++index) {
     cnet_owner_request *request = &impl->request_records[index];
     int status;
-    if (!request->active || request->role != CNET_OWNER_REQUEST_RECEIVE ||
+    if (!request->active ||
+        (request->role != CNET_OWNER_REQUEST_RECEIVE &&
+         request->role != CNET_OWNER_REQUEST_TLS_READ) ||
         request->session.slot != session.slot || request->session.generation != session.generation)
       continue;
     status = native_io_backend_cancel_coroutine(&impl->backend, request->coroutine);
@@ -270,10 +319,26 @@ static int cnet_owner_cancel_receive_requests(cnet_owner_impl *impl, cnet_sessio
   return first_error;
 }
 
+static int cnet_owner_release_tls_send(cnet_owner_impl *impl, cnet_owner_session *session) {
+  int status;
+  if (session->tls_send_command._sequence == 0u) return TURBO_OK;
+  status = cnet_command_queue_release(impl->commands, &session->tls_send_command);
+  if (status == TURBO_OK) {
+    session->tls_send_accepted = false;
+    session->tls_close_after_send = false;
+  }
+  return status;
+}
+
 static int cnet_owner_finalize_session(cnet_owner_impl *impl, cnet_owner_session *session) {
   int close_status;
   int status;
+  if (session->pending_status != TURBO_OK) {
+    status = cnet_owner_release_tls_send(impl, session);
+    if (status != TURBO_OK) return status;
+  }
   if (session->active_requests != 0u || session->resolve_active ||
+      session->tls_send_command._sequence != 0u ||
       (!session->close_requested && session->pending_status == TURBO_OK))
     return TURBO_OK;
   status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
@@ -285,6 +350,9 @@ static int cnet_owner_finalize_session(cnet_owner_impl *impl, cnet_owner_session
       return close_status;
     }
   }
+  cnet_tls_state_destroy(&session->tls);
+  cnet_tls_context_release(session->peer.tls_context);
+  session->peer.tls_context = NULL;
   if (session->pending_status != TURBO_OK) {
     status = cnet_session_table_fail(impl->sessions, session->handle, session->pending_status,
                                      session->pending_stage);
@@ -335,8 +403,10 @@ static int cnet_owner_release_request(cnet_owner_request *request) {
   }
   --session->active_requests;
   --impl->active_requests;
-  if (role == CNET_OWNER_REQUEST_RECEIVE) session->read_active = false;
-  if (role == CNET_OWNER_REQUEST_SEND) session->write_active = false;
+  if (role == CNET_OWNER_REQUEST_RECEIVE || role == CNET_OWNER_REQUEST_TLS_READ)
+    session->read_active = false;
+  if (role == CNET_OWNER_REQUEST_SEND || role == CNET_OWNER_REQUEST_TLS_WRITE)
+    session->write_active = false;
   memset(request, 0, sizeof(*request));
   impl->free_requests[impl->free_request_count++] = (uint32_t)index;
   return TURBO_OK;
@@ -355,6 +425,7 @@ static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *ses
 
   if (session->receive_demand == 0u || session->read_active || session->close_requested)
     return TURBO_OK;
+  if (session->peer.scheme == CNET_URI_TLS) return cnet_owner_tls_pump(impl, session);
   operation_kind = session->peer.scheme == CNET_URI_TCP   ? NATIVE_IO_OPERATION_TCP_RECV
                    : session->peer.scheme == CNET_URI_UDP ? NATIVE_IO_OPERATION_UDP_RECV_FROM
                                                           : NATIVE_IO_OPERATION_PIPE_READ;
@@ -410,7 +481,7 @@ static int cnet_owner_fail_started_request(cnet_owner_request *request, int fail
   impl = request->owner;
   session = cnet_owner_find_session(impl, request->session);
   if (session == NULL) return TURBO_EPROTO;
-  stage = cnet_owner_request_stage(request->role);
+  stage = request->stage;
   status = cnet_owner_release_request(request);
   if (status != TURBO_OK) return status;
   return cnet_owner_fail_session(impl, session, failure, stage);
@@ -421,7 +492,7 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
                                     const native_io_operation *operation, bool close_after_send) {
   cnet_owner_request *request;
   const uint32_t timeout_ms = cnet_owner_request_timeout(session, role);
-  const cnet_session_stage stage = cnet_owner_request_stage(role);
+  const cnet_session_stage stage = cnet_owner_request_stage(session, role);
   size_t index;
   int status;
 
@@ -434,6 +505,7 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
   request->operation = *operation;
   request->requested_size = operation->length;
   request->role = role;
+  request->stage = stage;
   request->close_after_send = close_after_send;
   if (command != NULL) {
     request->command = *command;
@@ -441,8 +513,10 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
   }
   ++session->active_requests;
   ++impl->active_requests;
-  if (role == CNET_OWNER_REQUEST_RECEIVE) session->read_active = true;
-  if (role == CNET_OWNER_REQUEST_SEND) session->write_active = true;
+  if (role == CNET_OWNER_REQUEST_RECEIVE || role == CNET_OWNER_REQUEST_TLS_READ)
+    session->read_active = true;
+  if (role == CNET_OWNER_REQUEST_SEND || role == CNET_OWNER_REQUEST_TLS_WRITE)
+    session->write_active = true;
   status = native_io_backend_spawn_coroutine(&impl->backend, cnet_owner_coroutine_entry, request,
                                              &request->coroutine);
   if (status != TURBO_OK) {
@@ -466,12 +540,183 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
   return cnet_owner_take_coroutine_status(impl);
 }
 
+static int cnet_owner_tls_start_write(cnet_owner_impl *impl, cnet_owner_session *session,
+                                      bool *out_started) {
+  native_io_operation operation;
+  size_t size = 0u;
+  int status;
+  if (out_started == NULL) return TURBO_EINVAL;
+  *out_started = false;
+  if (session->write_active) return TURBO_OK;
+  status = cnet_tls_take_cipher(&session->tls, session->tls.write_buffer,
+                                session->tls.io_buffer_bytes, &size);
+  if (status == TURBO_ENOENT) return TURBO_OK;
+  if (status != TURBO_OK) return status;
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_TCP_SEND,
+                                    .endpoint = cnet_transport_write_endpoint(&session->transport),
+                                    .buffer = session->tls.write_buffer,
+                                    .length = size};
+  status = cnet_owner_start_request(impl, session, NULL, CNET_OWNER_REQUEST_TLS_WRITE, &operation,
+                                    false);
+  if (status == TURBO_OK) *out_started = true;
+  return status;
+}
+
+static int cnet_owner_tls_start_read(cnet_owner_impl *impl, cnet_owner_session *session) {
+  native_io_operation operation;
+  size_t capacity;
+  if (session->read_active || session->close_requested) return TURBO_OK;
+  capacity = cnet_tls_cipher_input_capacity(&session->tls);
+  if (capacity == 0u) return TURBO_EPROTO;
+  if (capacity > session->tls.io_buffer_bytes) capacity = session->tls.io_buffer_bytes;
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_TCP_RECV,
+                                    .endpoint = cnet_transport_read_endpoint(&session->transport),
+                                    .buffer = session->tls.read_buffer,
+                                    .length = capacity};
+  return cnet_owner_start_request(impl, session, NULL, CNET_OWNER_REQUEST_TLS_READ, &operation,
+                                  false);
+}
+
+static int cnet_owner_tls_publish_send(cnet_owner_impl *impl, cnet_owner_session *session) {
+  const size_t size = session->tls_send_command.size;
+  const cnet_event event = {CNET_EVENT_SEND,
+                            session->handle,
+                            CNET_EVENT_STATE_NONE,
+                            TURBO_OK,
+                            CNET_SESSION_STAGE_NONE,
+                            NULL,
+                            0u,
+                            size};
+  int status = cnet_owner_release_tls_send(impl, session);
+  if (status != TURBO_OK) return status;
+  status = cnet_owner_publish_event(impl, &event);
+  if (status == TURBO_ENOBUFS) {
+    if (impl->pending_event_count == impl->pending_event_capacity) return TURBO_ENOBUFS;
+    impl->pending_events[impl->pending_event_count++].event = event;
+    return TURBO_OK;
+  }
+  return status;
+}
+
+static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *session) {
+  bool started = false;
+  int status;
+
+  if (!session->tls.handshake_complete) {
+    bool complete = false;
+    status = cnet_tls_handshake(&session->tls, &complete);
+    if (status != TURBO_OK) return status;
+    status = cnet_owner_tls_start_write(impl, session, &started);
+    if (status != TURBO_OK) return status;
+    if (!complete) return cnet_owner_tls_start_read(impl, session);
+
+    status = cnet_session_table_transition(impl->sessions, session->handle, CNET_SESSION_OPEN);
+    if (status != TURBO_OK) return status;
+    status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
+    if (status != TURBO_OK) return status;
+    session->session_deadline_stage = CNET_SESSION_STAGE_NONE;
+    status = cnet_owner_queue_connected_event(impl, session);
+    if (status != TURBO_OK) return status;
+  }
+
+  if (session->tls_send_command._sequence != 0u && !session->tls_send_accepted) {
+    bool complete = false;
+    status = cnet_tls_write(&session->tls, session->tls_send_command.data,
+                            session->tls_send_command.size, &complete);
+    if (status != TURBO_OK) return status;
+    session->tls_send_accepted = complete;
+  }
+  status = cnet_owner_tls_start_write(impl, session, &started);
+  if (status != TURBO_OK) return status;
+  if (session->tls_send_command._sequence != 0u && session->tls_send_accepted &&
+      !session->write_active && !started) {
+    const bool close_after_send = session->tls_close_after_send;
+    status = cnet_owner_tls_publish_send(impl, session);
+    if (status != TURBO_OK) return status;
+    if (close_after_send) session->tls_shutdown_after_flush = true;
+  }
+
+  if (!session->close_requested && session->receive_demand != 0u) {
+    size_t plaintext_size = 0u;
+    bool peer_closed = false;
+    status = cnet_tls_read(&session->tls, session->receive_buffer, impl->receive_buffer_bytes,
+                           &plaintext_size, &peer_closed);
+    if (status != TURBO_OK) return status;
+    status = cnet_owner_tls_start_write(impl, session, &started);
+    if (status != TURBO_OK) return status;
+    if (plaintext_size != 0u) {
+      const cnet_event event = {
+          CNET_EVENT_RECEIVE,      session->handle,         CNET_EVENT_STATE_NONE, TURBO_OK,
+          CNET_SESSION_STAGE_NONE, session->receive_buffer, plaintext_size,        0u};
+      --session->receive_demand;
+      if (session->receive_demand != 0u) {
+        status = cnet_owner_queue_receive_rearm(impl, session->handle);
+        if (status != TURBO_OK) return status;
+      }
+      status = cnet_owner_publish_event(impl, &event);
+      if (status == TURBO_ENOBUFS) {
+        if (impl->pending_event_count == impl->pending_event_capacity) return TURBO_ENOBUFS;
+        impl->pending_events[impl->pending_event_count++].event = event;
+        return TURBO_OK;
+      }
+      return status;
+    }
+    if (peer_closed) {
+      status = cnet_session_table_begin_close(impl->sessions, session->handle);
+      if (status != TURBO_OK && status != TURBO_EALREADY) return status;
+      session->close_requested = true;
+      session->receive_demand = 0u;
+      session->tls_shutdown_after_flush = true;
+      if (status == TURBO_OK) {
+        status = cnet_owner_queue_state_event(impl, session->handle, CNET_EVENT_STATE_CLOSING,
+                                              TURBO_OK, CNET_SESSION_STAGE_NONE);
+        if (status != TURBO_OK) return status;
+      }
+    } else {
+      return cnet_owner_tls_start_read(impl, session);
+    }
+  }
+
+  if (session->close_requested && session->tls_send_command._sequence == 0u) {
+    bool notify_generated = false;
+    status = cnet_tls_shutdown(&session->tls, &notify_generated);
+    if (status != TURBO_OK) return status;
+    if (notify_generated) session->tls_shutdown_after_flush = true;
+    status = cnet_owner_tls_start_write(impl, session, &started);
+    if (status != TURBO_OK) return status;
+    if (session->tls_shutdown_after_flush && !session->write_active && !started)
+      return cnet_owner_finalize_session(impl, session);
+  }
+  return TURBO_OK;
+}
+
+static int cnet_owner_start_tls(cnet_owner_impl *impl, cnet_owner_session *session) {
+  int status;
+  if (session->peer.scheme != CNET_URI_TLS) return TURBO_EINVAL;
+
+  status = cnet_session_table_transition(impl->sessions, session->handle,
+                                         CNET_SESSION_PROTOCOL_HANDSHAKING);
+  if (status == TURBO_OK) status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
+  if (status == TURBO_OK)
+    status = cnet_tls_state_init(&session->tls, session->peer.tls_context, session->peer.tls_server,
+                                 session->peer.tls_server_name, session->peer.tls_io_buffer_bytes);
+  if (status != TURBO_OK) return status;
+  session->peer.tls_context = NULL;
+  session->session_deadline_stage = CNET_SESSION_STAGE_HANDSHAKE;
+  status = turbo_deadline_queue_schedule(
+      &impl->deadlines, cnet_owner_deadline_after(impl, session->peer.tls_handshake_timeout_ms),
+      CNET_OWNER_SESSION_DEADLINE_TOKEN | (uint64_t)session->handle.slot,
+      &session->connect_deadline);
+  if (status != TURBO_OK) return status;
+  return cnet_owner_tls_pump(impl, session);
+}
+
 static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session *session,
                                       cnet_command_view *command) {
   native_io_operation operation;
   int status;
 
-  if (session->peer.scheme != CNET_URI_TCP) {
+  if (session->peer.scheme != CNET_URI_TCP && session->peer.scheme != CNET_URI_TLS) {
     status =
         session->peer.scheme == CNET_URI_UDP
             ? cnet_transport_udp_connect(&session->transport, &impl->backend, impl->backend_kind,
@@ -490,8 +735,7 @@ static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session 
       status = cnet_command_queue_release(impl->commands, command);
       if (status != TURBO_OK) return status;
     }
-    return cnet_owner_queue_state_event(impl, session->handle, CNET_EVENT_STATE_CONNECTED, TURBO_OK,
-                                        CNET_SESSION_STAGE_NONE);
+    return cnet_owner_queue_connected_event(impl, session);
   }
 
   status = cnet_transport_tcp_prepare_connect(&session->transport, &impl->backend,
@@ -517,6 +761,9 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
   bool has_pipe;
   bool pipe_present;
   bool has_adopted;
+  bool tls_name_present;
+  bool tls_name_valid;
+  bool tls_valid;
   int status;
 
   if (command->size != sizeof(cnet_owner_connect_payload) || command->data == NULL) {
@@ -534,18 +781,33 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
              memchr(payload->host, '\0', sizeof(payload->host)) != NULL;
   pipe_present = payload->pipe_name[0] != '\0';
   has_pipe = pipe_present && memchr(payload->pipe_name, '\0', sizeof(payload->pipe_name)) != NULL;
+  tls_name_present = payload->tls_server_name[0] != '\0';
+  tls_name_valid = tls_name_present &&
+                   memchr(payload->tls_server_name, '\0', sizeof(payload->tls_server_name)) != NULL;
+  tls_valid = payload->scheme == CNET_URI_TLS
+                  ? payload->tls_context != NULL &&
+                        payload->tls_io_buffer_bytes >= CNET_TLS_MIN_IO_BUFFER_BYTES &&
+                        payload->tls_io_buffer_bytes <= INT_MAX &&
+                        payload->tls_handshake_timeout_ms != 0u &&
+                        (payload->tls_server ? payload->adopted && !tls_name_present
+                                             : !payload->adopted && tls_name_valid)
+                  : payload->tls_context == NULL && payload->tls_io_buffer_bytes == 0u &&
+                        payload->tls_handshake_timeout_ms == 0u && !payload->tls_server &&
+                        !tls_name_present;
   if ((payload->scheme != CNET_URI_TCP && payload->scheme != CNET_URI_UDP &&
-       payload->scheme != CNET_URI_PIPE) ||
+       payload->scheme != CNET_URI_TLS && payload->scheme != CNET_URI_PIPE) ||
+      !tls_valid ||
       (payload->adopted
-           ? payload->scheme != CNET_URI_TCP || !has_adopted || payload->address_length != 0u ||
-                 host_present || payload->port != 0u || pipe_present ||
-                 payload->connect_timeout_ms != 0u
+           ? (payload->scheme != CNET_URI_TCP && payload->scheme != CNET_URI_TLS) || !has_adopted ||
+                 payload->address_length != 0u || host_present || payload->port != 0u ||
+                 pipe_present || payload->connect_timeout_ms != 0u
        : payload->scheme == CNET_URI_PIPE
            ? payload->address_length != 0u || host_present || payload->port != 0u || !has_pipe
            : pipe_present || (payload->address_length != 0u
                                   ? !has_address || host_present || payload->port != 0u
                                   : !has_host))) {
     if (payload->adopted) cnet_transport_close_socket(payload->adopted_socket);
+    cnet_tls_context_release(payload->tls_context);
     status = cnet_command_queue_release(impl->commands, command);
     if (status != TURBO_OK) return status;
     return cnet_session_table_fail(impl->sessions, handle, TURBO_EINVAL,
@@ -553,18 +815,21 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
   }
   if ((size_t)command->connection.slot > impl->connection_capacity) {
     if (payload->adopted) cnet_transport_close_socket(payload->adopted_socket);
+    cnet_tls_context_release(payload->tls_context);
     (void)cnet_command_queue_release(impl->commands, command);
     return TURBO_ENOBUFS;
   }
   session = &impl->session_records[command->connection.slot - 1u];
   if (session->occupied) {
     if (payload->adopted) cnet_transport_close_socket(payload->adopted_socket);
+    cnet_tls_context_release(payload->tls_context);
     (void)cnet_command_queue_release(impl->commands, command);
     return TURBO_EPROTO;
   }
   status = cnet_session_table_state(impl->sessions, command->connection, &state);
   if (status != TURBO_OK || state != CNET_SESSION_RESERVED) {
     if (payload->adopted) cnet_transport_close_socket(payload->adopted_socket);
+    cnet_tls_context_release(payload->tls_context);
     (void)cnet_command_queue_release(impl->commands, command);
     return status != TURBO_OK ? status : TURBO_EPROTO;
   }
@@ -584,7 +849,9 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
         &session->connect_deadline);
     if (status != TURBO_OK)
       return cnet_owner_fail_accepted_command(impl, session, command, status,
-                                              CNET_SESSION_STAGE_CONNECT);
+                                              session->peer.scheme == CNET_URI_TLS
+                                                  ? CNET_SESSION_STAGE_HANDSHAKE
+                                                  : CNET_SESSION_STAGE_CONNECT);
   }
   status = cnet_session_table_transition(impl->sessions, session->handle,
                                          has_host ? CNET_SESSION_RESOLVING
@@ -598,20 +865,30 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
         cnet_transport_adopt_tcp(&session->transport, &impl->backend, session->peer.adopted_socket);
     session->peer.adopted_socket = UINTPTR_MAX;
     session->peer.adopted = false;
-    if (status == TURBO_OK)
-      status = cnet_session_table_transition(impl->sessions, session->handle, CNET_SESSION_OPEN);
+    if (status == TURBO_OK) {
+      if (session->peer.scheme == CNET_URI_TLS) status = cnet_owner_start_tls(impl, session);
+      else {
+        status = cnet_session_table_transition(impl->sessions, session->handle, CNET_SESSION_OPEN);
+        if (status == TURBO_OK)
+          status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
+      }
+    }
     if (status != TURBO_OK)
       return cnet_owner_fail_accepted_command(impl, session, command, status,
-                                              CNET_SESSION_STAGE_CONNECT);
+                                              session->peer.scheme == CNET_URI_TLS
+                                                  ? CNET_SESSION_STAGE_HANDSHAKE
+                                                  : CNET_SESSION_STAGE_CONNECT);
     status = cnet_command_queue_release(impl->commands, command);
     if (status != TURBO_OK) return status;
-    return cnet_owner_queue_state_event(impl, session->handle, CNET_EVENT_STATE_CONNECTED, TURBO_OK,
-                                        CNET_SESSION_STAGE_NONE);
+    return session->peer.scheme == CNET_URI_TLS ? TURBO_OK
+                                                : cnet_owner_queue_connected_event(impl, session);
   }
   if (has_host) {
-    status = cnet_resolver_submit(&impl->resolver, session->peer.host, session->peer.port,
-                                  session->peer.scheme == CNET_URI_TCP ? SOCK_STREAM : SOCK_DGRAM,
-                                  (uintptr_t)(session->handle.slot - 1u), &session->resolve_query);
+    status = cnet_resolver_submit(
+        &impl->resolver, session->peer.host, session->peer.port,
+        (session->peer.scheme == CNET_URI_TCP || session->peer.scheme == CNET_URI_TLS) ? SOCK_STREAM
+                                                                                       : SOCK_DGRAM,
+        (uintptr_t)(session->handle.slot - 1u), &session->resolve_query);
     if (status != TURBO_OK)
       return cnet_owner_fail_accepted_command(impl, session, command, status,
                                               CNET_SESSION_STAGE_RESOLVE);
@@ -672,16 +949,10 @@ static int cnet_owner_send(cnet_owner_impl *impl, cnet_command_view *command,
   status = cnet_session_table_state(impl->sessions, command->connection, &state);
   if (status != TURBO_OK || state != CNET_SESSION_OPEN)
     return cnet_command_queue_release(impl->commands, command);
-  if (session->write_active)
+  if ((session->peer.scheme == CNET_URI_TLS && session->tls_send_command._sequence != 0u) ||
+      (session->peer.scheme != CNET_URI_TLS && session->write_active))
     return cnet_owner_fail_accepted_command(impl, session, command, TURBO_EBUSY,
                                             CNET_SESSION_STAGE_WRITE);
-  operation_kind = session->peer.scheme == CNET_URI_TCP   ? NATIVE_IO_OPERATION_TCP_SEND
-                   : session->peer.scheme == CNET_URI_UDP ? NATIVE_IO_OPERATION_UDP_SEND_TO
-                                                          : NATIVE_IO_OPERATION_PIPE_WRITE;
-  operation = (native_io_operation){.kind = operation_kind,
-                                    .endpoint = cnet_transport_write_endpoint(&session->transport),
-                                    .buffer = (void *)command->data,
-                                    .length = command->size};
   if (close_after_send) {
     status = cnet_session_table_begin_close(impl->sessions, session->handle);
     if (status != TURBO_OK)
@@ -699,6 +970,23 @@ static int cnet_owner_send(cnet_owner_impl *impl, cnet_command_view *command,
       return cnet_owner_fail_accepted_command(impl, session, command, status,
                                               CNET_SESSION_STAGE_CALLBACK);
   }
+  if (session->peer.scheme == CNET_URI_TLS) {
+    session->tls_send_command = *command;
+    memset(command, 0, sizeof(*command));
+    session->tls_send_accepted = false;
+    session->tls_close_after_send = close_after_send;
+    status = cnet_owner_tls_pump(impl, session);
+    return status == TURBO_OK
+               ? TURBO_OK
+               : cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_WRITE);
+  }
+  operation_kind = session->peer.scheme == CNET_URI_TCP   ? NATIVE_IO_OPERATION_TCP_SEND
+                   : session->peer.scheme == CNET_URI_UDP ? NATIVE_IO_OPERATION_UDP_SEND_TO
+                                                          : NATIVE_IO_OPERATION_PIPE_WRITE;
+  operation = (native_io_operation){.kind = operation_kind,
+                                    .endpoint = cnet_transport_write_endpoint(&session->transport),
+                                    .buffer = (void *)command->data,
+                                    .length = command->size};
   return cnet_owner_start_request(impl, session, command, CNET_OWNER_REQUEST_SEND, &operation,
                                   close_after_send);
 }
@@ -740,6 +1028,15 @@ static int cnet_owner_close_session(cnet_owner_impl *impl, cnet_command_view *co
     if (status != TURBO_OK) cnet_owner_record_failure(session, status, CNET_SESSION_STAGE_SHUTDOWN);
     return TURBO_OK;
   }
+  if (session->peer.scheme == CNET_URI_TLS && session->tls.handshake_complete) {
+    status = cnet_owner_cancel_receive_requests(impl, session->handle);
+    if (status != TURBO_OK)
+      return cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_SHUTDOWN);
+    status = cnet_owner_tls_pump(impl, session);
+    return status == TURBO_OK
+               ? TURBO_OK
+               : cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_SHUTDOWN);
+  }
   if (session->active_requests != 0u) {
     status = cnet_owner_cancel_session_requests(impl, session->handle);
     if (status != TURBO_OK) cnet_owner_record_failure(session, status, CNET_SESSION_STAGE_SHUTDOWN);
@@ -771,6 +1068,7 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
                                const native_io_completion *completion) {
   cnet_owner_session *session;
   cnet_owner_request_role role;
+  cnet_session_stage request_stage;
   size_t requested_size;
   bool close_after_send;
   int status;
@@ -779,6 +1077,7 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
   if (session == NULL || session->active_requests == 0u || impl->active_requests == 0u)
     return TURBO_EPROTO;
   role = request->role;
+  request_stage = request->stage;
   requested_size = request->requested_size;
   close_after_send = request->close_after_send;
   status = cnet_owner_release_request(request);
@@ -788,17 +1087,60 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
   if (role == CNET_OWNER_REQUEST_CONNECT) {
     if (session->close_requested) return cnet_owner_finalize_session(impl, session);
     if (completion->kind == NATIVE_IO_COMPLETION_OK) {
+      if (session->peer.scheme == CNET_URI_TLS) {
+        status = cnet_owner_start_tls(impl, session);
+        if (status == TURBO_OK) return TURBO_OK;
+        return cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_HANDSHAKE);
+      }
       status = cnet_session_table_transition(impl->sessions, session->handle, CNET_SESSION_OPEN);
       if (status != TURBO_OK) return status;
       status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
       if (status != TURBO_OK) return status;
-      return cnet_owner_queue_state_event(impl, session->handle, CNET_EVENT_STATE_CONNECTED,
-                                          TURBO_OK, CNET_SESSION_STAGE_NONE);
+      return cnet_owner_queue_connected_event(impl, session);
     }
     cnet_owner_record_failure(session,
                               completion->status < TURBO_OK ? completion->status : TURBO_EIO,
                               CNET_SESSION_STAGE_CONNECT);
     return cnet_owner_finalize_session(impl, session);
+  }
+
+  if (role == CNET_OWNER_REQUEST_TLS_READ) {
+    if (completion->kind == NATIVE_IO_COMPLETION_OK) {
+      if (completion->bytes == 0u || completion->bytes > session->tls.io_buffer_bytes)
+        return cnet_owner_fail_session(impl, session, TURBO_EIO, request_stage);
+      status = cnet_tls_feed_cipher(&session->tls, session->tls.read_buffer, completion->bytes);
+      if (status == TURBO_OK) status = cnet_owner_tls_pump(impl, session);
+      return status == TURBO_OK ? TURBO_OK
+                                : cnet_owner_fail_session(impl, session, status, request_stage);
+    }
+    if (completion->kind == NATIVE_IO_COMPLETION_CANCELLED) {
+      if (session->close_requested && session->tls.handshake_complete) {
+        status = cnet_owner_tls_pump(impl, session);
+        return status == TURBO_OK
+                   ? TURBO_OK
+                   : cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_SHUTDOWN);
+      }
+      return cnet_owner_finalize_session(impl, session);
+    }
+    return cnet_owner_fail_session(
+        impl, session,
+        completion->kind == NATIVE_IO_COMPLETION_EOF
+            ? (session->tls.handshake_complete ? TURBO_EPROTO : TURBO_ECONNABORTED)
+            : (completion->status < TURBO_OK ? completion->status : TURBO_EIO),
+        request_stage);
+  }
+
+  if (role == CNET_OWNER_REQUEST_TLS_WRITE) {
+    if (completion->kind == NATIVE_IO_COMPLETION_OK) {
+      status = cnet_owner_tls_pump(impl, session);
+      return status == TURBO_OK ? TURBO_OK
+                                : cnet_owner_fail_session(impl, session, status, request_stage);
+    }
+    if (completion->kind == NATIVE_IO_COMPLETION_CANCELLED && session->close_requested)
+      return cnet_owner_finalize_session(impl, session);
+    return cnet_owner_fail_session(impl, session,
+                                   completion->status < TURBO_OK ? completion->status : TURBO_EIO,
+                                   request_stage);
   }
 
   if (role == CNET_OWNER_REQUEST_RECEIVE) {
@@ -878,7 +1220,9 @@ static void cnet_owner_coroutine_entry(native_io_coroutine *coroutine, void *use
   if (impl == NULL || !request->active) return;
   do {
     status = native_io_coroutine_await(coroutine, &request->operation, &completion);
-    if (status != TURBO_OK || request->role != CNET_OWNER_REQUEST_SEND ||
+    if (status != TURBO_OK ||
+        (request->role != CNET_OWNER_REQUEST_SEND &&
+         request->role != CNET_OWNER_REQUEST_TLS_WRITE) ||
         completion.kind != NATIVE_IO_COMPLETION_OK)
       break;
     if (completion.bytes == 0u || completion.bytes > request->operation.length) {
@@ -894,7 +1238,8 @@ static void cnet_owner_coroutine_entry(native_io_coroutine *coroutine, void *use
     request->operation.buffer = (unsigned char *)request->operation.buffer + completion.bytes;
     request->operation.length -= completion.bytes;
   } while (true);
-  if (status == TURBO_OK && request->role == CNET_OWNER_REQUEST_SEND &&
+  if (status == TURBO_OK &&
+      (request->role == CNET_OWNER_REQUEST_SEND || request->role == CNET_OWNER_REQUEST_TLS_WRITE) &&
       completion.kind == NATIVE_IO_COMPLETION_OK)
     completion.bytes = request->completed_size;
   if (status == TURBO_OK) status = cnet_owner_complete(impl, request, &completion);
@@ -922,8 +1267,10 @@ static int cnet_owner_process_deadlines(cnet_owner_impl *impl) {
       if (!session->occupied || session->connect_deadline != deadline.id) return TURBO_EPROTO;
       session->connect_deadline = 0u;
       cnet_owner_record_failure(session, TURBO_ETIMEDOUT,
-                                session->resolve_active ? CNET_SESSION_STAGE_RESOLVE
-                                                        : CNET_SESSION_STAGE_CONNECT);
+                                session->session_deadline_stage != CNET_SESSION_STAGE_NONE
+                                    ? session->session_deadline_stage
+                                : session->resolve_active ? CNET_SESSION_STAGE_RESOLVE
+                                                          : CNET_SESSION_STAGE_CONNECT);
       if (session->resolve_active) {
         status = cnet_resolver_cancel(&impl->resolver, session->resolve_query);
         if (status != TURBO_OK) return status;
@@ -942,7 +1289,7 @@ static int cnet_owner_process_deadlines(cnet_owner_impl *impl) {
       request->deadline = 0u;
       session = cnet_owner_find_session(impl, request->session);
       if (session == NULL) return TURBO_EPROTO;
-      cnet_owner_record_failure(session, TURBO_ETIMEDOUT, cnet_owner_request_stage(request->role));
+      cnet_owner_record_failure(session, TURBO_ETIMEDOUT, request->stage);
       status = cnet_owner_cancel_session_requests(impl, session->handle);
       if (status != TURBO_OK) return status;
     }

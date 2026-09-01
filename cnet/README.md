@@ -13,7 +13,8 @@ consumers link `TurboUtils::CNet` and include `<cnet/cnet.h>`.
 
 Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 
-- `cnet_connect` with `tcp://host:port`, `udp://host:port`, or `pipe://name`;
+- `cnet_connect` with `tcp://host:port`, `tls://host:port`, `udp://host:port`, or
+  `pipe://name`;
 - `cnet_send` to transfer one bounded payload copy into CNet;
 - `observer.on_send` to observe completion before admitting the next ordered
   write on that connection;
@@ -24,7 +25,45 @@ Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 
 TCP and Pipe deliver byte chunks. Connected UDP delivers one datagram per
 receive callback. A receive view is borrowed only until its callback returns.
-TLS, WebSocket, and KCP are not exposed by this base header.
+TLS delivers verified encrypted byte streams through the same send/receive
+contract. WebSocket and KCP are not exposed by this base header.
+
+## TLS transport
+
+TLS is an opt-in bounded transport implemented by CNet over the same NativeIO
+TCP endpoints. Set both `cnet_client_config.tls_io_buffer_bytes` (at least
+`CNET_TLS_MIN_IO_BUFFER_BYTES`) and `tls_handshake_timeout_ms` to admit TLS
+connections. Leaving both zero preserves a TLS-free client and makes a
+`tls://` connect fail with `TURBO_ENOTSUP`.
+
+`cnet_connect()` accepts an optional `cnet_tls_client_config`. NULL uses the
+platform trust store and the URI host as the verified identity. An explicit
+configuration can select CA file/path, client certificate/key, SNI/identity,
+and an ordered ALPN offer. Certificate-chain and hostname/IP verification are
+mandatory; CNet exposes no insecure mode and never retries `tls://` as
+plaintext. Configuration strings are consumed synchronously during admission.
+
+After CONNECTED, `cnet_tls_negotiated_alpn()` copies the selected protocol. It
+can be called from the CONNECTED callback because CNet records ALPN before
+invoking user code. No overlap returns `TURBO_ENOENT`; protocol layers such as
+HTTP/2 must treat that result as a policy decision rather than assume `h2`.
+
+Servers initialize one reusable `cnet_tls_server`, accept sockets with
+`cnet_listener_accept_tls()`, and destroy the public context after closing
+admission. Accepted sessions retain their context, but accept and destroy on
+the same wrapper must not overlap. Optional client authentication requires an
+explicit CA source and validates the client certificate during the handshake.
+
+Each TLS session owns two fixed-capacity BIO directions and two fixed-capacity
+I/O scratch buffers. Handshake, encrypted reads/writes, ALPN, cancellation,
+and `close_notify` stay on the CNet progress owner; TLS creates no worker
+thread. Handshake timeout is reported with stage `handshake`, malformed or
+truncated TLS never falls back to plaintext, and user close during a handshake
+cancels the in-flight transport without publishing CONNECTED.
+
+The adapter follows OpenSSL's [BIO pair](https://docs.openssl.org/3.5/man3/BIO_new_bio_pair/)
+and [hostname validation](https://docs.openssl.org/3.5/man3/SSL_set1_host/) contracts;
+ALPN wire behavior follows [RFC 7301](https://www.rfc-editor.org/rfc/rfc7301).
 
 ## Ownership and progress
 
@@ -86,9 +125,11 @@ a stable stage string. TurboUtils status codes use `cnet_error.status`; a raw
 platform status is normalized to `TURBO_EIO` and retained in
 `cnet_error.native_status`.
 
-The executable contract is in `tests/cnet_api_test.c`; it covers caller-owned
-callback execution, TCP, connected UDP, platform Pipe, callback reentrancy,
-stale handles, live drain, and receive demand across request-slot reuse.
+The executable contracts are in `tests/cnet_api_test.c` and
+`tests/cnet_tls_test.c`; they cover caller-owned callback execution, TCP,
+connected UDP, platform Pipe, callback reentrancy, stale handles, live drain,
+receive demand across request-slot reuse, verified TLS, ALPN, mTLS, partial
+records, handshake timeout/cancel, accepted sockets, and clean close.
 
 ## Benchmark
 

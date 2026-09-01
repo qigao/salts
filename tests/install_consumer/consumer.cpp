@@ -1,5 +1,6 @@
 #if defined(CONSUME_NETWORK_CPP)
 
+  #include <cnet/cnet.h>
   #include <crpc/crpc.h>
 
 int main() {
@@ -8,8 +9,11 @@ int main() {
   crpc_request request{};
   chttp_server server{};
   chttp_session session{};
+  cnet_tls_server tls_server{};
+  cnet_tls_client_config tls_client_config{};
   return client.impl == nullptr && async_client.impl == nullptr && request.slot == 0u &&
-                 request.generation == 0u && server.impl == nullptr && session.impl == nullptr
+                 request.generation == 0u && server.impl == nullptr && session.impl == nullptr &&
+                 tls_server.impl == nullptr && tls_client_config.size == 0u
              ? 0
              : 1;
 }

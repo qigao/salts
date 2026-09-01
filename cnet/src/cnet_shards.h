@@ -21,6 +21,8 @@ typedef struct cnet_shards_config {
   size_t completion_batch_capacity;
   size_t event_capacity_per_shard;
   size_t receive_buffer_bytes;
+  /** Additional copied state-event payload bound; zero when no protocol needs one. */
+  size_t max_state_payload_bytes;
   size_t max_command_payload_bytes;
 } cnet_shards_config;
 

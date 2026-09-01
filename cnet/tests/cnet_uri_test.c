@@ -4,7 +4,7 @@
 #include <string.h>
 
 spec("CNet strict transport URI") {
-  it("parses bounded TCP and UDP authorities") {
+  it("parses bounded TCP UDP and TLS authorities") {
     cnet_uri uri = {0};
 
     check_equal(cnet_uri_parse("tcp://example.com:443", &uri), TURBO_OK);
@@ -17,6 +17,11 @@ spec("CNet strict transport URI") {
     check_equal(uri.scheme, CNET_URI_UDP);
     check_equal(strcmp(uri.host, "::1"), 0);
     check_equal(uri.port, 9000u);
+
+    check_equal(cnet_uri_parse("tls://example.com:443", &uri), TURBO_OK);
+    check_equal(uri.scheme, CNET_URI_TLS);
+    check_equal(strcmp(uri.host, "example.com"), 0);
+    check_equal(uri.port, 443u);
   }
 
   it("parses a bounded pipe name without inventing an authority") {
@@ -43,7 +48,7 @@ spec("CNet strict transport URI") {
     check_equal(cnet_uri_parse("tcp://user@host:80", &uri), TURBO_EINVAL);
     check_equal(cnet_uri_parse("udp://[::1:80", &uri), TURBO_EINVAL);
     check_equal(cnet_uri_parse("pipe://", &uri), TURBO_EINVAL);
-    check_equal(cnet_uri_parse("tls://example.com:443", &uri), TURBO_ENOTSUP);
+    check_equal(cnet_uri_parse("tls://example.com", &uri), TURBO_EINVAL);
     check_equal(cnet_uri_parse(oversized, &uri), TURBO_ERANGE);
     check_equal(uri.scheme, CNET_URI_NONE);
   }

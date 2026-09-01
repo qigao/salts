@@ -30,6 +30,16 @@ set_target_properties(cnet_uri_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+cmake_add_test(cnet_tls_test
+  SOURCES cnet_tls_test.c
+  LIBS turbo_cnet TurboUtils::TinyTest OpenSSL::SSL
+  INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_tls_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 cmake_add_test(cnet_transport_test
   SOURCES cnet_transport_test.c
   LIBS turbo_cnet TurboUtils::TinyTest

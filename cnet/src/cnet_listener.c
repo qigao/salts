@@ -318,6 +318,40 @@ int cnet_listener_accept(cnet_listener *listener, cnet_client *client,
   return cnet_client_adopt_tcp(client, (uintptr_t)accepted, observer, out_connection);
 }
 
+int cnet_listener_accept_tls(cnet_listener *listener, cnet_client *client,
+                             const cnet_tls_server *server, const cnet_observer *observer,
+                             cnet_connection *out_connection) {
+  cnet_listener_impl *impl = cnet_listener_get(listener);
+  cnet_tls_context *context = cnet_tls_server_context(server);
+  cnet_listener_socket accepted;
+  if (out_connection == NULL) return TURBO_EINVAL;
+  *out_connection = (cnet_connection){0};
+  if (impl == NULL || client == NULL || context == NULL || observer == NULL ||
+      observer->on_state == NULL)
+    return TURBO_EINVAL;
+  if (impl->closed) return TURBO_ESHUTDOWN;
+  do {
+    accepted = accept(impl->socket_value, NULL, NULL);
+#if defined(_WIN32)
+  } while (false);
+#else
+  } while (accepted == CNET_LISTENER_INVALID_SOCKET && errno == EINTR);
+#endif
+  if (accepted == CNET_LISTENER_INVALID_SOCKET)
+    return cnet_listener_would_block() ? TURBO_ETIMEDOUT : cnet_listener_native_error();
+#if !defined(_WIN32)
+  {
+    const int status = cnet_listener_set_nonblocking(accepted);
+    if (status != TURBO_OK) {
+      cnet_transport_close_socket((uintptr_t)accepted);
+      return status;
+    }
+  }
+#endif
+  return cnet_client_adopt_tls_server(client, (uintptr_t)accepted, context, observer,
+                                      out_connection);
+}
+
 int cnet_listener_close(cnet_listener *listener) {
   cnet_listener_impl *impl = cnet_listener_get(listener);
   if (impl == NULL) return TURBO_EINVAL;
