@@ -125,6 +125,7 @@ typedef struct cflow_statechart_instance_impl {
     bool driver_scheduled;
     bool driver_repost;
     bool driver_after_microstep;
+    bool root_completion_draining;
     bool skip_to_external;
     bool microstep_pending;
     size_t task_reservations;
@@ -1296,6 +1297,7 @@ static void clear_semantic_queues_locked(
     impl->completion_head = 0u;
     impl->completion_count = 0u;
     impl->staged_completion_count = 0u;
+    impl->root_completion_draining = false;
 }
 
 static void claim_external_for_failure_locked(
@@ -3458,6 +3460,9 @@ static void settle_quiescent_macrostep(cflow_statechart_instance_impl *impl) {
     cflow_waker waker = {0};
     turbo_mutex_lock(&impl->lock);
     if (impl->terminal_outcome == STATECHART_TERMINAL_NONE &&
+        impl->exit_requested) {
+        impl->driver_repost = true;
+    } else if (impl->terminal_outcome == STATECHART_TERMINAL_NONE &&
         root_configuration_complete(impl)) {
         (void)win_terminal_locked(
             impl, STATECHART_TERMINAL_CLEAN_DONE,
@@ -3473,6 +3478,66 @@ static void settle_quiescent_macrostep(cflow_statechart_instance_impl *impl) {
     }
     turbo_mutex_unlock(&impl->lock);
     finish_terminal_side_effects(impl, waker);
+}
+
+static void invoke_before_root_completion_settle_test_hook(
+    cflow_statechart_instance_impl *impl) {
+    void (*before_settle)(void *) = NULL;
+    void *hook_user = NULL;
+    turbo_mutex_lock(&impl->lock);
+    before_settle = impl->test_hooks.before_root_completion_settle;
+    hook_user = impl->test_hooks.user;
+    turbo_mutex_unlock(&impl->lock);
+    if (before_settle != NULL) before_settle(hook_user);
+}
+
+/* Root completion is a hard semantic boundary. Once its queue row reaches
+ * the head, only already-staged completion work may run until a completion
+ * transition leaves the completed root configuration or the queue drains. */
+static bool drain_root_completions(
+    cflow_statechart_instance_impl *impl) {
+    cflow_machine_state_id completion = 0u;
+    bool complete, pending;
+    int result;
+
+    turbo_mutex_lock(&impl->lock);
+    complete = root_configuration_complete(impl);
+    if (impl->root_completion_draining && !complete)
+        impl->root_completion_draining = false;
+    if (!impl->root_completion_draining) {
+        turbo_mutex_unlock(&impl->lock);
+        return false;
+    }
+    turbo_mutex_unlock(&impl->lock);
+
+    if (!pop_completion(impl, &completion)) {
+        turbo_mutex_lock(&impl->lock);
+        impl->root_completion_draining = false;
+        turbo_mutex_unlock(&impl->lock);
+        invoke_before_root_completion_settle_test_hook(impl);
+        settle_quiescent_macrostep(impl);
+        return true;
+    }
+
+    result = driver_try_completion(impl, completion);
+    if (result != 0) return true;
+
+    turbo_mutex_lock(&impl->lock);
+    complete = root_configuration_complete(impl);
+    pending = impl->completion_count != 0u;
+    if (!complete) {
+        impl->root_completion_draining = false;
+    } else if (pending) {
+        impl->driver_repost = true;
+    } else {
+        impl->root_completion_draining = false;
+    }
+    turbo_mutex_unlock(&impl->lock);
+    if (!complete) return false;
+    if (pending) return true;
+    invoke_before_root_completion_settle_test_hook(impl);
+    settle_quiescent_macrostep(impl);
+    return true;
 }
 
 static void statechart_driver_run(void *user) {
@@ -3512,6 +3577,7 @@ static void statechart_driver_run(void *user) {
         return;
     }
 
+    if (drain_root_completions(impl)) return;
     if (skip_to_external) goto external_admission;
 
     result = driver_try_trigger(impl, &trigger);
@@ -3522,14 +3588,10 @@ static void statechart_driver_run(void *user) {
     if (root_completion_ready(impl)) {
         if (impl->ir->states[impl->ir->root].kind !=
             CFLOW_STATECHART_FINAL) {
-            if (!pop_completion(impl, &completion)) {
-                latch_terminal_failure(
-                    impl, CFLOW_STATECHART_INSTANCE_INVALID_CONFIGURATION,
-                    "Statechart root completion queue is inconsistent");
-                return;
-            }
-            result = driver_try_completion(impl, completion);
-            if (result != 0) return;
+            turbo_mutex_lock(&impl->lock);
+            impl->root_completion_draining = true;
+            turbo_mutex_unlock(&impl->lock);
+            if (drain_root_completions(impl)) return;
         }
         settle_quiescent_macrostep(impl);
         return;
@@ -4553,6 +4615,7 @@ void cflow_statechart_instance_request_exit(
         impl->internal_event_count = 0u;
         impl->completion_head = 0u;
         impl->completion_count = 0u;
+        impl->root_completion_draining = false;
         cancel_external_admission_locked(impl, &waker);
         if (impl->timers_initialized)
             (void)cflow_timer_event_queue_close_begin_internal(
