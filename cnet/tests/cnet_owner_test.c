@@ -4,7 +4,9 @@
 #include "cnet_test_pipe.h"
 #include "tinytest.h"
 #include <turbo/clock.h>
+#include <turbo/thread.h>
 
+#include <limits.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -21,7 +23,11 @@ typedef int cnet_owner_test_socket;
   #define CNET_OWNER_TEST_INVALID_SOCKET (-1)
 #endif
 
-enum { CNET_OWNER_TEST_TIMEOUT_MS = 5000, CNET_OWNER_TEST_MAX_BACKENDS = 2 };
+enum {
+  CNET_OWNER_TEST_TIMEOUT_MS = 5000,
+  CNET_OWNER_TEST_MAX_BACKENDS = 2,
+  CNET_OWNER_TEST_UDP_ECHO_CAPACITY = 64
+};
 
 typedef struct cnet_owner_test_clock {
   uint64_t now_ms;
@@ -43,6 +49,49 @@ typedef enum cnet_owner_test_timeout {
   CNET_OWNER_TEST_READ_TIMEOUT,
   CNET_OWNER_TEST_WRITE_TIMEOUT
 } cnet_owner_test_timeout;
+
+typedef struct cnet_owner_test_udp_echo {
+  cnet_owner_test_socket socket_value;
+  const unsigned char *expected;
+  size_t expected_size;
+  const unsigned char *reply;
+  size_t reply_size;
+  int status;
+} cnet_owner_test_udp_echo;
+
+static void cnet_owner_test_udp_echo_entry(void *argument) {
+  cnet_owner_test_udp_echo *echo = (cnet_owner_test_udp_echo *)argument;
+  struct sockaddr_storage peer;
+#if defined(_WIN32)
+  int peer_length = (int)sizeof(peer);
+#else
+  socklen_t peer_length = (socklen_t)sizeof(peer);
+#endif
+  unsigned char buffer[CNET_OWNER_TEST_UDP_ECHO_CAPACITY];
+  int received;
+  int sent;
+
+  echo->status = TURBO_EIO;
+  if (echo->expected_size > sizeof(buffer) || echo->reply_size > INT_MAX) return;
+#if defined(_WIN32)
+  received = recvfrom(echo->socket_value, (char *)buffer, (int)sizeof(buffer), 0,
+                      (struct sockaddr *)&peer, &peer_length);
+  if (received == (int)echo->expected_size &&
+      memcmp(buffer, echo->expected, echo->expected_size) == 0)
+    sent = sendto(echo->socket_value, (const char *)echo->reply, (int)echo->reply_size, 0,
+                  (const struct sockaddr *)&peer, peer_length);
+  else return;
+#else
+  received = (int)recvfrom(echo->socket_value, buffer, sizeof(buffer), 0, (struct sockaddr *)&peer,
+                           &peer_length);
+  if (received == (int)echo->expected_size &&
+      memcmp(buffer, echo->expected, echo->expected_size) == 0)
+    sent = (int)sendto(echo->socket_value, echo->reply, echo->reply_size, 0,
+                       (const struct sockaddr *)&peer, peer_length);
+  else return;
+#endif
+  if (sent == (int)echo->reply_size) echo->status = TURBO_OK;
+}
 
 static size_t
 cnet_owner_test_backends(native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS]) {
@@ -357,18 +406,14 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
                                           .events = &events};
   cnet_owner_test_socket peer = CNET_OWNER_TEST_INVALID_SOCKET;
   struct sockaddr_in peer_address;
-  struct sockaddr_in owner_address;
-#if defined(_WIN32)
-  int owner_address_length = (int)sizeof(owner_address);
-#else
-  socklen_t owner_address_length = (socklen_t)sizeof(owner_address);
-#endif
+  cnet_owner_test_udp_echo echo = {0};
+  turbo_thread_t echo_thread = {0};
   cnet_session_handle session = {0};
   cnet_owner_connect_payload connect_payload = {0};
   cnet_command command = {0};
   cnet_event_view event = {0};
   cnet_session_terminal terminal = {0};
-  unsigned char received[sizeof(outbound)] = {0};
+  int echo_start_status;
 
   check_equal(cnet_session_table_init(&sessions, 1u), TURBO_OK);
   check_equal(cnet_command_queue_init(&commands, &command_config), TURBO_OK);
@@ -392,24 +437,24 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   check_equal(event.session.generation, session.generation);
   check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
 
-  command = (cnet_command){CNET_COMMAND_SEND, session, outbound, sizeof(outbound), 0u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(recvfrom(peer, (char *)received, (int)sizeof(received), 0,
-                       (struct sockaddr *)&owner_address, &owner_address_length),
-              (int)sizeof(received));
-  check_equal(received, outbound, sizeof(outbound));
-
-  command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_drive(&owner, 0u), TURBO_OK);
-  check_equal(sendto(peer, (const char *)inbound, (int)sizeof(inbound), 0,
-                     (const struct sockaddr *)&owner_address, owner_address_length),
-              (int)sizeof(inbound));
-  check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), TURBO_OK);
-  check_equal(event.kind, CNET_EVENT_RECEIVE);
-  check_equal(event.data, inbound, sizeof(inbound));
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+  echo = (cnet_owner_test_udp_echo){peer,    outbound,        sizeof(outbound),
+                                    inbound, sizeof(inbound), TURBO_EIO};
+  echo_start_status = turbo_thread_create(&echo_thread, cnet_owner_test_udp_echo_entry, &echo);
+  check_equal(echo_start_status, TURBO_OK);
+  if (echo_start_status == TURBO_OK) {
+    command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
+    check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+    command = (cnet_command){CNET_COMMAND_SEND, session, outbound, sizeof(outbound), 0u};
+    check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+    check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+    check_equal(event.kind, CNET_EVENT_RECEIVE);
+    check_equal(event.data, inbound, sizeof(inbound));
+    check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+    check_equal(turbo_thread_join(&echo_thread), TURBO_OK);
+    turbo_thread_destroy(&echo_thread);
+    check_equal(echo.status, TURBO_OK);
+  }
 
   command = (cnet_command){CNET_COMMAND_CLOSE, session, NULL, 0u, 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);

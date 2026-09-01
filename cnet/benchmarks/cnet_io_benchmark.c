@@ -131,7 +131,7 @@ typedef struct io_bench_cnet {
   cnet_client client;
   cnet_connection connection;
   io_bench_protocol protocol;
-  unsigned char *received_data;
+  const unsigned char *expected_data;
   size_t payload_size;
   size_t received;
   atomic_int connected;
@@ -764,9 +764,14 @@ static void io_bench_cnet_state(void *user, cnet_connection connection, cnet_con
   if (state == CNET_CONNECTION_CONNECTED)
     atomic_store_explicit(&fixture->connected, 1, memory_order_release);
   else if (state == CNET_CONNECTION_FAILED || state == CNET_CONNECTION_CLOSED) {
-    if (state == CNET_CONNECTION_FAILED)
+    if (state == CNET_CONNECTION_FAILED) {
+      fprintf(stderr, "CNet connection failed: protocol=%s status=%d native_status=%d stage=%s\n",
+              fixture->protocol == IO_BENCH_TCP ? "TCP" : "UDP",
+              error == NULL ? TURBO_EIO : error->status, error == NULL ? 0 : error->native_status,
+              error == NULL || error->stage == NULL ? "unknown" : error->stage);
       atomic_store_explicit(&fixture->status, error == NULL ? TURBO_EIO : error->status,
                             memory_order_release);
+    }
     atomic_store_explicit(&fixture->done, 1, memory_order_release);
     atomic_store_explicit(&fixture->terminal, 1, memory_order_release);
   }
@@ -780,6 +785,11 @@ static void io_bench_cnet_receive(void *user, cnet_connection connection,
       fixture->protocol == IO_BENCH_TCP ? CNET_MESSAGE_BYTES : CNET_MESSAGE_DATAGRAM;
   if (view->kind != expected || view->size > fixture->payload_size - fixture->received ||
       (fixture->protocol == IO_BENCH_UDP && view->size != fixture->payload_size)) {
+    fprintf(stderr,
+            "CNet receive contract mismatch: protocol=%s kind=%d expected=%d size=%zu "
+            "remaining=%zu payload=%zu\n",
+            fixture->protocol == IO_BENCH_TCP ? "TCP" : "UDP", (int)view->kind, (int)expected,
+            view->size, fixture->payload_size - fixture->received, fixture->payload_size);
     atomic_store_explicit(&fixture->status, TURBO_EIO, memory_order_release);
     atomic_store_explicit(&fixture->done, 1, memory_order_release);
     if (fixture->measuring) {
@@ -788,7 +798,28 @@ static void io_bench_cnet_receive(void *user, cnet_connection connection,
     }
     return;
   }
-  memcpy(fixture->received_data + fixture->received, view->data, view->size);
+  if (memcmp(fixture->expected_data + fixture->received, view->data, view->size) != 0) {
+    const unsigned char *received = (const unsigned char *)view->data;
+    size_t mismatch = 0u;
+    while (mismatch < view->size &&
+           fixture->expected_data[fixture->received + mismatch] == received[mismatch])
+      ++mismatch;
+    fprintf(stderr,
+            "CNet payload mismatch: protocol=%s length=%zu offset=%zu expected=%u received=%u\n",
+            fixture->protocol == IO_BENCH_TCP ? "TCP" : "UDP", fixture->payload_size,
+            fixture->received + mismatch,
+            mismatch < view->size
+                ? (unsigned int)fixture->expected_data[fixture->received + mismatch]
+                : 0u,
+            mismatch < view->size ? (unsigned int)received[mismatch] : 0u);
+    atomic_store_explicit(&fixture->status, TURBO_EIO, memory_order_release);
+    atomic_store_explicit(&fixture->done, 1, memory_order_release);
+    if (fixture->measuring) {
+      fixture->callback_ns += turbo_hrtime() - callback_started;
+      ++fixture->callback_calls;
+    }
+    return;
+  }
   fixture->received += view->size;
   if (fixture->received == fixture->payload_size)
     atomic_store_explicit(&fixture->done, 1, memory_order_release);
@@ -855,31 +886,31 @@ static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol
   return cnet_connect(&fixture->client, &options, &fixture->connection);
 }
 
-static int io_bench_cnet_ready(io_bench_cnet *fixture) {
+static int io_bench_cnet_ready(io_bench_cnet *fixture, size_t payload_size) {
+  size_t receive_demand;
   int status = io_bench_wait_cnet(fixture, &fixture->connected, 1);
   if (status == TURBO_OK) status = atomic_load_explicit(&fixture->status, memory_order_acquire);
-  if (status == TURBO_OK && fixture->protocol == IO_BENCH_UDP)
-    status = cnet_receive(&fixture->client, fixture->connection, IO_BENCH_ALL_EXCHANGES);
+  if (status != TURBO_OK) return status;
+  if (fixture->protocol == IO_BENCH_TCP) {
+    if (payload_size > SIZE_MAX / IO_BENCH_ALL_EXCHANGES) return TURBO_ERANGE;
+    receive_demand = payload_size * IO_BENCH_ALL_EXCHANGES;
+  } else {
+    receive_demand = IO_BENCH_ALL_EXCHANGES;
+  }
+  status = cnet_receive(&fixture->client, fixture->connection, receive_demand);
   return status;
 }
 
 static int io_bench_cnet_exchange(io_bench_cnet *fixture, const unsigned char *sent,
                                   unsigned char *received, size_t length) {
   int status;
-  fixture->received_data = received;
+  (void)received;
+  fixture->expected_data = sent;
   fixture->payload_size = length;
   fixture->received = 0u;
   atomic_store_explicit(&fixture->done, 0, memory_order_release);
   atomic_store_explicit(&fixture->status, TURBO_OK, memory_order_release);
   status = TURBO_OK;
-  if (fixture->protocol == IO_BENCH_TCP) {
-    const uint64_t started = fixture->measuring ? turbo_hrtime() : 0u;
-    status = cnet_receive(&fixture->client, fixture->connection, 1u);
-    if (fixture->measuring) {
-      fixture->receive_admission_ns += turbo_hrtime() - started;
-      ++fixture->receive_admission_calls;
-    }
-  }
   if (status == TURBO_OK) {
     const uint64_t started = fixture->measuring ? turbo_hrtime() : 0u;
     status = cnet_send(&fixture->client, fixture->connection, sent, length);
@@ -890,7 +921,6 @@ static int io_bench_cnet_exchange(io_bench_cnet *fixture, const unsigned char *s
   }
   if (status == TURBO_OK) status = io_bench_wait_cnet(fixture, &fixture->done, 1);
   if (status == TURBO_OK) status = atomic_load_explicit(&fixture->status, memory_order_acquire);
-  if (status == TURBO_OK && memcmp(sent, received, length) != 0) status = TURBO_EIO;
   return status;
 }
 
@@ -924,7 +954,8 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
     else status = io_bench_cnet_init(&fixture->cnet, protocol, &fixture->server.address);
   }
   if (status == TURBO_OK) status = io_bench_server_start(&fixture->server);
-  if (status == TURBO_OK && driver == IO_BENCH_CNET) status = io_bench_cnet_ready(&fixture->cnet);
+  if (status == TURBO_OK && driver == IO_BENCH_CNET)
+    status = io_bench_cnet_ready(&fixture->cnet, payload_size);
   return status;
 }
 
@@ -940,13 +971,14 @@ static int io_bench_exchange(io_bench_fixture *fixture, const unsigned char *sen
 }
 
 static int io_bench_fixture_destroy(io_bench_fixture *fixture) {
-  int status = io_bench_server_finish(&fixture->server);
-  int driver_status;
-  if (fixture->driver == IO_BENCH_LIBUV) driver_status = io_bench_libuv_destroy(&fixture->libuv);
+  int status;
+  int server_status;
+  if (fixture->driver == IO_BENCH_LIBUV) status = io_bench_libuv_destroy(&fixture->libuv);
   else if (fixture->driver == IO_BENCH_NATIVE_IO || fixture->driver == IO_BENCH_NATIVE_IO_COROUTINE)
-    driver_status = io_bench_native_destroy(&fixture->native);
-  else driver_status = io_bench_cnet_destroy(&fixture->cnet);
-  if (status == TURBO_OK) status = driver_status;
+    status = io_bench_native_destroy(&fixture->native);
+  else status = io_bench_cnet_destroy(&fixture->cnet);
+  server_status = io_bench_server_finish(&fixture->server);
+  if (status == TURBO_OK) status = server_status;
   io_bench_network_stop(fixture);
   return status;
 }
@@ -1169,6 +1201,8 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
            uv_version_string(), io_bench_backend_name());
     printf("Each client uses the same dedicated blocking echo peer, payloads, warmups, and "
            "samples.\n");
+    printf("CNet publishes one bounded receive demand per row and consumes borrowed callback "
+           "views without an extra payload copy.\n");
     printf("Per-I/O deadlines are disabled in the comparison; timeout behavior is covered by "
            "contract tests.\n");
     printf("Workload: %d warmups, then %d x %d persistent round trips per row.\n",

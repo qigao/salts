@@ -81,6 +81,7 @@ struct cnet_owner_impl {
   size_t completion_batch_capacity;
   size_t pending_event_capacity;
   size_t pending_event_count;
+  uint64_t published_event_count;
   size_t receive_buffer_bytes;
   size_t occupied_sessions;
   size_t active_requests;
@@ -130,8 +131,10 @@ static cnet_owner_impl *cnet_owner_get(cnet_owner *owner) {
 }
 
 static int cnet_owner_publish_event(cnet_owner_impl *impl, const cnet_event *event) {
-  return impl->publish_event != NULL ? impl->publish_event(impl->event_context, event)
-                                     : cnet_event_queue_publish(impl->events, event);
+  const int status = impl->publish_event != NULL ? impl->publish_event(impl->event_context, event)
+                                                 : cnet_event_queue_publish(impl->events, event);
+  if (status == TURBO_OK) ++impl->published_event_count;
+  return status;
 }
 
 static cnet_owner_session *cnet_owner_find_session(cnet_owner_impl *impl,
@@ -946,45 +949,66 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
 
 int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
+  uint64_t started_ms;
+  uint64_t published_before;
   size_t processed = 0u;
-  size_t completion_count = 0u;
   bool event_blocked = false;
   int status;
   if (impl == NULL || impl->closed) return TURBO_EINVAL;
+  started_ms = turbo_monotonic_ms();
+  published_before = impl->published_event_count;
   status = cnet_owner_flush_state_events(impl, &event_blocked);
   if (status != TURBO_OK) return status;
-  if (event_blocked) return TURBO_OK;
+  if (event_blocked || impl->published_event_count != published_before) return TURBO_OK;
   status = cnet_owner_arm_pending_receives(impl);
   if (status != TURBO_OK) return status;
   status = cnet_owner_process_commands(impl, &processed);
   if (status != TURBO_OK) return status;
-  if (impl->pending_event_count != 0u) return TURBO_OK;
+  if (impl->pending_event_count != 0u || impl->published_event_count != published_before)
+    return TURBO_OK;
   status = cnet_owner_process_deadlines(impl);
   if (status != TURBO_OK) return status;
-  if (impl->pending_event_count != 0u) return TURBO_OK;
+  if (impl->pending_event_count != 0u || impl->published_event_count != published_before)
+    return TURBO_OK;
   if (cnet_resolver_has_pending(&impl->resolver)) {
     status = cnet_resolver_poll(&impl->resolver);
     if (status != TURBO_OK) return status;
     status = cnet_owner_process_resolver(impl, &processed);
     if (status != TURBO_OK) return status;
+    if (impl->published_event_count != published_before) return TURBO_OK;
   }
-  status = native_io_backend_observe(
-      &impl->backend, impl->completions, impl->completion_batch_capacity,
-      cnet_owner_observe_timeout(impl, timeout_ms, processed != 0u), &completion_count);
-  if (status == TURBO_ETIMEDOUT) {
-    if (cnet_resolver_has_pending(&impl->resolver)) {
-      status = cnet_resolver_poll(&impl->resolver);
-      if (status != TURBO_OK) return status;
-      status = cnet_owner_process_resolver(impl, &processed);
-      if (status != TURBO_OK) return status;
+  /* Work that did not start asynchronous I/O must not turn a drive into an idle wait. */
+  if (processed != 0u && impl->active_requests == 0u && !cnet_resolver_has_pending(&impl->resolver))
+    return TURBO_OK;
+
+  for (;;) {
+    const uint64_t elapsed_ms = turbo_monotonic_ms() - started_ms;
+    const uint32_t remaining_ms = elapsed_ms >= timeout_ms ? 0u : timeout_ms - (uint32_t)elapsed_ms;
+    size_t completion_count = 0u;
+
+    status = native_io_backend_observe(
+        &impl->backend, impl->completions, impl->completion_batch_capacity,
+        cnet_owner_observe_timeout(impl, remaining_ms, false), &completion_count);
+    if (status == TURBO_ETIMEDOUT) {
+      if (cnet_resolver_has_pending(&impl->resolver)) {
+        status = cnet_resolver_poll(&impl->resolver);
+        if (status != TURBO_OK) return status;
+        status = cnet_owner_process_resolver(impl, &processed);
+        if (status != TURBO_OK) return status;
+      }
+      return cnet_owner_process_deadlines(impl);
     }
-    return cnet_owner_process_deadlines(impl);
+    if (status != TURBO_OK) return status;
+    status = cnet_owner_take_coroutine_status(impl);
+    if (status != TURBO_OK) return status;
+    if (completion_count != 0u) return TURBO_EPROTO;
+    if (impl->published_event_count != published_before) return TURBO_OK;
+    status = cnet_owner_process_deadlines(impl);
+    if (status != TURBO_OK) return status;
+    if (impl->pending_event_count != 0u || impl->published_event_count != published_before)
+      return TURBO_OK;
+    if (remaining_ms == 0u || impl->active_requests == 0u) return TURBO_OK;
   }
-  if (status != TURBO_OK) return status;
-  status = cnet_owner_take_coroutine_status(impl);
-  if (status != TURBO_OK) return status;
-  if (completion_count != 0u) return TURBO_EPROTO;
-  return cnet_owner_process_deadlines(impl);
 }
 
 bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats) {
