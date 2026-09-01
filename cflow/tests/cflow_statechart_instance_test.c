@@ -6744,6 +6744,177 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_destroy(&fixture);
     }
 
+    it("drains nested completion transitions before root termination") {
+        enum {
+            ROOT = 1000u,
+            ROOT_INITIAL = 1001u,
+            FIRST = 1010u,
+            FIRST_INITIAL = 1011u,
+            FIRST_FINAL = 1012u,
+            SECOND = 1020u,
+            SECOND_INITIAL = 1021u,
+            SECOND_FINAL = RTC_FINAL,
+            PASS = 1030u,
+            FAIL = 1040u
+        };
+        rtc_fixture action_fixture = {0};
+        const cflow_statechart_state states[] = {
+            {ROOT, 0u, CFLOW_STATECHART_COMPOUND, 0u},
+            {ROOT_INITIAL, ROOT, CFLOW_STATECHART_INITIAL, 1u},
+            {FIRST, ROOT, CFLOW_STATECHART_COMPOUND, 2u},
+            {FIRST_INITIAL, FIRST, CFLOW_STATECHART_INITIAL, 3u},
+            {FIRST_FINAL, FIRST, CFLOW_STATECHART_FINAL, 4u},
+            {SECOND, ROOT, CFLOW_STATECHART_COMPOUND, 5u},
+            {SECOND_INITIAL, SECOND, CFLOW_STATECHART_INITIAL, 6u},
+            {SECOND_FINAL, SECOND, CFLOW_STATECHART_FINAL, 7u},
+            {PASS, ROOT, CFLOW_STATECHART_FINAL, 8u},
+            {FAIL, ROOT, CFLOW_STATECHART_ATOMIC, 9u}};
+        const cflow_event_type events[] = {
+            {RTC_NEXT, &cmeta_type_int}};
+        const cflow_statechart_executable executables[] = {{
+            RTC_EXEC, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS}};
+        const cflow_statechart_transition transitions[] = {
+            {1u, ROOT_INITIAL, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+             0u, 0u, 0u, FIRST,
+             CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 0u},
+            {2u, FIRST_INITIAL, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+             0u, 0u, 0u, FIRST_FINAL,
+             CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 1u},
+            {3u, FIRST, CFLOW_STATECHART_TRIGGER_COMPLETION,
+             0u, FIRST, 0u, SECOND,
+             CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 2u},
+            {4u, SECOND_INITIAL, CFLOW_STATECHART_TRIGGER_EVENTLESS,
+             0u, 0u, 0u, SECOND_FINAL,
+             CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 3u},
+            {5u, SECOND, CFLOW_STATECHART_TRIGGER_COMPLETION,
+             0u, SECOND, 0u, PASS,
+             CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 4u},
+            {6u, ROOT, CFLOW_STATECHART_TRIGGER_EVENT,
+             RTC_NEXT, 0u, 0u, FAIL,
+             CFLOW_STATECHART_TRANSITION_EXTERNAL, 0u, 5u}};
+        const cflow_statechart_state_action state_actions[] = {{
+            SECOND_FINAL, CFLOW_STATECHART_STATE_ACTION_ENTRY,
+            RTC_EXEC, 0u}};
+        const cflow_statechart_definition definition = {
+            &cmeta_type_int, states, sizeof(states) / sizeof(states[0]),
+            events, sizeof(events) / sizeof(events[0]),
+            NULL, 0u,
+            executables, sizeof(executables) / sizeof(executables[0]),
+            transitions, sizeof(transitions) / sizeof(transitions[0]),
+            state_actions,
+            sizeof(state_actions) / sizeof(state_actions[0]),
+            NULL, 0u};
+        const cflow_statechart_executable_binding binding = {
+            .id = RTC_EXEC,
+            .fn = rtc_action,
+            .user = &action_fixture};
+        const cflow_machine_state_id expected[] = {ROOT, PASS};
+        const int initial_state = 0;
+        cflow_statechart statechart = {0};
+        cflow_executor executor = {0};
+        cflow_statechart_instance instance = {0};
+        cflow_statechart_instance_stats stats = {0};
+        cflow_statechart_instance_config config;
+        cflow_machine_state_id active[3] = {0};
+        size_t active_count = 0u;
+        uint64_t version = 0u;
+
+        action_fixture.raise_on_final_entry = true;
+        action_fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_host_transaction = rtc_host_transaction};
+        check_equal(cflow_statechart_build(&statechart, &definition),
+                    CFLOW_STATECHART_OK);
+        check_true(cflow_executor_serial_init(&executor));
+        config = (cflow_statechart_instance_config){
+            .statechart = &statechart,
+            .initial_state = &initial_state,
+            .executables = &binding,
+            .executable_count = 1u,
+            .external_event_capacity = 1u,
+            .internal_event_capacity = 1u,
+            .completion_capacity = 2u,
+            .microstep_limit = 8u,
+            .executor = &executor,
+            .hooks = &action_fixture.hooks,
+            .hook_user = &action_fixture};
+        check_equal(cflow_statechart_instance_init(&instance, &config),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_true(cflow_executor_wait_idle(&executor));
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &instance, active, 3u, &active_count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(active_count, (size_t)2u);
+        check_equal(active, expected, sizeof(expected));
+        check_true(cflow_statechart_instance_get_stats(&instance, &stats));
+        check_true(stats.done);
+        check_false(stats.errored);
+        check_equal(stats.completion_pending, (size_t)0u);
+        check_equal(action_fixture.event_hook_calls, (size_t)3u);
+        check_equal(action_fixture.observed_event_kinds[0],
+                    CFLOW_STATECHART_OBSERVED_COMPLETION);
+        check_equal(action_fixture.observed_event_kinds[1],
+                    CFLOW_STATECHART_OBSERVED_COMPLETION);
+        check_equal(action_fixture.observed_event_kinds[2],
+                    CFLOW_STATECHART_OBSERVED_COMPLETION);
+        check_equal(cflow_statechart_instance_destroy(&instance),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        cflow_executor_destroy(&executor);
+        cflow_statechart_destroy(&statechart);
+    }
+
+    it("preserves controlled exit accepted before root completion settles") {
+        rtc_fixture fixture;
+        microstep_executor_blocker blocker;
+        const int payload = 1;
+        const cflow_event_view go = {
+            RTC_GO, &cmeta_type_int, &payload};
+        const cflow_statechart_state_action state_actions[] = {{
+            RTC_FINAL, CFLOW_STATECHART_STATE_ACTION_EXIT,
+            RTC_EXEC, 0u}};
+        const cflow_statechart_instance_test_hooks hooks = {
+            .before_root_completion_settle = microstep_block_executor,
+            .user = &blocker};
+        const int expected_trace[] = {
+            RTC_A, RTC_B, RTC_C, RTC_FINAL};
+        cflow_statechart_instance_stats stats = {0};
+        cflow_machine_state_id states[2] = {0};
+        size_t state_count = 0u;
+        uint64_t version = 0u;
+
+        rtc_definition(&fixture, false, false);
+        fixture.definition.state_actions = state_actions;
+        fixture.definition.state_action_count = 1u;
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        check_true(cflow_statechart_instance_set_test_hooks_internal(
+            &fixture.instance, &hooks));
+        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+                    CFLOW_MAILBOX_OK);
+        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        cflow_statechart_instance_request_exit(&fixture.instance);
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(cflow_statechart_instance_copy_configuration(
+                        &fixture.instance, states, 2u,
+                        &state_count, &version),
+                    CFLOW_STATECHART_SNAPSHOT_OK);
+        check_equal(state_count, (size_t)0u);
+        check_equal(fixture.trace, expected_trace, sizeof(expected_trace));
+        check_true(cflow_statechart_instance_get_stats(
+            &fixture.instance, &stats));
+        check_true(stats.done);
+        check_true(stats.cancelled);
+        check_equal(stats.external_accepted, UINT64_C(1));
+        check_equal(stats.external_completed, UINT64_C(0));
+        check_equal(stats.external_cancelled, UINT64_C(1));
+        rtc_destroy(&fixture);
+    }
+
     it("halts before selecting an internal event raised by root completion") {
         rtc_fixture fixture;
         const cflow_statechart_state_action state_actions[] = {{
