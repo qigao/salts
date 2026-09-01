@@ -176,6 +176,7 @@ static void latch_terminal_failure(cflow_statechart_instance_impl *impl,
                                    cflow_statechart_instance_status status,
                                    const char *message);
 static void discard_staged_effects(cflow_statechart_instance_impl *impl);
+static void commit_internal_events(cflow_statechart_instance_impl *impl);
 static cflow_statechart_host_result run_host_transaction_runtime_hook(
     cflow_statechart_instance_impl *impl,
     cflow_statechart_host_phase phase,
@@ -1427,8 +1428,12 @@ static bool trigger_matches(const cflow_statechart_transition *transition,
 }
 
 typedef struct statechart_configuration_query {
-    const cflow_statechart_instance_impl *impl;
+    cflow_statechart_instance_impl *impl;
     const unsigned char *bits;
+    size_t *staged_event_count;
+    size_t staged_event_capacity;
+    cflow_statechart_instance_status raise_status;
+    const char *raise_error;
 } statechart_configuration_query;
 
 static bool configuration_query_is_active(
@@ -1444,16 +1449,97 @@ static bool configuration_query_is_active(
            bit_test(query->bits, state_index);
 }
 
+static cflow_statechart_instance_status stage_internal_event_for_instance(
+    cflow_statechart_instance_impl *impl, const cflow_event_view *event,
+    uint64_t origin_token, size_t *staged_event_count,
+    size_t staged_event_capacity, const char **out_error) {
+    size_t type_index;
+    const cmeta_type_desc *type;
+    if (out_error != NULL) *out_error = NULL;
+    if (impl == NULL || event == NULL || staged_event_count == NULL ||
+        out_error == NULL ||
+        event->payload_type == NULL || event->payload == NULL) {
+        if (out_error != NULL)
+            *out_error = "Statechart internal event is invalid";
+        return CFLOW_STATECHART_INSTANCE_INTERNAL_EVENT_INVALID;
+    }
+    type_index = find_event_index(impl->ir, event->id);
+    if (type_index == SIZE_MAX) {
+        *out_error = "Statechart internal event is unknown";
+        return CFLOW_STATECHART_INSTANCE_INTERNAL_EVENT_INVALID;
+    }
+    type = impl->ir->events[type_index].payload_type;
+    if (!cmeta_type_equal(type, event->payload_type)) {
+        *out_error = "Statechart internal event type mismatch";
+        return CFLOW_STATECHART_INSTANCE_INTERNAL_EVENT_TYPE_MISMATCH;
+    }
+    if (*staged_event_count >= staged_event_capacity) {
+        *out_error = "Statechart internal event queue is full";
+        return CFLOW_STATECHART_INSTANCE_INTERNAL_QUEUE_FULL;
+    }
+    impl->staged_event_slots[*staged_event_count].type_index = type_index;
+    impl->staged_event_slots[*staged_event_count].origin_token =
+        origin_token;
+    memcpy(impl->staged_event_payloads +
+               *staged_event_count * impl->event_payload_stride,
+           event->payload, type->size);
+    ++*staged_event_count;
+    return CFLOW_STATECHART_INSTANCE_OK;
+}
+
+bool cflow_statechart_guard_context_raise_internal(
+    const cflow_statechart_guard_context *context,
+    const cflow_event_view *event, uint64_t origin_token,
+    const char **out_error) {
+    statechart_configuration_query *query = context != NULL
+        ? (statechart_configuration_query *)context->configuration_user
+        : NULL;
+    cflow_statechart_instance_status status;
+    if (out_error != NULL) *out_error = NULL;
+    if (context == NULL || query == NULL ||
+        query->impl == NULL ||
+        context->is_active != configuration_query_is_active ||
+        context->state != query->impl->extended_states[query->impl->published] ||
+        query->bits != query->impl->configurations[query->impl->published].bits ||
+        !query->impl->selection_in_progress) {
+        if (out_error != NULL)
+            *out_error = "Statechart guard context is invalid";
+        return false;
+    }
+    if (query->raise_status != CFLOW_STATECHART_INSTANCE_OK) {
+        if (out_error != NULL) *out_error = query->raise_error;
+        return false;
+    }
+    if (out_error == NULL) {
+        query->raise_status =
+            CFLOW_STATECHART_INSTANCE_INTERNAL_EVENT_INVALID;
+        query->raise_error = "Statechart internal event is invalid";
+        return false;
+    }
+    status = stage_internal_event_for_instance(
+        query->impl, event, origin_token, query->staged_event_count,
+        query->staged_event_capacity, out_error);
+    if (status != CFLOW_STATECHART_INSTANCE_OK) {
+        query->raise_status = status;
+        query->raise_error = *out_error;
+        return false;
+    }
+    return true;
+}
+
 static cflow_statechart_instance_status guard_enabled(
     cflow_statechart_instance_impl *impl,
     const cflow_statechart_transition *transition,
     const cflow_statechart_selection_trigger *trigger,
+    size_t *staged_event_count, size_t staged_event_capacity,
     bool *out_enabled) {
     const cflow_statechart_guard *declaration;
     const cflow_statechart_guard_binding *binding;
     const char *error = NULL;
     bool enabled = false;
     bool succeeded;
+    cflow_statechart_instance_status raise_status =
+        CFLOW_STATECHART_INSTANCE_OK;
     if (transition->guard == 0u) {
         *out_enabled = true;
         return CFLOW_STATECHART_INSTANCE_OK;
@@ -1467,8 +1553,12 @@ static cflow_statechart_instance_status guard_enabled(
         return CFLOW_STATECHART_INSTANCE_GUARD_FAILED;
     }
     if (binding->contextual_fn != NULL) {
-        const statechart_configuration_query query = {
-            impl, impl->configurations[impl->published].bits};
+        statechart_configuration_query query = {
+            .impl = impl,
+            .bits = impl->configurations[impl->published].bits,
+            .staged_event_count = staged_event_count,
+            .staged_event_capacity = staged_event_capacity,
+            .raise_status = CFLOW_STATECHART_INSTANCE_OK};
         const cflow_statechart_guard_context context = {
             impl->extended_states[impl->published],
             trigger->kind == CFLOW_STATECHART_TRIGGER_EVENT
@@ -1477,6 +1567,11 @@ static cflow_statechart_instance_status guard_enabled(
             (void *)&query};
         succeeded = binding->contextual_fn(
             binding->user, &context, &enabled, &error);
+        raise_status = query.raise_status;
+        if (raise_status != CFLOW_STATECHART_INSTANCE_OK) {
+            succeeded = false;
+            error = query.raise_error;
+        }
     } else {
         succeeded = binding->fn(
             binding->user, impl->extended_states[impl->published],
@@ -1593,6 +1688,8 @@ cflow_statechart_instance_status cflow_statechart_instance_select_internal(
         ? (cflow_statechart_instance_impl *)instance->impl : NULL;
     const statechart_configuration_buffer *configuration;
     size_t position, leaf_order = 0u;
+    size_t selection_staged_event_count = 0u;
+    size_t selection_staged_event_capacity;
     if (out != NULL) memset(out, 0, sizeof(*out));
     if (impl == NULL || trigger == NULL || out == NULL ||
         !trigger_valid(impl, trigger))
@@ -1620,6 +1717,11 @@ cflow_statechart_instance_status cflow_statechart_instance_select_internal(
     impl->selection_consumed = false;
     impl->selected_count = 0u;
     impl->selected_configuration_version = impl->configuration_version;
+    impl->staged_event_count = 0u;
+    selection_staged_event_capacity =
+        impl->internal_event_count <= impl->internal_event_capacity
+            ? impl->internal_event_capacity - impl->internal_event_count
+            : 0u;
     impl->selection_trigger = *trigger;
     if (trigger->kind == CFLOW_STATECHART_TRIGGER_EVENT) {
         const size_t type_index = find_event_index(
@@ -1656,7 +1758,9 @@ cflow_statechart_instance_status cflow_statechart_instance_select_internal(
                 if (!trigger_matches(transition, &impl->selection_trigger))
                     continue;
                 status = guard_enabled(
-                    impl, transition, &impl->selection_trigger, &enabled);
+                    impl, transition, &impl->selection_trigger,
+                    &selection_staged_event_count,
+                    selection_staged_event_capacity, &enabled);
                 if (status != CFLOW_STATECHART_INSTANCE_OK) {
                     turbo_mutex_lock(&impl->lock);
                     impl->selected_count = 0u;
@@ -1686,6 +1790,8 @@ cflow_statechart_instance_status cflow_statechart_instance_select_internal(
         return CFLOW_STATECHART_INSTANCE_TASK_CANCELLED;
     }
     ++impl->selection_generation;
+    impl->staged_event_count = selection_staged_event_count;
+    commit_internal_events(impl);
     impl->selection_valid = true;
     impl->selection_in_progress = false;
     *out = (cflow_statechart_selection_snapshot){
@@ -1823,57 +1929,32 @@ static bool stage_internal_event_tagged(
         (statechart_action_context *)user;
     cflow_statechart_instance_impl *impl =
         context != NULL ? context->impl : NULL;
-    size_t type_index;
-    const cmeta_type_desc *type;
+    cflow_statechart_instance_status status;
     if (context != NULL &&
         context->raise_status != CFLOW_STATECHART_INSTANCE_OK) {
         if (out_error != NULL) *out_error = context->raise_error;
         return false;
     }
-    if (out_error != NULL) *out_error = NULL;
-    if (impl == NULL || event == NULL || out_error == NULL ||
-        event->payload_type == NULL || event->payload == NULL) {
+    if (out_error == NULL) {
         if (context != NULL) {
             context->raise_status =
                 CFLOW_STATECHART_INSTANCE_INTERNAL_EVENT_INVALID;
             context->raise_error = "Statechart internal event is invalid";
         }
-        if (out_error != NULL)
-            *out_error = "Statechart internal event is invalid";
         return false;
     }
-    type_index = find_event_index(impl->ir, event->id);
-    if (type_index == SIZE_MAX) {
-        context->raise_status =
-            CFLOW_STATECHART_INSTANCE_INTERNAL_EVENT_INVALID;
-        context->raise_error = "Statechart internal event is unknown";
-        *out_error = context->raise_error;
-        return false;
+    status = stage_internal_event_for_instance(
+        impl, event, origin_token, &impl->staged_event_count,
+        impl->internal_event_count <= impl->internal_event_capacity
+            ? impl->internal_event_capacity - impl->internal_event_count
+            : 0u,
+        out_error);
+    if (status == CFLOW_STATECHART_INSTANCE_OK) return true;
+    if (context != NULL) {
+        context->raise_status = status;
+        context->raise_error = out_error != NULL ? *out_error : NULL;
     }
-    type = impl->ir->events[type_index].payload_type;
-    if (!cmeta_type_equal(type, event->payload_type)) {
-        context->raise_status =
-            CFLOW_STATECHART_INSTANCE_INTERNAL_EVENT_TYPE_MISMATCH;
-        context->raise_error = "Statechart internal event type mismatch";
-        *out_error = context->raise_error;
-        return false;
-    }
-    if (impl->internal_event_count > impl->internal_event_capacity ||
-        impl->staged_event_count >=
-            impl->internal_event_capacity - impl->internal_event_count) {
-        context->raise_status = CFLOW_STATECHART_INSTANCE_INTERNAL_QUEUE_FULL;
-        context->raise_error = "Statechart internal event queue is full";
-        *out_error = context->raise_error;
-        return false;
-    }
-    impl->staged_event_slots[impl->staged_event_count].type_index = type_index;
-    impl->staged_event_slots[impl->staged_event_count].origin_token =
-        origin_token;
-    memcpy(impl->staged_event_payloads +
-               impl->staged_event_count * impl->event_payload_stride,
-           event->payload, type->size);
-    ++impl->staged_event_count;
-    return true;
+    return false;
 }
 
 static bool stage_internal_event(void *user, const cflow_event_view *event,
