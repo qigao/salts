@@ -232,9 +232,11 @@ bool cflow_io_native_backend_get_stats(
  * and one write lane per identity so duplicate descriptors and registrations
  * scale with live sockets instead of operations. This explicit boundary makes
  * each bounded socket table reusable without guessing whether the OS recycled
- * a handle. TURBO_EBUSY means this socket is not quiescent; TURBO_ENOENT means
- * the identity is unknown or was already forgotten. io_uring retains no
- * identity and only validates its existing global quiescence contract.
+ * a handle. TURBO_EBUSY means this socket is not yet quiescent and bounded
+ * shutdown code may retry it after yielding; completion delivery can precede
+ * readiness callback unwind. TURBO_ENOENT means the identity is unknown or was
+ * already forgotten. io_uring retains no identity and only validates its
+ * existing global quiescence contract.
  */
 int cflow_io_native_backend_forget_socket(
     cflow_io_native_backend *backend, uintptr_t closed_socket);

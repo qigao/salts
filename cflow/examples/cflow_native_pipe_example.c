@@ -294,8 +294,8 @@ cleanup:
             const uintptr_t identity = (uintptr_t)pipes[index];
             cflow_pipe_example_close(pipes[index]);
             pipes[index] = CFLOW_EXAMPLE_INVALID_PIPE;
-            status = cflow_io_native_backend_forget_pipe(
-                &context.backend, identity);
+            status = cflow_native_example_forget_until_quiescent(
+                &context, identity, cflow_io_native_backend_forget_pipe);
             if (status != TURBO_OK &&
                 (require_retained_identity || status != TURBO_ENOENT)) {
                 fprintf(stderr,
