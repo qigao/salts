@@ -58,6 +58,7 @@ add_subdirectory(platform)
 add_subdirectory(concurrency)
 add_subdirectory(coroutine)
 add_subdirectory(native-io)
+add_subdirectory(parser/uri_parser)
 add_subdirectory(cnet)
 add_subdirectory(chttp)
 add_subdirectory(cmeta)
@@ -88,8 +89,8 @@ set(verify_installed_dependencies
     turbo_cflow_process
     turbo_cflow_fs
     turbo_crpc
-    xml_parser
-    json_cserde_adapter)
+    ${ROCIDA_PARSER_TARGETS}
+    turbo_selector)
 add_custom_target(
   verify_installed_package
   COMMAND

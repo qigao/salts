@@ -1,5 +1,7 @@
 // re2c --lang c
 #include "uri_parser.h"
+#include "uri_parser_internal.h"
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -7,7 +9,7 @@ int uri_parse_internal(const char *url_str, uri_t *uri)
 {
     const char *marker;
     const char *src = url_str;
-    int pos = 0;
+    size_t pos = 0u;
     /*!re2c
       re2c:define:YYCTYPE = "unsigned char";
       re2c:define:YYCURSOR = url_str;
@@ -48,8 +50,9 @@ int uri_parse_internal(const char *url_str, uri_t *uri)
       * { return 0; }
 
       ALPHA (ALPHA | DIGIT | [+.-])* ":" {
-        int len =  (int)(url_str - src - 1);
-        uri_copy_substring(src, pos, len, uri->scheme, sizeof(uri->scheme));
+        size_t len = (size_t)(url_str - src - 1);
+        if (!uri_copy_substring_checked(uri, src, pos, len, uri->scheme, sizeof(uri->scheme)))
+          return 0;
         pos += len + 1; // skip ":"
         goto hier_part;
       }
@@ -64,14 +67,16 @@ hier_part:
 
 hier_part_authority:
     /*!re2c
-      [^] { url_str--; goto hier_part_host; }
       EOF { return 0;}
       USERINFO* "@" {
-        int len =  (int)( url_str - src - pos - 1); // unshift 1 char for "@"
-        uri_copy_substring(src, pos, len, uri->userinfo, sizeof(uri->userinfo));
+        size_t len = (size_t)(url_str - src) - pos - 1u; // unshift 1 char for "@"
+        uri->component_flags |= URI_COMPONENT_USERINFO;
+        if (!uri_copy_substring_checked(uri, src, pos, len, uri->userinfo, sizeof(uri->userinfo)))
+          return 0;
         pos += len + 1; // shift for "@" char
         goto hier_part_host;
       }
+      [^] { url_str--; goto hier_part_host; }
     */
 
 hier_part_host:
@@ -83,32 +88,32 @@ hier_part_host:
         goto hier_part_path;
       }
       IPV4ADDR {
-        int len = (int)( url_str - src - pos);
+        size_t len = (size_t)(url_str - src) - pos;
         uri->host_type = URI_HOST_IPV4ADDR;
-        uri_copy_substring(src, pos, len, uri->host, sizeof(uri->host));
+        if (!uri_copy_substring_checked(uri, src, pos, len, uri->host, sizeof(uri->host))) return 0;
         pos += len;
         goto hier_part_port;
       }
       "[v" [^\]\x00]+ "]" {
         pos++; // shift "["
-        int len =  (int)(url_str - src - pos - 1);
+        size_t len = (size_t)(url_str - src) - pos - 1u;
         uri->host_type = URI_HOST_IPVFUTURE;
-        uri_copy_substring(src, pos, len, uri->host, sizeof(uri->host));
+        if (!uri_copy_substring_checked(uri, src, pos, len, uri->host, sizeof(uri->host))) return 0;
         pos += len + 1;
         goto hier_part_port;
       }
       "[" [^\]\x00]+ "]" {
         pos++; // shift "["
-        int len =  (int)(url_str - src - pos - 1); // skip "]"
+        size_t len = (size_t)(url_str - src) - pos - 1u; // skip "]"
         uri->host_type = URI_HOST_IPV6ADDR;
-        uri_copy_substring(src, pos, len, uri->host, sizeof(uri->host));
+        if (!uri_copy_substring_checked(uri, src, pos, len, uri->host, sizeof(uri->host))) return 0;
         pos += len + 1;
         goto hier_part_port;
       }
       REGNAME+ {
-        int len = (int)( url_str - src - pos);
+        size_t len = (size_t)(url_str - src) - pos;
         uri->host_type = URI_HOST_REGNAME;
-        uri_copy_substring(src, pos, len, uri->host, sizeof(uri->host));
+        if (!uri_copy_substring_checked(uri, src, pos, len, uri->host, sizeof(uri->host))) return 0;
         pos += len;
         goto hier_part_port;
       }
@@ -120,23 +125,23 @@ hier_part_port:
         uri->valid = 1;
         return 1;
       }
+      ":" { return 0; }
       "" { goto hier_part_path; }
-      ":" DIGIT* {
+      ":" DIGIT+ {
         pos++; // shift ":"
-        int len =  (int)(url_str - src - pos);
-        char port_str[16];
-        uri_copy_substring(src, pos, len, port_str, sizeof(port_str));
-
-        // Use strtol to parse port, preserve original value
-        char* endptr;
-        long port_long = strtol(port_str, &endptr, 10);
-        if (*endptr != '\0' || port_long < 0) {
-          uri->port = -1;  // Invalid format
-          uri->valid = 0;
-        } else {
-          uri->port = (int)port_long;  // Preserve original value (even if > 65535)
-          // Don't set valid=0 here - let upper layer validate port range
+        size_t len = (size_t)(url_str - src) - pos;
+        int port = 0;
+        for (size_t index = 0u; index < len; ++index) {
+          const int digit = src[pos + index] - '0';
+          if (!(uri->overflow_flags & URI_OVERFLOW_PORT) && port > (INT_MAX - digit) / 10) {
+            uri->overflow_flags |= URI_OVERFLOW_PORT;
+            port = INT_MAX;
+          } else if (!(uri->overflow_flags & URI_OVERFLOW_PORT)) {
+            port = port * 10 + digit;
+          }
         }
+        uri->port = port; // Upper layers validate their protocol range.
+        uri->component_flags |= URI_COMPONENT_PORT;
 
         pos += len;
         goto hier_part_path;
@@ -149,10 +154,10 @@ hier_part_path:
         uri->valid = 1;
         return 1;
       }
-      * {goto query_frag;}
+      * { url_str--; goto query_frag; }
       ("/" SEGMENT)+ {
-        int len = (int)(url_str - src - pos);
-        uri_copy_substring(src, pos, len, uri->path, sizeof(uri->path));
+        size_t len = (size_t)(url_str - src) - pos;
+        if (!uri_copy_substring_checked(uri, src, pos, len, uri->path, sizeof(uri->path))) return 0;
         pos += len;
         goto query_frag;
       }
@@ -160,24 +165,27 @@ hier_part_path:
 
 query_frag:
     /*!re2c
-      * { return 0; }
       EOF {
         uri->valid = 1;
         return 1;
       }
       "?" (PCHAR | [/?])* {
         pos++; // shift "?"
-        int len = (int)( url_str - src - pos);
-        uri_copy_substring(src, pos, len, uri->query, sizeof(uri->query));
+        size_t len = (size_t)(url_str - src) - pos;
+        uri->component_flags |= URI_COMPONENT_QUERY;
+        if (!uri_copy_substring_checked(uri, src, pos, len, uri->query, sizeof(uri->query))) return 0;
         pos += len;
         goto query_frag;
       }
       "#" (PCHAR | [/?])* {
         pos++; // shift "#"
-        int len =  (int)(url_str - src - pos);
-        uri_copy_substring(src, pos, len, uri->fragment, sizeof(uri->fragment));
+        size_t len = (size_t)(url_str - src) - pos;
+        uri->component_flags |= URI_COMPONENT_FRAGMENT;
+        if (!uri_copy_substring_checked(uri, src, pos, len, uri->fragment, sizeof(uri->fragment)))
+          return 0;
         uri->valid = 1;
         return 1;
       }
+      * { return 0; }
     */
 }
