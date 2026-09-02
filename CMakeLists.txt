@@ -21,7 +21,7 @@ get_filename_component(CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}" ABSOLUTE)
 
 # Project description
 set(PROJECT_DESCRIPTION "common library for C/C++")
-set(PROJECT_HOMEPAGE_URL "https://github.com/qigao/turboutils")
+set(PROJECT_HOMEPAGE_URL "https://github.com/qigao/turbo-utils")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # Language standards - unified approach

@@ -27,7 +27,7 @@ max_container_items, max_buffer_bytes)` for any graph containing STRING or
 BYTES. Older context prefixes remain valid for older scalar graphs, but a
 buffer graph rejects them before consuming input.
 
-TurboUtils applications can include `turbo_cmeta_data.h` and attach
+Rocida applications can include `turbo_cmeta_data.h` and attach
 `turbo_tstr_cmeta_buffer_ops` for unique-owned storage or
 `turbo_vstr_cmeta_buffer_ops` for borrowed storage. A borrowed decoded view
 remains valid only as long as the CSerde reader's backing owner keeps the

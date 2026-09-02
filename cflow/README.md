@@ -97,7 +97,7 @@ are not interchangeable user surfaces.
 
 | Layer | Use it for | Primary public headers | State and execution boundary | Move to the next layer when |
 |---|---|---|---|---|
-| **simple Stream** | Linear typed container queries and transformations such as filter, map, slice, bounded distinct/sorted, and collection terminals | `stream.h`, `adapters.h`; TurboSTL users normally enter through `<turbostl/stream.h>` | The Stream owns a Surface Graph and borrows its Range/container. A synchronous terminal creates fresh execution state and returns an owned or transactionally committed result. | Topology itself becomes part of the problem: explicit branches, subgraphs, relations, lowering, optimization, or compiled-plan admission are required. |
+| **simple Stream** | Linear typed container queries and transformations such as filter, map, slice, bounded distinct/sorted, and collection terminals | `stream.h`, `adapters.h`; Rocida STL users normally enter through `<rocida/stl/stream.h>` | The Stream owns a Surface Graph and borrows its Range/container. A synchronous terminal creates fresh execution state and returns an owned or transactionally committed result. | Topology itself becomes part of the problem: explicit branches, subgraphs, relations, lowering, optimization, or compiled-plan admission are required. |
 | **advanced Graph** | Explicit typed topology, structured relations, normalization, optimization, verification, and eligible compiled plans | `graph.h`, `lower.h`, `opt.h`, `verify.h`, `plan.h` | Construction mutates the Surface Graph. Normalized/optimized Graphs and Plans are separate artifacts and are immutable while evaluated. A Graph does not own a Publisher, Scheduler, or live execution. | Input may wait or wake, downstream demand must be controlled, cancellation matters, or execution must outlive one synchronous call. |
 | **async Reactive** | Demand-driven or long-lived execution over array, Range, channel, timer, readiness, I/O, or custom Publishers | `reactive.h`, `publishers.h`, `scheduler.h`; `stream_execution.h` is the asynchronous collection facade for an existing Stream | A Subscription owns its moved Publisher and all live operator state, while borrowing its immutable Graph, Scheduler, Subscriber context, and backend tables. `request`, wake, cancel, and close are execution operations, not Graph mutations. | Events describe durable domain control state—hierarchy, parallel regions, history, eventless/completion transitions, timers, or run-to-completion microsteps. |
 | **control Statechart** | Event-driven control state and bounded Actor lifecycle | `statechart.h`, `statechart_instance.h`, `actor.h` | The immutable Statechart is the definition; one instance is the sole owner of active configuration, queues, history, timers, and first error. Its Executor serializes semantic mutation; Actor optionally adds identity, mailbox, and lifecycle. | Data produced by control logic must enter a dataflow explicitly through an application adapter. Do not turn Statechart states or transitions into generic Graph nodes. |
@@ -105,7 +105,7 @@ are not interchangeable user surfaces.
 The dependency and adapter direction is:
 
 ```text
-TurboSTL container / CMeta Range
+Rocida STL container / CMeta Range
         -> simple Stream -> Surface Graph
                               -> normalize / optimize -> advanced Graph
                                                         -> Plan evaluation
@@ -597,7 +597,7 @@ SCXML compilation, interpretation, data-model integration, conformance tests, an
 packaging are owned by [TurboSCXML](https://github.com/qigao/turbo-scxml).
 Applications include `<scxml/scxml.h>` and link `TurboSCXML::SCXML`; that
 package depends on `Rocida::CFlow` and the other required Rocida
-components. TurboUtils does not export an SCXML library or compatibility target.
+components. Rocida does not export an SCXML library or compatibility target.
 
 ## Bounded Actor lifecycle
 
@@ -1413,7 +1413,7 @@ socket.
 ## Descriptor-backed container streams — v47
 
 The Stream facade is CFlow's typed convenience layer for modern container
-operations. TurboSTL supplies container algorithms and Range/Collector
+operations. Rocida STL supplies container algorithms and Range/Collector
 adapters; CFlow supplies the Graph, operators, optimizer, execution, and error
 semantics. Its fluent spelling is intentionally familiar, but compatibility
 with Java or any other language's Stream contract is not a design goal.

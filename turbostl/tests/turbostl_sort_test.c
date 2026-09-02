@@ -1,4 +1,4 @@
-#include <turbostl/sort.h>
+#include <rocida/stl/sort.h>
 #include "tinytest.h"
 
 #include <stdint.h>
@@ -109,7 +109,7 @@ static owned_sort_item owned_sort_make(int key, int order) {
     return result;
 }
 
-spec("TurboSTL stable sort") {
+spec("Rocida STL stable sort") {
     it("sorts stably while preserving duplicate encounter order") {
         stable_item values[] = {{2, 0}, {1, 1}, {2, 2}, {1, 3}};
 

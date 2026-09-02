@@ -1,4 +1,4 @@
-#include <turbostl/stream.h>
+#include <rocida/stl/stream.h>
 
 #include "tinytest.hpp"
 
@@ -20,7 +20,7 @@ static_assert(std::is_same<decltype(&turbostl_stream_count),
                            turbostl_count_fn>::value,
               "the C++ facade must preserve the C count terminal signature");
 
-spec("TurboSTL C++ Stream facade") {
+spec("Rocida STL C++ Stream facade") {
     it("exposes the generic asynchronous collector macro") {
         turbostl_stream_execution_t execution = {};
         turbostl_stream_t stream = {};

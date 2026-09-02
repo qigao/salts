@@ -6,7 +6,7 @@ Struct(StreamStudent,
     (int, age)
 );
 
-#include <turbostl/stream.h>
+#include <rocida/stl/stream.h>
 
 #include "tinytest.h"
 
@@ -76,7 +76,7 @@ static bool stream_test_input(StreamIntList *input) {
     return true;
 }
 
-suite("TurboSTL CFlow Stream") {
+suite("Rocida STL CFlow Stream") {
     it("collects a typed pipeline asynchronously on a worker scheduler") {
         StreamIntList input = {0};
         StreamLongList output = {0};
@@ -312,7 +312,7 @@ suite("TurboSTL CFlow Stream") {
         StreamIntList_destroy(&input);
     }
 
-    it("reports the TurboSTL sorted hard bound structurally") {
+    it("reports the Rocida STL sorted hard bound structurally") {
         const int input_values[] = {3, 1, 2};
         StreamIntList input = {0};
         turbostl_stream_t pipeline = {0};
@@ -359,7 +359,7 @@ suite("TurboSTL CFlow Stream") {
         StreamIntList_destroy(&input);
     }
 
-    it("reports the TurboSTL distinct hard bound structurally") {
+    it("reports the Rocida STL distinct hard bound structurally") {
         const int input_values[] = {1, 2, 3};
         StreamIntList input = {0};
         turbostl_stream_t pipeline = {0};

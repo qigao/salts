@@ -85,7 +85,7 @@ suite("regex and contains benchmarks") {
     benchmark_bytes("libc 64KiB first-byte scan", 1000, SCAN_BYTES) {
       check_null(memchr(buf, 'z', SCAN_BYTES));
     }
-    benchmark_bytes("TurboUtils 64KiB first-byte scan", 1000, SCAN_BYTES) {
+    benchmark_bytes("Rocida 64KiB first-byte scan", 1000, SCAN_BYTES) {
       check_null(turbo_scan_char(buf, buf + SCAN_BYTES, 'z'));
     }
   }

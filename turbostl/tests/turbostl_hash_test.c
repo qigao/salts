@@ -1,4 +1,4 @@
-#include <turbostl.h>
+#include <rocida/stl.h>
 #include "tinytest.h"
 
 #include <stdlib.h>
@@ -98,7 +98,7 @@ static int raw_int_compare_multimap(const void *left, const void *right,
     return (lhs > rhs) - (lhs < rhs);
 }
 
-suite("TurboSTL hash ownership") {
+suite("Rocida STL hash ownership") {
     it("keeps HashSet independent with collision and duplicate semantics") {
         hash_set_t set = {0};
         int key;

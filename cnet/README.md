@@ -121,7 +121,7 @@ failures use portable Turbo status codes such as `TURBO_EADDRINUSE`.
 
 Immediate connect validation failure clears the output handle and emits no
 callback. Asynchronous failures emit exactly one `CNET_CONNECTION_FAILED` with
-a stable stage string. TurboUtils status codes use `cnet_error.status`; a raw
+a stable stage string. Rocida status codes use `cnet_error.status`; a raw
 platform status is normalized to `TURBO_EIO` and retained in
 `cnet_error.native_status`.
 

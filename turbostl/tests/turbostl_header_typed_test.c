@@ -1,4 +1,4 @@
-#include <turbostl/typed.h>
+#include <rocida/stl/typed.h>
 #include "tinytest.h"
 
 static vec_t make_int_vec(void) {
@@ -24,7 +24,7 @@ typed(Map, HeaderGenericMap, int, long);
 #error "typed.h must retain PR #53 associative expression initializers"
 #endif
 
-suite("TurboSTL typed public header") {
+suite("Rocida STL typed public header") {
     it("exposes self-describing declarations without generated type names") {
         Vec(int, vec);
         List(int, list);

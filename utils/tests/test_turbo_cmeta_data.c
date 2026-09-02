@@ -77,7 +77,7 @@ static const cmeta_data_desc vstr_string = {
     .buffer_ops = &turbo_vstr_cmeta_buffer_ops
 };
 
-spec("TurboUtils CMeta buffer adapters") {
+spec("Rocida CMeta buffer adapters") {
   it("copies exact owned tstr bytes including embedded NUL") {
     static const unsigned char input[] = {'a', 0, 'b'};
     const unsigned char *view = NULL;
@@ -160,7 +160,7 @@ spec("TurboUtils CMeta buffer adapters") {
   }
 }
 
-spec("TurboUtils fixed-width CMeta descriptors") {
+spec("Rocida fixed-width CMeta descriptors") {
   it("describes every signed width with exact storage ABI") {
     const cmeta_data_desc *const values[] = {
         &turbo_int8_cmeta_data, &turbo_int16_cmeta_data,
@@ -226,7 +226,7 @@ spec("TurboUtils fixed-width CMeta descriptors") {
   }
 }
 
-spec("TurboUtils UUID CMeta adapter") {
+spec("Rocida UUID CMeta adapter") {
   it("uses one canonical UUID metadata authority across translation units") {
     check_true(turbo_uuid_cmeta_data_from_peer() ==
                &turbo_uuid_cmeta_data);

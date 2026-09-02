@@ -1,9 +1,9 @@
-# TurboUtils Canonical Architecture
+# Rocida Canonical Architecture
 
 日期：2026-08-24  
 状态：Canonical repository architecture
 
-本文定义 TurboUtils 当前仓库级模块边界、public target ownership、依赖方向，以及与
+本文定义 Rocida 当前仓库级模块边界、public target ownership、依赖方向，以及与
 TurboParser 的集成边界。专项 API、错误语义、ABI 和阶段能力仍以公开头文件、测试及
 `docs/superpowers/specs/` 中的专项设计为事实源；本文不重复低层契约。
 
@@ -166,12 +166,12 @@ runtime target。Layer 2/3 共同属于 CFlow；Layer 1 是 CMeta 语义工具�
 
 `CSerde` 与 `CBind` 在客户视角中属于 `Cross-Cutting Capabilities`：它们横跨 parser、native
 value、Stream/Graph 等使用场景，但这不改变模块依赖事实。当前 target 仍然是
-`CBind -> CMeta + CSerde`，`CSerde` 不依赖 CFlow/CMeta，CBind 也不依赖 CFlow、TurboSTL、
+`CBind -> CMeta + CSerde`，`CSerde` 不依赖 CFlow/CMeta，CBind 也不依赖 CFlow、Rocida STL、
 Core 或 TurboParser。
 
 `tinytest/`、vendor、build tools 与 Lean/formal generation 属于测试、构建或验证平面，
 不进入上面的 runtime ownership 图。设备采集与串口子系统由 TurboParser 所有，
-TurboUtils 不再导出对应 targets。
+Rocida 不再导出对应 targets。
 
 ## 2. Single sources of truth
 
@@ -190,7 +190,7 @@ CMeta 不实现容器算法、不解析具体数据格式，也不拥有 CFlow r
 ### CSerde — canonical data-event truth
 
 `Rocida::CSerde` 定义 format-neutral canonical token、reader/writer contract 和 view
-lifetime 语义。它当前没有 TurboUtils public target 依赖，也不拥有 JSON/YAML/XML/CSV
+lifetime 语义。它当前没有 Rocida public target 依赖，也不拥有 JSON/YAML/XML/CSV
 parser。
 
 具体格式由 parser/codec adapter 将 native syntax/events 投影为 CSerde，而不是在 CSerde
@@ -203,7 +203,7 @@ semantic shape 在 canonical CSerde values 与 native C storage 之间绑定。
 
 因此 CBind 是 parser-independent kernel：数据库、IPC、自定义 binary source 或测试
 provider 只要实现 CSerde contract，也可以直接复用 CBind。CBind 不直接依赖
-TurboParser、TurboSTL、CFlow 或 Core。
+TurboParser、Rocida STL、CFlow 或 Core。
 
 ### CFlow — execution truth
 
@@ -215,12 +215,12 @@ CFlow 不拥有容器算法、不解析 serialization format，也不把 raw `cs
 任意 `filter/map` 的业务 `Stream<T>`。Parser/CBind/CFlow 的组合边界位于完整
 semantic/native value 上。
 
-### TurboSTL — container truth
+### Rocida STL — container truth
 
 `Rocida::STL` 是标准容器算法和实例 metadata 的事实源，并通过 CMeta container
 contract 暴露类型、Range、Collector 与 construction 能力。
 
-CFlow 本身不依赖 TurboSTL。`Rocida::STLStream` 是显式 INTERFACE composition target，
+CFlow 本身不依赖 Rocida STL。`Rocida::STLStream` 是显式 INTERFACE composition target，
 只把 `Rocida::STL + Rocida::CFlow` 组合给需要 container stream API 的使用者。
 
 ### Platform / Concurrency — execution substrate
@@ -317,9 +317,9 @@ CFlow Stream<T> / Graph / Machine
 关键禁止项：
 
 - `CBind -> TurboParser`；
-- `CBind -> TurboSTL`；
+- `CBind -> Rocida STL`；
 - `CBind -> CFlow`；
-- `CFlow -> TurboSTL`；
+- `CFlow -> Rocida STL`；
 - `CSerde -> concrete parser`；
 - 把 `Stream<cserde_token>` 暴露为可任意 `filter/map` 的业务 stream；
 - 在 DataBind/TBE/CFlow 中维护第二套通用 type/semantic/binding truth。
@@ -344,17 +344,17 @@ TurboParser。
 | `Rocida::STLStream` | `STL`, `CFlow` | INTERFACE composition | container stream integration |
 | `Rocida::Core` | `CMeta`, `Platform`, `Concurrency` | `STL`, `CFlow` plus utility vendors | general utilities |
 
-该表只描述 canonical TurboUtils public/runtime target graph；具体第三方 vendor 与 build/test
+该表只描述 canonical Rocida public/runtime target graph；具体第三方 vendor 与 build/test
 target 不属于此表的 ownership 语义。
 
 ## 6. Architectural invariants
 
 1. **依赖只向基础事实源收敛。** CMeta/CSerde 不因上层使用场景反向依赖 CBind、CFlow、
-   TurboSTL 或 TurboParser。
+   Rocida STL 或 TurboParser。
 2. **同一语义只保留一个 truth。** 类型与 semantic shape 属于 CMeta；canonical events
    属于 CSerde；native binding 属于 CBind；execution 属于 CFlow；container algorithms
-   属于 TurboSTL。
-3. **repo ownership 与 link dependency 分离。** CBind/CSerde 属于 TurboUtils；TurboParser
+   属于 Rocida STL。
+3. **repo ownership 与 link dependency 分离。** CBind/CSerde 属于 Rocida；TurboParser
    不消费或重新导出它们，具体格式组合通过独立 adapter target 显式表达。
 4. **组合能力位于 adapter/composition layer。** Parser + CBind、CBind + CFlow、STL + CFlow
    不通过反向依赖污染底层 kernel。
@@ -372,7 +372,7 @@ target 不属于此表的 ownership 语义。
 以当前公开接口、测试和本文的 repo-level ownership 为准：
 
 - `cflow/README.md` — CFlow public surface、lower/IR/runtime/Machine；
-- `docs/superpowers/specs/2026-08-21-container-cmeta-cflow-design.md` — TurboSTL/CMeta/CFlow 分层来源；
+- `docs/superpowers/specs/2026-08-21-container-cmeta-cflow-design.md` — Rocida STL/CMeta/CFlow 分层来源；
 - `docs/superpowers/specs/2026-08-22-cmeta-cflow-calculus-v1-design.md` — CMeta/CFlow calculus 与 operator policy；
 - `docs/superpowers/specs/2026-08-22-cflow-execution-foundation-design.md` — execution substrate；
 - `docs/superpowers/specs/2026-08-23-serialization-data-binding-design.md` — CMeta/CSerde/CBind/TurboParser data architecture；

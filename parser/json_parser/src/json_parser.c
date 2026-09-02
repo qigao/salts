@@ -18,7 +18,7 @@
 #include <string.h>
 #include <turbo/thread.h>
 #include <turbo_str.h>
-#include <turbostl/hash_map.h>
+#include <rocida/stl/hash_map.h>
 
 #define MAX_ERROR_LEN 512
 #define JSON_ARRAY_INDEX_THRESHOLD 8U

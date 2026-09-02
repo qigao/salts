@@ -3,8 +3,8 @@
  * @brief Bounded sharded executor for cooperative coroutines.
  */
 
-#ifndef TURBO_UTILS_CORO_EXECUTOR_H
-#define TURBO_UTILS_CORO_EXECUTOR_H
+#ifndef ROCIDA_CORO_EXECUTOR_H
+#define ROCIDA_CORO_EXECUTOR_H
 
 #include "turbo_coro_pool.h"
 
@@ -278,4 +278,4 @@ TURBO_COROUTINE_C_API void turbo_coro_executor_get_stats(const turbo_coro_execut
 }
 #endif
 
-#endif /* TURBO_UTILS_CORO_EXECUTOR_H */
+#endif /* ROCIDA_CORO_EXECUTOR_H */

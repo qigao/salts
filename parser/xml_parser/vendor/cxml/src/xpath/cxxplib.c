@@ -617,7 +617,7 @@ void __cxml_xp_matches_fn(cxml_xp_functioncall *node,
 {
     /* matches(string, pattern) -> boolean
      * Dialect extension: two arguments, no flags; the pattern is evaluated by
-     * the bounded TurboUtils re engine (re.h), not XSD regex. Invalid or
+     * the bounded Rocida re engine (re.h), not XSD regex. Invalid or
      * over-budget patterns evaluate to false. */
     cxml_for_each(arg, &node->args){
         cxml_xp_visit(arg);

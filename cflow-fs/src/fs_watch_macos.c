@@ -185,7 +185,7 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
         return TURBO_EIO;
     }
     backend->queue = dispatch_queue_create(
-        "org.turboutils.cflow.fs-watch", DISPATCH_QUEUE_SERIAL);
+        "org.rocida.cflow.fs-watch", DISPATCH_QUEUE_SERIAL);
     if (backend->queue == NULL) {
         FSEventStreamRelease(backend->stream);
         free(backend->root);

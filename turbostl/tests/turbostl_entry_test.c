@@ -12,7 +12,7 @@ typedef struct owned_entry_value {
     , (O, owned_entry_value, cmeta_type_owned_entry_value, CMETA_T_OBJECT, \
        cmeta_traits_owned_entry_value)
 
-#include <turbostl/typed.h>
+#include <rocida/stl/typed.h>
 #include "tinytest.h"
 
 static size_t owned_entry_live;
@@ -109,7 +109,7 @@ const cmeta_type_desc cmeta_type_owned_entry_value_ptr = {
     .identity = NULL
 };
 
-spec("TurboSTL composed entry descriptors") {
+spec("Rocida STL composed entry descriptors") {
     it("constructs managed values returned by a generated List Range") {
         List(owned_entry_value, source);
         owned_entry_value input = owned_entry_make(7);

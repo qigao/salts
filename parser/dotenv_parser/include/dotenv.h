@@ -1,5 +1,5 @@
-#ifndef turboutils_DOTENV_H
-#define turboutils_DOTENV_H
+#ifndef ROCIDA_DOTENV_H
+#define ROCIDA_DOTENV_H
 
 #include <stdbool.h>
 
@@ -43,4 +43,4 @@ int dotenv_sync_environment(const char *name);
 }
 #endif
 
-#endif // turboutils_DOTENV_H
+#endif // ROCIDA_DOTENV_H

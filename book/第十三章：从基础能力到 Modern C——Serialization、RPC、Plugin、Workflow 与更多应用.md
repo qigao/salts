@@ -203,7 +203,7 @@ Struct Metadata
     可以被 Serializer / Binder 复用
 ```
 
-当前 TurboUtils 已经有一条更具体的实现链：
+当前 Rocida 已经有一条更具体的实现链：
 
 ```text
 Format Adapter
@@ -1776,7 +1776,7 @@ CFlow
 因此 CNet 不应该让 NativeIO 负责 DNS、URI、连接状态或协议握手；也不应该把
 TCP、UDP、Pipe 的 transport 语义塞进 CFlow Graph。
 
-当前 CNet 随 TurboUtils 正常构建，source-tree target 为 `turbo_cnet`，安装包导出
+当前 CNet 随 Rocida 正常构建，source-tree target 为 `turbo_cnet`，安装包导出
 `Rocida::CNet` 与 `<cnet/cnet.h>`。书中可以讨论已经实现并由测试覆盖的 base API 与
 TLS transport，但不能把未来的 WebSocket 或 KCP 写成已发布事实。
 

@@ -1,5 +1,5 @@
 /*
- * TurboUtils Disruptor worker-pool protocol model.
+ * Rocida Disruptor worker-pool protocol model.
  *
  * Scope:
  *   - bounded publisher claim against the completed cursor

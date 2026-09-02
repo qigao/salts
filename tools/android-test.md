@@ -36,7 +36,7 @@ adb devices -l
 ```text
 Preset:           android-arm64-v8a-release-win
 Build directory: build/android-arm64-v8a-release
-Remote directory:/data/local/tmp/turbo-utils-tests
+Remote directory:/data/local/tmp/rocida-tests
 LLDB port:        5039
 ```
 

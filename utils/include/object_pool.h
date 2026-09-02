@@ -1,5 +1,5 @@
-#ifndef turboutils_OBJECT_POOL_H
-#define turboutils_OBJECT_POOL_H
+#ifndef ROCIDA_OBJECT_POOL_H
+#define ROCIDA_OBJECT_POOL_H
 
 #include "platform.h"
 
@@ -91,4 +91,4 @@ TURBO_C_API void object_pool_reset_stats(object_pool_t *pool);
 }
 #endif
 
-#endif /* turboutils_OBJECT_POOL_H */
+#endif /* ROCIDA_OBJECT_POOL_H */

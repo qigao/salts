@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-Builds, deploys, runs, or debugs one TurboUtils test on an Android device.
+Builds, deploys, runs, or debugs one Rocida test on an Android device.
 
 .DESCRIPTION
 Uses the repository's Android CMake preset to build one EXCLUDE_FROM_ALL test
@@ -82,7 +82,7 @@ param(
     [string]$BuildDirectory,
 
     [ValidatePattern('^/data/local/tmp/[A-Za-z0-9._/-]+$')]
-    [string]$RemoteDirectory = '/data/local/tmp/turbo-utils-tests',
+    [string]$RemoteDirectory = '/data/local/tmp/rocida-tests',
 
     [string]$Filter,
     [switch]$Tap,

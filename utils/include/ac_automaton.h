@@ -1,5 +1,5 @@
-#ifndef TURBO_UTILS_AC_AUTOMATON_H
-#define TURBO_UTILS_AC_AUTOMATON_H
+#ifndef ROCIDA_AC_AUTOMATON_H
+#define ROCIDA_AC_AUTOMATON_H
 
 #include "platform.h"
 #include "turbo_vstr.h"
@@ -116,4 +116,4 @@ TURBO_C_API uint32_t ac_utf8_automaton_pattern_count(const ac_utf8_automaton_t *
 }
 #endif
 
-#endif /* TURBO_UTILS_AC_AUTOMATON_H */
+#endif /* ROCIDA_AC_AUTOMATON_H */

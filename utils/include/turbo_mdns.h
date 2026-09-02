@@ -1,5 +1,5 @@
-#ifndef turboutils_MDNS_H
-#define turboutils_MDNS_H
+#ifndef ROCIDA_MDNS_H
+#define ROCIDA_MDNS_H
 
 #include <platform.h>
 

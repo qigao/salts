@@ -1,5 +1,5 @@
-#ifndef turboutils_BASE64_UTILS_H
-#define turboutils_BASE64_UTILS_H
+#ifndef ROCIDA_BASE64_UTILS_H
+#define ROCIDA_BASE64_UTILS_H
 
 #include <platform.h>
 #include <stdbool.h>
@@ -65,4 +65,4 @@ TURBO_C_API int tn_base64_decode(const char *input, uint8_t **output, size_t *ou
 }
 #endif
 
-#endif /* turboutils_BASE64_UTILS_H */
+#endif /* ROCIDA_BASE64_UTILS_H */

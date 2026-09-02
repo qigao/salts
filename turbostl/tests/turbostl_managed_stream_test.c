@@ -12,7 +12,7 @@ typedef struct managed_stream_value {
        CMETA_T_OBJECT, cmeta_traits_managed_stream_value)
 #define CMETA_CALLABLE_TYPE_LIST CMETA_BUILTIN_TYPE_LIST
 
-#include <turbostl/stream.h>
+#include <rocida/stl/stream.h>
 #include "tinytest.h"
 
 static size_t managed_stream_copies;
@@ -121,7 +121,7 @@ const cmeta_type_desc cmeta_type_managed_stream_value_ptr = {
 
 typed(List, ManagedStreamList, managed_stream_value);
 
-spec("TurboSTL managed CFlow Stream") {
+spec("Rocida STL managed CFlow Stream") {
     it("counts managed values without retaining terminal copies") {
         managed_stream_value values[] = {
             managed_stream_make(4), managed_stream_make(12)

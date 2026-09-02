@@ -1,6 +1,6 @@
 /**
  * @file turbo_fs.c
- * @brief TurboUtils File System - Synchronous cross-platform I/O, zero dependencies.
+ * @brief Rocida File System - Synchronous cross-platform I/O, zero dependencies.
  *
  * "Simple, direct, no bullshit."
  * No libuv. Just standard POSIX / Win32 syscalls.

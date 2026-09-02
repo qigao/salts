@@ -6,7 +6,7 @@
 #include <string.h>
 
 #ifndef TURBO_API
-  #error "re.h must use the TurboUtils export contract"
+  #error "re.h must use the Rocida export contract"
 #endif
 
 #ifdef RE_API

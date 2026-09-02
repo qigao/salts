@@ -60,13 +60,9 @@ install(
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(
-  DIRECTORY include/turbostl
+  DIRECTORY include/rocida
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
-
-install(
-  FILES include/turbostl.h
-  DESTINATION include)
 
 if(BUILD_TESTS)
   add_subdirectory(tests)

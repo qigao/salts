@@ -38,10 +38,11 @@ foreach(required_package_file IN ITEMS RocidaConfig.cmake RocidaTargets.cmake)
             "Rocida install is missing ${required_package_file}")
   endif()
 endforeach()
-if(EXISTS "${install_prefix}/lib/cmake/TurboUtils")
-  message(FATAL_ERROR "Rocida install unexpectedly contains TurboUtils package files")
-endif()
-
+foreach(required_stl_header IN ITEMS stl.h stl/typed.h stl/stream.h)
+  if(NOT EXISTS "${install_prefix}/include/rocida/${required_stl_header}")
+    message(FATAL_ERROR "Rocida install is missing ${required_stl_header}")
+  endif()
+endforeach()
 execute_process(
   COMMAND "${CMAKE_COMMAND_PATH}"
           -S "${SOURCE_DIR}/tests/install_consumer"

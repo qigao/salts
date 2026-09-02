@@ -1,8 +1,8 @@
-#include <turbostl/typed.h>
+#include <rocida/stl/typed.h>
 #include <cmeta/data.h>
 #include "tinytest.h"
 
-spec("TurboSTL semantic projection") {
+spec("Rocida STL semantic projection") {
   it("projects sequence-like containers without duplicating element type") {
     Vec(int, vec);
     Deque(int, deque);

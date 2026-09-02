@@ -3,11 +3,11 @@
 #include "tinytest.h"
 
 #ifdef TURBO_BUILD_SHARED
-#error "TURBO_BUILD_SHARED must not be required by TurboUtils consumers"
+#error "TURBO_BUILD_SHARED must not be required by Rocida consumers"
 #endif
 
 #ifdef TURBO_USE_SHARED
-#error "TURBO_USE_SHARED must not leak to TurboUtils consumers"
+#error "TURBO_USE_SHARED must not leak to Rocida consumers"
 #endif
 
 #ifdef turbo_utils_EXPORTS

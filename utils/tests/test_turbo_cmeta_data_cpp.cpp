@@ -42,7 +42,7 @@ turbo_uuid_cmeta_shape_from_peer(void);
 extern "C" const cmeta_data_buffer_ops *
 turbo_uuid_cmeta_buffer_ops_from_peer(void);
 
-spec("TurboUtils CMeta buffer adapter C++ surface") {
+spec("Rocida CMeta buffer adapter C++ surface") {
   it("exposes semantically distinct tstr and vstr storage types") {
     check_false(cmeta_type_equal(&turbo_tstr_cmeta_type,
                                  &turbo_vstr_cmeta_type));
@@ -53,7 +53,7 @@ spec("TurboUtils CMeta buffer adapter C++ surface") {
   }
 }
 
-spec("TurboUtils fixed-width and UUID CMeta C++ surface") {
+spec("Rocida fixed-width and UUID CMeta C++ surface") {
   it("compares header-local descriptors semantically") {
     cmeta_type_desc equivalent = turbo_int64_cmeta_type;
 

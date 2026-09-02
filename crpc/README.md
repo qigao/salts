@@ -10,7 +10,7 @@ CMeta method semantics + CSerde params/result
     -> NativeIO terminal completion
 ```
 
-CRPC 随 TurboUtils 正常构建，source-tree target 是 `turbo_crpc`；安装后通过
+CRPC 随 Rocida 正常构建，source-tree target 是 `turbo_crpc`；安装后通过
 `Rocida::CRPC` 与 `<crpc/crpc.h>` 使用。它公开的是纯 C API，不依赖 experimental
 feature 或编译开关。
 
@@ -72,7 +72,7 @@ RPC `deadline_ms` 从 call 开始计时，并约束编码、HTTP 和网络等待
 timeout 仍是独立 transport deadline。RPC deadline 到期后只请求下层取消，payload、parser、
 callback state 和 handle 必须保留到 CHTTP/CNet/NativeIO 给出 terminal result 后才能回收。
 
-`crpc_error` 保留四类上下文：TurboUtils status、native status、HTTP status 与 stable stage。
+`crpc_error` 保留四类上下文：Rocida status、native status、HTTP status 与 stable stage。
 合法的 JSON-RPC error object 以 `CRPC_RESPONSE_REMOTE_ERROR` 返回，不伪装成 transport failure。
 metadata 不能覆盖 CRPC 自己拥有的 Content-Type、Accept、Host、Content-Length 或 Connection。
 
