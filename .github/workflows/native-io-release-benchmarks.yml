@@ -114,6 +114,60 @@ jobs:
         shell: powershell
         run: choco install re2c -y --no-progress
 
+      - name: Setup Windows build environment
+        if: matrix.family == 'windows'
+        id: windows-env
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLATION_ROOT)) {
+            throw "VCPKG_INSTALLATION_ROOT is unavailable"
+          }
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          $vcpkgToolchain = Join-Path $vcpkgRoot "scripts\buildsystems\vcpkg.cmake"
+          if (-not (Test-Path -LiteralPath $vcpkgToolchain -PathType Leaf)) {
+            throw "vcpkg toolchain is unavailable: $vcpkgToolchain"
+          }
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+            throw "vswhere is unavailable: $vswhere"
+          }
+          $vsInstall = & $vswhere -latest -products '*' `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) {
+            throw "Visual Studio with the x64 C++ toolchain was not found"
+          }
+          $vsDevCmd = Join-Path $vsInstall "Common7\Tools\VsDevCmd.bat"
+          if (-not (Test-Path -LiteralPath $vsDevCmd -PathType Leaf)) {
+            throw "VsDevCmd.bat is unavailable: $vsDevCmd"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ImageOS) -or
+              [string]::IsNullOrWhiteSpace($env:ImageVersion)) {
+            throw "GitHub runner image identity is unavailable"
+          }
+
+          $binaryCache = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg-binary-cache"
+          New-Item -ItemType Directory -Force -Path $binaryCache | Out-Null
+          "PROJECT_ROOT=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
+          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_SOURCES=clear;files,$binaryCache,readwrite" >> $env:GITHUB_ENV
+          "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Restore Windows vcpkg binary cache
+        if: matrix.family == 'windows'
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-x64-windows-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-x64-windows-
+            vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Setup macOS dependencies
         if: matrix.family == 'mac'
         shell: bash
@@ -148,23 +202,21 @@ jobs:
               cnet_api_test cnet_header_cpp_test cnet_tls_test cnet_benchmark_stats_test \
               concurrency_deadline_queue_test
 
-      - name: Configure and build Windows Release
+      - name: Configure Windows Release
         if: matrix.family == 'windows'
         shell: cmd
         run: |
-          set "PROJECT_ROOT=%GITHUB_WORKSPACE%"
-          if defined VCPKG_INSTALLATION_ROOT set "VCPKG_ROOT=%VCPKG_INSTALLATION_ROOT%"
-          if not defined VCPKG_ROOT exit /b 1
-
-          for /f "usebackq tokens=*" %%I in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%I"
-          if not defined VSINSTALL exit /b 1
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
-
           cmake --preset "${{ matrix.configure_preset }}" -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
+
+      - name: Build Windows Release
+        if: matrix.family == 'windows'
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test cnet_io_benchmark cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_header_cpp_test cnet_tls_test cnet_benchmark_stats_test concurrency_deadline_queue_test
-          if errorlevel 1 exit /b 1
 
       - name: Configure and build macOS Release
         if: matrix.family == 'mac'

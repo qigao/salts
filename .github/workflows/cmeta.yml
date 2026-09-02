@@ -261,25 +261,89 @@ jobs:
         shell: powershell
         run: choco install re2c -y --no-progress
 
-      - name: Configure, build, and test
+      - name: Setup Windows build environment
+        id: windows-env
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLATION_ROOT)) {
+            throw "VCPKG_INSTALLATION_ROOT is unavailable"
+          }
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          $vcpkgToolchain = Join-Path $vcpkgRoot "scripts\buildsystems\vcpkg.cmake"
+          if (-not (Test-Path -LiteralPath $vcpkgToolchain -PathType Leaf)) {
+            throw "vcpkg toolchain is unavailable: $vcpkgToolchain"
+          }
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+            throw "vswhere is unavailable: $vswhere"
+          }
+          $vsInstall = & $vswhere -latest -products '*' `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath | Select-Object -First 1
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) {
+            throw "Visual Studio with the x64 C++ toolchain was not found"
+          }
+          $vsDevCmd = Join-Path $vsInstall "Common7\Tools\VsDevCmd.bat"
+          if (-not (Test-Path -LiteralPath $vsDevCmd -PathType Leaf)) {
+            throw "VsDevCmd.bat is unavailable: $vsDevCmd"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ImageOS) -or
+              [string]::IsNullOrWhiteSpace($env:ImageVersion)) {
+            throw "GitHub runner image identity is unavailable"
+          }
+
+          $binaryCache = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg-binary-cache"
+          New-Item -ItemType Directory -Force -Path $binaryCache | Out-Null
+          "PROJECT_ROOT=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
+          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_SOURCES=clear;files,$binaryCache,readwrite" >> $env:GITHUB_ENV
+          "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-x64-windows-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-x64-windows-
+            vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Configure
         shell: cmd
         run: |
-          set "PROJECT_ROOT=%GITHUB_WORKSPACE%"
-          if defined VCPKG_INSTALLATION_ROOT set "VCPKG_ROOT=%VCPKG_INSTALLATION_ROOT%"
-          if not defined VCPKG_ROOT exit /b 1
-
-          for /f "usebackq tokens=*" %%I in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%I"
-          if not defined VSINSTALL exit /b 1
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
-
           cmake --preset win-release-user
+
+      - name: Build
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user
+
+      - name: Test execution foundation and typed layers
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           ctest --preset win-release-user -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cbind_|cflow_|turbostl_|test_execution_compat$|test_turbo_process$)" --output-on-failure
+
+      - name: Install release profile
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           cmake --build --preset install-win-release-user
+
+      - name: Verify installed package targets
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user --target verify_installed_package
-          if errorlevel 1 exit /b 1
