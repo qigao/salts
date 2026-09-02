@@ -101,20 +101,71 @@ int main(void) {
 
 #elif defined(CONSUME_CNET)
   #include <cnet/cnet.h>
+  #include <cnet/websocket.h>
+  #include <string.h>
+
+typedef struct installed_websocket_probe {
+  uint8_t frame[CNET_WEBSOCKET_MAX_HEADER_BYTES + CNET_WEBSOCKET_MIN_FRAME_BYTES];
+  size_t frame_size;
+  size_t event_count;
+} installed_websocket_probe;
+
+static int installed_websocket_write(void *user, const uint8_t *data, size_t size) {
+  installed_websocket_probe *probe = (installed_websocket_probe *)user;
+  if (probe == NULL || data == NULL || size > sizeof(probe->frame)) return TURBO_ENOSPC;
+  memcpy(probe->frame, data, size);
+  probe->frame_size = size;
+  return TURBO_OK;
+}
+
+static void installed_websocket_event(void *user, cnet_websocket *websocket,
+                                      const cnet_websocket_event *event) {
+  installed_websocket_probe *probe = (installed_websocket_probe *)user;
+  (void)websocket;
+  if (probe != NULL && event != NULL) ++probe->event_count;
+}
 
 int main(void) {
+  static const uint8_t inbound_text[] = {0x81u, 0x01u, 'x'};
   cnet_client client = {0};
   cnet_listener listener = {0};
   cnet_tls_server tls_server = {0};
   cnet_tls_client_config tls_client_config = {.size = sizeof(tls_client_config)};
   cnet_tls_server_config tls_server_config = {.size = sizeof(tls_server_config)};
   cnet_connection connection = {0};
-  return client.impl == NULL && listener.impl == NULL && tls_server.impl == NULL &&
-                 tls_client_config.size == sizeof(tls_client_config) &&
-                 tls_server_config.size == sizeof(tls_server_config) && connection.slot == 0u &&
-                 connection.generation == 0u && CNET_TLS_MIN_IO_BUFFER_BYTES >= 16384
-             ? 0
-             : 1;
+  cnet_websocket websocket = {0};
+  installed_websocket_probe probe = {0};
+  cnet_websocket_config websocket_config = {
+      .size = sizeof(websocket_config),
+      .role = CNET_WEBSOCKET_CLIENT,
+      .max_frame_bytes = CNET_WEBSOCKET_MIN_FRAME_BYTES,
+      .max_message_bytes = CNET_WEBSOCKET_MIN_FRAME_BYTES,
+      .max_buffered_input_bytes = CNET_WEBSOCKET_MAX_HEADER_BYTES + CNET_WEBSOCKET_MIN_FRAME_BYTES,
+      .write = installed_websocket_write,
+      .on_event = installed_websocket_event,
+      .user = &probe,
+  };
+  int status;
+
+  if (client.impl != NULL || listener.impl != NULL || tls_server.impl != NULL ||
+      tls_client_config.size != sizeof(tls_client_config) ||
+      tls_server_config.size != sizeof(tls_server_config) || connection.slot != 0u ||
+      connection.generation != 0u || websocket.impl != NULL ||
+      CNET_WEBSOCKET_MAX_CONTROL_BYTES != 125 || CNET_TLS_MIN_IO_BUFFER_BYTES < 16384)
+    return 1;
+  status = cnet_websocket_init(&websocket, &websocket_config);
+  if (status != TURBO_OK) return 2;
+  status = cnet_websocket_send_text(&websocket, "x", 1u);
+  if (status != TURBO_OK || probe.frame_size == 0u) {
+    (void)cnet_websocket_destroy(&websocket);
+    return 3;
+  }
+  status = cnet_websocket_feed(&websocket, inbound_text, sizeof(inbound_text));
+  if (status != TURBO_OK || probe.event_count != 1u) {
+    (void)cnet_websocket_destroy(&websocket);
+    return 4;
+  }
+  return cnet_websocket_destroy(&websocket) == TURBO_OK ? 0 : 5;
 }
 
 #elif defined(CONSUME_CHTTP)

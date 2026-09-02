@@ -12,6 +12,18 @@ typedef enum {
   URI_HOST_IPVFUTURE
 } uri_host_type_t;
 
+typedef enum {
+  URI_COMPONENT_PORT = 1u << 0u,
+  URI_COMPONENT_USERINFO = 1u << 1u,
+  URI_COMPONENT_QUERY = 1u << 2u,
+  URI_COMPONENT_FRAGMENT = 1u << 3u
+} uri_component_flag_t;
+
+typedef enum {
+  URI_OVERFLOW_PORT = 1u << 0u,
+  URI_OVERFLOW_COMPONENT = 1u << 1u
+} uri_overflow_flag_t;
+
 // Simplified URL structure - all stack allocated, no malloc!
 typedef struct uri_s {
   char scheme[32];
@@ -20,9 +32,11 @@ typedef struct uri_s {
   char path[1024];
   char query[1024];
   char fragment[256];
-  int port; // Use int to preserve original value (even if invalid)
+  int port; // INT_MAX when the syntactically valid numeric value overflows.
   uint8_t host_type;
   uint8_t valid;
+  uint8_t component_flags; // uri_component_flag_t bits; preserves empty components.
+  uint8_t overflow_flags;  // uri_overflow_flag_t bits; the corresponding value is bounded.
 } uri_t;
 
 /**
