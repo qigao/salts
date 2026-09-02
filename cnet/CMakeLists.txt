@@ -17,7 +17,9 @@ add_library(${TARGET_NAME} STATIC
   src/cnet_tls.c
   src/cnet_transport.c
   src/cnet_transport_pipe.c
-  src/cnet_uri.c)
+  src/cnet_uri.c
+  src/cnet_websocket.c
+  $<TARGET_OBJECTS:turbo_wsparser>)
 cmake_config_target(${TARGET_NAME}
   ALIAS TurboUtils::CNet
   FOLDER "cnet"
@@ -28,11 +30,11 @@ target_include_directories(
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/tools/wsparser)
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC TurboUtils::NativeIO TurboUtils::Concurrency
-  PRIVATE c-ares::cares OpenSSL::SSL OpenSSL::Crypto
+  PRIVATE TurboUtils::UriParser TurboUtils::Platform c-ares::cares OpenSSL::SSL OpenSSL::Crypto
           $<$<PLATFORM_ID:Windows>:crypt32>)
 
 install(TARGETS ${TARGET_NAME} EXPORT TurboUtilsTargets)

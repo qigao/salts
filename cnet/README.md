@@ -7,7 +7,8 @@ threadless operating-system I/O backend; CFlow Actor and Reactive code continue
 to depend on NativeIO directly.
 
 CNet is built unconditionally. Its source-tree target is `turbo_cnet`; installed
-consumers link `TurboUtils::CNet` and include `<cnet/cnet.h>`.
+consumers link `TurboUtils::CNet` and include `<cnet/cnet.h>`. The independent
+WebSocket session API is declared by `<cnet/websocket.h>`.
 
 ## Base API
 
@@ -26,7 +27,84 @@ Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 TCP and Pipe deliver byte chunks. Connected UDP delivers one datagram per
 receive callback. A receive view is borrowed only until its callback returns.
 TLS delivers verified encrypted byte streams through the same send/receive
-contract. WebSocket and KCP are not exposed by this base header.
+contract. WebSocket and KCP are not exposed by this base header. CNet parses
+TCP, TLS, and UDP URIs through TurboUtils UriParser and then applies
+transport-specific constraints: network URIs require an explicit port and reject
+userinfo, path, query, and fragment components instead of accepting truncated or
+ambiguous input. Pipe is a scheme-specific IPC endpoint rather than a network
+authority, so its bounded name after `pipe://` is preserved byte-for-byte.
+
+## WebSocket session engine
+
+`<cnet/websocket.h>` provides a transport-independent RFC 6455 session after a
+successful HTTP Upgrade. It handles text/binary messages, fragmentation,
+ping/pong, close handshakes, client masking, strict UTF-8 validation, and role
+masking rules. Input chunks may split or coalesce frames; event payloads are
+borrowed only until their callback returns.
+
+Initialization allocates fixed-capacity input, reassembled-message, and
+single-frame output storage. `max_frame_bytes`, `max_message_bytes`, and
+`max_buffered_input_bytes` are mandatory. A write callback returning
+`TURBO_EBUSY` retains exactly one complete frame; the owner calls
+`cnet_websocket_flush()` before feeding or sending more data. Other write errors
+move the session to `CNET_WEBSOCKET_FAILED` and are available through
+`cnet_websocket_last_error()`. A peer Close commits `CLOSING` before its event
+callback and becomes `CLOSED` only after any retained echo Close is transferred.
+
+The engine owns protocol state but performs no socket I/O and creates no thread.
+It is single-owner and can therefore be driven by a CNet callback, Executor,
+Actor mailbox, or another ordered byte-stream adapter. CHTTP remains responsible
+for HTTP/1.1 Upgrade routing/header validation and future HTTP/2 extended
+CONNECT. `cnet_connect()` does not currently accept `ws://` or `wss://`, and
+CHTTP does not yet expose WebSocket routes.
+
+The following complete adapter example sends one server-side text frame into a
+bounded transport sink:
+
+```c
+#include <cnet/websocket.h>
+
+#include <string.h>
+
+typedef struct frame_sink {
+  unsigned char bytes[270];
+  size_t size;
+} frame_sink;
+
+static int write_frame(void *user, const uint8_t *data, size_t size) {
+  frame_sink *sink = (frame_sink *)user;
+  if (size > sizeof(sink->bytes)) return TURBO_EMSGSIZE;
+  memcpy(sink->bytes, data, size);
+  sink->size = size;
+  return TURBO_OK;
+}
+
+static void on_event(void *user, cnet_websocket *websocket,
+                     const cnet_websocket_event *event) {
+  (void)user;
+  (void)websocket;
+  (void)event;
+}
+
+int main(void) {
+  cnet_websocket websocket = {0};
+  frame_sink sink = {0};
+  cnet_websocket_config config = {
+      .size = sizeof(config),
+      .role = CNET_WEBSOCKET_SERVER,
+      .max_frame_bytes = 256,
+      .max_message_bytes = 512,
+      .max_buffered_input_bytes = 1024,
+      .write = write_frame,
+      .on_event = on_event,
+      .user = &sink,
+  };
+  int status = cnet_websocket_init(&websocket, &config);
+  if (status == TURBO_OK) status = cnet_websocket_send_text(&websocket, "hello", 5);
+  (void)cnet_websocket_destroy(&websocket);
+  return status == TURBO_OK && sink.size != 0 ? 0 : 1;
+}
+```
 
 ## TLS transport
 

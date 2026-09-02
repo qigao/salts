@@ -11,7 +11,6 @@ add_subdirectory(ini_parser)
 add_subdirectory(json_parser)
 add_subdirectory(xml_parser)
 add_subdirectory(csv_parser)
-add_subdirectory(uri_parser)
 add_subdirectory(tlv_parser)
 add_subdirectory(ltv_parser)
 add_subdirectory(modbus_parser)
@@ -41,6 +40,7 @@ set(TURBOUTILS_PARSER_TARGETS
   toml_parser
   datetime_parser
   cyaml_json_adapter)
+set(TURBOUTILS_PARSER_TARGETS ${TURBOUTILS_PARSER_TARGETS} PARENT_SCOPE)
 
 install(
   TARGETS ${TURBOUTILS_PARSER_TARGETS}

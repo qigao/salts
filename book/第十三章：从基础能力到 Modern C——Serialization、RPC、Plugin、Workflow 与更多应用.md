@@ -1777,14 +1777,19 @@ CFlow
 TCP、UDP、Pipe 的 transport 语义塞进 CFlow Graph。
 
 当前 CNet 随 TurboUtils 正常构建，source-tree target 为 `turbo_cnet`，安装包导出
-`TurboUtils::CNet` 与 `<cnet/cnet.h>`。书中可以讨论已经实现并由测试覆盖的 base API 与
-TLS transport，但不能把未来的 WebSocket 或 KCP 写成已发布事实。
+`TurboUtils::CNet`、`<cnet/cnet.h>` 与独立的 `<cnet/websocket.h>`。TCP/TLS/UDP endpoint URI
+交给 TurboUtils UriParser 分析，再由 transport adapter 严格约束 scheme、host 与
+port；Pipe 是专用 IPC endpoint，因此有界保留 `pipe://` 后的原始名称，避免将方括号或冒号
+误解为 network authority 而改变实际连接目标。书中可以讨论已经由测试覆盖的 base API、TLS transport 和 WebSocket
+session engine，但不能把尚未实现的 WS/WSS HTTP endpoint 或 KCP 写成已发布事实。
 
 KCP 与 WebSocket 的归属也应遵守这条边界。NativeIO 只提供 UDP datagram、TCP byte stream、
 timer、cancel 与 terminal completion；KCP 的 conversation/window/retransmit/ordered message，
 以及 WebSocket 的 frame/fragment/ping-pong/close handshake 都是连接协议状态，应由 CNet owner
-独占。帧与 opening-handshake 的语法解析复用仓库 `tools/wsparser`，CNet/CHTTP 在其上补有界
-message/session ownership，不再引入另一套 WS parser。服务端 HTTP Upgrade 的路由与 header 校验由 CHTTP 完成，成功后再把 stream 所有权一次性
+独占。当前 CNet 已复用仓库 `tools/wsparser` 的 frame parser，并在其上实现固定容量的
+message/session ownership、UTF-8、mask、fragment、control frame 与 close 状态机。opening
+handshake 仍由 CHTTP 的 llhttp request parser 负责，不在 CNet 中复制 HTTP parser。服务端
+HTTP Upgrade 的路由与 header 校验由 CHTTP 完成，成功后再把 stream 所有权一次性
 移交给 CNet WebSocket session。未来 HTTP/2 的 RFC 8441 extended CONNECT 也由 CHTTP 校验，
 再把单个 H2 stream 适配给同一套 CNet WebSocket engine；H1/H2 不应复制两套 frame/session
 状态机。把这些状态塞进 NativeIO backend，会令每一种 OS backend 重复协议逻辑，也会破坏
@@ -1838,9 +1843,10 @@ CHTTP depends on CNet and llhttp
 backend。client 当前接受 TCP 与 Pipe，并已在固定 `request_capacity` 内实现同
 `connection_uri + authority` 的 HTTP/1.1 keep-alive 复用；每条连接同一时刻仍只承载一个
 request。server 当前在明文 TCP 上提供后台 CNet owner、严格 request parsing、keep-alive、
-静态/命名参数路由、中间件与有界内存 Session。两侧都不提供 TLS、HTTP/2、WebSocket、
+静态/命名参数路由、中间件与有界内存 Session。两侧都不提供 HTTPS、HTTP/2、WebSocket route、
 streaming body、redirect 或自动 retry。这里的 TLS 缺口属于 CHTTP 的 HTTPS 适配层；CNet
-本身已经提供经验证的 TLS transport 与 TLS listener accept。
+本身已经提供经验证的 TLS transport、TLS listener accept 与可由未来 Upgrade adapter 驱动的
+WebSocket session engine。
 
 后续协议演进只要求从 TurboHTTP 导入 HTTP/2 与 S3，不要求 HTTP/3。依赖方向应保持为：
 
@@ -1911,7 +1917,7 @@ LRU 驱逐掩盖资源压力。默认 Cookie 属性包含 HttpOnly、SameSite=La
 | Mustache/template 与静态 CSS/JS | start 前通过 TurboParser/turbo_fs 加载；handler 使用 immutable 资源 reply |
 | 数据库/ORM、密码哈希、业务鉴权 | 由 TurboDB/安全模块实现，通过 middleware/handler 组合，不进入 HTTP kernel |
 | 异步 DB、异步文件、Actor continuation | 需要未来 owning request token + owner mailbox 的 suspend/resume API |
-| TLS、KCP、WebSocket | CNet TLS transport 已实现；CHTTP HTTPS、CNet KCP/WS 与 CHTTP Upgrade 尚未实现 |
+| TLS、KCP、WebSocket | CNet TLS 与 WebSocket session engine 已实现；CHTTP HTTPS/Upgrade/route 与 CNet KCP 尚未实现 |
 | HTTP/2 | 从 TurboHTTP 导入协议引擎，改用 CNet stream；当前未实现 |
 | S3 | 从 TurboHTTP 导入到 CHTTP 上层，复用 H1/H2；当前未实现 |
 | HTTP/3 | 不在当前范围内，不作为隐式 fallback |
@@ -2186,12 +2192,13 @@ RPC terminal state。
 | 层 | 应拥有的参数 |
 |---|---|
 | CNet | endpoint URI、local bind、address-family policy、TCP no-delay/keepalive、connect/read/write timeout、transport capacity |
-| CNet transport extension | 已实现 TLS trust、verified SNI/identity、ALPN、client certificate、mTLS 与 handshake timeout；KCP/WS 尚未实现 |
+| CNet transport extension | 已实现 TLS trust、verified SNI/identity、ALPN、client certificate、mTLS、handshake timeout 与 transport-independent WebSocket session；KCP 和 WS/WSS HTTP endpoint 尚未实现 |
 | CHTTP | client 拥有 method、authority、target、headers、copied body 与 bounded keep-alive pool；server 拥有 listener、route/middleware、Session、strict request parsing 与 response limits；streaming、async suspended handler、proxy 是未来能力 |
 | RPC | service/method、request id、codec、deadline、idempotency、auth metadata、application error mapping |
 
 因此默认关系仍然是：上层选择或约束下层 profile，但不接管下层事实。当前 CNet 已有 listener、
-ordered write completion、TLS 与 ALPN；CHTTP 尚未接入 HTTPS，HTTP/2 与 WebSocket 也未实现，
+ordered write completion、TLS、ALPN 与 WebSocket session engine；CHTTP 尚未接入 HTTPS、
+HTTP/2 或 WebSocket Upgrade/route，
 对应 capability 必须明确返回 unsupported，不能在 RPC/CHTTP 内静默绕过 CNet 改用另一套
 NativeIO socket runtime。
 
@@ -2229,9 +2236,10 @@ buffer lifetime、timeout 和 shutdown drain 的特殊 transport adapter。对�
 当前 CNet 除 connect/send/receive/close/poll 外，也已经提供单 owner 的 nonblocking TCP
 listener、accepted socket ownership transfer、generation-checked connection 与
 send-and-close。CHTTP server 使用的 accepted data path 因而仍经过 CNet/NativeIO，没有另建一套
-socket runtime。这里实现的是明文 HTTP/1.1 application server；TLS、HTTP/2、WebSocket 与完整
-RPC server 仍不能笼统写成已经实现的 CHTTP 能力：CNet TLS 已实现，但 CHTTP HTTPS adapter、
-HTTP/2、WebSocket 与完整 RPC server 尚未实现；HTTP/3 也不在当前导入范围内。
+socket runtime。这里实现的是明文 HTTP/1.1 application server；HTTPS、HTTP/2、WebSocket route
+与完整 RPC server 仍不能笼统写成已经实现的 CHTTP 能力：CNet TLS 与 WebSocket session engine
+已实现，但 CHTTP HTTPS adapter、HTTP/2、Upgrade/route 与完整 RPC server 尚未实现；HTTP/3
+也不在当前导入范围内。
 
 ## 24.4 异步文件与 CNet 复用底层协议，但不强行复用同一个上层模型
 

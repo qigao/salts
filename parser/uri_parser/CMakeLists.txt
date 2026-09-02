@@ -22,6 +22,6 @@ target_include_directories(
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/parser ${CMAKE_CURRENT_BINARY_DIR})
 
 # Tests
-if(ENABLE_TESTS)
+if(BUILD_TESTS)
   add_subdirectory(test)
 endif()

@@ -1,4 +1,25 @@
 set(CNET_TEST_PRIVATE_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+set(CNET_WSPARSER_INCLUDE ${CMAKE_SOURCE_DIR}/tools/wsparser)
+
+cmake_add_test(cnet_websocket_parser_test
+  SOURCES cnet_websocket_parser_test.c
+  LIBS turbo_cnet TurboUtils::TinyTest
+  INCLUDES ${CNET_WSPARSER_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_websocket_parser_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(cnet_websocket_test
+  SOURCES cnet_websocket_test.c
+  LIBS turbo_cnet TurboUtils::TinyTest
+  INCLUDES ${CNET_WSPARSER_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_websocket_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
 
 cmake_add_test(cnet_session_test
   SOURCES cnet_session_test.c

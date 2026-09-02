@@ -1,9 +1,32 @@
 #if defined(CONSUME_NETWORK_CPP)
 
   #include <cnet/cnet.h>
+  #include <cnet/websocket.h>
   #include <crpc/crpc.h>
+  #include <cstring>
+
+struct InstalledWebSocketProbe {
+  uint8_t frame[CNET_WEBSOCKET_MAX_HEADER_BYTES + CNET_WEBSOCKET_MIN_FRAME_BYTES]{};
+  size_t frame_size{};
+  size_t event_count{};
+};
+
+static int installed_websocket_write(void *user, const uint8_t *data, size_t size) {
+  auto *probe = static_cast<InstalledWebSocketProbe *>(user);
+  if (probe == nullptr || data == nullptr || size > sizeof(probe->frame)) return TURBO_ENOSPC;
+  std::memcpy(probe->frame, data, size);
+  probe->frame_size = size;
+  return TURBO_OK;
+}
+
+static void installed_websocket_event(void *user, cnet_websocket *,
+                                      const cnet_websocket_event *event) {
+  auto *probe = static_cast<InstalledWebSocketProbe *>(user);
+  if (probe != nullptr && event != nullptr) ++probe->event_count;
+}
 
 int main() {
+  static const uint8_t inbound_text[] = {0x81u, 0x01u, 'x'};
   crpc_client client{};
   crpc_async_client async_client{};
   crpc_request request{};
@@ -11,11 +34,34 @@ int main() {
   chttp_session session{};
   cnet_tls_server tls_server{};
   cnet_tls_client_config tls_client_config{};
-  return client.impl == nullptr && async_client.impl == nullptr && request.slot == 0u &&
-                 request.generation == 0u && server.impl == nullptr && session.impl == nullptr &&
-                 tls_server.impl == nullptr && tls_client_config.size == 0u
-             ? 0
-             : 1;
+  cnet_websocket websocket{};
+  InstalledWebSocketProbe probe{};
+  cnet_websocket_config websocket_config{};
+
+  if (client.impl != nullptr || async_client.impl != nullptr || request.slot != 0u ||
+      request.generation != 0u || server.impl != nullptr || session.impl != nullptr ||
+      tls_server.impl != nullptr || tls_client_config.size != 0u || websocket.impl != nullptr)
+    return 1;
+  websocket_config.size = sizeof(websocket_config);
+  websocket_config.role = CNET_WEBSOCKET_CLIENT;
+  websocket_config.max_frame_bytes = CNET_WEBSOCKET_MIN_FRAME_BYTES;
+  websocket_config.max_message_bytes = CNET_WEBSOCKET_MIN_FRAME_BYTES;
+  websocket_config.max_buffered_input_bytes =
+      CNET_WEBSOCKET_MAX_HEADER_BYTES + CNET_WEBSOCKET_MIN_FRAME_BYTES;
+  websocket_config.write = installed_websocket_write;
+  websocket_config.on_event = installed_websocket_event;
+  websocket_config.user = &probe;
+  if (cnet_websocket_init(&websocket, &websocket_config) != TURBO_OK) return 2;
+  if (cnet_websocket_send_text(&websocket, "x", 1u) != TURBO_OK || probe.frame_size == 0u) {
+    (void)cnet_websocket_destroy(&websocket);
+    return 3;
+  }
+  if (cnet_websocket_feed(&websocket, inbound_text, sizeof(inbound_text)) != TURBO_OK ||
+      probe.event_count != 1u) {
+    (void)cnet_websocket_destroy(&websocket);
+    return 4;
+  }
+  return cnet_websocket_destroy(&websocket) == TURBO_OK ? 0 : 5;
 }
 
 #else
