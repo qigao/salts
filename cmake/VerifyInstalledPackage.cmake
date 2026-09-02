@@ -19,6 +19,8 @@ endif()
 
 set(install_prefix "${smoke_root}/install")
 set(consumer_build "${smoke_root}/consumer")
+set(hidden_dependency_consumer_build
+    "${smoke_root}/consumer-nodeps")
 set(consumer_prefix_path "${install_prefix}")
 list(APPEND consumer_prefix_path ${DEPENDENCY_PREFIX_PATH})
 file(REMOVE_RECURSE "${smoke_root}")
@@ -38,6 +40,20 @@ foreach(required_package_file IN ITEMS RocidaConfig.cmake RocidaTargets.cmake)
             "Rocida install is missing ${required_package_file}")
   endif()
 endforeach()
+
+file(GLOB installed_target_files
+     "${install_prefix}/lib/cmake/Rocida/RocidaTargets*.cmake")
+foreach(installed_target_file IN LISTS installed_target_files)
+  file(READ "${installed_target_file}" installed_target_contents)
+  if(installed_target_contents MATCHES
+     "(c-ares::|llhttp::|[/\\\\]cares\\.(lib|a|so)|[/\\\\]llhttp[^/\\\\]*\\.(lib|a|so))")
+    message(
+      FATAL_ERROR
+        "Rocida installed target metadata exposes a private network dependency: ${installed_target_file}"
+    )
+  endif()
+endforeach()
+
 foreach(required_stl_header IN ITEMS stl.h stl/typed.h stl/stream.h)
   if(NOT EXISTS "${install_prefix}/include/rocida/${required_stl_header}")
     message(FATAL_ERROR "Rocida install is missing ${required_stl_header}")
@@ -58,10 +74,36 @@ if(NOT configure_result EQUAL 0)
 endif()
 
 execute_process(
+  COMMAND "${CMAKE_COMMAND_PATH}"
+          -S "${SOURCE_DIR}/tests/install_consumer"
+          -B "${hidden_dependency_consumer_build}"
+          -G "${BUILD_GENERATOR}"
+          "-DCMAKE_BUILD_TYPE=${BUILD_CONFIG}"
+          "-DCMAKE_PREFIX_PATH=${consumer_prefix_path}"
+          "-DRocida_DIR=${install_prefix}/lib/cmake/Rocida"
+          "-DCMAKE_DISABLE_FIND_PACKAGE_c-ares=TRUE"
+          "-DCMAKE_DISABLE_FIND_PACKAGE_llhttp=TRUE"
+  RESULT_VARIABLE hidden_dependency_configure_result)
+if(NOT hidden_dependency_configure_result EQUAL 0)
+  message(FATAL_ERROR
+          "Rocida network targets leaked c-ares or llhttp to the installed consumer: ${hidden_dependency_configure_result}")
+endif()
+
+execute_process(
   COMMAND "${CMAKE_COMMAND_PATH}" --build "${consumer_build}"
           --config "${BUILD_CONFIG}"
   RESULT_VARIABLE build_result)
 if(NOT build_result EQUAL 0)
   message(FATAL_ERROR
           "Rocida installed consumer build failed: ${build_result}")
+endif()
+
+execute_process(
+  COMMAND "${CMAKE_COMMAND_PATH}" --build
+          "${hidden_dependency_consumer_build}"
+          --config "${BUILD_CONFIG}"
+  RESULT_VARIABLE hidden_dependency_build_result)
+if(NOT hidden_dependency_build_result EQUAL 0)
+  message(FATAL_ERROR
+          "Rocida installed consumer without c-ares/llhttp failed to build: ${hidden_dependency_build_result}")
 endif()

@@ -72,3 +72,33 @@ set_target_properties(chttp_tls_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+cmake_add_test(chttp_h2_frame_test
+  SOURCES chttp_h2_frame_test.c
+  LIBS turbo_chttp Rocida::TinyTest
+  INCLUDES ../src
+  FOLDER "chttp/tests")
+set_target_properties(chttp_h2_frame_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(chttp_h2_hpack_test
+  SOURCES chttp_h2_hpack_test.c
+  LIBS turbo_chttp Rocida::TinyTest
+  INCLUDES ../src
+  FOLDER "chttp/tests")
+set_target_properties(chttp_h2_hpack_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(chttp_h2_proto_test
+  SOURCES chttp_h2_proto_test.c
+  LIBS turbo_chttp Rocida::TinyTest
+  INCLUDES ../src
+  FOLDER "chttp/tests")
+set_target_properties(chttp_h2_proto_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
