@@ -1,10 +1,10 @@
 /**
  * @file turbo_coro_pool.h
- * @brief Generic bounded coroutine reuse pool for TurboUtils.
+ * @brief Generic bounded coroutine reuse pool for Rocida.
  */
 
-#ifndef TURBO_UTILS_CORO_POOL_H
-#define TURBO_UTILS_CORO_POOL_H
+#ifndef ROCIDA_CORO_POOL_H
+#define ROCIDA_CORO_POOL_H
 
 #include "turbo_coro.h"
 #include <stddef.h>
@@ -73,4 +73,4 @@ TURBO_COROUTINE_C_API size_t turbo_coro_pool_retained_count(const turbo_coro_poo
 }
 #endif
 
-#endif /* TURBO_UTILS_CORO_POOL_H */
+#endif /* ROCIDA_CORO_POOL_H */

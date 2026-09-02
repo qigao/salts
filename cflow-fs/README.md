@@ -1,8 +1,8 @@
 # CFlowFS
 
-`TurboUtils::CFlowFS` is the filesystem control-plane adapter between the
+`Rocida::CFlowFS` is the filesystem control-plane adapter between the
 synchronous `turbo_fs` implementation and CFlow's bounded execution model. It
-is separate from `TurboUtils::CFlow` so the portable kernel has no reverse
+is separate from `Rocida::CFlow` so the portable kernel has no reverse
 dependency on filesystem policy or native watcher backends.
 
 The distinction is intentional:

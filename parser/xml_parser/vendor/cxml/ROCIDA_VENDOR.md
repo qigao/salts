@@ -1,4 +1,4 @@
-# cxml vendor record
+# cxml vendor record for Rocida
 
 - Upstream: <https://github.com/ziord/cxml>
 - Declared upstream version: `0.1.0` (`CMakeLists.txt` in the imported tree)
@@ -9,10 +9,10 @@
   imported; the declared version and complete imported sources are retained so
   the provenance gap is explicit rather than guessed.
 
-TurboUtils builds cxml core, DOM XML, query, XPath, and utility sources. SAX,
+Rocida builds cxml core, DOM XML, query, XPath, and utility sources. SAX,
 upstream tests, examples, and tools are retained as source reference where
-present but are not compiled into `turboutils_cxml`. Query and XPath remain
-private implementations behind `TurboUtils::XmlParser`.
+present but are not compiled into `rocida_cxml`. Query and XPath remain
+private implementations behind `Rocida::XmlParser`.
 
 Local patches:
 
@@ -51,4 +51,4 @@ Local patches:
     optional `standalone` field order and value grammar.
 
 No cxml header, target, or allocation/lifetime contract is installed or
-exported. `TurboUtils::XmlParser` is the only supported consumer boundary.
+exported. `Rocida::XmlParser` is the only supported consumer boundary.

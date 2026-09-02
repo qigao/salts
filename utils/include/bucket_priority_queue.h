@@ -1,5 +1,5 @@
-#ifndef turboutils_BUCKET_PRIORITY_QUEUE_H
-#define turboutils_BUCKET_PRIORITY_QUEUE_H
+#ifndef ROCIDA_BUCKET_PRIORITY_QUEUE_H
+#define ROCIDA_BUCKET_PRIORITY_QUEUE_H
 
 #include "platform.h"
 #include "ring_buffer.h"
@@ -93,4 +93,4 @@ TURBO_C_API size_t bucket_priority_queue_capacity_at(const bucket_priority_queue
 }
 #endif
 
-#endif /* turboutils_BUCKET_PRIORITY_QUEUE_H */
+#endif /* ROCIDA_BUCKET_PRIORITY_QUEUE_H */

@@ -1,20 +1,20 @@
 cmake_add_test(cserde_token_test
   SOURCES cserde_token_test.c
-  LIBS TurboUtils::CSerde TurboUtils::TinyTest
+  LIBS Rocida::CSerde Rocida::TinyTest
   FOLDER "cserde/tests")
 
 cmake_add_test(cserde_reader_test
   SOURCES cserde_reader_test.c
-  LIBS TurboUtils::CSerde TurboUtils::TinyTest
+  LIBS Rocida::CSerde Rocida::TinyTest
   FOLDER "cserde/tests")
 
 cmake_add_test(cserde_writer_test
   SOURCES cserde_writer_test.c
-  LIBS TurboUtils::CSerde TurboUtils::TinyTest
+  LIBS Rocida::CSerde Rocida::TinyTest
   FOLDER "cserde/tests")
 
 add_library(cserde_recording_support STATIC support/recording.c)
-target_link_libraries(cserde_recording_support PUBLIC TurboUtils::CSerde)
+target_link_libraries(cserde_recording_support PUBLIC Rocida::CSerde)
 target_include_directories(
   cserde_recording_support
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/support)
@@ -22,12 +22,12 @@ cmake_config_target(cserde_recording_support FOLDER "cserde/tests")
 
 cmake_add_test(cserde_recording_test
   SOURCES cserde_recording_test.c
-  LIBS cserde_recording_support TurboUtils::TinyTest
+  LIBS cserde_recording_support Rocida::TinyTest
   FOLDER "cserde/tests")
 
 cmake_add_test(cserde_header_cpp_test
   SOURCES cserde_header_cpp_test.cpp
-  LIBS TurboUtils::CSerde TurboUtils::TinyTest
+  LIBS Rocida::CSerde Rocida::TinyTest
   FOLDER "cserde/tests")
 
 set_target_properties(

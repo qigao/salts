@@ -21,7 +21,7 @@ add_library(${TARGET_NAME} STATIC
   src/cnet_websocket.c
   $<TARGET_OBJECTS:turbo_wsparser>)
 cmake_config_target(${TARGET_NAME}
-  ALIAS TurboUtils::CNet
+  ALIAS Rocida::CNet
   FOLDER "cnet"
   EXPORT_NAME CNet)
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
@@ -33,11 +33,11 @@ target_include_directories(
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/tools/wsparser)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC TurboUtils::NativeIO TurboUtils::Concurrency
-  PRIVATE TurboUtils::UriParser TurboUtils::Platform c-ares::cares OpenSSL::SSL OpenSSL::Crypto
+  PUBLIC Rocida::NativeIO Rocida::Concurrency
+  PRIVATE Rocida::UriParser Rocida::Platform c-ares::cares OpenSSL::SSL OpenSSL::Crypto
           $<$<PLATFORM_ID:Windows>:crypt32>)
 
-install(TARGETS ${TARGET_NAME} EXPORT TurboUtilsTargets)
+install(TARGETS ${TARGET_NAME} EXPORT RocidaTargets)
 install(
   DIRECTORY include/cnet
   DESTINATION include

@@ -2,7 +2,7 @@ set(TEST_NAME test_cmd_parser)
 
 cmake_add_test(${TEST_NAME}
   SOURCES test_cmd_parser.c
-  LIBS TurboUtils::CmdParser TurboUtils::TinyTest
+  LIBS Rocida::CmdParser Rocida::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../include
   FOLDER "parser/cmd_parser/test")
 set_target_properties(${TEST_NAME} PROPERTIES

@@ -1,7 +1,7 @@
 // re2c --lang c
 /**
  * @file turbo_vstr.h
- * @brief Non-owning string view type for TurboUtils (C string_view)
+ * @brief Non-owning string view type for Rocida (C string_view)
  *
  * Memory model:
  * - vstr does NOT own memory

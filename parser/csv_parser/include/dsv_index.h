@@ -83,7 +83,7 @@ int dsv_index_build_memory(dsv_index_t *index, const char *index_path,
                            const char *content, size_t len,
                            const dsv_index_config_t *config);
 
-/** Build a sidecar from a static CSV file using TurboUtils mmap and file APIs. */
+/** Build a sidecar from a static CSV file using Rocida mmap and file APIs. */
 int dsv_index_build_file(dsv_index_t *index, const char *csv_path,
                          const char *index_path, const dsv_index_config_t *config);
 

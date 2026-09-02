@@ -6,12 +6,12 @@ cmake_add_test(cflow_graph_test
   SOURCES
     cflow_graph_test.c
     ${CFLOW_TEST_SUPPORT}
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_dense_successor_index_test
   SOURCES cflow_dense_successor_index_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
@@ -19,7 +19,7 @@ cmake_add_test(cflow_branching_views_test
   SOURCES
     cflow_branching_views_test.c
     ../benchmarks/cflow_branching_views.c
-  LIBS TurboUtils::CFlow TurboUtils::STL TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::STL Rocida::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../benchmarks
   FOLDER "cflow/tests")
 
@@ -27,63 +27,63 @@ cmake_add_test(cflow_pipeline_test
   SOURCES
     cflow_pipeline_test.c
     ${CFLOW_TEST_SUPPORT}
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_plan_managed_test
   SOURCES cflow_plan_managed_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_stream_slice_test
   SOURCES cflow_stream_slice_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_stream_count_test
   SOURCES cflow_stream_count_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_stream_execution_test
   SOURCES cflow_stream_execution_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_adapter_lifecycle_test
   SOURCES cflow_adapter_lifecycle_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_stream_terminal_test
   SOURCES cflow_stream_terminal_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_status_test
   SOURCES cflow_status_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_backend_test
   SOURCES cflow_backend_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_reactive_test
   SOURCES
     cflow_reactive_test.c
     ${CFLOW_TEST_SUPPORT}
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_readiness_test
   SOURCES
     cflow_readiness_test.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../platform/tests/readiness_fake_backend.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../../platform/tests
   FOLDER "cflow/tests")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
@@ -94,69 +94,69 @@ endif()
 
 cmake_add_test(cflow_event_mailbox_test
   SOURCES cflow_event_mailbox_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_machine_test
   SOURCES cflow_machine_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_machine_hierarchy_test
   SOURCES cflow_machine_hierarchy_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_statechart_test
   SOURCES cflow_statechart_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_statechart_instance_test
   SOURCES cflow_statechart_instance_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_statechart_instance_adapter_test
   SOURCES cflow_statechart_instance_adapter_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_statechart_hierarchy_adapter_test
   SOURCES cflow_statechart_hierarchy_adapter_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_machine_instance_test
   SOURCES cflow_machine_instance_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_actor_test
   SOURCES cflow_actor_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_statechart_actor_test
   SOURCES cflow_statechart_actor_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_io_actor_test
   SOURCES cflow_io_actor_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_io_publisher_test
   SOURCES cflow_io_publisher_test.c cflow_io_publisher_init_failure_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_io_native_test
   SOURCES cflow_io_native_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 if(WIN32)
@@ -169,66 +169,66 @@ endif()
 
 cmake_add_test(cflow_io_file_test
   SOURCES cflow_io_file_test.c cflow_io_file_init_failure_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_io_pipe_test
   SOURCES cflow_io_pipe_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_timer_event_test
   SOURCES cflow_timer_event_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_temporal_test
   SOURCES cflow_temporal_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_calculus_conformance_test
   SOURCES
     cflow_calculus_conformance_test.c
     ${CFLOW_TEST_SUPPORT}
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_direct_test
   SOURCES cflow_direct_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_parallel_reduce_test
   SOURCES cflow_parallel_reduce_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_certificate_test
   SOURCES cflow_certificate_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_execution_test
   SOURCES cflow_execution_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_scheduler_compat_test
   SOURCES cflow_scheduler_compat_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_header_cpp_test
   SOURCES cflow_header_cpp_test.cpp
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 cmake_add_test(cflow_operator_policy_test
   SOURCES cflow_operator_policy_test.c
-  LIBS TurboUtils::CFlow TurboUtils::TinyTest
+  LIBS Rocida::CFlow Rocida::TinyTest
   FOLDER "cflow/tests")
 
 set_target_properties(

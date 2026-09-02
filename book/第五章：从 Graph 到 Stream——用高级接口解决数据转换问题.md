@@ -1265,7 +1265,7 @@ Collector
 Vec_push_back
 ```
 
-那么它就知道太多 TurboSTL 细节。
+那么它就知道太多 Rocida STL 细节。
 
 更好的结构是：
 
@@ -1309,21 +1309,21 @@ Collector
 
 这也是模块边界逐渐成熟的表现。
 
-### 22.1 当前 TurboSTL 如何落地这条边界
+### 22.1 当前 Rocida STL 如何落地这条边界
 
-当前仓库中，TurboSTL 是 CMeta finite generic 的容器提供者。一次：
+当前仓库中，Rocida STL 是 CMeta finite generic 的容器提供者。一次：
 
 ```c
 typed(List, IntList, int);
 ```
 
-会生成具体 wrapper、类型与容器描述、borrowed Range 和 transactional Collector；但 list storage、节点分配、插入和销毁算法仍归 TurboSTL 所有。CFlow 只读取 Range，并通过 Collector terminal 写入 caller-owned zero-state 输出。
+会生成具体 wrapper、类型与容器描述、borrowed Range 和 transactional Collector；但 list storage、节点分配、插入和销毁算法仍归 Rocida STL 所有。CFlow 只读取 Range，并通过 Collector terminal 写入 caller-owned zero-state 输出。
 
-下面是当前 `TurboUtils::STLStream` 接口的一条完整最小路径：
+下面是当前 `Rocida::STLStream` 接口的一条完整最小路径：
 
 ```c
 #include <stdbool.h>
-#include <turbostl/stream.h>
+#include <rocida/stl/stream.h>
 
 typed(List, IntList, int);
 typed(List, LongList, long);

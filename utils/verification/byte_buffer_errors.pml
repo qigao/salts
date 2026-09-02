@@ -1,5 +1,5 @@
 /*
- * TurboUtils byte-buffer invalid-input protocol model.
+ * Rocida byte-buffer invalid-input protocol model.
  *
  * Scope:
  *   - invalid initialization does not mutate the caller object

@@ -17,7 +17,7 @@ add_library(${TARGET_NAME} STATIC ${SOURCE_FILES} ${TOML_LEXER_GEN}
 add_dependencies(${TARGET_NAME} ${TOML_LEXER_TARGET} ${TOML_GRAMMAR_TARGET})
 
 cmake_config_target(${TARGET_NAME}
-  ALIAS TurboUtils::TomlParser
+  ALIAS Rocida::TomlParser
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME TomlParser)
 
@@ -38,15 +38,15 @@ target_include_directories(${TARGET_NAME} PRIVATE ${SIMDE_INCLUDE_DIRS})
 
 cmake_add_executable(toml2json
   SOURCES tools/toml2json.c
-  LIBS TurboUtils::TomlParser
+  LIBS Rocida::TomlParser
   FOLDER "parser/${TARGET_NAME}/examples")
 
 cmake_add_executable(toml-c-test
   SOURCES tools/toml-c-test.c
-  LIBS TurboUtils::TomlParser
+  LIBS Rocida::TomlParser
   FOLDER "parser/${TARGET_NAME}/examples")
 
 cmake_add_executable(test_toml
   SOURCES tests/test_toml.c
-  LIBS TurboUtils::TomlParser TurboUtils::TinyTest
+  LIBS Rocida::TomlParser Rocida::TinyTest
   FOLDER "parser/${TARGET_NAME}/tests")

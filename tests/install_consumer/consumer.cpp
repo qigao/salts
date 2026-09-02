@@ -66,7 +66,10 @@ int main() {
 
 #else
 
-  #include <turbostl/typed.h>
+  #include <rocida/stl/typed.h>
+  #include <turbo_uuid.h>
+
+static_assert(sizeof(Rocida::UUID) == TURBO_UUID_SIZE);
 
 Struct(InstalledCppPayload, (TYPE(Vec, int), values));
 

@@ -1,9 +1,9 @@
 #include "tinytest.h"
 
-#include <turbostl/deque.h>
-#include <turbostl/hash_map.h>
-#include <turbostl/heap.h>
-#include <turbostl/vec.h>
+#include <rocida/stl/deque.h>
+#include <rocida/stl/hash_map.h>
+#include <rocida/stl/heap.h>
+#include <rocida/stl/vec.h>
 
 #include <stdint.h>
 #include <string.h>
@@ -43,7 +43,7 @@ static bool turbostl_bench_equal_u64(const void *left, const void *right,
          memcmp(left, right, sizeof(uint64_t)) == 0;
 }
 
-suite("standard TurboSTL operation benchmarks") {
+suite("standard Rocida STL operation benchmarks") {
   bench("pre-reserved operation paths") {
     vec_t vec = {0};
     size_t i;

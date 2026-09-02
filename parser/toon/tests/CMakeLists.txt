@@ -6,7 +6,7 @@
 function(add_toon_test test_name source_file)
     cmake_add_test(${test_name}
       SOURCES ${source_file}
-      LIBS toon TurboUtils::TinyTest
+      LIBS toon Rocida::TinyTest
       FOLDER "parser/toon/tests")
 
     if(UNIX)

@@ -79,7 +79,7 @@ TURBO_C_API bool turbo_uuid_equal(const turbo_uuid_t *left, const turbo_uuid_t *
 #ifdef __cplusplus
 }
 
-namespace TurboUtils {
+namespace Rocida {
   using UUID = ::turbo_uuid_t;
 }
 #endif

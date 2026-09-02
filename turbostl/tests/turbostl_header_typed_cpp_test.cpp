@@ -1,4 +1,4 @@
-#include <turbostl/typed.h>
+#include <rocida/stl/typed.h>
 #include "tinytest.hpp"
 
 #include <cstring>
@@ -18,7 +18,7 @@ static_assert(std::is_same_v<decltype(cpp_construction_payload{}.values), vec_t>
 static_assert(std::is_same_v<decltype(cpp_construction_payload{}.index), map_t>,
               "TYPE(Map,int,long) must lower to map_t storage in C++17");
 
-spec("TurboSTL typed C++ public header") {
+spec("Rocida STL typed C++ public header") {
   it("exposes ordinary self-describing handle types") {
     vec_t vec{};
     list_t list{};

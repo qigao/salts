@@ -1,15 +1,15 @@
 add_subdirectory(vendor)
 
 add_library(xml_parser STATIC src/xml_parser.c)
-target_sources(xml_parser PRIVATE $<TARGET_OBJECTS:turboutils_cxml>)
+target_sources(xml_parser PRIVATE $<TARGET_OBJECTS:rocida_cxml>)
 cmake_config_target(xml_parser
-  ALIAS TurboUtils::XmlParser
+  ALIAS Rocida::XmlParser
   FOLDER "parser/xml_parser"
   EXPORT_NAME XmlParser)
 target_compile_features(xml_parser PUBLIC c_std_11)
 target_link_libraries(xml_parser
-  PUBLIC TurboUtils::QueryVM
-  PRIVATE TurboUtils::Core)
+  PUBLIC Rocida::QueryVM
+  PRIVATE Rocida::Core)
 if(NOT MSVC)
   # cxml objects call libm; the final archive must carry that link requirement.
   target_link_libraries(xml_parser PRIVATE m)

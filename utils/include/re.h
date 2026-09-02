@@ -1,5 +1,5 @@
 /*
- * Bounded byte-oriented regular expression engine, part of TurboUtils.
+ * Bounded byte-oriented regular expression engine, part of Rocida.
  *
  * Supported syntax: . ^ $ * + ? {m} {m,} {m,n} with lazy variants *? +? ??,
  * character classes, inverted classes, ranges, branches, capturing-style

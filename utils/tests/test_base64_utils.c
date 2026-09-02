@@ -7,13 +7,13 @@
 
 spec("base64_utils") {
   it("should encode known value") {
-    const uint8_t input[] = "TurboUtils";
+    const uint8_t input[] = "Rocida";
     char *encoded = NULL;
 
     int rc = tn_base64_encode(input, sizeof(input) - 1, &encoded);
     check_equal(rc, 0);
     check_not_null(encoded);
-    check_equal(encoded, "VHVyYm9VdGlscw==");
+    check_equal(encoded, "Um9jaWRh");
 
     free(encoded);
   }

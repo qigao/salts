@@ -11,10 +11,10 @@ typedef struct platform_stack {
 #endif
 
 #define TURBOSTL_NO_LEGACY_STACK_T 1
-#include <turbostl.h>
+#include <rocida/stl.h>
 #include "tinytest.h"
 
-spec("TurboSTL stack type compatibility") {
+spec("Rocida STL stack type compatibility") {
   it("keeps the canonical stack handle distinct from a platform stack_t") {
     turbostl_stack_t stack = StackOf(int);
     int input = 9;

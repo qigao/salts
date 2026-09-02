@@ -9,8 +9,8 @@ Application / RPC
     -> NativeIO terminal completion
 ```
 
-CHTTP 随 TurboUtils 正常构建，source-tree target 是 `turbo_chttp`；安装后通过
-`TurboUtils::CHTTP` 与 `<chttp/chttp.h>` 使用。llhttp 是基础依赖，不再由单独的 manifest
+CHTTP 随 Rocida 正常构建，source-tree target 是 `turbo_chttp`；安装后通过
+`Rocida::CHTTP` 与 `<chttp/chttp.h>` 使用。llhttp 是基础依赖，不再由单独的 manifest
 feature 控制。
 
 ## 当前能力与明确边界

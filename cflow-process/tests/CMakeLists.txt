@@ -1,6 +1,6 @@
 cmake_add_test(cflow_process_test
   SOURCES cflow_process_test.c
-  LIBS TurboUtils::CFlowProcess TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Rocida::CFlowProcess Rocida::Platform Rocida::TinyTest
   FOLDER "cflow-process/tests")
 set_target_properties(cflow_process_test PROPERTIES
   C_STANDARD 11
@@ -9,7 +9,7 @@ set_target_properties(cflow_process_test PROPERTIES
 
 cmake_add_test(cflow_process_header_cpp_test
   SOURCES cflow_process_header_cpp_test.cpp
-  LIBS TurboUtils::CFlowProcess TurboUtils::TinyTest
+  LIBS Rocida::CFlowProcess Rocida::TinyTest
   FOLDER "cflow-process/tests")
 set_target_properties(cflow_process_header_cpp_test PROPERTIES
   CXX_STANDARD 17

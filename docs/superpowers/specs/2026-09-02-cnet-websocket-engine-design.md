@@ -7,7 +7,7 @@ post-handshake CNet WebSocket session engine. HTTP/1.1 Upgrade, RFC 8441,
 `ws://`/`wss://` URI admission, and CHTTP routes are separate follow-up work.
 
 The same implementation change replaces CNet's private hand-written network
-URI tokenization with the existing `TurboUtils::UriParser`. CNet retains
+URI tokenization with the existing `Rocida::UriParser`. CNet retains
 transport policy validation, output adaptation, and byte-preserving extraction
 of the scheme-specific Pipe IPC endpoint.
 

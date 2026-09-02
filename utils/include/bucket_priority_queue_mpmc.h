@@ -1,5 +1,5 @@
-#ifndef turboutils_BUCKET_PRIORITY_QUEUE_MPMC_H
-#define turboutils_BUCKET_PRIORITY_QUEUE_MPMC_H
+#ifndef ROCIDA_BUCKET_PRIORITY_QUEUE_MPMC_H
+#define ROCIDA_BUCKET_PRIORITY_QUEUE_MPMC_H
 
 #include "platform.h"
 #include "disruptor.h"
@@ -92,4 +92,4 @@ TURBO_C_API bool bucket_priority_queue_mpmc_empty(const bucket_priority_queue_mp
 }
 #endif
 
-#endif /* turboutils_BUCKET_PRIORITY_QUEUE_MPMC_H */
+#endif /* ROCIDA_BUCKET_PRIORITY_QUEUE_MPMC_H */

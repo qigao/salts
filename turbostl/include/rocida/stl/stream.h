@@ -3,16 +3,16 @@
 
 #include <cflow/adapters.h>
 #include <cflow/stream_execution.h>
-#include <turbostl/typed.h>
+#include <rocida/stl/typed.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /*
- * Optional TurboSTL/CFlow integration facade.
+ * Optional Rocida STL/CFlow integration facade.
  *
- * This API provides modern, typed operations over TurboSTL containers. Fluent
+ * This API provides modern, typed operations over Rocida STL containers. Fluent
  * names are a readability choice, not a promise of Java Stream compatibility.
  * The object retains a reusable CFlow Graph rather than single-use traversal
  * state. Each terminal adapter creates independent execution state; repeated
@@ -20,7 +20,7 @@ extern "C" {
  * operator, terminal, ordering, error, and parallel semantics.
  *
  * stream()/stream_keys()/stream_values()/stream_entries() and every fluent
- * operator are owned by CFlow. The bound TurboSTL container is borrowed and
+ * operator are owned by CFlow. The bound Rocida STL container is borrowed and
  * must remain alive and unmodified until collection finishes.
  * Interpreted collection supports managed COPY/MOVE/DESTROY element types.
  * to_array() remains a trivial-value byte terminal and fails for managed T.
@@ -37,7 +37,7 @@ typedef cflow_stream_execution turbostl_stream_execution_t;
 typedef cflow_find_result turbostl_find_result;
 typedef cflow_status_result turbostl_status_result;
 
-/* TurboSTL supplies the bounded state backend explicitly; CFlow continues to
+/* Rocida STL supplies the bounded state backend explicitly; CFlow continues to
  * own Graph and execution semantics. Returned options are process-lifetime
  * immutable data. The constructed Stream borrows its source container. */
 const cflow_eval_options *turbostl_stream_eval_options(void);

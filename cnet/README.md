@@ -7,7 +7,7 @@ threadless operating-system I/O backend; CFlow Actor and Reactive code continue
 to depend on NativeIO directly.
 
 CNet is built unconditionally. Its source-tree target is `turbo_cnet`; installed
-consumers link `TurboUtils::CNet` and include `<cnet/cnet.h>`. The independent
+consumers link `Rocida::CNet` and include `<cnet/cnet.h>`. The independent
 WebSocket session API is declared by `<cnet/websocket.h>`.
 
 ## Base API
@@ -28,7 +28,7 @@ TCP and Pipe deliver byte chunks. Connected UDP delivers one datagram per
 receive callback. A receive view is borrowed only until its callback returns.
 TLS delivers verified encrypted byte streams through the same send/receive
 contract. WebSocket and KCP are not exposed by this base header. CNet parses
-TCP, TLS, and UDP URIs through TurboUtils UriParser and then applies
+TCP, TLS, and UDP URIs through Rocida UriParser and then applies
 transport-specific constraints: network URIs require an explicit port and reject
 userinfo, path, query, and fragment components instead of accepting truncated or
 ambiguous input. Pipe is a scheme-specific IPC endpoint rather than a network
@@ -199,7 +199,7 @@ failures use portable Turbo status codes such as `TURBO_EADDRINUSE`.
 
 Immediate connect validation failure clears the output handle and emits no
 callback. Asynchronous failures emit exactly one `CNET_CONNECTION_FAILED` with
-a stable stage string. TurboUtils status codes use `cnet_error.status`; a raw
+a stable stage string. Rocida status codes use `cnet_error.status`; a raw
 platform status is normalized to `TURBO_EIO` and retained in
 `cnet_error.native_status`.
 

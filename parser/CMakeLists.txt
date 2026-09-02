@@ -23,7 +23,7 @@ add_subdirectory(datetime_parser)
 add_subdirectory(cyaml)
 add_subdirectory(selector)
 
-set(TURBOUTILS_PARSER_TARGETS
+set(ROCIDA_PARSER_TARGETS
   ini_parser
   json_parser
   json_cserde_adapter
@@ -40,16 +40,16 @@ set(TURBOUTILS_PARSER_TARGETS
   toml_parser
   datetime_parser
   cyaml_json_adapter)
-set(TURBOUTILS_PARSER_TARGETS ${TURBOUTILS_PARSER_TARGETS} PARENT_SCOPE)
+set(ROCIDA_PARSER_TARGETS ${ROCIDA_PARSER_TARGETS} PARENT_SCOPE)
 
 install(
-  TARGETS ${TURBOUTILS_PARSER_TARGETS}
-  EXPORT TurboUtilsTargets
+  TARGETS ${ROCIDA_PARSER_TARGETS}
+  EXPORT RocidaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-set(TURBOUTILS_PARSER_FLAT_INCLUDE_DIRS
+set(ROCIDA_PARSER_FLAT_INCLUDE_DIRS
   ini_parser/include
   json_parser/include
   xml_parser/include
@@ -64,7 +64,7 @@ set(TURBOUTILS_PARSER_FLAT_INCLUDE_DIRS
   toml/include
   datetime_parser/include)
 
-foreach(parser_include_dir IN LISTS TURBOUTILS_PARSER_FLAT_INCLUDE_DIRS)
+foreach(parser_include_dir IN LISTS ROCIDA_PARSER_FLAT_INCLUDE_DIRS)
   install(
     DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${parser_include_dir}/"
     DESTINATION include

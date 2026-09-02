@@ -1,6 +1,6 @@
 # Coroutine
 
-`TurboUtils::Coroutine` 是 `vendor/minicoro/minicoro.h` 的唯一编译封装，提供低层 coroutine primitive、单 owner 有界 frame pool，以及可选的多 shard Executor。它不依赖 CFlow、NativeIO 或 CNet；Executor 只复用 `TurboUtils::Concurrency` 的线程池与 Disruptor，不把网络状态带入 coroutine core。
+`Rocida::Coroutine` 是 `vendor/minicoro/minicoro.h` 的唯一编译封装，提供低层 coroutine primitive、单 owner 有界 frame pool，以及可选的多 shard Executor。它不依赖 CFlow、NativeIO 或 CNet；Executor 只复用 `Rocida::Concurrency` 的线程池与 Disruptor，不把网络状态带入 coroutine core。
 
 低层 API 提供显式 coroutine 生命周期、cooperative yield/resume、bounded pool 和通用 scheduler。`turbo_coro_pool_t` 本身不增加锁或线程：create/acquire/release/destroy 由同一 owner 执行。`turbo_coro_executor_t` 在它之上建立固定 shard；每个 worker 独占一个 scheduler、一个 pool、一个有界 MPSC task queue 和一个有界 completion wake queue，用户线程只提交复制后的 descriptor，运行中的 frame 不跨 shard 迁移。
 

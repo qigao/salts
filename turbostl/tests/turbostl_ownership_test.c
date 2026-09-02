@@ -1,4 +1,4 @@
-#include <turbostl.h>
+#include <rocida/stl.h>
 #include "tinytest.h"
 
 #include <stdlib.h>
@@ -83,7 +83,7 @@ static void counted_reset(void) {
     counted_copy_fail_on = 0u;
 }
 
-suite("TurboSTL ownership") {
+suite("Rocida STL ownership") {
     it("transfers typed vector removals and balances constructed values") {
         vec_t vec = {0};
         counted_value first;

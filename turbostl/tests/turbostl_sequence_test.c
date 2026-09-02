@@ -1,4 +1,4 @@
-#include <turbostl.h>
+#include <rocida/stl.h>
 #include "tinytest.h"
 
 #include <stdint.h>
@@ -23,7 +23,7 @@ static int large_heap_compare(const void *left, const void *right, void *context
     return (lhs->priority > rhs->priority) - (lhs->priority < rhs->priority);
 }
 
-suite("TurboSTL sequences") {
+suite("Rocida STL sequences") {
     it("keeps raw vector values bounded and zero fills growth") {
         vec_t vec = {0};
         const int value = 7;

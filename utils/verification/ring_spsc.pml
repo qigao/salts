@@ -1,5 +1,5 @@
 /*
- * TurboUtils SPSC byte-ring protocol model.
+ * Rocida SPSC byte-ring protocol model.
  *
  * Scope:
  *   - one producer and one consumer

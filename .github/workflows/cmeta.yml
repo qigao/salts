@@ -217,8 +217,8 @@ jobs:
         run: |
           test -f "$ANDROID_INSTALL_PREFIX/include/cflow/cflow.h"
           test -f "$ANDROID_INSTALL_PREFIX/include/turbo/thread.h"
-          test -f "$ANDROID_INSTALL_PREFIX/lib/cmake/TurboUtils/TurboUtilsConfig.cmake"
-          test -f "$ANDROID_INSTALL_PREFIX/lib/cmake/TurboUtils/TurboUtilsTargets.cmake"
+          test -f "$ANDROID_INSTALL_PREFIX/lib/cmake/Rocida/RocidaConfig.cmake"
+          test -f "$ANDROID_INSTALL_PREFIX/lib/cmake/Rocida/RocidaTargets.cmake"
 
       - name: Collect Android build evidence
         if: always()
@@ -245,7 +245,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: turboutils-android-arm64-release
+          name: rocida-android-arm64-release
           path: |
             build/android-arm64-package
             build/android-evidence

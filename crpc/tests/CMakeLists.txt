@@ -1,6 +1,6 @@
 cmake_add_test(crpc_json_test
   SOURCES crpc_json_test.c
-  LIBS turbo_crpc TurboUtils::TinyTest
+  LIBS turbo_crpc Rocida::TinyTest
   INCLUDES ../src
   FOLDER "crpc/tests")
 set_target_properties(crpc_json_test PROPERTIES
@@ -10,7 +10,7 @@ set_target_properties(crpc_json_test PROPERTIES
 
 cmake_add_test(crpc_api_test
   SOURCES crpc_api_test.c
-  LIBS turbo_crpc TurboUtils::TinyTest
+  LIBS turbo_crpc Rocida::TinyTest
   FOLDER "crpc/tests")
 set_target_properties(crpc_api_test PROPERTIES
   C_STANDARD 11

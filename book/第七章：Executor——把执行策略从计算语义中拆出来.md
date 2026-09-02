@@ -1119,7 +1119,7 @@ Worker Executor 使用线程执行 ready Task；Worker Scheduler 则把 timer qu
 
 ### Coro：保存执行位置，不接管 completion
 
-`TurboUtils::Coroutine` 对 minicoro 提供 stackful coroutine primitive、单 owner 有界复用池，以及可选的多 shard `turbo_coro_executor_t`。运行中的 frame 可以用 `turbo_coro_executor_yield()` 主动让出；需要等待外部操作时，则先以 `await_begin` 获取 generation-checked token，提交失败以 `await_abort` 收尾，提交成功后调用 `await` 挂起。外部完成线程调用 `await_complete` 只发布 terminal signal，原 shard owner 才执行 resume。frame 仍只保存“代码停在哪里”，不能成为“操作是否已经完成”的第二份事实源。
+`Rocida::Coroutine` 对 minicoro 提供 stackful coroutine primitive、单 owner 有界复用池，以及可选的多 shard `turbo_coro_executor_t`。运行中的 frame 可以用 `turbo_coro_executor_yield()` 主动让出；需要等待外部操作时，则先以 `await_begin` 获取 generation-checked token，提交失败以 `await_abort` 收尾，提交成功后调用 `await` 挂起。外部完成线程调用 `await_complete` 只发布 terminal signal，原 shard owner 才执行 resume。frame 仍只保存“代码停在哪里”，不能成为“操作是否已经完成”的第二份事实源。
 
 通用 coroutine Executor 把用户线程与调度线程明确分开。每个固定 shard 独占一个 scheduler、一个 `turbo_coro_pool_t`、一个有界 MPSC task queue 和一个不与新任务争抢容量的 completion wake queue；用户线程提交复制后的 task descriptor，运行中的 frame 不跨 shard 迁移。普通 submit 采用 round-robin，`submit_to` 则为 connection、session 或 Actor 提供显式 affinity。queue full、closed admission 与同 Executor 自阻塞分别暴露为 `TURBO_ENOBUFS`、`TURBO_ESHUTDOWN` 与 `TURBO_EBUSY`，不会通过无界扩容隐藏背压。
 

@@ -7,7 +7,7 @@ if(POLICY CMP0167)
 endif()
 
 project(
-  TurboUtils
+  Rocida
   VERSION 1.1.0
   LANGUAGES C CXX)
 
@@ -21,7 +21,7 @@ get_filename_component(CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}" ABSOLUTE)
 
 # Project description
 set(PROJECT_DESCRIPTION "common library for C/C++")
-set(PROJECT_HOMEPAGE_URL "https://github.com/qigao/turboutils")
+set(PROJECT_HOMEPAGE_URL "https://github.com/qigao/turbo-utils")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # Language standards - unified approach
@@ -89,7 +89,7 @@ set(verify_installed_dependencies
     turbo_cflow_process
     turbo_cflow_fs
     turbo_crpc
-    ${TURBOUTILS_PARSER_TARGETS}
+    ${ROCIDA_PARSER_TARGETS}
     turbo_selector)
 add_custom_target(
   verify_installed_package
@@ -112,29 +112,29 @@ include(CMakePackageConfigHelpers)
 
 # Generate the config file
 configure_package_config_file(
-  "${CMAKE_SOURCE_DIR}/cmake/TurboUtilsConfig.cmake.in"
-  "${CMAKE_BINARY_DIR}/TurboUtilsConfig.cmake"
-  INSTALL_DESTINATION "lib/cmake/TurboUtils")
+  "${CMAKE_SOURCE_DIR}/cmake/RocidaConfig.cmake.in"
+  "${CMAKE_BINARY_DIR}/RocidaConfig.cmake"
+  INSTALL_DESTINATION "lib/cmake/Rocida")
 
 # Generate the version file
 write_basic_package_version_file(
-  "${CMAKE_BINARY_DIR}/TurboUtilsConfigVersion.cmake"
+  "${CMAKE_BINARY_DIR}/RocidaConfigVersion.cmake"
   VERSION ${PROJECT_VERSION}
   COMPATIBILITY AnyNewerVersion)
 
 # Install the config files
-install(FILES "${CMAKE_BINARY_DIR}/TurboUtilsConfig.cmake"
-              "${CMAKE_BINARY_DIR}/TurboUtilsConfigVersion.cmake"
-        DESTINATION "lib/cmake/TurboUtils")
+install(FILES "${CMAKE_BINARY_DIR}/RocidaConfig.cmake"
+              "${CMAKE_BINARY_DIR}/RocidaConfigVersion.cmake"
+        DESTINATION "lib/cmake/Rocida")
 
 # Install the export set
 export(
-  EXPORT TurboUtilsTargets
-  FILE "${CMAKE_BINARY_DIR}/TurboUtilsTargets.cmake"
-  NAMESPACE TurboUtils::)
+  EXPORT RocidaTargets
+  FILE "${CMAKE_BINARY_DIR}/RocidaTargets.cmake"
+  NAMESPACE Rocida::)
 
 install(
-  EXPORT TurboUtilsTargets
-  FILE TurboUtilsTargets.cmake
-  NAMESPACE TurboUtils::
-  DESTINATION "lib/cmake/TurboUtils")
+  EXPORT RocidaTargets
+  FILE RocidaTargets.cmake
+  NAMESPACE Rocida::
+  DESTINATION "lib/cmake/Rocida")

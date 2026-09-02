@@ -3,27 +3,27 @@
 
 #include <cmeta/meta.h>
 
-#include <turbostl/vec.h>
-#include <turbostl/deque.h>
-#include <turbostl/list.h>
-#include <turbostl/stack.h>
-#include <turbostl/queue.h>
-#include <turbostl/heap.h>
-#include <turbostl/set.h>
-#include <turbostl/hash_set.h>
-#include <turbostl/hash_map.h>
-#include <turbostl/map.h>
-#include <turbostl/multimap.h>
-#include <turbostl/btree.h>
-#include <turbostl/bplus_tree.h>
-#include <turbostl/detail/instance_meta.h>
+#include <rocida/stl/vec.h>
+#include <rocida/stl/deque.h>
+#include <rocida/stl/list.h>
+#include <rocida/stl/stack.h>
+#include <rocida/stl/queue.h>
+#include <rocida/stl/heap.h>
+#include <rocida/stl/set.h>
+#include <rocida/stl/hash_set.h>
+#include <rocida/stl/hash_map.h>
+#include <rocida/stl/map.h>
+#include <rocida/stl/multimap.h>
+#include <rocida/stl/btree.h>
+#include <rocida/stl/bplus_tree.h>
+#include <rocida/stl/detail/instance_meta.h>
 
 #ifndef __cplusplus
-#include <turbostl/detail/typed_facade.h>
+#include <rocida/stl/detail/typed_facade.h>
 #endif
 
 /* TYPE(...) provider registrations. CMeta owns the generic declaration
- * protocol; TurboSTL supplies only storage, constructor and bind capability. */
+ * protocol; Rocida STL supplies only storage, constructor and bind capability. */
 #define CMETA_DECLARED_STORAGE_Vec vec_t
 #define CMETA_DECLARED_STORAGE_DESC_Vec (&stl_vec_storage_type)
 #define CMETA_DECLARED_CONSTRUCTOR_Vec (&stl_vec_generic_desc)
@@ -89,11 +89,11 @@
 #define CMETA_DECLARED_CONSTRUCTOR_BPlusTree (&stl_bplus_tree_generic_desc)
 #define CMETA_DECLARED_CONSTRUCTION_BPlusTree (&stl_bplus_tree_construct_ops)
 
-#include <turbostl/detail/typed_initializers.h>
+#include <rocida/stl/detail/typed_initializers.h>
 
 #ifndef __cplusplus
 
-/* TurboSTL is a finite CMeta Generic provider. One typed(...) declaration
+/* Rocida STL is a finite CMeta Generic provider. One typed(...) declaration
  * emits the concrete wrapper type, typed ABI, metadata, Range views and
  * collector. The declaration/expression initializers above remain erased
  * handle construction forms and do not generate Generic types. */

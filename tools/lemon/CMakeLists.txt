@@ -1,6 +1,6 @@
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
   cmake_minimum_required(VERSION 3.23)
-  project(TurboUtilsLemonHost LANGUAGES C)
+  project(RocidaLemonHost LANGUAGES C)
 endif()
 
 if(CMAKE_CROSSCOMPILING)
@@ -50,5 +50,5 @@ else()
   set_target_properties(lemon PROPERTIES FOLDER tools)
 endif()
 
-add_executable(TurboUtils::Lemon ALIAS lemon)
+add_executable(Rocida::Lemon ALIAS lemon)
 

@@ -1,5 +1,5 @@
-#ifndef turboutils_BUCKET_PRIORITY_QUEUE_SPSC_H
-#define turboutils_BUCKET_PRIORITY_QUEUE_SPSC_H
+#ifndef ROCIDA_BUCKET_PRIORITY_QUEUE_SPSC_H
+#define ROCIDA_BUCKET_PRIORITY_QUEUE_SPSC_H
 
 #include "platform.h"
 #include "ring_buffer_spsc.h"
@@ -101,4 +101,4 @@ TURBO_C_API size_t bucket_priority_queue_spsc_capacity_at(const bucket_priority_
 }
 #endif
 
-#endif /* turboutils_BUCKET_PRIORITY_QUEUE_SPSC_H */
+#endif /* ROCIDA_BUCKET_PRIORITY_QUEUE_SPSC_H */

@@ -5,7 +5,7 @@ cmake_add_source(SOURCE_FILES RECURSE DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
 
 add_library(${TARGET_NAME} STATIC ${SOURCE_FILES})
 cmake_config_target(${TARGET_NAME}
-    ALIAS TurboUtils::SoaParser
+    ALIAS Rocida::SoaParser
     FOLDER "parser/soa_parser"
     EXPORT_NAME SoaParser)
 
@@ -18,7 +18,7 @@ target_include_directories(${TARGET_NAME}
 target_link_libraries(${TARGET_NAME}
     PUBLIC
 
-        TurboUtils::UriParser
+        Rocida::UriParser
 
 )
 
