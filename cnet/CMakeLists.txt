@@ -3,7 +3,47 @@ set(TARGET_NAME turbo_cnet)
 find_package(c-ares CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 
-add_library(${TARGET_NAME} STATIC
+get_target_property(cnet_cares_configurations c-ares::cares
+                    IMPORTED_CONFIGURATIONS)
+if(NOT cnet_cares_configurations)
+  set(cnet_cares_configurations NOCONFIG)
+endif()
+
+set(cnet_cares_link_items)
+foreach(cnet_cares_configuration IN LISTS cnet_cares_configurations)
+  if(cnet_cares_configuration STREQUAL "NOCONFIG")
+    set(cnet_cares_configuration_suffix "")
+  else()
+    set(cnet_cares_configuration_suffix "_${cnet_cares_configuration}")
+  endif()
+
+  if(WIN32)
+    get_target_property(
+      cnet_cares_link_file c-ares::cares
+      "IMPORTED_IMPLIB${cnet_cares_configuration_suffix}")
+  else()
+    get_target_property(
+      cnet_cares_link_file c-ares::cares
+      "IMPORTED_LOCATION${cnet_cares_configuration_suffix}")
+  endif()
+  if(NOT cnet_cares_link_file
+     OR cnet_cares_link_file MATCHES "-NOTFOUND$")
+    message(
+      FATAL_ERROR
+        "c-ares does not provide a link file for ${cnet_cares_configuration}")
+  endif()
+
+  if(cnet_cares_configuration STREQUAL "NOCONFIG")
+    list(APPEND cnet_cares_link_items "${cnet_cares_link_file}")
+  else()
+    list(
+      APPEND
+      cnet_cares_link_items
+      "$<$<CONFIG:${cnet_cares_configuration}>:${cnet_cares_link_file}>")
+  endif()
+endforeach()
+
+add_library(${TARGET_NAME} SHARED
   src/cnet_client.c
   src/cnet_command.c
   src/cnet_dispatcher.c
@@ -25,6 +65,7 @@ cmake_config_target(${TARGET_NAME}
   FOLDER "cnet"
   EXPORT_NAME CNet)
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
+set_target_properties(${TARGET_NAME} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 target_include_directories(
   ${TARGET_NAME}
   PUBLIC
@@ -34,10 +75,15 @@ target_include_directories(
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC Rocida::NativeIO Rocida::Concurrency
-  PRIVATE Rocida::UriParser Rocida::Platform c-ares::cares OpenSSL::SSL OpenSSL::Crypto
+  PRIVATE Rocida::UriParser Rocida::Platform ${cnet_cares_link_items} OpenSSL::SSL OpenSSL::Crypto
           $<$<PLATFORM_ID:Windows>:crypt32>)
 
 install(TARGETS ${TARGET_NAME} EXPORT RocidaTargets)
+if(WIN32)
+  install(FILES "$<TARGET_FILE:c-ares::cares>" TYPE BIN)
+endif()
+install(FILES "${c-ares_DIR}/copyright"
+        DESTINATION share/licenses/Rocida/c-ares)
 install(
   DIRECTORY include/cnet
   DESTINATION include
