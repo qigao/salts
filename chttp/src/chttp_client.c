@@ -1,4 +1,5 @@
 #include "chttp_internal.h"
+#include "chttp_tls.h"
 
 #include <limits.h>
 #include <stdbool.h>
@@ -25,6 +26,7 @@ typedef struct chttp_slot {
   unsigned char *request_data;
   char *connection_uri;
   char *authority;
+  chttp_tls_profile_impl *tls_profile;
   size_t request_size;
   chttp_complete_fn on_complete;
   void *user;
@@ -85,11 +87,12 @@ static bool chttp_config_valid(const chttp_client_config *config) {
   return config->max_header_count <= (SIZE_MAX - config->max_header_bytes - 1u) / 2u;
 }
 
-static int chttp_stream_uri_supported(const char *uri) {
+static int chttp_stream_uri_supported(const char *uri, bool has_tls_profile) {
   if (uri == NULL) return TURBO_EINVAL;
+  if (strncmp(uri, "tls://", sizeof("tls://") - 1u) == 0) return TURBO_OK;
   if (strncmp(uri, "tcp://", sizeof("tcp://") - 1u) == 0 ||
       strncmp(uri, "pipe://", sizeof("pipe://") - 1u) == 0)
-    return TURBO_OK;
+    return has_tls_profile ? TURBO_EINVAL : TURBO_OK;
   return TURBO_ENOTSUP;
 }
 
@@ -102,6 +105,7 @@ static void chttp_slot_release(chttp_slot *slot) {
   free(slot->request_data);
   free(slot->authority);
   free(slot->connection_uri);
+  chttp_tls_profile_release(slot->tls_profile);
   chttp_response_parser_destroy(&slot->response_parser);
   *slot = (chttp_slot){.client = client, .generation = generation};
 }
@@ -115,13 +119,14 @@ static chttp_slot *chttp_slot_find_free(chttp_client_impl *impl) {
 
 /* The scan is O(request_capacity), whose configured hard bound also limits CNet connections. */
 static chttp_slot *chttp_slot_find_idle(chttp_client_impl *impl,
-                                        const chttp_request_options *options) {
+                                        const chttp_request_options *options,
+                                        const chttp_tls_profile_impl *tls_profile) {
   size_t index;
   for (index = 0u; index < impl->request_capacity; ++index) {
     chttp_slot *slot = &impl->slots[index];
     if (slot->state == CHTTP_SLOT_IDLE && slot->connection_uri != NULL && slot->authority != NULL &&
         strcmp(slot->connection_uri, options->connection_uri) == 0 &&
-        strcmp(slot->authority, options->authority) == 0)
+        strcmp(slot->authority, options->authority) == 0 && slot->tls_profile == tls_profile)
       return slot;
   }
   return NULL;
@@ -377,6 +382,7 @@ int chttp_async_client_submit(chttp_async_client *client, const chttp_request_op
   unsigned char *request_data = NULL;
   size_t request_size = 0u;
   cnet_connect_options connect_options;
+  chttp_tls_profile_impl *tls_profile = NULL;
   size_t slot_index;
   int status;
   if (out_request == NULL) return TURBO_EINVAL;
@@ -384,13 +390,19 @@ int chttp_async_client_submit(chttp_async_client *client, const chttp_request_op
   if (impl == NULL || options == NULL) return TURBO_EINVAL;
   if (impl->callback_active) return TURBO_EBUSY;
   if (!impl->admission_open) return TURBO_ESHUTDOWN;
-  status = chttp_stream_uri_supported(options->connection_uri);
+  status = chttp_stream_uri_supported(options->connection_uri, options->tls != NULL);
   if (status != TURBO_OK) return status;
   status = chttp_request_build(options, &impl->limits, &request_data, &request_size);
   if (status != TURBO_OK) return status;
+  status = chttp_tls_profile_acquire(options->tls, &tls_profile);
+  if (status != TURBO_OK) {
+    free(request_data);
+    return status;
+  }
 
-  slot = chttp_slot_find_idle(impl, options);
+  slot = chttp_slot_find_idle(impl, options, tls_profile);
   if (slot != NULL) {
+    chttp_tls_profile_release(tls_profile);
     if (!slot->receive_armed) {
       free(request_data);
       (void)chttp_slot_try_close(slot);
@@ -437,6 +449,7 @@ int chttp_async_client_submit(chttp_async_client *client, const chttp_request_op
   if (slot == NULL) {
     chttp_slot *idle = chttp_slot_find_any_idle(impl);
     free(request_data);
+    chttp_tls_profile_release(tls_profile);
     if (idle != NULL) {
       status = chttp_slot_try_close(idle);
       if (status != TURBO_OK && status != TURBO_ENOBUFS) return status;
@@ -446,6 +459,7 @@ int chttp_async_client_submit(chttp_async_client *client, const chttp_request_op
   status = chttp_response_parser_init(&slot->response_parser, options->method, &impl->limits);
   if (status != TURBO_OK) {
     free(request_data);
+    chttp_tls_profile_release(tls_profile);
     return status;
   }
   slot_index = (size_t)(slot - impl->slots);
@@ -456,6 +470,7 @@ int chttp_async_client_submit(chttp_async_client *client, const chttp_request_op
   slot->request_size = request_size;
   slot->on_complete = options->on_complete;
   slot->user = options->user;
+  slot->tls_profile = tls_profile;
   slot->state = CHTTP_SLOT_CONNECTING;
   slot->connection_uri = chttp_copy_text(options->connection_uri);
   slot->authority = chttp_copy_text(options->authority);
@@ -465,7 +480,8 @@ int chttp_async_client_submit(chttp_async_client *client, const chttp_request_op
   }
   connect_options = (cnet_connect_options){
       .uri = options->connection_uri,
-      .observer = {.on_state = chttp_cnet_state, .on_receive = chttp_cnet_receive, .user = slot}};
+      .observer = {.on_state = chttp_cnet_state, .on_receive = chttp_cnet_receive, .user = slot},
+      .tls_client = chttp_tls_profile_client(slot->tls_profile)};
   status = cnet_connect(&impl->network, &connect_options, &slot->connection);
   if (status != TURBO_OK) {
     chttp_slot_release(slot);

@@ -4,7 +4,7 @@
 
 截至当前基线，CNet 已提供 TCP、TLS、UDP、Pipe、TCP listener、plain/TLS accepted-socket
 接管、有序 send completion、send-and-close，以及独立于 transport 的有界 WebSocket session
-engine；CHTTP 已在其上提供 HTTP/1.1 client/server、
+engine；CHTTP 已在其上提供 HTTP/1.1/HTTPS client/server、
 静态与命名参数路由、中间件、有界内存 Cookie Session，以及不要求用户调用 poller 的
 后台 server owner。
 
@@ -12,9 +12,9 @@ CHTTP server 的网络命令采用每连接单 owner pending-action 状态机：
 command ring 满额时保留 receive/send/close 动作和相关 buffer，worker 以 round-robin 公平重试。
 该状态不跨线程写入，不通过无界分配绕过背压；动作成功提交或收到终态事件后才清除。
 
-CHTTP 尚未把 CNet TLS 接入 HTTPS client/server，也未实现 WebSocket Upgrade/route。以下能力
-不得在对应公开文档、示例或 capability negotiation 中声明为可用：CHTTP HTTPS、KCP、
-WS/WSS endpoint、HTTP/2 与 S3。
+CHTTP 已通过可复用 TLS profile 把 CNet TLS 接入 client/server，但尚未实现 WebSocket
+Upgrade/route。以下能力不得在对应公开文档、示例或 capability negotiation 中声明为可用：
+KCP、WS/WSS endpoint、HTTP/2 与 S3。
 HTTP/3 明确不在本路线范围内。
 
 ## P0：CNet TLS transport
@@ -25,7 +25,7 @@ HTTP/3 明确不在本路线范围内。
   close-notify 与 cancellation 仍由同一个 owner 推进。
 - [x] 默认强制证书链与 hostname verification；不提供从 `tls`/`https` 静默降级到明文的
   fallback。
-- [ ] 将 TLS profile 纳入连接复用 key；证书身份、trust source、SNI 或 ALPN 不同的连接
+- [x] 将 TLS profile 纳入连接复用 key；证书身份、trust source、SNI 或 ALPN 不同的连接
   不得复用。
 - [x] 对 handshake input/output、单 record、累计 plaintext/ciphertext buffer 设置硬上限，
   并定义满额、timeout、peer truncation 和 shutdown 的可区分错误。
@@ -33,8 +33,9 @@ HTTP/3 明确不在本路线范围内。
   close-notify、accepted socket 和安装包链接测试。
 
 完成条件：`tls://` 能以 mandatory verification 建连，CNet server caller 能通过同一
-accepted-connection 路径终止 TLS，ASan 与 Release 回归通过。CHTTP HTTPS adapter 仍按上面的
-当前基线保持未实现。
+accepted-connection 路径终止 TLS；CHTTP client/server 复用该路径，并以
+`connection_uri + authority + TLS profile identity` 隔离连接池。Release、ASan 与安装包回归
+属于每次交付的统一门槛。
 
 ## P1：CNet KCP、WebSocket engine 与 CHTTP Upgrade
 
@@ -118,7 +119,7 @@ CNet 或 NativeIO。迁移时记录实际源 commit，保留 SigV4、URL、XML�
 | HTTP/1.1 route、参数、middleware | 已实现 | CHTTP server |
 | 有界内存 Cookie Session | 已实现 | CHTTP server；持久化/分布式 backend 不在当前路线 |
 | 同步 template/static response | 可组合 | handler 内使用现有 parser/fs 能力 |
-| TLS listener / HTTPS | CNet TLS listener 已实现；CHTTP HTTPS 未接入 | CHTTP transport adapter，P0 |
+| TLS listener / HTTPS | 已实现 | CNet TLS transport + CHTTP H1 adapter；支持 verified TLS/mTLS |
 | WebSocket session / WS/WSS route | CNet session engine 已实现；route 未实现 | CHTTP Upgrade，P1 |
 | KCP transport | 未实现 | NativeIO UDP + CNet KCP session，P1 |
 | HTTP/2 | 待从 TurboHTTP 导入 | CHTTP protocol + CNet stream，P2 |

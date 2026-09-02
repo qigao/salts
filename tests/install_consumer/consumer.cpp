@@ -32,6 +32,8 @@ int main() {
   crpc_request request{};
   chttp_server server{};
   chttp_session session{};
+  chttp_tls_profile http_tls_profile{};
+  cnet_tls_client tls_client{};
   cnet_tls_server tls_server{};
   cnet_tls_client_config tls_client_config{};
   cnet_websocket websocket{};
@@ -40,6 +42,7 @@ int main() {
 
   if (client.impl != nullptr || async_client.impl != nullptr || request.slot != 0u ||
       request.generation != 0u || server.impl != nullptr || session.impl != nullptr ||
+      http_tls_profile.impl != nullptr || tls_client.impl != nullptr ||
       tls_server.impl != nullptr || tls_client_config.size != 0u || websocket.impl != nullptr)
     return 1;
   websocket_config.size = sizeof(websocket_config);

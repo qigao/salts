@@ -10,6 +10,8 @@ static_assert(std::is_standard_layout<cnet_connection>::value,
 static_assert(std::is_standard_layout<cnet_listener>::value, "listener must be a C value wrapper");
 static_assert(std::is_standard_layout<cnet_tls_server>::value,
               "TLS server must be a C value wrapper");
+static_assert(std::is_standard_layout<cnet_tls_client>::value,
+              "TLS client must be a C value wrapper");
 static_assert(std::is_standard_layout<cnet_websocket>::value,
               "WebSocket must be a C value wrapper");
 static_assert(CNET_CONNECTION_CONNECTED != CNET_CONNECTION_FAILED,
@@ -23,6 +25,7 @@ int main() {
   cnet_client client{};
   cnet_listener listener{};
   cnet_tls_server tls_server{};
+  cnet_tls_client tls_client{};
   cnet_connection connection{};
   cnet_websocket websocket{};
   cnet_client_config config{};
@@ -36,6 +39,7 @@ int main() {
   (void)client;
   (void)listener;
   (void)tls_server;
+  (void)tls_client;
   (void)connection;
   (void)websocket;
   (void)config;

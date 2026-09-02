@@ -123,6 +123,7 @@ struct chttp_server_impl {
   char *session_values;
   cnet_client network;
   cnet_listener listener;
+  cnet_tls_server tls_server;
   turbo_mutex_t mutex;
   turbo_cond_t changed;
   turbo_thread_t thread;
@@ -130,6 +131,7 @@ struct chttp_server_impl {
   bool sync_initialized;
   bool network_initialized;
   bool listener_initialized;
+  bool tls_initialized;
   bool thread_started;
   bool start_called;
   bool stop_requested;

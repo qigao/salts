@@ -11,7 +11,8 @@ add_library(${TARGET_NAME} STATIC
   src/chttp_server_parser.c
   src/chttp_server_response.c
   src/chttp_server_route.c
-  src/chttp_session.c)
+  src/chttp_session.c
+  src/chttp_tls.c)
 cmake_config_target(${TARGET_NAME}
   ALIAS Rocida::CHTTP
   FOLDER "chttp"

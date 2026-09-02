@@ -21,6 +21,11 @@ typedef struct chttp_async_client {
   void *impl;
 } chttp_async_client;
 
+/** Reusable immutable HTTPS policy and connection-pool identity. */
+typedef struct chttp_tls_profile {
+  void *impl;
+} chttp_tls_profile;
+
 /** Background HTTP/1.1 server owner; ordinary callers never drive a poller. */
 typedef struct chttp_server {
   void *impl;
@@ -141,6 +146,8 @@ typedef struct chttp_server_config {
   const char *session_cookie_name;
   int session_cookie_secure;
   uint32_t poll_slice_ms;
+  /** Optional HTTPS/mTLS policy consumed during server initialization. */
+  const cnet_tls_server_config *tls;
 } chttp_server_config;
 
 /** Thread-safe snapshot of server lifecycle and bounded admission counters. */
@@ -197,7 +204,7 @@ typedef void (*chttp_complete_fn)(void *user, chttp_request request,
 /**
  * One admitted request owns one bounded parser state and either opens or
  * exclusively leases one CNet connection from this client's bounded pool.
- * `connection_uri` currently accepts only `tcp://` and `pipe://`. `authority`
+ * `connection_uri` accepts `tcp://`, `tls://`, and `pipe://`. `authority`
  * becomes the Host header, while `target` is an origin-form target beginning
  * with `/` (or `*` for OPTIONS). Header/body/options are copied before submit
  * succeeds. `user` remains borrowed until the terminal callback returns.
@@ -213,6 +220,8 @@ typedef struct chttp_request_options {
   size_t body_size;
   chttp_complete_fn on_complete;
   void *user;
+  /** Optional reusable TLS profile; valid only with a `tls://` connection URI. */
+  const chttp_tls_profile *tls;
 } chttp_request_options;
 
 /**
@@ -231,6 +240,8 @@ typedef struct chttp_options {
   const void *body;
   size_t body_size;
   uint32_t timeout_ms;
+  /** Optional reusable TLS profile; valid only with a `tls://` connection URI. */
+  const chttp_tls_profile *tls;
 } chttp_options;
 
 /**
@@ -251,6 +262,23 @@ typedef struct chttp_client_config {
   size_t max_response_body_bytes;
   size_t max_informational_responses;
 } chttp_client_config;
+
+/**
+ * Builds a reusable verified TLS profile. Configuration is consumed before
+ * return. ALPN must be absent or contain only `http/1.1`. The same public
+ * wrapper must not be initialized/destroyed concurrently with submit.
+ *
+ * @param profile Zero-initialized reusable output profile.
+ * @param config Explicit CNet TLS client policy.
+ * @return CNet TLS setup errors, or `TURBO_ENOTSUP` for non-HTTP/1.1 ALPN.
+ */
+int chttp_tls_profile_init(chttp_tls_profile *profile, const cnet_tls_client_config *config);
+
+/**
+ * Releases the public reference; admitted requests and idle slots remain
+ * valid. Repeated destroy succeeds; a NULL wrapper returns `TURBO_EINVAL`.
+ */
+int chttp_tls_profile_destroy(chttp_tls_profile *profile);
 
 /**
  * Initializes one advanced caller-driven CHTTP/CNet owner. No partial client

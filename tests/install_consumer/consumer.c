@@ -129,6 +129,7 @@ int main(void) {
   static const uint8_t inbound_text[] = {0x81u, 0x01u, 'x'};
   cnet_client client = {0};
   cnet_listener listener = {0};
+  cnet_tls_client tls_client = {0};
   cnet_tls_server tls_server = {0};
   cnet_tls_client_config tls_client_config = {.size = sizeof(tls_client_config)};
   cnet_tls_server_config tls_server_config = {.size = sizeof(tls_server_config)};
@@ -147,8 +148,8 @@ int main(void) {
   };
   int status;
 
-  if (client.impl != NULL || listener.impl != NULL || tls_server.impl != NULL ||
-      tls_client_config.size != sizeof(tls_client_config) ||
+  if (client.impl != NULL || listener.impl != NULL || tls_client.impl != NULL ||
+      tls_server.impl != NULL || tls_client_config.size != sizeof(tls_client_config) ||
       tls_server_config.size != sizeof(tls_server_config) || connection.slot != 0u ||
       connection.generation != 0u || websocket.impl != NULL ||
       CNET_WEBSOCKET_MAX_CONTROL_BYTES != 125 || CNET_TLS_MIN_IO_BUFFER_BYTES < 16384)
@@ -165,7 +166,8 @@ int main(void) {
     (void)cnet_websocket_destroy(&websocket);
     return 4;
   }
-  return cnet_websocket_destroy(&websocket) == TURBO_OK ? 0 : 5;
+  if (cnet_websocket_destroy(&websocket) != TURBO_OK) return 5;
+  return cnet_tls_client_destroy(&tls_client) == TURBO_OK ? 0 : 6;
 }
 
 #elif defined(CONSUME_CHTTP)
@@ -173,11 +175,13 @@ int main(void) {
 
 int main(void) {
   chttp_client client = {0};
+  chttp_tls_profile tls_profile = {0};
   chttp_server server = {0};
   chttp_session session = {0};
   chttp_response response = {0};
   chttp_response_destroy(&response);
   return chttp_client_destroy(&client, 0u) == TURBO_OK &&
+                 chttp_tls_profile_destroy(&tls_profile) == TURBO_OK &&
                  chttp_server_destroy(&server) == TURBO_OK && session.impl == NULL
              ? 0
              : 1;

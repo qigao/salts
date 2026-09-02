@@ -114,12 +114,15 @@ TCP endpoints. Set both `cnet_client_config.tls_io_buffer_bytes` (at least
 connections. Leaving both zero preserves a TLS-free client and makes a
 `tls://` connect fail with `TURBO_ENOTSUP`.
 
-`cnet_connect()` accepts an optional `cnet_tls_client_config`. NULL uses the
-platform trust store and the URI host as the verified identity. An explicit
-configuration can select CA file/path, client certificate/key, SNI/identity,
-and an ordered ALPN offer. Certificate-chain and hostname/IP verification are
-mandatory; CNet exposes no insecure mode and never retries `tls://` as
-plaintext. Configuration strings are consumed synchronously during admission.
+`cnet_connect()` accepts either a one-shot `cnet_tls_client_config` or a reusable
+`cnet_tls_client`; the two fields are mutually exclusive. NULL uses the platform
+trust store and the URI host as the verified identity. An explicit configuration
+can select CA file/path, client certificate/key, SNI/identity, and an ordered
+ALPN offer. `cnet_tls_client_init()` builds an immutable OpenSSL context and
+consumes all input synchronously. A successful connect retains that context, so
+the public wrapper may be destroyed after admission while the connection remains
+valid. Certificate-chain and hostname/IP verification are mandatory; CNet
+exposes no insecure mode and never retries `tls://` as plaintext.
 
 After CONNECTED, `cnet_tls_negotiated_alpn()` copies the selected protocol. It
 can be called from the CONNECTED callback because CNet records ALPN before
