@@ -1119,7 +1119,11 @@ Worker Executor 使用线程执行 ready Task；Worker Scheduler 则把 timer qu
 
 ### Coro：保存执行位置，不接管 completion
 
-`TurboUtils::Coroutine` 对 minicoro 提供 stackful coroutine primitive 与有界复用池。Coroutine 可以在发起异步操作后 yield，并在 completion 到达后由 owner 通过 Scheduler/Executor 安排 resume；但 frame 只保存“代码停在哪里”，不能成为“操作是否已经完成”的第二份事实源。
+`TurboUtils::Coroutine` 对 minicoro 提供 stackful coroutine primitive、单 owner 有界复用池，以及可选的多 shard `turbo_coro_executor_t`。运行中的 frame 可以用 `turbo_coro_executor_yield()` 主动让出；需要等待外部操作时，则先以 `await_begin` 获取 generation-checked token，提交失败以 `await_abort` 收尾，提交成功后调用 `await` 挂起。外部完成线程调用 `await_complete` 只发布 terminal signal，原 shard owner 才执行 resume。frame 仍只保存“代码停在哪里”，不能成为“操作是否已经完成”的第二份事实源。
+
+通用 coroutine Executor 把用户线程与调度线程明确分开。每个固定 shard 独占一个 scheduler、一个 `turbo_coro_pool_t`、一个有界 MPSC task queue 和一个不与新任务争抢容量的 completion wake queue；用户线程提交复制后的 task descriptor，运行中的 frame 不跨 shard 迁移。普通 submit 采用 round-robin，`submit_to` 则为 connection、session 或 Actor 提供显式 affinity。queue full、closed admission 与同 Executor 自阻塞分别暴露为 `TURBO_ENOBUFS`、`TURBO_ESHUTDOWN` 与 `TURBO_EBUSY`，不会通过无界扩容隐藏背压。
+
+一个 frame 同时最多保留一个 await slot，wake queue 的容量至少等于该 shard 的最大 active frame 数，所以每个合法 await 的唯一 terminal wake 都有保留预算。completion 可以早于 `await` 到达，也可以晚于 `shutdown` 关闭 task admission；前者直接读取已保存状态而不挂起，后者仍被接受以完成 drain。Executor 不会替外部系统虚构取消结果：若 NativeIO request、timer 或用户 operation 已成功提交，其 owner 必须最终发布一次 completion，并在 Executor destroy 前停止 completion caller。
 
 因此组合关系应该是：
 
@@ -1134,7 +1138,7 @@ Scheduler / Executor
     = resume task becomes ready and runs
 ```
 
-当前 Utils coroutine primitive 与 CFlow Executor 仍是独立 target；把 coroutine resume 封装成 Task 是上层 adapter 的职责，不应让 CFlow core 反向依赖某个网络协程 context。
+Coroutine Executor 与 CFlow Executor 仍是不同的执行语义：前者调度固定 shard 上的 cooperative frame，后者承载 typed flow 的 task/admission contract。通用 await token 已经解决“完成线程怎样安全唤醒原 shard”，但把 NativeIO request completion 映射为哪个 token、何时 cancel/drain，仍是上层 adapter 的职责。不应让 CFlow core 反向依赖某个网络协程 context，也不应让通用 coroutine Executor 自己成为 I/O 事实源。
 
 ### Readiness：把平台事件翻译成 WAIT/Wake
 

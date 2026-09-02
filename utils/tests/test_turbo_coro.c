@@ -67,6 +67,14 @@ static void sched_fast(coro_t *co, void *arg) {
     (*counter) += 10;
 }
 
+static void storage_pop_coro(coro_t *co, void *arg) {
+    int value = 0;
+    int *total = (int *)arg;
+    if (coro_pop(co, &value, sizeof(value)) == 0) {
+        *total += value;
+    }
+}
+
 static void stack_work_coro(coro_t *co, void *arg) {
     coro_stack_work_state_t *state = (coro_stack_work_state_t *)arg;
     uint8_t source[CORO_STACK_WORK_BYTES];
@@ -387,6 +395,31 @@ spec("Turbo Coro Pool") {
 
         check_equal(c1, 3);
         check_equal(c2, 3);
+        turbo_coro_pool_destroy(pool);
+    }
+
+    it("preserves default storage capacity when reusing a frame") {
+        turbo_coro_pool_config_t config = {.initial_capacity = 1, .max_capacity = 1, .stack_size = 0, .storage_size = 0};
+        turbo_coro_pool_t *pool = turbo_coro_pool_create(&config);
+        int total = 0;
+        int first = 17;
+        int second = 25;
+        coro_t *co = NULL;
+
+        check_not_null(pool);
+        co = turbo_coro_pool_acquire(pool, storage_pop_coro, &total);
+        check_not_null(co);
+        check_equal(coro_push(co, &first, sizeof(first)), 0);
+        check_equal(coro_resume(co), 0);
+        turbo_coro_pool_release(pool, co);
+
+        co = turbo_coro_pool_acquire(pool, storage_pop_coro, &total);
+        check_not_null(co);
+        check_equal(coro_push(co, &second, sizeof(second)), 0);
+        check_equal(coro_resume(co), 0);
+        turbo_coro_pool_release(pool, co);
+
+        check_equal(total, first + second);
         turbo_coro_pool_destroy(pool);
     }
 

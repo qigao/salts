@@ -43,10 +43,13 @@ accepted-connection 路径终止 TLS，ASan 与 Release 回归通过。CHTTP HTT
 - [ ] 覆盖 loss/reorder/duplicate、窗口满、timer 推进、cancel、peer timeout 与 shutdown
   drain 测试。
 
+- [ ] 导入并复用 `tools/wsparser` 作为唯一 WebSocket frame/opening-handshake parser；先补
+  RFC 6455 canonical length、reserved opcode/RSV、mask direction、NULL/overflow、fuzz corpus
+  与 borrowed payload 失效点测试，不在 CNet 或 CHTTP 中复制第二套解析器。
 - [ ] 定义有界 WS message API：text/binary、fragment、ping/pong、close code/reason、
   max frame bytes、max message bytes、UTF-8 validation 和 backpressure。
-- [ ] 实现 RFC 6455 frame 状态机；client frame 必须 mask，控制帧、fragmentation 和
-  close handshake 必须严格校验。
+- [ ] 在 `tools/wsparser` 语法结果之上实现 RFC 6455 session 状态机；client frame 必须 mask，
+  控制帧、fragmentation 和 close handshake 必须严格校验。
 - [ ] CNet WebSocket engine 只依赖有序双向 byte stream，不解析 HTTP header；同一 frame/
   message/session 状态机同时承载 CHTTP HTTP/1.1 Upgrade 与未来 HTTP/2 RFC 8441 stream。
 - [ ] 为 `ws://` 和 `wss://` client 实现 HTTP Upgrade；`wss` 必须复用 P0 TLS transport。

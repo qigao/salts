@@ -1674,8 +1674,10 @@ submit next operation
 Coroutine 可以把这段控制流重新写成接近同步代码的形式，但它不应该成为第二份
 I/O 状态源。
 
-当前实验路径中的 `TurboUtils::Coroutine` 是 minicoro 的唯一编译封装与有界
-frame pool。`NativeIO` 仍然拥有 request slot 和 terminal completion；
+当前 `TurboUtils::Coroutine` 是 minicoro 的唯一编译封装，提供单 owner 有界
+frame pool 和可选的固定 shard Executor。每个 Executor worker 独占 scheduler、pool 与
+有界 command queue，用户线程只负责 submit；显式 shard affinity 可让同一 connection
+的 coroutine 始终在同一 owner 上运行。`NativeIO` 仍然拥有 request slot 和 terminal completion；
 coroutine 只保存：
 
 ```text
@@ -1716,6 +1718,12 @@ request payload 和 frame，因为 cancel request 不是 terminal evidence。
 明确取消
 明确 shutdown drain
 ```
+
+这并不表示通用 coroutine Executor 已经接管 NativeIO。Executor 现在提供 cooperative
+`yield` 和 generation-checked `await` token：完成线程只调用 `await_complete` 发布 terminal
+signal，原 shard owner 才恢复 frame；completion 早于 suspend 和 shutdown 后 drain 都有明确
+语义。但 readiness/native completion 到 token 的映射仍属于专门 adapter，NativeIO request
+slot 仍是唯一终态证据。这样可以独立扩展多 CPU 调度，而不把 I/O progress 复制进 frame pool。
 
 ## 24.2 CNet 是 NativeIO 之上的连接层，不是 CFlow 的网络分支
 
@@ -1775,7 +1783,8 @@ TLS transport，但不能把未来的 WebSocket 或 KCP 写成已发布事实。
 KCP 与 WebSocket 的归属也应遵守这条边界。NativeIO 只提供 UDP datagram、TCP byte stream、
 timer、cancel 与 terminal completion；KCP 的 conversation/window/retransmit/ordered message，
 以及 WebSocket 的 frame/fragment/ping-pong/close handshake 都是连接协议状态，应由 CNet owner
-独占。服务端 HTTP Upgrade 的路由与 header 校验由 CHTTP 完成，成功后再把 stream 所有权一次性
+独占。帧与 opening-handshake 的语法解析复用仓库 `tools/wsparser`，CNet/CHTTP 在其上补有界
+message/session ownership，不再引入另一套 WS parser。服务端 HTTP Upgrade 的路由与 header 校验由 CHTTP 完成，成功后再把 stream 所有权一次性
 移交给 CNet WebSocket session。未来 HTTP/2 的 RFC 8441 extended CONNECT 也由 CHTTP 校验，
 再把单个 H2 stream 适配给同一套 CNet WebSocket engine；H1/H2 不应复制两套 frame/session
 状态机。把这些状态塞进 NativeIO backend，会令每一种 OS backend 重复协议逻辑，也会破坏

@@ -15,8 +15,8 @@ Actor, and Reactive are separate modules; Actor and Reactive depend on NativeIO
 directly and none of them depends on CNet.
 
 **Tech Stack:** C11, NativeIO, TurboUtils Concurrency (`turbo_threadpool` and
-`disruptor`), TinyTest, CMake Presets, BoringSSL, c-ares,
-llhttp, Wslay, and upstream KCP.
+`disruptor`), TinyTest, CMake Presets, BoringSSL, c-ares, llhttp,
+`tools/wsparser`, and upstream KCP.
 
 **Spec:**
 `docs/superpowers/specs/2026-08-31-cnet-actor-reactive-network-design.md`
@@ -307,8 +307,9 @@ destruction.
 **Files:**
 
 - Modify: `vcpkg.json`
-- Create: `vcpkg-ports/wslay/vcpkg.json`
-- Create: `vcpkg-ports/wslay/portfile.cmake`
+- Import and harden: `tools/wsparser/websocket_frame_parser.[ch]`
+- Import and harden: `tools/wsparser/websocket_handshake_parser.[ch]`
+- Import: `tools/wsparser/CMakeLists.txt`
 - Create: `vcpkg-ports/kcp/vcpkg.json`
 - Create: `vcpkg-ports/kcp/portfile.cmake`
 - Create: `vcpkg-ports/kcp/per-session-allocator.patch`
@@ -334,8 +335,8 @@ destruction.
 - Modify: `cnet/CMakeLists.txt`
 - Modify: `cnet/tests/CMakeLists.txt`
 
-- [ ] Add pinned vcpkg dependencies for BoringSSL and llhttp. Add Wslay
-  and KCP overlay ports with upstream source, checksums, licenses, and an exact
+- [ ] Add pinned vcpkg dependencies for BoringSSL and llhttp. Add the KCP
+  overlay port with upstream source, checksums, licenses, and an exact
   record of local patches.
 - [ ] Migrate `vendor/reed/gf256.c`, `gf256.h`, and their tests from the neutral
   vendor component at `C:/projects/cpp/turbonet/turbonet/vendor/reed`, retaining
@@ -344,7 +345,7 @@ destruction.
   APIs against the same vectors.
 - [ ] Add `CNET_ENABLE_TLS`, `CNET_ENABLE_WEBSOCKET`, and `CNET_ENABLE_KCP`.
   Make each option fail configuration when its dependency is unavailable; WSS
-  requires both TLS and WebSocket.
+  requires both TLS and the in-tree `tools/wsparser` target.
 - [ ] Write TLS tests for mandatory chain/hostname verification, partial
   records, WANT_READ/WANT_WRITE, connect timeout, and orderly/abrupt shutdown.
 - [ ] Implement TLS with BoringSSL memory BIOs so all encrypted bytes still flow
@@ -353,9 +354,11 @@ destruction.
 - [ ] Write WebSocket corpus tests for Upgrade validation, fragmented
   text/binary messages, masking, control frames, invalid lengths/UTF-8, bounded
   reassembly, and close handshake.
-- [ ] Implement HTTP Upgrade parsing with llhttp and frame parsing/serialization
-  with Wslay's low-level frame API; neither library may access sockets or own a
-  message queue.
+- [ ] Import `tools/wsparser` as the sole frame/opening-handshake parser and add
+  canonical-length, reserved-bit/opcode, mask-direction, NULL/overflow, fuzz,
+  and borrowed-view lifetime coverage before CNet integration. Parser code may
+  not access sockets or own a message queue; CNet owns message/session state and
+  CHTTP owns route/Upgrade handoff.
 - [ ] Write deterministic KCP tests with a fake clock and packet link covering
   authenticated handshake/retry, wrong PSK, replay, tampered data/FEC shards,
   loss, duplication, reordering, recovery within parity limits, failure beyond
@@ -433,7 +436,7 @@ destruction.
 - [ ] Run `rg.exe -n "TODO|TBD|FIXME|HACK|Not implemented|assert\\(false\\)" cnet`
   and remove every unowned placeholder.
 - [ ] Confirm NativeIO and CFlow contain no CNet include or link dependency.
-- [ ] Confirm no public header exposes BoringSSL, llhttp, Wslay, KCP, Monocypher,
+- [ ] Confirm no public header exposes BoringSSL, llhttp, wsparser, KCP, Monocypher,
   GF256, OS socket, or
   internal pool types.
 - [ ] Confirm every accepted connection, command, receive-buffer lease, and NativeIO

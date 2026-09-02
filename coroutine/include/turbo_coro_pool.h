@@ -14,6 +14,11 @@
 extern "C" {
 #endif
 
+/**
+ * A pool has one control and execution owner at a time and is not thread-safe.
+ * Create, acquire, release, abandon, and destroy it from the same shard/thread,
+ * or transfer ownership only while no operation or coroutine is active.
+ */
 typedef struct turbo_coro_pool_s turbo_coro_pool_t;
 
 typedef void *(*turbo_coro_pool_alloc_fn)(void *user_data, size_t size);
