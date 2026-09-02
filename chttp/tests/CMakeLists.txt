@@ -63,3 +63,12 @@ set_target_properties(chttp_header_cpp_test PROPERTIES
   CXX_STANDARD 11
   CXX_STANDARD_REQUIRED ON
   CXX_EXTENSIONS OFF)
+
+cmake_add_test(chttp_tls_test
+  SOURCES chttp_tls_test.c
+  LIBS turbo_chttp Rocida::TinyTest
+  FOLDER "chttp/tests")
+set_target_properties(chttp_tls_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)

@@ -375,18 +375,28 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
     return TURBO_EINVAL;
   status = cnet_uri_parse(options->uri, &uri);
   if (status != TURBO_OK) return status;
-  if (options->tls != NULL && uri.scheme != CNET_URI_TLS) return TURBO_EINVAL;
+  if (options->tls != NULL && options->tls_client != NULL) return TURBO_EINVAL;
+  if ((options->tls != NULL || options->tls_client != NULL) && uri.scheme != CNET_URI_TLS)
+    return TURBO_EINVAL;
   if (uri.scheme == CNET_URI_TLS && impl->tls_io_buffer_bytes == 0u) return TURBO_ENOTSUP;
   payload.scheme = uri.scheme;
   payload.connect_timeout_ms = impl->connect_timeout_ms;
   payload.read_timeout_ms = impl->read_timeout_ms;
   payload.write_timeout_ms = impl->write_timeout_ms;
   if (uri.scheme == CNET_URI_TLS) {
+    const char *profile_server_name = cnet_tls_client_server_name(options->tls_client);
     const char *server_name = options->tls != NULL && options->tls->server_name != NULL
                                   ? options->tls->server_name
-                                  : uri.host;
-    status = cnet_tls_client_context_create(options->tls, &payload.tls_context);
-    if (status != TURBO_OK) return status;
+                              : profile_server_name != NULL ? profile_server_name
+                                                            : uri.host;
+    if (options->tls_client != NULL) {
+      payload.tls_context = cnet_tls_client_context(options->tls_client);
+      if (payload.tls_context == NULL) return TURBO_EINVAL;
+      cnet_tls_context_retain(payload.tls_context);
+    } else {
+      status = cnet_tls_client_context_create(options->tls, &payload.tls_context);
+      if (status != TURBO_OK) return status;
+    }
     memcpy(payload.tls_server_name, server_name, strlen(server_name) + 1u);
     payload.tls_io_buffer_bytes = impl->tls_io_buffer_bytes;
     payload.tls_handshake_timeout_ms = impl->tls_handshake_timeout_ms;

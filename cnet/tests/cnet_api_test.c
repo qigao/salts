@@ -297,6 +297,53 @@ static cnet_client_config cnet_api_test_config(void) {
 }
 
 spec("CNet public client API") {
+  it("validates reusable TLS client profile lifecycle") {
+    cnet_tls_client client = {0};
+    cnet_tls_client_config config = {.size = sizeof(config)};
+    cnet_tls_client_config invalid = {0};
+
+    check_equal(cnet_tls_client_init(NULL, &config), TURBO_EINVAL);
+    check_equal(cnet_tls_client_init(&client, NULL), TURBO_EINVAL);
+    check_equal(cnet_tls_client_init(&client, &invalid), TURBO_EINVAL);
+    check_null(client.impl);
+    check_equal(cnet_tls_client_init(&client, &config), TURBO_OK);
+    check_not_null(client.impl);
+    check_equal(cnet_tls_client_init(&client, &config), TURBO_EALREADY);
+    check_equal(cnet_tls_client_destroy(NULL), TURBO_EINVAL);
+    check_equal(cnet_tls_client_destroy(&client), TURBO_OK);
+    check_null(client.impl);
+    check_equal(cnet_tls_client_destroy(&client), TURBO_OK);
+  }
+
+  it("rejects ambiguous or plaintext reusable TLS profiles") {
+    cnet_client client = {0};
+    cnet_tls_client tls_client = {0};
+    cnet_tls_client_config tls_config = {.size = sizeof(tls_config)};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_connection connection = {17u, 19u};
+    cnet_connect_options options = {.uri = "tcp://127.0.0.1:443",
+                                    .observer = {.on_state = cnet_api_test_ignore_state},
+                                    .tls_client = &tls_client};
+
+    config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    config.tls_handshake_timeout_ms = 1000u;
+    check_equal(cnet_tls_client_init(&tls_client, &tls_config), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), TURBO_OK);
+    check_equal(cnet_connect(&client, &options, &connection), TURBO_EINVAL);
+    check_equal(connection.slot, 0u);
+    check_equal(connection.generation, 0u);
+
+    options.uri = "tls://127.0.0.1:443";
+    options.tls = &tls_config;
+    check_equal(cnet_connect(&client, &options, &connection), TURBO_EINVAL);
+    check_equal(connection.slot, 0u);
+    check_equal(connection.generation, 0u);
+
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_tls_client_destroy(&tls_client), TURBO_OK);
+  }
+
   it("rejects malformed TLS server configuration without publishing a context") {
     cnet_tls_server server = {0};
     cnet_tls_server_config config = {.size = sizeof(config)};

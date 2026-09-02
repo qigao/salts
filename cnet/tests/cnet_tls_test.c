@@ -384,6 +384,7 @@ spec("CNet bounded TLS engine") {
     cnet_client client = {0};
     cnet_client server = {0};
     cnet_listener listener = {0};
+    cnet_tls_client tls_client = {0};
     cnet_tls_server tls_server = {0};
     cnet_client_config client_config = cnet_tls_network_config();
     cnet_client_config server_client_config = cnet_tls_network_config();
@@ -395,6 +396,7 @@ spec("CNet bounded TLS engine") {
     cnet_tls_network_probe server_probe = {.client = &server};
     cnet_connect_options connect_options;
     cnet_connection client_connection = {0};
+    char server_name[] = "localhost";
     char *cert_path = tt_make_temp_file("cnet-cert", ".pem");
     char *key_path = tt_make_temp_file("cnet-key", ".pem");
     char uri[64];
@@ -416,11 +418,13 @@ spec("CNet bounded TLS engine") {
                                                  .alpn_protocol_count = 2u};
     tls_client_config = (cnet_tls_client_config){.size = sizeof(tls_client_config),
                                                  .ca_file = cert_path,
-                                                 .server_name = "localhost",
+                                                 .server_name = server_name,
                                                  .alpn_protocols = client_alpn,
                                                  .alpn_protocol_count = 2u};
 
     check_equal(cnet_tls_server_init(&tls_server, &tls_server_config), TURBO_OK);
+    check_equal(cnet_tls_client_init(&tls_client, &tls_client_config), TURBO_OK);
+    server_name[0] = 'x';
     check_equal(cnet_client_init(&client, &client_config), TURBO_OK);
     check_equal(cnet_client_init(&server, &server_client_config), TURBO_OK);
     check_equal(cnet_listener_init(&listener, &listener_config), TURBO_OK);
@@ -431,8 +435,10 @@ spec("CNet bounded TLS engine") {
                                                           .on_receive = cnet_tls_network_receive,
                                                           .user = &client_probe,
                                                           .on_send = cnet_tls_network_send},
-                                             .tls = &tls_client_config};
+                                             .tls_client = &tls_client};
     check_equal(cnet_connect(&client, &connect_options, &client_connection), TURBO_OK);
+    check_equal(cnet_tls_client_destroy(&tls_client), TURBO_OK);
+    check_null(tls_client.impl);
     client_probe.connection = client_connection;
 
     deadline = turbo_monotonic_ms() + 5000u;

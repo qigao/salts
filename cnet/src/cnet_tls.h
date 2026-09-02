@@ -27,6 +27,8 @@ typedef struct cnet_tls_state {
 
 int cnet_tls_client_context_create(const cnet_tls_client_config *config,
                                    cnet_tls_context **out_context);
+cnet_tls_context *cnet_tls_client_context(const cnet_tls_client *client);
+const char *cnet_tls_client_server_name(const cnet_tls_client *client);
 cnet_tls_context *cnet_tls_server_context(const cnet_tls_server *server);
 void cnet_tls_context_retain(cnet_tls_context *context);
 void cnet_tls_context_release(cnet_tls_context *context);

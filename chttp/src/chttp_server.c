@@ -1,4 +1,5 @@
 #include "chttp_server_runtime.h"
+#include "chttp_tls.h"
 
 #include <turbo/clock.h>
 
@@ -74,6 +75,14 @@ static int chttp_server_config_validate(const chttp_server_config *config) {
       config->max_response_header_count == 0u || config->max_response_header_bytes == 0u ||
       config->max_response_body_bytes == 0u || config->poll_slice_ms == 0u)
     return TURBO_EINVAL;
+  if (config->tls != NULL) {
+    if (config->tls->size != sizeof(*config->tls)) return TURBO_EINVAL;
+    const int alpn_status = chttp_tls_http1_alpn_validate(config->tls->alpn_protocols,
+                                                          config->tls->alpn_protocol_count);
+    if (alpn_status != TURBO_OK) return alpn_status;
+    if (config->network.tls_io_buffer_bytes == 0u || config->network.tls_handshake_timeout_ms == 0u)
+      return TURBO_EINVAL;
+  }
   if ((config->max_route_param_count != 0u && config->max_route_param_bytes == 0u) ||
       config->max_route_middleware_count > SIZE_MAX / sizeof(chttp_server_middleware) ||
       config->middleware_capacity > SIZE_MAX / sizeof(chttp_server_middleware) ||
@@ -123,6 +132,7 @@ static void chttp_server_impl_free(chttp_server_impl *impl) {
   free(impl->routes);
   free(impl->session_cookie_name);
   free(impl->host);
+  if (impl->tls_initialized) (void)cnet_tls_server_destroy(&impl->tls_server);
   if (impl->sync_initialized) {
     turbo_cond_destroy(&impl->changed);
     turbo_mutex_destroy(&impl->mutex);
@@ -184,6 +194,15 @@ int chttp_server_init(chttp_server *server, const chttp_server_config *config) {
   impl = (chttp_server_impl *)calloc(1u, sizeof(*impl));
   if (impl == NULL) return TURBO_ENOMEM;
   impl->config = *config;
+  if (config->tls != NULL) {
+    status = cnet_tls_server_init(&impl->tls_server, config->tls);
+    if (status != TURBO_OK) {
+      chttp_server_impl_free(impl);
+      return status;
+    }
+    impl->tls_initialized = true;
+    impl->config.tls = NULL;
+  }
   impl->max_response_wire_bytes = config->max_response_body_bytes +
                                   config->max_response_header_bytes +
                                   CHTTP_SERVER_GENERATED_RESPONSE_BYTES;
@@ -501,7 +520,10 @@ static int chttp_server_accept_ready(chttp_server_impl *server) {
                                .on_receive = chttp_server_on_receive,
                                .on_send = chttp_server_on_send,
                                .user = connection};
-    status = cnet_listener_accept(&server->listener, &server->network, &observer, &handle);
+    status = server->tls_initialized
+                 ? cnet_listener_accept_tls(&server->listener, &server->network,
+                                            &server->tls_server, &observer, &handle)
+                 : cnet_listener_accept(&server->listener, &server->network, &observer, &handle);
     if (status == TURBO_ETIMEDOUT) return TURBO_OK;
     if (status == TURBO_ENOBUFS) {
       turbo_mutex_lock(&server->mutex);

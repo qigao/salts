@@ -22,16 +22,17 @@ feature 控制。
 - HTTP/1.0、HTTP/1.1 response 的严格增量解析；
 - GET、HEAD、POST、PUT、DELETE、PATCH、OPTIONS request serialization；
 - 固定长度、chunked、EOF-delimited body，以及有界 1xx informational response；
-- TCP 和本地 Pipe ordered byte stream；
-- 同一 `connection_uri + authority` 的有界 HTTP/1.1 keep-alive 连接复用；
+- TCP、TLS 和本地 Pipe ordered byte stream；
+- 同一 `connection_uri + authority + TLS profile identity` 的有界 HTTP/1.1 keep-alive
+  连接复用；
 - 供 RPC、Executor 和既有 event loop 集成的高级 submit/cancel/poll 接口；
-- 用户不接触 poller 的后台 HTTP/1.1 server、动态 `:name` 路由与 GET/HEAD/POST/PUT/DELETE/
-  PATCH/OPTIONS handler；
+- 用户不接触 poller 的后台 HTTP/1.1/HTTPS server、动态 `:name` 路由与
+  GET/HEAD/POST/PUT/DELETE/PATCH/OPTIONS handler；
 - 按注册顺序执行的全局/路由 middleware，以及只能调用一次的 `chttp_server_next_call()`；
 - 使用系统 CSPRNG session id 的有界内存 Cookie Session，支持 get/set/remove/clear/invalidate；
 - start-line、header count、header bytes、request body、response body、request count 的硬上限。
 
-当前有意不提供 TLS、HTTP/2/3、WebSocket/Upgrade、CONNECT、redirect、compression、proxy、
+当前有意不提供 HTTP/2/3、WebSocket/Upgrade、CONNECT、redirect、compression、proxy、
 streaming upload/download、异步悬挂 server response 或自动 retry。client serializer 发送
 `Connection: keep-alive`；final response 只有在 llhttp 判定协议允许持久连接时才回到池中，
 `Connection: close`、EOF framing、解析失败、取消和 shutdown 都会关闭该连接。UDP/datagram 在
@@ -46,7 +47,7 @@ request API 不暴露 trailer，因此 server 拒绝任何非空 trailer，避�
 Authorization 错当成普通 header。
 
 后续协议路线只计划把 TurboHTTP 的 HTTP/2 引擎导入 CHTTP，并把 S3 作为 CHTTP 上层模块导入；
-HTTP/3 不在范围内。TLS、KCP 与 WebSocket 连接状态归 CNet，CHTTP 只负责 WebSocket Upgrade
+HTTP/3 不在范围内。TLS、KCP 与 WebSocket 连接状态归 CNet，CHTTP 只负责 HTTPS policy、WebSocket Upgrade
 路由和所有权移交。详细阶段与验证门槛见 `../docs/CHTTP_CNET_PROTOCOL_TODO.md`。
 
 这里的 keep-alive 是 HTTP/1.1 在同一 TCP stream 上的持久连接复用，不等于内核
@@ -180,20 +181,38 @@ request/event capacity、单次 send/receive bytes 和 connect/read/write timeou
 
 每次 requests-style call 或高级 submit 再提供三项不同事实：
 
-- `connection_uri`：CNet endpoint，例如 `tcp://127.0.0.1:8080`；
+- `connection_uri`：CNet endpoint，例如 `tcp://127.0.0.1:8080` 或
+  `tls://127.0.0.1:8443`；
 - `authority`：HTTP Host/virtual-host，例如 `api.example.test:8080`；
 - `target`：HTTP origin-form target，例如 `/v1/users?id=7`。
 
 三者不能合并为一个模糊 URL：连接 endpoint、HTTP authority 和 request target 的归属不同，
-Pipe 与 virtual host 也需要能独立组合。CNet 已提供 TLS/SNI/ALPN，但 CHTTP 尚未接入对应的
-HTTPS transport adapter；在接入完成前，不能把 `https://` 静默降级为 TCP。
+Pipe、TLS SNI 与 virtual host 也需要能独立组合。CHTTP 不把 `https://` 当作模糊 URL 解析，
+HTTPS 明确使用 `tls://` connection URI 和可选的 `chttp_tls_profile`。
 
-pool key 是经过验证后的 `connection_uri + authority` 精确组合，`target` 不参与。因此同一站点的
-`/users`、`/orders` 与 `/status` 可以顺序复用一条连接，但不同 authority 不做隐式 coalescing。
+pool key 是经过验证后的 `connection_uri + authority + TLS profile identity` 精确组合，`target`
+不参与。因此同一站点的 `/users`、`/orders` 与 `/status` 可以顺序复用一条连接，但不同
+authority 或不同 TLS profile 不做隐式 coalescing。内容相同但分别初始化的 profile 也属于不同
+安全域；需要复用时应共享同一个 immutable profile。
 每条连接同一时刻最多承载一个 request，不实现 HTTP pipelining。pool 满且没有同 key idle slot
 时，高级 submit 会开始关闭一个不匹配 idle slot，并返回 `TURBO_ENOBUFS`；调用方 poll 后再重试。
 requests-style client 则在本次调用 deadline 内自行推进该关闭并重新提交，因此普通用户切换站点
 仍不需要接触 poller。这里的重新提交发生在新 request admission 之前，不是断线后的 HTTP retry。
+
+## HTTPS 与 TLS profile
+
+客户端先用 `chttp_tls_profile_init()` 把 CA、可选客户端证书、SNI/verified identity 与 ALPN
+构造成可复用 profile，再把它放入 `chttp_options.tls` 或 `chttp_request_options.tls`。CHTTP
+只支持空 ALPN 或唯一的 `http/1.1`；`h2` 和其他协议会返回 `TURBO_ENOTSUP`，避免协商出非 H1
+协议后仍发送 H1 wire bytes。profile public wrapper 可在 request admission 后销毁；busy/idle slot
+持有内部引用，直到连接关闭。CNet 始终执行 peer 与 hostname verification，不提供不安全开关。
+
+服务端把 `cnet_tls_server_config` 放入 `chttp_server_config.tls`。`chttp_server_init()` 同步建立并
+拥有 TLS context，因此证书配置字符串在 init 返回后即可释放；start 后仍由原有后台 owner
+accept 和推进握手。TLS 模式要求 `network.tls_io_buffer_bytes >= CNET_TLS_MIN_IO_BUFFER_BYTES` 且
+`tls_handshake_timeout_ms` 非零，配置或证书错误在监听前失败，不回退明文。mTLS 继续使用 CNet 的
+`CNET_TLS_CLIENT_AUTH_REQUIRED` 与显式 CA source。HTTPS Session 应设置
+`session_cookie_secure = 1`。
 
 ## 高级 event-loop 接口
 
@@ -223,7 +242,7 @@ FREE
   -> RECYCLE
 ```
 
-- 新连接 submit 成功前由 CNet 复制 URI，CHTTP 复制 pool key，并由 serializer 复制
+- 新连接 submit 成功前由 CNet 复制 URI，CHTTP 复制 pool key、retain TLS profile，并由 serializer 复制
   method/authority/target/headers/body；
 - `options.user` 是 borrowed，必须存活到 completion callback 返回；
 - response、header string 和 body 只在 completion callback 期间有效；需要跨 callback 或协程
@@ -245,7 +264,7 @@ serialized request <= network.max_send_bytes
 + max_response_body_bytes
 ```
 
-总预算还需乘 `request_capacity`，再加每个连接的 URI/authority pool key、CNet
+总预算还需乘 `request_capacity`，再加每个连接的 URI/authority/profile pool key、CNet
 command/event/native-request 和 receive buffer 预算。idle slot 已释放上一条 response parser 的
 reason/header/body storage，只保留连接、key 和 CNet receive state。
 

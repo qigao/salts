@@ -203,7 +203,8 @@ static int chttp_requests_perform(chttp_client *client, chttp_method method,
                                             .body = options->body,
                                             .body_size = options->body_size,
                                             .on_complete = chttp_requests_complete,
-                                            .user = &impl->probe};
+                                            .user = &impl->probe,
+                                            .tls = options->tls};
   if (options->timeout_ms != 0u)
     deadline_at_ms = chttp_requests_deadline_after(turbo_monotonic_ms(), options->timeout_ms);
   for (;;) {

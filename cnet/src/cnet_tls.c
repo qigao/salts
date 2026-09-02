@@ -32,6 +32,7 @@ struct cnet_tls_context {
   SSL_CTX *ssl;
   unsigned char *alpn_wire;
   size_t alpn_wire_size;
+  char client_server_name[CNET_TLS_SERVER_NAME_CAPACITY];
   atomic_size_t references;
   bool server;
 };
@@ -274,8 +275,42 @@ int cnet_tls_client_context_create(const cnet_tls_client_config *config,
     cnet_tls_context_release(context);
     return status;
   }
+  if (config->server_name != NULL)
+    memcpy(context->client_server_name, config->server_name, strlen(config->server_name) + 1u);
   *out_context = context;
   return TURBO_OK;
+}
+
+int cnet_tls_client_init(cnet_tls_client *client, const cnet_tls_client_config *config) {
+  cnet_tls_context *context = NULL;
+  int status;
+  if (client == NULL || config == NULL) return TURBO_EINVAL;
+  if (client->impl != NULL) return TURBO_EALREADY;
+  status = cnet_tls_client_context_create(config, &context);
+  if (status != TURBO_OK) return status;
+  client->impl = context;
+  return TURBO_OK;
+}
+
+int cnet_tls_client_destroy(cnet_tls_client *client) {
+  cnet_tls_context *context;
+  if (client == NULL) return TURBO_EINVAL;
+  context = (cnet_tls_context *)client->impl;
+  if (context == NULL) return TURBO_OK;
+  client->impl = NULL;
+  cnet_tls_context_release(context);
+  return TURBO_OK;
+}
+
+cnet_tls_context *cnet_tls_client_context(const cnet_tls_client *client) {
+  cnet_tls_context *context = client != NULL ? (cnet_tls_context *)client->impl : NULL;
+  return context != NULL && !context->server ? context : NULL;
+}
+
+const char *cnet_tls_client_server_name(const cnet_tls_client *client) {
+  const cnet_tls_context *context = cnet_tls_client_context(client);
+  return context != NULL && context->client_server_name[0] != '\0' ? context->client_server_name
+                                                                   : NULL;
 }
 
 int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *config) {

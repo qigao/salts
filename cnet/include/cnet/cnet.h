@@ -21,6 +21,11 @@ typedef struct cnet_listener {
   void *impl;
 } cnet_listener;
 
+/** Reusable immutable TLS client context. */
+typedef struct cnet_tls_client {
+  void *impl;
+} cnet_tls_client;
+
 /** Reusable TLS server context. */
 typedef struct cnet_tls_server {
   void *impl;
@@ -123,6 +128,8 @@ typedef struct cnet_connect_options {
   cnet_observer observer;
   /** Optional TLS policy; valid only with `tls://`. NULL selects verified defaults. */
   const cnet_tls_client_config *tls;
+  /** Optional reusable TLS policy; mutually exclusive with `tls`. */
+  const cnet_tls_client *tls_client;
 } cnet_connect_options;
 
 /**
@@ -252,6 +259,27 @@ int cnet_client_stop(cnet_client *client, uint32_t timeout_ms);
  * A NULL internal implementation is already destroyed and returns `TURBO_OK`.
  */
 int cnet_client_destroy(cnet_client *client);
+
+/**
+ * Builds one reusable fail-closed TLS 1.2+ client context. Configuration,
+ * credentials, and ALPN are consumed synchronously and are not retained.
+ * Peer and hostname verification remain mandatory.
+ *
+ * @param client Zero-initialized reusable output profile.
+ * @param config Explicit trust, client identity, SNI, and ALPN policy.
+ * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_EALREADY`, `TURBO_ERANGE`,
+ * `TURBO_ENOMEM`, or `TURBO_EIO` for trust/certificate/OpenSSL setup failure.
+ */
+int cnet_tls_client_init(cnet_tls_client *client, const cnet_tls_client_config *config);
+
+/**
+ * Releases the public context reference. Connections already admitted with
+ * this profile retain their own reference. Repeated destroy is successful.
+ * This control-plane call must not overlap init or connect using the same
+ * wrapper.
+ * @return `TURBO_OK`, or `TURBO_EINVAL` for a NULL wrapper.
+ */
+int cnet_tls_client_destroy(cnet_tls_client *client);
 
 /**
  * Builds one fail-closed TLS 1.2+ server context. Certificate/key and ALPN
