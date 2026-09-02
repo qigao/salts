@@ -11,7 +11,7 @@ CMeta method semantics + CSerde params/result
 ```
 
 CRPC 随 TurboUtils 正常构建，source-tree target 是 `turbo_crpc`；安装后通过
-`TurboUtils::CRPC` 与 `<crpc/crpc.h>` 使用。它公开的是纯 C API，不依赖 experimental
+`Rocida::CRPC` 与 `<crpc/crpc.h>` 使用。它公开的是纯 C API，不依赖 experimental
 feature 或编译开关。
 
 ## 当前能力

@@ -28,7 +28,18 @@ execute_process(
           --prefix "${install_prefix}" --config "${BUILD_CONFIG}"
   RESULT_VARIABLE install_result)
 if(NOT install_result EQUAL 0)
-  message(FATAL_ERROR "TurboUtils package install failed: ${install_result}")
+  message(FATAL_ERROR "Rocida package install failed: ${install_result}")
+endif()
+
+foreach(required_package_file IN ITEMS RocidaConfig.cmake RocidaTargets.cmake)
+  if(NOT EXISTS
+     "${install_prefix}/lib/cmake/Rocida/${required_package_file}")
+    message(FATAL_ERROR
+            "Rocida install is missing ${required_package_file}")
+  endif()
+endforeach()
+if(EXISTS "${install_prefix}/lib/cmake/TurboUtils")
+  message(FATAL_ERROR "Rocida install unexpectedly contains TurboUtils package files")
 endif()
 
 execute_process(
@@ -38,11 +49,11 @@ execute_process(
           -G "${BUILD_GENERATOR}"
           "-DCMAKE_BUILD_TYPE=${BUILD_CONFIG}"
           "-DCMAKE_PREFIX_PATH=${consumer_prefix_path}"
-          "-DTurboUtils_DIR=${install_prefix}/lib/cmake/TurboUtils"
+          "-DRocida_DIR=${install_prefix}/lib/cmake/Rocida"
   RESULT_VARIABLE configure_result)
 if(NOT configure_result EQUAL 0)
   message(FATAL_ERROR
-          "TurboUtils installed consumer configure failed: ${configure_result}")
+          "Rocida installed consumer configure failed: ${configure_result}")
 endif()
 
 execute_process(
@@ -51,5 +62,5 @@ execute_process(
   RESULT_VARIABLE build_result)
 if(NOT build_result EQUAL 0)
   message(FATAL_ERROR
-          "TurboUtils installed consumer build failed: ${build_result}")
+          "Rocida installed consumer build failed: ${build_result}")
 endif()

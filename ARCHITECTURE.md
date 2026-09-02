@@ -177,7 +177,7 @@ TurboUtils 不再导出对应 targets。
 
 ### CMeta — type and semantic truth
 
-`TurboUtils::CMeta` 是整个体系最底层的类型与语义事实源，负责：
+`Rocida::CMeta` 是整个体系最底层的类型与语义事实源，负责：
 
 - type identity、type traits、Enum/Struct reflection；
 - callable / relation / interface / contract 元数据；
@@ -189,7 +189,7 @@ CMeta 不实现容器算法、不解析具体数据格式，也不拥有 CFlow r
 
 ### CSerde — canonical data-event truth
 
-`TurboUtils::CSerde` 定义 format-neutral canonical token、reader/writer contract 和 view
+`Rocida::CSerde` 定义 format-neutral canonical token、reader/writer contract 和 view
 lifetime 语义。它当前没有 TurboUtils public target 依赖，也不拥有 JSON/YAML/XML/CSV
 parser。
 
@@ -198,7 +198,7 @@ parser。
 
 ### CBind — native binding truth
 
-`TurboUtils::CBind` 只依赖 `TurboUtils::CMeta + TurboUtils::CSerde`。它负责依据 CMeta
+`Rocida::CBind` 只依赖 `Rocida::CMeta + Rocida::CSerde`。它负责依据 CMeta
 semantic shape 在 canonical CSerde values 与 native C storage 之间绑定。
 
 因此 CBind 是 parser-independent kernel：数据库、IPC、自定义 binary source 或测试
@@ -207,7 +207,7 @@ TurboParser、TurboSTL、CFlow 或 Core。
 
 ### CFlow — execution truth
 
-`TurboUtils::CFlow` 是 typed structured graph/dataflow compiler and runtime。其 public
+`Rocida::CFlow` 是 typed structured graph/dataflow compiler and runtime。其 public
 依赖为 CMeta 与 Platform；公开 readiness API 直接暴露 Platform 类型。Concurrency 是
 private execution substrate。
 
@@ -217,16 +217,16 @@ semantic/native value 上。
 
 ### TurboSTL — container truth
 
-`TurboUtils::STL` 是标准容器算法和实例 metadata 的事实源，并通过 CMeta container
+`Rocida::STL` 是标准容器算法和实例 metadata 的事实源，并通过 CMeta container
 contract 暴露类型、Range、Collector 与 construction 能力。
 
-CFlow 本身不依赖 TurboSTL。`TurboUtils::STLStream` 是显式 INTERFACE composition target，
-只把 `TurboUtils::STL + TurboUtils::CFlow` 组合给需要 container stream API 的使用者。
+CFlow 本身不依赖 TurboSTL。`Rocida::STLStream` 是显式 INTERFACE composition target，
+只把 `Rocida::STL + Rocida::CFlow` 组合给需要 container stream API 的使用者。
 
 ### Platform / Concurrency — execution substrate
 
-`TurboUtils::Platform` 提供最底层 platform abstraction，并公开依赖 CMake 的
-`Threads::Threads`。`TurboUtils::Concurrency` 在其上提供 thread pool、Disruptor 等并发
+`Rocida::Platform` 提供最底层 platform abstraction，并公开依赖 CMake 的
+`Threads::Threads`。`Rocida::Concurrency` 在其上提供 thread pool、Disruptor 等并发
 基础能力，并公开依赖 Platform。
 
 CFlow 通过公开 readiness API 消费 Platform，并私有消费 Concurrency。因此 CFlow 的 public
@@ -235,7 +235,7 @@ Platform 定义。
 
 ### Core — general utility layer
 
-`TurboUtils::Core` 保留字符串、文件、日志、正则、进程、内存及其他通用工具。它公开依赖
+`Rocida::Core` 保留字符串、文件、日志、正则、进程、内存及其他通用工具。它公开依赖
 CMeta、Platform、Concurrency，并私有消费 STL/CFlow；Core 不应重新成为 container、
 metadata、data binding 或 execution semantics 的第二事实源。
 
@@ -324,25 +324,25 @@ CFlow Stream<T> / Graph / Machine
 - 把 `Stream<cserde_token>` 暴露为可任意 `filter/map` 的业务 stream；
 - 在 DataBind/TBE/CFlow 中维护第二套通用 type/semantic/binding truth。
 
-TurboParser 是独立 package，其公共 parser runtime 以 `TurboUtils::Core` 和独立 parser
+TurboParser 是独立 package，其公共 parser runtime 以 `Rocida::Core` 和独立 parser
 component targets 为基础依赖，不依赖 CSerde 或 CBind。具体 parser 与 CSerde 的组合只能位于
-显式 adapter target；例如 `TurboUtils::JsonCSerdeAdapter` 组合
-`TurboUtils::JsonParser` 与 `TurboUtils::CSerde`，而不会把 CSerde 传播给 JsonParser 或
+显式 adapter target；例如 `Rocida::JsonCSerdeAdapter` 组合
+`Rocida::JsonParser` 与 `Rocida::CSerde`，而不会把 CSerde 传播给 JsonParser 或
 TurboParser。
 
 ## 5. Public target dependency matrix
 
 | Target | Public dependencies | Private / composition dependencies | Canonical ownership |
 | --- | --- | --- | --- |
-| `TurboUtils::CMeta` | none | none | type / semantic metadata |
-| `TurboUtils::CSerde` | none | none | canonical token protocol |
-| `TurboUtils::CBind` | `CMeta`, `CSerde` | none | native data binding |
-| `TurboUtils::Platform` | `Threads::Threads` | platform implementation | platform abstraction |
-| `TurboUtils::Concurrency` | `Platform` | none | concurrency substrate |
-| `TurboUtils::CFlow` | `CMeta`, `Platform` | `Concurrency` | graph/dataflow execution |
-| `TurboUtils::STL` | `CMeta` | none | container algorithms |
-| `TurboUtils::STLStream` | `STL`, `CFlow` | INTERFACE composition | container stream integration |
-| `TurboUtils::Core` | `CMeta`, `Platform`, `Concurrency` | `STL`, `CFlow` plus utility vendors | general utilities |
+| `Rocida::CMeta` | none | none | type / semantic metadata |
+| `Rocida::CSerde` | none | none | canonical token protocol |
+| `Rocida::CBind` | `CMeta`, `CSerde` | none | native data binding |
+| `Rocida::Platform` | `Threads::Threads` | platform implementation | platform abstraction |
+| `Rocida::Concurrency` | `Platform` | none | concurrency substrate |
+| `Rocida::CFlow` | `CMeta`, `Platform` | `Concurrency` | graph/dataflow execution |
+| `Rocida::STL` | `CMeta` | none | container algorithms |
+| `Rocida::STLStream` | `STL`, `CFlow` | INTERFACE composition | container stream integration |
+| `Rocida::Core` | `CMeta`, `Platform`, `Concurrency` | `STL`, `CFlow` plus utility vendors | general utilities |
 
 该表只描述 canonical TurboUtils public/runtime target graph；具体第三方 vendor 与 build/test
 target 不属于此表的 ownership 语义。

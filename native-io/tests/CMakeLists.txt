@@ -1,6 +1,6 @@
 cmake_add_test(native_io_test
   SOURCES native_io_test.c
-  LIBS TurboUtils::NativeIO TurboUtils::Coroutine TurboUtils::TinyTest TurboUtils::Concurrency
+  LIBS Rocida::NativeIO Rocida::Coroutine Rocida::TinyTest Rocida::Concurrency
   FOLDER "native-io/tests")
 set_target_properties(native_io_test PROPERTIES
   C_STANDARD 11
@@ -13,7 +13,7 @@ endif()
 
 cmake_add_test(native_io_header_cpp_test
   SOURCES native_io_header_cpp_test.cpp
-  LIBS TurboUtils::NativeIO
+  LIBS Rocida::NativeIO
   FOLDER "native-io/tests")
 set_target_properties(native_io_header_cpp_test PROPERTIES
   CXX_STANDARD 17

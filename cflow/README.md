@@ -585,7 +585,7 @@ shared-library ABI identity `2`. The execution-hook extension below appends to
 `cflow_statechart_instance_config`, so this release advances CFlow to `3.0.0`
 and shared ABI identity `3`; Windows shared builds use the `turbo_cflow-3`
 basename so an older DLL cannot satisfy the new configuration ABI.
-The exported CMake target name remains `TurboUtils::CFlow`.
+The exported CMake target name is `Rocida::CFlow`.
 
 The CFlow core remains format-neutral and does not parse XML or implement
 SCXML. The Statechart runtime exposes the bounded host-transaction protocol
@@ -596,7 +596,7 @@ used by format-specific frontends without depending on those frontends.
 SCXML compilation, interpretation, data-model integration, conformance tests, and
 packaging are owned by [TurboSCXML](https://github.com/qigao/turbo-scxml).
 Applications include `<scxml/scxml.h>` and link `TurboSCXML::SCXML`; that
-package depends on `TurboUtils::CFlow` and the other required TurboUtils
+package depends on `Rocida::CFlow` and the other required Rocida
 components. TurboUtils does not export an SCXML library or compatibility target.
 
 ## Bounded Actor lifecycle
@@ -835,7 +835,7 @@ cleanup:
 }
 ```
 
-Link the example with `TurboUtils::CFlow`. Supervision, restart, parent/child
+Link the example with `Rocida::CFlow`. Supervision, restart, parent/child
 hierarchies, remoting, persistence, and Mailbox resizing are intentionally
 unavailable; there are no placeholder APIs or implicit fallbacks for them.
 
@@ -1184,7 +1184,7 @@ may still fail at execution. CFlow never substitutes another backend implicitly.
 Subscriptionnable socket, typed pipe, and regular-file programs, together with the
 host/backend and resource-validation matrices, are in
 [Native I/O examples](examples/README.md). The same source files are compiled
-against both the repository targets and the installed `TurboUtils::CFlow`
+against both the repository targets and the installed `Rocida::CFlow`
 package target.
 
 The caller owns listening, connecting, and connected sockets and must keep them
@@ -1401,7 +1401,7 @@ registrations per socket identity (one read lane and one write lane), so a
 request capacity of N produces a checked reactor capacity of 2N.
 
 Subprocess standard-stream ownership is provided by the separate
-`TurboUtils::CFlowProcess` adapter target. Message framing, asynchronous
+`Rocida::CFlowProcess` adapter target. Message framing, asynchronous
 pathname open, file metadata/directory operations, and devices remain separate
 contracts.
 POSIX regular-file readiness does not

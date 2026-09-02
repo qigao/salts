@@ -2,5 +2,5 @@ set(TARGET_NAME test_datetime_parser)
 
 cmake_add_test(${TARGET_NAME}
   SOURCES test_datetime_parser.cpp
-  LIBS TurboUtils::DateTimeParser TurboUtils::TinyTest
+  LIBS Rocida::DateTimeParser Rocida::TinyTest
   FOLDER "parser/datetime_parser/test")

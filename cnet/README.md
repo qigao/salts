@@ -7,7 +7,7 @@ threadless operating-system I/O backend; CFlow Actor and Reactive code continue
 to depend on NativeIO directly.
 
 CNet is built unconditionally. Its source-tree target is `turbo_cnet`; installed
-consumers link `TurboUtils::CNet` and include `<cnet/cnet.h>`.
+consumers link `Rocida::CNet` and include `<cnet/cnet.h>`.
 
 ## Base API
 

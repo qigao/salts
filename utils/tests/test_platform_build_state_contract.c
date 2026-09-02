@@ -15,11 +15,11 @@
 #endif
 
 #ifndef TURBO_API
-#error "TurboUtils::Core consumers must receive TURBO_API through the target contract"
+#error "Rocida::Core consumers must receive TURBO_API through the target contract"
 #endif
 
 #ifndef TURBO_C_API
-#error "TurboUtils::Core consumers must receive TURBO_C_API through the target contract"
+#error "Rocida::Core consumers must receive TURBO_C_API through the target contract"
 #endif
 
 spec("platform build-state contract") {

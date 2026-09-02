@@ -2,8 +2,8 @@
 
 CBind is the C11, format-neutral decode kernel between a canonical CSerde
 reader and CMeta-described native storage. The production target
-`TurboUtils::CBind` depends only on `TurboUtils::CMeta` and
-`TurboUtils::CSerde`.
+`Rocida::CBind` depends only on `Rocida::CMeta` and
+`Rocida::CSerde`.
 
 ## STRING and BYTES storage
 

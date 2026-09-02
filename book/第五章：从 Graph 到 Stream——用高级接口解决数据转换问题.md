@@ -1319,7 +1319,7 @@ typed(List, IntList, int);
 
 会生成具体 wrapper、类型与容器描述、borrowed Range 和 transactional Collector；但 list storage、节点分配、插入和销毁算法仍归 TurboSTL 所有。CFlow 只读取 Range，并通过 Collector terminal 写入 caller-owned zero-state 输出。
 
-下面是当前 `TurboUtils::STLStream` 接口的一条完整最小路径：
+下面是当前 `Rocida::STLStream` 接口的一条完整最小路径：
 
 ```c
 #include <stdbool.h>

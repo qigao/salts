@@ -8,7 +8,7 @@ add_library(${TARGET_NAME} STATIC
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS TurboUtils::Concurrency
+  ALIAS Rocida::Concurrency
   FOLDER "concurrency"
   EXPORT_NAME Concurrency)
 
@@ -17,7 +17,7 @@ target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
-target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::Platform)
+target_link_libraries(${TARGET_NAME} PUBLIC Rocida::Platform)
 
 if(APPLE)
   target_compile_definitions(${TARGET_NAME} PRIVATE _DARWIN_C_SOURCE=1)
@@ -29,7 +29,7 @@ endif()
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT TurboUtilsTargets
+  EXPORT RocidaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

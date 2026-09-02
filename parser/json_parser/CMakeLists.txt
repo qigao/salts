@@ -21,7 +21,7 @@ add_dependencies(${TARGET_NAME} ${JSON_LEXER_TARGET} ${JSON_GRAMMAR_TARGET}
                                ${JSONPATH_GRAMMAR_TARGET})
 
 cmake_config_target(${TARGET_NAME}
-  ALIAS TurboUtils::JsonParser
+  ALIAS Rocida::JsonParser
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME JsonParser)
 
@@ -33,12 +33,12 @@ target_include_directories(
 find_path(SIMDE_INCLUDE_DIRS NAMES simde/x86/sse2.h REQUIRED)
 target_include_directories(${TARGET_NAME} PRIVATE ${SIMDE_INCLUDE_DIRS})
 target_link_libraries(${TARGET_NAME}
-  PRIVATE TurboUtils::STL
-  PUBLIC TurboUtils::Core TurboUtils::QueryVM)
+  PRIVATE Rocida::STL
+  PUBLIC Rocida::Core Rocida::QueryVM)
 
 add_library(json_cserde_adapter STATIC src/json_cserde_reader.c)
 cmake_config_target(json_cserde_adapter
-  ALIAS TurboUtils::JsonCSerdeAdapter
+  ALIAS Rocida::JsonCSerdeAdapter
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME JsonCSerdeAdapter)
 target_include_directories(json_cserde_adapter
@@ -46,14 +46,14 @@ target_include_directories(json_cserde_adapter
          $<INSTALL_INTERFACE:include>
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/parser)
 target_link_libraries(json_cserde_adapter
-  PUBLIC TurboUtils::JsonParser TurboUtils::CSerde)
+  PUBLIC Rocida::JsonParser Rocida::CSerde)
 
 if(BUILD_TESTING)
   get_target_property(JSON_PARSER_PUBLIC_LINKS
                       ${TARGET_NAME} INTERFACE_LINK_LIBRARIES)
   if(JSON_PARSER_PUBLIC_LINKS MATCHES "CSerde")
     message(FATAL_ERROR
-      "TurboUtils::JsonParser must not expose the CSerde adapter dependency")
+      "Rocida::JsonParser must not expose the CSerde adapter dependency")
   endif()
   if(NOT TARGET json_cserde_adapter)
     message(FATAL_ERROR
@@ -62,9 +62,9 @@ if(BUILD_TESTING)
   get_target_property(JSON_CSERDE_ADAPTER_PUBLIC_LINKS
                       json_cserde_adapter INTERFACE_LINK_LIBRARIES)
   if(NOT JSON_CSERDE_ADAPTER_PUBLIC_LINKS STREQUAL
-     "TurboUtils::JsonParser;TurboUtils::CSerde")
+     "Rocida::JsonParser;Rocida::CSerde")
     message(FATAL_ERROR
-      "TurboUtils::JsonCSerdeAdapter dependency contract changed")
+      "Rocida::JsonCSerdeAdapter dependency contract changed")
   endif()
 endif()
 

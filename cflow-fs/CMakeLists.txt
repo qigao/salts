@@ -15,7 +15,7 @@ else()
 endif()
 cmake_config_target(
   turbo_cflow_fs
-  ALIAS TurboUtils::CFlowFS
+  ALIAS Rocida::CFlowFS
   FOLDER "cflow-fs"
   EXPORT_NAME CFlowFS)
 
@@ -24,10 +24,10 @@ target_include_directories(turbo_cflow_fs PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(turbo_cflow_fs
-  PUBLIC TurboUtils::Core TurboUtils::CFlow
-  PRIVATE TurboUtils::Platform)
+  PUBLIC Rocida::Core Rocida::CFlow
+  PRIVATE Rocida::Platform)
 
-install(TARGETS turbo_cflow_fs EXPORT TurboUtilsTargets)
+install(TARGETS turbo_cflow_fs EXPORT RocidaTargets)
 install(
   DIRECTORY include/cflow
   DESTINATION include

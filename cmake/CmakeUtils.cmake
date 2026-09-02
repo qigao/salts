@@ -1,4 +1,4 @@
-# TurboUtils CMake Utilities
+# Rocida CMake Utilities
 
 function(cmake_config_target target_name)
     set(options)

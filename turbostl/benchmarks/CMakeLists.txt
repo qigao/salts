@@ -1,6 +1,6 @@
 cmake_add_benchmark(turbostl_standard_benchmark
   SOURCES turbostl_standard_benchmark.c
-  LIBS TurboUtils::STL TurboUtils::TinyTest
+  LIBS Rocida::STL Rocida::TinyTest
   FOLDER "turbostl/benchmarks")
 
 set_target_properties(turbostl_standard_benchmark PROPERTIES

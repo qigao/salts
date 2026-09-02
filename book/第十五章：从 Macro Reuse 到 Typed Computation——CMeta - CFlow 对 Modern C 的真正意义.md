@@ -132,9 +132,9 @@ flowchart TD
     PP["CMeta Schema / Replay"]
     SEM["Type / Traits / Callable / Interface"]
     PROTO["Range / Collector / Semantic Identity"]
-    STL["TurboUtils::STL<br/>container algorithms + typed facade"]
-    FLOW["TurboUtils::CFlow<br/>Graph / Reactive / Machine / Statechart / Actor"]
-    STLS["TurboUtils::STLStream<br/>TurboSTL + CFlow facade"]
+    STL["Rocida::STL<br/>container algorithms + typed facade"]
+    FLOW["Rocida::CFlow<br/>Graph / Reactive / Machine / Statechart / Actor"]
+    STLS["Rocida::STLStream<br/>TurboSTL + CFlow facade"]
 
     PP --> SEM --> PROTO
     PROTO --> STL
@@ -156,7 +156,7 @@ borrowed Range views
 transactional Collector
 ```
 
-真正的 storage 与算法仍在 TurboSTL。`TurboUtils::STL` 公开这一容器层并链接 `TurboUtils::CMeta`；`TurboUtils::STLStream` 再组合 `TurboUtils::STL` 与 `TurboUtils::CFlow`。因此正确的依赖方向是：
+真正的 storage 与算法仍在 TurboSTL。`Rocida::STL` 公开这一容器层并链接 `Rocida::CMeta`；`Rocida::STLStream` 再组合 `Rocida::STL` 与 `Rocida::CFlow`。因此正确的依赖方向是：
 
 ```text
 CMeta 描述类型和协议

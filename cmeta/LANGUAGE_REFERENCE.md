@@ -146,7 +146,7 @@ registered kind to that kind's concrete C11 generator.
 
 Algorithmic container kinds such as `List`, `Vec`, and `HashMap` belong to
 TurboSTL. Container users include `<turbostl/typed.h>` and link
-`TurboUtils::STL`:
+`Rocida::STL`:
 
 ```c
 #include <turbostl/typed.h>

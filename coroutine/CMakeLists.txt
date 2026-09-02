@@ -8,7 +8,7 @@ add_library(
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS TurboUtils::Coroutine
+  ALIAS Rocida::Coroutine
   FOLDER "coroutine"
   EXPORT_NAME Coroutine)
 
@@ -18,11 +18,11 @@ target_include_directories(
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>
   PRIVATE ${PROJECT_SOURCE_DIR}/vendor/minicoro)
-target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::Concurrency)
+target_link_libraries(${TARGET_NAME} PUBLIC Rocida::Concurrency)
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT TurboUtilsTargets
+  EXPORT RocidaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

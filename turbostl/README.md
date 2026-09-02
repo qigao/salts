@@ -8,7 +8,7 @@ Link the installed CMake target and include the typed header (the aggregate
 header includes it as well):
 
 ```cmake
-target_link_libraries(my_target PRIVATE TurboUtils::STL)
+target_link_libraries(my_target PRIVATE Rocida::STL)
 ```
 
 ```c
@@ -136,7 +136,7 @@ intercept or reinterpret their C expressions.
 
 ## CFlow bridge
 
-Link `TurboUtils::STLStream` for the optional modern container-operation facade.
+Link `Rocida::STLStream` for the optional modern container-operation facade.
 Its purpose is to make filtering, transformation, aggregation, and typed
 collection convenient for TurboSTL containers without introducing another
 container implementation. Familiar fluent names improve readability, but no
@@ -151,9 +151,9 @@ Graph stage and collection remains an explicit terminal. Capacity arguments are
 hard resource bounds: exceeding one fails the collection transaction instead of
 silently truncating the result.
 
-`TurboUtils::STLStream` is a compiled bridge target. Its `stream(...)` helpers
+`Rocida::STLStream` is a compiled bridge target. Its `stream(...)` helpers
 bind the container Range and explicitly inject TurboSTL's bounded HashSet and
-Vec state backends; the core `TurboUtils::STL` target still has no CFlow
+Vec state backends; the core `Rocida::STL` target still has no CFlow
 dependency.
 
 Element predicates are already represented by CMeta callables. The callable
@@ -306,7 +306,7 @@ Runtime failures; `status` remains the exact CMeta Collector status, and
 with the Collector's abort status, while output-collector overflow reports
 `CMETA_CAPACITY_EXCEEDED` directly. `error` remains a borrowed diagnostic and
 must not be freed or retained beyond its documented source lifetime.
-The core `TurboUtils::STL` target does not depend on CFlow.
+The core `Rocida::STL` target does not depend on CFlow.
 
 ### Worker-scheduler terminal
 

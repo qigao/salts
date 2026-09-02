@@ -65,32 +65,32 @@
             "name": "android-dependencies-debug",
             "hidden": true,
             "cacheVariables": {
-                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}"
+                "CMAKE_INSTALL_PREFIX": "$env{ROCIDA_ROOT}"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android/debug"
+                "ROCIDA_ROOT": "$env{PKG_ROOT}/rocida-android/debug"
             }
         },
         {
             "name": "android-dependencies-release",
             "hidden": true,
             "cacheVariables": {
-                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}"
+                "CMAKE_INSTALL_PREFIX": "$env{ROCIDA_ROOT}"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils-android/release"
+                "ROCIDA_ROOT": "$env{PKG_ROOT}/rocida-android/release"
             }
         },
         {
             "name": "win-dev-user",
             "cacheVariables": {
                 "ENABLE_SANITIZER_ADDRESS": "ON",
-                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_INSTALL_PREFIX": "$env{ROCIDA_ROOT}",
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows/debug"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/debug",
-                "PATH": "${sourceDir}/build/Msvc/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "ROCIDA_ROOT": "$env{PKG_ROOT}/rocida/debug",
+                "PATH": "${sourceDir}/build/Msvc/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{ROCIDA_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-dev-user",
@@ -100,12 +100,12 @@
         {
             "name": "win-release-user",
             "cacheVariables": {
-                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_INSTALL_PREFIX": "$env{ROCIDA_ROOT}",
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/release",
-                "PATH": "${sourceDir}/build/Msvc-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "ROCIDA_ROOT": "$env{PKG_ROOT}/rocida/release",
+                "PATH": "${sourceDir}/build/Msvc-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{ROCIDA_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-release-user",
@@ -116,13 +116,13 @@
             "name": "linux-dev-user",
             "cacheVariables": {
                 "ENABLE_SANITIZER_ADDRESS": "ON",
-                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_INSTALL_PREFIX": "$env{ROCIDA_ROOT}",
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/debug"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/debug",
-                "PATH": "${sourceDir}/build/linux-gcc-debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}",
-                "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/lib${pathListSep}$env{TURBOUTILS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
+                "ROCIDA_ROOT": "$env{PKG_ROOT}/rocida/debug",
+                "PATH": "${sourceDir}/build/linux-gcc-debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/bin${pathListSep}$env{ROCIDA_ROOT}/bin${pathListSep}$penv{PATH}",
+                "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/debug/lib${pathListSep}$env{ROCIDA_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
             },
             "inherits": [
                 "base-linux-dev-user",
@@ -132,14 +132,14 @@
         {
             "name": "linux-release-user",
             "cacheVariables": {
-                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_INSTALL_PREFIX": "$env{ROCIDA_ROOT}",
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux",
                 "TURBO_ENABLE_EPOLL_READINESS": "ON"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/release",
-                "PATH": "${sourceDir}/build/linux-gcc-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}",
-                "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/lib${pathListSep}$env{TURBOUTILS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
+                "ROCIDA_ROOT": "$env{PKG_ROOT}/rocida/release",
+                "PATH": "${sourceDir}/build/linux-gcc-release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{ROCIDA_ROOT}/bin${pathListSep}$penv{PATH}",
+                "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/lib${pathListSep}$env{ROCIDA_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
             },
             "inherits": [
                 "release-linux-ninja",
@@ -150,7 +150,7 @@
             "name": "linux-sdk-package",
             "binaryDir": "${sourceDir}/build/linux-gcc-sdk-package",
             "cacheVariables": {
-                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_INSTALL_PREFIX": "$env{ROCIDA_ROOT}",
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux",
                 "ENABLE_SANITIZER_ADDRESS": "OFF",
                 "ENABLE_TESTS": "OFF",
@@ -158,9 +158,9 @@
                 "BUILD_EXAMPLES": "OFF"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/release",
-                "PATH": "${sourceDir}/build/linux-gcc-sdk-package/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}",
-                "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/lib${pathListSep}$env{TURBOUTILS_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
+                "ROCIDA_ROOT": "$env{PKG_ROOT}/rocida/release",
+                "PATH": "${sourceDir}/build/linux-gcc-sdk-package/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-linux/bin${pathListSep}$env{ROCIDA_ROOT}/bin${pathListSep}$penv{PATH}",
+                "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/lib${pathListSep}$env{ROCIDA_ROOT}/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
             },
             "inherits": [
                 "release-linux-ninja",
@@ -243,12 +243,12 @@
             "name": "win-clang-user",
             "cacheVariables": {
                 "ENABLE_SANITIZER_ADDRESS": "OFF",
-                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_INSTALL_PREFIX": "$env{ROCIDA_ROOT}",
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows/debug"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/debug",
-                "PATH": "${sourceDir}/build/Clang/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "ROCIDA_ROOT": "$env{PKG_ROOT}/rocida/debug",
+                "PATH": "${sourceDir}/build/Clang/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/debug/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{ROCIDA_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-dev-clang-user",
@@ -260,12 +260,12 @@
             "cacheVariables": {
                 "ENABLE_SANITIZER_ADDRESS": "OFF",
                 "ENABLE_TESTS": "ON",
-                "CMAKE_INSTALL_PREFIX": "$env{TURBOUTILS_ROOT}",
+                "CMAKE_INSTALL_PREFIX": "$env{ROCIDA_ROOT}",
                 "CMAKE_PREFIX_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-windows"
             },
             "environment": {
-                "TURBOUTILS_ROOT": "$env{PKG_ROOT}/turboutils/release",
-                "PATH": "${sourceDir}/build/Clang-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{TURBOUTILS_ROOT}/bin${pathListSep}$penv{PATH}"
+                "ROCIDA_ROOT": "$env{PKG_ROOT}/rocida/release",
+                "PATH": "${sourceDir}/build/Clang-Release/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$env{ROCIDA_ROOT}/bin${pathListSep}$penv{PATH}"
             },
             "inherits": [
                 "base-win-release-clang-user",

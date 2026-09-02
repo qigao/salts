@@ -13,7 +13,7 @@ add_library(${TARGET_NAME} STATIC
   src/chttp_server_route.c
   src/chttp_session.c)
 cmake_config_target(${TARGET_NAME}
-  ALIAS TurboUtils::CHTTP
+  ALIAS Rocida::CHTTP
   FOLDER "chttp"
   EXPORT_NAME CHTTP)
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
@@ -24,10 +24,10 @@ target_include_directories(
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC TurboUtils::CNet
-  PRIVATE llhttp::llhttp_static TurboUtils::Platform)
+  PUBLIC Rocida::CNet
+  PRIVATE llhttp::llhttp_static Rocida::Platform)
 
-install(TARGETS ${TARGET_NAME} EXPORT TurboUtilsTargets)
+install(TARGETS ${TARGET_NAME} EXPORT RocidaTargets)
 install(
   DIRECTORY include/chttp
   DESTINATION include

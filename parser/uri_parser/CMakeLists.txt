@@ -11,7 +11,7 @@ cmake_add_source(SOURCE_FILES DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src)
 add_library(${TARGET_NAME} STATIC ${SOURCE_FILES} ${URI_LEXER_GEN})
 
 cmake_config_target(${TARGET_NAME}
-  ALIAS TurboUtils::UriParser
+  ALIAS Rocida::UriParser
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME UriParser)
 

@@ -18,7 +18,7 @@ target_include_directories(
                            $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
 find_path(SIMDE_INCLUDE_DIRS "simde/x86/sse2.h" REQUIRED)
 target_include_directories(log_pattern_lexer PRIVATE ${PROJECT_SOURCE_DIR}/parser ${SIMDE_INCLUDE_DIRS})
-target_link_libraries(log_pattern_lexer PRIVATE TurboUtils::Platform)
+target_link_libraries(log_pattern_lexer PRIVATE Rocida::Platform)
 
 # Export for parent
 set(LOG_PATTERN_LEXER_LIBRARY
@@ -50,8 +50,8 @@ target_include_directories(
                    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
 target_include_directories(fmt_lexer PRIVATE ${PROJECT_SOURCE_DIR}/parser ${SIMDE_INCLUDE_DIRS})
 target_link_libraries(fmt_lexer
-  PUBLIC TurboUtils::CMeta
-  PRIVATE TurboUtils::Platform TurboUtils::Concurrency)
+  PUBLIC Rocida::CMeta
+  PRIVATE Rocida::Platform Rocida::Concurrency)
 
 # Export for parent
 set(FMT_LEXER_LIBRARY

@@ -7,6 +7,6 @@ find_dependency(c-ares CONFIG)
 find_dependency(llhttp CONFIG)
 find_dependency(OpenSSL)
 
-include("${CMAKE_CURRENT_LIST_DIR}/TurboUtilsTargets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/RocidaTargets.cmake")
 
-check_required_components(TurboUtils)
+check_required_components(Rocida)

@@ -1,6 +1,6 @@
 cmake_add_test(chttp_request_test
   SOURCES chttp_request_test.c
-  LIBS turbo_chttp llhttp::llhttp_static TurboUtils::TinyTest
+  LIBS turbo_chttp llhttp::llhttp_static Rocida::TinyTest
   INCLUDES ../src
   FOLDER "chttp/tests")
 set_target_properties(chttp_request_test PROPERTIES
@@ -10,7 +10,7 @@ set_target_properties(chttp_request_test PROPERTIES
 
 cmake_add_test(chttp_response_test
   SOURCES chttp_response_test.c
-  LIBS turbo_chttp llhttp::llhttp_static TurboUtils::TinyTest
+  LIBS turbo_chttp llhttp::llhttp_static Rocida::TinyTest
   INCLUDES ../src
   FOLDER "chttp/tests")
 set_target_properties(chttp_response_test PROPERTIES
@@ -20,7 +20,7 @@ set_target_properties(chttp_response_test PROPERTIES
 
 cmake_add_test(chttp_server_parser_test
   SOURCES chttp_server_parser_test.c
-  LIBS turbo_chttp llhttp::llhttp_static TurboUtils::TinyTest
+  LIBS turbo_chttp llhttp::llhttp_static Rocida::TinyTest
   INCLUDES ../src
   FOLDER "chttp/tests")
 set_target_properties(chttp_server_parser_test PROPERTIES
@@ -30,7 +30,7 @@ set_target_properties(chttp_server_parser_test PROPERTIES
 
 cmake_add_test(chttp_server_test
   SOURCES chttp_server_test.c
-  LIBS turbo_chttp TurboUtils::TinyTest
+  LIBS turbo_chttp Rocida::TinyTest
   FOLDER "chttp/tests")
 set_target_properties(chttp_server_test PROPERTIES
   C_STANDARD 11
@@ -39,7 +39,7 @@ set_target_properties(chttp_server_test PROPERTIES
 
 cmake_add_test(chttp_api_test
   SOURCES chttp_api_test.c
-  LIBS turbo_chttp TurboUtils::TinyTest
+  LIBS turbo_chttp Rocida::TinyTest
   FOLDER "chttp/tests")
 set_target_properties(chttp_api_test PROPERTIES
   C_STANDARD 11
@@ -48,7 +48,7 @@ set_target_properties(chttp_api_test PROPERTIES
 
 cmake_add_test(chttp_requests_test
   SOURCES chttp_requests_test.c
-  LIBS turbo_chttp TurboUtils::TinyTest
+  LIBS turbo_chttp Rocida::TinyTest
   FOLDER "chttp/tests")
 set_target_properties(chttp_requests_test PROPERTIES
   C_STANDARD 11
