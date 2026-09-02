@@ -1,4 +1,4 @@
-#include <turbostl/typed.h>
+#include <rocida/stl/typed.h>
 #include "tinytest.h"
 
 #include <string.h>
@@ -67,7 +67,7 @@ static const cmeta_generic_desc *const canonical_constructors[] = {
     check_null(cmeta_container_type_argument(&(handle), 2u));                  \
 } while (0)
 
-suite("TurboSTL generic type identities") {
+suite("Rocida STL generic type identities") {
     it("exposes canonical generic applications for every typed container kind") {
         Vec(int, vec);
         Deque(int, deque);

@@ -117,7 +117,7 @@ endif()
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS TurboUtils::CFlow
+  ALIAS Rocida::CFlow
   FOLDER "cflow"
   EXPORT_NAME CFlow
   VERSION ${CFLOW_LIBRARY_VERSION}
@@ -147,12 +147,12 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC TurboUtils::CMeta TurboUtils::NativeIO TurboUtils::Platform
-  PRIVATE TurboUtils::Concurrency)
+  PUBLIC Rocida::CMeta Rocida::NativeIO Rocida::Platform
+  PRIVATE Rocida::Concurrency)
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT TurboUtilsTargets
+  EXPORT RocidaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

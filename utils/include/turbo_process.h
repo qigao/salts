@@ -98,7 +98,7 @@ TURBO_C_API const char *turbo_process_state_name(turbo_process_state_t state);
  * Start a child process and its monitor thread.
  *
  * On success, *out_process owns all resources and must be destroyed. On
- * failure, *out_process is NULL and the return value is a TurboUtils or
+ * failure, *out_process is NULL and the return value is a Rocida or
  * negative native platform error code.
  */
 TURBO_C_API int turbo_process_spawn(const turbo_process_options_t *options,

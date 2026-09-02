@@ -14,7 +14,7 @@ list(FILTER SOURCE_FILES EXCLUDE REGEX ".*memory_pool\\.(c|h)$")
 # Library
 add_library(${TARGET_NAME} STATIC ${SOURCE_FILES})
 cmake_config_target(${TARGET_NAME}
-    ALIAS TurboUtils::TLVParser
+    ALIAS Rocida::TLVParser
     FOLDER "parser/tlv_parser"
     EXPORT_NAME TLVParser)
 
@@ -30,8 +30,8 @@ target_include_directories(${TARGET_NAME}
 # - uri_parser for backward compatibility (uri.h includes uri_parser.h)
 target_link_libraries(${TARGET_NAME}
     PUBLIC
-        TurboUtils::Core
-        TurboUtils::UriParser
+        Rocida::Core
+        Rocida::UriParser
 )
 
 

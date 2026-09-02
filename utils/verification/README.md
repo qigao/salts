@@ -1,6 +1,6 @@
-# TurboUtils 队列与内存协议验证
+# Rocida 队列与内存协议验证
 
-这些模型用于验证 TurboUtils 并发原语的有限状态协议。模型抽象了 payload 内容、指针地址和 C11 内存模型，重点检查 claim/publish/observe/release、容量、所有权、关闭和唤醒语义。
+这些模型用于验证 Rocida 并发原语的有限状态协议。模型抽象了 payload 内容、指针地址和 C11 内存模型，重点检查 claim/publish/observe/release、容量、所有权、关闭和唤醒语义。
 
 ## 模型范围
 

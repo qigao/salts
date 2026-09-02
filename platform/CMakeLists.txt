@@ -31,7 +31,7 @@ endif()
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS TurboUtils::Platform
+  ALIAS Rocida::Platform
   FOLDER "platform"
   EXPORT_NAME Platform)
 
@@ -56,7 +56,7 @@ endif()
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT TurboUtilsTargets
+  EXPORT RocidaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

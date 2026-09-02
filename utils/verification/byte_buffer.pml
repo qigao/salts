@@ -1,5 +1,5 @@
 /*
- * TurboUtils bounded byte-buffer protocol model.
+ * Rocida bounded byte-buffer protocol model.
  *
  * Scope:
  *   - one owner; no concurrent access

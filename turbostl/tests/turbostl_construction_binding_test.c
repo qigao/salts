@@ -1,4 +1,4 @@
-#include <turbostl/typed.h>
+#include <rocida/stl/typed.h>
 #include "tinytest.h"
 
 #include <string.h>
@@ -76,7 +76,7 @@ Struct(construction_matrix,
                     CMETA_OK);                                                   \
     } while (0)
 
-spec("TurboSTL construction binding") {
+spec("Rocida STL construction binding") {
   it("binds a zero Vec field from static TYPE metadata before Collector") {
     const cmeta_field_desc *values =
         cmeta_struct_find_field(construction_payload_meta(), "values");
@@ -160,7 +160,7 @@ spec("TurboSTL construction binding") {
     map_destroy(&payload.index);
   }
 
-  it("binds every canonical TurboSTL generic kind without semantic duplication") {
+  it("binds every canonical Rocida STL generic kind without semantic duplication") {
     construction_matrix matrix = {0};
 
     CHECK_UNARY_BIND(matrix, vec, stl_vec_generic_desc);

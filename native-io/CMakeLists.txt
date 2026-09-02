@@ -30,7 +30,7 @@ endif()
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS TurboUtils::NativeIO
+  ALIAS Rocida::NativeIO
   FOLDER "native-io"
   EXPORT_NAME NativeIO)
 
@@ -40,8 +40,8 @@ target_include_directories(
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(${TARGET_NAME}
-  PUBLIC TurboUtils::Platform
-  PRIVATE TurboUtils::Coroutine)
+  PUBLIC Rocida::Platform
+  PRIVATE Rocida::Coroutine)
 
 if(WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE ws2_32)
@@ -49,7 +49,7 @@ endif()
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT TurboUtilsTargets
+  EXPORT RocidaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

@@ -1,6 +1,6 @@
 /**
  * @file fs_example.c
- * @brief TurboUtils FS example - demonstrates all major file I/O operations.
+ * @brief Rocida FS example - demonstrates all major file I/O operations.
  *
  * Exercises: bulk read/write, streaming, pread/pwrite, seek/tell,
  * ftruncate, rename, mkdir, directory enumeration, stat, and path utilities.
@@ -26,7 +26,7 @@
 static int example_bulk_rw(void) {
   puts("\n--- Bulk Read / Write ---");
 
-  const char *data = "TurboUtils FS: zero-dep, pure-C, cross-platform.";
+  const char *data = "Rocida FS: zero-dep, pure-C, cross-platform.";
   turbo_fs_buf_t wb = turbo_fs_buf_init((char *)data, strlen(data));
 
   CHECK(turbo_fs_write_file("example_out.txt", &wb), "write_file");
@@ -249,9 +249,9 @@ static int example_path_utils(void) {
   char joined[256], dir[256], base[256];
 
 #ifdef _WIN32
-  turbo_fs_path_join(joined, sizeof(joined), "C:\\projects", "TurboUtils");
+  turbo_fs_path_join(joined, sizeof(joined), "C:\\projects", "Rocida");
 #else
-  turbo_fs_path_join(joined, sizeof(joined), "/projects", "TurboUtils");
+  turbo_fs_path_join(joined, sizeof(joined), "/projects", "Rocida");
 #endif
   printf("      join      = %s\n", joined);
 
@@ -265,7 +265,7 @@ static int example_path_utils(void) {
 }
 
 int main(void) {
-  puts("=== TurboUtils FS Example ===");
+  puts("=== Rocida FS Example ===");
 
   int rc = 0;
   rc |= example_bulk_rw();

@@ -203,7 +203,7 @@ Struct Metadata
     可以被 Serializer / Binder 复用
 ```
 
-当前 TurboUtils 已经有一条更具体的实现链：
+当前 Rocida 已经有一条更具体的实现链：
 
 ```text
 Format Adapter
@@ -360,18 +360,18 @@ CMeta target status
 当前构建边界同样保持分层：
 
 ```text
-TurboUtils::CSerde
+Rocida::CSerde
     = canonical token protocol
 
-TurboUtils::CBind
+Rocida::CBind
     = CSerde + CMeta 的 format-neutral decode kernel
 
-TurboUtils::JsonCSerdeAdapter
+Rocida::JsonCSerdeAdapter
     = JSON DOM 到 CSerde reader 的独立适配 target
 ```
 
-基础 `TurboUtils::JsonParser` 不因为存在这个适配器就反向依赖 CSerde。
-需要这条桥的 consumer 显式链接 `TurboUtils::JsonCSerdeAdapter`。
+基础 `Rocida::JsonParser` 不因为存在这个适配器就反向依赖 CSerde。
+需要这条桥的 consumer 显式链接 `Rocida::JsonCSerdeAdapter`。
 
 同样需要明确当前边界：
 
@@ -1674,7 +1674,7 @@ submit next operation
 Coroutine 可以把这段控制流重新写成接近同步代码的形式，但它不应该成为第二份
 I/O 状态源。
 
-当前 `TurboUtils::Coroutine` 是 minicoro 的唯一编译封装，提供单 owner 有界
+当前 `Rocida::Coroutine` 是 minicoro 的唯一编译封装，提供单 owner 有界
 frame pool 和可选的固定 shard Executor。每个 Executor worker 独占 scheduler、pool 与
 有界 command queue，用户线程只负责 submit；显式 shard affinity 可让同一 connection
 的 coroutine 始终在同一 owner 上运行。`NativeIO` 仍然拥有 request slot 和 terminal completion；
@@ -1776,8 +1776,8 @@ CFlow
 因此 CNet 不应该让 NativeIO 负责 DNS、URI、连接状态或协议握手；也不应该把
 TCP、UDP、Pipe 的 transport 语义塞进 CFlow Graph。
 
-当前 CNet 随 TurboUtils 正常构建，source-tree target 为 `turbo_cnet`，安装包导出
-`TurboUtils::CNet` 与 `<cnet/cnet.h>`。书中可以讨论已经实现并由测试覆盖的 base API 与
+当前 CNet 随 Rocida 正常构建，source-tree target 为 `turbo_cnet`，安装包导出
+`Rocida::CNet` 与 `<cnet/cnet.h>`。书中可以讨论已经实现并由测试覆盖的 base API 与
 TLS transport，但不能把未来的 WebSocket 或 KCP 写成已发布事实。
 
 KCP 与 WebSocket 的归属也应遵守这条边界。NativeIO 只提供 UDP datagram、TCP byte stream、
@@ -1834,7 +1834,7 @@ CHTTP depends on CNet and llhttp
 ```
 
 对应源码位于 `chttp/`，source-tree target 是 `turbo_chttp`；安装包导出
-`TurboUtils::CHTTP`。llhttp 是 TurboUtils 的基础 vcpkg 依赖，但仍只作为 CHTTP 的私有解析
+`Rocida::CHTTP`。llhttp 是 Rocida 的基础 vcpkg 依赖，但仍只作为 CHTTP 的私有解析
 backend。client 当前接受 TCP 与 Pipe，并已在固定 `request_capacity` 内实现同
 `connection_uri + authority` 的 HTTP/1.1 keep-alive 复用；每条连接同一时刻仍只承载一个
 request。server 当前在明文 TCP 上提供后台 CNet owner、严格 request parsing、keep-alive、
@@ -2284,7 +2284,7 @@ shutdown drain
 ```
 
 路径、stat、rename、delete 等可能阻塞的文件系统控制操作，则属于
-`TurboUtils::CFlowFS` 的 bounded worker-backed service；它不能被包装成内核原生
+`Rocida::CFlowFS` 的 bounded worker-backed service；它不能被包装成内核原生
 异步文件 I/O。文件 watch 又是独立的 native watcher + Publisher 边界。
 
 所以最终不是：

@@ -1,6 +1,6 @@
 # NativeIO
 
-NativeIO 是 TurboUtils 根目录下的原生 I/O 操作层。它只负责把有界操作提交给明确选择的 OS backend，并把终态完成批量交还给调用者；它不拥有 Actor、Reactor、CFlow Graph 或用户 socket。
+NativeIO 是 Rocida 根目录下的原生 I/O 操作层。它只负责把有界操作提交给明确选择的 OS backend，并把终态完成批量交还给调用者；它不拥有 Actor、Reactor、CFlow Graph 或用户 socket。
 
 ## 架构决策
 
@@ -40,7 +40,7 @@ Coroutine pool       Platform errors/ABI
 
 `native_io_backend_spawn_coroutine()` 提供同一 owner 线程上的可选结构化路径。entry 立即运行到返回或 `native_io_coroutine_await()`；await 成功提交后挂起，只有匹配的 terminal completion 被 owner observe 后才恢复。一次 observe 会先完成整批 terminal 的 request 归属解析，再恢复其中的 coroutine；因此恢复后的 entry 可以立即再次 await，不会复用仍被该批后续 packet 引用的 request 槽位。NativeIO 不使用 CoroNet context、TLS current-loop、隐式线程或第二套 request 状态机；request 槽位仍是唯一 I/O 事实源，coroutine 只保存执行位置。
 
-coroutine task 数与 request 共用同一硬容量。frame 由 `TurboUtils::Coroutine` 的有界池延迟创建并复用；池满返回 `TURBO_ENOBUFS`。取消 task 只转发为 request cancel，frame 必须等 `CANCELLED`/其他竞态终态被 observe 后才释放。带 ABI 版本与结构大小的 `native_io_coroutine_stats` 公开 `capacity`、`active` 与 `retained_frames`，但不改变既有 `native_io_backend_stats` 布局，也不暴露 minicoro handle。
+coroutine task 数与 request 共用同一硬容量。frame 由 `Rocida::Coroutine` 的有界池延迟创建并复用；池满返回 `TURBO_ENOBUFS`。取消 task 只转发为 request cancel，frame 必须等 `CANCELLED`/其他竞态终态被 observe 后才释放。带 ABI 版本与结构大小的 `native_io_coroutine_stats` 公开 `capacity`、`active` 与 `retained_frames`，但不改变既有 `native_io_backend_stats` 布局，也不暴露 minicoro handle。
 
 若 entry 未经 `native_io_coroutine_await()` 直接挂起，则违反 NativeIO coroutine 协议：spawn/resume 返回 `TURBO_EPROTO`，该 suspended frame 被销毁，task slot 立即归还，不把 backend 留在无法 drain 的活动状态。
 

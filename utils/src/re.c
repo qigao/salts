@@ -2,8 +2,8 @@
  * @file re.c
  * @brief Bounded byte-oriented regex engine backing the public re.h API.
  *
- * Single implementation owned by TurboUtils (utils/src/re.c); JSONPath and
- * TBE data_bind consume it from TurboUtils::Core.
+ * Single implementation owned by Rocida (utils/src/re.c); JSONPath and
+ * TBE data_bind consume it from Rocida::Core.
  *
  * re_match_borrowed() accelerates patterns whose first atom is a mandatory
  * single literal byte: candidate start positions are located with a SIMDe

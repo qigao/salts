@@ -1,4 +1,4 @@
-#include <turbostl/typed.h>
+#include <rocida/stl/typed.h>
 #include "tinytest.h"
 
 #include <string.h>
@@ -89,7 +89,7 @@ typed(BPlusTree, IntLongBPlusTree, int, long);
     check_equal(memcmp(&aborted, &(Name){0}, sizeof(aborted)), 0);           \
 } while (0)
 
-spec("TurboSTL typed schema") {
+spec("Rocida STL typed schema") {
     it("generates a bounded sequence Range and transactional collector") {
         IntVec source = {0};
         IntVec output = {0};

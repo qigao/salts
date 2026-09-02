@@ -1,6 +1,6 @@
 /**
  * @file test_turbo_fs.c
- * @brief TurboUtils FS unit tests - zero libuv, pure POSIX/Win32 backend
+ * @brief Rocida FS unit tests - zero libuv, pure POSIX/Win32 backend
  */
 #include "tinytest.h"
 #include "turbo_fs.h"
@@ -46,7 +46,7 @@ spec("Turbo FS Tests") {
 
   describe("Bulk read/write") {
     it("write_file + read_file round-trips data") {
-      const char *data = "Hello, TurboUtils FS!";
+      const char *data = "Hello, Rocida FS!";
       turbo_fs_buf_t wb = turbo_fs_buf_init((char *)data, strlen(data));
 
       check_equal(turbo_fs_write_file(g_file, &wb), 0);

@@ -13,7 +13,7 @@
 
 本文件保留核心约束与原则。详细技术规范已迁移为全局 Codex skills，按需激活：
 
-- **`turboutils`** - TurboUtils 共享 API 参考（错误、字符串、容器、文件、内存映射、平台安全、线程、协程、链接）
+- **`turboutils`** - Rocida 共享 API 参考（错误、字符串、容器、文件、内存映射、平台安全、线程、协程、链接）
 - **`memory-design-protocols`** - 内存、buffer、ring、Disruptor、queue、pool 与零拷贝 API/设计协议（所有权、容量、背压、关闭、验证）
 - **`cmake-presets`** - CMake Presets 构建测试指南（configure/build/test preset、target 构建、build tree 恢复）
 - **`c-design-patterns`** - C 语言设计模式实现指南（12 种模式、SOLID 原则、反模式警告）
@@ -209,32 +209,32 @@
 
 #### 库优先级顺序（从高到低）
 
-1. **TurboUtils**（按能力选择模块；标准容器通过 `TurboUtils::STL`，其余共享能力优先通过 `TurboUtils::Core`）— 最优先
+1. **Rocida**（按能力选择模块；标准容器通过 `Rocida::STL`，其余共享能力优先通过 `Rocida::Core`）— 最优先
 2. **项目内模块**（`exprtk/`、`plugins/` 等）
 3. **vendor/ 库**（sds、croar、mir、monocypher、sha2、miniblas）
 4. **vcpkg 依赖**（xxhash、sqlite3、zstd、openssl、c-ares、aklomp-base64、simde）
 5. **C 标准库**（libc：`string.h`、`stdlib.h`、`stdio.h`）
-6. **底层系统 API**（仅允许封装在 TurboUtils 平台/协程适配层或项目适配层之后使用）
+6. **底层系统 API**（仅允许封装在 Rocida 平台/协程适配层或项目适配层之后使用）
 
 #### 手写实现触发条件（严格约束）
 
 允许手写实现的前提：
-1. **TurboUtils/vendor/vcpkg 无对应功能**，且项目内没有稳定复用点；或现有库无法满足接口/平台/许可约束
+1. **Rocida/vendor/vcpkg 无对应功能**，且项目内没有稳定复用点；或现有库无法满足接口/平台/许可约束
 2. 若是为了替换现有库或优化成熟通用能力，必须有 profiling 证明现有路径是瓶颈（≥20% 总耗时）
 3. 若是因为特殊约束（嵌入式、实时性、代码体积 <50KB），必须说明约束来源
 4. 高风险基础设施必须提供 Benchmark 对比、测试覆盖率目标和文档化理由
 
 #### 避免重复造轮子（强制规则）
 
-- ❌ **禁止手写**：动态数组 → 包含 `<turbostl/typed.h>` 并用 `typed(Vec, Name, Type)`；统一生命周期的临时数组按协议选 `MemoryPool` 或 `mem_pool_t`
-- ❌ **禁止手写**：字符串拼接 → 用 `tstr`（TurboUtils）或 `sds`（vendor）
-- ❌ **禁止手写**：哈希表/集合 → 包含 `<turbostl/typed.h>` 并用 `typed(HashMap, Name, Key, Value)` 或 `typed(Set, Name, Type)`
-- ❌ **禁止手写**：双端队列 → 包含 `<turbostl/typed.h>` 并用 `typed(Deque, Name, Type)`
-- ❌ **禁止手写**：文件读写 → 用 `turbo_fs`（TurboUtils）
-- ❌ **禁止手写**：日志系统 → 使用 TurboUtils `tlog`，API、数量、交付与生产协议参见 `logging-guide`
-- ❌ **禁止手写**：线程池 → 用 `turbo_threadpool`（TurboUtils）
-- ❌ **禁止手写**：并发 ring/queue → 按拓扑与消费语义选择 `ring_buffer_spsc`、`disruptor`、`turbo_threadpool` 或 bucket priority queue（TurboUtils）
-- ❌ **禁止手写**：arena/slab/object pool → 按生命周期选择 `MemoryPool`、`mem_pool_t`、`mem_buffer_t` / `mem_slice_t` 或 `object_pool_t`（TurboUtils）
+- ❌ **禁止手写**：动态数组 → 包含 `<rocida/stl/typed.h>` 并用 `typed(Vec, Name, Type)`；统一生命周期的临时数组按协议选 `MemoryPool` 或 `mem_pool_t`
+- ❌ **禁止手写**：字符串拼接 → 用 `tstr`（Rocida）或 `sds`（vendor）
+- ❌ **禁止手写**：哈希表/集合 → 包含 `<rocida/stl/typed.h>` 并用 `typed(HashMap, Name, Key, Value)` 或 `typed(Set, Name, Type)`
+- ❌ **禁止手写**：双端队列 → 包含 `<rocida/stl/typed.h>` 并用 `typed(Deque, Name, Type)`
+- ❌ **禁止手写**：文件读写 → 用 `turbo_fs`（Rocida）
+- ❌ **禁止手写**：日志系统 → 使用 Rocida `tlog`，API、数量、交付与生产协议参见 `logging-guide`
+- ❌ **禁止手写**：线程池 → 用 `turbo_threadpool`（Rocida）
+- ❌ **禁止手写**：并发 ring/queue → 按拓扑与消费语义选择 `ring_buffer_spsc`、`disruptor`、`turbo_threadpool` 或 bucket priority queue（Rocida）
+- ❌ **禁止手写**：arena/slab/object pool → 按生命周期选择 `MemoryPool`、`mem_pool_t`、`mem_buffer_t` / `mem_slice_t` 或 `object_pool_t`（Rocida）
 
 ### 依赖管理与接口设计
 
@@ -321,7 +321,7 @@
   - 可重入锁仅用于递归调用且无法重构时；普通 mutex 为默认
 - 无锁数据结构适用边界：
   - 只在 profiling 证明锁竞争是瓶颈，或既有架构明确要求对应 SPSC/MPMC 拓扑时考虑
-  - 优先复用 TurboUtils 已有实现；性能验证以现有实现或简单带锁实现为基线
+  - 优先复用 Rocida 已有实现；性能验证以现有实现或简单带锁实现为基线
   - 只有算法实际存在地址复用与并发回收时，才设计 hazard pointer、epoch reclamation 或引用计数等 ABA/回收协议；固定槽位 ring 不机械套用
   - 线程角色、memory ordering、容量、背压、claim/publish/release 和 shutdown 以 `memory-design-protocols` 为准
   - 复杂共享状态机仍优先用锁或单 owner 消息传递

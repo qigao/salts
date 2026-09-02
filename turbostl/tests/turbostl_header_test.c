@@ -1,7 +1,7 @@
-#include <turbostl.h>
+#include <rocida/stl.h>
 #include "tinytest.h"
 
-suite("TurboSTL public header") {
+suite("Rocida STL public header") {
     it("infers a vector type without exposing a generated container type") {
         Vec(int, vec);
         int input = 7;

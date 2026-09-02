@@ -1,5 +1,5 @@
 /*
- * TurboUtils MPMC bucket-priority queue protocol model.
+ * Rocida MPMC bucket-priority queue protocol model.
  *
  * Scope:
  *   - four independent priority buckets with a small hard capacity

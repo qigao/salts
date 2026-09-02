@@ -7,7 +7,7 @@ set(SDS_SOURCES
 )
 
 add_library(sds STATIC ${SDS_SOURCES})
-add_library(TurboUtils::SDS ALIAS sds)
+add_library(Rocida::SDS ALIAS sds)
 
 target_include_directories(sds PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
@@ -21,5 +21,5 @@ set_target_properties(sds PROPERTIES FOLDER "vendor/sds")
 # Testing 
 add_subdirectory(test)
  
-install(TARGETS sds EXPORT TurboUtilsTargets)
+install(TARGETS sds EXPORT RocidaTargets)
 install(FILES sds.h sdsalloc.h DESTINATION include)

@@ -1,6 +1,6 @@
 # CFlowProcess
 
-`TurboUtils::CFlowProcess` combines the existing Core process owner with the
+`Rocida::CFlowProcess` combines the existing Core process owner with the
 CFlow native byte-pipe Actor. It is a separate target because Core already uses
 CFlow internally; placing this adapter in CFlow would create a dependency cycle.
 
@@ -110,8 +110,8 @@ int main(void) {
 Build consumers with:
 
 ```cmake
-find_package(TurboUtils CONFIG REQUIRED)
-target_link_libraries(app PRIVATE TurboUtils::CFlowProcess)
+find_package(Rocida CONFIG REQUIRED)
+target_link_libraries(app PRIVATE Rocida::CFlowProcess)
 ```
 
 The cross-platform capability matrix, state machines, ownership proofs, and

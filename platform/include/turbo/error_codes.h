@@ -3,7 +3,7 @@
 
 #define TURBO_OK 0
 
-/* Dependency-free status codes shared by lower-level TurboUtils modules. */
+/* Dependency-free status codes shared by lower-level Rocida modules. */
 #define TURBO_ERROR_CODE_ITEMS(X)                                                                 \
   X(TURBO_EAI_ADDRFAMILY, -3000, "TURBO_EAI_ADDRFAMILY", "address family for hostname not supported") \
   X(TURBO_EAI_AGAIN, -3001, "TURBO_EAI_AGAIN", "temporary DNS failure")                              \

@@ -22,18 +22,18 @@ target_include_directories(${TARGET_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}/parser
     ${CMAKE_CURRENT_BINARY_DIR})
 cmake_config_target(${TARGET_NAME}
-  ALIAS TurboUtils::Selector
+  ALIAS Rocida::Selector
   EXPORT_NAME Selector
   FOLDER "${TARGET_FOLDER}")
 
 install(TARGETS ${TARGET_NAME}
-  EXPORT TurboUtilsTargets
+  EXPORT RocidaTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES include/turbo_selector.h DESTINATION include/selector)
 
 if(BUILD_TESTING)
   cmake_add_test(test_turbo_selector
     SOURCES test/test_turbo_selector.c
-    LIBS ${TARGET_NAME} TurboUtils::TinyTest
+    LIBS ${TARGET_NAME} Rocida::TinyTest
     FOLDER "${TARGET_FOLDER}/tests")
 endif()

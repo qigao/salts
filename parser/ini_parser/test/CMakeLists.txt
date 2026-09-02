@@ -6,5 +6,5 @@ foreach(test_source ${TEST_SOURCES})
   cmake_add_test(${test_name}
     SOURCES ${test_source}
     FOLDER "parser/${TARGET_NAME}/test"
-    LIBS TurboUtils::TinyTest ${TARGET_NAME})
+    LIBS Rocida::TinyTest ${TARGET_NAME})
 endforeach()

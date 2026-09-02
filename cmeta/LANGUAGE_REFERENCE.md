@@ -145,11 +145,11 @@ CMeta aggregate header registers the value kinds `Pair`, `Tuple`, `Option`, and
 registered kind to that kind's concrete C11 generator.
 
 Algorithmic container kinds such as `List`, `Vec`, and `HashMap` belong to
-TurboSTL. Container users include `<turbostl/typed.h>` and link
-`TurboUtils::STL`:
+Rocida STL. Container users include `<rocida/stl/typed.h>` and link
+`Rocida::STL`:
 
 ```c
-#include <turbostl/typed.h>
+#include <rocida/stl/typed.h>
 
 typed(List, IntList, int);
 typed(Vec, IntVec, int);
@@ -174,10 +174,10 @@ complete facade does not implicitly register its element, key, or value types;
 those types must satisfy the finite type-universe rules described below.
 
 Declare each concrete container with its own `typed(...)` statement, as shown
-above. There is no batch syntax inside the CMeta Generic grammar. TurboSTL also
+above. There is no batch syntax inside the CMeta Generic grammar. Rocida STL also
 retains self-describing raw-handle initializers such as `Vec(int, variable)`
 and `VecOf(int)` (plus their associative forms). Those initializers produce
-erased TurboSTL handles; they do not declare a generated Generic type and do
+erased Rocida STL handles; they do not declare a generated Generic type and do
 not change the meaning of `typed(...)`.
 
 ### `typed_any(...)`
@@ -700,7 +700,7 @@ Containers(
 Current style:
 
 ```c
-#include <turbostl/typed.h>
+#include <rocida/stl/typed.h>
 
 typed(List, IntList, int);
 typed(Vec, IntVec, int);

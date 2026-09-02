@@ -21,7 +21,7 @@ add_library(${TARGET_NAME}
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS TurboUtils::STL
+  ALIAS Rocida::STL
   FOLDER "turbostl"
   EXPORT_NAME STL)
 
@@ -31,42 +31,38 @@ target_include_directories(
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
-target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::CMeta)
+target_link_libraries(${TARGET_NAME} PUBLIC Rocida::CMeta)
 
 add_library(turbo_stl_stream
   src/cflow_backend.c)
 cmake_config_target(
   turbo_stl_stream
-  ALIAS TurboUtils::STLStream
+  ALIAS Rocida::STLStream
   FOLDER "turbostl"
   EXPORT_NAME STLStream)
 target_link_libraries(
   turbo_stl_stream
-  PUBLIC TurboUtils::STL TurboUtils::CFlow)
+  PUBLIC Rocida::STL Rocida::CFlow)
 target_compile_features(turbo_stl_stream PUBLIC c_std_11)
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT TurboUtilsTargets
+  EXPORT RocidaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(
   TARGETS turbo_stl_stream
-  EXPORT TurboUtilsTargets
+  EXPORT RocidaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(
-  DIRECTORY include/turbostl
+  DIRECTORY include/rocida
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
-
-install(
-  FILES include/turbostl.h
-  DESTINATION include)
 
 if(BUILD_TESTS)
   add_subdirectory(tests)

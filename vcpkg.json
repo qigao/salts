@@ -1,5 +1,5 @@
 {
-  "name": "vcpkg-turboutils",
+  "name": "rocida",
   "version-semver": "0.1.0",
   "dependencies": [
     {

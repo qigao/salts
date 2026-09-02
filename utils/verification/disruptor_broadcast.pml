@@ -1,5 +1,5 @@
 /*
- * TurboUtils Disruptor broadcast protocol model.
+ * Rocida Disruptor broadcast protocol model.
  *
  * Scope:
  *   - one publisher and two registered consumers

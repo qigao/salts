@@ -1,5 +1,5 @@
-#ifndef TURBO_UTILS_LEVENSHTEIN_AUTOMATON_H
-#define TURBO_UTILS_LEVENSHTEIN_AUTOMATON_H
+#ifndef ROCIDA_LEVENSHTEIN_AUTOMATON_H
+#define ROCIDA_LEVENSHTEIN_AUTOMATON_H
 
 #include "platform.h"
 #include "turbo_vstr.h"
@@ -72,4 +72,4 @@ TURBO_C_API int lev_utf8_automaton_match(const lev_utf8_automaton_t *lev, vstr t
 }
 #endif
 
-#endif /* TURBO_UTILS_LEVENSHTEIN_AUTOMATON_H */
+#endif /* ROCIDA_LEVENSHTEIN_AUTOMATON_H */

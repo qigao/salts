@@ -1,11 +1,11 @@
-#include <turbostl.h>
+#include <rocida/stl.h>
 #include "tinytest.hpp"
 
 #include <cstddef>
 
-static_assert(STL_OK == 0, "TurboSTL status must remain zero-success");
+static_assert(STL_OK == 0, "Rocida STL status must remain zero-success");
 
-spec("TurboSTL C++ public header") {
+spec("Rocida STL C++ public header") {
   it("exposes natural zero-initializable raw container handles") {
     vec_t vec{};
     deque_t deque{};

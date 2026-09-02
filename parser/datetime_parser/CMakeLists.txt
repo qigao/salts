@@ -18,7 +18,7 @@ add_dependencies(${TARGET_NAME} ${DATETIME_LEXER_TARGET}
                  ${DATETIME_GRAMMAR_TARGET})
 
 cmake_config_target(${TARGET_NAME}
-  ALIAS TurboUtils::DateTimeParser
+  ALIAS Rocida::DateTimeParser
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME DateTimeParser)
 

@@ -1,13 +1,13 @@
 /**
- * @file turboutils_fs.h
- * @brief TurboUtils File System Utilities
+ * @file turbo_fs.h
+ * @brief Rocida File System Utilities
  * @author "Simple, direct, no bullshit" - Linus philosophy applied to file I/O
  *
  * This header provides simple synchronous file system utilities without exposing libuv.
  */
 
-#ifndef turboutils_FS_H
-#define turboutils_FS_H
+#ifndef ROCIDA_FS_H
+#define ROCIDA_FS_H
 
 #include "platform.h"
 #include <stdbool.h>
@@ -245,11 +245,11 @@ TURBO_C_API int turbo_fs_unlink(const char *path);
 TURBO_C_API turbo_fs_buf_t turbo_fs_buf_init(char *base, size_t len);
 
 /**
- * @brief Free a file system buffer allocated by TurboUtils
+ * @brief Free a file system buffer allocated by Rocida
  *
  * @param buf Pointer to turbo_fs_buf_t to free
  *
- * @note Only call this on buffers allocated by TurboUtils functions
+ * @note Only call this on buffers allocated by Rocida functions
  */
 TURBO_C_API void turbo_fs_buf_free(turbo_fs_buf_t *buf);
 
@@ -473,4 +473,4 @@ TURBO_C_API int64_t turbo_fs_seek(turbo_file_t fd, int64_t offset, int whence);
 }
 #endif
 
-#endif // turboutils_FS_H
+#endif // ROCIDA_FS_H

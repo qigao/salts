@@ -32,7 +32,7 @@ TURBO_CMETA_STATIC_ASSERT(sizeof(turbo_uuid_t) == TURBO_UUID_SIZE,
 #undef TURBO_CMETA_STATIC_ASSERT
 
 /**
- * Canonical process-wide UUID metadata exported by TurboUtils::Core.
+ * Canonical process-wide UUID metadata exported by Rocida::Core.
  *
  * These objects have stable linkage identities across translation units.
  * Semantic admission still uses turbo_uuid_cmeta_data_valid rather than

@@ -11,7 +11,7 @@ add_library(${TARGET_NAME} SHARED ${SOURCE_FILES})
 cmake_config_target(
   ${TARGET_NAME}
   ALIAS
-  TurboUtils::Core
+  Rocida::Core
   FOLDER
   "utils"
   EXPORT_NAME
@@ -27,9 +27,9 @@ target_include_directories(
           $<BUILD_INTERFACE:${FMT_LEXER_INCLUDE_DIRS}>
           $<BUILD_INTERFACE:${LOG_PATTERN_LEXER_INCLUDE_DIRS}>)
 
-# Keep shared-library producer/consumer state on TurboUtils::Core itself.
-# The INTERFACE definition is exported into TurboUtilsTargets.cmake, so only
-# targets that link TurboUtils::Core receive the consumer-side import marker.
+# Keep shared-library producer/consumer state on Rocida::Core itself.
+# The INTERFACE definition is exported into RocidaTargets.cmake, so only
+# targets that link Rocida::Core receive the consumer-side import marker.
 target_compile_definitions(
   ${TARGET_NAME}
   PUBLIC
@@ -52,13 +52,13 @@ endif()
 # Link dependencies
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC TurboUtils::CMeta
-         TurboUtils::Platform
-         TurboUtils::Concurrency
-         TurboUtils::Coroutine
-  PRIVATE TurboUtils::STL
-          TurboUtils::CFlow
-          ${FMT_LEXER_LIBRARY} TurboUtils::SDS # Simple Dynamic Strings
+  PUBLIC Rocida::CMeta
+         Rocida::Platform
+         Rocida::Concurrency
+         Rocida::Coroutine
+  PRIVATE Rocida::STL
+          Rocida::CFlow
+          ${FMT_LEXER_LIBRARY} Rocida::SDS # Simple Dynamic Strings
           aklomp::base64 zstd::libzstd
           ${LOG_PATTERN_LEXER_LIBRARY} # Log pattern lexer
 )
@@ -69,7 +69,7 @@ endif()
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT TurboUtilsTargets
+  EXPORT RocidaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

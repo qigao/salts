@@ -1,6 +1,6 @@
-# TurboSTL
+# Rocida STL
 
-TurboSTL is TurboUtils' C11 standard-library-style collection module. It owns
+Rocida STL is Rocida's C11 standard-library-style collection module. It owns
 the concrete data-structure algorithms, while CMeta supplies finite typed
 facades and metadata around those raw algorithms.
 
@@ -8,11 +8,11 @@ Link the installed CMake target and include the typed header (the aggregate
 header includes it as well):
 
 ```cmake
-target_link_libraries(my_target PRIVATE TurboUtils::STL)
+target_link_libraries(my_target PRIVATE Rocida::STL)
 ```
 
 ```c
-#include <turbostl/typed.h>
+#include <rocida/stl/typed.h>
 ```
 
 ## One declaration is enough
@@ -55,7 +55,7 @@ turbostl_stack_t pending = StackOf(int);
 signal-stack API, so portable code must use `turbostl_stack_t` or the
 `Stack(T, name)` declaration facade.
 
-These forms bind CMeta descriptors to erased TurboSTL handles without
+These forms bind CMeta descriptors to erased Rocida STL handles without
 allocating storage or generating a concrete C type. They are raw-handle
 initializers, not additional CMeta Generic instantiations. Initialize them with
 the ordinary raw operations and destroy them after use:
@@ -81,7 +81,7 @@ container descriptor
 Range factories / traits
 ```
 
-The forwarding functions are `static inline`, and descriptors are header-local metadata. The actual algorithms remain compiled C in TurboSTL sources:
+The forwarding functions are `static inline`, and descriptors are header-local metadata. The actual algorithms remain compiled C in Rocida STL sources:
 
 ```text
 vector growth
@@ -136,9 +136,9 @@ intercept or reinterpret their C expressions.
 
 ## CFlow bridge
 
-Link `TurboUtils::STLStream` for the optional modern container-operation facade.
+Link `Rocida::STLStream` for the optional modern container-operation facade.
 Its purpose is to make filtering, transformation, aggregation, and typed
-collection convenient for TurboSTL containers without introducing another
+collection convenient for Rocida STL containers without introducing another
 container implementation. Familiar fluent names improve readability, but no
 external Stream API defines this facade's lifecycle, reuse, terminal, ordering,
 or parallel-execution semantics.
@@ -151,9 +151,9 @@ Graph stage and collection remains an explicit terminal. Capacity arguments are
 hard resource bounds: exceeding one fails the collection transaction instead of
 silently truncating the result.
 
-`TurboUtils::STLStream` is a compiled bridge target. Its `stream(...)` helpers
-bind the container Range and explicitly inject TurboSTL's bounded HashSet and
-Vec state backends; the core `TurboUtils::STL` target still has no CFlow
+`Rocida::STLStream` is a compiled bridge target. Its `stream(...)` helpers
+bind the container Range and explicitly inject Rocida STL's bounded HashSet and
+Vec state backends; the core `Rocida::STL` target still has no CFlow
 dependency.
 
 Element predicates are already represented by CMeta callables. The callable
@@ -195,7 +195,7 @@ growing state; the next new value after the bound returns
 `EQUAL`; managed elements are copied into the HashSet and destroyed when the
 Run closes. Direct/compiled plans reject this stateful operator explicitly.
 
-`sorted(max_elements)` uses a bounded TurboSTL Vec plus the stable
+`sorted(max_elements)` uses a bounded Rocida STL Vec plus the stable
 `O(n log n)` sort implementation. It buffers the complete upstream, requires
 `COMPARE` plus lifecycle traits, preserves encounter order among equal values,
 and emits no partial result if the hard element bound is exceeded. Managed
@@ -209,7 +209,7 @@ New convenience operations follow the same ownership boundary:
 - A result operation such as counting, matching, or finding belongs in the
   terminal/collector layer, with explicit short-circuit, ownership, error, and
   capacity semantics.
-- TurboSTL remains responsible for container storage and Range/collector
+- Rocida STL remains responsible for container storage and Range/collector
   adapters; it does not duplicate the CFlow algorithm for each container kind.
 
 Names alone do not create API. A new operation is public only after its Graph or
@@ -306,12 +306,12 @@ Runtime failures; `status` remains the exact CMeta Collector status, and
 with the Collector's abort status, while output-collector overflow reports
 `CMETA_CAPACITY_EXCEEDED` directly. `error` remains a borrowed diagnostic and
 must not be freed or retained beyond its documented source lifetime.
-The core `TurboUtils::STL` target does not depend on CFlow.
+The core `Rocida::STL` target does not depend on CFlow.
 
 ### Worker-scheduler terminal
 
 `collect_async_typed()` submits the complete pipeline to an existing CFlow
-worker scheduler. TurboSTL does not create or own another thread pool. Multiple
+worker scheduler. Rocida STL does not create or own another thread pool. Multiple
 independent handles may share that scheduler; one handle remains ordered and
 its Collector is never invoked concurrently. This is pipeline-level
 concurrency, not implicit per-element parallelism.
@@ -323,7 +323,7 @@ failure or cancellation aborts the output instead of publishing a partial
 container.
 
 ```c
-#include <turbostl/stream.h>
+#include <rocida/stl/stream.h>
 
 typed(List, AsyncIntList, int);
 

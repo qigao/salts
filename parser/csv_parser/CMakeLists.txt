@@ -27,7 +27,7 @@ add_dependencies(${TARGET_NAME} ${CSV_LEXER_TARGET} ${CSV_GRAMMAR_TARGET}
                  ${DSV_FILTER_EXPR_GRAMMAR_TARGET})
 
 cmake_config_target(${TARGET_NAME}
-  ALIAS TurboUtils::CsvParser
+  ALIAS Rocida::CsvParser
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME CsvParser)
 
@@ -40,10 +40,10 @@ find_path(SIMDE_INCLUDE_DIRS NAMES simde/x86/sse2.h REQUIRED)
 target_include_directories(${TARGET_NAME} PRIVATE ${SIMDE_INCLUDE_DIRS})
 
 target_link_libraries(${TARGET_NAME}
-  PRIVATE TurboUtils::STL
-  PUBLIC TurboUtils::Core)
+  PRIVATE Rocida::STL
+  PUBLIC Rocida::Core)
 
-target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::QueryVM)
+target_link_libraries(${TARGET_NAME} PUBLIC Rocida::QueryVM)
 
 # =============================================================================
 # Tests

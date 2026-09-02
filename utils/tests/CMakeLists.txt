@@ -18,7 +18,7 @@ cmake_add_source(CXX_TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
                  "test_*.cpp" EXCLUDES ${TLOG_HEADER_COLLISION_CPP} ${FMT_SURFACE_CONTRACT_CPP})
 
 # Common libraries for all tests
-set(COMMON_LIBS TurboUtils::TinyTest TurboUtils::Core)
+set(COMMON_LIBS Rocida::TinyTest Rocida::Core)
 if(WIN32)
   list(APPEND COMMON_LIBS psapi iphlpapi userenv ws2_32)
 endif()
@@ -44,7 +44,7 @@ endif()
 cmake_add_test(test_execution_compat
   SOURCES ${EXECUTION_COMPAT_C}
   FOLDER "utils/tests"
-  LIBS TurboUtils::Core)
+  LIBS Rocida::Core)
 set_target_properties(test_execution_compat PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
@@ -62,14 +62,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   endforeach()
 endif()
 
-# fmt surface contracts deliberately do not link TurboUtils::Core. They stub
+# fmt surface contracts deliberately do not link Rocida::Core. They stub
 # fmt_print and validate the public macro expansion contract. Because fmt.h
 # reaches the Core compatibility headers directly, these standalone targets
 # explicitly own both canonical execution-substrate include contracts.
 cmake_add_test(test_fmt_surface_contract_c
   SOURCES ${FMT_SURFACE_CONTRACT_C}
   FOLDER "utils/tests"
-  LIBS TurboUtils::CMeta TurboUtils::Platform TurboUtils::Concurrency)
+  LIBS Rocida::CMeta Rocida::Platform Rocida::Concurrency)
 target_include_directories(test_fmt_surface_contract_c PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../parser
@@ -91,7 +91,7 @@ endif()
 cmake_add_test(test_fmt_surface_contract_cpp
   SOURCES ${FMT_SURFACE_CONTRACT_CPP}
   FOLDER "utils/tests"
-  LIBS TurboUtils::CMeta TurboUtils::Platform TurboUtils::Concurrency)
+  LIBS Rocida::CMeta Rocida::Platform Rocida::Concurrency)
 target_include_directories(test_fmt_surface_contract_cpp PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../parser
@@ -146,7 +146,7 @@ endforeach()
 
 foreach(tgt test_turbo_str)
   if(TARGET ${tgt})
-    target_link_libraries(${tgt} PRIVATE TurboUtils::SDS)
+    target_link_libraries(${tgt} PRIVATE Rocida::SDS)
   endif()
 endforeach()
 

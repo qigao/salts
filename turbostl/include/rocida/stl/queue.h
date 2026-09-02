@@ -1,7 +1,7 @@
 #ifndef TURBOSTL_QUEUE_H
 #define TURBOSTL_QUEUE_H
 
-#include <turbostl/deque.h>
+#include <rocida/stl/deque.h>
 
 #ifdef __cplusplus
 extern "C" {

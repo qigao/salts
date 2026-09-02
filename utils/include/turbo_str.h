@@ -1,6 +1,6 @@
 /**
  * @file turbo_str.h
- * @brief High-performance dynamic string type for TurboUtils
+ * @brief High-performance dynamic string type for Rocida
  *
  * API uses snake_case naming with tstr_ prefix:
  * - tstr_len, tstr_cpy, tstr_cat, etc.

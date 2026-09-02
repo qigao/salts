@@ -1,4 +1,4 @@
-#include <turbostl/typed.h>
+#include <rocida/stl/typed.h>
 #include "tinytest.h"
 
 #include <stdlib.h>
@@ -155,7 +155,7 @@ static stl_status int_bplus_remove(bplus_tree_t *tree, int key,
     return bplus_tree_remove(tree, &key, out_value);
 }
 
-spec("TurboSTL trees") {
+spec("Rocida STL trees") {
     it("splits BTree nodes and iterates entries in key order") {
         BTree(int, long, tree);
         cmeta_range range = {0};

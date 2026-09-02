@@ -17,7 +17,7 @@ add_library(${TARGET_NAME} STATIC
 add_dependencies(${TARGET_NAME} ${TOON_LEXER_TARGET} ${TOON_GRAMMAR_TARGET})
 
 cmake_config_target(${TARGET_NAME}
-  ALIAS TurboUtils::Toon
+  ALIAS Rocida::Toon
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME Toon)
 
@@ -34,8 +34,8 @@ target_include_directories(${TARGET_NAME} PRIVATE ${SIMDE_INCLUDE_DIRS})
 
 # Link dependencies
 target_link_libraries(${TARGET_NAME}
-  PRIVATE TurboUtils::STL
-  PUBLIC TurboUtils::Core TurboUtils::JsonParser)
+  PRIVATE Rocida::STL
+  PUBLIC Rocida::Core Rocida::JsonParser)
 if(UNIX)
   target_link_libraries(${TARGET_NAME} PRIVATE m)
 endif()

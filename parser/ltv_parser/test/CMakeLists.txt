@@ -5,6 +5,6 @@ foreach(test_source ${TEST_SOURCES})
   get_filename_component(test_name ${test_source} NAME_WE)
   cmake_add_test(${test_name}
     SOURCES ${test_source}
-    LIBS TurboUtils::TinyTest ${TARGET_NAME}
+    LIBS Rocida::TinyTest ${TARGET_NAME}
     FOLDER "${folder_name}")
 endforeach()

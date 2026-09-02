@@ -1,6 +1,6 @@
 /**
  * @file platform.h
- * @brief Minimal cross-platform utilities for TurboUtils
+ * @brief Minimal cross-platform utilities for Rocida
  * @author Follows Linux philosophy: Simple, direct, no bullshit
  *
  * Only what we actually use - pure POSIX / Win32, no third-party dependencies.

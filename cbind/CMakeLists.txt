@@ -10,7 +10,7 @@ add_library(${TARGET_NAME}
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS TurboUtils::CBind
+  ALIAS Rocida::CBind
   FOLDER "cbind"
   EXPORT_NAME CBind)
 
@@ -20,7 +20,7 @@ target_include_directories(
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(${TARGET_NAME}
-  PUBLIC TurboUtils::CMeta TurboUtils::CSerde)
+  PUBLIC Rocida::CMeta Rocida::CSerde)
 
 if(NOT WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE m)
@@ -28,7 +28,7 @@ endif()
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT TurboUtilsTargets
+  EXPORT RocidaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

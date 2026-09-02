@@ -11,7 +11,7 @@ add_library(${TARGET_NAME}
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS TurboUtils::CMeta
+  ALIAS Rocida::CMeta
   FOLDER "cmeta"
   EXPORT_NAME CMeta)
 
@@ -25,7 +25,7 @@ target_include_directories(
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT TurboUtilsTargets
+  EXPORT RocidaTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

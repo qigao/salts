@@ -6,7 +6,7 @@ add_library(${TARGET_NAME} STATIC
   src/crpc_json.c
   src/crpc_request_reply.c)
 cmake_config_target(${TARGET_NAME}
-  ALIAS TurboUtils::CRPC
+  ALIAS Rocida::CRPC
   FOLDER "crpc"
   EXPORT_NAME CRPC)
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
@@ -17,10 +17,10 @@ target_include_directories(
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC TurboUtils::CHTTP TurboUtils::CMeta TurboUtils::CSerde
-  PRIVATE TurboUtils::JsonCSerdeAdapter TurboUtils::Core)
+  PUBLIC Rocida::CHTTP Rocida::CMeta Rocida::CSerde
+  PRIVATE Rocida::JsonCSerdeAdapter Rocida::Core)
 
-install(TARGETS ${TARGET_NAME} EXPORT TurboUtilsTargets)
+install(TARGETS ${TARGET_NAME} EXPORT RocidaTargets)
 install(
   DIRECTORY include/crpc
   DESTINATION include

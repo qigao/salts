@@ -313,7 +313,7 @@ int main(void) {
 }
 
 #elif defined(CONSUME_STL_STREAM)
-  #include <turbostl/stream.h>
+  #include <rocida/stl/stream.h>
 
 typed(List, InstalledStreamInts, int);
 
@@ -353,7 +353,7 @@ int main(void) {
 }
 
 #elif defined(CONSUME_STL)
-  #include <turbostl/typed.h>
+  #include <rocida/stl/typed.h>
 
 typed(Vec, InstalledInts, int);
 
@@ -413,5 +413,5 @@ int main(void) {
 }
 
 #else
-  #error "one TurboUtils consumer contract is required"
+  #error "one Rocida consumer contract is required"
 #endif

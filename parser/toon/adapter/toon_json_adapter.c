@@ -7,7 +7,7 @@
 #include <string.h>
 #include <turbo_buffer.h>
 #include <turbo_vstr.h>
-#include <turbostl/hash_set.h>
+#include <rocida/stl/hash_set.h>
 
 #define TOON_JSON_ARENA_INITIAL_SIZE (32U * 1024U)
 #define TOON_JSON_MAX_EXACT_INTEGER_TEXT "9007199254740992"
