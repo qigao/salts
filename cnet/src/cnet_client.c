@@ -24,7 +24,10 @@ typedef struct cnet_client_record {
   cnet_connection public_handle;
   cnet_observer observer;
   cnet_uri_scheme scheme;
+  size_t negotiated_alpn_size;
+  char negotiated_alpn[CNET_TLS_ALPN_NAME_MAX_BYTES + 1u];
   bool active;
+  bool connected;
   bool write_pending;
   bool closing_pending;
 } cnet_client_record;
@@ -40,9 +43,11 @@ struct cnet_client_impl {
   size_t connection_capacity;
   size_t active_count;
   size_t max_send_bytes;
+  size_t tls_io_buffer_bytes;
   uint32_t connect_timeout_ms;
   uint32_t read_timeout_ms;
   uint32_t write_timeout_ms;
+  uint32_t tls_handshake_timeout_ms;
   atomic_int callback_error;
   size_t poll_callback_count;
   bool admission_open;
@@ -65,7 +70,11 @@ static bool cnet_client_config_valid(const cnet_client_config *config) {
       config->request_capacity == 0u || config->completion_batch_capacity == 0u ||
       config->completion_batch_capacity > config->request_capacity ||
       !cnet_power_of_two(config->event_capacity) || config->event_capacity < 2u ||
-      config->max_send_bytes == 0u || config->receive_buffer_bytes == 0u)
+      config->max_send_bytes == 0u || config->receive_buffer_bytes == 0u ||
+      ((config->tls_io_buffer_bytes == 0u) != (config->tls_handshake_timeout_ms == 0u)) ||
+      (config->tls_io_buffer_bytes != 0u &&
+       (config->tls_io_buffer_bytes < CNET_TLS_MIN_IO_BUFFER_BYTES ||
+        config->tls_io_buffer_bytes > INT_MAX)))
     return false;
   return config->connection_capacity <= UINT32_MAX &&
          config->connection_capacity <= SIZE_MAX / sizeof(cnet_client_record);
@@ -167,6 +176,16 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
   } else if (view->kind == CNET_EVENT_STATE && record->observer.on_state != NULL) {
     cnet_error error;
     const cnet_error *error_view = NULL;
+    if (view->state == CNET_EVENT_STATE_CONNECTED) {
+      turbo_mutex_lock(&impl->lock);
+      record->connected = true;
+      record->negotiated_alpn_size = view->size;
+      if (view->size != 0u && view->size <= CNET_TLS_ALPN_NAME_MAX_BYTES) {
+        memcpy(record->negotiated_alpn, view->data, view->size);
+        record->negotiated_alpn[view->size] = '\0';
+      }
+      turbo_mutex_unlock(&impl->lock);
+    }
     if (view->state == CNET_EVENT_STATE_FAILED) {
       error.status = cnet_client_turbo_status(view->status) ? view->status : TURBO_EIO;
       error.native_status = cnet_client_turbo_status(view->status) ? 0 : view->status;
@@ -184,9 +203,12 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
     if (record->active && record->internal.session.slot == view->session.slot &&
         record->internal.session.generation == view->session.generation) {
       record->active = false;
+      record->connected = false;
       record->write_pending = false;
       record->closing_pending = false;
       record->observer = (cnet_observer){0};
+      record->negotiated_alpn_size = 0u;
+      record->negotiated_alpn[0] = '\0';
       if (impl->active_count == 0u) cnet_client_record_error(impl, TURBO_EPROTO);
       else --impl->active_count;
     }
@@ -230,9 +252,11 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   impl->record_count = config->connection_capacity;
   impl->connection_capacity = config->connection_capacity;
   impl->max_send_bytes = config->max_send_bytes;
+  impl->tls_io_buffer_bytes = config->tls_io_buffer_bytes;
   impl->connect_timeout_ms = config->connect_timeout_ms;
   impl->read_timeout_ms = config->read_timeout_ms;
   impl->write_timeout_ms = config->write_timeout_ms;
+  impl->tls_handshake_timeout_ms = config->tls_handshake_timeout_ms;
   impl->admission_open = true;
   atomic_init(&impl->callback_error, TURBO_OK);
   turbo_mutex_init(&impl->lock);
@@ -253,6 +277,8 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
       .completion_batch_capacity = config->completion_batch_capacity,
       .event_capacity_per_shard = config->event_capacity,
       .receive_buffer_bytes = config->receive_buffer_bytes,
+      .max_state_payload_bytes =
+          config->tls_io_buffer_bytes != 0u ? CNET_TLS_ALPN_NAME_MAX_BYTES : 0u,
       .max_command_payload_bytes = config->max_send_bytes > sizeof(cnet_owner_connect_payload)
                                        ? config->max_send_bytes
                                        : sizeof(cnet_owner_connect_payload)};
@@ -318,6 +344,7 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
   record->observer = *observer;
   record->scheme = scheme;
   record->active = true;
+  record->connected = false;
   record->write_pending = false;
   record->closing_pending = false;
   ++impl->active_count;
@@ -339,6 +366,7 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
   cnet_client_impl *impl = cnet_client_get(client);
   cnet_owner_connect_payload payload = {0};
   cnet_uri uri = {0};
+  bool transferred = false;
   int status;
 
   if (out_connection == NULL) return TURBO_EINVAL;
@@ -347,10 +375,22 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
     return TURBO_EINVAL;
   status = cnet_uri_parse(options->uri, &uri);
   if (status != TURBO_OK) return status;
+  if (options->tls != NULL && uri.scheme != CNET_URI_TLS) return TURBO_EINVAL;
+  if (uri.scheme == CNET_URI_TLS && impl->tls_io_buffer_bytes == 0u) return TURBO_ENOTSUP;
   payload.scheme = uri.scheme;
   payload.connect_timeout_ms = impl->connect_timeout_ms;
   payload.read_timeout_ms = impl->read_timeout_ms;
   payload.write_timeout_ms = impl->write_timeout_ms;
+  if (uri.scheme == CNET_URI_TLS) {
+    const char *server_name = options->tls != NULL && options->tls->server_name != NULL
+                                  ? options->tls->server_name
+                                  : uri.host;
+    status = cnet_tls_client_context_create(options->tls, &payload.tls_context);
+    if (status != TURBO_OK) return status;
+    memcpy(payload.tls_server_name, server_name, strlen(server_name) + 1u);
+    payload.tls_io_buffer_bytes = impl->tls_io_buffer_bytes;
+    payload.tls_handshake_timeout_ms = impl->tls_handshake_timeout_ms;
+  }
   if (uri.scheme == CNET_URI_PIPE) memcpy(payload.pipe_name, uri.path, strlen(uri.path) + 1u);
   else {
     status = cnet_transport_parse_numeric_address(uri.host, uri.port, payload.address,
@@ -359,11 +399,15 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
       memcpy(payload.host, uri.host, strlen(uri.host) + 1u);
       payload.port = uri.port;
     } else if (status != TURBO_OK) {
+      if (payload.tls_context != NULL) cnet_tls_context_release(payload.tls_context);
       return status;
     }
   }
 
-  return cnet_client_admit(impl, &payload, uri.scheme, &options->observer, out_connection, NULL);
+  status = cnet_client_admit(impl, &payload, uri.scheme, &options->observer, out_connection,
+                             &transferred);
+  if (!transferred && payload.tls_context != NULL) cnet_tls_context_release(payload.tls_context);
+  return status;
 }
 
 int cnet_client_adopt_tcp(cnet_client *client, uintptr_t native_socket,
@@ -390,6 +434,71 @@ int cnet_client_adopt_tcp(cnet_client *client, uintptr_t native_socket,
   payload.adopted = true;
   status = cnet_client_admit(impl, &payload, CNET_URI_TCP, observer, out_connection, &transferred);
   if (!transferred) cnet_transport_close_socket(native_socket);
+  return status;
+}
+
+int cnet_client_adopt_tls_server(cnet_client *client, uintptr_t native_socket,
+                                 cnet_tls_context *context, const cnet_observer *observer,
+                                 cnet_connection *out_connection) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_owner_connect_payload payload = {0};
+  bool transferred = false;
+  int status;
+
+  if (out_connection == NULL) {
+    cnet_transport_close_socket(native_socket);
+    return TURBO_EINVAL;
+  }
+  *out_connection = (cnet_connection){0};
+  if (impl == NULL || observer == NULL || observer->on_state == NULL || context == NULL ||
+      native_socket == UINTPTR_MAX) {
+    cnet_transport_close_socket(native_socket);
+    return TURBO_EINVAL;
+  }
+  if (impl->tls_io_buffer_bytes == 0u) {
+    cnet_transport_close_socket(native_socket);
+    return TURBO_ENOTSUP;
+  }
+
+  cnet_tls_context_retain(context);
+  payload.scheme = CNET_URI_TLS;
+  payload.adopted_socket = native_socket;
+  payload.read_timeout_ms = impl->read_timeout_ms;
+  payload.write_timeout_ms = impl->write_timeout_ms;
+  payload.tls_handshake_timeout_ms = impl->tls_handshake_timeout_ms;
+  payload.tls_io_buffer_bytes = impl->tls_io_buffer_bytes;
+  payload.tls_context = context;
+  payload.adopted = true;
+  payload.tls_server = true;
+  status = cnet_client_admit(impl, &payload, CNET_URI_TLS, observer, out_connection, &transferred);
+  if (!transferred) {
+    cnet_tls_context_release(context);
+    cnet_transport_close_socket(native_socket);
+  }
+  return status;
+}
+
+int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, char *buffer,
+                             size_t capacity, size_t *out_size) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_client_record *record;
+  int status = TURBO_OK;
+  if (out_size == NULL) return TURBO_EINVAL;
+  *out_size = 0u;
+  if (impl == NULL || buffer == NULL || capacity == 0u) return TURBO_EINVAL;
+
+  turbo_mutex_lock(&impl->lock);
+  record = cnet_client_find_record(impl, connection, NULL);
+  if (record == NULL) status = TURBO_ENOENT;
+  else if (record->scheme != CNET_URI_TLS) status = TURBO_ENOTSUP;
+  else if (!record->connected) status = TURBO_ENOTCONN;
+  else if (record->negotiated_alpn_size == 0u) status = TURBO_ENOENT;
+  else if (capacity <= record->negotiated_alpn_size) status = TURBO_EMSGSIZE;
+  else {
+    memcpy(buffer, record->negotiated_alpn, record->negotiated_alpn_size + 1u);
+    *out_size = record->negotiated_alpn_size;
+  }
+  turbo_mutex_unlock(&impl->lock);
   return status;
 }
 

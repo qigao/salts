@@ -185,8 +185,8 @@ request/event capacity、单次 send/receive bytes 和 connect/read/write timeou
 - `target`：HTTP origin-form target，例如 `/v1/users?id=7`。
 
 三者不能合并为一个模糊 URL：连接 endpoint、HTTP authority 和 request target 的归属不同，
-Pipe 与 virtual host 也需要能独立组合。TLS/SNI/ALPN 尚未实现，不能把 `https://` 静默降级为
-TCP。
+Pipe 与 virtual host 也需要能独立组合。CNet 已提供 TLS/SNI/ALPN，但 CHTTP 尚未接入对应的
+HTTPS transport adapter；在接入完成前，不能把 `https://` 静默降级为 TCP。
 
 pool key 是经过验证后的 `connection_uri + authority` 精确组合，`target` 不参与。因此同一站点的
 `/users`、`/orders` 与 `/status` 可以顺序复用一条连接，但不同 authority 不做隐式 coalescing。

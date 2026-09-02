@@ -556,11 +556,13 @@ Protocol dependencies must be I/O-neutral:
 - TLS uses BoringSSL with memory BIOs. BoringSSL exposes memory BIOs and
   caller-managed buffer ownership, so encrypted bytes remain in CNet/NativeIO
   buffers: <https://boringssl.googlesource.com/boringssl/+/HEAD/include/openssl/bio.h>.
-- WebSocket framing uses Wslay's low-level frame API. Wslay performs no I/O and
-  supports an external event loop, but explicitly does not implement the HTTP
-  opening handshake: <https://github.com/tatsuhiro-t/wslay>.
-- WebSocket Upgrade parsing uses llhttp's generated C parser; it performs no
-  network I/O: <https://github.com/nodejs/llhttp>.
+- WebSocket frame and opening-handshake syntax reuse the in-repository
+  `tools/wsparser` C parser. Before CNet integration it must pass bounded
+  incremental/corpus tests for canonical lengths, reserved bits/opcodes, mask
+  direction, control frames, malformed HTTP Upgrade fields, and borrowed-view
+  lifetime. CNet owns fragmentation/message/close state; CHTTP owns route and
+  Upgrade handoff. The protocol baseline is RFC 6455:
+  <https://www.rfc-editor.org/rfc/rfc6455>.
 - KCP uses the upstream algorithm core. Upstream requires caller-provided UDP
   output and clock/update calls and performs no system calls:
   <https://github.com/skywind3000/kcp>.
@@ -572,10 +574,9 @@ Protocol dependencies must be I/O-neutral:
   reimplemented in CNet.
 
 BoringSSL, c-ares, llhttp, and KCP enter through the existing vcpkg manifest.
-Wslay is not in the baseline registry used by this repository; admission
-therefore requires a pinned overlay port containing upstream URL/commit,
-checksum, MIT license, and an unmodified-source statement. CNet wraps all
-third-party types in private translation units. BoringSSL contains C++ objects,
+WebSocket parsing uses `tools/wsparser`, so it adds no Wslay dependency or
+third-party parser type to installed headers. CNet wraps all third-party types
+in private translation units. BoringSSL contains C++ objects,
 so CNet includes one private C++ linkage translation unit and links its C API
 target with the configured C++ runtime, matching the established repository
 integration. No third-party type or error code enters installed headers.

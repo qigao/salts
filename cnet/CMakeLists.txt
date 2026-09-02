@@ -1,6 +1,7 @@
 set(TARGET_NAME turbo_cnet)
 
 find_package(c-ares CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 add_library(${TARGET_NAME} STATIC
   src/cnet_client.c
@@ -13,6 +14,7 @@ add_library(${TARGET_NAME} STATIC
   src/cnet_resolver.c
   src/cnet_session.c
   src/cnet_shards.c
+  src/cnet_tls.c
   src/cnet_transport.c
   src/cnet_transport_pipe.c
   src/cnet_uri.c)
@@ -30,7 +32,8 @@ target_include_directories(
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC TurboUtils::NativeIO TurboUtils::Concurrency
-  PRIVATE c-ares::cares)
+  PRIVATE c-ares::cares OpenSSL::SSL OpenSSL::Crypto
+          $<$<PLATFORM_ID:Windows>:crypt32>)
 
 install(TARGETS ${TARGET_NAME} EXPORT TurboUtilsTargets)
 install(

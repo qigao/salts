@@ -2,8 +2,8 @@
 
 ## 当前基线
 
-截至本文件建立时，CNet 已提供 TCP、UDP、Pipe、TCP listener、accepted-socket 接管、
-有序 send completion 与 send-and-close；CHTTP 已在其上提供 HTTP/1.1 client/server、
+截至当前基线，CNet 已提供 TCP、TLS、UDP、Pipe、TCP listener、plain/TLS accepted-socket
+接管、有序 send completion 与 send-and-close；CHTTP 已在其上提供 HTTP/1.1 client/server、
 静态与命名参数路由、中间件、有界内存 Cookie Session，以及不要求用户调用 poller 的
 后台 server owner。
 
@@ -11,26 +11,28 @@ CHTTP server 的网络命令采用每连接单 owner pending-action 状态机：
 command ring 满额时保留 receive/send/close 动作和相关 buffer，worker 以 round-robin 公平重试。
 该状态不跨线程写入，不通过无界分配绕过背压；动作成功提交或收到终态事件后才清除。
 
-以下能力尚未实现，不得在公开文档、示例或 capability negotiation 中声明为可用：TLS、
-KCP、WS/WSS、HTTP/2 与 S3。HTTP/3 明确不在本路线范围内。
+CHTTP 尚未把 CNet TLS 接入 HTTPS client/server。以下能力不得在对应公开文档、示例或
+capability negotiation 中声明为可用：CHTTP HTTPS、KCP、WS/WSS、HTTP/2 与 S3。
+HTTP/3 明确不在本路线范围内。
 
 ## P0：CNet TLS transport
 
-- [ ] 定义纯 C、opaque 的 TLS client/server 配置：trust source、证书链、私钥、SNI、
+- [x] 定义纯 C、opaque 的 TLS client/server 配置：trust source、证书链、私钥、SNI、
   ALPN、peer/hostname verification、client certificate policy 和 handshake timeout。
-- [ ] 在 CNet transport 层实现 TLS 状态机，使 connect/adopt、handshake、加密 read/write、
+- [x] 在 CNet transport 层实现 TLS 状态机，使 connect/adopt、handshake、加密 read/write、
   close-notify 与 cancellation 仍由同一个 owner 推进。
-- [ ] 默认强制证书链与 hostname verification；不提供从 `tls`/`https` 静默降级到明文的
+- [x] 默认强制证书链与 hostname verification；不提供从 `tls`/`https` 静默降级到明文的
   fallback。
 - [ ] 将 TLS profile 纳入连接复用 key；证书身份、trust source、SNI 或 ALPN 不同的连接
   不得复用。
-- [ ] 对 handshake input/output、单 record、累计 plaintext/ciphertext buffer 设置硬上限，
+- [x] 对 handshake input/output、单 record、累计 plaintext/ciphertext buffer 设置硬上限，
   并定义满额、timeout、peer truncation 和 shutdown 的可区分错误。
-- [ ] 覆盖可信/不可信证书、hostname mismatch、mTLS、部分 record、超时、取消、
+- [x] 覆盖可信/不可信证书、hostname mismatch、mTLS、部分 record、超时、取消、
   close-notify、accepted socket 和安装包链接测试。
 
-完成条件：`tls://` 能以 mandatory verification 建连，CHTTP server 能通过同一 CNet
-accepted-connection 路径终止 TLS，ASan 与 Release 回归通过。
+完成条件：`tls://` 能以 mandatory verification 建连，CNet server caller 能通过同一
+accepted-connection 路径终止 TLS，ASan 与 Release 回归通过。CHTTP HTTPS adapter 仍按上面的
+当前基线保持未实现。
 
 ## P1：CNet KCP、WebSocket engine 与 CHTTP Upgrade
 
@@ -41,10 +43,13 @@ accepted-connection 路径终止 TLS，ASan 与 Release 回归通过。
 - [ ] 覆盖 loss/reorder/duplicate、窗口满、timer 推进、cancel、peer timeout 与 shutdown
   drain 测试。
 
+- [ ] 导入并复用 `tools/wsparser` 作为唯一 WebSocket frame/opening-handshake parser；先补
+  RFC 6455 canonical length、reserved opcode/RSV、mask direction、NULL/overflow、fuzz corpus
+  与 borrowed payload 失效点测试，不在 CNet 或 CHTTP 中复制第二套解析器。
 - [ ] 定义有界 WS message API：text/binary、fragment、ping/pong、close code/reason、
   max frame bytes、max message bytes、UTF-8 validation 和 backpressure。
-- [ ] 实现 RFC 6455 frame 状态机；client frame 必须 mask，控制帧、fragmentation 和
-  close handshake 必须严格校验。
+- [ ] 在 `tools/wsparser` 语法结果之上实现 RFC 6455 session 状态机；client frame 必须 mask，
+  控制帧、fragmentation 和 close handshake 必须严格校验。
 - [ ] CNet WebSocket engine 只依赖有序双向 byte stream，不解析 HTTP header；同一 frame/
   message/session 状态机同时承载 CHTTP HTTP/1.1 Upgrade 与未来 HTTP/2 RFC 8441 stream。
 - [ ] 为 `ws://` 和 `wss://` client 实现 HTTP Upgrade；`wss` 必须复用 P0 TLS transport。
@@ -109,7 +114,7 @@ CNet 或 NativeIO。迁移时记录实际源 commit，保留 SigV4、URL、XML�
 | HTTP/1.1 route、参数、middleware | 已实现 | CHTTP server |
 | 有界内存 Cookie Session | 已实现 | CHTTP server；持久化/分布式 backend 不在当前路线 |
 | 同步 template/static response | 可组合 | handler 内使用现有 parser/fs 能力 |
-| TLS listener / HTTPS | 未实现 | CNet TLS transport，P0 |
+| TLS listener / HTTPS | CNet TLS listener 已实现；CHTTP HTTPS 未接入 | CHTTP transport adapter，P0 |
 | WebSocket / WSS route | 未实现 | CNet WS engine + CHTTP Upgrade，P1 |
 | KCP transport | 未实现 | NativeIO UDP + CNet KCP session，P1 |
 | HTTP/2 | 待从 TurboHTTP 导入 | CHTTP protocol + CNet stream，P2 |

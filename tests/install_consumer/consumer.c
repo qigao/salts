@@ -23,6 +23,7 @@ int main(void) {
 
 #elif defined(CONSUME_COROUTINE)
   #include <turbo_coro.h>
+  #include <turbo_coro_executor.h>
 
 static void complete(coro_t *coroutine, void *user_data) {
   int *completed = (int *)user_data;
@@ -30,15 +31,64 @@ static void complete(coro_t *coroutine, void *user_data) {
   *completed = 1;
 }
 
+typedef struct installed_executor_state {
+  turbo_coro_executor_t *executor;
+  int completed;
+  int status;
+} installed_executor_state;
+
+static void complete_with_await(coro_t *coroutine, void *user_data) {
+  installed_executor_state *state = (installed_executor_state *)user_data;
+  turbo_coro_executor_await_t await_handle = {0};
+  int completion_status = TURBO_EIO;
+  (void)coroutine;
+
+  state->status = turbo_coro_executor_yield();
+  if (state->status != TURBO_OK) return;
+  state->status = turbo_coro_executor_await_begin(&await_handle);
+  if (state->status != TURBO_OK) return;
+  state->status = turbo_coro_executor_await_complete(state->executor, await_handle, TURBO_OK);
+  if (state->status != TURBO_OK) return;
+  state->status = turbo_coro_executor_await(await_handle, &completion_status);
+  if (state->status != TURBO_OK || completion_status != TURBO_OK) return;
+  state->status = turbo_coro_executor_await_begin(&await_handle);
+  if (state->status != TURBO_OK) return;
+  state->status = turbo_coro_executor_await_abort(await_handle);
+  if (state->status == TURBO_OK) state->completed = 1;
+}
+
 int main(void) {
   int completed = 0;
+  installed_executor_state executor_state = {0};
   coro_t *coroutine = coro_create(complete, &completed, NULL);
+  turbo_coro_executor_config_t config = TURBO_CORO_EXECUTOR_CONFIG_DEFAULT;
+  turbo_coro_executor_task_t task = {complete_with_await, NULL, NULL, &executor_state};
+  turbo_coro_executor_t *executor;
   if (coroutine == NULL) return 1;
   if (coro_resume(coroutine) != 0 || completed != 1 || coro_alive(coroutine)) {
     coro_destroy(coroutine);
     return 2;
   }
   coro_destroy(coroutine);
+
+  completed = 0;
+  config.worker_count = 1u;
+  config.queue_capacity_per_worker = 1u;
+  config.coroutine_pool.initial_capacity = 0u;
+  config.coroutine_pool.max_capacity = 1u;
+  executor = turbo_coro_executor_create(&config);
+  if (executor == NULL) return 3;
+  executor_state.executor = executor;
+  if (turbo_coro_executor_submit(executor, &task) != 0) {
+    turbo_coro_executor_destroy(executor);
+    return 4;
+  }
+  if (turbo_coro_executor_wait(executor) != 0 || executor_state.completed != 1 ||
+      executor_state.status != TURBO_OK) {
+    turbo_coro_executor_destroy(executor);
+    return 5;
+  }
+  if (turbo_coro_executor_destroy(executor) != 0) return 6;
   return 0;
 }
 
@@ -55,9 +105,14 @@ int main(void) {
 int main(void) {
   cnet_client client = {0};
   cnet_listener listener = {0};
+  cnet_tls_server tls_server = {0};
+  cnet_tls_client_config tls_client_config = {.size = sizeof(tls_client_config)};
+  cnet_tls_server_config tls_server_config = {.size = sizeof(tls_server_config)};
   cnet_connection connection = {0};
-  return client.impl == NULL && listener.impl == NULL && connection.slot == 0u &&
-                 connection.generation == 0u
+  return client.impl == NULL && listener.impl == NULL && tls_server.impl == NULL &&
+                 tls_client_config.size == sizeof(tls_client_config) &&
+                 tls_server_config.size == sizeof(tls_server_config) && connection.slot == 0u &&
+                 connection.generation == 0u && CNET_TLS_MIN_IO_BUFFER_BYTES >= 16384
              ? 0
              : 1;
 }

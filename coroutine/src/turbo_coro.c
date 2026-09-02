@@ -132,8 +132,8 @@ coro_t *coro_create(coro_fn fn, void *arg, const coro_opts_t *opts) {
   if (opts) {
     co->user_data = opts->user_data;
     co->stack_size = opts->stack_size;
-    co->storage_size = opts->storage_size;
   }
+  co->storage_size = desc.storage_size;
 
   // Initialize minicoro in the combined allocation
   mco_result res = mco_init(co->mco, &desc);

@@ -3,7 +3,8 @@ set(TARGET_NAME turbo_coroutine)
 add_library(
   ${TARGET_NAME} STATIC
   src/turbo_coro.c
-  src/turbo_coro_pool.c)
+  src/turbo_coro_pool.c
+  src/turbo_coro_executor.c)
 
 cmake_config_target(
   ${TARGET_NAME}
@@ -17,6 +18,7 @@ target_include_directories(
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>
   PRIVATE ${PROJECT_SOURCE_DIR}/vendor/minicoro)
+target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::Concurrency)
 
 install(
   TARGETS ${TARGET_NAME}
@@ -29,3 +31,11 @@ install(
   DIRECTORY include/
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
+
+if(BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
+
+if(BUILD_BENCHMARKS)
+  add_subdirectory(benchmarks)
+endif()

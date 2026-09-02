@@ -297,6 +297,51 @@ static cnet_client_config cnet_api_test_config(void) {
 }
 
 spec("CNet public client API") {
+  it("rejects malformed TLS server configuration without publishing a context") {
+    cnet_tls_server server = {0};
+    cnet_tls_server_config config = {.size = sizeof(config)};
+
+    check_equal(cnet_tls_server_init(NULL, &config), TURBO_EINVAL);
+    check_equal(cnet_tls_server_init(&server, NULL), TURBO_EINVAL);
+    check_equal(cnet_tls_server_init(&server, &config), TURBO_EINVAL);
+    check_null(server.impl);
+    check_equal(cnet_tls_server_destroy(&server), TURBO_OK);
+  }
+
+  it("keeps TLS disabled when bounded TLS storage is not configured") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_connection connection = {17u, 19u};
+    cnet_connect_options options = {.uri = "tls://localhost:443",
+                                    .observer = {.on_state = cnet_api_test_ignore_state}};
+
+    check_equal(cnet_client_init(&client, &config), TURBO_OK);
+    check_equal(cnet_connect(&client, &options, &connection), TURBO_ENOTSUP);
+    check_equal(connection.slot, 0u);
+    check_equal(connection.generation, 0u);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_client_destroy(&client), TURBO_OK);
+  }
+
+  it("requires a complete bounded TLS client allocation policy") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+
+    config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    check_equal(cnet_client_init(&client, &config), TURBO_EINVAL);
+    check_null(client.impl);
+
+    config.tls_handshake_timeout_ms = 1000u;
+    config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES - 1u;
+    check_equal(cnet_client_init(&client, &config), TURBO_EINVAL);
+    check_null(client.impl);
+
+    config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    check_equal(cnet_client_init(&client, &config), TURBO_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_client_destroy(&client), TURBO_OK);
+  }
+
   it("returns a portable address-in-use error for listener bind conflicts") {
     cnet_listener first = {0};
     cnet_listener second = {0};
