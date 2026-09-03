@@ -25,7 +25,10 @@ cmake_config_target(${TARGET_NAME}
   VERSION ${S3_LIBRARY_VERSION}
   SOVERSION ${S3_ABI_VERSION})
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
-set_target_properties(${TARGET_NAME} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+# BoringSSL archives contain C++ objects even though S3 exposes a C API.
+set_target_properties(${TARGET_NAME} PROPERTIES
+  WINDOWS_EXPORT_ALL_SYMBOLS ON
+  LINKER_LANGUAGE CXX)
 if(WIN32)
   set_target_properties(${TARGET_NAME} PROPERTIES OUTPUT_NAME "turbo_s3-${S3_ABI_VERSION}")
 endif()

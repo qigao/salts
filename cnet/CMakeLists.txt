@@ -65,7 +65,10 @@ cmake_config_target(${TARGET_NAME}
   FOLDER "cnet"
   EXPORT_NAME CNet)
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
-set_target_properties(${TARGET_NAME} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+# BoringSSL archives contain C++ objects even though CNet exposes a C API.
+set_target_properties(${TARGET_NAME} PROPERTIES
+  WINDOWS_EXPORT_ALL_SYMBOLS ON
+  LINKER_LANGUAGE CXX)
 target_include_directories(
   ${TARGET_NAME}
   PUBLIC
