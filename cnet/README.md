@@ -114,11 +114,15 @@ TCP endpoints. Set both `cnet_client_config.tls_io_buffer_bytes` (at least
 connections. Leaving both zero preserves a TLS-free client and makes a
 `tls://` connect fail with `TURBO_ENOTSUP`.
 
+The repository manifest selects BoringSSL. CMake consumes its conventional
+`find_package(OpenSSL REQUIRED)` compatibility targets only as private build
+dependencies; Rocida neither exports those targets nor installs BoringSSL.
+
 `cnet_connect()` accepts either a one-shot `cnet_tls_client_config` or a reusable
 `cnet_tls_client`; the two fields are mutually exclusive. NULL uses the platform
 trust store and the URI host as the verified identity. An explicit configuration
 can select CA file/path, client certificate/key, SNI/identity, and an ordered
-ALPN offer. `cnet_tls_client_init()` builds an immutable OpenSSL context and
+ALPN offer. `cnet_tls_client_init()` builds an immutable BoringSSL context and
 consumes all input synchronously. A successful connect retains that context, so
 the public wrapper may be destroyed after admission while the connection remains
 valid. Certificate-chain and hostname/IP verification are mandatory; CNet
@@ -142,8 +146,10 @@ thread. Handshake timeout is reported with stage `handshake`, malformed or
 truncated TLS never falls back to plaintext, and user close during a handshake
 cancels the in-flight transport without publishing CONNECTED.
 
-The adapter follows OpenSSL's [BIO pair](https://docs.openssl.org/3.5/man3/BIO_new_bio_pair/)
-and [hostname validation](https://docs.openssl.org/3.5/man3/SSL_set1_host/) contracts;
+The adapter follows BoringSSL's OpenSSL-compatible
+[BIO pair](https://boringssl.googlesource.com/boringssl/+/HEAD/include/openssl/bio.h)
+and [hostname validation](https://boringssl.googlesource.com/boringssl/+/HEAD/include/openssl/ssl.h)
+contracts;
 ALPN wire behavior follows [RFC 7301](https://www.rfc-editor.org/rfc/rfc7301).
 
 ## Ownership and progress

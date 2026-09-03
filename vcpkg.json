@@ -34,7 +34,7 @@
       "name": "llhttp"
     },
     {
-      "name": "openssl"
+      "name": "boringssl"
     }
   ],
   "overrides": [

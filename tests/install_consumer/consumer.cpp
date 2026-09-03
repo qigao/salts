@@ -56,6 +56,8 @@ int main() {
   crpc_client client{};
   crpc_async_client async_client{};
   crpc_request request{};
+  crpc_options rpc_options{};
+  crpc_server rpc_server{};
   chttp_server server{};
   chttp_session session{};
   chttp_websocket http_websocket{};
@@ -101,12 +103,14 @@ int main() {
       chttp_websocket_client_destroy(&http_websocket_client, 0u) != TURBO_OK ||
       chttp_websocket_pool_destroy(&http_websocket_pool, 0u) != TURBO_OK ||
       client.impl != nullptr || async_client.impl != nullptr || request.slot != 0u ||
-      request.generation != 0u || server.impl != nullptr || session.impl != nullptr ||
-      http_tls_profile.impl != nullptr || http_options.protocol != CHTTP_HTTP_1_1 ||
-      CHTTP_HTTP_2 == CHTTP_HTTP_1_1 || http_config.h2_input_buffer_bytes != 64u * 1024u ||
-      http_server_config.enable_http2 != 1 || http_server_config.h2_stream_capacity != 32u ||
-      http_body_source.read != nullptr || http_body_sink.write != nullptr ||
-      http_websocket_config.size != 0u ||
+      request.generation != 0u || rpc_options.tls != nullptr ||
+      rpc_options.protocol != CHTTP_HTTP_1_1 || rpc_server.impl != nullptr ||
+      crpc_server_destroy(&rpc_server) != TURBO_OK || server.impl != nullptr ||
+      session.impl != nullptr || http_tls_profile.impl != nullptr ||
+      http_options.protocol != CHTTP_HTTP_1_1 || CHTTP_HTTP_2 == CHTTP_HTTP_1_1 ||
+      http_config.h2_input_buffer_bytes != 64u * 1024u || http_server_config.enable_http2 != 1 ||
+      http_server_config.h2_stream_capacity != 32u || http_body_source.read != nullptr ||
+      http_body_sink.write != nullptr || http_websocket_config.size != 0u ||
       http_websocket_config.h2_input_buffer_bytes != 128u * 1024u ||
       http_websocket_config.h2_hpack_dynamic_table_bytes != 4096u ||
       http_websocket_config.h2_max_settings_count != 16u || http_websocket_options.size != 0u ||

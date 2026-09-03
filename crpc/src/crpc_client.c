@@ -229,7 +229,9 @@ int crpc_async_client_submit(crpc_async_client *client, const crpc_options *opti
                                          .body = prepared.encoded.data,
                                          .body_size = prepared.encoded.size,
                                          .on_complete = crpc_slot_complete,
-                                         .user = slot};
+                                         .user = slot,
+                                         .tls = options->tls,
+                                         .protocol = options->protocol};
   status = chttp_async_client_submit(&impl->http, &http_options, &slot->http_request);
   if (status != TURBO_OK) {
     crpc_slot_release(slot);

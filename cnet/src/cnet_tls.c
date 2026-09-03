@@ -14,9 +14,15 @@
 #include <string.h>
 
 #if defined(_WIN32)
-  #include <wincrypt.h>
-  #include <windows.h>
   #include <winsock2.h>
+#endif
+
+#if defined(_WIN32)
+  #include <windows.h>
+#endif
+
+#if defined(_WIN32)
+  #include <wincrypt.h>
   #include <ws2tcpip.h>
 #else
   #include <arpa/inet.h>
@@ -504,44 +510,45 @@ int cnet_tls_handshake(cnet_tls_state *state, bool *out_complete) {
 
 size_t cnet_tls_cipher_input_capacity(const cnet_tls_state *state) {
   if (state == NULL || state->network_bio == NULL) return 0u;
-  return BIO_get_write_guarantee(state->network_bio);
+  return BIO_ctrl_get_write_guarantee(state->network_bio);
 }
 
 int cnet_tls_feed_cipher(cnet_tls_state *state, const void *data, size_t size) {
-  size_t written = 0u;
+  int written;
   if (state == NULL || state->network_bio == NULL || data == NULL || size == 0u)
     return TURBO_EINVAL;
+  if (size > INT_MAX) return TURBO_ERANGE;
   if (size > cnet_tls_cipher_input_capacity(state)) return TURBO_ENOBUFS;
-  if (BIO_write_ex(state->network_bio, data, size, &written) != 1)
-    return BIO_should_retry(state->network_bio) ? TURBO_ENOBUFS : TURBO_EIO;
-  return written == size ? TURBO_OK : TURBO_EIO;
+  written = BIO_write(state->network_bio, data, (int)size);
+  if (written <= 0) return BIO_should_retry(state->network_bio) ? TURBO_ENOBUFS : TURBO_EIO;
+  return (size_t)written == size ? TURBO_OK : TURBO_EIO;
 }
 
 int cnet_tls_take_cipher(cnet_tls_state *state, void *buffer, size_t capacity, size_t *out_size) {
-  size_t read_size = 0u;
+  int read_size;
   if (out_size == NULL) return TURBO_EINVAL;
   *out_size = 0u;
   if (state == NULL || state->network_bio == NULL || buffer == NULL || capacity == 0u)
     return TURBO_EINVAL;
+  if (capacity > INT_MAX) return TURBO_ERANGE;
   if (BIO_ctrl_pending(state->network_bio) == 0u) return TURBO_ENOENT;
-  if (BIO_read_ex(state->network_bio, buffer, capacity, &read_size) != 1)
-    return BIO_should_retry(state->network_bio) ? TURBO_ENOENT : TURBO_EIO;
-  if (read_size == 0u) return TURBO_EIO;
-  *out_size = read_size;
+  read_size = BIO_read(state->network_bio, buffer, (int)capacity);
+  if (read_size <= 0) return BIO_should_retry(state->network_bio) ? TURBO_ENOENT : TURBO_EIO;
+  *out_size = (size_t)read_size;
   return TURBO_OK;
 }
 
 int cnet_tls_write(cnet_tls_state *state, const void *data, size_t size, bool *out_complete) {
-  size_t written = 0u;
   int result;
   if (state == NULL || state->ssl == NULL || data == NULL || size == 0u || out_complete == NULL)
     return TURBO_EINVAL;
   *out_complete = false;
   if (!state->handshake_complete || state->close_notify_started) return TURBO_ENOTCONN;
+  if (size > INT_MAX) return TURBO_ERANGE;
   ERR_clear_error();
-  result = SSL_write_ex(state->ssl, data, size, &written);
-  if (result == 1) {
-    if (written != size) return TURBO_EIO;
+  result = SSL_write(state->ssl, data, (int)size);
+  if (result > 0) {
+    if ((size_t)result != size) return TURBO_EIO;
     *out_complete = true;
     return TURBO_OK;
   }
@@ -550,7 +557,6 @@ int cnet_tls_write(cnet_tls_state *state, const void *data, size_t size, bool *o
 
 int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity, size_t *out_size,
                   bool *out_peer_closed) {
-  size_t read_size = 0u;
   int result;
   int error;
   if (out_size == NULL || out_peer_closed == NULL) return TURBO_EINVAL;
@@ -558,16 +564,16 @@ int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity, size_t *
   *out_peer_closed = false;
   if (state == NULL || state->ssl == NULL || buffer == NULL || capacity == 0u) return TURBO_EINVAL;
   if (!state->handshake_complete) return TURBO_ENOTCONN;
+  if (capacity > INT_MAX) return TURBO_ERANGE;
   if (state->peer_close_notify) {
     *out_peer_closed = true;
     return TURBO_OK;
   }
 
   ERR_clear_error();
-  result = SSL_read_ex(state->ssl, buffer, capacity, &read_size);
-  if (result == 1) {
-    if (read_size == 0u) return TURBO_EIO;
-    *out_size = read_size;
+  result = SSL_read(state->ssl, buffer, (int)capacity);
+  if (result > 0) {
+    *out_size = (size_t)result;
     return TURBO_OK;
   }
   error = SSL_get_error(state->ssl, result);

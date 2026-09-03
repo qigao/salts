@@ -34,6 +34,7 @@ if(NOT install_result EQUAL 0)
 endif()
 
 set(expected_chttp_abi_version 2)
+set(expected_crpc_abi_version 2)
 if(WIN32)
   set(expected_chttp_runtime
       "${install_prefix}/bin/turbo_chttp-${expected_chttp_abi_version}.dll")
@@ -47,6 +48,8 @@ if(WIN32)
               "Rocida install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_file}")
     endif()
   endforeach()
+  set(expected_crpc_archive
+      "${install_prefix}/lib/turbo_crpc-${expected_crpc_abi_version}.lib")
 elseif(APPLE)
   set(expected_chttp_runtime
       "${install_prefix}/lib/libturbo_chttp.${expected_chttp_abi_version}.dylib")
@@ -54,6 +57,8 @@ elseif(APPLE)
     message(FATAL_ERROR
             "Rocida install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_runtime}")
   endif()
+  set(expected_crpc_archive
+      "${install_prefix}/lib/libturbo_crpc-${expected_crpc_abi_version}.a")
 else()
   set(expected_chttp_runtime
       "${install_prefix}/lib/libturbo_chttp.so.${expected_chttp_abi_version}")
@@ -61,6 +66,13 @@ else()
     message(FATAL_ERROR
             "Rocida install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_runtime}")
   endif()
+  set(expected_crpc_archive
+      "${install_prefix}/lib/libturbo_crpc-${expected_crpc_abi_version}.a")
+endif()
+
+if(NOT EXISTS "${expected_crpc_archive}")
+  message(FATAL_ERROR
+          "Rocida install is missing CRPC ABI ${expected_crpc_abi_version} artifact: ${expected_crpc_archive}")
 endif()
 
 foreach(required_package_file IN ITEMS RocidaConfig.cmake RocidaTargets.cmake)
@@ -76,7 +88,7 @@ file(GLOB installed_target_files
 foreach(installed_target_file IN LISTS installed_target_files)
   file(READ "${installed_target_file}" installed_target_contents)
   if(installed_target_contents MATCHES
-     "(c-ares::|llhttp::|[/\\\\]cares\\.(lib|a|so)|[/\\\\]llhttp[^/\\\\]*\\.(lib|a|so))")
+     "(c-ares::|llhttp::|OpenSSL::|BoringSSL|[/\\\\]cares\\.(lib|a|so)|[/\\\\]llhttp[^/\\\\]*\\.(lib|a|so)|[/\\\\](ssl|crypto)[^/\\\\]*\\.(lib|a|so))")
     message(
       FATAL_ERROR
         "Rocida installed target metadata exposes a private network dependency: ${installed_target_file}"
@@ -113,10 +125,11 @@ execute_process(
           "-DRocida_DIR=${install_prefix}/lib/cmake/Rocida"
           "-DCMAKE_DISABLE_FIND_PACKAGE_c-ares=TRUE"
           "-DCMAKE_DISABLE_FIND_PACKAGE_llhttp=TRUE"
+          "-DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE"
   RESULT_VARIABLE hidden_dependency_configure_result)
 if(NOT hidden_dependency_configure_result EQUAL 0)
   message(FATAL_ERROR
-          "Rocida network targets leaked c-ares or llhttp to the installed consumer: ${hidden_dependency_configure_result}")
+          "Rocida network targets leaked c-ares, llhttp, or BoringSSL to the installed consumer: ${hidden_dependency_configure_result}")
 endif()
 
 execute_process(
@@ -135,5 +148,5 @@ execute_process(
   RESULT_VARIABLE hidden_dependency_build_result)
 if(NOT hidden_dependency_build_result EQUAL 0)
   message(FATAL_ERROR
-          "Rocida installed consumer without c-ares/llhttp failed to build: ${hidden_dependency_build_result}")
+          "Rocida installed consumer without c-ares/llhttp/BoringSSL failed to build: ${hidden_dependency_build_result}")
 endif()
