@@ -68,7 +68,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y re2c
+          sudo apt-get install -y nasm re2c
           echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
           if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
             echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
@@ -126,7 +126,7 @@ jobs:
       - name: Setup re2c and vcpkg
         shell: bash
         run: |
-          brew install re2c
+          brew install nasm re2c
           if [ -n "${VCPKG_ROOT:-}" ] &&
              [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
             true
@@ -183,7 +183,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y re2c
+          sudo apt-get install -y nasm re2c
           if [ -n "${VCPKG_ROOT:-}" ] &&
              [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
             true
