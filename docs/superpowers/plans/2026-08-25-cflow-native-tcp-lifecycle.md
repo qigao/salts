@@ -6,7 +6,7 @@
 
 **Architecture:** Extend the caller-owned native operation descriptor with two additive kinds and one accepted-socket result. Each backend retains provisional accept ownership inside its existing bounded request record, publishes the result immediately before the Actor's authoritative completion, and closes it on every non-transfer terminal path. Existing Actor, Executor, capacity, cancellation, identity, and shutdown boundaries remain unchanged.
 
-**Tech Stack:** C11, Winsock IOCP/AcceptEx/ConnectEx, Linux io_uring, TurboUtils readiness reactor (epoll/kqueue), CFlow I/O Actor, TinyTest, CMake Presets.
+**Tech Stack:** C11, Winsock IOCP/AcceptEx/ConnectEx, Linux io_uring, Salts readiness reactor (epoll/kqueue), CFlow I/O Actor, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-cflow-native-tcp-lifecycle-design.md`
 
@@ -66,7 +66,7 @@ leaves the result invalid and permits request-slot reuse.
 
 - [x] **Step 2: Run focused IOCP tests and record RED**
 
-Expected: lifecycle submissions complete as `FAILED`/`TURBO_EINVAL` until IOCP handles the new kinds.
+Expected: lifecycle submissions complete as `FAILED`/`SALTS_EINVAL` until IOCP handles the new kinds.
 
 - [x] **Step 3: Implement bounded AcceptEx and ConnectEx records**
 

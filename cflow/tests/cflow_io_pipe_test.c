@@ -1,8 +1,8 @@
 #include <cflow/io_pipe.h>
 
-#include <turbo/clock.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/clock.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include "tinytest.h"
 
@@ -35,15 +35,15 @@ typedef struct pipe_client_thread_probe {
 
 static void pipe_client_connect_until_available(void *user) {
   pipe_client_thread_probe *probe = (pipe_client_thread_probe *)user;
-  const uint64_t started = turbo_hrtime();
+  const uint64_t started = salts_hrtime();
   InterlockedExchange(&probe->started, 1);
   do {
     probe->status =
         cflow_io_pipe_client_connect(probe->name, CFLOW_IO_PIPE_DUPLEX, &probe->endpoint);
-    if (probe->status != TURBO_ENOENT && probe->status != TURBO_EBUSY) return;
-    turbo_thread_yield();
-  } while (turbo_hrtime() - started <= UINT64_C(2000000000));
-  probe->status = TURBO_ETIMEDOUT;
+    if (probe->status != SALTS_ENOENT && probe->status != SALTS_EBUSY) return;
+    salts_thread_yield();
+  } while (salts_hrtime() - started <= UINT64_C(2000000000));
+  probe->status = SALTS_ETIMEDOUT;
 }
 #endif
 
@@ -61,15 +61,15 @@ static void pipe_accept_completion(void *user, cflow_io_request_id request_id,
 
 #if defined(_WIN32)
 static int pipe_wait(cflow_io_pipe_server *server, pipe_completion_probe *probe, size_t expected) {
-  const uint64_t started = turbo_hrtime();
+  const uint64_t started = salts_hrtime();
   while (probe->count < expected) {
     size_t progressed = 0u;
     int status = cflow_io_pipe_server_run_ready(server, 8u, &progressed);
-    if (status != TURBO_OK) return status;
-    if (turbo_hrtime() - started > UINT64_C(5000000000)) return TURBO_ETIMEDOUT;
-    if (progressed == 0u) turbo_thread_yield();
+    if (status != SALTS_OK) return status;
+    if (salts_hrtime() - started > UINT64_C(5000000000)) return SALTS_ETIMEDOUT;
+    if (progressed == 0u) salts_thread_yield();
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 #endif
 
@@ -96,7 +96,7 @@ spec("CFlow pipe rendezvous") {
     pipe_completion_probe probe = {0};
 
     snprintf(name, sizeof(name), "\\\\.\\pipe\\cflow-rendezvous-%lu-%llu",
-             (unsigned long)GetCurrentProcessId(), (unsigned long long)turbo_hrtime());
+             (unsigned long)GetCurrentProcessId(), (unsigned long long)salts_hrtime());
     cflow_io_pipe_endpoint_init(&client);
     cflow_io_pipe_endpoint_init(&probe.endpoints[0]);
     config.name = name;
@@ -107,22 +107,22 @@ spec("CFlow pipe rendezvous") {
     config.completion = pipe_accept_completion;
     config.completion_user = &probe;
 
-    check_equal(cflow_io_pipe_server_init(&server, &config), TURBO_OK);
+    check_equal(cflow_io_pipe_server_init(&server, &config), SALTS_OK);
     submitted = cflow_io_pipe_server_try_accept(&server);
     check_equal(submitted.status, CFLOW_IO_PIPE_SUBMIT_ACCEPTED);
     check_not_equal(submitted.request_id, (cflow_io_request_id)0u);
-    check_equal(cflow_io_pipe_client_connect(name, CFLOW_IO_PIPE_DUPLEX, &client), TURBO_OK);
+    check_equal(cflow_io_pipe_client_connect(name, CFLOW_IO_PIPE_DUPLEX, &client), SALTS_OK);
     check_true(cflow_io_pipe_endpoint_is_valid(&client));
-    check_equal(pipe_wait(&server, &probe, 1u), TURBO_OK);
+    check_equal(pipe_wait(&server, &probe, 1u), SALTS_OK);
     check_equal(probe.request_ids[0], submitted.request_id);
     check_equal(probe.completions[0].kind, CFLOW_IO_COMPLETION_OK);
     check_true(cflow_io_pipe_endpoint_is_valid(&probe.endpoints[0]));
 
-    check_equal(cflow_io_pipe_endpoint_close(&client), TURBO_OK);
-    check_equal(cflow_io_pipe_endpoint_close(&probe.endpoints[0]), TURBO_OK);
-    check_equal(cflow_io_pipe_server_close(&server), TURBO_OK);
+    check_equal(cflow_io_pipe_endpoint_close(&client), SALTS_OK);
+    check_equal(cflow_io_pipe_endpoint_close(&probe.endpoints[0]), SALTS_OK);
+    check_equal(cflow_io_pipe_server_close(&server), SALTS_OK);
     check_true(cflow_io_pipe_server_is_quiescent(&server));
-    check_equal(cflow_io_pipe_server_destroy(&server), TURBO_OK);
+    check_equal(cflow_io_pipe_server_destroy(&server), SALTS_OK);
   }
 
   it("bounds pending instances and reclaims cancelled slots after completion") {
@@ -136,7 +136,7 @@ spec("CFlow pipe rendezvous") {
     pipe_completion_probe probe = {0};
 
     snprintf(name, sizeof(name), "\\\\.\\pipe\\cflow-capacity-%lu-%llu",
-             (unsigned long)GetCurrentProcessId(), (unsigned long long)turbo_hrtime());
+             (unsigned long)GetCurrentProcessId(), (unsigned long long)salts_hrtime());
     config.name = name;
     config.direction = CFLOW_IO_PIPE_DUPLEX;
     config.request_capacity = 2u;
@@ -145,7 +145,7 @@ spec("CFlow pipe rendezvous") {
     config.completion = pipe_accept_completion;
     config.completion_user = &probe;
 
-    check_equal(cflow_io_pipe_server_init(&server, &config), TURBO_OK);
+    check_equal(cflow_io_pipe_server_init(&server, &config), SALTS_OK);
     first = cflow_io_pipe_server_try_accept(&server);
     second = cflow_io_pipe_server_try_accept(&server);
     third = cflow_io_pipe_server_try_accept(&server);
@@ -162,16 +162,16 @@ spec("CFlow pipe rendezvous") {
                 CFLOW_IO_CANCEL_ACCEPTED);
     check_equal(cflow_io_pipe_server_try_cancel(&server, second.request_id),
                 CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(pipe_wait(&server, &probe, 2u), TURBO_OK);
+    check_equal(pipe_wait(&server, &probe, 2u), SALTS_OK);
     check_equal(probe.completions[0].kind, CFLOW_IO_COMPLETION_CANCELLED);
     check_equal(probe.completions[1].kind, CFLOW_IO_COMPLETION_CANCELLED);
-    check_equal(cflow_io_pipe_server_close(&server), TURBO_OK);
+    check_equal(cflow_io_pipe_server_close(&server), SALTS_OK);
     check_true(cflow_io_pipe_server_get_stats(&server, &stats));
     check_equal(stats.active_requests, (size_t)0u);
     check_equal(stats.cancelled, (uint64_t)2u);
     check_false(stats.admission_open);
     check_true(cflow_io_pipe_server_is_quiescent(&server));
-    check_equal(cflow_io_pipe_server_destroy(&server), TURBO_OK);
+    check_equal(cflow_io_pipe_server_destroy(&server), SALTS_OK);
   }
 
   it("maps missing and fully occupied named pipe instances without waiting") {
@@ -184,11 +184,11 @@ spec("CFlow pipe rendezvous") {
     pipe_completion_probe probe = {0};
 
     snprintf(name, sizeof(name), "\\\\.\\pipe\\cflow-busy-%lu-%llu",
-             (unsigned long)GetCurrentProcessId(), (unsigned long long)turbo_hrtime());
+             (unsigned long)GetCurrentProcessId(), (unsigned long long)salts_hrtime());
     cflow_io_pipe_endpoint_init(&first_client);
     cflow_io_pipe_endpoint_init(&second_client);
     check_equal(cflow_io_pipe_client_connect(name, CFLOW_IO_PIPE_DUPLEX, &first_client),
-                TURBO_ENOENT);
+                SALTS_ENOENT);
     config.name = name;
     config.direction = CFLOW_IO_PIPE_DUPLEX;
     config.request_capacity = 1u;
@@ -196,17 +196,17 @@ spec("CFlow pipe rendezvous") {
     config.output_buffer_size = 4096u;
     config.completion = pipe_accept_completion;
     config.completion_user = &probe;
-    check_equal(cflow_io_pipe_server_init(&server, &config), TURBO_OK);
+    check_equal(cflow_io_pipe_server_init(&server, &config), SALTS_OK);
     submitted = cflow_io_pipe_server_try_accept(&server);
     check_equal(submitted.status, CFLOW_IO_PIPE_SUBMIT_ACCEPTED);
-    check_equal(cflow_io_pipe_client_connect(name, CFLOW_IO_PIPE_DUPLEX, &first_client), TURBO_OK);
+    check_equal(cflow_io_pipe_client_connect(name, CFLOW_IO_PIPE_DUPLEX, &first_client), SALTS_OK);
     check_equal(cflow_io_pipe_client_connect(name, CFLOW_IO_PIPE_DUPLEX, &second_client),
-                TURBO_EBUSY);
-    check_equal(pipe_wait(&server, &probe, 1u), TURBO_OK);
-    check_equal(cflow_io_pipe_endpoint_close(&first_client), TURBO_OK);
-    check_equal(cflow_io_pipe_endpoint_close(&probe.endpoints[0]), TURBO_OK);
-    check_equal(cflow_io_pipe_server_close(&server), TURBO_OK);
-    check_equal(cflow_io_pipe_server_destroy(&server), TURBO_OK);
+                SALTS_EBUSY);
+    check_equal(pipe_wait(&server, &probe, 1u), SALTS_OK);
+    check_equal(cflow_io_pipe_endpoint_close(&first_client), SALTS_OK);
+    check_equal(cflow_io_pipe_endpoint_close(&probe.endpoints[0]), SALTS_OK);
+    check_equal(cflow_io_pipe_server_close(&server), SALTS_OK);
+    check_equal(cflow_io_pipe_server_destroy(&server), SALTS_OK);
   }
 
   it("turns close of a pending accept into one authoritative cancellation") {
@@ -220,7 +220,7 @@ spec("CFlow pipe rendezvous") {
 
     check_true(GetProcessHandleCount(GetCurrentProcess(), &handles_before));
     snprintf(name, sizeof(name), "\\\\.\\pipe\\cflow-close-%lu-%llu",
-             (unsigned long)GetCurrentProcessId(), (unsigned long long)turbo_hrtime());
+             (unsigned long)GetCurrentProcessId(), (unsigned long long)salts_hrtime());
     config.name = name;
     config.direction = CFLOW_IO_PIPE_DUPLEX;
     config.request_capacity = 1u;
@@ -228,16 +228,16 @@ spec("CFlow pipe rendezvous") {
     config.output_buffer_size = 4096u;
     config.completion = pipe_accept_completion;
     config.completion_user = &probe;
-    check_equal(cflow_io_pipe_server_init(&server, &config), TURBO_OK);
+    check_equal(cflow_io_pipe_server_init(&server, &config), SALTS_OK);
     submitted = cflow_io_pipe_server_try_accept(&server);
     check_equal(submitted.status, CFLOW_IO_PIPE_SUBMIT_ACCEPTED);
-    check_equal(cflow_io_pipe_server_close(&server), TURBO_OK);
+    check_equal(cflow_io_pipe_server_close(&server), SALTS_OK);
     check_equal(cflow_io_pipe_server_try_accept(&server).status, CFLOW_IO_PIPE_SUBMIT_CLOSED);
-    check_equal(pipe_wait(&server, &probe, 1u), TURBO_OK);
+    check_equal(pipe_wait(&server, &probe, 1u), SALTS_OK);
     check_equal(probe.request_ids[0], submitted.request_id);
     check_equal(probe.completions[0].kind, CFLOW_IO_COMPLETION_CANCELLED);
     check_true(cflow_io_pipe_server_is_quiescent(&server));
-    check_equal(cflow_io_pipe_server_destroy(&server), TURBO_OK);
+    check_equal(cflow_io_pipe_server_destroy(&server), SALTS_OK);
     check_true(GetProcessHandleCount(GetCurrentProcess(), &handles_after));
     check_equal(handles_after, handles_before);
   }
@@ -249,13 +249,13 @@ spec("CFlow pipe rendezvous") {
     pipe_client_thread_probe client = {0};
     pipe_completion_probe probe = {0};
     cflow_io_pipe_submit_result submitted;
-    turbo_thread_t thread = NULL;
+    salts_thread_t thread = NULL;
 
     snprintf(name, sizeof(name), "\\\\.\\pipe\\cflow-race-%lu-%llu",
-             (unsigned long)GetCurrentProcessId(), (unsigned long long)turbo_hrtime());
+             (unsigned long)GetCurrentProcessId(), (unsigned long long)salts_hrtime());
     cflow_io_pipe_endpoint_init(&client.endpoint);
     client.name = name;
-    client.status = TURBO_EBUSY;
+    client.status = SALTS_EBUSY;
     config.name = name;
     config.direction = CFLOW_IO_PIPE_DUPLEX;
     config.request_capacity = 1u;
@@ -263,23 +263,23 @@ spec("CFlow pipe rendezvous") {
     config.output_buffer_size = 4096u;
     config.completion = pipe_accept_completion;
     config.completion_user = &probe;
-    check_equal(cflow_io_pipe_server_init(&server, &config), TURBO_OK);
-    check_equal(turbo_thread_create(&thread, pipe_client_connect_until_available, &client),
-                TURBO_OK);
+    check_equal(cflow_io_pipe_server_init(&server, &config), SALTS_OK);
+    check_equal(salts_thread_create(&thread, pipe_client_connect_until_available, &client),
+                SALTS_OK);
     while (InterlockedCompareExchange(&client.started, 1, 1) == 0)
-      turbo_thread_yield();
+      salts_thread_yield();
     submitted = cflow_io_pipe_server_try_accept(&server);
     check_equal(submitted.status, CFLOW_IO_PIPE_SUBMIT_ACCEPTED);
-    check_equal(turbo_thread_join(&thread), TURBO_OK);
-    check_equal(client.status, TURBO_OK);
-    check_equal(pipe_wait(&server, &probe, 1u), TURBO_OK);
+    check_equal(salts_thread_join(&thread), SALTS_OK);
+    check_equal(client.status, SALTS_OK);
+    check_equal(pipe_wait(&server, &probe, 1u), SALTS_OK);
     check_equal(probe.count, (size_t)1u);
     check_equal(probe.request_ids[0], submitted.request_id);
     check_equal(probe.completions[0].kind, CFLOW_IO_COMPLETION_OK);
-    check_equal(cflow_io_pipe_endpoint_close(&client.endpoint), TURBO_OK);
-    check_equal(cflow_io_pipe_endpoint_close(&probe.endpoints[0]), TURBO_OK);
-    check_equal(cflow_io_pipe_server_close(&server), TURBO_OK);
-    check_equal(cflow_io_pipe_server_destroy(&server), TURBO_OK);
+    check_equal(cflow_io_pipe_endpoint_close(&client.endpoint), SALTS_OK);
+    check_equal(cflow_io_pipe_endpoint_close(&probe.endpoints[0]), SALTS_OK);
+    check_equal(cflow_io_pipe_server_close(&server), SALTS_OK);
+    check_equal(cflow_io_pipe_server_destroy(&server), SALTS_OK);
   }
 #else
   it("reports Windows named pipe accept as unsupported") {
@@ -294,7 +294,7 @@ spec("CFlow pipe rendezvous") {
     config.output_buffer_size = 4096u;
     config.completion = pipe_accept_completion;
     config.completion_user = &probe;
-    check_equal(cflow_io_pipe_server_init(&server, &config), TURBO_ENOTSUP);
+    check_equal(cflow_io_pipe_server_init(&server, &config), SALTS_ENOTSUP);
   }
 #endif
 
@@ -312,17 +312,17 @@ spec("CFlow pipe rendezvous") {
     check_equal(mkfifo(path, 0600), 0);
     cflow_io_pipe_endpoint_init(&reader);
     cflow_io_pipe_endpoint_init(&writer);
-    check_equal(cflow_io_fifo_open(path, CFLOW_IO_PIPE_WRITE, &writer), TURBO_EPIPE);
+    check_equal(cflow_io_fifo_open(path, CFLOW_IO_PIPE_WRITE, &writer), SALTS_EPIPE);
     check_false(cflow_io_pipe_endpoint_is_valid(&writer));
-    check_equal(cflow_io_fifo_open(path, CFLOW_IO_PIPE_READ, &reader), TURBO_OK);
-    check_equal(cflow_io_fifo_open(path, CFLOW_IO_PIPE_WRITE, &writer), TURBO_OK);
+    check_equal(cflow_io_fifo_open(path, CFLOW_IO_PIPE_READ, &reader), SALTS_OK);
+    check_equal(cflow_io_fifo_open(path, CFLOW_IO_PIPE_WRITE, &writer), SALTS_OK);
     check_equal(write((int)writer.handle, payload, sizeof(payload) - 1u),
                 (ssize_t)(sizeof(payload) - 1u));
     check_equal(read((int)reader.handle, received, sizeof(received)),
                 (ssize_t)(sizeof(payload) - 1u));
     check_equal(received, payload, sizeof(payload) - 1u);
-    check_equal(cflow_io_pipe_endpoint_close(&writer), TURBO_OK);
-    check_equal(cflow_io_pipe_endpoint_close(&reader), TURBO_OK);
+    check_equal(cflow_io_pipe_endpoint_close(&writer), SALTS_OK);
+    check_equal(cflow_io_pipe_endpoint_close(&reader), SALTS_OK);
     check_equal(tt_remove_tree(directory), 0);
     free(directory);
   }
@@ -334,7 +334,7 @@ spec("CFlow pipe rendezvous") {
     check_not_null(path);
     cflow_io_pipe_endpoint_init(&endpoint);
     errno = EACCES;
-    check_equal(cflow_io_fifo_open(path, CFLOW_IO_PIPE_READ, &endpoint), TURBO_ENOTSUP);
+    check_equal(cflow_io_fifo_open(path, CFLOW_IO_PIPE_READ, &endpoint), SALTS_ENOTSUP);
     check_false(cflow_io_pipe_endpoint_is_valid(&endpoint));
     check_equal(tt_remove_file(path), 0);
     free(path);

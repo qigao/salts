@@ -6,7 +6,7 @@
 
 **Architecture:** Reuse the existing two-endpoint Actor fixture. Each heap operation wrapper owns its native address storage. UDP preposts a receive before each send, captures the receive operation's published source endpoint in the completion probe, validates it against the bound peer, and echoes the exact datagram back through the other native endpoint. CI expands grouping by protocol and adds a dedicated Ubuntu 24.04 io_uring row.
 
-**Tech Stack:** C11, CFlow I/O Actor/native backends, TurboUtils Platform synchronization, TinyTest benchmark assertions, GitHub Actions PowerShell, CMake Presets.
+**Tech Stack:** C11, CFlow I/O Actor/native backends, Salts Platform synchronization, TinyTest benchmark assertions, GitHub Actions PowerShell, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-cflow-native-udp-io-uring-hardening-design.md`
 
@@ -45,14 +45,14 @@ it("round trips one UDP datagram through dual native endpoints") {
   int status = network_select_backend(&backend_kind);
 
   memset(sent, 0x5a, sizeof(sent));
-  check_equal(status, TURBO_OK);
+  check_equal(status, SALTS_OK);
   check_equal(network_fixture_init(&fixture, NETWORK_PROTOCOL_UDP,
                                    backend_kind, NETWORK_WAIT_BLOCKING,
-                                   NETWORK_PEER_NATIVE, 1u, sizeof(sent)), TURBO_OK);
+                                   NETWORK_PEER_NATIVE, 1u, sizeof(sent)), SALTS_OK);
   check_equal(network_exchange(&fixture, NETWORK_PROTOCOL_UDP,
-                               (unsigned char *)sent, received, sizeof(sent), 1u), TURBO_OK);
+                               (unsigned char *)sent, received, sizeof(sent), 1u), SALTS_OK);
   check_equal(received, sent, sizeof(sent));
-  check_equal(network_fixture_destroy(&fixture), TURBO_OK);
+  check_equal(network_fixture_destroy(&fixture), SALTS_OK);
 }
 ```
 
@@ -67,7 +67,7 @@ Build with `win-release-user`, then run:
 build\Msvc-Release\bin\cflow_network_benchmark.exe --filter "round trips one UDP datagram through dual native endpoints" --no-color
 ```
 
-Expected: FAIL because `network_fixture_init()` returns `TURBO_ENOTSUP`.
+Expected: FAIL because `network_fixture_init()` returns `SALTS_ENOTSUP`.
 
 - [x] **Step 3: Implement the minimal UDP paired path**
 
@@ -134,7 +134,7 @@ foreach ($protocol in @("tcp", "udp")) {
 ```
 
 Group by `protocol, payload_bytes, wait_mode` and require twelve groups. Before Task 1,
-the UDP native process exits non-zero with `TURBO_ENOTSUP`, proving the workflow catches
+the UDP native process exits non-zero with `SALTS_ENOTSUP`, proving the workflow catches
 the missing behavior.
 
 - [x] **Step 2: Add the explicit io_uring host row**

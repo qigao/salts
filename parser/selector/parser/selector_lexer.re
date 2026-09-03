@@ -6,7 +6,7 @@
 #include <string.h>
 
 static int selector_lexer_fail(selector_lexer_t *lexer,
-                               turbo_selector_status_t status,
+                               salts_selector_status_t status,
                                const char *cursor, const char *message) {
   lexer->status = status;
   lexer->error_offset = (size_t)(cursor - lexer->input);
@@ -22,7 +22,7 @@ void selector_lexer_init(selector_lexer_t *lexer, const char *input,
   lexer->cursor = input;
   lexer->limit = input + input_size;
   lexer->marker = input;
-  lexer->status = TURBO_SELECTOR_OK;
+  lexer->status = SALTS_SELECTOR_OK;
 }
 
 int selector_lexer_next(selector_lexer_t *lexer,
@@ -71,8 +71,8 @@ again:
     "!=" { token->node = SELECTOR_V1_TOKEN_NE; goto emit; }
     "!"  { token->node = SELECTOR_V1_TOKEN_BANG; goto emit; }
     "("  {
-      if (++lexer->parenthesis_depth > TURBO_SELECTOR_MAX_DEPTH_V1)
-        return selector_lexer_fail(lexer, TURBO_SELECTOR_RESOURCE_LIMIT,
+      if (++lexer->parenthesis_depth > SALTS_SELECTOR_MAX_DEPTH_V1)
+        return selector_lexer_fail(lexer, SALTS_SELECTOR_RESOURCE_LIMIT,
                                    token_start, "selector nesting limit exceeded");
       token->node = SELECTOR_V1_TOKEN_LPAREN;
       goto emit;
@@ -94,7 +94,7 @@ again:
     field { token->node = SELECTOR_V1_TOKEN_FIELD; goto emit; }
 
     * {
-      return selector_lexer_fail(lexer, TURBO_SELECTOR_SYNTAX_ERROR,
+      return selector_lexer_fail(lexer, SALTS_SELECTOR_SYNTAX_ERROR,
                                  token_start, "invalid selector token");
     }
   */

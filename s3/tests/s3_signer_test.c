@@ -23,7 +23,7 @@ suite("S3 Signature Version 4") {
                                        .header_count = sizeof(headers) / sizeof(headers[0])};
     s3_signer_result result = {0};
 
-    check_equal(s3_signer_sign(&request, &result), TURBO_OK);
+    check_equal(s3_signer_sign(&request, &result), SALTS_OK);
     check_equal(result.authorization,
                 "AWS4-HMAC-SHA256 "
                 "Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request,"
@@ -54,7 +54,7 @@ suite("S3 Signature Version 4") {
                                        .query_count = sizeof(queries) / sizeof(queries[0])};
     s3_signer_result result = {0};
 
-    check_equal(s3_signer_sign(&request, &result), TURBO_OK);
+    check_equal(s3_signer_sign(&request, &result), SALTS_OK);
     check_equal(result.canonical_query, "acl=&marker=x%20y&prefix=a%2Bb&prefix=a%2Fb");
     check_contains(result.canonical_request, "/bucket/a//b\n");
     check_contains(result.signed_headers, "x-amz-security-token");
@@ -76,12 +76,12 @@ suite("S3 Signature Version 4") {
                                  .header_count = 2u};
     s3_signer_result result = {0};
 
-    check_equal(s3_signer_sign(&request, &result), TURBO_EINVAL);
+    check_equal(s3_signer_sign(&request, &result), SALTS_EINVAL);
     request.amz_date = "20260903T010203Z";
-    check_equal(s3_signer_sign(&request, &result), TURBO_EINVAL);
+    check_equal(s3_signer_sign(&request, &result), SALTS_EINVAL);
     request.header_count = 1u;
     request.max_header_count = 2u;
-    check_equal(s3_signer_sign(&request, &result), TURBO_ENOBUFS);
+    check_equal(s3_signer_sign(&request, &result), SALTS_ENOBUFS);
     check_null(result.authorization);
   }
 
@@ -100,7 +100,7 @@ suite("S3 Signature Version 4") {
                                         .query_count = 1u};
     s3_presign_result result = {0};
 
-    check_equal(s3_signer_presign(&request, &result), TURBO_OK);
+    check_equal(s3_signer_presign(&request, &result), SALTS_OK);
     check_equal(result.signature,
                 "c37f9eb5c09ebe0ae4bceb51b69afa4dd86d044c178f08a55189bc56c0ddacdd");
     check_equal(result.canonical_query,
@@ -129,17 +129,17 @@ suite("S3 Signature Version 4") {
                                   .query_count = 1u};
     s3_presign_result result = {0};
 
-    check_equal(s3_signer_presign(&request, &result), TURBO_OK);
+    check_equal(s3_signer_presign(&request, &result), SALTS_OK);
     check_contains(result.canonical_query, "X-Amz-Security-Token=token%2F%2B%3D");
     s3_presign_result_destroy(&result);
 
     request.expires_seconds = 0u;
-    check_equal(s3_signer_presign(&request, &result), TURBO_EINVAL);
+    check_equal(s3_signer_presign(&request, &result), SALTS_EINVAL);
     request.expires_seconds = 604801u;
-    check_equal(s3_signer_presign(&request, &result), TURBO_EINVAL);
+    check_equal(s3_signer_presign(&request, &result), SALTS_EINVAL);
     request.expires_seconds = 60u;
     query[0] = (s3_signer_query){"x-amz-signature", "caller-value"};
-    check_equal(s3_signer_presign(&request, &result), TURBO_EINVAL);
+    check_equal(s3_signer_presign(&request, &result), SALTS_EINVAL);
     check_null(result.canonical_query);
     check_null(result.signature);
   }

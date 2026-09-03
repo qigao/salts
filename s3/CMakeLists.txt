@@ -1,4 +1,4 @@
-set(TARGET_NAME turbo_s3)
+set(TARGET_NAME salts_s3)
 set(S3_LIBRARY_VERSION 1.0.0)
 set(S3_ABI_VERSION 1)
 
@@ -19,7 +19,7 @@ add_library(${TARGET_NAME} SHARED
   src/s3_sse.c
   src/s3_xml.c)
 cmake_config_target(${TARGET_NAME}
-  ALIAS Rocida::S3
+  ALIAS Salts::S3
   FOLDER "s3"
   EXPORT_NAME S3
   VERSION ${S3_LIBRARY_VERSION}
@@ -30,7 +30,7 @@ set_target_properties(${TARGET_NAME} PROPERTIES
   WINDOWS_EXPORT_ALL_SYMBOLS ON
   LINKER_LANGUAGE CXX)
 if(WIN32)
-  set_target_properties(${TARGET_NAME} PROPERTIES OUTPUT_NAME "turbo_s3-${S3_ABI_VERSION}")
+  set_target_properties(${TARGET_NAME} PROPERTIES OUTPUT_NAME "salts_s3-${S3_ABI_VERSION}")
 endif()
 target_include_directories(
   ${TARGET_NAME}
@@ -39,10 +39,10 @@ target_include_directories(
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC Rocida::CHTTP
-  PRIVATE Rocida::Core Rocida::XmlParser OpenSSL::Crypto)
+  PUBLIC Salts::CHTTP
+  PRIVATE Salts::Core Salts::XmlParser OpenSSL::Crypto)
 
-install(TARGETS ${TARGET_NAME} EXPORT RocidaTargets)
+install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
 install(
   DIRECTORY include/s3
   DESTINATION include

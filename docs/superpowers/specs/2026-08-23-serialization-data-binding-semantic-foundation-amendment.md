@@ -6,14 +6,14 @@
 本 amendment 建立在已合并的 generic foundation 上：
 
 - `#36` 已完成 `CMETA_TYPE_APPLY` application well-formedness 与跨 TU structural identity；
-- `#37` 已完成 versioned `cmeta_container_ext` root 与 TurboSTL canonical generic constructors / runtime argument introspection；
+- `#37` 已完成 versioned `cmeta_container_ext` root 与 Container canonical generic constructors / runtime argument introspection；
 - `master` 基线 merge commit 为 `93e68ef443b86aa887cff21d2ceeb134ad32e0e4`。
 
-本文件 supersede 原设计中 semantic model 的 container/optional 实现细节。TurboUtils/TurboParser ownership boundary、CSerde/CBind 分层和 DataBind/TBE 迁移方向不变。
+本文件 supersede 原设计中 semantic model 的 cstl/optional 实现细节。Salts/TurboParser ownership boundary、CSerde/CBind 分层和 DataBind/TBE 迁移方向不变。
 
 ## 1. Semantic shape 消费已经证明的 TYPE application
 
-TurboSTL typed object 已能提供：
+Container typed object 已能提供：
 
 ```text
 constructor + arity + T/K/V type descriptors
@@ -43,9 +43,9 @@ semantic projection owns only meaning/category
 例如：
 
 ```text
-typed(Vec, IntVec, int)                   -> constructor = turbostl.Vec, semantic = SEQUENCE
-typed(Set, UserSet, User)                 -> constructor = turbostl.Set, semantic = SET
-typed(Map, UserByString, string, User)    -> constructor = turbostl.Map, semantic = MAP
+typed(Vec, IntVec, int)                   -> constructor = cstl.Vec, semantic = SEQUENCE
+typed(Set, UserSet, User)                 -> constructor = cstl.Set, semantic = SET
+typed(Map, UserByString, string, User)    -> constructor = cstl.Map, semantic = MAP
 ```
 
 实际 T/K/V 永远继续来自：
@@ -78,7 +78,7 @@ typedef struct cmeta_container_ext {
 
 目标是以后 append semantic / construction capability，而不是继续扩大 `cmeta_container_desc`。
 
-但当前 `container_type.c` 使用：
+但当前 `cstl_type.c` 使用：
 
 ```c
 ext->struct_size < sizeof(*ext)
@@ -298,7 +298,7 @@ SEQUENCE，但仍没有包含元素类型参数的 Vec type application，不能
 cmeta_container_type_argument(object, index)
 ```
 
-## 7. TurboSTL v1 mapping
+## 7. Container v1 mapping
 
 明确映射：
 
@@ -373,11 +373,11 @@ semantic introspection of already-typed container instances
 
 ```text
 #36  CMETA_TYPE_APPLY contract                   DONE
-#37  container extension + TurboSTL generic      DONE
+#37  container extension + Container generic      DONE
 
 C0   append-only container-extension ABI hardening
 C1   CMeta semantic descriptor core
-C2   TurboSTL semantic projection through ext.data
+C2   Container semantic projection through ext.data
 
 next construction + static field TYPE application
 next CSerde canonical token protocol

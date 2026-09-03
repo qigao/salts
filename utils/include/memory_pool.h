@@ -46,7 +46,7 @@ typedef struct MemoryPool {
  * 
  * THREAD SAFETY: Safe to call concurrently (creates independent pools)
  */
-TURBO_C_API MemoryPool *pool_create(size_t size);
+SALTS_C_API MemoryPool *pool_create(size_t size);
 
 /**
  * @brief Allocate from pool with default alignment
@@ -71,7 +71,7 @@ TURBO_C_API MemoryPool *pool_create(size_t size);
  *   __m128 *simd = (__m128 *)pool_alloc(pool, sizeof(__m128));  // ⚠️ Under-aligned on some ABIs
  *   // Use pool_alloc_aligned(pool, sizeof(__m128), 16) instead
  */
-TURBO_C_API void *pool_alloc(MemoryPool *pool, size_t size);
+SALTS_C_API void *pool_alloc(MemoryPool *pool, size_t size);
 
 /**
  * @brief Allocate with explicit alignment requirement
@@ -87,7 +87,7 @@ TURBO_C_API void *pool_alloc(MemoryPool *pool, size_t size);
  *   __m128 *v = (__m128 *)pool_alloc_aligned(pool, sizeof(__m128), 16);
  *   __m256 *w = (__m256 *)pool_alloc_aligned(pool, sizeof(__m256), 32);
  */
-TURBO_C_API void *pool_alloc_aligned(MemoryPool *pool, size_t size, size_t alignment);
+SALTS_C_API void *pool_alloc_aligned(MemoryPool *pool, size_t size, size_t alignment);
 
 /**
  * @brief Reset pool (reuse memory)
@@ -98,7 +98,7 @@ TURBO_C_API void *pool_alloc_aligned(MemoryPool *pool, size_t size, size_t align
  * 
  * LIFETIME: Invalidates all pointers previously allocated from this pool.
  */
-TURBO_C_API void pool_reset(MemoryPool *pool);
+SALTS_C_API void pool_reset(MemoryPool *pool);
 
 /**
  * @brief Get current used bytes
@@ -107,7 +107,7 @@ TURBO_C_API void pool_reset(MemoryPool *pool);
  * 
  * THREAD SAFETY: NOT thread-safe (may race with concurrent pool_alloc)
  */
-TURBO_C_API size_t pool_get_used(MemoryPool *pool);
+SALTS_C_API size_t pool_get_used(MemoryPool *pool);
 
 /**
  * @brief Get remaining available bytes
@@ -116,7 +116,7 @@ TURBO_C_API size_t pool_get_used(MemoryPool *pool);
  * 
  * THREAD SAFETY: NOT thread-safe (may race with concurrent pool_alloc)
  */
-TURBO_C_API size_t pool_get_available(MemoryPool *pool);
+SALTS_C_API size_t pool_get_available(MemoryPool *pool);
 
 /**
  * @brief Get peak memory usage
@@ -125,7 +125,7 @@ TURBO_C_API size_t pool_get_available(MemoryPool *pool);
  * 
  * THREAD SAFETY: NOT thread-safe (may race with pool_alloc updates)
  */
-TURBO_C_API size_t pool_get_peak(MemoryPool *pool);
+SALTS_C_API size_t pool_get_peak(MemoryPool *pool);
 
 /**
  * @brief Mark current position for stack-style allocations
@@ -140,7 +140,7 @@ TURBO_C_API size_t pool_get_peak(MemoryPool *pool);
  *   // ... use temp ...
  *   pool_rewind(pool, mark);  // Reclaim temp
  */
-TURBO_C_API size_t pool_mark(MemoryPool *pool);
+SALTS_C_API size_t pool_mark(MemoryPool *pool);
 
 /**
  * @brief Rewind pool to previous mark
@@ -152,7 +152,7 @@ TURBO_C_API size_t pool_mark(MemoryPool *pool);
  * 
  * LIFETIME: Invalidates all pointers allocated after the mark position.
  */
-TURBO_C_API void pool_rewind(MemoryPool *pool, size_t mark);
+SALTS_C_API void pool_rewind(MemoryPool *pool, size_t mark);
 
 /**
  * @brief Destroy pool and free all memory
@@ -164,6 +164,6 @@ TURBO_C_API void pool_rewind(MemoryPool *pool, size_t mark);
  * LIFETIME: Invalidates all pointers allocated from this pool. Pool pointer
  *           itself becomes invalid after this call.
  */
-TURBO_C_API void pool_destroy(MemoryPool *pool);
+SALTS_C_API void pool_destroy(MemoryPool *pool);
 
 #endif // MEMORY_POOL_H

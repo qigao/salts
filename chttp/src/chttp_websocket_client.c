@@ -3,7 +3,7 @@
 #include "chttp_websocket_handshake.h"
 
 #include <cnet/websocket.h>
-#include <turbo/clock.h>
+#include <salts/clock.h>
 #include <uri_parser.h>
 
 #include <limits.h>
@@ -100,7 +100,7 @@ static void chttp_websocket_client_event_push(void *user, cnet_websocket *websoc
   if (client->event_count >= client->event_capacity ||
       event->size > client->event_payload_capacity) {
     client->event_overflow = true;
-    client->terminal_status = TURBO_ENOBUFS;
+    client->terminal_status = SALTS_ENOBUFS;
     return;
   }
   index = (client->event_head + client->event_count) % client->event_capacity;
@@ -119,36 +119,36 @@ static int chttp_websocket_client_write(void *user, const uint8_t *data, size_t 
   chttp_websocket_client_impl *client = (chttp_websocket_client_impl *)user;
   int status;
   if (client == NULL || data == NULL || size == 0u || client->phase != CHTTP_WEBSOCKET_CLIENT_OPEN)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (client->protocol == CHTTP_HTTP_2) {
-    if (client->h2_protocol == NULL || client->h2_stream_id == 0) return TURBO_EINVAL;
+    if (client->h2_protocol == NULL || client->h2_stream_id == 0) return SALTS_EINVAL;
     if (client->h2_frame_size != 0u ||
         chttp_h2_proto_stream_output_pending(client->h2_protocol, client->h2_stream_id))
-      return TURBO_EBUSY;
-    if (size > client->h2_frame_capacity) return TURBO_EMSGSIZE;
+      return SALTS_EBUSY;
+    if (size > client->h2_frame_capacity) return SALTS_EMSGSIZE;
     memcpy(client->h2_frame_buffer, data, size);
     client->h2_frame_size = size;
     if (chttp_h2_proto_submit_data(client->h2_protocol, client->h2_stream_id,
                                    client->h2_frame_buffer, size, 0) != 0) {
       client->h2_frame_size = 0u;
-      return TURBO_ENOBUFS;
+      return SALTS_ENOBUFS;
     }
-    return TURBO_OK;
+    return SALTS_OK;
   }
-  if (client->write_pending) return TURBO_EBUSY;
+  if (client->write_pending) return SALTS_EBUSY;
   status = cnet_send(&client->network, client->connection, data, size);
-  if (status == TURBO_ENOBUFS) return TURBO_EBUSY;
-  if (status != TURBO_OK) return status;
+  if (status == SALTS_ENOBUFS) return SALTS_EBUSY;
+  if (status != SALTS_OK) return status;
   client->write_pending = true;
   client->expected_write_size = size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void chttp_websocket_client_on_send(void *user, cnet_connection connection, size_t size) {
   chttp_websocket_client_impl *client = (chttp_websocket_client_impl *)user;
   if (!chttp_websocket_client_connection_matches(client, connection) || !client->write_pending ||
       size != client->expected_write_size) {
-    if (client != NULL) client->terminal_status = TURBO_EPROTO;
+    if (client != NULL) client->terminal_status = SALTS_EPROTO;
     return;
   }
   client->write_pending = false;
@@ -169,9 +169,9 @@ static void chttp_websocket_client_on_state(void *user, cnet_connection connecti
   client->receive_pending = false;
   client->write_pending = false;
   if (client->websocket.impl != NULL) (void)cnet_websocket_transport_closed(&client->websocket);
-  if (client->terminal_status == TURBO_OK)
+  if (client->terminal_status == SALTS_OK)
     client->terminal_status =
-        error != NULL && error->status != TURBO_OK ? error->status : TURBO_ECONNRESET;
+        error != NULL && error->status != SALTS_OK ? error->status : SALTS_ECONNRESET;
   client->phase = CHTTP_WEBSOCKET_CLIENT_TERMINAL;
 }
 
@@ -262,13 +262,13 @@ static int chttp_websocket_client_h2_end_headers(void *user, int32_t stream_id, 
     return -1;
   client->h2_header_block_open = false;
   if (client->handshake_http_status != 200u) {
-    client->terminal_status = TURBO_EPROTO;
+    client->terminal_status = SALTS_EPROTO;
     client->phase = CHTTP_WEBSOCKET_CLIENT_TERMINAL;
     return 0;
   }
   if (end_stream) return -1;
   status = chttp_websocket_client_engine_init(client);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     client->terminal_status = status;
     return -1;
   }
@@ -279,7 +279,7 @@ static int chttp_websocket_client_h2_end_headers(void *user, int32_t stream_id, 
 static int chttp_websocket_client_h2_data(void *user, int32_t stream_id, const uint8_t *data,
                                           size_t size) {
   chttp_websocket_client_impl *client = (chttp_websocket_client_impl *)user;
-  int status = TURBO_OK;
+  int status = SALTS_OK;
   if (client == NULL || stream_id != client->h2_stream_id || (size != 0u && data == NULL))
     return -1;
   if (size != 0u && client->phase == CHTTP_WEBSOCKET_CLIENT_OPEN && client->websocket.impl != NULL)
@@ -287,14 +287,14 @@ static int chttp_websocket_client_h2_data(void *user, int32_t stream_id, const u
   if (size != 0u && (chttp_h2_proto_consume_stream(client->h2_protocol, stream_id, size) != 0 ||
                      chttp_h2_proto_consume_connection(client->h2_protocol, size) != 0))
     return -1;
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     client->terminal_status = status;
     return -1;
   }
   if (chttp_h2_proto_remote_end_stream(client->h2_protocol, stream_id)) {
     if (client->websocket.impl != NULL) (void)cnet_websocket_transport_closed(&client->websocket);
-    if (!client->h2_close_requested && client->terminal_status == TURBO_OK)
-      client->terminal_status = TURBO_ECONNRESET;
+    if (!client->h2_close_requested && client->terminal_status == SALTS_OK)
+      client->terminal_status = SALTS_ECONNRESET;
   }
   return 0;
 }
@@ -305,8 +305,8 @@ static int chttp_websocket_client_h2_stream_close(void *user, int32_t stream_id,
   if (client == NULL || stream_id != client->h2_stream_id) return 0;
   client->h2_stream_terminal = true;
   if (client->websocket.impl != NULL) (void)cnet_websocket_transport_closed(&client->websocket);
-  if (error_code != CHTTP_H2_ERR_NO_ERROR && client->terminal_status == TURBO_OK)
-    client->terminal_status = TURBO_ECONNRESET;
+  if (error_code != CHTTP_H2_ERR_NO_ERROR && client->terminal_status == SALTS_OK)
+    client->terminal_status = SALTS_ECONNRESET;
   return 0;
 }
 
@@ -317,29 +317,29 @@ static void chttp_websocket_client_h2_goaway(void *user, uint32_t last_stream_id
       (uint32_t)client->h2_stream_id <= last_stream_id)
     return;
   client->h2_stream_terminal = true;
-  if (client->terminal_status == TURBO_OK)
-    client->terminal_status = error_code == CHTTP_H2_ERR_NO_ERROR ? TURBO_ECONNRESET : TURBO_EPROTO;
+  if (client->terminal_status == SALTS_OK)
+    client->terminal_status = error_code == CHTTP_H2_ERR_NO_ERROR ? SALTS_ECONNRESET : SALTS_EPROTO;
 }
 
 static void chttp_websocket_client_on_receive(void *user, cnet_connection connection,
                                               const cnet_receive_view *view) {
   chttp_websocket_client_impl *client = (chttp_websocket_client_impl *)user;
-  int status = TURBO_OK;
+  int status = SALTS_OK;
   if (!chttp_websocket_client_connection_matches(client, connection) || view == NULL ||
       view->kind != CNET_MESSAGE_BYTES) {
-    if (client != NULL) client->terminal_status = TURBO_EPROTO;
+    if (client != NULL) client->terminal_status = SALTS_EPROTO;
     return;
   }
   client->receive_pending = false;
   if (client->protocol == CHTTP_HTTP_2) {
     const ptrdiff_t consumed = chttp_h2_proto_recv(client->h2_protocol, view->data, view->size);
-    if (consumed < 0 || (size_t)consumed != view->size) status = TURBO_EPROTO;
+    if (consumed < 0 || (size_t)consumed != view->size) status = SALTS_EPROTO;
   } else if (client->phase == CHTTP_WEBSOCKET_CLIENT_HANDSHAKE) {
     const unsigned char *header_end;
     size_t header_size;
     if (client->handshake_size > client->handshake_capacity ||
         view->size > client->handshake_capacity - client->handshake_size) {
-      client->terminal_status = TURBO_EMSGSIZE;
+      client->terminal_status = SALTS_EMSGSIZE;
       return;
     }
     if (view->size != 0u)
@@ -352,23 +352,23 @@ static void chttp_websocket_client_on_receive(void *user, cnet_connection connec
     status = chttp_websocket_client_handshake_validate(client->handshake_buffer, header_size,
                                                        client->expected_accept,
                                                        &client->handshake_http_status);
-    if (status == TURBO_OK) status = chttp_websocket_client_engine_init(client);
-    if (status == TURBO_OK) client->phase = CHTTP_WEBSOCKET_CLIENT_OPEN;
-    if (status == TURBO_OK && header_size < client->handshake_size)
+    if (status == SALTS_OK) status = chttp_websocket_client_engine_init(client);
+    if (status == SALTS_OK) client->phase = CHTTP_WEBSOCKET_CLIENT_OPEN;
+    if (status == SALTS_OK && header_size < client->handshake_size)
       status = cnet_websocket_feed(&client->websocket, client->handshake_buffer + header_size,
                                    client->handshake_size - header_size);
     client->handshake_size = 0u;
   } else if (client->phase == CHTTP_WEBSOCKET_CLIENT_OPEN && client->websocket.impl != NULL) {
     status = cnet_websocket_feed(&client->websocket, view->data, view->size);
   } else {
-    status = TURBO_EPROTO;
+    status = SALTS_EPROTO;
   }
-  if (client->event_overflow) status = TURBO_ENOBUFS;
-  if (status != TURBO_OK) client->terminal_status = status;
+  if (client->event_overflow) status = SALTS_ENOBUFS;
+  if (status != SALTS_OK) client->terminal_status = status;
 }
 
 static uint64_t chttp_websocket_client_deadline(uint32_t timeout_ms) {
-  const uint64_t now = turbo_monotonic_ms();
+  const uint64_t now = salts_monotonic_ms();
   if (timeout_ms == 0u) return 0u;
   return UINT64_MAX - now < timeout_ms ? UINT64_MAX : now + timeout_ms;
 }
@@ -377,9 +377,9 @@ static int chttp_websocket_client_poll(chttp_websocket_client_impl *client, uint
   uint32_t wait_ms = 1000u;
   size_t events = 0u;
   if (deadline != 0u) {
-    const uint64_t now = turbo_monotonic_ms();
+    const uint64_t now = salts_monotonic_ms();
     uint64_t remaining;
-    if (now >= deadline) return TURBO_ETIMEDOUT;
+    if (now >= deadline) return SALTS_ETIMEDOUT;
     remaining = deadline - now;
     wait_ms = remaining > UINT32_MAX ? UINT32_MAX : (uint32_t)remaining;
   }
@@ -388,9 +388,9 @@ static int chttp_websocket_client_poll(chttp_websocket_client_impl *client, uint
 
 static int chttp_websocket_client_receive_arm(chttp_websocket_client_impl *client) {
   int status;
-  if (client->receive_pending) return TURBO_OK;
+  if (client->receive_pending) return SALTS_OK;
   status = cnet_receive(&client->network, client->connection, 1u);
-  if (status == TURBO_OK) client->receive_pending = true;
+  if (status == SALTS_OK) client->receive_pending = true;
   return status;
 }
 
@@ -398,7 +398,7 @@ static int chttp_websocket_client_h2_wire_flush(chttp_websocket_client_impl *cli
   const uint8_t *wire = NULL;
   ptrdiff_t wire_size;
   int status;
-  if (client == NULL || client->h2_protocol == NULL) return TURBO_EINVAL;
+  if (client == NULL || client->h2_protocol == NULL) return SALTS_EINVAL;
   if (client->h2_frame_size != 0u &&
       !chttp_h2_proto_stream_output_pending(client->h2_protocol, client->h2_stream_id))
     client->h2_frame_size = 0u;
@@ -406,29 +406,29 @@ static int chttp_websocket_client_h2_wire_flush(chttp_websocket_client_impl *cli
       client->websocket.impl != NULL && !cnet_websocket_has_pending_output(&client->websocket)) {
     cnet_websocket_state websocket_state = CNET_WEBSOCKET_OPEN;
     status = cnet_websocket_state_get(&client->websocket, &websocket_state);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     if (websocket_state == CNET_WEBSOCKET_CLOSED || websocket_state == CNET_WEBSOCKET_FAILED) {
       if (chttp_h2_proto_submit_data(client->h2_protocol, client->h2_stream_id, NULL, 0u, 1) != 0)
-        return TURBO_ENOBUFS;
+        return SALTS_ENOBUFS;
       client->h2_end_submitted = true;
     }
   }
-  if (client->write_pending) return TURBO_OK;
+  if (client->write_pending) return SALTS_OK;
   if (client->h2_wire_size == 0u) {
     wire_size = chttp_h2_proto_send(client->h2_protocol, &wire);
-    if (wire_size < 0 || (size_t)wire_size > client->send_capacity) return TURBO_EPROTO;
-    if (wire_size == 0) return TURBO_OK;
+    if (wire_size < 0 || (size_t)wire_size > client->send_capacity) return SALTS_EPROTO;
+    if (wire_size == 0) return SALTS_OK;
     memcpy(client->send_buffer, wire, (size_t)wire_size);
     client->h2_wire_size = (size_t)wire_size;
   }
   status =
       cnet_send(&client->network, client->connection, client->send_buffer, client->h2_wire_size);
-  if (status == TURBO_EBUSY || status == TURBO_ENOBUFS) return TURBO_OK;
-  if (status != TURBO_OK) return status;
+  if (status == SALTS_EBUSY || status == SALTS_ENOBUFS) return SALTS_OK;
+  if (status != SALTS_OK) return status;
   client->write_pending = true;
   client->expected_write_size = client->h2_wire_size;
   client->h2_wire_size = 0u;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static bool chttp_websocket_client_h2_output_pending(chttp_websocket_client_impl *client) {
@@ -439,35 +439,35 @@ static bool chttp_websocket_client_h2_output_pending(chttp_websocket_client_impl
 
 static int chttp_websocket_client_drain_output(chttp_websocket_client_impl *client,
                                                uint64_t deadline) {
-  int status = TURBO_OK;
+  int status = SALTS_OK;
   if (client->protocol == CHTTP_HTTP_2) {
     do {
       if (client->h2_frame_size == 0u && client->websocket.impl != NULL &&
           cnet_websocket_has_pending_output(&client->websocket)) {
         status = cnet_websocket_flush(&client->websocket);
-        if (status != TURBO_OK && status != TURBO_EBUSY) return status;
+        if (status != SALTS_OK && status != SALTS_EBUSY) return status;
       }
       status = chttp_websocket_client_h2_wire_flush(client);
-      if (status != TURBO_OK) return status;
+      if (status != SALTS_OK) return status;
       if (!chttp_websocket_client_h2_output_pending(client)) break;
       status = chttp_websocket_client_poll(client, deadline);
-      if (status != TURBO_OK) return status;
-    } while (!client->transport_terminal && client->terminal_status == TURBO_OK);
-    return client->terminal_status == TURBO_OK ? status : client->terminal_status;
+      if (status != SALTS_OK) return status;
+    } while (!client->transport_terminal && client->terminal_status == SALTS_OK);
+    return client->terminal_status == SALTS_OK ? status : client->terminal_status;
   }
-  while (!client->transport_terminal && client->terminal_status == TURBO_OK &&
+  while (!client->transport_terminal && client->terminal_status == SALTS_OK &&
          (client->write_pending || cnet_websocket_has_pending_output(&client->websocket))) {
     if (!client->write_pending) {
       status = cnet_websocket_flush(&client->websocket);
-      if (status != TURBO_OK && status != TURBO_EBUSY) return status;
-      status = TURBO_OK;
+      if (status != SALTS_OK && status != SALTS_EBUSY) return status;
+      status = SALTS_OK;
     }
     if (client->write_pending || cnet_websocket_has_pending_output(&client->websocket)) {
       status = chttp_websocket_client_poll(client, deadline);
-      if (status != TURBO_OK) return status;
+      if (status != SALTS_OK) return status;
     }
   }
-  return client->terminal_status == TURBO_OK ? status : client->terminal_status;
+  return client->terminal_status == SALTS_OK ? status : client->terminal_status;
 }
 
 static bool chttp_websocket_client_ascii_equal(const char *left, const char *right) {
@@ -528,10 +528,10 @@ static bool chttp_websocket_client_header_owned(const char *name) {
 static int chttp_websocket_client_append(chttp_websocket_client_impl *client, size_t *size,
                                          const void *data, size_t data_size) {
   if (*size > client->send_capacity || data_size > client->send_capacity - *size)
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   if (data_size != 0u) memcpy(client->send_buffer + *size, data, data_size);
   *size += data_size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_websocket_client_uri(const char *value, uri_t *uri, bool *secure, char *transport,
@@ -545,33 +545,33 @@ static int chttp_websocket_client_uri(const char *value, uri_t *uri, bool *secur
   int written;
   if (value == NULL || uri == NULL || secure == NULL || transport == NULL || authority == NULL ||
       target == NULL)
-    return TURBO_EINVAL;
-  if (uri_parse(value, uri) != 1) return uri->overflow_flags != 0u ? TURBO_ERANGE : TURBO_EINVAL;
-  if (uri->overflow_flags != 0u) return TURBO_ERANGE;
+    return SALTS_EINVAL;
+  if (uri_parse(value, uri) != 1) return uri->overflow_flags != 0u ? SALTS_ERANGE : SALTS_EINVAL;
+  if (uri->overflow_flags != 0u) return SALTS_ERANGE;
   if (!uri->valid || uri->host[0] == '\0' ||
       (uri->component_flags & (URI_COMPONENT_USERINFO | URI_COMPONENT_FRAGMENT)) != 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   has_port = (uri->component_flags & URI_COMPONENT_PORT) != 0u;
   ipv6 = uri->host_type == URI_HOST_IPV6ADDR;
   if (chttp_websocket_client_ascii_equal(uri->scheme, "wss")) *secure = true;
   else if (chttp_websocket_client_ascii_equal(uri->scheme, "ws")) *secure = false;
-  else return TURBO_EPROTONOSUPPORT;
-  if (has_port && (uri->port <= 0 || uri->port > UINT16_MAX)) return TURBO_ERANGE;
+  else return SALTS_EPROTONOSUPPORT;
+  if (has_port && (uri->port <= 0 || uri->port > UINT16_MAX)) return SALTS_ERANGE;
   port = has_port ? (unsigned int)uri->port : (*secure ? 443u : 80u);
   written = ipv6 ? snprintf(transport, transport_capacity, "%s://[%s]:%u", *secure ? "tls" : "tcp",
                             uri->host, port)
                  : snprintf(transport, transport_capacity, "%s://%s:%u", *secure ? "tls" : "tcp",
                             uri->host, port);
-  if (written < 0 || (size_t)written >= transport_capacity) return TURBO_EMSGSIZE;
+  if (written < 0 || (size_t)written >= transport_capacity) return SALTS_EMSGSIZE;
   written = ipv6 ? snprintf(authority, authority_capacity, "[%s]:%u", uri->host, port)
                  : snprintf(authority, authority_capacity, "%s:%u", uri->host, port);
-  if (written < 0 || (size_t)written >= authority_capacity) return TURBO_EMSGSIZE;
+  if (written < 0 || (size_t)written >= authority_capacity) return SALTS_EMSGSIZE;
   path = uri->path[0] == '\0' ? "/" : uri->path;
   written = (uri->component_flags & URI_COMPONENT_QUERY) != 0u
                 ? snprintf(target, target_capacity, "%s?%s", path, uri->query)
                 : snprintf(target, target_capacity, "%s", path);
-  if (written < 0 || (size_t)written >= target_capacity) return TURBO_EMSGSIZE;
-  return TURBO_OK;
+  if (written < 0 || (size_t)written >= target_capacity) return SALTS_EMSGSIZE;
+  return SALTS_OK;
 }
 
 static int chttp_websocket_client_request_build(chttp_websocket_client_impl *client,
@@ -587,33 +587,33 @@ static int chttp_websocket_client_request_build(chttp_websocket_client_impl *cli
   size_t index;
   int status;
   status = chttp_websocket_client_append(client, &size, method, sizeof(method) - 1u);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = chttp_websocket_client_append(client, &size, target, strlen(target));
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = chttp_websocket_client_append(client, &size, host_prefix, sizeof(host_prefix) - 1u);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = chttp_websocket_client_append(client, &size, authority, strlen(authority));
-  if (status == TURBO_OK) status = chttp_websocket_client_append(client, &size, "\r\n", 2u);
-  for (index = 0u; status == TURBO_OK && index < options->header_count; ++index) {
+  if (status == SALTS_OK) status = chttp_websocket_client_append(client, &size, "\r\n", 2u);
+  for (index = 0u; status == SALTS_OK && index < options->header_count; ++index) {
     const chttp_header *header = &options->headers[index];
     if (!chttp_websocket_client_header_token(header->name) ||
         !chttp_websocket_client_header_value(header->value) ||
         chttp_websocket_client_header_owned(header->name))
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
     status = chttp_websocket_client_append(client, &size, header->name, strlen(header->name));
-    if (status == TURBO_OK) status = chttp_websocket_client_append(client, &size, ": ", 2u);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK) status = chttp_websocket_client_append(client, &size, ": ", 2u);
+    if (status == SALTS_OK)
       status = chttp_websocket_client_append(client, &size, header->value, strlen(header->value));
-    if (status == TURBO_OK) status = chttp_websocket_client_append(client, &size, "\r\n", 2u);
+    if (status == SALTS_OK) status = chttp_websocket_client_append(client, &size, "\r\n", 2u);
   }
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = chttp_websocket_client_append(client, &size, upgrade, sizeof(upgrade) - 1u);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = chttp_websocket_client_append(client, &size, key_prefix, sizeof(key_prefix) - 1u);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = chttp_websocket_client_append(client, &size, key, CHTTP_WEBSOCKET_KEY_BYTES);
-  if (status == TURBO_OK) status = chttp_websocket_client_append(client, &size, "\r\n\r\n", 4u);
-  if (status == TURBO_OK) *out_size = size;
+  if (status == SALTS_OK) status = chttp_websocket_client_append(client, &size, "\r\n\r\n", 4u);
+  if (status == SALTS_OK) *out_size = size;
   return status;
 }
 
@@ -635,9 +635,9 @@ static int chttp_websocket_client_h2_init(chttp_websocket_client_impl *client) {
       .on_data = chttp_websocket_client_h2_data,
       .on_stream_close = chttp_websocket_client_h2_stream_close,
       .on_goaway = chttp_websocket_client_h2_goaway};
-  if (!chttp_h2_proto_config_valid(&config)) return TURBO_EMSGSIZE;
+  if (!chttp_h2_proto_config_valid(&config)) return SALTS_EMSGSIZE;
   client->h2_protocol = chttp_h2_proto_create(CHTTP_H2_PROTO_CLIENT, &config, &callbacks);
-  return client->h2_protocol == NULL ? TURBO_ENOMEM : TURBO_OK;
+  return client->h2_protocol == NULL ? SALTS_ENOMEM : SALTS_OK;
 }
 
 static int chttp_websocket_client_h2_submit(chttp_websocket_client_impl *client,
@@ -649,12 +649,12 @@ static int chttp_websocket_client_h2_submit(chttp_websocket_client_impl *client,
   size_t header_bytes = 0u;
   size_t name_storage_used = 0u;
   size_t index;
-  int status = TURBO_OK;
-  if (options->header_count > SIZE_MAX - 6u) return TURBO_ERANGE;
+  int status = SALTS_OK;
+  if (options->header_count > SIZE_MAX - 6u) return SALTS_ERANGE;
   header_count = options->header_count + 6u;
-  if (header_count > client->handshake_capacity / sizeof(*headers)) return TURBO_EMSGSIZE;
+  if (header_count > client->handshake_capacity / sizeof(*headers)) return SALTS_EMSGSIZE;
   headers = (chttp_h2_hpack_header *)calloc(header_count, sizeof(*headers));
-  if (headers == NULL) return TURBO_ENOMEM;
+  if (headers == NULL) return SALTS_ENOMEM;
   headers[0] =
       (chttp_h2_hpack_header){":method", sizeof(":method") - 1u, "CONNECT", sizeof("CONNECT") - 1u};
   headers[1] = (chttp_h2_hpack_header){":protocol", sizeof(":protocol") - 1u, "websocket",
@@ -669,12 +669,12 @@ static int chttp_websocket_client_h2_submit(chttp_websocket_client_impl *client,
   for (index = 0u; index < 6u; ++index) {
     size_t field_bytes;
     if (headers[index].name_size > SIZE_MAX - headers[index].value_size - 32u) {
-      status = TURBO_EMSGSIZE;
+      status = SALTS_EMSGSIZE;
       goto done;
     }
     field_bytes = headers[index].name_size + headers[index].value_size + 32u;
     if (field_bytes > client->handshake_capacity - header_bytes) {
-      status = TURBO_EMSGSIZE;
+      status = SALTS_EMSGSIZE;
       goto done;
     }
     header_bytes += field_bytes;
@@ -689,12 +689,12 @@ static int chttp_websocket_client_h2_submit(chttp_websocket_client_impl *client,
         !chttp_websocket_client_header_value(input->value) ||
         chttp_websocket_client_header_owned(input->name) ||
         name_size > client->handshake_capacity - name_storage_used) {
-      status = TURBO_EINVAL;
+      status = SALTS_EINVAL;
       goto done;
     }
     if (name_size > SIZE_MAX - value_size - 32u ||
         name_size + value_size + 32u > client->handshake_capacity - header_bytes) {
-      status = TURBO_EMSGSIZE;
+      status = SALTS_EMSGSIZE;
       goto done;
     }
     name = (char *)client->handshake_buffer + name_storage_used;
@@ -708,7 +708,7 @@ static int chttp_websocket_client_h2_submit(chttp_websocket_client_impl *client,
   }
   if (chttp_h2_proto_submit_request_headers(client->h2_protocol, headers, header_count, 0,
                                             &client->h2_stream_id) != 0)
-    status = TURBO_EPROTO;
+    status = SALTS_EPROTO;
 
 done:
   free(headers);
@@ -728,7 +728,7 @@ int chttp_websocket_client_init(chttp_websocket_client *client,
   int status;
   if (client == NULL || config == NULL || client->impl != NULL || config->size != sizeof(*config) ||
       config->network.max_send_bytes <= CNET_WEBSOCKET_MAX_HEADER_BYTES)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   frame_bytes = config->max_frame_bytes;
   if (frame_bytes == 0u) {
     frame_bytes = config->network.max_send_bytes - CNET_WEBSOCKET_MAX_HEADER_BYTES;
@@ -738,15 +738,15 @@ int chttp_websocket_client_init(chttp_websocket_client *client,
   message_bytes = config->max_message_bytes == 0u ? frame_bytes : config->max_message_bytes;
   if (frame_bytes < CNET_WEBSOCKET_MIN_FRAME_BYTES || message_bytes < frame_bytes ||
       frame_bytes > SIZE_MAX - CNET_WEBSOCKET_MAX_HEADER_BYTES)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   output_bytes = frame_bytes + CNET_WEBSOCKET_MAX_HEADER_BYTES;
   input_bytes =
       config->max_buffered_input_bytes == 0u ? output_bytes : config->max_buffered_input_bytes;
   if (output_bytes > config->network.max_send_bytes || input_bytes < output_bytes)
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   if (input_bytes > SIZE_MAX - message_bytes ||
       input_bytes + message_bytes > SIZE_MAX - output_bytes)
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   event_capacity =
       config->event_capacity == 0u ? config->network.event_capacity : config->event_capacity;
   event_payload_capacity = message_bytes > CNET_WEBSOCKET_MAX_CONTROL_BYTES
@@ -754,10 +754,10 @@ int chttp_websocket_client_init(chttp_websocket_client *client,
                                : CNET_WEBSOCKET_MAX_CONTROL_BYTES;
   if (event_capacity == 0u || event_capacity > SIZE_MAX / sizeof(*impl->events) ||
       event_payload_capacity > SIZE_MAX / event_capacity)
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   event_payload_bytes = event_payload_capacity * event_capacity;
   impl = (chttp_websocket_client_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   impl->send_capacity = config->network.max_send_bytes;
   impl->handshake_capacity = config->max_handshake_header_bytes == 0u
                                  ? CHTTP_WEBSOCKET_CLIENT_DEFAULT_HANDSHAKE_BYTES
@@ -782,7 +782,7 @@ int chttp_websocket_client_init(chttp_websocket_client *client,
       impl->h2_input_buffer_bytes > PTRDIFF_MAX ||
       impl->h2_hpack_dynamic_table_bytes > UINT32_MAX ||
       impl->h2_max_settings_count > SIZE_MAX / sizeof(uint32_t)) {
-    status = TURBO_EMSGSIZE;
+    status = SALTS_EMSGSIZE;
     goto fail;
   }
   impl->send_buffer = (unsigned char *)malloc(impl->send_capacity);
@@ -792,15 +792,15 @@ int chttp_websocket_client_init(chttp_websocket_client *client,
   impl->event_payloads = (unsigned char *)malloc(event_payload_bytes);
   if (impl->send_buffer == NULL || impl->h2_frame_buffer == NULL ||
       impl->handshake_buffer == NULL || impl->events == NULL || impl->event_payloads == NULL) {
-    status = TURBO_ENOMEM;
+    status = SALTS_ENOMEM;
     goto fail;
   }
   for (size_t index = 0u; index < event_capacity; ++index)
     impl->events[index].payload = impl->event_payloads + index * event_payload_capacity;
   status = cnet_client_init(&impl->network, &config->network);
-  if (status != TURBO_OK) goto fail;
+  if (status != SALTS_OK) goto fail;
   client->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 
 fail:
   free(impl->h2_frame_buffer);
@@ -832,27 +832,27 @@ int chttp_websocket_client_connect(chttp_websocket_client *client,
       options->size != sizeof(*options) || options->uri == NULL || out_http_status == NULL ||
       (options->header_count != 0u && options->headers == NULL) ||
       (options->protocol != CHTTP_HTTP_1_1 && options->protocol != CHTTP_HTTP_2))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   impl = (chttp_websocket_client_impl *)client->impl;
-  if (impl->operation_active) return TURBO_EBUSY;
-  if (impl->phase != CHTTP_WEBSOCKET_CLIENT_DISCONNECTED) return TURBO_EALREADY;
+  if (impl->operation_active) return SALTS_EBUSY;
+  if (impl->phase != CHTTP_WEBSOCKET_CLIENT_DISCONNECTED) return SALTS_EALREADY;
   impl->operation_active = true;
   impl->protocol = options->protocol;
   status = chttp_websocket_client_uri(options->uri, &uri, &secure, transport, sizeof(transport),
                                       authority, sizeof(authority), target, sizeof(target));
-  if (status != TURBO_OK) goto done;
+  if (status != SALTS_OK) goto done;
   if ((!secure && options->tls != NULL) ||
       (secure && options->tls != NULL && options->tls->impl == NULL)) {
-    status = TURBO_EINVAL;
+    status = SALTS_EINVAL;
     goto done;
   }
   if (secure) {
     status = chttp_tls_profile_acquire(options->tls, &impl->tls_profile);
-    if (status != TURBO_OK) goto done;
+    if (status != SALTS_OK) goto done;
     if ((options->protocol == CHTTP_HTTP_2 && impl->tls_profile == NULL) ||
         (impl->tls_profile != NULL &&
          chttp_tls_profile_protocol(impl->tls_profile) != options->protocol)) {
-      status = TURBO_EPROTONOSUPPORT;
+      status = SALTS_EPROTONOSUPPORT;
       goto done;
     }
   }
@@ -860,14 +860,14 @@ int chttp_websocket_client_connect(chttp_websocket_client *client,
     status = chttp_websocket_client_h2_init(impl);
   } else {
     status = chttp_websocket_client_key_generate(key, sizeof(key));
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
       status =
           chttp_websocket_accept_compute(key, impl->expected_accept, sizeof(impl->expected_accept));
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
       status = chttp_websocket_client_request_build(impl, options, authority, target, key,
                                                     &request_size);
   }
-  if (status != TURBO_OK) goto done;
+  if (status != SALTS_OK) goto done;
   observer = (cnet_observer){.on_state = chttp_websocket_client_on_state,
                              .on_receive = chttp_websocket_client_on_receive,
                              .on_send = chttp_websocket_client_on_send,
@@ -878,79 +878,79 @@ int chttp_websocket_client_connect(chttp_websocket_client *client,
                              .tls_client = chttp_tls_profile_client(impl->tls_profile)};
   impl->phase = CHTTP_WEBSOCKET_CLIENT_CONNECTING;
   status = cnet_connect(&impl->network, &connect_options, &impl->connection);
-  if (status != TURBO_OK) goto done;
+  if (status != SALTS_OK) goto done;
   deadline = chttp_websocket_client_deadline(options->timeout_ms);
-  while (!impl->connected && !impl->transport_terminal && impl->terminal_status == TURBO_OK) {
+  while (!impl->connected && !impl->transport_terminal && impl->terminal_status == SALTS_OK) {
     status = chttp_websocket_client_poll(impl, deadline);
-    if (status != TURBO_OK) goto done;
+    if (status != SALTS_OK) goto done;
   }
   if (!impl->connected) {
-    status = impl->terminal_status == TURBO_OK ? TURBO_ECONNRESET : impl->terminal_status;
+    status = impl->terminal_status == SALTS_OK ? SALTS_ECONNRESET : impl->terminal_status;
     goto done;
   }
   impl->phase = CHTTP_WEBSOCKET_CLIENT_HANDSHAKE;
   if (options->protocol == CHTTP_HTTP_2) {
     status = chttp_websocket_client_h2_wire_flush(impl);
-    if (status != TURBO_OK) goto done;
+    if (status != SALTS_OK) goto done;
     while (!chttp_h2_proto_peer_settings_received(impl->h2_protocol) && !impl->transport_terminal &&
-           impl->terminal_status == TURBO_OK) {
+           impl->terminal_status == SALTS_OK) {
       status = chttp_websocket_client_receive_arm(impl);
-      if (status == TURBO_ENOBUFS || status == TURBO_EBUSY) status = TURBO_OK;
-      if (status != TURBO_OK) goto done;
+      if (status == SALTS_ENOBUFS || status == SALTS_EBUSY) status = SALTS_OK;
+      if (status != SALTS_OK) goto done;
       status = chttp_websocket_client_poll(impl, deadline);
-      if (status != TURBO_OK) goto done;
+      if (status != SALTS_OK) goto done;
       status = chttp_websocket_client_h2_wire_flush(impl);
-      if (status != TURBO_OK) goto done;
+      if (status != SALTS_OK) goto done;
     }
     if (!chttp_h2_proto_peer_settings_received(impl->h2_protocol) ||
         chttp_h2_proto_peer_enable_connect_protocol(impl->h2_protocol) != 1u) {
-      status = TURBO_EPROTONOSUPPORT;
+      status = SALTS_EPROTONOSUPPORT;
       goto done;
     }
     status = chttp_websocket_client_h2_submit(impl, options, authority, target, secure);
-    if (status != TURBO_OK) goto done;
+    if (status != SALTS_OK) goto done;
     status = chttp_websocket_client_drain_output(impl, deadline);
-    if (status != TURBO_OK) goto done;
+    if (status != SALTS_OK) goto done;
   } else {
     status = cnet_send(&impl->network, impl->connection, impl->send_buffer, request_size);
-    if (status != TURBO_OK) goto done;
+    if (status != SALTS_OK) goto done;
     impl->write_pending = true;
     impl->expected_write_size = request_size;
-    while (impl->write_pending && !impl->transport_terminal && impl->terminal_status == TURBO_OK) {
+    while (impl->write_pending && !impl->transport_terminal && impl->terminal_status == SALTS_OK) {
       status = chttp_websocket_client_poll(impl, deadline);
-      if (status != TURBO_OK) goto done;
+      if (status != SALTS_OK) goto done;
     }
   }
   while (impl->phase == CHTTP_WEBSOCKET_CLIENT_HANDSHAKE && !impl->transport_terminal &&
-         impl->terminal_status == TURBO_OK) {
+         impl->terminal_status == SALTS_OK) {
     status = chttp_websocket_client_receive_arm(impl);
-    if (status == TURBO_ENOBUFS || status == TURBO_EBUSY) {
+    if (status == SALTS_ENOBUFS || status == SALTS_EBUSY) {
       status = chttp_websocket_client_poll(impl, deadline);
-      if (status != TURBO_OK) goto done;
+      if (status != SALTS_OK) goto done;
       continue;
     }
-    if (status != TURBO_OK) goto done;
+    if (status != SALTS_OK) goto done;
     status = chttp_websocket_client_poll(impl, deadline);
-    if (status != TURBO_OK) goto done;
+    if (status != SALTS_OK) goto done;
     if (options->protocol == CHTTP_HTTP_2) {
       status = chttp_websocket_client_h2_wire_flush(impl);
-      if (status != TURBO_OK) goto done;
+      if (status != SALTS_OK) goto done;
     }
   }
   if (impl->phase == CHTTP_WEBSOCKET_CLIENT_OPEN) {
     status = chttp_websocket_client_drain_output(impl, deadline);
-    if (status != TURBO_OK) goto done;
+    if (status != SALTS_OK) goto done;
   }
   *out_http_status = impl->handshake_http_status;
-  status = impl->phase == CHTTP_WEBSOCKET_CLIENT_OPEN ? TURBO_OK : impl->terminal_status;
+  status = impl->phase == CHTTP_WEBSOCKET_CLIENT_OPEN ? SALTS_OK : impl->terminal_status;
 
 done:
-  if (status != TURBO_OK && impl->phase != CHTTP_WEBSOCKET_CLIENT_OPEN) {
+  if (status != SALTS_OK && impl->phase != CHTTP_WEBSOCKET_CLIENT_OPEN) {
     if (impl->connection.generation != 0u && !impl->transport_terminal)
       (void)cnet_close(&impl->network, impl->connection);
     impl->phase = CHTTP_WEBSOCKET_CLIENT_TERMINAL;
   }
-  if (status != TURBO_OK && impl->tls_profile != NULL) {
+  if (status != SALTS_OK && impl->tls_profile != NULL) {
     chttp_tls_profile_release(impl->tls_profile);
     impl->tls_profile = NULL;
   }
@@ -968,17 +968,17 @@ static int chttp_websocket_client_send(chttp_websocket_client *client,
   uint64_t deadline;
   int status;
   if (client == NULL || client->impl == NULL || send == NULL || (data == NULL && size != 0u))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   impl = (chttp_websocket_client_impl *)client->impl;
-  if (impl->operation_active) return TURBO_EBUSY;
-  if (impl->phase != CHTTP_WEBSOCKET_CLIENT_OPEN || impl->terminal_status != TURBO_OK)
-    return TURBO_ESHUTDOWN;
+  if (impl->operation_active) return SALTS_EBUSY;
+  if (impl->phase != CHTTP_WEBSOCKET_CLIENT_OPEN || impl->terminal_status != SALTS_OK)
+    return SALTS_ESHUTDOWN;
   impl->operation_active = true;
   deadline = chttp_websocket_client_deadline(timeout_ms);
   status = chttp_websocket_client_drain_output(impl, deadline);
-  if (status == TURBO_OK) status = send(&impl->websocket, data, size);
-  if (status == TURBO_OK) status = chttp_websocket_client_drain_output(impl, deadline);
-  if (status == TURBO_OK && impl->terminal_status != TURBO_OK) status = impl->terminal_status;
+  if (status == SALTS_OK) status = send(&impl->websocket, data, size);
+  if (status == SALTS_OK) status = chttp_websocket_client_drain_output(impl, deadline);
+  if (status == SALTS_OK && impl->terminal_status != SALTS_OK) status = impl->terminal_status;
   impl->operation_active = false;
   return status;
 }
@@ -1007,31 +1007,31 @@ int chttp_websocket_client_receive(chttp_websocket_client *client, uint32_t time
                                    chttp_websocket_event *out_event) {
   chttp_websocket_client_impl *impl;
   uint64_t deadline;
-  int status = TURBO_OK;
-  if (client == NULL || client->impl == NULL || out_event == NULL) return TURBO_EINVAL;
+  int status = SALTS_OK;
+  if (client == NULL || client->impl == NULL || out_event == NULL) return SALTS_EINVAL;
   *out_event = (chttp_websocket_event){0};
   impl = (chttp_websocket_client_impl *)client->impl;
-  if (impl->operation_active) return TURBO_EBUSY;
-  if (impl->phase != CHTTP_WEBSOCKET_CLIENT_OPEN && impl->event_count == 0u) return TURBO_ESHUTDOWN;
+  if (impl->operation_active) return SALTS_EBUSY;
+  if (impl->phase != CHTTP_WEBSOCKET_CLIENT_OPEN && impl->event_count == 0u) return SALTS_ESHUTDOWN;
   impl->operation_active = true;
   deadline = chttp_websocket_client_deadline(timeout_ms);
   while (impl->event_count == 0u && !impl->transport_terminal &&
-         impl->terminal_status == TURBO_OK) {
+         impl->terminal_status == SALTS_OK) {
     status = chttp_websocket_client_receive_arm(impl);
-    if (status == TURBO_ENOBUFS || status == TURBO_EBUSY) status = TURBO_OK;
-    if (status != TURBO_OK) break;
+    if (status == SALTS_ENOBUFS || status == SALTS_EBUSY) status = SALTS_OK;
+    if (status != SALTS_OK) break;
     status = chttp_websocket_client_poll(impl, deadline);
-    if (status != TURBO_OK) break;
+    if (status != SALTS_OK) break;
   }
-  if (status == TURBO_OK && impl->event_count != 0u && !impl->transport_terminal &&
-      impl->terminal_status == TURBO_OK)
+  if (status == SALTS_OK && impl->event_count != 0u && !impl->transport_terminal &&
+      impl->terminal_status == SALTS_OK)
     status = chttp_websocket_client_drain_output(impl, deadline);
-  if (status == TURBO_OK && impl->event_count != 0u) {
+  if (status == SALTS_OK && impl->event_count != 0u) {
     *out_event = impl->events[impl->event_head].event;
     impl->event_head = (impl->event_head + 1u) % impl->event_capacity;
     --impl->event_count;
-  } else if (status == TURBO_OK) {
-    status = impl->terminal_status == TURBO_OK ? TURBO_ECONNRESET : impl->terminal_status;
+  } else if (status == SALTS_OK) {
+    status = impl->terminal_status == SALTS_OK ? SALTS_ECONNRESET : impl->terminal_status;
   }
   impl->operation_active = false;
   return status;
@@ -1043,52 +1043,52 @@ int chttp_websocket_client_close(chttp_websocket_client *client, uint16_t code, 
   uint64_t deadline;
   int status;
   if (client == NULL || client->impl == NULL || (reason == NULL && reason_size != 0u))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   impl = (chttp_websocket_client_impl *)client->impl;
-  if (impl->operation_active) return TURBO_EBUSY;
-  if (impl->phase != CHTTP_WEBSOCKET_CLIENT_OPEN) return TURBO_EALREADY;
+  if (impl->operation_active) return SALTS_EBUSY;
+  if (impl->phase != CHTTP_WEBSOCKET_CLIENT_OPEN) return SALTS_EALREADY;
   impl->operation_active = true;
   deadline = chttp_websocket_client_deadline(timeout_ms);
   status = chttp_websocket_client_drain_output(impl, deadline);
   if (impl->protocol == CHTTP_HTTP_2) impl->h2_close_requested = true;
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = cnet_websocket_close(&impl->websocket, code, reason, reason_size);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     impl->operation_active = false;
     return status;
   }
   if (impl->protocol == CHTTP_HTTP_2) {
-    while (status == TURBO_OK && !impl->transport_terminal && !impl->h2_stream_terminal &&
-           impl->terminal_status == TURBO_OK) {
+    while (status == SALTS_OK && !impl->transport_terminal && !impl->h2_stream_terminal &&
+           impl->terminal_status == SALTS_OK) {
       status = chttp_websocket_client_drain_output(impl, deadline);
-      if (status != TURBO_OK || impl->h2_stream_terminal) break;
+      if (status != SALTS_OK || impl->h2_stream_terminal) break;
       status = chttp_websocket_client_receive_arm(impl);
-      if (status == TURBO_ENOBUFS || status == TURBO_EBUSY) status = TURBO_OK;
-      if (status != TURBO_OK) break;
+      if (status == SALTS_ENOBUFS || status == SALTS_EBUSY) status = SALTS_OK;
+      if (status != SALTS_OK) break;
       status = chttp_websocket_client_poll(impl, deadline);
     }
   } else
-    while (status == TURBO_OK && !impl->transport_terminal && impl->terminal_status == TURBO_OK) {
+    while (status == SALTS_OK && !impl->transport_terminal && impl->terminal_status == SALTS_OK) {
       cnet_websocket_state websocket_state = CNET_WEBSOCKET_OPEN;
       if (!impl->write_pending && cnet_websocket_has_pending_output(&impl->websocket)) {
         status = cnet_websocket_flush(&impl->websocket);
-        if (status == TURBO_EBUSY) status = TURBO_OK;
-        if (status != TURBO_OK) break;
+        if (status == SALTS_EBUSY) status = SALTS_OK;
+        if (status != SALTS_OK) break;
       }
       if (!impl->write_pending) {
         status = cnet_websocket_state_get(&impl->websocket, &websocket_state);
-        if (status != TURBO_OK || websocket_state == CNET_WEBSOCKET_CLOSED ||
+        if (status != SALTS_OK || websocket_state == CNET_WEBSOCKET_CLOSED ||
             websocket_state == CNET_WEBSOCKET_FAILED)
           break;
         status = chttp_websocket_client_receive_arm(impl);
-        if (status == TURBO_ENOBUFS || status == TURBO_EBUSY) status = TURBO_OK;
-        if (status != TURBO_OK) break;
+        if (status == SALTS_ENOBUFS || status == SALTS_EBUSY) status = SALTS_OK;
+        if (status != SALTS_OK) break;
       }
       status = chttp_websocket_client_poll(impl, deadline);
     }
   if (!impl->transport_terminal) {
     const int close_status = cnet_close(&impl->network, impl->connection);
-    if (status == TURBO_OK && close_status != TURBO_OK && close_status != TURBO_EALREADY)
+    if (status == SALTS_OK && close_status != SALTS_OK && close_status != SALTS_EALREADY)
       status = close_status;
   }
   impl->phase = CHTTP_WEBSOCKET_CLIENT_TERMINAL;
@@ -1098,27 +1098,27 @@ int chttp_websocket_client_close(chttp_websocket_client *client, uint16_t code, 
 
 int chttp_websocket_client_destroy(chttp_websocket_client *client, uint32_t timeout_ms) {
   chttp_websocket_client_impl *impl;
-  int first_status = TURBO_OK;
+  int first_status = SALTS_OK;
   int status;
-  if (client == NULL) return TURBO_EINVAL;
+  if (client == NULL) return SALTS_EINVAL;
   impl = (chttp_websocket_client_impl *)client->impl;
-  if (impl == NULL) return TURBO_OK;
-  if (impl->operation_active) return TURBO_EBUSY;
+  if (impl == NULL) return SALTS_OK;
+  if (impl->operation_active) return SALTS_EBUSY;
   if (!impl->transport_terminal && impl->connection.generation != 0u) {
     status = cnet_close(&impl->network, impl->connection);
-    if (status != TURBO_OK && status != TURBO_EALREADY && status != TURBO_ESHUTDOWN)
+    if (status != SALTS_OK && status != SALTS_EALREADY && status != SALTS_ESHUTDOWN)
       first_status = status;
   }
   status = cnet_client_stop(&impl->network, timeout_ms);
-  if (status == TURBO_ETIMEDOUT) return status;
-  if (first_status == TURBO_OK && status != TURBO_OK && status != TURBO_EALREADY)
+  if (status == SALTS_ETIMEDOUT) return status;
+  if (first_status == SALTS_OK && status != SALTS_OK && status != SALTS_EALREADY)
     first_status = status;
   status = cnet_client_destroy(&impl->network);
-  if (first_status == TURBO_OK && status != TURBO_OK) first_status = status;
-  if (status != TURBO_OK) return first_status;
+  if (first_status == SALTS_OK && status != SALTS_OK) first_status = status;
+  if (status != SALTS_OK) return first_status;
   if (impl->websocket.impl != NULL) {
     status = cnet_websocket_destroy(&impl->websocket);
-    if (first_status == TURBO_OK && status != TURBO_OK) first_status = status;
+    if (first_status == SALTS_OK && status != SALTS_OK) first_status = status;
   }
   chttp_h2_proto_destroy(impl->h2_protocol);
   chttp_tls_profile_release(impl->tls_profile);

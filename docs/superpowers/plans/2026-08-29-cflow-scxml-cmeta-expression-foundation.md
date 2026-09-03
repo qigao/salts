@@ -6,7 +6,7 @@
 
 **Architecture:** `cflow-scxml` owns parsing and CMeta location semantics, compiles expressions once into immutable QueryVM instructions and immutable operands, and evaluates them allocation-free against one borrowed root object plus a borrowed active-state callback. The root object remains the sole state fact source. This increment supports Boolean, signed/unsigned integer, floating-point, and enum field locations; CMeta string reads and sequence indices remain rejected until their descriptor APIs expose explicit read/traversal contracts.
 
-**Tech Stack:** C11, CMeta semantic descriptors, TurboUtils QueryVM, TinyTest, CMake Presets.
+**Tech Stack:** C11, CMeta semantic descriptors, Salts QueryVM, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-cflow-scxml-cmeta-data-model-selection.md`
 

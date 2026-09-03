@@ -57,6 +57,9 @@ int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *p
                         cnet_shard_connection *out_connection);
 int cnet_shards_send(cnet_shards *shards, cnet_shard_connection connection, const void *data,
                      size_t size);
+int cnet_shards_sendv(cnet_shards *shards, cnet_shard_connection connection,
+                      const cnet_const_buffer *segments, size_t segment_count,
+                      size_t total_size);
 int cnet_shards_send_and_close(cnet_shards *shards, cnet_shard_connection connection,
                                const void *data, size_t size);
 int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, size_t demand);
@@ -72,7 +75,7 @@ int cnet_shards_recycle(cnet_shards *shards, cnet_shard_connection connection,
                         cnet_session_terminal *out_terminal);
 
 /**
- * Closes a quiescent owner. Live connections return TURBO_EBUSY; client stop
+ * Closes a quiescent owner. Live connections return SALTS_EBUSY; client stop
  * closes and drives them first.
  */
 int cnet_shards_stop(cnet_shards *shards, uint32_t timeout_ms);

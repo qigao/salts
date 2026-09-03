@@ -1,4 +1,4 @@
-set(TARGET_NAME turbo_utils)
+set(TARGET_NAME salts)
 # Add parser subdirectory first (generates lexer)
 add_subdirectory(parser)
 cmake_add_source(SOURCE_FILES RECURSE)
@@ -11,7 +11,7 @@ add_library(${TARGET_NAME} SHARED ${SOURCE_FILES})
 cmake_config_target(
   ${TARGET_NAME}
   ALIAS
-  Rocida::Core
+  Salts::Core
   FOLDER
   "utils"
   EXPORT_NAME
@@ -27,17 +27,17 @@ target_include_directories(
           $<BUILD_INTERFACE:${FMT_LEXER_INCLUDE_DIRS}>
           $<BUILD_INTERFACE:${LOG_PATTERN_LEXER_INCLUDE_DIRS}>)
 
-# Keep shared-library producer/consumer state on Rocida::Core itself.
-# The INTERFACE definition is exported into RocidaTargets.cmake, so only
-# targets that link Rocida::Core receive the consumer-side import marker.
+# Keep shared-library producer/consumer state on Salts::Core itself.
+# The INTERFACE definition is exported into SaltsTargets.cmake, so only
+# targets that link Salts::Core receive the consumer-side import marker.
 target_compile_definitions(
   ${TARGET_NAME}
   PUBLIC
-    $<$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>,$<CONFIG:RelWithDebInfo>>:TURBO_LOG_CAPTURE_SOURCE=0>
+    $<$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>,$<CONFIG:RelWithDebInfo>>:SALTS_LOG_CAPTURE_SOURCE=0>
   PRIVATE
-    "$<$<PLATFORM_ID:Windows>:TURBO_API=__declspec(dllexport)>"
+    "$<$<PLATFORM_ID:Windows>:SALTS_API=__declspec(dllexport)>"
   INTERFACE
-    "$<$<PLATFORM_ID:Windows>:TURBO_API=__declspec(dllimport)>")
+    "$<$<PLATFORM_ID:Windows>:SALTS_API=__declspec(dllimport)>")
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
 target_compile_options(${TARGET_NAME}
   PUBLIC $<$<COMPILE_LANG_AND_ID:C,MSVC>:/experimental:c11atomics>)
@@ -52,13 +52,13 @@ endif()
 # Link dependencies
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC Rocida::CMeta
-         Rocida::Platform
-         Rocida::Concurrency
-         Rocida::Coroutine
-  PRIVATE Rocida::STL
-          Rocida::CFlow
-          ${FMT_LEXER_LIBRARY} Rocida::SDS # Simple Dynamic Strings
+  PUBLIC Salts::CMeta
+         Salts::Platform
+         Salts::Concurrency
+         Salts::Coroutine
+  PRIVATE Salts::CSTL
+          Salts::CFlow
+          ${FMT_LEXER_LIBRARY} Salts::SDS # Simple Dynamic Strings
           aklomp::base64 zstd::libzstd
           ${LOG_PATTERN_LEXER_LIBRARY} # Log pattern lexer
 )
@@ -69,7 +69,7 @@ endif()
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT RocidaTargets
+  EXPORT SaltsTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

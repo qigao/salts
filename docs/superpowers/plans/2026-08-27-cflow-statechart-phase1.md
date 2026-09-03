@@ -6,7 +6,7 @@
 
 **Architecture:** New opaque `cflow_statechart` and `cflow_statechart_instance` objects sit beside the existing single-leaf Machine. Build normalizes a tree and ordered declaration rows; one borrowed SerialExecutor owns all runtime mutation. Each microstep uses preallocated staged state/configuration/history buffers and publishes once after exit, transition, and entry phases succeed.
 
-**Tech Stack:** C11, CMeta type/effect contracts, CFlow Event/Mailbox/Executor/Clock/Timer Event, Turbo Platform synchronization, TinyTest, CMake Presets, Lean 4.33.1 and Lake.
+**Tech Stack:** C11, CMeta type/effect contracts, CFlow Event/Mailbox/Executor/Clock/Timer Event, Salts Platform synchronization, TinyTest, CMake Presets, Lean 4.33.1 and Lake.
 
 **Spec:** `docs/superpowers/specs/2026-08-27-cflow-statechart-phase1-design.md`
 
@@ -65,7 +65,7 @@
 
   Add count/row queries returning borrowed normalized rows valid until destroy.
   Include the installed header from `cflow/cflow.h`, add the source to
-  `TurboUtils::CFlow`, and compile both C11 and C++17 consumers.
+  `Salts::CFlow`, and compile both C11 and C++17 consumers.
 
 - [x] **Step 5: Verify GREEN and adjacent regressions**
 
@@ -400,7 +400,7 @@
   build completed 81/81 targets. The changed Statechart C/Lean files contain no
   `sorry`, `admit`, `TODO`, `FIXME`, `HACK`, placeholder abort, or focused test.
 - Linux Release on `root@eu`: in isolated worktree
-  `/root/codex-worktrees/turbo-utils-statechart-c8b4f2a`, run
+  `/root/codex-worktrees/salts-statechart-c8b4f2a`, run
   `PROJECT_ROOT="$PWD" VCPKG_ROOT=/opt/vcpkg cmake --preset linux-release-user
   -DENABLE_TESTS=ON`, then `cmake --build --preset linux-release-user -j2`.
   All 534 build steps passed; focused Statechart tests passed 8/8, all CFlow
@@ -413,5 +413,5 @@
   identified the three expected Statechart test files; `git diff --check`
   passed. Build trees and `.codegraph/` remained absent from the Git diff.
 - Delivery: scoped commits were pushed to `feat/cflow-statechart-phase1` and
-  [PR #124](https://github.com/qigao/turbo-utils/pull/124) was opened against
+  [PR #124](https://github.com/qigao/salts/pull/124) was opened against
   `master` with `Refs #122`. Merge remains gated on required CI.

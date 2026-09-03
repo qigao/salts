@@ -138,18 +138,18 @@ spec("cyaml incremental SAX")
             cyaml_sax_parser_t* parser = make_parser(&state);
             check_not_null(parser);
 
-            check_equal(cyaml_sax_parser_feed(parser, "name: tur", 9), 0);
+            check_equal(cyaml_sax_parser_feed(parser, "name: sal", 9), 0);
             check_equal(state.document_starts, 1);
             check_equal(state.mapping_starts, 1);
             check_equal(state.value_count, 1);
             check_equal(state.values[0], "name");
 
-            check_equal(cyaml_sax_parser_feed(parser, "bo\nitems:\n  - 1",
-                             sizeof("bo\nitems:\n  - 1") - 1),
+            check_equal(cyaml_sax_parser_feed(parser, "ts\nitems:\n  - 1",
+                             sizeof("ts\nitems:\n  - 1") - 1),
                 0);
             check_equal(state.sequence_starts, 1);
             check_equal(state.value_count, 3);
-            check_equal(state.values[1], "turbo");
+            check_equal(state.values[1], "salts");
             check_equal(state.values[2], "items");
 
             check_equal(cyaml_sax_parser_feed(parser, "\n  - 2\n", 7), 0);

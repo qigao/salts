@@ -97,7 +97,7 @@ typedef struct cflow_io_run_result {
 
 /**
  * submit() starts one native operation and must eventually call
- * cflow_io_actor_complete() exactly once after returning TURBO_OK. The Actor
+ * cflow_io_actor_complete() exactly once after returning SALTS_OK. The Actor
  * argument is a borrowed, stable completion handle valid until that request's
  * terminal completion. A nonzero return is converted to FAILED unless the
  * backend completed synchronously first.
@@ -181,7 +181,7 @@ typedef struct cflow_io_actor_stats {
  * The Actor borrows config->executor and backend/callback contexts until a
  * successful destroy. request_capacity and command_capacity are hard logical
  * limits and must be nonzero. The backend submit and completion callbacks are
- * required. Returns TURBO_OK, TURBO_EINVAL, or TURBO_ENOMEM.
+ * required. Returns SALTS_OK, SALTS_EINVAL, or SALTS_ENOMEM.
  *
  * Thread safety: initialization requires exclusive access to actor.
  */
@@ -263,9 +263,9 @@ bool cflow_io_actor_get_stats(const cflow_io_actor *actor,
 bool cflow_io_actor_is_quiescent(const cflow_io_actor *actor);
 
 /**
- * Returns TURBO_EBUSY until the closed Actor is quiescent. The injected backend
+ * Returns SALTS_EBUSY until the closed Actor is quiescent. The injected backend
  * and Executor must remain alive, and public API entry must itself be
- * quiescent, until destroy returns TURBO_OK. The Executor must remain OPEN and
+ * quiescent, until destroy returns SALTS_OK. The Executor must remain OPEN and
  * drain-capable until every Actor completion is accepted, delivered and
  * acknowledged; shut it down only after Actor destroy succeeds. Closing it
  * first leaves retained completions visible through executor_rejected_closed

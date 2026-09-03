@@ -1,7 +1,7 @@
 #include <cflow/io_actor.h>
 
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include "tinytest.h"
 
@@ -70,7 +70,7 @@ static void io_wake_block(void *user) {
             &probe->started, &expected, true))
         return;
     while (!atomic_load(&probe->release))
-        turbo_thread_yield();
+        salts_thread_yield();
 }
 
 static void io_run_executor(void *user) {
@@ -91,7 +91,7 @@ static int io_backend_submit(void *user,
         probe->submitted[probe->submitted_count++] = request_id;
     if (probe->complete_during_submit) {
         const cflow_io_completion completion = {
-            CFLOW_IO_COMPLETION_OK, 12u, TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, 12u, SALTS_OK};
         (void)cflow_io_actor_complete(actor, request_id, &completion);
     }
     if (probe->run_during_submit)
@@ -139,7 +139,7 @@ static void io_submitter(void *user) {
     io_submitter_context *context = (io_submitter_context *)user;
     size_t offset;
     while (!atomic_load(context->go))
-        turbo_thread_yield();
+        salts_thread_yield();
     for (offset = 0u; offset < context->count; ++offset) {
         const size_t index = context->first + offset;
         cflow_io_operation operation = {
@@ -166,7 +166,7 @@ static int io_fixture_init(io_fixture *fixture,
     config.backend_user = &fixture->backend;
     config.completion = io_completion_record;
     config.completion_user = &fixture->completions;
-    if (cflow_io_actor_init(&fixture->actor, &config) != TURBO_OK) {
+    if (cflow_io_actor_init(&fixture->actor, &config) != SALTS_OK) {
         cflow_executor_destroy(&fixture->executor);
         return 0;
     }
@@ -176,7 +176,7 @@ static int io_fixture_init(io_fixture *fixture,
 static void io_fixture_settle(io_fixture *fixture,
                               cflow_io_request_id request_id) {
     const cflow_io_completion completion = {
-        CFLOW_IO_COMPLETION_OK, 4u, TURBO_OK};
+        CFLOW_IO_COMPLETION_OK, 4u, SALTS_OK};
     (void)cflow_io_actor_run_ready(&fixture->actor, 16u);
     check_equal(cflow_io_actor_complete(
                     &fixture->actor, request_id, &completion),
@@ -189,10 +189,10 @@ static void io_fixture_settle(io_fixture *fixture,
 
 static void io_fixture_destroy(io_fixture *fixture) {
     const int close_status = cflow_io_actor_close(&fixture->actor);
-    check_true(close_status == TURBO_OK || close_status == TURBO_EALREADY);
+    check_true(close_status == SALTS_OK || close_status == SALTS_EALREADY);
     (void)cflow_io_actor_run_ready(&fixture->actor, 16u);
     check_true(cflow_io_actor_is_quiescent(&fixture->actor));
-    check_equal(cflow_io_actor_destroy(&fixture->actor), TURBO_OK);
+    check_equal(cflow_io_actor_destroy(&fixture->actor), SALTS_OK);
     check_true(cflow_executor_shutdown(&fixture->executor));
     cflow_executor_destroy(&fixture->executor);
 }
@@ -208,7 +208,7 @@ spec("CFlow IO Actor protocol") {
         config.executor = &executor;
         config.backend.submit = io_backend_submit;
         config.completion = io_completion_record;
-        check_equal(cflow_io_actor_init(&actor, &config), TURBO_EINVAL);
+        check_equal(cflow_io_actor_init(&actor, &config), SALTS_EINVAL);
         check_null(actor.impl);
         cflow_executor_destroy(&executor);
     }
@@ -385,7 +385,7 @@ spec("CFlow IO Actor protocol") {
         cflow_io_operation operations[4];
         cflow_io_submit_result results[4];
         const cflow_io_completion completion = {
-            CFLOW_IO_COMPLETION_OK, 1u, TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, 1u, SALTS_OK};
         size_t index;
 
         check_true(io_fixture_init(&fixture, 2u, 2u));
@@ -506,7 +506,7 @@ spec("CFlow IO Actor protocol") {
         cflow_io_submit_result submitted;
         cflow_io_actor_stats stats = {0};
         const cflow_io_completion cancelled = {
-            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, SALTS_OK};
 
         check_true(io_fixture_init(&fixture, 1u, 2u));
         submitted = cflow_io_actor_try_submit(&fixture.actor, 91u, &operation);
@@ -553,7 +553,7 @@ spec("CFlow IO Actor protocol") {
         cflow_io_submit_result submitted;
         cflow_io_actor_stats stats = {0};
         const cflow_io_completion completed = {
-            CFLOW_IO_COMPLETION_OK, 8u, TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, 8u, SALTS_OK};
 
         check_true(io_fixture_init(&fixture, 1u, 2u));
         check_equal(cflow_executor_try_post(
@@ -591,7 +591,7 @@ spec("CFlow IO Actor protocol") {
         cflow_io_operation operation = {&released, io_operation_release};
         cflow_io_submit_result submitted;
         const cflow_io_completion completed = {
-            CFLOW_IO_COMPLETION_OK, 9u, TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, 9u, SALTS_OK};
 
         memset(&fixture, 0, sizeof(fixture));
         check_true(cflow_executor_serial_init_with_capacity(
@@ -604,7 +604,7 @@ spec("CFlow IO Actor protocol") {
         config.backend_user = &fixture.backend;
         config.completion = io_completion_record;
         config.completion_user = &fixture.completions;
-        check_equal(cflow_io_actor_init(&fixture.actor, &config), TURBO_OK);
+        check_equal(cflow_io_actor_init(&fixture.actor, &config), SALTS_OK);
 
         submitted = cflow_io_actor_try_submit(&fixture.actor, 102u, &operation);
         check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
@@ -637,12 +637,12 @@ spec("CFlow IO Actor protocol") {
         check_true(io_fixture_init(&fixture, 2u, 2u));
         submitted = cflow_io_actor_try_submit(&fixture.actor, 201u, &accepted);
         check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-        check_equal(cflow_io_actor_close(&fixture.actor), TURBO_OK);
+        check_equal(cflow_io_actor_close(&fixture.actor), SALTS_OK);
         after_close = cflow_io_actor_try_submit(
             &fixture.actor, 202u, &rejected);
         check_equal(after_close.status, CFLOW_IO_SUBMIT_CLOSED);
         check_true(rejected.user == &rejected_released);
-        check_equal(cflow_io_actor_destroy(&fixture.actor), TURBO_EBUSY);
+        check_equal(cflow_io_actor_destroy(&fixture.actor), SALTS_EBUSY);
 
         (void)cflow_io_actor_run_ready(&fixture.actor, 16u);
         check_equal(fixture.backend.submitted_count, (size_t)0u);
@@ -650,12 +650,12 @@ spec("CFlow IO Actor protocol") {
         check_equal(fixture.completions.count, (size_t)1u);
         check_equal(fixture.completions.completions[0].kind,
                     CFLOW_IO_COMPLETION_CANCELLED);
-        check_equal(cflow_io_actor_destroy(&fixture.actor), TURBO_EBUSY);
+        check_equal(cflow_io_actor_destroy(&fixture.actor), SALTS_EBUSY);
         check_equal(cflow_io_actor_acknowledge(
                         &fixture.actor, submitted.request_id),
                     CFLOW_IO_ACK_RELEASED);
         rejected.release(rejected.user);
-        check_equal(cflow_io_actor_destroy(&fixture.actor), TURBO_OK);
+        check_equal(cflow_io_actor_destroy(&fixture.actor), SALTS_OK);
         check_true(cflow_executor_shutdown(&fixture.executor));
         cflow_executor_destroy(&fixture.executor);
         check_equal(accepted_released, 1);
@@ -669,7 +669,7 @@ spec("CFlow IO Actor protocol") {
         cflow_io_submit_result submitted;
 
         check_true(io_fixture_init(&fixture, 1u, 1u));
-        fixture.backend.submit_status = TURBO_EBUSY;
+        fixture.backend.submit_status = SALTS_EBUSY;
         submitted = cflow_io_actor_try_submit(&fixture.actor, 301u, &operation);
         check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
         (void)cflow_io_actor_run_ready(&fixture.actor, 16u);
@@ -677,7 +677,7 @@ spec("CFlow IO Actor protocol") {
         check_equal(fixture.completions.count, (size_t)1u);
         check_equal(fixture.completions.completions[0].kind,
                     CFLOW_IO_COMPLETION_FAILED);
-        check_equal(fixture.completions.completions[0].error, TURBO_EBUSY);
+        check_equal(fixture.completions.completions[0].error, SALTS_EBUSY);
         check_equal(cflow_io_actor_acknowledge(
                         &fixture.actor, submitted.request_id),
                     CFLOW_IO_ACK_RELEASED);
@@ -694,7 +694,7 @@ spec("CFlow IO Actor protocol") {
 
         check_true(io_fixture_init(&fixture, 1u, 1u));
         fixture.backend.complete_during_submit = true;
-        fixture.backend.submit_status = TURBO_EBUSY;
+        fixture.backend.submit_status = SALTS_EBUSY;
         submitted = cflow_io_actor_try_submit(&fixture.actor, 401u, &operation);
         check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
         (void)cflow_io_actor_run_ready(&fixture.actor, 16u);
@@ -752,7 +752,7 @@ spec("CFlow IO Actor protocol") {
         config.wake_user = &wake;
         wake.actor = &fixture.actor;
         fixture.backend.complete_during_submit = true;
-        check_equal(cflow_io_actor_init(&fixture.actor, &config), TURBO_OK);
+        check_equal(cflow_io_actor_init(&fixture.actor, &config), SALTS_OK);
 
         submitted = cflow_io_actor_try_submit(&fixture.actor, 403u, &operation);
         check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
@@ -772,13 +772,13 @@ spec("CFlow IO Actor protocol") {
         cflow_io_actor_config config = {0};
         io_blocking_wake_probe wake;
         io_executor_runner runner;
-        turbo_thread_t thread = {0};
+        salts_thread_t thread = {0};
         int released = 0;
         int attempts = 0;
         cflow_io_operation operation = {&released, io_operation_release};
         cflow_io_submit_result submitted;
         const cflow_io_completion completion = {
-            CFLOW_IO_COMPLETION_OK, 10u, TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, 10u, SALTS_OK};
 
         memset(&fixture, 0, sizeof(fixture));
         atomic_init(&wake.block, false);
@@ -797,7 +797,7 @@ spec("CFlow IO Actor protocol") {
         config.completion_user = &fixture.completions;
         config.wake = io_wake_block;
         config.wake_user = &wake;
-        check_equal(cflow_io_actor_init(&fixture.actor, &config), TURBO_OK);
+        check_equal(cflow_io_actor_init(&fixture.actor, &config), SALTS_OK);
 
         submitted = cflow_io_actor_try_submit(&fixture.actor, 404u, &operation);
         check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
@@ -807,23 +807,23 @@ spec("CFlow IO Actor protocol") {
                     CFLOW_IO_COMPLETE_ACCEPTED);
         (void)cflow_io_actor_run_ready(&fixture.actor, 16u);
         atomic_store(&wake.block, true);
-        check_equal(turbo_thread_create(&thread, io_run_executor, &runner), 0);
+        check_equal(salts_thread_create(&thread, io_run_executor, &runner), 0);
         while (!atomic_load(&wake.started) && attempts++ < 1000)
-            turbo_sleep_ms(1);
+            salts_sleep_ms(1);
         check_true(atomic_load(&wake.started));
 
         check_equal(cflow_io_actor_acknowledge(
                         &fixture.actor, submitted.request_id),
                     CFLOW_IO_ACK_RELEASED);
-        check_equal(cflow_io_actor_close(&fixture.actor), TURBO_OK);
+        check_equal(cflow_io_actor_close(&fixture.actor), SALTS_OK);
         check_false(cflow_io_actor_is_quiescent(&fixture.actor));
-        check_equal(cflow_io_actor_destroy(&fixture.actor), TURBO_EBUSY);
+        check_equal(cflow_io_actor_destroy(&fixture.actor), SALTS_EBUSY);
 
         atomic_store(&wake.release, true);
-        check_equal(turbo_thread_join(&thread), 0);
+        check_equal(salts_thread_join(&thread), 0);
         check_equal(runner.ran, (size_t)1u);
         check_true(cflow_io_actor_is_quiescent(&fixture.actor));
-        check_equal(cflow_io_actor_destroy(&fixture.actor), TURBO_OK);
+        check_equal(cflow_io_actor_destroy(&fixture.actor), SALTS_OK);
         check_true(cflow_executor_shutdown(&fixture.executor));
         cflow_executor_destroy(&fixture.executor);
         check_equal(released, 1);
@@ -832,13 +832,13 @@ spec("CFlow IO Actor protocol") {
     it("admits concurrent publishers with unique request ownership") {
         enum { PRODUCERS = 4, PER_PRODUCER = 8, TOTAL = 32 };
         io_fixture fixture;
-        turbo_thread_t threads[PRODUCERS] = {0};
+        salts_thread_t threads[PRODUCERS] = {0};
         io_submitter_context contexts[PRODUCERS] = {0};
         cflow_io_submit_result results[TOTAL] = {0};
         int released[TOTAL] = {0};
         atomic_bool go = false;
         const cflow_io_completion completion = {
-            CFLOW_IO_COMPLETION_OK, 1u, TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, 1u, SALTS_OK};
         size_t producer;
         size_t index;
         size_t other;
@@ -848,14 +848,14 @@ spec("CFlow IO Actor protocol") {
             contexts[producer] = (io_submitter_context){
                 &fixture.actor, &go, producer * PER_PRODUCER,
                 PER_PRODUCER, results, released};
-            check_equal(turbo_thread_create(
+            check_equal(salts_thread_create(
                             &threads[producer], io_submitter,
                             &contexts[producer]),
                         0);
         }
         atomic_store(&go, true);
         for (producer = 0u; producer < PRODUCERS; ++producer)
-            check_equal(turbo_thread_join(&threads[producer]), 0);
+            check_equal(salts_thread_join(&threads[producer]), 0);
 
         for (index = 0u; index < TOTAL; ++index) {
             check_equal(results[index].status, CFLOW_IO_SUBMIT_ACCEPTED);

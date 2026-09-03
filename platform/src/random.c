@@ -1,5 +1,5 @@
-#include <turbo/error_codes.h>
-#include <turbo/random.h>
+#include <salts/error_codes.h>
+#include <salts/random.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -22,17 +22,17 @@
   #include <unistd.h>
 #endif
 
-enum { TURBO_PLATFORM_RANDOM_CHUNK_BYTES = 256 };
+enum { SALTS_PLATFORM_RANDOM_CHUNK_BYTES = 256 };
 
-int turbo_platform_secure_random(void *buffer, size_t length) {
+int salts_platform_secure_random(void *buffer, size_t length) {
   uint8_t *cursor = (uint8_t *)buffer;
-  if (length == 0u) return TURBO_OK;
-  if (buffer == NULL) return TURBO_EINVAL;
+  if (length == 0u) return SALTS_OK;
+  if (buffer == NULL) return SALTS_EINVAL;
 #if defined(_WIN32)
   while (length != 0u) {
     const ULONG chunk = length > (size_t)ULONG_MAX ? ULONG_MAX : (ULONG)length;
     const NTSTATUS status = BCryptGenRandom(NULL, cursor, chunk, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-    if (!BCRYPT_SUCCESS(status)) return TURBO_EIO;
+    if (!BCRYPT_SUCCESS(status)) return SALTS_EIO;
     cursor += chunk;
     length -= chunk;
   }
@@ -42,13 +42,13 @@ int turbo_platform_secure_random(void *buffer, size_t length) {
 #elif defined(__linux__)
   while (length != 0u) {
     const size_t chunk =
-        length > TURBO_PLATFORM_RANDOM_CHUNK_BYTES ? TURBO_PLATFORM_RANDOM_CHUNK_BYTES : length;
+        length > SALTS_PLATFORM_RANDOM_CHUNK_BYTES ? SALTS_PLATFORM_RANDOM_CHUNK_BYTES : length;
     const ssize_t received = getrandom(cursor, chunk, 0);
     if (received < 0) {
       if (errno == EINTR) continue;
       return -errno;
     }
-    if (received == 0) return TURBO_EIO;
+    if (received == 0) return SALTS_EIO;
     cursor += (size_t)received;
     length -= (size_t)received;
   }
@@ -63,7 +63,7 @@ int turbo_platform_secure_random(void *buffer, size_t length) {
     if (descriptor < 0) return -errno;
     while (length != 0u) {
       const size_t chunk =
-          length > TURBO_PLATFORM_RANDOM_CHUNK_BYTES ? TURBO_PLATFORM_RANDOM_CHUNK_BYTES : length;
+          length > SALTS_PLATFORM_RANDOM_CHUNK_BYTES ? SALTS_PLATFORM_RANDOM_CHUNK_BYTES : length;
       const ssize_t received = read(descriptor, cursor, chunk);
       if (received < 0) {
         const int error = errno;
@@ -73,7 +73,7 @@ int turbo_platform_secure_random(void *buffer, size_t length) {
       }
       if (received == 0) {
         (void)close(descriptor);
-        return TURBO_EIO;
+        return SALTS_EIO;
       }
       cursor += (size_t)received;
       length -= (size_t)received;
@@ -81,5 +81,5 @@ int turbo_platform_secure_random(void *buffer, size_t length) {
     (void)close(descriptor);
   }
 #endif
-  return TURBO_OK;
+  return SALTS_OK;
 }

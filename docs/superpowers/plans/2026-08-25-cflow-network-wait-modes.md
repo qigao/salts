@@ -6,7 +6,7 @@
 
 **Architecture:** Keep Actor and Executor public APIs unchanged. The benchmark's blocking mode wires the existing Actor advisory wake callback to a condition-variable edge latch, drains Actor/Executor work on the benchmark thread, and sleeps only after rechecking the latch under its mutex. Busy mode retains the current yield loop as a baseline.
 
-**Tech Stack:** ISO C11, CFlow IO Actor/native backend, TurboUtils mutex/condition/clock primitives, TinyTest, PowerShell GitHub Actions.
+**Tech Stack:** ISO C11, CFlow IO Actor/native backend, Salts mutex/condition/clock primitives, TinyTest, PowerShell GitHub Actions.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-cflow-network-performance-ci-design.md`
 

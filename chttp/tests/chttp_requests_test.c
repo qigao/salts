@@ -1,7 +1,7 @@
 #include "tinytest.h"
 #include <chttp/chttp.h>
 
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -123,15 +123,15 @@ static int chttp_requests_test_set_timeout(chttp_requests_test_socket socket_val
   const DWORD timeout_ms = CHTTP_REQUESTS_TEST_TIMEOUT_MS;
   return setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms,
                     (int)sizeof(timeout_ms)) == 0
-             ? TURBO_OK
-             : TURBO_EIO;
+             ? SALTS_OK
+             : SALTS_EIO;
 #else
   const struct timeval timeout = {CHTTP_REQUESTS_TEST_TIMEOUT_MS / 1000,
                                   (CHTTP_REQUESTS_TEST_TIMEOUT_MS % 1000) * 1000};
   return setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, &timeout, (socklen_t)sizeof(timeout)) ==
                  0
-             ? TURBO_OK
-             : TURBO_EIO;
+             ? SALTS_OK
+             : SALTS_EIO;
 #endif
 }
 
@@ -143,9 +143,9 @@ static int chttp_requests_test_listener(chttp_requests_test_socket *out_listener
 #else
   socklen_t length = (socklen_t)sizeof(address);
 #endif
-  if (out_listener == NULL || out_port == NULL) return TURBO_EINVAL;
+  if (out_listener == NULL || out_port == NULL) return SALTS_EINVAL;
   *out_listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (*out_listener == CHTTP_REQUESTS_TEST_INVALID_SOCKET) return TURBO_EIO;
+  if (*out_listener == CHTTP_REQUESTS_TEST_INVALID_SOCKET) return SALTS_EIO;
   memset(&address, 0, sizeof(address));
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -154,10 +154,10 @@ static int chttp_requests_test_listener(chttp_requests_test_socket *out_listener
       listen(*out_listener, 1) != 0) {
     chttp_requests_test_close_socket(*out_listener);
     *out_listener = CHTTP_REQUESTS_TEST_INVALID_SOCKET;
-    return TURBO_EIO;
+    return SALTS_EIO;
   }
   *out_port = ntohs(address.sin_port);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_requests_test_recv_all(chttp_requests_test_socket socket_value, void *data,
@@ -165,10 +165,10 @@ static int chttp_requests_test_recv_all(chttp_requests_test_socket socket_value,
   size_t offset = 0u;
   while (offset < size) {
     const int received = recv(socket_value, (char *)data + offset, (int)(size - offset), 0);
-    if (received <= 0) return TURBO_EIO;
+    if (received <= 0) return SALTS_EIO;
     offset += (size_t)received;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_requests_test_send_all(chttp_requests_test_socket socket_value, const void *data,
@@ -176,10 +176,10 @@ static int chttp_requests_test_send_all(chttp_requests_test_socket socket_value,
   size_t offset = 0u;
   while (offset < size) {
     const int sent = send(socket_value, (const char *)data + offset, (int)(size - offset), 0);
-    if (sent <= 0) return TURBO_EIO;
+    if (sent <= 0) return SALTS_EIO;
     offset += (size_t)sent;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static chttp_requests_test_socket chttp_requests_test_accept(chttp_requests_test_socket listener) {
@@ -204,17 +204,17 @@ static void chttp_requests_test_serve(void *user) {
   if (server == NULL || server->expected_size > sizeof(received)) return;
   accepted = accept(server->listener, NULL, NULL);
   if (accepted == CHTTP_REQUESTS_TEST_INVALID_SOCKET) {
-    server->status = TURBO_EIO;
+    server->status = SALTS_EIO;
     return;
   }
   server->status = chttp_requests_test_set_timeout(accepted);
-  if (server->status == TURBO_OK)
+  if (server->status == SALTS_OK)
     server->status = chttp_requests_test_recv_all(accepted, received, server->expected_size);
-  if (server->status == TURBO_OK && memcmp(received, server->expected, server->expected_size) != 0)
-    server->status = TURBO_EPROTO;
-  if (server->status == TURBO_OK && server->hold_after_receive_ms != 0u)
-    turbo_sleep_ms(server->hold_after_receive_ms);
-  if (server->status == TURBO_OK)
+  if (server->status == SALTS_OK && memcmp(received, server->expected, server->expected_size) != 0)
+    server->status = SALTS_EPROTO;
+  if (server->status == SALTS_OK && server->hold_after_receive_ms != 0u)
+    salts_sleep_ms(server->hold_after_receive_ms);
+  if (server->status == SALTS_OK)
     server->status =
         chttp_requests_test_send_all(accepted, server->response, server->response_size);
   chttp_requests_test_close_socket(accepted);
@@ -229,24 +229,24 @@ static void chttp_requests_test_serve_keep_alive(void *user) {
     return;
   accepted = accept(server->listener, NULL, NULL);
   if (accepted == CHTTP_REQUESTS_TEST_INVALID_SOCKET) {
-    server->status = TURBO_EIO;
+    server->status = SALTS_EIO;
     return;
   }
   server->status = chttp_requests_test_set_timeout(accepted);
-  if (server->status == TURBO_OK)
+  if (server->status == SALTS_OK)
     server->status = chttp_requests_test_recv_all(accepted, received, server->first_expected_size);
-  if (server->status == TURBO_OK &&
+  if (server->status == SALTS_OK &&
       memcmp(received, server->first_expected, server->first_expected_size) != 0)
-    server->status = TURBO_EPROTO;
-  if (server->status == TURBO_OK)
+    server->status = SALTS_EPROTO;
+  if (server->status == SALTS_OK)
     server->status =
         chttp_requests_test_send_all(accepted, server->first_response, server->first_response_size);
-  if (server->status == TURBO_OK)
+  if (server->status == SALTS_OK)
     server->status = chttp_requests_test_recv_all(accepted, received, server->second_expected_size);
-  if (server->status == TURBO_OK &&
+  if (server->status == SALTS_OK &&
       memcmp(received, server->second_expected, server->second_expected_size) != 0)
-    server->status = TURBO_EPROTO;
-  if (server->status == TURBO_OK)
+    server->status = SALTS_EPROTO;
+  if (server->status == SALTS_OK)
     server->status = chttp_requests_test_send_all(accepted, server->second_response,
                                                   server->second_response_size);
   chttp_requests_test_close_socket(accepted);
@@ -262,35 +262,35 @@ static void chttp_requests_test_serve_origin_switch(void *user) {
 
   accepted = chttp_requests_test_accept(server->listener);
   if (accepted == CHTTP_REQUESTS_TEST_INVALID_SOCKET) {
-    server->status = TURBO_EIO;
+    server->status = SALTS_EIO;
     return;
   }
   server->status = chttp_requests_test_set_timeout(accepted);
-  if (server->status == TURBO_OK)
+  if (server->status == SALTS_OK)
     server->status = chttp_requests_test_recv_all(accepted, received, server->first_expected_size);
-  if (server->status == TURBO_OK &&
+  if (server->status == SALTS_OK &&
       memcmp(received, server->first_expected, server->first_expected_size) != 0)
-    server->status = TURBO_EPROTO;
-  if (server->status == TURBO_OK)
+    server->status = SALTS_EPROTO;
+  if (server->status == SALTS_OK)
     server->status =
         chttp_requests_test_send_all(accepted, server->first_response, server->first_response_size);
-  if (server->status == TURBO_OK && recv(accepted, (char *)received, 1, 0) != 0)
-    server->status = TURBO_EPROTO;
+  if (server->status == SALTS_OK && recv(accepted, (char *)received, 1, 0) != 0)
+    server->status = SALTS_EPROTO;
   chttp_requests_test_close_socket(accepted);
 
-  if (server->status != TURBO_OK) return;
+  if (server->status != SALTS_OK) return;
   accepted = chttp_requests_test_accept(server->listener);
   if (accepted == CHTTP_REQUESTS_TEST_INVALID_SOCKET) {
-    server->status = TURBO_EIO;
+    server->status = SALTS_EIO;
     return;
   }
   server->status = chttp_requests_test_set_timeout(accepted);
-  if (server->status == TURBO_OK)
+  if (server->status == SALTS_OK)
     server->status = chttp_requests_test_recv_all(accepted, received, server->second_expected_size);
-  if (server->status == TURBO_OK &&
+  if (server->status == SALTS_OK &&
       memcmp(received, server->second_expected, server->second_expected_size) != 0)
-    server->status = TURBO_EPROTO;
-  if (server->status == TURBO_OK)
+    server->status = SALTS_EPROTO;
+  if (server->status == SALTS_OK)
     server->status = chttp_requests_test_send_all(accepted, server->second_response,
                                                   server->second_response_size);
   chttp_requests_test_close_socket(accepted);
@@ -330,7 +330,7 @@ static void chttp_requests_test_round_trip(chttp_client *client,
                                            const chttp_requests_test_case *test_case) {
   chttp_requests_test_socket listener = CHTTP_REQUESTS_TEST_INVALID_SOCKET;
   chttp_requests_test_server server = {0};
-  turbo_thread_t thread = NULL;
+  salts_thread_t thread = NULL;
   chttp_response response = {0};
   chttp_error error = {0};
   chttp_options options;
@@ -342,7 +342,7 @@ static void chttp_requests_test_round_trip(chttp_client *client,
 
   check_not_null(client);
   check_not_null(test_case);
-  check_equal(chttp_requests_test_listener(&listener, &port), TURBO_OK);
+  check_equal(chttp_requests_test_listener(&listener, &port), SALTS_OK);
   check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
   check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
   expected_size = snprintf(expected, sizeof(expected),
@@ -360,17 +360,17 @@ static void chttp_requests_test_round_trip(chttp_client *client,
                                         .expected_size = (size_t)expected_size,
                                         .response = test_case->wire_response,
                                         .response_size = test_case->wire_response_size};
-  check_equal(turbo_thread_create(&thread, chttp_requests_test_serve, &server), TURBO_OK);
+  check_equal(salts_thread_create(&thread, chttp_requests_test_serve, &server), SALTS_OK);
   options = (chttp_options){.connection_uri = uri,
                             .authority = authority,
                             .target = test_case->target,
                             .body = test_case->request_body,
                             .body_size = strlen(test_case->request_body),
                             .timeout_ms = CHTTP_REQUESTS_TEST_TIMEOUT_MS};
-  check_equal(test_case->call(client, &options, &response, &error), TURBO_OK);
-  check_equal(turbo_thread_join(&thread), TURBO_OK);
-  turbo_thread_destroy(&thread);
-  check_equal(server.status, TURBO_OK);
+  check_equal(test_case->call(client, &options, &response, &error), SALTS_OK);
+  check_equal(salts_thread_join(&thread), SALTS_OK);
+  salts_thread_destroy(&thread);
+  check_equal(server.status, SALTS_OK);
   check_equal(response.status_code, test_case->status_code);
   check_equal(response.reason, test_case->reason);
   check_equal(chttp_response_header(&response, "x-mode"), "requests");
@@ -390,7 +390,7 @@ spec("CHTTP requests-style client") {
     chttp_client_config config = chttp_requests_test_config();
     chttp_requests_test_socket listener = CHTTP_REQUESTS_TEST_INVALID_SOCKET;
     chttp_requests_test_keep_alive_server server = {0};
-    turbo_thread_t thread = NULL;
+    salts_thread_t thread = NULL;
     chttp_response response = {0};
     chttp_error error = {0};
     chttp_options options;
@@ -402,8 +402,8 @@ spec("CHTTP requests-style client") {
     int first_expected_size;
     int second_expected_size;
 
-    check_equal(chttp_client_init(&client, &config), TURBO_OK);
-    check_equal(chttp_requests_test_listener(&listener, &port), TURBO_OK);
+    check_equal(chttp_client_init(&client, &config), SALTS_OK);
+    check_equal(chttp_requests_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     first_expected_size = snprintf(first_expected, sizeof(first_expected),
@@ -432,29 +432,29 @@ spec("CHTTP requests-style client") {
         .first_response_size = sizeof(chttp_requests_test_keep_alive_response) - 1u,
         .second_response = chttp_requests_test_close_response,
         .second_response_size = sizeof(chttp_requests_test_close_response) - 1u};
-    check_equal(turbo_thread_create(&thread, chttp_requests_test_serve_keep_alive, &server),
-                TURBO_OK);
+    check_equal(salts_thread_create(&thread, chttp_requests_test_serve_keep_alive, &server),
+                SALTS_OK);
     options = (chttp_options){.connection_uri = uri,
                               .authority = authority,
                               .target = "/first",
                               .timeout_ms = CHTTP_REQUESTS_TEST_TIMEOUT_MS};
-    check_equal(chttp_get(&client, &options, &response, &error), TURBO_OK);
+    check_equal(chttp_get(&client, &options, &response, &error), SALTS_OK);
     check_equal(response.body_size, (size_t)3u);
     check_equal(response.body, "one", 3u);
     check_equal(response.protocol_keep_alive, 1);
     chttp_response_destroy(&response);
 
     options.target = "/second";
-    check_equal(chttp_get(&client, &options, &response, &error), TURBO_OK);
+    check_equal(chttp_get(&client, &options, &response, &error), SALTS_OK);
     check_equal(response.body_size, (size_t)3u);
     check_equal(response.body, "two", 3u);
     check_equal(response.protocol_keep_alive, 0);
     chttp_response_destroy(&response);
 
-    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(turbo_thread_join(&thread), TURBO_OK);
-    turbo_thread_destroy(&thread);
-    check_equal(server.status, TURBO_OK);
+    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(salts_thread_join(&thread), SALTS_OK);
+    salts_thread_destroy(&thread);
+    check_equal(server.status, SALTS_OK);
     chttp_requests_test_close_socket(listener);
   }
 
@@ -463,7 +463,7 @@ spec("CHTTP requests-style client") {
     chttp_client_config config = chttp_requests_test_config();
     chttp_requests_test_socket listener = CHTTP_REQUESTS_TEST_INVALID_SOCKET;
     chttp_requests_test_keep_alive_server server = {0};
-    turbo_thread_t thread = NULL;
+    salts_thread_t thread = NULL;
     chttp_response response = {0};
     chttp_error error = {0};
     chttp_options options;
@@ -474,8 +474,8 @@ spec("CHTTP requests-style client") {
     int first_expected_size;
     int second_expected_size;
 
-    check_equal(chttp_client_init(&client, &config), TURBO_OK);
-    check_equal(chttp_requests_test_listener(&listener, &port), TURBO_OK);
+    check_equal(chttp_client_init(&client, &config), SALTS_OK);
+    check_equal(chttp_requests_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     first_expected_size = snprintf(first_expected, sizeof(first_expected),
                                    "GET /first HTTP/1.1\r\n"
@@ -501,27 +501,27 @@ spec("CHTTP requests-style client") {
         .first_response_size = sizeof(chttp_requests_test_keep_alive_response) - 1u,
         .second_response = chttp_requests_test_close_response,
         .second_response_size = sizeof(chttp_requests_test_close_response) - 1u};
-    check_equal(turbo_thread_create(&thread, chttp_requests_test_serve_origin_switch, &server),
-                TURBO_OK);
+    check_equal(salts_thread_create(&thread, chttp_requests_test_serve_origin_switch, &server),
+                SALTS_OK);
 
     options = (chttp_options){.connection_uri = uri,
                               .authority = "first.test",
                               .target = "/first",
                               .timeout_ms = CHTTP_REQUESTS_TEST_TIMEOUT_MS};
-    check_equal(chttp_get(&client, &options, &response, &error), TURBO_OK);
+    check_equal(chttp_get(&client, &options, &response, &error), SALTS_OK);
     chttp_response_destroy(&response);
 
     options.authority = "second.test";
     options.target = "/second";
-    check_equal(chttp_get(&client, &options, &response, &error), TURBO_OK);
+    check_equal(chttp_get(&client, &options, &response, &error), SALTS_OK);
     check_equal(response.body_size, (size_t)3u);
     check_equal(response.body, "two", 3u);
     chttp_response_destroy(&response);
 
-    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(turbo_thread_join(&thread), TURBO_OK);
-    turbo_thread_destroy(&thread);
-    check_equal(server.status, TURBO_OK);
+    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(salts_thread_join(&thread), SALTS_OK);
+    salts_thread_destroy(&thread);
+    check_equal(server.status, SALTS_OK);
     chttp_requests_test_close_socket(listener);
   }
 
@@ -540,11 +540,11 @@ spec("CHTTP requests-style client") {
         .response_body = "ok",
         .response_body_size = 2u};
 
-    check_equal(chttp_client_init(&client, &config), TURBO_OK);
+    check_equal(chttp_client_init(&client, &config), SALTS_OK);
     {
       chttp_requests_test_socket listener = CHTTP_REQUESTS_TEST_INVALID_SOCKET;
       chttp_requests_test_server server = {0};
-      turbo_thread_t thread = NULL;
+      salts_thread_t thread = NULL;
       chttp_response response_value = {0};
       chttp_error error = {0};
       chttp_options options;
@@ -554,7 +554,7 @@ spec("CHTTP requests-style client") {
       uint16_t port = 0u;
       int expected_size;
 
-      check_equal(chttp_requests_test_listener(&listener, &port), TURBO_OK);
+      check_equal(chttp_requests_test_listener(&listener, &port), SALTS_OK);
       check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
       check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
       expected_size = snprintf(expected, sizeof(expected),
@@ -570,21 +570,21 @@ spec("CHTTP requests-style client") {
                                        .expected = expected,
                                        .expected_size = (size_t)expected_size,
                                        .hold_after_receive_ms = CHTTP_REQUESTS_TEST_SERVER_HOLD_MS};
-      check_equal(turbo_thread_create(&thread, chttp_requests_test_serve, &server), TURBO_OK);
+      check_equal(salts_thread_create(&thread, chttp_requests_test_serve, &server), SALTS_OK);
       options = (chttp_options){.connection_uri = uri,
                                 .authority = authority,
                                 .target = "/timeout",
                                 .timeout_ms = CHTTP_REQUESTS_TEST_DEADLINE_MS};
-      check_equal(chttp_get(&client, &options, &response_value, &error), TURBO_ETIMEDOUT);
-      check_equal(error.status, TURBO_ETIMEDOUT);
+      check_equal(chttp_get(&client, &options, &response_value, &error), SALTS_ETIMEDOUT);
+      check_equal(error.status, SALTS_ETIMEDOUT);
       check_null(response_value.body);
-      check_equal(turbo_thread_join(&thread), TURBO_OK);
-      turbo_thread_destroy(&thread);
-      check_equal(server.status, TURBO_OK);
+      check_equal(salts_thread_join(&thread), SALTS_OK);
+      salts_thread_destroy(&thread);
+      check_equal(server.status, SALTS_OK);
       chttp_requests_test_close_socket(listener);
     }
     chttp_requests_test_round_trip(&client, &recovery_case);
-    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), SALTS_OK);
     check_null(client.impl);
   }
 
@@ -644,11 +644,11 @@ spec("CHTTP requests-style client") {
     chttp_client_config config = chttp_requests_test_config();
     size_t index;
 
-    check_equal(chttp_client_init(&client, &config), TURBO_OK);
+    check_equal(chttp_client_init(&client, &config), SALTS_OK);
     for (index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index) {
       chttp_requests_test_round_trip(&client, &cases[index]);
     }
-    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), SALTS_OK);
     check_null(client.impl);
   }
 
@@ -667,9 +667,9 @@ spec("CHTTP requests-style client") {
     chttp_client client = {0};
     chttp_client_config config = chttp_requests_test_config();
 
-    check_equal(chttp_client_init(&client, &config), TURBO_OK);
+    check_equal(chttp_client_init(&client, &config), SALTS_OK);
     chttp_requests_test_round_trip(&client, &head_case);
-    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), SALTS_OK);
     check_null(client.impl);
   }
 
@@ -683,7 +683,7 @@ spec("CHTTP requests-style client") {
     chttp_client_config config = chttp_requests_test_config();
     chttp_requests_test_socket listener = CHTTP_REQUESTS_TEST_INVALID_SOCKET;
     chttp_requests_test_server server = {0};
-    turbo_thread_t thread = NULL;
+    salts_thread_t thread = NULL;
     chttp_response response = {0};
     chttp_error error = {0};
     chttp_options options;
@@ -706,9 +706,9 @@ spec("CHTTP requests-style client") {
     check_equal(tt_write_file(upload_path, upload_data, sizeof(upload_data) - 1u), 0);
     check_equal(tt_write_file(download_path, "sentinel", sizeof("sentinel") - 1u), 0);
     config.stream_chunk_bytes = 8u;
-    check_equal(chttp_client_init(&client, &config), TURBO_OK);
+    check_equal(chttp_client_init(&client, &config), SALTS_OK);
 
-    check_equal(chttp_requests_test_listener(&listener, &port), TURBO_OK);
+    check_equal(chttp_requests_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     expected_size = snprintf(expected, sizeof(expected),
@@ -723,17 +723,17 @@ spec("CHTTP requests-style client") {
                                           .expected_size = (size_t)expected_size,
                                           .response = upload_response,
                                           .response_size = sizeof(upload_response) - 1u};
-    check_equal(turbo_thread_create(&thread, chttp_requests_test_serve, &server), TURBO_OK);
+    check_equal(salts_thread_create(&thread, chttp_requests_test_serve, &server), SALTS_OK);
     options = (chttp_options){.connection_uri = uri,
                               .authority = authority,
                               .target = "/upload",
                               .timeout_ms = CHTTP_REQUESTS_TEST_TIMEOUT_MS};
     check_equal(chttp_put_file(&client, &options, upload_path, chttp_requests_test_progress,
                                &upload_progress, &response, &error),
-                TURBO_OK);
-    check_equal(turbo_thread_join(&thread), TURBO_OK);
-    turbo_thread_destroy(&thread);
-    check_equal(server.status, TURBO_OK);
+                SALTS_OK);
+    check_equal(salts_thread_join(&thread), SALTS_OK);
+    salts_thread_destroy(&thread);
+    check_equal(server.status, SALTS_OK);
     check_equal(response.status_code, 201u);
     check_equal(upload_progress.transferred, sizeof(upload_data) - 1u);
     check_equal(upload_progress.total, sizeof(upload_data) - 1u);
@@ -742,7 +742,7 @@ spec("CHTTP requests-style client") {
     chttp_requests_test_close_socket(listener);
 
     listener = CHTTP_REQUESTS_TEST_INVALID_SOCKET;
-    check_equal(chttp_requests_test_listener(&listener, &port), TURBO_OK);
+    check_equal(chttp_requests_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     expected_size = snprintf(expected, sizeof(expected),
@@ -762,17 +762,17 @@ spec("CHTTP requests-style client") {
                                           .expected_size = (size_t)expected_size,
                                           .response = wire_response,
                                           .response_size = (size_t)wire_response_size};
-    check_equal(turbo_thread_create(&thread, chttp_requests_test_serve, &server), TURBO_OK);
+    check_equal(salts_thread_create(&thread, chttp_requests_test_serve, &server), SALTS_OK);
     options = (chttp_options){.connection_uri = uri,
                               .authority = authority,
                               .target = "/download",
                               .timeout_ms = CHTTP_REQUESTS_TEST_TIMEOUT_MS};
     check_equal(chttp_download_file(&client, &options, download_path, chttp_requests_test_progress,
                                     &download_progress, &response, &error),
-                TURBO_OK);
-    check_equal(turbo_thread_join(&thread), TURBO_OK);
-    turbo_thread_destroy(&thread);
-    check_equal(server.status, TURBO_OK);
+                SALTS_OK);
+    check_equal(salts_thread_join(&thread), SALTS_OK);
+    salts_thread_destroy(&thread);
+    check_equal(server.status, SALTS_OK);
     check_equal(response.status_code, 200u);
     check_null(response.body);
     check_equal(response.body_size, sizeof(download_data) - 1u);
@@ -791,7 +791,7 @@ spec("CHTTP requests-style client") {
 
     check_equal(tt_write_file(download_path, "sentinel", sizeof("sentinel") - 1u), 0);
     listener = CHTTP_REQUESTS_TEST_INVALID_SOCKET;
-    check_equal(chttp_requests_test_listener(&listener, &port), TURBO_OK);
+    check_equal(chttp_requests_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     expected_size = snprintf(expected, sizeof(expected),
@@ -808,17 +808,17 @@ spec("CHTTP requests-style client") {
                                           .expected_size = (size_t)expected_size,
                                           .response = wire_response,
                                           .response_size = (size_t)wire_response_size};
-    check_equal(turbo_thread_create(&thread, chttp_requests_test_serve, &server), TURBO_OK);
+    check_equal(salts_thread_create(&thread, chttp_requests_test_serve, &server), SALTS_OK);
     options = (chttp_options){.connection_uri = uri,
                               .authority = authority,
                               .target = "/missing",
                               .timeout_ms = CHTTP_REQUESTS_TEST_TIMEOUT_MS};
     check_equal(
         chttp_download_file(&client, &options, download_path, NULL, NULL, &response, &error),
-        TURBO_OK);
-    check_equal(turbo_thread_join(&thread), TURBO_OK);
-    turbo_thread_destroy(&thread);
-    check_equal(server.status, TURBO_OK);
+        SALTS_OK);
+    check_equal(salts_thread_join(&thread), SALTS_OK);
+    salts_thread_destroy(&thread);
+    check_equal(server.status, SALTS_OK);
     check_equal(response.status_code, 404u);
     downloaded = tt_read_file(download_path, &downloaded_size);
     check_not_null(downloaded);
@@ -827,7 +827,7 @@ spec("CHTTP requests-style client") {
     free(downloaded);
     chttp_response_destroy(&response);
 
-    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(tt_remove_file(upload_path), 0);
     check_equal(tt_remove_file(download_path), 0);
     free(upload_path);

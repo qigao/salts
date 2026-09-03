@@ -145,11 +145,11 @@ CMeta aggregate header registers the value kinds `Pair`, `Tuple`, `Option`, and
 registered kind to that kind's concrete C11 generator.
 
 Algorithmic container kinds such as `List`, `Vec`, and `HashMap` belong to
-Rocida STL. Container users include `<rocida/stl/typed.h>` and link
-`Rocida::STL`:
+CSTL. Container users include `<cstl/typed.h>` and link
+`Salts::CSTL`:
 
 ```c
-#include <rocida/stl/typed.h>
+#include <cstl/typed.h>
 
 typed(List, IntList, int);
 typed(Vec, IntVec, int);
@@ -174,10 +174,10 @@ complete facade does not implicitly register its element, key, or value types;
 those types must satisfy the finite type-universe rules described below.
 
 Declare each concrete container with its own `typed(...)` statement, as shown
-above. There is no batch syntax inside the CMeta Generic grammar. Rocida STL also
+above. There is no batch syntax inside the CMeta Generic grammar. CSTL also
 retains self-describing raw-handle initializers such as `Vec(int, variable)`
 and `VecOf(int)` (plus their associative forms). Those initializers produce
-erased Rocida STL handles; they do not declare a generated Generic type and do
+erased CSTL handles; they do not declare a generated Generic type and do
 not change the meaning of `typed(...)`.
 
 ### `typed_any(...)`
@@ -634,7 +634,7 @@ a different provider and `CMETA_INVALID_ARGUMENT` for an invalid declaration,
 missing lifecycle callback, or invalid pointer.
 
 Complete C usage is compiled in
-`turbostl/tests/turbostl_construction_binding_test.c`.
+`cstl/tests/cstl_construction_binding_test.c`.
 
 The restore operation is not a synonym for `cmeta_collector_abort()`.
 Collector abort owns only a begun/accepting collection transaction and remains
@@ -700,7 +700,7 @@ Containers(
 Current style:
 
 ```c
-#include <rocida/stl/typed.h>
+#include <cstl/typed.h>
 
 typed(List, IntList, int);
 typed(Vec, IntVec, int);

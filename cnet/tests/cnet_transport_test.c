@@ -2,7 +2,7 @@
 #include "cnet_test_pipe.h"
 #include "cnet_transport.h"
 #include "tinytest.h"
-#include <turbo/native_io.h>
+#include <salts/native_io.h>
 
 #include <stdint.h>
 #include <string.h>
@@ -55,7 +55,7 @@ static int cnet_test_listener(cnet_test_socket *out_listener, struct sockaddr_in
   socklen_t length = (socklen_t)sizeof(*out_address);
 #endif
   *out_listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (*out_listener == CNET_TEST_INVALID_SOCKET) return TURBO_EIO;
+  if (*out_listener == CNET_TEST_INVALID_SOCKET) return SALTS_EIO;
   memset(out_address, 0, sizeof(*out_address));
   out_address->sin_family = AF_INET;
   out_address->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -64,9 +64,9 @@ static int cnet_test_listener(cnet_test_socket *out_listener, struct sockaddr_in
       listen(*out_listener, 1) != 0) {
     cnet_test_close_socket(*out_listener);
     *out_listener = CNET_TEST_INVALID_SOCKET;
-    return TURBO_EIO;
+    return SALTS_EIO;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int cnet_test_udp_peer(cnet_test_socket *out_socket, struct sockaddr_in *out_address) {
@@ -76,7 +76,7 @@ static int cnet_test_udp_peer(cnet_test_socket *out_socket, struct sockaddr_in *
   socklen_t length = (socklen_t)sizeof(*out_address);
 #endif
   *out_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  if (*out_socket == CNET_TEST_INVALID_SOCKET) return TURBO_EIO;
+  if (*out_socket == CNET_TEST_INVALID_SOCKET) return SALTS_EIO;
   memset(out_address, 0, sizeof(*out_address));
   out_address->sin_family = AF_INET;
   out_address->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -84,9 +84,9 @@ static int cnet_test_udp_peer(cnet_test_socket *out_socket, struct sockaddr_in *
       getsockname(*out_socket, (struct sockaddr *)out_address, &length) != 0) {
     cnet_test_close_socket(*out_socket);
     *out_socket = CNET_TEST_INVALID_SOCKET;
-    return TURBO_EIO;
+    return SALTS_EIO;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void cnet_test_tcp_transport(native_io_backend_kind kind) {
@@ -100,14 +100,14 @@ static void cnet_test_tcp_transport(native_io_backend_kind kind) {
   native_io_completion completion = {0};
   size_t count = 0u;
 
-  check_equal(native_io_backend_init(&backend, &config), TURBO_OK);
-  check_equal(cnet_test_listener(&listener, &address), TURBO_OK);
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+  check_equal(cnet_test_listener(&listener, &address), SALTS_OK);
   check_equal(cnet_transport_tcp_connect(&transport, &backend, kind, &address, sizeof(address), 91u,
                                          &request),
-              TURBO_OK);
+              SALTS_OK);
   check_true(native_io_request_valid(request));
   check_equal(native_io_backend_observe(&backend, &completion, 1u, CNET_TEST_TIMEOUT_MS, &count),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(count, 1u);
   check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
   check_equal(completion.user_data, 91u);
@@ -116,9 +116,9 @@ static void cnet_test_tcp_transport(native_io_backend_kind kind) {
 
   cnet_test_close_socket(accepted);
   cnet_test_close_socket(listener);
-  check_equal(cnet_transport_close(&transport, &backend), TURBO_OK);
-  check_equal(native_io_backend_close(&backend), TURBO_OK);
-  check_equal(native_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(cnet_transport_close(&transport, &backend), SALTS_OK);
+  check_equal(native_io_backend_close(&backend), SALTS_OK);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
 }
 
 static void cnet_test_udp_transport(native_io_backend_kind kind) {
@@ -134,26 +134,26 @@ static void cnet_test_udp_transport(native_io_backend_kind kind) {
   unsigned char received[sizeof(payload)] = {0};
   size_t count = 0u;
 
-  check_equal(native_io_backend_init(&backend, &config), TURBO_OK);
-  check_equal(cnet_test_udp_peer(&peer, &address), TURBO_OK);
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+  check_equal(cnet_test_udp_peer(&peer, &address), SALTS_OK);
   check_equal(cnet_transport_udp_connect(&transport, &backend, kind, &address, sizeof(address)),
-              TURBO_OK);
+              SALTS_OK);
   operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_UDP_SEND_TO,
                                     .endpoint = transport.endpoint,
                                     .buffer = (void *)payload,
                                     .length = sizeof(payload)};
-  check_equal(native_io_backend_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_backend_submit(&backend, &operation, &request), SALTS_OK);
   check_equal(native_io_backend_observe(&backend, &completion, 1u, CNET_TEST_TIMEOUT_MS, &count),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(count, 1u);
   check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
   check_equal(recv(peer, (char *)received, (int)sizeof(received), 0), (int)sizeof(received));
   check_equal(received, payload, sizeof(payload));
 
   cnet_test_close_socket(peer);
-  check_equal(cnet_transport_close(&transport, &backend), TURBO_OK);
-  check_equal(native_io_backend_close(&backend), TURBO_OK);
-  check_equal(native_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(cnet_transport_close(&transport, &backend), SALTS_OK);
+  check_equal(native_io_backend_close(&backend), SALTS_OK);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
 }
 
 static void cnet_test_pipe_transport(native_io_backend_kind kind) {
@@ -169,21 +169,21 @@ static void cnet_test_pipe_transport(native_io_backend_kind kind) {
   unsigned char received[sizeof(inbound)] = {0};
   size_t count = 0u;
 
-  check_equal(cnet_shared_test_make_pipe_pair(&pair), TURBO_OK);
-  check_equal(native_io_backend_init(&backend, &config), TURBO_OK);
+  check_equal(cnet_shared_test_make_pipe_pair(&pair), SALTS_OK);
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
   check_equal(cnet_transport_adopt_pipe(&transport, &backend, pair.cnet_read, pair.cnet_write),
-              TURBO_OK);
+              SALTS_OK);
   pair.cnet_read = pair.cnet_write = UINTPTR_MAX;
 
   operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_PIPE_READ,
                                     .endpoint = cnet_transport_read_endpoint(&transport),
                                     .buffer = received,
                                     .length = sizeof(received)};
-  check_equal(native_io_backend_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_backend_submit(&backend, &operation, &request), SALTS_OK);
   check_equal(cnet_shared_test_pipe_peer_write(pair.peer_write, inbound, sizeof(inbound)),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(native_io_backend_observe(&backend, &completion, 1u, CNET_TEST_TIMEOUT_MS, &count),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(count, 1u);
   check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
   check_equal(received, inbound, sizeof(inbound));
@@ -192,20 +192,20 @@ static void cnet_test_pipe_transport(native_io_backend_kind kind) {
                                     .endpoint = cnet_transport_write_endpoint(&transport),
                                     .buffer = (void *)outbound,
                                     .length = sizeof(outbound)};
-  check_equal(native_io_backend_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_backend_submit(&backend, &operation, &request), SALTS_OK);
   check_equal(native_io_backend_observe(&backend, &completion, 1u, CNET_TEST_TIMEOUT_MS, &count),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(count, 1u);
   check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
   memset(received, 0, sizeof(received));
   check_equal(cnet_shared_test_pipe_peer_read(pair.peer_read, received, sizeof(received)),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(received, outbound, sizeof(outbound));
 
-  check_equal(cnet_transport_close(&transport, &backend), TURBO_OK);
+  check_equal(cnet_transport_close(&transport, &backend), SALTS_OK);
   cnet_shared_test_close_pipe_pair(&pair);
-  check_equal(native_io_backend_close(&backend), TURBO_OK);
-  check_equal(native_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_backend_close(&backend), SALTS_OK);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
 }
 
 static void cnet_test_named_pipe_transport(native_io_backend_kind kind) {
@@ -221,19 +221,19 @@ static void cnet_test_named_pipe_transport(native_io_backend_kind kind) {
   unsigned char received[sizeof(inbound)] = {0};
   size_t count = 0u;
 
-  check_equal(cnet_shared_test_named_pipe_start(&pipe), TURBO_OK);
-  check_equal(native_io_backend_init(&backend, &config), TURBO_OK);
-  check_equal(cnet_transport_pipe_connect(&transport, &backend, kind, pipe.name), TURBO_OK);
-  check_equal(cnet_shared_test_named_pipe_finish(&pipe), TURBO_OK);
+  check_equal(cnet_shared_test_named_pipe_start(&pipe), SALTS_OK);
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+  check_equal(cnet_transport_pipe_connect(&transport, &backend, kind, pipe.name), SALTS_OK);
+  check_equal(cnet_shared_test_named_pipe_finish(&pipe), SALTS_OK);
 
   operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_PIPE_READ,
                                     .endpoint = cnet_transport_read_endpoint(&transport),
                                     .buffer = received,
                                     .length = sizeof(received)};
-  check_equal(native_io_backend_submit(&backend, &operation, &request), TURBO_OK);
-  check_equal(cnet_shared_test_named_pipe_peer_write(&pipe, inbound, sizeof(inbound)), TURBO_OK);
+  check_equal(native_io_backend_submit(&backend, &operation, &request), SALTS_OK);
+  check_equal(cnet_shared_test_named_pipe_peer_write(&pipe, inbound, sizeof(inbound)), SALTS_OK);
   check_equal(native_io_backend_observe(&backend, &completion, 1u, CNET_TEST_TIMEOUT_MS, &count),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(count, 1u);
   check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
   check_equal(received, inbound, sizeof(inbound));
@@ -242,19 +242,19 @@ static void cnet_test_named_pipe_transport(native_io_backend_kind kind) {
                                     .endpoint = cnet_transport_write_endpoint(&transport),
                                     .buffer = (void *)outbound,
                                     .length = sizeof(outbound)};
-  check_equal(native_io_backend_submit(&backend, &operation, &request), TURBO_OK);
+  check_equal(native_io_backend_submit(&backend, &operation, &request), SALTS_OK);
   check_equal(native_io_backend_observe(&backend, &completion, 1u, CNET_TEST_TIMEOUT_MS, &count),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(count, 1u);
   check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
   memset(received, 0, sizeof(received));
-  check_equal(cnet_shared_test_named_pipe_peer_read(&pipe, received, sizeof(received)), TURBO_OK);
+  check_equal(cnet_shared_test_named_pipe_peer_read(&pipe, received, sizeof(received)), SALTS_OK);
   check_equal(received, outbound, sizeof(outbound));
 
-  check_equal(cnet_transport_close(&transport, &backend), TURBO_OK);
+  check_equal(cnet_transport_close(&transport, &backend), SALTS_OK);
   cnet_shared_test_named_pipe_close(&pipe);
-  check_equal(native_io_backend_close(&backend), TURBO_OK);
-  check_equal(native_io_backend_destroy(&backend), TURBO_OK);
+  check_equal(native_io_backend_close(&backend), SALTS_OK);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
 }
 
 spec("CNet NativeIO transport ownership") {
@@ -266,7 +266,7 @@ spec("CNet NativeIO transport ownership") {
     memset(&address, 0xa5, sizeof(address));
     check_equal(cnet_transport_parse_numeric_address("127.0.0.1", port, &address, sizeof(address),
                                                      &address_length),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(address_length, sizeof(struct sockaddr_in));
     check_equal(((const struct sockaddr_in *)&address)->sin_family, AF_INET);
     check_equal(((const struct sockaddr_in *)&address)->sin_port, htons(port));
@@ -276,7 +276,7 @@ spec("CNet NativeIO transport ownership") {
     address_length = SIZE_MAX;
     check_equal(cnet_transport_parse_numeric_address("::1", port, &address, sizeof(address),
                                                      &address_length),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(address_length, sizeof(struct sockaddr_in6));
     check_equal(((const struct sockaddr_in6 *)&address)->sin6_family, AF_INET6);
     check_equal(((const struct sockaddr_in6 *)&address)->sin6_port, htons(port));
@@ -292,7 +292,7 @@ spec("CNet NativeIO transport ownership") {
     memset(&address, 0, sizeof(address));
     check_equal(cnet_transport_parse_numeric_address("localhost", UINT16_C(443), &address,
                                                      sizeof(address), &address_length),
-                TURBO_ENOENT);
+                SALTS_ENOENT);
     check_equal(address_length, 0u);
   }
 
@@ -346,13 +346,13 @@ spec("CNet NativeIO transport ownership") {
                                   .write_attached = true};
       int status;
       if (!native_io_backend_kind_supports_pipe(backends[index])) continue;
-      check_equal(native_io_backend_init(&backend, &config), TURBO_OK);
+      check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
       status = cnet_transport_pipe_connect(&transport, &backend, backends[index],
                                            "cnet-missing-platform-pipe");
-      check(status != TURBO_OK);
+      check(status != SALTS_OK);
       check_false(cnet_transport_active(&transport));
-      check_equal(native_io_backend_close(&backend), TURBO_OK);
-      check_equal(native_io_backend_destroy(&backend), TURBO_OK);
+      check_equal(native_io_backend_close(&backend), SALTS_OK);
+      check_equal(native_io_backend_destroy(&backend), SALTS_OK);
     }
   }
 
@@ -365,7 +365,7 @@ spec("CNet NativeIO transport ownership") {
     native_io_request request = {1u, 1u};
     check_equal(cnet_transport_tcp_connect(&transport, NULL, NATIVE_IO_BACKEND_IOCP, NULL, 0u, 0u,
                                            &request),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     check_equal(transport.native_handle, UINTPTR_MAX);
     check_false(transport.attached);
     check_false(native_io_request_valid(request));

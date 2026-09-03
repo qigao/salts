@@ -14,10 +14,10 @@ D2 原设计关于 scalar/struct decode、context-first、caller scratch、prefl
 
 ## 2. Ownership 最终决策
 
-CBind 与 CMeta/CSerde 同属 TurboUtils 基础数据语义栈：
+CBind 与 CMeta/CSerde 同属 Salts 基础数据语义栈：
 
 ```text
-TurboUtils
+Salts
 ├── CMeta   semantic/type truth
 ├── CSerde  canonical token truth
 ├── CBind   canonical semantic value <-> native C storage
@@ -28,9 +28,9 @@ TurboUtils
 公开身份保持：
 
 ```text
-repo:    qigao/turbo-utils
+repo:    qigao/salts
 module:  top-level cbind/
-target:  TurboUtils::CBind
+target:  Salts::CBind
 headers: <cbind/...>
 C ABI:   cbind_*
 ```
@@ -38,9 +38,9 @@ C ABI:   cbind_*
 依赖固定为：
 
 ```text
-TurboUtils::CBind
-    -> TurboUtils::CMeta
-    -> TurboUtils::CSerde
+Salts::CBind
+    -> Salts::CMeta
+    -> Salts::CSerde
 ```
 
 CBind core 不依赖：
@@ -50,7 +50,7 @@ TurboParser
 parser/*
 DataBind
 TBE
-TurboSTL
+Container
 CFlow
 JSON/YAML/XML/CSV concrete parser
 ```
@@ -59,7 +59,7 @@ repo ownership 由模块自身语义和依赖决定，而不是由未来 consume
 
 ## 3. TurboParser 的职责
 
-TurboParser 继续单向依赖 TurboUtils，并拥有格式语法、查询和 format-specific projection：
+TurboParser 继续单向依赖 Salts，并拥有格式语法、查询和 format-specific projection：
 
 ```text
 TurboParser
@@ -75,13 +75,13 @@ TurboParser
 ```text
 TurboParser format adapter
     -> concrete parser
-    -> TurboUtils::CSerde
-    -> TurboUtils::CBind
+    -> Salts::CSerde
+    -> Salts::CBind
 ```
 
-TurboUtils 不反向依赖 TurboParser。
+Salts 不反向依赖 TurboParser。
 
-DataBind/TbeTyped 可在后续 migration 中消费 `TurboUtils::CBind`，但它们不是 CBind ownership 的理由。
+DataBind/TbeTyped 可在后续 migration 中消费 `Salts::CBind`，但它们不是 CBind ownership 的理由。
 
 ## 4. D2 public API 不变
 
@@ -119,7 +119,7 @@ CSerde v1 的 public decode substrate 是 pull `cserde_reader`。TurboParser 当
 parser SAX -> canonical token -> cbind machine
 ```
 
-该结构可以是 CBind D2 的内部实现方式，但 **private machine 不能作为跨 repo contract**。TurboParser 不得 include TurboUtils private headers 或调用未导出的 CBind internal symbols。
+该结构可以是 CBind D2 的内部实现方式，但 **private machine 不能作为跨 repo contract**。TurboParser 不得 include Salts private headers 或调用未导出的 CBind internal symbols。
 
 因此 D2 只要求 `cbind_decode(reader)` 的可观察语义，不要求公开或稳定内部 machine ABI。
 
@@ -145,7 +145,7 @@ bounded/streaming execution
 
 ## 6. Direct format binding 的 ownership
 
-未来 convenience API 可以让应用直接从格式输入绑定 native object，但 implementation/target 属于 TurboParser format adapter，而不是 `TurboUtils::CBind` core。
+未来 convenience API 可以让应用直接从格式输入绑定 native object，但 implementation/target 属于 TurboParser format adapter，而不是 `Salts::CBind` core。
 
 概念数据流：
 
@@ -159,7 +159,7 @@ TurboParser concrete parser
 format-specific canonical projection
         |
         v
-TurboUtils::CBind
+Salts::CBind
         |
         v
 native C object
@@ -171,7 +171,7 @@ JSON/YAML 更接近 canonical MAP/ARRAY event model；XML/CSV 需要 format-spec
 
 ## 7. CFlow integration 最终边界
 
-CFlow 与 CBind 都在 TurboUtils，但二者 core 仍不互相依赖。
+CFlow 与 CBind 都在 Salts，但二者 core 仍不互相依赖。
 
 禁止把 raw `cserde_token` 暴露成允许任意业务 operator 的普通 typed CFlow stream：
 
@@ -223,8 +223,8 @@ Parser-specific stream composition 属于 TurboParser integration layer，因为
 ```text
 TurboParser parser/CBind/CFlow integration
     -> concrete parser/query
-    -> TurboUtils::CBind
-    -> TurboUtils::CFlow
+    -> Salts::CBind
+    -> Salts::CFlow
 ```
 
 `CBindFlow` 可作为讨论中的 design label，但 target/header/API 名称尚未批准，不属于 D2 ABI。
@@ -240,7 +240,7 @@ TbeTyped generic semantic metadata
     -> project/replace with CMeta semantic descriptors
 
 DataBind native binding paths
-    -> delegate generic binding to TurboUtils::CBind
+    -> delegate generic binding to Salts::CBind
 
 TBE-only metadata
     -> retain wire offset / endian / presence / fixed block / group / var-data
@@ -253,7 +253,7 @@ TBE-only metadata
 D2 implementation plan 必须：
 
 ```text
-keep target TurboUtils::CBind
+keep target Salts::CBind
 keep production deps CMeta + CSerde only
 keep public entry cbind_decode(reader)
 not add parser adapters
@@ -264,14 +264,14 @@ not modify TurboParser
 
 内部是否采用 token-fed state machine 可以由 implementation plan 为可测试性/职责分离做出选择，但它必须保持 private，且不能被当作未来 TurboParser integration ABI。
 
-实现应从 implementation 时的最新 TurboUtils master 创建 feature branch；本 design branch 的历史 base SHA 不要求成为未来 implementation branch base。
+实现应从 implementation 时的最新 Salts master 创建 feature branch；本 design branch 的历史 base SHA 不要求成为未来 implementation branch base。
 
 ## 11. 后续设计顺序
 
 推荐顺序：
 
 ```text
-D2   TurboUtils::CBind scalar + struct pull decode
+D2   Salts::CBind scalar + struct pull decode
 D2a  installed package / Linux + Windows conformance
 P1   incremental CBind decoder contract（仅当 direct SAX zero-queue 需要）
 P2   TurboParser JSON direct adapter
@@ -287,8 +287,8 @@ P1 是否需要、以及具体 public ABI，在 P2 设计时由真实 parser int
 ## 12. Final invariants
 
 ```text
-TurboUtils owns CMeta + CSerde + CBind + CFlow.
-TurboUtils does not depend on TurboParser.
+Salts owns CMeta + CSerde + CBind + CFlow.
+Salts does not depend on TurboParser.
 
 CBind depends only on CMeta + CSerde.
 CBind does not depend on CFlow or parser/*.

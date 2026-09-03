@@ -2,13 +2,13 @@
 
 ## 背景与范围
 
-本阶段把同一所有者仓库 `qigao/TurboHTTP` 的 HTTP/2 与 S3 能力迁入
-TurboUtils。审查源为 `C:\projects\cpp\TurboHTTP` commit
+本阶段把同一所有者的旧 HTTP codebase 中的 HTTP/2 与 S3 能力迁入
+Salts。审查基线 commit 为
 `38f1e389b3f94909db6cb2482a8cbc16522e7e4f`。源仓库没有根级
 `LICENSE`、`COPYING` 或 `NOTICE`；迁移保留本节的来源、commit 与作者记录，
 不推断或新增许可文本。
 
-S3 协议边界与测试思路另外依据 TurboHTTP commit
+S3 协议边界与测试思路另外依据旧 codebase commit
 `5f1068f5194f94472e54a185ec51638f421d4fc5` 重建；准确的文件映射和许可事实记录在
 `s3/PROVENANCE.md`。
 
@@ -35,8 +35,8 @@ headers 或 body hash。
 
 ### 下游依赖边界
 
-`llhttp` 与 `c-ares` 是实现细节。安装包使用者只链接 `Rocida::CHTTP`、
-`Rocida::CNet` 或更高层 target，不需要发现、链接或配置这两个包。由于静态库的 PRIVATE
+`llhttp` 与 `c-ares` 是实现细节。安装包使用者只链接 `Salts::CHTTP`、
+`Salts::CNet` 或更高层 target，不需要发现、链接或配置这两个包。由于静态库的 PRIVATE
 依赖仍会以 link-only 形式进入 CMake export，CNet 与 CHTTP 使用共享库边界封装各自私有
 依赖；Windows 生成 import library/DLL，Linux 生成带项目版本的 shared object。公开
 header 不出现第三方类型，安装测试显式禁用两个 package 的发现以验证边界。
@@ -52,7 +52,7 @@ header 不出现第三方类型，安装测试显式禁用两个 package 的发�
   时 DATA 先由 sink 成功消费再归还窗口，response body 不保留但累计 size 仍可见。
 - session key：`connection_uri + authority + TLS profile identity + HTTP version`。HTTP/1.1
   与 HTTP/2 连接不能互相复用。物理池满时只驱逐没有活动 request/stream 的连接；advanced
-  submit 返回一次 `TURBO_ENOBUFS`，由 owner poll 后重试，requests-style 调用在内部完成该过程。
+  submit 返回一次 `SALTS_ENOBUFS`，由 owner poll 后重试，requests-style 调用在内部完成该过程。
 - 状态：`NEW -> CONNECTING -> ACTIVE -> DRAINING -> CLOSED`，任一阶段可进入
   `FAILED`。收到 GOAWAY 后停止接收新 stream；已接受 stream 继续收敛，超过
   Last-Stream-ID 的请求返回明确的未处理错误。
@@ -61,7 +61,7 @@ header 不出现第三方类型，安装测试显式禁用两个 package 的发�
 - 隔离：单 stream 的响应语义错误或 body/header 上限错误发送 RST_STREAM；HPACK block 仍完整
   解码以保持动态表一致，兄弟 stream 和物理连接继续工作。
 - 关闭：stop 关闭 admission、发 GOAWAY 并 drain 已提交 stream；timeout 返回可重试的
-  `TURBO_ETIMEDOUT`，不偷偷取消剩余 stream。destroy 只在 stop 完成且没有 callback 正在执行时释放。
+  `SALTS_ETIMEDOUT`，不偷偷取消剩余 stream。destroy 只在 stop 完成且没有 callback 正在执行时释放。
 
 ### 硬上限与背压
 
@@ -69,7 +69,7 @@ header 不出现第三方类型，安装测试显式禁用两个 package 的发�
 
 | 资源 | 默认上限 | 满额行为 |
 | --- | ---: | --- |
-| 本地并发 stream | 100 | submit 返回 `TURBO_EBUSY` |
+| 本地并发 stream | 100 | submit 返回 `SALTS_EBUSY` |
 | frame payload | 16 KiB | connection protocol error |
 | header list | 64 KiB | stream header-too-large error |
 | HPACK dynamic table | 4 KiB | SETTINGS/HPACK 超界为 compression error |
@@ -135,7 +135,7 @@ ABI 与 handler API 无需随之改变。
 - stop 先停止 listener admission，对 H2 连接发送 GOAWAY，将已接收的响应输出
   flush；应用层排空后发送 drain PING，匹配的 ACK 证明此前响应和控制帧已经按序到达，
   server 在该 receive callback 边界关闭 transport。对不响应 PING 的 peer 保留 64 个
-  `poll_slice_ms` 的有界兜底；stop timeout 保持现有可重试的 `TURBO_ETIMEDOUT` 语义。
+  `poll_slice_ms` 的有界兜底；stop timeout 保持现有可重试的 `SALTS_ETIMEDOUT` 语义。
 
 ### 容量、背压与失败
 
@@ -176,8 +176,8 @@ ABI 与 handler API 无需随之改变。
 
 新增字段只追加到公开配置结构尾部；零初始化保持 HTTP/1.1。源码兼容，重新编译后生效。
 由于 C 结构大小变化，本阶段把 CHTTP library version 提升到 2.0.0、ABI/SOVERSION 提升到 2。
-Unix 通过 `libturbo_chttp.so.2` SONAME、Windows 通过 `turbo_chttp-2.dll` 与对应 import library
-隔离旧布局；`Rocida::CHTTP` 的 CMake target 名保持不变。ABI 1 二进制不会意外装载 ABI 2，源码
+Unix 通过 `libsalts_chttp.so.2` SONAME、Windows 通过 `salts_chttp-2.dll` 与对应 import library
+隔离旧布局；`Salts::CHTTP` 的 CMake target 名保持不变。ABI 1 二进制不会意外装载 ABI 2，源码
 使用者仍必须使用匹配头文件重新编译、链接。未来继续扩展公开 options 时，应引入
 `struct_size`/版本化 options 或再次提升 ABI major，不能假定追加字段天然二进制兼容。
 

@@ -7,7 +7,7 @@
 static int cpp_surface_count;
 static std::string cpp_surface_message;
 
-static void cpp_surface_capture(const turbo_log_entry_t *entry, void *user_data) {
+static void cpp_surface_capture(const salts_log_entry_t *entry, void *user_data) {
   (void)user_data;
   ++cpp_surface_count;
   cpp_surface_message = entry->message ? entry->message : "";
@@ -16,7 +16,7 @@ static void cpp_surface_capture(const turbo_log_entry_t *entry, void *user_data)
 spec("TLog C++ surface contract") {
   it("keeps native C++ type detection on formatted logging") {
     tlog_t *logger = tlog_create(NULL);
-    turbo_log_sink_t *sink = turbo_sink_callback_create(cpp_surface_capture, NULL);
+    salts_log_sink_t *sink = salts_sink_callback_create(cpp_surface_capture, NULL);
     check_not_null(logger);
     check_not_null(sink);
     check_equal(tlog_add_sink(logger, sink), 0);

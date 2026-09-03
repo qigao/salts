@@ -189,7 +189,7 @@
   ```text
   git diff --check
   rg.exe -n "\b(sorry|admit|axiom)\b" formal/cmeta_cflow_calculus
-  git diff --name-only -- cmeta cflow platform concurrency turbostl utils
+  git diff --name-only -- cmeta cflow platform concurrency container utils
   git rev-parse ':CMakeUserPresets.json'
   ```
 

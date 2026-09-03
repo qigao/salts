@@ -2,7 +2,7 @@
 
 #include "event_internal.h"
 
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -39,7 +39,7 @@ typedef struct cflow_mailbox_impl {
     uint64_t cancelled;
     cflow_mailbox_terminal terminal;
     cflow_waker waiter;
-    turbo_mutex_t lock;
+    salts_mutex_t lock;
 } cflow_mailbox_impl;
 
 static void cflow_counter_increment(uint64_t *counter) {
@@ -142,7 +142,7 @@ bool cflow_mailbox_storage_requirements_internal(
 
 static void cflow_mailbox_impl_free(cflow_mailbox_impl *impl) {
     if (impl == NULL) return;
-    if (impl->lock != NULL) turbo_mutex_destroy(&impl->lock);
+    if (impl->lock != NULL) salts_mutex_destroy(&impl->lock);
     free(impl->payloads);
     free(impl->slots);
     free(impl->schema);
@@ -178,7 +178,7 @@ cflow_mailbox_status cflow_mailbox_init(cflow_mailbox *mailbox,
     impl->schema = (cflow_event_type *)malloc(schema_bytes);
     impl->slots = (cflow_event_slot *)calloc(1u, slot_bytes);
     impl->payloads = (unsigned char *)malloc(payload_bytes);
-    turbo_mutex_init(&impl->lock);
+    salts_mutex_init(&impl->lock);
     if (impl->schema == NULL || impl->slots == NULL || impl->payloads == NULL ||
         impl->lock == NULL) {
         cflow_mailbox_impl_free(impl);
@@ -227,20 +227,20 @@ cflow_mailbox_status cflow_mailbox_try_send(cflow_mailbox *mailbox,
     if (!cmeta_type_equal(schema_type, event->payload_type))
         return CFLOW_MAILBOX_TYPE_MISMATCH;
 
-    turbo_mutex_lock(&impl->lock);
+    salts_mutex_lock(&impl->lock);
     if (impl->terminal == CFLOW_MAILBOX_TERMINAL_CANCELLED) {
         cflow_counter_increment(&impl->rejected_cancelled);
-        turbo_mutex_unlock(&impl->lock);
+        salts_mutex_unlock(&impl->lock);
         return CFLOW_MAILBOX_CANCELLED;
     }
     if (impl->terminal == CFLOW_MAILBOX_TERMINAL_DRAINING) {
         cflow_counter_increment(&impl->rejected_closed);
-        turbo_mutex_unlock(&impl->lock);
+        salts_mutex_unlock(&impl->lock);
         return CFLOW_MAILBOX_CLOSED;
     }
     if (impl->count == impl->capacity) {
         cflow_counter_increment(&impl->rejected_full);
-        turbo_mutex_unlock(&impl->lock);
+        salts_mutex_unlock(&impl->lock);
         return CFLOW_MAILBOX_FULL;
     }
     tail = (impl->head + impl->count) % impl->capacity;
@@ -253,7 +253,7 @@ cflow_mailbox_status cflow_mailbox_try_send(cflow_mailbox *mailbox,
     cflow_counter_increment(&impl->accepted);
     waker = impl->waiter;
     impl->waiter = (cflow_waker){0};
-    turbo_mutex_unlock(&impl->lock);
+    salts_mutex_unlock(&impl->lock);
     cflow_waker_invoke(waker);
     return CFLOW_MAILBOX_OK;
 }
@@ -275,7 +275,7 @@ cflow_mailbox_status cflow_mailbox_try_receive(
         out_payload == NULL)
         return CFLOW_MAILBOX_INVALID_ARGUMENT;
 
-    turbo_mutex_lock(&impl->lock);
+    salts_mutex_lock(&impl->lock);
     if (impl->count == 0u) {
         const cflow_mailbox_status status =
             impl->terminal == CFLOW_MAILBOX_TERMINAL_CANCELLED
@@ -283,17 +283,17 @@ cflow_mailbox_status cflow_mailbox_try_receive(
                 : impl->terminal == CFLOW_MAILBOX_TERMINAL_DRAINING
                       ? CFLOW_MAILBOX_CLOSED
                       : CFLOW_MAILBOX_EMPTY;
-        turbo_mutex_unlock(&impl->lock);
+        salts_mutex_unlock(&impl->lock);
         return status;
     }
     head = impl->head;
     event_type = &impl->schema[impl->slots[head].type_index];
     if (out_payload_capacity < event_type->payload_type->size) {
-        turbo_mutex_unlock(&impl->lock);
+        salts_mutex_unlock(&impl->lock);
         return CFLOW_MAILBOX_BUFFER_TOO_SMALL;
     }
     if (((uintptr_t)out_payload % event_type->payload_type->align) != 0u) {
-        turbo_mutex_unlock(&impl->lock);
+        salts_mutex_unlock(&impl->lock);
         return CFLOW_MAILBOX_INVALID_ARGUMENT;
     }
 
@@ -304,7 +304,7 @@ cflow_mailbox_status cflow_mailbox_try_receive(
     cflow_counter_increment(&impl->received);
     *out_id = event_type->id;
     *out_type = event_type->payload_type;
-    turbo_mutex_unlock(&impl->lock);
+    salts_mutex_unlock(&impl->lock);
     return CFLOW_MAILBOX_OK;
 }
 
@@ -315,7 +315,7 @@ bool cflow_mailbox_get_stats(const cflow_mailbox *mailbox,
     cflow_mailbox_stats snapshot;
 
     if (impl == NULL || out == NULL) return false;
-    turbo_mutex_lock(&impl->lock);
+    salts_mutex_lock(&impl->lock);
     snapshot.schema_count = impl->schema_count;
     snapshot.capacity = impl->capacity;
     snapshot.pending = impl->count;
@@ -328,7 +328,7 @@ bool cflow_mailbox_get_stats(const cflow_mailbox *mailbox,
     snapshot.rejected_closed = impl->rejected_closed;
     snapshot.rejected_cancelled = impl->rejected_cancelled;
     snapshot.cancelled = impl->cancelled;
-    turbo_mutex_unlock(&impl->lock);
+    salts_mutex_unlock(&impl->lock);
     *out = snapshot;
     return true;
 }
@@ -339,19 +339,19 @@ cflow_mailbox_status cflow_mailbox_close(cflow_mailbox *mailbox) {
     cflow_waker waker = {0};
 
     if (impl == NULL) return CFLOW_MAILBOX_INVALID_ARGUMENT;
-    turbo_mutex_lock(&impl->lock);
+    salts_mutex_lock(&impl->lock);
     if (impl->terminal == CFLOW_MAILBOX_TERMINAL_CANCELLED) {
-        turbo_mutex_unlock(&impl->lock);
+        salts_mutex_unlock(&impl->lock);
         return CFLOW_MAILBOX_CANCELLED;
     }
     if (impl->terminal == CFLOW_MAILBOX_TERMINAL_DRAINING) {
-        turbo_mutex_unlock(&impl->lock);
+        salts_mutex_unlock(&impl->lock);
         return CFLOW_MAILBOX_CLOSED;
     }
     impl->terminal = CFLOW_MAILBOX_TERMINAL_DRAINING;
     waker = impl->waiter;
     impl->waiter = (cflow_waker){0};
-    turbo_mutex_unlock(&impl->lock);
+    salts_mutex_unlock(&impl->lock);
     cflow_waker_invoke(waker);
     return CFLOW_MAILBOX_OK;
 }
@@ -372,9 +372,9 @@ cflow_mailbox_status cflow_mailbox_cancel_detach_internal(
     if (out_waker != NULL) *out_waker = (cflow_waker){0};
     if (impl == NULL || out_waker == NULL)
         return CFLOW_MAILBOX_INVALID_ARGUMENT;
-    turbo_mutex_lock(&impl->lock);
+    salts_mutex_lock(&impl->lock);
     if (impl->terminal == CFLOW_MAILBOX_TERMINAL_CANCELLED) {
-        turbo_mutex_unlock(&impl->lock);
+        salts_mutex_unlock(&impl->lock);
         return CFLOW_MAILBOX_CANCELLED;
     }
     impl->terminal = CFLOW_MAILBOX_TERMINAL_CANCELLED;
@@ -383,7 +383,7 @@ cflow_mailbox_status cflow_mailbox_cancel_detach_internal(
     impl->count = 0u;
     *out_waker = impl->waiter;
     impl->waiter = (cflow_waker){0};
-    turbo_mutex_unlock(&impl->lock);
+    salts_mutex_unlock(&impl->lock);
     return CFLOW_MAILBOX_OK;
 }
 
@@ -392,15 +392,15 @@ static bool cflow_mailbox_wait_arm(void *state, cflow_waker waker) {
     bool ready;
 
     if (impl == NULL || waker.wake == NULL) return false;
-    turbo_mutex_lock(&impl->lock);
+    salts_mutex_lock(&impl->lock);
     ready = impl->count != 0u ||
             impl->terminal != CFLOW_MAILBOX_TERMINAL_OPEN;
     if (!ready && impl->waiter.wake != NULL) {
-        turbo_mutex_unlock(&impl->lock);
+        salts_mutex_unlock(&impl->lock);
         return false;
     }
     if (!ready) impl->waiter = waker;
-    turbo_mutex_unlock(&impl->lock);
+    salts_mutex_unlock(&impl->lock);
     if (ready) cflow_waker_invoke(waker);
     return true;
 }
@@ -409,9 +409,9 @@ static void cflow_mailbox_wait_cancel(void *state) {
     cflow_mailbox_impl *impl = (cflow_mailbox_impl *)state;
 
     if (impl == NULL) return;
-    turbo_mutex_lock(&impl->lock);
+    salts_mutex_lock(&impl->lock);
     impl->waiter = (cflow_waker){0};
-    turbo_mutex_unlock(&impl->lock);
+    salts_mutex_unlock(&impl->lock);
 }
 
 CMETA_IMPLEMENTS(cflow_waitable, cflow_mailbox_waitable, 0,

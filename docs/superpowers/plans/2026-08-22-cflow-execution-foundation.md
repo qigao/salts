@@ -4,25 +4,25 @@
 
 > **Historical execution record:** The implementation described here landed through the Platform, Concurrency, Clock, Executor, TimerQueue, scheduler, and Core-compatibility commit series. The unchecked boxes preserve the original step-by-step script; current completion evidence is maintained in `2026-08-23-cflow-execution-foundation-completion.md` and the design status table.
 
-**Goal:** Refactor TurboUtils into a real `Platform -> Concurrency -> CFlow -> Core` execution stack, remove CFlow's duplicate worker-pool/wall-clock scheduling implementation, and preserve existing Core/CFlow public behavior during migration.
+**Goal:** Refactor Salts into a real `Platform -> Concurrency -> CFlow -> Core` execution stack, remove CFlow's duplicate worker-pool/wall-clock scheduling implementation, and preserve existing Core/CFlow public behavior during migration.
 
-**Architecture:** `TurboUtils::Platform` owns OS clock/thread/synchronization primitives. `TurboUtils::Concurrency` owns disruptor and the existing disruptor-backed thread pool. CFlow builds typed Clock/Executor/TimerQueue semantics on those modules while retaining `cflow_scheduler` as a compatibility facade. Core moves above these modules and may depend on CFlow/CMeta without creating a cycle.
+**Architecture:** `Salts::Platform` owns OS clock/thread/synchronization primitives. `Salts::Concurrency` owns disruptor and the existing disruptor-backed thread pool. CFlow builds typed Clock/Executor/TimerQueue semantics on those modules while retaining `cflow_scheduler` as a compatibility facade. Core moves above these modules and may depend on CFlow/CMeta without creating a cycle.
 
-**Tech Stack:** C11, C++17 public-header compatibility, CMake 3.20+, CMeta `CMETA_INTERFACE`, TinyTest, Win32 threads/SRW locks/condition variables, POSIX pthread/`CLOCK_MONOTONIC`, existing Turbo disruptor/thread pool.
+**Tech Stack:** C11, C++17 public-header compatibility, CMake 3.20+, CMeta `CMETA_INTERFACE`, TinyTest, Win32 threads/SRW locks/condition variables, POSIX pthread/`CLOCK_MONOTONIC`, existing Salts disruptor/thread pool.
 
 **Spec:** `docs/superpowers/specs/2026-08-22-cflow-execution-foundation-design.md`
 
 ## Global Constraints
 
-- CFlow must never link `TurboUtils::Core`; Core may link CFlow.
-- `TurboUtils::Platform` must not depend on CMeta, CFlow, TurboSTL, Core, SDS, logging, disruptor, Concurrency, or Core policy state.
-- `TurboUtils::Concurrency` depends only on Platform plus standard/OS facilities.
-- `turbo_sync_set_single_threaded()` / `turbo_sync_is_single_threaded()` remain Core-owned policy; do not move them into Platform.
+- CFlow must never link `Salts::Core`; Core may link CFlow.
+- `Salts::Platform` must not depend on CMeta, CFlow, Container, Core, SDS, logging, disruptor, Concurrency, or Core policy state.
+- `Salts::Concurrency` depends only on Platform plus standard/OS facilities.
+- `salts_sync_set_single_threaded()` / `salts_sync_is_single_threaded()` remain Core-owned policy; do not move them into Platform.
 - CFlow deadlines/timeouts/delays use monotonic time only; realtime is never a control-flow deadline source.
 - Existing `cflow_scheduler` legacy delay ticks remain milliseconds.
-- Platform/Concurrency export state is target-scoped and does not reuse Core `TURBO_API` producer/consumer state.
+- Platform/Concurrency export state is target-scoped and does not reuse Core `SALTS_API` producer/consumer state.
 - Public headers must not define `_POSIX_C_SOURCE`, `_DEFAULT_SOURCE`, `_XOPEN_SOURCE`, or `_DARWIN_C_SOURCE`.
-- Existing legacy includes `platform.h`, `turbo_thread.h`, and `disruptor.h` remain source-compatible during the migration window.
+- Existing legacy includes `platform.h`, `salts_thread.h`, and `disruptor.h` remain source-compatible during the migration window.
 - Do not rewrite disruptor or thread-pool algorithms; move ownership and adapt interfaces.
 - Strict C11 and C++17 public-header compilation must remain valid on Linux/Windows/macOS/Android-supported builds.
 - Each task follows RED -> GREEN -> focused regression -> commit. Do not suppress diagnostics with `-Wno-*`.
@@ -33,10 +33,10 @@
 
 ### New Platform module
 
-- `platform/CMakeLists.txt` — `TurboUtils::Platform` target, install/export, private OS feature macros.
-- `platform/include/turbo/platform.h` — Platform-local API/export markers only.
-- `platform/include/turbo/clock.h` — monotonic/realtime clock primitives and conversion helpers.
-- `platform/include/turbo/thread.h` — thread, mutex, rwlock, condition variable, once, TLS, yield/sleep, CPU count.
+- `platform/CMakeLists.txt` — `Salts::Platform` target, install/export, private OS feature macros.
+- `platform/include/salts/platform.h` — Platform-local API/export markers only.
+- `platform/include/salts/clock.h` — monotonic/realtime clock primitives and conversion helpers.
+- `platform/include/salts/thread.h` — thread, mutex, rwlock, condition variable, once, TLS, yield/sleep, CPU count.
 - `platform/src/clock.c` — Win32/POSIX clock backends.
 - `platform/src/thread.c` — Win32/POSIX thread/synchronization backends.
 - `platform/tests/CMakeLists.txt` — focused Platform tests.
@@ -46,10 +46,10 @@
 
 ### New Concurrency module
 
-- `concurrency/CMakeLists.txt` — `TurboUtils::Concurrency` target and install/export.
-- `concurrency/include/turbo/concurrency.h` — module-local API/export markers.
-- `concurrency/include/turbo/disruptor.h` — canonical disruptor public API.
-- `concurrency/include/turbo/thread_pool.h` — canonical thread-pool public API.
+- `concurrency/CMakeLists.txt` — `Salts::Concurrency` target and install/export.
+- `concurrency/include/salts/concurrency.h` — module-local API/export markers.
+- `concurrency/include/salts/disruptor.h` — canonical disruptor public API.
+- `concurrency/include/salts/thread_pool.h` — canonical thread-pool public API.
 - `concurrency/src/disruptor.c` — moved existing disruptor implementation.
 - `concurrency/src/thread_pool.c` — extracted existing thread-pool implementation.
 - `concurrency/tests/CMakeLists.txt` — moved concurrency regression tests.
@@ -58,11 +58,11 @@
 
 ### Core compatibility and policy
 
-- `utils/include/turbo_api.h` — Core-only `TURBO_API` / `TURBO_C_API` contract.
+- `utils/include/salts_api.h` — Core-only `SALTS_API` / `SALTS_C_API` contract.
 - `utils/include/platform.h` — compatibility facade; Core system-info/calendar/native-timer API plus focused Platform includes.
-- `utils/include/turbo_thread.h` — compatibility aggregate over `<turbo/thread.h>` and `<turbo/thread_pool.h>`, plus Core global synchronization-policy declarations.
-- `utils/include/disruptor.h` — compatibility include of `<turbo/disruptor.h>`.
-- `utils/src/turbo_sync_policy.c` — Core-owned `turbo_sync_set_single_threaded()` / `turbo_sync_is_single_threaded()` state.
+- `utils/include/salts_thread.h` — compatibility aggregate over `<salts/thread.h>` and `<salts/thread_pool.h>`, plus Core global synchronization-policy declarations.
+- `utils/include/disruptor.h` — compatibility include of `<salts/disruptor.h>`.
+- `utils/src/salts_sync_policy.c` — Core-owned `salts_sync_set_single_threaded()` / `salts_sync_is_single_threaded()` state.
 - `utils/src/platform.c` — retains Core-owned system-info/calendar/native-timer logic after clock extraction.
 - `utils/CMakeLists.txt` — Core dependencies updated to Platform/Concurrency/CFlow as required.
 
@@ -85,33 +85,33 @@
 ### Task 1: Separate Core API linkage from `platform.h`
 
 **Files:**
-- Create: `utils/include/turbo_api.h`
+- Create: `utils/include/salts_api.h`
 - Modify: `utils/include/platform.h`
 - Modify: `utils/tests/test_platform.c`
 - Modify: `utils/tests/test_platform_build_state_contract.c`
 
 **Interfaces:**
-- Produces: Core-only `TURBO_API` and `TURBO_C_API` definitions with exactly the current target-provided semantics.
-- Consumes: current Core CMake definitions of `TURBO_API` on Windows.
+- Produces: Core-only `SALTS_API` and `SALTS_C_API` definitions with exactly the current target-provided semantics.
+- Consumes: current Core CMake definitions of `SALTS_API` on Windows.
 
 - [ ] **Step 1: Write the failing include-contract test**
 
 Add a direct Core API-header include to `utils/tests/test_platform_build_state_contract.c` before `platform.h`:
 
 ```c
-#include "turbo_api.h"
+#include "salts_api.h"
 #include "platform.h"
 #include "tinytest.h"
 
-#ifndef TURBO_API
-#error "turbo_api.h must expose the Core target API marker"
+#ifndef SALTS_API
+#error "salts_api.h must expose the Core target API marker"
 #endif
-#ifndef TURBO_C_API
-#error "turbo_api.h must expose C linkage composition"
+#ifndef SALTS_C_API
+#error "salts_api.h must expose C linkage composition"
 #endif
 ```
 
-Keep the existing checks that `TURBO_BUILD_SHARED`, `TURBO_USE_SHARED`, and `turbo_utils_EXPORTS` are absent.
+Keep the existing checks that `SALTS_BUILD_SHARED`, `SALTS_USE_SHARED`, and `salts_EXPORTS` are absent.
 
 - [ ] **Step 2: Run the focused build to verify RED**
 
@@ -120,29 +120,29 @@ cmake --preset linux-release-user
 cmake --build --preset linux-release-user --target test_platform_build_state_contract
 ```
 
-Expected: compile failure because `utils/include/turbo_api.h` does not exist.
+Expected: compile failure because `utils/include/salts_api.h` does not exist.
 
-- [ ] **Step 3: Create `utils/include/turbo_api.h`**
+- [ ] **Step 3: Create `utils/include/salts_api.h`**
 
 Move only the Core API linkage block out of `platform.h`:
 
 ```c
-#ifndef TURBO_API_H
-#define TURBO_API_H
+#ifndef SALTS_API_H
+#define SALTS_API_H
 
-#ifndef TURBO_API
+#ifndef SALTS_API
   #if !defined(_WIN32) && defined(__GNUC__) && __GNUC__ >= 4
-    #define TURBO_API __attribute__((visibility("default")))
+    #define SALTS_API __attribute__((visibility("default")))
   #else
-    #define TURBO_API
+    #define SALTS_API
   #endif
 #endif
 
-#ifndef TURBO_C_API
+#ifndef SALTS_C_API
   #ifdef __cplusplus
-    #define TURBO_C_API extern "C" TURBO_API
+    #define SALTS_C_API extern "C" SALTS_API
   #else
-    #define TURBO_C_API TURBO_API
+    #define SALTS_C_API SALTS_API
   #endif
 #endif
 
@@ -152,7 +152,7 @@ Move only the Core API linkage block out of `platform.h`:
 Replace the corresponding block in `utils/include/platform.h` with:
 
 ```c
-#include "turbo_api.h"
+#include "salts_api.h"
 ```
 
 Do not move OS/time/thread declarations in this task.
@@ -169,18 +169,18 @@ Expected: all selected targets build and tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add utils/include/turbo_api.h utils/include/platform.h utils/tests/test_platform.c utils/tests/test_platform_build_state_contract.c
+git add utils/include/salts_api.h utils/include/platform.h utils/tests/test_platform.c utils/tests/test_platform_build_state_contract.c
 git commit -m "refactor(core): isolate API linkage contract"
 ```
 
 ---
 
-### Task 2: Introduce `TurboUtils::Platform` and extract clock ownership
+### Task 2: Introduce `Salts::Platform` and extract clock ownership
 
 **Files:**
 - Create: `platform/CMakeLists.txt`
-- Create: `platform/include/turbo/platform.h`
-- Create: `platform/include/turbo/clock.h`
+- Create: `platform/include/salts/platform.h`
+- Create: `platform/include/salts/clock.h`
 - Create: `platform/src/clock.c`
 - Create: `platform/tests/CMakeLists.txt`
 - Create: `platform/tests/platform_clock_test.c`
@@ -191,8 +191,8 @@ git commit -m "refactor(core): isolate API linkage contract"
 - Modify: `utils/CMakeLists.txt`
 
 **Interfaces:**
-- Produces: `TurboUtils::Platform`, `turbo_hrtime()`, `turbo_monotonic_ms()`, `turbo_realtime_ms()`, `turbo_uptime_ms()`, `turbo_ns_to_ms()`, `turbo_ms_to_ns()` from `<turbo/clock.h>`.
-- Produces: `TURBO_PLATFORM_API` / `TURBO_PLATFORM_C_API` from `<turbo/platform.h>`.
+- Produces: `Salts::Platform`, `salts_hrtime()`, `salts_monotonic_ms()`, `salts_realtime_ms()`, `salts_uptime_ms()`, `salts_ns_to_ms()`, `salts_ms_to_ns()` from `<salts/clock.h>`.
+- Produces: `SALTS_PLATFORM_API` / `SALTS_PLATFORM_C_API` from `<salts/platform.h>`.
 - Preserves: legacy inclusion of those APIs through `utils/include/platform.h`.
 
 - [ ] **Step 1: Add Platform clock tests before the target exists**
@@ -200,24 +200,24 @@ git commit -m "refactor(core): isolate API linkage contract"
 Create `platform/tests/platform_clock_test.c`:
 
 ```c
-#include <turbo/clock.h>
+#include <salts/clock.h>
 #include "tinytest.h"
 
 spec("Platform clock") {
   it("keeps monotonic time nondecreasing") {
-    uint64_t first = turbo_hrtime();
-    uint64_t second = turbo_hrtime();
+    uint64_t first = salts_hrtime();
+    uint64_t second = salts_hrtime();
     check(second >= first);
-    check(turbo_monotonic_ms() > 0);
+    check(salts_monotonic_ms() > 0);
   }
 
   it("keeps conversion helpers deterministic") {
-    check_equal(turbo_ns_to_ms(1999999ULL), 1ULL);
-    check_equal(turbo_ms_to_ns(7ULL), 7000000ULL);
+    check_equal(salts_ns_to_ms(1999999ULL), 1ULL);
+    check_equal(salts_ms_to_ns(7ULL), 7000000ULL);
   }
 
   it("keeps realtime separate from monotonic time") {
-    check(turbo_realtime_ms() > 0);
+    check(salts_realtime_ms() > 0);
   }
 }
 ```
@@ -225,11 +225,11 @@ spec("Platform clock") {
 Create `platform/tests/platform_header_cpp_test.cpp`:
 
 ```cpp
-#include <turbo/clock.h>
+#include <salts/clock.h>
 #include <type_traits>
 
-static_assert(std::is_same_v<decltype(turbo_hrtime()), uint64_t>);
-int main() { return turbo_hrtime() > 0 ? 0 : 1; }
+static_assert(std::is_same_v<decltype(salts_hrtime()), uint64_t>);
+int main() { return salts_hrtime() > 0 ? 0 : 1; }
 ```
 
 - [ ] **Step 2: Configure to verify RED**
@@ -247,10 +247,10 @@ Expected: failure until `platform/CMakeLists.txt` and headers exist.
 `platform/CMakeLists.txt` starts with:
 
 ```cmake
-set(TARGET_NAME turbo_platform)
+set(TARGET_NAME salts_platform)
 add_library(${TARGET_NAME} STATIC src/clock.c)
 cmake_config_target(${TARGET_NAME}
-  ALIAS TurboUtils::Platform
+  ALIAS Salts::Platform
   FOLDER "platform"
   EXPORT_NAME Platform)
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
@@ -264,45 +264,45 @@ elseif(UNIX)
   target_compile_definitions(${TARGET_NAME} PRIVATE
     _DEFAULT_SOURCE=1 _POSIX_C_SOURCE=200809L _XOPEN_SOURCE=700)
 endif()
-install(TARGETS ${TARGET_NAME} EXPORT TurboUtilsTargets
+install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(DIRECTORY include/turbo DESTINATION include FILES_MATCHING PATTERN "*.h")
+install(DIRECTORY include/salts DESTINATION include FILES_MATCHING PATTERN "*.h")
 if(BUILD_TESTS)
   add_subdirectory(tests)
 endif()
 ```
 
-`platform/include/turbo/platform.h` defines only Platform-local linkage markers. On Windows they default to empty for the initial static target; no Core marker is reused.
+`platform/include/salts/platform.h` defines only Platform-local linkage markers. On Windows they default to empty for the initial static target; no Core marker is reused.
 
 - [ ] **Step 4: Move clock declarations and implementation**
 
-Create `platform/include/turbo/clock.h` with:
+Create `platform/include/salts/clock.h` with:
 
 ```c
-#ifndef TURBO_CLOCK_H
-#define TURBO_CLOCK_H
-#include <turbo/platform.h>
+#ifndef SALTS_CLOCK_H
+#define SALTS_CLOCK_H
+#include <salts/platform.h>
 #include <stdint.h>
 
-TURBO_PLATFORM_C_API uint64_t turbo_hrtime(void);
-TURBO_PLATFORM_C_API uint64_t turbo_monotonic_ms(void);
-TURBO_PLATFORM_C_API uint64_t turbo_realtime_ms(void);
-TURBO_PLATFORM_C_API uint64_t turbo_uptime_ms(void);
+SALTS_PLATFORM_C_API uint64_t salts_hrtime(void);
+SALTS_PLATFORM_C_API uint64_t salts_monotonic_ms(void);
+SALTS_PLATFORM_C_API uint64_t salts_realtime_ms(void);
+SALTS_PLATFORM_C_API uint64_t salts_uptime_ms(void);
 
-static inline uint64_t turbo_ns_to_ms(uint64_t ns) { return ns / 1000000ULL; }
-static inline uint64_t turbo_ms_to_ns(uint64_t ms) { return ms * 1000000ULL; }
+static inline uint64_t salts_ns_to_ms(uint64_t ns) { return ns / 1000000ULL; }
+static inline uint64_t salts_ms_to_ns(uint64_t ms) { return ms * 1000000ULL; }
 #endif
 ```
 
 Move the existing Win32 QPC and POSIX `CLOCK_MONOTONIC` implementations from `utils/src/platform.c` into `platform/src/clock.c`. Preserve behavior; do not redesign realtime/calendar code here.
 
-Update `utils/include/platform.h` to include `<turbo/clock.h>` and remove duplicate clock declarations/helpers. Update Core:
+Update `utils/include/platform.h` to include `<salts/clock.h>` and remove duplicate clock declarations/helpers. Update Core:
 
 ```cmake
 target_link_libraries(${TARGET_NAME}
-  PUBLIC TurboUtils::CMeta TurboUtils::Platform
+  PUBLIC Salts::CMeta Salts::Platform
   PRIVATE ...)
 ```
 
@@ -328,26 +328,26 @@ git commit -m "refactor(platform): extract clock module"
 ### Task 3: Extract thread and synchronization primitives into Platform
 
 **Files:**
-- Create: `platform/include/turbo/thread.h`
+- Create: `platform/include/salts/thread.h`
 - Create: `platform/src/thread.c`
 - Create: `platform/tests/platform_thread_test.c`
 - Modify: `platform/CMakeLists.txt`
-- Modify: `utils/include/turbo_thread.h`
-- Modify: `utils/src/turbo_thread.c`
+- Modify: `utils/include/salts_thread.h`
+- Modify: `utils/src/salts_thread.c`
 - Modify: `utils/tests/test_threadpool.c` only as needed for includes during the transition
 
 **Interfaces:**
-- Produces: `turbo_mutex_t`, `turbo_cond_t`, `turbo_rwlock_t`, `turbo_thread_t`, `turbo_once_t`, `turbo_thread_*`, `turbo_mutex_*`, `turbo_cond_*`, `turbo_rwlock_*`, `turbo_once`, `turbo_sleep_ms`, `turbo_thread_yield`, `turbo_cpu_count` from `<turbo/thread.h>`.
-- Preserves: legacy `"turbo_thread.h"` include; thread-pool and global sync-policy declarations remain in the compatibility header until Task 5.
-- Explicitly does not move: `turbo_sync_set_single_threaded()` or `turbo_sync_is_single_threaded()`.
+- Produces: `salts_mutex_t`, `salts_cond_t`, `salts_rwlock_t`, `salts_thread_t`, `salts_once_t`, `salts_thread_*`, `salts_mutex_*`, `salts_cond_*`, `salts_rwlock_*`, `salts_once`, `salts_sleep_ms`, `salts_thread_yield`, `salts_cpu_count` from `<salts/thread.h>`.
+- Preserves: legacy `"salts_thread.h"` include; thread-pool and global sync-policy declarations remain in the compatibility header until Task 5.
+- Explicitly does not move: `salts_sync_set_single_threaded()` or `salts_sync_is_single_threaded()`.
 
 - [ ] **Step 1: Add primitive/timed-wait tests**
 
 Create `platform/tests/platform_thread_test.c`:
 
 ```c
-#include <turbo/clock.h>
-#include <turbo/thread.h>
+#include <salts/clock.h>
+#include <salts/thread.h>
 #include "tinytest.h"
 #include <errno.h>
 
@@ -355,28 +355,28 @@ static void set_flag(void *arg) { *(int *)arg = 1; }
 
 spec("Platform thread primitives") {
   it("creates and joins a thread") {
-    turbo_thread_t thread;
+    salts_thread_t thread;
     int flag = 0;
-    check_equal(turbo_thread_create(&thread, set_flag, &flag), 0);
-    check_equal(turbo_thread_join(&thread), 0);
+    check_equal(salts_thread_create(&thread, set_flag, &flag), 0);
+    check_equal(salts_thread_join(&thread), 0);
     check_equal(flag, 1);
   }
 
   it("times condition waits using elapsed duration") {
-    turbo_mutex_t mutex;
-    turbo_cond_t cond;
-    turbo_mutex_init(&mutex);
-    turbo_cond_init(&cond);
-    turbo_mutex_lock(&mutex);
-    uint64_t before = turbo_hrtime();
-    int rc = turbo_cond_timedwait(&cond, &mutex, 20ULL * 1000000ULL);
-    uint64_t elapsed = turbo_hrtime() - before;
-    turbo_mutex_unlock(&mutex);
+    salts_mutex_t mutex;
+    salts_cond_t cond;
+    salts_mutex_init(&mutex);
+    salts_cond_init(&cond);
+    salts_mutex_lock(&mutex);
+    uint64_t before = salts_hrtime();
+    int rc = salts_cond_timedwait(&cond, &mutex, 20ULL * 1000000ULL);
+    uint64_t elapsed = salts_hrtime() - before;
+    salts_mutex_unlock(&mutex);
     check_equal(rc, -ETIMEDOUT);
     check(elapsed >= 10ULL * 1000000ULL);
     check(elapsed < 1000ULL * 1000000ULL);
-    turbo_cond_destroy(&cond);
-    turbo_mutex_destroy(&mutex);
+    salts_cond_destroy(&cond);
+    salts_mutex_destroy(&mutex);
   }
 }
 ```
@@ -387,19 +387,19 @@ spec("Platform thread primitives") {
 cmake --build --preset linux-release-user --target platform_thread_test
 ```
 
-Expected: failure because `<turbo/thread.h>` does not exist.
+Expected: failure because `<salts/thread.h>` does not exist.
 
 - [ ] **Step 3: Move primitive declarations and implementations**
 
-Move only OS primitive declarations from `utils/include/turbo_thread.h` into `platform/include/turbo/thread.h`. Move Win32/POSIX mutex/cond/rwlock/once/thread/sleep/yield/CPU-count implementations into `platform/src/thread.c`.
+Move only OS primitive declarations from `utils/include/salts_thread.h` into `platform/include/salts/thread.h`. Move Win32/POSIX mutex/cond/rwlock/once/thread/sleep/yield/CPU-count implementations into `platform/src/thread.c`.
 
-Leave thread-pool declarations and the two `turbo_sync_*` policy declarations in `utils/include/turbo_thread.h` for now.
+Leave thread-pool declarations and the two `salts_sync_*` policy declarations in `utils/include/salts_thread.h` for now.
 
-Leave the thread-pool implementation and `g_single_threaded` policy implementation in `utils/src/turbo_thread.c` until Task 5.
+Leave the thread-pool implementation and `g_single_threaded` policy implementation in `utils/src/salts_thread.c` until Task 5.
 
 - [ ] **Step 4: Make POSIX timed waits monotonic**
 
-Implement POSIX `turbo_cond_t` with a private wrapper configured using:
+Implement POSIX `salts_cond_t` with a private wrapper configured using:
 
 ```c
 pthread_condattr_t attr;
@@ -423,18 +423,18 @@ Expected: primitive behavior and existing pool behavior both pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add platform utils/include/turbo_thread.h utils/src/turbo_thread.c utils/tests/test_threadpool.c
+git add platform utils/include/salts_thread.h utils/src/salts_thread.c utils/tests/test_threadpool.c
 git commit -m "refactor(platform): extract thread primitives"
 ```
 
 ---
 
-### Task 4: Move disruptor into `TurboUtils::Concurrency`
+### Task 4: Move disruptor into `Salts::Concurrency`
 
 **Files:**
 - Create: `concurrency/CMakeLists.txt`
-- Create: `concurrency/include/turbo/concurrency.h`
-- Create: `concurrency/include/turbo/disruptor.h`
+- Create: `concurrency/include/salts/concurrency.h`
+- Create: `concurrency/include/salts/disruptor.h`
 - Create: `concurrency/src/disruptor.c`
 - Create: `concurrency/tests/CMakeLists.txt`
 - Create: `concurrency/tests/disruptor_test.c`
@@ -445,8 +445,8 @@ git commit -m "refactor(platform): extract thread primitives"
 - Modify: `utils/CMakeLists.txt`
 
 **Interfaces:**
-- Produces: `TurboUtils::Concurrency` and canonical `<turbo/disruptor.h>` API.
-- Consumes: `<turbo/thread.h>` from Platform.
+- Produces: `Salts::Concurrency` and canonical `<salts/disruptor.h>` API.
+- Consumes: `<salts/thread.h>` from Platform.
 - Preserves: legacy `"disruptor.h"` include and Core-link consumer behavior through transitive Concurrency linkage.
 
 - [ ] **Step 1: Copy the disruptor regression test under the new owner**
@@ -454,8 +454,8 @@ git commit -m "refactor(platform): extract thread primitives"
 Create `concurrency/tests/disruptor_test.c` from the existing test and change only includes:
 
 ```c
-#include <turbo/disruptor.h>
-#include <turbo/thread.h>
+#include <salts/disruptor.h>
+#include <salts/thread.h>
 #include "tinytest.h"
 ```
 
@@ -477,32 +477,32 @@ Expected: failure until Concurrency target/header exists.
 `concurrency/CMakeLists.txt`:
 
 ```cmake
-set(TARGET_NAME turbo_concurrency)
+set(TARGET_NAME salts_concurrency)
 add_library(${TARGET_NAME} STATIC src/disruptor.c)
 cmake_config_target(${TARGET_NAME}
-  ALIAS TurboUtils::Concurrency
+  ALIAS Salts::Concurrency
   FOLDER "concurrency"
   EXPORT_NAME Concurrency)
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
 target_include_directories(${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
-target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::Platform)
+target_link_libraries(${TARGET_NAME} PUBLIC Salts::Platform)
 ```
 
 Move implementation without algorithm changes; replace includes with:
 
 ```c
-#include <turbo/disruptor.h>
-#include <turbo/thread.h>
+#include <salts/disruptor.h>
+#include <salts/thread.h>
 ```
 
 Replace `utils/include/disruptor.h` with:
 
 ```c
-#ifndef TURBO_DISRUPTOR_COMPAT_H
-#define TURBO_DISRUPTOR_COMPAT_H
-#include <turbo/disruptor.h>
+#ifndef SALTS_DISRUPTOR_COMPAT_H
+#define SALTS_DISRUPTOR_COMPAT_H
+#include <salts/disruptor.h>
 #endif
 ```
 
@@ -530,28 +530,28 @@ git commit -m "refactor(concurrency): extract disruptor module"
 ### Task 5: Move the existing thread pool into Concurrency and keep Core policy in Core
 
 **Files:**
-- Create: `concurrency/include/turbo/thread_pool.h`
+- Create: `concurrency/include/salts/thread_pool.h`
 - Create: `concurrency/src/thread_pool.c`
 - Create: `concurrency/tests/thread_pool_test.c`
-- Create: `utils/src/turbo_sync_policy.c`
+- Create: `utils/src/salts_sync_policy.c`
 - Modify: `concurrency/CMakeLists.txt`
-- Modify: `utils/include/turbo_thread.h`
-- Delete: `utils/src/turbo_thread.c`
+- Modify: `utils/include/salts_thread.h`
+- Delete: `utils/src/salts_thread.c`
 - Delete: `utils/tests/test_threadpool.c`
 
 **Interfaces:**
-- Produces: existing `turbo_threadpool_*` API from `<turbo/thread_pool.h>`.
-- Consumes: `<turbo/thread.h>` and `<turbo/disruptor.h>`.
+- Produces: existing `salts_threadpool_*` API from `<salts/thread_pool.h>`.
+- Consumes: `<salts/thread.h>` and `<salts/disruptor.h>`.
 - Preserves: queue capacity, MPMC submitters, shutdown rejection, pending/wait/stats semantics.
-- Preserves in Core: `turbo_sync_set_single_threaded()` / `turbo_sync_is_single_threaded()` and `g_single_threaded` policy state.
+- Preserves in Core: `salts_sync_set_single_threaded()` / `salts_sync_is_single_threaded()` and `g_single_threaded` policy state.
 
 - [ ] **Step 1: Move the thread-pool test to the new owner**
 
 Create `concurrency/tests/thread_pool_test.c` from `utils/tests/test_threadpool.c` and use:
 
 ```c
-#include <turbo/thread.h>
-#include <turbo/thread_pool.h>
+#include <salts/thread.h>
+#include <salts/thread_pool.h>
 #include "tinytest.h"
 ```
 
@@ -559,16 +559,16 @@ Do not weaken or remove the multi-producer, queue-capacity, shutdown, pending, o
 
 - [ ] **Step 2: Create the canonical thread-pool header**
 
-Move these types and all existing `turbo_threadpool_*` declarations into `<turbo/thread_pool.h>` using `TURBO_CONCURRENCY_C_API`:
+Move these types and all existing `salts_threadpool_*` declarations into `<salts/thread_pool.h>` using `SALTS_CONCURRENCY_C_API`:
 
 ```c
-typedef struct turbo_threadpool_s turbo_threadpool_t;
-typedef void (*turbo_task_fn)(void *arg);
+typedef struct salts_threadpool_s salts_threadpool_t;
+typedef void (*salts_task_fn)(void *arg);
 
 typedef struct {
   int num_threads;
   size_t queue_capacity;
-} turbo_threadpool_config_t;
+} salts_threadpool_config_t;
 
 typedef struct {
   int num_threads;
@@ -581,7 +581,7 @@ typedef struct {
   int64_t queued_tasks;
   int64_t active_tasks;
   int64_t pending_tasks;
-} turbo_threadpool_stats_t;
+} salts_threadpool_stats_t;
 ```
 
 - [ ] **Step 3: Extract pool implementation and Core policy separately**
@@ -589,47 +589,47 @@ typedef struct {
 Move the existing Thread Pool section into `concurrency/src/thread_pool.c` with:
 
 ```c
-#include <turbo/disruptor.h>
-#include <turbo/thread.h>
-#include <turbo/thread_pool.h>
+#include <salts/disruptor.h>
+#include <salts/thread.h>
+#include <salts/thread_pool.h>
 ```
 
-Create `utils/src/turbo_sync_policy.c`:
+Create `utils/src/salts_sync_policy.c`:
 
 ```c
-#include "turbo_thread.h"
+#include "salts_thread.h"
 
 static int g_single_threaded = 0;
 
-void turbo_sync_set_single_threaded(int enabled) {
+void salts_sync_set_single_threaded(int enabled) {
   g_single_threaded = enabled;
 }
 
-int turbo_sync_is_single_threaded(void) {
+int salts_sync_is_single_threaded(void) {
   return g_single_threaded;
 }
 ```
 
-`utils/include/turbo_thread.h` becomes:
+`utils/include/salts_thread.h` becomes:
 
 ```c
-#ifndef TURBO_THREAD_COMPAT_H
-#define TURBO_THREAD_COMPAT_H
-#include "turbo_api.h"
-#include <turbo/thread.h>
-#include <turbo/thread_pool.h>
+#ifndef SALTS_THREAD_COMPAT_H
+#define SALTS_THREAD_COMPAT_H
+#include "salts_api.h"
+#include <salts/thread.h>
+#include <salts/thread_pool.h>
 
-TURBO_C_API void turbo_sync_set_single_threaded(int enabled);
-TURBO_C_API int turbo_sync_is_single_threaded(void);
+SALTS_C_API void salts_sync_set_single_threaded(int enabled);
+SALTS_C_API int salts_sync_is_single_threaded(void);
 #endif
 ```
 
-Delete `utils/src/turbo_thread.c` only after all primitive, pool, and policy code has a new owner.
+Delete `utils/src/salts_thread.c` only after all primitive, pool, and policy code has a new owner.
 
 - [ ] **Step 4: Run migrated and Core-link regression**
 
 ```bash
-cmake --build --preset linux-release-user --target thread_pool_test turbo_utils
+cmake --build --preset linux-release-user --target thread_pool_test salts
 ctest --preset linux-release-user -R "^thread_pool_test$" --output-on-failure
 ```
 
@@ -638,8 +638,8 @@ Expected: new owner test passes; Core links without duplicate/missing thread, po
 - [ ] **Step 5: Commit**
 
 ```bash
-git add concurrency utils/include/turbo_thread.h utils/src/turbo_sync_policy.c
-git rm utils/src/turbo_thread.c utils/tests/test_threadpool.c
+git add concurrency utils/include/salts_thread.h utils/src/salts_sync_policy.c
+git rm utils/src/salts_thread.c utils/tests/test_threadpool.c
 git commit -m "refactor(concurrency): move thread pool below Core"
 ```
 
@@ -659,7 +659,7 @@ git commit -m "refactor(concurrency): move thread pool below Core"
 - Produces: `cflow_duration`, `cflow_instant`, `cflow_deadline`.
 - Produces: `cflow_clock`, `cflow_clock_system_init`, `cflow_clock_virtual_init`.
 - Produces: clock capability `CMETA_CLOCK_CAP_MANUAL` and generic `cflow_clock_advance()` returning false for SystemClock.
-- Consumes: `turbo_hrtime()` from Platform.
+- Consumes: `salts_hrtime()` from Platform.
 
 - [ ] **Step 1: Write failing typed-time tests**
 
@@ -724,7 +724,7 @@ bool cflow_clock_system_init(cflow_clock *clock);
 bool cflow_clock_virtual_init(cflow_clock *clock, cflow_instant start);
 ```
 
-System `now()` returns `{ turbo_hrtime() }`; System `advance()` returns false. VirtualClock stores logical ns and saturates advancement.
+System `now()` returns `{ salts_hrtime() }`; System `advance()` returns false. VirtualClock stores logical ns and saturates advancement.
 
 - [ ] **Step 5: Run focused tests**
 
@@ -756,7 +756,7 @@ git commit -m "feat(cflow): add typed clock semantics"
 **Interfaces:**
 - Produces: `cflow_executor_manual_init`, `cflow_executor_serial_init`, `cflow_executor_worker_init`.
 - Produces internal TimerQueue APIs used by schedulers.
-- Consumes: `turbo_threadpool_*` from Concurrency.
+- Consumes: `salts_threadpool_*` from Concurrency.
 
 - [ ] **Step 1: Add failing Manual/Serial/Worker executor tests**
 
@@ -772,7 +772,7 @@ static void serial_probe(void *user) {
   int seen = atomic_load(&max_active);
   while (active > seen &&
          !atomic_compare_exchange_weak(&max_active, &seen, active)) {}
-  turbo_sleep_ms(1);
+  salts_sleep_ms(1);
   atomic_fetch_sub(&active_callbacks, 1);
 }
 ```
@@ -796,7 +796,7 @@ typedef void (*cflow_task_fn)(void *user);
 CMETA_INTERFACE(cflow_executor, CMETA_EXECUTOR_METHODS);
 ```
 
-ManualExecutor owns a simple FIFO. SerialExecutor wraps `turbo_threadpool_create(1)`. WorkerExecutor wraps `turbo_threadpool_create(workers)`.
+ManualExecutor owns a simple FIFO. SerialExecutor wraps `salts_threadpool_create(1)`. WorkerExecutor wraps `salts_threadpool_create(workers)`.
 
 - [ ] **Step 3: Define TimerQueue internal API**
 
@@ -899,9 +899,9 @@ Map `post_after(delay_ms)` through `cflow_duration_from_ms`, `cflow_clock_now`, 
 
 ```c
 typedef struct worker_state {
-  turbo_mutex_t mutex;
-  turbo_cond_t changed;
-  turbo_thread_t timer_thread;
+  salts_mutex_t mutex;
+  salts_cond_t changed;
+  salts_thread_t timer_thread;
   cflow_clock clock;
   cflow_executor executor;
   cflow_timer_queue timers;
@@ -927,11 +927,11 @@ Signal `changed` when a new earlier timer is inserted, cancelled, or shutdown be
 
 ```cmake
 target_link_libraries(${TARGET_NAME}
-  PUBLIC TurboUtils::CMeta
-  PRIVATE TurboUtils::Platform TurboUtils::Concurrency)
+  PUBLIC Salts::CMeta
+  PRIVATE Salts::Platform Salts::Concurrency)
 ```
 
-Remove `Threads::Threads` from CFlow. Replace `<threads.h>` usage in CFlow source/tests with `<turbo/thread.h>` where explicit producer threads are still required.
+Remove `Threads::Threads` from CFlow. Replace `<threads.h>` usage in CFlow source/tests with `<salts/thread.h>` where explicit producer threads are still required.
 
 - [ ] **Step 5: Run full CFlow regression**
 
@@ -956,14 +956,14 @@ git commit -m "refactor(cflow): compose scheduler execution foundation"
 **Files:**
 - Modify: `utils/CMakeLists.txt`
 - Modify: `utils/include/platform.h`
-- Modify: `utils/include/turbo_thread.h`
+- Modify: `utils/include/salts_thread.h`
 - Modify: `utils/include/disruptor.h`
 - Modify: `CMakeLists.txt`
-- Modify: `cmake/TurboUtilsConfig.cmake.in` only if exported dependency discovery requires it
+- Modify: `cmake/SaltsConfig.cmake.in` only if exported dependency discovery requires it
 - Create: `utils/tests/test_execution_compat.c`
 
 **Interfaces:**
-- Core may link `TurboUtils::CFlow` privately.
+- Core may link `Salts::CFlow` privately.
 - Core publishes Platform/Concurrency transitively while legacy Core public headers aggregate those APIs.
 - CFlow never links Core.
 
@@ -980,9 +980,9 @@ add_subdirectory(platform)
 add_subdirectory(concurrency)
 add_subdirectory(cmeta)
 add_subdirectory(cflow)
-add_subdirectory(turbostl)
+add_subdirectory(cstl)
 add_subdirectory(utils)
-add_subdirectory(turbo_serial)
+add_subdirectory(salts_serial)
 ```
 
 TinyTest appears before Platform/Concurrency only so their test subdirectories can create TinyTest-linked test targets. Production Platform/Concurrency targets do not link TinyTest.
@@ -991,14 +991,14 @@ TinyTest appears before Platform/Concurrency only so their test subdirectories c
 
 ```cmake
 target_link_libraries(
-  turbo_utils
-  PUBLIC TurboUtils::CMeta
-         TurboUtils::Platform
-         TurboUtils::Concurrency
-  PRIVATE TurboUtils::STL
-          TurboUtils::CFlow
+  salts
+  PUBLIC Salts::CMeta
+         Salts::Platform
+         Salts::Concurrency
+  PRIVATE Salts::CSTL
+          Salts::CFlow
           ${FMT_LEXER_LIBRARY}
-          TurboUtils::SDS
+          Salts::SDS
           aklomp::base64
           zstd::libzstd
           ${LOG_PATTERN_LEXER_LIBRARY})
@@ -1016,21 +1016,21 @@ Create `utils/tests/test_execution_compat.c`:
 
 ```c
 #include "platform.h"
-#include "turbo_thread.h"
+#include "salts_thread.h"
 #include "disruptor.h"
 
 int main(void) {
-  turbo_threadpool_t *pool = turbo_threadpool_create(1);
+  salts_threadpool_t *pool = salts_threadpool_create(1);
   if (pool == NULL) return 1;
-  turbo_threadpool_destroy(pool);
-  turbo_sync_set_single_threaded(1);
-  if (!turbo_sync_is_single_threaded()) return 2;
-  turbo_sync_set_single_threaded(0);
-  return turbo_hrtime() == 0 ? 3 : 0;
+  salts_threadpool_destroy(pool);
+  salts_sync_set_single_threaded(1);
+  if (!salts_sync_is_single_threaded()) return 2;
+  salts_sync_set_single_threaded(0);
+  return salts_hrtime() == 0 ? 3 : 0;
 }
 ```
 
-Register it linking `TurboUtils::Core` only. This proves transitive compile/link behavior; it is not a source-spelling test.
+Register it linking `Salts::Core` only. This proves transitive compile/link behavior; it is not a source-spelling test.
 
 - [ ] **Step 5: Build full repository**
 
@@ -1044,7 +1044,7 @@ Expected: build succeeds and all registered tests pass.
 
 - [ ] **Step 6: Verify installed target graph with external consumers**
 
-Install to a temporary prefix. Configure one tiny external CMake consumer linking only `TurboUtils::Core` and another linking only `TurboUtils::CFlow`. Neither consumer manually adds Platform/Concurrency.
+Install to a temporary prefix. Configure one tiny external CMake consumer linking only `Salts::Core` and another linking only `Salts::CFlow`. Neither consumer manually adds Platform/Concurrency.
 
 Expected target graph:
 
@@ -1086,7 +1086,7 @@ Expected: zero build errors and zero test failures.
 - [ ] **Step 2: Build module targets independently**
 
 ```bash
-cmake --build --preset linux-release-user --target turbo_platform turbo_concurrency turbo_cflow turbo_utils
+cmake --build --preset linux-release-user --target salts_platform salts_concurrency salts_cflow salts
 ```
 
 Expected: each resolves only declared lower-level dependencies; no duplicate symbol failures.
@@ -1095,10 +1095,10 @@ Expected: each resolves only declared lower-level dependencies; no duplicate sym
 
 Do not add grep-based source-style tests. Ensure:
 
-- Platform tests link `TurboUtils::Platform` only (+ TinyTest as test dependency).
-- Concurrency tests link `TurboUtils::Concurrency` only (+ TinyTest).
-- CFlow tests link `TurboUtils::CFlow` only (+ TinyTest).
-- Core compatibility tests link `TurboUtils::Core` only (+ TinyTest if using TinyTest).
+- Platform tests link `Salts::Platform` only (+ TinyTest as test dependency).
+- Concurrency tests link `Salts::Concurrency` only (+ TinyTest).
+- CFlow tests link `Salts::CFlow` only (+ TinyTest).
+- Core compatibility tests link `Salts::Core` only (+ TinyTest if using TinyTest).
 
 Missing transitive dependencies therefore fail naturally at compile/link time.
 
@@ -1114,7 +1114,7 @@ Verify:
 - no `TIME_UTC` deadline source in CFlow worker scheduling;
 - no `<threads.h>` in CFlow scheduler/runtime;
 - no disruptor/thread-pool implementation remains under Core;
-- `turbo_sync_*` policy remains Core-owned;
+- `salts_sync_*` policy remains Core-owned;
 - legacy public include wrappers remain;
 - Platform/Concurrency visibility state is independent of Core.
 

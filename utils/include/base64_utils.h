@@ -1,5 +1,5 @@
-#ifndef ROCIDA_BASE64_UTILS_H
-#define ROCIDA_BASE64_UTILS_H
+#ifndef SALTS_BASE64_UTILS_H
+#define SALTS_BASE64_UTILS_H
 
 #include <platform.h>
 #include <stdbool.h>
@@ -41,28 +41,28 @@ typedef struct {
 } tn_base64_bytes_result_t;
 
 /* Result-style APIs. Caller owns returned value on success and frees it with free(). */
-TURBO_C_API tn_base64_string_result_t tn_base64_encode_ex(const uint8_t *data, size_t len);
-TURBO_C_API tn_base64_error_t tn_base64_encode_buf_ex(const uint8_t *data, size_t len,
+SALTS_C_API tn_base64_string_result_t tn_base64_encode_ex(const uint8_t *data, size_t len);
+SALTS_C_API tn_base64_error_t tn_base64_encode_buf_ex(const uint8_t *data, size_t len,
                                                     char *out, size_t out_cap);
-TURBO_C_API tn_base64_bytes_result_t tn_base64_decode_ex(const char *input);
+SALTS_C_API tn_base64_bytes_result_t tn_base64_decode_ex(const char *input);
 
 /* Encode binary data to Base64.
  * Allocates a null-terminated string in *output on success.
  * Returns 0 on success, -1 on error. */
-TURBO_C_API int tn_base64_encode(const uint8_t *data, size_t len, char **output);
+SALTS_C_API int tn_base64_encode(const uint8_t *data, size_t len, char **output);
 
 /* Encode binary data to Base64 into a caller-supplied buffer (no malloc).
  * out_cap must be >= 4*ceil(len/3)+1.  Returns 0 on success, -1 on error. */
-TURBO_C_API int tn_base64_encode_buf(const uint8_t *data, size_t len,
+SALTS_C_API int tn_base64_encode_buf(const uint8_t *data, size_t len,
                                    char *out, size_t out_cap);
 
 /* Decode a Base64 string into a newly allocated buffer.
  * The binary output length is returned via *output_len.
  * Returns 0 on success, -1 on error. */
-TURBO_C_API int tn_base64_decode(const char *input, uint8_t **output, size_t *output_len);
+SALTS_C_API int tn_base64_decode(const char *input, uint8_t **output, size_t *output_len);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* ROCIDA_BASE64_UTILS_H */
+#endif /* SALTS_BASE64_UTILS_H */

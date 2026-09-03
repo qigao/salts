@@ -6,14 +6,14 @@
   (COLOR_GREEN, 1, "green"), \
   (COLOR_BLUE, 2, "blue")
 
-TURBO_ENUM_DECLARE(color_t, color, COLOR_ITEMS, "UNKNOWN")
+SALTS_ENUM_DECLARE(color_t, color, COLOR_ITEMS, "UNKNOWN")
 
 #define STATUS_ITEMS \
   (STATUS_OK, 0, "ok"), \
   (STATUS_ERROR, 1, "error"), \
   (STATUS_DEGRADED, 2, "degraded")
 
-TURBO_ENUM_DECLARE(status_t, status, STATUS_ITEMS, "UNKNOWN")
+SALTS_ENUM_DECLARE(status_t, status, STATUS_ITEMS, "UNKNOWN")
 
 spec("Enum Utils Tests") {
   it("should expose CMeta enum metadata") {
@@ -61,7 +61,7 @@ spec("Enum Utils Tests") {
     check_equal(status_from_string("error", &s), 0);
     check_true(status_is_valid(s));
     check_true(status_equals(s, STATUS_ERROR));
-    check_equal(TURBO_ENUM_DISPATCH_TO_STRING_OF(c, color_t, color_to_string), "blue");
-    check_equal(TURBO_ENUM_DISPATCH_TO_STRING_OF(s, status_t, status_to_string), "error");
+    check_equal(SALTS_ENUM_DISPATCH_TO_STRING_OF(c, color_t, color_to_string), "blue");
+    check_equal(SALTS_ENUM_DISPATCH_TO_STRING_OF(s, status_t, status_to_string), "error");
   }
 }

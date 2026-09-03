@@ -6,7 +6,7 @@ endif()
 
 cmake_add_benchmark(native_io_pipe_benchmark
   SOURCES native_io_pipe_benchmark.c
-  LIBS Rocida::NativeIO Rocida::TinyTest
+  LIBS Salts::NativeIO Salts::TinyTest
   FOLDER "native-io/benchmarks")
 set_target_properties(native_io_pipe_benchmark PROPERTIES
   C_STANDARD 11

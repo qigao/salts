@@ -2,8 +2,8 @@
 
 #include "fs_watch_internal.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -11,8 +11,8 @@
 
 typedef struct cflow_fs_watch_publisher_state {
   cflow_fs_watch watch;
-  turbo_mutex_t lock;
-  turbo_cond_t changed;
+  salts_mutex_t lock;
+  salts_cond_t changed;
   cflow_waker waiter;
   cflow_waker terminal_waker;
   const char *name;
@@ -27,12 +27,12 @@ typedef struct cflow_fs_watch_publisher_state {
   bool encoded;
 } cflow_fs_watch_publisher_state;
 
-static TURBO_THREAD_LOCAL cflow_fs_watch_publisher_state *cflow_fs_watch_publisher_active_callback;
+static SALTS_THREAD_LOCAL cflow_fs_watch_publisher_state *cflow_fs_watch_publisher_active_callback;
 
 static void cflow_fs_watch_publisher_free(cflow_fs_watch_publisher_state *state) {
   if (state == NULL) return;
-  turbo_cond_destroy(&state->changed);
-  turbo_mutex_destroy(&state->lock);
+  salts_cond_destroy(&state->changed);
+  salts_mutex_destroy(&state->lock);
   free(state);
 }
 
@@ -49,15 +49,15 @@ static void cflow_fs_watch_publisher_invoke_wake(cflow_fs_watch_publisher_state 
   cflow_fs_watch_publisher_active_callback = state;
   waker.wake(waker.user);
   cflow_fs_watch_publisher_active_callback = previous;
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   --state->wake_inflight;
-  turbo_cond_broadcast(&state->changed);
-  turbo_mutex_unlock(&state->lock);
+  salts_cond_broadcast(&state->changed);
+  salts_mutex_unlock(&state->lock);
 }
 
 static void cflow_fs_watch_publisher_wait_wakes_locked(cflow_fs_watch_publisher_state *state) {
   while (state->wake_inflight != 0u && cflow_fs_watch_publisher_active_callback != state)
-    turbo_cond_wait(&state->changed, &state->lock);
+    salts_cond_wait(&state->changed, &state->lock);
 }
 
 static void cflow_fs_watch_publisher_wake(void *user) {
@@ -66,7 +66,7 @@ static void cflow_fs_watch_publisher_wake(void *user) {
   cflow_waker terminal = {0};
   bool done;
   if (state == NULL) return;
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   done = cflow_fs_watch_backend_done_and_empty(&state->watch);
   waiter = state->waiter;
   state->waiter = (cflow_waker){0};
@@ -76,7 +76,7 @@ static void cflow_fs_watch_publisher_wake(void *user) {
     state->terminal_waker = (cflow_waker){0};
     cflow_fs_watch_publisher_retain_wake_locked(state, terminal);
   }
-  turbo_mutex_unlock(&state->lock);
+  salts_mutex_unlock(&state->lock);
   cflow_fs_watch_publisher_invoke_wake(state, waiter);
   cflow_fs_watch_publisher_invoke_wake(state, terminal);
 }
@@ -92,9 +92,9 @@ static bool cflow_fs_watch_publisher_arm(void *self, cflow_waker waker) {
   cflow_waker wake_now = {0};
   bool ready;
   if (state == NULL || waker.wake == NULL) return false;
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   if (state->waiter.wake != NULL) {
-    turbo_mutex_unlock(&state->lock);
+    salts_mutex_unlock(&state->lock);
     return false;
   }
   state->waiter = waker;
@@ -104,7 +104,7 @@ static bool cflow_fs_watch_publisher_arm(void *self, cflow_waker waker) {
     state->waiter = (cflow_waker){0};
     cflow_fs_watch_publisher_retain_wake_locked(state, wake_now);
   }
-  turbo_mutex_unlock(&state->lock);
+  salts_mutex_unlock(&state->lock);
   cflow_fs_watch_publisher_invoke_wake(state, wake_now);
   return true;
 }
@@ -112,10 +112,10 @@ static bool cflow_fs_watch_publisher_arm(void *self, cflow_waker waker) {
 static void cflow_fs_watch_publisher_unarm(void *self) {
   cflow_fs_watch_publisher_state *state = (cflow_fs_watch_publisher_state *)self;
   if (state == NULL) return;
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   state->waiter = (cflow_waker){0};
   cflow_fs_watch_publisher_wait_wakes_locked(state);
-  turbo_mutex_unlock(&state->lock);
+  salts_mutex_unlock(&state->lock);
 }
 
 CMETA_IMPLEMENTS(cflow_waitable, cflow_fs_watch_publisher_waitable, 0,
@@ -128,32 +128,32 @@ static cflow_step cflow_fs_watch_publisher_resume(void *self, cflow_publish_cont
   (void)ctx;
   if (state == NULL || out_value == NULL)
     return (cflow_step){CFLOW_STEP_ERROR, {0}, "filesystem watch Publisher unavailable"};
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   if (state->cancelled) {
-    turbo_mutex_unlock(&state->lock);
+    salts_mutex_unlock(&state->lock);
     return (cflow_step){CFLOW_STEP_DONE, {0}, NULL};
   }
   state->current_out = out_value;
   state->encoded = false;
   memset(out_value, 0, state->output_type->size);
-  turbo_mutex_unlock(&state->lock);
+  salts_mutex_unlock(&state->lock);
 
   status = cflow_fs_watch_run_ready(&state->watch, 1u, &delivered);
 
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   state->current_out = NULL;
-  if (status != TURBO_OK) {
-    turbo_mutex_unlock(&state->lock);
+  if (status != SALTS_OK) {
+    salts_mutex_unlock(&state->lock);
     return (cflow_step){CFLOW_STEP_ERROR, {0}, "filesystem watch driver failed"};
   }
   if (delivered != 0u) {
     const bool encoded = state->encoded;
     const bool done = cflow_fs_watch_backend_done_and_empty(&state->watch);
-    turbo_mutex_unlock(&state->lock);
+    salts_mutex_unlock(&state->lock);
     if (!encoded) return (cflow_step){CFLOW_STEP_ERROR, {0}, "filesystem watch encoder failed"};
     return (cflow_step){done ? CFLOW_STEP_VALUE_AND_DONE : CFLOW_STEP_VALUE, {0}, NULL};
   }
-  turbo_mutex_unlock(&state->lock);
+  salts_mutex_unlock(&state->lock);
 
   if (cflow_fs_watch_backend_done_and_empty(&state->watch))
     return (cflow_step){CFLOW_STEP_DONE, {0}, NULL};
@@ -166,7 +166,7 @@ static void cflow_fs_watch_publisher_cancel(void *self) {
   cflow_waker waiter = {0};
   cflow_waker terminal = {0};
   if (state == NULL) return;
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   if (!state->cancelled) {
     state->cancelled = true;
     waiter = state->waiter;
@@ -176,13 +176,13 @@ static void cflow_fs_watch_publisher_cancel(void *self) {
     cflow_fs_watch_publisher_retain_wake_locked(state, waiter);
     cflow_fs_watch_publisher_retain_wake_locked(state, terminal);
   }
-  turbo_mutex_unlock(&state->lock);
+  salts_mutex_unlock(&state->lock);
   (void)cflow_fs_watch_close(&state->watch);
   cflow_fs_watch_publisher_invoke_wake(state, waiter);
   cflow_fs_watch_publisher_invoke_wake(state, terminal);
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   cflow_fs_watch_publisher_wait_wakes_locked(state);
-  turbo_mutex_unlock(&state->lock);
+  salts_mutex_unlock(&state->lock);
 }
 
 static void cflow_fs_watch_publisher_destroy(void *self) {
@@ -190,13 +190,13 @@ static void cflow_fs_watch_publisher_destroy(void *self) {
   bool free_state = false;
   if (state == NULL) return;
   cflow_fs_watch_publisher_cancel(state);
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   if (state->publisher_live) {
     state->publisher_live = false;
     --state->references;
     free_state = state->references == 0u;
   }
-  turbo_mutex_unlock(&state->lock);
+  salts_mutex_unlock(&state->lock);
   if (free_state) cflow_fs_watch_publisher_free(state);
 }
 
@@ -214,11 +214,11 @@ static void cflow_fs_watch_publisher_bind_terminal(void *self, cflow_waker waker
   cflow_fs_watch_publisher_state *state = (cflow_fs_watch_publisher_state *)self;
   bool wake_now;
   if (state == NULL) return;
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   wake_now = state->cancelled || cflow_fs_watch_backend_done_and_empty(&state->watch);
   if (!wake_now) state->terminal_waker = waker;
   else cflow_fs_watch_publisher_retain_wake_locked(state, waker);
-  turbo_mutex_unlock(&state->lock);
+  salts_mutex_unlock(&state->lock);
   if (wake_now) cflow_fs_watch_publisher_invoke_wake(state, waker);
 }
 
@@ -227,9 +227,9 @@ static cflow_publisher_terminal cflow_fs_watch_publisher_poll_terminal(void *sel
   bool cancelled;
   (void)error;
   if (state == NULL) return CFLOW_PUBLISHER_ERROR;
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   cancelled = state->cancelled || cflow_fs_watch_backend_done_and_empty(&state->watch);
-  turbo_mutex_unlock(&state->lock);
+  salts_mutex_unlock(&state->lock);
   return cancelled ? CFLOW_PUBLISHER_DONE : CFLOW_PUBLISHER_OPEN;
 }
 
@@ -250,18 +250,18 @@ int cflow_fs_watch_publisher_open(cflow_publisher *out, cflow_fs_watch_publisher
       config->watch_capacity == 0u || config->path_capacity < 2u ||
       config->native_buffer_capacity < 1024u || config->native_buffer_capacity > 65536u ||
       config->encode == NULL || !cmeta_type_desc_valid(config->output_type))
-    return TURBO_EINVAL;
-  if (cmeta_type_require_traits(config->output_type, required) != CMETA_OK) return TURBO_ENOTSUP;
+    return SALTS_EINVAL;
+  if (cmeta_type_require_traits(config->output_type, required) != CMETA_OK) return SALTS_ENOTSUP;
 
   state = (cflow_fs_watch_publisher_state *)calloc(1u, sizeof(*state));
-  if (state == NULL) return TURBO_ENOMEM;
-  turbo_mutex_init(&state->lock);
-  turbo_cond_init(&state->changed);
+  if (state == NULL) return SALTS_ENOMEM;
+  salts_mutex_init(&state->lock);
+  salts_cond_init(&state->changed);
   if (state->lock == NULL || state->changed == NULL) {
-    turbo_cond_destroy(&state->changed);
-    turbo_mutex_destroy(&state->lock);
+    salts_cond_destroy(&state->changed);
+    salts_mutex_destroy(&state->lock);
     free(state);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   state->name = config->name;
   state->output_type = config->output_type;
@@ -278,7 +278,7 @@ int cflow_fs_watch_publisher_open(cflow_publisher *out, cflow_fs_watch_publisher
   };
   status = cflow_fs_watch_open_notified(&state->watch, path, &watch_config,
                                         cflow_fs_watch_publisher_wake, state);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     cflow_fs_watch_publisher_free(state);
     return status;
   }
@@ -286,13 +286,13 @@ int cflow_fs_watch_publisher_open(cflow_publisher *out, cflow_fs_watch_publisher
   state->publisher_live = true;
   *out = cflow_fs_watch_publisher_as_cflow_publisher(state);
   owner->impl = state;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cflow_fs_watch_publisher_owner_acknowledge_rescan(cflow_fs_watch_publisher_owner *owner) {
   cflow_fs_watch_publisher_state *state =
       owner != NULL ? (cflow_fs_watch_publisher_state *)owner->impl : NULL;
-  if (state == NULL) return TURBO_EINVAL;
+  if (state == NULL) return SALTS_EINVAL;
   return cflow_fs_watch_acknowledge_rescan(&state->watch);
 }
 
@@ -308,29 +308,29 @@ int cflow_fs_watch_publisher_owner_close(cflow_fs_watch_publisher_owner *owner) 
   size_t delivered = 0u;
   bool free_state;
   int status;
-  if (owner == NULL) return TURBO_EINVAL;
-  if (owner->impl == NULL) return TURBO_OK;
+  if (owner == NULL) return SALTS_EINVAL;
+  if (owner->impl == NULL) return SALTS_OK;
   state = (cflow_fs_watch_publisher_state *)owner->impl;
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   if (state->publisher_live || state->wake_inflight != 0u) {
-    turbo_mutex_unlock(&state->lock);
-    return TURBO_EBUSY;
+    salts_mutex_unlock(&state->lock);
+    return SALTS_EBUSY;
   }
-  turbo_mutex_unlock(&state->lock);
+  salts_mutex_unlock(&state->lock);
 
   status = cflow_fs_watch_close(&state->watch);
-  if (status != TURBO_OK && status != TURBO_EALREADY) return status;
+  if (status != SALTS_OK && status != SALTS_EALREADY) return status;
   status = cflow_fs_watch_run_ready(&state->watch, SIZE_MAX, &delivered);
-  if (status != TURBO_OK) return status;
-  if (!cflow_fs_watch_is_quiescent(&state->watch)) return TURBO_EBUSY;
+  if (status != SALTS_OK) return status;
+  if (!cflow_fs_watch_is_quiescent(&state->watch)) return SALTS_EBUSY;
   status = cflow_fs_watch_destroy(&state->watch);
   if (state->watch.impl != NULL) return status;
 
-  turbo_mutex_lock(&state->lock);
+  salts_mutex_lock(&state->lock);
   --state->references;
   free_state = state->references == 0u;
   owner->impl = NULL;
-  turbo_mutex_unlock(&state->lock);
+  salts_mutex_unlock(&state->lock);
   if (free_state) cflow_fs_watch_publisher_free(state);
   return status;
 }

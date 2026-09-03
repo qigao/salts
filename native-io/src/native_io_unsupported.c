@@ -1,6 +1,6 @@
 #include "native_io_internal.h"
 
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 bool native_io_platform_backend_supported(native_io_backend_kind kind) {
   (void)kind;
@@ -16,5 +16,5 @@ int native_io_platform_backend_init(native_io_backend *backend,
                                    const native_io_backend_config *config) {
   (void)backend;
   (void)config;
-  return TURBO_ENOTSUP;
+  return SALTS_ENOTSUP;
 }

@@ -11,7 +11,7 @@ a controller adapter, while IOCP/io_uring own fixed completion records, then all
 exactly one terminal result to the existing Actor.
 
 **Tech Stack:** C11, POSIX sockets/epoll/kqueue, Winsock IOCP, Linux io_uring ABI,
-TurboUtils thread/error/clock primitives, TinyTest, CMake presets.
+Salts thread/error/clock primitives, TinyTest, CMake presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-cflow-native-io-backends-design.md`
 

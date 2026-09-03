@@ -1,6 +1,6 @@
 # CFlow Hierarchical Machine and Temporal Source Design
 
-**Issue:** qigao/turbo-utils#69
+**Issue:** qigao/salts#69
 **Date:** 2026-08-24
 
 ## Scope and compatibility

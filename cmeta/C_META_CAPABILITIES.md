@@ -124,10 +124,10 @@ typed(Option, MaybeUser, User);
 typed(Result, LoadResult, User, Error);
 ```
 
-## Containers and turbostl
+## Containers and container
 
-Algorithmic containers are owned by `turbostl`, not by the CMeta aggregate
-header. `turbostl` may register finite generic kinds such as:
+Algorithmic containers are owned by `container`, not by the CMeta aggregate
+header. `container` may register finite generic kinds such as:
 
 ```text
 Vec        Deque      List

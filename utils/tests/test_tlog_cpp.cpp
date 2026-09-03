@@ -6,12 +6,12 @@
 spec("TLog C++ Tests") {
 
   it("should expose log entry metadata to C++ consumers") {
-    const cmeta_struct_desc *meta = turbo_log_entry_t_meta();
+    const cmeta_struct_desc *meta = salts_log_entry_t_meta();
 
     check_not_null(meta);
     check(meta->field_count == static_cast<size_t>(8));
-    check(meta->fields[0].offset == offsetof(turbo_log_entry_t, level));
-    check(meta->fields[7].offset == offsetof(turbo_log_entry_t, message_len));
+    check(meta->fields[0].offset == offsetof(salts_log_entry_t, level));
+    check(meta->fields[7].offset == offsetof(salts_log_entry_t, message_len));
   }
 
   it("should log const char* with {}") {

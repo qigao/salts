@@ -62,7 +62,7 @@ middleware、route middleware 与 Session 行为。调用方不得 destroy 该 p
 
 一个 `target + service.name` 是方法 identity。同一个 target 可以注册多个 method；同一个 server 可以
 注册多个 target。第一次看到 target 时，CRPC 向 CHTTP 注册一个 POST route；方法注册只允许在 start
-之前进行，duplicate 返回 `TURBO_EALREADY`，容量耗尽返回 `TURBO_ENOBUFS`。target 是固定
+之前进行，duplicate 返回 `SALTS_EALREADY`，容量耗尽返回 `SALTS_ENOBUFS`。target 是固定
 origin-form path，CRPC 拒绝 CHTTP `:segment` 动态 route pattern，避免注册 pattern 与实际 request
 path 形成两个方法事实源。
 
@@ -78,7 +78,7 @@ path 形成两个方法事实源。
 | topology | CHTTP 当前一个 server worker 是唯一 dispatch owner；不承诺并发调用同一 server 控制 API |
 | ordering | batch 按输入顺序执行；非 notification response 按输入顺序输出 |
 | capacity | method、method bytes、HTTP body、JSON depth、batch items、CHTTP buffered response body 均为硬上限；CRPC 要求显式配置非零 buffered response 上限，并按 `max_batch_items` 验证总预算可容纳逐项最坏内置协议错误与 array framing；所有乘加先检查溢出 |
-| backpressure | 注册满返回 `TURBO_ENOBUFS`；request/output 超限返回明确 JSON-RPC/HTTP error，不扩为无界队列 |
+| backpressure | 注册满返回 `SALTS_ENOBUFS`；request/output 超限返回明确 JSON-RPC/HTTP error，不扩为无界队列 |
 | shutdown | stop 先关闭 CHTTP admission 并 drain 已接受 handler；成功后 destroy JSON registry 与 CHTTP owner |
 
 params reader 是 single-pass borrowed view。reader、method string 与 HTTP header pointers 在 handler 返回时
@@ -104,7 +104,7 @@ params reader 是 single-pass borrowed view。reader、method string 与 HTTP he
 ## Handler 与编码规则
 
 handler 必须对普通 call 恰好调用一次 `crpc_server_response_result()` 或
-`crpc_server_response_error()`；第二次调用返回 `TURBO_EALREADY`。NULL result encoder 编码 JSON
+`crpc_server_response_error()`；第二次调用返回 `SALTS_EALREADY`。NULL result encoder 编码 JSON
 `null`；NULL error-data encoder 表示省略 `data`。encoder 必须写恰好一个完整 JSON value，CRPC 负责
 writer finish；scalar、array、map 都允许。
 
@@ -119,7 +119,7 @@ notification 的 response helper 只标记完成并跳过实际编码，避免�
 - `crpc_server_test.c`：H1/H2/TLS、multiple endpoint、CMeta/CSerde、notification/batch 与错误边界；
 - `crpc.h`：opaque server、callback views 与生命周期文档。
 
-不从 TurboHTTP/Iris 复制 ownership 模型。Iris 的多 endpoint、notification suppression 与 batch 顺序是
+不从 legacy HTTP codebase/Iris 复制 ownership 模型。Iris 的多 endpoint、notification suppression 与 batch 顺序是
 行为参考；CRPC 使用自身的 bounded CSerde writer、opaque owner 与 CHTTP 生命周期，避免 raw JSON 字符串
 成为 handler 接口。
 

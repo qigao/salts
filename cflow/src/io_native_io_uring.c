@@ -4,8 +4,8 @@
 
 #include "io_native_internal.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -64,8 +64,8 @@ typedef struct cflow_uring_record {
 
 typedef struct cflow_uring_impl {
     cflow_io_native_impl base;
-    turbo_mutex_t gate;
-    turbo_thread_t worker;
+    salts_mutex_t gate;
+    salts_thread_t worker;
     cflow_uring_record *records;
     size_t request_capacity;
     size_t completion_batch_capacity;
@@ -136,7 +136,7 @@ static int uring_sigpipe_guard_begin(cflow_uring_sigpipe_guard *guard) {
     guard->active = true;
     if (sigpending(&pending) == 0)
         guard->had_pending = sigismember(&pending, SIGPIPE) == 1;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static void uring_sigpipe_guard_end(cflow_uring_sigpipe_guard *guard) {
@@ -194,7 +194,7 @@ static int uring_publish_sqe_locked(cflow_uring_impl *impl,
         (_Atomic unsigned *)impl->sq_tail, memory_order_relaxed);
     unsigned index;
     if (tail - head >= *impl->sq_entries)
-        return TURBO_EBUSY;
+        return SALTS_EBUSY;
     index = tail & *impl->sq_mask;
     impl->sqes[index] = *prepared;
     impl->sq_array[index] = index;
@@ -203,10 +203,10 @@ static int uring_publish_sqe_locked(cflow_uring_impl *impl,
     {
         const int submitted = uring_enter(impl, 1u, 0u, 0u);
         if (submitted == 1)
-            return TURBO_OK;
+            return SALTS_OK;
         atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail,
                               memory_order_release);
-        return submitted < 0 ? submitted : TURBO_EIO;
+        return submitted < 0 ? submitted : SALTS_EIO;
     }
 }
 
@@ -355,12 +355,12 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     int effective_result = result;
     bool cancelled;
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     record = uring_record_for_token(impl, native_token);
     if (record == NULL || record->phase != CFLOW_URING_RECORD_PENDING ||
         record->native_token != native_token) {
         uring_counter_increment(&impl->stale_native_completions);
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         return;
     }
     actor = record->actor;
@@ -395,17 +395,17 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
     --impl->active_requests;
     uring_counter_increment(&impl->completed);
     if (cancelled) uring_counter_increment(&impl->cancelled);
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     if (resource_kind == CFLOW_URING_RESOURCE_SOCKET &&
         vector_buffer_count == 0u &&
         operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT && result >= 0) {
         accepted_fd = result;
-        effective_result = TURBO_OK;
+        effective_result = SALTS_OK;
         if (operation->address != NULL) {
             if ((size_t)peer_address_length >
                 operation->address_capacity) {
-                effective_result = TURBO_ERANGE;
+                effective_result = SALTS_ERANGE;
             } else {
                 memcpy(operation->address, &peer_address,
                        (size_t)peer_address_length);
@@ -413,13 +413,13 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
                     (size_t)peer_address_length;
             }
         }
-        if (effective_result == TURBO_OK)
+        if (effective_result == SALTS_OK)
             operation->result_socket = (uintptr_t)accepted_fd;
     }
 
     if (cancelled) {
         completion = (cflow_io_completion){
-            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, SALTS_OK};
     } else if (effective_result < 0) {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_FAILED, 0u, effective_result};
@@ -434,7 +434,7 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
                  file_operation->kind == CFLOW_IO_NATIVE_FILE_READ_AT)) &&
                result == 0) {
         completion = (cflow_io_completion){
-            CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_EOF, 0u, SALTS_OK};
     } else {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_OK,
@@ -443,7 +443,7 @@ static void uring_finish(cflow_uring_impl *impl, uint64_t native_token,
                     (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT ||
                      operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT)
                 ? 0u : (size_t)effective_result,
-            TURBO_OK};
+            SALTS_OK};
     }
     delivery_status = cflow_io_actor_complete(
         actor, request_id, &completion);
@@ -461,13 +461,13 @@ static void uring_fail_all(cflow_uring_impl *impl, int status) {
     for (size_t index = 0u; index < impl->request_capacity; ++index) {
         cflow_uring_record *record = &impl->records[index];
         uint64_t native_token;
-        turbo_mutex_lock(&impl->gate);
+        salts_mutex_lock(&impl->gate);
         if (record->phase != CFLOW_URING_RECORD_PENDING) {
-            turbo_mutex_unlock(&impl->gate);
+            salts_mutex_unlock(&impl->gate);
             continue;
         }
         native_token = record->native_token;
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         uring_finish(impl, native_token, status);
     }
 }
@@ -475,7 +475,7 @@ static void uring_fail_all(cflow_uring_impl *impl, int status) {
 static void uring_worker(void *user) {
     cflow_uring_impl *impl = (cflow_uring_impl *)user;
     sigset_t blocked;
-    int terminal_status = TURBO_OK;
+    int terminal_status = SALTS_OK;
     sigemptyset(&blocked);
     sigaddset(&blocked, SIGPIPE);
     terminal_status = pthread_sigmask(SIG_BLOCK, &blocked, NULL);
@@ -511,24 +511,24 @@ static void uring_worker(void *user) {
             if (token == CFLOW_URING_STOP_TOKEN)
                 goto stopped;
             if (uring_record_for_token(impl, token) == NULL) {
-                turbo_mutex_lock(&impl->gate);
+                salts_mutex_lock(&impl->gate);
                 uring_counter_increment(&impl->stale_native_completions);
-                turbo_mutex_unlock(&impl->gate);
+                salts_mutex_unlock(&impl->gate);
                 continue;
             }
             uring_finish(impl, token, result);
         }
     }
 failed:
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     impl->admission_open = false;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     uring_fail_all(impl, terminal_status);
 
 stopped:
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     impl->worker_running = false;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 }
 
 static int uring_submit_record(
@@ -545,17 +545,17 @@ static int uring_submit_record(
         resource_kind == CFLOW_URING_RESOURCE_PIPE &&
         pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_WRITE;
     int status;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (!impl->admission_open) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_ESHUTDOWN;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_ESHUTDOWN;
     }
     record = uring_find_free_locked(impl);
     if (record == NULL) {
         const int capacity_status = impl->active_requests == 0u
-                                        ? -EOVERFLOW : TURBO_EBUSY;
+                                        ? -EOVERFLOW : SALTS_EBUSY;
         uring_counter_increment(&impl->rejected_full);
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         return capacity_status;
     }
     record->phase = CFLOW_URING_RECORD_PENDING;
@@ -584,11 +584,11 @@ static int uring_submit_record(
     uring_prepare_operation(record, &sqe);
     status = guard_sigpipe
                  ? uring_sigpipe_guard_begin(&sigpipe_guard)
-                 : TURBO_OK;
-    if (status == TURBO_OK)
+                 : SALTS_OK;
+    if (status == SALTS_OK)
         status = uring_publish_sqe_locked(impl, &sqe);
     uring_sigpipe_guard_end(&sigpipe_guard);
-    if (status == TURBO_OK) {
+    if (status == SALTS_OK) {
         ++impl->active_requests;
         uring_counter_increment(&impl->submitted);
     } else {
@@ -604,7 +604,7 @@ static int uring_submit_record(
         record->cancel_requested = false;
         uring_counter_increment(&impl->native_submit_errors);
     }
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     return status;
 }
 
@@ -614,7 +614,7 @@ static int uring_submit(cflow_io_native_impl *base,
                         cflow_io_native_operation *operation) {
     cflow_uring_impl *impl = (cflow_uring_impl *)base;
     if (operation->socket > (uintptr_t)INT_MAX)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT ||
         operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT) {
         int flags;
@@ -624,7 +624,7 @@ static int uring_submit(cflow_io_native_impl *base,
         if (flags < 0)
             return -errno;
         if ((flags & O_NONBLOCK) == 0)
-            return TURBO_EINVAL;
+            return SALTS_EINVAL;
     }
     return uring_submit_record(
         impl, actor, request_id, CFLOW_URING_RESOURCE_SOCKET,
@@ -637,7 +637,7 @@ static int uring_submit_vector(
     cflow_io_native_vector_operation *operation) {
     cflow_uring_impl *impl = (cflow_uring_impl *)base;
     if (operation->socket > (uintptr_t)INT_MAX)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return uring_submit_record(
         impl, actor, request_id, CFLOW_URING_RESOURCE_SOCKET,
         NULL, operation, NULL, NULL);
@@ -649,9 +649,9 @@ static int uring_submit_pipe(
     cflow_io_native_pipe_operation *operation) {
     cflow_uring_impl *impl = (cflow_uring_impl *)base;
     if ((operation->flags & CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE) == 0u)
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     if (operation->handle > (uintptr_t)INT_MAX)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return uring_submit_record(
         impl, actor, request_id, CFLOW_URING_RESOURCE_PIPE,
         NULL, NULL, operation, NULL);
@@ -665,14 +665,14 @@ static int uring_submit_file(
     struct stat status_buffer;
     int status;
     if (operation->handle > (uintptr_t)INT_MAX)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     do {
         status = fstat((int)operation->handle, &status_buffer);
     } while (status < 0 && errno == EINTR);
     if (status < 0)
         return -errno;
     if (!S_ISREG(status_buffer.st_mode))
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return uring_submit_record(
         impl, actor, request_id, CFLOW_URING_RESOURCE_FILE,
         NULL, NULL, NULL, operation);
@@ -684,11 +684,11 @@ static int uring_cancel(cflow_io_native_impl *base,
     cflow_uring_record *record;
     struct io_uring_sqe sqe;
     int status;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     record = uring_find_request_locked(impl, request_id);
     if (record == NULL) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_ENOENT;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_ENOENT;
     }
     memset(&sqe, 0, sizeof(sqe));
     sqe.opcode = IORING_OP_ASYNC_CANCEL;
@@ -696,25 +696,25 @@ static int uring_cancel(cflow_io_native_impl *base,
     sqe.addr = record->native_token;
     sqe.user_data = CFLOW_URING_CANCEL_TOKEN;
     status = uring_publish_sqe_locked(impl, &sqe);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         record->cancel_requested = true;
     else
         uring_counter_increment(&impl->native_cancel_errors);
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     return status;
 }
 
 static bool uring_get_stats(const cflow_io_native_impl *base,
                             cflow_io_native_backend_stats *out) {
     cflow_uring_impl *impl = (cflow_uring_impl *)base;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     *out = (cflow_io_native_backend_stats){
         impl->request_capacity, impl->active_requests, impl->submitted,
         impl->completed, impl->cancelled, impl->rejected_full,
         impl->stale_native_completions, impl->native_submit_errors,
         impl->native_cancel_errors, impl->admission_open,
         impl->worker_running, impl->shutdown_complete};
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     return true;
 }
 
@@ -722,13 +722,13 @@ static int uring_forget_socket(cflow_io_native_impl *base,
                                uintptr_t closed_socket) {
     cflow_uring_impl *impl = (cflow_uring_impl *)base;
     (void)closed_socket;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (impl->active_requests != 0u) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
-    turbo_mutex_unlock(&impl->gate);
-    return TURBO_OK;
+    salts_mutex_unlock(&impl->gate);
+    return SALTS_OK;
 }
 
 static int uring_forget_pipe(cflow_io_native_impl *base,
@@ -746,18 +746,18 @@ static int uring_shutdown(cflow_io_native_impl *base) {
     struct io_uring_sqe sqe;
     bool wake_worker;
     int status;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (impl->shutdown_complete) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EALREADY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EALREADY;
     }
     impl->admission_open = false;
     if (impl->active_requests != 0u) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
     wake_worker = impl->worker_running;
-    status = TURBO_OK;
+    status = SALTS_OK;
     if (wake_worker) {
         memset(&sqe, 0, sizeof(sqe));
         sqe.opcode = IORING_OP_NOP;
@@ -765,17 +765,17 @@ static int uring_shutdown(cflow_io_native_impl *base) {
         sqe.user_data = CFLOW_URING_STOP_TOKEN;
         status = uring_publish_sqe_locked(impl, &sqe);
     }
-    turbo_mutex_unlock(&impl->gate);
-    if (status != TURBO_OK)
+    salts_mutex_unlock(&impl->gate);
+    if (status != SALTS_OK)
         return status;
-    status = turbo_thread_join(&impl->worker);
-    if (status != TURBO_OK)
+    status = salts_thread_join(&impl->worker);
+    if (status != SALTS_OK)
         return status;
-    turbo_thread_destroy(&impl->worker);
-    turbo_mutex_lock(&impl->gate);
+    salts_thread_destroy(&impl->worker);
+    salts_mutex_lock(&impl->gate);
     impl->shutdown_complete = true;
-    turbo_mutex_unlock(&impl->gate);
-    return TURBO_OK;
+    salts_mutex_unlock(&impl->gate);
+    return SALTS_OK;
 }
 
 static void uring_unmap(cflow_uring_impl *impl) {
@@ -790,18 +790,18 @@ static void uring_unmap(cflow_uring_impl *impl) {
 
 static int uring_destroy(cflow_io_native_impl *base) {
     cflow_uring_impl *impl = (cflow_uring_impl *)base;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (!impl->shutdown_complete) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     uring_unmap(impl);
     (void)close(impl->ring_fd);
-    turbo_mutex_destroy(&impl->gate);
+    salts_mutex_destroy(&impl->gate);
     free(impl->records);
     free(impl);
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static const cflow_io_native_impl_ops uring_ops = {
@@ -860,7 +860,7 @@ static int uring_map(cflow_uring_impl *impl, struct io_uring_params *params) {
                                  impl->cq_ring_size) ||
         !uring_mapped_field_fits(params->cq_off.ring_mask, sizeof(unsigned),
                                  impl->cq_ring_size))
-        return TURBO_ERANGE;
+        return SALTS_ERANGE;
     impl->single_mmap = (params->features & IORING_FEAT_SINGLE_MMAP) != 0u;
     shared_size = impl->sq_ring_size > impl->cq_ring_size
                       ? impl->sq_ring_size : impl->cq_ring_size;
@@ -901,7 +901,7 @@ static int uring_map(cflow_uring_impl *impl, struct io_uring_params *params) {
     impl->cq_mask = uring_mapped_field(impl->cq_ring,
                                        params->cq_off.ring_mask);
     impl->cqes = uring_mapped_field(impl->cq_ring, params->cq_off.cqes);
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 int cflow_io_native_io_uring_init(
@@ -912,19 +912,19 @@ int cflow_io_native_io_uring_init(
     unsigned entries;
     int status;
     if (config->kind != CFLOW_IO_NATIVE_IO_URING)
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     if (config->request_capacity > UINT32_MAX / 2u ||
         config->request_capacity > SIZE_MAX / sizeof(cflow_uring_record))
-        return TURBO_ERANGE;
+        return SALTS_ERANGE;
     entries = (unsigned)config->request_capacity * 2u;
     impl = (cflow_uring_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL)
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     impl->records = (cflow_uring_record *)calloc(
         config->request_capacity, sizeof(*impl->records));
     if (impl->records == NULL) {
         free(impl);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
     impl->ring_fd = -1;
     impl->base.ops = &uring_ops;
@@ -934,40 +934,40 @@ int cflow_io_native_io_uring_init(
     impl->admission_open = true;
     for (size_t index = 0u; index < impl->request_capacity; ++index)
         impl->records[index].index = (uint32_t)index;
-    turbo_mutex_init(&impl->gate);
+    salts_mutex_init(&impl->gate);
     if (impl->gate == NULL) {
         free(impl->records);
         free(impl);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
     memset(&params, 0, sizeof(params));
     impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
     if (impl->ring_fd < 0) {
         status = -errno;
-        turbo_mutex_destroy(&impl->gate);
+        salts_mutex_destroy(&impl->gate);
         free(impl->records);
         free(impl);
         return status;
     }
     status = uring_map(impl, &params);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         uring_unmap(impl);
         (void)close(impl->ring_fd);
-        turbo_mutex_destroy(&impl->gate);
+        salts_mutex_destroy(&impl->gate);
         free(impl->records);
         free(impl);
         return status;
     }
-    status = turbo_thread_create(&impl->worker, uring_worker, impl);
-    if (status != TURBO_OK) {
+    status = salts_thread_create(&impl->worker, uring_worker, impl);
+    if (status != SALTS_OK) {
         uring_unmap(impl);
         (void)close(impl->ring_fd);
-        turbo_mutex_destroy(&impl->gate);
+        salts_mutex_destroy(&impl->gate);
         free(impl->records);
         free(impl);
         return status;
     }
     impl->worker_running = true;
     backend->impl = impl;
-    return TURBO_OK;
+    return SALTS_OK;
 }

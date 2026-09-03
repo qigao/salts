@@ -6,7 +6,7 @@
 
 **Architecture:** A heap control block owns the Machine instance, lifecycle state, identity Graph, Run, error copy, and counters. Retained producer refs share only this control block; an Actor gate linearizes send against stop/destruction, while the existing SerialExecutor and Scheduler perform all execution. No new runtime, thread, pump, supervision, hierarchy, remoting, persistence, or restart layer is introduced.
 
-**Tech Stack:** C11, TurboUtils platform synchronization, CMeta typed descriptors/interfaces, CFlow Mailbox/Machine/Run/Scheduler, TinyTest, CMake Presets, Lean 4/Lake.
+**Tech Stack:** C11, Salts platform synchronization, CMeta typed descriptors/interfaces, CFlow Mailbox/Machine/Run/Scheduler, TinyTest, CMake Presets, Lean 4/Lake.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-cflow-actor-lifecycle-design.md`
 

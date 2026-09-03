@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Phase A 仅覆盖 `Types / Effects / Ownership / Flow Syntax`。
-- 不修改 `cmeta/src`、`cmeta/include`、`cflow/src`、`cflow/include`、`platform/`、`concurrency/`、`turbostl/` 或 `utils/`。
+- 不修改 `cmeta/src`、`cmeta/include`、`cflow/src`、`cflow/include`、`platform/`、`concurrency/`、`cstl/` 或 `utils/`。
 - 不使用 `axiom`、`sorry`、`admit` 或第三方证明依赖。
 - `Relation / Zip / Distinct / Sorted / Window / Merge / Parallel / Reactive` 不进入 v1 Flow syntax。
 - `Source / WAIT / Demand / Terminal` small-step semantics、R1–R15 与 Cost 推导留给 Phase B–E。

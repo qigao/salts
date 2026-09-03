@@ -2,8 +2,8 @@
 
 #include "readiness_internal.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include "value_storage.h"
 
@@ -29,10 +29,10 @@ typedef struct cflow_reactor_adapter_state {
     cflow_read_fn read;
     cflow_resource_close_fn user_close;
     void *user;
-    turbo_readiness_events events;
-    turbo_readiness_registration registration;
-    turbo_mutex_t lock;
-    turbo_cond_t changed;
+    salts_readiness_events events;
+    salts_readiness_registration registration;
+    salts_mutex_t lock;
+    salts_cond_t changed;
     cflow_reactor_adapter_phase phase;
     cflow_waker waker;
     size_t references;
@@ -55,7 +55,7 @@ static void cflow_reactor_set_error_locked(
 }
 
 static void cflow_reactor_callback(void *user,
-                                   turbo_readiness_events events,
+                                   salts_readiness_events events,
                                    int status) {
     cflow_reactor_adapter_state *state =
         (cflow_reactor_adapter_state *)user;
@@ -66,27 +66,27 @@ static void cflow_reactor_callback(void *user,
         return;
 
     /* Platform keeps callback_user borrowed until this callback returns. */
-    turbo_mutex_lock(&state->lock);
+    salts_mutex_lock(&state->lock);
     ++state->references;
     if (!state->cancelled &&
         (state->phase == CFLOW_REACTOR_ADAPTER_ARMING ||
          state->phase == CFLOW_REACTOR_ADAPTER_ARMED)) {
-        if (status == TURBO_OK)
+        if (status == SALTS_OK)
             state->phase = CFLOW_REACTOR_ADAPTER_NOTIFIED;
         else
             cflow_reactor_set_error_locked(state, "backend", status);
         waker = state->waker;
         state->waker = (cflow_waker){0};
     }
-    turbo_mutex_unlock(&state->lock);
+    salts_mutex_unlock(&state->lock);
 
     if (waker.wake)
         waker.wake(waker.user);
 
-    turbo_mutex_lock(&state->lock);
+    salts_mutex_lock(&state->lock);
     --state->references;
-    turbo_cond_broadcast(&state->changed);
-    turbo_mutex_unlock(&state->lock);
+    salts_cond_broadcast(&state->changed);
+    salts_mutex_unlock(&state->lock);
 }
 
 static bool cflow_reactor_arm(void *self, cflow_waker waker) {
@@ -98,39 +98,39 @@ static bool cflow_reactor_arm(void *self, cflow_waker waker) {
     if (!state || !waker.wake)
         return false;
 
-    turbo_mutex_lock(&state->lock);
+    salts_mutex_lock(&state->lock);
     if (state->cancelled || state->cleanup_inflight ||
         state->phase == CFLOW_REACTOR_ADAPTER_CLOSED) {
-        cflow_reactor_set_error_locked(state, "cancelled", TURBO_ESHUTDOWN);
+        cflow_reactor_set_error_locked(state, "cancelled", SALTS_ESHUTDOWN);
         wake_now = waker;
-        turbo_mutex_unlock(&state->lock);
+        salts_mutex_unlock(&state->lock);
         wake_now.wake(wake_now.user);
         return true;
     }
     if (state->phase != CFLOW_REACTOR_ADAPTER_IDLE) {
-        turbo_mutex_unlock(&state->lock);
+        salts_mutex_unlock(&state->lock);
         return false;
     }
     state->phase = CFLOW_REACTOR_ADAPTER_ARMING;
     state->waker = waker;
-    turbo_mutex_unlock(&state->lock);
+    salts_mutex_unlock(&state->lock);
 
-    status = turbo_readiness_arm(&state->registration, state->events,
+    status = salts_readiness_arm(&state->registration, state->events,
                                  cflow_reactor_callback, state);
 
-    turbo_mutex_lock(&state->lock);
-    if (status != TURBO_OK &&
+    salts_mutex_lock(&state->lock);
+    if (status != SALTS_OK &&
         state->phase == CFLOW_REACTOR_ADAPTER_ARMING) {
         cflow_reactor_set_error_locked(state, "arm", status);
         if (!state->cancelled) {
             wake_now = state->waker;
             state->waker = (cflow_waker){0};
         }
-    } else if (status == TURBO_OK &&
+    } else if (status == SALTS_OK &&
                state->phase == CFLOW_REACTOR_ADAPTER_ARMING) {
         state->phase = CFLOW_REACTOR_ADAPTER_ARMED;
     }
-    turbo_mutex_unlock(&state->lock);
+    salts_mutex_unlock(&state->lock);
 
     /* A synchronous arm failure is a successful CFlow arm followed by wake. */
     if (wake_now.wake)
@@ -144,36 +144,36 @@ static int cflow_reactor_close(cflow_reactor_adapter_state *state) {
     int status;
 
     if (!state)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
 
-    turbo_mutex_lock(&state->lock);
+    salts_mutex_lock(&state->lock);
     while (state->cleanup_inflight)
-        turbo_cond_wait(&state->changed, &state->lock);
+        salts_cond_wait(&state->changed, &state->lock);
     if (state->cleanup_complete) {
-        turbo_mutex_unlock(&state->lock);
-        return TURBO_OK;
+        salts_mutex_unlock(&state->lock);
+        return SALTS_OK;
     }
     state->cancelled = true;
     state->waker = (cflow_waker){0};
     state->cleanup_inflight = true;
-    turbo_mutex_unlock(&state->lock);
+    salts_mutex_unlock(&state->lock);
 
     /* Platform close is the quiescence and ownership-transfer boundary. */
-    status = turbo_readiness_close(&state->registration);
-    if (status == TURBO_OK) {
-        turbo_mutex_lock(&state->lock);
+    status = salts_readiness_close(&state->registration);
+    if (status == SALTS_OK) {
+        salts_mutex_lock(&state->lock);
         if (!state->user_closed) {
             user_close = state->user_close;
             user = state->user;
         }
-        turbo_mutex_unlock(&state->lock);
+        salts_mutex_unlock(&state->lock);
 
         if (user_close)
             user_close(user);
     }
 
-    turbo_mutex_lock(&state->lock);
-    if (status == TURBO_OK) {
+    salts_mutex_lock(&state->lock);
+    if (status == SALTS_OK) {
         state->user_closed = true;
         state->cleanup_complete = true;
         state->phase = CFLOW_REACTOR_ADAPTER_CLOSED;
@@ -181,8 +181,8 @@ static int cflow_reactor_close(cflow_reactor_adapter_state *state) {
         cflow_reactor_set_error_locked(state, "close", status);
     }
     state->cleanup_inflight = false;
-    turbo_cond_broadcast(&state->changed);
-    turbo_mutex_unlock(&state->lock);
+    salts_cond_broadcast(&state->changed);
+    salts_mutex_unlock(&state->lock);
     return status;
 }
 
@@ -208,26 +208,26 @@ static cflow_step cflow_reactor_resume(void *self,
         return (cflow_step){CFLOW_STEP_ERROR, {0},
                             "reactor readiness source unavailable"};
 
-    turbo_mutex_lock(&state->lock);
+    salts_mutex_lock(&state->lock);
     if (state->phase == CFLOW_REACTOR_ADAPTER_ERROR) {
         const char *error = state->error;
-        turbo_mutex_unlock(&state->lock);
+        salts_mutex_unlock(&state->lock);
         return (cflow_step){CFLOW_STEP_ERROR, {0}, error};
     }
     if (state->cancelled || state->phase == CFLOW_REACTOR_ADAPTER_CLOSED) {
-        turbo_mutex_unlock(&state->lock);
+        salts_mutex_unlock(&state->lock);
         return (cflow_step){CFLOW_STEP_ERROR, {0},
                             "reactor readiness source cancelled"};
     }
     if (state->phase == CFLOW_REACTOR_ADAPTER_ARMING ||
         state->phase == CFLOW_REACTOR_ADAPTER_ARMED) {
-        turbo_mutex_unlock(&state->lock);
+        salts_mutex_unlock(&state->lock);
         return (cflow_step){
             CFLOW_STEP_WAIT,
             cflow_reactor_waitable_as_cflow_waitable(state), NULL};
     }
     state->phase = CFLOW_REACTOR_ADAPTER_IDLE;
-    turbo_mutex_unlock(&state->lock);
+    salts_mutex_unlock(&state->lock);
 
     read_status = state->read(state->user, out_value, &read_error);
     switch (read_status) {
@@ -266,18 +266,18 @@ static void cflow_reactor_destroy(void *self) {
 
     (void)cflow_reactor_close(state);
 
-    turbo_mutex_lock(&state->lock);
+    salts_mutex_lock(&state->lock);
     if (state->publisher_live) {
         state->publisher_live = false;
         --state->references;
         free_state = state->references == 0u;
-        turbo_cond_broadcast(&state->changed);
+        salts_cond_broadcast(&state->changed);
     }
-    turbo_mutex_unlock(&state->lock);
+    salts_mutex_unlock(&state->lock);
 
     if (free_state) {
-        turbo_cond_destroy(&state->changed);
-        turbo_mutex_destroy(&state->lock);
+        salts_cond_destroy(&state->changed);
+        salts_mutex_destroy(&state->lock);
         free(state);
     }
 }
@@ -319,16 +319,16 @@ CMETA_IMPLEMENTS(cflow_publisher, cflow_reactor_source, 0,
 int cflow_publisher_from_readiness_registration(
     cflow_publisher *out,
     cflow_readiness_publisher_owner *owner,
-    turbo_readiness_registration *registration,
-    turbo_readiness_events events,
+    salts_readiness_registration *registration,
+    salts_readiness_events events,
     const char *name,
     const cmeta_type_desc *type,
     cflow_read_fn read,
     cflow_resource_close_fn close,
     void *user) {
-    const turbo_readiness_events supported_events =
-        TURBO_READINESS_EVENT_READ | TURBO_READINESS_EVENT_WRITE |
-        TURBO_READINESS_EVENT_ERROR | TURBO_READINESS_EVENT_HANGUP;
+    const salts_readiness_events supported_events =
+        SALTS_READINESS_EVENT_READ | SALTS_READINESS_EVENT_WRITE |
+        SALTS_READINESS_EVENT_ERROR | SALTS_READINESS_EVENT_HANGUP;
     cflow_reactor_adapter_state *state;
 
     if (out)
@@ -339,20 +339,20 @@ int cflow_publisher_from_readiness_registration(
     if (!out || !owner || !registration || !registration->impl || !read ||
         !cmeta_type_desc_valid(type) || events == 0u ||
         (events & ~supported_events) != 0u)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (!cflow_value_storage_type_supported(type))
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
 
     state = (cflow_reactor_adapter_state *)calloc(1, sizeof(*state));
     if (!state)
-        return TURBO_ENOMEM;
-    turbo_mutex_init(&state->lock);
-    turbo_cond_init(&state->changed);
+        return SALTS_ENOMEM;
+    salts_mutex_init(&state->lock);
+    salts_cond_init(&state->changed);
     if (!state->lock || !state->changed) {
-        turbo_cond_destroy(&state->changed);
-        turbo_mutex_destroy(&state->lock);
+        salts_cond_destroy(&state->changed);
+        salts_mutex_destroy(&state->lock);
         free(state);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
 
     state->name = name ? name : "reactor-readiness";
@@ -370,7 +370,7 @@ int cflow_publisher_from_readiness_registration(
     *out = cflow_reactor_source_as_cflow_publisher(state);
     owner->impl = state;
     memset(registration, 0, sizeof(*registration));
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 int cflow_readiness_publisher_owner_close(cflow_readiness_publisher_owner *owner) {
@@ -379,42 +379,42 @@ int cflow_readiness_publisher_owner_close(cflow_readiness_publisher_owner *owner
     int status;
 
     if (!owner)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (!owner->impl)
-        return TURBO_OK;
+        return SALTS_OK;
     state = (cflow_reactor_adapter_state *)owner->impl;
 
-    turbo_mutex_lock(&state->lock);
+    salts_mutex_lock(&state->lock);
     if (state->publisher_live) {
-        turbo_mutex_unlock(&state->lock);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&state->lock);
+        return SALTS_EBUSY;
     }
-    turbo_mutex_unlock(&state->lock);
+    salts_mutex_unlock(&state->lock);
 
     status = cflow_reactor_close(state);
-    if (status != TURBO_OK)
+    if (status != SALTS_OK)
         return status;
 
-    turbo_mutex_lock(&state->lock);
+    salts_mutex_lock(&state->lock);
     if (!state->owner_live) {
-        turbo_mutex_unlock(&state->lock);
-        return TURBO_EINVAL;
+        salts_mutex_unlock(&state->lock);
+        return SALTS_EINVAL;
     }
     state->owner_live = false;
     --state->references;
     free_state = state->references == 0u;
     owner->impl = NULL;
-    turbo_mutex_unlock(&state->lock);
+    salts_mutex_unlock(&state->lock);
 
     if (free_state) {
-        turbo_cond_destroy(&state->changed);
-        turbo_mutex_destroy(&state->lock);
+        salts_cond_destroy(&state->changed);
+        salts_mutex_destroy(&state->lock);
         free(state);
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
-turbo_readiness_registration *
+salts_readiness_registration *
 cflow_readiness_publisher_owner_observe_registration(
     cflow_readiness_publisher_owner *owner) {
     cflow_reactor_adapter_state *state =

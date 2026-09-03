@@ -1,6 +1,6 @@
 #include <cflow/plan_internal.h>
 #include "executor_internal.h"
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -18,8 +18,8 @@ typedef struct cflow_parallel_reduce_task {
 } cflow_parallel_reduce_task;
 
 struct cflow_parallel_reduce_frame {
-    turbo_mutex_t mutex;
-    turbo_cond_t condition;
+    salts_mutex_t mutex;
+    salts_cond_t condition;
     const cflow_plan_inst *reducer;
     cflow_plan_value_vec prefix;
     cflow_parallel_reduce_task *tasks;
@@ -40,11 +40,11 @@ static void parallel_reduce_task_settle(cflow_parallel_reduce_task *task,
                                         bool succeeded) {
     cflow_parallel_reduce_frame *frame = task ? task->frame : NULL;
     if (!frame) return;
-    turbo_mutex_lock(&frame->mutex);
+    salts_mutex_lock(&frame->mutex);
     if (!succeeded) frame->failed = true;
     ++frame->completed;
-    turbo_cond_broadcast(&frame->condition);
-    turbo_mutex_unlock(&frame->mutex);
+    salts_cond_broadcast(&frame->condition);
+    salts_mutex_unlock(&frame->mutex);
 }
 
 static void parallel_reduce_task_run(void *user) {
@@ -81,8 +81,8 @@ static void parallel_reduce_task_cancel(void *user) {
 
 static void parallel_reduce_frame_destroy(cflow_parallel_reduce_frame *frame) {
     if (!frame) return;
-    turbo_cond_destroy(&frame->condition);
-    turbo_mutex_destroy(&frame->mutex);
+    salts_cond_destroy(&frame->condition);
+    salts_mutex_destroy(&frame->mutex);
     free(frame->scratch);
     free(frame->partials);
     free(frame->tasks);
@@ -110,8 +110,8 @@ static bool parallel_reduce_frame_init(cflow_parallel_reduce_frame **out,
         parallel_reduce_frame_destroy(frame);
         return false;
     }
-    turbo_mutex_init(&frame->mutex);
-    turbo_cond_init(&frame->condition);
+    salts_mutex_init(&frame->mutex);
+    salts_cond_init(&frame->condition);
     if (!frame->mutex || !frame->condition) {
         parallel_reduce_frame_destroy(frame);
         return false;
@@ -154,11 +154,11 @@ static size_t parallel_task_count(size_t item_count,
 static bool wait_for_accepted(cflow_parallel_reduce_frame *frame,
                               size_t accepted) {
     bool succeeded;
-    turbo_mutex_lock(&frame->mutex);
+    salts_mutex_lock(&frame->mutex);
     while (frame->completed < accepted)
-        turbo_cond_wait(&frame->condition, &frame->mutex);
+        salts_cond_wait(&frame->condition, &frame->mutex);
     succeeded = !frame->failed;
-    turbo_mutex_unlock(&frame->mutex);
+    salts_mutex_unlock(&frame->mutex);
     return succeeded;
 }
 

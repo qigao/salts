@@ -2,7 +2,7 @@
 #include "tinytest.h"
 
 #include <chttp/chttp.h>
-#include <turbo/clock.h>
+#include <salts/clock.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -96,7 +96,7 @@ static int chttp_tls_test_middleware(void *user, const chttp_server_request_view
   (void)request;
   ++probe->middleware_calls;
   status = chttp_server_response_set_header(response, "X-TLS-Middleware", "yes");
-  return status == TURBO_OK ? chttp_server_next_call(next) : status;
+  return status == SALTS_OK ? chttp_server_next_call(next) : status;
 }
 
 static int chttp_tls_test_session(void *user, const chttp_server_request_view *request,
@@ -107,7 +107,7 @@ static int chttp_tls_test_session(void *user, const chttp_server_request_view *r
   (void)user;
   if (previous != NULL) current[0] = (char)(previous[0] + 1);
   status = chttp_session_set(request->session, "visits", current);
-  return status == TURBO_OK ? chttp_server_reply(response, 200u, "text/plain", current, 1u)
+  return status == SALTS_OK ? chttp_server_reply(response, 200u, "text/plain", current, 1u)
                             : status;
 }
 
@@ -115,14 +115,14 @@ static int chttp_tls_test_cookie(const chttp_response *response, char *output, s
   const char *set_cookie = chttp_response_header(response, "Set-Cookie");
   const char *end;
   size_t size;
-  if (set_cookie == NULL || output == NULL || capacity == 0u) return TURBO_EINVAL;
+  if (set_cookie == NULL || output == NULL || capacity == 0u) return SALTS_EINVAL;
   end = strchr(set_cookie, ';');
-  if (end == NULL) return TURBO_EPROTO;
+  if (end == NULL) return SALTS_EPROTO;
   size = (size_t)(end - set_cookie);
-  if (size >= capacity) return TURBO_EMSGSIZE;
+  if (size >= capacity) return SALTS_EMSGSIZE;
   memcpy(output, set_cookie, size);
   output[size] = '\0';
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_tls_test_get(chttp_client *client, const char *uri,
@@ -159,24 +159,24 @@ static void chttp_tls_test_async_complete(void *user, chttp_request request,
     return;
   }
   if (response == NULL || response->body_size > sizeof(probe->body)) {
-    probe->status = response == NULL ? TURBO_EPROTO : TURBO_EMSGSIZE;
+    probe->status = response == NULL ? SALTS_EPROTO : SALTS_EMSGSIZE;
     return;
   }
-  probe->status = TURBO_OK;
+  probe->status = SALTS_OK;
   probe->status_code = response->status_code;
   probe->body_size = response->body_size;
   if (response->body_size != 0u) memcpy(probe->body, response->body, response->body_size);
 }
 
 static int chttp_tls_test_poll_until(chttp_async_client *client, chttp_tls_async_probe *probe) {
-  const uint64_t deadline = turbo_monotonic_ms() + CHTTP_TLS_TEST_TIMEOUT_MS;
+  const uint64_t deadline = salts_monotonic_ms() + CHTTP_TLS_TEST_TIMEOUT_MS;
   while (probe->called == 0) {
     size_t completions = 0u;
     const int status = chttp_async_client_poll(client, 5u, &completions);
-    if (status != TURBO_OK) return status;
-    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
+    if (status != SALTS_OK) return status;
+    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 spec("CHTTP HTTPS adapter") {
@@ -193,20 +193,20 @@ spec("CHTTP HTTPS adapter") {
                                   .alpn_protocol_count = 1u};
 
     config.tls = &tls;
-    check_equal(chttp_server_init(&server, &config), TURBO_ENOTSUP);
+    check_equal(chttp_server_init(&server, &config), SALTS_ENOTSUP);
     check_null(server.impl);
 
     tls.alpn_protocols = h1;
     config.network.tls_io_buffer_bytes = 0u;
     config.network.tls_handshake_timeout_ms = 0u;
-    check_equal(chttp_server_init(&server, &config), TURBO_EINVAL);
+    check_equal(chttp_server_init(&server, &config), SALTS_EINVAL);
     check_null(server.impl);
 
     config.network = chttp_tls_test_network(4u);
     tls.cert_file = NULL;
-    check_equal(chttp_server_init(&server, &config), TURBO_EINVAL);
+    check_equal(chttp_server_init(&server, &config), SALTS_EINVAL);
     check_null(server.impl);
-    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
   }
 
   it("validates TLS profile lifecycle and explicit HTTP ALPN") {
@@ -215,26 +215,26 @@ spec("CHTTP HTTPS adapter") {
     chttp_tls_profile profile = {0};
     cnet_tls_client_config config = {.size = sizeof(config)};
 
-    check_equal(chttp_tls_profile_init(NULL, &config), TURBO_EINVAL);
-    check_equal(chttp_tls_profile_init(&profile, NULL), TURBO_EINVAL);
+    check_equal(chttp_tls_profile_init(NULL, &config), SALTS_EINVAL);
+    check_equal(chttp_tls_profile_init(&profile, NULL), SALTS_EINVAL);
     config.alpn_protocols = h2;
     config.alpn_protocol_count = 1u;
-    check_equal(chttp_tls_profile_init(&profile, &config), TURBO_OK);
+    check_equal(chttp_tls_profile_init(&profile, &config), SALTS_OK);
     check_not_null(profile.impl);
-    check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
+    check_equal(chttp_tls_profile_destroy(&profile), SALTS_OK);
     config.alpn_protocols = mixed;
     config.alpn_protocol_count = 2u;
-    check_equal(chttp_tls_profile_init(&profile, &config), TURBO_ENOTSUP);
+    check_equal(chttp_tls_profile_init(&profile, &config), SALTS_ENOTSUP);
     check_null(profile.impl);
     config.alpn_protocols = NULL;
     config.alpn_protocol_count = 0u;
-    check_equal(chttp_tls_profile_init(&profile, &config), TURBO_OK);
+    check_equal(chttp_tls_profile_init(&profile, &config), SALTS_OK);
     check_not_null(profile.impl);
-    check_equal(chttp_tls_profile_init(&profile, &config), TURBO_EALREADY);
-    check_equal(chttp_tls_profile_destroy(NULL), TURBO_EINVAL);
-    check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
+    check_equal(chttp_tls_profile_init(&profile, &config), SALTS_EALREADY);
+    check_equal(chttp_tls_profile_destroy(NULL), SALTS_EINVAL);
+    check_equal(chttp_tls_profile_destroy(&profile), SALTS_OK);
     check_null(profile.impl);
-    check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
+    check_equal(chttp_tls_profile_destroy(&profile), SALTS_OK);
   }
 
   it("rejects an HTTP/2 TLS profile for a default HTTP/1.1 request") {
@@ -252,14 +252,14 @@ spec("CHTTP HTTPS adapter") {
                                      .on_complete = chttp_tls_test_noop_complete,
                                      .tls = &profile};
 
-    check_equal(chttp_tls_profile_init(&profile, &tls), TURBO_OK);
-    check_equal(chttp_async_client_init(&client, &config), TURBO_OK);
-    check_equal(chttp_async_client_submit(&client, &options, &request), TURBO_EPROTONOSUPPORT);
+    check_equal(chttp_tls_profile_init(&profile, &tls), SALTS_OK);
+    check_equal(chttp_async_client_init(&client, &config), SALTS_OK);
+    check_equal(chttp_async_client_submit(&client, &options, &request), SALTS_EPROTONOSUPPORT);
     check_equal(request.slot, 0u);
     check_equal(request.generation, 0u);
-    check_equal(chttp_async_client_stop(&client, CHTTP_TLS_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(chttp_async_client_destroy(&client), TURBO_OK);
-    check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
+    check_equal(chttp_async_client_stop(&client, CHTTP_TLS_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_async_client_destroy(&client), SALTS_OK);
+    check_equal(chttp_tls_profile_destroy(&profile), SALTS_OK);
   }
 
   it("rejects a TLS profile on a plaintext request") {
@@ -275,14 +275,14 @@ spec("CHTTP HTTPS adapter") {
                                      .on_complete = chttp_tls_test_noop_complete,
                                      .tls = &profile};
 
-    check_equal(chttp_tls_profile_init(&profile, &tls), TURBO_OK);
-    check_equal(chttp_async_client_init(&client, &config), TURBO_OK);
-    check_equal(chttp_async_client_submit(&client, &options, &request), TURBO_EINVAL);
+    check_equal(chttp_tls_profile_init(&profile, &tls), SALTS_OK);
+    check_equal(chttp_async_client_init(&client, &config), SALTS_OK);
+    check_equal(chttp_async_client_submit(&client, &options, &request), SALTS_EINVAL);
     check_equal(request.slot, 0u);
     check_equal(request.generation, 0u);
-    check_equal(chttp_async_client_stop(&client, CHTTP_TLS_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(chttp_async_client_destroy(&client), TURBO_OK);
-    check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
+    check_equal(chttp_async_client_stop(&client, CHTTP_TLS_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_async_client_destroy(&client), SALTS_OK);
+    check_equal(chttp_tls_profile_destroy(&profile), SALTS_OK);
   }
 
   it("serves HTTPS middleware and sessions while isolating pool profiles") {
@@ -332,22 +332,22 @@ spec("CHTTP HTTPS adapter") {
                                           .alpn_protocol_count = 1u};
     server_config.tls = &server_tls;
 
-    check_equal(chttp_tls_profile_init(&first_profile, &client_tls), TURBO_OK);
-    check_equal(chttp_tls_profile_init(&second_profile, &client_tls), TURBO_OK);
-    check_equal(chttp_tls_profile_init(&transient_profile, &client_tls), TURBO_OK);
-    check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
-    check_equal(chttp_server_use(&server, chttp_tls_test_middleware, &probe), TURBO_OK);
-    check_equal(chttp_server_get(&server, "/session", chttp_tls_test_session, NULL), TURBO_OK);
+    check_equal(chttp_tls_profile_init(&first_profile, &client_tls), SALTS_OK);
+    check_equal(chttp_tls_profile_init(&second_profile, &client_tls), SALTS_OK);
+    check_equal(chttp_tls_profile_init(&transient_profile, &client_tls), SALTS_OK);
+    check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
+    check_equal(chttp_server_use(&server, chttp_tls_test_middleware, &probe), SALTS_OK);
+    check_equal(chttp_server_get(&server, "/session", chttp_tls_test_session, NULL), SALTS_OK);
     check_equal(tt_remove_file(cert_path), 0);
     check_equal(tt_remove_file(key_path), 0);
     free(cert_path);
     free(key_path);
-    check_equal(chttp_server_start(&server), TURBO_OK);
-    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u", (unsigned int)port), 0);
-    check_equal(chttp_client_init(&client, &client_config), TURBO_OK);
+    check_equal(chttp_client_init(&client, &client_config), SALTS_OK);
 
-    check_equal(chttp_tls_test_get(&client, uri, &first_profile, NULL, 0u, &response), TURBO_OK);
+    check_equal(chttp_tls_test_get(&client, uri, &first_profile, NULL, 0u, &response), SALTS_OK);
     check_equal(response.status_code, 200u);
     check_equal(response.body, "1", 1u);
     check_equal(chttp_response_header(&response, "X-TLS-Middleware"), "yes");
@@ -356,24 +356,24 @@ spec("CHTTP HTTPS adapter") {
       check_not_null(set_cookie);
       check_true(set_cookie != NULL && strstr(set_cookie, "Secure") != NULL);
     }
-    check_equal(chttp_tls_test_cookie(&response, cookie, sizeof(cookie)), TURBO_OK);
+    check_equal(chttp_tls_test_cookie(&response, cookie, sizeof(cookie)), SALTS_OK);
     chttp_response_destroy(&response);
-    check_equal(chttp_server_get_stats(&server, &stats), TURBO_OK);
+    check_equal(chttp_server_get_stats(&server, &stats), SALTS_OK);
     check_equal(stats.accepted_connections, (uint64_t)1u);
 
     cookie_header = (chttp_header){"Cookie", cookie};
     check_equal(chttp_tls_test_get(&client, uri, &first_profile, &cookie_header, 1u, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.body, "2", 1u);
     chttp_response_destroy(&response);
-    check_equal(chttp_server_get_stats(&server, &stats), TURBO_OK);
+    check_equal(chttp_server_get_stats(&server, &stats), SALTS_OK);
     check_equal(stats.accepted_connections, (uint64_t)1u);
 
     check_equal(chttp_tls_test_get(&client, uri, &second_profile, &cookie_header, 1u, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.body, "3", 1u);
     chttp_response_destroy(&response);
-    check_equal(chttp_server_get_stats(&server, &stats), TURBO_OK);
+    check_equal(chttp_server_get_stats(&server, &stats), SALTS_OK);
     check_equal(stats.accepted_connections, (uint64_t)2u);
     check_equal(stats.requests, (uint64_t)3u);
     check_equal(probe.middleware_calls, (size_t)3u);
@@ -387,26 +387,26 @@ spec("CHTTP HTTPS adapter") {
                                             .on_complete = chttp_tls_test_async_complete,
                                             .user = &async_probe,
                                             .tls = &transient_profile};
-    check_equal(chttp_async_client_init(&async_client, &client_config), TURBO_OK);
-    check_equal(chttp_async_client_submit(&async_client, &async_options, &async_request), TURBO_OK);
-    check_equal(chttp_tls_profile_destroy(&transient_profile), TURBO_OK);
+    check_equal(chttp_async_client_init(&async_client, &client_config), SALTS_OK);
+    check_equal(chttp_async_client_submit(&async_client, &async_options, &async_request), SALTS_OK);
+    check_equal(chttp_tls_profile_destroy(&transient_profile), SALTS_OK);
     check_null(transient_profile.impl);
-    check_equal(chttp_tls_test_poll_until(&async_client, &async_probe), TURBO_OK);
-    check_equal(async_probe.status, TURBO_OK);
+    check_equal(chttp_tls_test_poll_until(&async_client, &async_probe), SALTS_OK);
+    check_equal(async_probe.status, SALTS_OK);
     check_equal(async_probe.status_code, 200u);
     check_equal(async_probe.body_size, (size_t)1u);
     check_equal(async_probe.body, "4", 1u);
-    check_equal(chttp_async_client_stop(&async_client, CHTTP_TLS_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(chttp_async_client_destroy(&async_client), TURBO_OK);
-    check_equal(chttp_server_get_stats(&server, &stats), TURBO_OK);
+    check_equal(chttp_async_client_stop(&async_client, CHTTP_TLS_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_async_client_destroy(&async_client), SALTS_OK);
+    check_equal(chttp_server_get_stats(&server, &stats), SALTS_OK);
     check_equal(stats.accepted_connections, (uint64_t)3u);
     check_equal(stats.requests, (uint64_t)4u);
     check_equal(probe.middleware_calls, (size_t)4u);
 
-    check_equal(chttp_tls_profile_destroy(&first_profile), TURBO_OK);
-    check_equal(chttp_tls_profile_destroy(&second_profile), TURBO_OK);
-    check_equal(chttp_client_destroy(&client, CHTTP_TLS_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(chttp_server_stop(&server, CHTTP_TLS_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(chttp_tls_profile_destroy(&first_profile), SALTS_OK);
+    check_equal(chttp_tls_profile_destroy(&second_profile), SALTS_OK);
+    check_equal(chttp_client_destroy(&client, CHTTP_TLS_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_TLS_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
   }
 }

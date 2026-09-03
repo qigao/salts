@@ -6,7 +6,7 @@
 
 **Architecture:** One `cnet_client` owns one NativeIO backend and one authoritative session owner. `cnet_client_poll()` drains bounded commands, observes NativeIO, resumes owner-affine coroutines, and invokes callbacks on its caller. Cross-thread progress is not part of the core contract; a later adapter may add an MPSC mailbox without changing the owner model.
 
-**Tech Stack:** C11, NativeIO, TurboUtils coroutine pool, c-ares, TinyTest, CMake Presets.
+**Tech Stack:** C11, NativeIO, Salts coroutine pool, c-ares, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-31-cnet-actor-reactive-network-design.md`
 
@@ -36,7 +36,7 @@
 ```c
 it("requires caller polling to advance callbacks") {
   size_t events = SIZE_MAX;
-  check_equal(cnet_client_poll(&client, 0u, &events), TURBO_OK);
+  check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
   check_equal(events, (size_t)0u);
 }
 ```

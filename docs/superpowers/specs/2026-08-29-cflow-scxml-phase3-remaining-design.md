@@ -1,6 +1,6 @@
 # CFlow SCXML Phase 3 Remaining Features Design
 
-**Issue:** [qigao/turbo-utils#122](https://github.com/qigao/turbo-utils/issues/122)
+**Issue:** [qigao/salts#122](https://github.com/qigao/salts/issues/122)
 
 **Status:** Accepted. Increment A (`send`, `cancel`, recoverable adapter errors,
 and owning sessions) and Increment B (`invoke`, restricted `finalize`, stable
@@ -60,12 +60,12 @@ externally visible effect; a successful ticket has exactly one terminal call;
 - `cflow_scxml_program_runtime_bindings()` returns program-owned binding rows;
   their `user` values are shared by all instances and therefore cannot hold
   per-session adapter state.
-- CSerde and CBind are format-neutral TurboUtils token/binding layers.
+- CSerde and CBind are format-neutral Salts token/binding layers.
   TurboParser DataBind 2.0, ABI 8, provides owned dynamic values, traversal,
   clone, and serialization, but its public API does not provide a mutable
   SCXML location-expression store or expression evaluator.
-- TurboUtils must not depend on TurboParser. A future DataBind integration can
-  live in TurboParser and consume an installed TurboUtils SPI, but CFlowScxml
+- Salts must not depend on TurboParser. A future DataBind integration can
+  live in TurboParser and consume an installed Salts SPI, but CFlowScxml
   cannot link `TurboParser::DataBind`.
 
 ### Standards facts
@@ -146,7 +146,7 @@ initialization, rather than fail later inside an action.
 | Call transport/invoke adapters directly from `execute_scxml_block()` | Preserves immediate document order but publishes effects before the microstep commits | Smallest patch, but later queue/action failure cannot roll back an already visible effect | Rejected |
 | Lower every XML executable element to an independent native executable row | Uses existing native callbacks but loses one natural boundary for conditional/foreach block abort and effect journaling | Multiplies action rows and callback dispatch; nested control flow still needs a second IR | Rejected |
 | Put configuration, data model, and invocation state in an SCXML-only side runtime | Avoids native hooks initially | Duplicates Statechart facts and requires bidirectional synchronization during rollback, close, and cancel | Rejected |
-| Link DataBind/CSerde directly as the SCXML data model | Supplies value codecs but not normative expressions or mutable locations | DataBind would reverse the TurboUtils/TurboParser dependency; CSerde is a token protocol rather than a store | Rejected |
+| Link DataBind/CSerde directly as the SCXML data model | Supplies value codecs but not normative expressions or mutable locations | DataBind would reverse the Salts/TurboParser dependency; CSerde is a token protocol rather than a store | Rejected |
 
 The chosen design has more control-plane surface than direct callbacks, but
 the added protocols correspond to existing semantic boundaries: native
@@ -328,7 +328,7 @@ System variables are read-only provider bindings:
 CSerde/CBind can encode/decode typed values at Event I/O boundaries. They do
 not implement expressions or mutable locations. TurboParser DataBind can be an
 optional downstream codec/owning-value adapter after checking ABI 8 and schema
-identity, but it cannot become a TurboUtils dependency or a second mutable
+identity, but it cannot become a Salts dependency or a second mutable
 Statechart fact source.
 
 ## Compatibility and migration
@@ -369,7 +369,7 @@ Statechart fact source.
   rows, iterable snapshots, and adapter completions all need independent hard
   capacities, peak accounting, and deterministic close/drain behavior.
 - **MED — dependency direction:** linking TurboParser DataBind from
-  TurboUtils would create the forbidden package reversal. Any such bridge must
+  Salts would create the forbidden package reversal. Any such bridge must
   remain downstream.
 - **LOW — interpreter cost:** indexed inline dispatch adds one branch per
   executed step. It is not a demonstrated hot-path problem; optimize only

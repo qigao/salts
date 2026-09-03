@@ -6,7 +6,7 @@
 
 **Architecture:** CFlow gains a shareable file runtime that owns one native backend, actor, executor, completion lane, and fixed operation slots. Individual files own only their native handle and callback state. CHTTP owns one runtime per async client/server, and a protocol-neutral transfer state machine maps file readiness onto H1 send/receive admission or H2 source WAIT/resume and flow-control credit.
 
-**Tech Stack:** C11, CFlow actor/native IOCP/io_uring file operations, CNet, CHTTP H1/llhttp, CHTTP H2 engine, Rocida Core filesystem, TinyTest, CMake Presets.
+**Tech Stack:** C11, CFlow actor/native IOCP/io_uring file operations, CNet, CHTTP H1/llhttp, CHTTP H2 engine, Salts Core filesystem, TinyTest, CMake Presets.
 
 **Spec:** `docs/CHTTP_STREAMING_FILE_DESIGN.md`
 

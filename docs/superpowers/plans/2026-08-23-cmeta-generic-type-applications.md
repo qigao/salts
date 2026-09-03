@@ -1,4 +1,4 @@
-# CMeta Generic Type Applications and TurboSTL Genericization Implementation Plan
+# CMeta Generic Type Applications and Container Genericization Implementation Plan
 
 > **Status:** Historical execution record. The described foundation is present
 > on `master`; unchecked boxes are retained for traceability and are not an
@@ -7,11 +7,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `CMETA_TYPE_APPLY` a first-class, verifiable CMeta contract and make TurboSTL typed instances expose their real type constructor and arguments before semantic serialization descriptors are introduced.
+**Goal:** Make `CMETA_TYPE_APPLY` a first-class, verifiable CMeta contract and make Container typed instances expose their real type constructor and arguments before semantic serialization descriptors are introduced.
 
-**Architecture:** Keep `cmeta_generic_desc` + `cmeta_type_identity(CMETA_TYPE_APPLY)` as the canonical type-language foundation. First tighten and directly test application well-formedness in CMeta. Then add one versioned extension root to `cmeta_container_desc` and let TurboSTL instances declared with `typed(Vec, ...)`, `typed(Set, ...)`, `typed(Map, ...)`, etc. expose concrete type applications using the type descriptors already stored on each handle. Container algorithms and ownership remain unchanged.
+**Architecture:** Keep `cmeta_generic_desc` + `cmeta_type_identity(CMETA_TYPE_APPLY)` as the canonical type-language foundation. First tighten and directly test application well-formedness in CMeta. Then add one versioned extension root to `cmeta_container_desc` and let Container instances declared with `typed(Vec, ...)`, `typed(Set, ...)`, `typed(Map, ...)`, etc. expose concrete type applications using the type descriptors already stored on each handle. Container algorithms and ownership remain unchanged.
 
-**Tech Stack:** C11, C++17 public-header compatibility, CMake presets, TinyTest, TurboUtils::CMeta, TurboUtils::STL.
+**Tech Stack:** C11, C++17 public-header compatibility, CMake presets, TinyTest, Salts::CMeta, Salts::CSTL.
 
 **Spec:** `docs/superpowers/specs/2026-08-23-serialization-data-binding-design.md` plus `docs/superpowers/specs/2026-08-23-serialization-data-binding-generic-foundation-amendment.md`.
 
@@ -21,20 +21,20 @@
 - Type identity and operation capability are separate contracts. `typed(Set, SetName, T)` may describe a well-formed type application even when a concrete Set operation later rejects `T` for missing compare traits.
 - Generic identity compares constructor `stable_id` + recursively validated argument identities; pointer equality is never cross-TU type identity.
 - No serialization, CSerde, CBind, parser, schema-policy, or format-specific code is introduced by this plan.
-- No TurboSTL raw algorithm is rewritten. Genericization changes metadata/introspection only.
+- No Container raw algorithm is rewritten. Genericization changes metadata/introspection only.
 - Raw byte containers with no `cmeta_type_desc` binding are not semantic generic applications.
 - Existing typed handle metadata (`element_type`, `key_type`, `value_type`) remains the storage of concrete type arguments.
 - Add exactly one extension pointer to `cmeta_container_desc`; future construction metadata must extend the versioned extension object instead of repeatedly growing the main descriptor.
 - `typed(Option/Pair/Tuple/Result, ...)` already creates real C storage shapes but does not yet attach a complete type identity. This plan does not fake identity from C spelling. A later value-type metadata plan must solve that before a typed Option value is admitted as semantic OPTIONAL.
 - Therefore field presence (`required`, missing field, default) remains CBind/schema policy. A future semantic OPTIONAL applies only to a typed Option value with real type identity, not to a field merely allowed to be absent.
-- Public CMeta/TurboSTL headers must compile as C11 and C++17.
+- Public CMeta/Container headers must compile as C11 and C++17.
 - Linux and Windows fresh CI are required before each implementation PR is merged.
 
 ---
 
 ## PR decomposition
 
-This plan is executed as two implementation PRs. PR A is pure CMeta and can be reviewed without TurboSTL. PR B starts only after PR A merges and makes TurboSTL the first real consumer of the generic-application contract. The later semantic-data-descriptor PR is intentionally not part of this plan.
+This plan is executed as two implementation PRs. PR A is pure CMeta and can be reviewed without Container. PR B starts only after PR A merges and makes Container the first real consumer of the generic-application contract. The later semantic-data-descriptor PR is intentionally not part of this plan.
 
 ---
 
@@ -237,17 +237,17 @@ ctest --preset linux-dev-user
 git diff --check
 ```
 
-The PR must also pass the repository Windows CI path. No TurboSTL source should change in PR A.
+The PR must also pass the repository Windows CI path. No Container source should change in PR A.
 
 ---
 
-## PR B — CMeta container type extension + TurboSTL genericization
+## PR B — CMeta container type extension + Container genericization
 
 ### Task 3: Add one versioned container extension root
 
 **Files:**
 - Modify: `cmeta/include/cmeta/range.h`
-- Create: `cmeta/src/container_type.c`
+- Create: `cmeta/src/cstl_type.c`
 - Modify: `cmeta/CMakeLists.txt`
 - Modify: `cmeta/tests/cmeta_collector_test.c`
 - Modify: `cmeta/tests/cmeta_header_cpp_test.cpp`
@@ -320,7 +320,7 @@ enum {
 
 The extension root is intentionally introduced now so later construction support can append `construct` to `cmeta_container_ext` under `struct_size`/`abi_version`, rather than growing `cmeta_container_desc` again.
 
-- [ ] **Step 4: Implement container type introspection in `container_type.c`**
+- [ ] **Step 4: Implement container type introspection in `cstl_type.c`**
 
 `cmeta_container_type_application_valid()` must:
 
@@ -334,7 +334,7 @@ The extension root is intentionally introduced now so later construction support
 
 Do not inspect traits here.
 
-- [ ] **Step 5: Add `container_type.c` to `TurboUtils::CMeta` and update all CMeta test descriptors with `.ext = NULL` or complete positional tail initialization**
+- [ ] **Step 5: Add `cstl_type.c` to `Salts::CMeta` and update all CMeta test descriptors with `.ext = NULL` or complete positional tail initialization**
 
 Use designated initializers in new tests. Existing positional initializers must receive a final `NULL` so `-Werror=missing-field-initializers` remains clean.
 
@@ -356,47 +356,47 @@ Expected: all CMeta tests pass.
 ```bash
 git add \
   cmeta/include/cmeta/range.h \
-  cmeta/src/container_type.c \
+  cmeta/src/cstl_type.c \
   cmeta/CMakeLists.txt \
   cmeta/tests/cmeta_collector_test.c \
   cmeta/tests/cmeta_header_cpp_test.cpp
 git commit -m "feat(cmeta): expose container generic type applications"
 ```
 
-### Task 4: Define canonical TurboSTL generic constructors
+### Task 4: Define canonical Container generic constructors
 
 **Files:**
-- Modify: `turbostl/include/turbostl/detail/instance_meta.h`
-- Modify: `turbostl/src/instance_meta.c`
-- Modify: `turbostl/src/list.c`
-- Modify: `turbostl/src/map.c`
-- Modify: `turbostl/src/associative_meta.c`
+- Modify: `cstl/include/cstl/detail/instance_meta.h`
+- Modify: `cstl/src/instance_meta.c`
+- Modify: `cstl/src/list.c`
+- Modify: `cstl/src/map.c`
+- Modify: `cstl/src/associative_meta.c`
 
 **Interfaces:**
 - Consumes: `cmeta_generic_desc`, `cmeta_container_ext`, `cmeta_container_type_ops`.
 - Produces canonical constructor identities with these stable IDs and exact arities:
 
 ```text
-turbostl.Vec        1
-turbostl.Deque      1
-turbostl.List       1
-turbostl.Stack      1
-turbostl.Queue      1
-turbostl.Heap       1
-turbostl.Set        1
-turbostl.HashSet    1
-turbostl.HashMap    2
-turbostl.Map        2
-turbostl.MultiMap   2
-turbostl.BTree      2
-turbostl.BPlusTree  2
+cstl.Vec        1
+cstl.Deque      1
+cstl.List       1
+cstl.Stack      1
+cstl.Queue      1
+cstl.Heap       1
+cstl.Set        1
+cstl.HashSet    1
+cstl.HashMap    2
+cstl.Map        2
+cstl.MultiMap   2
+cstl.BTree      2
+cstl.BPlusTree  2
 ```
 
 All use `CMETA_GENERIC_CONTAINER`.
 
-- [ ] **Step 1: Add failing TurboSTL metadata tests**
+- [ ] **Step 1: Add failing Container metadata tests**
 
-In `turbostl/tests/turbostl_header_typed_test.c`, create at least:
+In `cstl/tests/cstl_header_typed_test.c`, create at least:
 
 ```c
 Vec(int, values);
@@ -411,7 +411,7 @@ Before initialization, assert:
 check_true(cmeta_container_type_application_valid(&values));
 check_equal(cmeta_container_type_arity(&values), 1u);
 check_equal(cmeta_container_type_constructor(&values)->stable_id,
-            "turbostl.Vec");
+            "cstl.Vec");
 check_true(cmeta_type_equal(
     cmeta_container_type_argument(&values, 0u), &cmeta_type_int));
 
@@ -423,21 +423,21 @@ check_true(cmeta_type_equal(
     cmeta_container_type_argument(&counts, 1u), &cmeta_type_long));
 ```
 
-Add the same constructor/arity assertions for every supported TurboSTL generic kind, using one or two representative built-in argument types.
+Add the same constructor/arity assertions for every supported Container generic kind, using one or two representative built-in argument types.
 
 - [ ] **Step 2: Build typed header tests and verify red**
 
 Run:
 
 ```bash
-cmake --build --preset linux-dev-user --target turbostl_header_typed_test
+cmake --build --preset linux-dev-user --target cstl_header_typed_test
 ```
 
-Expected: type application is unavailable/invalid because TurboSTL descriptors have no type extension yet.
+Expected: type application is unavailable/invalid because Container descriptors have no type extension yet.
 
 - [ ] **Step 3: Publish canonical constructor descriptors**
 
-Declare the 13 constructor descriptors in `turbostl/include/turbostl/detail/instance_meta.h` and define them once in compiled TurboSTL code with `CMETA_GENERIC_DESC_INIT(...)`.
+Declare the 13 constructor descriptors in `cstl/include/cstl/detail/instance_meta.h` and define them once in compiled Container code with `CMETA_GENERIC_DESC_INIT(...)`.
 
 `instance_meta.c` may own the constructor objects; `list.c`, `map.c`, and `associative_meta.c` reference them through the detail header. Do not make per-user-type constructor objects.
 
@@ -457,7 +457,7 @@ Do not infer generic arguments from Range entry types.
 
 Every canonical descriptor must point to a `cmeta_container_ext` with the correct type ops. Keep all existing Range/Collector function pointers unchanged.
 
-For generated/header-local CMeta test containers that are not TurboSTL, `.ext = NULL` remains valid and means “container capabilities exist but no generic type application is exposed.”
+For generated/header-local CMeta test containers that are not Container, `.ext = NULL` remains valid and means “container capabilities exist but no generic type application is exposed.”
 
 - [ ] **Step 7: Prove raw byte containers are not falsely typed**
 
@@ -473,40 +473,40 @@ A typed `Vec(int, typed_values)` must stay valid before init, after successful i
 
 Add a test type with a valid atom identity but missing compare/hash traits. Its `typed(Set, SetName, T)` / `typed(HashSet, HashSetName, T)` type applications are well-formed, while `set_init()` / `hash_set_init()` continues to fail with the existing trait error. This proves “type exists” and “operation is admissible” are different contracts.
 
-- [ ] **Step 9: Run focused TurboSTL regression**
+- [ ] **Step 9: Run focused Container regression**
 
 Run:
 
 ```bash
 cmake --build --preset linux-dev-user --target \
-  turbostl_header_typed_test \
-  turbostl_sequence_test \
-  turbostl_list_test \
-  turbostl_map_test \
-  turbostl_hash_test
-ctest --preset linux-dev-user -R '^turbostl_'
+  cstl_header_typed_test \
+  cstl_sequence_test \
+  cstl_list_test \
+  cstl_map_test \
+  cstl_hash_test
+ctest --preset linux-dev-user -R '^cstl_'
 git diff --check
 ```
 
-Expected: all TurboSTL tests pass and existing container behavior is unchanged.
+Expected: all Container tests pass and existing container behavior is unchanged.
 
-- [ ] **Step 10: Commit TurboSTL genericization**
+- [ ] **Step 10: Commit Container genericization**
 
 ```bash
 git add \
-  turbostl/include/turbostl/detail/instance_meta.h \
-  turbostl/src/instance_meta.c \
-  turbostl/src/list.c \
-  turbostl/src/map.c \
-  turbostl/src/associative_meta.c \
-  turbostl/tests/turbostl_header_typed_test.c
-git commit -m "feat(turbostl): expose generic container identities"
+  cstl/include/cstl/detail/instance_meta.h \
+  cstl/src/instance_meta.c \
+  cstl/src/list.c \
+  cstl/src/map.c \
+  cstl/src/associative_meta.c \
+  cstl/tests/cstl_header_typed_test.c
+git commit -m "feat(container): expose generic container identities"
 ```
 
 ### Task 5: C++ and installed-header compatibility
 
 **Files:**
-- Modify: `turbostl/tests/turbostl_header_typed_cpp_test.cpp`
+- Modify: `cstl/tests/cstl_header_typed_cpp_test.cpp`
 - Modify if required by the existing install test: files under `tests/install_consumer/`
 
 - [ ] **Step 1: Add C++ descriptor/introspection coverage without `_Generic` expansion**
@@ -515,14 +515,14 @@ The C++ test consumes the public `cmeta_container_ext`, `cmeta_container_type_op
 
 - [ ] **Step 2: Build C++ and the repository install-consumer target**
 
-Run the existing C++ TurboSTL header test, then use the root
+Run the existing C++ Container header test, then use the root
 `verify_installed_package` target. That target installs the package and
 configures/builds `tests/install_consumer` against the installed public surface.
 
 ```bash
 cmake --fresh --preset linux-release-user
 cmake --build --preset linux-release-user --target \
-  turbostl_header_typed_cpp_test verify_installed_package
+  cstl_header_typed_cpp_test verify_installed_package
 ```
 
 Expected: C++17 headers compile and installed public headers contain all required CMeta declarations.
@@ -530,8 +530,8 @@ Expected: C++17 headers compile and installed public headers contain all require
 - [ ] **Step 3: Commit compatibility tests**
 
 ```bash
-git add turbostl/tests/turbostl_header_typed_cpp_test.cpp tests/install_consumer
-git commit -m "test(turbostl): cover generic metadata consumers"
+git add cstl/tests/cstl_header_typed_cpp_test.cpp tests/install_consumer
+git commit -m "test(container): cover generic metadata consumers"
 ```
 
 ### PR B verification gate
@@ -553,7 +553,7 @@ Audit the public surface:
 rg -n "cserde|cbind|json|yaml|xml|csv|DataBind|TbeTyped" \
   cmeta/include/cmeta/type_identity.h \
   cmeta/include/cmeta/range.h \
-  turbostl/include/turbostl/detail/instance_meta.h
+  cstl/include/cstl/detail/instance_meta.h
 ```
 
 Expected: no serialization/parser/data-binding dependencies.

@@ -1,6 +1,6 @@
 # CFlow Statechart Runtime Projection and Actor Integration Design
 
-**Issue:** https://github.com/qigao/turbo-utils/issues/125
+**Issue:** https://github.com/qigao/salts/issues/125
 
 ## Decision
 

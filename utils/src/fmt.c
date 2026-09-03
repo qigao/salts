@@ -491,7 +491,7 @@ static inline int format_arg_to_buffer(char *dst, char *end, const fmt_arg_t *ar
  * Internal re2c Formatting Loop
  * ============================================================================ */
 
-TURBO_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
+SALTS_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
                         size_t arg_count) {
   if (!buf || size == 0)
     return 0;
@@ -584,7 +584,7 @@ format_error:
   return 0;
 }
 
-TURBO_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args,
+SALTS_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args,
                                 size_t arg_count) {
   enum { FMT_TSTR_STACK_CAP = 256 };
   char stack[FMT_TSTR_STACK_CAP];

@@ -6,7 +6,7 @@
 
 **Architecture:** Extend the opaque ThreadPool queue entry with optional cancel and finalize callbacks, then adapt CFlow Manual, Serial, and Worker built-ins through additive free functions. Preserve every existing vtable field and legacy `fn/user` entry point.
 
-**Tech Stack:** ISO C11, CMeta interfaces, TurboUtils ThreadPool/Disruptor, TinyTest, CMake Presets.
+**Tech Stack:** ISO C11, CMeta interfaces, Salts ThreadPool/Disruptor, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-cflow-executor-runtime-protocol-design.md`
 
@@ -27,13 +27,13 @@
 ### Task 1: ThreadPool task descriptor protocol
 
 **Files:**
-- Modify: `concurrency/include/turbo/thread_pool.h`
+- Modify: `concurrency/include/salts/thread_pool.h`
 - Modify: `concurrency/src/thread_pool.c`
 - Test: `concurrency/tests/thread_pool_test.c`
 
 **Interfaces:**
-- Produces: `turbo_threadpool_task_t`, `turbo_threadpool_submit_task`, and `turbo_threadpool_try_submit_task`.
-- Preserves: `turbo_threadpool_submit` and `turbo_threadpool_try_submit` as descriptor wrappers.
+- Produces: `salts_threadpool_task_t`, `salts_threadpool_submit_task`, and `salts_threadpool_try_submit_task`.
+- Preserves: `salts_threadpool_submit` and `salts_threadpool_try_submit` as descriptor wrappers.
 
 - [x] **Step 1: Write failing lifecycle tests**
 
@@ -126,8 +126,8 @@
 ## Verification Evidence
 
 - ThreadPool RED: `cmake --build --preset win-release-user --target
-  thread_pool_test` failed at the missing `turbo_threadpool_task_t`,
-  `turbo_threadpool_submit_task`, and `turbo_threadpool_try_submit_task`
+  thread_pool_test` failed at the missing `salts_threadpool_task_t`,
+  `salts_threadpool_submit_task`, and `salts_threadpool_try_submit_task`
   declarations.
 - ThreadPool GREEN: the descriptor filters passed 5/5; the complete executable
   passed 19/19 tests and 120 assertions.

@@ -3,7 +3,7 @@
 #include "../src/io_publisher_internal.h"
 #include "tinytest.h"
 
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,8 +97,8 @@ typedef struct io_source_run_fixture {
 } io_source_run_fixture;
 
 typedef struct io_source_blocking_wake_probe {
-    turbo_mutex_t lock;
-    turbo_cond_t changed;
+    salts_mutex_t lock;
+    salts_cond_t changed;
     bool entered;
     bool released;
     bool close_returned;
@@ -117,8 +117,8 @@ typedef struct io_source_drive_context {
 } io_source_drive_context;
 
 typedef struct io_source_tail_barrier {
-    turbo_mutex_t lock;
-    turbo_cond_t changed;
+    salts_mutex_t lock;
+    salts_cond_t changed;
     bool entered;
     bool released;
 } io_source_tail_barrier;
@@ -129,8 +129,8 @@ typedef struct io_source_reentrant_cancel_probe {
 } io_source_reentrant_cancel_probe;
 
 typedef struct io_source_nested_wake_probe {
-    turbo_mutex_t lock;
-    turbo_cond_t changed;
+    salts_mutex_t lock;
+    salts_cond_t changed;
     cflow_publisher *source_a;
     cflow_io_publisher_owner *owner_a;
     cflow_waitable waitable_a;
@@ -261,12 +261,12 @@ static void io_source_blocking_wake(void *user) {
 
     if (probe == NULL)
         return;
-    turbo_mutex_lock(&probe->lock);
+    salts_mutex_lock(&probe->lock);
     probe->entered = true;
-    turbo_cond_broadcast(&probe->changed);
+    salts_cond_broadcast(&probe->changed);
     while (!probe->released)
-        turbo_cond_wait(&probe->changed, &probe->lock);
-    turbo_mutex_unlock(&probe->lock);
+        salts_cond_wait(&probe->changed, &probe->lock);
+    salts_mutex_unlock(&probe->lock);
 }
 
 static void io_source_close_thread(void *user) {
@@ -274,10 +274,10 @@ static void io_source_close_thread(void *user) {
         (io_source_close_context *)user;
 
     cflow_publisher_destroy(context->source);
-    turbo_mutex_lock(&context->probe->lock);
+    salts_mutex_lock(&context->probe->lock);
     context->probe->close_returned = true;
-    turbo_cond_broadcast(&context->probe->changed);
-    turbo_mutex_unlock(&context->probe->lock);
+    salts_cond_broadcast(&context->probe->changed);
+    salts_mutex_unlock(&context->probe->lock);
 }
 
 static void io_source_drive_thread(void *user) {
@@ -292,12 +292,12 @@ static void io_source_tail_barrier_task(void *user) {
     io_source_tail_barrier *barrier =
         (io_source_tail_barrier *)user;
 
-    turbo_mutex_lock(&barrier->lock);
+    salts_mutex_lock(&barrier->lock);
     barrier->entered = true;
-    turbo_cond_broadcast(&barrier->changed);
+    salts_cond_broadcast(&barrier->changed);
     while (!barrier->released)
-        turbo_cond_wait(&barrier->changed, &barrier->lock);
-    turbo_mutex_unlock(&barrier->lock);
+        salts_cond_wait(&barrier->changed, &barrier->lock);
+    salts_mutex_unlock(&barrier->lock);
 }
 
 static bool io_source_tail_barrier_wait(
@@ -305,22 +305,22 @@ static bool io_source_tail_barrier_wait(
     size_t waits = 0u;
     bool entered;
 
-    turbo_mutex_lock(&barrier->lock);
+    salts_mutex_lock(&barrier->lock);
     while (!barrier->entered && waits++ < IO_SOURCE_WAIT_LIMIT)
-        (void)turbo_cond_timedwait(
+        (void)salts_cond_timedwait(
             &barrier->changed, &barrier->lock,
             IO_SOURCE_WAIT_SLICE_NS);
     entered = barrier->entered;
-    turbo_mutex_unlock(&barrier->lock);
+    salts_mutex_unlock(&barrier->lock);
     return entered;
 }
 
 static void io_source_tail_barrier_release(
     io_source_tail_barrier *barrier) {
-    turbo_mutex_lock(&barrier->lock);
+    salts_mutex_lock(&barrier->lock);
     barrier->released = true;
-    turbo_cond_broadcast(&barrier->changed);
-    turbo_mutex_unlock(&barrier->lock);
+    salts_cond_broadcast(&barrier->changed);
+    salts_mutex_unlock(&barrier->lock);
 }
 
 static void io_source_reentrant_cancel(void *user) {
@@ -370,10 +370,10 @@ static void io_source_nested_arm_thread(void *user) {
     probe->arm_a_accepted = cflow_waitable_arm(
         &probe->waitable_a,
         (cflow_waker){io_source_nested_wake_a, probe});
-    turbo_mutex_lock(&probe->lock);
+    salts_mutex_lock(&probe->lock);
     probe->worker_completed = true;
-    turbo_cond_broadcast(&probe->changed);
-    turbo_mutex_unlock(&probe->lock);
+    salts_cond_broadcast(&probe->changed);
+    salts_mutex_unlock(&probe->lock);
 }
 
 static void io_source_operation_release(void *user) {
@@ -503,10 +503,10 @@ static int io_source_backend_submit(
         fixture->backend_active_max = fixture->backend_active;
     if (fixture->complete_during_submit) {
         const cflow_io_completion completion = {
-            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, sizeof(int), SALTS_OK};
         (void)io_source_complete_backend(fixture, &completion);
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int io_source_backend_cancel(
@@ -515,7 +515,7 @@ static int io_source_backend_cancel(
 
     (void)request_id;
     ++fixture->backend_cancel_calls;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static void io_source_drive(void *user) {
@@ -528,13 +528,13 @@ static void io_source_drive(void *user) {
 
         ++fixture->drive_run_calls;
         fixture->drive_run_progressed += progressed;
-        if (status == TURBO_EBUSY) {
+        if (status == SALTS_EBUSY) {
             ++fixture->drive_run_busy;
             fixture->drive_run_busy_progressed += progressed;
-        } else if (status != TURBO_OK) {
+        } else if (status != SALTS_OK) {
             fixture->drive_run_error = status;
         }
-        if (status == TURBO_OK &&
+        if (status == SALTS_OK &&
             fixture->close_owner_after_successful_drive) {
             ++fixture->drive_close_calls;
             fixture->drive_close_status =
@@ -618,11 +618,11 @@ static bool io_source_run_fixture_init_mode(
     if (window_capacity == 0u) {
         if (cflow_publisher_from_io_actor(
                 &run_fixture->source, &run_fixture->owner,
-                &config) != TURBO_OK)
+                &config) != SALTS_OK)
             goto cleanup;
     } else if (cflow_publisher_from_io_actor_windowed(
                    &run_fixture->source, &run_fixture->owner,
-                   &config, window_capacity) != TURBO_OK) {
+                   &config, window_capacity) != SALTS_OK) {
         goto cleanup;
     }
 
@@ -674,7 +674,7 @@ static void io_source_run_fixture_close(
     io_source_run_fixture *run_fixture) {
     cflow_subscription_close(&run_fixture->run);
     check_equal(cflow_io_publisher_owner_close(
-                    &run_fixture->owner), TURBO_OK);
+                    &run_fixture->owner), SALTS_OK);
     cflow_scheduler_destroy(&run_fixture->scheduler);
     cflow_graph_destroy(&run_fixture->normalized);
     cflow_graph_destroy(&run_fixture->surface);
@@ -688,7 +688,7 @@ spec("CFlow reactive IO source") {
         cflow_io_publisher_stats stats = {0};
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_EINVAL);
+                        &source, &owner, &config), SALTS_EINVAL);
         check_false(cflow_publisher_valid(&source));
         check_null(owner.impl);
         check_false(stats.publisher_live);
@@ -701,14 +701,14 @@ spec("CFlow reactive IO source") {
         cflow_io_publisher_owner owner = {0};
 
         check_equal(cflow_publisher_from_io_actor_windowed(
-                        &source, &owner, &config, 0u), TURBO_EINVAL);
+                        &source, &owner, &config, 0u), SALTS_EINVAL);
         check_false(cflow_publisher_valid(&source));
         check_null(owner.impl);
 
         check_equal(cflow_publisher_from_io_actor_windowed(
                         &source, &owner, &config,
                         CFLOW_IO_PUBLISHER_MAX_WINDOW + 1u),
-                    TURBO_EINVAL);
+                    SALTS_EINVAL);
         check_false(cflow_publisher_valid(&source));
         check_null(owner.impl);
     }
@@ -723,12 +723,12 @@ spec("CFlow reactive IO source") {
         check_equal(
             cflow_io_publisher_owner_run_serial_batch_phase_internal(
                 &run_fixture.owner, 8u, &progressed),
-            TURBO_ENOTSUP);
+            SALTS_ENOTSUP);
         check_equal(progressed, (size_t)0u);
 
         cflow_publisher_destroy(&run_fixture.source);
         check_equal(cflow_io_publisher_owner_close(
-                        &run_fixture.owner), TURBO_OK);
+                        &run_fixture.owner), SALTS_OK);
         cflow_scheduler_destroy(&run_fixture.scheduler);
         cflow_graph_destroy(&run_fixture.normalized);
         cflow_graph_destroy(&run_fixture.surface);
@@ -761,7 +761,7 @@ spec("CFlow reactive IO source") {
         (void)cflow_scheduler_run_until_idle(
             &sequential_run.scheduler, 0u);
         check_equal(cflow_io_publisher_owner_run_ready(
-            &sequential_run.owner, 32u, &progressed), TURBO_OK);
+            &sequential_run.owner, 32u, &progressed), SALTS_OK);
         (void)cflow_scheduler_run_until_idle(
             &sequential_run.scheduler, 0u);
         check_true(cflow_io_publisher_owner_get_stats(
@@ -780,7 +780,7 @@ spec("CFlow reactive IO source") {
         (void)cflow_scheduler_run_until_idle(
             &windowed_run.scheduler, 0u);
         check_equal(cflow_io_publisher_owner_run_ready(
-            &windowed_run.owner, 32u, &progressed), TURBO_OK);
+            &windowed_run.owner, 32u, &progressed), SALTS_OK);
         (void)cflow_scheduler_run_until_idle(
             &windowed_run.scheduler, 0u);
         check_true(cflow_io_publisher_owner_get_stats(
@@ -821,10 +821,10 @@ spec("CFlow reactive IO source") {
         cflow_io_publisher_owner second_owner = {0};
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         original_source = source;
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &second_owner, &config), TURBO_EINVAL);
+                        &source, &second_owner, &config), SALTS_EINVAL);
         check_true(cflow_publisher_valid(&source));
         check_equal(&source, &original_source, sizeof(source));
         check_null(second_owner.impl);
@@ -833,7 +833,7 @@ spec("CFlow reactive IO source") {
             cflow_publisher_destroy(&source);
         else
             cflow_publisher_destroy(&original_source);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
     }
 
     it("preserves an occupied owner on rejected construction") {
@@ -845,19 +845,19 @@ spec("CFlow reactive IO source") {
         cflow_io_publisher_owner original_owner;
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         original_owner = owner;
         check_equal(cflow_publisher_from_io_actor(
-                        &second_source, &owner, &config), TURBO_EINVAL);
+                        &second_source, &owner, &config), SALTS_EINVAL);
         check_false(cflow_publisher_valid(&second_source));
         check_equal(owner.impl, original_owner.impl);
 
         cflow_publisher_destroy(&source);
         if (owner.impl != NULL)
-            check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+            check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
         else
             check_equal(cflow_io_publisher_owner_close(
-                            &original_owner), TURBO_OK);
+                            &original_owner), SALTS_OK);
     }
 
     it("requires only the callbacks needed by the adapter protocol") {
@@ -868,40 +868,40 @@ spec("CFlow reactive IO source") {
 
         config.backend.submit = NULL;
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_EINVAL);
+                        &source, &owner, &config), SALTS_EINVAL);
         check_false(cflow_publisher_valid(&source));
         check_null(owner.impl);
 
         config = io_source_config(&fixture);
         config.prepare = NULL;
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_EINVAL);
+                        &source, &owner, &config), SALTS_EINVAL);
         check_false(cflow_publisher_valid(&source));
         check_null(owner.impl);
 
         config = io_source_config(&fixture);
         config.encode = NULL;
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_EINVAL);
+                        &source, &owner, &config), SALTS_EINVAL);
         check_false(cflow_publisher_valid(&source));
         check_null(owner.impl);
 
         config = io_source_config(&fixture);
         config.drive = NULL;
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         check_true(cflow_publisher_valid(&source));
         check_not_null(owner.impl);
         cflow_publisher_destroy(&source);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
         source = (cflow_publisher){0};
 
         config = io_source_config(&fixture);
         config.backend.cancel = NULL;
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         cflow_publisher_destroy(&source);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
     }
 
     it("does not prepare or submit without downstream demand") {
@@ -932,7 +932,7 @@ spec("CFlow reactive IO source") {
         check_false(stats.result_ready);
         check_false(stats.close_requested);
         check_equal(cflow_io_publisher_owner_close(
-                        &run_fixture.owner), TURBO_EBUSY);
+                        &run_fixture.owner), SALTS_EBUSY);
         check_not_null(run_fixture.owner.impl);
 
         io_source_run_fixture_close(&run_fixture);
@@ -948,7 +948,7 @@ spec("CFlow reactive IO source") {
         cflow_io_publisher_stats stats = {0};
         cflow_io_publisher_window_stats window = {0};
         const cflow_io_completion cancelled = {
-            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, SALTS_OK};
         size_t progressed = 0u;
 
         check_true(io_source_run_fixture_init_windowed(
@@ -978,7 +978,7 @@ spec("CFlow reactive IO source") {
         check_equal(window.peak_occupied, (size_t)4u);
 
         check_equal(cflow_io_publisher_owner_run_ready(
-            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            &run_fixture.owner, 64u, &progressed), SALTS_OK);
         check_true(progressed >= (size_t)4u);
         check_equal(fixture.backend_submit_calls, (size_t)4u);
         check_equal(fixture.backend_active, (size_t)4u);
@@ -996,11 +996,11 @@ spec("CFlow reactive IO source") {
                    &run_fixture.owner)) {
             progressed = 0u;
             check_equal(cflow_io_publisher_owner_run_ready(
-                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+                &run_fixture.owner, 64u, &progressed), SALTS_OK);
             check_true(progressed > (size_t)0u);
         }
         check_equal(cflow_io_publisher_owner_close(
-            &run_fixture.owner), TURBO_OK);
+            &run_fixture.owner), SALTS_OK);
         cflow_scheduler_destroy(&run_fixture.scheduler);
         cflow_graph_destroy(&run_fixture.normalized);
         cflow_graph_destroy(&run_fixture.surface);
@@ -1021,7 +1021,7 @@ spec("CFlow reactive IO source") {
         cflow_io_publisher_stats stats = {0};
         cflow_io_publisher_window_stats window = {0};
         const cflow_io_completion completion = {
-            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, sizeof(int), SALTS_OK};
         size_t progressed = 0u;
 
         check_true(io_source_run_fixture_init_windowed(
@@ -1034,7 +1034,7 @@ spec("CFlow reactive IO source") {
         (void)cflow_scheduler_run_until_idle(
             &run_fixture.scheduler, 0u);
         check_equal(cflow_io_publisher_owner_run_ready(
-            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            &run_fixture.owner, 64u, &progressed), SALTS_OK);
         check_equal(fixture.backend_submit_calls, (size_t)4u);
 
         for (size_t index = 0u;
@@ -1045,7 +1045,7 @@ spec("CFlow reactive IO source") {
                 &fixture, completion_order[index], &completion),
                 CFLOW_IO_COMPLETE_ACCEPTED);
             check_equal(cflow_io_publisher_owner_run_ready(
-                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+                &run_fixture.owner, 64u, &progressed), SALTS_OK);
             check_true(progressed > (size_t)0u);
             check_equal(fixture.encode_calls, index + 1u);
         }
@@ -1076,7 +1076,7 @@ spec("CFlow reactive IO source") {
             &run_fixture.scheduler, 0u);
         progressed = 0u;
         check_equal(cflow_io_publisher_owner_run_ready(
-            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            &run_fixture.owner, 64u, &progressed), SALTS_OK);
         check_equal(fixture.backend_request_count, (size_t)8u);
         for (size_t index = 4u; index < 8u; ++index) {
             check_equal(fixture.backend_requests[index].lease_id,
@@ -1086,7 +1086,7 @@ spec("CFlow reactive IO source") {
                 CFLOW_IO_COMPLETE_ACCEPTED);
             progressed = 0u;
             check_equal(cflow_io_publisher_owner_run_ready(
-                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+                &run_fixture.owner, 64u, &progressed), SALTS_OK);
             check_true(progressed > (size_t)0u);
         }
         (void)cflow_scheduler_run_until_idle(
@@ -1117,7 +1117,7 @@ spec("CFlow reactive IO source") {
         };
         io_source_run_fixture run_fixture;
         const cflow_io_completion completion = {
-            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, sizeof(int), SALTS_OK};
         size_t progressed = 0u;
 
         check_true(io_source_run_fixture_init_windowed(
@@ -1131,7 +1131,7 @@ spec("CFlow reactive IO source") {
             &run_fixture.scheduler, 0u);
         check_equal(fixture.prepare_calls, (size_t)4u);
         check_equal(cflow_io_publisher_owner_run_ready(
-            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            &run_fixture.owner, 64u, &progressed), SALTS_OK);
         check_equal(fixture.backend_submit_calls, (size_t)3u);
 
         for (size_t index = 0u; index < 3u; ++index) {
@@ -1140,7 +1140,7 @@ spec("CFlow reactive IO source") {
                 CFLOW_IO_COMPLETE_ACCEPTED);
             progressed = 0u;
             check_equal(cflow_io_publisher_owner_run_ready(
-                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+                &run_fixture.owner, 64u, &progressed), SALTS_OK);
             check_true(progressed > (size_t)0u);
         }
         (void)cflow_scheduler_run_until_idle(
@@ -1192,7 +1192,7 @@ spec("CFlow reactive IO source") {
                    &run_fixture.owner)) {
             progressed = 0u;
             check_equal(cflow_io_publisher_owner_run_ready(
-                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+                &run_fixture.owner, 64u, &progressed), SALTS_OK);
             check_true(progressed > (size_t)0u);
         }
 
@@ -1216,9 +1216,9 @@ spec("CFlow reactive IO source") {
         };
         io_source_run_fixture run_fixture;
         const cflow_io_completion completed = {
-            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, sizeof(int), SALTS_OK};
         const cflow_io_completion cancelled = {
-            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, SALTS_OK};
         size_t progressed = 0u;
 
         check_true(io_source_run_fixture_init_windowed(
@@ -1231,14 +1231,14 @@ spec("CFlow reactive IO source") {
         (void)cflow_scheduler_run_until_idle(
             &run_fixture.scheduler, 0u);
         check_equal(cflow_io_publisher_owner_run_ready(
-            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            &run_fixture.owner, 64u, &progressed), SALTS_OK);
         check_equal(fixture.backend_submit_calls, (size_t)4u);
 
         check_equal(io_source_complete_backend_at(
             &fixture, 2u, &completed), CFLOW_IO_COMPLETE_ACCEPTED);
         progressed = 0u;
         check_equal(cflow_io_publisher_owner_run_ready(
-            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            &run_fixture.owner, 64u, &progressed), SALTS_OK);
         check_true(progressed > (size_t)0u);
         (void)cflow_scheduler_run_until_idle(
             &run_fixture.scheduler, 0u);
@@ -1262,14 +1262,14 @@ spec("CFlow reactive IO source") {
                    &run_fixture.owner)) {
             progressed = 0u;
             check_equal(cflow_io_publisher_owner_run_ready(
-                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+                &run_fixture.owner, 64u, &progressed), SALTS_OK);
             check_true(progressed > (size_t)0u);
         }
 
         check_equal(fixture.encode_calls, (size_t)1u);
         check_equal(fixture.release_calls, (size_t)4u);
         check_equal(cflow_io_publisher_owner_close(
-            &run_fixture.owner), TURBO_OK);
+            &run_fixture.owner), SALTS_OK);
         cflow_scheduler_destroy(&run_fixture.scheduler);
         cflow_graph_destroy(&run_fixture.normalized);
         cflow_graph_destroy(&run_fixture.surface);
@@ -1285,9 +1285,9 @@ spec("CFlow reactive IO source") {
         io_source_run_fixture run_fixture;
         cflow_io_publisher_window_stats window = {0};
         const cflow_io_completion completed = {
-            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, sizeof(int), SALTS_OK};
         const cflow_io_completion cancelled = {
-            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, SALTS_OK};
         size_t progressed = 0u;
 
         check_true(io_source_run_fixture_init_windowed(
@@ -1300,13 +1300,13 @@ spec("CFlow reactive IO source") {
         (void)cflow_scheduler_run_until_idle(
             &run_fixture.scheduler, 0u);
         check_equal(cflow_io_publisher_owner_run_ready(
-            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            &run_fixture.owner, 64u, &progressed), SALTS_OK);
 
         check_equal(io_source_complete_backend_at(
             &fixture, 0u, &completed), CFLOW_IO_COMPLETE_ACCEPTED);
         progressed = 0u;
         check_equal(cflow_io_publisher_owner_run_ready(
-            &run_fixture.owner, 64u, &progressed), TURBO_OK);
+            &run_fixture.owner, 64u, &progressed), SALTS_OK);
         check_equal(fixture.encode_calls, (size_t)1u);
         check_true(cflow_io_publisher_owner_get_window_stats(
             &run_fixture.owner, &window));
@@ -1324,7 +1324,7 @@ spec("CFlow reactive IO source") {
                    &run_fixture.owner)) {
             progressed = 0u;
             check_equal(cflow_io_publisher_owner_run_ready(
-                &run_fixture.owner, 64u, &progressed), TURBO_OK);
+                &run_fixture.owner, 64u, &progressed), SALTS_OK);
             check_true(progressed > (size_t)0u);
         }
 
@@ -1338,7 +1338,7 @@ spec("CFlow reactive IO source") {
         check_equal(window.results_ready, (size_t)0u);
 
         check_equal(cflow_io_publisher_owner_close(
-            &run_fixture.owner), TURBO_OK);
+            &run_fixture.owner), SALTS_OK);
         cflow_scheduler_destroy(&run_fixture.scheduler);
         cflow_graph_destroy(&run_fixture.normalized);
         cflow_graph_destroy(&run_fixture.surface);
@@ -1370,7 +1370,7 @@ spec("CFlow reactive IO source") {
         check_true(fixture.drive_calls >= (size_t)1u);
 
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &run_fixture.owner, 32u, &progressed), TURBO_OK);
+                        &run_fixture.owner, 32u, &progressed), SALTS_OK);
         check_true(progressed > (size_t)0u);
         check_equal(cflow_scheduler_run_until_idle(
                         &run_fixture.scheduler, 0u), (size_t)1u);
@@ -1425,7 +1425,7 @@ spec("CFlow reactive IO source") {
         check_true(fixture.drive_run_calls >= (size_t)1u);
         check_true(fixture.drive_run_progressed > (size_t)0u);
         check_equal(fixture.drive_run_busy, (size_t)0u);
-        check_equal(fixture.drive_run_error, TURBO_OK);
+        check_equal(fixture.drive_run_error, SALTS_OK);
         check_true(cflow_io_publisher_owner_get_stats(
             &run_fixture.owner, &stats));
         check_equal(stats.actor.acknowledged, (uint64_t)1u);
@@ -1445,17 +1445,17 @@ spec("CFlow reactive IO source") {
         io_source_run_fixture run_fixture;
         io_source_tail_barrier barrier = {0};
         io_source_drive_context drive_context = {
-            &run_fixture.owner, 1u, 0u, TURBO_EINVAL
+            &run_fixture.owner, 1u, 0u, SALTS_EINVAL
         };
         const cflow_io_completion completed = {
-            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, sizeof(int), SALTS_OK};
         cflow_executor *executor;
-        turbo_thread_t driver = NULL;
+        salts_thread_t driver = NULL;
         size_t progressed = 0u;
         bool entered;
 
-        turbo_mutex_init(&barrier.lock);
-        turbo_cond_init(&barrier.changed);
+        salts_mutex_init(&barrier.lock);
+        salts_cond_init(&barrier.changed);
         check_not_null(barrier.lock);
         check_not_null(barrier.changed);
         check_true(io_source_run_fixture_init_with_scheduler(
@@ -1468,7 +1468,7 @@ spec("CFlow reactive IO source") {
         check_true(cflow_subscription_request(&run_fixture.run, 1u));
 
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &run_fixture.owner, 2u, &progressed), TURBO_OK);
+                        &run_fixture.owner, 2u, &progressed), SALTS_OK);
         check_equal(progressed, (size_t)2u);
         check_equal(fixture.backend_submit_calls, (size_t)1u);
         check_equal(fixture.backend_active, (size_t)1u);
@@ -1479,9 +1479,9 @@ spec("CFlow reactive IO source") {
                         executor, io_source_tail_barrier_task,
                         &barrier), CFLOW_ADMISSION_ACCEPTED);
         fixture.drive_owner_inline = true;
-        check_equal(turbo_thread_create(
+        check_equal(salts_thread_create(
                         &driver, io_source_drive_thread,
-                        &drive_context), TURBO_OK);
+                        &drive_context), SALTS_OK);
         entered = io_source_tail_barrier_wait(&barrier);
         check_true(entered);
         if (entered) {
@@ -1493,10 +1493,10 @@ spec("CFlow reactive IO source") {
                         (size_t)0u);
         }
         io_source_tail_barrier_release(&barrier);
-        check_equal(turbo_thread_join(&driver), TURBO_OK);
-        turbo_thread_destroy(&driver);
+        check_equal(salts_thread_join(&driver), SALTS_OK);
+        salts_thread_destroy(&driver);
 
-        check_equal(drive_context.status, TURBO_OK);
+        check_equal(drive_context.status, SALTS_OK);
         check_equal(drive_context.progressed, (size_t)1u);
         check_equal(run_fixture.sink_probe.values, (size_t)1u);
         check_equal(run_fixture.sink_probe.received[0], 61);
@@ -1513,12 +1513,12 @@ spec("CFlow reactive IO source") {
             (void)cflow_io_publisher_owner_run_ready(
                 &run_fixture.owner, 32u, &progressed);
         check_equal(cflow_io_publisher_owner_close(
-                        &run_fixture.owner), TURBO_OK);
+                        &run_fixture.owner), SALTS_OK);
         cflow_scheduler_destroy(&run_fixture.scheduler);
         cflow_graph_destroy(&run_fixture.normalized);
         cflow_graph_destroy(&run_fixture.surface);
-        turbo_cond_destroy(&barrier.changed);
-        turbo_mutex_destroy(&barrier.lock);
+        salts_cond_destroy(&barrier.changed);
+        salts_mutex_destroy(&barrier.lock);
     }
 
     it("drains cancellation across the adapter driver tail window") {
@@ -1531,17 +1531,17 @@ spec("CFlow reactive IO source") {
         io_source_run_fixture run_fixture;
         io_source_tail_barrier barrier = {0};
         io_source_drive_context drive_context = {
-            &run_fixture.owner, 1u, 0u, TURBO_EINVAL
+            &run_fixture.owner, 1u, 0u, SALTS_EINVAL
         };
         const cflow_io_completion cancelled = {
-            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, SALTS_OK};
         cflow_executor *executor;
-        turbo_thread_t driver = NULL;
+        salts_thread_t driver = NULL;
         size_t progressed = 0u;
         bool entered;
 
-        turbo_mutex_init(&barrier.lock);
-        turbo_cond_init(&barrier.changed);
+        salts_mutex_init(&barrier.lock);
+        salts_cond_init(&barrier.changed);
         check_not_null(barrier.lock);
         check_not_null(barrier.changed);
         check_true(io_source_run_fixture_init_with_scheduler(
@@ -1553,7 +1553,7 @@ spec("CFlow reactive IO source") {
             &run_fixture.sink));
         check_true(cflow_subscription_request(&run_fixture.run, 1u));
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &run_fixture.owner, 2u, &progressed), TURBO_OK);
+                        &run_fixture.owner, 2u, &progressed), SALTS_OK);
         check_equal(progressed, (size_t)2u);
         check_equal(fixture.backend_submit_calls, (size_t)1u);
 
@@ -1564,10 +1564,10 @@ spec("CFlow reactive IO source") {
                         &barrier), CFLOW_ADMISSION_ACCEPTED);
         fixture.drive_owner_inline = true;
         fixture.close_owner_after_successful_drive = true;
-        fixture.drive_close_status = TURBO_EINVAL;
-        check_equal(turbo_thread_create(
+        fixture.drive_close_status = SALTS_EINVAL;
+        check_equal(salts_thread_create(
                         &driver, io_source_drive_thread,
-                        &drive_context), TURBO_OK);
+                        &drive_context), SALTS_OK);
         entered = io_source_tail_barrier_wait(&barrier);
         check_true(entered);
         if (entered) {
@@ -1580,17 +1580,17 @@ spec("CFlow reactive IO source") {
                         (size_t)0u);
         }
         io_source_tail_barrier_release(&barrier);
-        check_equal(turbo_thread_join(&driver), TURBO_OK);
-        turbo_thread_destroy(&driver);
+        check_equal(salts_thread_join(&driver), SALTS_OK);
+        salts_thread_destroy(&driver);
 
-        check_equal(drive_context.status, TURBO_OK);
+        check_equal(drive_context.status, SALTS_OK);
         check_equal(drive_context.progressed, (size_t)1u);
         check_equal(run_fixture.sink_probe.values, (size_t)0u);
         check_equal(fixture.encode_calls, (size_t)0u);
         check_equal(fixture.release_calls, (size_t)1u);
         check_true(fixture.drive_run_progressed > (size_t)0u);
         check_equal(fixture.drive_close_calls, (size_t)1u);
-        check_equal(fixture.drive_close_status, TURBO_EBUSY);
+        check_equal(fixture.drive_close_status, SALTS_EBUSY);
         check_true(fixture.drive_close_owner_preserved);
         check_true(cflow_io_publisher_owner_is_quiescent(
             &run_fixture.owner));
@@ -1598,12 +1598,12 @@ spec("CFlow reactive IO source") {
             (void)cflow_io_publisher_owner_run_ready(
                 &run_fixture.owner, 32u, &progressed);
         check_equal(cflow_io_publisher_owner_close(
-                        &run_fixture.owner), TURBO_OK);
+                        &run_fixture.owner), SALTS_OK);
         cflow_scheduler_destroy(&run_fixture.scheduler);
         cflow_graph_destroy(&run_fixture.normalized);
         cflow_graph_destroy(&run_fixture.surface);
-        turbo_cond_destroy(&barrier.changed);
-        turbo_mutex_destroy(&barrier.lock);
+        salts_cond_destroy(&barrier.changed);
+        salts_mutex_destroy(&barrier.lock);
     }
 
     it("serializes two demanded values through ACK under inline scheduling") {
@@ -1671,50 +1671,50 @@ spec("CFlow reactive IO source") {
         io_source_blocking_wake_probe wake = {0};
         io_source_close_context close_context = {&source, &wake};
         io_source_drive_context drive_context = {
-            &owner, 32u, 0u, TURBO_EINVAL
+            &owner, 32u, 0u, SALTS_EINVAL
         };
-        turbo_thread_t driver = NULL;
-        turbo_thread_t closer = NULL;
+        salts_thread_t driver = NULL;
+        salts_thread_t closer = NULL;
         size_t waits = 0u;
         bool stats_valid = true;
 
-        turbo_mutex_init(&wake.lock);
-        turbo_cond_init(&wake.changed);
+        salts_mutex_init(&wake.lock);
+        salts_cond_init(&wake.changed);
         check_not_null(wake.lock);
         check_not_null(wake.changed);
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_true(cflow_waitable_arm(
             &step.waitable,
             (cflow_waker){io_source_blocking_wake, &wake}));
-        check_equal(turbo_thread_create(
+        check_equal(salts_thread_create(
                         &driver, io_source_drive_thread,
-                        &drive_context), TURBO_OK);
+                        &drive_context), SALTS_OK);
 
-        turbo_mutex_lock(&wake.lock);
+        salts_mutex_lock(&wake.lock);
         while (!wake.entered && waits++ < IO_SOURCE_WAIT_LIMIT)
-            (void)turbo_cond_timedwait(
+            (void)salts_cond_timedwait(
                 &wake.changed, &wake.lock, IO_SOURCE_WAIT_SLICE_NS);
         if (!wake.entered) {
             wake.released = true;
-            turbo_cond_broadcast(&wake.changed);
+            salts_cond_broadcast(&wake.changed);
         }
         check_true(wake.entered);
-        turbo_mutex_unlock(&wake.lock);
+        salts_mutex_unlock(&wake.lock);
 
-        check_equal(turbo_thread_create(
+        check_equal(salts_thread_create(
                         &closer, io_source_close_thread,
-                        &close_context), TURBO_OK);
-        turbo_mutex_lock(&wake.lock);
+                        &close_context), SALTS_OK);
+        salts_mutex_lock(&wake.lock);
         waits = 0u;
         do {
             stats_valid = cflow_io_publisher_owner_get_stats(
                 &owner, &close_stats);
             if (!stats_valid || close_stats.close_requested)
                 break;
-            (void)turbo_cond_timedwait(
+            (void)salts_cond_timedwait(
                 &wake.changed, &wake.lock,
                 IO_SOURCE_WAIT_SLICE_NS);
         } while (++waits < IO_SOURCE_WAIT_LIMIT);
@@ -1722,7 +1722,7 @@ spec("CFlow reactive IO source") {
         check_true(close_stats.close_requested);
 
         if (!wake.close_returned)
-            (void)turbo_cond_timedwait(
+            (void)salts_cond_timedwait(
                 &wake.changed, &wake.lock,
                 IO_SOURCE_CANCEL_OBSERVATION_NS);
         check_false(wake.close_returned);
@@ -1731,20 +1731,20 @@ spec("CFlow reactive IO source") {
         check_true(close_stats.close_requested);
         check_true(close_stats.publisher_live);
         wake.released = true;
-        turbo_cond_broadcast(&wake.changed);
-        turbo_mutex_unlock(&wake.lock);
+        salts_cond_broadcast(&wake.changed);
+        salts_mutex_unlock(&wake.lock);
 
-        check_equal(turbo_thread_join(&driver), TURBO_OK);
-        turbo_thread_destroy(&driver);
-        check_equal(turbo_thread_join(&closer), TURBO_OK);
-        turbo_thread_destroy(&closer);
-        check_equal(drive_context.status, TURBO_OK);
+        check_equal(salts_thread_join(&driver), SALTS_OK);
+        salts_thread_destroy(&driver);
+        check_equal(salts_thread_join(&closer), SALTS_OK);
+        salts_thread_destroy(&closer);
+        check_equal(drive_context.status, SALTS_OK);
         check_true(drive_context.progressed > (size_t)0u);
         check_true(wake.close_returned);
         check_true(cflow_io_publisher_owner_is_quiescent(&owner));
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
-        turbo_cond_destroy(&wake.changed);
-        turbo_mutex_destroy(&wake.lock);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
+        salts_cond_destroy(&wake.changed);
+        salts_mutex_destroy(&wake.lock);
     }
 
     it("allows Source cancel to return from inside its own waker") {
@@ -1764,19 +1764,19 @@ spec("CFlow reactive IO source") {
         int output = 0;
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_true(cflow_waitable_arm(
             &step.waitable,
             (cflow_waker){io_source_reentrant_cancel, &wake}));
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 32u, &progressed), TURBO_OK);
+                        &owner, 32u, &progressed), SALTS_OK);
         check_true(wake.returned);
         check_true(progressed > (size_t)0u);
         cflow_publisher_destroy(&source);
         check_true(cflow_io_publisher_owner_is_quiescent(&owner));
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
     }
 
     it("keeps A owner alive while nested adapter wakers unwind") {
@@ -1803,48 +1803,48 @@ spec("CFlow reactive IO source") {
         cflow_step step_a;
         cflow_step step_b;
         io_source_nested_wake_probe probe = {0};
-        turbo_thread_t worker = NULL;
+        salts_thread_t worker = NULL;
         size_t progressed = 0u;
         size_t waits = 0u;
         bool worker_completed;
         int output_a = 0;
         int output_b = 0;
 
-        turbo_mutex_init(&probe.lock);
-        turbo_cond_init(&probe.changed);
+        salts_mutex_init(&probe.lock);
+        salts_cond_init(&probe.changed);
         check_not_null(probe.lock);
         check_not_null(probe.changed);
         check_equal(cflow_publisher_from_io_actor(
-                        &source_a, &owner_a, &config_a), TURBO_OK);
+                        &source_a, &owner_a, &config_a), SALTS_OK);
         check_equal(cflow_publisher_from_io_actor(
-                        &source_b, &owner_b, &config_b), TURBO_OK);
+                        &source_b, &owner_b, &config_b), SALTS_OK);
         step_a = cflow_publisher_resume(&source_a, NULL, &output_a);
         step_b = cflow_publisher_resume(&source_b, NULL, &output_b);
         check_equal(step_a.kind, CFLOW_STEP_WAIT);
         check_equal(step_b.kind, CFLOW_STEP_WAIT);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner_a, 32u, &progressed), TURBO_OK);
+                        &owner_a, 32u, &progressed), SALTS_OK);
         check_true(progressed > (size_t)0u);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner_b, 32u, &progressed), TURBO_OK);
+                        &owner_b, 32u, &progressed), SALTS_OK);
         check_true(progressed > (size_t)0u);
 
         probe.source_a = &source_a;
         probe.owner_a = &owner_a;
         probe.waitable_a = step_a.waitable;
         probe.waitable_b = step_b.waitable;
-        probe.owner_a_close_status = TURBO_EINVAL;
-        check_equal(turbo_thread_create(
+        probe.owner_a_close_status = SALTS_EINVAL;
+        check_equal(salts_thread_create(
                         &worker, io_source_nested_arm_thread,
-                        &probe), TURBO_OK);
-        turbo_mutex_lock(&probe.lock);
+                        &probe), SALTS_OK);
+        salts_mutex_lock(&probe.lock);
         while (!probe.worker_completed &&
                waits++ < IO_SOURCE_NESTED_WAIT_LIMIT)
-            (void)turbo_cond_timedwait(
+            (void)salts_cond_timedwait(
                 &probe.changed, &probe.lock,
                 IO_SOURCE_WAIT_SLICE_NS);
         worker_completed = probe.worker_completed;
-        turbo_mutex_unlock(&probe.lock);
+        salts_mutex_unlock(&probe.lock);
 
         if (!worker_completed) {
             fprintf(stderr,
@@ -1853,8 +1853,8 @@ spec("CFlow reactive IO source") {
             fflush(stderr);
             abort();
         }
-        check_equal(turbo_thread_join(&worker), TURBO_OK);
-        turbo_thread_destroy(&worker);
+        check_equal(salts_thread_join(&worker), SALTS_OK);
+        salts_thread_destroy(&worker);
         check_true(probe.arm_a_accepted);
         check_true(probe.arm_b_accepted);
         check_true(probe.destroy_a_returned);
@@ -1863,16 +1863,16 @@ spec("CFlow reactive IO source") {
         check_equal(probe.wake_a_calls, (size_t)1u);
         check_equal(probe.wake_b_calls, (size_t)1u);
         check_equal(probe.unexpected_a_calls, (size_t)0u);
-        check_equal(probe.owner_a_close_status, TURBO_EBUSY);
+        check_equal(probe.owner_a_close_status, SALTS_EBUSY);
         check_true(cflow_io_publisher_owner_is_quiescent(&owner_a));
         check_equal(cflow_io_publisher_owner_close(
-                        &owner_a), TURBO_OK);
+                        &owner_a), SALTS_OK);
         cflow_publisher_destroy(&source_b);
         check_true(cflow_io_publisher_owner_is_quiescent(&owner_b));
         check_equal(cflow_io_publisher_owner_close(
-                        &owner_b), TURBO_OK);
-        turbo_cond_destroy(&probe.changed);
-        turbo_mutex_destroy(&probe.lock);
+                        &owner_b), SALTS_OK);
+        salts_cond_destroy(&probe.changed);
+        salts_mutex_destroy(&probe.lock);
     }
 
     it("bounds owner progress and permits VALUE consumption before ACK") {
@@ -1892,25 +1892,25 @@ spec("CFlow reactive IO source") {
         int output = 0;
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
 
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 1u, &progressed), TURBO_OK);
+                        &owner, 1u, &progressed), SALTS_OK);
         check_equal(progressed, (size_t)1u);
         check_equal(fixture.backend_submit_calls, (size_t)0u);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 1u, &progressed), TURBO_OK);
+                        &owner, 1u, &progressed), SALTS_OK);
         check_equal(progressed, (size_t)1u);
         check_equal(fixture.backend_submit_calls, (size_t)1u);
         check_equal(fixture.encode_calls, (size_t)0u);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 1u, &progressed), TURBO_OK);
+                        &owner, 1u, &progressed), SALTS_OK);
         check_equal(progressed, (size_t)1u);
         check_equal(fixture.encode_calls, (size_t)0u);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 1u, &progressed), TURBO_OK);
+                        &owner, 1u, &progressed), SALTS_OK);
         check_equal(progressed, (size_t)1u);
         check_equal(fixture.encode_calls, (size_t)1u);
         check_equal(fixture.release_calls, (size_t)0u);
@@ -1932,14 +1932,14 @@ spec("CFlow reactive IO source") {
         check_equal(fixture.release_calls, (size_t)0u);
 
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 1u, &progressed), TURBO_OK);
+                        &owner, 1u, &progressed), SALTS_OK);
         check_equal(progressed, (size_t)1u);
         check_equal(fixture.release_calls, (size_t)1u);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 1u, &progressed), TURBO_OK);
+                        &owner, 1u, &progressed), SALTS_OK);
         check_equal(progressed, (size_t)0u);
         cflow_publisher_destroy(&source);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
     }
 
     it("cancels before backend submit and retries owner close after drain") {
@@ -1958,23 +1958,23 @@ spec("CFlow reactive IO source") {
         int output = 0;
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_equal(fixture.backend_submit_calls, (size_t)0u);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_EBUSY);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_EBUSY);
 
         cflow_publisher_cancel(&source);
         check_true(cflow_io_publisher_owner_get_stats(&owner, &stats));
         check_true(stats.publisher_live);
         check_true(stats.close_requested);
         check_equal(stats.actor.lifecycle, CFLOW_IO_CLOSING);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_EBUSY);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_EBUSY);
         cflow_publisher_destroy(&source);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_EBUSY);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_EBUSY);
 
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 32u, &progressed), TURBO_OK);
+                        &owner, 32u, &progressed), SALTS_OK);
         check_true(progressed > (size_t)0u);
         check_equal(fixture.backend_submit_calls, (size_t)0u);
         check_equal(fixture.backend_cancel_calls, (size_t)0u);
@@ -1986,7 +1986,7 @@ spec("CFlow reactive IO source") {
         check_equal(stats.actor.accepted, (uint64_t)1u);
         check_equal(stats.actor.acknowledged, (uint64_t)1u);
         check_true(cflow_io_publisher_owner_is_quiescent(&owner));
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
         check_null(owner.impl);
         check_equal(fixture.release_calls, (size_t)1u);
     }
@@ -2003,42 +2003,42 @@ spec("CFlow reactive IO source") {
         cflow_io_publisher_owner owner = {0};
         cflow_io_publisher_stats stats = {0};
         const cflow_io_completion cancelled = {
-            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, SALTS_OK};
         cflow_step step;
         size_t progressed = 0u;
         int output = 0;
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 1u, &progressed), TURBO_OK);
+                        &owner, 1u, &progressed), SALTS_OK);
         check_equal(progressed, (size_t)1u);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 1u, &progressed), TURBO_OK);
+                        &owner, 1u, &progressed), SALTS_OK);
         check_equal(progressed, (size_t)1u);
         check_equal(fixture.backend_submit_calls, (size_t)1u);
         check_equal(fixture.backend_active, (size_t)1u);
         check_true(cflow_io_publisher_owner_get_stats(&owner, &stats));
         check_equal(stats.actor.backend_pending, (size_t)1u);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_EBUSY);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_EBUSY);
 
         cflow_publisher_destroy(&source);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_EBUSY);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_EBUSY);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 32u, &progressed), TURBO_OK);
+                        &owner, 32u, &progressed), SALTS_OK);
         check_true(progressed > (size_t)0u);
         check_equal(fixture.backend_cancel_calls, (size_t)1u);
         check_equal(fixture.release_calls, (size_t)0u);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_EBUSY);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_EBUSY);
 
         check_equal(io_source_complete_backend(
                         &fixture, &cancelled),
                     CFLOW_IO_COMPLETE_ACCEPTED);
         check_equal(fixture.backend_active, (size_t)0u);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 32u, &progressed), TURBO_OK);
+                        &owner, 32u, &progressed), SALTS_OK);
         check_true(progressed > (size_t)0u);
         check_equal(fixture.encode_calls, (size_t)0u);
         check_equal(fixture.release_calls, (size_t)1u);
@@ -2046,7 +2046,7 @@ spec("CFlow reactive IO source") {
         check_false(stats.request_active);
         check_equal(stats.actor.acknowledged, (uint64_t)1u);
         check_true(cflow_io_publisher_owner_is_quiescent(&owner));
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
         check_null(owner.impl);
         check_equal(fixture.backend_submit_calls, (size_t)1u);
         check_equal(fixture.backend_cancel_calls, (size_t)1u);
@@ -2065,17 +2065,17 @@ spec("CFlow reactive IO source") {
         cflow_io_publisher_owner owner = {0};
         cflow_io_publisher_stats stats = {0};
         const cflow_io_completion completed = {
-            CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, sizeof(int), SALTS_OK};
         cflow_step step;
         size_t progressed = 0u;
         int output = 0;
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 2u, &progressed), TURBO_OK);
+                        &owner, 2u, &progressed), SALTS_OK);
         check_equal(progressed, (size_t)2u);
         check_equal(io_source_complete_backend(
                         &fixture, &completed),
@@ -2084,7 +2084,7 @@ spec("CFlow reactive IO source") {
                         &fixture, &completed),
                     CFLOW_IO_COMPLETE_NOT_PENDING);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 32u, &progressed), TURBO_OK);
+                        &owner, 32u, &progressed), SALTS_OK);
         check_true(progressed > (size_t)0u);
 
         step = cflow_publisher_resume(&source, NULL, &output);
@@ -2100,7 +2100,7 @@ spec("CFlow reactive IO source") {
         check_false(stats.request_active);
 
         cflow_publisher_destroy(&source);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
         check_equal(fixture.release_calls, (size_t)1u);
     }
 
@@ -2119,17 +2119,17 @@ spec("CFlow reactive IO source") {
         int output = 0;
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 32u, &progressed), TURBO_OK);
+                        &owner, 32u, &progressed), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_DONE);
         check_equal(fixture.encode_calls, (size_t)1u);
         check_equal(fixture.release_calls, (size_t)1u);
         cflow_publisher_destroy(&source);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
     }
 
     it("preserves the stable encoder ERROR") {
@@ -2149,18 +2149,18 @@ spec("CFlow reactive IO source") {
         int output = 0;
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 32u, &progressed), TURBO_OK);
+                        &owner, 32u, &progressed), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_ERROR);
         check_true(step.error == encode_error);
         check_equal(fixture.encode_calls, (size_t)1u);
         check_equal(fixture.release_calls, (size_t)1u);
         cflow_publisher_destroy(&source);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
     }
 
     it("maps encoder WOULD_BLOCK to its protocol error") {
@@ -2178,11 +2178,11 @@ spec("CFlow reactive IO source") {
         int output = 0;
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 32u, &progressed), TURBO_OK);
+                        &owner, 32u, &progressed), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_ERROR);
         check_equal(step.error,
@@ -2190,7 +2190,7 @@ spec("CFlow reactive IO source") {
         check_equal(fixture.encode_calls, (size_t)1u);
         check_equal(fixture.release_calls, (size_t)1u);
         cflow_publisher_destroy(&source);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
     }
 
     it("distinguishes an invalid encoder status") {
@@ -2208,11 +2208,11 @@ spec("CFlow reactive IO source") {
         int output = 0;
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &owner, 32u, &progressed), TURBO_OK);
+                        &owner, 32u, &progressed), SALTS_OK);
         step = cflow_publisher_resume(&source, NULL, &output);
         check_equal(step.kind, CFLOW_STEP_ERROR);
         check_equal(step.error,
@@ -2220,7 +2220,7 @@ spec("CFlow reactive IO source") {
         check_equal(fixture.encode_calls, (size_t)1u);
         check_equal(fixture.release_calls, (size_t)1u);
         cflow_publisher_destroy(&source);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
     }
 
     it("reports an accepted operation active during Actor admission transfer") {
@@ -2259,13 +2259,13 @@ spec("CFlow reactive IO source") {
         cflow_subscription_close(&run_fixture.run);
         check_equal(fixture.release_calls, (size_t)0u);
         check_equal(cflow_io_publisher_owner_run_ready(
-                        &run_fixture.owner, 32u, &progressed), TURBO_OK);
+                        &run_fixture.owner, 32u, &progressed), SALTS_OK);
         check_true(progressed > (size_t)0u);
         check_equal(fixture.release_calls, (size_t)1u);
         check_true(cflow_io_publisher_owner_is_quiescent(
             &run_fixture.owner));
         check_equal(cflow_io_publisher_owner_close(
-                        &run_fixture.owner), TURBO_OK);
+                        &run_fixture.owner), SALTS_OK);
         cflow_scheduler_destroy(&run_fixture.scheduler);
         cflow_graph_destroy(&run_fixture.normalized);
         cflow_graph_destroy(&run_fixture.surface);
@@ -2284,7 +2284,7 @@ spec("CFlow reactive IO source") {
         int output = 0;
 
         check_equal(cflow_publisher_from_io_actor(
-                        &source, &owner, &config), TURBO_OK);
+                        &source, &owner, &config), SALTS_OK);
         fixture.cancel_source_during_prepare = &source;
         step = cflow_publisher_resume(&source, NULL, &output);
 
@@ -2300,7 +2300,7 @@ spec("CFlow reactive IO source") {
 
         cflow_publisher_destroy(&source);
         check_equal(fixture.release_calls, (size_t)1u);
-        check_equal(cflow_io_publisher_owner_close(&owner), TURBO_OK);
+        check_equal(cflow_io_publisher_owner_close(&owner), SALTS_OK);
         check_equal(fixture.release_calls, (size_t)1u);
     }
 

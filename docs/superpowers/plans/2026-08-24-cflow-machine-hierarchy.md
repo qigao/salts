@@ -6,7 +6,7 @@
 
 **Architecture:** `machine_hierarchy.c` owns hierarchy metadata, expands inherited transitions into a flat `cflow_machine`, and stores route metadata aligned to flat transition rows. A private Machine-runtime commit hook observes the selected row without creating a second state source. Timer Event scope is private to the hierarchy wrapper and preserves all existing public behavior.
 
-**Tech Stack:** C11, CMeta descriptors, TurboUtils concurrency, CFlow Machine/Mailbox/Timer Event, TinyTest, CMake Presets, Lean 4.
+**Tech Stack:** C11, CMeta descriptors, Salts concurrency, CFlow Machine/Mailbox/Timer Event, TinyTest, CMake Presets, Lean 4.
 
 ---
 

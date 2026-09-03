@@ -1,6 +1,6 @@
 #include <cflow/machine_instance.h>
 
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 #include "../src/machine_instance_internal.h"
 #include "tinytest.h"
@@ -20,8 +20,8 @@ typedef struct runtime_control_probe {
 } runtime_control_probe;
 
 typedef struct runtime_commit_barrier {
-    turbo_mutex_t lock;
-    turbo_cond_t changed;
+    salts_mutex_t lock;
+    salts_cond_t changed;
     bool entered;
     bool released;
     bool committed;
@@ -52,11 +52,11 @@ static void runtime_producer(void *user) {
 static bool runtime_commit_barrier_init(runtime_commit_barrier *barrier) {
     if (barrier == NULL) return false;
     memset(barrier, 0, sizeof(*barrier));
-    turbo_mutex_init(&barrier->lock);
-    turbo_cond_init(&barrier->changed);
+    salts_mutex_init(&barrier->lock);
+    salts_cond_init(&barrier->changed);
     if (barrier->lock == NULL || barrier->changed == NULL) {
-        if (barrier->changed != NULL) turbo_cond_destroy(&barrier->changed);
-        if (barrier->lock != NULL) turbo_mutex_destroy(&barrier->lock);
+        if (barrier->changed != NULL) salts_cond_destroy(&barrier->changed);
+        if (barrier->lock != NULL) salts_mutex_destroy(&barrier->lock);
         *barrier = (runtime_commit_barrier){0};
         return false;
     }
@@ -65,52 +65,52 @@ static bool runtime_commit_barrier_init(runtime_commit_barrier *barrier) {
 
 static void runtime_commit_barrier_destroy(runtime_commit_barrier *barrier) {
     if (barrier == NULL) return;
-    if (barrier->changed != NULL) turbo_cond_destroy(&barrier->changed);
-    if (barrier->lock != NULL) turbo_mutex_destroy(&barrier->lock);
+    if (barrier->changed != NULL) salts_cond_destroy(&barrier->changed);
+    if (barrier->lock != NULL) salts_mutex_destroy(&barrier->lock);
     *barrier = (runtime_commit_barrier){0};
 }
 
 static void runtime_commit_boundary(void *user) {
     runtime_commit_barrier *barrier = (runtime_commit_barrier *)user;
     if (barrier == NULL) return;
-    turbo_mutex_lock(&barrier->lock);
+    salts_mutex_lock(&barrier->lock);
     barrier->entered = true;
-    turbo_cond_broadcast(&barrier->changed);
+    salts_cond_broadcast(&barrier->changed);
     while (!barrier->released)
-        turbo_cond_wait(&barrier->changed, &barrier->lock);
-    turbo_mutex_unlock(&barrier->lock);
+        salts_cond_wait(&barrier->changed, &barrier->lock);
+    salts_mutex_unlock(&barrier->lock);
 }
 
 static void runtime_commit_barrier_wait(runtime_commit_barrier *barrier) {
-    turbo_mutex_lock(&barrier->lock);
+    salts_mutex_lock(&barrier->lock);
     while (!barrier->entered)
-        turbo_cond_wait(&barrier->changed, &barrier->lock);
-    turbo_mutex_unlock(&barrier->lock);
+        salts_cond_wait(&barrier->changed, &barrier->lock);
+    salts_mutex_unlock(&barrier->lock);
 }
 
 static void runtime_commit_barrier_release(runtime_commit_barrier *barrier) {
-    turbo_mutex_lock(&barrier->lock);
+    salts_mutex_lock(&barrier->lock);
     barrier->released = true;
-    turbo_cond_broadcast(&barrier->changed);
-    turbo_mutex_unlock(&barrier->lock);
+    salts_cond_broadcast(&barrier->changed);
+    salts_mutex_unlock(&barrier->lock);
 }
 
 static void runtime_transition_commit_probe(
     void *user, size_t transition_index, bool begin) {
     runtime_commit_barrier *barrier = (runtime_commit_barrier *)user;
     if (barrier == NULL || begin || transition_index == SIZE_MAX) return;
-    turbo_mutex_lock(&barrier->lock);
+    salts_mutex_lock(&barrier->lock);
     barrier->committed = true;
-    turbo_cond_broadcast(&barrier->changed);
-    turbo_mutex_unlock(&barrier->lock);
+    salts_cond_broadcast(&barrier->changed);
+    salts_mutex_unlock(&barrier->lock);
 }
 
 static void runtime_commit_barrier_wait_committed(
     runtime_commit_barrier *barrier) {
-    turbo_mutex_lock(&barrier->lock);
+    salts_mutex_lock(&barrier->lock);
     while (!barrier->committed)
-        turbo_cond_wait(&barrier->changed, &barrier->lock);
-    turbo_mutex_unlock(&barrier->lock);
+        salts_cond_wait(&barrier->changed, &barrier->lock);
+    salts_mutex_unlock(&barrier->lock);
 }
 
 static bool guard_enabled(void *user,
@@ -1223,7 +1223,7 @@ suite("CFlow Machine Resumable runtime") {
         runtime_producer_context producer = {
             &instance, EVENTS_PER_PRODUCER
         };
-        turbo_thread_t threads[PRODUCER_COUNT];
+        salts_thread_t threads[PRODUCER_COUNT];
         const int initial = 7;
         const cflow_machine_instance_config config = {
             &machine, &initial, &cmeta_type_long,
@@ -1244,10 +1244,10 @@ suite("CFlow Machine Resumable runtime") {
         check_true(cflow_machine_instance_as_resumable(
             &instance, &resumable));
         for (index = 0u; index < PRODUCER_COUNT; ++index)
-            check_equal(turbo_thread_create(
+            check_equal(salts_thread_create(
                 &threads[index], runtime_producer, &producer), 0);
         for (index = 0u; index < PRODUCER_COUNT; ++index)
-            check_equal(turbo_thread_join(&threads[index]), 0);
+            check_equal(salts_thread_join(&threads[index]), 0);
         check_equal(atomic_load(&producer.failures), 0);
 
         step = resumable.ops->resume(

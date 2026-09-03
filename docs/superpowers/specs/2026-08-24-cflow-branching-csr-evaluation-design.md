@@ -25,7 +25,7 @@ The compared paths are:
 - current public flat-edge lookup: one `out_degree` scan plus one outgoing-edge
   scan per node;
 - one pass over the flat fact-source edge array as the lower-bound control;
-- a TurboSTL HashMap from source node to a contiguous target span;
+- a Container HashMap from source node to a contiguous target span;
 - pointer-linked adjacency with one node head and one link per edge; and
 - CSR with `V + 1` `size_t` offsets and `E` `cflow_node_id` targets.
 
@@ -92,7 +92,7 @@ RSS or allocator-private headers:
 - peak bytes: maximum concurrently requested bytes during build.
 
 HashMap bookkeeping is calculated from its public capacity/stride/alignment
-fields and the current TurboSTL single-storage-block contract. It includes the
+fields and the current Container single-storage-block contract. It includes the
 `sequence_allocate` alignment prefix in each map, prepared-key and
 prepared-value `malloc` request. Platform allocator headers and heap rounding
 remain outside the measurement.
@@ -175,7 +175,7 @@ reproducible controls, but cannot override the valid-Graph result.
 
 ### Fixed-host confirmation
 
-[CFlow release host benchmarks run 118](https://github.com/qigao/turbo-utils/actions/runs/32712195163)
+[CFlow release host benchmarks run 118](https://github.com/qigao/salts/actions/runs/32712195163)
 completed successfully on all four fixed Release hosts. Every artifact contains
 host/compiler metadata, five direct benchmark runs and five parallel-reduce
 runs. All 20 direct runs passed. Median valid nested results are:

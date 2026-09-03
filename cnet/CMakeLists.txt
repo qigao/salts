@@ -1,4 +1,4 @@
-set(TARGET_NAME turbo_cnet)
+set(TARGET_NAME salts_cnet)
 
 find_package(c-ares CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
@@ -59,9 +59,9 @@ add_library(${TARGET_NAME} SHARED
   src/cnet_transport_pipe.c
   src/cnet_uri.c
   src/cnet_websocket.c
-  $<TARGET_OBJECTS:turbo_wsparser>)
+  $<TARGET_OBJECTS:salts_wsparser>)
 cmake_config_target(${TARGET_NAME}
-  ALIAS Rocida::CNet
+  ALIAS Salts::CNet
   FOLDER "cnet"
   EXPORT_NAME CNet)
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
@@ -77,16 +77,16 @@ target_include_directories(
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/tools/wsparser)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC Rocida::NativeIO Rocida::Concurrency
-  PRIVATE Rocida::UriParser Rocida::Platform ${cnet_cares_link_items} OpenSSL::SSL OpenSSL::Crypto
+  PUBLIC Salts::NativeIO Salts::Concurrency
+  PRIVATE Salts::UriParser Salts::Platform ${cnet_cares_link_items} OpenSSL::SSL OpenSSL::Crypto
           $<$<PLATFORM_ID:Windows>:crypt32>)
 
-install(TARGETS ${TARGET_NAME} EXPORT RocidaTargets)
+install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
 if(WIN32)
   install(FILES "$<TARGET_FILE:c-ares::cares>" TYPE BIN)
 endif()
 install(FILES "${c-ares_DIR}/copyright"
-        DESTINATION share/licenses/Rocida/c-ares)
+        DESTINATION share/licenses/Salts/c-ares)
 install(
   DIRECTORY include/cnet
   DESTINATION include

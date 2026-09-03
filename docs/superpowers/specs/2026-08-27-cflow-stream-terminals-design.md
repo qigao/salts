@@ -69,7 +69,7 @@ contracts.
 Invalid Stream, missing bound Range, invalid output pointer, predicate type
 mismatch, unsupported lifecycle traits, callback failure, allocation failure,
 source failure, and runtime failure all fail fast. Existing `cflow_eval_*`
-entry points retain their behavior. TurboSTL exposes prefixed inline wrappers,
+entry points retain their behavior. Container exposes prefixed inline wrappers,
 avoiding global macros such as `count` that would collide with container APIs.
 
 The new opaque `cflow_find_result` is ABI-stable as a single implementation

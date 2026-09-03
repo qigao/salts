@@ -14,7 +14,7 @@ metadata and aligned payload storage protected by one mutex. The Lean module is
 a pure transition system under `CFlow.Mailbox`, separate from kernel trace
 labels.
 
-**Tech Stack:** C11, CMeta type descriptors, CFlow waitables, TurboUtils mutexes,
+**Tech Stack:** C11, CMeta type descriptors, CFlow waitables, Salts mutexes,
 TinyTest, CMake/CTest Release presets, Lean 4/Lake.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-cflow-typed-event-mailbox-design.md`

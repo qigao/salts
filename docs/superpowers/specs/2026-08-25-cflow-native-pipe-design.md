@@ -1,7 +1,7 @@
 # CFlow Native Pipe Read/Write Design
 
-Issue: [#105](https://github.com/qigao/turbo-utils/issues/105)
-Parent tracker: [#100](https://github.com/qigao/turbo-utils/issues/100)
+Issue: [#105](https://github.com/qigao/salts/issues/105)
+Parent tracker: [#100](https://github.com/qigao/salts/issues/100)
 
 ## Decision
 
@@ -58,7 +58,7 @@ The first contract is a one-shot byte-stream read or write:
 
 Therefore each pipe operation must carry the caller's explicit
 `CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE` declaration. IOCP rejects an operation
-without that declaration as `TURBO_ENOTSUP`. On POSIX the declaration is also
+without that declaration as `SALTS_ENOTSUP`. On POSIX the declaration is also
 required, and the readiness backend independently verifies `O_NONBLOCK` with
 `fcntl`; a false declaration cannot cause its worker to block.
 
@@ -156,19 +156,19 @@ active request violates the contract; the caller cancels or drains first,
 closes the endpoint, then calls `forget_pipe` for a retained readiness or IOCP
 identity.
 
-Backend shutdown closes admission first and returns `TURBO_EBUSY` while native
+Backend shutdown closes admission first and returns `SALTS_EBUSY` while native
 requests remain. No pipe-specific drain path bypasses the Actor. IOCP and
 io_uring workers join only after all accepted requests are terminal; readiness
 uses the existing Platform reactor worker and retained lane cleanup.
 
 ## Error semantics
 
-- malformed operation: `TURBO_EINVAL` before native admission;
+- malformed operation: `SALTS_EINVAL` before native admission;
 - unsupported backend/resource or missing Windows async declaration:
-  `TURBO_ENOTSUP`;
-- blocking POSIX readiness descriptor: `TURBO_EINVAL`;
-- full bounded request/resource table: existing `TURBO_EBUSY` behavior;
-- closed pipe read: `CFLOW_IO_COMPLETION_EOF` with zero bytes and `TURBO_OK`;
+  `SALTS_ENOTSUP`;
+- blocking POSIX readiness descriptor: `SALTS_EINVAL`;
+- full bounded request/resource table: existing `SALTS_EBUSY` behavior;
+- closed pipe read: `CFLOW_IO_COMPLETION_EOF` with zero bytes and `SALTS_OK`;
 - broken pipe write: `CFLOW_IO_COMPLETION_FAILED` with the native negative error;
 - cancelled native operation: `CFLOW_IO_COMPLETION_CANCELLED` only after
   authoritative backend completion.

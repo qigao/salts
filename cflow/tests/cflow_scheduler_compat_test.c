@@ -1,5 +1,5 @@
 #include <cflow/scheduler.h>
-#include <turbo/thread.h>
+#include <salts/thread.h>
 #include "tinytest.h"
 
 #include <stdatomic.h>
@@ -11,8 +11,8 @@ enum { CROSS_THREAD_POST_COUNT = 256 };
 
 typedef struct cross_thread_post_state {
   cflow_scheduler *scheduler;
-  turbo_mutex_t mutex;
-  turbo_cond_t changed;
+  salts_mutex_t mutex;
+  salts_cond_t changed;
   bool start;
   _Atomic size_t accepted;
   _Atomic size_t executed;
@@ -27,10 +27,10 @@ static void count_cross_thread_task(void *user) {
 static void post_from_external_callback_thread(void *user) {
   cross_thread_post_state *state = (cross_thread_post_state *)user;
 
-  turbo_mutex_lock(&state->mutex);
+  salts_mutex_lock(&state->mutex);
   while (!state->start)
-    turbo_cond_wait(&state->changed, &state->mutex);
-  turbo_mutex_unlock(&state->mutex);
+    salts_cond_wait(&state->changed, &state->mutex);
+  salts_mutex_unlock(&state->mutex);
 
   for (size_t i = 0u; i < CROSS_THREAD_POST_COUNT; ++i) {
     if (cflow_scheduler_post(state->scheduler,
@@ -230,28 +230,28 @@ spec("CFlow scheduler compatibility") {
   it("accepts wake work while its owner drains the test loop") {
     cflow_scheduler scheduler = {0};
     cross_thread_post_state state = {0};
-    turbo_thread_t producer = NULL;
+    salts_thread_t producer = NULL;
 
     state.scheduler = &scheduler;
-    turbo_mutex_init(&state.mutex);
-    turbo_cond_init(&state.changed);
+    salts_mutex_init(&state.mutex);
+    salts_cond_init(&state.changed);
     check_not_null(state.mutex);
     check_not_null(state.changed);
     check_true(cflow_scheduler_test_init_with_capacity(
         &scheduler, CROSS_THREAD_POST_COUNT, CROSS_THREAD_POST_COUNT));
-    check_equal(turbo_thread_create(
+    check_equal(salts_thread_create(
         &producer, post_from_external_callback_thread, &state), 0);
 
-    turbo_mutex_lock(&state.mutex);
+    salts_mutex_lock(&state.mutex);
     state.start = true;
-    turbo_cond_broadcast(&state.changed);
-    turbo_mutex_unlock(&state.mutex);
+    salts_cond_broadcast(&state.changed);
+    salts_mutex_unlock(&state.mutex);
 
     while (!atomic_load(&state.producer_done)) {
       (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
-      turbo_thread_yield();
+      salts_thread_yield();
     }
-    check_equal(turbo_thread_join(&producer), 0);
+    check_equal(salts_thread_join(&producer), 0);
     (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
 
     check_equal(atomic_load(&state.accepted),
@@ -261,7 +261,7 @@ spec("CFlow scheduler compatibility") {
     check_equal(cflow_scheduler_pending(&scheduler), (size_t)0u);
 
     cflow_scheduler_destroy(&scheduler);
-    turbo_cond_destroy(&state.changed);
-    turbo_mutex_destroy(&state.mutex);
+    salts_cond_destroy(&state.changed);
+    salts_mutex_destroy(&state.mutex);
   }
 }

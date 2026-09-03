@@ -498,7 +498,7 @@ char *TOONc_toJSONString(const toonObject *obj, size_t *out_len) {
     char *result;
 
     if (out_len) *out_len = 0;
-    if (toon_json_to_value(obj, &value) != TURBO_OK) return NULL;
+    if (toon_json_to_value(obj, &value) != SALTS_OK) return NULL;
     result = json_serialize_pretty(value, out_len);
     json_free(value);
     return result;

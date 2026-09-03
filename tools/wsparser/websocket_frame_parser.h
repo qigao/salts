@@ -51,30 +51,30 @@ static inline int ws_is_data(uint8_t opcode) {
 }
 
 /** Determine the complete frame size after enough length bytes are present. */
-ws_parse_result_t turbo_wsparser_frame_peek_size(const uint8_t *data, size_t len,
+ws_parse_result_t salts_wsparser_frame_peek_size(const uint8_t *data, size_t len,
                                                  size_t *out_needed);
 
 /** Parse one complete frame into a borrowed view. Failure leaves frame unchanged. */
-ws_parse_result_t turbo_wsparser_frame_parse(const uint8_t *data, size_t len, ws_frame_t *frame);
+ws_parse_result_t salts_wsparser_frame_parse(const uint8_t *data, size_t len, ws_frame_t *frame);
 
 /** Unmask payload in place. NULL/NULL is accepted only for a zero-length payload. */
-ws_parse_result_t turbo_wsparser_frame_unmask(uint8_t *payload, size_t len,
+ws_parse_result_t salts_wsparser_frame_unmask(uint8_t *payload, size_t len,
                                               const uint8_t masking_key[4]);
 
-size_t turbo_wsparser_frame_header_len(uint64_t payload_len, int masked);
+size_t salts_wsparser_frame_header_len(uint64_t payload_len, int masked);
 
 /** Build a checked header; failure leaves out_written unchanged. */
-ws_parse_result_t turbo_wsparser_frame_build_header(uint8_t *buffer, size_t capacity,
+ws_parse_result_t salts_wsparser_frame_build_header(uint8_t *buffer, size_t capacity,
                                                     uint8_t opcode, uint64_t payload_len, int fin,
                                                     int masked, const uint8_t masking_key[4],
                                                     size_t *out_written);
 
 /* Private source compatibility aliases; emitted symbols keep the project prefix. */
-#define ws_frame_peek_size turbo_wsparser_frame_peek_size
-#define ws_frame_parse turbo_wsparser_frame_parse
-#define ws_frame_unmask turbo_wsparser_frame_unmask
-#define ws_frame_header_len turbo_wsparser_frame_header_len
-#define ws_frame_build_header turbo_wsparser_frame_build_header
+#define ws_frame_peek_size salts_wsparser_frame_peek_size
+#define ws_frame_parse salts_wsparser_frame_parse
+#define ws_frame_unmask salts_wsparser_frame_unmask
+#define ws_frame_header_len salts_wsparser_frame_header_len
+#define ws_frame_build_header salts_wsparser_frame_build_header
 
 #ifdef __cplusplus
 }

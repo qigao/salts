@@ -1,7 +1,7 @@
 /**
  * SQLite public-API reference for VDBE-backed B-tree and R-tree queries.
  * SQLite internals remain owned and updated by vcpkg; this file keeps only the
- * reproducible workload used to evaluate future Rocida index code.
+ * reproducible workload used to evaluate future Salts index code.
  * Architecture reference: https://www.sqlite.org/arch.html
  */
 #include "tinytest.h"

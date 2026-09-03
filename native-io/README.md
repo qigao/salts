@@ -1,6 +1,6 @@
 # NativeIO
 
-NativeIO 是 Rocida 根目录下的原生 I/O 操作层。它只负责把有界操作提交给明确选择的 OS backend，并把终态完成批量交还给调用者；它不拥有 Actor、Reactor、CFlow Graph 或用户 socket。
+NativeIO 是 Salts 根目录下的原生 I/O 操作层。它只负责把有界操作提交给明确选择的 OS backend，并把终态完成批量交还给调用者；它不拥有 Actor、Reactor、CFlow Graph 或用户 socket。
 
 ## 架构决策
 
@@ -19,7 +19,7 @@ Coroutine pool       Platform errors/ABI
  vendor/minicoro
 ```
 
-当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 TCP connect/recv/send 和 UDP recv_from/send_to。Windows IOCP 支持 overlapped byte-mode named pipe，Linux epoll 与 macOS/BSD kqueue 支持非阻塞 connected byte pipe；io_uring pipe 仍显式返回 `TURBO_ENOTSUP`。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `TURBO_ENOTSUP`。CFlow Actor 与 Reactive 可直接依赖 NativeIO；NativeIO 本身不依赖或拥有 CFlow/CNet 状态。
+当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 TCP connect/recv/send 和 UDP recv_from/send_to。Windows IOCP 支持 overlapped byte-mode named pipe，Linux epoll 与 macOS/BSD kqueue 支持非阻塞 connected byte pipe；io_uring pipe 仍显式返回 `SALTS_ENOTSUP`。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `SALTS_ENOTSUP`。CFlow Actor 与 Reactive 可直接依赖 NativeIO；NativeIO 本身不依赖或拥有 CFlow/CNet 状态。
 
 ## 数据与状态协议
 
@@ -28,21 +28,21 @@ Coroutine pool       Platform errors/ABI
 - endpoint 类型：attach 时从 `SO_TYPE` 记录 stream/datagram，分别只接受 TCP/UDP operation；byte pipe 单独记录。IPv4/IPv6 是地址维度，不扩张 endpoint 类型，UDP 地址族仍由 native `sockaddr` 表达。
 - 所有权：backend 借用 socket；成功 submit 后借用 payload，直到 observe 返回对应 completion。
 - 拓扑：除 `native_io_backend_wake()` 外，一个 backend 只由一个 owner 线程调用。一个 owner 可在同一 backend 上驱动最多 `endpoint_capacity` 个 TCP/UDP/Pipe endpoint；模块不创建线程、不内置任务队列。需要多核扩展时由上层创建多个 backend 并分片 endpoint，不能让多个线程并发驱动同一 backend。wake 是唯一允许从生产者线程调用的合并式控制边。
-- 容量：endpoint、request 和 completion batch 均在 init 时固定；满额返回 `TURBO_ENOBUFS`。
+- 容量：endpoint、request 和 completion batch 均在 init 时固定；满额返回 `SALTS_ENOBUFS`。
 - 顺序：每个 endpoint 的 read lane 与 write lane 分别按 FIFO 向内核发起操作，lane 之间不排序。request handle 与 `user_data` 用于关联；不同 endpoint 的 completion 顺序由内核决定。
-- 连接：`TCP_CONNECT` 独占尚未连接 stream endpoint 的 admission，重复 connect 返回 `TURBO_EALREADY`，连接终态被 observe 前提交 recv/send 返回 `TURBO_EBUSY`。readiness backend 要求该 socket 已由调用方设为 nonblocking；NativeIO 不改变其模式。
+- 连接：`TCP_CONNECT` 独占尚未连接 stream endpoint 的 admission，重复 connect 返回 `SALTS_EALREADY`，连接终态被 observe 前提交 recv/send 返回 `SALTS_EBUSY`。readiness backend 要求该 socket 已由调用方设为 nonblocking；NativeIO 不改变其模式。
 - 取消：cancel 只请求取消。IOCP 的 `ERROR_OPERATION_ABORTED`、io_uring 的 `-ECANCELED` 和 readiness 队列中尚未执行的请求进入 CANCELLED；已经完成的请求不会被改写成取消。
 - 关闭：`close admission -> cancel/drain -> close native sockets -> release endpoints -> destroy`。
-- 等待：`timeout_ms == 0` 为 poll，`UINT32_MAX` 为无限等待，其余值为相对毫秒 deadline；无终态返回 `TURBO_ETIMEDOUT` 且 count 为零。
-- 唤醒：生产者先发布上层命令，再调用 wake。多个并发 wake 合并成一个有界 OS 控制信号；纯控制唤醒使 observe 返回 `TURBO_OK` 且 count 为零，不伪造 completion。close/destroy 前必须先停止 wake 调用者。
+- 等待：`timeout_ms == 0` 为 poll，`UINT32_MAX` 为无限等待，其余值为相对毫秒 deadline；无终态返回 `SALTS_ETIMEDOUT` 且 count 为零。
+- 唤醒：生产者先发布上层命令，再调用 wake。多个并发 wake 合并成一个有界 OS 控制信号；纯控制唤醒使 observe 返回 `SALTS_OK` 且 count 为零，不伪造 completion。close/destroy 前必须先停止 wake 调用者。
 
 ### Coroutine owner 路径
 
 `native_io_backend_spawn_coroutine()` 提供同一 owner 线程上的可选结构化路径。entry 立即运行到返回或 `native_io_coroutine_await()`；await 成功提交后挂起，只有匹配的 terminal completion 被 owner observe 后才恢复。一次 observe 会先完成整批 terminal 的 request 归属解析，再恢复其中的 coroutine；因此恢复后的 entry 可以立即再次 await，不会复用仍被该批后续 packet 引用的 request 槽位。NativeIO 不使用 CoroNet context、TLS current-loop、隐式线程或第二套 request 状态机；request 槽位仍是唯一 I/O 事实源，coroutine 只保存执行位置。
 
-coroutine task 数与 request 共用同一硬容量。frame 由 `Rocida::Coroutine` 的有界池延迟创建并复用；池满返回 `TURBO_ENOBUFS`。取消 task 只转发为 request cancel，frame 必须等 `CANCELLED`/其他竞态终态被 observe 后才释放。带 ABI 版本与结构大小的 `native_io_coroutine_stats` 公开 `capacity`、`active` 与 `retained_frames`，但不改变既有 `native_io_backend_stats` 布局，也不暴露 minicoro handle。
+coroutine task 数与 request 共用同一硬容量。frame 由 `Salts::Coroutine` 的有界池延迟创建并复用；池满返回 `SALTS_ENOBUFS`。取消 task 只转发为 request cancel，frame 必须等 `CANCELLED`/其他竞态终态被 observe 后才释放。带 ABI 版本与结构大小的 `native_io_coroutine_stats` 公开 `capacity`、`active` 与 `retained_frames`，但不改变既有 `native_io_backend_stats` 布局，也不暴露 minicoro handle。
 
-若 entry 未经 `native_io_coroutine_await()` 直接挂起，则违反 NativeIO coroutine 协议：spawn/resume 返回 `TURBO_EPROTO`，该 suspended frame 被销毁，task slot 立即归还，不把 backend 留在无法 drain 的活动状态。
+若 entry 未经 `native_io_coroutine_await()` 直接挂起，则违反 NativeIO coroutine 协议：spawn/resume 返回 `SALTS_EPROTO`，该 suspended frame 被销毁，task slot 立即归还，不把 backend 留在无法 drain 的活动状态。
 
 ```text
 spawn -> RUNNING -> await/submit -> SUSPENDED
@@ -61,7 +61,7 @@ FREE --submit accepted--> PENDING --observe terminal--> FREE(next generation)
                               +--cancel request--------+
 ```
 
-每次成功 submit 恰好产生一个可观察终态。submit 原生失败在返回前回滚到 FREE，不产生 completion。destroy 在 admission 未关闭、请求未 drain 或 endpoint 未释放时返回 `TURBO_EBUSY`，并保留所有权供调用者修复。
+每次成功 submit 恰好产生一个可观察终态。submit 原生失败在返回前回滚到 FREE，不产生 completion。destroy 在 admission 未关闭、请求未 drain 或 endpoint 未释放时返回 `SALTS_EBUSY`，并保留所有权供调用者修复。
 
 ## 性能边界
 
@@ -84,7 +84,7 @@ readiness 的 kernel interest 是请求 lane 推导出的镜像，不是第二�
 ## 最小示例
 
 ```c
-#include <turbo/native_io.h>
+#include <salts/native_io.h>
 
 native_io_backend backend = {0};
 native_io_backend_config config = {

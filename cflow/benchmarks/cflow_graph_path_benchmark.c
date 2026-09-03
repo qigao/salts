@@ -3,7 +3,7 @@
 
 #include <cflow/cflow.h>
 #include <cflow/plan_internal.h>
-#include <rocida/stl/hash_map.h>
+#include <cstl/hash_map.h>
 
 #include <stdint.h>
 #include <string.h>
@@ -553,7 +553,7 @@ done:
                                      reference);                                                   \
       CFLOW_GRAPH_PATH_BENCHMARK_ROW(label " / linked path tree", samples, repetitions, operators, \
                                      cflow_graph_path_traverse_tree(fixture), reference);          \
-      CFLOW_GRAPH_PATH_BENCHMARK_ROW(label " / Rocida STL HashMap", samples, repetitions, operators, \
+      CFLOW_GRAPH_PATH_BENCHMARK_ROW(label " / CSTL HashMap", samples, repetitions, operators, \
                                      cflow_graph_path_traverse_hash_map(fixture), reference);      \
       CFLOW_GRAPH_PATH_BENCHMARK_ROW(label " / compiled Plan tape", samples, repetitions,          \
                                      operators, cflow_graph_path_traverse_plan(fixture),           \

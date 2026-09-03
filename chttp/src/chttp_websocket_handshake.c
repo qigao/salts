@@ -4,7 +4,7 @@
 
 #include <llhttp.h>
 #include <openssl/evp.h>
-#include <turbo/random.h>
+#include <salts/random.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -86,27 +86,27 @@ int chttp_websocket_accept_compute(const char *key, char *output, size_t output_
   unsigned int digest_size = 0u;
   if (key == NULL || output == NULL || strlen(key) != CHTTP_WEBSOCKET_KEY_BYTES ||
       output_capacity < CHTTP_WEBSOCKET_ACCEPT_CAPACITY)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   memcpy(source, key, CHTTP_WEBSOCKET_KEY_BYTES);
   memcpy(source + CHTTP_WEBSOCKET_KEY_BYTES, CHTTP_WEBSOCKET_GUID,
          sizeof(CHTTP_WEBSOCKET_GUID) - 1u);
   if (EVP_Digest(source, sizeof(source), digest, &digest_size, EVP_sha1(), NULL) != 1 ||
       digest_size != CHTTP_WEBSOCKET_SHA1_BYTES)
-    return TURBO_EIO;
+    return SALTS_EIO;
   if (tn_base64_encode_buf_ex(digest, digest_size, output, output_capacity) != TN_BASE64_OK)
-    return TURBO_EMSGSIZE;
-  return strlen(output) == CHTTP_WEBSOCKET_ACCEPT_BYTES ? TURBO_OK : TURBO_EPROTO;
+    return SALTS_EMSGSIZE;
+  return strlen(output) == CHTTP_WEBSOCKET_ACCEPT_BYTES ? SALTS_OK : SALTS_EPROTO;
 }
 
 int chttp_websocket_client_key_generate(char *output, size_t output_capacity) {
   unsigned char nonce[CHTTP_WEBSOCKET_NONCE_BYTES];
   int status;
-  if (output == NULL || output_capacity < CHTTP_WEBSOCKET_KEY_CAPACITY) return TURBO_EINVAL;
-  status = turbo_platform_secure_random(nonce, sizeof(nonce));
-  if (status != TURBO_OK) return status;
+  if (output == NULL || output_capacity < CHTTP_WEBSOCKET_KEY_CAPACITY) return SALTS_EINVAL;
+  status = salts_platform_secure_random(nonce, sizeof(nonce));
+  if (status != SALTS_OK) return status;
   return tn_base64_encode_buf_ex(nonce, sizeof(nonce), output, output_capacity) == TN_BASE64_OK
-             ? TURBO_OK
-             : TURBO_EMSGSIZE;
+             ? SALTS_OK
+             : SALTS_EMSGSIZE;
 }
 
 typedef struct chttp_websocket_client_handshake_parser {
@@ -213,16 +213,16 @@ int chttp_websocket_client_handshake_validate(const void *data, size_t size,
                                               unsigned int *out_http_status) {
   chttp_websocket_client_handshake_parser context = {0};
   llhttp_errno_t parse_status;
-  int status = TURBO_EPROTO;
+  int status = SALTS_EPROTO;
   if (out_http_status != NULL) *out_http_status = 0u;
   if (data == NULL || size == 0u || expected_accept == NULL ||
       strlen(expected_accept) != CHTTP_WEBSOCKET_ACCEPT_BYTES || out_http_status == NULL ||
       size == SIZE_MAX)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   context.field = (char *)malloc(size + 1u);
   context.value = (char *)malloc(size + 1u);
   if (context.field == NULL || context.value == NULL) {
-    status = TURBO_ENOMEM;
+    status = SALTS_ENOMEM;
     goto cleanup;
   }
   context.expected_accept = expected_accept;
@@ -241,8 +241,8 @@ int chttp_websocket_client_handshake_validate(const void *data, size_t size,
       context.protocol_version && context.http_status == 101u && context.upgrade &&
       context.connection_upgrade && context.accept_count == 1u && context.accept_matches &&
       !context.invalid_framing && !context.unsupported_negotiation)
-    status = TURBO_OK;
-  else if (context.overflow) status = TURBO_EMSGSIZE;
+    status = SALTS_OK;
+  else if (context.overflow) status = SALTS_EMSGSIZE;
 
 cleanup:
   free(context.value);
@@ -255,17 +255,17 @@ static int chttp_websocket_key_validate(const char *value, char *key) {
   char canonical[CHTTP_WEBSOCKET_KEY_CAPACITY];
   size_t size = 0u;
   const char *trimmed = chttp_websocket_trim_ows(value, &size);
-  int status = TURBO_EPROTO;
-  if (trimmed == NULL || size != CHTTP_WEBSOCKET_KEY_BYTES) return TURBO_EPROTO;
+  int status = SALTS_EPROTO;
+  if (trimmed == NULL || size != CHTTP_WEBSOCKET_KEY_BYTES) return SALTS_EPROTO;
   memcpy(key, trimmed, size);
   key[size] = '\0';
   decoded = tn_base64_decode_ex(key);
-  if (!decoded.ok) return decoded.error == TN_BASE64_ERR_NO_MEMORY ? TURBO_ENOMEM : TURBO_EPROTO;
+  if (!decoded.ok) return decoded.error == TN_BASE64_ERR_NO_MEMORY ? SALTS_ENOMEM : SALTS_EPROTO;
   if (decoded.value.len == CHTTP_WEBSOCKET_NONCE_BYTES &&
       tn_base64_encode_buf_ex(decoded.value.data, decoded.value.len, canonical,
                               sizeof(canonical)) == TN_BASE64_OK &&
       memcmp(canonical, key, sizeof(canonical)) == 0)
-    status = TURBO_OK;
+    status = SALTS_OK;
   free(decoded.value.data);
   return status;
 }
@@ -287,17 +287,17 @@ int chttp_websocket_server_handshake_validate(const chttp_server_request_view *r
   if (request == NULL || accept == NULL || out_http_status == NULL ||
       accept_capacity < CHTTP_WEBSOCKET_ACCEPT_CAPACITY ||
       (request->header_count != 0u && request->headers == NULL))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (request->method != CHTTP_METHOD_GET || request->http_major != 1u ||
       request->http_minor != 1u || request->body_size != 0u || request->body_streamed != 0) {
     *out_http_status = 400u;
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   }
   for (index = 0u; index < request->header_count; ++index) {
     const chttp_header *header = &request->headers[index];
     if (header->name == NULL || header->value == NULL) {
       *out_http_status = 400u;
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     }
     if (chttp_websocket_header_name(header, "Host")) ++host_count;
     else if (chttp_websocket_header_name(header, "Upgrade"))
@@ -315,28 +315,28 @@ int chttp_websocket_server_handshake_validate(const chttp_server_request_view *r
                (chttp_websocket_header_name(header, "Content-Length") &&
                 !chttp_websocket_content_length_zero(header->value))) {
       *out_http_status = 400u;
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     }
   }
   if (host_count != 1u || !upgrade || !connection_upgrade || key_count != 1u ||
       version_count != 1u) {
     *out_http_status = 400u;
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   }
   {
     size_t version_size = 0u;
     const char *version = chttp_websocket_trim_ows(version_value, &version_size);
     if (version == NULL || version_size != 2u || memcmp(version, "13", 2u) != 0) {
       *out_http_status = 426u;
-      return TURBO_EPROTONOSUPPORT;
+      return SALTS_EPROTONOSUPPORT;
     }
   }
   status = chttp_websocket_key_validate(key_value, key);
-  if (status != TURBO_OK) {
-    *out_http_status = status == TURBO_ENOMEM ? 500u : 400u;
+  if (status != SALTS_OK) {
+    *out_http_status = status == SALTS_ENOMEM ? 500u : 400u;
     return status;
   }
   status = chttp_websocket_accept_compute(key, accept, accept_capacity);
-  if (status != TURBO_OK) *out_http_status = status == TURBO_EMSGSIZE ? 500u : 400u;
+  if (status != SALTS_OK) *out_http_status = status == SALTS_EMSGSIZE ? 500u : 400u;
   return status;
 }

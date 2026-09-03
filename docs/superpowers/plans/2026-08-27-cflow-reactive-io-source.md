@@ -6,7 +6,7 @@
 
 **Architecture:** A new `cflow/io_source.h` adapter owns one `cflow_io_actor`, one capacity-one manual Executor, and one typed completion slot while borrowing the backend and user callbacks. Source demand prepares at most one move-only operation; owner driving converts Actor completion into a copied trivial CMeta value and wakes the Run. Source and owner share lifecycle state so cancellation can drain without blocking `cflow_run_close()`.
 
-**Tech Stack:** C11, CMeta type descriptors, CFlow Source/Waitable/Run, CFlow I/O Actor and Executor, Turbo mutexes, TinyTest, CMake Presets.
+**Tech Stack:** C11, CMeta type descriptors, CFlow Source/Waitable/Run, CFlow I/O Actor and Executor, Salts mutexes, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-27-cflow-reactive-io-source-design.md`
 
@@ -49,7 +49,7 @@
           cflow_io_source_config config = {0};
 
           check_equal(cflow_source_from_io_actor(
-                          &source, &owner, &config), TURBO_EINVAL);
+                          &source, &owner, &config), SALTS_EINVAL);
           check_false(cflow_source_valid(&source));
           check_null(owner.impl);
       }
@@ -63,7 +63,7 @@
   ```cmake
   cmake_add_test(
     SOURCES cflow_io_source_test.c
-    LIBS turbo_cflow tinytest
+    LIBS salts_cflow tinytest
     FOLDER "cflow/tests")
   ```
 
@@ -127,7 +127,7 @@
   cflow_io_actor actor;
   cflow_executor executor;
   cflow_value_slot result;
-  turbo_mutex_t gate;
+  salts_mutex_t gate;
   cflow_waker source_waker;
   cflow_io_request_id request_id;
   bool source_live;
@@ -183,7 +183,7 @@
   check_true(fixture.drive_wakes >= (size_t)1u);
 
   check_equal(cflow_io_source_owner_run_ready(
-                  &owner, 32u, &progressed), TURBO_OK);
+                  &owner, 32u, &progressed), SALTS_OK);
   check_true(progressed > (size_t)0u);
   check_equal(cflow_scheduler_run_until_idle(&scheduler, 0u), (size_t)1u);
   check_equal(sink.values[0], 37);
@@ -249,7 +249,7 @@
 - [ ] **Step 3: Write RED tests for cancellation and early owner close**
 
   Cover cancellation before backend submit and after backend submit. Assert owner close returns
-  `TURBO_EBUSY` while Source is live or a native request is pending; completion CANCELLED is drained,
+  `SALTS_EBUSY` while Source is live or a native request is pending; completion CANCELLED is drained,
   operation release runs exactly once, owner eventually becomes quiescent, close clears owner, and
   backend/context remain caller-owned.
 
@@ -258,7 +258,7 @@
   Source cancel atomically closes admission, clears Source waker, and delegates to Actor close.
   Completion after cancellation skips encoder but still becomes delivered and acknowledged.
   `get_stats()` copies Actor stats plus Source state under the gate. Concurrent/reentrant
-  `owner_run_ready()` returns `TURBO_EBUSY` and reports zero progress.
+  `owner_run_ready()` returns `SALTS_EBUSY` and reports zero progress.
 
 - [ ] **Step 5: Add malformed encoder and operation tests**
 
@@ -369,7 +369,7 @@
 
   Use barriers to deliver a real `cflow_io_actor_complete()` after the last Actor idle result but
   before `cflow_io_source_owner_run_ready()` releases its adapter driver credit. Make `drive`
-  immediately reenter `owner_run_ready()` and observe `TURBO_EBUSY` with zero progress. Assert the
+  immediately reenter `owner_run_ready()` and observe `SALTS_EBUSY` with zero progress. Assert the
   outer call still preserves or reissues the pending edge and eventually encodes, emits,
   acknowledges, releases exactly once, and reaches owner quiescence without a caller polling loop.
 
@@ -378,7 +378,7 @@
   Route the Actor wake through an adapter-owned wrapper that records a coalesced pending generation
   under the adapter gate before notifying the borrowed external `drive`. On driver exit, atomically
   consume a newly observed pending generation and continue draining, or clear `driver_active` and
-  re-notify the external driver outside the gate. Preserve `TURBO_EBUSY + progressed=0` for genuine
+  re-notify the external driver outside the gate. Preserve `SALTS_EBUSY + progressed=0` for genuine
   concurrent/reentrant calls, all callback-outside-gate rules, `max_steps` bounds, and capacity one.
 
 - [x] **Step 3: Run focused, race repetition, adjacent and full verification**
@@ -396,7 +396,7 @@
   Evidence (2026-08-27): the barrier RED placed a manual-Executor task after
   the Actor's idle result and completed the real backend request while the
   adapter driver remained active. Both immediate drive reentries returned
-  `TURBO_EBUSY` with zero progress, while the old implementation failed both
+  `SALTS_EBUSY` with zero progress, while the old implementation failed both
   value and cancellation cases (2 failed, 39 passing assertions) without an
   external polling call. The adapter-owned Actor drive wrapper now records one
   coalesced, saturating generation/credit under the adapter gate. Driver exit
@@ -407,5 +407,5 @@
   fresh AddressSanitizer focused sets passed 9/9; all CFlow passed 29/29; full
   Release passed 147/147; install included `cflow/io_source.h`; and the
   installed-package consumer built 18/18. A callback-local close probe returned
-  `TURBO_EBUSY` while the retained drive credit was live, preserved the owner,
+  `SALTS_EBUSY` while the retained drive credit was live, preserved the owner,
   and the final close succeeded after callback return.

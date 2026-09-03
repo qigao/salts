@@ -4,9 +4,9 @@
 
 #include <cflow/io_native.h>
 
-#include <turbo/clock.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/clock.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include "tinytest.h"
 #include "io_native_internal.h"
@@ -100,7 +100,7 @@ static int native_test_set_nonblocking(native_test_socket socket_value) {
 #if defined(_WIN32)
     u_long enabled = 1u;
     return ioctlsocket(socket_value, FIONBIO, &enabled) == 0
-               ? TURBO_OK : native_test_last_socket_error();
+               ? SALTS_OK : native_test_last_socket_error();
 #else
     int flags;
     do {
@@ -112,7 +112,7 @@ static int native_test_set_nonblocking(native_test_socket socket_value) {
         if (errno != EINTR)
             return -errno;
     }
-    return TURBO_OK;
+    return SALTS_OK;
 #endif
 }
 
@@ -126,19 +126,19 @@ static int native_test_status_flags(native_test_socket socket_value,
     if (value < 0)
         return -errno;
     *flags = value;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int native_test_set_blocking(native_test_socket socket_value) {
     int flags = 0;
     int status = native_test_status_flags(socket_value, &flags);
-    if (status != TURBO_OK)
+    if (status != SALTS_OK)
         return status;
     while (fcntl(socket_value, F_SETFL, flags & ~O_NONBLOCK) < 0) {
         if (errno != EINTR)
             return -errno;
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 #endif
 
@@ -160,7 +160,7 @@ static int native_test_bind_loopback(native_test_socket socket_value,
 #endif
                     ) != 0)
         return native_test_last_socket_error();
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int native_test_make_tcp_pair(native_test_socket sockets[2]) {
@@ -173,28 +173,28 @@ static int native_test_make_tcp_pair(native_test_socket sockets[2]) {
     if (listener == NATIVE_TEST_INVALID_SOCKET)
         return native_test_last_socket_error();
     status = native_test_bind_loopback(listener, &address);
-    if (status == TURBO_OK && listen(listener, 1) != 0)
+    if (status == SALTS_OK && listen(listener, 1) != 0)
         status = native_test_last_socket_error();
-    if (status == TURBO_OK) {
+    if (status == SALTS_OK) {
         sockets[0] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (sockets[0] == NATIVE_TEST_INVALID_SOCKET)
             status = native_test_last_socket_error();
     }
-    if (status == TURBO_OK &&
+    if (status == SALTS_OK &&
         connect(sockets[0], (const struct sockaddr *)&address,
                 (int)sizeof(address)) != 0)
         status = native_test_last_socket_error();
-    if (status == TURBO_OK) {
+    if (status == SALTS_OK) {
         sockets[1] = accept(listener, NULL, NULL);
         if (sockets[1] == NATIVE_TEST_INVALID_SOCKET)
             status = native_test_last_socket_error();
     }
     native_test_close_socket(listener);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         status = native_test_set_nonblocking(sockets[0]);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         status = native_test_set_nonblocking(sockets[1]);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         native_test_close_socket(sockets[0]);
         native_test_close_socket(sockets[1]);
         sockets[0] = NATIVE_TEST_INVALID_SOCKET;
@@ -212,19 +212,19 @@ static int native_test_make_tcp_listener(
     if (*listener == NATIVE_TEST_INVALID_SOCKET)
         return native_test_last_socket_error();
     status = native_test_bind_loopback(*listener, address);
-    if (status == TURBO_OK &&
+    if (status == SALTS_OK &&
         listen(*listener, NATIVE_TEST_LISTEN_BACKLOG) != 0)
         status = native_test_last_socket_error();
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         status = native_test_set_nonblocking(*listener);
-    if (status == TURBO_OK) {
+    if (status == SALTS_OK) {
         *client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (*client == NATIVE_TEST_INVALID_SOCKET)
             status = native_test_last_socket_error();
     }
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         status = native_test_set_nonblocking(*client);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         native_test_close_socket(*client);
         native_test_close_socket(*listener);
         *client = NATIVE_TEST_INVALID_SOCKET;
@@ -237,17 +237,17 @@ static int native_test_start_connect(native_test_socket socket_value,
                                      const struct sockaddr_in *address) {
     if (connect(socket_value, (const struct sockaddr *)address,
                 (int)sizeof(*address)) == 0)
-        return TURBO_OK;
+        return SALTS_OK;
 #if defined(_WIN32)
     {
         const int error = WSAGetLastError();
         return error == WSAEWOULDBLOCK || error == WSAEINPROGRESS
-                   ? TURBO_OK : -error;
+                   ? SALTS_OK : -error;
     }
 #else
     return errno == EINPROGRESS || errno == EWOULDBLOCK ||
                    errno == EALREADY
-               ? TURBO_OK : -errno;
+               ? SALTS_OK : -errno;
 #endif
 }
 
@@ -269,7 +269,7 @@ static bool native_test_socket_is_nonblocking(
 static int native_test_receive_exact(native_test_socket socket_value,
                                      void *buffer, size_t length) {
     unsigned char *bytes = (unsigned char *)buffer;
-    const uint64_t started = turbo_hrtime();
+    const uint64_t started = salts_hrtime();
     size_t received = 0u;
     while (received < length) {
         const size_t remaining = length - received;
@@ -282,7 +282,7 @@ static int native_test_receive_exact(native_test_socket socket_value,
             continue;
         }
         if (result == 0)
-            return TURBO_EOF;
+            return SALTS_EOF;
 #if defined(_WIN32)
         {
             const int error = WSAGetLastError();
@@ -297,30 +297,30 @@ static int native_test_receive_exact(native_test_socket socket_value,
                 return -error;
         }
 #endif
-        if (turbo_hrtime() - started >= NATIVE_TEST_TIMEOUT_NS)
-            return TURBO_ETIMEDOUT;
-        turbo_thread_yield();
+        if (salts_hrtime() - started >= NATIVE_TEST_TIMEOUT_NS)
+            return SALTS_ETIMEDOUT;
+        salts_thread_yield();
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int native_test_make_udp_pair(native_test_socket sockets[2],
                                      struct sockaddr_in addresses[2]) {
-    int status = TURBO_OK;
+    int status = SALTS_OK;
     sockets[0] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     sockets[1] = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sockets[0] == NATIVE_TEST_INVALID_SOCKET ||
         sockets[1] == NATIVE_TEST_INVALID_SOCKET)
         status = native_test_last_socket_error();
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         status = native_test_bind_loopback(sockets[0], &addresses[0]);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         status = native_test_bind_loopback(sockets[1], &addresses[1]);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         status = native_test_set_nonblocking(sockets[0]);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         status = native_test_set_nonblocking(sockets[1]);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         native_test_close_socket(sockets[0]);
         native_test_close_socket(sockets[1]);
         sockets[0] = NATIVE_TEST_INVALID_SOCKET;
@@ -375,13 +375,13 @@ static int native_fixture_init_with_ops(
     int status;
     memset(fixture, 0, sizeof(*fixture));
     status = cflow_io_native_backend_init(&fixture->backend, &backend_config);
-    if (status != TURBO_OK)
+    if (status != SALTS_OK)
         return status;
     if (!cflow_executor_manual_init_with_capacity(&fixture->executor,
                                                    capacity)) {
         (void)cflow_io_native_backend_shutdown(&fixture->backend);
         (void)cflow_io_native_backend_destroy(&fixture->backend);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
     memset(&actor_config, 0, sizeof(actor_config));
     actor_config.request_capacity = capacity;
@@ -392,7 +392,7 @@ static int native_fixture_init_with_ops(
     actor_config.completion = native_completion_record;
     actor_config.completion_user = &fixture->completions;
     status = cflow_io_actor_init(&fixture->actor, &actor_config);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         cflow_executor_destroy(&fixture->executor);
         (void)cflow_io_native_backend_shutdown(&fixture->backend);
         (void)cflow_io_native_backend_destroy(&fixture->backend);
@@ -432,82 +432,82 @@ static int native_file_fixture_init(native_fixture *fixture,
 }
 
 static int native_fixture_wait(native_fixture *fixture, size_t count) {
-    const uint64_t started = turbo_hrtime();
+    const uint64_t started = salts_hrtime();
     while (fixture->completions.count < count) {
         (void)cflow_io_actor_run_ready(&fixture->actor, 64u);
         (void)cflow_executor_run_ready(&fixture->executor);
-        if (turbo_hrtime() - started >= NATIVE_TEST_TIMEOUT_NS)
-            return TURBO_ETIMEDOUT;
-        turbo_thread_yield();
+        if (salts_hrtime() - started >= NATIVE_TEST_TIMEOUT_NS)
+            return SALTS_ETIMEDOUT;
+        salts_thread_yield();
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int native_fixture_wait_native_submitted(native_fixture *fixture,
                                                 uint64_t count) {
-    const uint64_t started = turbo_hrtime();
+    const uint64_t started = salts_hrtime();
     cflow_io_native_backend_stats stats;
     do {
         (void)cflow_io_actor_run_ready(&fixture->actor, 64u);
         (void)cflow_executor_run_ready(&fixture->executor);
         if (cflow_io_native_backend_get_stats(&fixture->backend, &stats) &&
             stats.submitted >= count)
-            return TURBO_OK;
-        turbo_thread_yield();
-    } while (turbo_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
-    return TURBO_ETIMEDOUT;
+            return SALTS_OK;
+        salts_thread_yield();
+    } while (salts_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
+    return SALTS_ETIMEDOUT;
 }
 
 static int native_fixture_forget_socket(
     native_fixture *fixture, uintptr_t socket_identity) {
-    const uint64_t started = turbo_hrtime();
+    const uint64_t started = salts_hrtime();
     int status;
     do {
         status = cflow_io_native_backend_forget_socket(
             &fixture->backend, socket_identity);
-        if (status != TURBO_EBUSY)
+        if (status != SALTS_EBUSY)
             return status;
-        turbo_thread_yield();
-    } while (turbo_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
-    return TURBO_ETIMEDOUT;
+        salts_thread_yield();
+    } while (salts_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
+    return SALTS_ETIMEDOUT;
 }
 
 static int native_fixture_forget_pipe(
     native_fixture *fixture, uintptr_t pipe_identity) {
-    const uint64_t started = turbo_hrtime();
+    const uint64_t started = salts_hrtime();
     int status;
     do {
         status = cflow_io_native_backend_forget_pipe(
             &fixture->backend, pipe_identity);
-        if (status != TURBO_EBUSY)
+        if (status != SALTS_EBUSY)
             return status;
-        turbo_thread_yield();
-    } while (turbo_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
-    return TURBO_ETIMEDOUT;
+        salts_thread_yield();
+    } while (salts_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
+    return SALTS_ETIMEDOUT;
 }
 
 static int native_fixture_forget_file(
     native_fixture *fixture, uintptr_t file_identity) {
-    const uint64_t started = turbo_hrtime();
+    const uint64_t started = salts_hrtime();
     int status;
     do {
         status = cflow_io_native_backend_forget_file(
             &fixture->backend, file_identity);
-        if (status != TURBO_EBUSY)
+        if (status != SALTS_EBUSY)
             return status;
-        turbo_thread_yield();
-    } while (turbo_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
-    return TURBO_ETIMEDOUT;
+        salts_thread_yield();
+    } while (salts_hrtime() - started < NATIVE_TEST_TIMEOUT_NS);
+    return SALTS_ETIMEDOUT;
 }
 
 static void native_fixture_destroy(native_fixture *fixture) {
     const int close_status = cflow_io_actor_close(&fixture->actor);
-    check_true(close_status == TURBO_OK || close_status == TURBO_EALREADY);
+    check_true(close_status == SALTS_OK || close_status == SALTS_EALREADY);
     (void)cflow_io_actor_run_ready(&fixture->actor, 64u);
     check_true(cflow_io_actor_is_quiescent(&fixture->actor));
-    check_equal(cflow_io_actor_destroy(&fixture->actor), TURBO_OK);
-    check_equal(cflow_io_native_backend_shutdown(&fixture->backend), TURBO_OK);
-    check_equal(cflow_io_native_backend_destroy(&fixture->backend), TURBO_OK);
+    check_equal(cflow_io_actor_destroy(&fixture->actor), SALTS_OK);
+    check_equal(cflow_io_native_backend_shutdown(&fixture->backend), SALTS_OK);
+    check_equal(cflow_io_native_backend_destroy(&fixture->backend), SALTS_OK);
     check_true(cflow_executor_shutdown(&fixture->executor));
     cflow_executor_destroy(&fixture->executor);
 }
@@ -560,7 +560,7 @@ static int native_test_open_overlapped_file(char **out_path,
     HANDLE file;
     DWORD error;
     if (path == NULL)
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     file = CreateFileA(path, GENERIC_READ | GENERIC_WRITE,
                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                        NULL, OPEN_EXISTING,
@@ -574,7 +574,7 @@ static int native_test_open_overlapped_file(char **out_path,
     }
     *out_path = path;
     *out_file = file;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static void native_test_remove_file(char *path, HANDLE file) {
@@ -600,7 +600,7 @@ static int native_test_make_named_pipe_pair(HANDLE pipes[2]) {
                      L"\\\\.\\pipe\\cflow-native-test-%lu-%ld",
                      GetCurrentProcessId(),
                      InterlockedIncrement(&sequence)) < 0)
-        return TURBO_ERANGE;
+        return SALTS_ERANGE;
     pipes[0] = CreateNamedPipeW(
         name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u,
@@ -636,7 +636,7 @@ static int native_test_make_named_pipe_pair(HANDLE pipes[2]) {
         }
     }
     (void)CloseHandle(event);
-    return TURBO_OK;
+    return SALTS_OK;
 
 failed:
     native_test_close_pipe(pipes[1]);
@@ -662,7 +662,7 @@ static int native_test_make_outbound_named_pipe_pair(HANDLE pipes[2]) {
                      L"\\\\.\\pipe\\cflow-native-outbound-%lu-%ld",
                      GetCurrentProcessId(),
                      InterlockedIncrement(&sequence)) < 0)
-        return TURBO_ERANGE;
+        return SALTS_ERANGE;
     pipes[0] = CreateNamedPipeW(
         name, PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u,
@@ -697,7 +697,7 @@ static int native_test_make_outbound_named_pipe_pair(HANDLE pipes[2]) {
         }
     }
     (void)CloseHandle(event);
-    return TURBO_OK;
+    return SALTS_OK;
 
 failed:
     native_test_close_pipe(pipes[1]);
@@ -719,15 +719,15 @@ static void native_check_pipe_read_write(
     unsigned char received[sizeof(payload)] = {0};
     cflow_io_submit_result submitted;
 
-    check_equal(native_pipe_fixture_init(&fixture, kind, 2u), TURBO_OK);
-    check_equal(native_test_make_named_pipe_pair(pipes), TURBO_OK);
+    check_equal(native_pipe_fixture_init(&fixture, kind, 2u), SALTS_OK);
+    check_equal(native_test_make_named_pipe_pair(pipes), SALTS_OK);
     write_operation.native = (cflow_io_native_pipe_operation){
         CFLOW_IO_NATIVE_PIPE_WRITE, (uintptr_t)pipes[1],
         (void *)payload, sizeof(payload),
         CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
     submitted = native_pipe_submit(&fixture, 91u, &write_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[0].bytes, sizeof(payload));
@@ -741,7 +741,7 @@ static void native_check_pipe_read_write(
         sizeof(received), CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
     submitted = native_pipe_submit(&fixture, 92u, &read_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(fixture.completions.values[1].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[1].bytes, sizeof(payload));
@@ -754,9 +754,9 @@ static void native_check_pipe_read_write(
     native_test_close_pipe(pipes[0]);
     native_test_close_pipe(pipes[1]);
     check_equal(native_fixture_forget_pipe(
-                    &fixture, (uintptr_t)pipes[0]), TURBO_OK);
+                    &fixture, (uintptr_t)pipes[0]), SALTS_OK);
     check_equal(native_fixture_forget_pipe(
-                    &fixture, (uintptr_t)pipes[1]), TURBO_OK);
+                    &fixture, (uintptr_t)pipes[1]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -770,15 +770,15 @@ static void native_check_outbound_pipe_write_iocp(void) {
     cflow_io_submit_result submitted;
 
     check_equal(native_pipe_fixture_init(
-                    &fixture, CFLOW_IO_NATIVE_IOCP, 1u), TURBO_OK);
-    check_equal(native_test_make_outbound_named_pipe_pair(pipes), TURBO_OK);
+                    &fixture, CFLOW_IO_NATIVE_IOCP, 1u), SALTS_OK);
+    check_equal(native_test_make_outbound_named_pipe_pair(pipes), SALTS_OK);
     write_operation.native = (cflow_io_native_pipe_operation){
         CFLOW_IO_NATIVE_PIPE_WRITE, (uintptr_t)pipes[0],
         (void *)payload, sizeof(payload),
         CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
     submitted = native_pipe_submit(&fixture, 96u, &write_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[0].bytes, sizeof(payload));
@@ -793,7 +793,7 @@ static void native_check_outbound_pipe_write_iocp(void) {
     native_test_close_pipe(pipes[0]);
     native_test_close_pipe(pipes[1]);
     check_equal(native_fixture_forget_pipe(
-                    &fixture, (uintptr_t)pipes[0]), TURBO_OK);
+                    &fixture, (uintptr_t)pipes[0]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -804,8 +804,8 @@ static void native_check_pipe_cancel(cflow_io_native_backend_kind kind) {
     unsigned char received = 0u;
     cflow_io_submit_result submitted;
 
-    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_named_pipe_pair(pipes), TURBO_OK);
+    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_named_pipe_pair(pipes), SALTS_OK);
     read_operation.native = (cflow_io_native_pipe_operation){
         CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)pipes[0], &received,
         sizeof(received), CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
@@ -815,7 +815,7 @@ static void native_check_pipe_cancel(cflow_io_native_backend_kind kind) {
     check_equal(cflow_io_actor_try_cancel(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_CANCELLED);
     check_equal(cflow_io_actor_acknowledge(
@@ -824,7 +824,7 @@ static void native_check_pipe_cancel(cflow_io_native_backend_kind kind) {
     native_test_close_pipe(pipes[0]);
     native_test_close_pipe(pipes[1]);
     check_equal(native_fixture_forget_pipe(
-                    &fixture, (uintptr_t)pipes[0]), TURBO_OK);
+                    &fixture, (uintptr_t)pipes[0]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -835,8 +835,8 @@ static void native_check_pipe_eof(cflow_io_native_backend_kind kind) {
     unsigned char received = 0u;
     cflow_io_submit_result submitted;
 
-    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_named_pipe_pair(pipes), TURBO_OK);
+    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_named_pipe_pair(pipes), SALTS_OK);
     read_operation.native = (cflow_io_native_pipe_operation){
         CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)pipes[0], &received,
         sizeof(received), CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
@@ -844,7 +844,7 @@ static void native_check_pipe_eof(cflow_io_native_backend_kind kind) {
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
     (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
     native_test_close_pipe(pipes[1]);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_EOF);
     check_equal(cflow_io_actor_acknowledge(
@@ -852,7 +852,7 @@ static void native_check_pipe_eof(cflow_io_native_backend_kind kind) {
                 CFLOW_IO_ACK_RELEASED);
     native_test_close_pipe(pipes[0]);
     check_equal(native_fixture_forget_pipe(
-                    &fixture, (uintptr_t)pipes[0]), TURBO_OK);
+                    &fixture, (uintptr_t)pipes[0]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -867,17 +867,17 @@ static void native_check_rejects_sync_anonymous_pipe(
     unsigned char received = 0u;
     cflow_io_submit_result submitted;
 
-    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), SALTS_OK);
     check_true(CreatePipe(&read_pipe, &write_pipe, &security, 0u));
     read_operation.native = (cflow_io_native_pipe_operation){
         CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)read_pipe, &received,
         sizeof(received), 0u};
     submitted = native_pipe_submit(&fixture, 95u, &read_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[0].error, TURBO_ENOTSUP);
+    check_equal(fixture.completions.values[0].error, SALTS_ENOTSUP);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -898,8 +898,8 @@ static void native_check_file_read_write_iocp(void) {
     HANDLE file = INVALID_HANDLE_VALUE;
 
     check_equal(native_file_fixture_init(
-                    &fixture, CFLOW_IO_NATIVE_IOCP, 2u), TURBO_OK);
-    check_equal(native_test_open_overlapped_file(&path, &file), TURBO_OK);
+                    &fixture, CFLOW_IO_NATIVE_IOCP, 2u), SALTS_OK);
+    check_equal(native_test_open_overlapped_file(&path, &file), SALTS_OK);
     write_operation.native = (cflow_io_native_file_operation){
         .kind = CFLOW_IO_NATIVE_FILE_WRITE_AT,
         .handle = (uintptr_t)file,
@@ -909,7 +909,7 @@ static void native_check_file_read_write_iocp(void) {
         .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE};
     submitted = native_file_submit(&fixture, 110u, &write_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[0].bytes, sizeof(payload));
@@ -927,7 +927,7 @@ static void native_check_file_read_write_iocp(void) {
         .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE};
     submitted = native_file_submit(&fixture, 111u, &read_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(fixture.completions.values[1].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[1].bytes, sizeof(payload));
@@ -939,7 +939,7 @@ static void native_check_file_read_write_iocp(void) {
 
     check_true(CloseHandle(file));
     check_equal(native_fixture_forget_file(
-                    &fixture, (uintptr_t)file), TURBO_OK);
+                    &fixture, (uintptr_t)file), SALTS_OK);
     file = INVALID_HANDLE_VALUE;
     native_fixture_destroy(&fixture);
     native_test_remove_file(path, file);
@@ -955,8 +955,8 @@ static void native_check_file_eof_iocp(void) {
     HANDLE file = INVALID_HANDLE_VALUE;
 
     check_equal(native_file_fixture_init(
-                    &fixture, CFLOW_IO_NATIVE_IOCP, 1u), TURBO_OK);
-    check_equal(native_test_open_overlapped_file(&path, &file), TURBO_OK);
+                    &fixture, CFLOW_IO_NATIVE_IOCP, 1u), SALTS_OK);
+    check_equal(native_test_open_overlapped_file(&path, &file), SALTS_OK);
     operation.native = (cflow_io_native_file_operation){
         .kind = CFLOW_IO_NATIVE_FILE_WRITE_AT,
         .handle = (uintptr_t)file,
@@ -965,7 +965,7 @@ static void native_check_file_eof_iocp(void) {
         .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE};
     submitted = native_file_submit(&fixture, 112u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -979,7 +979,7 @@ static void native_check_file_eof_iocp(void) {
         .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE};
     submitted = native_file_submit(&fixture, 113u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(fixture.completions.values[1].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[1].bytes, 2u);
@@ -992,7 +992,7 @@ static void native_check_file_eof_iocp(void) {
     operation.native.offset = sizeof(payload);
     submitted = native_file_submit(&fixture, 114u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 3u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 3u), SALTS_OK);
     check_equal(fixture.completions.values[2].kind,
                 CFLOW_IO_COMPLETION_EOF);
     check_equal(fixture.completions.values[2].bytes, 0u);
@@ -1003,7 +1003,7 @@ static void native_check_file_eof_iocp(void) {
 
     check_true(CloseHandle(file));
     check_equal(native_fixture_forget_file(
-                    &fixture, (uintptr_t)file), TURBO_OK);
+                    &fixture, (uintptr_t)file), SALTS_OK);
     file = INVALID_HANDLE_VALUE;
     native_fixture_destroy(&fixture);
     native_test_remove_file(path, file);
@@ -1019,8 +1019,8 @@ static void native_check_file_rejections_iocp(void) {
     HANDLE event;
 
     check_equal(native_file_fixture_init(
-                    &fixture, CFLOW_IO_NATIVE_IOCP, 1u), TURBO_OK);
-    check_equal(native_test_open_overlapped_file(&path, &file), TURBO_OK);
+                    &fixture, CFLOW_IO_NATIVE_IOCP, 1u), SALTS_OK);
+    check_equal(native_test_open_overlapped_file(&path, &file), SALTS_OK);
     operation.native = (cflow_io_native_file_operation){
         .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
         .handle = (uintptr_t)file,
@@ -1028,10 +1028,10 @@ static void native_check_file_rejections_iocp(void) {
         .length = 1u};
     submitted = native_file_submit(&fixture, 115u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[0].error, TURBO_ENOTSUP);
+    check_equal(fixture.completions.values[0].error, SALTS_ENOTSUP);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -1042,10 +1042,10 @@ static void native_check_file_rejections_iocp(void) {
         .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE};
     submitted = native_file_submit(&fixture, 116u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(fixture.completions.values[1].kind,
                 CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[1].error, TURBO_ENOTSUP);
+    check_equal(fixture.completions.values[1].error, SALTS_ENOTSUP);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -1060,10 +1060,10 @@ static void native_check_file_rejections_iocp(void) {
         .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE};
     submitted = native_file_submit(&fixture, 117u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 3u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 3u), SALTS_OK);
     check_equal(fixture.completions.values[2].kind,
                 CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[2].error, TURBO_EINVAL);
+    check_equal(fixture.completions.values[2].error, SALTS_EINVAL);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -1087,11 +1087,11 @@ static void native_check_file_capacity_reuse_iocp(void) {
     HANDLE second_file = INVALID_HANDLE_VALUE;
 
     check_equal(native_file_fixture_init(
-                    &fixture, CFLOW_IO_NATIVE_IOCP, 1u), TURBO_OK);
+                    &fixture, CFLOW_IO_NATIVE_IOCP, 1u), SALTS_OK);
     check_equal(native_test_open_overlapped_file(
-                    &first_path, &first_file), TURBO_OK);
+                    &first_path, &first_file), SALTS_OK);
     check_equal(native_test_open_overlapped_file(
-                    &second_path, &second_file), TURBO_OK);
+                    &second_path, &second_file), SALTS_OK);
     first.native = (cflow_io_native_file_operation){
         .kind = CFLOW_IO_NATIVE_FILE_WRITE_AT,
         .handle = (uintptr_t)first_file,
@@ -1100,7 +1100,7 @@ static void native_check_file_capacity_reuse_iocp(void) {
         .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE};
     submitted = native_file_submit(&fixture, 118u, &first);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(cflow_io_actor_acknowledge(
@@ -1115,21 +1115,21 @@ static void native_check_file_capacity_reuse_iocp(void) {
         .flags = CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE};
     submitted = native_file_submit(&fixture, 119u, &second);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(fixture.completions.values[1].kind,
                 CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[1].error, TURBO_EBUSY);
+    check_equal(fixture.completions.values[1].error, SALTS_EBUSY);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
 
     check_true(CloseHandle(first_file));
     check_equal(native_fixture_forget_file(
-                    &fixture, (uintptr_t)first_file), TURBO_OK);
+                    &fixture, (uintptr_t)first_file), SALTS_OK);
     first_file = INVALID_HANDLE_VALUE;
     submitted = native_file_submit(&fixture, 120u, &second);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 3u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 3u), SALTS_OK);
     check_equal(fixture.completions.values[2].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(cflow_io_actor_acknowledge(
@@ -1140,7 +1140,7 @@ static void native_check_file_capacity_reuse_iocp(void) {
 
     check_true(CloseHandle(second_file));
     check_equal(native_fixture_forget_file(
-                    &fixture, (uintptr_t)second_file), TURBO_OK);
+                    &fixture, (uintptr_t)second_file), SALTS_OK);
     second_file = INVALID_HANDLE_VALUE;
     native_fixture_destroy(&fixture);
     native_test_remove_file(first_path, first_file);
@@ -1157,8 +1157,8 @@ static void native_check_file_cancel_race_iocp(void) {
     size_t iteration;
 
     check_equal(native_file_fixture_init(
-                    &fixture, CFLOW_IO_NATIVE_IOCP, 1u), TURBO_OK);
-    check_equal(native_test_open_overlapped_file(&path, &file), TURBO_OK);
+                    &fixture, CFLOW_IO_NATIVE_IOCP, 1u), SALTS_OK);
+    check_equal(native_test_open_overlapped_file(&path, &file), SALTS_OK);
     operation.native = (cflow_io_native_file_operation){
         .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
         .handle = (uintptr_t)file,
@@ -1171,7 +1171,7 @@ static void native_check_file_cancel_race_iocp(void) {
     check_equal(cflow_io_actor_try_cancel(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_true(fixture.completions.values[0].kind ==
                    CFLOW_IO_COMPLETION_CANCELLED ||
                fixture.completions.values[0].kind ==
@@ -1180,7 +1180,7 @@ static void native_check_file_cancel_race_iocp(void) {
          ++iteration) {
         (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
         (void)cflow_executor_run_ready(&fixture.executor);
-        turbo_thread_yield();
+        salts_thread_yield();
     }
     check_equal(fixture.completions.count, 1u);
     check_equal(cflow_io_actor_acknowledge(
@@ -1190,7 +1190,7 @@ static void native_check_file_cancel_race_iocp(void) {
 
     check_true(CloseHandle(file));
     check_equal(native_fixture_forget_file(
-                    &fixture, (uintptr_t)file), TURBO_OK);
+                    &fixture, (uintptr_t)file), SALTS_OK);
     file = INVALID_HANDLE_VALUE;
     native_fixture_destroy(&fixture);
     native_test_remove_file(path, file);
@@ -1210,7 +1210,7 @@ static int native_test_make_pipe_pair(int pipes[2], bool nonblocking) {
 #if defined(__linux__)
     if (nonblocking) {
         if (pipe2(pipes, O_NONBLOCK | O_CLOEXEC) == 0)
-            return TURBO_OK;
+            return SALTS_OK;
         return -errno;
     }
 #endif
@@ -1218,9 +1218,9 @@ static int native_test_make_pipe_pair(int pipes[2], bool nonblocking) {
         return -errno;
     if (nonblocking) {
         status = native_test_set_nonblocking(pipes[0]);
-        if (status == TURBO_OK)
+        if (status == SALTS_OK)
             status = native_test_set_nonblocking(pipes[1]);
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             goto failed;
     }
     for (size_t index = 0u; index < 2u; ++index) {
@@ -1239,7 +1239,7 @@ static int native_test_make_pipe_pair(int pipes[2], bool nonblocking) {
             }
         }
     }
-    return TURBO_OK;
+    return SALTS_OK;
 
 failed:
     native_test_close_pipe(pipes[0]);
@@ -1259,15 +1259,15 @@ static void native_check_pipe_read_write(
     unsigned char received[sizeof(payload)] = {0};
     cflow_io_submit_result submitted;
 
-    check_equal(native_pipe_fixture_init(&fixture, kind, 2u), TURBO_OK);
-    check_equal(native_test_make_pipe_pair(pipes, true), TURBO_OK);
+    check_equal(native_pipe_fixture_init(&fixture, kind, 2u), SALTS_OK);
+    check_equal(native_test_make_pipe_pair(pipes, true), SALTS_OK);
     write_operation.native = (cflow_io_native_pipe_operation){
         CFLOW_IO_NATIVE_PIPE_WRITE, (uintptr_t)pipes[1],
         (void *)payload, sizeof(payload),
         CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
     submitted = native_pipe_submit(&fixture, 91u, &write_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[0].bytes, sizeof(payload));
@@ -1280,7 +1280,7 @@ static void native_check_pipe_read_write(
         sizeof(received), CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
     submitted = native_pipe_submit(&fixture, 92u, &read_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(fixture.completions.values[1].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[1].bytes, sizeof(payload));
@@ -1291,9 +1291,9 @@ static void native_check_pipe_read_write(
     native_test_close_pipe(pipes[0]);
     native_test_close_pipe(pipes[1]);
     check_equal(native_fixture_forget_pipe(
-                    &fixture, (uintptr_t)pipes[0]), TURBO_OK);
+                    &fixture, (uintptr_t)pipes[0]), SALTS_OK);
     check_equal(native_fixture_forget_pipe(
-                    &fixture, (uintptr_t)pipes[1]), TURBO_OK);
+                    &fixture, (uintptr_t)pipes[1]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -1304,8 +1304,8 @@ static void native_check_pipe_cancel(cflow_io_native_backend_kind kind) {
     unsigned char received = 0u;
     cflow_io_submit_result submitted;
 
-    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_pipe_pair(pipes, true), TURBO_OK);
+    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_pipe_pair(pipes, true), SALTS_OK);
     read_operation.native = (cflow_io_native_pipe_operation){
         CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)pipes[0], &received,
         sizeof(received), CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
@@ -1315,7 +1315,7 @@ static void native_check_pipe_cancel(cflow_io_native_backend_kind kind) {
     check_equal(cflow_io_actor_try_cancel(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_CANCELLED);
     check_equal(cflow_io_actor_acknowledge(
@@ -1324,7 +1324,7 @@ static void native_check_pipe_cancel(cflow_io_native_backend_kind kind) {
     native_test_close_pipe(pipes[0]);
     native_test_close_pipe(pipes[1]);
     check_equal(native_fixture_forget_pipe(
-                    &fixture, (uintptr_t)pipes[0]), TURBO_OK);
+                    &fixture, (uintptr_t)pipes[0]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -1335,8 +1335,8 @@ static void native_check_pipe_eof(cflow_io_native_backend_kind kind) {
     unsigned char received = 0u;
     cflow_io_submit_result submitted;
 
-    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_pipe_pair(pipes, true), TURBO_OK);
+    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_pipe_pair(pipes, true), SALTS_OK);
     read_operation.native = (cflow_io_native_pipe_operation){
         CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)pipes[0], &received,
         sizeof(received), CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
@@ -1344,7 +1344,7 @@ static void native_check_pipe_eof(cflow_io_native_backend_kind kind) {
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
     (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
     native_test_close_pipe(pipes[1]);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_EOF);
     check_equal(cflow_io_actor_acknowledge(
@@ -1352,7 +1352,7 @@ static void native_check_pipe_eof(cflow_io_native_backend_kind kind) {
                 CFLOW_IO_ACK_RELEASED);
     native_test_close_pipe(pipes[0]);
     check_equal(native_fixture_forget_pipe(
-                    &fixture, (uintptr_t)pipes[0]), TURBO_OK);
+                    &fixture, (uintptr_t)pipes[0]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -1368,8 +1368,8 @@ static void native_check_pipe_read_lane_order(
     cflow_io_submit_result first_submitted;
     cflow_io_submit_result second_submitted;
 
-    check_equal(native_pipe_fixture_init(&fixture, kind, 2u), TURBO_OK);
-    check_equal(native_test_make_pipe_pair(pipes, true), TURBO_OK);
+    check_equal(native_pipe_fixture_init(&fixture, kind, 2u), SALTS_OK);
+    check_equal(native_test_make_pipe_pair(pipes, true), SALTS_OK);
     first.native = (cflow_io_native_pipe_operation){
         CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)pipes[0], &first_byte, 1u,
         CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
@@ -1383,7 +1383,7 @@ static void native_check_pipe_read_lane_order(
     (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
     check_equal(write(pipes[1], payload, sizeof(payload)),
                 (ssize_t)sizeof(payload));
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(fixture.completions.ids[0], first_submitted.request_id);
     check_equal(fixture.completions.ids[1], second_submitted.request_id);
     check_equal(first_byte, payload[0]);
@@ -1397,7 +1397,7 @@ static void native_check_pipe_read_lane_order(
     native_test_close_pipe(pipes[0]);
     native_test_close_pipe(pipes[1]);
     check_equal(native_fixture_forget_pipe(
-                    &fixture, (uintptr_t)pipes[0]), TURBO_OK);
+                    &fixture, (uintptr_t)pipes[0]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -1409,17 +1409,17 @@ static void native_check_pipe_rejects_blocking_fd(
     unsigned char received = 0u;
     cflow_io_submit_result submitted;
 
-    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_pipe_pair(pipes, false), TURBO_OK);
+    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_pipe_pair(pipes, false), SALTS_OK);
     read_operation.native = (cflow_io_native_pipe_operation){
         CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)pipes[0], &received, 1u,
         CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
     submitted = native_pipe_submit(&fixture, 98u, &read_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[0].error, TURBO_EINVAL);
+    check_equal(fixture.completions.values[0].error, SALTS_EINVAL);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -1436,16 +1436,16 @@ static void native_check_pipe_requires_async_flag(
     unsigned char received = 0u;
     cflow_io_submit_result submitted;
 
-    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_pipe_pair(pipes, true), TURBO_OK);
+    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_pipe_pair(pipes, true), SALTS_OK);
     read_operation.native = (cflow_io_native_pipe_operation){
         CFLOW_IO_NATIVE_PIPE_READ, (uintptr_t)pipes[0], &received, 1u, 0u};
     submitted = native_pipe_submit(&fixture, 100u, &read_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[0].error, TURBO_ENOTSUP);
+    check_equal(fixture.completions.values[0].error, SALTS_ENOTSUP);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -1462,8 +1462,8 @@ static void native_check_pipe_write_contains_sigpipe(
     native_test_pipe_operation write_operation = {0};
     cflow_io_submit_result submitted;
 
-    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_pipe_pair(pipes, true), TURBO_OK);
+    check_equal(native_pipe_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_pipe_pair(pipes, true), SALTS_OK);
     native_test_close_pipe(pipes[0]);
     write_operation.native = (cflow_io_native_pipe_operation){
         CFLOW_IO_NATIVE_PIPE_WRITE, (uintptr_t)pipes[1],
@@ -1471,7 +1471,7 @@ static void native_check_pipe_write_contains_sigpipe(
         CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE};
     submitted = native_pipe_submit(&fixture, 99u, &write_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_FAILED);
     check_equal(fixture.completions.values[0].error, -EPIPE);
@@ -1480,7 +1480,7 @@ static void native_check_pipe_write_contains_sigpipe(
                 CFLOW_IO_ACK_RELEASED);
     native_test_close_pipe(pipes[1]);
     check_equal(native_fixture_forget_pipe(
-                    &fixture, (uintptr_t)pipes[1]), TURBO_OK);
+                    &fixture, (uintptr_t)pipes[1]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 #endif
@@ -1510,7 +1510,7 @@ static void native_check_readiness_rejects_regular_file(
     check_equal(write(fd, payload, sizeof(payload)),
                 (ssize_t)sizeof(payload));
     check_equal(lseek(fd, 1, SEEK_SET), (off_t)1);
-    check_equal(native_file_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_file_fixture_init(&fixture, kind, 1u), SALTS_OK);
 
     read_operation.native = (cflow_io_native_file_operation){
         .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
@@ -1520,10 +1520,10 @@ static void native_check_readiness_rejects_regular_file(
         .offset = 0u};
     submitted = native_file_submit(&fixture, 101u, &read_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[0].error, TURBO_ENOTSUP);
+    check_equal(fixture.completions.values[0].error, SALTS_ENOTSUP);
     check_equal(received, 0u);
     check_equal(lseek(fd, 0, SEEK_CUR), (off_t)1);
     check_equal(pread(fd, observed, sizeof(observed), 0),
@@ -1546,7 +1546,7 @@ static int native_test_open_posix_file(char **out_path, int *out_fd) {
     char *path = tt_make_temp_file("cflow-native-file-", ".bin");
     int fd;
     if (path == NULL)
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     fd = open(path, O_RDWR | O_CLOEXEC | O_TRUNC);
     if (fd < 0) {
         const int status = -errno;
@@ -1556,7 +1556,7 @@ static int native_test_open_posix_file(char **out_path, int *out_fd) {
     }
     *out_path = path;
     *out_fd = fd;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static void native_test_remove_posix_file(char *path, int fd) {
@@ -1579,8 +1579,8 @@ static void native_check_file_read_write_uring(void) {
     int fd = -1;
 
     check_equal(native_file_fixture_init(
-                    &fixture, CFLOW_IO_NATIVE_IO_URING, 2u), TURBO_OK);
-    check_equal(native_test_open_posix_file(&path, &fd), TURBO_OK);
+                    &fixture, CFLOW_IO_NATIVE_IO_URING, 2u), SALTS_OK);
+    check_equal(native_test_open_posix_file(&path, &fd), SALTS_OK);
     check_equal(lseek(fd, 3, SEEK_SET), (off_t)3);
     operation.native = (cflow_io_native_file_operation){
         .kind = CFLOW_IO_NATIVE_FILE_WRITE_AT,
@@ -1590,7 +1590,7 @@ static void native_check_file_read_write_uring(void) {
         .offset = 5u};
     submitted = native_file_submit(&fixture, 130u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[0].bytes, sizeof(payload));
@@ -1607,7 +1607,7 @@ static void native_check_file_read_write_uring(void) {
         .offset = 5u};
     submitted = native_file_submit(&fixture, 131u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(fixture.completions.values[1].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[1].bytes, sizeof(payload));
@@ -1622,7 +1622,7 @@ static void native_check_file_read_write_uring(void) {
         .handle = (uintptr_t)fd};
     submitted = native_file_submit(&fixture, 132u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 3u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 3u), SALTS_OK);
     check_equal(fixture.completions.values[2].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[2].bytes, 0u);
@@ -1633,7 +1633,7 @@ static void native_check_file_read_write_uring(void) {
 
     check_equal(close(fd), 0);
     check_equal(native_fixture_forget_file(
-                    &fixture, (uintptr_t)fd), TURBO_OK);
+                    &fixture, (uintptr_t)fd), SALTS_OK);
     fd = -1;
     native_fixture_destroy(&fixture);
     native_test_remove_posix_file(path, fd);
@@ -1650,8 +1650,8 @@ static void native_check_file_eof_and_type_uring(void) {
     int pipes[2] = {-1, -1};
 
     check_equal(native_file_fixture_init(
-                    &fixture, CFLOW_IO_NATIVE_IO_URING, 1u), TURBO_OK);
-    check_equal(native_test_open_posix_file(&path, &fd), TURBO_OK);
+                    &fixture, CFLOW_IO_NATIVE_IO_URING, 1u), SALTS_OK);
+    check_equal(native_test_open_posix_file(&path, &fd), SALTS_OK);
     operation.native = (cflow_io_native_file_operation){
         .kind = CFLOW_IO_NATIVE_FILE_WRITE_AT,
         .handle = (uintptr_t)fd,
@@ -1659,7 +1659,7 @@ static void native_check_file_eof_and_type_uring(void) {
         .length = sizeof(payload)};
     submitted = native_file_submit(&fixture, 133u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -1672,7 +1672,7 @@ static void native_check_file_eof_and_type_uring(void) {
         .offset = 2u};
     submitted = native_file_submit(&fixture, 134u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(fixture.completions.values[1].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[1].bytes, 2u);
@@ -1685,7 +1685,7 @@ static void native_check_file_eof_and_type_uring(void) {
     operation.native.offset = sizeof(payload);
     submitted = native_file_submit(&fixture, 135u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 3u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 3u), SALTS_OK);
     check_equal(fixture.completions.values[2].kind,
                 CFLOW_IO_COMPLETION_EOF);
     check_equal(fixture.completions.values[2].bytes, 0u);
@@ -1698,10 +1698,10 @@ static void native_check_file_eof_and_type_uring(void) {
     operation.native.offset = 0u;
     submitted = native_file_submit(&fixture, 136u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 4u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 4u), SALTS_OK);
     check_equal(fixture.completions.values[3].kind,
                 CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[3].error, TURBO_EINVAL);
+    check_equal(fixture.completions.values[3].error, SALTS_EINVAL);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -1711,7 +1711,7 @@ static void native_check_file_eof_and_type_uring(void) {
     check_equal(close(pipes[1]), 0);
     check_equal(close(fd), 0);
     check_equal(native_fixture_forget_file(
-                    &fixture, (uintptr_t)fd), TURBO_OK);
+                    &fixture, (uintptr_t)fd), SALTS_OK);
     fd = -1;
     native_fixture_destroy(&fixture);
     native_test_remove_posix_file(path, fd);
@@ -1727,8 +1727,8 @@ static void native_check_file_cancel_race_uring(void) {
     size_t iteration;
 
     check_equal(native_file_fixture_init(
-                    &fixture, CFLOW_IO_NATIVE_IO_URING, 1u), TURBO_OK);
-    check_equal(native_test_open_posix_file(&path, &fd), TURBO_OK);
+                    &fixture, CFLOW_IO_NATIVE_IO_URING, 1u), SALTS_OK);
+    check_equal(native_test_open_posix_file(&path, &fd), SALTS_OK);
     operation.native = (cflow_io_native_file_operation){
         .kind = CFLOW_IO_NATIVE_FILE_READ_AT,
         .handle = (uintptr_t)fd,
@@ -1740,7 +1740,7 @@ static void native_check_file_cancel_race_uring(void) {
     check_equal(cflow_io_actor_try_cancel(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_true(fixture.completions.values[0].kind ==
                    CFLOW_IO_COMPLETION_CANCELLED ||
                fixture.completions.values[0].kind ==
@@ -1749,7 +1749,7 @@ static void native_check_file_cancel_race_uring(void) {
          ++iteration) {
         (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
         (void)cflow_executor_run_ready(&fixture.executor);
-        turbo_thread_yield();
+        salts_thread_yield();
     }
     check_equal(fixture.completions.count, 1u);
     check_equal(cflow_io_actor_acknowledge(
@@ -1759,7 +1759,7 @@ static void native_check_file_cancel_race_uring(void) {
 
     check_equal(close(fd), 0);
     check_equal(native_fixture_forget_file(
-                    &fixture, (uintptr_t)fd), TURBO_OK);
+                    &fixture, (uintptr_t)fd), SALTS_OK);
     fd = -1;
     native_fixture_destroy(&fixture);
     native_test_remove_posix_file(path, fd);
@@ -1781,8 +1781,8 @@ static void native_check_tcp(cflow_io_native_backend_kind kind) {
     cflow_io_submit_result send_result;
     unsigned char received[NATIVE_TEST_PAYLOAD_CAPACITY] = {0};
 
-    check_equal(native_fixture_init(&fixture, kind, 2u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 2u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     receive.native = (cflow_io_native_operation){
         CFLOW_IO_NATIVE_TCP_RECV, (uintptr_t)sockets[1], received,
         sizeof(payload), NULL, 0u, 0u};
@@ -1794,7 +1794,7 @@ static void native_check_tcp(cflow_io_native_backend_kind kind) {
     send_result = native_submit(&fixture, 12u, &send_operation);
     check_equal(receive_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
     check_equal(send_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(received, payload, sizeof(payload));
     for (size_t i = 0u; i < fixture.completions.count; ++i) {
         check_equal(fixture.completions.values[i].kind,
@@ -1826,8 +1826,8 @@ static void native_check_vector_tcp(cflow_io_native_backend_kind kind) {
     unsigned char second_received[sizeof(second_payload)] = {0};
     const size_t total = sizeof(first_payload) + sizeof(second_payload);
 
-    check_equal(native_vector_fixture_init(&fixture, kind, 2u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_vector_fixture_init(&fixture, kind, 2u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     receive_spans[0] = (cflow_io_native_buffer_span){
         first_received, sizeof(first_received)};
     receive_spans[1] = (cflow_io_native_buffer_span){
@@ -1847,7 +1847,7 @@ static void native_check_vector_tcp(cflow_io_native_backend_kind kind) {
     send_result = native_vector_submit(&fixture, 142u, &send_operation);
     check_equal(receive_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
     check_equal(send_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(first_received, first_payload, sizeof(first_payload));
     check_equal(second_received, second_payload, sizeof(second_payload));
     for (size_t i = 0u; i < fixture.completions.count; ++i) {
@@ -1877,21 +1877,21 @@ static void native_check_vector_descriptor_copy_and_short(
     unsigned char second[4] = {0};
     unsigned char poison[6] = {0};
 
-    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     spans[0] = (cflow_io_native_buffer_span){first, sizeof(first)};
     spans[1] = (cflow_io_native_buffer_span){second, sizeof(second)};
     receive.native = (cflow_io_native_vector_operation){
         CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1], spans, 2u};
     submitted = native_vector_submit(&fixture, 143u, &receive);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), SALTS_OK);
 
     spans[0] = (cflow_io_native_buffer_span){poison, 2u};
     spans[1] = (cflow_io_native_buffer_span){poison + 2u, 4u};
     check_equal(send(sockets[0], (const char *)payload,
                      (int)sizeof(payload), 0), (int)sizeof(payload));
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind, CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[0].bytes, sizeof(payload));
     check_equal(first, payload, sizeof(first));
@@ -1904,7 +1904,7 @@ static void native_check_vector_descriptor_copy_and_short(
     native_test_close_socket(sockets[0]);
     native_test_close_socket(sockets[1]);
     check_equal(native_fixture_forget_socket(
-                    &fixture, (uintptr_t)sockets[1]), TURBO_OK);
+                    &fixture, (uintptr_t)sockets[1]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -1916,17 +1916,17 @@ static void native_check_vector_eof(cflow_io_native_backend_kind kind) {
     cflow_io_submit_result submitted;
     unsigned char received[2] = {0};
 
-    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     span = (cflow_io_native_buffer_span){received, sizeof(received)};
     receive.native = (cflow_io_native_vector_operation){
         CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1], &span, 1u};
     submitted = native_vector_submit(&fixture, 144u, &receive);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), SALTS_OK);
     native_test_close_socket(sockets[0]);
     sockets[0] = NATIVE_TEST_INVALID_SOCKET;
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind, CFLOW_IO_COMPLETION_EOF);
     check_equal(fixture.completions.values[0].bytes, 0u);
     check_equal(cflow_io_actor_acknowledge(&fixture.actor,
@@ -1935,7 +1935,7 @@ static void native_check_vector_eof(cflow_io_native_backend_kind kind) {
     check_equal(receive.released, 1);
     native_test_close_socket(sockets[1]);
     check_equal(native_fixture_forget_socket(
-                    &fixture, (uintptr_t)sockets[1]), TURBO_OK);
+                    &fixture, (uintptr_t)sockets[1]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -1947,18 +1947,18 @@ static void native_check_vector_cancel(cflow_io_native_backend_kind kind) {
     cflow_io_submit_result submitted;
     unsigned char received[2] = {0};
 
-    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     span = (cflow_io_native_buffer_span){received, sizeof(received)};
     receive.native = (cflow_io_native_vector_operation){
         CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1], &span, 1u};
     submitted = native_vector_submit(&fixture, 145u, &receive);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), SALTS_OK);
     check_equal(cflow_io_actor_try_cancel(&fixture.actor,
                                            submitted.request_id),
                 CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_CANCELLED);
     check_equal(cflow_io_actor_acknowledge(&fixture.actor,
@@ -1968,7 +1968,7 @@ static void native_check_vector_cancel(cflow_io_native_backend_kind kind) {
     native_test_close_socket(sockets[0]);
     native_test_close_socket(sockets[1]);
     check_equal(native_fixture_forget_socket(
-                    &fixture, (uintptr_t)sockets[1]), TURBO_OK);
+                    &fixture, (uintptr_t)sockets[1]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -1986,8 +1986,8 @@ static void native_check_vector_max_segments(
         payload[index] = (unsigned char)(index + 1u);
         spans[index] = (cflow_io_native_buffer_span){&received[index], 1u};
     }
-    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     receive.native = (cflow_io_native_vector_operation){
         CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1], spans,
         CFLOW_IO_NATIVE_VECTOR_MAX};
@@ -1995,7 +1995,7 @@ static void native_check_vector_max_segments(
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
     check_equal(send(sockets[0], (const char *)payload, (int)sizeof(payload), 0),
                 (int)sizeof(payload));
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind, CFLOW_IO_COMPLETION_OK);
     check_equal(fixture.completions.values[0].bytes, sizeof(payload));
     check_equal(received, payload, sizeof(payload));
@@ -2005,7 +2005,7 @@ static void native_check_vector_max_segments(
     native_test_close_socket(sockets[0]);
     native_test_close_socket(sockets[1]);
     check_equal(native_fixture_forget_socket(
-                    &fixture, (uintptr_t)sockets[1]), TURBO_OK);
+                    &fixture, (uintptr_t)sockets[1]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -2022,8 +2022,8 @@ static void native_check_vector_same_socket_bidirectional(
     unsigned char received[sizeof(incoming)] = {0};
     unsigned char peer_received[sizeof(outgoing)] = {0};
 
-    check_equal(native_vector_fixture_init(&fixture, kind, 2u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_vector_fixture_init(&fixture, kind, 2u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     check_equal(send(sockets[1], (const char *)incoming,
                      (int)sizeof(incoming), 0), (int)sizeof(incoming));
     receive_spans[0] = (cflow_io_native_buffer_span){&received[0], 1u};
@@ -2040,9 +2040,9 @@ static void native_check_vector_same_socket_bidirectional(
                 CFLOW_IO_SUBMIT_ACCEPTED);
     check_equal(native_vector_submit(&fixture, 148u, &send_operation).status,
                 CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(native_test_receive_exact(sockets[1], peer_received,
-                                          sizeof(peer_received)), TURBO_OK);
+                                          sizeof(peer_received)), SALTS_OK);
     check_equal(received, incoming, sizeof(incoming));
     check_equal(peer_received, outgoing, sizeof(outgoing));
     for (size_t index = 0u; index < fixture.completions.count; ++index) {
@@ -2055,7 +2055,7 @@ static void native_check_vector_same_socket_bidirectional(
     native_test_close_socket(sockets[0]);
     native_test_close_socket(sockets[1]);
     check_equal(native_fixture_forget_socket(
-                    &fixture, (uintptr_t)sockets[0]), TURBO_OK);
+                    &fixture, (uintptr_t)sockets[0]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -2072,8 +2072,8 @@ static void native_check_vector_capacity(
     unsigned char accepted_byte = 0u;
     unsigned char rejected_byte = 0u;
 
-    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     accepted_span = (cflow_io_native_buffer_span){&accepted_byte, 1u};
     rejected_span = (cflow_io_native_buffer_span){&rejected_byte, 1u};
     accepted_operation.native = (cflow_io_native_vector_operation){
@@ -2089,11 +2089,11 @@ static void native_check_vector_capacity(
     check_equal(rejected_operation.released, 0);
     native_vector_operation_release(&rejected_operation);
     check_equal(rejected_operation.released, 1);
-    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), SALTS_OK);
     check_equal(cflow_io_actor_try_cancel(&fixture.actor,
                                            accepted.request_id),
                 CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_CANCELLED);
     check_equal(cflow_io_actor_acknowledge(&fixture.actor,
@@ -2103,7 +2103,7 @@ static void native_check_vector_capacity(
     native_test_close_socket(sockets[0]);
     native_test_close_socket(sockets[1]);
     check_equal(native_fixture_forget_socket(
-                    &fixture, (uintptr_t)sockets[1]), TURBO_OK);
+                    &fixture, (uintptr_t)sockets[1]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -2116,14 +2116,14 @@ static void native_check_vector_identity_lifecycle(
     cflow_io_native_buffer_span span;
     cflow_io_submit_result submitted;
 
-    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     span = (cflow_io_native_buffer_span){(void *)payload, sizeof(payload)};
     send_operation.native = (cflow_io_native_vector_operation){
         CFLOW_IO_NATIVE_TCP_SEND_VECTOR, (uintptr_t)sockets[0], &span, 1u};
     submitted = native_vector_submit(&fixture, 151u, &send_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(cflow_io_actor_acknowledge(&fixture.actor,
@@ -2132,11 +2132,11 @@ static void native_check_vector_identity_lifecycle(
     native_test_close_socket(sockets[0]);
     native_test_close_socket(sockets[1]);
     check_equal(native_fixture_forget_socket(
-                    &fixture, (uintptr_t)sockets[0]), TURBO_OK);
+                    &fixture, (uintptr_t)sockets[0]), SALTS_OK);
     check_equal(cflow_io_native_backend_forget_socket(
                     &fixture.backend, (uintptr_t)sockets[0]),
                 kind == CFLOW_IO_NATIVE_IO_URING
-                    ? TURBO_OK : TURBO_ENOENT);
+                    ? SALTS_OK : SALTS_ENOENT);
     native_fixture_destroy(&fixture);
 }
 
@@ -2149,18 +2149,18 @@ static void native_check_vector_shutdown_drain(
     cflow_io_submit_result submitted;
     unsigned char received = 0u;
 
-    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     span = (cflow_io_native_buffer_span){&received, 1u};
     receive.native = (cflow_io_native_vector_operation){
         CFLOW_IO_NATIVE_TCP_RECV_VECTOR, (uintptr_t)sockets[1], &span, 1u};
     submitted = native_vector_submit(&fixture, 152u, &receive);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait_native_submitted(&fixture, 1u), SALTS_OK);
     check_equal(cflow_io_native_backend_shutdown(&fixture.backend),
-                TURBO_EBUSY);
-    check_equal(cflow_io_actor_close(&fixture.actor), TURBO_OK);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+                SALTS_EBUSY);
+    check_equal(cflow_io_actor_close(&fixture.actor), SALTS_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_CANCELLED);
     check_equal(cflow_io_actor_acknowledge(&fixture.actor,
@@ -2170,7 +2170,7 @@ static void native_check_vector_shutdown_drain(
     native_test_close_socket(sockets[0]);
     native_test_close_socket(sockets[1]);
     check_equal(native_fixture_forget_socket(
-                    &fixture, (uintptr_t)sockets[1]), TURBO_OK);
+                    &fixture, (uintptr_t)sockets[1]), SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -2182,16 +2182,16 @@ static void native_check_vector_invalid_shape_terminal(
     cflow_io_submit_result submitted;
     unsigned char byte = 0u;
 
-    check_equal(native_vector_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_vector_fixture_init(&fixture, kind, 1u), SALTS_OK);
     span = (cflow_io_native_buffer_span){&byte, 1u};
     operation.native = (cflow_io_native_vector_operation){
         CFLOW_IO_NATIVE_TCP_RECV_VECTOR, 1u, &span, 0u};
     submitted = native_vector_submit(&fixture, 153u, &operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[0].error, TURBO_EINVAL);
+    check_equal(fixture.completions.values[0].error, SALTS_EINVAL);
     check_equal(cflow_io_actor_acknowledge(&fixture.actor,
                                             submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -2244,10 +2244,10 @@ static void native_check_tcp_lifecycle(
     memset(&peer, 0, sizeof(peer));
     check_equal(native_fixture_init(
                     &fixture, kind, NATIVE_TEST_CAPACITY),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(native_test_make_tcp_listener(
                     &listener, &client, &destination),
-                TURBO_OK);
+                SALTS_OK);
     accept_operation.native = (cflow_io_native_operation){
         .kind = CFLOW_IO_NATIVE_TCP_ACCEPT,
         .socket = (uintptr_t)listener,
@@ -2265,7 +2265,7 @@ static void native_check_tcp_lifecycle(
     connect_result = native_submit(&fixture, 92u, &connect_operation);
     check_equal(accept_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
     check_equal(connect_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     completion = native_completion_for(&fixture, accept_result.request_id);
     check_not_null(completion);
     if (completion != NULL) {
@@ -2302,7 +2302,7 @@ static void native_check_tcp_lifecycle(
     send_result = native_submit(&fixture, 94u, &send_operation);
     check_equal(receive_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
     check_equal(send_result.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(received, payload, sizeof(payload));
     for (size_t index = 0u; index < fixture.completions.count; ++index) {
         check_equal(fixture.completions.values[index].kind,
@@ -2319,13 +2319,13 @@ static void native_check_tcp_lifecycle(
     native_test_close_socket(listener);
     check_equal(native_fixture_forget_socket(
                     &fixture, (uintptr_t)accepted),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(native_fixture_forget_socket(
                     &fixture, (uintptr_t)client),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(native_fixture_forget_socket(
                     &fixture, (uintptr_t)listener),
-                TURBO_OK);
+                SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -2340,10 +2340,10 @@ static void native_check_tcp_accept_cancel_reuse(
     native_test_operation replacement = {0};
     cflow_io_submit_result submitted;
 
-    check_equal(native_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 1u), SALTS_OK);
     check_equal(native_test_make_tcp_listener(
                     &listener, &client, &destination),
-                TURBO_OK);
+                SALTS_OK);
     cancelled.native = (cflow_io_native_operation){
         .kind = CFLOW_IO_NATIVE_TCP_ACCEPT,
         .socket = (uintptr_t)listener,
@@ -2354,7 +2354,7 @@ static void native_check_tcp_accept_cancel_reuse(
     check_equal(cflow_io_actor_try_cancel(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_CANCELLED);
     check_equal(cancelled.native.result_socket,
@@ -2371,8 +2371,8 @@ static void native_check_tcp_accept_cancel_reuse(
     submitted = native_submit(&fixture, 96u, &replacement);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
     (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
-    check_equal(native_test_start_connect(client, &destination), TURBO_OK);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_test_start_connect(client, &destination), SALTS_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_not_equal(replacement.native.result_socket,
@@ -2387,7 +2387,7 @@ static void native_check_tcp_accept_cancel_reuse(
     native_test_close_socket(listener);
     check_equal(native_fixture_forget_socket(
                     &fixture, (uintptr_t)listener),
-                TURBO_OK);
+                SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -2401,10 +2401,10 @@ static void native_check_tcp_accept_address_overflow(
     cflow_io_submit_result submitted;
     unsigned char peer_byte = 0u;
 
-    check_equal(native_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 1u), SALTS_OK);
     check_equal(native_test_make_tcp_listener(
                     &listener, &client, &destination),
-                TURBO_OK);
+                SALTS_OK);
     accept_operation.native = (cflow_io_native_operation){
         .kind = CFLOW_IO_NATIVE_TCP_ACCEPT,
         .socket = (uintptr_t)listener,
@@ -2414,11 +2414,11 @@ static void native_check_tcp_accept_address_overflow(
     submitted = native_submit(&fixture, 97u, &accept_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
     (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
-    check_equal(native_test_start_connect(client, &destination), TURBO_OK);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_test_start_connect(client, &destination), SALTS_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[0].error, TURBO_ERANGE);
+    check_equal(fixture.completions.values[0].error, SALTS_ERANGE);
     check_equal(accept_operation.native.result_socket,
                 CFLOW_IO_NATIVE_INVALID_SOCKET);
     check_equal(accept_operation.native.address_length, 0u);
@@ -2430,7 +2430,7 @@ static void native_check_tcp_accept_address_overflow(
     native_test_close_socket(listener);
     check_equal(native_fixture_forget_socket(
                     &fixture, (uintptr_t)listener),
-                TURBO_OK);
+                SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -2445,8 +2445,8 @@ static void native_check_udp(cflow_io_native_backend_kind kind) {
     native_test_operation send_operation = {0};
     unsigned char received[NATIVE_TEST_PAYLOAD_CAPACITY] = {0};
 
-    check_equal(native_fixture_init(&fixture, kind, 2u), TURBO_OK);
-    check_equal(native_test_make_udp_pair(sockets, addresses), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 2u), SALTS_OK);
+    check_equal(native_test_make_udp_pair(sockets, addresses), SALTS_OK);
     receive.native = (cflow_io_native_operation){
         CFLOW_IO_NATIVE_UDP_RECV_FROM, (uintptr_t)sockets[1], received,
         sizeof(payload), &source_address, sizeof(source_address), 0u};
@@ -2458,7 +2458,7 @@ static void native_check_udp(cflow_io_native_backend_kind kind) {
                 CFLOW_IO_SUBMIT_ACCEPTED);
     check_equal(native_submit(&fixture, 22u, &send_operation).status,
                 CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(received, payload, sizeof(payload));
     check_true(receive.native.address_length > 0u);
     for (size_t i = 0u; i < fixture.completions.count; ++i) {
@@ -2484,8 +2484,8 @@ static void native_check_same_tcp_socket_bidirectional(
     native_test_operation send_operation = {0};
     unsigned char received[NATIVE_TEST_PAYLOAD_CAPACITY] = {0};
 
-    check_equal(native_fixture_init(&fixture, kind, 2u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 2u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     check_equal(send(sockets[1], (const char *)incoming,
                      (int)sizeof(incoming), 0), (int)sizeof(incoming));
     receive.native = (cflow_io_native_operation){
@@ -2498,7 +2498,7 @@ static void native_check_same_tcp_socket_bidirectional(
                 CFLOW_IO_SUBMIT_ACCEPTED);
     check_equal(native_submit(&fixture, 42u, &send_operation).status,
                 CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(received, incoming, sizeof(incoming));
     for (size_t index = 0u; index < fixture.completions.count; ++index) {
         check_equal(fixture.completions.values[index].kind,
@@ -2519,8 +2519,8 @@ static void native_check_cancel(cflow_io_native_backend_kind kind) {
     unsigned char received[NATIVE_TEST_PAYLOAD_CAPACITY] = {0};
     cflow_io_submit_result submitted;
 
-    check_equal(native_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     receive.native = (cflow_io_native_operation){
         CFLOW_IO_NATIVE_TCP_RECV, (uintptr_t)sockets[1], received,
         sizeof(received), NULL, 0u, 0u};
@@ -2530,7 +2530,7 @@ static void native_check_cancel(cflow_io_native_backend_kind kind) {
     check_equal(cflow_io_actor_try_cancel(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_CANCELLED);
     check_equal(cflow_io_actor_acknowledge(
@@ -2540,7 +2540,7 @@ static void native_check_cancel(cflow_io_native_backend_kind kind) {
     native_test_close_socket(sockets[1]);
     check_equal(cflow_io_native_backend_forget_socket(
                     &fixture.backend, (uintptr_t)sockets[1]),
-                TURBO_OK);
+                SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -2553,14 +2553,14 @@ static void native_check_forget_socket_identity(
     native_test_operation send_operation = {0};
     cflow_io_submit_result submitted;
 
-    check_equal(native_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     send_operation.native = (cflow_io_native_operation){
         CFLOW_IO_NATIVE_TCP_SEND, (uintptr_t)sockets[0],
         (void *)payload, sizeof(payload), NULL, 0u, 0u};
     submitted = native_submit(&fixture, 51u, &send_operation);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_OK);
     check_equal(cflow_io_actor_acknowledge(
@@ -2570,10 +2570,10 @@ static void native_check_forget_socket_identity(
     native_test_close_socket(sockets[1]);
     check_equal(cflow_io_native_backend_forget_socket(
                     &fixture.backend, (uintptr_t)sockets[0]),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(cflow_io_native_backend_forget_socket(
                     &fixture.backend, (uintptr_t)sockets[0]),
-                TURBO_ENOENT);
+                SALTS_ENOENT);
     native_fixture_destroy(&fixture);
 }
 
@@ -2589,9 +2589,9 @@ static void native_check_forget_is_socket_scoped(
     cflow_io_submit_result pending;
     cflow_io_submit_result completed;
 
-    check_equal(native_fixture_init(&fixture, kind, 2u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(pending_sockets), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(completed_sockets), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 2u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(pending_sockets), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(completed_sockets), SALTS_OK);
     pending_receive.native = (cflow_io_native_operation){
         CFLOW_IO_NATIVE_TCP_RECV, (uintptr_t)pending_sockets[1],
         &received, sizeof(received), NULL, 0u, 0u};
@@ -2602,7 +2602,7 @@ static void native_check_forget_is_socket_scoped(
     completed = native_submit(&fixture, 72u, &completed_send);
     check_equal(pending.status, CFLOW_IO_SUBMIT_ACCEPTED);
     check_equal(completed.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.ids[0], completed.request_id);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, completed.request_id),
@@ -2613,12 +2613,12 @@ static void native_check_forget_is_socket_scoped(
     check_equal(cflow_io_native_backend_forget_socket(
                     &fixture.backend,
                     (uintptr_t)completed_sockets[0]),
-                TURBO_OK);
+                SALTS_OK);
 
     check_equal(cflow_io_actor_try_cancel(
                     &fixture.actor, pending.request_id),
                 CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, pending.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -2626,7 +2626,7 @@ static void native_check_forget_is_socket_scoped(
     native_test_close_socket(pending_sockets[1]);
     check_equal(cflow_io_native_backend_forget_socket(
                     &fixture.backend, (uintptr_t)pending_sockets[1]),
-                TURBO_OK);
+                SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 
@@ -2635,7 +2635,7 @@ static void native_check_readiness_has_no_adapter_worker(
     native_fixture fixture;
     cflow_io_native_backend_stats stats = {0};
 
-    check_equal(native_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 1u), SALTS_OK);
     check_true(cflow_io_native_backend_get_stats(&fixture.backend, &stats));
     check_false(stats.worker_running);
     native_fixture_destroy(&fixture);
@@ -2653,8 +2653,8 @@ static void native_check_cancel_queued_follower(
     cflow_io_submit_result first;
     cflow_io_submit_result second;
 
-    check_equal(native_fixture_init(&fixture, kind, 2u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 2u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     first_receive.native = (cflow_io_native_operation){
         CFLOW_IO_NATIVE_TCP_RECV, (uintptr_t)sockets[1],
         &first_byte, sizeof(first_byte), NULL, 0u, 0u};
@@ -2670,7 +2670,7 @@ static void native_check_cancel_queued_follower(
     check_equal(cflow_io_actor_try_cancel(
                     &fixture.actor, second.request_id),
                 CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.ids[0], second.request_id);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_CANCELLED);
@@ -2680,7 +2680,7 @@ static void native_check_cancel_queued_follower(
 
     check_equal(send(sockets[0], (const char *)payload,
                      (int)sizeof(payload), 0), (int)sizeof(payload));
-    check_equal(native_fixture_wait(&fixture, 2u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 2u), SALTS_OK);
     check_equal(fixture.completions.ids[1], first.request_id);
     check_equal(fixture.completions.values[1].kind,
                 CFLOW_IO_COMPLETION_OK);
@@ -2693,7 +2693,7 @@ static void native_check_cancel_queued_follower(
     native_test_close_socket(sockets[1]);
     check_equal(cflow_io_native_backend_forget_socket(
                     &fixture.backend, (uintptr_t)sockets[1]),
-                TURBO_OK);
+                SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 #endif
@@ -2706,16 +2706,16 @@ static void native_check_rejects_truncated_socket(
     unsigned char received = 0u;
     cflow_io_submit_result submitted;
 
-    check_equal(native_fixture_init(&fixture, kind, 1u), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 1u), SALTS_OK);
     receive.native = (cflow_io_native_operation){
         CFLOW_IO_NATIVE_TCP_RECV, (uintptr_t)INT_MAX + 1u, &received,
         sizeof(received), NULL, 0u, 0u};
     submitted = native_submit(&fixture, 61u, &receive);
     check_equal(submitted.status, CFLOW_IO_SUBMIT_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_FAILED);
-    check_equal(fixture.completions.values[0].error, TURBO_EINVAL);
+    check_equal(fixture.completions.values[0].error, SALTS_EINVAL);
     check_equal(cflow_io_actor_acknowledge(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_ACK_RELEASED);
@@ -2733,10 +2733,10 @@ static void native_check_preserves_caller_socket_flags(
     int flags_before = 0;
     int flags_after = 0;
 
-    check_equal(native_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
-    check_equal(native_test_set_blocking(sockets[1]), TURBO_OK);
-    check_equal(native_test_status_flags(sockets[1], &flags_before), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
+    check_equal(native_test_set_blocking(sockets[1]), SALTS_OK);
+    check_equal(native_test_status_flags(sockets[1], &flags_before), SALTS_OK);
     receive.native = (cflow_io_native_operation){
         CFLOW_IO_NATIVE_TCP_RECV, (uintptr_t)sockets[1], &received,
         sizeof(received), NULL, 0u, 0u};
@@ -2746,12 +2746,12 @@ static void native_check_preserves_caller_socket_flags(
     check_true(cflow_io_native_backend_get_stats(&fixture.backend, &stats));
     check_equal(stats.submitted, 1u);
     check_equal(stats.active_requests, 1u);
-    check_equal(native_test_status_flags(sockets[1], &flags_after), TURBO_OK);
+    check_equal(native_test_status_flags(sockets[1], &flags_after), SALTS_OK);
     check_equal(flags_after, flags_before);
     check_equal(cflow_io_actor_try_cancel(
                     &fixture.actor, submitted.request_id),
                 CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+    check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
     check_equal(fixture.completions.values[0].kind,
                 CFLOW_IO_COMPLETION_CANCELLED);
     check_equal(cflow_io_actor_acknowledge(
@@ -2761,7 +2761,7 @@ static void native_check_preserves_caller_socket_flags(
     native_test_close_socket(sockets[1]);
     check_equal(cflow_io_native_backend_forget_socket(
                     &fixture.backend, (uintptr_t)sockets[1]),
-                TURBO_OK);
+                SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 #endif
@@ -2774,8 +2774,8 @@ static void native_check_cancelled_slot_reuse(
     native_test_socket sockets[2];
     unsigned char received[NATIVE_TEST_PAYLOAD_CAPACITY];
 
-    check_equal(native_fixture_init(&fixture, kind, 1u), TURBO_OK);
-    check_equal(native_test_make_tcp_pair(sockets), TURBO_OK);
+    check_equal(native_fixture_init(&fixture, kind, 1u), SALTS_OK);
+    check_equal(native_test_make_tcp_pair(sockets), SALTS_OK);
     for (size_t iteration = 0u;
          iteration < NATIVE_TEST_CANCEL_REUSE_ITERATIONS; ++iteration) {
         native_test_operation cancelled = {0};
@@ -2792,7 +2792,7 @@ static void native_check_cancelled_slot_reuse(
         check_equal(cflow_io_actor_try_cancel(
                         &fixture.actor, submitted.request_id),
                     CFLOW_IO_CANCEL_ACCEPTED);
-        check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+        check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
         check_equal(fixture.completions.values[0].kind,
                     CFLOW_IO_COMPLETION_CANCELLED);
         check_equal(cflow_io_actor_acknowledge(
@@ -2810,12 +2810,12 @@ static void native_check_cancelled_slot_reuse(
              attempt < NATIVE_TEST_CANCEL_SETTLE_YIELDS; ++attempt) {
             (void)cflow_io_actor_run_ready(&fixture.actor, 8u);
             (void)cflow_executor_run_ready(&fixture.executor);
-            turbo_thread_yield();
+            salts_thread_yield();
         }
         check_equal(fixture.completions.count, 0u);
         check_equal(send(sockets[0], (const char *)payload,
                          (int)sizeof(payload), 0), (int)sizeof(payload));
-        check_equal(native_fixture_wait(&fixture, 1u), TURBO_OK);
+        check_equal(native_fixture_wait(&fixture, 1u), SALTS_OK);
         check_equal(fixture.completions.values[0].kind,
                     CFLOW_IO_COMPLETION_OK);
         check_equal(fixture.completions.values[0].bytes, sizeof(payload));
@@ -2829,7 +2829,7 @@ static void native_check_cancelled_slot_reuse(
     native_test_close_socket(sockets[1]);
     check_equal(cflow_io_native_backend_forget_socket(
                     &fixture.backend, (uintptr_t)sockets[1]),
-                TURBO_OK);
+                SALTS_OK);
     native_fixture_destroy(&fixture);
 }
 #endif
@@ -2963,7 +2963,7 @@ spec("CFlow native IO backend") {
             cflow_io_native_backend_vector_actor_ops();
 
         check_equal(actor_ops.submit(&backend, &actor, 1u, 1u, &operation),
-                    TURBO_ENOTSUP);
+                    SALTS_ENOTSUP);
     }
     it("validates the bounded native file operation contract") {
         unsigned char byte = 0u;
@@ -3170,14 +3170,14 @@ spec("CFlow native IO backend") {
         cflow_io_native_backend_config config = {
             CFLOW_IO_NATIVE_IOCP, 0u, 1u};
         check_equal(cflow_io_native_backend_init(&backend, &config),
-                    TURBO_EINVAL);
+                    SALTS_EINVAL);
         check_null(backend.impl);
 
         backend.impl = (void *)(uintptr_t)1u;
         config.request_capacity = 1u;
         config.completion_batch_capacity = 0u;
         check_equal(cflow_io_native_backend_init(&backend, &config),
-                    TURBO_EINVAL);
+                    SALTS_EINVAL);
         check_null(backend.impl);
     }
 
@@ -3199,7 +3199,7 @@ spec("CFlow native IO backend") {
 
         check_false(cflow_io_native_backend_supported(CFLOW_IO_NATIVE_POLL));
         check_equal(cflow_io_native_backend_init(&backend, &config),
-                    TURBO_ENOTSUP);
+                    SALTS_ENOTSUP);
         check_null(backend.impl);
     }
 
@@ -3340,9 +3340,9 @@ spec("CFlow native IO backend") {
             cflow_io_native_backend_config config = {
                 CFLOW_IO_NATIVE_IO_URING, 1u, 1u};
             const int status = cflow_io_native_backend_init(&probe, &config);
-            if (status == TURBO_OK) {
-                check_equal(cflow_io_native_backend_shutdown(&probe), TURBO_OK);
-                check_equal(cflow_io_native_backend_destroy(&probe), TURBO_OK);
+            if (status == SALTS_OK) {
+                check_equal(cflow_io_native_backend_shutdown(&probe), SALTS_OK);
+                check_equal(cflow_io_native_backend_destroy(&probe), SALTS_OK);
                 native_check_backend(CFLOW_IO_NATIVE_IO_URING);
                 native_check_vector_contract(CFLOW_IO_NATIVE_IO_URING);
                 native_check_cancelled_slot_reuse(

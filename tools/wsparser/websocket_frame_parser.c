@@ -56,7 +56,7 @@ static ws_parse_result_t ws_frame_decode_header(const uint8_t *data, size_t len,
   return WS_PARSE_OK;
 }
 
-ws_parse_result_t turbo_wsparser_frame_peek_size(const uint8_t *data, size_t len,
+ws_parse_result_t salts_wsparser_frame_peek_size(const uint8_t *data, size_t len,
                                                  size_t *out_needed) {
   ws_decoded_header decoded;
   ws_parse_result_t status;
@@ -66,7 +66,7 @@ ws_parse_result_t turbo_wsparser_frame_peek_size(const uint8_t *data, size_t len
   return status;
 }
 
-ws_parse_result_t turbo_wsparser_frame_parse(const uint8_t *data, size_t len, ws_frame_t *frame) {
+ws_parse_result_t salts_wsparser_frame_parse(const uint8_t *data, size_t len, ws_frame_t *frame) {
   ws_decoded_header decoded;
   ws_frame_t parsed = {0};
   ws_parse_result_t status;
@@ -88,7 +88,7 @@ ws_parse_result_t turbo_wsparser_frame_parse(const uint8_t *data, size_t len, ws
   return WS_PARSE_OK;
 }
 
-ws_parse_result_t turbo_wsparser_frame_unmask(uint8_t *payload, size_t len,
+ws_parse_result_t salts_wsparser_frame_unmask(uint8_t *payload, size_t len,
                                               const uint8_t masking_key[4]) {
   size_t index = 0u;
   uint32_t mask;
@@ -110,14 +110,14 @@ ws_parse_result_t turbo_wsparser_frame_unmask(uint8_t *payload, size_t len,
   return WS_PARSE_OK;
 }
 
-size_t turbo_wsparser_frame_header_len(uint64_t payload_len, int masked) {
+size_t salts_wsparser_frame_header_len(uint64_t payload_len, int masked) {
   size_t length = 2u;
   if (payload_len > 125u) length += payload_len <= UINT16_MAX ? 2u : 8u;
   if (masked) length += 4u;
   return length;
 }
 
-ws_parse_result_t turbo_wsparser_frame_build_header(uint8_t *buffer, size_t capacity,
+ws_parse_result_t salts_wsparser_frame_build_header(uint8_t *buffer, size_t capacity,
                                                     uint8_t opcode, uint64_t payload_len, int fin,
                                                     int masked, const uint8_t masking_key[4],
                                                     size_t *out_written) {

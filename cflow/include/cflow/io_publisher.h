@@ -4,7 +4,7 @@
 #include <cflow/io_actor.h>
 #include <cflow/publishers.h>
 
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -112,7 +112,7 @@ typedef struct cflow_io_publisher_window_stats {
  * successful owner close. prepare is called only for positive downstream
  * demand. After an operation is accepted, no next operation is prepared until
  * that operation's completion delivery has completed and its Actor request has
- * been acknowledged. Returns TURBO_OK, TURBO_EINVAL, or TURBO_ENOMEM.
+ * been acknowledged. Returns SALTS_OK, SALTS_EINVAL, or SALTS_ENOMEM.
  *
  * Thread safety: construction requires exclusive access. The Subscription
  * Scheduler is the only Publisher resume consumer after success.
@@ -134,8 +134,8 @@ int cflow_publisher_from_io_actor(
  * construction and never grows it while active. Full capacity applies
  * backpressure by stopping preparation; it never retries, drops, overwrites or
  * allocates a fallback queue. Ownership, callback threads, errors and shutdown
- * otherwise follow cflow_publisher_from_io_actor(). Returns TURBO_OK,
- * TURBO_EINVAL, or TURBO_ENOMEM.
+ * otherwise follow cflow_publisher_from_io_actor(). Returns SALTS_OK,
+ * SALTS_EINVAL, or SALTS_ENOMEM.
  */
 int cflow_publisher_from_io_actor_windowed(
     cflow_publisher *out,
@@ -146,9 +146,9 @@ int cflow_publisher_from_io_actor_windowed(
 /**
  * Drives at most max_steps owner transitions and writes the completed count to
  * progressed. Exactly one driver may run; concurrent or reentrant calls return
- * TURBO_EBUSY. Backend completions may arrive on any thread, while completion
- * encoding runs on this owner's manual Executor. Returns TURBO_OK,
- * TURBO_EINVAL, or TURBO_EBUSY.
+ * SALTS_EBUSY. Backend completions may arrive on any thread, while completion
+ * encoding runs on this owner's manual Executor. Returns SALTS_OK,
+ * SALTS_EINVAL, or SALTS_EBUSY.
  */
 int cflow_io_publisher_owner_run_ready(
     cflow_io_publisher_owner *owner,
@@ -190,9 +190,9 @@ bool cflow_io_publisher_owner_get_window_stats(
  * Closes the external owner after Publisher cancellation/destruction and
  * complete driver drain. An early close, a live Publisher, or non-quiescent
  * Actor returns
- * TURBO_EBUSY without releasing state. Success destroys the Actor, manual
+ * SALTS_EBUSY without releasing state. Success destroys the Actor, manual
  * Executor, and typed slot, clears owner, and ends all borrowed config
- * lifetimes. Returns TURBO_OK, TURBO_EINVAL, or TURBO_EBUSY.
+ * lifetimes. Returns SALTS_OK, SALTS_EINVAL, or SALTS_EBUSY.
  *
  * Thread safety: close requires exclusive owner access and never blocks for a
  * native completion; callers must continue driving after cancellation until

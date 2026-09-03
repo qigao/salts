@@ -2,11 +2,11 @@
 
 > **For Codex:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Allow a bound CFlow/TurboSTL Stream to execute asynchronously through an existing concurrent scheduler while preserving serialized Run and transactional Collector semantics.
+**Goal:** Allow a bound CFlow/Container Stream to execute asynchronously through an existing concurrent scheduler while preserving serialized Run and transactional Collector semantics.
 
-**Architecture:** Add one opaque Stream execution handle above `cflow_run`. The handle owns normalized Graph/runtime state and a Collector transaction, borrows the scheduler/source/output, and exposes start, wait, cancel, snapshot, and destroy control-plane operations. TurboSTL adds only typed convenience wrappers.
+**Architecture:** Add one opaque Stream execution handle above `cflow_run`. The handle owns normalized Graph/runtime state and a Collector transaction, borrows the scheduler/source/output, and exposes start, wait, cancel, snapshot, and destroy control-plane operations. Container adds only typed convenience wrappers.
 
-**Tech Stack:** ISO C11, CFlow Run/Scheduler/Range Source, CMeta Collector, TurboUtils thread primitives, TurboSTL typed containers, TinyTest, CMake Presets.
+**Tech Stack:** ISO C11, CFlow Run/Scheduler/Range Source, CMeta Collector, Salts thread primitives, Container typed containers, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-cflow-async-stream-execution-design.md`
 
@@ -36,21 +36,21 @@
 4. Implement synchronous external cancellation, callback-context WOULD_BLOCK protection, waiting, snapshot, and idempotent ZERO destruction.
 5. Build and run `cflow_stream_execution_test` until GREEN.
 
-### Task 3: Expose the TurboSTL convenience surface
+### Task 3: Expose the Container convenience surface
 
 **Files:**
-- Modify: `turbostl/include/turbostl/stream.h`
-- Modify: `turbostl/tests/turbostl_stream_test.c`
+- Modify: `cstl/include/cstl/stream.h`
+- Modify: `cstl/tests/cstl_stream_test.c`
 
-1. Add a TurboSTL alias/wrapper and `collect_async[_typed]` macros that create the existing typed Collector and delegate to CFlow.
+1. Add a Container alias/wrapper and `collect_async[_typed]` macros that create the existing typed Collector and delegate to CFlow.
 2. Add a real worker scheduler test for typed List output and verify wait/snapshot/destroy behavior.
-3. Build and run `turbostl_stream_test` until GREEN.
+3. Build and run `cstl_stream_test` until GREEN.
 
 ### Task 4: Document the execution boundary
 
 **Files:**
 - Modify: `cflow/README.md`
-- Modify: `turbostl/README.md`
+- Modify: `cstl/README.md`
 
 1. Document pipeline-level concurrency, borrowed lifetimes, terminal state inspection, cancellation, and the non-goal of Java compatibility or implicit operator parallelism.
 2. Include a complete compiling usage example with cleanup order.
@@ -60,7 +60,7 @@
 **Files:**
 - Verify only
 
-1. Run focused CFlow and TurboSTL tests.
+1. Run focused CFlow and Container tests.
 2. Build and run the C++ aggregate-header test.
 3. Run the repository release preset build and full CTest suite.
 4. Inspect `git diff --check`, `git status`, and the final diff for unrelated changes.

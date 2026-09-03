@@ -28,7 +28,7 @@ adb devices -l
 在仓库根目录运行：
 
 ```powershell
-./tools/android-test.ps1 test_turbo_error -Tap
+./tools/android-test.ps1 test_salts_error -Tap
 ```
 
 默认使用：
@@ -36,7 +36,7 @@ adb devices -l
 ```text
 Preset:           android-arm64-v8a-release-win
 Build directory: build/android-arm64-v8a-release
-Remote directory:/data/local/tmp/rocida-tests
+Remote directory:/data/local/tmp/salts-tests
 LLDB port:        5039
 ```
 
@@ -80,7 +80,7 @@ CTest `Testing/*/Test.xml` 是测试结果，不包含可靠的 CMake target art
 只有一个在线设备时不需要指定 serial。存在多个设备时，使用 `-Serial`：
 
 ```powershell
-./tools/android-test.ps1 test_turbo_error `
+./tools/android-test.ps1 test_salts_error `
   -Serial "adb-38101FDJG00AVU-Rx6MV9._adb-tls-connect._tcp"
 ```
 
@@ -104,7 +104,7 @@ CTest `Testing/*/Test.xml` 是测试结果，不包含可靠的 CMake target art
 ### TAP 输出
 
 ```powershell
-./tools/android-test.ps1 test_turbo_error -Tap
+./tools/android-test.ps1 test_salts_error -Tap
 ```
 
 ### JUnit 输出
@@ -178,9 +178,9 @@ try {
 或 NDK 的可发现目录中，可显式指定：
 
 ```powershell
-./tools/android-test.ps1 test_turbo_error `
+./tools/android-test.ps1 test_salts_error `
   -NoBuild `
-  -Library 'build/android-arm64-v8a-release/bin/libturbo_utils.so'
+  -Library 'build/android-arm64-v8a-release/bin/libsalts.so'
 ```
 
 无法解析非系统依赖时，脚本 fail fast，并在错误信息中给出缺失的库名。
@@ -191,7 +191,7 @@ try {
 ARM64 Debug 示例：
 
 ```powershell
-./tools/android-test.ps1 test_turbo_error `
+./tools/android-test.ps1 test_salts_error `
   -Preset android-arm64-v8a-debug-win
 ```
 
@@ -200,7 +200,7 @@ ARM64 Debug 示例：
 `-BuildDirectory`：
 
 ```powershell
-./tools/android-test.ps1 test_turbo_error `
+./tools/android-test.ps1 test_salts_error `
   -Preset my-android-preset `
   -BuildDirectory build/my-android-tree
 ```
@@ -249,7 +249,7 @@ configure preset 和 build preset 属于不同 preset 类型，可以使用相�
 ## 交互式 LLDB 调试
 
 ```powershell
-./tools/android-test.ps1 test_turbo_error -Lldb
+./tools/android-test.ps1 test_salts_error -Lldb
 ```
 
 脚本会：
@@ -282,7 +282,7 @@ AOSP 当前的 `lldbclient.py` 是指向历史名称 `gdbclient.py` 的符号链
 使用 `-LldbCommand` 在连接后执行额外命令：
 
 ```powershell
-./tools/android-test.ps1 test_turbo_error `
+./tools/android-test.ps1 test_salts_error `
   -NoBuild `
   -Lldb `
   -LldbCommand @(
@@ -299,7 +299,7 @@ AOSP 当前的 `lldbclient.py` 是指向历史名称 `gdbclient.py` 的符号链
 更换端口：
 
 ```powershell
-./tools/android-test.ps1 test_turbo_error -Lldb -Port 5040
+./tools/android-test.ps1 test_salts_error -Lldb -Port 5040
 ```
 
 端口必须在主机与设备上均未被其他进程占用。
@@ -382,9 +382,9 @@ Android 与 Windows presets 当前共用仓库的 `vcpkg_installed`。Android co
 
 | 场景 | 结果 |
 |---|---|
-| 构建并运行 `test_turbo_error -Tap` | 6 个测试全部通过 |
+| 构建并运行 `test_salts_error -Tap` | 6 个测试全部通过 |
 | 运行 `test_toml` | 13 个测试、74 个断言全部通过 |
 | `-Filter "Basic Types"` | 1 个测试通过，12 个测试被过滤 |
 | JUnit 回传 | XML 成功从设备拉取到主机 |
-| C++ 动态依赖 | 成功部署 `libturbo_utils.so` 和 `libc++_shared.so` |
+| C++ 动态依赖 | 成功部署 `libsalts.so` 和 `libc++_shared.so` |
 | LLDB `main` 断点和 backtrace | 成功解析本地源码并继续运行至退出状态 0 |

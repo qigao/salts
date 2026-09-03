@@ -4,7 +4,7 @@
 #define TINYTEST_NO_MAIN
 #include "tinytest.h"
 
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 static size_t fs_init_failure_executor_calls;
 
@@ -16,7 +16,7 @@ static void fs_init_failure_completion(void *user, uint64_t request_id,
   (void)result;
 }
 
-static void fs_init_failure_mutex_init(turbo_mutex_t *mutex) {
+static void fs_init_failure_mutex_init(salts_mutex_t *mutex) {
   if (mutex != NULL) *mutex = NULL;
 }
 
@@ -29,7 +29,7 @@ static bool fs_init_failure_executor_init(cflow_executor *executor, size_t worke
   return false;
 }
 
-#define turbo_mutex_init fs_init_failure_mutex_init
+#define salts_mutex_init fs_init_failure_mutex_init
 #define cflow_executor_worker_init_with_capacity fs_init_failure_executor_init
 #define cflow_fs_service_init cflow_fs_service_init_with_init_failure
 #define cflow_fs_try_stat cflow_fs_try_stat_with_init_failure
@@ -61,7 +61,7 @@ static bool fs_init_failure_executor_init(cflow_executor *executor, size_t worke
 #undef cflow_fs_try_stat
 #undef cflow_fs_service_init
 #undef cflow_executor_worker_init_with_capacity
-#undef turbo_mutex_init
+#undef salts_mutex_init
 
 spec("CFlow filesystem service initialization failures") {
   it("returns ENOMEM before executor initialization when its mutex is unavailable") {
@@ -72,7 +72,7 @@ spec("CFlow filesystem service initialization failures") {
                                     .completion = fs_init_failure_completion};
 
     fs_init_failure_executor_calls = 0u;
-    check_equal(cflow_fs_service_init_with_init_failure(&service, &config), TURBO_ENOMEM);
+    check_equal(cflow_fs_service_init_with_init_failure(&service, &config), SALTS_ENOMEM);
     check_equal(fs_init_failure_executor_calls, (size_t)0u);
     check_null(service.impl);
   }

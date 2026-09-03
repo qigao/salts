@@ -1,5 +1,5 @@
 /*
- * Rocida buffer/slice ownership model.
+ * Salts buffer/slice ownership model.
  *
  * Scope:
  *   - pool-managed and externally wrapped buffers

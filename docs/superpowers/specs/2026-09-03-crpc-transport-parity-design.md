@@ -33,7 +33,7 @@ CHTTP 在 admission 中按既有契约 retain 所需 profile。
 
 - 同步 client 仍为 single-owner、一次只允许一个 request/reply。
 - async client 仍为单 progress owner；submit 成功后 exactly-once terminal callback。
-- TLS、ALPN、URI/protocol 不匹配错误原样从 CHTTP 传播，例如 `TURBO_EPROTONOSUPPORT`。
+- TLS、ALPN、URI/protocol 不匹配错误原样从 CHTTP 传播，例如 `SALTS_EPROTONOSUPPORT`。
 - HTTP/2 使用 CHTTP 的 multiplexed session pool；CRPC 不创建第二套连接或 stream 状态。
 - `crpc_options` 是公开结构体，字段追加会改变结构尺寸。源码级零初始化兼容；按值跨 DLL ABI 不兼容。
   本仓库当前 CRPC 是静态库，但 installed C/C++ consumer 与头文件 ABI 编译测试必须同步更新。

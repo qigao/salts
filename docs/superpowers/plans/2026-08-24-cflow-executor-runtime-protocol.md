@@ -4,9 +4,9 @@
 
 **Goal:** Implement the proved Executor admission, callback-context, shutdown, and terminal-accounting protocol in the C Manual, Serial, and Worker backends.
 
-**Architecture:** Keep the existing `cflow_executor` ABI as the data plane and add an optional `cflow_executor_control` view over the same built-in backend state. Add policy-aware shutdown and callback-context fail-fast primitives to `turbo_threadpool`, then adapt Manual and pool executors to one public protocol vocabulary.
+**Architecture:** Keep the existing `cflow_executor` ABI as the data plane and add an optional `cflow_executor_control` view over the same built-in backend state. Add policy-aware shutdown and callback-context fail-fast primitives to `salts_threadpool`, then adapt Manual and pool executors to one public protocol vocabulary.
 
-**Tech Stack:** ISO C11, CMeta interfaces, TurboUtils ThreadPool/Disruptor, TinyTest, CMake Presets, Lean protocol specification.
+**Tech Stack:** ISO C11, CMeta interfaces, Salts ThreadPool/Disruptor, TinyTest, CMake Presets, Lean protocol specification.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-cflow-executor-runtime-protocol-design.md`
 
@@ -25,19 +25,19 @@
 ### Task 1: ThreadPool callback and shutdown protocol
 
 **Files:**
-- Modify: `concurrency/include/turbo/thread_pool.h`
+- Modify: `concurrency/include/salts/thread_pool.h`
 - Modify: `concurrency/src/thread_pool.c`
 - Test: `concurrency/tests/thread_pool_test.c`
 
 **Interfaces:**
-- Produces: `turbo_threadpool_shutdown_policy_t`, `turbo_threadpool_wait_status`, `turbo_threadpool_shutdown_with_policy`, and cancelled-task observation.
-- Preserves: `turbo_threadpool_shutdown` as drain and `turbo_threadpool_wait` as the compatibility wrapper.
+- Produces: `salts_threadpool_shutdown_policy_t`, `salts_threadpool_wait_status`, `salts_threadpool_shutdown_with_policy`, and cancelled-task observation.
+- Preserves: `salts_threadpool_shutdown` as drain and `salts_threadpool_wait` as the compatibility wrapper.
 
 - [x] **Step 1: Write callback self-post/self-wait and cancel-pending tests**
 
   Add a one-worker/one-slot callback test whose first nested submit fills the
-  queue and whose second blocking submit returns `TURBO_EBUSY`; assert
-  status-returning wait also returns `TURBO_EBUSY`. Add a gated running task plus
+  queue and whose second blocking submit returns `SALTS_EBUSY`; assert
+  status-returning wait also returns `SALTS_EBUSY`. Add a gated running task plus
   two queued tasks, invoke cancel-pending shutdown, release the gate, and assert
   one completion, two cancellations, and zero pending.
 
@@ -50,7 +50,7 @@
 
   Track the current callback pool in C11 thread-local storage. Reuse
   non-blocking reservation for a same-pool blocking submit and return
-  `TURBO_EBUSY` only when it cannot proceed. Add a cancel-pending flag and
+  `SALTS_EBUSY` only when it cannot proceed. Add a cancel-pending flag and
   cancellation count; workers settle claimed queued entries as cancelled after
   cancel shutdown and continue executing already-running callbacks.
 
@@ -126,8 +126,8 @@
 ## Verification Evidence
 
 - ThreadPool RED: `thread_pool_test.c` failed to compile because
-  `turbo_threadpool_wait_status`, policy-aware shutdown, cancellation count,
-  and `TURBO_THREADPOOL_SHUTDOWN_CANCEL_PENDING` did not exist.
+  `salts_threadpool_wait_status`, policy-aware shutdown, cancellation count,
+  and `SALTS_THREADPOOL_SHUTDOWN_CANCEL_PENDING` did not exist.
 - ThreadPool focused GREEN: callback self-block and cancel-pending filters each
   passed; the complete executable passed 14 tests and 55 assertions.
 - CFlow RED: `cflow_execution_test.c` failed to compile because the control

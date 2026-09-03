@@ -12,7 +12,7 @@ Run; the Statechart strategy uses the terminal-only Source and treats natural
 completion as successful Actor termination.
 
 **Stack:** C11, CMeta typed Events, CFlow Statechart Runtime/Run/Scheduler,
-TurboUtils threading, TinyTest, CMake presets.
+Salts threading, TinyTest, CMake presets.
 
 ---
 

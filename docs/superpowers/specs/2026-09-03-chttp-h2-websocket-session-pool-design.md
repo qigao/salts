@@ -49,7 +49,7 @@ origin and use the same TLS profile.
 
 The API is requests-style and blocks internally until the requested operation completes or its
 deadline expires. The user never calls a poller. The pool is single-owner and rejects a reentrant or
-concurrent operation with `TURBO_EBUSY`.
+concurrent operation with `SALTS_EBUSY`.
 
 ## Ownership and bounded data path
 
@@ -65,7 +65,7 @@ initialization. Opening a slot initializes its CNet WebSocket parser with the al
 bounds and allocates a bounded HTTP/2 header-descriptor array. `session_capacity`, every event ring,
 every payload slab, HTTP/2 input/output, HPACK, and CNet capacities are hard bounds. Arithmetic is
 checked before allocation. Local capacity or peer
-`MAX_CONCURRENT_STREAMS` exhaustion returns `TURBO_ENOBUFS`; no second physical connection and no
+`MAX_CONCURRENT_STREAMS` exhaustion returns `SALTS_ENOBUFS`; no second physical connection and no
 unbounded fallback are created.
 
 The topology is single-threaded/single-owner: public operations synchronously drive CNet, whose

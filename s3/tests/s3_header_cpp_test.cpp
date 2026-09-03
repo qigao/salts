@@ -18,7 +18,7 @@ int main() {
   s3_response_destroy(&response);
   s3_bucket_list_destroy(&buckets);
   s3_object_list_destroy(&objects);
-  if (s3_multipart_destroy(&multipart) != TURBO_OK) return 1;
+  if (s3_multipart_destroy(&multipart) != SALTS_OK) return 1;
   s3_signer_result_destroy(&signature);
   return client.impl == nullptr && async_client.impl == nullptr && multipart_options.size == 0u &&
                  S3_MULTIPART_MAX_PARTS == 10000

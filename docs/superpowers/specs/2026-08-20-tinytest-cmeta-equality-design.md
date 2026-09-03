@@ -4,7 +4,7 @@
 
 TinyTest 只支持 C11 及以上 C 编译模式，不依赖 CMeta。断言 API 以少量泛型名称覆盖
 内建标量、字符串、指针、内存和显式注册的用户值类型；语言无关的运行时能力由
-`TurboUtils::TinyTest` 静态库提供，避免继续把实现堆在 `tinytest.h`。
+`Salts::TinyTest` 静态库提供，避免继续把实现堆在 `tinytest.h`。
 
 ## 接口
 
@@ -51,7 +51,7 @@ spec 函数继续使用头文件中的 select-any TLS 定义；共享 spec 链�
 
 ## 构建与兼容性
 
-`tinytest` CMake target 是 `STATIC`，安装导出名仍为 `TurboUtils::TinyTest`。所有使用者
+`tinytest` CMake target 是 `STATIC`，安装导出名仍为 `Salts::TinyTest`。所有使用者
 必须链接该 target；直接只包含头文件再调用运行时 API 不再受支持。这是有意的构建
 兼容性破坏。安装内容包括静态库以及 `tinytest.h`、`tinytest.hpp`、`tinymeta/traits.h`、
 `tinytest_cmeta.h`、传递依赖 `tinytest_internal.h` 和 `tinymock.h`。

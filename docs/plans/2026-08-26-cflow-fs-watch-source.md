@@ -1,12 +1,12 @@
 # CFlowFS Typed Watch Source Implementation Plan
 
-> Issue: [#116](https://github.com/qigao/turbo-utils/issues/116)
+> Issue: [#116](https://github.com/qigao/salts/issues/116)
 
 **Goal:** 将原生文件监听的有界事件队列无轮询地适配为 typed `cflow_source`，供 Run、Graph 与 Actor 复用。
 
 **Architecture:** `cflow_fs_watch` 保持低层公开 ABI 不变，只在 CFlowFS 库内增加“队列可读/后端终止”通知。新的 Source 适配器把借用的 watcher event 经调用方 encoder 写入一个 trivial CMeta value；Source 和外部 owner 各持一份共享状态引用，Source 销毁只请求关闭，owner 在 Source 已销毁且 watcher 静止后完成 drain/destroy。
 
-**Tech Stack:** C11、CMeta type descriptor、CFlow Source/Waitable、Turbo mutex/atomic、TinyTest、CMake Presets。
+**Tech Stack:** C11、CMeta type descriptor、CFlow Source/Waitable、Salts mutex/atomic、TinyTest、CMake Presets。
 
 ---
 
@@ -17,7 +17,7 @@
 - 线程拓扑：原生 backend 是 producer；CFlow driver 是唯一 consumer；waker 可以从 backend 线程调用。
 - 背压：沿用 watcher 的固定 `event_capacity`，满额进入现有 generation-safe `RESCAN_REQUIRED`，不扩容、不丢失恢复信号。
 - 关闭顺序：停止 Source admission → Source destroy 请求 watcher close，并等待已取出的 waker 返回 → owner 重试 close/drain → backend done、队列空且 readiness 通知全部返回 → watcher destroy → 释放 Source/owner 状态。
-- 错误语义：非法 descriptor/config 返回 `TURBO_EINVAL`/`TURBO_ENOTSUP`；encoder 失败成为 `CFLOW_STEP_ERROR`；并发 driver 或过早 owner close 返回 `TURBO_EBUSY`。
+- 错误语义：非法 descriptor/config 返回 `SALTS_EINVAL`/`SALTS_ENOTSUP`；encoder 失败成为 `CFLOW_STEP_ERROR`；并发 driver 或过早 owner close 返回 `SALTS_EBUSY`。
 
 ### Task 1: 锁定公开 Source 契约（RED）
 
@@ -61,7 +61,7 @@
 
 1. 写 `cflow_run` 行为测试，验证 typed event 经 Source 进入 sink，路径内容由 encoder 复制且在 callback 后仍有效。
 2. 写 encoder failure 测试，验证 Run 以明确错误终止。
-3. 写 owner ordering 测试：Source live 时 close 返回 `TURBO_EBUSY`；Source destroy 后 close 在尚未静止时返回 `TURBO_EBUSY`，最终 drain/destroy 成功并归零。
+3. 写 owner ordering 测试：Source live 时 close 返回 `SALTS_EBUSY`；Source destroy 后 close 在尚未静止时返回 `SALTS_EBUSY`，最终 drain/destroy 成功并归零。
 4. 写 cancel/wake 测试，验证 backend done 会唤醒等待中的 Source 并终止。
 
 ### Task 5: 文档、头文件兼容与验证

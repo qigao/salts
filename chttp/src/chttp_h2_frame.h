@@ -2,9 +2,9 @@
  * @file chttp_h2_frame.h
  * @brief Private HTTP/2 frame codec derived from RFC 9113 sections 4-6.
  *
- * Migrated from qigao/TurboHTTP commit
+ * Migrated from the legacy HTTP repository commit
  * 38f1e389b3f94909db6cb2482a8cbc16522e7e4f and adapted to CHTTP naming and
- * Turbo error codes. This header is private and is not installed.
+ * Salts error codes. This header is private and is not installed.
  */
 
 #ifndef CHTTP_H2_FRAME_H

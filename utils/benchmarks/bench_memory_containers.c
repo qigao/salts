@@ -1,6 +1,6 @@
 #include "tinytest.h"
-#include "turbo_buffer.h"
-#include "turbo_thread.h"
+#include "salts_buffer.h"
+#include "salts_thread.h"
 
 #include <stdint.h>
 #include <stdatomic.h>
@@ -60,14 +60,14 @@ typedef struct slab_alloc_bench_worker {
 static const size_t g_slab_alloc_bench_sizes[SLAB_ALLOC_BENCH_SIZE_CLASSES] = {
     16U, 48U, 112U, 240U, 496U, 1008U, 2032U, 4080U, 8176U};
 
-static turbo_mutex_t g_memory_bench_baseline_mutex;
+static salts_mutex_t g_memory_bench_baseline_mutex;
 
 static void external_wrapper_bench_worker_run(void *arg) {
   external_wrapper_bench_worker_t *worker = (external_wrapper_bench_worker_t *)arg;
   uintptr_t local_sink = 0;
   size_t i;
   atomic_fetch_add_explicit(worker->ready_count, 1U, memory_order_release);
-  while (!atomic_load_explicit(worker->start, memory_order_acquire)) turbo_thread_yield();
+  while (!atomic_load_explicit(worker->start, memory_order_acquire)) salts_thread_yield();
   for (i = 0; i < worker->iterations; ++i) {
     mem_buffer_t *buffer;
     if (worker->locked_baseline) {
@@ -82,9 +82,9 @@ static void external_wrapper_bench_worker_run(void *arg) {
     }
     local_sink ^= (uintptr_t)buffer;
     if (worker->locked_baseline) {
-      turbo_mutex_lock(&g_memory_bench_baseline_mutex);
+      salts_mutex_lock(&g_memory_bench_baseline_mutex);
       free(buffer);
-      turbo_mutex_unlock(&g_memory_bench_baseline_mutex);
+      salts_mutex_unlock(&g_memory_bench_baseline_mutex);
     } else {
       mem_buffer_release(buffer);
     }
@@ -93,7 +93,7 @@ static void external_wrapper_bench_worker_run(void *arg) {
 }
 
 static void external_wrapper_bench_parallel(size_t thread_count, int locked_baseline) {
-  turbo_thread_t threads[EXTERNAL_WRAPPER_BENCH_MAX_THREADS] = {0};
+  salts_thread_t threads[EXTERNAL_WRAPPER_BENCH_MAX_THREADS] = {0};
   external_wrapper_bench_worker_t workers[EXTERNAL_WRAPPER_BENCH_MAX_THREADS];
   atomic_size_t ready_count = 0;
   atomic_int start = 0;
@@ -105,16 +105,16 @@ static void external_wrapper_bench_parallel(size_t thread_count, int locked_base
     workers[i].start = &start;
     workers[i].iterations = EXTERNAL_WRAPPER_BENCH_ITERS;
     workers[i].locked_baseline = locked_baseline;
-    if (turbo_thread_create(&threads[i], external_wrapper_bench_worker_run, &workers[i]) != 0) {
+    if (salts_thread_create(&threads[i], external_wrapper_bench_worker_run, &workers[i]) != 0) {
       atomic_fetch_add_explicit(&g_memory_bench_failures, 1U, memory_order_relaxed);
       break;
     }
     created++;
   }
-  while (atomic_load_explicit(&ready_count, memory_order_acquire) < created) turbo_thread_yield();
+  while (atomic_load_explicit(&ready_count, memory_order_acquire) < created) salts_thread_yield();
   atomic_store_explicit(&start, 1, memory_order_release);
   for (i = 0; i < created; ++i) {
-    if (turbo_thread_join(&threads[i]) != 0)
+    if (salts_thread_join(&threads[i]) != 0)
       atomic_fetch_add_explicit(&g_memory_bench_failures, 1U, memory_order_relaxed);
   }
 }
@@ -135,27 +135,27 @@ static void buffer_recycle_bench_worker_run(void *arg) {
   }
 
   atomic_fetch_add_explicit(worker->ready_count, 1U, memory_order_release);
-  while (!atomic_load_explicit(worker->start, memory_order_acquire)) turbo_thread_yield();
+  while (!atomic_load_explicit(worker->start, memory_order_acquire)) salts_thread_yield();
   for (i = 0; i < worker->iterations; ++i) {
     mem_buffer_t *buffer;
-    if (worker->serialized) turbo_mutex_lock(&g_memory_bench_baseline_mutex);
+    if (worker->serialized) salts_mutex_lock(&g_memory_bench_baseline_mutex);
     buffer = mem_get_buffer(pool, BUFFER_RECYCLE_BENCH_SIZE);
-    if (worker->serialized) turbo_mutex_unlock(&g_memory_bench_baseline_mutex);
+    if (worker->serialized) salts_mutex_unlock(&g_memory_bench_baseline_mutex);
     if (buffer == NULL) {
       atomic_fetch_add_explicit(&g_memory_bench_failures, 1U, memory_order_relaxed);
       continue;
     }
     local_sink ^= (uintptr_t)buffer;
-    if (worker->serialized) turbo_mutex_lock(&g_memory_bench_baseline_mutex);
+    if (worker->serialized) salts_mutex_lock(&g_memory_bench_baseline_mutex);
     mem_buffer_release(buffer);
-    if (worker->serialized) turbo_mutex_unlock(&g_memory_bench_baseline_mutex);
+    if (worker->serialized) salts_mutex_unlock(&g_memory_bench_baseline_mutex);
   }
   atomic_fetch_xor_explicit(&g_parallel_bench_sink, local_sink, memory_order_relaxed);
   if (worker->owner_local) mem_destroy(&worker->local_pool);
 }
 
 static void buffer_recycle_bench_parallel(size_t thread_count, int owner_local, int serialized) {
-  turbo_thread_t threads[EXTERNAL_WRAPPER_BENCH_MAX_THREADS] = {0};
+  salts_thread_t threads[EXTERNAL_WRAPPER_BENCH_MAX_THREADS] = {0};
   buffer_recycle_bench_worker_t workers[EXTERNAL_WRAPPER_BENCH_MAX_THREADS] = {0};
   atomic_size_t ready_count = 0;
   atomic_int start = 0;
@@ -169,16 +169,16 @@ static void buffer_recycle_bench_parallel(size_t thread_count, int owner_local, 
     workers[i].iterations = BUFFER_RECYCLE_BENCH_ITERS;
     workers[i].owner_local = owner_local;
     workers[i].serialized = serialized;
-    if (turbo_thread_create(&threads[i], buffer_recycle_bench_worker_run, &workers[i]) != 0) {
+    if (salts_thread_create(&threads[i], buffer_recycle_bench_worker_run, &workers[i]) != 0) {
       atomic_fetch_add_explicit(&g_memory_bench_failures, 1U, memory_order_relaxed);
       break;
     }
     created++;
   }
-  while (atomic_load_explicit(&ready_count, memory_order_acquire) < created) turbo_thread_yield();
+  while (atomic_load_explicit(&ready_count, memory_order_acquire) < created) salts_thread_yield();
   atomic_store_explicit(&start, 1, memory_order_release);
   for (i = 0; i < created; ++i) {
-    if (turbo_thread_join(&threads[i]) != 0)
+    if (salts_thread_join(&threads[i]) != 0)
       atomic_fetch_add_explicit(&g_memory_bench_failures, 1U, memory_order_relaxed);
   }
 }
@@ -199,7 +199,7 @@ static void slab_alloc_bench_worker_run(void *arg) {
   }
 
   atomic_fetch_add_explicit(worker->ready_count, 1U, memory_order_release);
-  while (!atomic_load_explicit(worker->start, memory_order_acquire)) turbo_thread_yield();
+  while (!atomic_load_explicit(worker->start, memory_order_acquire)) salts_thread_yield();
   for (i = 0; i < worker->iterations; ++i) {
     size_t size = worker->mixed_sizes
                       ? g_slab_alloc_bench_sizes[i % SLAB_ALLOC_BENCH_SIZE_CLASSES]
@@ -217,7 +217,7 @@ static void slab_alloc_bench_worker_run(void *arg) {
 }
 
 static void slab_alloc_bench_parallel(size_t thread_count, int owner_local, int mixed_sizes) {
-  turbo_thread_t threads[EXTERNAL_WRAPPER_BENCH_MAX_THREADS] = {0};
+  salts_thread_t threads[EXTERNAL_WRAPPER_BENCH_MAX_THREADS] = {0};
   slab_alloc_bench_worker_t workers[EXTERNAL_WRAPPER_BENCH_MAX_THREADS] = {0};
   atomic_size_t ready_count = 0;
   atomic_int start = 0;
@@ -231,24 +231,24 @@ static void slab_alloc_bench_parallel(size_t thread_count, int owner_local, int 
     workers[i].iterations = SLAB_ALLOC_BENCH_ITERS;
     workers[i].owner_local = owner_local;
     workers[i].mixed_sizes = mixed_sizes;
-    if (turbo_thread_create(&threads[i], slab_alloc_bench_worker_run, &workers[i]) != 0) {
+    if (salts_thread_create(&threads[i], slab_alloc_bench_worker_run, &workers[i]) != 0) {
       atomic_fetch_add_explicit(&g_memory_bench_failures, 1U, memory_order_relaxed);
       break;
     }
     created++;
   }
-  while (atomic_load_explicit(&ready_count, memory_order_acquire) < created) turbo_thread_yield();
+  while (atomic_load_explicit(&ready_count, memory_order_acquire) < created) salts_thread_yield();
   atomic_store_explicit(&start, 1, memory_order_release);
   for (i = 0; i < created; ++i) {
-    if (turbo_thread_join(&threads[i]) != 0)
+    if (salts_thread_join(&threads[i]) != 0)
       atomic_fetch_add_explicit(&g_memory_bench_failures, 1U, memory_order_relaxed);
   }
 }
 
 spec("Memory and container allocation benchmarks") {
-  before_all() { turbo_mutex_init(&g_memory_bench_baseline_mutex); }
+  before_all() { salts_mutex_init(&g_memory_bench_baseline_mutex); }
 
-  after_all() { turbo_mutex_destroy(&g_memory_bench_baseline_mutex); }
+  after_all() { salts_mutex_destroy(&g_memory_bench_baseline_mutex); }
 
   before_each() { check_equal(mem_init(&g_memory_bench_pool, 0), 0); }
 

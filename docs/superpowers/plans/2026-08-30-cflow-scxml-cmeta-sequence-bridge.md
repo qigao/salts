@@ -4,9 +4,9 @@
 
 **Goal:** Add a private, allocation-free bridge that resolves one reflected CMeta sequence location and opens a validated sized, ordered borrowed Range for later SCXML `<foreach>` execution.
 
-**Architecture:** Compile a dotted NCName path against the existing `cmeta_data_struct_shape` and its paired `cmeta_struct_desc` layout. The compiled private program retains only descriptor pointers, the root-relative field offset, the concrete container storage type, and the declared element type. Runtime opening validates the actual container's semantic sequence projection, concrete generic application, Range element type, and `SIZED | ORDERED` capabilities without depending on TurboSTL types.
+**Architecture:** Compile a dotted NCName path against the existing `cmeta_data_struct_shape` and its paired `cmeta_struct_desc` layout. The compiled private program retains only descriptor pointers, the root-relative field offset, the concrete container storage type, and the declared element type. Runtime opening validates the actual container's semantic sequence projection, concrete generic application, Range element type, and `SIZED | ORDERED` capabilities without depending on Container types.
 
-**Tech Stack:** C11, CMeta data/declared-type/container/Range protocols, CFlowScxml private adapters, TinyTest, CMake presets.
+**Tech Stack:** C11, CMeta data/declared-type/cstl/Range protocols, CFlowScxml private adapters, TinyTest, CMake presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-cflow-scxml-cmeta-data-model-selection.md`
 
@@ -31,7 +31,7 @@
 - Modify: `cflow-scxml/tests/CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: `Struct(TYPE(Vec, int), ...)`, `cmeta_data_sequence`, and the existing raw TurboSTL Vec Range provider.
+- Consumes: `Struct(TYPE(Vec, int), ...)`, `cmeta_data_sequence`, and the existing raw Container Vec Range provider.
 - Produces: behavioral requirements for `cflow_scxml_cmeta_sequence_compile()` and `cflow_scxml_cmeta_sequence_open()`.
 
 - [x] **Step 1: Write the failing success-path test**
@@ -102,5 +102,5 @@
 - Focused GREEN: `cflow_scxml_cmeta_sequence_test` passed 1/1 through `win-dev-user`.
 - Debug ASan adjacent regression: `cmeta_core_test`, `cflow_scxml_cmeta_test`, and `cflow_scxml_cmeta_sequence_test` passed 3/3 through `win-dev-user`.
 - Release regression: the registered `win-release-user` CTest suite passed 200/200.
-- Structural consistency: `codegraph sync .` indexed 3 changed files; CodeGraph identified the bridge's CMeta container/type/range dependencies, while manual `rg.exe` confirmed the dedicated test call sites because `codegraph affected` did not associate the new private source with a test target.
+- Structural consistency: `codegraph sync .` indexed 3 changed files; CodeGraph identified the bridge's CMeta cstl/type/range dependencies, while manual `rg.exe` confirmed the dedicated test call sites because `codegraph affected` did not associate the new private source with a test target.
 - Repository consistency: `git diff --check` completed without diagnostics after the final plan update.

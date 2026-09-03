@@ -1,6 +1,6 @@
 #include "disruptor.h"
 #include "tinytest.h"
-#include "turbo_thread.h"
+#include "salts_thread.h"
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -277,7 +277,7 @@ spec("Disruptor Tests") {
                               .consumer_capacity = 1,
                               .mode = DISRUPTOR_MODE_WORKER_POOL};
     disruptor_worker_wait_test_t test;
-    turbo_thread_t worker = NULL;
+    salts_thread_t worker = NULL;
     disruptor_cursor_t published = {0};
     disruptor_t *d = disruptor_create(&cfg);
     check_not_null(d);
@@ -286,12 +286,12 @@ spec("Disruptor Tests") {
     atomic_init(&test.running, 1);
     atomic_init(&test.entered, 0);
     atomic_init(&test.result, 0);
-    check_equal(turbo_thread_create(&worker, disruptor_test_worker_wait, &test), 0);
-    while (!atomic_load_explicit(&test.entered, memory_order_acquire)) turbo_thread_yield();
+    check_equal(salts_thread_create(&worker, disruptor_test_worker_wait, &test), 0);
+    while (!atomic_load_explicit(&test.entered, memory_order_acquire)) salts_thread_yield();
     check_equal(disruptor_publisher_try_claim(d, &published), 1);
     *(uint64_t *)disruptor_acquire_entry(d, &published) = 42;
     check_equal(disruptor_publisher_publish(d, &published), 1);
-    check_equal(turbo_thread_join(&worker), 0);
+    check_equal(salts_thread_join(&worker), 0);
     check_equal(atomic_load_explicit(&test.result, memory_order_acquire), 1);
     check_equal(test.cursor.sequence, published.sequence);
     check_equal(*(const uint64_t *)disruptor_show_entry(d, &test.cursor), 42);
@@ -305,7 +305,7 @@ spec("Disruptor Tests") {
                               .consumer_capacity = 1,
                               .mode = DISRUPTOR_MODE_WORKER_POOL};
     disruptor_worker_wait_test_t test;
-    turbo_thread_t worker = NULL;
+    salts_thread_t worker = NULL;
     disruptor_t *d = disruptor_create(&cfg);
     check_not_null(d);
     memset(&test, 0, sizeof(test));
@@ -313,11 +313,11 @@ spec("Disruptor Tests") {
     atomic_init(&test.running, 1);
     atomic_init(&test.entered, 0);
     atomic_init(&test.result, 1);
-    check_equal(turbo_thread_create(&worker, disruptor_test_worker_wait, &test), 0);
-    while (!atomic_load_explicit(&test.entered, memory_order_acquire)) turbo_thread_yield();
+    check_equal(salts_thread_create(&worker, disruptor_test_worker_wait, &test), 0);
+    while (!atomic_load_explicit(&test.entered, memory_order_acquire)) salts_thread_yield();
     atomic_store_explicit(&test.running, 0, memory_order_release);
     disruptor_worker_wake_all(d);
-    check_equal(turbo_thread_join(&worker), 0);
+    check_equal(salts_thread_join(&worker), 0);
     check_equal(atomic_load_explicit(&test.result, memory_order_acquire), 0);
     check_equal(test.cursor.sequence, 0);
     disruptor_destroy(d);

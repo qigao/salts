@@ -1,11 +1,11 @@
 # NativeIO Pipe and IPC Boundary Design
 
-Issue: [#168](https://github.com/qigao/turbo-utils/issues/168)
+Issue: [#168](https://github.com/qigao/salts/issues/168)
 
-Related evidence: [#100](https://github.com/qigao/turbo-utils/issues/100),
-[#105](https://github.com/qigao/turbo-utils/issues/105),
-[#133](https://github.com/qigao/turbo-utils/issues/133), and
-[#148](https://github.com/qigao/turbo-utils/issues/148).
+Related evidence: [#100](https://github.com/qigao/salts/issues/100),
+[#105](https://github.com/qigao/salts/issues/105),
+[#133](https://github.com/qigao/salts/issues/133), and
+[#148](https://github.com/qigao/salts/issues/148).
 
 ## Decision
 
@@ -48,7 +48,7 @@ NativeIPC control plane
 
 ## Current repository facts
 
-- `native-io/include/turbo/native_io.h` exposes only `attach_socket`,
+- `native-io/include/salts/native_io.h` exposes only `attach_socket`,
   `release_socket`, TCP receive/send, and UDP receive-from/send-to.
 - NativeIO already fixes endpoint, request, and completion-batch capacity at
   initialization and performs no data-path allocation after initialization.
@@ -155,7 +155,7 @@ how the native resource was created:
 - io_uring accepts a valid pipe/FIFO descriptor but still requires the flag so
   one endpoint contract remains portable across explicitly selected backends.
 - Windows anonymous handles returned by `CreatePipe` are not async-capable and
-  return `TURBO_ENOTSUP` rather than falling back to a worker.
+  return `SALTS_ENOTSUP` rather than falling back to a worker.
 
 The backend borrows the native handle and never closes it. The caller stops
 submission, observes every terminal request, closes the native handle, and
@@ -166,11 +166,11 @@ then calls the matching release function.
 Each backend endpoint record adds an internal discriminator:
 
 ```c
-typedef enum turbo_io_resource_kind {
-  TURBO_IO_RESOURCE_STREAM_SOCKET = 1,
-  TURBO_IO_RESOURCE_DATAGRAM_SOCKET = 2,
-  TURBO_IO_RESOURCE_BYTE_PIPE = 3
-} turbo_io_resource_kind;
+typedef enum salts_io_resource_kind {
+  SALTS_IO_RESOURCE_STREAM_SOCKET = 1,
+  SALTS_IO_RESOURCE_DATAGRAM_SOCKET = 2,
+  SALTS_IO_RESOURCE_BYTE_PIPE = 3
+} salts_io_resource_kind;
 ```
 
 The discriminator is not exposed in `native_io_endpoint`; it is checked on
@@ -211,7 +211,7 @@ event drives only a bounded completion batch and rearms when the lane head
 would block again.
 
 POSIX pipe writes suppress process-visible `SIGPIPE` using the existing
-readiness guard. `EPIPE` becomes a FAILED completion carrying `TURBO_EPIPE` or
+readiness guard. `EPIPE` becomes a FAILED completion carrying `SALTS_EPIPE` or
 the normalized negative native error selected by the existing NativeIO error
 policy. No signal is consumed if it was already pending before the write.
 
@@ -219,12 +219,12 @@ policy. No signal is consumed if it was already pending before the write.
 
 | Condition | API result |
 |---|---|
-| malformed operation, unknown flags, nonzero pipe address fields | `TURBO_EINVAL` before native admission |
-| unsupported backend/resource pair | `TURBO_ENOTSUP` |
-| stale endpoint or request | `TURBO_ENOENT` |
-| endpoint/request capacity exhausted | `TURBO_ENOBUFS` |
-| admission closed | `TURBO_ESHUTDOWN` |
-| observe deadline without terminal packet | `TURBO_ETIMEDOUT`, count zero |
+| malformed operation, unknown flags, nonzero pipe address fields | `SALTS_EINVAL` before native admission |
+| unsupported backend/resource pair | `SALTS_ENOTSUP` |
+| stale endpoint or request | `SALTS_ENOENT` |
+| endpoint/request capacity exhausted | `SALTS_ENOBUFS` |
+| admission closed | `SALTS_ESHUTDOWN` |
+| observe deadline without terminal packet | `SALTS_ETIMEDOUT`, count zero |
 | pipe read returns positive bytes | `NATIVE_IO_COMPLETION_OK` |
 | pipe read returns zero / broken peer read EOF | `NATIVE_IO_COMPLETION_EOF` |
 | pipe write transfers a partial positive prefix | `NATIVE_IO_COMPLETION_OK` with actual bytes |
@@ -238,7 +238,7 @@ Cancel success only marks or submits cancellation; it does not end any borrow.
 
 ## NativeIPC control plane
 
-NativeIPC is a separate installed header, `turbo/native_ipc.h`, within the
+NativeIPC is a separate installed header, `salts/native_ipc.h`, within the
 NativeIO target. It creates or accepts byte-pipe resources and transfers their
 ownership; it does not submit payload operations.
 
@@ -246,58 +246,58 @@ The first public surface preserves already-tested CFlow semantics under root
 names. The complete initial type vocabulary is:
 
 ```c
-typedef uint64_t turbo_ipc_request_id;
+typedef uint64_t salts_ipc_request_id;
 
-typedef enum turbo_ipc_pipe_direction {
-  TURBO_IPC_PIPE_READ = 1u,
-  TURBO_IPC_PIPE_WRITE = 2u,
-  TURBO_IPC_PIPE_DUPLEX = 3u
-} turbo_ipc_pipe_direction;
+typedef enum salts_ipc_pipe_direction {
+  SALTS_IPC_PIPE_READ = 1u,
+  SALTS_IPC_PIPE_WRITE = 2u,
+  SALTS_IPC_PIPE_DUPLEX = 3u
+} salts_ipc_pipe_direction;
 
-typedef enum turbo_ipc_pipe_capability {
-  TURBO_IPC_WINDOWS_SERVER_ACCEPT = 0,
-  TURBO_IPC_WINDOWS_CLIENT_CONNECT,
-  TURBO_IPC_POSIX_FIFO_OPEN
-} turbo_ipc_pipe_capability;
+typedef enum salts_ipc_pipe_capability {
+  SALTS_IPC_WINDOWS_SERVER_ACCEPT = 0,
+  SALTS_IPC_WINDOWS_CLIENT_CONNECT,
+  SALTS_IPC_POSIX_FIFO_OPEN
+} salts_ipc_pipe_capability;
 
-typedef struct turbo_ipc_pipe_endpoint {
+typedef struct salts_ipc_pipe_endpoint {
   uintptr_t handle;
   uint32_t native_io_flags;
-} turbo_ipc_pipe_endpoint;
+} salts_ipc_pipe_endpoint;
 
-typedef struct turbo_ipc_pipe_server {
+typedef struct salts_ipc_pipe_server {
   void *impl;
-} turbo_ipc_pipe_server;
+} salts_ipc_pipe_server;
 
-typedef enum turbo_ipc_completion_kind {
-  TURBO_IPC_COMPLETION_OK = 1,
-  TURBO_IPC_COMPLETION_CANCELLED,
-  TURBO_IPC_COMPLETION_FAILED
-} turbo_ipc_completion_kind;
+typedef enum salts_ipc_completion_kind {
+  SALTS_IPC_COMPLETION_OK = 1,
+  SALTS_IPC_COMPLETION_CANCELLED,
+  SALTS_IPC_COMPLETION_FAILED
+} salts_ipc_completion_kind;
 
-typedef struct turbo_ipc_completion {
-  turbo_ipc_request_id request_id;
-  turbo_ipc_completion_kind kind;
+typedef struct salts_ipc_completion {
+  salts_ipc_request_id request_id;
+  salts_ipc_completion_kind kind;
   int status;
   uint32_t native_status;
-} turbo_ipc_completion;
+} salts_ipc_completion;
 
-typedef void (*turbo_ipc_pipe_accept_fn)(
+typedef void (*salts_ipc_pipe_accept_fn)(
     void *user,
-    const turbo_ipc_completion *completion,
-    turbo_ipc_pipe_endpoint endpoint);
+    const salts_ipc_completion *completion,
+    salts_ipc_pipe_endpoint endpoint);
 
-typedef struct turbo_ipc_pipe_server_config {
+typedef struct salts_ipc_pipe_server_config {
   const char *name;
-  turbo_ipc_pipe_direction direction;
+  salts_ipc_pipe_direction direction;
   size_t request_capacity;
   size_t input_buffer_size;
   size_t output_buffer_size;
-  turbo_ipc_pipe_accept_fn completion;
+  salts_ipc_pipe_accept_fn completion;
   void *completion_user;
-} turbo_ipc_pipe_server_config;
+} salts_ipc_pipe_server_config;
 
-typedef struct turbo_ipc_pipe_server_stats {
+typedef struct salts_ipc_pipe_server_stats {
   size_t request_capacity;
   size_t active_requests;
   uint64_t submitted;
@@ -306,37 +306,37 @@ typedef struct turbo_ipc_pipe_server_stats {
   uint64_t failed;
   uint64_t rejected_full;
   bool admission_open;
-} turbo_ipc_pipe_server_stats;
+} salts_ipc_pipe_server_stats;
 
-bool turbo_ipc_pipe_capability_supported(
-    turbo_ipc_pipe_capability capability);
-void turbo_ipc_pipe_endpoint_init(turbo_ipc_pipe_endpoint *endpoint);
-bool turbo_ipc_pipe_endpoint_valid(const turbo_ipc_pipe_endpoint *endpoint);
-int turbo_ipc_pipe_endpoint_close(turbo_ipc_pipe_endpoint *endpoint);
+bool salts_ipc_pipe_capability_supported(
+    salts_ipc_pipe_capability capability);
+void salts_ipc_pipe_endpoint_init(salts_ipc_pipe_endpoint *endpoint);
+bool salts_ipc_pipe_endpoint_valid(const salts_ipc_pipe_endpoint *endpoint);
+int salts_ipc_pipe_endpoint_close(salts_ipc_pipe_endpoint *endpoint);
 
-int turbo_ipc_pipe_server_init(turbo_ipc_pipe_server *server,
-                               const turbo_ipc_pipe_server_config *config);
-int turbo_ipc_pipe_server_try_accept(turbo_ipc_pipe_server *server,
-                                     turbo_ipc_request_id *out_request_id);
-int turbo_ipc_pipe_server_cancel(turbo_ipc_pipe_server *server,
-                                 turbo_ipc_request_id request_id);
-int turbo_ipc_pipe_server_observe(turbo_ipc_pipe_server *server,
+int salts_ipc_pipe_server_init(salts_ipc_pipe_server *server,
+                               const salts_ipc_pipe_server_config *config);
+int salts_ipc_pipe_server_try_accept(salts_ipc_pipe_server *server,
+                                     salts_ipc_request_id *out_request_id);
+int salts_ipc_pipe_server_cancel(salts_ipc_pipe_server *server,
+                                 salts_ipc_request_id request_id);
+int salts_ipc_pipe_server_observe(salts_ipc_pipe_server *server,
                                   size_t max_events,
                                   size_t *out_count);
-int turbo_ipc_pipe_server_close(turbo_ipc_pipe_server *server);
-bool turbo_ipc_pipe_server_is_quiescent(
-    const turbo_ipc_pipe_server *server);
-bool turbo_ipc_pipe_server_get_stats(
-    const turbo_ipc_pipe_server *server,
-    turbo_ipc_pipe_server_stats *out_stats);
-int turbo_ipc_pipe_server_destroy(turbo_ipc_pipe_server *server);
+int salts_ipc_pipe_server_close(salts_ipc_pipe_server *server);
+bool salts_ipc_pipe_server_is_quiescent(
+    const salts_ipc_pipe_server *server);
+bool salts_ipc_pipe_server_get_stats(
+    const salts_ipc_pipe_server *server,
+    salts_ipc_pipe_server_stats *out_stats);
+int salts_ipc_pipe_server_destroy(salts_ipc_pipe_server *server);
 
-int turbo_ipc_named_pipe_connect(const char *name,
-                                 turbo_ipc_pipe_direction direction,
-                                 turbo_ipc_pipe_endpoint *out_endpoint);
-int turbo_ipc_fifo_open(const char *path,
-                        turbo_ipc_pipe_direction direction,
-                        turbo_ipc_pipe_endpoint *out_endpoint);
+int salts_ipc_named_pipe_connect(const char *name,
+                                 salts_ipc_pipe_direction direction,
+                                 salts_ipc_pipe_endpoint *out_endpoint);
+int salts_ipc_fifo_open(const char *path,
+                        salts_ipc_pipe_direction direction,
+                        salts_ipc_pipe_endpoint *out_endpoint);
 ```
 
 Windows server accept is fixed-capacity and owner-driven. A successful observe
@@ -346,8 +346,8 @@ connect is one synchronous `CreateFile` attempt: missing and busy are returned,
 and NativeIPC does not call `WaitNamedPipe` or retry.
 
 POSIX FIFO open is one synchronous nonblocking control-plane operation. Writer
-open with no reader maps `ENXIO` to `TURBO_EPIPE`. FIFO has no portable accept
-object, so its server APIs return `TURBO_ENOTSUP` on POSIX. Path creation,
+open with no reader maps `ENXIO` to `SALTS_EPIPE`. FIFO has no portable accept
+object, so its server APIs return `SALTS_ENOTSUP` on POSIX. Path creation,
 unlink policy, permissions, and sandbox/security policy remain caller-owned.
 
 The endpoint wrapper is move-only by contract despite C's copy syntax. Close
@@ -417,7 +417,7 @@ token retains it through terminal delivery and acknowledgement.
 The adapter owns one NativeIO backend plus a fixed bridge table sized from
 `backend.request_capacity`. It binds to one `cflow_io_actor` because the
 existing Actor cancel callback carries a request ID but no Actor identity.
-A second Actor submit fails fast with `TURBO_EINVAL`; sharing one adapter across
+A second Actor submit fails fast with `SALTS_EINVAL`; sharing one adapter across
 Actors would make duplicate per-Actor request IDs ambiguous.
 
 Actor producers continue to publish commands through the Actor's existing
@@ -472,7 +472,7 @@ each capacity <= UINT32_MAX
 capacity * record_size does not overflow SIZE_MAX
 ```
 
-Full admission returns `TURBO_ENOBUFS`; there is no spin, wait-for-space,
+Full admission returns `SALTS_ENOBUFS`; there is no spin, wait-for-space,
 unbounded allocation, overwrite, drop, or blocking fallback. Configuration is
 a memory and descriptor budget, not a throughput promise. Benchmarks must
 report rejections and peak retained resources alongside throughput.
@@ -563,7 +563,7 @@ The root dependency remains one-way:
 CFlow -> NativeIO -> Platform
 ```
 
-NativeIO never links CFlow, Actor, Graph, Executor, or TurboSTL. Existing
+NativeIO never links CFlow, Actor, Graph, Executor, or Container. Existing
 NativeIO socket callers do not need to migrate. Rollback before CFlow migration
 removes additive pipe/control-plane APIs; rollback during migration restores
 the compatibility facade implementation without changing caller data.
@@ -608,7 +608,7 @@ without removing a cross-thread boundary.
 ### Implement blocking fallback with a thread or coroutine pool
 
 Rejected. It changes resource capacity, cancellation, affinity, scheduling, and
-latency semantics. Unsupported resources return `TURBO_ENOTSUP`; a future
+latency semantics. Unsupported resources return `SALTS_ENOTSUP`; a future
 worker-backed adapter must be explicitly named and independently bounded.
 
 ### Place shared memory and synchronization objects in NativeIO
@@ -631,8 +631,8 @@ Correctness precedes performance:
 - repeated success/failure/cancel/shutdown resource-count stability;
 - Actor completion, Executor delivery, acknowledgement, Source WAIT/wake,
   cancellation, and Run close ordering;
-- install/export consumption of `TurboUtils::NativeIO` and
-  `TurboUtils::CFlow`.
+- install/export consumption of `Salts::NativeIO` and
+  `Salts::CFlow`.
 
 Performance reports compare only equivalent semantic paths on the same commit:
 
@@ -649,7 +649,7 @@ hypothesis.
 
 ## Documentation sources
 
-- Current root contract: `native-io/include/turbo/native_io.h`
+- Current root contract: `native-io/include/salts/native_io.h`
 - Current NativeIO implementation notes: `native-io/README.md`
 - Legacy pipe data semantics:
   `docs/superpowers/specs/2026-08-25-cflow-native-pipe-design.md`

@@ -3,7 +3,7 @@
 
 #include "json_parser.h"
 #include "toonc.h"
-#include <turbo_error.h>
+#include <salts_error.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,11 +20,11 @@ extern "C" {
  *
  * @param root Source TOON node; borrowed for the duration of the call.
  * @param out_value Receives an owned JSON value released with json_free().
- * @return TURBO_OK on success; TURBO_EINVAL for invalid arguments;
- *         TURBO_EPROTO for a malformed, shared, cyclic, or duplicate-key
- *         TOON tree; TURBO_ECHARSET for invalid UTF-8; TURBO_ERANGE for a
- *         non-finite number or excessive depth; TURBO_ENOTSUP for an
- *         unsupported node type; or TURBO_ENOMEM. On failure, *out_value is
+ * @return SALTS_OK on success; SALTS_EINVAL for invalid arguments;
+ *         SALTS_EPROTO for a malformed, shared, cyclic, or duplicate-key
+ *         TOON tree; SALTS_ECHARSET for invalid UTF-8; SALTS_ERANGE for a
+ *         non-finite number or excessive depth; SALTS_ENOTSUP for an
+ *         unsupported node type; or SALTS_ENOMEM. On failure, *out_value is
  *         NULL.
  */
 int toon_json_to_value(const toonObject *root, json_value_t **out_value);
@@ -41,11 +41,11 @@ int toon_json_to_value(const toonObject *root, json_value_t **out_value);
  *
  * @param value Source JSON value; borrowed for the duration of the call.
  * @param out_root Receives an owned TOON tree released with TOONc_free().
- * @return TURBO_OK on success; TURBO_EINVAL for invalid arguments;
- *         TURBO_EPROTO for a malformed JSON DOM; TURBO_ECHARSET for invalid
- *         UTF-8; TURBO_ERANGE for a non-finite/lossy number or excessive
- *         depth; TURBO_ENOTSUP for an embedded-NUL object key or unsupported
- *         JSON type; or TURBO_ENOMEM. On failure, *out_root is NULL.
+ * @return SALTS_OK on success; SALTS_EINVAL for invalid arguments;
+ *         SALTS_EPROTO for a malformed JSON DOM; SALTS_ECHARSET for invalid
+ *         UTF-8; SALTS_ERANGE for a non-finite/lossy number or excessive
+ *         depth; SALTS_ENOTSUP for an embedded-NUL object key or unsupported
+ *         JSON type; or SALTS_ENOMEM. On failure, *out_root is NULL.
  */
 int toon_json_from_value(const json_value_t *value, toonObject **out_root);
 

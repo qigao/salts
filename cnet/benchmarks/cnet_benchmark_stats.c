@@ -1,6 +1,6 @@
 #include "cnet_benchmark_stats.h"
 
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 #include <math.h>
 #include <stdbool.h>
@@ -24,13 +24,13 @@ static int cnet_benchmark_summarize_impl(const double *values, size_t count, boo
   double *scratch;
   double median;
 
-  if (values == NULL || out_summary == NULL || count == 0u) return TURBO_EINVAL;
-  if (count > SIZE_MAX / sizeof(*scratch)) return TURBO_ERANGE;
+  if (values == NULL || out_summary == NULL || count == 0u) return SALTS_EINVAL;
+  if (count > SIZE_MAX / sizeof(*scratch)) return SALTS_ERANGE;
   for (size_t index = 0u; index < count; ++index) {
-    if (!isfinite(values[index]) || (require_positive && values[index] <= 0.0)) return TURBO_ERANGE;
+    if (!isfinite(values[index]) || (require_positive && values[index] <= 0.0)) return SALTS_ERANGE;
   }
   scratch = (double *)malloc(count * sizeof(*scratch));
-  if (scratch == NULL) return TURBO_ENOMEM;
+  if (scratch == NULL) return SALTS_ENOMEM;
   for (size_t index = 0u; index < count; ++index)
     scratch[index] = values[index];
   qsort(scratch, count, sizeof(*scratch), cnet_benchmark_double_compare);
@@ -40,7 +40,7 @@ static int cnet_benchmark_summarize_impl(const double *values, size_t count, boo
   qsort(scratch, count, sizeof(*scratch), cnet_benchmark_double_compare);
   *out_summary = (cnet_benchmark_summary){median, cnet_benchmark_median(scratch, count)};
   free(scratch);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_benchmark_summarize(const double *values, size_t count,
@@ -54,15 +54,15 @@ int cnet_benchmark_summarize_paired_delta(const double *baseline, const double *
   int status;
 
   if (baseline == NULL || candidate == NULL || out_summary == NULL || count == 0u)
-    return TURBO_EINVAL;
-  if (count > SIZE_MAX / sizeof(*deltas)) return TURBO_ERANGE;
+    return SALTS_EINVAL;
+  if (count > SIZE_MAX / sizeof(*deltas)) return SALTS_ERANGE;
   deltas = (double *)malloc(count * sizeof(*deltas));
-  if (deltas == NULL) return TURBO_ENOMEM;
+  if (deltas == NULL) return SALTS_ENOMEM;
   for (size_t index = 0u; index < count; ++index) {
     if (!isfinite(baseline[index]) || baseline[index] <= 0.0 || !isfinite(candidate[index]) ||
         candidate[index] <= 0.0) {
       free(deltas);
-      return TURBO_ERANGE;
+      return SALTS_ERANGE;
     }
     deltas[index] = (candidate[index] / baseline[index] - 1.0) * 100.0;
   }

@@ -203,7 +203,7 @@ Struct Metadata
     可以被 Serializer / Binder 复用
 ```
 
-当前 Rocida 已经有一条更具体的实现链：
+当前 Salts 已经有一条更具体的实现链：
 
 ```text
 Format Adapter
@@ -360,18 +360,18 @@ CMeta target status
 当前构建边界同样保持分层：
 
 ```text
-Rocida::CSerde
+Salts::CSerde
     = canonical token protocol
 
-Rocida::CBind
+Salts::CBind
     = CSerde + CMeta 的 format-neutral decode kernel
 
-Rocida::JsonCSerdeAdapter
+Salts::JsonCSerdeAdapter
     = JSON DOM 到 CSerde reader 的独立适配 target
 ```
 
-基础 `Rocida::JsonParser` 不因为存在这个适配器就反向依赖 CSerde。
-需要这条桥的 consumer 显式链接 `Rocida::JsonCSerdeAdapter`。
+基础 `Salts::JsonParser` 不因为存在这个适配器就反向依赖 CSerde。
+需要这条桥的 consumer 显式链接 `Salts::JsonCSerdeAdapter`。
 
 同样需要明确当前边界：
 
@@ -1674,7 +1674,7 @@ submit next operation
 Coroutine 可以把这段控制流重新写成接近同步代码的形式，但它不应该成为第二份
 I/O 状态源。
 
-当前 `Rocida::Coroutine` 是 minicoro 的唯一编译封装，提供单 owner 有界
+当前 `Salts::Coroutine` 是 minicoro 的唯一编译封装，提供单 owner 有界
 frame pool 和可选的固定 shard Executor。每个 Executor worker 独占 scheduler、pool 与
 有界 command queue，用户线程只负责 submit；显式 shard affinity 可让同一 connection
 的 coroutine 始终在同一 owner 上运行。`NativeIO` 仍然拥有 request slot 和 terminal completion；
@@ -1776,9 +1776,9 @@ CFlow
 因此 CNet 不应该让 NativeIO 负责 DNS、URI、连接状态或协议握手；也不应该把
 TCP、UDP、Pipe 的 transport 语义塞进 CFlow Graph。
 
-当前 CNet 随 Rocida 正常构建，source-tree target 为 `turbo_cnet`，安装包导出
-`Rocida::CNet`、`<cnet/cnet.h>` 与独立的 `<cnet/websocket.h>`。TCP/TLS/UDP endpoint URI
-交给 Rocida UriParser 分析，再由 transport adapter 严格约束 scheme、host 与
+当前 CNet 随 Salts 正常构建，source-tree target 为 `salts_cnet`，安装包导出
+`Salts::CNet`、`<cnet/cnet.h>` 与独立的 `<cnet/websocket.h>`。TCP/TLS/UDP endpoint URI
+交给 Salts UriParser 分析，再由 transport adapter 严格约束 scheme、host 与
 port；Pipe 是专用 IPC endpoint，因此有界保留 `pipe://` 后的原始名称，避免将方括号或冒号
 误解为 network authority 而改变实际连接目标。书中可以讨论已经由测试覆盖的 base API、TLS transport 和 WebSocket
 session engine，但不能把尚未实现的 WS/WSS HTTP endpoint 或 KCP 写成已发布事实。
@@ -1838,8 +1838,8 @@ CNet depends on llhttp
 CHTTP depends on CNet and llhttp
 ```
 
-对应源码位于 `chttp/`，source-tree target 是 `turbo_chttp`；安装包导出
-`Rocida::CHTTP`。llhttp 是 Rocida 的基础 vcpkg 依赖，但仍只作为 CHTTP 的私有解析
+对应源码位于 `chttp/`，source-tree target 是 `salts_chttp`；安装包导出
+`Salts::CHTTP`。llhttp 是 Salts 的基础 vcpkg 依赖，但仍只作为 CHTTP 的私有解析
 backend。H1 client 接受 TCP、TLS 与 Pipe，并已在固定 `request_capacity` 内实现同
 `connection_uri + authority + TLS profile identity + protocol` 的 keep-alive 复用；H1 每条连接同一
 时刻只承载一个 request。显式 `CHTTP_HTTP_2` 请求使用 h2c prior knowledge 或 TLS ALPN `h2`，
@@ -1869,7 +1869,7 @@ HTTP/2 的 frame、HPACK、SETTINGS、flow-control 与 stream lifecycle 属于 C
 对象与 multipart 一致性属于 CHTTP 之上的应用协议。二者都不应下沉进 CNet 或 NativeIO，
 HTTP/3 也不作为这条迁移路径的 fallback。
 
-公开的 `Rocida::S3` 借用 `chttp_client` 或 `chttp_async_client`，不复制 transport owner。
+公开的 `Salts::S3` 借用 `chttp_client` 或 `chttp_async_client`，不复制 transport owner。
 同步风格覆盖 bucket/object CRUD、分页 list、copy、presigned URL、SSE、文件传输、可恢复
 multipart 与 bucket 配置子资源；高级 async 风格保留给 Executor、Actor 与批量事件循环。
 H1/H2 的连接复用、TLS、流控和文件 source/sink 继续由 CHTTP 拥有，SigV4 canonical request、
@@ -1920,7 +1920,7 @@ middleware 的核心不是“一个回调数组”，而是受约束的 continua
 
 Session 采用 Cookie id + server-side store：Cookie 只保存系统 CSPRNG 生成的 128-bit id，
 key/value 被复制进固定 `session_capacity × session_entry_capacity` 存储。idle timeout 到期后才
-回收；容量全部被活跃 Session 占用时，新的 set 返回 `TURBO_ENOBUFS`，不能用无界 map 或静默
+回收；容量全部被活跃 Session 占用时，新的 set 返回 `SALTS_ENOBUFS`，不能用无界 map 或静默
 LRU 驱逐掩盖资源压力。默认 Cookie 属性包含 HttpOnly、SameSite=Lax 与 Path=/，部署 HTTPS 时
 还应打开 Secure。当前 store 只属于单进程 owner，不是持久化或分布式 Session。
 
@@ -1936,7 +1936,7 @@ LRU 驱逐掩盖资源压力。默认 Cookie 属性包含 HttpOnly、SameSite=La
 | 异步 DB、异步文件、Actor continuation | 需要未来 owning request token + owner mailbox 的 suspend/resume API |
 | TLS、KCP、WebSocket | CNet TLS/WebSocket engine 与 CHTTP H1 Upgrade、H2 RFC 8441、WS/WSS route/client 已实现；CNet KCP 尚未实现 |
 | HTTP/2 | client/server 已导入 frame/HPACK/protocol 并使用 CNet stream；server 复用 H1 route/middleware/Session API |
-| S3 | `Rocida::S3` 已在 CHTTP 上层实现，复用 H1/H2、TLS、连接池与异步文件 source/sink |
+| S3 | `Salts::S3` 已在 CHTTP 上层实现，复用 H1/H2、TLS、连接池与异步文件 source/sink |
 | HTTP/3 | 不在当前范围内，不作为隐式 fallback |
 
 因此“Castle 功能可以建立在 CHTTP 之上”不等于“全部代码都应该塞进 CHTTP”。当前可以直接迁移
@@ -2093,8 +2093,8 @@ chttp_client_config
 CHTTP 已进入 installed shared-library target。公开 C API 在 options 尾部增加 TLS profile 与
 protocol，并在 client config 尾部增加 H2 资源上限；使用 designated/zero initialization 的源码保持
 H1 默认行为。因为公开结构布局已经变化，本阶段将 CHTTP library version 提升到 2.0.0、
-ABI/SOVERSION 提升到 2：Unix 使用 `libturbo_chttp.so.2` SONAME，Windows 使用
-`turbo_chttp-2.dll`，而下游仍通过 `Rocida::CHTTP` 链接。ABI 1 二进制不会意外装载 ABI 2；源码
+ABI/SOVERSION 提升到 2：Unix 使用 `libsalts_chttp.so.2` SONAME，Windows 使用
+`salts_chttp-2.dll`，而下游仍通过 `Salts::CHTTP` 链接。ABI 1 二进制不会意外装载 ABI 2；源码
 使用者仍必须用匹配头文件重新编译并重新链接。公开 options 仍没有可扩展的 `struct_size` 与 ABI
 version，因此后续不能继续把尾部扩展误写成二进制兼容；应先引入版本化 options，或在再次改变
 布局时继续提升 ABI major，也不能依靠未初始化尾部字段或同名布尔值猜测。
@@ -2180,7 +2180,7 @@ CHTTP 不应复制 socket 配置体系。它只保存协议和复用策略：
 H2 session 达到 peer `SETTINGS_MAX_CONCURRENT_STREAMS` 时，client 会先尝试其他同 key session；仍有
 物理连接容量时再建立一条 session，使单连接的 stream 上限不会变成整个 origin 的隐式串行点。
 pool 满且没有同 key 可用 session 时，高级 submit 开始关闭一个没有活动 request/stream 的不匹配
-H1 connection 或 H2 session，并以 `TURBO_ENOBUFS` 把重试责任交给 progress owner；H1/H2 切换也
+H1 connection 或 H2 session，并以 `SALTS_ENOBUFS` 把重试责任交给 progress owner；H1/H2 切换也
 遵守同一物理容量，且没有隐藏的无界 waiter queue。requests-style
 client 会在调用 deadline 内自行推进这次 idle eviction 并重新执行 admission，所以普通用户切换
 站点仍不需要 poll；这不是对已经 accepted 的 HTTP request 做断线重放。
@@ -2316,7 +2316,7 @@ no silent fallback
 
 但它当前不通过 CNet，也不要求每个文件操作都使用 coroutine。Completion
 callback 在唯一 driver 调用 `cflow_io_file_run_ready()` 时同步执行；并发或
-reentrant drive 会明确返回 `TURBO_EBUSY`。
+reentrant drive 会明确返回 `SALTS_EBUSY`。
 
 这说明 toolkit 的目标不是让所有异步能力拥有同一种表面 API，而是复用稳定的
 底层协议：
@@ -2331,7 +2331,7 @@ shutdown drain
 ```
 
 路径、stat、rename、delete 等可能阻塞的文件系统控制操作，则属于
-`Rocida::CFlowFS` 的 bounded worker-backed service；它不能被包装成内核原生
+`Salts::CFlowFS` 的 bounded worker-backed service；它不能被包装成内核原生
 异步文件 I/O。文件 watch 又是独立的 native watcher + Publisher 边界。
 
 所以最终不是：
@@ -2402,7 +2402,7 @@ Directory Actor 拥有快照、版本和 rescan 状态；Publisher 只唤醒它�
 
 ### CFlowProcess：I/O completion 在下层，进程生命周期在 Actor
 
-当前 `cflow_process` 已经组合 `turbo_process`、native pipe backend、I/O Actor 和
+当前 `cflow_process` 已经组合 `salts_process`、native pipe backend、I/O Actor 和
 Executor。它提供有界的 stdin write、stdout/stderr read、request cancel、poll、
 terminate、close、quiescent destroy，并要求借用 buffer 一直存活到 terminal callback
 返回。因此它适合编译器驱动、外部工具流水线、worker supervisor、媒体处理命令和

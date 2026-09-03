@@ -78,6 +78,6 @@ int s3_test_endpoint(uint16_t port, char *connection_uri, size_t uri_capacity, c
       snprintf(authority, authority_capacity, "127.0.0.1:%u", (unsigned int)port);
   return uri_size > 0 && (size_t)uri_size < uri_capacity && authority_size > 0 &&
                  (size_t)authority_size < authority_capacity
-             ? TURBO_OK
-             : TURBO_EMSGSIZE;
+             ? SALTS_OK
+             : SALTS_EMSGSIZE;
 }

@@ -6,11 +6,11 @@
 and borrowed CMeta STRING/BYTES storage.
 
 **Architecture:** CMeta exposes a versioned, format-neutral buffer adapter and
-checked facade. TurboUtils Core supplies `tstr` and `vstr` providers. CBind
+checked facade. Salts Core supplies `tstr` and `vstr` providers. CBind
 validates descriptor/context/lifetime rules, invokes the facade, and extends
 its existing whole-root rollback without linking Core.
 
-**Tech Stack:** C11, CMeta, CSerde, CBind, TurboUtils Core (`tstr`/`vstr`),
+**Tech Stack:** C11, CMeta, CSerde, CBind, Salts Core (`tstr`/`vstr`),
 TinyTest, CMake user presets, MSVC.
 
 **Design:** `docs/superpowers/specs/2026-08-24-cbind-string-bytes-decode-design.md`
@@ -34,13 +34,13 @@ TinyTest, CMake user presets, MSVC.
   `data.c`; retain the old descriptor-validity prefix.
 - [x] Build and run `cmeta_data_test` plus `cmeta_header_cpp_test` until GREEN.
 
-## Task 2: TurboUtils standard tstr/vstr adapters
+## Task 2: Salts standard tstr/vstr adapters
 
 **Files:**
 
-- Create: `utils/include/turbo_cmeta_data.h`
-- Create: `utils/tests/test_turbo_cmeta_data.c`
-- Create: `utils/tests/test_turbo_cmeta_data_cpp.cpp`
+- Create: `utils/include/salts_cmeta_data.h`
+- Create: `utils/tests/test_salts_cmeta_data.c`
+- Create: `utils/tests/test_salts_cmeta_data_cpp.cpp`
 
 - [x] Add real-provider tests for tstr exact-byte copy, embedded NUL, zero
   state, restore, and invalid assignment; add vstr stable-address borrow,
@@ -126,7 +126,7 @@ TinyTest, CMake user presets, MSVC.
 - Create: `cbind/README.md`
 - Modify: `cmeta/include/cmeta/data.h`
 - Modify: `cbind/include/cbind/context.h`
-- Modify: `utils/include/turbo_cmeta_data.h`
+- Modify: `utils/include/salts_cmeta_data.h`
 
 - [x] Document adapter ownership, zero state, failure atomicity, and single-
   owner rules.
@@ -149,7 +149,7 @@ TinyTest, CMake user presets, MSVC.
 - [x] Build all Release targets and run the full Release CTest preset.
 - [x] Build the `install-win-release-user` preset.
 - [x] Configure/build/run a small external C and C++ consumer against the
-  installed `TurboUtils::CMeta`, `TurboUtils::Core`, and `TurboUtils::CBind`
+  installed `Salts::CMeta`, `Salts::Core`, and `Salts::CBind`
   package targets.
 - [x] Inspect `git diff --check`, `git status`, and the final diff; confirm no
   `.codegraph`, build, or vcpkg artifact is tracked.

@@ -1,7 +1,7 @@
 #include "tinytest.h"
 #include <chttp/chttp.h>
 
-#include <turbo/clock.h>
+#include <salts/clock.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -44,11 +44,11 @@ typedef struct chttp_test_source {
 static int chttp_test_source_read(void *user, void *buffer, size_t capacity, size_t *out_size) {
   chttp_test_source *source = (chttp_test_source *)user;
   size_t size;
-  if (source == NULL || buffer == NULL || out_size == NULL || capacity == 0u) return TURBO_EINVAL;
+  if (source == NULL || buffer == NULL || out_size == NULL || capacity == 0u) return SALTS_EINVAL;
   ++source->calls;
   if (source->offset == source->size) {
     *out_size = 0u;
-    return TURBO_OK;
+    return SALTS_OK;
   }
   size = source->size - source->offset;
   if (size > source->chunk_size) size = source->chunk_size;
@@ -56,23 +56,23 @@ static int chttp_test_source_read(void *user, void *buffer, size_t capacity, siz
   memcpy(buffer, source->data + source->offset, size);
   source->offset += size;
   *out_size = size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_test_response_sink(void *user, const void *data, size_t size) {
   chttp_test_probe *probe = (chttp_test_probe *)user;
   if (probe == NULL || (data == NULL && size != 0u) ||
       size > sizeof(probe->body) - probe->body_size)
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   memcpy(probe->body + probe->body_size, data, size);
   probe->body_size += size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_test_server_handler(void *user, const chttp_server_request_view *request,
                                      chttp_server_response *response) {
   (void)user;
-  if (request == NULL || response == NULL) return TURBO_EINVAL;
+  if (request == NULL || response == NULL) return SALTS_EINVAL;
   return chttp_server_reply(response, 200u, "text/plain", "ok", 2u);
 }
 
@@ -90,15 +90,15 @@ static int chttp_test_set_timeout(chttp_test_socket socket_value) {
   const DWORD timeout_ms = CHTTP_TEST_TIMEOUT_MS;
   return setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms,
                     (int)sizeof(timeout_ms)) == 0
-             ? TURBO_OK
-             : TURBO_EIO;
+             ? SALTS_OK
+             : SALTS_EIO;
 #else
   const struct timeval timeout = {CHTTP_TEST_TIMEOUT_MS / 1000,
                                   (CHTTP_TEST_TIMEOUT_MS % 1000) * 1000};
   return setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, &timeout, (socklen_t)sizeof(timeout)) ==
                  0
-             ? TURBO_OK
-             : TURBO_EIO;
+             ? SALTS_OK
+             : SALTS_EIO;
 #endif
 }
 
@@ -109,9 +109,9 @@ static int chttp_test_listener(chttp_test_socket *out_listener, uint16_t *out_po
 #else
   socklen_t length = (socklen_t)sizeof(address);
 #endif
-  if (out_listener == NULL || out_port == NULL) return TURBO_EINVAL;
+  if (out_listener == NULL || out_port == NULL) return SALTS_EINVAL;
   *out_listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (*out_listener == CHTTP_TEST_INVALID_SOCKET) return TURBO_EIO;
+  if (*out_listener == CHTTP_TEST_INVALID_SOCKET) return SALTS_EIO;
   memset(&address, 0, sizeof(address));
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -120,30 +120,30 @@ static int chttp_test_listener(chttp_test_socket *out_listener, uint16_t *out_po
       listen(*out_listener, 1) != 0) {
     chttp_test_close_socket(*out_listener);
     *out_listener = CHTTP_TEST_INVALID_SOCKET;
-    return TURBO_EIO;
+    return SALTS_EIO;
   }
   *out_port = ntohs(address.sin_port);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_test_recv_all(chttp_test_socket socket_value, void *data, size_t size) {
   size_t offset = 0u;
   while (offset < size) {
     const int received = recv(socket_value, (char *)data + offset, (int)(size - offset), 0);
-    if (received <= 0) return TURBO_EIO;
+    if (received <= 0) return SALTS_EIO;
     offset += (size_t)received;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_test_send_all(chttp_test_socket socket_value, const void *data, size_t size) {
   size_t offset = 0u;
   while (offset < size) {
     const int sent = send(socket_value, (const char *)data + offset, (int)(size - offset), 0);
-    if (sent <= 0) return TURBO_EIO;
+    if (sent <= 0) return SALTS_EIO;
     offset += (size_t)sent;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void chttp_test_complete(void *user, chttp_request request,
@@ -156,7 +156,7 @@ static void chttp_test_complete(void *user, chttp_request request,
     probe->status = error->status;
     return;
   }
-  probe->status = TURBO_OK;
+  probe->status = SALTS_OK;
   probe->response_status = response->status_code;
   (void)snprintf(probe->reason, sizeof(probe->reason), "%s", response->reason);
   content_type = chttp_response_view_header(response, "Content-Type");
@@ -166,7 +166,7 @@ static void chttp_test_complete(void *user, chttp_request request,
   probe->response_body_is_null = response->body == NULL;
   if (response->body != NULL && probe->body_size <= sizeof(probe->body))
     memcpy(probe->body, response->body, probe->body_size);
-  else if (response->body != NULL) probe->status = TURBO_EMSGSIZE;
+  else if (response->body != NULL) probe->status = SALTS_EMSGSIZE;
 }
 
 static chttp_client_config chttp_test_config(void) {
@@ -199,14 +199,14 @@ static chttp_client_config chttp_test_config(void) {
 }
 
 static int chttp_test_poll_until(chttp_async_client *client, chttp_test_probe *probe) {
-  const uint64_t deadline = turbo_monotonic_ms() + CHTTP_TEST_TIMEOUT_MS;
+  const uint64_t deadline = salts_monotonic_ms() + CHTTP_TEST_TIMEOUT_MS;
   while (probe->called == 0) {
     size_t completions = 0u;
     const int status = chttp_async_client_poll(client, 5u, &completions);
-    if (status != TURBO_OK) return status;
-    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
+    if (status != SALTS_OK) return status;
+    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 spec("CHTTP advanced async client API") {
@@ -215,12 +215,12 @@ spec("CHTTP advanced async client API") {
     chttp_server_config config = {0};
     chttp_server_stats stats = {0};
 
-    check_equal(chttp_server_init(NULL, &config), TURBO_EINVAL);
+    check_equal(chttp_server_init(NULL, &config), SALTS_EINVAL);
     check_equal(
         chttp_server_route(&server, CHTTP_METHOD_GET, "/health", chttp_test_server_handler, NULL),
-        TURBO_EINVAL);
-    check_equal(chttp_server_get_stats(&server, &stats), TURBO_EINVAL);
-    check_equal(chttp_server_destroy(&server), TURBO_OK);
+        SALTS_EINVAL);
+    check_equal(chttp_server_get_stats(&server, &stats), SALTS_EINVAL);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
   }
 
   it("round-trips one bounded HTTP response over CNet") {
@@ -246,8 +246,8 @@ spec("CHTTP advanced async client API") {
     int expected_size;
     size_t completions = 0u;
 
-    check_equal(chttp_async_client_init(&client, &config), TURBO_OK);
-    check_equal(chttp_test_listener(&listener, &port), TURBO_OK);
+    check_equal(chttp_async_client_init(&client, &config), SALTS_OK);
+    check_equal(chttp_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     options = (chttp_request_options){.connection_uri = uri,
@@ -258,14 +258,14 @@ spec("CHTTP advanced async client API") {
                                       .header_count = 1u,
                                       .on_complete = chttp_test_complete,
                                       .user = &probe};
-    check_equal(chttp_async_client_submit(&client, &options, &request), TURBO_OK);
+    check_equal(chttp_async_client_submit(&client, &options, &request), SALTS_OK);
     check_true(request.slot != 0u && request.generation != 0u);
-    check_equal(chttp_async_client_poll(&client, CHTTP_TEST_TIMEOUT_MS, &completions), TURBO_OK);
+    check_equal(chttp_async_client_poll(&client, CHTTP_TEST_TIMEOUT_MS, &completions), SALTS_OK);
     check_equal(completions, (size_t)0u);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CHTTP_TEST_INVALID_SOCKET);
-    check_equal(chttp_test_set_timeout(accepted), TURBO_OK);
-    check_equal(chttp_async_client_poll(&client, 10u, &completions), TURBO_OK);
+    check_equal(chttp_test_set_timeout(accepted), SALTS_OK);
+    check_equal(chttp_async_client_poll(&client, 10u, &completions), SALTS_OK);
 
     expected_size = snprintf(expected, sizeof(expected),
                              "GET /hello?x=1 HTTP/1.1\r\n"
@@ -276,24 +276,24 @@ spec("CHTTP advanced async client API") {
                              "\r\n",
                              authority);
     check_true(expected_size > 0 && (size_t)expected_size < sizeof(expected));
-    check_equal(chttp_test_recv_all(accepted, received, (size_t)expected_size), TURBO_OK);
+    check_equal(chttp_test_recv_all(accepted, received, (size_t)expected_size), SALTS_OK);
     check_equal(received, expected, (size_t)expected_size);
 
-    check_equal(chttp_test_send_all(accepted, response, 19u), TURBO_OK);
-    check_equal(chttp_async_client_poll(&client, 5u, &completions), TURBO_OK);
+    check_equal(chttp_test_send_all(accepted, response, 19u), SALTS_OK);
+    check_equal(chttp_async_client_poll(&client, 5u, &completions), SALTS_OK);
     check_equal(chttp_test_send_all(accepted, response + 19u, sizeof(response) - 1u - 19u),
-                TURBO_OK);
-    check_equal(chttp_test_poll_until(&client, &probe), TURBO_OK);
+                SALTS_OK);
+    check_equal(chttp_test_poll_until(&client, &probe), SALTS_OK);
     check_equal(probe.called, 1);
-    check_equal(probe.status, TURBO_OK);
+    check_equal(probe.status, SALTS_OK);
     check_equal(probe.response_status, 200u);
     check_equal(probe.reason, "OK");
     check_equal(probe.content_type, "text/plain");
     check_equal(probe.body_size, (size_t)11u);
     check_equal(probe.body, "hello world", 11u);
 
-    check_equal(chttp_async_client_stop(&client, CHTTP_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(chttp_async_client_destroy(&client), TURBO_OK);
+    check_equal(chttp_async_client_stop(&client, CHTTP_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_async_client_destroy(&client), SALTS_OK);
     chttp_test_close_socket(accepted);
     chttp_test_close_socket(listener);
   }
@@ -329,8 +329,8 @@ spec("CHTTP advanced async client API") {
     size_t completions = 0u;
 
     config.stream_chunk_bytes = 2u;
-    check_equal(chttp_async_client_init(&client, &config), TURBO_OK);
-    check_equal(chttp_test_listener(&listener, &port), TURBO_OK);
+    check_equal(chttp_async_client_init(&client, &config), SALTS_OK);
+    check_equal(chttp_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     options = (chttp_request_options){.connection_uri = uri,
@@ -341,12 +341,12 @@ spec("CHTTP advanced async client API") {
                                       .body_sink = &sink,
                                       .on_complete = chttp_test_complete,
                                       .user = &probe};
-    check_equal(chttp_async_client_submit(&client, &options, &request), TURBO_OK);
-    check_equal(chttp_async_client_poll(&client, CHTTP_TEST_TIMEOUT_MS, &completions), TURBO_OK);
+    check_equal(chttp_async_client_submit(&client, &options, &request), SALTS_OK);
+    check_equal(chttp_async_client_poll(&client, CHTTP_TEST_TIMEOUT_MS, &completions), SALTS_OK);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CHTTP_TEST_INVALID_SOCKET);
-    check_equal(chttp_test_set_timeout(accepted), TURBO_OK);
-    check_equal(chttp_async_client_poll(&client, 10u, &completions), TURBO_OK);
+    check_equal(chttp_test_set_timeout(accepted), SALTS_OK);
+    check_equal(chttp_async_client_poll(&client, 10u, &completions), SALTS_OK);
 
     expected_head_size = snprintf(expected_head, sizeof(expected_head),
                                   "POST /stream HTTP/1.1\r\n"
@@ -356,26 +356,26 @@ spec("CHTTP advanced async client API") {
                                   "\r\n",
                                   authority);
     check_true(expected_head_size > 0 && (size_t)expected_head_size < sizeof(expected_head));
-    check_equal(chttp_test_recv_all(accepted, received, (size_t)expected_head_size), TURBO_OK);
+    check_equal(chttp_test_recv_all(accepted, received, (size_t)expected_head_size), SALTS_OK);
     check_equal(received, expected_head, (size_t)expected_head_size);
 
-    check_equal(chttp_async_client_poll(&client, 10u, &completions), TURBO_OK);
-    check_equal(chttp_test_recv_all(accepted, received, sizeof(chunk1) - 1u), TURBO_OK);
+    check_equal(chttp_async_client_poll(&client, 10u, &completions), SALTS_OK);
+    check_equal(chttp_test_recv_all(accepted, received, sizeof(chunk1) - 1u), SALTS_OK);
     check_equal(received, chunk1, sizeof(chunk1) - 1u);
-    check_equal(chttp_async_client_poll(&client, 10u, &completions), TURBO_OK);
-    check_equal(chttp_test_recv_all(accepted, received, sizeof(chunk2) - 1u), TURBO_OK);
+    check_equal(chttp_async_client_poll(&client, 10u, &completions), SALTS_OK);
+    check_equal(chttp_test_recv_all(accepted, received, sizeof(chunk2) - 1u), SALTS_OK);
     check_equal(received, chunk2, sizeof(chunk2) - 1u);
-    check_equal(chttp_async_client_poll(&client, 10u, &completions), TURBO_OK);
-    check_equal(chttp_test_recv_all(accepted, received, sizeof(chunk3) - 1u), TURBO_OK);
+    check_equal(chttp_async_client_poll(&client, 10u, &completions), SALTS_OK);
+    check_equal(chttp_test_recv_all(accepted, received, sizeof(chunk3) - 1u), SALTS_OK);
     check_equal(received, chunk3, sizeof(chunk3) - 1u);
-    check_equal(chttp_async_client_poll(&client, 10u, &completions), TURBO_OK);
-    check_equal(chttp_test_recv_all(accepted, received, sizeof(chunk_end) - 1u), TURBO_OK);
+    check_equal(chttp_async_client_poll(&client, 10u, &completions), SALTS_OK);
+    check_equal(chttp_test_recv_all(accepted, received, sizeof(chunk_end) - 1u), SALTS_OK);
     check_equal(received, chunk_end, sizeof(chunk_end) - 1u);
 
-    check_equal(chttp_test_send_all(accepted, response, sizeof(response) - 1u), TURBO_OK);
-    check_equal(chttp_test_poll_until(&client, &probe), TURBO_OK);
+    check_equal(chttp_test_send_all(accepted, response, sizeof(response) - 1u), SALTS_OK);
+    check_equal(chttp_test_poll_until(&client, &probe), SALTS_OK);
     check_equal(probe.called, 1);
-    check_equal(probe.status, TURBO_OK);
+    check_equal(probe.status, SALTS_OK);
     check_equal(probe.response_status, 200u);
     check_equal(probe.response_body_is_null, 1);
     check_equal(probe.body_size, (size_t)5u);
@@ -383,8 +383,8 @@ spec("CHTTP advanced async client API") {
     check_equal(source_state.offset, (size_t)5u);
     check_equal(source_state.calls, (size_t)4u);
 
-    check_equal(chttp_async_client_stop(&client, CHTTP_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(chttp_async_client_destroy(&client), TURBO_OK);
+    check_equal(chttp_async_client_stop(&client, CHTTP_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_async_client_destroy(&client), SALTS_OK);
     chttp_test_close_socket(accepted);
     chttp_test_close_socket(listener);
   }
@@ -401,13 +401,13 @@ spec("CHTTP advanced async client API") {
                                            .on_complete = chttp_test_complete,
                                            .user = &probe};
 
-    check_equal(chttp_async_client_init(&client, &config), TURBO_OK);
-    check_equal(chttp_async_client_submit(&client, &options, &request), TURBO_ENOTSUP);
+    check_equal(chttp_async_client_init(&client, &config), SALTS_OK);
+    check_equal(chttp_async_client_submit(&client, &options, &request), SALTS_ENOTSUP);
     check_equal(request.slot, 0u);
     check_equal(request.generation, 0u);
     check_equal(probe.called, 0);
-    check_equal(chttp_async_client_stop(&client, CHTTP_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(chttp_async_client_destroy(&client), TURBO_OK);
+    check_equal(chttp_async_client_stop(&client, CHTTP_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_async_client_destroy(&client), SALTS_OK);
   }
 
   it("keeps a canceled request until its terminal callback") {
@@ -421,8 +421,8 @@ spec("CHTTP advanced async client API") {
     char authority[64];
     uint16_t port = 0u;
 
-    check_equal(chttp_async_client_init(&client, &config), TURBO_OK);
-    check_equal(chttp_test_listener(&listener, &port), TURBO_OK);
+    check_equal(chttp_async_client_init(&client, &config), SALTS_OK);
+    check_equal(chttp_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     options = (chttp_request_options){.connection_uri = uri,
@@ -431,15 +431,15 @@ spec("CHTTP advanced async client API") {
                                       .method = CHTTP_METHOD_GET,
                                       .on_complete = chttp_test_complete,
                                       .user = &probe};
-    check_equal(chttp_async_client_submit(&client, &options, &request), TURBO_OK);
-    check_equal(chttp_async_request_cancel(&client, request), TURBO_OK);
-    check_equal(chttp_async_request_cancel(&client, request), TURBO_EALREADY);
-    check_equal(chttp_test_poll_until(&client, &probe), TURBO_OK);
+    check_equal(chttp_async_client_submit(&client, &options, &request), SALTS_OK);
+    check_equal(chttp_async_request_cancel(&client, request), SALTS_OK);
+    check_equal(chttp_async_request_cancel(&client, request), SALTS_EALREADY);
+    check_equal(chttp_test_poll_until(&client, &probe), SALTS_OK);
     check_equal(probe.called, 1);
-    check_equal(probe.status, TURBO_ECANCELED);
-    check_equal(chttp_async_request_cancel(&client, request), TURBO_ENOENT);
-    check_equal(chttp_async_client_stop(&client, CHTTP_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(chttp_async_client_destroy(&client), TURBO_OK);
+    check_equal(probe.status, SALTS_ECANCELED);
+    check_equal(chttp_async_request_cancel(&client, request), SALTS_ENOENT);
+    check_equal(chttp_async_client_stop(&client, CHTTP_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_async_client_destroy(&client), SALTS_OK);
     chttp_test_close_socket(listener);
   }
 }

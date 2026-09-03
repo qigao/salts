@@ -38,22 +38,22 @@ typedef struct cflow_fs_watch_publisher_config {
  * without retaining event path pointers.
  *
  * Success moves cleanup responsibility into Publisher plus owner. Destroy the
- * Publisher first, then retry owner_close while it returns TURBO_EBUSY. Failure
+ * Publisher first, then retry owner_close while it returns SALTS_EBUSY. Failure
  * leaves both caller-owned outputs unchanged.
  *
  * @param out Zero-initialized Publisher destination, moved into a Subscription.
  * @param owner Zero-initialized external cleanup owner.
  * @param path Existing directory encoded as UTF-8.
  * @param config Positive bounded capacities, output type, and encoder.
- * @return TURBO_OK; TURBO_EINVAL for malformed input; TURBO_ENOTSUP for a
- * non-trivial output type/backend contract; TURBO_ENOMEM; or a native error.
+ * @return SALTS_OK; SALTS_EINVAL for malformed input; SALTS_ENOTSUP for a
+ * non-trivial output type/backend contract; SALTS_ENOMEM; or a native error.
  */
 int cflow_fs_watch_publisher_open(cflow_publisher *out, cflow_fs_watch_publisher_owner *owner,
                                const char *path, const cflow_fs_watch_publisher_config *config);
 
 /**
  * Acknowledge a delivered RESCAN_REQUIRED after rebuilding caller state.
- * @return TURBO_OK, TURBO_EINVAL, or TURBO_EALREADY.
+ * @return SALTS_OK, SALTS_EINVAL, or SALTS_EALREADY.
  */
 int cflow_fs_watch_publisher_owner_acknowledge_rescan(cflow_fs_watch_publisher_owner *owner);
 
@@ -66,10 +66,10 @@ bool cflow_fs_watch_publisher_owner_get_stats(const cflow_fs_watch_publisher_own
 
 /**
  * Drain and release native state after Publisher destruction.
- * Returns TURBO_EBUSY while Publisher is live or native shutdown is incomplete.
+ * Returns SALTS_EBUSY while Publisher is live or native shutdown is incomplete.
  * Once native destruction consumes the watcher, owner is cleared even if the
  * function returns a native cleanup error.
- * @return TURBO_OK, TURBO_EINVAL, TURBO_EBUSY, or a native cleanup error.
+ * @return SALTS_OK, SALTS_EINVAL, SALTS_EBUSY, or a native cleanup error.
  */
 int cflow_fs_watch_publisher_owner_close(cflow_fs_watch_publisher_owner *owner);
 

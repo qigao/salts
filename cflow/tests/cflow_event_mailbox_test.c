@@ -1,5 +1,5 @@
 #include <cflow/event.h>
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 #include "tinytest.h"
 
@@ -73,7 +73,7 @@ static void mailbox_producer(void *user) {
                 cflow_mailbox_try_send(context->mailbox, &event);
             if (status == CFLOW_MAILBOX_OK) break;
             if (status == CFLOW_MAILBOX_FULL) {
-                turbo_thread_yield();
+                salts_thread_yield();
                 continue;
             }
             atomic_fetch_add(context->failures, 1);
@@ -317,7 +317,7 @@ suite("CFlow typed event mailbox") {
     it("admits concurrent producers and observes every value once") {
         const cflow_event_type schema[] = {{1u, &cmeta_type_int}};
         cflow_mailbox mailbox = {0};
-        turbo_thread_t producers[MAILBOX_PRODUCER_COUNT] = {0};
+        salts_thread_t producers[MAILBOX_PRODUCER_COUNT] = {0};
         bool producer_started[MAILBOX_PRODUCER_COUNT] = {false};
         mailbox_producer_context contexts[MAILBOX_PRODUCER_COUNT];
         bool seen[MAILBOX_CONCURRENT_EVENT_COUNT] = {false};
@@ -339,7 +339,7 @@ suite("CFlow typed event mailbox") {
             contexts[producer_index].finished = &finished;
             contexts[producer_index].failures = &failures;
             {
-                const int create_status = turbo_thread_create(
+                const int create_status = salts_thread_create(
                     &producers[producer_index], mailbox_producer,
                     &contexts[producer_index]);
                 check_equal(create_status, 0);
@@ -363,7 +363,7 @@ suite("CFlow typed event mailbox") {
                 /* A producer may commit after EMPTY but before this load. */
                 producers_quiescent =
                     atomic_load(&finished) == MAILBOX_PRODUCER_COUNT;
-                if (!producers_quiescent) turbo_thread_yield();
+                if (!producers_quiescent) salts_thread_yield();
                 continue;
             }
             if (status != CFLOW_MAILBOX_OK) {
@@ -385,7 +385,7 @@ suite("CFlow typed event mailbox") {
              producer_index < MAILBOX_PRODUCER_COUNT;
              ++producer_index)
             if (producer_started[producer_index])
-                check_equal(turbo_thread_join(&producers[producer_index]), 0);
+                check_equal(salts_thread_join(&producers[producer_index]), 0);
         check_equal(atomic_load(&failures), 0);
         check_equal(received, (size_t)MAILBOX_CONCURRENT_EVENT_COUNT);
         for (producer_index = 0;

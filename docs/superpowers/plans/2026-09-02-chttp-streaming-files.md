@@ -4,9 +4,9 @@
 
 **Goal:** 为 CHTTP 的 H1/H2 client/server 实现统一、有界、可背压的正文 source/sink，并在其上提供文件上传、原子下载和服务端文件响应。
 
-**Architecture:** 公开层只暴露协议无关的 callback strategy；H1 adapter 负责 Content-Length/chunked 和单 send-in-flight，H2 adapter 负责 DATA/END_STREAM 与窗口 credit。同步文件便利层使用 `turbo_fs`，下载通过同目录临时文件、fsync、close、rename 形成事务提交。
+**Architecture:** 公开层只暴露协议无关的 callback strategy；H1 adapter 负责 Content-Length/chunked 和单 send-in-flight，H2 adapter 负责 DATA/END_STREAM 与窗口 credit。同步文件便利层使用 `salts_fs`，下载通过同目录临时文件、fsync、close、rename 形成事务提交。
 
-**Tech Stack:** C11、CHTTP、CNet、llhttp（PRIVATE）、CHTTP H2 engine（PRIVATE）、Rocida Core `turbo_fs`、TinyTest、CMake Presets。
+**Tech Stack:** C11、CHTTP、CNet、llhttp（PRIVATE）、CHTTP H2 engine（PRIVATE）、Salts Core `salts_fs`、TinyTest、CMake Presets。
 
 **Spec:** `docs/CHTTP_STREAMING_FILE_DESIGN.md`
 
@@ -17,7 +17,7 @@
 - `max_request_body_bytes` 与 `max_response_body_bytes` 始终限制累计正文大小。
 - source/sink callback 不得阻塞或重入 owner；borrowed chunk 在 callback 返回时失效。
 - H1 source/sink 失败关闭独占连接；H2 source/sink 失败只 reset 当前 stream。
-- 文件 I/O 只使用 Rocida `turbo_fs`；下载仅在 2xx、完整写入、fsync、close 后原子 rename。
+- 文件 I/O 只使用 Salts `salts_fs`；下载仅在 2xx、完整写入、fsync、close 后原子 rename。
 - llhttp、H2 engine、文件句柄和第三方错误类型不得进入公开头文件。
 
 ---
@@ -37,7 +37,7 @@
 
 - [ ] **Step 1: Write failing validation and header tests**
 
-Add TinyTest cases that initialize source/sink callbacks, assert memory body plus source returns `TURBO_EINVAL`, missing callbacks return `TURBO_EINVAL`, known length above `max_request_body_bytes` returns `TURBO_EMSGSIZE`, and zero `stream_chunk_bytes` normalizes to 65536.
+Add TinyTest cases that initialize source/sink callbacks, assert memory body plus source returns `SALTS_EINVAL`, missing callbacks return `SALTS_EINVAL`, known length above `max_request_body_bytes` returns `SALTS_EMSGSIZE`, and zero `stream_chunk_bytes` normalizes to 65536.
 
 - [ ] **Step 2: Run the focused tests and verify RED**
 
@@ -85,7 +85,7 @@ Run the same three tests and require all pass.
 
 - [ ] **Step 1: Write failing H1 wire and real-socket tests**
 
-Add tests for a known-length POST split across at least three reads, an unknown-length POST producing correct chunked framing, exact-length early EOF returning `TURBO_EPROTO`, response chunks delivered in order to a sink, and sink failure terminating exactly once.
+Add tests for a known-length POST split across at least three reads, an unknown-length POST producing correct chunked framing, exact-length early EOF returning `SALTS_EPROTO`, response chunks delivered in order to a sink, and sink failure terminating exactly once.
 
 - [ ] **Step 2: Run focused tests and verify RED**
 
@@ -138,7 +138,7 @@ Require H2 tests and all H1 client tests pass.
 - Test: `chttp/tests/chttp_requests_test.c`
 
 **Interfaces:**
-- Consumes: Tasks 1-3 source/sink and `turbo_fs_open/read/write/stat/fsync/close/rename/unlink`.
+- Consumes: Tasks 1-3 source/sink and `salts_fs_open/read/write/stat/fsync/close/rename/unlink`.
 - Produces: `chttp_post_file`, `chttp_put_file`, `chttp_download_file`, and `chttp_progress_fn`.
 
 - [ ] **Step 1: Write failing H1/H2 file tests**
@@ -149,9 +149,9 @@ For both protocols, upload a file larger than one chunk and compare exact server
 
 Build/run `chttp_requests_test`. Expected failure: file APIs are undeclared.
 
-- [ ] **Step 3: Implement file adapters with Rocida Core**
+- [ ] **Step 3: Implement file adapters with Salts Core**
 
-Stat/open uploads and expose an exact known-length source. Create a UUID-named temp beside the destination, write via sink, then fsync/close/rename only for 2xx. Close/unlink on every failure and preserve native status plus stable stage. Add `Rocida::Core` as a PRIVATE CHTTP dependency.
+Stat/open uploads and expose an exact known-length source. Create a UUID-named temp beside the destination, write via sink, then fsync/close/rename only for 2xx. Close/unlink on every failure and preserve native status plus stable stage. Add `Salts::Core` as a PRIVATE CHTTP dependency.
 
 - [ ] **Step 4: Re-run requests tests and verify GREEN**
 
@@ -212,7 +212,7 @@ Expected failure: builder only accepts copied memory bodies.
 
 - [ ] **Step 3: Implement response source strategies**
 
-Copy source descriptors into the response state. H1 sends headers then one bounded body/chunk per `on_send`; H2 submits HEADERS then DATA under flow control. The file helper stats/opens with `turbo_fs`, installs an exact-length source, and transfers ownership of its private context to the response terminal cleanup path.
+Copy source descriptors into the response state. H1 sends headers then one bounded body/chunk per `on_send`; H2 submits HEADERS then DATA under flow control. The file helper stats/opens with `salts_fs`, installs an exact-length source, and transfers ownership of its private context to the response terminal cleanup path.
 
 - [ ] **Step 4: Re-run all CHTTP server/client tests**
 

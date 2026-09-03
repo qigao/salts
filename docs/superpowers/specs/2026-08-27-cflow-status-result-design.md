@@ -38,7 +38,7 @@ The three owned byte adapters follow the same rule:
 `cflow_eval_stream_limit_result()` return `cflow_status_result`, clear their
 `cflow_result` output before admission, and transfer its allocation only on
 success. Their existing `bool` forms remain compatibility projections over the
-same execution. TurboSTL exposes the bounded Stream form as
+same execution. Container exposes the bounded Stream form as
 `to_array_result()` while retaining `to_array()`.
 
 ## Classification
@@ -73,5 +73,5 @@ text follows that provider's contract.
 
 Tests must establish exact status classification, canonical message lifetime,
 unchanged detailed legacy errors, output commit-on-success behavior, C++ header
-types, TurboSTL forwarding, and installed-package consumption. Focused Release
-and AddressSanitizer tests precede the adjacent CFlow/TurboSTL suites.
+types, Container forwarding, and installed-package consumption. Focused Release
+and AddressSanitizer tests precede the adjacent CFlow/Container suites.

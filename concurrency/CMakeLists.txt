@@ -1,4 +1,4 @@
-set(TARGET_NAME turbo_concurrency)
+set(TARGET_NAME salts_concurrency)
 
 add_library(${TARGET_NAME} STATIC
   src/deadline_queue.c
@@ -8,7 +8,7 @@ add_library(${TARGET_NAME} STATIC
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS Rocida::Concurrency
+  ALIAS Salts::Concurrency
   FOLDER "concurrency"
   EXPORT_NAME Concurrency)
 
@@ -17,7 +17,7 @@ target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
-target_link_libraries(${TARGET_NAME} PUBLIC Rocida::Platform)
+target_link_libraries(${TARGET_NAME} PUBLIC Salts::Platform)
 
 if(APPLE)
   target_compile_definitions(${TARGET_NAME} PRIVATE _DARWIN_C_SOURCE=1)
@@ -29,13 +29,13 @@ endif()
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT RocidaTargets
+  EXPORT SaltsTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(
-  DIRECTORY include/turbo
+  DIRECTORY include/salts
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
 

@@ -56,7 +56,7 @@
 - Modify: `cflow/README.md`
 - Modify: `docs/superpowers/specs/2026-08-29-cflow-scxml-cmeta-data-model-selection.md`
 
-- [x] Promote `TurboUtils::CMeta` to the `TurboUtils::CFlowScxml` public link contract because the public header exposes `cmeta_data_desc`.
+- [x] Promote `Salts::CMeta` to the `Salts::CFlowScxml` public link contract because the public header exposes `cmeta_data_desc`.
 - [x] Exercise the versioned structs through the installed-package consumer.
 - [x] Document ownership, supported expressions, explicit exclusions, and migration compatibility.
 

@@ -1,5 +1,5 @@
 /*
- * Rocida bounded byte-buffer protocol model.
+ * Salts bounded byte-buffer protocol model.
  *
  * Scope:
  *   - one owner; no concurrent access

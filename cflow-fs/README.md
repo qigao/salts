@@ -1,13 +1,13 @@
 # CFlowFS
 
-`Rocida::CFlowFS` is the filesystem control-plane adapter between the
-synchronous `turbo_fs` implementation and CFlow's bounded execution model. It
-is separate from `Rocida::CFlow` so the portable kernel has no reverse
+`Salts::CFlowFS` is the filesystem control-plane adapter between the
+synchronous `salts_fs` implementation and CFlow's bounded execution model. It
+is separate from `Salts::CFlow` so the portable kernel has no reverse
 dependency on filesystem policy or native watcher backends.
 
 The distinction is intentional:
 
-- `turbo_fs_*` calls are synchronous and run on their caller;
+- `salts_fs_*` calls are synchronous and run on their caller;
 - `cflow_io_file` offset reads/writes use explicitly selected native IOCP or
   io_uring data-plane backends;
 - `cflow_fs_service` runs pathname operations on an explicitly bounded worker
@@ -17,43 +17,43 @@ The distinction is intentional:
 
 ```c
 #include <cflow/fs.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 static void completed(void *user, uint64_t id,
                       cflow_fs_operation_kind operation, int result) {
     int *done = (int *)user;
     (void)id;
     (void)operation;
-    *done = result == TURBO_OK ? 1 : -1;
+    *done = result == SALTS_OK ? 1 : -1;
 }
 
-int inspect_path(const char *path, turbo_fs_stat_t *out) {
+int inspect_path(const char *path, salts_fs_stat_t *out) {
     cflow_fs_service service = {0};
     int done = 0;
     cflow_fs_config config = {1u, 8u, 1024u, completed, &done};
     cflow_fs_submit_result submitted;
 
-    if (cflow_fs_service_init(&service, &config) != TURBO_OK)
+    if (cflow_fs_service_init(&service, &config) != SALTS_OK)
         return -1;
     submitted = cflow_fs_try_stat(&service, path, out);
     if (submitted.status != CFLOW_FS_SUBMIT_ACCEPTED)
         return cflow_fs_close(&service), cflow_fs_destroy(&service), -1;
     while (done == 0) {
         size_t count = 0u;
-        if (cflow_fs_run_ready(&service, 8u, &count) != TURBO_OK)
+        if (cflow_fs_run_ready(&service, 8u, &count) != SALTS_OK)
             return -1;
         if (count == 0u)
-            turbo_sleep_ms(1u);
+            salts_sleep_ms(1u);
     }
-    if (cflow_fs_close(&service) != TURBO_OK)
+    if (cflow_fs_close(&service) != SALTS_OK)
         return -1;
     while (!cflow_fs_is_quiescent(&service)) {
         size_t count = 0u;
-        if (cflow_fs_run_ready(&service, 8u, &count) != TURBO_OK)
+        if (cflow_fs_run_ready(&service, 8u, &count) != SALTS_OK)
             return -1;
     }
-    return cflow_fs_destroy(&service) == TURBO_OK && done > 0 ? 0 : -1;
+    return cflow_fs_destroy(&service) == SALTS_OK && done > 0 ? 0 : -1;
 }
 ```
 
@@ -126,6 +126,6 @@ value. After rebuilding its authoritative view, the consumer calls
 Ownership is deliberately split. Subscription owns the moved Publisher, while the caller
 retains `cflow_fs_watch_publisher_owner`. Close Subscription (or destroy the standalone
 Publisher) first, then retry `cflow_fs_watch_publisher_owner_close()` while it returns
-`TURBO_EBUSY`; success means the backend stopped, queued events were drained,
+`SALTS_EBUSY`; success means the backend stopped, queued events were drained,
 native handles were released, and the owner was cleared. Owner operations are
 control-plane calls and must not race each other or Publisher destruction.

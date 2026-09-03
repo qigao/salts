@@ -3,7 +3,7 @@
 #define RING_BUFFER_SPSC_H
 
 #include "platform.h"
-#include <turbo/spsc_ring.h>
+#include <salts/spsc_ring.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,7 +29,7 @@ extern "C" {
  * - No invalidate index (simplified algorithm)
  * - Cache-line alignment to prevent false sharing
  */
-typedef turbo_spsc_ring ring_spsc_t;
+typedef salts_spsc_ring ring_spsc_t;
 
 /******************** FUNCTION PROTOTYPES *********************/
 
@@ -40,7 +40,7 @@ typedef turbo_spsc_ring ring_spsc_t;
  * @param size Size of data array (MUST be power of 2)
  * @return true on success, false if size is not power of 2
  */
-TURBO_C_API bool ring_spsc_init(ring_spsc_t *inst, uint8_t *data_array, size_t size);
+SALTS_C_API bool ring_spsc_init(ring_spsc_t *inst, uint8_t *data_array, size_t size);
 
 /**
  * @brief Acquire space for writing
@@ -51,7 +51,7 @@ TURBO_C_API bool ring_spsc_init(ring_spsc_t *inst, uint8_t *data_array, size_t s
  * NOTE: Returns contiguous space only. If wrapping is needed, returns NULL.
  * Call again after consumer reads to get space from beginning.
  */
-TURBO_C_API uint8_t *ring_spsc_write_acquire(ring_spsc_t *inst, size_t size_required);
+SALTS_C_API uint8_t *ring_spsc_write_acquire(ring_spsc_t *inst, size_t size_required);
 
 /**
  * @brief Release write operation
@@ -60,7 +60,7 @@ TURBO_C_API uint8_t *ring_spsc_write_acquire(ring_spsc_t *inst, size_t size_requ
  *
  * NOTE: Data becomes visible to consumer only after release
  */
-TURBO_C_API void ring_spsc_write_release(ring_spsc_t *inst, size_t bytes_written);
+SALTS_C_API void ring_spsc_write_release(ring_spsc_t *inst, size_t bytes_written);
 
 /**
  * @brief Acquire data for reading
@@ -70,28 +70,28 @@ TURBO_C_API void ring_spsc_write_release(ring_spsc_t *inst, size_t bytes_written
  *
  * NOTE: Returns contiguous data only. May need multiple calls to read all data.
  */
-TURBO_C_API uint8_t *ring_spsc_read_acquire(ring_spsc_t *inst, size_t *available);
+SALTS_C_API uint8_t *ring_spsc_read_acquire(ring_spsc_t *inst, size_t *available);
 
 /**
  * @brief Release read operation
  * @param inst Instance pointer
  * @param bytes_read Actual bytes consumed
  */
-TURBO_C_API void ring_spsc_read_release(ring_spsc_t *inst, size_t bytes_read);
+SALTS_C_API void ring_spsc_read_release(ring_spsc_t *inst, size_t bytes_read);
 
 /**
  * @brief Get available space for writing
  * @param inst Instance pointer
  * @return Available bytes
  */
-TURBO_C_API size_t ring_spsc_write_available(const ring_spsc_t *inst);
+SALTS_C_API size_t ring_spsc_write_available(const ring_spsc_t *inst);
 
 /**
  * @brief Get available data for reading
  * @param inst Instance pointer
  * @return Available bytes
  */
-TURBO_C_API size_t ring_spsc_read_available(const ring_spsc_t *inst);
+SALTS_C_API size_t ring_spsc_read_available(const ring_spsc_t *inst);
 
 #ifdef __cplusplus
 }

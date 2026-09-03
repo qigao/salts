@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <turbo_fs.h>
+#include <salts_fs.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,7 +53,7 @@ typedef enum cflow_fs_lifecycle {
 
 typedef struct cflow_fs_dir_buffer {
     /* Entries and names are caller-owned through terminal callback return. */
-    turbo_fs_dirent_t *entries;
+    salts_fs_dirent_t *entries;
     size_t entry_capacity;
     char *names;
     size_t names_capacity;
@@ -90,7 +90,7 @@ typedef struct cflow_fs_stats {
  *
  * @param service Zero-initialized destination handle.
  * @param config Positive worker/request/path capacities and terminal callback.
- * @return TURBO_OK, TURBO_EINVAL for an invalid contract, or TURBO_ENOMEM.
+ * @return SALTS_OK, SALTS_EINVAL for an invalid contract, or SALTS_ENOMEM.
  *
  * No pathname side effect occurs during initialization. Successful destroy
  * restores service to the zero state.
@@ -105,14 +105,14 @@ int cflow_fs_service_init(cflow_fs_service *service,
  * @return Exact admission result; rejection does not borrow out.
  */
 cflow_fs_submit_result cflow_fs_try_stat(
-    cflow_fs_service *service, const char *path, turbo_fs_stat_t *out);
+    cflow_fs_service *service, const char *path, salts_fs_stat_t *out);
 /** Same contract as cflow_fs_try_stat(), without following the final link. */
 cflow_fs_submit_result cflow_fs_try_lstat(
-    cflow_fs_service *service, const char *path, turbo_fs_stat_t *out);
+    cflow_fs_service *service, const char *path, salts_fs_stat_t *out);
 /**
  * Submit bounded directory enumeration.
  * @param out Caller-owned entries and name arena borrowed through callback.
- * @return Accepted work reports TURBO_ENOBUFS through the callback if either
+ * @return Accepted work reports SALTS_ENOBUFS through the callback if either
  * capacity cannot hold the complete listing; used counts are then zero.
  */
 cflow_fs_submit_result cflow_fs_try_read_directory(
@@ -140,7 +140,7 @@ cflow_fs_cancel_status cflow_fs_try_cancel(
     cflow_fs_service *service, uint64_t request_id);
 /**
  * Deliver at most max_completions terminal callbacks on the calling thread.
- * @return TURBO_OK, TURBO_EINVAL, or TURBO_EBUSY for another/reentrant driver.
+ * @return SALTS_OK, SALTS_EINVAL, or SALTS_EBUSY for another/reentrant driver.
  */
 int cflow_fs_run_ready(cflow_fs_service *service, size_t max_completions,
                        size_t *completed);
@@ -151,7 +151,7 @@ bool cflow_fs_is_quiescent(const cflow_fs_service *service);
 /** Copy an observational bounded-protocol snapshot to out. */
 bool cflow_fs_get_stats(const cflow_fs_service *service,
                         cflow_fs_stats *out);
-/** Destroy a quiescent service, or return TURBO_EBUSY while work remains. */
+/** Destroy a quiescent service, or return SALTS_EBUSY while work remains. */
 int cflow_fs_destroy(cflow_fs_service *service);
 
 #ifdef __cplusplus

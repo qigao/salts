@@ -1,9 +1,9 @@
-#ifndef ROCIDA_BUCKET_PRIORITY_QUEUE_MPMC_H
-#define ROCIDA_BUCKET_PRIORITY_QUEUE_MPMC_H
+#ifndef SALTS_BUCKET_PRIORITY_QUEUE_MPMC_H
+#define SALTS_BUCKET_PRIORITY_QUEUE_MPMC_H
 
 #include "platform.h"
 #include "disruptor.h"
-#include "turbo_thread.h"
+#include "salts_thread.h"
 #ifdef __cplusplus
   #include <atomic>
   #define ATOMIC_UINT32_T std::atomic<uint32_t>
@@ -44,18 +44,18 @@ typedef struct {
  * - Multiple producer threads can call push operations
  * - Multiple consumer threads can call pop operations
  */
-TURBO_C_API bool bucket_priority_queue_mpmc_init(bucket_priority_queue_mpmc_t *queue,
+SALTS_C_API bool bucket_priority_queue_mpmc_init(bucket_priority_queue_mpmc_t *queue,
                                                size_t capacity_per_bucket,
                                                uint32_t max_consumers);
 
 /* Releases all memory owned by queue. Safe to call on zero-initialized queue. */
-TURBO_C_API void bucket_priority_queue_mpmc_destroy(bucket_priority_queue_mpmc_t *queue);
+SALTS_C_API void bucket_priority_queue_mpmc_destroy(bucket_priority_queue_mpmc_t *queue);
 
 /*
  * Try to push (non-blocking). Returns false if all queues are full.
  * Thread-safe for multiple producers.
  */
-TURBO_C_API bool bucket_priority_queue_mpmc_try_push(bucket_priority_queue_mpmc_t *queue,
+SALTS_C_API bool bucket_priority_queue_mpmc_try_push(bucket_priority_queue_mpmc_t *queue,
                                                    bucket_priority_mpmc_t priority,
                                                    bucket_priority_mpmc_value_t value);
 
@@ -63,7 +63,7 @@ TURBO_C_API bool bucket_priority_queue_mpmc_try_push(bucket_priority_queue_mpmc_
  * Push (blocking). Waits if queue is full.
  * Thread-safe for multiple producers.
  */
-TURBO_C_API void bucket_priority_queue_mpmc_push_blocking(bucket_priority_queue_mpmc_t *queue,
+SALTS_C_API void bucket_priority_queue_mpmc_push_blocking(bucket_priority_queue_mpmc_t *queue,
                                                         bucket_priority_mpmc_t priority,
                                                         bucket_priority_mpmc_value_t value);
 
@@ -72,7 +72,7 @@ TURBO_C_API void bucket_priority_queue_mpmc_push_blocking(bucket_priority_queue_
  * Returns false if all queues are empty.
  * Thread-safe for multiple consumers.
  */
-TURBO_C_API bool bucket_priority_queue_mpmc_try_pop(
+SALTS_C_API bool bucket_priority_queue_mpmc_try_pop(
     bucket_priority_queue_mpmc_t *queue,
     bucket_priority_mpmc_value_t *out_value);
 
@@ -80,16 +80,16 @@ TURBO_C_API bool bucket_priority_queue_mpmc_try_pop(
  * Pop highest-priority item (blocking). Waits if all queues are empty.
  * Thread-safe for multiple consumers.
  */
-TURBO_C_API bool bucket_priority_queue_mpmc_pop_blocking(
+SALTS_C_API bool bucket_priority_queue_mpmc_pop_blocking(
     bucket_priority_queue_mpmc_t *queue,
     bucket_priority_mpmc_value_t *out_value,
     uint32_t timeout_ms);
 
 /* Query helpers - approximate values in MPMC scenario */
-TURBO_C_API bool bucket_priority_queue_mpmc_empty(const bucket_priority_queue_mpmc_t *queue);
+SALTS_C_API bool bucket_priority_queue_mpmc_empty(const bucket_priority_queue_mpmc_t *queue);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* ROCIDA_BUCKET_PRIORITY_QUEUE_MPMC_H */
+#endif /* SALTS_BUCKET_PRIORITY_QUEUE_MPMC_H */

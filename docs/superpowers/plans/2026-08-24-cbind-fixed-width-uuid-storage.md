@@ -2,18 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:test-driven-development for every behavior change and superpowers:verification-before-completion before commit.
 
-**Goal:** 让 TurboUtils CBind 安全解码 descriptor-driven 8/16/32/64 位整数，并提供 header-local fixed-width metadata 与 Core-exported canonical UUID metadata。
+**Goal:** 让 Salts CBind 安全解码 descriptor-driven 8/16/32/64 位整数，并提供 header-local fixed-width metadata 与 Core-exported canonical UUID metadata。
 
 **Architecture:** CBind 继续拥有格式无关 scalar conversion；CMeta descriptor 是 native storage 事实源。整数在 preflight 验证 width/size/alignment，在 64-bit token 域校验后经 exact-width temporary + `memcpy` 提交。独立窄头承载无 Core 依赖的 fixed-width metadata；Core 导出 process-wide UUID objects/callback authority，并把 bounded slice 同步解析到固定 16-byte value。
 
-**Tech Stack:** C11、C++17 header consumer、TurboUtils CMeta/CSerde/CBind/Core、TinyTest、CMake user presets、MSVC Release。
+**Tech Stack:** C11、C++17 header consumer、Salts CMeta/CSerde/CBind/Core、TinyTest、CMake user presets、MSVC Release。
 
 **Spec:** `docs/superpowers/specs/2026-08-24-cbind-fixed-width-uuid-storage.md`
 
 ## Global constraints
 
 - 不改变 CBind public ABI、status enum、CSerde token protocol 或 legacy scalar 行为。
-- 不修改 `vendor/`，不提交 `.codegraph/`，不修改原始 dirty TurboUtils worktree。
+- 不修改 `vendor/`，不提交 `.codegraph/`，不修改原始 dirty Salts worktree。
 - 所有失败在写 destination 前判定；descriptor 错误在消费 input 前 fail fast。
 - 不给 CBind 添加 Core 依赖；UUID adapter 保持无分配、bounded，canonical metadata/callback authority 由 Core 导出。
 - production code 前必须存在能够观察 missing behavior 的 RED test。
@@ -56,8 +56,8 @@
 
 **Files:**
 
-- Modify: `utils/tests/test_turbo_cmeta_data.c`
-- Modify: `utils/tests/test_turbo_cmeta_data_cpp.cpp`
+- Modify: `utils/tests/test_salts_cmeta_data.c`
+- Modify: `utils/tests/test_salts_cmeta_data_cpp.cpp`
 
 1. 先引用期望公开名称并验证 fixed-width type/data descriptor 的 kind、bits、size、align、semantic identity。
 2. 添加 UUID tests：16-byte storage，lower/uppercase canonical slice，无 NUL 终止，错误长度/hyphen/hex，max-buffer，occupied destination，失败恢复全零，restore 幂等。
@@ -65,7 +65,7 @@
 4. 构建：
 
    ```powershell
-   cmake --build --preset win-release-user --target test_turbo_cmeta_data test_turbo_cmeta_data_cpp
+   cmake --build --preset win-release-user --target test_salts_cmeta_data test_salts_cmeta_data_cpp
    ```
 
    预期 RED：新 metadata symbol 尚不存在，测试 target 编译失败。
@@ -74,10 +74,10 @@
 
 **Files:**
 
-- Modify: `utils/include/turbo_cmeta_data.h`
+- Modify: `utils/include/salts_cmeta_data.h`
 
-1. 包含 `turbo_uuid.h`、`limits.h`、`stdint.h`、`string.h`，添加 C/C++ portable static assertions。
-2. 定义八组 header-local type identity/type/integer shape/data descriptors，stable id 使用 `turbo.<ctype>` / `turbo.<ctype>.data`。
+1. 包含 `salts_uuid.h`、`limits.h`、`stdint.h`、`string.h`，添加 C/C++ portable static assertions。
+2. 定义八组 header-local type identity/type/integer shape/data descriptors，stable id 使用 `salts.<ctype>` / `salts.<ctype>.data`。
 3. 定义 UUID stable type、owned STRING shape、buffer ops/data descriptor。
 4. UUID assign 只按 `(data,size)` fixed indices 解析 local temporary；成功才写 destination。失败由 CMeta wrapper restore 全零。
 5. 运行 Task 3 focused targets/CTest，预期 GREEN。
@@ -94,7 +94,7 @@
 2. 运行 focused、相邻与全量：
 
    ```powershell
-   ctest --preset win-release-user -R '^(cbind_|cmeta_|test_turbo_cmeta_data)' --output-on-failure
+   ctest --preset win-release-user -R '^(cbind_|cmeta_|test_salts_cmeta_data)' --output-on-failure
    ctest --preset win-release-user --output-on-failure
    cmake --build --preset win-release-user --target verify_installed_package
    ```
@@ -112,7 +112,7 @@
    且能用其 data descriptor 完成真实 UUID assignment。
 2. 复制 canonical provenance/data/ops，分别只替换 `is_zero`、`assign`、
    `restore_zero`，先观察缺少 UUID-specific admission surface 的 RED。
-3. 在 `turbo_cmeta_data.h` 增加 UUID 专用 size-prefixed adapter descriptor、v1 ABI 与
+3. 在 `salts_cmeta_data.h` 增加 UUID 专用 size-prefixed adapter descriptor、v1 ABI 与
    header-local self validator；consumer validator 在完整 prefix 得到 size 证明前不得读取
    extension 字段。
 4. 保留全部既有 UUID/fixed-width 名称与 generic CMeta ABI，不改变 tstr/vstr，不给 CBind
@@ -129,7 +129,7 @@
 3. provider-TU callback 接受 canonical cross-TU candidate 与 intact deep copy，并逐项拒绝
    copied provenance 下的 `is_zero`、`assign`、`restore_zero` replacement。
 4. 删除不可从 candidate 获得的二参数 API；以 C/C++ compile assertions 验证
-   `turbo_uuid_cmeta_buffer_ops` macro facade 仍保留 const base lvalue、address 与 field/sizeof
+   `salts_uuid_cmeta_buffer_ops` macro facade 仍保留 const base lvalue、address 与 field/sizeof
    source usage。
 5. 保持 generic records/ABI、tstr/vstr、CBind 依赖不变；重跑 focused、相邻、全量、安装
    consumer 与静态范围检查，用新的独立 fix commit 交付。
@@ -138,14 +138,14 @@
 
 1. 先测试跨 TU canonical object 地址必须一致，并构造 callback mutation + candidate-owned
    always-true validator bypass；在 round-2 实现上观察两个独立 runtime RED。
-2. 经用户批准，把既有 UUID public object names/types 改为 `TURBO_API extern const`
+2. 经用户批准，把既有 UUID public object names/types 改为 `SALTS_API extern const`
    declarations，并在 Core `.c` 中提供唯一 definitions 与 static canonical callbacks。
-3. 保留 candidate-only `turbo_uuid_cmeta_data_valid`，但 authority 只来自 canonical external
+3. 保留 candidate-only `salts_uuid_cmeta_data_valid`，但 authority 只来自 canonical external
    ops callbacks；删除 extension/wrapper/macro 与 candidate-supplied validator。
 4. 验证 canonical cross-TU addresses、intact deep copy、三 callback mutation、C/C++ 精确
    declared type/`&name` source behavior，以及 UUID parse/rollback 全部契约。
 5. 将 header-local fixed-width descriptors 提取到独立
-   `turbo_cmeta_fixed_width.h`，既有 `turbo_cmeta_data.h` 聚合该窄头以保持 source
+   `salts_cmeta_fixed_width.h`，既有 `salts_cmeta_data.h` 聚合该窄头以保持 source
    compatibility。installed CBind-only consumer 只包含窄头并引用 fixed-width metadata，
    证明 CBind export deps 仍为 CMeta+CSerde 且不产生 UUID/Core unresolved references。
 6. fresh、focused、adjacent、clean-first、full Release、installed-package、exported-symbol/

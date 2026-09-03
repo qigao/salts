@@ -6,13 +6,13 @@
 
 **Architecture:** `cflow_io_file` is a thin facade over the existing native file Actor strategy. It owns the compatible native handle, backend, manual Executor, Actor, and fixed operation slots; callers retain buffers through completion callback return. Explicit backend selection and operation capability checks preserve fail-fast behavior without readiness or worker fallback.
 
-**Tech Stack:** C11, CFlow I/O Actor, Windows IOCP, Linux io_uring, Turbo threads, TinyTest, CMake Presets.
+**Tech Stack:** C11, CFlow I/O Actor, Windows IOCP, Linux io_uring, Salts threads, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-26-cflow-async-file-facade-design.md`
 
 ## Global Constraints
 
-- `turbo_fs` remains synchronous and independent from CFlow.
+- `salts_fs` remains synchronous and independent from CFlow.
 - Path open is synchronous control-plane work; read/write/flush are native asynchronous data-plane work.
 - Backend selection is explicit and unsupported behavior never falls back.
 - `request_capacity` is the exact operation-slot bound; submission performs no allocation.
@@ -47,7 +47,7 @@ test target:
 ```cmake
 cmake_add_test(cflow_io_file_test
   SOURCES cflow_io_file_test.c
-  LIBS TurboUtils::CFlow TurboUtils::Platform TurboUtils::TinyTest
+  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 ```
 
@@ -88,14 +88,14 @@ function before Task 2 supplies its implementation.
 Add cases proving:
 
 ```c
-check_equal(cflow_io_file_open(NULL, path, &config), TURBO_EINVAL);
-check_equal(cflow_io_file_open(&file, path, &unsupported), TURBO_ENOTSUP);
+check_equal(cflow_io_file_open(NULL, path, &config), SALTS_EINVAL);
+check_equal(cflow_io_file_open(&file, path, &unsupported), SALTS_ENOTSUP);
 check_false(file_exists_after_unsupported_open);
-check_equal(cflow_io_file_open(&file, path, &config), TURBO_OK);
-check_equal(cflow_io_file_destroy(&file), TURBO_EBUSY);
-check_equal(cflow_io_file_close(&file), TURBO_OK);
+check_equal(cflow_io_file_open(&file, path, &config), SALTS_OK);
+check_equal(cflow_io_file_destroy(&file), SALTS_EBUSY);
+check_equal(cflow_io_file_close(&file), SALTS_OK);
 check_true(cflow_io_file_is_quiescent(&file));
-check_equal(cflow_io_file_destroy(&file), TURBO_OK);
+check_equal(cflow_io_file_destroy(&file), SALTS_OK);
 check_null(file.impl);
 ```
 
@@ -159,7 +159,7 @@ results and no callback.
 
 - [x] **Step 3: Implement fixed-slot admission**
 
-Claim one free slot under a Turbo mutex, fill its native operation, and submit
+Claim one free slot under a Salts mutex, fill its native operation, and submit
 it as a move-only Actor operation. Map every Actor submit status one-to-one.
 On rejection, return the slot immediately. On accepted submit, only the Actor's
 release callback may return the slot.
@@ -169,13 +169,13 @@ release callback may return the slot.
 The facade callback invokes the user callback, then marks that slot delivered.
 `run_ready` performs at most `max_steps` total actions by prioritizing one
 automatic acknowledgement, one Actor transition, or one manual Executor task
-per iteration. It returns `TURBO_EBUSY` for a concurrent/reentrant driver and
+per iteration. It returns `SALTS_EBUSY` for a concurrent/reentrant driver and
 reports the exact number of progressed actions.
 
 - [x] **Step 5: Run GREEN and adjacent regression**
 
 ```powershell
-cmd.exe /D /S /C 'call "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target cflow_io_file_test cflow_io_native_test cflow_io_actor_test test_turbo_fs && ctest --preset win-release-user -R "^(cflow_io_file_test|cflow_io_native_test|cflow_io_actor_test|test_turbo_fs)$" --output-on-failure'
+cmd.exe /D /S /C 'call "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target cflow_io_file_test cflow_io_native_test cflow_io_actor_test test_salts_fs && ctest --preset win-release-user -R "^(cflow_io_file_test|cflow_io_native_test|cflow_io_actor_test|test_salts_fs)$" --output-on-failure'
 ```
 
 ### Task 4: Documentation and Final Verification
@@ -191,13 +191,13 @@ cmd.exe /D /S /C 'call "C:\Program Files\Microsoft Visual Studio\2022\Profession
 
 - [x] **Step 1: Document the layer boundary and runnable usage**
 
-Document that `turbo_fs` is synchronous, facade open is synchronous, file data
+Document that `salts_fs` is synchronous, facade open is synchronous, file data
 operations are native asynchronous, and readiness/worker fallback is absent.
 Include a complete open → submit → drive → close → drain → destroy example.
 
 - [x] **Step 2: Run formatting and symbol checks**
 
-Run `git diff --check`; search for removed `turbo_fs_*_async` symbols and verify
+Run `git diff --check`; search for removed `salts_fs_*_async` symbols and verify
 none were restored. Confirm the CFlow facade appears in the aggregate header.
 
 - [x] **Step 3: Run final Windows Release verification**

@@ -170,12 +170,12 @@ static int crpc_server_test_math(void *user, const crpc_server_request_view *req
       cserde_reader_next(request->params, &token) != CSERDE_OK || token.kind != CSERDE_UINT ||
       token.value.uint != UINT64_C(7) || cserde_reader_next(request->params, &token) != CSERDE_OK ||
       token.kind != CSERDE_ARRAY_END || cserde_reader_next(request->params, &token) != CSERDE_DONE)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   ++probe->calls;
   if (request->notification) ++probe->notifications;
   if (request->callable != NULL) {
     signature = cmeta_callable_signature(*request->callable);
-    if (signature == NULL || signature->protocol != CMETA_FN_PROTOCOL_VALUE) return TURBO_EPROTO;
+    if (signature == NULL || signature->protocol != CMETA_FN_PROTOCOL_VALUE) return SALTS_EPROTO;
     ++probe->callable_calls;
   }
   status = crpc_server_response_result(response, crpc_server_test_encode_uint, (void *)&result);
@@ -229,19 +229,19 @@ static int crpc_server_test_incomplete(void *user, const crpc_server_request_vie
   (void)request;
   (void)response;
   ++probe->calls;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int crpc_server_test_middleware(void *user, const chttp_server_request_view *request,
                                        chttp_server_response *response, chttp_server_next *next) {
   crpc_server_test_probe *probe = (crpc_server_test_probe *)user;
   int status;
-  if (probe == NULL || request == NULL || request->session == NULL) return TURBO_EPROTO;
+  if (probe == NULL || request == NULL || request->session == NULL) return SALTS_EPROTO;
   ++probe->middleware_calls;
   status = chttp_session_set(request->session, "transport", "crpc");
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = chttp_server_response_set_header(response, "X-CRPC-Middleware", "yes");
-  return status == TURBO_OK ? chttp_server_next_call(next) : status;
+  return status == SALTS_OK ? chttp_server_next_call(next) : status;
 }
 
 static int crpc_server_test_http_post(chttp_client *client, const char *uri, const char *target,
@@ -273,56 +273,56 @@ spec("CRPC server") {
     crpc_server_test_probe probe = {0};
     uint16_t port = 0u;
 
-    check_equal(crpc_server_init(NULL, &config), TURBO_EINVAL);
-    check_equal(crpc_server_init(&server, NULL), TURBO_EINVAL);
+    check_equal(crpc_server_init(NULL, &config), SALTS_EINVAL);
+    check_equal(crpc_server_init(&server, NULL), SALTS_EINVAL);
     config.method_capacity = 0u;
-    check_equal(crpc_server_init(&server, &config), TURBO_EINVAL);
+    check_equal(crpc_server_init(&server, &config), SALTS_EINVAL);
     config = crpc_server_test_config(0);
     config.max_json_depth = 1u;
-    check_equal(crpc_server_init(&server, &config), TURBO_EINVAL);
+    check_equal(crpc_server_init(&server, &config), SALTS_EINVAL);
     config = crpc_server_test_config(0);
     config.max_batch_items = 0u;
-    check_equal(crpc_server_init(&server, &config), TURBO_EINVAL);
+    check_equal(crpc_server_init(&server, &config), SALTS_EINVAL);
     config = crpc_server_test_config(0);
     config.http.max_buffered_response_body_bytes = 0u;
-    check_equal(crpc_server_init(&server, &config), TURBO_EINVAL);
+    check_equal(crpc_server_init(&server, &config), SALTS_EINVAL);
     config = crpc_server_test_config(0);
     config.http.max_buffered_response_body_bytes = 95u;
-    check_equal(crpc_server_init(&server, &config), TURBO_EMSGSIZE);
+    check_equal(crpc_server_init(&server, &config), SALTS_EMSGSIZE);
     config = crpc_server_test_config(0);
     config.http.max_buffered_response_body_bytes = CRPC_SERVER_TEST_MIN_BATCH_RESPONSE_BYTES - 1u;
-    check_equal(crpc_server_init(&server, &config), TURBO_EMSGSIZE);
+    check_equal(crpc_server_init(&server, &config), SALTS_EMSGSIZE);
 
     config = crpc_server_test_config(0);
     config.method_capacity = 3u;
-    check_equal(crpc_server_init(&server, &config), TURBO_OK);
+    check_equal(crpc_server_init(&server, &config), SALTS_OK);
     check_not_null(crpc_server_http(&server));
-    check_equal(crpc_server_init(&server, &config), TURBO_EALREADY);
+    check_equal(crpc_server_init(&server, &config), SALTS_EALREADY);
     check_equal(crpc_server_register(&server, "/rpc/:tenant", &ping, crpc_server_test_ping, &probe),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     check_equal(crpc_server_register(&server, "/rpc", &ping, crpc_server_test_ping, &probe),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(crpc_server_register(&server, "/rpc", &ping, crpc_server_test_ping, &probe),
-                TURBO_EALREADY);
+                SALTS_EALREADY);
     check_equal(crpc_server_register(&server, "/rpc", &status, crpc_server_test_status, &probe),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(crpc_server_register(&server, "/other", &ping, crpc_server_test_ping, &probe),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(crpc_server_register(&server, "/rpc", &ping, crpc_server_test_ping, &probe),
-                TURBO_EALREADY);
+                SALTS_EALREADY);
     check_equal(crpc_server_register(&server, "/full", &ping, crpc_server_test_ping, &probe),
-                TURBO_ENOBUFS);
-    check_equal(crpc_server_start(&server), TURBO_OK);
-    check_equal(crpc_server_port(&server, &port), TURBO_OK);
+                SALTS_ENOBUFS);
+    check_equal(crpc_server_start(&server), SALTS_OK);
+    check_equal(crpc_server_port(&server, &port), SALTS_OK);
     check_true(port != 0u);
-    check_equal(crpc_server_start(&server), TURBO_EALREADY);
+    check_equal(crpc_server_start(&server), SALTS_EALREADY);
     check_equal(crpc_server_register(&server, "/late", &ping, crpc_server_test_ping, &probe),
-                TURBO_EBUSY);
-    check_equal(crpc_server_destroy(&server), TURBO_EBUSY);
-    check_equal(crpc_server_stop(&server, CRPC_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_server_destroy(&server), TURBO_OK);
+                SALTS_EBUSY);
+    check_equal(crpc_server_destroy(&server), SALTS_EBUSY);
+    check_equal(crpc_server_stop(&server, CRPC_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_server_destroy(&server), SALTS_OK);
     check_null(server.impl);
-    check_equal(crpc_server_destroy(&server), TURBO_OK);
+    check_equal(crpc_server_destroy(&server), SALTS_OK);
   }
 
   it("serves CMeta and CSerde unary methods on multiple endpoints with middleware sessions") {
@@ -342,20 +342,20 @@ spec("CRPC server") {
     char uri[64];
     uint16_t port = 0u;
 
-    check_equal(crpc_server_init(&server, &server_config), TURBO_OK);
+    check_equal(crpc_server_init(&server, &server_config), SALTS_OK);
     check_equal(
         chttp_server_use(crpc_server_http(&server), crpc_server_test_middleware, &middleware_probe),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(
         crpc_server_register(&server, "/rpc/math", &math, crpc_server_test_math, &method_probe),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(crpc_server_register(&server, "/rpc/status", &status, crpc_server_test_status,
                                      &method_probe),
-                TURBO_OK);
-    check_equal(crpc_server_start(&server), TURBO_OK);
-    check_equal(crpc_server_port(&server, &port), TURBO_OK);
+                SALTS_OK);
+    check_equal(crpc_server_start(&server), SALTS_OK);
+    check_equal(crpc_server_port(&server, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
-    check_equal(crpc_client_init(&client, &client_config), TURBO_OK);
+    check_equal(crpc_client_init(&client, &client_config), SALTS_OK);
 
     options = (crpc_options){.connection_uri = uri,
                              .authority = "localhost",
@@ -364,7 +364,7 @@ spec("CRPC server") {
                              .request_id = UINT64_C(9),
                              .deadline_ms = CRPC_SERVER_TEST_TIMEOUT_MS,
                              .encode_params = crpc_server_test_encode_params};
-    check_equal(crpc_request_reply(&client, &options, &response, &error), TURBO_OK);
+    check_equal(crpc_request_reply(&client, &options, &response, &error), SALTS_OK);
     check_equal(response.kind, CRPC_RESPONSE_RESULT);
     check_not_null(response.callable);
     check_equal(cserde_reader_next(response.value.result, &token), CSERDE_OK);
@@ -378,7 +378,7 @@ spec("CRPC server") {
                              .method = status,
                              .request_id = UINT64_C(10),
                              .deadline_ms = CRPC_SERVER_TEST_TIMEOUT_MS};
-    check_equal(crpc_request_reply(&client, &options, &response, &error), TURBO_OK);
+    check_equal(crpc_request_reply(&client, &options, &response, &error), SALTS_OK);
     check_equal(cserde_reader_next(response.value.result, &token), CSERDE_OK);
     check_equal(token.kind, CSERDE_STRING);
     check_equal(token.value.slice.data, (const unsigned char *)"ready", 5u);
@@ -386,11 +386,11 @@ spec("CRPC server") {
 
     check_equal(method_probe.calls, (size_t)2u);
     check_equal(method_probe.callable_calls, (size_t)1u);
-    check_equal(method_probe.second_response_status, TURBO_EALREADY);
+    check_equal(method_probe.second_response_status, SALTS_EALREADY);
     check_equal(middleware_probe.middleware_calls, (size_t)2u);
-    check_equal(crpc_client_destroy(&client, CRPC_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_server_stop(&server, CRPC_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_server_destroy(&server), TURBO_OK);
+    check_equal(crpc_client_destroy(&client, CRPC_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_server_stop(&server, CRPC_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_server_destroy(&server), SALTS_OK);
   }
 
   it("suppresses notifications and emits bounded ordered batch responses") {
@@ -448,113 +448,113 @@ spec("CRPC server") {
     char uri[64];
     uint16_t port = 0u;
 
-    check_equal(crpc_server_init(&server, &server_config), TURBO_OK);
+    check_equal(crpc_server_init(&server, &server_config), SALTS_OK);
     check_equal(crpc_server_register(&server, "/rpc", &ping, crpc_server_test_ping, &probe),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(crpc_server_register(&server, "/rpc", &fail, crpc_server_test_error, &probe),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(
         crpc_server_register(&server, "/rpc", &no_reply, crpc_server_test_incomplete, &probe),
-        TURBO_OK);
-    check_equal(crpc_server_start(&server), TURBO_OK);
-    check_equal(crpc_server_port(&server, &port), TURBO_OK);
+        SALTS_OK);
+    check_equal(crpc_server_start(&server), SALTS_OK);
+    check_equal(crpc_server_port(&server, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
-    check_equal(chttp_client_init(&client, &client_config), TURBO_OK);
+    check_equal(chttp_client_init(&client, &client_config), SALTS_OK);
 
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", notification,
                                            sizeof(notification) - 1u, NULL, CHTTP_HTTP_1_1,
                                            &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.status_code, 204u);
     check_equal(response.body_size, (size_t)0u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", unknown_notification,
                                            sizeof(unknown_notification) - 1u, NULL, CHTTP_HTTP_1_1,
                                            &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.status_code, 204u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", invalid_notification,
                                            sizeof(invalid_notification) - 1u, NULL, CHTTP_HTTP_1_1,
                                            &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.status_code, 204u);
     chttp_response_destroy(&response);
 
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", batch, sizeof(batch) - 1u, NULL,
                                            CHTTP_HTTP_1_1, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.status_code, 200u);
     check_equal(response.body, batch_response, sizeof(batch_response) - 1u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", all_notifications,
                                            sizeof(all_notifications) - 1u, NULL, CHTTP_HTTP_1_1,
                                            &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.status_code, 204u);
     chttp_response_destroy(&response);
     check_equal(
         crpc_server_test_http_post(&client, uri, "/rpc", "[]", 2u, NULL, CHTTP_HTTP_1_1, &response),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(response.body, invalid_response, sizeof(invalid_response) - 1u);
     chttp_response_destroy(&response);
     check_equal(
         crpc_server_test_http_post(&client, uri, "/rpc", "{", 1u, NULL, CHTTP_HTTP_1_1, &response),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(response.body, parse_response, sizeof(parse_response) - 1u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", too_many, sizeof(too_many) - 1u,
                                            NULL, CHTTP_HTTP_1_1, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.body, invalid_response, sizeof(invalid_response) - 1u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", app_error, sizeof(app_error) - 1u,
                                            NULL, CHTTP_HTTP_1_1, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.body, app_error_response, sizeof(app_error_response) - 1u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", incomplete,
                                            sizeof(incomplete) - 1u, NULL, CHTTP_HTTP_1_1,
                                            &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.body, internal_response, sizeof(internal_response) - 1u);
     chttp_response_destroy(&response);
 
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", duplicate_version,
                                            sizeof(duplicate_version) - 1u, NULL, CHTTP_HTTP_1_1,
                                            &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.body, invalid_response, sizeof(invalid_response) - 1u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", wrong_version,
                                            sizeof(wrong_version) - 1u, NULL, CHTTP_HTTP_1_1,
                                            &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.body, invalid_response, sizeof(invalid_response) - 1u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", reserved_method,
                                            sizeof(reserved_method) - 1u, NULL, CHTTP_HTTP_1_1,
                                            &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.body, invalid_response, sizeof(invalid_response) - 1u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", null_id, sizeof(null_id) - 1u,
                                            NULL, CHTTP_HTTP_1_1, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.body, invalid_response, sizeof(invalid_response) - 1u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", scalar_params,
                                            sizeof(scalar_params) - 1u, NULL, CHTTP_HTTP_1_1,
                                            &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.body, invalid_response, sizeof(invalid_response) - 1u);
     chttp_response_destroy(&response);
 
     check_equal(probe.calls, (size_t)6u);
     check_equal(probe.notifications, (size_t)3u);
-    check_equal(chttp_client_destroy(&client, CRPC_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_server_stop(&server, CRPC_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_server_destroy(&server), TURBO_OK);
+    check_equal(chttp_client_destroy(&client, CRPC_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_server_stop(&server, CRPC_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_server_destroy(&server), SALTS_OK);
   }
 
   it("maps per-item batch response overflow without skipping later calls") {
@@ -579,25 +579,25 @@ spec("CRPC server") {
 
     server_config.http.max_response_body_bytes = 400u;
     server_config.http.max_buffered_response_body_bytes = 400u;
-    check_equal(crpc_server_init(&server, &server_config), TURBO_OK);
+    check_equal(crpc_server_init(&server, &server_config), SALTS_OK);
     check_equal(
         crpc_server_register(&server, "/rpc", &method, crpc_server_test_large_result, &probe),
-        TURBO_OK);
-    check_equal(crpc_server_start(&server), TURBO_OK);
-    check_equal(crpc_server_port(&server, &port), TURBO_OK);
+        SALTS_OK);
+    check_equal(crpc_server_start(&server), SALTS_OK);
+    check_equal(crpc_server_port(&server, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
-    check_equal(chttp_client_init(&client, &client_config), TURBO_OK);
+    check_equal(chttp_client_init(&client, &client_config), SALTS_OK);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", batch, sizeof(batch) - 1u, NULL,
                                            CHTTP_HTTP_1_1, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.status_code, 200u);
     check_equal(response.body, internal_responses, sizeof(internal_responses) - 1u);
     check_equal(probe.calls, (size_t)4u);
     check_equal(probe.notifications, (size_t)1u);
     chttp_response_destroy(&response);
-    check_equal(chttp_client_destroy(&client, CRPC_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_server_stop(&server, CRPC_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_server_destroy(&server), TURBO_OK);
+    check_equal(chttp_client_destroy(&client, CRPC_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_server_stop(&server, CRPC_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_server_destroy(&server), SALTS_OK);
   }
 
   it("serves the same RPC endpoint over cleartext HTTP/2") {
@@ -613,30 +613,30 @@ spec("CRPC server") {
     char uri[64];
     uint16_t port = 0u;
 
-    check_equal(crpc_server_init(&server, &server_config), TURBO_OK);
+    check_equal(crpc_server_init(&server, &server_config), SALTS_OK);
     check_equal(crpc_server_register(&server, "/rpc", &ping, crpc_server_test_ping, &probe),
-                TURBO_OK);
-    check_equal(crpc_server_start(&server), TURBO_OK);
-    check_equal(crpc_server_port(&server, &port), TURBO_OK);
+                SALTS_OK);
+    check_equal(crpc_server_start(&server), SALTS_OK);
+    check_equal(crpc_server_port(&server, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
-    check_equal(chttp_client_init(&client, &client_config), TURBO_OK);
+    check_equal(chttp_client_init(&client, &client_config), SALTS_OK);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", call, sizeof(call) - 1u, NULL,
                                            CHTTP_HTTP_2, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.http_major, 2u);
     check_equal(response.body, reply, sizeof(reply) - 1u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", crpc_server_test_h2_batch,
                                            sizeof(crpc_server_test_h2_batch) - 1u, NULL,
                                            CHTTP_HTTP_2, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.http_major, 2u);
     check_equal(response.body, crpc_server_test_h2_batch_reply,
                 sizeof(crpc_server_test_h2_batch_reply) - 1u);
     chttp_response_destroy(&response);
-    check_equal(chttp_client_destroy(&client, CRPC_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_server_stop(&server, CRPC_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_server_destroy(&server), TURBO_OK);
+    check_equal(chttp_client_destroy(&client, CRPC_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_server_stop(&server, CRPC_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_server_destroy(&server), SALTS_OK);
   }
 
   it("serves the same RPC endpoint over TLS HTTP/1.1 and HTTP/2") {
@@ -683,51 +683,51 @@ spec("CRPC server") {
     h1_tls.alpn_protocols = h1;
     server_config.http.tls = &server_tls;
 
-    check_equal(chttp_tls_profile_init(&h2_profile, &h2_tls), TURBO_OK);
-    check_equal(chttp_tls_profile_init(&h1_profile, &h1_tls), TURBO_OK);
-    check_equal(crpc_server_init(&server, &server_config), TURBO_OK);
+    check_equal(chttp_tls_profile_init(&h2_profile, &h2_tls), SALTS_OK);
+    check_equal(chttp_tls_profile_init(&h1_profile, &h1_tls), SALTS_OK);
+    check_equal(crpc_server_init(&server, &server_config), SALTS_OK);
     check_equal(crpc_server_register(&server, "/rpc", &ping, crpc_server_test_ping, &probe),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(tt_remove_file(cert_path), 0);
     check_equal(tt_remove_file(key_path), 0);
     free(cert_path);
     free(key_path);
-    check_equal(crpc_server_start(&server), TURBO_OK);
-    check_equal(crpc_server_port(&server, &port), TURBO_OK);
+    check_equal(crpc_server_start(&server), SALTS_OK);
+    check_equal(crpc_server_port(&server, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u", (unsigned int)port), 0);
-    check_equal(chttp_client_init(&client, &client_config), TURBO_OK);
+    check_equal(chttp_client_init(&client, &client_config), SALTS_OK);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", call, sizeof(call) - 1u,
                                            &h2_profile, CHTTP_HTTP_2, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.http_major, 2u);
     check_equal(response.body, reply, sizeof(reply) - 1u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", crpc_server_test_h2_batch,
                                            sizeof(crpc_server_test_h2_batch) - 1u, &h2_profile,
                                            CHTTP_HTTP_2, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.http_major, 2u);
     check_equal(response.body, crpc_server_test_h2_batch_reply,
                 sizeof(crpc_server_test_h2_batch_reply) - 1u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", call, sizeof(call) - 1u,
                                            &h1_profile, CHTTP_HTTP_1_1, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.http_major, 1u);
     check_equal(response.body, reply, sizeof(reply) - 1u);
     chttp_response_destroy(&response);
     check_equal(crpc_server_test_http_post(&client, uri, "/rpc", crpc_server_test_h2_batch,
                                            sizeof(crpc_server_test_h2_batch) - 1u, &h1_profile,
                                            CHTTP_HTTP_1_1, &response),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(response.http_major, 1u);
     check_equal(response.body, crpc_server_test_h2_batch_reply,
                 sizeof(crpc_server_test_h2_batch_reply) - 1u);
     chttp_response_destroy(&response);
-    check_equal(chttp_client_destroy(&client, CRPC_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(chttp_tls_profile_destroy(&h1_profile), TURBO_OK);
-    check_equal(chttp_tls_profile_destroy(&h2_profile), TURBO_OK);
-    check_equal(crpc_server_stop(&server, CRPC_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_server_destroy(&server), TURBO_OK);
+    check_equal(chttp_client_destroy(&client, CRPC_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_tls_profile_destroy(&h1_profile), SALTS_OK);
+    check_equal(chttp_tls_profile_destroy(&h2_profile), SALTS_OK);
+    check_equal(crpc_server_stop(&server, CRPC_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_server_destroy(&server), SALTS_OK);
   }
 }

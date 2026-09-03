@@ -98,22 +98,22 @@ Accept adds at most one provisional socket and one fixed peer-address workspace
 per active request; there is no unbounded queue or allocation. Connect adds only
 a phase bit to readiness records. Cancellation remains best effort and native
 completion remains authoritative. Shutdown closes admission and returns
-`TURBO_EBUSY` until all accepted requests have terminally completed; it does not
+`SALTS_EBUSY` until all accepted requests have terminally completed; it does not
 silently close caller-owned listening, connected, or connecting sockets.
 
 ## Error Semantics
 
-Malformed operation shapes fail validation with `TURBO_EINVAL` before backend
-submission. Capacity exhaustion remains `TURBO_EBUSY`. OS failures are reported
+Malformed operation shapes fail validation with `SALTS_EINVAL` before backend
+submission. Capacity exhaustion remains `SALTS_EBUSY`. OS failures are reported
 as existing negative native error values. An optional accept peer address that
-does not fit fails with `TURBO_ERANGE` and closes the provisional socket. There
+does not fit fails with `SALTS_ERANGE` and closes the provisional socket. There
 is no backend fallback and no synchronous blocking compatibility path.
 
 ## Compatibility and Migration
 
 The enum and structure changes are additive at source level, but enlarging the
 public C structure is an ABI change for binaries compiled against an older
-header. TurboUtils consumers must rebuild. Existing send/receive behavior,
+header. Salts consumers must rebuild. Existing send/receive behavior,
 socket ownership, configuration, statistics, and backend selection are
 unchanged. No new dependency is introduced; Windows adds the platform
 `mswsock.h` extension declarations already supplied by the SDK.

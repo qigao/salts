@@ -18,7 +18,7 @@ cmake_add_source(CXX_TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
                  "test_*.cpp" EXCLUDES ${TLOG_HEADER_COLLISION_CPP} ${FMT_SURFACE_CONTRACT_CPP})
 
 # Common libraries for all tests
-set(COMMON_LIBS Rocida::TinyTest Rocida::Core)
+set(COMMON_LIBS Salts::TinyTest Salts::Core)
 if(WIN32)
   list(APPEND COMMON_LIBS psapi iphlpapi userenv ws2_32)
 endif()
@@ -34,9 +34,9 @@ endforeach()
 
 # Seed a parent-only variable so the process clean-environment contract can be
 # tested without relying on PATH, which command interpreters may synthesize.
-if(TARGET test_turbo_process)
-  set_tests_properties(test_turbo_process PROPERTIES
-    ENVIRONMENT "TURBO_PROCESS_PARENT_SENTINEL=parent-value")
+if(TARGET test_salts_process)
+  set_tests_properties(test_salts_process PROPERTIES
+    ENVIRONMENT "SALTS_PROCESS_PARENT_SENTINEL=parent-value")
 endif()
 
 # This link contract intentionally depends only on Core. Its legacy headers
@@ -44,7 +44,7 @@ endif()
 cmake_add_test(test_execution_compat
   SOURCES ${EXECUTION_COMPAT_C}
   FOLDER "utils/tests"
-  LIBS Rocida::Core)
+  LIBS Salts::Core)
 set_target_properties(test_execution_compat PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
@@ -55,21 +55,21 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND TARGET test_tlog)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  foreach(tgt test_tlog_cpp test_turbo_str_meta_cpp)
+  foreach(tgt test_tlog_cpp test_salts_str_meta_cpp)
     if(TARGET ${tgt})
       target_compile_options(${tgt} PRIVATE -Werror=old-style-cast)
     endif()
   endforeach()
 endif()
 
-# fmt surface contracts deliberately do not link Rocida::Core. They stub
+# fmt surface contracts deliberately do not link Salts::Core. They stub
 # fmt_print and validate the public macro expansion contract. Because fmt.h
 # reaches the Core compatibility headers directly, these standalone targets
 # explicitly own both canonical execution-substrate include contracts.
 cmake_add_test(test_fmt_surface_contract_c
   SOURCES ${FMT_SURFACE_CONTRACT_C}
   FOLDER "utils/tests"
-  LIBS Rocida::CMeta Rocida::Platform Rocida::Concurrency)
+  LIBS Salts::CMeta Salts::Platform Salts::Concurrency)
 target_include_directories(test_fmt_surface_contract_c PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../parser
@@ -91,7 +91,7 @@ endif()
 cmake_add_test(test_fmt_surface_contract_cpp
   SOURCES ${FMT_SURFACE_CONTRACT_CPP}
   FOLDER "utils/tests"
-  LIBS Rocida::CMeta Rocida::Platform Rocida::Concurrency)
+  LIBS Salts::CMeta Salts::Platform Salts::Concurrency)
 target_include_directories(test_fmt_surface_contract_cpp PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../include
   ${CMAKE_CURRENT_SOURCE_DIR}/../parser
@@ -109,13 +109,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     -Werror=unused-variable)
 endif()
 
-if(TARGET test_turbo_str_meta)
-  target_sources(test_turbo_str_meta PRIVATE turbo_str_meta_peer.c)
+if(TARGET test_salts_str_meta)
+  target_sources(test_salts_str_meta PRIVATE salts_str_meta_peer.c)
 endif()
 
-foreach(tgt test_turbo_cmeta_data test_turbo_cmeta_data_cpp)
+foreach(tgt test_salts_cmeta_data test_salts_cmeta_data_cpp)
   if(TARGET ${tgt})
-    target_sources(${tgt} PRIVATE turbo_cmeta_data_peer.c)
+    target_sources(${tgt} PRIVATE salts_cmeta_data_peer.c)
   endif()
 endforeach()
 
@@ -144,9 +144,9 @@ foreach(tgt test_fmt_re2c test_fmt)
   endif()
 endforeach()
 
-foreach(tgt test_turbo_str)
+foreach(tgt test_salts_str)
   if(TARGET ${tgt})
-    target_link_libraries(${tgt} PRIVATE Rocida::SDS)
+    target_link_libraries(${tgt} PRIVATE Salts::SDS)
   endif()
 endforeach()
 

@@ -53,16 +53,16 @@ list_items(A) ::= list_items(B) COMMA STRING(V).
   { A = selector_list_append(ctx, B, V); }
 
 %syntax_error {
-  selector_ctx_fail(ctx, TURBO_SELECTOR_SYNTAX_ERROR, ctx->current_offset,
+  selector_ctx_fail(ctx, SALTS_SELECTOR_SYNTAX_ERROR, ctx->current_offset,
                     "selector syntax error");
 }
 
 %parse_failure {
-  selector_ctx_fail(ctx, TURBO_SELECTOR_SYNTAX_ERROR, ctx->current_offset,
+  selector_ctx_fail(ctx, SALTS_SELECTOR_SYNTAX_ERROR, ctx->current_offset,
                     "selector parse failed");
 }
 
 %stack_overflow {
-  selector_ctx_fail(ctx, TURBO_SELECTOR_RESOURCE_LIMIT, ctx->current_offset,
+  selector_ctx_fail(ctx, SALTS_SELECTOR_RESOURCE_LIMIT, ctx->current_offset,
                     "selector parser stack limit exceeded");
 }

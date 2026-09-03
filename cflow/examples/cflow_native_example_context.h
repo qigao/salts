@@ -3,9 +3,9 @@
 
 #include <cflow/io_native.h>
 
-#include <turbo/clock.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/clock.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -44,18 +44,18 @@ typedef int (*cflow_native_example_forget_fn)(
 static int cflow_native_example_forget_until_quiescent(
     cflow_native_example_context *context, uintptr_t identity,
     cflow_native_example_forget_fn forget) {
-    const uint64_t started = turbo_hrtime();
+    const uint64_t started = salts_hrtime();
     int status;
 
     if (context == NULL || forget == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     do {
         status = forget(&context->backend, identity);
-        if (status != TURBO_EBUSY)
+        if (status != SALTS_EBUSY)
             return status;
-        turbo_thread_yield();
-    } while (turbo_hrtime() - started < CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS);
-    return TURBO_ETIMEDOUT;
+        salts_thread_yield();
+    } while (salts_hrtime() - started < CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS);
+    return SALTS_ETIMEDOUT;
 }
 
 static void cflow_native_example_completed(
@@ -89,17 +89,17 @@ static int cflow_native_example_context_init(
     int status;
 
     if (context == NULL || backend_ops.submit == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     memset(context, 0, sizeof(*context));
     if (!cflow_io_native_backend_supported(backend_kind))
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     status = cflow_io_native_backend_init(&context->backend, &backend_config);
-    if (status != TURBO_OK)
+    if (status != SALTS_OK)
         return status;
     context->backend_initialized = true;
     if (!cflow_executor_manual_init_with_capacity(
             &context->executor, CFLOW_NATIVE_EXAMPLE_CAPACITY))
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     context->executor_initialized = true;
 
     memset(&actor_config, 0, sizeof(actor_config));
@@ -111,7 +111,7 @@ static int cflow_native_example_context_init(
     actor_config.completion = cflow_native_example_completed;
     actor_config.completion_user = &context->log;
     status = cflow_io_actor_init(&context->actor, &actor_config);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         context->actor_initialized = true;
     return status;
 }
@@ -123,10 +123,10 @@ static int cflow_native_example_acknowledge_ready(
             context->log.request_ids[context->log.acknowledged];
         if (cflow_io_actor_acknowledge(&context->actor, request_id) !=
             CFLOW_IO_ACK_RELEASED)
-            return TURBO_EPROTO;
+            return SALTS_EPROTO;
         ++context->log.acknowledged;
     }
-    return context->log.overflow ? TURBO_ERANGE : TURBO_OK;
+    return context->log.overflow ? SALTS_ERANGE : SALTS_OK;
 }
 
 static int cflow_native_example_drive_once(
@@ -139,99 +139,99 @@ static int cflow_native_example_drive_once(
     int status;
 
     if (actor_result.status == CFLOW_IO_RUN_INVALID_ARGUMENT)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (actor_result.status == CFLOW_IO_RUN_BUSY)
-        return TURBO_EBUSY;
+        return SALTS_EBUSY;
     status = cflow_native_example_acknowledge_ready(context);
-    if (status != TURBO_OK)
+    if (status != SALTS_OK)
         return status;
     if (progressed != NULL)
         *progressed = actor_result.progressed + executor_progress;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int cflow_native_example_drive_until(
     cflow_native_example_context *context, size_t expected_completions) {
-    const uint64_t started = turbo_hrtime();
+    const uint64_t started = salts_hrtime();
     if (context == NULL || !context->actor_initialized ||
         expected_completions > CFLOW_NATIVE_EXAMPLE_CAPACITY)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     while (context->log.count < expected_completions ||
            context->log.acknowledged < context->log.count) {
         size_t progressed = 0u;
         const int status =
             cflow_native_example_drive_once(context, &progressed);
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             return status;
-        if (turbo_hrtime() - started >= CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS)
-            return TURBO_ETIMEDOUT;
+        if (salts_hrtime() - started >= CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS)
+            return SALTS_ETIMEDOUT;
         if (progressed == 0u)
-            turbo_thread_yield();
+            salts_thread_yield();
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int cflow_native_example_close_actor(
     cflow_native_example_context *context) {
-    const uint64_t started = turbo_hrtime();
-    int first_error = TURBO_OK;
+    const uint64_t started = salts_hrtime();
+    int first_error = SALTS_OK;
     int status;
 
     if (context == NULL || !context->actor_initialized)
-        return TURBO_OK;
+        return SALTS_OK;
     status = cflow_io_actor_close(&context->actor);
-    if (status != TURBO_OK && status != TURBO_EALREADY)
+    if (status != SALTS_OK && status != SALTS_EALREADY)
         first_error = status;
     while (!cflow_io_actor_is_quiescent(&context->actor)) {
         size_t progressed = 0u;
         status = cflow_native_example_drive_once(context, &progressed);
-        if (status != TURBO_OK && first_error == TURBO_OK)
+        if (status != SALTS_OK && first_error == SALTS_OK)
             first_error = status;
-        if (status != TURBO_OK ||
-            turbo_hrtime() - started >= CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS) {
-            if (first_error == TURBO_OK)
-                first_error = TURBO_ETIMEDOUT;
+        if (status != SALTS_OK ||
+            salts_hrtime() - started >= CFLOW_NATIVE_EXAMPLE_TIMEOUT_NS) {
+            if (first_error == SALTS_OK)
+                first_error = SALTS_ETIMEDOUT;
             break;
         }
         if (progressed == 0u)
-            turbo_thread_yield();
+            salts_thread_yield();
     }
     status = cflow_io_actor_destroy(&context->actor);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         context->actor_initialized = false;
-    else if (first_error == TURBO_OK)
+    else if (first_error == SALTS_OK)
         first_error = status;
     return first_error;
 }
 
 static int cflow_native_example_destroy_context(
     cflow_native_example_context *context) {
-    int first_error = TURBO_OK;
+    int first_error = SALTS_OK;
     int status;
     if (context == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (context->actor_initialized) {
         status = cflow_native_example_close_actor(context);
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             first_error = status;
     }
     if (context->backend_initialized) {
         status = cflow_io_native_backend_shutdown(&context->backend);
-        if (status != TURBO_OK && status != TURBO_EALREADY &&
-            first_error == TURBO_OK)
+        if (status != SALTS_OK && status != SALTS_EALREADY &&
+            first_error == SALTS_OK)
             first_error = status;
-        if (status == TURBO_OK || status == TURBO_EALREADY) {
+        if (status == SALTS_OK || status == SALTS_EALREADY) {
             status = cflow_io_native_backend_destroy(&context->backend);
-            if (status == TURBO_OK)
+            if (status == SALTS_OK)
                 context->backend_initialized = false;
-            else if (first_error == TURBO_OK)
+            else if (first_error == SALTS_OK)
                 first_error = status;
         }
     }
     if (context->executor_initialized) {
         if (!cflow_executor_shutdown(&context->executor) &&
-            first_error == TURBO_OK)
-            first_error = TURBO_EBUSY;
+            first_error == SALTS_OK)
+            first_error = SALTS_EBUSY;
         cflow_executor_destroy(&context->executor);
         context->executor_initialized = false;
     }

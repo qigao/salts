@@ -1,5 +1,5 @@
-#ifndef TURBO_ENUM_UTILS_H
-#define TURBO_ENUM_UTILS_H
+#ifndef SALTS_ENUM_UTILS_H
+#define SALTS_ENUM_UTILS_H
 
 #include <cmeta/enum.h>
 
@@ -18,7 +18,7 @@
  *   (COLOR_GREEN, 1, "green"), \
  *   (COLOR_BLUE, 2, "blue")
  *
- * TURBO_ENUM_DECLARE(color_t, color, COLOR_ITEMS, "UNKNOWN");
+ * SALTS_ENUM_DECLARE(color_t, color, COLOR_ITEMS, "UNKNOWN");
  *
  * Then use:
  *   color_t c = COLOR_RED;
@@ -30,26 +30,26 @@
 extern "C" {
 #endif
 
-typedef struct turbo_enum_entry_s {
+typedef struct salts_enum_entry_s {
   long long value;
   const char *name;
-} turbo_enum_entry_t;
+} salts_enum_entry_t;
 
 /**
  * @brief Expand an enum item as a lookup table entry.
  */
-#define TURBO_ENUM_TABLE_ITEM(name, value, str) {value, str},
+#define SALTS_ENUM_TABLE_ITEM(name, value, str) {value, str},
 
 /**
  * @brief C11 _Generic mapping item for dispatch helpers.
  *
  * usage:
- *   TURBO_ENUM_DISPATCH_TO_STRING_OF(color, color_t, color_to_string)
- *   TURBO_ENUM_DISPATCH_TO_STRING_OF(status, status_t, status_to_string)
+ *   SALTS_ENUM_DISPATCH_TO_STRING_OF(color, color_t, color_to_string)
+ *   SALTS_ENUM_DISPATCH_TO_STRING_OF(status, status_t, status_to_string)
  */
-#define TURBO_ENUM_DISPATCH_TO_STRING_CASE(enum_type, fn) enum_type: fn
+#define SALTS_ENUM_DISPATCH_TO_STRING_CASE(enum_type, fn) enum_type: fn
 
-static inline const char *turbo_enum_unknown_to_string(void) {
+static inline const char *salts_enum_unknown_to_string(void) {
   return "UNKNOWN";
 }
 
@@ -62,17 +62,17 @@ static inline const char *turbo_enum_unknown_to_string(void) {
  *   treat different enums as compatible and reject multiple enum associations.
  */
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-#define TURBO_ENUM_DISPATCH_TO_STRING(value, case_list) \
+#define SALTS_ENUM_DISPATCH_TO_STRING(value, case_list) \
   _Generic((value), case_list)(value)
 
-#define TURBO_ENUM_DISPATCH_TO_STRING_OF(value, enum_type, fn) \
+#define SALTS_ENUM_DISPATCH_TO_STRING_OF(value, enum_type, fn) \
   _Generic((value), enum_type: fn)(value)
 #else
-#define TURBO_ENUM_DISPATCH_TO_STRING(value, case_list) \
-  turbo_enum_unknown_to_string()
+#define SALTS_ENUM_DISPATCH_TO_STRING(value, case_list) \
+  salts_enum_unknown_to_string()
 
-#define TURBO_ENUM_DISPATCH_TO_STRING_OF(value, enum_type, fn) \
-  turbo_enum_unknown_to_string()
+#define SALTS_ENUM_DISPATCH_TO_STRING_OF(value, enum_type, fn) \
+  salts_enum_unknown_to_string()
 #endif
 
 /**
@@ -92,10 +92,10 @@ static inline const char *turbo_enum_unknown_to_string(void) {
  *   - prefix##_from_string(const char *, enum_type *)
  *   - prefix##_is_valid(enum_type)
  */
-#define TURBO_ENUM_DECLARE(enum_type, prefix, item_list, unknown_str) \
+#define SALTS_ENUM_DECLARE(enum_type, prefix, item_list, unknown_str) \
   Enum(enum_type, item_list); \
-  static const turbo_enum_entry_t prefix##_entries[] = { \
-      Schema(TURBO_ENUM_TABLE_ITEM, item_list) \
+  static const salts_enum_entry_t prefix##_entries[] = { \
+      Schema(SALTS_ENUM_TABLE_ITEM, item_list) \
   }; \
   static inline size_t prefix##_count(void) { \
     return sizeof(prefix##_entries) / sizeof(prefix##_entries[0]); \
@@ -124,4 +124,4 @@ static inline const char *turbo_enum_unknown_to_string(void) {
 }
 #endif
 
-#endif // TURBO_ENUM_UTILS_H
+#endif // SALTS_ENUM_UTILS_H

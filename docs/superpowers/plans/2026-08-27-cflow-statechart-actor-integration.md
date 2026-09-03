@@ -6,7 +6,7 @@
 
 **Architecture:** Add a single-waiter terminal projection directly to the Statechart runtime, then select Machine or Statechart through an internal Actor backend tag. Keep all semantic state in the existing runtime instance and reuse the existing Actor producer-ref control block and lifecycle states.
 
-**Tech Stack:** C11, CMeta interfaces, TurboUtils thread primitives, CFlow Statechart/Mailbox/Executor/Actor, TinyTest, CMake Presets.
+**Tech Stack:** C11, CMeta interfaces, Salts thread primitives, CFlow Statechart/Mailbox/Executor/Actor, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-27-cflow-statechart-actor-integration-design.md`
 

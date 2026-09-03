@@ -9,7 +9,7 @@
 TinyTest reports human metrics, a stable JSON line carries quantiles/resources/outcomes,
 and the existing release benchmark workflow aggregates and uploads per-host artifacts.
 
-**Tech Stack:** C11 sockets, CFlow IO Actor/native backend, TurboUtils clock/thread,
+**Tech Stack:** C11 sockets, CFlow IO Actor/native backend, Salts clock/thread,
 TinyTest `benchmark_io`, PowerShell in GitHub Actions.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-cflow-network-performance-ci-design.md`

@@ -5,8 +5,8 @@
 #include <stdint.h>
 #include <string.h>
 
-#ifndef TURBO_API
-  #error "re.h must use the Rocida export contract"
+#ifndef SALTS_API
+  #error "re.h must use the Salts export contract"
 #endif
 
 #ifdef RE_API

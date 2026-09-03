@@ -3,19 +3,19 @@
 
 **Goal:** 为 CFlow WAIT/waker 增加有界、代际安全、可 quiescent close 的 readiness reactor adapter，并交付首个 Linux epoll 生产后端。
 
-**Architecture:** Platform 预分配 registration slots 并拥有 native epoll/eventfd/thread；CFlow move 一个 opaque registration，负责 `read -> WOULD_BLOCK -> arm -> wake`。旧 raw readiness factory 保留。首个 native backend 由 `TURBO_ENABLE_EPOLL_READINESS` 显式启用，其他 host 明确 `TURBO_ENOTSUP`。
+**Architecture:** Platform 预分配 registration slots 并拥有 native epoll/eventfd/thread；CFlow move 一个 opaque registration，负责 `read -> WOULD_BLOCK -> arm -> wake`。旧 raw readiness factory 保留。首个 native backend 由 `SALTS_ENABLE_EPOLL_READINESS` 显式启用，其他 host 明确 `SALTS_ENOTSUP`。
 
-**Tech Stack:** ISO C11、TurboUtils Platform thread/error primitives、Linux epoll/eventfd、CFlow Source/WAIT/waker、TinyTest、CMake Presets、GitHub Actions。
+**Tech Stack:** ISO C11、Salts Platform thread/error primitives、Linux epoll/eventfd、CFlow Source/WAIT/waker、TinyTest、CMake Presets、GitHub Actions。
 
 **Spec:** `docs/superpowers/specs/2026-08-24-cflow-readiness-reactor-design.md`
 
 ## Global Constraints
 
 - 不修改现有 `cflow_waker`、`cflow_waitable` 或旧 readiness factory ABI。
-- registration/rearm 热路径不分配、不扩容；容量满返回 `TURBO_ENOBUFS`。
+- registration/rearm 热路径不分配、不扩容；容量满返回 `SALTS_ENOBUFS`。
 - 不提供 poll/select、定时扫描、thread-per-handle 或静默 fallback。
 - Platform callback 和 CFlow waker 一律在锁外调用；callback 内 reactor
-  shutdown 立即返回 `TURBO_EBUSY`，不等待自身 delivery 或 backend thread。
+  shutdown 立即返回 `SALTS_EBUSY`，不等待自身 delivery 或 backend thread。
 - 每个成功 register 必须恰好由 close 释放；slot 仅在 native unwatch 和 callback
   quiescence 后复用。
 - `.codegraph/`、build tree 和 vcpkg installed tree 不提交。
@@ -28,7 +28,7 @@
 
 **Files:**
 
-- Create: `platform/include/turbo/readiness.h`
+- Create: `platform/include/salts/readiness.h`
 - Create: `platform/tests/readiness_contract_suite.h`
 - Create: `platform/tests/readiness_contract_suite.c`
 - Create: `platform/tests/platform_readiness_fake_test.c`
@@ -65,7 +65,7 @@
 - [ ] **Step 4: 添加公共声明、CMake target 和 unsupported-host 行为**
 
   添加完整公共声明、测试 target 和 feature option 校验；不加入占位成功返回。
-  未支持 native backend 的 factory 明确返回 `TURBO_ENOTSUP`。
+  未支持 native backend 的 factory 明确返回 `SALTS_ENOTSUP`。
 
 - [ ] **Step 5: 实现 checked init-time storage**
 
@@ -174,8 +174,8 @@
 
 - [ ] **Step 3: 固定 feature option 与 unsupported host**
 
-  Linux Release user preset 显式 `TURBO_ENABLE_EPOLL_READINESS=ON`。非 Linux
-  若显式打开则 configure fail；关闭时 native init 返回 `TURBO_ENOTSUP`，fake
+  Linux Release user preset 显式 `SALTS_ENABLE_EPOLL_READINESS=ON`。非 Linux
+  若显式打开则 configure fail；关闭时 native init 返回 `SALTS_ENOTSUP`，fake
   suite 仍构建运行。
 
 - [ ] **Step 4: Linux native GREEN**
@@ -227,7 +227,7 @@
 - [ ] **Step 4: 保留旧 API 并更新 umbrella/header tests**
 
   `cflow_source_from_readiness` 行为不变；`cflow/cflow.h` 导出新 header。
-  `TurboUtils::CFlow` 将 Platform 设为 PUBLIC dependency。
+  `Salts::CFlow` 将 Platform 设为 PUBLIC dependency。
 
 - [ ] **Step 5: Windows fake GREEN**
 
@@ -309,15 +309,15 @@
 
 - [ ] **Step 2: 扩展 installed consumer**
 
-  安装后 consumer 编译 `<turbo/readiness.h>` 和 `<cflow/readiness.h>`，链接
-  `TurboUtils::CFlow`，在 Linux 验证 epoll feature，在其他 host 验证 public
-  surface 和 `TURBO_ENOTSUP`。
+  安装后 consumer 编译 `<salts/readiness.h>` 和 `<cflow/readiness.h>`，链接
+  `Salts::CFlow`，在 Linux 验证 epoll feature，在其他 host 验证 public
+  surface 和 `SALTS_ENOTSUP`。
 
 - [ ] **Step 3: 同步 CodeGraph 并检查影响面**
 
   ```powershell
   codegraph sync .
-  codegraph affected -p . platform/include/turbo/readiness.h platform/src/readiness.c platform/src/readiness_epoll.c cflow/include/cflow/readiness.h cflow/src/readiness.c
+  codegraph affected -p . platform/include/salts/readiness.h platform/src/readiness.c platform/src/readiness_epoll.c cflow/include/cflow/readiness.h cflow/src/readiness.c
   git status --short
   ```
 

@@ -1,7 +1,7 @@
 # CFlow Native Regular-File I/O Design
 
-Issue: [#107](https://github.com/qigao/turbo-utils/issues/107)
-Parent tracker: [#100](https://github.com/qigao/turbo-utils/issues/100)
+Issue: [#107](https://github.com/qigao/salts/issues/107)
+Parent tracker: [#100](https://github.com/qigao/salts/issues/100)
 
 ## Decision
 
@@ -32,7 +32,7 @@ An accepted operation has these invariants:
   route through separate Actor strategies. A file operation needs an explicit
   offset and optional flush, so reusing either shape would expose false fields
   and ownership semantics.
-- `turbo_fs_*_async` is a thread-pool-backed whole-file facility. It is not a
+- `salts_fs_*_async` is a thread-pool-backed whole-file facility. It is not a
   native completion backend and cannot be an implicit implementation of this
   API.
 - IOCP and io_uring already own bounded request records, cancellation,
@@ -181,24 +181,24 @@ operation, or express the dependency in their graph.
   retained IOCP identity.
 - `request_capacity` is the hard shared bound. Full admission reports the
   existing busy/backpressure result; it never allocates an overflow record.
-- Shutdown first closes admission and reports `TURBO_EBUSY` while native
+- Shutdown first closes admission and reports `SALTS_EBUSY` while native
   requests remain. It does not synchronously flush caller files or close them.
 
 ## Error semantics
 
-- malformed operation or offset range: `TURBO_EINVAL` before native admission;
+- malformed operation or offset range: `SALTS_EINVAL` before native admission;
 - backend/operation unsupported, IOCP flush, or missing IOCP async declaration:
-  `TURBO_ENOTSUP`;
-- wrong resource type: `TURBO_EINVAL`;
-- full bounded request/resource storage: existing `TURBO_EBUSY` behavior;
-- read past end: `CFLOW_IO_COMPLETION_EOF`, zero bytes, `TURBO_OK`;
+  `SALTS_ENOTSUP`;
+- wrong resource type: `SALTS_EINVAL`;
+- full bounded request/resource storage: existing `SALTS_EBUSY` behavior;
+- read past end: `CFLOW_IO_COMPLETION_EOF`, zero bytes, `SALTS_OK`;
 - partial read/write: `CFLOW_IO_COMPLETION_OK` with actual bytes;
 - native failure: `CFLOW_IO_COMPLETION_FAILED` with the mapped negative error;
 - cancelled native operation: `CFLOW_IO_COMPLETION_CANCELLED` only after the
   backend's authoritative completion.
 
 No error path closes the file, mutates a current file position, or submits work
-to `turbo_fs_*_async`.
+to `salts_fs_*_async`.
 
 ## Verification matrix
 
@@ -222,7 +222,7 @@ to `turbo_fs_*_async`.
 This is additive public API. Existing layouts, enumerator values, entry points,
 backend selection, and socket/pipe behavior do not change. Applications may
 adopt file operations per backend using the operation-specific capability
-query. There is no automatic migration from `turbo_fs_*_async`, because its
+query. There is no automatic migration from `salts_fs_*_async`, because its
 whole-file thread-pool semantics differ from offset-based native completion.
 
 ## Deferred work

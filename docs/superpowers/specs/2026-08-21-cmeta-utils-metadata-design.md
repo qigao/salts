@@ -4,19 +4,19 @@
 
 ## 背景
 
-TurboUtils 正在把 CMeta 作为整个应用可复用的基础元数据层。目前已有两个试点：
+Salts 正在把 CMeta 作为整个应用可复用的基础元数据层。目前已有两个试点：
 
 - `fmt.h` 使用 `Schema/Replay` 生成 `fmt_type_t`、`fmt_arg_t` union、构造器及 C/C++ 类型检测。
-- `tlog.h` 使用 `Enum(...)` 声明 `turbo_log_level_t`，日志实现通过枚举元数据完成控制面校验和名称转换。
+- `tlog.h` 使用 `Enum(...)` 声明 `salts_log_level_t`，日志实现通过枚举元数据完成控制面校验和名称转换。
 
-这两个试点已经证明 CMeta 可以减少机械重复，但应用仍无法查询 `fmt_type_t` 和 `turbo_log_entry_t` 的只读结构信息。与此同时，CMeta 的若干生成式头文件分别维护 unused/inline 属性，并且 `struct.h` 直接使用 C11 `_Alignof`，不适合作为 C/C++ 公共头文件的统一实现基础。
+这两个试点已经证明 CMeta 可以减少机械重复，但应用仍无法查询 `fmt_type_t` 和 `salts_log_entry_t` 的只读结构信息。与此同时，CMeta 的若干生成式头文件分别维护 unused/inline 属性，并且 `struct.h` 直接使用 C11 `_Alignof`，不适合作为 C/C++ 公共头文件的统一实现基础。
 
 本设计把 fmt/tlog 作为第一个完整的 Utils 元数据试点。它只扩展描述能力，不改变格式化、日志传递、字符串所有权或 sink 调度算法。
 
 ## 目标
 
 1. 让 `fmt_type_t` 的稳定存储类型表同时生成 ABI tag、union、构造器和公开只读枚举元数据；源语言检测继续由独立策略 Schema 映射到这些构造器。
-2. 为 `turbo_log_entry_t` 提供公开只读结构元数据。
+2. 为 `salts_log_entry_t` 提供公开只读结构元数据。
 3. 统一 CMeta 头文件生成代码的 inline、unused 和 C/C++ alignof 基础宏。
 4. 保持现有公开 API、ABI、错误语义、所有权、日志输出及热路径行为。
 5. 以 C、C++、多翻译单元、功能测试、完整回归和性能基线证明兼容性。
@@ -43,7 +43,7 @@ TurboUtils 正在把 CMeta 作为整个应用可复用的基础元数据层。�
 
 ### 方案二：直接将所有类型改写为 `Enum/Struct`
 
-`turbo_log_entry_t` 适合 `Struct(...)`，但 `fmt_arg_t` 包含 tag、union、构造器及多组语言检测策略，单独使用 `Enum(...)` 无法让这些产物共享同一事实源，反而会保留两份类型表。
+`salts_log_entry_t` 适合 `Struct(...)`，但 `fmt_arg_t` 包含 tag、union、构造器及多组语言检测策略，单独使用 `Enum(...)` 无法让这些产物共享同一事实源，反而会保留两份类型表。
 
 ### 方案三：注册到 CMeta runtime registry
 
@@ -56,16 +56,16 @@ TurboUtils 正在把 CMeta 作为整个应用可复用的基础元数据层。�
 ```text
 CMeta preprocessor / metadata primitives
         ↓
-TurboUtils fmt/tlog declarations
+Salts fmt/tlog declarations
         ↓
-TurboUtils runtime algorithms
+Salts runtime algorithms
         ↓
 application / plugin / diagnostics consumers
 ```
 
 CMeta 只生成声明、只读描述符和薄 typed helper。`fmt.c` 和 `tlog.c` 继续拥有所有解析、格式化、异步传递和 sink 算法。元数据查询不会隐式执行日志操作，也不会推进任何运行时状态。
 
-`TurboUtils::Core` 已公开依赖 `TurboUtils::CMeta`；本设计不新增目标、不拆分 CMeta，也不改变安装或导出目标名称。
+`Salts::Core` 已公开依赖 `Salts::CMeta`；本设计不新增目标、不拆分 CMeta，也不改变安装或导出目标名称。
 
 ## CMeta 基础宏
 
@@ -76,7 +76,7 @@ CMeta 只生成声明、只读描述符和薄 typed helper。`fmt.c` 和 `tlog.c
 - `CMETA_LOCAL`：`static CMETA_UNUSED`。
 - `CMETA_ALIGNOF(type)`：C++ 使用 `alignof(type)`，C 使用 `_Alignof(type)`。
 
-`enum.h`、`struct.h`、`interface.h` 和 `container.h` 复用这些宏。现有模块私有的等价宏删除，避免生成式公共头文件在严格 `-Werror` 消费者中产生未使用函数告警。
+`enum.h`、`struct.h`、`interface.h` 和 `cstl.h` 复用这些宏。现有模块私有的等价宏删除，避免生成式公共头文件在严格 `-Werror` 消费者中产生未使用函数告警。
 
 这些宏只控制 linkage、诊断和跨语言拼写，不改变函数签名、描述符内容或对象布局。
 
@@ -116,7 +116,7 @@ bool fmt_type_t_from_string(const char *text, fmt_type_t *out);
 
 ## 日志条目元数据
 
-现有 `turbo_log_entry_t` 字段按原顺序放入 CMeta `Struct(...)`：
+现有 `salts_log_entry_t` 字段按原顺序放入 CMeta `Struct(...)`：
 
 ```text
 level, timestamp_ms, thread_id, component, file, line, message, message_len
@@ -125,7 +125,7 @@ level, timestamp_ms, thread_id, component, file, line, message, message_len
 生成的公开入口为：
 
 ```c
-const cmeta_struct_desc *turbo_log_entry_t_meta(void);
+const cmeta_struct_desc *salts_log_entry_t_meta(void);
 ```
 
 描述符公开字段名、类型文本、offset、size 和 align。字段顺序、字段类型、结构 size/align 及 sink callback 签名不变。为结构增加 C tag 属于源代码层面的兼容扩展，不改变对象布局。
@@ -137,16 +137,16 @@ const cmeta_struct_desc *turbo_log_entry_t_meta(void);
 日志热路径保持不变：
 
 ```text
-TLOG_* / TURBO_LOG_*
+TLOG_* / SALTS_LOG_*
   → FMT_ARGS
-  → turbo_log_typed
+  → salts_log_typed
   → fmt_print
   → async_entry_create（复制 borrowed payload）
   → queue
   → sinks
 ```
 
-`FMT_ARG(x)` 仍只在调用点完成编译期类型选择并构造现有 `fmt_arg_t`。`fmt_print()` 不读取新描述符。`turbo_log_typed()` 和 sink 分发也不读取日志条目结构元数据。
+`FMT_ARG(x)` 仍只在调用点完成编译期类型选择并构造现有 `fmt_arg_t`。`fmt_print()` 不读取新描述符。`salts_log_typed()` 和 sink 分发也不读取日志条目结构元数据。
 
 应用、插件或诊断代码必须显式调用 `*_meta()` 才会访问描述符，因此控制面元数据不会进入数据面。
 
@@ -164,10 +164,10 @@ TLOG_* / TURBO_LOG_*
 
 - `FMT_TYPE_NONE == 0`，既有 fmt tag 继续为 `1..14`。
 - `fmt_arg_t.type`、union member、结构 size/align 和所有 member offset。
-- `turbo_log_level_t` 的 `0..4` 数值及既有文本。
-- `turbo_log_entry_t` 字段顺序、类型、size/align 和 member offset。
-- `FMT_ARG`、`FMT_ARGS`、`FMT_WRAP_0..8`、`fmt`、`TLOG_*` 和 `TURBO_LOG_*` 的源兼容入口。
-- `fmt_print`、`turbo_log_typed`、sink callback 等导出符号及 ABI。
+- `salts_log_level_t` 的 `0..4` 数值及既有文本。
+- `salts_log_entry_t` 字段顺序、类型、size/align 和 member offset。
+- `FMT_ARG`、`FMT_ARGS`、`FMT_WRAP_0..8`、`fmt`、`TLOG_*` 和 `SALTS_LOG_*` 的源兼容入口。
+- `fmt_print`、`salts_log_typed`、sink callback 等导出符号及 ABI。
 
 新增元数据 helper 是 source-level additive API，不新增动态库导出符号。旧调用方无需修改即可重新编译。
 
@@ -193,7 +193,7 @@ TLOG_* / TURBO_LOG_*
 - fmt C 测试查询 15 个 item（含 NONE），验证名称、symbol、显式数值及解析失败不修改输出。
 - fmt C++ 测试包含同一公共头并查询相同语义。
 - tlog C 测试查询 8 个字段，验证字段名、类型文本、offset、size 和 align。
-- tlog C++ 测试包含并调用 `turbo_log_entry_t_meta()`，证明 `Struct` 生成面跨语言可用。
+- tlog C++ 测试包含并调用 `salts_log_entry_t_meta()`，证明 `Struct` 生成面跨语言可用。
 
 ### ABI 锁定
 
@@ -251,7 +251,7 @@ mirror 不进入生产头文件，不形成第二个运行时事实源。
 本改动不迁移持久化数据，也不改变动态库导出 ABI。若兼容、编译或性能验证失败，可按以下顺序回滚：
 
 1. 删除 Utils 新增的元数据 helper 和测试；
-2. 恢复 `turbo_log_entry_t` 的显式 typedef；
+2. 恢复 `salts_log_entry_t` 的显式 typedef；
 3. 保留或单独回滚 CMeta 基础宏统一；
 4. 重新运行原有 fmt/tlog/CMeta 测试确认恢复。
 

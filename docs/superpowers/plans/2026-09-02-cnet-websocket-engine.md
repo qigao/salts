@@ -9,7 +9,7 @@ in-repository `tools/wsparser` frame parser without changing existing CNet
 transport behavior.
 
 **Architecture:** `tools/wsparser` is a private object target embedded in
-`turbo_cnet`. `<cnet/websocket.h>` exposes only CNet value types and callbacks.
+`salts_cnet`. `<cnet/websocket.h>` exposes only CNet value types and callbacks.
 `cnet_websocket.c` owns fixed-capacity input, reassembly, and one-frame output
 buffers and never parses HTTP.
 

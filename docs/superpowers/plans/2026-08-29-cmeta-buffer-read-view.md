@@ -4,9 +4,9 @@
 
 **Goal:** Add a bounded borrowed read-view contract for reflected CMeta `STRING` and `BYTES` values without changing existing assignment behavior.
 
-**Architecture:** Extend the existing versioned `cmeta_data_buffer_ops` adapter by appending an optional read callback. A checked CMeta facade validates the descriptor, callback result, and caller-supplied byte ceiling before publishing outputs; TurboUtils `tstr` and `vstr` adapters provide thin layout-aware implementations. Existing adapters without the appended callback remain valid for assignment and fail reads with `CMETA_TRAIT_MISSING`.
+**Architecture:** Extend the existing versioned `cmeta_data_buffer_ops` adapter by appending an optional read callback. A checked CMeta facade validates the descriptor, callback result, and caller-supplied byte ceiling before publishing outputs; Salts `tstr` and `vstr` adapters provide thin layout-aware implementations. Existing adapters without the appended callback remain valid for assignment and fail reads with `CMETA_TRAIT_MISSING`.
 
-**Tech Stack:** C11, CMeta descriptors, TurboUtils `tstr`/`vstr`, TinyTest, CMake Presets.
+**Tech Stack:** C11, CMeta descriptors, Salts `tstr`/`vstr`, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-cflow-scxml-cmeta-data-model-selection.md`
 
@@ -49,18 +49,18 @@
 
   Build and run `cmeta_data_test` and `cmeta_header_cpp_test` using `win-release-user`.
 
-### Task 2: Turbo String Adapters and Cross-TU Compatibility
+### Task 2: Salts String Adapters and Cross-TU Compatibility
 
 **Files:**
-- Modify: `utils/include/turbo_cmeta_data.h`
-- Modify: `utils/src/turbo_cmeta_data.c`
-- Modify: `utils/tests/test_turbo_cmeta_data.c`
-- Modify: `utils/tests/test_turbo_cmeta_data_cpp.cpp`
-- Modify: `utils/tests/turbo_cmeta_data_peer.c`
+- Modify: `utils/include/salts_cmeta_data.h`
+- Modify: `utils/src/salts_cmeta_data.c`
+- Modify: `utils/tests/test_salts_cmeta_data.c`
+- Modify: `utils/tests/test_salts_cmeta_data_cpp.cpp`
+- Modify: `utils/tests/salts_cmeta_data_peer.c`
 
 **Interfaces:**
 - Consumes: the checked CMeta read contract from Task 1 and the existing `tstr`/`vstr` storage APIs.
-- Produces: read-capable `turbo_tstr_cmeta_buffer_ops` and `turbo_vstr_cmeta_buffer_ops`; the UUID descriptor remains a valid write-only adapter because its object does not retain canonical source text.
+- Produces: read-capable `salts_tstr_cmeta_buffer_ops` and `salts_vstr_cmeta_buffer_ops`; the UUID descriptor remains a valid write-only adapter because its object does not retain canonical source text.
 
 - [x] **Step 1: Write failing adapter behavior tests**
 
@@ -68,7 +68,7 @@
 
 - [x] **Step 2: Verify the adapter tests fail because read callbacks are absent**
 
-  Build and run the focused Turbo CMeta targets; expect `CMETA_TRAIT_MISSING` or the new success assertions to fail before adapter implementation.
+  Build and run the focused Salts CMeta targets; expect `CMETA_TRAIT_MISSING` or the new success assertions to fail before adapter implementation.
 
 - [x] **Step 3: Implement thin adapter callbacks**
 
@@ -76,13 +76,13 @@
 
 - [x] **Step 4: Run focused and adjacent regression tests**
 
-  Run `cmeta_data_test`, `cmeta_header_cpp_test`, `test_turbo_cmeta_data`, and `test_turbo_cmeta_data_cpp`, then the complete Release CTest preset and focused ASan tests.
+  Run `cmeta_data_test`, `cmeta_header_cpp_test`, `test_salts_cmeta_data`, and `test_salts_cmeta_data_cpp`, then the complete Release CTest preset and focused ASan tests.
 
 ### Task 3: Contract Documentation and Final Verification
 
 **Files:**
 - Modify: `cmeta/include/cmeta/data.h`
-- Modify: `utils/include/turbo_cmeta_data.h`
+- Modify: `utils/include/salts_cmeta_data.h`
 - Modify: `docs/superpowers/specs/2026-08-29-cflow-scxml-cmeta-data-model-selection.md`
 
 **Interfaces:**

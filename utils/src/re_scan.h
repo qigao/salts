@@ -1,5 +1,5 @@
-#ifndef TURBO_RE_SCAN_H
-#define TURBO_RE_SCAN_H
+#ifndef SALTS_RE_SCAN_H
+#define SALTS_RE_SCAN_H
 
 #include <simde/x86/sse2.h>
 
@@ -39,4 +39,4 @@ static inline const char *re_scan_first_byte_simde(const char *p, const char *en
   return re_scan_first_byte_scalar(p, end, needle);
 }
 
-#endif /* TURBO_RE_SCAN_H */
+#endif /* SALTS_RE_SCAN_H */

@@ -1,6 +1,6 @@
 cmake_add_test(crpc_json_test
   SOURCES crpc_json_test.c
-  LIBS turbo_crpc Rocida::TinyTest
+  LIBS salts_crpc Salts::TinyTest
   INCLUDES ../src
   FOLDER "crpc/tests")
 set_target_properties(crpc_json_test PROPERTIES
@@ -10,7 +10,7 @@ set_target_properties(crpc_json_test PROPERTIES
 
 cmake_add_test(crpc_api_test
   SOURCES crpc_api_test.c
-  LIBS turbo_crpc Rocida::TinyTest
+  LIBS salts_crpc Salts::TinyTest
   FOLDER "crpc/tests")
 set_target_properties(crpc_api_test PROPERTIES
   C_STANDARD 11
@@ -19,7 +19,7 @@ set_target_properties(crpc_api_test PROPERTIES
 
 cmake_add_test(crpc_transport_test
   SOURCES crpc_transport_test.c
-  LIBS turbo_crpc Rocida::TinyTest
+  LIBS salts_crpc Salts::TinyTest
   INCLUDES ../../chttp/tests
   FOLDER "crpc/tests")
 set_target_properties(crpc_transport_test PROPERTIES
@@ -29,7 +29,7 @@ set_target_properties(crpc_transport_test PROPERTIES
 
 cmake_add_test(crpc_server_test
   SOURCES crpc_server_test.c
-  LIBS turbo_crpc Rocida::TinyTest
+  LIBS salts_crpc Salts::TinyTest
   INCLUDES ../../chttp/tests
   FOLDER "crpc/tests")
 set_target_properties(crpc_server_test PROPERTIES
@@ -39,7 +39,7 @@ set_target_properties(crpc_server_test PROPERTIES
 
 cmake_add_test(crpc_header_cpp_test
   SOURCES crpc_header_cpp_test.cpp
-  LIBS turbo_crpc
+  LIBS salts_crpc
   FOLDER "crpc/tests")
 set_target_properties(crpc_header_cpp_test PROPERTIES
   CXX_STANDARD 11

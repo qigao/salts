@@ -1550,7 +1550,7 @@ framework magic
 ```text
 meta_xxx
 cmeta_xxx
-turbo_xxx
+salts_xxx
 internal_xxx
 generated_xxx
 ```

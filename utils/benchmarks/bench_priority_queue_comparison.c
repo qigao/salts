@@ -2,7 +2,7 @@
 #include "bucket_priority_queue_spsc.h"
 #include "bucket_priority_queue_mpmc.h"
 #include "tinytest.h"
-#include "turbo_thread.h"
+#include "salts_thread.h"
 #include <stdatomic.h>
 
 #include <stdint.h>
@@ -282,14 +282,14 @@ spec("Priority Queue Comparison - Multi-threaded") {
         .target = 10000
       };
 
-      turbo_thread_t producer, consumer;
-      turbo_thread_create(&producer, spsc_producer, &ctx);
-      turbo_thread_create(&consumer, spsc_consumer, &ctx);
+      salts_thread_t producer, consumer;
+      salts_thread_create(&producer, spsc_producer, &ctx);
+      salts_thread_create(&consumer, spsc_consumer, &ctx);
 
       atomic_store_explicit(&ctx.start, 1, memory_order_release);
 
-      turbo_thread_join(&producer);
-      turbo_thread_join(&consumer);
+      salts_thread_join(&producer);
+      salts_thread_join(&consumer);
 
       bucket_priority_queue_spsc_destroy(&queue);
     }
@@ -310,14 +310,14 @@ spec("Priority Queue Comparison - Multi-threaded") {
         .target = 10000
       };
 
-      turbo_thread_t producer, consumer;
-      turbo_thread_create(&producer, mpmc_producer, &ctx);
-      turbo_thread_create(&consumer, mpmc_consumer, &ctx);
+      salts_thread_t producer, consumer;
+      salts_thread_create(&producer, mpmc_producer, &ctx);
+      salts_thread_create(&consumer, mpmc_consumer, &ctx);
 
       atomic_store_explicit(&ctx.start, 1, memory_order_release);
 
-      turbo_thread_join(&producer);
-      turbo_thread_join(&consumer);
+      salts_thread_join(&producer);
+      salts_thread_join(&consumer);
 
       bench_bucket_priority_queue_destroy(queue);
     }

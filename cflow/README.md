@@ -97,7 +97,7 @@ are not interchangeable user surfaces.
 
 | Layer | Use it for | Primary public headers | State and execution boundary | Move to the next layer when |
 |---|---|---|---|---|
-| **simple Stream** | Linear typed container queries and transformations such as filter, map, slice, bounded distinct/sorted, and collection terminals | `stream.h`, `adapters.h`; Rocida STL users normally enter through `<rocida/stl/stream.h>` | The Stream owns a Surface Graph and borrows its Range/container. A synchronous terminal creates fresh execution state and returns an owned or transactionally committed result. | Topology itself becomes part of the problem: explicit branches, subgraphs, relations, lowering, optimization, or compiled-plan admission are required. |
+| **simple Stream** | Linear typed container queries and transformations such as filter, map, slice, bounded distinct/sorted, and collection terminals | `stream.h`, `adapters.h`; CSTL users normally enter through `<cstl/stream.h>` | The Stream owns a Surface Graph and borrows its Range/container. A synchronous terminal creates fresh execution state and returns an owned or transactionally committed result. | Topology itself becomes part of the problem: explicit branches, subgraphs, relations, lowering, optimization, or compiled-plan admission are required. |
 | **advanced Graph** | Explicit typed topology, structured relations, normalization, optimization, verification, and eligible compiled plans | `graph.h`, `lower.h`, `opt.h`, `verify.h`, `plan.h` | Construction mutates the Surface Graph. Normalized/optimized Graphs and Plans are separate artifacts and are immutable while evaluated. A Graph does not own a Publisher, Scheduler, or live execution. | Input may wait or wake, downstream demand must be controlled, cancellation matters, or execution must outlive one synchronous call. |
 | **async Reactive** | Demand-driven or long-lived execution over array, Range, channel, timer, readiness, I/O, or custom Publishers | `reactive.h`, `publishers.h`, `scheduler.h`; `stream_execution.h` is the asynchronous collection facade for an existing Stream | A Subscription owns its moved Publisher and all live operator state, while borrowing its immutable Graph, Scheduler, Subscriber context, and backend tables. `request`, wake, cancel, and close are execution operations, not Graph mutations. | Events describe durable domain control state—hierarchy, parallel regions, history, eventless/completion transitions, timers, or run-to-completion microsteps. |
 | **control Statechart** | Event-driven control state and bounded Actor lifecycle | `statechart.h`, `statechart_instance.h`, `actor.h` | The immutable Statechart is the definition; one instance is the sole owner of active configuration, queues, history, timers, and first error. Its Executor serializes semantic mutation; Actor optionally adds identity, mailbox, and lifecycle. | Data produced by control logic must enter a dataflow explicitly through an application adapter. Do not turn Statechart states or transitions into generic Graph nodes. |
@@ -105,7 +105,7 @@ are not interchangeable user surfaces.
 The dependency and adapter direction is:
 
 ```text
-Rocida STL container / CMeta Range
+CSTL container / CMeta Range
         -> simple Stream -> Surface Graph
                               -> normalize / optimize -> advanced Graph
                                                         -> Plan evaluation
@@ -583,9 +583,9 @@ consumers built against an older header must be rebuilt and relinked.
 Those contextual bindings introduced component library version `2.0.0` and
 shared-library ABI identity `2`. The execution-hook extension below appends to
 `cflow_statechart_instance_config`, so this release advances CFlow to `3.0.0`
-and shared ABI identity `3`; Windows shared builds use the `turbo_cflow-3`
+and shared ABI identity `3`; Windows shared builds use the `salts_cflow-3`
 basename so an older DLL cannot satisfy the new configuration ABI.
-The exported CMake target name is `Rocida::CFlow`.
+The exported CMake target name is `Salts::CFlow`.
 
 The CFlow core remains format-neutral and does not parse XML or implement
 SCXML. The Statechart runtime exposes the bounded host-transaction protocol
@@ -596,8 +596,8 @@ used by format-specific frontends without depending on those frontends.
 SCXML compilation, interpretation, data-model integration, conformance tests, and
 packaging are owned by [TurboSCXML](https://github.com/qigao/turbo-scxml).
 Applications include `<scxml/scxml.h>` and link `TurboSCXML::SCXML`; that
-package depends on `Rocida::CFlow` and the other required Rocida
-components. Rocida does not export an SCXML library or compatibility target.
+package depends on `Salts::CFlow` and the other required Salts
+components. Salts does not export an SCXML library or compatibility target.
 
 ## Bounded Actor lifecycle
 
@@ -835,7 +835,7 @@ cleanup:
 }
 ```
 
-Link the example with `Rocida::CFlow`. Supervision, restart, parent/child
+Link the example with `Salts::CFlow`. Supervision, restart, parent/child
 hierarchies, remoting, persistence, and Mailbox resizing are intentionally
 unavailable; there are no placeholder APIs or implicit fallbacks for them.
 
@@ -849,7 +849,7 @@ lifetime. `native_io_operation` borrows its payload until
 operation token until delivery is acknowledged.
 
 The adapter allocates exactly `request_capacity` bridge records and one fixed
-completion batch during init. Full bridge capacity returns `TURBO_ENOBUFS`;
+completion batch during init. Full bridge capacity returns `SALTS_ENOBUFS`;
 there is no retry queue, payload copy, hidden blocking path, or backend
 fallback. 除合并式 `cflow_io_native_adapter_wake()` 外，所有 adapter 与 NativeIO
 方法都在一个固定 owner 线程执行：
@@ -867,7 +867,7 @@ cflow_io_native_adapter_config config = {{
     16u, 64u, 16u}};
 
 int status = cflow_io_native_adapter_init(&adapter, &config);
-if (status != TURBO_OK)
+if (status != SALTS_OK)
     return status;
 
 actor_config.backend = cflow_io_native_adapter_actor_ops();
@@ -904,7 +904,7 @@ should not be wrapped in Actor or Reactive by default.
 Shutdown order is: stop Actor/Publisher admission, cancel or drain accepted
 requests, keep observing and driving until Actor/Publisher quiescence, close the
 adapter, close caller-owned native sockets/pipes, release endpoint metadata, then
-destroy the adapter. `TURBO_EALREADY` from NativeIO cancellation means a
+destroy the adapter. `SALTS_EALREADY` from NativeIO cancellation means a
 terminal is already in progress and is normalized to successful Actor cancel
 dispatch; it does not authorize early payload reuse.
 
@@ -932,7 +932,7 @@ For independent operations, opt in explicitly with a capacity in
 
 ```c
 if (cflow_publisher_from_io_actor_windowed(
-        &publisher, &owner, &config, 8u) != TURBO_OK)
+        &publisher, &owner, &config, 8u) != SALTS_OK)
     goto cleanup;
 ```
 
@@ -964,7 +964,7 @@ Publisher), then continue owner driving until
 context remains alive.
 
 For threaded NativeIO Reactive execution, use one long-lived task on a
-one-worker Turbo thread pool for `cflow_io_native_adapter_drive_publisher()` and
+one-worker Salts thread pool for `cflow_io_native_adapter_drive_publisher()` and
 a separate one-worker CFlow Worker Scheduler for Subscription/Subscriber work.
 The Publisher `drive` callback publishes the coalesced adapter wake first and
 then signals the owner condition; it never queues another task behind the
@@ -983,7 +983,7 @@ reentrant callback. Neither mode may call close or destroy from the callback.
 
 ```c
 #include <cflow/cflow.h>
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -1019,22 +1019,22 @@ static int submit_operation(
     void *operation_user) {
     io_example *state = (io_example *)backend_user;
     const cflow_io_completion completion = {
-        CFLOW_IO_COMPLETION_OK, sizeof(state->backend_buffer), TURBO_OK
+        CFLOW_IO_COMPLETION_OK, sizeof(state->backend_buffer), SALTS_OK
     };
     (void)lease_id;
     if (operation_user != state)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     state->backend_buffer = 37;
     return cflow_io_actor_complete(actor, request_id, &completion) ==
                    CFLOW_IO_COMPLETE_ACCEPTED
-        ? TURBO_OK : TURBO_EINVAL;
+        ? SALTS_OK : SALTS_EINVAL;
 }
 
 static int cancel_operation(
     void *backend_user, cflow_io_request_id request_id) {
     (void)backend_user;
     (void)request_id;
-    return TURBO_OK; /* Best effort only; completion remains authoritative. */
+    return SALTS_OK; /* Best effort only; completion remains authoritative. */
 }
 
 static cflow_read_status encode_completion(
@@ -1111,7 +1111,7 @@ int main(void) {
     config.user = &state;
     config.drive = schedule_owner_drive;
     config.drive_user = &state;
-    if (cflow_publisher_from_io_actor(&publisher, &owner, &config) != TURBO_OK)
+    if (cflow_publisher_from_io_actor(&publisher, &owner, &config) != SALTS_OK)
         goto cleanup;
     if (!cflow_subscribe(
             &subscription, &graph, &publisher, &scheduler, &subscriber))
@@ -1129,7 +1129,7 @@ int main(void) {
             size_t progressed = 0u;
             state.drive_pending = false;
             if (cflow_io_publisher_owner_run_ready(
-                    &owner, 32u, &progressed) != TURBO_OK)
+                    &owner, 32u, &progressed) != SALTS_OK)
                 goto cleanup;
         }
     }
@@ -1147,13 +1147,13 @@ cleanup:
            !cflow_io_publisher_owner_is_quiescent(&owner)) {
         size_t progressed = 0u;
         if (cflow_io_publisher_owner_run_ready(
-                &owner, 32u, &progressed) != TURBO_OK) {
+                &owner, 32u, &progressed) != SALTS_OK) {
             status = 3;
             break;
         }
     }
     if (owner.impl != NULL &&
-        cflow_io_publisher_owner_close(&owner) != TURBO_OK)
+        cflow_io_publisher_owner_close(&owner) != SALTS_OK)
         status = 4;
     if (cflow_scheduler_valid(&scheduler))
         cflow_scheduler_destroy(&scheduler);
@@ -1184,7 +1184,7 @@ may still fail at execution. CFlow never substitutes another backend implicitly.
 Subscriptionnable socket, typed pipe, and regular-file programs, together with the
 host/backend and resource-validation matrices, are in
 [Native I/O examples](examples/README.md). The same source files are compiled
-against both the repository targets and the installed `Rocida::CFlow`
+against both the repository targets and the installed `Salts::CFlow`
 package target.
 
 The caller owns listening, connecting, and connected sockets and must keep them
@@ -1233,7 +1233,7 @@ than `length` bytes. A zero-byte read after peer close maps to
 
 The caller must set `CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE`. epoll, kqueue, and
 poll additionally require an `O_NONBLOCK` descriptor and reject a blocking
-descriptor with `TURBO_EINVAL`. IOCP accepts already-connected, byte-mode named
+descriptor with `SALTS_EINVAL`. IOCP accepts already-connected, byte-mode named
 pipe handles opened with `FILE_FLAG_OVERLAPPED`; handles returned directly by
 `CreatePipe` are synchronous and are not supported. The flag is a caller
 attestation because Windows cannot query `FILE_FLAG_OVERLAPPED` from an
@@ -1260,10 +1260,10 @@ authoritative result before reclaiming the slot. `ERROR_PIPE_CONNECTED` is the
 successful create/connect race, not a failure.
 
 Windows client connect is one synchronous `CreateFile` attempt. Missing and
-busy instances return `TURBO_ENOENT` and `TURBO_EBUSY`; the facade never calls
+busy instances return `SALTS_ENOENT` and `SALTS_EBUSY`; the facade never calls
 `WaitNamedPipe`. POSIX FIFO open is likewise one synchronous control-plane call
 using `O_NONBLOCK | O_CLOEXEC`: read open does not claim a writer exists, and a
-write open without a reader returns `TURBO_EPIPE`. Neither path creates a
+write open without a reader returns `SALTS_EPIPE`. Neither path creates a
 worker, retries, or substitutes another backend. The Windows server requires
 exclusive owner access, including lifecycle; transferred endpoints may then be
 submitted to the existing native byte-pipe Actor contract.
@@ -1313,8 +1313,8 @@ files, and accepted buffers remain borrowed through terminal callback return.
 
 ```c
 #include <cflow/io_file.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <stdio.h>
 
@@ -1332,7 +1332,7 @@ static void on_file_complete(
     (void)lease_id;
     (void)kind;
     state->result = completion->kind == CFLOW_IO_COMPLETION_OK
-        ? TURBO_OK : completion->error;
+        ? SALTS_OK : completion->error;
     state->done = 1;
 }
 
@@ -1348,7 +1348,7 @@ int main(void) {
 #elif defined(__linux__)
     config.backend_kind = CFLOW_IO_NATIVE_IO_URING;
 #else
-    return TURBO_ENOTSUP;
+    return SALTS_ENOTSUP;
 #endif
     config.request_capacity = 4u;
     config.command_capacity = 4u;
@@ -1359,7 +1359,7 @@ int main(void) {
     config.completion = on_file_complete;
     config.completion_user = &state;
 
-    if (cflow_io_file_open(&file, "cflow-output.bin", &config) != TURBO_OK)
+    if (cflow_io_file_open(&file, "cflow-output.bin", &config) != SALTS_OK)
         return 1;
     submitted = cflow_io_file_try_write_at(
         &file, 1u, payload, sizeof(payload) - 1u, 0u);
@@ -1370,24 +1370,24 @@ int main(void) {
     }
     while (!state.done) {
         size_t progressed = 0u;
-        if (cflow_io_file_run_ready(&file, 64u, &progressed) != TURBO_OK)
+        if (cflow_io_file_run_ready(&file, 64u, &progressed) != SALTS_OK)
             return 3;
         if (progressed == 0u)
-            turbo_thread_yield();
+            salts_thread_yield();
     }
-    if (cflow_io_file_close(&file) != TURBO_OK)
+    if (cflow_io_file_close(&file) != SALTS_OK)
         return 4;
     while (!cflow_io_file_is_quiescent(&file)) {
         size_t progressed = 0u;
-        if (cflow_io_file_run_ready(&file, 64u, &progressed) != TURBO_OK)
+        if (cflow_io_file_run_ready(&file, 64u, &progressed) != SALTS_OK)
             return 5;
         if (progressed == 0u)
-            turbo_thread_yield();
+            salts_thread_yield();
     }
-    if (cflow_io_file_destroy(&file) != TURBO_OK)
+    if (cflow_io_file_destroy(&file) != SALTS_OK)
         return 6;
     printf("write status: %d\n", state.result);
-    return state.result == TURBO_OK ? 0 : 7;
+    return state.result == SALTS_OK ? 0 : 7;
 }
 ```
 
@@ -1412,7 +1412,7 @@ registrations per socket identity (one read lane and one write lane), so a
 request capacity of N produces a checked reactor capacity of 2N.
 
 Subprocess standard-stream ownership is provided by the separate
-`Rocida::CFlowProcess` adapter target. Message framing, asynchronous
+`Salts::CFlowProcess` adapter target. Message framing, asynchronous
 pathname open, file metadata/directory operations, and devices remain separate
 contracts.
 POSIX regular-file readiness does not
@@ -1424,7 +1424,7 @@ socket.
 ## Descriptor-backed container streams — v47
 
 The Stream facade is CFlow's typed convenience layer for modern container
-operations. Rocida STL supplies container algorithms and Range/Collector
+operations. CSTL supplies container algorithms and Range/Collector
 adapters; CFlow supplies the Graph, operators, optimizer, execution, and error
 semantics. Its fluent spelling is intentionally familiar, but compatibility
 with Java or any other language's Stream contract is not a design goal.

@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the existing fixed-capacity Actor, native backend, manual Executor, MPSC admission, and exclusive control-plane lifecycle unchanged. Add test-only fault-injection translation units that compile the real implementation with renamed public symbols and controlled dependency failures; production code gains only the missing validation and exact error propagation.
 
-**Tech Stack:** ISO C11, Turbo Platform mutexes, CFlow Actor/native I/O, CFlowFS, TinyTest, CMake user presets.
+**Tech Stack:** ISO C11, Salts Platform mutexes, CFlow Actor/native I/O, CFlowFS, TinyTest, CMake user presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-26-cflow-async-file-facade-design.md`
 
@@ -15,7 +15,7 @@
 - Preserve all public function signatures, enum values, ownership transfer, capacity, backpressure, callback, and shutdown behavior.
 - Initialization and destruction remain exclusive control-plane operations; accepted submit/cancel remains MPSC.
 - No runtime fallback, unbounded allocation, new dependency, or data-path structure change.
-- Invalid configuration remains `TURBO_EINVAL`; synchronization allocation failure is `TURBO_ENOMEM`; lower-layer constructor errors retain their original code.
+- Invalid configuration remains `SALTS_EINVAL`; synchronization allocation failure is `SALTS_ENOMEM`; lower-layer constructor errors retain their original code.
 - Use `rg.exe`/`fd.exe` for repository searches and user CMake presets for configure, build, and test.
 - Do not create a git commit unless the user separately requests repository-history mutation.
 
@@ -29,26 +29,26 @@
 - Modify: `cflow/src/io_file.c:259`
 
 **Interfaces:**
-- Consumes: `turbo_mutex_init(turbo_mutex_t *)`, `cflow_io_file_open(...)`.
-- Produces: unchanged public API; `cflow_io_file_open()` returns `TURBO_ENOMEM` and leaves `file.impl == NULL` when its mutex handle remains null.
+- Consumes: `salts_mutex_init(salts_mutex_t *)`, `cflow_io_file_open(...)`.
+- Produces: unchanged public API; `cflow_io_file_open()` returns `SALTS_ENOMEM` and leaves `file.impl == NULL` when its mutex handle remains null.
 
 - [x] **Step 1: Write the failing real-implementation test**
 
-  Compile `cflow/src/io_file.c` into a test-only translation unit after renaming its public `cflow_io_file_*` definitions. Replace only `turbo_mutex_init` with a function that writes a null handle and replace backend initialization with a counting sentinel returning `TURBO_EIO`. Assert that open returns `TURBO_ENOMEM`, does not call the backend sentinel, leaves the public handle zero, and does not create the path.
+  Compile `cflow/src/io_file.c` into a test-only translation unit after renaming its public `cflow_io_file_*` definitions. Replace only `salts_mutex_init` with a function that writes a null handle and replace backend initialization with a counting sentinel returning `SALTS_EIO`. Assert that open returns `SALTS_ENOMEM`, does not call the backend sentinel, leaves the public handle zero, and does not create the path.
 
 - [x] **Step 2: Build and run the test to verify RED**
 
-  Run the `win-release-user` configure/build path and `ctest --preset win-release-user -R '^cflow_io_file_test$' --output-on-failure`. Expected before the fix: the backend sentinel is called and/or `TURBO_EIO` is returned.
+  Run the `win-release-user` configure/build path and `ctest --preset win-release-user -R '^cflow_io_file_test$' --output-on-failure`. Expected before the fix: the backend sentinel is called and/or `SALTS_EIO` is returned.
 
 - [x] **Step 3: Implement the minimal production check**
 
-  Immediately after `turbo_mutex_init(&impl->gate)`, add:
+  Immediately after `salts_mutex_init(&impl->gate)`, add:
 
   ```c
   if (impl->gate == NULL) {
       free(impl->slots);
       free(impl);
-      return TURBO_ENOMEM;
+      return SALTS_ENOMEM;
   }
   ```
 
@@ -64,12 +64,12 @@
 - Modify: `cflow-fs/src/fs.c:322`
 
 **Interfaces:**
-- Consumes: `turbo_mutex_init(turbo_mutex_t *)`, `cflow_fs_service_init(...)`.
-- Produces: unchanged public API; initialization returns `TURBO_ENOMEM` without constructing the worker Executor when its mutex handle remains null.
+- Consumes: `salts_mutex_init(salts_mutex_t *)`, `cflow_fs_service_init(...)`.
+- Produces: unchanged public API; initialization returns `SALTS_ENOMEM` without constructing the worker Executor when its mutex handle remains null.
 
 - [x] **Step 1: Write the failing real-implementation test**
 
-  Compile `cflow-fs/src/fs.c` with renamed public `cflow_fs_*` definitions. Inject a null mutex and a counting `cflow_executor_worker_init_with_capacity` sentinel. Assert `TURBO_ENOMEM`, zero service state, and zero Executor-init calls.
+  Compile `cflow-fs/src/fs.c` with renamed public `cflow_fs_*` definitions. Inject a null mutex and a counting `cflow_executor_worker_init_with_capacity` sentinel. Assert `SALTS_ENOMEM`, zero service state, and zero Executor-init calls.
 
 - [x] **Step 2: Run the focused CFlowFS test to verify RED**
 
@@ -77,7 +77,7 @@
 
 - [x] **Step 3: Implement the minimal production check**
 
-  After mutex initialization, release the preallocated path/slot/state storage and return `TURBO_ENOMEM` when `impl->gate == NULL`.
+  After mutex initialization, release the preallocated path/slot/state storage and return `SALTS_ENOMEM` when `impl->gate == NULL`.
 
 - [x] **Step 4: Rerun the focused test to verify GREEN**
 
@@ -89,12 +89,12 @@
 - Modify: `cflow/src/io_source.c:998`
 
 **Interfaces:**
-- Consumes: `cflow_io_actor_init(...)` returning `TURBO_OK`, `TURBO_EINVAL`, or `TURBO_ENOMEM`.
-- Produces: the same documented constructor result set without rewriting `TURBO_EINVAL` as `TURBO_ENOMEM`.
+- Consumes: `cflow_io_actor_init(...)` returning `SALTS_OK`, `SALTS_EINVAL`, or `SALTS_ENOMEM`.
+- Produces: the same documented constructor result set without rewriting `SALTS_EINVAL` as `SALTS_ENOMEM`.
 
 - [x] **Step 1: Confirm the existing public contract and call-site preconditions**
 
-  Verify that `cflow/include/cflow/io_source.h` already permits both `TURBO_EINVAL` and `TURBO_ENOMEM`, so exact propagation is source- and ABI-compatible.
+  Verify that `cflow/include/cflow/io_source.h` already permits both `SALTS_EINVAL` and `SALTS_ENOMEM`, so exact propagation is source- and ABI-compatible.
 
 - [x] **Step 2: Remove the lossy conversion**
 
@@ -112,7 +112,7 @@
 - Modify: `ARCHITECTURE.md:330`
 
 **Interfaces:**
-- Consumes: existing exclusive `destroy` contract and current CMake `PUBLIC TurboUtils::Platform` dependency.
+- Consumes: existing exclusive `destroy` contract and current CMake `PUBLIC Salts::Platform` dependency.
 - Produces: documentation only; no public ABI or runtime behavior change.
 
 - [x] **Step 1: Clarify exclusive destruction**

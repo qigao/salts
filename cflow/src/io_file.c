@@ -2,8 +2,8 @@
 
 #include "io_native_internal.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -44,7 +44,7 @@ struct cflow_io_file_runtime_impl {
   cflow_io_actor actor;
   cflow_io_file_slot *slots;
   size_t slot_capacity;
-  turbo_mutex_t gate;
+  salts_mutex_t gate;
   cflow_io_native_backend_kind backend_kind;
   size_t file_capacity;
   size_t open_files;
@@ -152,7 +152,7 @@ static int file_native_open(const char *path, const cflow_io_file_config *config
                        disposition, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
   if (handle == INVALID_HANDLE_VALUE) return -(int)GetLastError();
   *handle_out = (uintptr_t)handle;
-  return TURBO_OK;
+  return SALTS_OK;
 #else
   int access_flags;
   int flags;
@@ -180,15 +180,15 @@ static int file_native_open(const char *path, const cflow_io_file_config *config
   }
   #endif
   *handle_out = (uintptr_t)descriptor;
-  return TURBO_OK;
+  return SALTS_OK;
 #endif
 }
 
 static int file_native_close(uintptr_t handle) {
 #if defined(_WIN32)
-  return CloseHandle((HANDLE)handle) ? TURBO_OK : -(int)GetLastError();
+  return CloseHandle((HANDLE)handle) ? SALTS_OK : -(int)GetLastError();
 #else
-  return close((int)handle) == 0 ? TURBO_OK : -errno;
+  return close((int)handle) == 0 ? SALTS_OK : -errno;
 #endif
 }
 
@@ -197,14 +197,14 @@ static void file_slot_release(void *operation_user) {
   cflow_io_file_runtime_impl *runtime;
   if (slot == NULL || slot->runtime == NULL) return;
   runtime = slot->runtime;
-  turbo_mutex_lock(&runtime->gate);
+  salts_mutex_lock(&runtime->gate);
   memset(&slot->operation, 0, sizeof(slot->operation));
   slot->file = NULL;
   slot->request_id = 0u;
   slot->in_use = false;
   slot->delivered = false;
   slot->cancel_requested = false;
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
 }
 
 static void file_actor_completion(void *user, cflow_io_request_id request_id,
@@ -214,14 +214,14 @@ static void file_actor_completion(void *user, cflow_io_request_id request_id,
   cflow_io_file_slot *slot = (cflow_io_file_slot *)operation_user;
   cflow_io_file_impl *file;
   if (runtime == NULL || slot == NULL || completion == NULL) return;
-  turbo_mutex_lock(&runtime->gate);
+  salts_mutex_lock(&runtime->gate);
   file = slot->file;
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
   if (file == NULL) return;
   file->completion(file->completion_user, request_id, lease_id, slot->operation.kind, completion);
-  turbo_mutex_lock(&runtime->gate);
+  salts_mutex_lock(&runtime->gate);
   slot->delivered = true;
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
 }
 
 static void file_runtime_init_cleanup(cflow_io_file_runtime_impl *impl, bool backend_initialized,
@@ -233,14 +233,14 @@ static void file_runtime_init_cleanup(cflow_io_file_runtime_impl *impl, bool bac
   }
   if (backend_initialized) {
     const int status = cflow_io_native_backend_shutdown(&impl->backend);
-    if (status == TURBO_OK || status == TURBO_EALREADY)
+    if (status == SALTS_OK || status == SALTS_EALREADY)
       (void)cflow_io_native_backend_destroy(&impl->backend);
   }
   if (executor_initialized) {
     (void)cflow_executor_shutdown(&impl->executor);
     cflow_executor_destroy(&impl->executor);
   }
-  turbo_mutex_destroy(&impl->gate);
+  salts_mutex_destroy(&impl->gate);
   free(impl->slots);
   free(impl);
 }
@@ -256,29 +256,29 @@ int cflow_io_file_runtime_init(cflow_io_file_runtime *runtime,
   int status;
   size_t index;
 
-  if (!file_runtime_config_valid(runtime, config)) return TURBO_EINVAL;
+  if (!file_runtime_config_valid(runtime, config)) return SALTS_EINVAL;
   if (!cflow_io_native_backend_supported(config->backend_kind) ||
       (!cflow_io_native_backend_file_operation_supported(config->backend_kind,
                                                          CFLOW_IO_NATIVE_FILE_READ_AT) &&
        !cflow_io_native_backend_file_operation_supported(config->backend_kind,
                                                          CFLOW_IO_NATIVE_FILE_WRITE_AT)))
-    return TURBO_ENOTSUP;
+    return SALTS_ENOTSUP;
 
   impl = (cflow_io_file_runtime_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   impl->slots = (cflow_io_file_slot *)calloc(config->request_capacity, sizeof(*impl->slots));
   if (impl->slots == NULL) {
     free(impl);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   impl->slot_capacity = config->request_capacity;
   impl->backend_kind = config->backend_kind;
   impl->file_capacity = config->file_capacity;
-  turbo_mutex_init(&impl->gate);
+  salts_mutex_init(&impl->gate);
   if (impl->gate == NULL) {
     free(impl->slots);
     free(impl);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   for (index = 0u; index < impl->slot_capacity; ++index)
     impl->slots[index].runtime = impl;
@@ -286,11 +286,11 @@ int cflow_io_file_runtime_init(cflow_io_file_runtime *runtime,
   backend_config = (cflow_io_native_backend_config){config->backend_kind, config->request_capacity,
                                                     config->completion_batch_capacity};
   status = cflow_io_native_backend_init(&impl->backend, &backend_config);
-  if (status != TURBO_OK) goto failed;
+  if (status != SALTS_OK) goto failed;
   backend_initialized = true;
 
   if (!cflow_executor_manual_init_with_capacity(&impl->executor, config->request_capacity)) {
-    status = TURBO_ENOMEM;
+    status = SALTS_ENOMEM;
     goto failed;
   }
   executor_initialized = true;
@@ -306,11 +306,11 @@ int cflow_io_file_runtime_init(cflow_io_file_runtime *runtime,
   actor_config.wake = config->wake;
   actor_config.wake_user = config->wake_user;
   status = cflow_io_actor_init(&impl->actor, &actor_config);
-  if (status != TURBO_OK) goto failed;
+  if (status != SALTS_OK) goto failed;
   actor_initialized = true;
 
   runtime->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 
 failed:
   file_runtime_init_cleanup(impl, backend_initialized, executor_initialized, actor_initialized);
@@ -324,7 +324,7 @@ int cflow_io_file_open(cflow_io_file *file, const char *path, const cflow_io_fil
   cflow_io_native_backend_kind backend_kind;
   int status;
 
-  if (!file_config_valid(file, path, config)) return TURBO_EINVAL;
+  if (!file_config_valid(file, path, config)) return SALTS_EINVAL;
   if (config->runtime != NULL) {
     runtime = file_runtime_impl(config->runtime);
     backend_kind = runtime->backend_kind;
@@ -332,10 +332,10 @@ int cflow_io_file_open(cflow_io_file *file, const char *path, const cflow_io_fil
     runtime = NULL;
     backend_kind = config->backend_kind;
   }
-  if (!file_access_supported(backend_kind, config)) return TURBO_ENOTSUP;
+  if (!file_access_supported(backend_kind, config)) return SALTS_ENOTSUP;
 
   impl = (cflow_io_file_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   impl->native_handle = UINTPTR_MAX;
   impl->open_flags = config->open_flags;
   impl->completion = config->completion;
@@ -350,7 +350,7 @@ int cflow_io_file_open(cflow_io_file *file, const char *path, const cflow_io_fil
                                                     NULL,
                                                     NULL};
     status = cflow_io_file_runtime_init(&impl->private_runtime, &runtime_config);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       free(impl);
       return status;
     }
@@ -361,29 +361,29 @@ int cflow_io_file_open(cflow_io_file *file, const char *path, const cflow_io_fil
     impl->runtime = config->runtime;
   }
 
-  turbo_mutex_lock(&runtime->gate);
+  salts_mutex_lock(&runtime->gate);
   if (runtime->close_requested) {
-    turbo_mutex_unlock(&runtime->gate);
-    status = TURBO_ESHUTDOWN;
+    salts_mutex_unlock(&runtime->gate);
+    status = SALTS_ESHUTDOWN;
     goto failed;
   }
   if (runtime->open_files >= runtime->file_capacity) {
-    turbo_mutex_unlock(&runtime->gate);
-    status = TURBO_ENOBUFS;
+    salts_mutex_unlock(&runtime->gate);
+    status = SALTS_ENOBUFS;
     goto failed;
   }
   ++runtime->open_files;
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
 
   status = file_native_open(path, config, &impl->native_handle);
-  if (status != TURBO_OK) {
-    turbo_mutex_lock(&runtime->gate);
+  if (status != SALTS_OK) {
+    salts_mutex_lock(&runtime->gate);
     --runtime->open_files;
-    turbo_mutex_unlock(&runtime->gate);
+    salts_mutex_unlock(&runtime->gate);
     goto failed;
   }
   file->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 
 failed:
   if (impl->native_handle != UINTPTR_MAX) {
@@ -469,9 +469,9 @@ file_try_submit(cflow_io_file *file, cflow_io_lease_id lease_id,
   if (!cflow_io_native_file_operation_valid(&operation))
     return file_submit_result(CFLOW_IO_FILE_SUBMIT_INVALID_ARGUMENT, 0u);
 
-  turbo_mutex_lock(&runtime->gate);
+  salts_mutex_lock(&runtime->gate);
   if (impl->close_requested || runtime->close_requested) {
-    turbo_mutex_unlock(&runtime->gate);
+    salts_mutex_unlock(&runtime->gate);
     return file_submit_result(CFLOW_IO_FILE_SUBMIT_CLOSED, 0u);
   }
   for (index = 0u; index < runtime->slot_capacity; ++index) {
@@ -486,7 +486,7 @@ file_try_submit(cflow_io_file *file, cflow_io_lease_id lease_id,
       break;
     }
   }
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
   if (slot == NULL) return file_submit_result(CFLOW_IO_FILE_SUBMIT_FULL, 0u);
 
   actor_operation = (cflow_io_operation){&slot->operation, file_slot_release};
@@ -495,11 +495,11 @@ file_try_submit(cflow_io_file *file, cflow_io_lease_id lease_id,
     file_slot_release(&slot->operation);
     return file_submit_result(file_map_submit_status(submitted.status), 0u);
   }
-  turbo_mutex_lock(&runtime->gate);
+  salts_mutex_lock(&runtime->gate);
   slot->request_id = submitted.request_id;
   cancel_after_submit = slot->cancel_requested || impl->close_requested || runtime->close_requested;
   if (cancel_after_submit) slot->cancel_requested = true;
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
   if (cancel_after_submit) (void)cflow_io_actor_try_cancel(&runtime->actor, submitted.request_id);
   return file_submit_result(CFLOW_IO_FILE_SUBMIT_ACCEPTED, submitted.request_id);
 }
@@ -534,14 +534,14 @@ cflow_io_cancel_status cflow_io_file_try_cancel(cflow_io_file *file,
 static cflow_io_request_id file_delivered_request(cflow_io_file_runtime_impl *runtime) {
   cflow_io_request_id request_id = 0u;
   size_t index;
-  turbo_mutex_lock(&runtime->gate);
+  salts_mutex_lock(&runtime->gate);
   for (index = 0u; index < runtime->slot_capacity; ++index) {
     if (runtime->slots[index].in_use && runtime->slots[index].delivered) {
       request_id = runtime->slots[index].request_id;
       break;
     }
   }
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
   return request_id;
 }
 
@@ -549,15 +549,15 @@ int cflow_io_file_runtime_run_ready(cflow_io_file_runtime *runtime_handle, size_
                                     size_t *progressed) {
   cflow_io_file_runtime_impl *runtime = file_runtime_impl(runtime_handle);
   size_t count = 0u;
-  int status = TURBO_OK;
-  if (runtime == NULL || max_steps == 0u || progressed == NULL) return TURBO_EINVAL;
-  turbo_mutex_lock(&runtime->gate);
+  int status = SALTS_OK;
+  if (runtime == NULL || max_steps == 0u || progressed == NULL) return SALTS_EINVAL;
+  salts_mutex_lock(&runtime->gate);
   if (runtime->driver_active) {
-    turbo_mutex_unlock(&runtime->gate);
-    return TURBO_EBUSY;
+    salts_mutex_unlock(&runtime->gate);
+    return SALTS_EBUSY;
   }
   runtime->driver_active = true;
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
 
   while (count < max_steps) {
     const cflow_io_request_id request_id = file_delivered_request(runtime);
@@ -569,7 +569,7 @@ int cflow_io_file_runtime_run_ready(cflow_io_file_runtime *runtime_handle, size_
         ++count;
         continue;
       }
-      status = ack_status == CFLOW_IO_ACK_BUSY ? TURBO_EBUSY : TURBO_EPROTO;
+      status = ack_status == CFLOW_IO_ACK_BUSY ? SALTS_EBUSY : SALTS_EPROTO;
       break;
     }
 
@@ -579,11 +579,11 @@ int cflow_io_file_runtime_run_ready(cflow_io_file_runtime *runtime_handle, size_
       continue;
     }
     if (actor_result.status == CFLOW_IO_RUN_BUSY) {
-      status = TURBO_EBUSY;
+      status = SALTS_EBUSY;
       break;
     }
     if (actor_result.status == CFLOW_IO_RUN_INVALID_ARGUMENT) {
-      status = TURBO_EINVAL;
+      status = SALTS_EINVAL;
       break;
     }
     if (cflow_executor_run_one(&runtime->executor)) {
@@ -593,16 +593,16 @@ int cflow_io_file_runtime_run_ready(cflow_io_file_runtime *runtime_handle, size_
     break;
   }
 
-  turbo_mutex_lock(&runtime->gate);
+  salts_mutex_lock(&runtime->gate);
   runtime->driver_active = false;
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
   *progressed = count;
   return status;
 }
 
 int cflow_io_file_run_ready(cflow_io_file *file, size_t max_steps, size_t *progressed) {
   cflow_io_file_impl *impl = file_impl(file);
-  if (impl == NULL) return TURBO_EINVAL;
+  if (impl == NULL) return SALTS_EINVAL;
   return cflow_io_file_runtime_run_ready(impl->runtime, max_steps, progressed);
 }
 
@@ -623,7 +623,7 @@ static int file_cancel_operations(cflow_io_file_impl *file) {
     cflow_io_cancel_status cancel_status;
     size_t index;
 
-    turbo_mutex_lock(&runtime->gate);
+    salts_mutex_lock(&runtime->gate);
     for (index = 0u; index < runtime->slot_capacity; ++index) {
       if (runtime->slots[index].in_use && runtime->slots[index].file == file &&
           !runtime->slots[index].cancel_requested) {
@@ -633,19 +633,19 @@ static int file_cancel_operations(cflow_io_file_impl *file) {
         break;
       }
     }
-    turbo_mutex_unlock(&runtime->gate);
-    if (slot == NULL) return TURBO_OK;
+    salts_mutex_unlock(&runtime->gate);
+    if (slot == NULL) return SALTS_OK;
     if (request_id == 0u) continue;
 
     cancel_status = cflow_io_actor_try_cancel(&runtime->actor, request_id);
     if (cancel_status == CFLOW_IO_CANCEL_FULL) {
-      turbo_mutex_lock(&runtime->gate);
+      salts_mutex_lock(&runtime->gate);
       if (slot->in_use && slot->file == file && slot->request_id == request_id)
         slot->cancel_requested = false;
-      turbo_mutex_unlock(&runtime->gate);
-      return TURBO_ENOBUFS;
+      salts_mutex_unlock(&runtime->gate);
+      return SALTS_ENOBUFS;
     }
-    if (cancel_status == CFLOW_IO_CANCEL_INVALID_ARGUMENT) return TURBO_EINVAL;
+    if (cancel_status == CFLOW_IO_CANCEL_INVALID_ARGUMENT) return SALTS_EINVAL;
   }
 }
 
@@ -654,19 +654,19 @@ int cflow_io_file_close(cflow_io_file *file) {
   cflow_io_file_runtime_impl *runtime = file_owner_runtime(impl);
   bool already_closed;
   int status;
-  if (impl == NULL || runtime == NULL) return TURBO_EINVAL;
-  turbo_mutex_lock(&runtime->gate);
+  if (impl == NULL || runtime == NULL) return SALTS_EINVAL;
+  salts_mutex_lock(&runtime->gate);
   already_closed = impl->close_requested;
   impl->close_requested = true;
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
   if (impl->owns_runtime) {
     status = cflow_io_file_runtime_close(impl->runtime);
-    if (status == TURBO_EALREADY && !already_closed) return TURBO_OK;
+    if (status == SALTS_EALREADY && !already_closed) return SALTS_OK;
     return status;
   }
   status = file_cancel_operations(impl);
-  if (status != TURBO_OK) return status;
-  return already_closed ? TURBO_EALREADY : TURBO_OK;
+  if (status != SALTS_OK) return status;
+  return already_closed ? SALTS_EALREADY : SALTS_OK;
 }
 
 bool cflow_io_file_is_quiescent(const cflow_io_file *file) {
@@ -674,9 +674,9 @@ bool cflow_io_file_is_quiescent(const cflow_io_file *file) {
   cflow_io_file_runtime_impl *runtime = file_owner_runtime(impl);
   bool result;
   if (impl == NULL || runtime == NULL) return false;
-  turbo_mutex_lock(&runtime->gate);
+  salts_mutex_lock(&runtime->gate);
   result = impl->close_requested && !file_has_operations_locked(runtime, impl);
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
   return result;
 }
 
@@ -690,14 +690,14 @@ bool cflow_io_file_runtime_get_stats(const cflow_io_file_runtime *runtime_handle
       !cflow_io_actor_get_stats(&runtime->actor, &snapshot.actor) ||
       !cflow_io_native_backend_get_stats(&runtime->backend, &snapshot.backend))
     return false;
-  turbo_mutex_lock(&runtime->gate);
+  salts_mutex_lock(&runtime->gate);
   for (index = 0u; index < runtime->slot_capacity; ++index) {
     if (runtime->slots[index].in_use) ++snapshot.operation_slots_in_use;
   }
   snapshot.open_files = runtime->open_files;
   snapshot.file_capacity = runtime->file_capacity;
   snapshot.close_requested = runtime->close_requested;
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
   *out = snapshot;
   return true;
 }
@@ -711,13 +711,13 @@ bool cflow_io_file_get_stats(const cflow_io_file *file, cflow_io_file_stats *out
       !cflow_io_actor_get_stats(&runtime->actor, &snapshot.actor) ||
       !cflow_io_native_backend_get_stats(&runtime->backend, &snapshot.backend))
     return false;
-  turbo_mutex_lock(&runtime->gate);
+  salts_mutex_lock(&runtime->gate);
   for (index = 0u; index < runtime->slot_capacity; ++index) {
     if (runtime->slots[index].in_use && runtime->slots[index].file == impl)
       ++snapshot.operation_slots_in_use;
   }
   snapshot.close_requested = impl->close_requested;
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
   *out = snapshot;
   return true;
 }
@@ -725,12 +725,12 @@ bool cflow_io_file_get_stats(const cflow_io_file *file, cflow_io_file_stats *out
 int cflow_io_file_runtime_close(cflow_io_file_runtime *runtime_handle) {
   cflow_io_file_runtime_impl *runtime = file_runtime_impl(runtime_handle);
   int status;
-  if (runtime == NULL) return TURBO_EINVAL;
+  if (runtime == NULL) return SALTS_EINVAL;
   status = cflow_io_actor_close(&runtime->actor);
-  if (status == TURBO_OK || status == TURBO_EALREADY) {
-    turbo_mutex_lock(&runtime->gate);
+  if (status == SALTS_OK || status == SALTS_EALREADY) {
+    salts_mutex_lock(&runtime->gate);
     runtime->close_requested = true;
-    turbo_mutex_unlock(&runtime->gate);
+    salts_mutex_unlock(&runtime->gate);
   }
   return status;
 }
@@ -740,9 +740,9 @@ bool cflow_io_file_runtime_is_quiescent(const cflow_io_file_runtime *runtime_han
       (cflow_io_file_runtime_impl *)file_runtime_const_impl(runtime_handle);
   bool close_requested;
   if (runtime == NULL) return false;
-  turbo_mutex_lock(&runtime->gate);
+  salts_mutex_lock(&runtime->gate);
   close_requested = runtime->close_requested;
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
   return close_requested && cflow_io_actor_is_quiescent(&runtime->actor);
 }
 
@@ -751,31 +751,31 @@ int cflow_io_file_destroy(cflow_io_file *file) {
   cflow_io_file_runtime_impl *runtime = file_owner_runtime(impl);
   uintptr_t closed_handle;
   bool owns_runtime;
-  int result = TURBO_OK;
+  int result = SALTS_OK;
   int status;
-  if (impl == NULL || runtime == NULL) return TURBO_EINVAL;
-  turbo_mutex_lock(&runtime->gate);
+  if (impl == NULL || runtime == NULL) return SALTS_EINVAL;
+  salts_mutex_lock(&runtime->gate);
   if (!impl->close_requested || runtime->driver_active ||
       file_has_operations_locked(runtime, impl)) {
-    turbo_mutex_unlock(&runtime->gate);
-    return TURBO_EBUSY;
+    salts_mutex_unlock(&runtime->gate);
+    return SALTS_EBUSY;
   }
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
 
   closed_handle = impl->native_handle;
   impl->native_handle = UINTPTR_MAX;
   status = file_native_close(closed_handle);
-  if (status != TURBO_OK) result = status;
+  if (status != SALTS_OK) result = status;
   status = cflow_io_native_backend_forget_file(&runtime->backend, closed_handle);
-  if (status != TURBO_OK && status != TURBO_ENOENT && result == TURBO_OK) result = status;
-  turbo_mutex_lock(&runtime->gate);
+  if (status != SALTS_OK && status != SALTS_ENOENT && result == SALTS_OK) result = status;
+  salts_mutex_lock(&runtime->gate);
   --runtime->open_files;
-  turbo_mutex_unlock(&runtime->gate);
+  salts_mutex_unlock(&runtime->gate);
 
   owns_runtime = impl->owns_runtime;
   if (owns_runtime) {
     status = cflow_io_file_runtime_destroy(&impl->private_runtime);
-    if (status != TURBO_OK && result == TURBO_OK) result = status;
+    if (status != SALTS_OK && result == SALTS_OK) result = status;
   }
   free(impl);
   file->impl = NULL;
@@ -784,26 +784,26 @@ int cflow_io_file_destroy(cflow_io_file *file) {
 
 int cflow_io_file_runtime_destroy(cflow_io_file_runtime *runtime_handle) {
   cflow_io_file_runtime_impl *runtime = file_runtime_impl(runtime_handle);
-  int result = TURBO_OK;
+  int result = SALTS_OK;
   int status;
-  if (runtime == NULL) return TURBO_EINVAL;
-  turbo_mutex_lock(&runtime->gate);
+  if (runtime == NULL) return SALTS_EINVAL;
+  salts_mutex_lock(&runtime->gate);
   if (!runtime->close_requested || runtime->driver_active || runtime->open_files != 0u) {
-    turbo_mutex_unlock(&runtime->gate);
-    return TURBO_EBUSY;
+    salts_mutex_unlock(&runtime->gate);
+    return SALTS_EBUSY;
   }
-  turbo_mutex_unlock(&runtime->gate);
-  if (!cflow_io_actor_is_quiescent(&runtime->actor)) return TURBO_EBUSY;
+  salts_mutex_unlock(&runtime->gate);
+  if (!cflow_io_actor_is_quiescent(&runtime->actor)) return SALTS_EBUSY;
 
   status = cflow_io_native_backend_shutdown(&runtime->backend);
-  if (status != TURBO_OK && status != TURBO_EALREADY) return status;
+  if (status != SALTS_OK && status != SALTS_EALREADY) return status;
   status = cflow_io_actor_destroy(&runtime->actor);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status = cflow_io_native_backend_destroy(&runtime->backend);
-  if (status != TURBO_OK) result = status;
-  if (!cflow_executor_shutdown(&runtime->executor) && result == TURBO_OK) result = TURBO_EBUSY;
+  if (status != SALTS_OK) result = status;
+  if (!cflow_executor_shutdown(&runtime->executor) && result == SALTS_OK) result = SALTS_EBUSY;
   cflow_executor_destroy(&runtime->executor);
-  turbo_mutex_destroy(&runtime->gate);
+  salts_mutex_destroy(&runtime->gate);
   free(runtime->slots);
   free(runtime);
   runtime_handle->impl = NULL;

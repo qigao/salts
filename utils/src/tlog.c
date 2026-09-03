@@ -17,14 +17,14 @@
 #include <string.h>
 #include <time.h>
 #include "platform.h"
-#include "turbo_thread.h"
+#include "salts_thread.h"
 #include "tlog.h"
 #include "fmt.h"
 #include "log_pattern_lexer.h"
-#include "turbo_buffer.h" 
+#include "salts_buffer.h"
 #include <stdatomic.h>
-#include "turbo_fs.h"
-#include "turbo_mmap.h"
+#include "salts_fs.h"
+#include "salts_mmap.h"
 #include "disruptor.h"
 
 
@@ -73,7 +73,7 @@ static uint32_t tlog_gettid(void) {
 #endif
 
 typedef struct {
-  turbo_log_level_t level;
+  salts_log_level_t level;
   uint64_t timestamp_ms;
   uint32_t thread_id;
   int line;
@@ -106,8 +106,8 @@ typedef struct {
 } compiled_pattern_t;
 
 static tlog_t *g_default_logger = NULL;
-static turbo_once_t g_default_logger_mutex_once = TURBO_ONCE_INIT;
-static turbo_mutex_t g_default_logger_mutex;
+static salts_once_t g_default_logger_mutex_once = SALTS_ONCE_INIT;
+static salts_mutex_t g_default_logger_mutex;
 static int g_default_logger_mutex_init = 0;
 
 typedef enum {
@@ -120,45 +120,45 @@ typedef enum {
   SINK_KIND_METRICS
 } sink_kind_t;
 
-struct turbo_log_sink_s {
-  turbo_sink_write_fn write;
-  turbo_sink_flush_fn flush;
-  turbo_sink_destroy_fn destroy;
+struct salts_log_sink_s {
+  salts_sink_write_fn write;
+  salts_sink_flush_fn flush;
+  salts_sink_destroy_fn destroy;
   sink_kind_t kind;
   _Atomic int min_level;
   _Atomic uintptr_t user_data;
 };
 
-static void sink_base_init(turbo_log_sink_t *sink, turbo_sink_write_fn write,
-                           turbo_sink_flush_fn flush, turbo_sink_destroy_fn destroy,
+static void sink_base_init(salts_log_sink_t *sink, salts_sink_write_fn write,
+                           salts_sink_flush_fn flush, salts_sink_destroy_fn destroy,
                            sink_kind_t kind) {
   sink->write = write;
   sink->flush = flush;
   sink->destroy = destroy;
   sink->kind = kind;
-  atomic_init(&sink->min_level, (int)TURBO_LOG_LEVEL_DEBUG);
+  atomic_init(&sink->min_level, (int)SALTS_LOG_LEVEL_DEBUG);
   atomic_init(&sink->user_data, (uintptr_t)NULL);
 }
 
-static int sink_accepts_level(const turbo_log_sink_t *sink, turbo_log_level_t level) {
-  return level >= (turbo_log_level_t)atomic_load_explicit(&sink->min_level, memory_order_relaxed);
+static int sink_accepts_level(const salts_log_sink_t *sink, salts_log_level_t level) {
+  return level >= (salts_log_level_t)atomic_load_explicit(&sink->min_level, memory_order_relaxed);
 }
 
-static int log_level_is_valid(turbo_log_level_t level) {
-  return cmeta_enum_item_by_value(turbo_log_level_t_meta(), (int64_t)level) != NULL;
+static int log_level_is_valid(salts_log_level_t level) {
+  return cmeta_enum_item_by_value(salts_log_level_t_meta(), (int64_t)level) != NULL;
 }
 
-static void *sink_user_data(const turbo_log_sink_t *sink) {
+static void *sink_user_data(const salts_log_sink_t *sink) {
   return (void *)atomic_load_explicit(&sink->user_data, memory_order_relaxed);
 }
 
-static void sink_write_entry(turbo_log_sink_t *sink, const turbo_log_entry_t *entry) {
+static void sink_write_entry(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
   if (sink && sink->write) {
     sink->write(sink, entry);
   }
 }
 
-static void sink_flush_inner(turbo_log_sink_t *sink) {
+static void sink_flush_inner(salts_log_sink_t *sink) {
   if (sink && sink->flush) {
     sink->flush(sink);
   }
@@ -188,7 +188,7 @@ static inline uint32_t get_cached_tid(void) {
 }
 
 static void init_tlog_globals(void) {
-  turbo_mutex_init(&g_default_logger_mutex);
+  salts_mutex_init(&g_default_logger_mutex);
   g_default_logger_mutex_init = 1;
 }
 
@@ -294,7 +294,7 @@ static uint64_t logger_disruptor_capacity(size_t buffer_size_bytes) {
   return round_up_pow2_u64(entries);
 }
 
-static mem_buffer_t *async_entry_create(mem_pool_t *pool, const turbo_log_entry_t *entry) {
+static mem_buffer_t *async_entry_create(mem_pool_t *pool, const salts_log_entry_t *entry) {
   vstr comp = vstr_from_cstr(entry->component);
   vstr file = vstr_from_cstr(entry->file);
   size_t comp_len = comp.len;
@@ -349,20 +349,20 @@ static mem_buffer_t *async_entry_create(mem_pool_t *pool, const turbo_log_entry_
 // =============================================================================
 
 typedef struct {
-  turbo_log_sink_t base;
+  salts_log_sink_t base;
   FILE *output;
   int use_colors;
   compiled_pattern_t pattern;
-  turbo_mutex_t write_mutex; // Thread-safe writes
+  salts_mutex_t write_mutex; // Thread-safe writes
 } console_sink_t;
 
-static const char *get_level_color(turbo_log_level_t level) {
+static const char *get_level_color(salts_log_level_t level) {
   switch (level) {
-  case TURBO_LOG_LEVEL_DEBUG: return COLOR_DEBUG;
-  case TURBO_LOG_LEVEL_INFO:  return COLOR_INFO;
-  case TURBO_LOG_LEVEL_WARN:  return COLOR_WARN;
-  case TURBO_LOG_LEVEL_ERROR: return COLOR_ERROR;
-  case TURBO_LOG_LEVEL_FATAL: return COLOR_FATAL;
+  case SALTS_LOG_LEVEL_DEBUG: return COLOR_DEBUG;
+  case SALTS_LOG_LEVEL_INFO:  return COLOR_INFO;
+  case SALTS_LOG_LEVEL_WARN:  return COLOR_WARN;
+  case SALTS_LOG_LEVEL_ERROR: return COLOR_ERROR;
+  case SALTS_LOG_LEVEL_FATAL: return COLOR_FATAL;
   default:                    return COLOR_RESET;
   }
 }
@@ -372,7 +372,7 @@ static const char *get_level_color(turbo_log_level_t level) {
 // =============================================================================
 
 static int format_with_pattern(char *buf, size_t buf_size, const compiled_pattern_t *cp,
-                               const turbo_log_entry_t *entry) {
+                               const salts_log_entry_t *entry) {
   if (!cp || !buf || buf_size == 0)
     return 0;
 
@@ -398,7 +398,7 @@ static int format_with_pattern(char *buf, size_t buf_size, const compiled_patter
       break;
     }
     case LOG_TOKEN_LEVEL: {
-      vstr name = vstr_from_cstr(turbo_log_level_name(entry->level));
+      vstr name = vstr_from_cstr(salts_log_level_name(entry->level));
       written = (int)name.len;
       if (written > 0 && dst + written < end) {
         memcpy(dst, name.data, written);
@@ -471,7 +471,7 @@ static int format_with_pattern(char *buf, size_t buf_size, const compiled_patter
   return (int)(dst - buf);
 }
 
-static void console_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *entry) {
+static void console_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
   console_sink_t *cs = (console_sink_t *)sink;
   if (!sink_accepts_level(sink, entry->level))
     return;
@@ -480,7 +480,7 @@ static void console_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *
   int len = format_with_pattern(formatted, sizeof(formatted) - 2, &cs->pattern, entry);
   if (unlikely(len <= 0)) return;
 
-  turbo_mutex_lock(&cs->write_mutex);
+  salts_mutex_lock(&cs->write_mutex);
   FILE *out = cs->output;
   if (cs->use_colors) {
     const char *color = get_level_color(entry->level);
@@ -491,29 +491,29 @@ static void console_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *
     formatted[len] = '\n';
     fwrite(formatted, 1, len + 1, out);
   }
-  turbo_mutex_unlock(&cs->write_mutex);
+  salts_mutex_unlock(&cs->write_mutex);
 }
 
-static void console_sink_flush(turbo_log_sink_t *sink) {
+static void console_sink_flush(salts_log_sink_t *sink) {
   console_sink_t *cs = (console_sink_t *)sink;
-  turbo_mutex_lock(&cs->write_mutex);
+  salts_mutex_lock(&cs->write_mutex);
   fflush(cs->output);
-  turbo_mutex_unlock(&cs->write_mutex);
+  salts_mutex_unlock(&cs->write_mutex);
 }
 
-static void console_sink_destroy(turbo_log_sink_t *sink) {
+static void console_sink_destroy(salts_log_sink_t *sink) {
   console_sink_t *cs = (console_sink_t *)sink;
-  turbo_mutex_destroy(&cs->write_mutex);
+  salts_mutex_destroy(&cs->write_mutex);
   pattern_free(&cs->pattern);
   free(sink);
 }
 
-turbo_log_sink_t *turbo_sink_console_create(const turbo_console_sink_opts_t *opts) {
+salts_log_sink_t *salts_sink_console_create(const salts_console_sink_opts_t *opts) {
   console_sink_t *sink = calloc(1, sizeof(console_sink_t));
   if (!sink)
     return NULL;
 
-  turbo_mutex_init(&sink->write_mutex);
+  salts_mutex_init(&sink->write_mutex);
 
   sink_base_init(&sink->base, console_sink_write, console_sink_flush, console_sink_destroy,
                  SINK_KIND_CONSOLE);
@@ -521,17 +521,17 @@ turbo_log_sink_t *turbo_sink_console_create(const turbo_console_sink_opts_t *opt
   if (opts) {
     sink->output = opts->output ? opts->output : stdout;
     sink->use_colors = opts->use_colors;
-    if (pattern_compile(opts->pattern ? opts->pattern : TURBO_LOG_DEFAULT_PATTERN,
+    if (pattern_compile(opts->pattern ? opts->pattern : SALTS_LOG_DEFAULT_PATTERN,
                         &sink->pattern) != 0) {
-      turbo_mutex_destroy(&sink->write_mutex);
+      salts_mutex_destroy(&sink->write_mutex);
       free(sink);
       return NULL;
     }
   } else {
     sink->output = stdout;
     sink->use_colors = 1;
-    if (pattern_compile(TURBO_LOG_DEFAULT_PATTERN, &sink->pattern) != 0) {
-      turbo_mutex_destroy(&sink->write_mutex);
+    if (pattern_compile(SALTS_LOG_DEFAULT_PATTERN, &sink->pattern) != 0) {
+      salts_mutex_destroy(&sink->write_mutex);
       free(sink);
       return NULL;
     }
@@ -547,8 +547,8 @@ turbo_log_sink_t *turbo_sink_console_create(const turbo_console_sink_opts_t *opt
 // =============================================================================
 
 typedef struct {
-  turbo_log_sink_t base;
-  turbo_file_t fd;
+  salts_log_sink_t base;
+  salts_file_t fd;
   char *path;
   compiled_pattern_t pattern;
   _Atomic int64_t offset;
@@ -556,16 +556,16 @@ typedef struct {
   atomic_int rotate_flag;     // 1 => rotate before next write
   size_t max_size;
   int max_files;
-  turbo_mutex_t rotate_mutex;
+  salts_mutex_t rotate_mutex;
 } file_sink_t;
 
 static void file_sink_rotate(file_sink_t *fs) {
-  turbo_mutex_lock(&fs->rotate_mutex);
+  salts_mutex_lock(&fs->rotate_mutex);
 
   // Close current file
-  if (fs->fd != TURBO_INVALID_FILE) {
-    turbo_fs_close(fs->fd);
-    fs->fd = TURBO_INVALID_FILE;
+  if (fs->fd != SALTS_INVALID_FILE) {
+    salts_fs_close(fs->fd);
+    fs->fd = SALTS_INVALID_FILE;
   }
 
   if (fs->max_files > 0) {
@@ -582,7 +582,7 @@ static void file_sink_rotate(file_sink_t *fs) {
       }
       new_path = tstr_format("{}.{}", fs->path, i + 1);
       if (old_path && new_path) {
-        turbo_fs_rename(old_path, new_path);
+        salts_fs_rename(old_path, new_path);
       }
     }
     tstr_free(old_path);
@@ -590,18 +590,18 @@ static void file_sink_rotate(file_sink_t *fs) {
   }
 
   // Open new file (when max_files == 0, just recreate/truncate the current file)
-  fs->fd = turbo_fs_open(fs->path, TURBO_FS_O_WRONLY | TURBO_FS_O_CREAT | TURBO_FS_O_TRUNC,
-                         TURBO_FS_DEFAULT_MODE);
-  if (fs->fd != TURBO_INVALID_FILE) {
+  fs->fd = salts_fs_open(fs->path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+                         SALTS_FS_DEFAULT_MODE);
+  if (fs->fd != SALTS_INVALID_FILE) {
     atomic_store(&fs->offset, 0);
     atomic_store(&fs->bytes_written, 0);
     atomic_store(&fs->rotate_flag, 0);
   }
 
-  turbo_mutex_unlock(&fs->rotate_mutex);
+  salts_mutex_unlock(&fs->rotate_mutex);
 }
 
-static void file_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *entry) {
+static void file_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
   file_sink_t *fs = (file_sink_t *)sink;
   if (!sink_accepts_level(sink, entry->level))
     return;
@@ -615,12 +615,12 @@ static void file_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *ent
   if (fs->max_size > 0 && atomic_load(&fs->rotate_flag)) {
     file_sink_rotate(fs);
   }
-  if (fs->fd == TURBO_INVALID_FILE) {
+  if (fs->fd == SALTS_INVALID_FILE) {
     return;
   }
 
   int64_t write_offset = atomic_fetch_add(&fs->offset, len);
-  int written = turbo_fs_pwrite(fs->fd, line, (size_t)len, write_offset);
+  int written = salts_fs_pwrite(fs->fd, line, (size_t)len, write_offset);
   if (written <= 0) {
     return;
   }
@@ -634,29 +634,29 @@ static void file_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *ent
   }
 }
 
-static void file_sink_flush(turbo_log_sink_t *sink) {
+static void file_sink_flush(salts_log_sink_t *sink) {
   file_sink_t *fs = (file_sink_t *)sink;
-  turbo_mutex_lock(&fs->rotate_mutex);
-  if (fs->fd != TURBO_INVALID_FILE) {
-    turbo_fs_fsync(fs->fd);
+  salts_mutex_lock(&fs->rotate_mutex);
+  if (fs->fd != SALTS_INVALID_FILE) {
+    salts_fs_fsync(fs->fd);
   }
-  turbo_mutex_unlock(&fs->rotate_mutex);
+  salts_mutex_unlock(&fs->rotate_mutex);
 }
 
-static void file_sink_destroy(turbo_log_sink_t *sink) {
+static void file_sink_destroy(salts_log_sink_t *sink) {
   file_sink_t *fs = (file_sink_t *)sink;
-  turbo_mutex_lock(&fs->rotate_mutex);
-  if (fs->fd != TURBO_INVALID_FILE) {
-    turbo_fs_close(fs->fd);
+  salts_mutex_lock(&fs->rotate_mutex);
+  if (fs->fd != SALTS_INVALID_FILE) {
+    salts_fs_close(fs->fd);
   }
-  turbo_mutex_unlock(&fs->rotate_mutex);
-  turbo_mutex_destroy(&fs->rotate_mutex);
+  salts_mutex_unlock(&fs->rotate_mutex);
+  salts_mutex_destroy(&fs->rotate_mutex);
   tstr_free(fs->path);
   pattern_free(&fs->pattern);
   free(fs);
 }
 
-turbo_log_sink_t *turbo_sink_file_create(const turbo_file_sink_opts_t *opts) {
+salts_log_sink_t *salts_sink_file_create(const salts_file_sink_opts_t *opts) {
   if (!opts || !opts->path)
     return NULL;
 
@@ -664,15 +664,15 @@ turbo_log_sink_t *turbo_sink_file_create(const turbo_file_sink_opts_t *opts) {
   if (!sink)
     return NULL;
 
-  turbo_mutex_init(&sink->rotate_mutex);
+  salts_mutex_init(&sink->rotate_mutex);
 
   sink_base_init(&sink->base, file_sink_write, file_sink_flush, file_sink_destroy, SINK_KIND_FILE);
 
   sink->path = tstr_dup(opts->path);
   if (!sink->path ||
-      pattern_compile(opts->pattern ? opts->pattern : TURBO_LOG_DEFAULT_PATTERN,
+      pattern_compile(opts->pattern ? opts->pattern : SALTS_LOG_DEFAULT_PATTERN,
                       &sink->pattern) != 0) {
-    turbo_mutex_destroy(&sink->rotate_mutex);
+    salts_mutex_destroy(&sink->rotate_mutex);
     tstr_free(sink->path);
     free(sink);
     return NULL;
@@ -680,12 +680,12 @@ turbo_log_sink_t *turbo_sink_file_create(const turbo_file_sink_opts_t *opts) {
   sink->max_size = opts->max_size;
   sink->max_files = opts->max_files;
 
-  int flags = TURBO_FS_O_WRONLY | TURBO_FS_O_CREAT;
-  flags |= opts->append ? TURBO_FS_O_APPEND : TURBO_FS_O_TRUNC;
+  int flags = SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT;
+  flags |= opts->append ? SALTS_FS_O_APPEND : SALTS_FS_O_TRUNC;
 
-  sink->fd = turbo_fs_open(opts->path, flags, TURBO_FS_DEFAULT_MODE);
-  if (sink->fd == TURBO_INVALID_FILE) {
-    turbo_mutex_destroy(&sink->rotate_mutex);
+  sink->fd = salts_fs_open(opts->path, flags, SALTS_FS_DEFAULT_MODE);
+  if (sink->fd == SALTS_INVALID_FILE) {
+    salts_mutex_destroy(&sink->rotate_mutex);
     tstr_free(sink->path);
     pattern_free(&sink->pattern);
     free(sink);
@@ -694,7 +694,7 @@ turbo_log_sink_t *turbo_sink_file_create(const turbo_file_sink_opts_t *opts) {
 
   // Initialize counters from current file size if appending
   if (opts->append) {
-    int64_t pos = turbo_fs_seek(sink->fd, 0, SEEK_END);
+    int64_t pos = salts_fs_seek(sink->fd, 0, SEEK_END);
     int64_t initial = pos > 0 ? pos : 0;
     atomic_store(&sink->offset, initial);
     atomic_store(&sink->bytes_written, initial);
@@ -712,11 +712,11 @@ turbo_log_sink_t *turbo_sink_file_create(const turbo_file_sink_opts_t *opts) {
 // =============================================================================
 
 typedef struct {
-  turbo_log_sink_t base;
-  turbo_log_callback_fn callback;
+  salts_log_sink_t base;
+  salts_log_callback_fn callback;
 } callback_sink_t;
 
-static void callback_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *entry) {
+static void callback_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
   callback_sink_t *cs = (callback_sink_t *)sink;
   if (!sink_accepts_level(sink, entry->level))
     return;
@@ -725,10 +725,10 @@ static void callback_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t 
   }
 }
 
-static void callback_sink_flush(turbo_log_sink_t *sink) { (void)sink; }
-static void callback_sink_destroy(turbo_log_sink_t *sink) { free(sink); }
+static void callback_sink_flush(salts_log_sink_t *sink) { (void)sink; }
+static void callback_sink_destroy(salts_log_sink_t *sink) { free(sink); }
 
-turbo_log_sink_t *turbo_sink_callback_create(turbo_log_callback_fn callback, void *user_data) {
+salts_log_sink_t *salts_sink_callback_create(salts_log_callback_fn callback, void *user_data) {
   if (!callback)
     return NULL;
 
@@ -749,13 +749,13 @@ turbo_log_sink_t *turbo_sink_callback_create(turbo_log_callback_fn callback, voi
 // =============================================================================
 
 typedef struct {
-  turbo_log_sink_t base;
-  turbo_sink_custom_write_fn write;
-  turbo_sink_custom_flush_fn flush;
-  turbo_sink_custom_destroy_fn destroy;
+  salts_log_sink_t base;
+  salts_sink_custom_write_fn write;
+  salts_sink_custom_flush_fn flush;
+  salts_sink_custom_destroy_fn destroy;
 } custom_sink_t;
 
-static void custom_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *entry) {
+static void custom_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
   custom_sink_t *cs = (custom_sink_t *)sink;
   if (!sink_accepts_level(sink, entry->level)) {
     return;
@@ -763,14 +763,14 @@ static void custom_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *e
   cs->write(entry, sink_user_data(sink));
 }
 
-static void custom_sink_flush(turbo_log_sink_t *sink) {
+static void custom_sink_flush(salts_log_sink_t *sink) {
   custom_sink_t *cs = (custom_sink_t *)sink;
   if (cs->flush) {
     cs->flush(sink_user_data(sink));
   }
 }
 
-static void custom_sink_destroy(turbo_log_sink_t *sink) {
+static void custom_sink_destroy(salts_log_sink_t *sink) {
   custom_sink_t *cs = (custom_sink_t *)sink;
   if (cs->destroy) {
     cs->destroy(sink_user_data(sink));
@@ -778,7 +778,7 @@ static void custom_sink_destroy(turbo_log_sink_t *sink) {
   free(cs);
 }
 
-turbo_log_sink_t *turbo_sink_custom_create(const turbo_sink_custom_opts_t *opts) {
+salts_log_sink_t *salts_sink_custom_create(const salts_sink_custom_opts_t *opts) {
   if (!opts || !opts->write) {
     return NULL;
   }
@@ -802,7 +802,7 @@ turbo_log_sink_t *turbo_sink_custom_create(const turbo_sink_custom_opts_t *opts)
 // Sink Accessors
 // =============================================================================
 
-int turbo_sink_set_min_level(turbo_log_sink_t *sink, turbo_log_level_t level) {
+int salts_sink_set_min_level(salts_log_sink_t *sink, salts_log_level_t level) {
   if (!sink || !log_level_is_valid(level)) {
     return -1;
   }
@@ -810,12 +810,12 @@ int turbo_sink_set_min_level(turbo_log_sink_t *sink, turbo_log_level_t level) {
   return 0;
 }
 
-turbo_log_level_t turbo_sink_get_min_level(const turbo_log_sink_t *sink) {
-  return sink ? (turbo_log_level_t)atomic_load_explicit(&sink->min_level, memory_order_relaxed)
-              : TURBO_LOG_LEVEL_INFO;
+salts_log_level_t salts_sink_get_min_level(const salts_log_sink_t *sink) {
+  return sink ? (salts_log_level_t)atomic_load_explicit(&sink->min_level, memory_order_relaxed)
+              : SALTS_LOG_LEVEL_INFO;
 }
 
-int turbo_sink_set_user_data(turbo_log_sink_t *sink, void *user_data) {
+int salts_sink_set_user_data(salts_log_sink_t *sink, void *user_data) {
   if (!sink) {
     return -1;
   }
@@ -823,7 +823,7 @@ int turbo_sink_set_user_data(turbo_log_sink_t *sink, void *user_data) {
   return 0;
 }
 
-void *turbo_sink_get_user_data(const turbo_log_sink_t *sink) {
+void *salts_sink_get_user_data(const salts_log_sink_t *sink) {
   return sink ? sink_user_data(sink) : NULL;
 }
 
@@ -832,17 +832,17 @@ void *turbo_sink_get_user_data(const turbo_log_sink_t *sink) {
 // =============================================================================
 
 typedef struct {
-  turbo_log_sink_t base;
-  turbo_log_sink_t *inner;
+  salts_log_sink_t base;
+  salts_log_sink_t *inner;
   int owns_inner;
-  turbo_log_level_t min_level;
-  turbo_log_level_t max_level;
+  salts_log_level_t min_level;
+  salts_log_level_t max_level;
   char *component;
-  turbo_sink_filter_fn predicate;
+  salts_sink_filter_fn predicate;
   void *predicate_user_data;
 } filter_sink_t;
 
-static int filter_sink_allows(filter_sink_t *fs, const turbo_log_entry_t *entry) {
+static int filter_sink_allows(filter_sink_t *fs, const salts_log_entry_t *entry) {
   if (!sink_accepts_level(&fs->base, entry->level) || entry->level < fs->min_level ||
       entry->level > fs->max_level) {
     return 0;
@@ -859,7 +859,7 @@ static int filter_sink_allows(filter_sink_t *fs, const turbo_log_entry_t *entry)
   return 1;
 }
 
-static void filter_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *entry) {
+static void filter_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
   filter_sink_t *fs = (filter_sink_t *)sink;
   if (!filter_sink_allows(fs, entry)) {
     return;
@@ -867,23 +867,23 @@ static void filter_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *e
   sink_write_entry(fs->inner, entry);
 }
 
-static void filter_sink_flush(turbo_log_sink_t *sink) {
+static void filter_sink_flush(salts_log_sink_t *sink) {
   filter_sink_t *fs = (filter_sink_t *)sink;
   sink_flush_inner(fs->inner);
 }
 
-static void filter_sink_destroy(turbo_log_sink_t *sink) {
+static void filter_sink_destroy(salts_log_sink_t *sink) {
   filter_sink_t *fs = (filter_sink_t *)sink;
   if (fs->owns_inner && fs->inner) {
-    turbo_sink_destroy(fs->inner);
+    salts_sink_destroy(fs->inner);
   }
   tstr_free(fs->component);
   free(fs);
 }
 
-turbo_log_sink_t *turbo_sink_filter_create(turbo_log_sink_t *inner,
-                                           turbo_sink_ownership_t ownership,
-                                           const turbo_sink_filter_opts_t *opts) {
+salts_log_sink_t *salts_sink_filter_create(salts_log_sink_t *inner,
+                                           salts_sink_ownership_t ownership,
+                                           const salts_sink_filter_opts_t *opts) {
   if (!inner) {
     return NULL;
   }
@@ -896,14 +896,14 @@ turbo_log_sink_t *turbo_sink_filter_create(turbo_log_sink_t *inner,
   sink_base_init(&sink->base, filter_sink_write, filter_sink_flush, filter_sink_destroy,
                  SINK_KIND_FILTER);
   sink->inner = inner;
-  sink->owns_inner = ownership == TURBO_SINK_OWNED;
-  sink->min_level = opts ? opts->min_level : TURBO_LOG_LEVEL_DEBUG;
-  sink->max_level = opts ? opts->max_level : TURBO_LOG_LEVEL_FATAL;
+  sink->owns_inner = ownership == SALTS_SINK_OWNED;
+  sink->min_level = opts ? opts->min_level : SALTS_LOG_LEVEL_DEBUG;
+  sink->max_level = opts ? opts->max_level : SALTS_LOG_LEVEL_FATAL;
   sink->predicate = opts ? opts->predicate : NULL;
   sink->predicate_user_data = opts ? opts->predicate_user_data : NULL;
 
-  if (sink->min_level < TURBO_LOG_LEVEL_DEBUG || sink->min_level > TURBO_LOG_LEVEL_FATAL ||
-      sink->max_level < TURBO_LOG_LEVEL_DEBUG || sink->max_level > TURBO_LOG_LEVEL_FATAL ||
+  if (sink->min_level < SALTS_LOG_LEVEL_DEBUG || sink->min_level > SALTS_LOG_LEVEL_FATAL ||
+      sink->max_level < SALTS_LOG_LEVEL_DEBUG || sink->max_level > SALTS_LOG_LEVEL_FATAL ||
       sink->min_level > sink->max_level) {
     free(sink);
     return NULL;
@@ -925,16 +925,16 @@ turbo_log_sink_t *turbo_sink_filter_create(turbo_log_sink_t *inner,
 // =============================================================================
 
 typedef struct {
-  turbo_log_sink_t base;
-  turbo_log_sink_t *inner;
+  salts_log_sink_t base;
+  salts_log_sink_t *inner;
   int owns_inner;
   compiled_pattern_t pattern;
 } format_sink_t;
 
-static void format_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *entry) {
+static void format_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
   format_sink_t *fs = (format_sink_t *)sink;
   char formatted[MAX_MESSAGE_SIZE];
-  turbo_log_entry_t formatted_entry;
+  salts_log_entry_t formatted_entry;
   int len;
 
   if (!sink_accepts_level(sink, entry->level) || fs->inner == NULL) {
@@ -952,22 +952,22 @@ static void format_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *e
   sink_write_entry(fs->inner, &formatted_entry);
 }
 
-static void format_sink_flush(turbo_log_sink_t *sink) {
+static void format_sink_flush(salts_log_sink_t *sink) {
   format_sink_t *fs = (format_sink_t *)sink;
   sink_flush_inner(fs->inner);
 }
 
-static void format_sink_destroy(turbo_log_sink_t *sink) {
+static void format_sink_destroy(salts_log_sink_t *sink) {
   format_sink_t *fs = (format_sink_t *)sink;
   if (fs->owns_inner && fs->inner) {
-    turbo_sink_destroy(fs->inner);
+    salts_sink_destroy(fs->inner);
   }
   pattern_free(&fs->pattern);
   free(fs);
 }
 
-turbo_log_sink_t *turbo_sink_format_create(turbo_log_sink_t *inner,
-                                           turbo_sink_ownership_t ownership,
+salts_log_sink_t *salts_sink_format_create(salts_log_sink_t *inner,
+                                           salts_sink_ownership_t ownership,
                                            const char *pattern) {
   if (!inner) {
     return NULL;
@@ -981,7 +981,7 @@ turbo_log_sink_t *turbo_sink_format_create(turbo_log_sink_t *inner,
   sink_base_init(&sink->base, format_sink_write, format_sink_flush, format_sink_destroy,
                  SINK_KIND_FORMAT);
   sink->inner = inner;
-  sink->owns_inner = ownership == TURBO_SINK_OWNED;
+  sink->owns_inner = ownership == SALTS_SINK_OWNED;
   if (pattern_compile(pattern ? pattern : "{message}", &sink->pattern) != 0) {
     free(sink);
     return NULL;
@@ -995,8 +995,8 @@ turbo_log_sink_t *turbo_sink_format_create(turbo_log_sink_t *inner,
 // =============================================================================
 
 typedef struct {
-  turbo_log_sink_t base;
-  turbo_log_sink_t *inner;
+  salts_log_sink_t base;
+  salts_log_sink_t *inner;
   int owns_inner;
   _Atomic uint64_t entries_seen;
   _Atomic uint64_t entries_forwarded;
@@ -1004,7 +1004,7 @@ typedef struct {
   _Atomic uint64_t bytes_forwarded;
 } metrics_sink_t;
 
-static void metrics_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *entry) {
+static void metrics_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *entry) {
   metrics_sink_t *ms = (metrics_sink_t *)sink;
 
   atomic_fetch_add(&ms->entries_seen, 1);
@@ -1018,21 +1018,21 @@ static void metrics_sink_write(turbo_log_sink_t *sink, const turbo_log_entry_t *
   sink_write_entry(ms->inner, entry);
 }
 
-static void metrics_sink_flush(turbo_log_sink_t *sink) {
+static void metrics_sink_flush(salts_log_sink_t *sink) {
   metrics_sink_t *ms = (metrics_sink_t *)sink;
   sink_flush_inner(ms->inner);
 }
 
-static void metrics_sink_destroy(turbo_log_sink_t *sink) {
+static void metrics_sink_destroy(salts_log_sink_t *sink) {
   metrics_sink_t *ms = (metrics_sink_t *)sink;
   if (ms->owns_inner && ms->inner) {
-    turbo_sink_destroy(ms->inner);
+    salts_sink_destroy(ms->inner);
   }
   free(ms);
 }
 
-turbo_log_sink_t *turbo_sink_metrics_create(turbo_log_sink_t *inner,
-                                            turbo_sink_ownership_t ownership) {
+salts_log_sink_t *salts_sink_metrics_create(salts_log_sink_t *inner,
+                                            salts_sink_ownership_t ownership) {
   if (!inner) {
     return NULL;
   }
@@ -1045,12 +1045,12 @@ turbo_log_sink_t *turbo_sink_metrics_create(turbo_log_sink_t *inner,
   sink_base_init(&sink->base, metrics_sink_write, metrics_sink_flush, metrics_sink_destroy,
                  SINK_KIND_METRICS);
   sink->inner = inner;
-  sink->owns_inner = ownership == TURBO_SINK_OWNED;
+  sink->owns_inner = ownership == SALTS_SINK_OWNED;
 
   return &sink->base;
 }
 
-int turbo_sink_metrics_snapshot(turbo_log_sink_t *sink, turbo_sink_metrics_t *out) {
+int salts_sink_metrics_snapshot(salts_log_sink_t *sink, salts_sink_metrics_t *out) {
   metrics_sink_t *ms;
 
   if (!sink || !out || sink->kind != SINK_KIND_METRICS) {
@@ -1073,7 +1073,7 @@ int turbo_sink_metrics_snapshot(turbo_log_sink_t *sink, turbo_sink_metrics_t *ou
 // Logger Structure
 // =============================================================================
 
-void turbo_sink_destroy(turbo_log_sink_t *sink) {
+void salts_sink_destroy(salts_log_sink_t *sink) {
   if (sink && sink->destroy) {
     sink->destroy(sink);
   }
@@ -1088,9 +1088,9 @@ struct tlog_s {
   // Configuration (Read-Only)
   // ---------------------------------------------------------------------------
   _Atomic int min_level;
-  turbo_log_sink_t *sinks[MAX_SINKS];
+  salts_log_sink_t *sinks[MAX_SINKS];
   int sink_count;
-  turbo_mutex_t sink_mutex;
+  salts_mutex_t sink_mutex;
 
   // ---------------------------------------------------------------------------
   // Disruptor (Replaces custom ring buffer)
@@ -1099,7 +1099,7 @@ struct tlog_s {
   disruptor_consumer_t consumer;
 
   // ---------------------------------------------------------------------------
-  // Async payload pool (thread-safe via turbo_buffer)
+  // Async payload pool (thread-safe via salts_buffer)
   // ---------------------------------------------------------------------------
   mem_pool_t async_pool;
 
@@ -1108,9 +1108,9 @@ struct tlog_s {
   // ---------------------------------------------------------------------------
   atomic_int running;
   atomic_int consumer_ready;
-  turbo_thread_t thread;
-  turbo_mutex_t wake_mutex;
-  turbo_cond_t wake_cond;
+  salts_thread_t thread;
+  salts_mutex_t wake_mutex;
+  salts_cond_t wake_cond;
 
   // ---------------------------------------------------------------------------
   // Stats
@@ -1121,7 +1121,7 @@ struct tlog_s {
 };
 
 // Forward declarations
-static void logger_write_to_sinks(tlog_t *logger, const turbo_log_entry_t *entry);
+static void logger_write_to_sinks(tlog_t *logger, const salts_log_entry_t *entry);
 static int logger_publish_entry(tlog_t *logger, mem_buffer_t *buffer);
 
 // =============================================================================
@@ -1131,7 +1131,7 @@ static int logger_publish_entry(tlog_t *logger, mem_buffer_t *buffer);
 /**
  * @brief Drain log entries from disruptor range [first_seq, last_seq].
  *
- * Converts each async_log_entry_t back to turbo_log_entry_t and writes
+ * Converts each async_log_entry_t back to salts_log_entry_t and writes
  * to all sinks.  Releases each mem_buffer_t after processing.
  */
 static void logger_drain_entries(tlog_t *logger, uint64_t first_seq, uint64_t last_seq) {
@@ -1145,13 +1145,13 @@ static void logger_drain_entries(tlog_t *logger, uint64_t first_seq, uint64_t la
 
     mem_buffer_t *buffer = atomic_load_explicit(entry_ptr, memory_order_acquire);
     while (buffer == NULL) {
-      turbo_thread_yield();
+      salts_thread_yield();
       buffer = atomic_load_explicit(entry_ptr, memory_order_acquire);
     }
 
     async_log_entry_t *ae = (async_log_entry_t *)buffer->data;
 
-    turbo_log_entry_t entry = {
+    salts_log_entry_t entry = {
       .level = ae->level,
       .timestamp_ms = ae->timestamp_ms,
       .thread_id = ae->thread_id,
@@ -1179,9 +1179,9 @@ static void logger_signal_consumer(tlog_t *logger) {
     return;
   }
 
-  turbo_mutex_lock(&logger->wake_mutex);
-  turbo_cond_signal(&logger->wake_cond);
-  turbo_mutex_unlock(&logger->wake_mutex);
+  salts_mutex_lock(&logger->wake_mutex);
+  salts_cond_signal(&logger->wake_cond);
+  salts_mutex_unlock(&logger->wake_mutex);
 }
 
 static void logger_broadcast_consumer(tlog_t *logger) {
@@ -1189,9 +1189,9 @@ static void logger_broadcast_consumer(tlog_t *logger) {
     return;
   }
 
-  turbo_mutex_lock(&logger->wake_mutex);
-  turbo_cond_broadcast(&logger->wake_cond);
-  turbo_mutex_unlock(&logger->wake_mutex);
+  salts_mutex_lock(&logger->wake_mutex);
+  salts_cond_broadcast(&logger->wake_cond);
+  salts_mutex_unlock(&logger->wake_mutex);
 }
 
 static int logger_wait_for_available(tlog_t *logger, uint64_t next_sequence,
@@ -1209,22 +1209,22 @@ static int logger_wait_for_available(tlog_t *logger, uint64_t next_sequence,
     return 0;
   }
 
-  turbo_mutex_lock(&logger->wake_mutex);
+  salts_mutex_lock(&logger->wake_mutex);
   while (logger_should_run(logger)) {
     cursor->sequence = next_sequence;
     if (disruptor_consumer_wait_for_nonblocking(logger->disruptor, cursor)) {
-      turbo_mutex_unlock(&logger->wake_mutex);
+      salts_mutex_unlock(&logger->wake_mutex);
       return 1;
     }
-    turbo_cond_wait(&logger->wake_cond, &logger->wake_mutex);
+    salts_cond_wait(&logger->wake_cond, &logger->wake_mutex);
   }
 
   cursor->sequence = next_sequence;
   if (disruptor_consumer_wait_for_nonblocking(logger->disruptor, cursor)) {
-    turbo_mutex_unlock(&logger->wake_mutex);
+    salts_mutex_unlock(&logger->wake_mutex);
     return 1;
   }
-  turbo_mutex_unlock(&logger->wake_mutex);
+  salts_mutex_unlock(&logger->wake_mutex);
   return 0;
 }
 
@@ -1266,12 +1266,12 @@ static int logger_start_async(tlog_t *logger) {
   atomic_store(&logger->running, 1);
   atomic_store(&logger->consumer_ready, 0);
 
-  if (turbo_thread_create(&logger->thread, async_logger_thread, logger) != 0) {
+  if (salts_thread_create(&logger->thread, async_logger_thread, logger) != 0) {
     return -1;
   }
 
   while (!atomic_load(&logger->consumer_ready)) {
-    turbo_thread_yield();
+    salts_thread_yield();
   }
 
   return 0;
@@ -1280,7 +1280,7 @@ static int logger_start_async(tlog_t *logger) {
 static void logger_stop_async(tlog_t *logger) {
   atomic_store(&logger->running, 0);
   logger_broadcast_consumer(logger);
-  turbo_thread_join(&logger->thread);
+  salts_thread_join(&logger->thread);
 }
 
 static int logger_publish_entry(tlog_t *logger, mem_buffer_t *buffer) {
@@ -1315,11 +1315,11 @@ tlog_t *tlog_create(const tlog_config_t *config) {
   if (!logger)
     return NULL;
 
-  atomic_init(&logger->min_level, (int)(config ? config->min_level : TURBO_LOG_LEVEL_INFO));
+  atomic_init(&logger->min_level, (int)(config ? config->min_level : SALTS_LOG_LEVEL_INFO));
 
-  turbo_mutex_init(&logger->sink_mutex);
-  turbo_mutex_init(&logger->wake_mutex);
-  turbo_cond_init(&logger->wake_cond);
+  salts_mutex_init(&logger->sink_mutex);
+  salts_mutex_init(&logger->wake_mutex);
+  salts_cond_init(&logger->wake_cond);
 
   atomic_store(&logger->logs_written, 0);
   atomic_store(&logger->logs_dropped, 0);
@@ -1336,9 +1336,9 @@ tlog_t *tlog_create(const tlog_config_t *config) {
 
   logger->disruptor = disruptor_create(&disruptor_config);
   if (!logger->disruptor) {
-    turbo_cond_destroy(&logger->wake_cond);
-    turbo_mutex_destroy(&logger->wake_mutex);
-    turbo_mutex_destroy(&logger->sink_mutex);
+    salts_cond_destroy(&logger->wake_cond);
+    salts_mutex_destroy(&logger->wake_mutex);
+    salts_mutex_destroy(&logger->sink_mutex);
     free(logger);
     return NULL;
   }
@@ -1348,9 +1348,9 @@ tlog_t *tlog_create(const tlog_config_t *config) {
       (config && config->pool_size) ? config->pool_size : DEFAULT_POOL_SIZE;
   if (mem_init(&logger->async_pool, async_pool_size) != 0) {
     disruptor_destroy(logger->disruptor);
-    turbo_cond_destroy(&logger->wake_cond);
-    turbo_mutex_destroy(&logger->wake_mutex);
-    turbo_mutex_destroy(&logger->sink_mutex);
+    salts_cond_destroy(&logger->wake_cond);
+    salts_mutex_destroy(&logger->wake_mutex);
+    salts_mutex_destroy(&logger->sink_mutex);
     free(logger);
     return NULL;
   }
@@ -1358,9 +1358,9 @@ tlog_t *tlog_create(const tlog_config_t *config) {
   if (logger_start_async(logger) != 0) {
     mem_destroy(&logger->async_pool);
     disruptor_destroy(logger->disruptor);
-    turbo_cond_destroy(&logger->wake_cond);
-    turbo_mutex_destroy(&logger->wake_mutex);
-    turbo_mutex_destroy(&logger->sink_mutex);
+    salts_cond_destroy(&logger->wake_cond);
+    salts_mutex_destroy(&logger->wake_mutex);
+    salts_mutex_destroy(&logger->sink_mutex);
     free(logger);
     return NULL;
   }
@@ -1381,45 +1381,45 @@ void tlog_destroy(tlog_t *logger) {
   // Flush and destroy sinks
   for (int i = 0; i < logger->sink_count; i++) {
     sink_flush_inner(logger->sinks[i]);
-    turbo_sink_destroy(logger->sinks[i]);
+    salts_sink_destroy(logger->sinks[i]);
   }
 
-  turbo_mutex_destroy(&logger->sink_mutex);
-  turbo_cond_destroy(&logger->wake_cond);
-  turbo_mutex_destroy(&logger->wake_mutex);
+  salts_mutex_destroy(&logger->sink_mutex);
+  salts_cond_destroy(&logger->wake_cond);
+  salts_mutex_destroy(&logger->wake_mutex);
 
   // Clear default logger reference before freeing memory.
-  turbo_once(&g_default_logger_mutex_once, init_tlog_globals);
+  salts_once(&g_default_logger_mutex_once, init_tlog_globals);
   if (g_default_logger_mutex_init) {
-    turbo_mutex_lock(&g_default_logger_mutex);
+    salts_mutex_lock(&g_default_logger_mutex);
     if (g_default_logger == logger) {
       g_default_logger = NULL;
     }
-    turbo_mutex_unlock(&g_default_logger_mutex);
+    salts_mutex_unlock(&g_default_logger_mutex);
   }
 
   free(logger);
 }
 
-int tlog_add_sink(tlog_t *logger, turbo_log_sink_t *sink) {
+int tlog_add_sink(tlog_t *logger, salts_log_sink_t *sink) {
   if (!logger || !sink)
     return -1;
 
-  turbo_mutex_lock(&logger->sink_mutex);
+  salts_mutex_lock(&logger->sink_mutex);
   if (logger->sink_count >= MAX_SINKS) {
-    turbo_mutex_unlock(&logger->sink_mutex);
+    salts_mutex_unlock(&logger->sink_mutex);
     return -1;
   }
   logger->sinks[logger->sink_count++] = sink;
-  turbo_mutex_unlock(&logger->sink_mutex);
+  salts_mutex_unlock(&logger->sink_mutex);
   return 0;
 }
 
-void tlog_remove_sink(tlog_t *logger, turbo_log_sink_t *sink) {
+void tlog_remove_sink(tlog_t *logger, salts_log_sink_t *sink) {
   if (!logger || !sink)
     return;
 
-  turbo_mutex_lock(&logger->sink_mutex);
+  salts_mutex_lock(&logger->sink_mutex);
   for (int i = 0; i < logger->sink_count; i++) {
     if (logger->sinks[i] == sink) {
       for (int j = i; j < logger->sink_count - 1; j++) {
@@ -1429,7 +1429,7 @@ void tlog_remove_sink(tlog_t *logger, turbo_log_sink_t *sink) {
       break;
     }
   }
-  turbo_mutex_unlock(&logger->sink_mutex);
+  salts_mutex_unlock(&logger->sink_mutex);
 }
 
 void tlog_flush(tlog_t *logger) {
@@ -1443,39 +1443,39 @@ void tlog_flush(tlog_t *logger) {
   // contract and makes callback/file sinks observe partial output.
   int64_t published = atomic_load(&logger->logs_published);
   while (atomic_load(&logger->logs_written) < published) {
-    turbo_sleep_ms(1);
+    salts_sleep_ms(1);
   }
 
   // Flush all sinks
-  turbo_mutex_lock(&logger->sink_mutex);
+  salts_mutex_lock(&logger->sink_mutex);
   for (int i = 0; i < logger->sink_count; i++) {
     sink_flush_inner(logger->sinks[i]);
   }
-  turbo_mutex_unlock(&logger->sink_mutex);
+  salts_mutex_unlock(&logger->sink_mutex);
 }
 
 // =============================================================================
 // Core Logging Functions
 // =============================================================================
 
-static void logger_write_to_sinks(tlog_t *logger, const turbo_log_entry_t *entry) {
-  turbo_mutex_lock(&logger->sink_mutex);
+static void logger_write_to_sinks(tlog_t *logger, const salts_log_entry_t *entry) {
+  salts_mutex_lock(&logger->sink_mutex);
   for (int i = 0; i < logger->sink_count; i++) {
     sink_write_entry(logger->sinks[i], entry);
   }
-  turbo_mutex_unlock(&logger->sink_mutex);
+  salts_mutex_unlock(&logger->sink_mutex);
 }
 
-void turbo_log_typed(tlog_t *logger, turbo_log_level_t level, const char *component,
+void salts_log_typed(tlog_t *logger, salts_log_level_t level, const char *component,
                      const char *file, int line, const char *fmt, const fmt_arg_t *args,
                      size_t arg_count) {
   if (!logger || !fmt)
     return;
-  if (level < (turbo_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed))
+  if (level < (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed))
     return;
 
   if (arg_count == 0) {
-    turbo_log_str(logger, level, component, file, line, fmt, strlen(fmt));
+    salts_log_str(logger, level, component, file, line, fmt, strlen(fmt));
     return;
   }
 
@@ -1484,9 +1484,9 @@ void turbo_log_typed(tlog_t *logger, turbo_log_level_t level, const char *compon
   if (msg_len < 0) msg_len = 0;
   if (msg_len >= MAX_MESSAGE_SIZE) msg_len = MAX_MESSAGE_SIZE - 1;
 
-  turbo_log_entry_t entry = {
+  salts_log_entry_t entry = {
     .level = level,
-    .timestamp_ms = turbo_realtime_ms(),
+    .timestamp_ms = salts_realtime_ms(),
     .thread_id = get_cached_tid(),
     .component = component,
     .file = file,
@@ -1504,15 +1504,15 @@ void turbo_log_typed(tlog_t *logger, turbo_log_level_t level, const char *compon
   (void)logger_publish_entry(logger, buffer);
 }
 
-void turbo_log_str(tlog_t *logger, turbo_log_level_t level, const char *component, const char *file,
+void salts_log_str(tlog_t *logger, salts_log_level_t level, const char *component, const char *file,
                    int line, const char *message, size_t message_len) {
   if (!logger || !message)
     return;
-  if (level < (turbo_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed))
+  if (level < (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed))
     return;
 
-  turbo_log_entry_t entry = {.level = level,
-                             .timestamp_ms = turbo_realtime_ms(),
+  salts_log_entry_t entry = {.level = level,
+                             .timestamp_ms = salts_realtime_ms(),
                              .thread_id = get_cached_tid(),
                              .component = component,
                              .file = file,
@@ -1533,7 +1533,7 @@ void turbo_log_str(tlog_t *logger, turbo_log_level_t level, const char *componen
 // Level Control
 // =============================================================================
 
-int tlog_set_level_ex(tlog_t *logger, turbo_log_level_t level) {
+int tlog_set_level_ex(tlog_t *logger, salts_log_level_t level) {
   if (!logger || !log_level_is_valid(level)) {
     return -1;
   }
@@ -1541,13 +1541,13 @@ int tlog_set_level_ex(tlog_t *logger, turbo_log_level_t level) {
   return 0;
 }
 
-void tlog_set_level(tlog_t *logger, turbo_log_level_t level) {
+void tlog_set_level(tlog_t *logger, salts_log_level_t level) {
   (void)tlog_set_level_ex(logger, level);
 }
 
-turbo_log_level_t tlog_get_level(const tlog_t *logger) {
-  return logger ? (turbo_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed)
-                : TURBO_LOG_LEVEL_INFO;
+salts_log_level_t tlog_get_level(const tlog_t *logger) {
+  return logger ? (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed)
+                : SALTS_LOG_LEVEL_INFO;
 }
 
 // =============================================================================
@@ -1588,13 +1588,13 @@ int tlog_get_queue_size(const tlog_t *logger) {
 // =============================================================================
 
 static tlog_t *create_default_logger(void) {
-  tlog_config_t config = {.min_level = TURBO_LOG_LEVEL_INFO,
+  tlog_config_t config = {.min_level = SALTS_LOG_LEVEL_INFO,
                           .pool_size = DEFAULT_POOL_SIZE,
                           .buffer_size = 0};
 
   tlog_t *logger = tlog_create(&config);
   if (logger) {
-    turbo_log_sink_t *console = turbo_sink_console_create(NULL);
+    salts_log_sink_t *console = salts_sink_console_create(NULL);
     if (console) {
       tlog_add_sink(logger, console);
     }
@@ -1603,11 +1603,11 @@ static tlog_t *create_default_logger(void) {
 }
 
 void tlog_set_default(tlog_t *logger) {
-  turbo_once(&g_default_logger_mutex_once, init_tlog_globals);
+  salts_once(&g_default_logger_mutex_once, init_tlog_globals);
   if (g_default_logger_mutex_init) {
-    turbo_mutex_lock(&g_default_logger_mutex);
+    salts_mutex_lock(&g_default_logger_mutex);
     g_default_logger = logger;
-    turbo_mutex_unlock(&g_default_logger_mutex);
+    salts_mutex_unlock(&g_default_logger_mutex);
   }
 }
 
@@ -1615,14 +1615,14 @@ tlog_t *tlog_get_default(void) {
   tlog_t *logger = NULL;
   tlog_t *created = NULL;
 
-  turbo_once(&g_default_logger_mutex_once, init_tlog_globals);
+  salts_once(&g_default_logger_mutex_once, init_tlog_globals);
   if (!g_default_logger_mutex_init) {
     return NULL;
   }
 
-  turbo_mutex_lock(&g_default_logger_mutex);
+  salts_mutex_lock(&g_default_logger_mutex);
   logger = g_default_logger;
-  turbo_mutex_unlock(&g_default_logger_mutex);
+  salts_mutex_unlock(&g_default_logger_mutex);
   if (logger) {
     return logger;
   }
@@ -1632,7 +1632,7 @@ tlog_t *tlog_get_default(void) {
     return NULL;
   }
 
-  turbo_mutex_lock(&g_default_logger_mutex);
+  salts_mutex_lock(&g_default_logger_mutex);
   if (g_default_logger == NULL) {
     g_default_logger = created;
     logger = created;
@@ -1640,7 +1640,7 @@ tlog_t *tlog_get_default(void) {
   } else {
     logger = g_default_logger;
   }
-  turbo_mutex_unlock(&g_default_logger_mutex);
+  salts_mutex_unlock(&g_default_logger_mutex);
 
   if (created) {
     tlog_destroy(created);
@@ -1650,13 +1650,13 @@ tlog_t *tlog_get_default(void) {
 
 tlog_t *tlog_peek_default(void) {
   tlog_t *logger = NULL;
-  turbo_once(&g_default_logger_mutex_once, init_tlog_globals);
+  salts_once(&g_default_logger_mutex_once, init_tlog_globals);
   if (!g_default_logger_mutex_init) {
     return NULL;
   }
-  turbo_mutex_lock(&g_default_logger_mutex);
+  salts_mutex_lock(&g_default_logger_mutex);
   logger = g_default_logger;
-  turbo_mutex_unlock(&g_default_logger_mutex);
+  salts_mutex_unlock(&g_default_logger_mutex);
   return logger;
 }
 
@@ -1664,24 +1664,24 @@ tlog_t *tlog_peek_default(void) {
 // Utility Functions
 // =============================================================================
 
-const char *turbo_log_level_name(turbo_log_level_t level) {
-  const char *name = turbo_log_level_t_to_string(level);
+const char *salts_log_level_name(salts_log_level_t level) {
+  const char *name = salts_log_level_t_to_string(level);
   return name ? name : "UNKNOWN";
 }
 
-turbo_log_level_t turbo_log_level_from_name(const char *name) {
+salts_log_level_t salts_log_level_from_name(const char *name) {
   const cmeta_enum_desc *meta;
   size_t i;
   if (!name) {
-    return TURBO_LOG_LEVEL_INFO;
+    return SALTS_LOG_LEVEL_INFO;
   }
 
-  meta = turbo_log_level_t_meta();
+  meta = salts_log_level_t_meta();
   for (i = 0; i < meta->count; ++i) {
     if (strcmp(name, meta->items[i].text) == 0) {
-      return (turbo_log_level_t)meta->items[i].value;
+      return (salts_log_level_t)meta->items[i].value;
     }
   }
 
-  return TURBO_LOG_LEVEL_INFO;
+  return SALTS_LOG_LEVEL_INFO;
 }

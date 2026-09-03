@@ -9,7 +9,7 @@ admission, waiting, shutdown policy, and accounting snapshots for built-in
 executors. Existing methods remain compatibility wrappers and keep drain as
 their shutdown policy.
 
-The pool backend extends `turbo_threadpool` with additive status-returning wait
+The pool backend extends `salts_threadpool` with additive status-returning wait
 and policy-aware shutdown functions. A thread-local callback identity rejects
 self-wait and a blocking self-post that would require the same saturated pool
 to make progress.
@@ -29,7 +29,7 @@ and concurrent handle reclamation without adding value for this scope.
 
 - The accepted task is the accounting unit.
 - Manual owns a fixed task array. Pool executors own a bounded Disruptor worker
-  queue through `turbo_threadpool`.
+  queue through `salts_threadpool`.
 - Accepted work is partitioned into queued, running, completed, or cancelled.
   Public protocol snapshots derive accepted as the sum of those categories.
 - Queue capacity bounds queued work only; running work is separate.
@@ -83,7 +83,7 @@ an Interface Segregation/Adapter boundary over the same backend state; custom
 executor implementations that do not implement the built-in protocol simply
 fail the view conversion.
 
-`turbo_threadpool_submit` gains a documented `TURBO_EBUSY` result only for the
+`salts_threadpool_submit` gains a documented `SALTS_EBUSY` result only for the
 previously deadlocking same-pool/full callback case. Existing external blocking
 submission and drain shutdown behavior remain unchanged. New functions are
 additive, and no serialized format, Graph IR, or generated metadata changes.

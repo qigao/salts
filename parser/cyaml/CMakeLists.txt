@@ -32,11 +32,11 @@ add_dependencies(${TARGET_NAME}
   ${CYAML_YPATH_GRAMMAR_TARGET})
 
 cmake_config_target(${TARGET_NAME}
-  ALIAS Rocida::CYaml
+  ALIAS Salts::CYaml
   EXPORT_NAME CYaml
   FOLDER "${TARGET_FOLDER}")
 add_library(cyaml::cyaml ALIAS ${TARGET_NAME})
-target_link_libraries(${TARGET_NAME} PRIVATE Rocida::Core PUBLIC Rocida::QueryVM)
+target_link_libraries(${TARGET_NAME} PRIVATE Salts::Core PUBLIC Salts::QueryVM)
 
 target_include_directories(${TARGET_NAME}
   PUBLIC
@@ -52,7 +52,7 @@ endif()
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT RocidaTargets
+  EXPORT SaltsTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES src/cyaml.h DESTINATION include/cyaml)
 
@@ -66,36 +66,36 @@ target_include_directories(cyaml_json_adapter
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(cyaml_json_adapter PUBLIC ${TARGET_NAME} json_parser)
 cmake_config_target(cyaml_json_adapter
-  ALIAS Rocida::CYamlJsonAdapter
+  ALIAS Salts::CYamlJsonAdapter
   EXPORT_NAME CYamlJsonAdapter
   FOLDER "${TARGET_FOLDER}/adapter")
 
 if(BUILD_TESTING)
   cmake_add_test(test_api
     SOURCES tests/test_api.c
-    LIBS ${TARGET_NAME} Rocida::TinyTest
+    LIBS ${TARGET_NAME} Salts::TinyTest
     FOLDER "${TARGET_FOLDER}/tests")
 
   cmake_add_test(test_sax
     SOURCES tests/test_sax.c
-    LIBS ${TARGET_NAME} Rocida::TinyTest
+    LIBS ${TARGET_NAME} Salts::TinyTest
     FOLDER "${TARGET_FOLDER}/tests")
 
   cmake_add_test(test_ypath_lexer
     SOURCES tests/test_ypath_lexer.c
-    LIBS ${TARGET_NAME} Rocida::TinyTest
+    LIBS ${TARGET_NAME} Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src
     FOLDER "${TARGET_FOLDER}/tests")
 
   cmake_add_test(test_ypath_ast
     SOURCES tests/test_ypath_ast.c
-    LIBS ${TARGET_NAME} Rocida::QueryVM Rocida::TinyTest
+    LIBS ${TARGET_NAME} Salts::QueryVM Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src
     FOLDER "${TARGET_FOLDER}/tests")
 
   cmake_add_test(test_cyaml_json_adapter
     SOURCES tests/test_json_adapter.c
-    LIBS cyaml_json_adapter Rocida::TinyTest
+    LIBS cyaml_json_adapter Salts::TinyTest
     FOLDER "${TARGET_FOLDER}/tests")
 
   cmake_add_test(ypath_test

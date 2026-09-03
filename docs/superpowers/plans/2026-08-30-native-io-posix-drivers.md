@@ -17,7 +17,7 @@
 - Do not add liburing or another dependency; reuse `<linux/io_uring.h>` and the repository's already-tested ring mapping rules.
 - One backend has exactly one owner thread; no internal thread, lock, callback, mailbox, or fallback backend.
 - Socket, payload, and address memory remain borrowed until the matching terminal completion is observed.
-- Endpoint, request, ready-event, and terminal-completion capacities are fixed at init; full admission returns `TURBO_ENOBUFS`.
+- Endpoint, request, ready-event, and terminal-completion capacities are fixed at init; full admission returns `SALTS_ENOBUFS`.
 - No commit or push is performed unless the user requests it.
 
 ## Data-path protocol
@@ -30,7 +30,7 @@
 | Topology | Single producer/consumer owner thread. Control and data methods must not run concurrently. |
 | Ordering | Readiness drivers serialize each endpoint's read lane and write lane FIFO. Completion drivers expose kernel completion order. |
 | Capacity | `endpoint_capacity`, `request_capacity`, and `completion_batch_capacity`; all multiplication is overflow checked. |
-| Backpressure | No free request or terminal slot returns `TURBO_ENOBUFS`; no dynamic growth or silent drop. |
+| Backpressure | No free request or terminal slot returns `SALTS_ENOBUFS`; no dynamic growth or silent drop. |
 | Cancellation | Readiness removes a queued request and publishes CANCELLED. io_uring submits `IORING_OP_ASYNC_CANCEL`; only the original `-ECANCELED` CQE proves cancellation. |
 | Close | Close admission, cancel/drain requests, close sockets, release endpoints, destroy backend. Busy state retains ownership. |
 | Observation | Existing counters plus backend/model queries; benchmarks compare only against the matching raw native API. |
@@ -56,7 +56,7 @@ FREE --SQE accepted--> PENDING --original CQE--> TERMINAL --observe--> FREE(next
 ### Task 1: Public backend admission
 
 **Files:**
-- Modify: `native-io/include/turbo/native_io.h`
+- Modify: `native-io/include/salts/native_io.h`
 - Modify: `native-io/src/native_io.c`
 - Modify: `native-io/tests/native_io_test.c`
 
@@ -102,8 +102,8 @@ typedef enum native_io_backend_kind {
 - Modify: `native-io/tests/native_io_test.c`
 
 **Interfaces:**
-- Consumes existing `turbo_io_impl_ops`.
-- Produces `turbo_io_readiness_backend_init(backend, config, driver_ops)`.
+- Consumes existing `salts_io_impl_ops`.
+- Produces `salts_io_readiness_backend_init(backend, config, driver_ops)`.
 - Produces a driver boundary with `create`, `update(fd, token, old_interests, new_interests)`, `wait`, and `destroy`.
 
 - [x] **Step 1: Add portable real-socket contract tests**
@@ -112,7 +112,7 @@ Move TCP, UDP, cancellation, capacity, stale-handle, timeout, close, and destroy
 
 - [x] **Step 2: Configure/build on Linux and verify RED**
 
-Expected: EPOLL/KQUEUE/IO_URING backend initialization returns `TURBO_ENOTSUP`.
+Expected: EPOLL/KQUEUE/IO_URING backend initialization returns `SALTS_ENOTSUP`.
 
 - [x] **Step 3: Implement fixed records and lane queues**
 
@@ -135,12 +135,12 @@ Use `recv`, `send`, `recvfrom`, and `sendto`; retry `EINTR`, queue only `EAGAIN/
 - Test: `native-io/tests/native_io_test.c`
 
 **Interfaces:**
-- Produces `turbo_io_epoll_backend_init()`.
+- Produces `salts_io_epoll_backend_init()`.
 - `epoll_event.data.u64` stores the endpoint generation token.
 
 - [x] **Step 1: Add an epoll TCP/UDP parameter row and verify RED remotely**
 
-Run `native_io_test` on `root@eu`; expected failure is `TURBO_ENOTSUP` for EPOLL.
+Run `native_io_test` on `root@eu`; expected failure is `SALTS_ENOTSUP` for EPOLL.
 
 - [x] **Step 2: Implement direct level-triggered epoll**
 
@@ -161,7 +161,7 @@ Run TCP, UDP, cancellation, capacity, timeout, and lifecycle cases through EPOLL
 - Test: `native-io/tests/native_io_test.c`
 
 **Interfaces:**
-- Produces `turbo_io_io_uring_backend_init()`.
+- Produces `salts_io_io_uring_backend_init()`.
 - Packs request slot/generation into `sqe.user_data`; zero is reserved for cancel CQEs.
 
 - [x] **Step 1: Add io_uring TCP/UDP/cancel rows and verify RED remotely**
@@ -195,12 +195,12 @@ The Debian 6.1 remote kernel must pass TCP, UDP, cancellation, stale-handle, and
 - Test: `native-io/tests/native_io_test.c`
 
 **Interfaces:**
-- Produces `turbo_io_kqueue_backend_init()`.
+- Produces `salts_io_kqueue_backend_init()`.
 - Stores endpoint generation tokens in `kevent.udata`.
 
 - [x] **Step 1: Add the kqueue support row and portable contract invocation**
 
-On non-kqueue hosts the explicit selector must return `TURBO_ENOTSUP`; on Apple/BSD it runs the same real-socket contract.
+On non-kqueue hosts the explicit selector must return `SALTS_ENOTSUP`; on Apple/BSD it runs the same real-socket contract.
 
 - [x] **Step 2: Implement direct kqueue filter updates**
 

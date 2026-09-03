@@ -7,7 +7,7 @@ post-handshake CNet WebSocket session engine. HTTP/1.1 Upgrade, RFC 8441,
 `ws://`/`wss://` URI admission, and CHTTP routes are separate follow-up work.
 
 The same implementation change replaces CNet's private hand-written network
-URI tokenization with the existing `Rocida::UriParser`. CNet retains
+URI tokenization with the existing `Salts::UriParser`. CNet retains
 transport policy validation, output adaptation, and byte-preserving extraction
 of the scheme-specific Pipe IPC endpoint.
 
@@ -40,9 +40,9 @@ The public operations are:
 
 Input and output callbacks execute synchronously on the session owner. Event
 payloads are borrowed only until the callback returns. The transport write
-callback must copy the frame before returning `TURBO_OK`. If it returns
-`TURBO_EBUSY`, the engine retains exactly that one bounded frame; later send
-admission returns `TURBO_EBUSY` until `cnet_websocket_flush()` succeeds. No
+callback must copy the frame before returning `SALTS_OK`. If it returns
+`SALTS_EBUSY`, the engine retains exactly that one bounded frame; later send
+admission returns `SALTS_EBUSY` until `cnet_websocket_flush()` succeeds. No
 unbounded output queue or implicit worker is created.
 
 ## State and ownership protocol
@@ -52,7 +52,7 @@ unbounded output queue or implicit worker is created.
 | input bytes | session | `max_buffered_input_bytes` | copied by `feed`; a rejected append changes nothing |
 | one frame | input buffer view | `max_frame_bytes` plus 14-byte header | borrowed until frame consumption; never crosses a callback return |
 | fragmented message | session | `max_message_bytes` | reset after its event callback; overflow fails with close code 1009 |
-| pending output | session | one frame, `max_frame_bytes` plus 14 bytes | retained only after transport `TURBO_EBUSY`; `flush` is the only retry path |
+| pending output | session | one frame, `max_frame_bytes` plus 14 bytes | retained only after transport `SALTS_EBUSY`; `flush` is the only retry path |
 | event view | callback | message/control bound | invalid when the callback returns |
 
 All three allocations are fixed at initialization and never grow. Checked
@@ -82,7 +82,7 @@ frames between fragments, reassembles fragments in order, validates complete
 text messages and Close reasons as strict UTF-8, validates Close code ranges,
 and responds automatically to Ping and peer Close. Protocol errors use 1002,
 invalid text uses 1007, and configured frame/message limits use 1009. Client
-output masking keys come only from `turbo_platform_secure_random()`; entropy
+output masking keys come only from `salts_platform_secure_random()`; entropy
 failure is propagated with no fallback.
 
 These rules follow [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455), especially

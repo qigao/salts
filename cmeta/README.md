@@ -39,7 +39,7 @@ both capability flags and function slots from those tagged rows. Positional
 
 `typed(...)` is the single finite-generic entry point. CMeta owns value kinds
 such as `Pair`, `Tuple`, `Option`, and `Result`. Container kinds such as `List`,
-`Vec`, and `HashMap` are provided by `turbostl`, not by the CMeta aggregate
+`Vec`, and `HashMap` are provided by `container`, not by the CMeta aggregate
 header.
 
 ## Semantic string and byte storage adapters
@@ -64,8 +64,8 @@ or otherwise invalidated by the provider. Adapters that implement only the
 original v1 prefix remain valid for assignment and return
 `CMETA_TRAIT_MISSING` from the read facade.
 
-Rocida Core provides header-local `tstr` and `vstr` adapter metadata in
-`turbo_cmeta_data.h`. As with other header-generated CMeta metadata, descriptor
+Salts Core provides header-local `tstr` and `vstr` adapter metadata in
+`salts_cmeta_data.h`. As with other header-generated CMeta metadata, descriptor
 addresses may differ across translation units; use semantic type comparison.
 
 ## Unified Schema / Replay kernel
@@ -250,7 +250,7 @@ RANDOM_ACCESS
 REUSABLE
 ```
 
-Concrete libraries such as `turbostl` may expose Range views through their own
+Concrete libraries such as `container` may expose Range views through their own
 typed adapters and descriptors.
 
 ## Transactional collectors

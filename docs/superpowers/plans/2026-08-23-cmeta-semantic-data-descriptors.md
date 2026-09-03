@@ -6,11 +6,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a versioned, format-neutral CMeta semantic descriptor layer and project proven TurboSTL generic applications into `SEQUENCE` / `SET` / `MAP` without creating a second source of truth for `T/K/V`.
+**Goal:** Add a versioned, format-neutral CMeta semantic descriptor layer and project proven Container generic applications into `SEQUENCE` / `SET` / `MAP` without creating a second source of truth for `T/K/V`.
 
-**Architecture:** `CMETA_TYPE_APPLY` remains the sole owner of type constructor/arity/arguments. Semantic descriptors describe meaning only. TurboSTL links its canonical container extension to one shared semantic category descriptor; callers still obtain concrete type arguments only through `cmeta_container_type_argument()`. Before appending semantic metadata to `cmeta_container_ext`, make its existing `struct_size` checks truly prefix-safe.
+**Architecture:** `CMETA_TYPE_APPLY` remains the sole owner of type constructor/arity/arguments. Semantic descriptors describe meaning only. Container links its canonical container extension to one shared semantic category descriptor; callers still obtain concrete type arguments only through `cmeta_container_type_argument()`. Before appending semantic metadata to `cmeta_container_ext`, make its existing `struct_size` checks truly prefix-safe.
 
-**Tech Stack:** C11, C++17 public-header compatibility, CMake presets, TinyTest, TurboUtils::CMeta, TurboUtils::STL.
+**Tech Stack:** C11, C++17 public-header compatibility, CMake presets, TinyTest, Salts::CMeta, Salts::CSTL.
 
 **Spec:** `docs/superpowers/specs/2026-08-23-serialization-data-binding-design.md`, `docs/superpowers/specs/2026-08-23-serialization-data-binding-generic-foundation-amendment.md`, and `docs/superpowers/specs/2026-08-23-serialization-data-binding-semantic-foundation-amendment.md`.
 
@@ -23,14 +23,14 @@
 - `OPTIONAL` is not in this plan. It remains blocked until a typed Option value has a real `CMETA_TYPE_APPLY` identity.
 - Field presence, aliases, external names, defaults, nullable policy and emit policy remain CBind/schema concerns.
 - No CSerde, CBind, parser, DataBind, TBE, or format-specific production code is introduced.
-- No TurboSTL raw algorithm, ownership rule, Range traversal, or Collector behavior is rewritten.
+- No Container raw algorithm, ownership rule, Range traversal, or Collector behavior is rewritten.
 - Semantic category projection is independent of runtime generic validity. A raw-byte canonical Vec may project as `SEQUENCE`, but it has no T and cannot enter typed binding; typed consumers must validate the generic application separately.
 - Typed Heap and MultiMap instances remain semantically unresolved in v1.
 - Nested zero-initialized `vec_t/map_t` struct fields are not solved here; static field TYPE application + construction is the next plan.
 - v1 does not reserve an unspecified `cmeta_data_ops` callback pointer.
 - Semantic fingerprinting is deferred until the descriptor graph contract is stable.
 - `cmeta_container_ext` and `cmeta_data_desc` must both use append-only prefix-size validation; do not validate either with `struct_size >= sizeof(current_struct)`.
-- Public CMeta/TurboSTL headers compile as C11 and C++17.
+- Public CMeta/Container headers compile as C11 and C++17.
 - Linux verification uses public repository preset `linux-release-user`; Windows must pass repository CI on the exact final head.
 
 ---
@@ -40,7 +40,7 @@
 ```text
 PR C0  append-only cmeta_container_ext ABI hardening
 PR C1  CMeta semantic descriptor core
-PR C2  TurboSTL semantic projection via cmeta_container_ext.data
+PR C2  Container semantic projection via cmeta_container_ext.data
 ```
 
 C1 starts only after C0 merges. C2 starts only after C1 merges. Do not stack production PRs on unmerged heads.
@@ -53,7 +53,7 @@ C1 starts only after C0 merges. C2 starts only after C1 merges. Do not stack pro
 
 **Files:**
 - Modify: `cmeta/include/cmeta/range.h`
-- Modify: `cmeta/src/container_type.c`
+- Modify: `cmeta/src/cstl_type.c`
 - Modify: `cmeta/tests/cmeta_container_type_test.c`
 - Modify: `cmeta/tests/cmeta_header_cpp_test.cpp`
 
@@ -101,7 +101,7 @@ Declare in `cmeta/include/cmeta/range.h` before the existing type helpers:
 const cmeta_container_ext *cmeta_container_extension(const void *object);
 ```
 
-In `cmeta/src/container_type.c`, define a file-local helper:
+In `cmeta/src/cstl_type.c`, define a file-local helper:
 
 ```c
 #define CMETA_FIELD_END(type, member) \
@@ -176,7 +176,7 @@ Construct prefix-sized values under C++17 so the public layout/API compiles with
 cmake --build --preset linux-release-user --target \
   cmeta_container_type_test cmeta_header_cpp_test
 ctest --preset linux-release-user \
-  -R '^cmeta_(container_type|header_cpp)_test$' --output-on-failure
+  -R '^cmeta_(cstl_type|header_cpp)_test$' --output-on-failure
 ```
 
 Expected: PASS.
@@ -186,7 +186,7 @@ Expected: PASS.
 ```bash
 git add \
   cmeta/include/cmeta/range.h \
-  cmeta/src/container_type.c \
+  cmeta/src/cstl_type.c \
   cmeta/tests/cmeta_container_type_test.c \
   cmeta/tests/cmeta_header_cpp_test.cpp
 git commit -m "refactor(cmeta): make container extensions append-safe"
@@ -197,12 +197,12 @@ git commit -m "refactor(cmeta): make container extensions append-safe"
 ```bash
 cmake --fresh --preset linux-release-user
 cmake --build --preset linux-release-user
-ctest --preset linux-release-user -R '^(cmeta_|cflow_|turbostl_)' \
+ctest --preset linux-release-user -R '^(cmeta_|cflow_|cstl_)' \
   --output-on-failure
 git diff --check
 ```
 
-Windows CI must pass. No semantic descriptor or TurboSTL production file belongs in C0.
+Windows CI must pass. No semantic descriptor or Container production file belongs in C0.
 
 ---
 
@@ -365,7 +365,7 @@ spec("CMeta semantic data descriptors") {
 
 - [ ] **Step 2: Register the target and verify RED**
 
-Add `cmeta_data_test` to `cmeta/tests/CMakeLists.txt`, linked to `TurboUtils::CMeta` and `TurboUtils::TinyTest`, C11/no extensions, and include it in the existing `-Werror=missing-field-initializers` group.
+Add `cmeta_data_test` to `cmeta/tests/CMakeLists.txt`, linked to `Salts::CMeta` and `Salts::TinyTest`, C11/no extensions, and include it in the existing `-Werror=missing-field-initializers` group.
 
 ```bash
 cmake --fresh --preset linux-release-user
@@ -383,7 +383,7 @@ Make it independently includable from C11/C++17:
 #include <cmeta/struct.h>
 ```
 
-Do not include CSerde/CBind/TurboSTL headers.
+Do not include CSerde/CBind/Container headers.
 
 - [ ] **Step 4: Re-export semantic metadata from `cmeta/meta.h`**
 
@@ -587,7 +587,7 @@ Modify `cmeta/CMakeLists.txt`:
 ```cmake
 add_library(${TARGET_NAME}
   src/cmeta.c
-  src/container_type.c
+  src/cstl_type.c
   src/data.c
   src/entry.c
   src/type_identity.c)
@@ -653,16 +653,16 @@ git commit -m "test(cmeta): cover semantic descriptors in C++"
 ```bash
 cmake --fresh --preset linux-release-user
 cmake --build --preset linux-release-user
-ctest --preset linux-release-user -R '^(cmeta_|cflow_|turbostl_)' \
+ctest --preset linux-release-user -R '^(cmeta_|cflow_|cstl_)' \
   --output-on-failure
 git diff --check
 ```
 
-Windows CI must pass. C1 must not modify TurboSTL production sources.
+Windows CI must pass. C1 must not modify Container production sources.
 
 ---
 
-# PR C2 — TurboSTL semantic projection from proven TYPE applications
+# PR C2 — Container semantic projection from proven TYPE applications
 
 ## Task 5: Append the semantic category tail to `cmeta_container_ext`
 
@@ -765,7 +765,7 @@ Do not return, copy, or cache T/K/V. Callers still use `cmeta_container_type_arg
 cmake --build --preset linux-release-user --target \
   cmeta_container_type_test cmeta_data_test
 ctest --preset linux-release-user \
-  -R '^cmeta_(container_type|data)_test$' --output-on-failure
+  -R '^cmeta_(cstl_type|data)_test$' --output-on-failure
 ```
 
 Expected: PASS, including old-prefix compatibility.
@@ -782,13 +782,13 @@ git add \
 git commit -m "feat(cmeta): project container semantic categories"
 ```
 
-## Task 6: Attach TurboSTL canonical extensions to shared categories
+## Task 6: Attach Container canonical extensions to shared categories
 
 **Files:**
-- Modify: `turbostl/src/generic_meta.c`
-- Create: `turbostl/tests/turbostl_semantic_data_test.c`
-- Modify: `turbostl/tests/CMakeLists.txt`
-- Modify: `turbostl/tests/turbostl_header_typed_cpp_test.cpp`
+- Modify: `cstl/src/generic_meta.c`
+- Create: `cstl/tests/cstl_semantic_data_test.c`
+- Modify: `cstl/tests/CMakeLists.txt`
+- Modify: `cstl/tests/cstl_header_typed_cpp_test.cpp`
 
 **Interfaces:**
 - Consumes: canonical ext objects from `#37`, shared CMeta categories from C1, Task 5 projection helper.
@@ -815,14 +815,14 @@ typed(MultiMap, MultiMapName, K, V)    -> unresolved / NULL
 
 - [ ] **Step 1: Write the semantic mapping test before wiring `.data`**
 
-Create `turbostl/tests/turbostl_semantic_data_test.c`:
+Create `cstl/tests/cstl_semantic_data_test.c`:
 
 ```c
 #include <cmeta/data.h>
-#include <turbostl/typed.h>
+#include <cstl/typed.h>
 #include "tinytest.h"
 
-spec("TurboSTL semantic data projection") {
+spec("Container semantic data projection") {
     it("projects sequence containers without copying T") {
         Vec(int, vec);
         Deque(int, deque);
@@ -873,17 +873,17 @@ must be rejected by typed consumers.
 
 - [ ] **Step 3: Register the new test and verify RED**
 
-Add `turbostl_semantic_data_test` to `turbostl/tests/CMakeLists.txt`, linked to `TurboUtils::STL`, `TurboUtils::CMeta`, `TurboUtils::TinyTest`, C11/no extensions.
+Add `cstl_semantic_data_test` to `cstl/tests/CMakeLists.txt`, linked to `Salts::CSTL`, `Salts::CMeta`, `Salts::TinyTest`, C11/no extensions.
 
 ```bash
-cmake --build --preset linux-release-user --target turbostl_semantic_data_test
-ctest --preset linux-release-user -R '^turbostl_semantic_data_test$' \
+cmake --build --preset linux-release-user --target cstl_semantic_data_test
+ctest --preset linux-release-user -R '^cstl_semantic_data_test$' \
   --output-on-failure
 ```
 
-Expected: runtime failure because TurboSTL extensions do not yet populate `.data`.
+Expected: runtime failure because Container extensions do not yet populate `.data`.
 
-- [ ] **Step 4: Wire only `turbostl/src/generic_meta.c`**
+- [ ] **Step 4: Wire only `cstl/src/generic_meta.c`**
 
 Change its extension initializer macros to designated initializers:
 
@@ -904,10 +904,10 @@ Do not infer semantics from constructor name strings. Do not modify `instance_me
 
 ```bash
 cmake --build --preset linux-release-user --target \
-  turbostl_semantic_data_test turbostl_generic_identity_test \
-  turbostl_header_typed_test
+  cstl_semantic_data_test cstl_generic_identity_test \
+  cstl_header_typed_test
 ctest --preset linux-release-user \
-  -R '^turbostl_(semantic_data|generic_identity|header_typed)_test$' \
+  -R '^cstl_(semantic_data|generic_identity|header_typed)_test$' \
   --output-on-failure
 ```
 
@@ -915,7 +915,7 @@ Expected: PASS.
 
 - [ ] **Step 6: Add C++17 canonical-metadata coverage**
 
-In `turbostl/tests/turbostl_header_typed_cpp_test.cpp`, include `<cmeta/data.h>` and require:
+In `cstl/tests/cstl_header_typed_cpp_test.cpp`, include `<cmeta/data.h>` and require:
 
 ```cpp
 check_true(stl_vec_container_ext.data == &cmeta_data_sequence);
@@ -929,11 +929,11 @@ check_true(stl_multimap_container_ext.data == nullptr);
 
 ```bash
 git add \
-  turbostl/src/generic_meta.c \
-  turbostl/tests/turbostl_semantic_data_test.c \
-  turbostl/tests/CMakeLists.txt \
-  turbostl/tests/turbostl_header_typed_cpp_test.cpp
-git commit -m "feat(turbostl): expose semantic container categories"
+  cstl/src/generic_meta.c \
+  cstl/tests/cstl_semantic_data_test.c \
+  cstl/tests/CMakeLists.txt \
+  cstl/tests/cstl_header_typed_cpp_test.cpp
+git commit -m "feat(container): expose semantic container categories"
 ```
 
 ### PR C2 verification gate
@@ -941,7 +941,7 @@ git commit -m "feat(turbostl): expose semantic container categories"
 ```bash
 cmake --fresh --preset linux-release-user
 cmake --build --preset linux-release-user
-ctest --preset linux-release-user -R '^(cmeta_|cflow_|turbostl_)' \
+ctest --preset linux-release-user -R '^(cmeta_|cflow_|cstl_)' \
   --output-on-failure
 git diff --check
 ```
@@ -953,7 +953,7 @@ cmeta_data_sequence/set/map contain no T/K/V
 cmeta_container_type_argument() remains the sole concrete T/K/V API
 raw-byte Vec projects a semantic category but remains an invalid typed application
 Heap and MultiMap remain unresolved
-only generic_meta.c changes in TurboSTL production code
+only generic_meta.c changes in Container production code
 no Range/Collector/container algorithm body changes
 no CSerde/CBind/TurboParser/DataBind production code changes
 ```

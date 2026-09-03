@@ -14,7 +14,7 @@
 - [x] 为 C++ 保留模板值语义、字符串内容语义和异常展开。
 - [x] 用 `TTEST_USER_EQUAL_TRAIT_LIST` 支持显式注册 C 结构体相等比较。
 - [x] 将共享注册表、平台/文件、内部数组、结果和字符串实现迁入 `tinytest.c`。
-- [x] 将 `TurboUtils::TinyTest` 改为静态库并保持原有 CMake 导出名。
+- [x] 将 `Salts::TinyTest` 改为静态库并保持原有 CMake 导出名。
 - [x] 增加 C、C++、自定义 traits 和负向编译测试。
 
 ## 最终验证

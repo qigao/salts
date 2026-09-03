@@ -16,7 +16,7 @@ typedef uint32_t cflow_machine_guard_id;
 typedef uint32_t cflow_machine_action_id;
 
 /* CMake exports the library's configured limits to consumers. Defaults keep
- * direct header use consistent with a default Rocida build. */
+ * direct header use consistent with a default Salts build. */
 #ifndef CFLOW_MACHINE_MAX_STATES
 #define CFLOW_MACHINE_MAX_STATES 65536u
 #endif

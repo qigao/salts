@@ -30,17 +30,17 @@ static int s3_operations_put(void *user, const chttp_server_request_view *reques
   if (probe == NULL || request == NULL || strcmp(request->target, "/bucket/key%20one") != 0 ||
       request->body_size != 7u || memcmp(request->body, "payload", 7u) != 0 ||
       strcmp(chttp_server_request_header(request, "content-type"), "text/plain") != 0)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   ++probe->puts;
-  if (chttp_server_response_set_header(response, "ETag", "\"put-etag\"") != TURBO_OK)
-    return TURBO_EIO;
+  if (chttp_server_response_set_header(response, "ETag", "\"put-etag\"") != SALTS_OK)
+    return SALTS_EIO;
   return chttp_server_reply(response, 200u, NULL, NULL, 0u);
 }
 
 static int s3_operations_get(void *user, const chttp_server_request_view *request,
                              chttp_server_response *response) {
   s3_operations_probe *probe = (s3_operations_probe *)user;
-  if (probe == NULL || request == NULL) return TURBO_EPROTO;
+  if (probe == NULL || request == NULL) return SALTS_EPROTO;
   ++probe->gets;
   return chttp_server_reply(response, 200u, "text/plain", "payload", 7u);
 }
@@ -49,10 +49,10 @@ static int s3_operations_head(void *user, const chttp_server_request_view *reque
                               chttp_server_response *response) {
   s3_operations_probe *probe = (s3_operations_probe *)user;
   (void)request;
-  if (probe == NULL) return TURBO_EPROTO;
+  if (probe == NULL) return SALTS_EPROTO;
   ++probe->heads;
-  if (chttp_server_response_set_header(response, "ETag", "\"head-etag\"") != TURBO_OK)
-    return TURBO_EIO;
+  if (chttp_server_response_set_header(response, "ETag", "\"head-etag\"") != SALTS_OK)
+    return SALTS_EIO;
   return chttp_server_reply(response, 200u, "application/octet-stream", "ignored", 7u);
 }
 
@@ -60,7 +60,7 @@ static int s3_operations_delete(void *user, const chttp_server_request_view *req
                                 chttp_server_response *response) {
   s3_operations_probe *probe = (s3_operations_probe *)user;
   (void)request;
-  if (probe == NULL) return TURBO_EPROTO;
+  if (probe == NULL) return SALTS_EPROTO;
   ++probe->deletes;
   return chttp_server_reply(response, 204u, NULL, NULL, 0u);
 }
@@ -78,7 +78,7 @@ static int s3_operations_list(void *user, const chttp_server_request_view *reque
   if (probe == NULL || request == NULL ||
       strcmp(request->target,
              "/bucket?continuation-token=token%20one&list-type=2&max-keys=2&prefix=logs%2F") != 0)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   ++probe->lists;
   return chttp_server_reply(response, 200u, "application/xml", body, sizeof(body) - 1u);
 }
@@ -92,7 +92,7 @@ static int s3_operations_create_bucket(void *user, const chttp_server_request_vi
   if (probe == NULL || request == NULL || request->body_size != sizeof(body) - 1u ||
       memcmp(request->body, body, sizeof(body) - 1u) != 0 ||
       strcmp(chttp_server_request_header(request, "content-type"), "application/xml") != 0)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   ++probe->bucket_creates;
   return chttp_server_reply(response, 200u, NULL, NULL, 0u);
 }
@@ -101,7 +101,7 @@ static int s3_operations_head_bucket(void *user, const chttp_server_request_view
                                      chttp_server_response *response) {
   s3_operations_probe *probe = (s3_operations_probe *)user;
   (void)request;
-  if (probe == NULL) return TURBO_EPROTO;
+  if (probe == NULL) return SALTS_EPROTO;
   ++probe->bucket_heads;
   return chttp_server_reply(response, 200u, NULL, NULL, 0u);
 }
@@ -110,7 +110,7 @@ static int s3_operations_delete_bucket(void *user, const chttp_server_request_vi
                                        chttp_server_response *response) {
   s3_operations_probe *probe = (s3_operations_probe *)user;
   (void)request;
-  if (probe == NULL) return TURBO_EPROTO;
+  if (probe == NULL) return SALTS_EPROTO;
   ++probe->bucket_deletes;
   return chttp_server_reply(response, 204u, NULL, NULL, 0u);
 }
@@ -123,7 +123,7 @@ static int s3_operations_list_buckets(void *user, const chttp_server_request_vie
       "</Bucket><Bucket><Name>a&amp;b</Name><CreationDate>2026-09-02T00:00:00Z</CreationDate>"
       "</Bucket></Buckets></ListAllMyBucketsResult>";
   s3_operations_probe *probe = (s3_operations_probe *)user;
-  if (probe == NULL || request == NULL || strcmp(request->target, "/") != 0) return TURBO_EPROTO;
+  if (probe == NULL || request == NULL || strcmp(request->target, "/") != 0) return SALTS_EPROTO;
   ++probe->bucket_lists;
   return chttp_server_reply(response, 200u, "application/xml", body, sizeof(body) - 1u);
 }
@@ -135,7 +135,7 @@ static int s3_operations_copy(void *user, const chttp_server_request_view *reque
   if (probe == NULL || request == NULL || request->body_size != 0u ||
       strcmp(chttp_server_request_header(request, "x-amz-copy-source"), "/source/source%20key") !=
           0)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   ++probe->copies;
   return chttp_server_reply(response, 200u, "application/xml", body, sizeof(body) - 1u);
 }
@@ -162,29 +162,29 @@ static void s3_operations_run(chttp_protocol protocol) {
   char *presigned_url = NULL;
   uint16_t port = 0u;
 
-  check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
-  check_equal(chttp_server_put(&server, "/bucket/key%20one", s3_operations_put, &probe), TURBO_OK);
-  check_equal(chttp_server_get(&server, "/bucket/key%20one", s3_operations_get, &probe), TURBO_OK);
+  check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
+  check_equal(chttp_server_put(&server, "/bucket/key%20one", s3_operations_put, &probe), SALTS_OK);
+  check_equal(chttp_server_get(&server, "/bucket/key%20one", s3_operations_get, &probe), SALTS_OK);
   check_equal(chttp_server_head(&server, "/bucket/key%20one", s3_operations_head, &probe),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(chttp_server_delete(&server, "/bucket/key%20one", s3_operations_delete, &probe),
-              TURBO_OK);
-  check_equal(chttp_server_get(&server, "/bucket", s3_operations_list, &probe), TURBO_OK);
+              SALTS_OK);
+  check_equal(chttp_server_get(&server, "/bucket", s3_operations_list, &probe), SALTS_OK);
   check_equal(chttp_server_put(&server, "/new-bucket", s3_operations_create_bucket, &probe),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(chttp_server_head(&server, "/new-bucket", s3_operations_head_bucket, &probe),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(chttp_server_delete(&server, "/new-bucket", s3_operations_delete_bucket, &probe),
-              TURBO_OK);
-  check_equal(chttp_server_get(&server, "/", s3_operations_list_buckets, &probe), TURBO_OK);
+              SALTS_OK);
+  check_equal(chttp_server_get(&server, "/", s3_operations_list_buckets, &probe), SALTS_OK);
   check_equal(chttp_server_put(&server, "/bucket/copied%20key", s3_operations_copy, &probe),
-              TURBO_OK);
-  check_equal(chttp_server_start(&server), TURBO_OK);
-  check_equal(chttp_server_port(&server, &port), TURBO_OK);
+              SALTS_OK);
+  check_equal(chttp_server_start(&server), SALTS_OK);
+  check_equal(chttp_server_port(&server, &port), SALTS_OK);
   check_equal(
       s3_test_endpoint(port, connection_uri, sizeof(connection_uri), authority, sizeof(authority)),
-      TURBO_OK);
-  check_equal(chttp_client_init(&http_client, &http_config), TURBO_OK);
+      SALTS_OK);
+  check_equal(chttp_client_init(&http_client, &http_config), SALTS_OK);
   config = (s3_client_config){.size = sizeof(config),
                               .connection_uri = connection_uri,
                               .authority = authority,
@@ -194,11 +194,11 @@ static void s3_operations_run(chttp_protocol protocol) {
                               .credentials = s3_credentials_provider_static(&credentials),
                               .clock = s3_operations_clock,
                               .timeout_ms = S3_TEST_TIMEOUT_MS};
-  check_equal(s3_client_init(&client, &http_client, &config), TURBO_OK);
+  check_equal(s3_client_init(&client, &http_client, &config), SALTS_OK);
 
   check_equal(s3_presign_url(&client, S3_METHOD_GET, "bucket", "key one", NULL, 0u, 60u,
                              &presigned_url, &error),
-              TURBO_OK);
+              SALTS_OK);
   check_contains(presigned_url, "http://127.0.0.1:");
   check_contains(presigned_url, "/bucket/key%20one?X-Amz-Algorithm=AWS4-HMAC-SHA256&");
   check_contains(presigned_url, "X-Amz-Expires=60");
@@ -206,13 +206,13 @@ static void s3_operations_run(chttp_protocol protocol) {
   s3_string_free(presigned_url);
   presigned_url = NULL;
 
-  check_equal(s3_create_bucket(&client, "new-bucket", &response, &error), TURBO_OK);
+  check_equal(s3_create_bucket(&client, "new-bucket", &response, &error), SALTS_OK);
   s3_response_destroy(&response);
-  check_equal(s3_head_bucket(&client, "new-bucket", &response, &error), TURBO_OK);
+  check_equal(s3_head_bucket(&client, "new-bucket", &response, &error), SALTS_OK);
   s3_response_destroy(&response);
-  check_equal(s3_delete_bucket(&client, "new-bucket", &response, &error), TURBO_OK);
+  check_equal(s3_delete_bucket(&client, "new-bucket", &response, &error), SALTS_OK);
   s3_response_destroy(&response);
-  check_equal(s3_list_buckets(&client, &buckets, &response, &error), TURBO_OK);
+  check_equal(s3_list_buckets(&client, &buckets, &response, &error), SALTS_OK);
   check_equal(buckets.count, (size_t)2u);
   check_equal(buckets.items[0].name, "alpha");
   check_equal(buckets.items[0].creation_date, "2026-09-01T00:00:00Z");
@@ -222,27 +222,27 @@ static void s3_operations_run(chttp_protocol protocol) {
 
   check_equal(
       s3_put_object(&client, "bucket", "key one", "payload", 7u, "text/plain", &response, &error),
-      TURBO_OK);
+      SALTS_OK);
   check_equal(chttp_response_header(&response.http, "etag"), "\"put-etag\"");
   s3_response_destroy(&response);
-  check_equal(s3_get_object(&client, "bucket", "key one", &response, &error), TURBO_OK);
+  check_equal(s3_get_object(&client, "bucket", "key one", &response, &error), SALTS_OK);
   check_equal(response.http.body, "payload", 7u);
   s3_response_destroy(&response);
-  check_equal(s3_head_object(&client, "bucket", "key one", &response, &error), TURBO_OK);
+  check_equal(s3_head_object(&client, "bucket", "key one", &response, &error), SALTS_OK);
   check_equal(response.http.body_size, (size_t)0u);
   check_equal(chttp_response_header(&response.http, "etag"), "\"head-etag\"");
   s3_response_destroy(&response);
-  check_equal(s3_delete_object(&client, "bucket", "key one", &response, &error), TURBO_OK);
+  check_equal(s3_delete_object(&client, "bucket", "key one", &response, &error), SALTS_OK);
   check_equal(response.http.status_code, 204u);
   s3_response_destroy(&response);
 
   check_equal(
       s3_copy_object(&client, "source", "source key", "bucket", "copied key", &response, &error),
-      TURBO_OK);
+      SALTS_OK);
   s3_response_destroy(&response);
 
   check_equal(s3_list_objects(&client, "bucket", &list_options, &list, &response, &error),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(list.count, (size_t)2u);
   check_equal(list.items[0].key, "a.txt");
   check_equal(list.items[0].last_modified, "2026-09-03T01:02:03.000Z");
@@ -267,10 +267,10 @@ static void s3_operations_run(chttp_protocol protocol) {
   check_equal(probe.bucket_deletes, (size_t)1u);
   check_equal(probe.bucket_lists, (size_t)1u);
   check_equal(probe.copies, (size_t)1u);
-  check_equal(s3_client_destroy(&client), TURBO_OK);
-  check_equal(chttp_client_destroy(&http_client, S3_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(chttp_server_stop(&server, S3_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(chttp_server_destroy(&server), TURBO_OK);
+  check_equal(s3_client_destroy(&client), SALTS_OK);
+  check_equal(chttp_client_destroy(&http_client, S3_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(chttp_server_stop(&server, S3_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(chttp_server_destroy(&server), SALTS_OK);
 }
 
 spec("S3 bucket and object operations") {

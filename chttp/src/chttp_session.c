@@ -1,7 +1,7 @@
 #include "chttp_server_runtime.h"
 
-#include <turbo/clock.h>
-#include <turbo/random.h>
+#include <salts/clock.h>
+#include <salts/random.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,8 +42,8 @@ int chttp_session_store_init(chttp_server_impl *server) {
   size_t value_bytes;
   size_t record_index;
   size_t entry_index;
-  if (server == NULL) return TURBO_EINVAL;
-  if (server->config.session_capacity == 0u) return TURBO_OK;
+  if (server == NULL) return SALTS_EINVAL;
+  if (server->config.session_capacity == 0u) return SALTS_OK;
   key_stride = server->config.max_session_key_bytes + 1u;
   value_stride = server->config.max_session_value_bytes + 1u;
   if (key_stride == 0u || value_stride == 0u ||
@@ -53,7 +53,7 @@ int chttp_session_store_init(chttp_server_impl *server) {
       !chttp_session_multiply(entry_count, value_stride, &value_bytes) ||
       server->config.session_capacity > SIZE_MAX / sizeof(*server->sessions) ||
       entry_count > SIZE_MAX / sizeof(*server->session_entries))
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   server->sessions =
       (chttp_session_record *)calloc(server->config.session_capacity, sizeof(*server->sessions));
   server->session_entries =
@@ -63,7 +63,7 @@ int chttp_session_store_init(chttp_server_impl *server) {
   if (server->sessions == NULL || server->session_entries == NULL || server->session_keys == NULL ||
       server->session_values == NULL) {
     chttp_session_store_destroy(server);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   for (record_index = 0u; record_index < server->config.session_capacity; ++record_index) {
     chttp_session_record *record = &server->sessions[record_index];
@@ -75,7 +75,7 @@ int chttp_session_store_init(chttp_server_impl *server) {
       record->entries[entry_index].value = server->session_values + flat * value_stride;
     }
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 void chttp_session_store_destroy(chttp_server_impl *server) {
@@ -170,7 +170,7 @@ void chttp_session_request_begin(chttp_server_request_state *state,
   *context = (chttp_session_context){.server = server};
   state->session.impl = context;
   if (server->config.session_capacity == 0u) return;
-  now_ms = turbo_monotonic_ms();
+  now_ms = salts_monotonic_ms();
   chttp_session_expire(server, now_ms);
   id = chttp_session_cookie_value(server, request, &id_size);
   if (!chttp_session_hex_id(id, id_size)) return;
@@ -199,17 +199,17 @@ static int chttp_session_create(chttp_session_context *context) {
   size_t record_index;
   size_t attempt;
   size_t index;
-  uint64_t now_ms = turbo_monotonic_ms();
+  uint64_t now_ms = salts_monotonic_ms();
   chttp_session_expire(context->server, now_ms);
   for (record_index = 0u; record_index < context->server->config.session_capacity; ++record_index)
     if (!context->server->sessions[record_index].used) {
       record = &context->server->sessions[record_index];
       break;
     }
-  if (record == NULL) return TURBO_ENOBUFS;
+  if (record == NULL) return SALTS_ENOBUFS;
   for (attempt = 0u; attempt < CHTTP_SESSION_ID_ATTEMPTS; ++attempt) {
-    int status = turbo_platform_secure_random(random, sizeof(random));
-    if (status != TURBO_OK) return status;
+    int status = salts_platform_secure_random(random, sizeof(random));
+    if (status != SALTS_OK) return status;
     for (index = 0u; index < sizeof(random); ++index) {
       record->id[index * 2u] = hex[random[index] >> 4u];
       record->id[index * 2u + 1u] = hex[random[index] & 0x0fu];
@@ -219,13 +219,13 @@ static int chttp_session_create(chttp_session_context *context) {
   }
   if (attempt == CHTTP_SESSION_ID_ATTEMPTS) {
     record->id[0] = '\0';
-    return TURBO_EALREADY;
+    return SALTS_EALREADY;
   }
   record->expires_at_ms = chttp_session_expiry(context->server, now_ms);
   record->used = true;
   context->record = record;
   context->created = true;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static chttp_session_context *chttp_session_context_get(chttp_session *session) {
@@ -256,68 +256,68 @@ int chttp_session_set(chttp_session *session, const char *key, const char *value
   size_t index;
   int status;
   if (context == NULL || key == NULL || value == NULL || key[0] == '\0' || context->invalidated)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   key_size = strlen(key);
   value_size = strlen(value);
   if (key_size > context->server->config.max_session_key_bytes ||
       value_size > context->server->config.max_session_value_bytes)
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   if (context->record == NULL) {
     status = chttp_session_create(context);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
   }
   for (index = 0u; index < context->server->config.session_entry_capacity; ++index) {
     chttp_session_entry *entry = &context->record->entries[index];
     if (entry->used && strcmp(entry->key, key) == 0) {
       memcpy(entry->value, value, value_size + 1u);
-      return TURBO_OK;
+      return SALTS_OK;
     }
     if (!entry->used && free_entry == NULL) free_entry = entry;
   }
-  if (free_entry == NULL) return TURBO_ENOBUFS;
+  if (free_entry == NULL) return SALTS_ENOBUFS;
   memcpy(free_entry->key, key, key_size + 1u);
   memcpy(free_entry->value, value, value_size + 1u);
   free_entry->used = true;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int chttp_session_remove(chttp_session *session, const char *key) {
   chttp_session_context *context = chttp_session_context_get(session);
   size_t index;
-  if (context == NULL || key == NULL || key[0] == '\0' || context->invalidated) return TURBO_EINVAL;
-  if (context->record == NULL) return TURBO_ENOENT;
+  if (context == NULL || key == NULL || key[0] == '\0' || context->invalidated) return SALTS_EINVAL;
+  if (context->record == NULL) return SALTS_ENOENT;
   for (index = 0u; index < context->server->config.session_entry_capacity; ++index) {
     chttp_session_entry *entry = &context->record->entries[index];
     if (entry->used && strcmp(entry->key, key) == 0) {
       entry->used = false;
       entry->key[0] = '\0';
       entry->value[0] = '\0';
-      return TURBO_OK;
+      return SALTS_OK;
     }
   }
-  return TURBO_ENOENT;
+  return SALTS_ENOENT;
 }
 
 int chttp_session_clear(chttp_session *session) {
   chttp_session_context *context = chttp_session_context_get(session);
   size_t index;
-  if (context == NULL || context->invalidated) return TURBO_EINVAL;
-  if (context->record == NULL) return TURBO_OK;
+  if (context == NULL || context->invalidated) return SALTS_EINVAL;
+  if (context->record == NULL) return SALTS_OK;
   for (index = 0u; index < context->server->config.session_entry_capacity; ++index) {
     context->record->entries[index].used = false;
     context->record->entries[index].key[0] = '\0';
     context->record->entries[index].value[0] = '\0';
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int chttp_session_invalidate(chttp_session *session) {
   chttp_session_context *context = chttp_session_context_get(session);
-  if (context == NULL) return TURBO_EINVAL;
+  if (context == NULL) return SALTS_EINVAL;
   if (context->record != NULL) chttp_session_record_clear(context->server, context->record);
   context->record = NULL;
   context->invalidated = true;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_session_set_cookie(chttp_server_request_state *state, const char *id,
@@ -329,7 +329,7 @@ static int chttp_session_set_cookie(chttp_server_request_state *state, const cha
                              "Max-Age=%u%s",
                              server->session_cookie_name, id, (unsigned int)max_age_seconds,
                              server->config.session_cookie_secure ? "; Secure" : "");
-  if (cookie_size < 0 || (size_t)cookie_size >= sizeof(cookie)) return TURBO_EMSGSIZE;
+  if (cookie_size < 0 || (size_t)cookie_size >= sizeof(cookie)) return SALTS_EMSGSIZE;
   return chttp_server_response_set_header(&state->response, "Set-Cookie", cookie);
 }
 
@@ -338,15 +338,15 @@ int chttp_session_request_finish(chttp_server_request_state *state) {
   uint32_t max_age_seconds;
   int status;
   if (state == NULL || state->server == NULL || state->server->config.session_capacity == 0u)
-    return TURBO_OK;
+    return SALTS_OK;
   context = &state->session_context;
   if (context->invalidated) return chttp_session_set_cookie(state, "", 0u);
-  if (context->record == NULL) return TURBO_OK;
+  if (context->record == NULL) return SALTS_OK;
   max_age_seconds = state->server->config.session_idle_timeout_ms / 1000u;
   if (state->server->config.session_idle_timeout_ms % 1000u != 0u) ++max_age_seconds;
   if (max_age_seconds == 0u) max_age_seconds = 1u;
   status = chttp_session_set_cookie(state, context->record->id, max_age_seconds);
-  if (status != TURBO_OK && context->created) {
+  if (status != SALTS_OK && context->created) {
     chttp_session_record_clear(context->server, context->record);
     context->record = NULL;
   }

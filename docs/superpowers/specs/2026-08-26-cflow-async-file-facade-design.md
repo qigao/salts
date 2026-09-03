@@ -1,8 +1,8 @@
 # CFlow Bounded Async File Facade Design
 
-Issue: [#109](https://github.com/qigao/turbo-utils/issues/109)
-Parent tracker: [#100](https://github.com/qigao/turbo-utils/issues/100)
-Native file substrate: [#107](https://github.com/qigao/turbo-utils/issues/107)
+Issue: [#109](https://github.com/qigao/salts/issues/109)
+Parent tracker: [#100](https://github.com/qigao/salts/issues/100)
+Native file substrate: [#107](https://github.com/qigao/salts/issues/107)
 
 ## Decision
 
@@ -14,20 +14,20 @@ asynchronous data-plane operations.
 The facade owns one native file handle, one explicitly selected native backend,
 one manual Executor, one I/O Actor, and a fixed operation-slot array. It does
 not add a thread-pool fallback and does not restore the removed
-`turbo_fs_*_async` API.
+`salts_fs_*_async` API.
 
 ## Context and alternatives
 
 ### Current structure
 
-- `turbo_fs` provides synchronous whole-file, descriptor, metadata, directory,
+- `salts_fs` provides synchronous whole-file, descriptor, metadata, directory,
   path, lock, and mapping-adjacent control operations.
 - `cflow_io_native_file_operation` provides native `READ_AT`, `WRITE_AT`, and
   `FLUSH` after the caller has already opened a suitable native handle and
   assembled an Executor, Actor, backend, operation storage, callback,
   acknowledgement, and shutdown protocol.
 - IOCP requires a disk handle opened with `FILE_FLAG_OVERLAPPED`; the existing
-  `turbo_fs_open()` returns a CRT descriptor and cannot establish that contract.
+  `salts_fs_open()` returns a CRT descriptor and cannot establish that contract.
 
 ### Candidates
 
@@ -120,9 +120,9 @@ int cflow_io_file_destroy(cflow_io_file *file);
 
 `open_flags` must contain READ or WRITE. CREATE and TRUNCATE require WRITE.
 Unknown bits, an empty path, zero capacities, invalid create modes, a nonzero
-destination, or a null completion callback fail with `TURBO_EINVAL` before any
+destination, or a null completion callback fail with `SALTS_EINVAL` before any
 pathname side effect. A backend that cannot perform every access operation
-requested by the open flags fails with `TURBO_ENOTSUP` before opening the path.
+requested by the open flags fails with `SALTS_ENOTSUP` before opening the path.
 
 Windows maps the flags to `CreateFileA` with `FILE_FLAG_OVERLAPPED`. POSIX maps
 them to `open()` with `O_CLOEXEC`. The facade never exposes or transfers the
@@ -171,9 +171,9 @@ zero
 ```
 
 `cflow_io_file_close()` is nonblocking and starts logical close; a repeated
-call returns `TURBO_EALREADY` without changing state. It does not close the
+call returns `SALTS_EALREADY` without changing state. It does not close the
 native handle while work is live. `destroy()` returns
-`TURBO_EBUSY` until close has reached quiescence. Once quiescent, destroy
+`SALTS_EBUSY` until close has reached quiescence. Once quiescent, destroy
 consumes all owned resources and restores the public handle to zero. Native
 handle close errors are returned after the remaining owned resources are
 released; the object is still destroyed because retrying a POSIX `close()` is
@@ -186,9 +186,9 @@ entry.
 
 ## Error semantics
 
-- Open/configuration errors use `TURBO_E*`, negative POSIX errno, or negative
+- Open/configuration errors use `SALTS_E*`, negative POSIX errno, or negative
   Win32 error values.
-- A concurrent or reentrant driver call returns `TURBO_EBUSY` without running
+- A concurrent or reentrant driver call returns `SALTS_EBUSY` without running
   callbacks; `run_ready` reports only actions completed by the successful
   single driver.
 - Invalid operation shape is `CFLOW_IO_FILE_SUBMIT_INVALID_ARGUMENT`.
@@ -203,14 +203,14 @@ entry.
 ## Compatibility and impact
 
 This is additive for CFlow. Existing `cflow_io_native`, socket, pipe, and file
-operation layouts remain unchanged. `turbo_fs` remains synchronous and does not
+operation layouts remain unchanged. `salts_fs` remains synchronous and does not
 depend on CFlow. The facade adds one public header and one CFlow source module;
-consumers that use it already link `TurboUtils::CFlow`.
+consumers that use it already link `Salts::CFlow`.
 
-The preceding removal of `turbo_fs_*_async` is intentionally source- and
+The preceding removal of `salts_fs_*_async` is intentionally source- and
 ABI-breaking for that unused API. Repository searches show no production
 caller; out-of-repository consumers must migrate to this facade or remain on
-the synchronous `turbo_fs` contract.
+the synchronous `salts_fs` contract.
 
 ## Verification
 
@@ -221,7 +221,7 @@ the synchronous `turbo_fs` contract.
   close/drain, automatic acknowledgement, and repeated open/destroy.
 - Windows covers IOCP overlapped handles and immediate flush rejection.
 - Linux covers io_uring read/write/flush when runtime initialization succeeds.
-- Existing `cflow_io_native_test`, `cflow_io_actor_test`, and `test_turbo_fs`
+- Existing `cflow_io_native_test`, `cflow_io_actor_test`, and `test_salts_fs`
   remain green.
 
 ## Deferred scope

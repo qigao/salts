@@ -30,24 +30,24 @@ static int s3_bucket_config_request(s3_client *client, const char *bucket,
   s3_query_param query;
   chttp_header header = {"Content-Type", "application/xml"};
   s3_request_options request;
-  turbo_xml_document document = {0};
-  turbo_xml_node root = {0};
-  int status = TURBO_OK;
-  if (out_error == NULL) return TURBO_EINVAL;
+  salts_xml_document document = {0};
+  salts_xml_node root = {0};
+  int status = SALTS_OK;
+  if (out_error == NULL) return SALTS_EINVAL;
   *out_error = (s3_error){0};
   if (impl == NULL || subresource == NULL ||
       (method != S3_METHOD_GET && method != S3_METHOD_PUT && method != S3_METHOD_DELETE) ||
       (method == S3_METHOD_PUT &&
        (xml == NULL || xml_size == 0u || memchr(xml, '\0', xml_size) != NULL)) ||
       (method != S3_METHOD_PUT && (xml != NULL || xml_size != 0u)))
-    return s3_bucket_config_error(out_error, TURBO_EINVAL,
+    return s3_bucket_config_error(out_error, SALTS_EINVAL,
                                   subresource != NULL ? subresource->stage : "s3-bucket-config");
   if (method == S3_METHOD_PUT) {
     status = s3_xml_parse_root(xml, xml_size, impl->base.config.max_xml_bytes,
                                impl->base.config.max_xml_nodes, subresource->root_name, &document,
                                &root);
-    turbo_xml_document_destroy(&document);
-    if (status != TURBO_OK) return s3_bucket_config_error(out_error, status, subresource->stage);
+    salts_xml_document_destroy(&document);
+    if (status != SALTS_OK) return s3_bucket_config_error(out_error, status, subresource->stage);
   }
   query = (s3_query_param){subresource->query_name, ""};
   request = (s3_request_options){.size = sizeof(request),
@@ -60,12 +60,12 @@ static int s3_bucket_config_request(s3_client *client, const char *bucket,
                                  .body = xml,
                                  .body_size = xml_size};
   status = s3_request(client, &request, out_response, out_error);
-  if (status != TURBO_OK || method != S3_METHOD_GET) return status;
+  if (status != SALTS_OK || method != S3_METHOD_GET) return status;
   status = s3_xml_parse_root(out_response->http.body, out_response->http.body_size,
                              impl->base.config.max_xml_bytes, impl->base.config.max_xml_nodes,
                              subresource->root_name, &document, &root);
-  turbo_xml_document_destroy(&document);
-  if (status != TURBO_OK) s3_bucket_config_error(out_error, status, subresource->stage);
+  salts_xml_document_destroy(&document);
+  if (status != SALTS_OK) s3_bucket_config_error(out_error, status, subresource->stage);
   return status;
 }
 

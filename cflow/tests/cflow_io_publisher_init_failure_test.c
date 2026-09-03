@@ -13,7 +13,7 @@ static int io_source_init_failure_submit(void *backend_user, cflow_io_actor *act
   (void)request_id;
   (void)lease_id;
   (void)operation_user;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static cflow_io_publisher_prepare_status
@@ -46,7 +46,7 @@ static int io_source_init_failure_actor_init(cflow_io_actor *actor,
   (void)actor;
   (void)config;
   ++io_source_init_failure_actor_calls;
-  return TURBO_EINVAL;
+  return SALTS_EINVAL;
 }
 
 #define cflow_io_actor_init io_source_init_failure_actor_init
@@ -84,7 +84,7 @@ spec("CFlow IO source initialization failures") {
 
     io_source_init_failure_actor_calls = 0u;
     check_equal(cflow_publisher_from_io_actor_with_init_failure(&source, &owner, &config),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     check_equal(io_source_init_failure_actor_calls, (size_t)1u);
     check_false(cflow_publisher_valid(&source));
     check_null(owner.impl);

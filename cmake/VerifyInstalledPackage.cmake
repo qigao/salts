@@ -30,75 +30,84 @@ execute_process(
           --prefix "${install_prefix}" --config "${BUILD_CONFIG}"
   RESULT_VARIABLE install_result)
 if(NOT install_result EQUAL 0)
-  message(FATAL_ERROR "Rocida package install failed: ${install_result}")
+  message(FATAL_ERROR "Salts package install failed: ${install_result}")
 endif()
 
 set(expected_chttp_abi_version 2)
 set(expected_crpc_abi_version 2)
 if(WIN32)
   set(expected_chttp_runtime
-      "${install_prefix}/bin/turbo_chttp-${expected_chttp_abi_version}.dll")
+      "${install_prefix}/bin/salts_chttp-${expected_chttp_abi_version}.dll")
   set(expected_chttp_import_library
-      "${install_prefix}/lib/turbo_chttp-${expected_chttp_abi_version}.lib")
+      "${install_prefix}/lib/salts_chttp-${expected_chttp_abi_version}.lib")
   foreach(expected_chttp_file IN ITEMS
           "${expected_chttp_runtime}"
           "${expected_chttp_import_library}")
     if(NOT EXISTS "${expected_chttp_file}")
       message(FATAL_ERROR
-              "Rocida install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_file}")
+              "Salts install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_file}")
     endif()
   endforeach()
   set(expected_crpc_archive
-      "${install_prefix}/lib/turbo_crpc-${expected_crpc_abi_version}.lib")
+      "${install_prefix}/lib/salts_crpc-${expected_crpc_abi_version}.lib")
 elseif(APPLE)
   set(expected_chttp_runtime
-      "${install_prefix}/lib/libturbo_chttp.${expected_chttp_abi_version}.dylib")
+      "${install_prefix}/lib/libsalts_chttp.${expected_chttp_abi_version}.dylib")
   if(NOT EXISTS "${expected_chttp_runtime}")
     message(FATAL_ERROR
-            "Rocida install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_runtime}")
+            "Salts install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_runtime}")
   endif()
   set(expected_crpc_archive
-      "${install_prefix}/lib/libturbo_crpc-${expected_crpc_abi_version}.a")
+      "${install_prefix}/lib/libsalts_crpc-${expected_crpc_abi_version}.a")
 else()
   set(expected_chttp_runtime
-      "${install_prefix}/lib/libturbo_chttp.so.${expected_chttp_abi_version}")
+      "${install_prefix}/lib/libsalts_chttp.so.${expected_chttp_abi_version}")
   if(NOT EXISTS "${expected_chttp_runtime}")
     message(FATAL_ERROR
-            "Rocida install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_runtime}")
+            "Salts install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_runtime}")
   endif()
   set(expected_crpc_archive
-      "${install_prefix}/lib/libturbo_crpc-${expected_crpc_abi_version}.a")
+      "${install_prefix}/lib/libsalts_crpc-${expected_crpc_abi_version}.a")
 endif()
 
 if(NOT EXISTS "${expected_crpc_archive}")
   message(FATAL_ERROR
-          "Rocida install is missing CRPC ABI ${expected_crpc_abi_version} artifact: ${expected_crpc_archive}")
+          "Salts install is missing CRPC ABI ${expected_crpc_abi_version} artifact: ${expected_crpc_archive}")
 endif()
 
-foreach(required_package_file IN ITEMS RocidaConfig.cmake RocidaTargets.cmake)
+foreach(required_package_file IN ITEMS SaltsConfig.cmake SaltsTargets.cmake)
   if(NOT EXISTS
-     "${install_prefix}/lib/cmake/Rocida/${required_package_file}")
+     "${install_prefix}/lib/cmake/Salts/${required_package_file}")
     message(FATAL_ERROR
-            "Rocida install is missing ${required_package_file}")
+            "Salts install is missing ${required_package_file}")
   endif()
 endforeach()
 
 file(GLOB installed_target_files
-     "${install_prefix}/lib/cmake/Rocida/RocidaTargets*.cmake")
+     "${install_prefix}/lib/cmake/Salts/SaltsTargets*.cmake")
 foreach(installed_target_file IN LISTS installed_target_files)
   file(READ "${installed_target_file}" installed_target_contents)
   if(installed_target_contents MATCHES
      "(c-ares::|llhttp::|OpenSSL::|BoringSSL|[/\\\\]cares\\.(lib|a|so)|[/\\\\]llhttp[^/\\\\]*\\.(lib|a|so)|[/\\\\](ssl|crypto)[^/\\\\]*\\.(lib|a|so))")
     message(
       FATAL_ERROR
-        "Rocida installed target metadata exposes a private network dependency: ${installed_target_file}"
+        "Salts installed target metadata exposes a private network dependency: ${installed_target_file}"
     )
   endif()
 endforeach()
 
-foreach(required_stl_header IN ITEMS stl.h stl/typed.h stl/stream.h)
-  if(NOT EXISTS "${install_prefix}/include/rocida/${required_stl_header}")
-    message(FATAL_ERROR "Rocida install is missing ${required_stl_header}")
+foreach(required_cstl_header IN ITEMS cstl.h cstl/typed.h cstl/stream.h)
+  if(NOT EXISTS "${install_prefix}/include/${required_cstl_header}")
+    message(FATAL_ERROR "Salts install is missing ${required_cstl_header}")
+  endif()
+endforeach()
+foreach(required_core_header IN ITEMS
+    clock.h
+    thread_pool.h
+    coroutine_module.h
+    native_io.h)
+  if(NOT EXISTS "${install_prefix}/include/salts/${required_core_header}")
+    message(FATAL_ERROR "Salts install is missing salts/${required_core_header}")
   endif()
 endforeach()
 execute_process(
@@ -108,11 +117,11 @@ execute_process(
           -G "${BUILD_GENERATOR}"
           "-DCMAKE_BUILD_TYPE=${BUILD_CONFIG}"
           "-DCMAKE_PREFIX_PATH=${consumer_prefix_path}"
-          "-DRocida_DIR=${install_prefix}/lib/cmake/Rocida"
+          "-DSalts_DIR=${install_prefix}/lib/cmake/Salts"
   RESULT_VARIABLE configure_result)
 if(NOT configure_result EQUAL 0)
   message(FATAL_ERROR
-          "Rocida installed consumer configure failed: ${configure_result}")
+          "Salts installed consumer configure failed: ${configure_result}")
 endif()
 
 execute_process(
@@ -122,14 +131,14 @@ execute_process(
           -G "${BUILD_GENERATOR}"
           "-DCMAKE_BUILD_TYPE=${BUILD_CONFIG}"
           "-DCMAKE_PREFIX_PATH=${consumer_prefix_path}"
-          "-DRocida_DIR=${install_prefix}/lib/cmake/Rocida"
+          "-DSalts_DIR=${install_prefix}/lib/cmake/Salts"
           "-DCMAKE_DISABLE_FIND_PACKAGE_c-ares=TRUE"
           "-DCMAKE_DISABLE_FIND_PACKAGE_llhttp=TRUE"
           "-DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE"
   RESULT_VARIABLE hidden_dependency_configure_result)
 if(NOT hidden_dependency_configure_result EQUAL 0)
   message(FATAL_ERROR
-          "Rocida network targets leaked c-ares, llhttp, or BoringSSL to the installed consumer: ${hidden_dependency_configure_result}")
+          "Salts network targets leaked c-ares, llhttp, or BoringSSL to the installed consumer: ${hidden_dependency_configure_result}")
 endif()
 
 execute_process(
@@ -138,7 +147,7 @@ execute_process(
   RESULT_VARIABLE build_result)
 if(NOT build_result EQUAL 0)
   message(FATAL_ERROR
-          "Rocida installed consumer build failed: ${build_result}")
+          "Salts installed consumer build failed: ${build_result}")
 endif()
 
 execute_process(
@@ -148,5 +157,5 @@ execute_process(
   RESULT_VARIABLE hidden_dependency_build_result)
 if(NOT hidden_dependency_build_result EQUAL 0)
   message(FATAL_ERROR
-          "Rocida installed consumer without c-ares/llhttp/BoringSSL failed to build: ${hidden_dependency_build_result}")
+          "Salts installed consumer without c-ares/llhttp/BoringSSL failed to build: ${hidden_dependency_build_result}")
 endif()

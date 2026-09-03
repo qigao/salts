@@ -1,19 +1,19 @@
-#include <turbo/disruptor.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
-#include <turbo/thread_pool.h>
+#include <salts/disruptor.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
+#include <salts/thread_pool.h>
 
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
 typedef struct worker_context_s {
-  turbo_threadpool_t *pool;
+  salts_threadpool_t *pool;
   int worker_id;
 } worker_context_t;
 
-struct turbo_threadpool_s {
-  turbo_thread_t *threads;
+struct salts_threadpool_s {
+  salts_thread_t *threads;
   worker_context_t *workers;
   int num_threads;
   size_t queue_capacity;
@@ -31,44 +31,44 @@ struct turbo_threadpool_s {
   _Atomic int64_t tasks_rejected;
   _Atomic int64_t peak_pending_tasks;
 
-  turbo_mutex_t park_mutex;
-  turbo_cond_t task_available;
-  turbo_cond_t queue_space;
-  turbo_mutex_t dispatch_mutex;
-  turbo_mutex_t wait_mutex;
-  turbo_cond_t all_done;
+  salts_mutex_t park_mutex;
+  salts_cond_t task_available;
+  salts_cond_t queue_space;
+  salts_mutex_t dispatch_mutex;
+  salts_mutex_t wait_mutex;
+  salts_cond_t all_done;
 };
 
-#define TURBO_THREADPOOL_DEFAULT_QUEUE_CAPACITY 4096U
-#define TURBO_THREADPOOL_NO_SHUTDOWN_POLICY (-1)
+#define SALTS_THREADPOOL_DEFAULT_QUEUE_CAPACITY 4096U
+#define SALTS_THREADPOOL_NO_SHUTDOWN_POLICY (-1)
 
-static _Thread_local turbo_threadpool_t *turbo_threadpool_current = NULL;
+static _Thread_local salts_threadpool_t *salts_threadpool_current = NULL;
 
 /* Private cross-library query used by CFlow to reject synchronous joins that
  * cannot make progress from the same pool callback. */
-int turbo_threadpool_is_current_internal(const turbo_threadpool_t *pool) {
-  return pool != NULL && turbo_threadpool_current == pool;
+int salts_threadpool_is_current_internal(const salts_threadpool_t *pool) {
+  return pool != NULL && salts_threadpool_current == pool;
 }
 
-static void turbo_threadpool_run_descriptor(
-    turbo_threadpool_t *pool, const turbo_threadpool_task_t *task) {
-  turbo_threadpool_t *previous = turbo_threadpool_current;
-  turbo_threadpool_current = pool;
+static void salts_threadpool_run_descriptor(
+    salts_threadpool_t *pool, const salts_threadpool_task_t *task) {
+  salts_threadpool_t *previous = salts_threadpool_current;
+  salts_threadpool_current = pool;
   task->run(task->arg);
   if (task->finalize != NULL) task->finalize(task->arg);
-  turbo_threadpool_current = previous;
+  salts_threadpool_current = previous;
 }
 
-static void turbo_threadpool_cancel_descriptor(
-    turbo_threadpool_t *pool, const turbo_threadpool_task_t *task) {
-  turbo_threadpool_t *previous = turbo_threadpool_current;
-  turbo_threadpool_current = pool;
+static void salts_threadpool_cancel_descriptor(
+    salts_threadpool_t *pool, const salts_threadpool_task_t *task) {
+  salts_threadpool_t *previous = salts_threadpool_current;
+  salts_threadpool_current = pool;
   if (task->cancel != NULL) task->cancel(task->arg);
   if (task->finalize != NULL) task->finalize(task->arg);
-  turbo_threadpool_current = previous;
+  salts_threadpool_current = previous;
 }
 
-static uint64_t turbo_threadpool_round_up_pow2(size_t value) {
+static uint64_t salts_threadpool_round_up_pow2(size_t value) {
   uint64_t rounded = 1U;
 
   if (value == 0U) return 0U;
@@ -79,14 +79,14 @@ static uint64_t turbo_threadpool_round_up_pow2(size_t value) {
   return rounded;
 }
 
-static int64_t turbo_threadpool_pending_tasks(const turbo_threadpool_t *pool) {
+static int64_t salts_threadpool_pending_tasks(const salts_threadpool_t *pool) {
   if (pool == NULL) return 0;
   return atomic_load(&pool->tasks_submitted) -
          atomic_load(&pool->tasks_completed) -
          atomic_load(&pool->tasks_cancelled);
 }
 
-static void turbo_threadpool_update_peak_pending(turbo_threadpool_t *pool,
+static void salts_threadpool_update_peak_pending(salts_threadpool_t *pool,
                                                  int64_t candidate) {
   int64_t seen = atomic_load(&pool->peak_pending_tasks);
   while (candidate > seen && !atomic_compare_exchange_weak(
@@ -94,37 +94,37 @@ static void turbo_threadpool_update_peak_pending(turbo_threadpool_t *pool,
   }
 }
 
-static void turbo_threadpool_notify_progress(turbo_threadpool_t *pool) {
+static void salts_threadpool_notify_progress(salts_threadpool_t *pool) {
   if (pool == NULL) return;
-  turbo_mutex_lock(&pool->wait_mutex);
-  if (turbo_threadpool_pending_tasks(pool) <= 0)
-    turbo_cond_broadcast(&pool->all_done);
-  turbo_mutex_unlock(&pool->wait_mutex);
+  salts_mutex_lock(&pool->wait_mutex);
+  if (salts_threadpool_pending_tasks(pool) <= 0)
+    salts_cond_broadcast(&pool->all_done);
+  salts_mutex_unlock(&pool->wait_mutex);
 }
 
-static void turbo_threadpool_finish_task(turbo_threadpool_t *pool) {
+static void salts_threadpool_finish_task(salts_threadpool_t *pool) {
   atomic_fetch_add(&pool->tasks_completed, 1);
-  turbo_threadpool_notify_progress(pool);
+  salts_threadpool_notify_progress(pool);
 }
 
-static void turbo_threadpool_cancel_task(turbo_threadpool_t *pool) {
+static void salts_threadpool_cancel_task(salts_threadpool_t *pool) {
   atomic_fetch_add(&pool->tasks_cancelled, 1);
-  turbo_threadpool_notify_progress(pool);
+  salts_threadpool_notify_progress(pool);
 }
 
-static void turbo_threadpool_signal_task_available(turbo_threadpool_t *pool) {
-  turbo_mutex_lock(&pool->park_mutex);
-  turbo_cond_signal(&pool->task_available);
-  turbo_mutex_unlock(&pool->park_mutex);
+static void salts_threadpool_signal_task_available(salts_threadpool_t *pool) {
+  salts_mutex_lock(&pool->park_mutex);
+  salts_cond_signal(&pool->task_available);
+  salts_mutex_unlock(&pool->park_mutex);
 }
 
-static void turbo_threadpool_signal_queue_space(turbo_threadpool_t *pool) {
-  turbo_mutex_lock(&pool->park_mutex);
-  turbo_cond_signal(&pool->queue_space);
-  turbo_mutex_unlock(&pool->park_mutex);
+static void salts_threadpool_signal_queue_space(salts_threadpool_t *pool) {
+  salts_mutex_lock(&pool->park_mutex);
+  salts_cond_signal(&pool->queue_space);
+  salts_mutex_unlock(&pool->park_mutex);
 }
 
-static int turbo_threadpool_try_reserve_queue_slot(turbo_threadpool_t *pool,
+static int salts_threadpool_try_reserve_queue_slot(salts_threadpool_t *pool,
                                                     int blocking) {
   int64_t depth;
 
@@ -137,118 +137,118 @@ static int turbo_threadpool_try_reserve_queue_slot(turbo_threadpool_t *pool,
 
     if (!blocking) return 0;
 
-    turbo_mutex_lock(&pool->park_mutex);
+    salts_mutex_lock(&pool->park_mutex);
     while (atomic_load(&pool->queued_depth) >= (int64_t)pool->queue_capacity &&
            atomic_load(&pool->accepting) && !atomic_load(&pool->shutdown)) {
-      turbo_cond_wait(&pool->queue_space, &pool->park_mutex);
+      salts_cond_wait(&pool->queue_space, &pool->park_mutex);
     }
-    turbo_mutex_unlock(&pool->park_mutex);
+    salts_mutex_unlock(&pool->park_mutex);
   }
 
   return 0;
 }
 
-static void turbo_threadpool_release_queue_slot(turbo_threadpool_t *pool) {
+static void salts_threadpool_release_queue_slot(salts_threadpool_t *pool) {
   atomic_fetch_sub(&pool->queued_depth, 1);
-  turbo_threadpool_signal_queue_space(pool);
+  salts_threadpool_signal_queue_space(pool);
 }
 
-static void turbo_threadpool_destroy_sync(turbo_threadpool_t *pool) {
-  turbo_mutex_destroy(&pool->park_mutex);
-  turbo_cond_destroy(&pool->task_available);
-  turbo_cond_destroy(&pool->queue_space);
-  turbo_mutex_destroy(&pool->dispatch_mutex);
-  turbo_mutex_destroy(&pool->wait_mutex);
-  turbo_cond_destroy(&pool->all_done);
+static void salts_threadpool_destroy_sync(salts_threadpool_t *pool) {
+  salts_mutex_destroy(&pool->park_mutex);
+  salts_cond_destroy(&pool->task_available);
+  salts_cond_destroy(&pool->queue_space);
+  salts_mutex_destroy(&pool->dispatch_mutex);
+  salts_mutex_destroy(&pool->wait_mutex);
+  salts_cond_destroy(&pool->all_done);
 }
 
-typedef enum turbo_threadpool_take_status {
-  TURBO_THREADPOOL_TAKE_NONE = 0,
-  TURBO_THREADPOOL_TAKE_VALID,
-  TURBO_THREADPOOL_TAKE_INVALID
-} turbo_threadpool_take_status;
+typedef enum salts_threadpool_take_status {
+  SALTS_THREADPOOL_TAKE_NONE = 0,
+  SALTS_THREADPOOL_TAKE_VALID,
+  SALTS_THREADPOOL_TAKE_INVALID
+} salts_threadpool_take_status;
 
-static turbo_threadpool_take_status turbo_threadpool_try_take_task(
-    turbo_threadpool_t *pool, turbo_threadpool_task_t *task) {
+static salts_threadpool_take_status salts_threadpool_try_take_task(
+    salts_threadpool_t *pool, salts_threadpool_task_t *task) {
   disruptor_cursor_t cursor = {0};
-  const turbo_threadpool_task_t *entry;
+  const salts_threadpool_task_t *entry;
 
   /* Worker completion advances a contiguous cursor. Serializing this short
    * transfer prevents an out-of-order release from pinning reusable slots. */
-  turbo_mutex_lock(&pool->dispatch_mutex);
+  salts_mutex_lock(&pool->dispatch_mutex);
   if (!disruptor_worker_try_claim(pool->queue, &cursor)) {
-    turbo_mutex_unlock(&pool->dispatch_mutex);
-    return TURBO_THREADPOOL_TAKE_NONE;
+    salts_mutex_unlock(&pool->dispatch_mutex);
+    return SALTS_THREADPOOL_TAKE_NONE;
   }
 
-  entry = (const turbo_threadpool_task_t *)
+  entry = (const salts_threadpool_task_t *)
       disruptor_show_entry(pool->queue, &cursor);
   if (entry == NULL || entry->run == NULL) {
     disruptor_worker_release_entry(pool->queue, &cursor);
-    turbo_mutex_unlock(&pool->dispatch_mutex);
-    return TURBO_THREADPOOL_TAKE_INVALID;
+    salts_mutex_unlock(&pool->dispatch_mutex);
+    return SALTS_THREADPOOL_TAKE_INVALID;
   }
 
   *task = *entry;
   disruptor_worker_release_entry(pool->queue, &cursor);
-  turbo_mutex_unlock(&pool->dispatch_mutex);
-  return TURBO_THREADPOOL_TAKE_VALID;
+  salts_mutex_unlock(&pool->dispatch_mutex);
+  return SALTS_THREADPOOL_TAKE_VALID;
 }
 
 static void worker_entry(void *arg) {
   worker_context_t *ctx = (worker_context_t *)arg;
-  turbo_threadpool_t *pool = ctx->pool;
+  salts_threadpool_t *pool = ctx->pool;
 
   while (1) {
-    turbo_threadpool_task_t task;
-    turbo_threadpool_take_status take_status =
-        turbo_threadpool_try_take_task(pool, &task);
+    salts_threadpool_task_t task;
+    salts_threadpool_take_status take_status =
+        salts_threadpool_try_take_task(pool, &task);
 
-    if (take_status == TURBO_THREADPOOL_TAKE_NONE) {
+    if (take_status == SALTS_THREADPOOL_TAKE_NONE) {
       if (atomic_load(&pool->shutdown) &&
-          turbo_threadpool_pending_tasks(pool) <= 0 &&
+          salts_threadpool_pending_tasks(pool) <= 0 &&
           atomic_load(&pool->queued_depth) <= 0) {
         break;
       }
 
       if (atomic_load(&pool->queued_depth) > 0) {
-        turbo_thread_yield();
+        salts_thread_yield();
         continue;
       }
 
-      turbo_mutex_lock(&pool->park_mutex);
+      salts_mutex_lock(&pool->park_mutex);
       while (atomic_load(&pool->queued_depth) <= 0 &&
              !atomic_load(&pool->shutdown)) {
-        turbo_cond_wait(&pool->task_available, &pool->park_mutex);
+        salts_cond_wait(&pool->task_available, &pool->park_mutex);
       }
-      turbo_mutex_unlock(&pool->park_mutex);
+      salts_mutex_unlock(&pool->park_mutex);
       continue;
     }
 
-    if (take_status == TURBO_THREADPOOL_TAKE_INVALID) {
-      turbo_threadpool_release_queue_slot(pool);
-      turbo_threadpool_cancel_task(pool);
+    if (take_status == SALTS_THREADPOOL_TAKE_INVALID) {
+      salts_threadpool_release_queue_slot(pool);
+      salts_threadpool_cancel_task(pool);
       continue;
     }
 
     if (atomic_load(&pool->cancel_pending)) {
-      turbo_threadpool_cancel_descriptor(pool, &task);
-      turbo_threadpool_release_queue_slot(pool);
-      turbo_threadpool_cancel_task(pool);
+      salts_threadpool_cancel_descriptor(pool, &task);
+      salts_threadpool_release_queue_slot(pool);
+      salts_threadpool_cancel_task(pool);
       continue;
     }
     atomic_fetch_add(&pool->tasks_started, 1);
-    turbo_threadpool_release_queue_slot(pool);
-    turbo_threadpool_run_descriptor(pool, &task);
-    turbo_threadpool_finish_task(pool);
+    salts_threadpool_release_queue_slot(pool);
+    salts_threadpool_run_descriptor(pool, &task);
+    salts_threadpool_finish_task(pool);
   }
 
-  turbo_threadpool_notify_progress(pool);
+  salts_threadpool_notify_progress(pool);
 }
 
-turbo_threadpool_t *
-turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
-  turbo_threadpool_t *pool;
+salts_threadpool_t *
+salts_threadpool_create_with_config(const salts_threadpool_config_t *config) {
+  salts_threadpool_t *pool;
   disruptor_config_t queue_config;
   int num_threads;
   size_t queue_capacity;
@@ -257,18 +257,18 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
   if (config == NULL) return NULL;
 
   num_threads = config->num_threads;
-  if (num_threads <= 0) num_threads = turbo_cpu_count();
+  if (num_threads <= 0) num_threads = salts_cpu_count();
   queue_capacity = config->queue_capacity > 0U
                        ? config->queue_capacity
-                       : TURBO_THREADPOOL_DEFAULT_QUEUE_CAPACITY;
+                       : SALTS_THREADPOOL_DEFAULT_QUEUE_CAPACITY;
   if (queue_capacity == SIZE_MAX) return NULL;
 
-  ring_capacity = turbo_threadpool_round_up_pow2(queue_capacity);
+  ring_capacity = salts_threadpool_round_up_pow2(queue_capacity);
   if (ring_capacity == 0U || ring_capacity > (uint64_t)SIZE_MAX ||
       ring_capacity > (uint64_t)INT64_MAX)
     return NULL;
 
-  pool = (turbo_threadpool_t *)calloc(1, sizeof(*pool));
+  pool = (salts_threadpool_t *)calloc(1, sizeof(*pool));
   if (pool == NULL) return NULL;
 
   pool->num_threads = num_threads;
@@ -276,7 +276,7 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
   atomic_store(&pool->accepting, 1);
   atomic_store(&pool->shutdown, 0);
   atomic_store(&pool->shutdown_policy,
-               TURBO_THREADPOOL_NO_SHUTDOWN_POLICY);
+               SALTS_THREADPOOL_NO_SHUTDOWN_POLICY);
   atomic_store(&pool->cancel_pending, 0);
   atomic_store(&pool->queued_depth, 0);
   atomic_store(&pool->tasks_submitted, 0);
@@ -286,7 +286,7 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
   atomic_store(&pool->tasks_rejected, 0);
   atomic_store(&pool->peak_pending_tasks, 0);
 
-  queue_config.entry_size = sizeof(turbo_threadpool_task_t);
+  queue_config.entry_size = sizeof(salts_threadpool_task_t);
   queue_config.capacity = ring_capacity;
   queue_config.consumer_capacity = 1U;
   queue_config.mode = DISRUPTOR_MODE_WORKER_POOL;
@@ -296,29 +296,29 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
     return NULL;
   }
 
-  turbo_mutex_init(&pool->park_mutex);
-  turbo_cond_init(&pool->task_available);
-  turbo_cond_init(&pool->queue_space);
-  turbo_mutex_init(&pool->dispatch_mutex);
-  turbo_mutex_init(&pool->wait_mutex);
-  turbo_cond_init(&pool->all_done);
+  salts_mutex_init(&pool->park_mutex);
+  salts_cond_init(&pool->task_available);
+  salts_cond_init(&pool->queue_space);
+  salts_mutex_init(&pool->dispatch_mutex);
+  salts_mutex_init(&pool->wait_mutex);
+  salts_cond_init(&pool->all_done);
   if (pool->park_mutex == NULL || pool->task_available == NULL ||
       pool->queue_space == NULL || pool->dispatch_mutex == NULL ||
       pool->wait_mutex == NULL || pool->all_done == NULL) {
-    turbo_threadpool_destroy_sync(pool);
+    salts_threadpool_destroy_sync(pool);
     disruptor_destroy(pool->queue);
     free(pool);
     return NULL;
   }
 
-  pool->threads = (turbo_thread_t *)calloc((size_t)num_threads,
+  pool->threads = (salts_thread_t *)calloc((size_t)num_threads,
                                            sizeof(*pool->threads));
   pool->workers = (worker_context_t *)calloc((size_t)num_threads,
                                              sizeof(*pool->workers));
   if (pool->threads == NULL || pool->workers == NULL) {
     free(pool->threads);
     free(pool->workers);
-    turbo_threadpool_destroy_sync(pool);
+    salts_threadpool_destroy_sync(pool);
     disruptor_destroy(pool->queue);
     free(pool);
     return NULL;
@@ -327,15 +327,15 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
   for (int i = 0; i < num_threads; ++i) {
     pool->workers[i].pool = pool;
     pool->workers[i].worker_id = i;
-    if (turbo_thread_create(&pool->threads[i], worker_entry,
+    if (salts_thread_create(&pool->threads[i], worker_entry,
                             &pool->workers[i]) != 0) {
-      (void)turbo_threadpool_shutdown_with_policy(
-          pool, TURBO_THREADPOOL_SHUTDOWN_DRAIN);
+      (void)salts_threadpool_shutdown_with_policy(
+          pool, SALTS_THREADPOOL_SHUTDOWN_DRAIN);
       for (int j = 0; j < i; ++j)
-        (void)turbo_thread_join(&pool->threads[j]);
+        (void)salts_thread_join(&pool->threads[j]);
       free(pool->threads);
       free(pool->workers);
-      turbo_threadpool_destroy_sync(pool);
+      salts_threadpool_destroy_sync(pool);
       disruptor_destroy(pool->queue);
       free(pool);
       return NULL;
@@ -345,179 +345,179 @@ turbo_threadpool_create_with_config(const turbo_threadpool_config_t *config) {
   return pool;
 }
 
-turbo_threadpool_t *turbo_threadpool_create(int num_threads) {
-  turbo_threadpool_config_t config;
+salts_threadpool_t *salts_threadpool_create(int num_threads) {
+  salts_threadpool_config_t config;
   config.num_threads = num_threads;
-  config.queue_capacity = TURBO_THREADPOOL_DEFAULT_QUEUE_CAPACITY;
-  return turbo_threadpool_create_with_config(&config);
+  config.queue_capacity = SALTS_THREADPOOL_DEFAULT_QUEUE_CAPACITY;
+  return salts_threadpool_create_with_config(&config);
 }
 
-int turbo_threadpool_shutdown_with_policy(
-    turbo_threadpool_t *pool, turbo_threadpool_shutdown_policy_t policy) {
-  int expected = TURBO_THREADPOOL_NO_SHUTDOWN_POLICY;
+int salts_threadpool_shutdown_with_policy(
+    salts_threadpool_t *pool, salts_threadpool_shutdown_policy_t policy) {
+  int expected = SALTS_THREADPOOL_NO_SHUTDOWN_POLICY;
   if (pool == NULL ||
-      (policy != TURBO_THREADPOOL_SHUTDOWN_DRAIN &&
-       policy != TURBO_THREADPOOL_SHUTDOWN_CANCEL_PENDING))
-    return TURBO_EINVAL;
+      (policy != SALTS_THREADPOOL_SHUTDOWN_DRAIN &&
+       policy != SALTS_THREADPOOL_SHUTDOWN_CANCEL_PENDING))
+    return SALTS_EINVAL;
   if (!atomic_compare_exchange_strong(&pool->shutdown_policy, &expected,
                                       (int)policy) &&
       expected != (int)policy)
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   atomic_store(&pool->accepting, 0);
-  if (policy == TURBO_THREADPOOL_SHUTDOWN_CANCEL_PENDING)
+  if (policy == SALTS_THREADPOOL_SHUTDOWN_CANCEL_PENDING)
     atomic_store(&pool->cancel_pending, 1);
   atomic_store(&pool->shutdown, 1);
-  turbo_mutex_lock(&pool->park_mutex);
-  turbo_cond_broadcast(&pool->task_available);
-  turbo_cond_broadcast(&pool->queue_space);
-  turbo_mutex_unlock(&pool->park_mutex);
-  turbo_threadpool_notify_progress(pool);
-  return TURBO_OK;
+  salts_mutex_lock(&pool->park_mutex);
+  salts_cond_broadcast(&pool->task_available);
+  salts_cond_broadcast(&pool->queue_space);
+  salts_mutex_unlock(&pool->park_mutex);
+  salts_threadpool_notify_progress(pool);
+  return SALTS_OK;
 }
 
-void turbo_threadpool_shutdown(turbo_threadpool_t *pool) {
-  (void)turbo_threadpool_shutdown_with_policy(
-      pool, TURBO_THREADPOOL_SHUTDOWN_DRAIN);
+void salts_threadpool_shutdown(salts_threadpool_t *pool) {
+  (void)salts_threadpool_shutdown_with_policy(
+      pool, SALTS_THREADPOOL_SHUTDOWN_DRAIN);
 }
 
-void turbo_threadpool_destroy(turbo_threadpool_t *pool) {
+void salts_threadpool_destroy(salts_threadpool_t *pool) {
   if (pool == NULL) return;
-  turbo_threadpool_shutdown(pool);
+  salts_threadpool_shutdown(pool);
   for (int i = 0; i < pool->num_threads; ++i)
-    (void)turbo_thread_join(&pool->threads[i]);
+    (void)salts_thread_join(&pool->threads[i]);
 
-  turbo_threadpool_destroy_sync(pool);
+  salts_threadpool_destroy_sync(pool);
   disruptor_destroy(pool->queue);
   free(pool->workers);
   free(pool->threads);
   free(pool);
 }
 
-static int turbo_threadpool_submit_internal(turbo_threadpool_t *pool,
-                                            const turbo_threadpool_task_t *task,
+static int salts_threadpool_submit_internal(salts_threadpool_t *pool,
+                                            const salts_threadpool_task_t *task,
                                             int blocking) {
   disruptor_cursor_t cursor = {0};
-  turbo_threadpool_task_t *entry;
+  salts_threadpool_task_t *entry;
   unsigned int wait_rounds = 0U;
 
-  if (pool == NULL || task == NULL || task->run == NULL) return TURBO_EINVAL;
+  if (pool == NULL || task == NULL || task->run == NULL) return SALTS_EINVAL;
   if (!atomic_load(&pool->accepting) || atomic_load(&pool->shutdown)) {
     atomic_fetch_add(&pool->tasks_rejected, 1);
-    return TURBO_ESHUTDOWN;
+    return SALTS_ESHUTDOWN;
   }
 
-  if (!turbo_threadpool_try_reserve_queue_slot(
-          pool, blocking && turbo_threadpool_current != pool)) {
+  if (!salts_threadpool_try_reserve_queue_slot(
+          pool, blocking && salts_threadpool_current != pool)) {
     atomic_fetch_add(&pool->tasks_rejected, 1);
-    if (blocking && turbo_threadpool_current == pool &&
+    if (blocking && salts_threadpool_current == pool &&
         atomic_load(&pool->accepting) && !atomic_load(&pool->shutdown))
-      return TURBO_EBUSY;
+      return SALTS_EBUSY;
     return (!atomic_load(&pool->accepting) || atomic_load(&pool->shutdown))
-               ? TURBO_ESHUTDOWN
-               : TURBO_ENOBUFS;
+               ? SALTS_ESHUTDOWN
+               : SALTS_ENOBUFS;
   }
 
   while (!disruptor_publisher_try_claim(pool->queue, &cursor)) {
-    if (!blocking || turbo_threadpool_current == pool ||
+    if (!blocking || salts_threadpool_current == pool ||
         !atomic_load(&pool->accepting) ||
         atomic_load(&pool->shutdown)) {
-      turbo_threadpool_release_queue_slot(pool);
+      salts_threadpool_release_queue_slot(pool);
       atomic_fetch_add(&pool->tasks_rejected, 1);
       if (!atomic_load(&pool->accepting) || atomic_load(&pool->shutdown))
-        return TURBO_ESHUTDOWN;
-      return blocking && turbo_threadpool_current == pool
-                 ? TURBO_EBUSY : TURBO_ENOBUFS;
+        return SALTS_ESHUTDOWN;
+      return blocking && salts_threadpool_current == pool
+                 ? SALTS_EBUSY : SALTS_ENOBUFS;
     }
 
     if ((++wait_rounds & 0xFFU) == 0U)
-      turbo_sleep_ms(1);
+      salts_sleep_ms(1);
     else
-      turbo_thread_yield();
+      salts_thread_yield();
   }
 
-  entry = (turbo_threadpool_task_t *)
+  entry = (salts_threadpool_task_t *)
       disruptor_acquire_entry(pool->queue, &cursor);
   *entry = *task;
   {
     int64_t submitted = atomic_fetch_add(&pool->tasks_submitted, 1) + 1;
-    turbo_threadpool_update_peak_pending(
+    salts_threadpool_update_peak_pending(
         pool, submitted - atomic_load(&pool->tasks_completed));
   }
   (void)disruptor_publisher_publish(pool->queue, &cursor);
-  turbo_threadpool_signal_task_available(pool);
-  return TURBO_OK;
+  salts_threadpool_signal_task_available(pool);
+  return SALTS_OK;
 }
 
-int turbo_threadpool_submit_task(turbo_threadpool_t *pool,
-                                 const turbo_threadpool_task_t *task) {
-  return turbo_threadpool_submit_internal(pool, task, 1);
+int salts_threadpool_submit_task(salts_threadpool_t *pool,
+                                 const salts_threadpool_task_t *task) {
+  return salts_threadpool_submit_internal(pool, task, 1);
 }
 
-int turbo_threadpool_try_submit_task(turbo_threadpool_t *pool,
-                                     const turbo_threadpool_task_t *task) {
-  return turbo_threadpool_submit_internal(pool, task, 0);
+int salts_threadpool_try_submit_task(salts_threadpool_t *pool,
+                                     const salts_threadpool_task_t *task) {
+  return salts_threadpool_submit_internal(pool, task, 0);
 }
 
-int turbo_threadpool_submit(turbo_threadpool_t *pool,
-                            turbo_task_fn task,
+int salts_threadpool_submit(salts_threadpool_t *pool,
+                            salts_task_fn task,
                             void *arg) {
-  const turbo_threadpool_task_t descriptor = {
+  const salts_threadpool_task_t descriptor = {
       .run = task,
       .cancel = NULL,
       .finalize = NULL,
       .arg = arg,
   };
-  return turbo_threadpool_submit_task(pool, &descriptor);
+  return salts_threadpool_submit_task(pool, &descriptor);
 }
 
-int turbo_threadpool_try_submit(turbo_threadpool_t *pool,
-                                turbo_task_fn task,
+int salts_threadpool_try_submit(salts_threadpool_t *pool,
+                                salts_task_fn task,
                                 void *arg) {
-  const turbo_threadpool_task_t descriptor = {
+  const salts_threadpool_task_t descriptor = {
       .run = task,
       .cancel = NULL,
       .finalize = NULL,
       .arg = arg,
   };
-  return turbo_threadpool_try_submit_task(pool, &descriptor);
+  return salts_threadpool_try_submit_task(pool, &descriptor);
 }
 
-int turbo_threadpool_wait_status(turbo_threadpool_t *pool) {
-  if (pool == NULL) return TURBO_EINVAL;
-  if (turbo_threadpool_current == pool) return TURBO_EBUSY;
-  turbo_mutex_lock(&pool->wait_mutex);
-  while (turbo_threadpool_pending_tasks(pool) > 0)
-    turbo_cond_wait(&pool->all_done, &pool->wait_mutex);
-  turbo_mutex_unlock(&pool->wait_mutex);
-  return TURBO_OK;
+int salts_threadpool_wait_status(salts_threadpool_t *pool) {
+  if (pool == NULL) return SALTS_EINVAL;
+  if (salts_threadpool_current == pool) return SALTS_EBUSY;
+  salts_mutex_lock(&pool->wait_mutex);
+  while (salts_threadpool_pending_tasks(pool) > 0)
+    salts_cond_wait(&pool->all_done, &pool->wait_mutex);
+  salts_mutex_unlock(&pool->wait_mutex);
+  return SALTS_OK;
 }
 
-void turbo_threadpool_wait(turbo_threadpool_t *pool) {
-  (void)turbo_threadpool_wait_status(pool);
+void salts_threadpool_wait(salts_threadpool_t *pool) {
+  (void)salts_threadpool_wait_status(pool);
 }
 
-int turbo_threadpool_pending(turbo_threadpool_t *pool) {
-  return (int)turbo_threadpool_pending_tasks(pool);
+int salts_threadpool_pending(salts_threadpool_t *pool) {
+  return (int)salts_threadpool_pending_tasks(pool);
 }
 
-int64_t turbo_threadpool_cancelled(turbo_threadpool_t *pool) {
+int64_t salts_threadpool_cancelled(salts_threadpool_t *pool) {
   return pool != NULL ? atomic_load(&pool->tasks_cancelled) : 0;
 }
 
-int turbo_threadpool_size(turbo_threadpool_t *pool) {
+int salts_threadpool_size(salts_threadpool_t *pool) {
   return pool != NULL ? pool->num_threads : 0;
 }
 
-size_t turbo_threadpool_capacity(turbo_threadpool_t *pool) {
+size_t salts_threadpool_capacity(salts_threadpool_t *pool) {
   return pool != NULL ? pool->queue_capacity : 0U;
 }
 
-int turbo_threadpool_is_accepting(turbo_threadpool_t *pool) {
+int salts_threadpool_is_accepting(salts_threadpool_t *pool) {
   return pool != NULL ? atomic_load(&pool->accepting) : 0;
 }
 
-void turbo_threadpool_get_stats(turbo_threadpool_t *pool,
-                                turbo_threadpool_stats_t *stats) {
+void salts_threadpool_get_stats(salts_threadpool_t *pool,
+                                salts_threadpool_stats_t *stats) {
   int64_t submitted;
   int64_t started;
   int64_t completed;

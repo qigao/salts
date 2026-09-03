@@ -2,7 +2,7 @@
 #define CFLOW_READINESS_H
 
 #include <cflow/publishers.h>
-#include <turbo/readiness.h>
+#include <salts/readiness.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,16 +31,16 @@ typedef struct cflow_readiness_publisher_owner {
  * even if Platform close fails; owner keeps registration/user reachable.
  *
  * owner is not thread-safe and must not be moved or closed concurrently.
- * owner_close returns TURBO_EBUSY without side effects while the Publisher still
+ * owner_close returns SALTS_EBUSY without side effects while the Publisher still
  * exists. After Publisher destroy, it returns the exact Platform close error and
- * retains owner for retry. TURBO_OK clears owner and releases its final ref;
+ * retains owner for retry. SALTS_OK clears owner and releases its final ref;
  * callers must close owner even when Publisher cleanup already succeeded.
  */
 int cflow_publisher_from_readiness_registration(
     cflow_publisher *out,
     cflow_readiness_publisher_owner *owner,
-    turbo_readiness_registration *registration,
-    turbo_readiness_events events,
+    salts_readiness_registration *registration,
+    salts_readiness_events events,
     const char *name,
     const cmeta_type_desc *type,
     cflow_read_fn read,

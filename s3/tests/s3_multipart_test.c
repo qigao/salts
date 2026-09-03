@@ -74,14 +74,14 @@ static int s3_multipart_post(void *user, const chttp_server_request_view *reques
   s3_multipart_probe *probe = (s3_multipart_probe *)user;
   const unsigned char *part_one;
   const unsigned char *part_two;
-  if (probe == NULL || request == NULL) return TURBO_EPROTO;
+  if (probe == NULL || request == NULL) return SALTS_EPROTO;
   if (strcmp(request->target, "/bucket/large?uploads=") == 0) {
-    if (!s3_multipart_customer_headers_valid(request)) return TURBO_EPROTO;
+    if (!s3_multipart_customer_headers_valid(request)) return SALTS_EPROTO;
     ++probe->initiated;
     return chttp_server_reply(response, 200u, "application/xml", initiated, sizeof(initiated) - 1u);
   }
-  if (strcmp(request->target, "/bucket/large?uploadId=upload%2Fone") != 0) return TURBO_EPROTO;
-  if (request->body == NULL) return TURBO_EPROTO;
+  if (strcmp(request->target, "/bucket/large?uploadId=upload%2Fone") != 0) return SALTS_EPROTO;
+  if (request->body == NULL) return SALTS_EPROTO;
   part_one = s3_test_find_bytes(request->body, request->body_size, "<PartNumber>1</PartNumber>");
   part_two = s3_test_find_bytes(request->body, request->body_size, "<PartNumber>2</PartNumber>");
   if (part_one == NULL || part_two == NULL || part_one >= part_two ||
@@ -89,7 +89,7 @@ static int s3_multipart_post(void *user, const chttp_server_request_view *reques
           NULL ||
       s3_test_find_bytes(request->body, request->body_size, "<ETag>&quot;etag-2&quot;</ETag>") ==
           NULL)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   if (probe->complete_error_once) {
     static const char completion_error[] =
         "<Error><Code>InternalError</Code><Message>retry completion</Message></Error>";
@@ -110,17 +110,17 @@ static int s3_multipart_put(void *user, const chttp_server_request_view *request
                             chttp_server_response *response) {
   s3_multipart_probe *probe = (s3_multipart_probe *)user;
   const char *etag;
-  if (probe == NULL || request == NULL) return TURBO_EPROTO;
-  if (!s3_multipart_customer_headers_valid(request)) return TURBO_EPROTO;
+  if (probe == NULL || request == NULL) return SALTS_EPROTO;
+  if (!s3_multipart_customer_headers_valid(request)) return SALTS_EPROTO;
   if (strcmp(request->target, "/bucket/large?partNumber=1&uploadId=upload%2Fone") == 0) {
     ++probe->part_one_attempts;
     if (request->body_size != S3_MULTIPART_MIN_PART_BYTES ||
         memcmp(request->body, probe->first_part, S3_MULTIPART_MIN_PART_BYTES) != 0)
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     etag = "\"etag-1\"";
   } else if (strcmp(request->target, "/bucket/large?partNumber=2&uploadId=upload%2Fone") == 0) {
     ++probe->part_two_attempts;
-    if (request->body_size != S3_MULTIPART_TEST_LAST_BYTES) return TURBO_EPROTO;
+    if (request->body_size != S3_MULTIPART_TEST_LAST_BYTES) return SALTS_EPROTO;
     if (probe->fail_part_two_once) {
       static const char failure[] = "<Error><Code>InternalError</Code></Error>";
       probe->fail_part_two_once = 0;
@@ -128,10 +128,10 @@ static int s3_multipart_put(void *user, const chttp_server_request_view *request
     }
     etag = "\"etag-2\"";
   } else {
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   }
   ++probe->uploaded;
-  if (chttp_server_response_set_header(response, "ETag", etag) != TURBO_OK) return TURBO_EIO;
+  if (chttp_server_response_set_header(response, "ETag", etag) != SALTS_OK) return SALTS_EIO;
   return chttp_server_reply(response, 200u, NULL, NULL, 0u);
 }
 
@@ -140,7 +140,7 @@ static int s3_multipart_delete(void *user, const chttp_server_request_view *requ
   s3_multipart_probe *probe = (s3_multipart_probe *)user;
   if (probe == NULL || request == NULL ||
       strcmp(request->target, "/bucket/large?uploadId=upload%2Fone") != 0)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   ++probe->aborted;
   return chttp_server_reply(response, 204u, NULL, NULL, 0u);
 }
@@ -204,16 +204,16 @@ static void s3_multipart_run(chttp_protocol protocol) {
   probe.first_part = first_part;
   server_config.max_request_body_bytes = 6u * 1024u * 1024u;
   http_config.max_request_body_bytes = 6u * 1024u * 1024u;
-  check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
-  check_equal(chttp_server_post(&server, "/bucket/large", s3_multipart_post, &probe), TURBO_OK);
-  check_equal(chttp_server_put(&server, "/bucket/large", s3_multipart_put, &probe), TURBO_OK);
-  check_equal(chttp_server_delete(&server, "/bucket/large", s3_multipart_delete, &probe), TURBO_OK);
-  check_equal(chttp_server_start(&server), TURBO_OK);
-  check_equal(chttp_server_port(&server, &port), TURBO_OK);
+  check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
+  check_equal(chttp_server_post(&server, "/bucket/large", s3_multipart_post, &probe), SALTS_OK);
+  check_equal(chttp_server_put(&server, "/bucket/large", s3_multipart_put, &probe), SALTS_OK);
+  check_equal(chttp_server_delete(&server, "/bucket/large", s3_multipart_delete, &probe), SALTS_OK);
+  check_equal(chttp_server_start(&server), SALTS_OK);
+  check_equal(chttp_server_port(&server, &port), SALTS_OK);
   check_equal(
       s3_test_endpoint(port, connection_uri, sizeof(connection_uri), authority, sizeof(authority)),
-      TURBO_OK);
-  check_equal(chttp_client_init(&http_client, &http_config), TURBO_OK);
+      SALTS_OK);
+  check_equal(chttp_client_init(&http_client, &http_config), SALTS_OK);
   config = (s3_client_config){.size = sizeof(config),
                               .connection_uri = connection_uri,
                               .authority = authority,
@@ -224,52 +224,52 @@ static void s3_multipart_run(chttp_protocol protocol) {
                               .clock = s3_multipart_clock,
                               .timeout_ms = S3_TEST_TIMEOUT_MS,
                               .max_multipart_parts = 8u};
-  check_equal(s3_client_init(&client, &http_client, &config), TURBO_OK);
+  check_equal(s3_client_init(&client, &http_client, &config), SALTS_OK);
   progress.client = &client;
 
   check_equal(
       s3_multipart_initiate(&client, "bucket", "large", &put_options, &upload, &response, &error),
-      TURBO_OK);
+      SALTS_OK);
   check_equal(s3_multipart_upload_id(&upload), "upload/one");
   s3_response_destroy(&response);
   check_equal(s3_multipart_upload_part(&client, &upload, 2u, last_part, sizeof(last_part),
                                        &response, &error),
-              TURBO_OK);
+              SALTS_OK);
   s3_response_destroy(&response);
   check_equal(s3_multipart_upload_part(&client, &upload, 1u, first_part,
                                        S3_MULTIPART_MIN_PART_BYTES, &response, &error),
-              TURBO_OK);
+              SALTS_OK);
   s3_response_destroy(&response);
   probe.complete_error_once = 1;
-  check_equal(s3_multipart_complete(&client, &upload, &response, &error), TURBO_EPROTO);
+  check_equal(s3_multipart_complete(&client, &upload, &response, &error), SALTS_EPROTO);
   check_equal(response.http.status_code, 200u);
   check_equal(response.service_error.code, "InternalError");
-  check_equal(s3_multipart_state_get(&upload, &state), TURBO_OK);
+  check_equal(s3_multipart_state_get(&upload, &state), SALTS_OK);
   check_equal(state, S3_MULTIPART_ACTIVE);
   s3_response_destroy(&response);
   probe.complete_empty_once = 1;
-  check_equal(s3_multipart_complete(&client, &upload, &response, &error), TURBO_EPROTO);
+  check_equal(s3_multipart_complete(&client, &upload, &response, &error), SALTS_EPROTO);
   check_equal(response.http.status_code, 200u);
   check_equal(error.stage, "s3-multipart-complete-parse");
-  check_equal(s3_multipart_state_get(&upload, &state), TURBO_OK);
+  check_equal(s3_multipart_state_get(&upload, &state), SALTS_OK);
   check_equal(state, S3_MULTIPART_ACTIVE);
   s3_response_destroy(&response);
-  check_equal(s3_multipart_complete(&client, &upload, &response, &error), TURBO_OK);
-  check_equal(s3_multipart_state_get(&upload, &state), TURBO_OK);
+  check_equal(s3_multipart_complete(&client, &upload, &response, &error), SALTS_OK);
+  check_equal(s3_multipart_state_get(&upload, &state), SALTS_OK);
   check_equal(state, S3_MULTIPART_COMPLETED);
   s3_response_destroy(&response);
-  check_equal(s3_multipart_destroy(&upload), TURBO_OK);
+  check_equal(s3_multipart_destroy(&upload), SALTS_OK);
 
   check_equal(
       s3_multipart_initiate(&client, "bucket", "large", &put_options, &upload, &response, &error),
-      TURBO_OK);
+      SALTS_OK);
   s3_response_destroy(&response);
-  check_equal(s3_multipart_destroy(&upload), TURBO_EBUSY);
-  check_equal(s3_multipart_abort(&client, &upload, &response, &error), TURBO_OK);
+  check_equal(s3_multipart_destroy(&upload), SALTS_EBUSY);
+  check_equal(s3_multipart_abort(&client, &upload, &response, &error), SALTS_OK);
   s3_response_destroy(&response);
-  check_equal(s3_multipart_state_get(&upload, &state), TURBO_OK);
+  check_equal(s3_multipart_state_get(&upload, &state), SALTS_OK);
   check_equal(state, S3_MULTIPART_ABORTED);
-  check_equal(s3_multipart_destroy(&upload), TURBO_OK);
+  check_equal(s3_multipart_destroy(&upload), SALTS_OK);
 
   {
     const size_t invalid_size = strlen(checkpoint_path) + sizeof("/missing.xml");
@@ -285,7 +285,7 @@ static void s3_multipart_run(chttp_protocol protocol) {
                                                  .put_options = &put_options};
       check_equal(s3_put_object_multipart_file(&client, "bucket", "large", source_path,
                                                &file_options, &response, &error),
-                  TURBO_EIO);
+                  SALTS_EIO);
       check_equal(probe.initiated, (size_t)3u);
       check_equal(probe.aborted, (size_t)2u);
       free(invalid_checkpoint);
@@ -305,7 +305,7 @@ static void s3_multipart_run(chttp_protocol protocol) {
     probe.fail_part_two_once = 1;
     check_equal(s3_put_object_multipart_file(&client, "bucket", "large", source_path, &file_options,
                                              &response, &error),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(response.http.status_code, 500u);
     s3_response_destroy(&response);
     checkpoint_contents = tt_read_file(checkpoint_path, &checkpoint_size);
@@ -316,21 +316,21 @@ static void s3_multipart_run(chttp_protocol protocol) {
     file_options.put_options = &wrong_put_options;
     check_equal(s3_put_object_multipart_file(&client, "bucket", "large", source_path, &file_options,
                                              &response, &error),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     file_options.put_options = &put_options;
     check_equal(s3_put_object_multipart_file(&client, "bucket", "other", source_path, &file_options,
                                              &response, &error),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     check_equal(s3_put_object_multipart_file(&client, "bucket", "large", source_path, &file_options,
                                              &response, &error),
-                TURBO_OK);
+                SALTS_OK);
     s3_response_destroy(&response);
     checkpoint_contents = tt_read_file(checkpoint_path, &checkpoint_size);
     check_null(checkpoint_contents);
     check_equal(progress.transferred,
                 (size_t)S3_MULTIPART_MIN_PART_BYTES + S3_MULTIPART_TEST_LAST_BYTES);
     check_equal(progress.total, (size_t)S3_MULTIPART_MIN_PART_BYTES + S3_MULTIPART_TEST_LAST_BYTES);
-    check_equal(progress.destroy_status, TURBO_EBUSY);
+    check_equal(progress.destroy_status, SALTS_EBUSY);
   }
 
   check_equal(probe.initiated, (size_t)4u);
@@ -339,10 +339,10 @@ static void s3_multipart_run(chttp_protocol protocol) {
   check_equal(probe.aborted, (size_t)2u);
   check_equal(probe.part_one_attempts, (size_t)2u);
   check_equal(probe.part_two_attempts, (size_t)3u);
-  check_equal(s3_client_destroy(&client), TURBO_OK);
-  check_equal(chttp_client_destroy(&http_client, S3_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(chttp_server_stop(&server, S3_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(chttp_server_destroy(&server), TURBO_OK);
+  check_equal(s3_client_destroy(&client), SALTS_OK);
+  check_equal(chttp_client_destroy(&http_client, S3_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(chttp_server_stop(&server, S3_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(chttp_server_destroy(&server), SALTS_OK);
 
 done:
   if (source_path != NULL) (void)tt_remove_file(source_path);

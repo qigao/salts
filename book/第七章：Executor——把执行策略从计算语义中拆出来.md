@@ -1119,9 +1119,9 @@ Worker Executor 使用线程执行 ready Task；Worker Scheduler 则把 timer qu
 
 ### Coro：保存执行位置，不接管 completion
 
-`Rocida::Coroutine` 对 minicoro 提供 stackful coroutine primitive、单 owner 有界复用池，以及可选的多 shard `turbo_coro_executor_t`。运行中的 frame 可以用 `turbo_coro_executor_yield()` 主动让出；需要等待外部操作时，则先以 `await_begin` 获取 generation-checked token，提交失败以 `await_abort` 收尾，提交成功后调用 `await` 挂起。外部完成线程调用 `await_complete` 只发布 terminal signal，原 shard owner 才执行 resume。frame 仍只保存“代码停在哪里”，不能成为“操作是否已经完成”的第二份事实源。
+`Salts::Coroutine` 对 minicoro 提供 stackful coroutine primitive、单 owner 有界复用池，以及可选的多 shard `salts_coro_executor_t`。运行中的 frame 可以用 `salts_coro_executor_yield()` 主动让出；需要等待外部操作时，则先以 `await_begin` 获取 generation-checked token，提交失败以 `await_abort` 收尾，提交成功后调用 `await` 挂起。外部完成线程调用 `await_complete` 只发布 terminal signal，原 shard owner 才执行 resume。frame 仍只保存“代码停在哪里”，不能成为“操作是否已经完成”的第二份事实源。
 
-通用 coroutine Executor 把用户线程与调度线程明确分开。每个固定 shard 独占一个 scheduler、一个 `turbo_coro_pool_t`、一个有界 MPSC task queue 和一个不与新任务争抢容量的 completion wake queue；用户线程提交复制后的 task descriptor，运行中的 frame 不跨 shard 迁移。普通 submit 采用 round-robin，`submit_to` 则为 connection、session 或 Actor 提供显式 affinity。queue full、closed admission 与同 Executor 自阻塞分别暴露为 `TURBO_ENOBUFS`、`TURBO_ESHUTDOWN` 与 `TURBO_EBUSY`，不会通过无界扩容隐藏背压。
+通用 coroutine Executor 把用户线程与调度线程明确分开。每个固定 shard 独占一个 scheduler、一个 `salts_coro_pool_t`、一个有界 MPSC task queue 和一个不与新任务争抢容量的 completion wake queue；用户线程提交复制后的 task descriptor，运行中的 frame 不跨 shard 迁移。普通 submit 采用 round-robin，`submit_to` 则为 connection、session 或 Actor 提供显式 affinity。queue full、closed admission 与同 Executor 自阻塞分别暴露为 `SALTS_ENOBUFS`、`SALTS_ESHUTDOWN` 与 `SALTS_EBUSY`，不会通过无界扩容隐藏背压。
 
 一个 frame 同时最多保留一个 await slot，wake queue 的容量至少等于该 shard 的最大 active frame 数，所以每个合法 await 的唯一 terminal wake 都有保留预算。completion 可以早于 `await` 到达，也可以晚于 `shutdown` 关闭 task admission；前者直接读取已保存状态而不挂起，后者仍被接受以完成 drain。Executor 不会替外部系统虚构取消结果：若 NativeIO request、timer 或用户 operation 已成功提交，其 owner 必须最终发布一次 completion，并在 Executor destroy 前停止 completion caller。
 
@@ -1142,7 +1142,7 @@ Coroutine Executor 与 CFlow Executor 仍是不同的执行语义：前者调度
 
 ### Readiness：把平台事件翻译成 WAIT/Wake
 
-Platform `turbo_readiness_reactor` 拥有 registration 与 backend 状态。`cflow_publisher_from_readiness_registration()` 成功时把 registration 移入共享的 Publisher/owner state；read callback 仍是值与 terminal data semantics 的唯一生产者。Readiness callback 只发出可合并的唤醒边，Subscription 再按 demand 恢复 Publisher，而不是在平台 callback 栈上重入整张 Graph。
+Platform `salts_readiness_reactor` 拥有 registration 与 backend 状态。`cflow_publisher_from_readiness_registration()` 成功时把 registration 移入共享的 Publisher/owner state；read callback 仍是值与 terminal data semantics 的唯一生产者。Readiness callback 只发出可合并的唤醒边，Subscription 再按 demand 恢复 Publisher，而不是在平台 callback 栈上重入整张 Graph。
 
 这条路径的关闭顺序也属于接口语义：先取消并销毁 Publisher，使 registration quiescent；再调用 `cflow_readiness_publisher_owner_close()` 关闭外部 owner。Publisher 仍存活时提前 close 返回 busy，不通过悬空 callback 换取“方便”。
 

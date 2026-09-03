@@ -1,5 +1,5 @@
-#ifndef TURBO_SCRIPT_DSV_INDEX_H
-#define TURBO_SCRIPT_DSV_INDEX_H
+#ifndef SALTS_SCRIPT_DSV_INDEX_H
+#define SALTS_SCRIPT_DSV_INDEX_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -83,7 +83,7 @@ int dsv_index_build_memory(dsv_index_t *index, const char *index_path,
                            const char *content, size_t len,
                            const dsv_index_config_t *config);
 
-/** Build a sidecar from a static CSV file using Rocida mmap and file APIs. */
+/** Build a sidecar from a static CSV file using Salts mmap and file APIs. */
 int dsv_index_build_file(dsv_index_t *index, const char *csv_path,
                          const char *index_path, const dsv_index_config_t *config);
 
@@ -132,4 +132,4 @@ vstr dsv_index_row_view(const dsv_index_t *index, const dsv_index_row_t *row);
 }
 #endif
 
-#endif /* TURBO_SCRIPT_DSV_INDEX_H */
+#endif /* SALTS_SCRIPT_DSV_INDEX_H */

@@ -6,8 +6,8 @@ progress polling, and ordered state notifications. NativeIO remains the raw,
 threadless operating-system I/O backend; CFlow Actor and Reactive code continue
 to depend on NativeIO directly.
 
-CNet is built unconditionally. Its source-tree target is `turbo_cnet`; installed
-consumers link `Rocida::CNet` and include `<cnet/cnet.h>`. The independent
+CNet is built unconditionally. Its source-tree target is `salts_cnet`; installed
+consumers link `Salts::CNet` and include `<cnet/cnet.h>`. The independent
 WebSocket session API is declared by `<cnet/websocket.h>`.
 
 ## Base API
@@ -17,6 +17,8 @@ Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 - `cnet_connect` with `tcp://host:port`, `tls://host:port`, `udp://host:port`, or
   `pipe://name`;
 - `cnet_send` to transfer one bounded payload copy into CNet;
+- `cnet_sendv` to concatenate non-empty borrowed ranges directly into that
+  same final bounded command slot without caller-side staging;
 - `observer.on_send` to observe completion before admitting the next ordered
   write on that connection;
 - `cnet_receive` to add explicit receive demand;
@@ -28,7 +30,7 @@ TCP and Pipe deliver byte chunks. Connected UDP delivers one datagram per
 receive callback. A receive view is borrowed only until its callback returns.
 TLS delivers verified encrypted byte streams through the same send/receive
 contract. WebSocket and KCP are not exposed by this base header. CNet parses
-TCP, TLS, and UDP URIs through Rocida UriParser and then applies
+TCP, TLS, and UDP URIs through Salts UriParser and then applies
 transport-specific constraints: network URIs require an explicit port and reject
 userinfo, path, query, and fragment components instead of accepting truncated or
 ambiguous input. Pipe is a scheme-specific IPC endpoint rather than a network
@@ -45,7 +47,7 @@ borrowed only until their callback returns.
 Initialization allocates fixed-capacity input, reassembled-message, and
 single-frame output storage. `max_frame_bytes`, `max_message_bytes`, and
 `max_buffered_input_bytes` are mandatory. A write callback returning
-`TURBO_EBUSY` retains exactly one complete frame; the owner calls
+`SALTS_EBUSY` retains exactly one complete frame; the owner calls
 `cnet_websocket_flush()` before feeding or sending more data. Other write errors
 move the session to `CNET_WEBSOCKET_FAILED` and are available through
 `cnet_websocket_last_error()`. A peer Close commits `CLOSING` before its event
@@ -73,10 +75,10 @@ typedef struct frame_sink {
 
 static int write_frame(void *user, const uint8_t *data, size_t size) {
   frame_sink *sink = (frame_sink *)user;
-  if (size > sizeof(sink->bytes)) return TURBO_EMSGSIZE;
+  if (size > sizeof(sink->bytes)) return SALTS_EMSGSIZE;
   memcpy(sink->bytes, data, size);
   sink->size = size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void on_event(void *user, cnet_websocket *websocket,
@@ -100,9 +102,9 @@ int main(void) {
       .user = &sink,
   };
   int status = cnet_websocket_init(&websocket, &config);
-  if (status == TURBO_OK) status = cnet_websocket_send_text(&websocket, "hello", 5);
+  if (status == SALTS_OK) status = cnet_websocket_send_text(&websocket, "hello", 5);
   (void)cnet_websocket_destroy(&websocket);
-  return status == TURBO_OK && sink.size != 0 ? 0 : 1;
+  return status == SALTS_OK && sink.size != 0 ? 0 : 1;
 }
 ```
 
@@ -112,11 +114,11 @@ TLS is an opt-in bounded transport implemented by CNet over the same NativeIO
 TCP endpoints. Set both `cnet_client_config.tls_io_buffer_bytes` (at least
 `CNET_TLS_MIN_IO_BUFFER_BYTES`) and `tls_handshake_timeout_ms` to admit TLS
 connections. Leaving both zero preserves a TLS-free client and makes a
-`tls://` connect fail with `TURBO_ENOTSUP`.
+`tls://` connect fail with `SALTS_ENOTSUP`.
 
 The repository manifest selects BoringSSL. CMake consumes its conventional
 `find_package(OpenSSL REQUIRED)` compatibility targets only as private build
-dependencies; Rocida neither exports those targets nor installs BoringSSL.
+dependencies; Salts neither exports those targets nor installs BoringSSL.
 
 `cnet_connect()` accepts either a one-shot `cnet_tls_client_config` or a reusable
 `cnet_tls_client`; the two fields are mutually exclusive. NULL uses the platform
@@ -130,7 +132,7 @@ exposes no insecure mode and never retries `tls://` as plaintext.
 
 After CONNECTED, `cnet_tls_negotiated_alpn()` copies the selected protocol. It
 can be called from the CONNECTED callback because CNet records ALPN before
-invoking user code. No overlap returns `TURBO_ENOENT`; protocol layers such as
+invoking user code. No overlap returns `SALTS_ENOENT`; protocol layers such as
 HTTP/2 must treat that result as a policy decision rather than assume `h2`.
 
 Servers initialize one reusable `cnet_tls_server`, accept sockets with
@@ -180,10 +182,14 @@ retains the payload, request record, and frame until a terminal completion is
 observed.
 
 The URI, observer, and send bytes are copied before their admitting call returns
-success. A callback may call `cnet_send`, `cnet_receive`, or `cnet_close` for its
-client. Calling `cnet_client_poll`, `cnet_client_stop`, or
-`cnet_client_destroy` recursively from that callback returns `TURBO_EBUSY`.
-Each connection admits one write at a time; another send returns `TURBO_EBUSY`
+success. For `cnet_sendv`, both the descriptor array and its immutable backing
+ranges are borrowed only during the call; successful admission has copied their
+ordered concatenation and `on_send` reports its total size once. Empty ranges
+are rejected so segment count is bounded by the configured byte limit. A
+callback may call `cnet_send`, `cnet_sendv`, `cnet_receive`, or `cnet_close` for
+its client. Calling `cnet_client_poll`, `cnet_client_stop`, or
+`cnet_client_destroy` recursively from that callback returns `SALTS_EBUSY`.
+Each connection admits one write at a time; another send returns `SALTS_EBUSY`
 until its send event is observed. `cnet_send_and_close()` reserves the final
 write and immediately closes further send/receive admission.
 
@@ -198,18 +204,18 @@ progress. Numeric TCP/UDP addresses and Pipe endpoints do not enter this path.
 
 `cnet_client_stop(client, timeout_ms)` closes admission and drives the same
 caller-owned loop until connections, NativeIO requests, coroutines, and
-terminal callbacks settle. `TURBO_ETIMEDOUT` is retryable and preserves the
-client. Destroying a client before successful stop returns `TURBO_EBUSY`.
+terminal callbacks settle. `SALTS_ETIMEDOUT` is retryable and preserves the
+client. Destroying a client before successful stop returns `SALTS_EBUSY`.
 If progress has already recorded a fatal error, stop keeps that first error as
 its return value while still driving close/recycle to quiescence. The caller
 must still attempt `cnet_client_destroy`; it succeeds when cleanup completed,
 even though stop reported the terminal diagnostic. Listener bind and accept
-failures use portable Turbo status codes such as `TURBO_EADDRINUSE`.
+failures use portable Salts status codes such as `SALTS_EADDRINUSE`.
 
 Immediate connect validation failure clears the output handle and emits no
 callback. Asynchronous failures emit exactly one `CNET_CONNECTION_FAILED` with
-a stable stage string. Rocida status codes use `cnet_error.status`; a raw
-platform status is normalized to `TURBO_EIO` and retained in
+a stable stage string. Salts status codes use `cnet_error.status`; a raw
+platform status is normalized to `SALTS_EIO` and retained in
 `cnet_error.native_status`.
 
 The executable contracts are in `tests/cnet_api_test.c` and

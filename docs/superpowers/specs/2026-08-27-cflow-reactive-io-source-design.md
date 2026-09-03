@@ -134,7 +134,7 @@ owner 成功关闭。
 - operation preparation 发生在 Run pump 线程。
 - Actor submission 是 MPSC-safe，但本 Adapter 每次只有一个 live request。
 - `owner_run_ready()` 只有一个 driver，可由 reactor/event-loop 线程调用；并发或重入
-  返回 `TURBO_EBUSY`。
+  返回 `SALTS_EBUSY`。
 - backend completion 可从任意 backend thread 进入 Actor。
 - Adapter 的 completion encoder 运行在 owner driver 的 internal manual Executor。
 - `drive` 是可合并边沿通知，表示 owner 可能可驱动；它必须调度
@@ -177,7 +177,7 @@ Source 可以在 Actor acknowledge 之前消费已复制 value。此时下一次
 3. Source destroy 清除 waker、标记 `source_live=false` 并释放 Source 引用；不销毁 backend。
 4. 调用方继续响应 `drive` 并调用 `owner_run_ready()`，直到 completion delivery 与
    acknowledge 全部 drain。
-5. `owner_close()` 在 Source 仍 live 或 Actor 未 quiescent 时返回 `TURBO_EBUSY`，不释放状态。
+5. `owner_close()` 在 Source 仍 live 或 Actor 未 quiescent 时返回 `SALTS_EBUSY`，不释放状态。
 6. quiescent 后 owner close 销毁 Actor 和 manual Executor、清理 typed slot、清空 owner。
 7. 调用方之后才能销毁 borrowed backend 与 callback context。
 
@@ -186,9 +186,9 @@ Source 可以在 Actor acknowledge 之前消费已复制 value。此时下一次
 
 ## 错误语义
 
-- invalid output/owner/config/backend/descriptor/callback：`TURBO_EINVAL`；
-- 内部 state、typed slot、Executor 或 Actor 分配失败：`TURBO_ENOMEM`；
-- concurrent/reentrant driver 或过早 owner close：`TURBO_EBUSY`；
+- invalid output/owner/config/backend/descriptor/callback：`SALTS_EINVAL`；
+- 内部 state、typed slot、Executor 或 Actor 分配失败：`SALTS_ENOMEM`；
+- concurrent/reentrant driver 或过早 owner close：`SALTS_EBUSY`；
 - Actor admission 的 FULL/CLOSED/LEASE/ID 异常转换为稳定 Source ERROR；
 - prepare/encoder 用户错误通过其 `error` 指针传播；该字符串必须有效至 owner close；
 - backend submit failure 保留 Actor 原有 `FAILED(error)` completion；

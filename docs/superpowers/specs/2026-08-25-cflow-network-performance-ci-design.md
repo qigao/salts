@@ -12,7 +12,7 @@ Executor；结果用于 PR/主分支证据与 artifact，不作为共享 runner 
 
 - TinyTest `benchmark_io`：ops/s 与 MiB/s 展示；其 operation 数等于真实 exchange 数。
 - 独立固定 latency 数组：nearest-rank P50/P95/P99，`index = ceil(p*n)-1`。
-- wall time：`turbo_hrtime()`；进程 CPU：Windows `GetProcessTimes`，POSIX `getrusage`；
+- wall time：`salts_hrtime()`；进程 CPU：Windows `GetProcessTimes`，POSIX `getrusage`；
   `process_cpu_pct = process_cpu_ns / wall_ns * 100`。它是进程跨线程消耗的 core-equivalent，
   多个 worker/server 线程并行时允许超过 100%。同时报告
   `application_mib_per_second = application_bytes / MiB / wall_seconds`、

@@ -92,13 +92,13 @@ PowerShell, TinyTest benchmark output.
 - [x] Add a failing representation-equivalence benchmark test before its
   traversal implementations.
 - [x] Build one validated normalized linear Graph and derive flat, dense,
-  degenerate-tree and bounded TurboSTL HashMap views from its edges.
+  degenerate-tree and bounded Container HashMap views from its edges.
 - [x] Compile the same normalized Graph into a contiguous Plan instruction tape.
 - [x] Assert operator count and order-sensitive checksum parity outside timing
   for boundary, typical and peak sizes.
 - [x] Measure complete immutable path traversals with `benchmark_ops`; keep all
   construction, reservation, allocation and destruction outside timing.
-- [x] Trigger the host matrix for TurboSTL changes because the HashMap control
+- [x] Trigger the host matrix for Container changes because the HashMap control
   is now a benchmark dependency.
 - [x] Run the target in MSVC Release, then run adjacent CFlow tests and inspect
   the final diff for production API or executor changes.

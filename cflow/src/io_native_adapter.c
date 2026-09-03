@@ -107,21 +107,21 @@ static cflow_io_completion native_adapter_completion(
     switch (native->kind) {
     case NATIVE_IO_COMPLETION_OK:
         completion.kind = CFLOW_IO_COMPLETION_OK;
-        completion.error = TURBO_OK;
+        completion.error = SALTS_OK;
         break;
     case NATIVE_IO_COMPLETION_EOF:
         completion.kind = CFLOW_IO_COMPLETION_EOF;
-        completion.error = TURBO_OK;
+        completion.error = SALTS_OK;
         break;
     case NATIVE_IO_COMPLETION_CANCELLED:
         completion.kind = CFLOW_IO_COMPLETION_CANCELLED;
-        completion.error = TURBO_OK;
+        completion.error = SALTS_OK;
         break;
     case NATIVE_IO_COMPLETION_FAILED:
         break;
     default:
         completion.kind = CFLOW_IO_COMPLETION_FAILED;
-        completion.error = TURBO_EPROTO;
+        completion.error = SALTS_EPROTO;
         break;
     }
     return completion;
@@ -145,14 +145,14 @@ static int native_adapter_actor_submit(
     (void)lease_id;
     if (impl == NULL || actor == NULL || request_id == 0u ||
         operation == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (impl->bound_actor != NULL && impl->bound_actor != actor)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (impl->bound_actor == NULL)
         impl->bound_actor = actor;
     bridge = native_adapter_reserve_bridge(impl, &index);
     if (bridge == NULL)
-        return TURBO_ENOBUFS;
+        return SALTS_ENOBUFS;
     bridge->actor = actor;
     bridge->actor_request = request_id;
     bridge->operation = operation;
@@ -161,12 +161,12 @@ static int native_adapter_actor_submit(
     submitted.user_data = (uintptr_t)(index + 1u);
     status = native_io_backend_submit(&impl->backend, &submitted,
                                      &bridge->native_request);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         native_adapter_release_bridge(impl, index);
         return status;
     }
     bridge->phase = CFLOW_IO_NATIVE_BRIDGE_PENDING;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int native_adapter_actor_cancel(
@@ -179,14 +179,14 @@ static int native_adapter_actor_cancel(
     int status;
 
     if (impl == NULL || request_id == 0u)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     bridge = native_adapter_find_actor_request(impl, request_id);
     if (bridge == NULL)
-        return TURBO_ENOENT;
+        return SALTS_ENOENT;
     status = native_io_backend_cancel(&impl->backend, bridge->native_request);
     /* NativeIO EALREADY still guarantees a terminal packet to observe. From
      * the Actor's perspective cancellation dispatch therefore succeeded. */
-    return status == TURBO_EALREADY ? TURBO_OK : status;
+    return status == SALTS_EALREADY ? SALTS_OK : status;
 }
 
 int cflow_io_native_adapter_init(
@@ -197,24 +197,24 @@ int cflow_io_native_adapter_init(
     int status;
 
     if (adapter == NULL || config == NULL || adapter->impl != NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (config->backend.endpoint_capacity == 0u ||
         config->backend.request_capacity == 0u ||
         config->backend.completion_batch_capacity == 0u ||
         config->backend.completion_batch_capacity >
             config->backend.request_capacity)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (config->backend.endpoint_capacity > UINT32_MAX ||
         config->backend.request_capacity > UINT32_MAX ||
         config->backend.request_capacity >
             SIZE_MAX / sizeof(cflow_io_native_bridge) ||
         config->backend.completion_batch_capacity >
             SIZE_MAX / sizeof(native_io_completion))
-        return TURBO_ERANGE;
+        return SALTS_ERANGE;
 
     impl = (cflow_io_native_adapter_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL)
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
 
     impl->bridges = (cflow_io_native_bridge *)calloc(
         config->backend.request_capacity, sizeof(*impl->bridges));
@@ -224,11 +224,11 @@ int cflow_io_native_adapter_init(
         free(impl->completions);
         free(impl->bridges);
         free(impl);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
 
     status = native_io_backend_init(&impl->backend, &config->backend);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         free(impl->completions);
         free(impl->bridges);
         free(impl);
@@ -247,7 +247,7 @@ int cflow_io_native_adapter_init(
     }
 
     adapter->impl = impl;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 cflow_io_backend_ops cflow_io_native_adapter_actor_ops(void) {
@@ -262,7 +262,7 @@ int cflow_io_native_adapter_attach_socket(
     native_io_endpoint *out_endpoint) {
     cflow_io_native_adapter_impl *impl = native_adapter_impl(adapter);
     if (impl == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return native_io_backend_attach_socket(&impl->backend, native_socket,
                                           out_endpoint);
 }
@@ -272,7 +272,7 @@ int cflow_io_native_adapter_release_socket(
     native_io_endpoint endpoint) {
     cflow_io_native_adapter_impl *impl = native_adapter_impl(adapter);
     if (impl == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return native_io_backend_release_socket(&impl->backend, endpoint);
 }
 
@@ -283,7 +283,7 @@ int cflow_io_native_adapter_attach_pipe(
     native_io_endpoint *out_endpoint) {
     cflow_io_native_adapter_impl *impl = native_adapter_impl(adapter);
     if (impl == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return native_io_backend_attach_pipe(&impl->backend, native_handle, flags,
                                         out_endpoint);
 }
@@ -293,7 +293,7 @@ int cflow_io_native_adapter_release_pipe(
     native_io_endpoint endpoint) {
     cflow_io_native_adapter_impl *impl = native_adapter_impl(adapter);
     if (impl == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return native_io_backend_release_pipe(&impl->backend, endpoint);
 }
 
@@ -305,15 +305,15 @@ int cflow_io_native_adapter_observe(
     size_t count = 0u;
     size_t index;
     int status;
-    int delivery_status = TURBO_OK;
+    int delivery_status = SALTS_OK;
 
     if (impl == NULL || out_completed == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     *out_completed = 0u;
     status = native_io_backend_observe(&impl->backend, impl->completions,
                                       impl->completion_capacity, timeout_ms,
                                       &count);
-    if (status != TURBO_OK)
+    if (status != SALTS_OK)
         return status;
 
     for (index = 0u; index < count; ++index) {
@@ -325,8 +325,8 @@ int cflow_io_native_adapter_observe(
         cflow_io_complete_status completed;
 
         if (token == 0u || token > impl->bridge_capacity) {
-            if (delivery_status == TURBO_OK)
-                delivery_status = TURBO_EPROTO;
+            if (delivery_status == SALTS_OK)
+                delivery_status = SALTS_EPROTO;
             continue;
         }
         bridge_index = (size_t)(token - 1u);
@@ -335,8 +335,8 @@ int cflow_io_native_adapter_observe(
             !native_adapter_same_request(bridge->native_request,
                                          native->request)) {
             ++impl->stale_actor_completions;
-            if (delivery_status == TURBO_OK)
-                delivery_status = TURBO_EPROTO;
+            if (delivery_status == SALTS_OK)
+                delivery_status = SALTS_EPROTO;
             continue;
         }
 
@@ -359,7 +359,7 @@ int cflow_io_native_adapter_observe(
 int cflow_io_native_adapter_wake(cflow_io_native_adapter *adapter) {
     cflow_io_native_adapter_impl *impl = native_adapter_impl(adapter);
     if (impl == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return native_io_backend_wake(&impl->backend);
 }
 
@@ -373,46 +373,46 @@ int cflow_io_native_adapter_drive_publisher(
     size_t progressed = 0u;
     size_t polled = 0u;
     int poll_status;
-    int observe_status = TURBO_OK;
+    int observe_status = SALTS_OK;
     int owner_status;
 
     if (out_completed != NULL)
         *out_completed = 0u;
     if (impl == NULL || owner == NULL || owner->impl == NULL ||
         max_phase_steps == 0u || out_completed == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
 
     /* A wake can be posted before the owner reaches observe. Consume that
      * control edge before admitting new operations so it cannot masquerade as
      * progress for the newly submitted batch. Ready completions are delivered
      * at the same boundary and cause this tick to return after owner work. */
     poll_status = cflow_io_native_adapter_observe(adapter, 0u, &polled);
-    if (poll_status != TURBO_OK && poll_status != TURBO_ETIMEDOUT)
+    if (poll_status != SALTS_OK && poll_status != SALTS_ETIMEDOUT)
         return poll_status;
     *out_completed = polled;
 
     owner_status = cflow_io_publisher_owner_run_ready(
         owner, max_phase_steps, &progressed);
-    if (owner_status != TURBO_OK)
+    if (owner_status != SALTS_OK)
         return owner_status;
     if (polled != 0u)
-        return TURBO_OK;
+        return SALTS_OK;
     if (impl->active_bridges == 0u)
-        return TURBO_OK;
+        return SALTS_OK;
 
     observe_status = cflow_io_native_adapter_observe(
         adapter, timeout_ms, out_completed);
     progressed = 0u;
     owner_status = cflow_io_publisher_owner_run_ready(
         owner, max_phase_steps, &progressed);
-    return observe_status != TURBO_OK ? observe_status : owner_status;
+    return observe_status != SALTS_OK ? observe_status : owner_status;
 }
 
 int cflow_io_native_adapter_close(cflow_io_native_adapter *adapter) {
     cflow_io_native_adapter_impl *impl;
 
     if (adapter == NULL || adapter->impl == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     impl = (cflow_io_native_adapter_impl *)adapter->impl;
     return native_io_backend_close(&impl->backend);
 }
@@ -422,17 +422,17 @@ int cflow_io_native_adapter_destroy(cflow_io_native_adapter *adapter) {
     int status;
 
     if (adapter == NULL || adapter->impl == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     impl = (cflow_io_native_adapter_impl *)adapter->impl;
     status = native_io_backend_destroy(&impl->backend);
-    if (status != TURBO_OK)
+    if (status != SALTS_OK)
         return status;
 
     free(impl->completions);
     free(impl->bridges);
     free(impl);
     adapter->impl = NULL;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 bool cflow_io_native_adapter_get_stats(

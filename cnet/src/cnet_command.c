@@ -76,6 +76,7 @@ static bool cnet_is_power_of_two(uint64_t value) {
 }
 
 static bool cnet_command_valid(const cnet_command *command) {
+  size_t segment_bytes = 0u;
   if (command == NULL || command->kind <= CNET_COMMAND_NONE || command->kind > CNET_COMMAND_STOP)
     return false;
 
@@ -84,12 +85,28 @@ static bool cnet_command_valid(const cnet_command *command) {
            command->size == 0u;
 
   if (!cnet_session_handle_valid(command->connection)) return false;
-  if (command->kind == CNET_COMMAND_CONNECT || command->kind == CNET_COMMAND_SEND ||
-      command->kind == CNET_COMMAND_SEND_CLOSE)
-    return command->data != NULL && command->size != 0u && command->argument == 0u;
+  if (command->kind == CNET_COMMAND_CONNECT)
+    return command->data != NULL && command->size != 0u && command->argument == 0u &&
+           command->segments == NULL && command->segment_count == 0u;
+  if (command->kind == CNET_COMMAND_SEND || command->kind == CNET_COMMAND_SEND_CLOSE) {
+    if (command->size == 0u || command->argument != 0u) return false;
+    if (command->segments == NULL || command->segment_count == 0u)
+      return command->data != NULL && command->segments == NULL && command->segment_count == 0u;
+    if (command->data != NULL || command->segment_count > command->size) return false;
+    for (size_t index = 0u; index < command->segment_count; ++index) {
+      const cnet_const_buffer *segment = &command->segments[index];
+      if (segment->data == NULL || segment->size == 0u ||
+          segment->size > command->size - segment_bytes)
+        return false;
+      segment_bytes += segment->size;
+    }
+    return segment_bytes == command->size;
+  }
   if (command->kind == CNET_COMMAND_RECEIVE)
-    return command->data == NULL && command->size == 0u && command->argument != 0u;
-  return command->data == NULL && command->size == 0u && command->argument == 0u;
+    return command->data == NULL && command->size == 0u && command->argument != 0u &&
+           command->segments == NULL && command->segment_count == 0u;
+  return command->data == NULL && command->size == 0u && command->argument == 0u &&
+         command->segments == NULL && command->segment_count == 0u;
 }
 
 int cnet_command_queue_init(cnet_command_queue *queue, const cnet_command_queue_config *config) {
@@ -98,22 +115,22 @@ int cnet_command_queue_init(cnet_command_queue *queue, const cnet_command_queue_
   size_t entry_size;
   size_t capacity;
 
-  if (queue == NULL) return TURBO_EINVAL;
-  if (queue->impl != NULL) return TURBO_EALREADY;
+  if (queue == NULL) return SALTS_EINVAL;
+  if (queue->impl != NULL) return SALTS_EALREADY;
   if (config == NULL || !cnet_is_power_of_two(config->capacity) || config->max_payload_bytes == 0u)
-    return TURBO_EINVAL;
-  if (config->capacity > UINT32_MAX) return TURBO_ERANGE;
+    return SALTS_EINVAL;
+  if (config->capacity > UINT32_MAX) return SALTS_ERANGE;
   if (config->max_payload_bytes > SIZE_MAX - offsetof(cnet_command_entry, payload))
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   entry_size = offsetof(cnet_command_entry, payload) + config->max_payload_bytes;
-  if (entry_size > SIZE_MAX - (entry_alignment - 1u)) return TURBO_ERANGE;
+  if (entry_size > SIZE_MAX - (entry_alignment - 1u)) return SALTS_ERANGE;
   entry_size = (entry_size + entry_alignment - 1u) & ~(entry_alignment - 1u);
   capacity = (size_t)config->capacity;
   if (capacity > SIZE_MAX / entry_size || capacity > SIZE_MAX / sizeof(uint32_t))
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
 
   impl = (cnet_command_queue_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   impl->entries = (unsigned char *)calloc(capacity, entry_size);
   impl->free_slots = (uint32_t *)calloc(capacity, sizeof(*impl->free_slots));
   impl->queued_slots = (uint32_t *)calloc(capacity, sizeof(*impl->queued_slots));
@@ -122,7 +139,7 @@ int cnet_command_queue_init(cnet_command_queue *queue, const cnet_command_queue_
     free(impl->free_slots);
     free(impl->entries);
     free(impl);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   impl->capacity = capacity;
   impl->mask = capacity - 1u;
@@ -133,7 +150,7 @@ int cnet_command_queue_init(cnet_command_queue *queue, const cnet_command_queue_
   for (size_t index = 0u; index < capacity; ++index)
     impl->free_slots[index] = (uint32_t)(capacity - index - 1u);
   queue->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *command) {
@@ -142,30 +159,39 @@ int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *co
   size_t slot;
   size_t queue_tail;
 
-  if (impl == NULL || !cnet_command_valid(command)) return TURBO_EINVAL;
+  if (impl == NULL || !cnet_command_valid(command)) return SALTS_EINVAL;
   if (command->size > impl->max_payload_bytes) {
     cnet_command_record_rejection(impl, command->size);
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   }
   if (!impl->admission_open) {
     cnet_command_record_rejection(impl, command->size);
-    return TURBO_ESHUTDOWN;
+    return SALTS_ESHUTDOWN;
   }
   if (impl->free_count == 0u) {
     cnet_command_record_rejection(impl, command->size);
-    return TURBO_ENOBUFS;
+    return SALTS_ENOBUFS;
   }
 
   slot = impl->free_slots[--impl->free_count];
   entry = cnet_command_entry_at(impl, slot);
-  if (entry->state != CNET_COMMAND_ENTRY_FREE) return TURBO_EPROTO;
+  if (entry->state != CNET_COMMAND_ENTRY_FREE) return SALTS_EPROTO;
   entry->kind = command->kind;
   entry->connection = command->connection;
   entry->size = command->size;
   entry->argument = command->argument;
   entry->generation = cnet_command_next_generation(entry->generation);
   entry->state = CNET_COMMAND_ENTRY_QUEUED;
-  if (command->size != 0u) memcpy(entry->payload, command->data, command->size);
+  if (command->segment_count != 0u) {
+    size_t offset = 0u;
+    for (size_t index = 0u; index < command->segment_count; ++index) {
+      memcpy(entry->payload + offset, command->segments[index].data,
+             command->segments[index].size);
+      offset += command->segments[index].size;
+    }
+  } else if (command->size != 0u) {
+    memcpy(entry->payload, command->data, command->size);
+  }
 
   queue_tail = (impl->queued_head + impl->queued_count) & impl->mask;
   impl->queued_slots[queue_tail] = (uint32_t)slot;
@@ -174,7 +200,7 @@ int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *co
   impl->queued_bytes += command->size;
   if (impl->peak_commands < impl->live_commands) impl->peak_commands = impl->live_commands;
   if (impl->peak_queued_bytes < impl->queued_bytes) impl->peak_queued_bytes = impl->queued_bytes;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_command_queue_take(cnet_command_queue *queue, cnet_command_view *out_view) {
@@ -182,17 +208,17 @@ int cnet_command_queue_take(cnet_command_queue *queue, cnet_command_view *out_vi
   cnet_command_entry *entry;
   size_t slot;
 
-  if (out_view == NULL) return TURBO_EINVAL;
+  if (out_view == NULL) return SALTS_EINVAL;
   memset(out_view, 0, sizeof(*out_view));
-  if (impl == NULL) return TURBO_EINVAL;
+  if (impl == NULL) return SALTS_EINVAL;
   if (impl->queued_count == 0u)
-    return impl->close_complete && impl->live_commands == 0u ? TURBO_EOF : TURBO_ETIMEDOUT;
+    return impl->close_complete && impl->live_commands == 0u ? SALTS_EOF : SALTS_ETIMEDOUT;
 
   slot = impl->queued_slots[impl->queued_head];
   impl->queued_head = (impl->queued_head + 1u) & impl->mask;
   --impl->queued_count;
   entry = cnet_command_entry_at(impl, slot);
-  if (entry->state != CNET_COMMAND_ENTRY_QUEUED) return TURBO_EPROTO;
+  if (entry->state != CNET_COMMAND_ENTRY_QUEUED) return SALTS_EPROTO;
   entry->state = CNET_COMMAND_ENTRY_BORROWED;
   out_view->kind = entry->kind;
   out_view->connection = entry->connection;
@@ -200,7 +226,7 @@ int cnet_command_queue_take(cnet_command_queue *queue, cnet_command_view *out_vi
   out_view->size = entry->size;
   out_view->argument = entry->argument;
   out_view->_sequence = cnet_command_token(slot, entry->generation);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_command_queue_release(cnet_command_queue *queue, cnet_command_view *view) {
@@ -210,31 +236,31 @@ int cnet_command_queue_release(cnet_command_queue *queue, cnet_command_view *vie
   const uint32_t generation = view != NULL ? (uint32_t)(view->_sequence >> 32u) : 0u;
   size_t slot;
 
-  if (impl == NULL || view == NULL || encoded_slot == 0u || generation == 0u) return TURBO_EINVAL;
+  if (impl == NULL || view == NULL || encoded_slot == 0u || generation == 0u) return SALTS_EINVAL;
   slot = (size_t)encoded_slot - 1u;
-  if (slot >= impl->capacity) return TURBO_EINVAL;
+  if (slot >= impl->capacity) return SALTS_EINVAL;
   entry = cnet_command_entry_at(impl, slot);
   if (entry->state != CNET_COMMAND_ENTRY_BORROWED || entry->generation != generation)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (impl->live_commands == 0u || impl->queued_bytes < entry->size ||
       impl->free_count >= impl->capacity)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
 
   --impl->live_commands;
   impl->queued_bytes -= entry->size;
   entry->state = CNET_COMMAND_ENTRY_FREE;
   impl->free_slots[impl->free_count++] = (uint32_t)slot;
   memset(view, 0, sizeof(*view));
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_command_queue_close(cnet_command_queue *queue) {
   cnet_command_queue_impl *impl = cnet_command_impl(queue);
-  if (impl == NULL) return TURBO_EINVAL;
-  if (impl->close_complete) return TURBO_EALREADY;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->close_complete) return SALTS_EALREADY;
   impl->admission_open = false;
   impl->close_complete = true;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 bool cnet_command_queue_get_stats(const cnet_command_queue *queue,
@@ -249,15 +275,15 @@ bool cnet_command_queue_get_stats(const cnet_command_queue *queue,
 
 int cnet_command_queue_destroy(cnet_command_queue *queue) {
   cnet_command_queue_impl *impl = cnet_command_impl(queue);
-  if (queue == NULL) return TURBO_EINVAL;
-  if (impl == NULL) return TURBO_OK;
+  if (queue == NULL) return SALTS_EINVAL;
+  if (impl == NULL) return SALTS_OK;
   if (!impl->close_complete || impl->live_commands != 0u || impl->queued_count != 0u ||
       impl->free_count != impl->capacity)
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   free(impl->queued_slots);
   free(impl->free_slots);
   free(impl->entries);
   free(impl);
   queue->impl = NULL;
-  return TURBO_OK;
+  return SALTS_OK;
 }

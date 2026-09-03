@@ -182,7 +182,7 @@
 
   Run: `rg.exe -n "\b(sorry|admit|axiom)\b" CMetaCFlowCalculus Test`
 
-  Run: `git diff --name-only -- cmeta cflow platform concurrency turbostl utils`
+  Run: `git diff --name-only -- cmeta cflow platform concurrency container utils`
 
   Expected: no proof escapes and no production-directory changes. Confirm R1–R10, R11–R14, and R15 occupy only their designated rule-id types.
 

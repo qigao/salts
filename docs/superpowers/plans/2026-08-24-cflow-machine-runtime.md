@@ -6,7 +6,7 @@
 
 **Architecture:** A `cflow_machine_instance` owns copied mutable state, one bounded Mailbox, normalized callback bindings, and one prepared output. External producers only copy Events into the Mailbox; executor tasks alone select and commit transitions, while a Resumable/Source adapter maps readiness to VALUE/WAIT/DONE/ERROR without adding demand or scheduler state.
 
-**Tech Stack:** C11, CMeta descriptors/interfaces, CFlow Machine/Mailbox/Executor/Resumable/Source, Turbo Platform synchronization, TinyTest, CMake Presets, Lean 4.33.1 and Lake.
+**Tech Stack:** C11, CMeta descriptors/interfaces, CFlow Machine/Mailbox/Executor/Resumable/Source, Salts Platform synchronization, TinyTest, CMake Presets, Lean 4.33.1 and Lake.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-cflow-machine-runtime-design.md`
 
@@ -228,7 +228,7 @@
 
 - [ ] **Step 2: Run final verification**
 
-  Build `TurboUtils::CFlow` and all affected tests with Release, run the complete
+  Build `Salts::CFlow` and all affected tests with Release, run the complete
   CFlow CTest set, repeat focused tests with `win-dev-user` ASan, run focused and
   full Lean tests, verify the installed header consumer, and run
   `codegraph affected` for changed implementation/header files. Record any

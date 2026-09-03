@@ -55,7 +55,7 @@ static int s3_file_put(void *user, const chttp_server_request_view *request,
              "alias/archive") != 0 ||
       strcmp(chttp_server_request_header(request, "x-amz-server-side-encryption-context"),
              "eyJ0ZW5hbnQiOiJhbHBoYSJ9") != 0)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   ++probe->puts;
   return chttp_server_reply(response, 200u, NULL, NULL, 0u);
 }
@@ -63,7 +63,7 @@ static int s3_file_put(void *user, const chttp_server_request_view *request,
 static int s3_file_get(void *user, const chttp_server_request_view *request,
                        chttp_server_response *response) {
   s3_file_probe *probe = (s3_file_probe *)user;
-  if (probe == NULL || request == NULL) return TURBO_EPROTO;
+  if (probe == NULL || request == NULL) return SALTS_EPROTO;
   ++probe->gets;
   return chttp_server_response_file(response, 200u, "application/octet-stream",
                                     probe->payload_path);
@@ -86,7 +86,7 @@ static int s3_file_customer_put(void *user, const chttp_server_request_view *req
   s3_file_probe *probe = (s3_file_probe *)user;
   if (probe == NULL || !s3_file_customer_headers_valid(request) || request->body_size != 6u ||
       memcmp(request->body, "secret", 6u) != 0)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   ++probe->customer_puts;
   return chttp_server_reply(response, 200u, NULL, NULL, 0u);
 }
@@ -94,7 +94,7 @@ static int s3_file_customer_put(void *user, const chttp_server_request_view *req
 static int s3_file_customer_get(void *user, const chttp_server_request_view *request,
                                 chttp_server_response *response) {
   s3_file_probe *probe = (s3_file_probe *)user;
-  if (probe == NULL || !s3_file_customer_headers_valid(request)) return TURBO_EPROTO;
+  if (probe == NULL || !s3_file_customer_headers_valid(request)) return SALTS_EPROTO;
   ++probe->customer_gets;
   return chttp_server_reply(response, 200u, "application/octet-stream", "secret", 6u);
 }
@@ -103,7 +103,7 @@ static int s3_file_missing(void *user, const chttp_server_request_view *request,
                            chttp_server_response *response) {
   static const char body[] = "<Error><Code>NoSuchKey</Code></Error>";
   s3_file_probe *probe = (s3_file_probe *)user;
-  if (probe == NULL || request == NULL) return TURBO_EPROTO;
+  if (probe == NULL || request == NULL) return SALTS_EPROTO;
   ++probe->missing_gets;
   return chttp_server_reply(response, 404u, "application/xml", body, sizeof(body) - 1u);
 }
@@ -157,24 +157,24 @@ static void s3_file_run(chttp_protocol protocol) {
   probe.payload = payload;
   probe.payload_path = upload_path;
   probe.payload_size = S3_FILE_TEST_BYTES;
-  check_equal(s3_signer_sha256_hex(payload, S3_FILE_TEST_BYTES, probe.payload_sha256), TURBO_OK);
+  check_equal(s3_signer_sha256_hex(payload, S3_FILE_TEST_BYTES, probe.payload_sha256), SALTS_OK);
   check_equal(tt_write_file(upload_path, payload, S3_FILE_TEST_BYTES), 0);
   check_equal(tt_write_file(download_path, "sentinel", sizeof("sentinel") - 1u), 0);
 
-  check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
-  check_equal(chttp_server_put(&server, "/bucket/file", s3_file_put, &probe), TURBO_OK);
-  check_equal(chttp_server_get(&server, "/bucket/file", s3_file_get, &probe), TURBO_OK);
+  check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
+  check_equal(chttp_server_put(&server, "/bucket/file", s3_file_put, &probe), SALTS_OK);
+  check_equal(chttp_server_get(&server, "/bucket/file", s3_file_get, &probe), SALTS_OK);
   check_equal(chttp_server_put(&server, "/bucket/customer", s3_file_customer_put, &probe),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(chttp_server_get(&server, "/bucket/customer", s3_file_customer_get, &probe),
-              TURBO_OK);
-  check_equal(chttp_server_get(&server, "/bucket/missing", s3_file_missing, &probe), TURBO_OK);
-  check_equal(chttp_server_start(&server), TURBO_OK);
-  check_equal(chttp_server_port(&server, &port), TURBO_OK);
+              SALTS_OK);
+  check_equal(chttp_server_get(&server, "/bucket/missing", s3_file_missing, &probe), SALTS_OK);
+  check_equal(chttp_server_start(&server), SALTS_OK);
+  check_equal(chttp_server_port(&server, &port), SALTS_OK);
   check_equal(
       s3_test_endpoint(port, connection_uri, sizeof(connection_uri), authority, sizeof(authority)),
-      TURBO_OK);
-  check_equal(chttp_client_init(&http_client, &http_config), TURBO_OK);
+      SALTS_OK);
+  check_equal(chttp_client_init(&http_client, &http_config), SALTS_OK);
   config = (s3_client_config){.size = sizeof(config),
                               .connection_uri = connection_uri,
                               .authority = authority,
@@ -184,11 +184,11 @@ static void s3_file_run(chttp_protocol protocol) {
                               .credentials = s3_credentials_provider_static(&credentials),
                               .clock = s3_file_clock,
                               .timeout_ms = S3_TEST_TIMEOUT_MS};
-  check_equal(s3_client_init(&client, &http_client, &config), TURBO_OK);
+  check_equal(s3_client_init(&client, &http_client, &config), SALTS_OK);
 
   check_equal(s3_put_object_file(&client, "bucket", "file", upload_path, &put_options,
                                  s3_file_on_progress, &upload_progress, &response, &error),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(response.http.status_code, 200u);
   s3_response_destroy(&response);
   check_equal(upload_progress.transferred, (size_t)S3_FILE_TEST_BYTES);
@@ -197,7 +197,7 @@ static void s3_file_run(chttp_protocol protocol) {
 
   check_equal(s3_get_object_file(&client, "bucket", "file", download_path, NULL,
                                  s3_file_on_progress, &download_progress, &response, &error),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(response.http.status_code, 200u);
   check_null(response.http.body);
   check_equal(response.http.body_size, (size_t)S3_FILE_TEST_BYTES);
@@ -215,23 +215,23 @@ static void s3_file_run(chttp_protocol protocol) {
 
   check_equal(s3_put_object_with_options(&client, "bucket", "customer", "secret", 6u,
                                          &customer_put_options, &response, &error),
-              TURBO_OK);
+              SALTS_OK);
   s3_response_destroy(&response);
   check_equal(s3_get_object_with_options(&client, "bucket", "customer", &customer_get_options,
                                          &response, &error),
-              TURBO_OK);
+              SALTS_OK);
   check_equal(response.http.body, "secret", 6u);
   s3_response_destroy(&response);
   customer_sse.customer_key_size = sizeof(customer_key) - 2u;
   check_equal(s3_put_object_with_options(&client, "bucket", "customer", "secret", 6u,
                                          &customer_put_options, &response, &error),
-              TURBO_EINVAL);
+              SALTS_EINVAL);
   customer_sse.customer_key_size = sizeof(customer_key) - 1u;
 
   check_equal(tt_write_file(download_path, "sentinel", sizeof("sentinel") - 1u), 0);
   check_equal(s3_get_object_file(&client, "bucket", "missing", download_path, NULL, NULL, NULL,
                                  &response, &error),
-              TURBO_EPROTO);
+              SALTS_EPROTO);
   check_equal(response.http.status_code, 404u);
   s3_response_destroy(&response);
   downloaded = tt_read_file(download_path, &downloaded_size);
@@ -247,10 +247,10 @@ static void s3_file_run(chttp_protocol protocol) {
   check_equal(probe.customer_gets, (size_t)1u);
   check_equal(probe.missing_gets, (size_t)1u);
 
-  check_equal(s3_client_destroy(&client), TURBO_OK);
-  check_equal(chttp_client_destroy(&http_client, S3_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(chttp_server_stop(&server, S3_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(chttp_server_destroy(&server), TURBO_OK);
+  check_equal(s3_client_destroy(&client), SALTS_OK);
+  check_equal(chttp_client_destroy(&http_client, S3_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(chttp_server_stop(&server, S3_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(chttp_server_destroy(&server), SALTS_OK);
 
 done:
   if (upload_path != NULL) check_equal(tt_remove_file(upload_path), 0);

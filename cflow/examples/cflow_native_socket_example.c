@@ -60,7 +60,7 @@ static int cflow_socket_example_set_nonblocking(
 #if defined(_WIN32)
     u_long enabled = 1u;
     return ioctlsocket(socket_value, FIONBIO, &enabled) == 0
-        ? TURBO_OK : cflow_socket_example_last_error();
+        ? SALTS_OK : cflow_socket_example_last_error();
 #else
     int flags;
     do {
@@ -72,7 +72,7 @@ static int cflow_socket_example_set_nonblocking(
         if (errno != EINTR)
             return -errno;
     }
-    return TURBO_OK;
+    return SALTS_OK;
 #endif
 }
 
@@ -80,7 +80,7 @@ static int cflow_socket_example_pair(cflow_example_socket sockets[2]) {
     cflow_example_socket listener = CFLOW_EXAMPLE_INVALID_SOCKET;
     struct sockaddr_in address;
     int address_length = (int)sizeof(address);
-    int status = TURBO_OK;
+    int status = SALTS_OK;
 
     sockets[0] = CFLOW_EXAMPLE_INVALID_SOCKET;
     sockets[1] = CFLOW_EXAMPLE_INVALID_SOCKET;
@@ -94,7 +94,7 @@ static int cflow_socket_example_pair(cflow_example_socket sockets[2]) {
     if (bind(listener, (const struct sockaddr *)&address,
              (int)sizeof(address)) != 0)
         status = cflow_socket_example_last_error();
-    if (status == TURBO_OK &&
+    if (status == SALTS_OK &&
         getsockname(listener, (struct sockaddr *)&address,
 #if defined(_WIN32)
                     &address_length
@@ -103,28 +103,28 @@ static int cflow_socket_example_pair(cflow_example_socket sockets[2]) {
 #endif
                     ) != 0)
         status = cflow_socket_example_last_error();
-    if (status == TURBO_OK && listen(listener, 1) != 0)
+    if (status == SALTS_OK && listen(listener, 1) != 0)
         status = cflow_socket_example_last_error();
-    if (status == TURBO_OK) {
+    if (status == SALTS_OK) {
         sockets[0] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (sockets[0] == CFLOW_EXAMPLE_INVALID_SOCKET)
             status = cflow_socket_example_last_error();
     }
-    if (status == TURBO_OK &&
+    if (status == SALTS_OK &&
         connect(sockets[0], (const struct sockaddr *)&address,
                 (int)sizeof(address)) != 0)
         status = cflow_socket_example_last_error();
-    if (status == TURBO_OK) {
+    if (status == SALTS_OK) {
         sockets[1] = accept(listener, NULL, NULL);
         if (sockets[1] == CFLOW_EXAMPLE_INVALID_SOCKET)
             status = cflow_socket_example_last_error();
     }
     cflow_socket_example_close(listener);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         status = cflow_socket_example_set_nonblocking(sockets[0]);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         status = cflow_socket_example_set_nonblocking(sockets[1]);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         cflow_socket_example_close(sockets[0]);
         cflow_socket_example_close(sockets[1]);
         sockets[0] = CFLOW_EXAMPLE_INVALID_SOCKET;
@@ -160,20 +160,20 @@ int main(void) {
     status = cflow_native_example_context_init(
         &context, cflow_socket_example_backend(),
         cflow_io_native_backend_actor_ops());
-    if (status == TURBO_ENOTSUP) {
+    if (status == SALTS_ENOTSUP) {
         fprintf(stderr,
                 "native socket example: selected backend is unsupported; "
                 "no fallback was attempted\n");
         return CFLOW_SOCKET_EXAMPLE_SKIP;
     }
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native socket example: backend init failed: %d\n",
                 status);
         (void)cflow_native_example_destroy_context(&context);
         return result;
     }
     status = cflow_socket_example_pair(sockets);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native socket example: loopback setup failed: %d\n",
                 status);
         goto cleanup;
@@ -209,7 +209,7 @@ int main(void) {
     }
     status = cflow_native_example_drive_until(
         &context, CFLOW_NATIVE_EXAMPLE_CAPACITY);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native socket example: completion drain failed: %d\n",
                 status);
         goto cleanup;
@@ -246,7 +246,7 @@ cleanup:
     require_retained_identity = success;
     if (!success) {
         status = cflow_native_example_close_actor(&context);
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             fprintf(stderr,
                     "native socket example: Actor cleanup failed: %d\n",
                     status);
@@ -258,8 +258,8 @@ cleanup:
             sockets[index] = CFLOW_EXAMPLE_INVALID_SOCKET;
             status = cflow_native_example_forget_until_quiescent(
                 &context, identity, cflow_io_native_backend_forget_socket);
-            if (status != TURBO_OK &&
-                (require_retained_identity || status != TURBO_ENOENT)) {
+            if (status != SALTS_OK &&
+                (require_retained_identity || status != SALTS_ENOENT)) {
                 fprintf(stderr,
                         "native socket example: socket forget failed: %d\n",
                         status);
@@ -268,13 +268,13 @@ cleanup:
         }
     }
     status = cflow_native_example_close_actor(&context);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native socket example: Actor close failed: %d\n",
                 status);
         success = false;
     }
     status = cflow_native_example_destroy_context(&context);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native socket example: context destroy failed: %d\n",
                 status);
         success = false;

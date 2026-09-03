@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add the TurboMedia audio/video/screen capture abstraction to
-TurboUtils as the optional, installed `TurboUtils::Capture` component without
+Salts as the optional, installed `Salts::Capture` component without
 changing its public C behavior.
 
 **Architecture:** Keep capture in an independent shared library with a stable C
@@ -22,8 +22,8 @@ PipeWire/X11, AVFoundation/CoreGraphics, Android NDK camera/media APIs.
 The component, all listed native source sets, package export, presets,
 documentation, and deterministic tests are implemented. Windows Release was
 fresh-configured and built, all 148 registered tests passed, and the installed
-consumer compiled and linked `TurboUtils::Capture`. Android arm64 Debug also
-compiled the `turbo_capture` target.
+consumer compiled and linked `Salts::Capture`. Android arm64 Debug also
+compiled the `salts_capture` target.
 
 Native Linux, macOS, and iOS configure/link/runtime validation remains assigned
 to their corresponding runners; WSL and Apple SDKs are not available on this
@@ -33,15 +33,15 @@ are present, but this document does not infer native success from source review.
 
 ## Global Constraints
 
-- Preserve `turbo_capture.h`, all public C symbol names, enum numeric values,
+- Preserve `salts_capture.h`, all public C symbol names, enum numeric values,
   struct layouts, callback signatures, and capture error semantics.
-- Keep `TURBO_ENABLE_CAPTURE=OFF` by default; existing presets and exported
+- Keep `SALTS_ENABLE_CAPTURE=OFF` by default; existing presets and exported
   targets remain unchanged unless a capture profile is selected.
 - Do not migrate playback, codecs, RTSP, WebRTC, recorder, Java, or Swift code.
 - A frame/audio callback receives a borrowed view valid only until return; no
   queue, implicit retention, or unbounded allocation may be added.
 - `stop` drains native/in-flight callbacks before `destroy` releases storage.
-- Use TurboUtils tlog only at error-consumption boundaries and never per frame.
+- Use Salts tlog only at error-consumption boundaries and never per frame.
 - Run the smallest focused test before adjacent regressions and package smoke.
 
 ---
@@ -58,31 +58,31 @@ are present, but this document does not infer native success from source review.
 **Interfaces:**
 - Consumes: `cmake_config_target()` and `cmake_add_test()` from
   `cmake/CmakeUtils.cmake`.
-- Produces: option `TURBO_ENABLE_CAPTURE`, target `turbo_capture`, and alias
-  `TurboUtils::Capture`.
+- Produces: option `SALTS_ENABLE_CAPTURE`, target `salts_capture`, and alias
+  `Salts::Capture`.
 
 - [ ] **Step 1: Add the contract test before the public header exists**
 
-  Create a TinyTest file that includes `<turbo_capture.h>` and asserts these
+  Create a TinyTest file that includes `<salts_capture.h>` and asserts these
   hand-derived results:
 
   ```c
-  #include <turbo_capture.h>
+  #include <salts_capture.h>
   #include <tinytest.h>
 
   suite("capture portable contract") {
     it("rounds rational frame rates to the nearest integer") {
-      turbo_video_native_mode_t ntsc = {1920, 1080, 30000u, 1001u,
-                                        TURBO_VIDEO_CAPTURE_FORMAT_NV12, 1u};
-      check_equal(turbo_video_mode_fps(&ntsc), 30);
+      salts_video_native_mode_t ntsc = {1920, 1080, 30000u, 1001u,
+                                        SALTS_VIDEO_CAPTURE_FORMAT_NV12, 1u};
+      check_equal(salts_video_mode_fps(&ntsc), 30);
     }
 
     it("rejects invalid device adapter arguments") {
-      turbo_video_device_t *device = NULL;
-      check_equal(turbo_video_device_open(NULL, NULL),
-                  TURBO_CAPTURE_ERR_FORMAT);
-      check_equal(turbo_video_device_create_capture(NULL, NULL, NULL),
-                  TURBO_CAPTURE_ERR_FORMAT);
+      salts_video_device_t *device = NULL;
+      check_equal(salts_video_device_open(NULL, NULL),
+                  SALTS_CAPTURE_ERR_FORMAT);
+      check_equal(salts_video_device_create_capture(NULL, NULL, NULL),
+                  SALTS_CAPTURE_ERR_FORMAT);
       check_null(device);
     }
   }
@@ -96,11 +96,11 @@ are present, but this document does not infer native success from source review.
   cmake_add_test(
     capture_contract_test
     SOURCES test_capture_contract.c
-    LIBS TurboUtils::Capture TurboUtils::TinyTest
+    LIBS Salts::Capture Salts::TinyTest
     FOLDER "capture/tests")
   ```
 
-  Add `TURBO_ENABLE_CAPTURE` to `CMakeOptions.cmake`, conditionally add the
+  Add `SALTS_ENABLE_CAPTURE` to `CMakeOptions.cmake`, conditionally add the
   `capture/` directory from the root, and create only the target declaration in
   `capture/CMakeLists.txt`; do not add production sources yet.
 
@@ -113,15 +113,15 @@ are present, but this document does not infer native success from source review.
   cmake --build --preset win-capture-dev-user --target capture_contract_test
   ```
 
-  Expected result: compilation fails because `turbo_capture.h` and its
+  Expected result: compilation fails because `salts_capture.h` and its
   functions do not yet exist. A preset/dependency/toolchain failure is not an
   acceptable RED and must be repaired before continuing.
 
 ### Task 2: Migrate the stable public API and backend-neutral mode adapter
 
 **Files:**
-- Create: `capture/include/turbo_capture_export.h`
-- Create: `capture/include/turbo_capture.h`
+- Create: `capture/include/salts_capture_export.h`
+- Create: `capture/include/salts_capture.h`
 - Create: `capture/src/capture_video_backend.h`
 - Create: `capture/src/capture_video.c`
 - Modify: `capture/CMakeLists.txt`
@@ -129,9 +129,9 @@ are present, but this document does not infer native success from source review.
 
 **Interfaces:**
 - Consumes: source API from
-  `C:/projects/cpp/turbonet/turbomedia/media/include/turbo_capture.h`.
-- Produces: the compatible `turbo_capture_*`, `turbo_video_device_*`, and
-  `turbo_video_mode_*` surface plus internal `turbo_video_backend_ops_t`.
+  `C:/projects/cpp/turbonet/turbomedia/media/include/salts_capture.h`.
+- Produces: the compatible `salts_capture_*`, `salts_video_device_*`, and
+  `salts_video_mode_*` surface plus internal `salts_video_backend_ops_t`.
 
 - [ ] **Step 1: Extend RED coverage for rational and filtering boundaries**
 
@@ -144,18 +144,18 @@ are present, but this document does not infer native success from source review.
 - [ ] **Step 2: Add the public header without changing ABI data**
 
   Copy the source declarations and documentation, replace only
-  `TURBO_MEDIA_API` with `TURBO_CAPTURE_API`, and define the component export
+  `SALTS_MEDIA_API` with `SALTS_CAPTURE_API`, and define the component export
   macro as:
 
   ```c
-  #if defined(_WIN32) && defined(TURBO_CAPTURE_SHARED)
-  #  if defined(TURBO_CAPTURE_BUILD)
-  #    define TURBO_CAPTURE_API __declspec(dllexport)
+  #if defined(_WIN32) && defined(SALTS_CAPTURE_SHARED)
+  #  if defined(SALTS_CAPTURE_BUILD)
+  #    define SALTS_CAPTURE_API __declspec(dllexport)
   #  else
-  #    define TURBO_CAPTURE_API __declspec(dllimport)
+  #    define SALTS_CAPTURE_API __declspec(dllimport)
   #  endif
   #else
-  #  define TURBO_CAPTURE_API
+  #  define SALTS_CAPTURE_API
   #endif
   ```
 
@@ -197,7 +197,7 @@ are present, but this document does not infer native success from source review.
   }
   ```
 
-  Each capture configure preset sets `TURBO_ENABLE_CAPTURE=ON`,
+  Each capture configure preset sets `SALTS_ENABLE_CAPTURE=ON`,
   `VCPKG_MANIFEST_FEATURES=capture`, a distinct capture binary directory, and a
   runtime path rooted at that directory. Add matching build, test, and
   `install-...` build presets. Do not change non-capture preset semantics.
@@ -230,7 +230,7 @@ are present, but this document does not infer native success from source review.
 
 **Interfaces:**
 - Consumes: miniaudio, Media Foundation source reader, DirectShow camera
-  controls, libyuv, D3D11/DXGI duplication, and TurboUtils tlog.
+  controls, libyuv, D3D11/DXGI duplication, and Salts tlog.
 - Produces: complete Windows implementations for enumeration, creation,
   callback setup, start/stop/destroy, camera controls/crop, and screen capture.
 
@@ -331,14 +331,14 @@ are present, but this document does not infer native success from source review.
 
 - [ ] **Step 1: Enable capture in Android profiles and run RED configure**
 
-  Add `TURBO_ENABLE_CAPTURE=ON` and manifest feature `capture` to Android
+  Add `SALTS_ENABLE_CAPTURE=ON` and manifest feature `capture` to Android
   profiles. Fresh-configure `android-arm64-v8a-debug-win`; expected RED is
   missing Android capture sources or symbols, not a host-header fallback.
 
 - [ ] **Step 2: Migrate Android sources and logging**
 
   Copy only native C capture files. Replace local `LOGI/LOGE` macros with
-  bounded TurboUtils logging at create/start/stop failure boundaries. Preserve
+  bounded Salts logging at create/start/stop failure boundaries. Preserve
   camera/session/image-reader ownership, pthread synchronization, JNI handle
   validation, and libyuv conversion bounds. Java MediaProjection handoff is
   outside this component and unsupported screen setup must fail explicitly.
@@ -366,25 +366,25 @@ are present, but this document does not infer native success from source review.
 - Modify: `README.md`
 
 **Interfaces:**
-- Consumes: configured `turbo_capture` target and public header.
-- Produces: installed target `TurboUtils::Capture`, installed headers, package
+- Consumes: configured `salts_capture` target and public header.
+- Produces: installed target `Salts::Capture`, installed headers, package
   smoke consumer, and migration instructions for TurboMedia.
 
 - [ ] **Step 1: Write the installed-consumer RED path**
 
-  Add `TURBOUTILS_EXPECT_CAPTURE`. When true, require
-  `TurboUtils::Capture`, compile a consumer that includes
-  `<turbo_capture.h>`, constructs a literal `30000/1001` mode, and returns
-  success only when `turbo_video_mode_fps()` returns `30`. Run
+  Add `SALTS_EXPECT_CAPTURE`. When true, require
+  `Salts::Capture`, compile a consumer that includes
+  `<salts_capture.h>`, constructs a literal `30000/1001` mode, and returns
+  success only when `salts_video_mode_fps()` returns `30`. Run
   `verify_installed_package` and confirm it fails before export/install wiring.
 
 - [ ] **Step 2: Export and install the component**
 
-  Install the shared library in `TurboUtilsTargets`, install both headers, set
+  Install the shared library in `SaltsTargets`, install both headers, set
   export name `Capture`, and pass the capture expectation into package smoke.
   Because dependencies are private to the shared library, do not expose
   miniaudio/libyuv types or add unrelated global dependency discovery to
-  `TurboUtilsConfig.cmake.in`.
+  `SaltsConfig.cmake.in`.
 
 - [ ] **Step 3: Document usage and downstream migration**
 
@@ -392,8 +392,8 @@ are present, but this document does not infer native success from source review.
   control-plane serialization, shutdown ordering, and:
 
   ```cmake
-  find_package(TurboUtils CONFIG REQUIRED)
-  target_link_libraries(app PRIVATE TurboUtils::Capture)
+  find_package(Salts CONFIG REQUIRED)
+  target_link_libraries(app PRIVATE Salts::Capture)
   ```
 
   State that TurboMedia should switch its `TurboMedia::Device` callers to the

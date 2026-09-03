@@ -4,9 +4,9 @@
 
 **Goal:** Execute null-data-model SCXML `if`/`elseif`/`else` blocks using exact action-time `In(id)` configuration semantics without duplicating Statechart instance state.
 
-**Architecture:** Add a source-compatible contextual Statechart executable binding that exposes a borrowed read-only active-state query over the runtime's bounded action-time working configuration. Compile structured conditional blocks in `TurboUtils::CFlowScxml`, resolve every `In(id)` at admission, and interpret only the first matching partition through the existing transactional action/raise boundary.
+**Architecture:** Add a source-compatible contextual Statechart executable binding that exposes a borrowed read-only active-state query over the runtime's bounded action-time working configuration. Compile structured conditional blocks in `Salts::CFlowScxml`, resolve every `In(id)` at admission, and interpret only the first matching partition through the existing transactional action/raise boundary.
 
-**Tech Stack:** C11, CMeta descriptors, CFlow Statechart IR/runtime, TurboUtils XML parser, TinyTest, CMake Presets.
+**Tech Stack:** C11, CMeta descriptors, CFlow Statechart IR/runtime, Salts XML parser, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-cflow-scxml-phase3-conditional-design.md`
 
@@ -200,7 +200,7 @@ is disabled.
 
 ```powershell
 ctest --preset win-release-user -R "^(cflow_scxml_test|cflow_statechart_runtime_test|cflow_statechart_test|cflow_statechart_hierarchy_adapter_test)$" --output-on-failure
-cmake --build --preset win-release-user --target turbo_cflow cflow_scxml_test --parallel
+cmake --build --preset win-release-user --target salts_cflow cflow_scxml_test --parallel
 ```
 
 - [x] **Step 4: Run package and full repository verification**

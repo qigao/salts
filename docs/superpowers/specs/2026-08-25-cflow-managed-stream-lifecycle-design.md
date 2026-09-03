@@ -84,7 +84,7 @@ created through CMeta copy construction.
 
 Tests must cover:
 
-1. generated TurboSTL ranges construct managed values and expose the capability;
+1. generated Container ranges construct managed values and expose the capability;
 2. managed filter/map/reduce pipelines balance construction and destruction;
 3. cancellation/error paths destroy live source, accumulator, continuation,
    coordination, and relation values exactly once;

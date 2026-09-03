@@ -209,7 +209,7 @@ static void print_case_memory(const char *case_name, const cflow_branching_case_
   print_memory_row(case_name, "flat-lookup", &flat);
   print_memory_row(case_name, "one-pass-flat-workspace", &views->flat_once.memory);
   print_memory_row(case_name, "pointer-adjacency", &views->pointer.memory);
-  print_memory_row(case_name, "Rocida STL-HashMap", &views->hash.memory);
+  print_memory_row(case_name, "CSTL-HashMap", &views->hash.memory);
   print_memory_row(case_name, "CSR", &views->csr.memory);
 }
 
@@ -254,7 +254,7 @@ static bool build_csr_once(const cflow_subgraph *subgraph) {
     benchmark_batch(label " / pointer adjacency build + destroy", samples) {                       \
       if (!build_pointer_once(subgraph)) pointer_ok = false;                                       \
     }                                                                                              \
-    benchmark_batch(label " / Rocida STL HashMap build + destroy", samples) {                        \
+    benchmark_batch(label " / CSTL HashMap build + destroy", samples) {                        \
       if (!build_hash_once(subgraph)) hash_ok = false;                                             \
     }                                                                                              \
     benchmark_batch(label " / CSR build + destroy", samples) {                                     \
@@ -291,7 +291,7 @@ static bool build_csr_once(const cflow_subgraph *subgraph) {
         cflow_branching_observe_flat_once(&(views)->flat_once, &(fixture)->subgraph), reference);  \
     CFLOW_BRANCHING_TRAVERSAL_ROW(label " / pointer adjacency", samples, repetitions, work_units_, \
                                   cflow_branching_observe_pointer(&(views)->pointer), reference);  \
-    CFLOW_BRANCHING_TRAVERSAL_ROW(label " / Rocida STL HashMap adjacency", samples, repetitions,     \
+    CFLOW_BRANCHING_TRAVERSAL_ROW(label " / CSTL HashMap adjacency", samples, repetitions,     \
                                   work_units_, cflow_branching_observe_hash(&(views)->hash),       \
                                   reference);                                                      \
     CFLOW_BRANCHING_TRAVERSAL_ROW(label " / CSR adjacency", samples, repetitions, work_units_,     \

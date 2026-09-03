@@ -1,6 +1,6 @@
 #include "cnet_transport.h"
 
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 #include <limits.h>
 #include <string.h>
@@ -37,7 +37,7 @@ static int cnet_transport_native_error(void) {
 #else
   const int error = errno;
 #endif
-  return error > 0 ? -error : TURBO_EIO;
+  return error > 0 ? -error : SALTS_EIO;
 }
 
 static int cnet_transport_parse_address(const char *host, uint16_t port, bool allow_zero_port,
@@ -47,35 +47,35 @@ static int cnet_transport_parse_address(const char *host, uint16_t port, bool al
   struct sockaddr_in6 address_v6;
   int parsed;
 
-  if (out_address_length == NULL) return TURBO_EINVAL;
+  if (out_address_length == NULL) return SALTS_EINVAL;
   *out_address_length = 0u;
   if (host == NULL || host[0] == '\0' || (!allow_zero_port && port == 0u) || out_address == NULL)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
 
   memset(&address_v4, 0, sizeof(address_v4));
   parsed = inet_pton(AF_INET, host, &address_v4.sin_addr);
   if (parsed < 0) return cnet_transport_native_error();
   if (parsed == 1) {
-    if (address_capacity < sizeof(address_v4)) return TURBO_ERANGE;
+    if (address_capacity < sizeof(address_v4)) return SALTS_ERANGE;
     address_v4.sin_family = AF_INET;
     address_v4.sin_port = htons(port);
     memcpy(out_address, &address_v4, sizeof(address_v4));
     *out_address_length = sizeof(address_v4);
-    return TURBO_OK;
+    return SALTS_OK;
   }
 
   memset(&address_v6, 0, sizeof(address_v6));
   parsed = inet_pton(AF_INET6, host, &address_v6.sin6_addr);
   if (parsed < 0) return cnet_transport_native_error();
   if (parsed == 1) {
-    if (address_capacity < sizeof(address_v6)) return TURBO_ERANGE;
+    if (address_capacity < sizeof(address_v6)) return SALTS_ERANGE;
     address_v6.sin6_family = AF_INET6;
     address_v6.sin6_port = htons(port);
     memcpy(out_address, &address_v6, sizeof(address_v6));
     *out_address_length = sizeof(address_v6);
-    return TURBO_OK;
+    return SALTS_OK;
   }
-  return TURBO_ENOENT;
+  return SALTS_ENOENT;
 }
 
 int cnet_transport_parse_numeric_address(const char *host, uint16_t port, void *out_address,
@@ -126,32 +126,32 @@ static int cnet_transport_address_family(const void *address, size_t address_len
   const struct sockaddr *native_address = (const struct sockaddr *)address;
   if (address == NULL || out_family == NULL || address_length < sizeof(native_address->sa_family) ||
       address_length > (size_t)INT_MAX)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (native_address->sa_family == AF_INET) {
-    if (address_length < sizeof(struct sockaddr_in)) return TURBO_EINVAL;
+    if (address_length < sizeof(struct sockaddr_in)) return SALTS_EINVAL;
   } else if (native_address->sa_family == AF_INET6) {
-    if (address_length < sizeof(struct sockaddr_in6)) return TURBO_EINVAL;
+    if (address_length < sizeof(struct sockaddr_in6)) return SALTS_EINVAL;
   } else {
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   }
   *out_family = native_address->sa_family;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int cnet_transport_make_socket(native_io_backend_kind backend_kind, int family,
                                       int socket_type, int protocol,
                                       cnet_native_socket *out_socket) {
 #if defined(_WIN32)
-  if (backend_kind != NATIVE_IO_BACKEND_IOCP) return TURBO_ENOTSUP;
+  if (backend_kind != NATIVE_IO_BACKEND_IOCP) return SALTS_ENOTSUP;
   *out_socket = WSASocketW(family, socket_type, protocol, NULL, 0u, WSA_FLAG_OVERLAPPED);
-  return *out_socket == CNET_INVALID_SOCKET ? cnet_transport_native_error() : TURBO_OK;
+  return *out_socket == CNET_INVALID_SOCKET ? cnet_transport_native_error() : SALTS_OK;
 #else
   int flags;
   *out_socket = socket(family, socket_type, protocol);
   if (*out_socket == CNET_INVALID_SOCKET) return cnet_transport_native_error();
-  if (native_io_backend_kind_model(backend_kind) != NATIVE_IO_MODEL_READINESS) return TURBO_OK;
+  if (native_io_backend_kind_model(backend_kind) != NATIVE_IO_MODEL_READINESS) return SALTS_OK;
   flags = fcntl(*out_socket, F_GETFL, 0);
-  if (flags >= 0 && fcntl(*out_socket, F_SETFL, flags | O_NONBLOCK) == 0) return TURBO_OK;
+  if (flags >= 0 && fcntl(*out_socket, F_SETFL, flags | O_NONBLOCK) == 0) return SALTS_OK;
   {
     const int status = cnet_transport_native_error();
     (void)close(*out_socket);
@@ -169,22 +169,22 @@ int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_back
   int family = 0;
   int status;
 
-  if (transport == NULL || out_operation == NULL) return TURBO_EINVAL;
+  if (transport == NULL || out_operation == NULL) return SALTS_EINVAL;
   cnet_transport_reset(transport);
   *out_operation = (native_io_operation){0};
-  if (backend == NULL) return TURBO_EINVAL;
+  if (backend == NULL) return SALTS_EINVAL;
   status = cnet_transport_address_family(address, address_length, &family);
-  if (status != TURBO_OK) return status;
-  if (!native_io_backend_kind_supported(backend_kind)) return TURBO_ENOTSUP;
+  if (status != SALTS_OK) return status;
+  if (!native_io_backend_kind_supported(backend_kind)) return SALTS_ENOTSUP;
   status =
       cnet_transport_make_socket(backend_kind, family, SOCK_STREAM, IPPROTO_TCP, &socket_value);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
 
   transport->native_handle = (uintptr_t)socket_value;
   transport->resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET;
   transport->native_open = true;
   status = native_io_backend_attach_socket(backend, transport->native_handle, &transport->endpoint);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     cnet_transport_close_native(transport);
     cnet_transport_reset(transport);
     return status;
@@ -196,7 +196,7 @@ int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_back
                                          .address = (void *)address,
                                          .address_capacity = address_length,
                                          .address_length = address_length};
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *backend,
@@ -206,13 +206,13 @@ int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *bac
   native_io_operation operation;
   int status;
 
-  if (out_request == NULL) return TURBO_EINVAL;
+  if (out_request == NULL) return SALTS_EINVAL;
   *out_request = (native_io_request){0};
   status = cnet_transport_tcp_prepare_connect(transport, backend, backend_kind, address,
                                               address_length, user_data, &operation);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status = native_io_backend_submit(backend, &operation, out_request);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     cnet_transport_close_native(transport);
     (void)native_io_backend_release_socket(backend, transport->endpoint);
     cnet_transport_reset(transport);
@@ -223,21 +223,21 @@ int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *bac
 int cnet_transport_adopt_tcp(cnet_transport *transport, native_io_backend *backend,
                              uintptr_t native_socket) {
   int status;
-  if (transport == NULL) return TURBO_EINVAL;
+  if (transport == NULL) return SALTS_EINVAL;
   cnet_transport_reset(transport);
-  if (backend == NULL || native_socket == UINTPTR_MAX) return TURBO_EINVAL;
+  if (backend == NULL || native_socket == UINTPTR_MAX) return SALTS_EINVAL;
 
   transport->native_handle = native_socket;
   transport->resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET;
   transport->native_open = true;
   status = native_io_backend_attach_socket(backend, native_socket, &transport->endpoint);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     cnet_transport_close_native(transport);
     cnet_transport_reset(transport);
     return status;
   }
   transport->attached = true;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_transport_udp_connect(cnet_transport *transport, native_io_backend *backend,
@@ -247,14 +247,14 @@ int cnet_transport_udp_connect(cnet_transport *transport, native_io_backend *bac
   int family = 0;
   int status;
 
-  if (transport == NULL) return TURBO_EINVAL;
+  if (transport == NULL) return SALTS_EINVAL;
   cnet_transport_reset(transport);
-  if (backend == NULL) return TURBO_EINVAL;
+  if (backend == NULL) return SALTS_EINVAL;
   status = cnet_transport_address_family(address, address_length, &family);
-  if (status != TURBO_OK) return status;
-  if (!native_io_backend_kind_supported(backend_kind)) return TURBO_ENOTSUP;
+  if (status != SALTS_OK) return status;
+  if (!native_io_backend_kind_supported(backend_kind)) return SALTS_ENOTSUP;
   status = cnet_transport_make_socket(backend_kind, family, SOCK_DGRAM, IPPROTO_UDP, &socket_value);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
 
   transport->native_handle = (uintptr_t)socket_value;
   transport->resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET;
@@ -266,13 +266,13 @@ int cnet_transport_udp_connect(cnet_transport *transport, native_io_backend *bac
     return status;
   }
   status = native_io_backend_attach_socket(backend, transport->native_handle, &transport->endpoint);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     cnet_transport_close_native(transport);
     cnet_transport_reset(transport);
     return status;
   }
   transport->attached = true;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_transport_adopt_pipe(cnet_transport *transport, native_io_backend *backend,
@@ -280,17 +280,17 @@ int cnet_transport_adopt_pipe(cnet_transport *transport, native_io_backend *back
   native_io_endpoint read_endpoint = {0};
   native_io_endpoint write_endpoint = {0};
   int status;
-  if (transport == NULL) return TURBO_EINVAL;
+  if (transport == NULL) return SALTS_EINVAL;
   cnet_transport_reset(transport);
   if (backend == NULL || read_handle == UINTPTR_MAX || write_handle == UINTPTR_MAX)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   status = native_io_backend_attach_pipe(backend, read_handle,
                                          NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &read_endpoint);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   if (write_handle != read_handle) {
     status = native_io_backend_attach_pipe(backend, write_handle,
                                            NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &write_endpoint);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       (void)native_io_backend_release_pipe(backend, read_endpoint);
       return status;
     }
@@ -306,7 +306,7 @@ int cnet_transport_adopt_pipe(cnet_transport *transport, native_io_backend *back
   transport->attached = true;
   transport->write_native_open = write_handle != read_handle;
   transport->write_attached = write_handle != read_handle;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 native_io_endpoint cnet_transport_read_endpoint(const cnet_transport *transport) {
@@ -326,20 +326,20 @@ bool cnet_transport_active(const cnet_transport *transport) {
 int cnet_transport_close(cnet_transport *transport, native_io_backend *backend) {
   int status;
   if (transport == NULL || backend == NULL || !cnet_transport_active(transport))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   cnet_transport_close_native(transport);
   if (transport->attached) {
     status = transport->resource_kind == CNET_TRANSPORT_RESOURCE_PIPE
                  ? native_io_backend_release_pipe(backend, transport->endpoint)
                  : native_io_backend_release_socket(backend, transport->endpoint);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     transport->attached = false;
   }
   if (transport->write_attached) {
     status = native_io_backend_release_pipe(backend, transport->write_endpoint);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     transport->write_attached = false;
   }
   cnet_transport_reset(transport);
-  return TURBO_OK;
+  return SALTS_OK;
 }

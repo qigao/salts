@@ -11,7 +11,7 @@ DNS、TLS、bind/listen、multicast、socket option policy、message framing 与
 本设计范围内。
 
 Portable vectored TCP 的独立实现、跨平台测试与 benchmark 由
-[#139](https://github.com/qigao/turbo-utils/issues/139) 跟踪。
+[#139](https://github.com/qigao/salts/issues/139) 跟踪。
 
 ## 证据
 
@@ -87,7 +87,7 @@ unsupported，禁止循环调用 scalar operation 作为 fallback。
 
 Capability query 只报告当前 build 的 backend/operation 原生映射。需要 host limit 的 backend
 在 vector capability query 中验证固定 16 段预算；host 不满足时 vector submit 以
-`TURBO_ENOTSUP` 失败，既有 scalar backend 仍可使用。实现不能把 capability 缩成一个较小但
+`SALTS_ENOTSUP` 失败，既有 scalar backend 仍可使用。实现不能把 capability 缩成一个较小但
 未公开的段数，也不能在 submit 时拆成多个 scalar request。单个 socket/handle 的有效性仍在
 submit 边界检查，不由 compile-time capability query 代替。
 
@@ -198,15 +198,15 @@ Backend 可在内部批量 drain 已独立 admission 的 requests，但优化不
   Statechart 或通信层依赖。
 - 状态归属：Actor request table 仍是唯一业务事实源；platform vector descriptors 只是固定
   record 内的派生 native state。
-- 错误：现有 scalar API 不变；vector shape 错误产生 `TURBO_EINVAL` terminal，unsupported
-  产生 `TURBO_ENOTSUP` terminal；Actor admission 容量满仍返回 `CFLOW_IO_SUBMIT_FULL`。
+- 错误：现有 scalar API 不变；vector shape 错误产生 `SALTS_EINVAL` terminal，unsupported
+  产生 `SALTS_ENOTSUP` terminal；Actor admission 容量满仍返回 `CFLOW_IO_SUBMIT_FULL`。
 - ABI：vector 使用独立结构和 entry point，避免扩大现有公开 scalar struct。
 - 性能：不宣称 vector 或 batching 有性能收益。vector 实现先验证正确性；任何 hot-path
   收益必须由现有 network benchmark 的同 runner 对比支持。
 - benchmark：`CFLOW_NETWORK_DRIVER=actor` 是 scalar baseline；
   `CFLOW_NETWORK_DRIVER=vector` 使用同一 TCP loopback runner、payload、peer、wait mode、采样和
   `cflow-network-benchmark/v1` JSON 指标。vector driver 不接受 UDP，配置时返回
-  `TURBO_ENOTSUP`。
+  `SALTS_ENOTSUP`。
 - 回滚：可删除独立 vector types/ops 与各 backend 的 vector submit slot；没有数据或配置迁移，
   scalar API 与 ABI 不需回滚。
 

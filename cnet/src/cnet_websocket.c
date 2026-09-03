@@ -2,8 +2,8 @@
 
 #include "websocket_frame_parser.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/random.h>
+#include <salts/error_codes.h>
+#include <salts/random.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -126,7 +126,7 @@ static bool cnet_websocket_close_code_valid(uint16_t code) {
 }
 
 static void cnet_websocket_record_error(cnet_websocket_impl *impl, int status) {
-  if (impl->last_error == TURBO_OK && status != TURBO_OK) impl->last_error = status;
+  if (impl->last_error == SALTS_OK && status != SALTS_OK) impl->last_error = status;
 }
 
 static void cnet_websocket_consume(cnet_websocket_impl *impl, size_t size) {
@@ -152,12 +152,12 @@ static void cnet_websocket_emit_event(cnet_websocket_impl *impl, cnet_websocket_
 
 static int cnet_websocket_write_output(cnet_websocket_impl *impl) {
   int status;
-  if (impl->output_size == 0u) return TURBO_OK;
+  if (impl->output_size == 0u) return SALTS_OK;
   impl->write_active = true;
   status = impl->write(impl->user, impl->output, impl->output_size);
   impl->write_active = false;
-  if (status == TURBO_OK) impl->output_size = 0u;
-  else if (status != TURBO_EBUSY) {
+  if (status == SALTS_OK) impl->output_size = 0u;
+  else if (status != SALTS_EBUSY) {
     impl->output_size = 0u;
     cnet_websocket_record_error(impl, status);
     impl->state = CNET_WEBSOCKET_FAILED;
@@ -172,12 +172,12 @@ static int cnet_websocket_emit_frame(cnet_websocket_impl *impl, uint8_t opcode, 
   int masked = impl->role == CNET_WEBSOCKET_CLIENT;
   int status;
 
-  if (impl->output_size != 0u) return TURBO_EBUSY;
-  if (payload_size > impl->max_frame_bytes) return TURBO_EMSGSIZE;
-  if (payload == NULL && payload_size != 0u) return TURBO_EINVAL;
+  if (impl->output_size != 0u) return SALTS_EBUSY;
+  if (payload_size > impl->max_frame_bytes) return SALTS_EMSGSIZE;
+  if (payload == NULL && payload_size != 0u) return SALTS_EINVAL;
   if (masked) {
-    status = turbo_platform_secure_random(masking_key, sizeof(masking_key));
-    if (status != TURBO_OK) {
+    status = salts_platform_secure_random(masking_key, sizeof(masking_key));
+    if (status != SALTS_OK) {
       cnet_websocket_record_error(impl, status);
       impl->state = CNET_WEBSOCKET_FAILED;
       return status;
@@ -186,15 +186,15 @@ static int cnet_websocket_emit_frame(cnet_websocket_impl *impl, uint8_t opcode, 
   if (ws_frame_build_header(impl->output, impl->output_capacity, opcode, payload_size,
                             final_frame ? 1 : 0, masked, masked ? masking_key : NULL,
                             &header_size) != WS_PARSE_OK)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   if (payload_size != 0u) memcpy(impl->output + header_size, payload, payload_size);
   if (masked) {
     status = ws_frame_unmask(impl->output + header_size, payload_size, masking_key);
-    if (status != WS_PARSE_OK) return TURBO_EPROTO;
+    if (status != WS_PARSE_OK) return SALTS_EPROTO;
   }
   impl->output_size = header_size + payload_size;
   status = cnet_websocket_write_output(impl);
-  return status == TURBO_EBUSY ? TURBO_OK : status;
+  return status == SALTS_EBUSY ? SALTS_OK : status;
 }
 
 static int cnet_websocket_fail(cnet_websocket_impl *impl, int status, uint16_t close_code) {
@@ -210,7 +210,7 @@ static int cnet_websocket_fail(cnet_websocket_impl *impl, int status, uint16_t c
     payload[0] = (uint8_t)(close_code >> 8u);
     payload[1] = (uint8_t)close_code;
     if (cnet_websocket_emit_frame(impl, WS_OPCODE_CLOSE, true, payload, sizeof(payload)) ==
-        TURBO_OK)
+        SALTS_OK)
       impl->sent_close = true;
   }
   impl->state = CNET_WEBSOCKET_FAILED;
@@ -219,10 +219,10 @@ static int cnet_websocket_fail(cnet_websocket_impl *impl, int status, uint16_t c
 
 static int cnet_websocket_append_message(cnet_websocket_impl *impl, const uint8_t *data,
                                          size_t size) {
-  if (size > impl->max_message_bytes - impl->message_size) return TURBO_EMSGSIZE;
+  if (size > impl->max_message_bytes - impl->message_size) return SALTS_EMSGSIZE;
   if (size != 0u) memcpy(impl->message + impl->message_size, data, size);
   impl->message_size += size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int cnet_websocket_deliver_data(cnet_websocket_impl *impl, const ws_frame_t *frame,
@@ -233,40 +233,40 @@ static int cnet_websocket_deliver_data(cnet_websocket_impl *impl, const ws_frame
 
   if (frame->opcode == WS_OPCODE_CONTINUATION) {
     if (impl->inbound_message_type == CNET_WEBSOCKET_MESSAGE_NONE)
-      return cnet_websocket_fail(impl, TURBO_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+      return cnet_websocket_fail(impl, SALTS_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
     status = cnet_websocket_append_message(impl, frame->payload, (size_t)frame->payload_len);
-    if (status != TURBO_OK)
+    if (status != SALTS_OK)
       return cnet_websocket_fail(impl, status, CNET_WEBSOCKET_CLOSE_MESSAGE_TOO_BIG);
     cnet_websocket_consume(impl, wire_size);
-    if (!frame->fin) return TURBO_OK;
+    if (!frame->fin) return SALTS_OK;
     if (impl->inbound_message_type == CNET_WEBSOCKET_MESSAGE_TEXT &&
         !cnet_websocket_utf8_valid(impl->message, impl->message_size))
-      return cnet_websocket_fail(impl, TURBO_ECHARSET, CNET_WEBSOCKET_CLOSE_INVALID_TEXT);
+      return cnet_websocket_fail(impl, SALTS_ECHARSET, CNET_WEBSOCKET_CLOSE_INVALID_TEXT);
     cnet_websocket_emit_event(impl, CNET_WEBSOCKET_EVENT_MESSAGE, impl->inbound_message_type,
                               impl->message, impl->message_size, 0u);
     impl->message_size = 0u;
     impl->inbound_message_type = CNET_WEBSOCKET_MESSAGE_NONE;
-    return TURBO_OK;
+    return SALTS_OK;
   }
 
   if (impl->inbound_message_type != CNET_WEBSOCKET_MESSAGE_NONE)
-    return cnet_websocket_fail(impl, TURBO_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+    return cnet_websocket_fail(impl, SALTS_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
   if (!frame->fin) {
     status = cnet_websocket_append_message(impl, frame->payload, (size_t)frame->payload_len);
-    if (status != TURBO_OK)
+    if (status != SALTS_OK)
       return cnet_websocket_fail(impl, status, CNET_WEBSOCKET_CLOSE_MESSAGE_TOO_BIG);
     impl->inbound_message_type = frame_type;
     cnet_websocket_consume(impl, wire_size);
-    return TURBO_OK;
+    return SALTS_OK;
   }
 
   if (frame_type == CNET_WEBSOCKET_MESSAGE_TEXT &&
       !cnet_websocket_utf8_valid(frame->payload, (size_t)frame->payload_len))
-    return cnet_websocket_fail(impl, TURBO_ECHARSET, CNET_WEBSOCKET_CLOSE_INVALID_TEXT);
+    return cnet_websocket_fail(impl, SALTS_ECHARSET, CNET_WEBSOCKET_CLOSE_INVALID_TEXT);
   cnet_websocket_consume(impl, wire_size);
   cnet_websocket_emit_event(impl, CNET_WEBSOCKET_EVENT_MESSAGE, frame_type, frame->payload,
                             (size_t)frame->payload_len, 0u);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int cnet_websocket_deliver_close(cnet_websocket_impl *impl, const ws_frame_t *frame,
@@ -274,18 +274,18 @@ static int cnet_websocket_deliver_close(cnet_websocket_impl *impl, const ws_fram
   uint16_t code = 0u;
   const uint8_t *reason = NULL;
   size_t reason_size = 0u;
-  int status = TURBO_OK;
+  int status = SALTS_OK;
 
   if (frame->payload_len == 1u)
-    return cnet_websocket_fail(impl, TURBO_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+    return cnet_websocket_fail(impl, SALTS_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
   if (frame->payload_len >= 2u) {
     code = (uint16_t)(((uint16_t)frame->payload[0] << 8u) | frame->payload[1]);
     reason = frame->payload + 2u;
     reason_size = (size_t)frame->payload_len - 2u;
     if (!cnet_websocket_close_code_valid(code))
-      return cnet_websocket_fail(impl, TURBO_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+      return cnet_websocket_fail(impl, SALTS_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
     if (!cnet_websocket_utf8_valid(reason, reason_size))
-      return cnet_websocket_fail(impl, TURBO_ECHARSET, CNET_WEBSOCKET_CLOSE_INVALID_TEXT);
+      return cnet_websocket_fail(impl, SALTS_ECHARSET, CNET_WEBSOCKET_CLOSE_INVALID_TEXT);
   }
 
   cnet_websocket_consume(impl, wire_size);
@@ -294,14 +294,14 @@ static int cnet_websocket_deliver_close(cnet_websocket_impl *impl, const ws_fram
   if (!impl->sent_close) {
     status = cnet_websocket_emit_frame(impl, WS_OPCODE_CLOSE, true, frame->payload,
                                        (size_t)frame->payload_len);
-    if (status == TURBO_OK) impl->sent_close = true;
+    if (status == SALTS_OK) impl->sent_close = true;
   }
   if (!impl->close_event_delivered) {
     impl->close_event_delivered = true;
     cnet_websocket_emit_event(impl, CNET_WEBSOCKET_EVENT_CLOSE, CNET_WEBSOCKET_MESSAGE_NONE, reason,
                               reason_size, code);
   }
-  if (status == TURBO_OK && impl->sent_close)
+  if (status == SALTS_OK && impl->sent_close)
     impl->state = impl->output_size == 0u ? CNET_WEBSOCKET_CLOSED : CNET_WEBSOCKET_CLOSING;
   return status;
 }
@@ -316,9 +316,9 @@ static int cnet_websocket_process_input(cnet_websocket_impl *impl) {
     ws_parse_result_t parse_status = ws_frame_peek_size(wire, impl->input_size, &needed);
     int status;
 
-    if (parse_status == WS_PARSE_NEED_MORE) return TURBO_OK;
+    if (parse_status == WS_PARSE_NEED_MORE) return SALTS_OK;
     if (parse_status != WS_PARSE_OK)
-      return cnet_websocket_fail(impl, TURBO_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+      return cnet_websocket_fail(impl, SALTS_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
     header_size = 2u +
                   ((wire[1] & 0x7fu) == 126u   ? 2u
                    : (wire[1] & 0x7fu) == 127u ? 8u
@@ -326,17 +326,17 @@ static int cnet_websocket_process_input(cnet_websocket_impl *impl) {
                   ((wire[1] & 0x80u) != 0u ? 4u : 0u);
     payload_size = needed - header_size;
     if (payload_size > impl->max_frame_bytes)
-      return cnet_websocket_fail(impl, TURBO_EMSGSIZE, CNET_WEBSOCKET_CLOSE_MESSAGE_TOO_BIG);
-    if (needed > impl->input_size) return TURBO_OK;
+      return cnet_websocket_fail(impl, SALTS_EMSGSIZE, CNET_WEBSOCKET_CLOSE_MESSAGE_TOO_BIG);
+    if (needed > impl->input_size) return SALTS_OK;
     parse_status = ws_frame_parse(wire, impl->input_size, &frame);
     if (parse_status != WS_PARSE_OK)
-      return cnet_websocket_fail(impl, TURBO_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+      return cnet_websocket_fail(impl, SALTS_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
     if ((impl->role == CNET_WEBSOCKET_SERVER && !frame.masked) ||
         (impl->role == CNET_WEBSOCKET_CLIENT && frame.masked))
-      return cnet_websocket_fail(impl, TURBO_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+      return cnet_websocket_fail(impl, SALTS_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
     if (frame.masked && ws_frame_unmask((uint8_t *)frame.payload, (size_t)frame.payload_len,
                                         frame.masking_key) != WS_PARSE_OK)
-      return cnet_websocket_fail(impl, TURBO_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
+      return cnet_websocket_fail(impl, SALTS_EPROTO, CNET_WEBSOCKET_CLOSE_PROTOCOL_ERROR);
 
     if (impl->state == CNET_WEBSOCKET_CLOSING && frame.opcode != WS_OPCODE_CLOSE) {
       cnet_websocket_consume(impl, needed);
@@ -354,15 +354,15 @@ static int cnet_websocket_process_input(cnet_websocket_impl *impl) {
       cnet_websocket_consume(impl, needed);
       cnet_websocket_emit_event(impl, CNET_WEBSOCKET_EVENT_PONG, CNET_WEBSOCKET_MESSAGE_NONE,
                                 frame.payload, (size_t)frame.payload_len, 0u);
-      status = TURBO_OK;
+      status = SALTS_OK;
     } else {
       status = cnet_websocket_deliver_data(impl, &frame, needed);
     }
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     if (impl->state == CNET_WEBSOCKET_FAILED) return impl->last_error;
-    if (impl->state == CNET_WEBSOCKET_CLOSED) return TURBO_OK;
+    if (impl->state == CNET_WEBSOCKET_CLOSED) return SALTS_OK;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_websocket_init(cnet_websocket *websocket, const cnet_websocket_config *config) {
@@ -378,17 +378,17 @@ int cnet_websocket_init(cnet_websocket *websocket, const cnet_websocket_config *
       config->max_frame_bytes > (size_t)INT64_MAX ||
       config->max_frame_bytes > SIZE_MAX - CNET_WEBSOCKET_MAX_HEADER_BYTES ||
       config->write == NULL || config->on_event == NULL)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   output_capacity = config->max_frame_bytes + CNET_WEBSOCKET_MAX_HEADER_BYTES;
-  if (config->max_buffered_input_bytes < output_capacity) return TURBO_EINVAL;
+  if (config->max_buffered_input_bytes < output_capacity) return SALTS_EINVAL;
   if (config->max_buffered_input_bytes > SIZE_MAX - config->max_message_bytes ||
       config->max_buffered_input_bytes + config->max_message_bytes > SIZE_MAX - output_capacity)
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   total_capacity = config->max_buffered_input_bytes + config->max_message_bytes + output_capacity;
-  if (total_capacity == 0u) return TURBO_ERANGE;
+  if (total_capacity == 0u) return SALTS_ERANGE;
 
   impl = (cnet_websocket_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   impl->input = (uint8_t *)malloc(config->max_buffered_input_bytes);
   impl->message = (uint8_t *)malloc(config->max_message_bytes);
   impl->output = (uint8_t *)malloc(output_capacity);
@@ -397,7 +397,7 @@ int cnet_websocket_init(cnet_websocket *websocket, const cnet_websocket_config *
     free(impl->message);
     free(impl->input);
     free(impl);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   impl->public_value = websocket;
   impl->role = config->role;
@@ -410,35 +410,35 @@ int cnet_websocket_init(cnet_websocket *websocket, const cnet_websocket_config *
   impl->on_event = config->on_event;
   impl->user = config->user;
   websocket->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_websocket_destroy(cnet_websocket *websocket) {
   cnet_websocket_impl *impl;
-  if (websocket == NULL) return TURBO_EINVAL;
+  if (websocket == NULL) return SALTS_EINVAL;
   impl = cnet_websocket_get(websocket);
-  if (impl == NULL) return TURBO_OK;
-  if (impl->operation_active || impl->callback_active || impl->write_active) return TURBO_EBUSY;
+  if (impl == NULL) return SALTS_OK;
+  if (impl->operation_active || impl->callback_active || impl->write_active) return SALTS_EBUSY;
   free(impl->output);
   free(impl->message);
   free(impl->input);
   free(impl);
   websocket->impl = NULL;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_websocket_state_get(const cnet_websocket *websocket, cnet_websocket_state *out_state) {
   const cnet_websocket_impl *impl = cnet_websocket_const_get(websocket);
-  if (impl == NULL || out_state == NULL) return TURBO_EINVAL;
+  if (impl == NULL || out_state == NULL) return SALTS_EINVAL;
   *out_state = impl->state;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_websocket_last_error(const cnet_websocket *websocket, int *out_status) {
   const cnet_websocket_impl *impl = cnet_websocket_const_get(websocket);
-  if (impl == NULL || out_status == NULL) return TURBO_EINVAL;
+  if (impl == NULL || out_status == NULL) return SALTS_EINVAL;
   *out_status = impl->last_error;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 bool cnet_websocket_has_pending_output(const cnet_websocket *websocket) {
@@ -450,12 +450,12 @@ int cnet_websocket_feed(cnet_websocket *websocket, const void *data, size_t size
   cnet_websocket_impl *impl = cnet_websocket_get(websocket);
   int status;
 
-  if (impl == NULL || (data == NULL && size != 0u)) return TURBO_EINVAL;
-  if (impl->operation_active || impl->callback_active || impl->write_active) return TURBO_EBUSY;
+  if (impl == NULL || (data == NULL && size != 0u)) return SALTS_EINVAL;
+  if (impl->operation_active || impl->callback_active || impl->write_active) return SALTS_EBUSY;
   if (impl->state == CNET_WEBSOCKET_FAILED || impl->state == CNET_WEBSOCKET_CLOSED)
-    return TURBO_ESHUTDOWN;
-  if (impl->output_size != 0u) return TURBO_EBUSY;
-  if (size > impl->input_capacity - impl->input_size) return TURBO_ENOSPC;
+    return SALTS_ESHUTDOWN;
+  if (impl->output_size != 0u) return SALTS_EBUSY;
+  if (size > impl->input_capacity - impl->input_size) return SALTS_ENOSPC;
 
   if (size > impl->input_capacity - (impl->input_start + impl->input_size)) {
     if (impl->input_size != 0u)
@@ -473,14 +473,14 @@ int cnet_websocket_feed(cnet_websocket *websocket, const void *data, size_t size
 int cnet_websocket_flush(cnet_websocket *websocket) {
   cnet_websocket_impl *impl = cnet_websocket_get(websocket);
   int status;
-  if (impl == NULL) return TURBO_EINVAL;
-  if (impl->operation_active || impl->callback_active || impl->write_active) return TURBO_EBUSY;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->operation_active || impl->callback_active || impl->write_active) return SALTS_EBUSY;
   impl->operation_active = true;
   status = cnet_websocket_write_output(impl);
-  if (status == TURBO_OK && impl->output_size == 0u && impl->sent_close && impl->received_close &&
+  if (status == SALTS_OK && impl->output_size == 0u && impl->sent_close && impl->received_close &&
       impl->state == CNET_WEBSOCKET_CLOSING)
     impl->state = CNET_WEBSOCKET_CLOSED;
-  if (status == TURBO_OK && impl->state != CNET_WEBSOCKET_FAILED &&
+  if (status == SALTS_OK && impl->state != CNET_WEBSOCKET_FAILED &&
       impl->state != CNET_WEBSOCKET_CLOSED)
     status = cnet_websocket_process_input(impl);
   impl->operation_active = false;
@@ -490,8 +490,8 @@ int cnet_websocket_flush(cnet_websocket *websocket) {
 static int cnet_websocket_send_frame(cnet_websocket_impl *impl, uint8_t opcode, const void *data,
                                      size_t size) {
   if (size > CNET_WEBSOCKET_MAX_CONTROL_BYTES || size > impl->max_frame_bytes)
-    return TURBO_EMSGSIZE;
-  if (data == NULL && size != 0u) return TURBO_EINVAL;
+    return SALTS_EMSGSIZE;
+  if (data == NULL && size != 0u) return SALTS_EINVAL;
   return cnet_websocket_emit_frame(impl, opcode, true, (const uint8_t *)data, size);
 }
 
@@ -510,15 +510,15 @@ int cnet_websocket_send_fragment(cnet_websocket *websocket,
       (message_type != CNET_WEBSOCKET_MESSAGE_TEXT &&
        message_type != CNET_WEBSOCKET_MESSAGE_BINARY) ||
       (data == NULL && size != 0u))
-    return TURBO_EINVAL;
-  if (impl->write_active || (impl->operation_active && !impl->callback_active)) return TURBO_EBUSY;
-  if (impl->state != CNET_WEBSOCKET_OPEN) return TURBO_ESHUTDOWN;
-  if (impl->output_size != 0u) return TURBO_EBUSY;
-  if (size > impl->max_frame_bytes) return TURBO_EMSGSIZE;
+    return SALTS_EINVAL;
+  if (impl->write_active || (impl->operation_active && !impl->callback_active)) return SALTS_EBUSY;
+  if (impl->state != CNET_WEBSOCKET_OPEN) return SALTS_ESHUTDOWN;
+  if (impl->output_size != 0u) return SALTS_EBUSY;
+  if (size > impl->max_frame_bytes) return SALTS_EMSGSIZE;
   if (impl->outbound_message_type != CNET_WEBSOCKET_MESSAGE_NONE &&
       impl->outbound_message_type != message_type)
-    return TURBO_EPROTO;
-  if (size > impl->max_message_bytes - impl->outbound_message_size) return TURBO_EMSGSIZE;
+    return SALTS_EPROTO;
+  if (size > impl->max_message_bytes - impl->outbound_message_size) return SALTS_EMSGSIZE;
 
   prior_type = impl->outbound_message_type;
   prior_size = impl->outbound_message_size;
@@ -526,7 +526,7 @@ int cnet_websocket_send_fragment(cnet_websocket *websocket,
   if (message_type == CNET_WEBSOCKET_MESSAGE_TEXT) {
     if (prior_type == CNET_WEBSOCKET_MESSAGE_NONE) memset(&next_utf8, 0, sizeof(next_utf8));
     if (!cnet_websocket_utf8_update(&next_utf8, (const uint8_t *)data, size, final_fragment))
-      return TURBO_ECHARSET;
+      return SALTS_ECHARSET;
   }
   opcode = prior_type == CNET_WEBSOCKET_MESSAGE_NONE
                ? (message_type == CNET_WEBSOCKET_MESSAGE_TEXT ? WS_OPCODE_TEXT : WS_OPCODE_BINARY)
@@ -534,7 +534,7 @@ int cnet_websocket_send_fragment(cnet_websocket *websocket,
   nested = impl->callback_active;
   if (!nested) impl->operation_active = true;
   status = cnet_websocket_emit_frame(impl, opcode, final_fragment, (const uint8_t *)data, size);
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) {
     if (final_fragment) {
       impl->outbound_message_type = CNET_WEBSOCKET_MESSAGE_NONE;
       impl->outbound_message_size = 0u;
@@ -562,10 +562,10 @@ static int cnet_websocket_send_control(cnet_websocket *websocket, uint8_t opcode
   cnet_websocket_impl *impl = cnet_websocket_get(websocket);
   int status;
   bool nested;
-  if (impl == NULL) return TURBO_EINVAL;
-  if (impl->write_active || (impl->operation_active && !impl->callback_active)) return TURBO_EBUSY;
-  if (impl->state != CNET_WEBSOCKET_OPEN) return TURBO_ESHUTDOWN;
-  if (impl->output_size != 0u) return TURBO_EBUSY;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->write_active || (impl->operation_active && !impl->callback_active)) return SALTS_EBUSY;
+  if (impl->state != CNET_WEBSOCKET_OPEN) return SALTS_ESHUTDOWN;
+  if (impl->output_size != 0u) return SALTS_EBUSY;
   nested = impl->callback_active;
   if (!nested) impl->operation_active = true;
   status = cnet_websocket_send_frame(impl, opcode, data, size);
@@ -589,15 +589,15 @@ int cnet_websocket_close(cnet_websocket *websocket, uint16_t code, const void *r
   int status;
   bool nested;
 
-  if (impl == NULL || (reason == NULL && reason_size != 0u)) return TURBO_EINVAL;
+  if (impl == NULL || (reason == NULL && reason_size != 0u)) return SALTS_EINVAL;
   if ((code == 0u && reason_size != 0u) || (code != 0u && !cnet_websocket_close_code_valid(code)))
-    return TURBO_EINVAL;
-  if (reason_size > CNET_WEBSOCKET_MAX_CONTROL_BYTES - 2u) return TURBO_EMSGSIZE;
-  if (!cnet_websocket_utf8_valid((const uint8_t *)reason, reason_size)) return TURBO_ECHARSET;
-  if (impl->write_active || (impl->operation_active && !impl->callback_active)) return TURBO_EBUSY;
-  if (impl->state == CNET_WEBSOCKET_CLOSING) return TURBO_EALREADY;
-  if (impl->state != CNET_WEBSOCKET_OPEN) return TURBO_ESHUTDOWN;
-  if (impl->output_size != 0u) return TURBO_EBUSY;
+    return SALTS_EINVAL;
+  if (reason_size > CNET_WEBSOCKET_MAX_CONTROL_BYTES - 2u) return SALTS_EMSGSIZE;
+  if (!cnet_websocket_utf8_valid((const uint8_t *)reason, reason_size)) return SALTS_ECHARSET;
+  if (impl->write_active || (impl->operation_active && !impl->callback_active)) return SALTS_EBUSY;
+  if (impl->state == CNET_WEBSOCKET_CLOSING) return SALTS_EALREADY;
+  if (impl->state != CNET_WEBSOCKET_OPEN) return SALTS_ESHUTDOWN;
+  if (impl->output_size != 0u) return SALTS_EBUSY;
 
   if (code != 0u) {
     payload[0] = (uint8_t)(code >> 8u);
@@ -609,7 +609,7 @@ int cnet_websocket_close(cnet_websocket *websocket, uint16_t code, const void *r
   nested = impl->callback_active;
   if (!nested) impl->operation_active = true;
   status = cnet_websocket_emit_frame(impl, WS_OPCODE_CLOSE, true, payload, payload_size);
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) {
     impl->sent_close = true;
     impl->state = impl->received_close ? CNET_WEBSOCKET_CLOSED : CNET_WEBSOCKET_CLOSING;
   }
@@ -619,9 +619,9 @@ int cnet_websocket_close(cnet_websocket *websocket, uint16_t code, const void *r
 
 int cnet_websocket_transport_closed(cnet_websocket *websocket) {
   cnet_websocket_impl *impl = cnet_websocket_get(websocket);
-  if (impl == NULL) return TURBO_EINVAL;
-  if (impl->operation_active || impl->callback_active || impl->write_active) return TURBO_EBUSY;
-  if (impl->state == CNET_WEBSOCKET_CLOSED) return TURBO_EALREADY;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->operation_active || impl->callback_active || impl->write_active) return SALTS_EBUSY;
+  if (impl->state == CNET_WEBSOCKET_CLOSED) return SALTS_EALREADY;
   impl->operation_active = true;
   impl->output_size = 0u;
   impl->input_start = 0u;
@@ -636,5 +636,5 @@ int cnet_websocket_transport_closed(cnet_websocket *websocket) {
     }
   }
   impl->operation_active = false;
-  return TURBO_OK;
+  return SALTS_OK;
 }

@@ -6,7 +6,7 @@
 
 **Architecture:** Extend the private SCXML block IR with a program-owned NUL-terminated label step. Emit it only in the SCXML contextual callback through `tlog_peek_default()`, while keeping native CFlow free of XML/tlog and accounting the retained label in the existing string budget.
 
-**Tech Stack:** C11, CFlow Statechart, TurboUtils XML parser, TurboUtils tlog, TinyTest, CMake Presets.
+**Tech Stack:** C11, CFlow Statechart, Salts XML parser, Salts tlog, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-cflow-scxml-phase3-log-design.md`
 
@@ -36,11 +36,11 @@
 
 - [x] **Step 1: Add a real tlog capture fixture**
 
-Use `tlog_create`, `turbo_sink_callback_create`, `tlog_set_default`, and
+Use `tlog_create`, `salts_sink_callback_create`, `tlog_set_default`, and
 `tlog_flush` only in the test boundary. Capture `level`, `component`, and
 message bytes for two records, restore the prior default logger before
 destroying the test logger, and keep the statechart executor/instance real.
-Link the test target explicitly to `TurboUtils::Core` so its direct use of the
+Link the test target explicitly to `Salts::Core` so its direct use of the
 public tlog API does not depend on transitive include paths.
 
 - [x] **Step 2: Add the first failing behavior test**
@@ -75,7 +75,7 @@ runtime error.
 - Test: `cflow-scxml/tests/cflow_scxml_test.c`
 
 **Interfaces:**
-- Consumes: XML attribute views, checked allocation helpers, immutable block steps, `TurboUtils::Core` tlog API.
+- Consumes: XML attribute views, checked allocation helpers, immutable block steps, `Salts::Core` tlog API.
 - Produces: internal `SCXML_STEP_LOG` with a stable program-owned `const char *label`.
 
 - [x] **Step 1: Add XML admission and checked label counting**
@@ -95,14 +95,14 @@ path.
 - [x] **Step 3: Execute DEBUG output without affecting runtime status**
 
 Add the log branch to `execute_scxml_range` and call
-`TURBO_LOG_DEBUG(tlog_peek_default(), "cflow.scxml", step->label)`. Do not
+`SALTS_LOG_DEBUG(tlog_peek_default(), "cflow.scxml", step->label)`. Do not
 inspect delivery, flush, or modify `out_error`. Mark containing executable
 descriptors with `CMETA_EFFECT_IO` while preserving their existing stateful and
 may-fail effects.
 
 - [x] **Step 4: Add the private/link-only Core dependency**
 
-Link `cflow_scxml` privately to `TurboUtils::Core` and update its exact CMake
+Link `cflow_scxml` privately to `Salts::Core` and update its exact CMake
 dependency-contract assertion without exposing `tlog.h` from public headers.
 
 - [x] **Step 5: Run focused GREEN and adjacent tlog regression**
@@ -155,7 +155,7 @@ logger, proving the link-only Core dependency and no-op logger path.
 
 Describe label-only DEBUG behavior, null-model `expr` rejection, program-owned
 label lifetime, shared byte limit, no logger lifecycle, and the fact that
-`TurboUtils::CFlow` itself remains tlog-free.
+`Salts::CFlow` itself remains tlog-free.
 
 - [x] **Step 5: Run package and full verification**
 

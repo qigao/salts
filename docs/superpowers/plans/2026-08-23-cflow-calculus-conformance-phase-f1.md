@@ -25,7 +25,7 @@
 - 修改：`cflow/tests/CMakeLists.txt`
 
 - [ ] 先在 CMake 注册 `cflow_calculus_conformance_test`，验证目标因测试文件尚不存在而 RED。
-- [ ] 创建 TinyTest 文件，链接 `TurboUtils::CFlow`、`TurboUtils::Platform`、`TurboUtils::TinyTest` 与既有 `CFLOW_TEST_SUPPORT`。
+- [ ] 创建 TinyTest 文件，链接 `Salts::CFlow`、`Salts::Platform`、`Salts::TinyTest` 与既有 `CFLOW_TEST_SUPPORT`。
 - [ ] 重新配置，确认目标可构建且 CTest 能独立筛选。
 
 ## Task 2：证明 Plan 与 Kernel 的观察等价

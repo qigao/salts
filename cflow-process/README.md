@@ -1,10 +1,10 @@
 # CFlowProcess
 
-`Rocida::CFlowProcess` combines the existing Core process owner with the
+`Salts::CFlowProcess` combines the existing Core process owner with the
 CFlow native byte-pipe Actor. It is a separate target because Core already uses
 CFlow internally; placing this adapter in CFlow would create a dependency cycle.
 
-The adapter owns one `turbo_process_t`, three parent-side asynchronous pipe
+The adapter owns one `salts_process_t`, three parent-side asynchronous pipe
 endpoints, one fixed-capacity native backend, one manual Executor, one IO Actor,
 and exactly `request_capacity` operation slots. It never exposes raw endpoints,
 captures output into an unbounded buffer, or creates a second process state
@@ -16,7 +16,7 @@ machine.
 only for the call. It rejects Core capture/pipe flags because the adapter must
 remain the only standard-stream consumer. `backend_kind`, `request_capacity`,
 `command_capacity`, `completion_batch_capacity`, and `completion` are required;
-unsupported native pipe backends return `TURBO_ENOTSUP` without fallback.
+unsupported native pipe backends return `SALTS_ENOTSUP` without fallback.
 
 `try_write_stdin`, `try_read_stdout`, and `try_read_stderr` borrow each buffer
 until its terminal callback returns. Accepted operations receive a nonzero
@@ -25,7 +25,7 @@ Reads and writes may complete with fewer bytes than requested. Full request or
 command capacity is returned as a typed submit/cancel result; storage never
 grows after start.
 
-`cflow_process_close_stdin()` returns `TURBO_EBUSY` while an admitted stdin
+`cflow_process_close_stdin()` returns `SALTS_EBUSY` while an admitted stdin
 write remains live. After it succeeds, the child observes EOF and later stdin
 submissions return `CLOSED`. `cflow_process_get_stats()` exposes the Actor's
 bounded admission counters together with endpoint ownership and close state.
@@ -42,9 +42,9 @@ authoritative operation completion has been delivered and acknowledged.
 ```c
 #include <cflow/process.h>
 
-#include <turbo/clock.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/clock.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <stdint.h>
 
@@ -62,12 +62,12 @@ static void completed(void *user, cflow_io_request_id request_id,
 int main(void) {
     cflow_process process = {0};
     cflow_process_config config = {0};
-    turbo_process_options_t options;
+    salts_process_options_t options;
     const uint64_t deadline_ns = UINT64_C(5000000000);
     uint64_t started;
     int status;
 
-    turbo_process_options_init(&options);
+    salts_process_options_init(&options);
 #if defined(_WIN32)
     {
         static const char *args[] = {
@@ -91,27 +91,27 @@ int main(void) {
     config.completion = completed;
 
     status = cflow_process_start(&process, &options, &config);
-    if (status != TURBO_OK) return 1;
+    if (status != SALTS_OK) return 1;
     status = cflow_process_close(&process);
-    if (status != TURBO_OK) return 2;
+    if (status != SALTS_OK) return 2;
 
-    started = turbo_hrtime();
+    started = salts_hrtime();
     while (!cflow_process_is_quiescent(&process)) {
         size_t progressed = 0u;
         status = cflow_process_run_ready(&process, 32u, &progressed);
-        if (status != TURBO_OK) return 3;
-        if (turbo_hrtime() - started > deadline_ns) return 4;
-        if (progressed == 0u) turbo_sleep_ms(1u);
+        if (status != SALTS_OK) return 3;
+        if (salts_hrtime() - started > deadline_ns) return 4;
+        if (progressed == 0u) salts_sleep_ms(1u);
     }
-    return cflow_process_destroy(&process) == TURBO_OK ? 0 : 5;
+    return cflow_process_destroy(&process) == SALTS_OK ? 0 : 5;
 }
 ```
 
 Build consumers with:
 
 ```cmake
-find_package(Rocida CONFIG REQUIRED)
-target_link_libraries(app PRIVATE Rocida::CFlowProcess)
+find_package(Salts CONFIG REQUIRED)
+target_link_libraries(app PRIVATE Salts::CFlowProcess)
 ```
 
 The cross-platform capability matrix, state machines, ownership proofs, and

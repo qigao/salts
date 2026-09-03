@@ -68,23 +68,23 @@ int main(void) {
   uint16_t port = 0u;
   int status = crpc_server_init(&server, &config);
 
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = crpc_server_register(&server, "/rpc", &method, example_ping, NULL);
-  if (status == TURBO_OK) status = crpc_server_start(&server);
-  if (status == TURBO_OK) status = crpc_server_port(&server, &port);
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) status = crpc_server_start(&server);
+  if (status == SALTS_OK) status = crpc_server_port(&server, &port);
+  if (status == SALTS_OK) {
     printf("JSON-RPC endpoint: http://127.0.0.1:%u/rpc\n", (unsigned int)port);
     puts("Press Enter to stop.");
     (void)getchar();
   }
   if (server.impl != NULL) {
     const int stop_status = crpc_server_stop(&server, EXAMPLE_TIMEOUT_MS);
-    if (status == TURBO_OK && stop_status != TURBO_OK) status = stop_status;
-    if (stop_status == TURBO_OK) {
+    if (status == SALTS_OK && stop_status != SALTS_OK) status = stop_status;
+    if (stop_status == SALTS_OK) {
       const int destroy_status = crpc_server_destroy(&server);
-      if (status == TURBO_OK && destroy_status != TURBO_OK) status = destroy_status;
+      if (status == SALTS_OK && destroy_status != SALTS_OK) status = destroy_status;
     }
   }
-  if (status != TURBO_OK) fprintf(stderr, "CRPC server failed: %d\n", status);
-  return status == TURBO_OK ? EXIT_SUCCESS : EXIT_FAILURE;
+  if (status != SALTS_OK) fprintf(stderr, "CRPC server failed: %d\n", status);
+  return status == SALTS_OK ? EXIT_SUCCESS : EXIT_FAILURE;
 }

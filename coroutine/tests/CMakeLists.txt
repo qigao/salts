@@ -1,9 +1,9 @@
-cmake_add_test(turbo_coro_executor_test
-  SOURCES turbo_coro_executor_test.c
-  LIBS Rocida::Coroutine Rocida::Platform Rocida::TinyTest
+cmake_add_test(salts_coro_executor_test
+  SOURCES salts_coro_executor_test.c
+  LIBS Salts::Coroutine Salts::Platform Salts::TinyTest
   FOLDER "coroutine/tests")
 
-cmake_add_test(turbo_coro_executor_header_cpp_test
-  SOURCES turbo_coro_executor_header_cpp_test.cpp
-  LIBS Rocida::Coroutine
+cmake_add_test(salts_coro_executor_header_cpp_test
+  SOURCES salts_coro_executor_header_cpp_test.cpp
+  LIBS Salts::Coroutine
   FOLDER "coroutine/tests")

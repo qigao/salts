@@ -35,9 +35,9 @@ CHTTP 已在后台线程中拥有 CNet listener、HTTP/1.1 llhttp parser、HTTP/
 
 - 每个 WebSocket session 初始化固定的 `max_frame_bytes`、`max_message_bytes` 与 `max_buffered_input_bytes`。
 - CNet receive view 在 callback 返回时失效。若 client 将首帧与 HTTP Upgrade 合并发送，CHTTP 仅复制 header 后剩余 bytes 到预分配、以 `network.receive_buffer_bytes` 为硬上限的 upgrade buffer；101 写完成后再 feed。
-- CNet engine 只保留一个完整待写 frame。transport busy 时返回/传播 `TURBO_EBUSY`，不静默丢帧、不无界排队。
+- CNet engine 只保留一个完整待写 frame。transport busy 时返回/传播 `SALTS_EBUSY`，不静默丢帧、不无界排队。
 - server `on_open` 在 admission callback 中执行；在 101 尚未写出时提交的首个 frame 进入 CNet engine 的单一 retained slot，101 完成后 flush，因此线序始终是 handshake 在前。
-- server event payload 只在 event callback 内有效。同步 client 把事件复制进固定容量队列；`receive` 返回的 view 在下一次 client 操作前有效，队列满时明确返回 `TURBO_ENOBUFS`，不无界增长。
+- server event payload 只在 event callback 内有效。同步 client 把事件复制进固定容量队列；`receive` 返回的 view 在下一次 client 操作前有效，队列满时明确返回 `SALTS_ENOBUFS`，不无界增长。
 - transport terminal callback 恰好通知 CNet engine 一次；connection cleanup 恰好 destroy engine 一次。
 
 ## 公开接口

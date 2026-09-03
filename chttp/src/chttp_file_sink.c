@@ -1,7 +1,7 @@
 #include "chttp_file_sink.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +14,7 @@ static void chttp_file_sink_notify(chttp_file_sink_transfer *transfer) {
 
 static void chttp_file_sink_fail(chttp_file_sink_transfer *transfer, int status,
                                  int native_status) {
-  if (transfer == NULL || transfer->status != TURBO_OK) return;
+  if (transfer == NULL || transfer->status != SALTS_OK) return;
   transfer->status = status;
   transfer->native_status = native_status;
 }
@@ -24,28 +24,28 @@ static int chttp_file_sink_map_submit(chttp_file_sink_transfer *transfer,
   int mapped;
   switch (status) {
   case CFLOW_IO_FILE_SUBMIT_ACCEPTED:
-    return TURBO_OK;
+    return SALTS_OK;
   case CFLOW_IO_FILE_SUBMIT_FULL:
-    mapped = TURBO_ENOBUFS;
+    mapped = SALTS_ENOBUFS;
     break;
   case CFLOW_IO_FILE_SUBMIT_CLOSED:
-    mapped = TURBO_ESHUTDOWN;
+    mapped = SALTS_ESHUTDOWN;
     break;
   case CFLOW_IO_FILE_SUBMIT_UNSUPPORTED:
-    mapped = TURBO_ENOTSUP;
+    mapped = SALTS_ENOTSUP;
     break;
   case CFLOW_IO_FILE_SUBMIT_ACCESS_DENIED:
-    mapped = TURBO_EPERM;
+    mapped = SALTS_EPERM;
     break;
   case CFLOW_IO_FILE_SUBMIT_LEASE_IN_USE:
-    mapped = TURBO_EBUSY;
+    mapped = SALTS_EBUSY;
     break;
   case CFLOW_IO_FILE_SUBMIT_ID_EXHAUSTED:
-    mapped = TURBO_ERANGE;
+    mapped = SALTS_ERANGE;
     break;
   case CFLOW_IO_FILE_SUBMIT_INVALID_ARGUMENT:
   default:
-    mapped = TURBO_EINVAL;
+    mapped = SALTS_EINVAL;
     break;
   }
   chttp_file_sink_fail(transfer, mapped, 0);
@@ -60,21 +60,21 @@ static void chttp_file_sink_complete(void *user, cflow_io_request_id request_id,
   (void)lease_id;
   if (transfer == NULL || completion == NULL || !transfer->pending ||
       transfer->pending_request != request_id || transfer->pending_operation != operation_kind) {
-    if (transfer != NULL) chttp_file_sink_fail(transfer, TURBO_EPROTO, 0);
+    if (transfer != NULL) chttp_file_sink_fail(transfer, SALTS_EPROTO, 0);
     chttp_file_sink_notify(transfer);
     return;
   }
   transfer->pending = false;
   transfer->pending_request = 0u;
   if (completion->kind == CFLOW_IO_COMPLETION_FAILED) {
-    chttp_file_sink_fail(transfer, TURBO_EIO, completion->error);
+    chttp_file_sink_fail(transfer, SALTS_EIO, completion->error);
   } else if (completion->kind == CFLOW_IO_COMPLETION_CANCELLED) {
-    chttp_file_sink_fail(transfer, TURBO_ECANCELED, completion->error);
+    chttp_file_sink_fail(transfer, SALTS_ECANCELED, completion->error);
   } else if (operation_kind == CFLOW_IO_NATIVE_FILE_WRITE_AT) {
     if (completion->kind != CFLOW_IO_COMPLETION_OK || completion->bytes == 0u ||
         completion->bytes > transfer->submitted_size ||
         completion->bytes > transfer->buffer_size - transfer->buffer_offset) {
-      chttp_file_sink_fail(transfer, TURBO_EIO, completion->error);
+      chttp_file_sink_fail(transfer, SALTS_EIO, completion->error);
     } else {
       transfer->buffer_offset += completion->bytes;
       transfer->file_offset += completion->bytes;
@@ -88,10 +88,10 @@ static void chttp_file_sink_complete(void *user, cflow_io_request_id request_id,
     }
   } else if (operation_kind == CFLOW_IO_NATIVE_FILE_FLUSH) {
     if (completion->kind != CFLOW_IO_COMPLETION_OK)
-      chttp_file_sink_fail(transfer, TURBO_EIO, completion->error);
+      chttp_file_sink_fail(transfer, SALTS_EIO, completion->error);
     else transfer->flushed = true;
   } else {
-    chttp_file_sink_fail(transfer, TURBO_EPROTO, 0);
+    chttp_file_sink_fail(transfer, SALTS_EPROTO, 0);
   }
   chttp_file_sink_notify(transfer);
 }
@@ -104,10 +104,10 @@ int chttp_file_sink_transfer_open(chttp_file_sink_transfer *transfer,
   int status;
   if (transfer == NULL || transfer->file.impl != NULL || runtime == NULL || path == NULL ||
       path[0] == '\0' || buffer_capacity == 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   memset(transfer, 0, sizeof(*transfer));
   transfer->buffer = (unsigned char *)malloc(buffer_capacity);
-  if (transfer->buffer == NULL) return TURBO_ENOMEM;
+  if (transfer->buffer == NULL) return SALTS_ENOMEM;
   transfer->buffer_capacity = buffer_capacity;
   transfer->progress = progress;
   transfer->progress_user = progress_user;
@@ -118,13 +118,13 @@ int chttp_file_sink_transfer_open(chttp_file_sink_transfer *transfer,
   config.completion_user = transfer;
   config.runtime = runtime;
   status = cflow_io_file_open(&transfer->file, path, &config);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     free(transfer->buffer);
     memset(transfer, 0, sizeof(*transfer));
     return status;
   }
   if (progress != NULL) progress(progress_user, 0u, 0u);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 void chttp_file_sink_transfer_set_ready(chttp_file_sink_transfer *transfer,
@@ -136,22 +136,22 @@ void chttp_file_sink_transfer_set_ready(chttp_file_sink_transfer *transfer,
 
 int chttp_file_sink_transfer_append(chttp_file_sink_transfer *transfer, const void *data,
                                     size_t size) {
-  int status = TURBO_OK;
+  int status = SALTS_OK;
   if (transfer == NULL || transfer->file.impl == NULL || (data == NULL && size != 0u))
-    return TURBO_EINVAL;
-  if (transfer->status != TURBO_OK) return transfer->status;
-  if (transfer->pending || transfer->buffer_offset != 0u) status = TURBO_EBUSY;
+    return SALTS_EINVAL;
+  if (transfer->status != SALTS_OK) return transfer->status;
+  if (transfer->pending || transfer->buffer_offset != 0u) status = SALTS_EBUSY;
   if (transfer->buffer_size > transfer->buffer_capacity ||
       size > transfer->buffer_capacity - transfer->buffer_size)
-    status = TURBO_ENOBUFS;
-  if (status != TURBO_OK) {
+    status = SALTS_ENOBUFS;
+  if (status != SALTS_OK) {
     chttp_file_sink_fail(transfer, status, 0);
     return status;
   }
   if (size != 0u) memcpy(transfer->buffer + transfer->buffer_size, data, size);
   transfer->buffer_size += size;
   transfer->flushed = false;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static chttp_file_sink_result chttp_file_sink_submit_write(chttp_file_sink_transfer *transfer) {
@@ -176,7 +176,7 @@ static chttp_file_sink_result chttp_file_sink_submit_write(chttp_file_sink_trans
 
 chttp_file_sink_result chttp_file_sink_transfer_advance(chttp_file_sink_transfer *transfer) {
   if (transfer == NULL || transfer->file.impl == NULL) return CHTTP_FILE_SINK_ERROR;
-  if (transfer->status != TURBO_OK) return CHTTP_FILE_SINK_ERROR;
+  if (transfer->status != SALTS_OK) return CHTTP_FILE_SINK_ERROR;
   if (transfer->pending) return CHTTP_FILE_SINK_WAIT;
   if (transfer->buffer_offset < transfer->buffer_size)
     return chttp_file_sink_submit_write(transfer);
@@ -188,7 +188,7 @@ chttp_file_sink_result chttp_file_sink_transfer_advance(chttp_file_sink_transfer
 chttp_file_sink_result chttp_file_sink_transfer_write(chttp_file_sink_transfer *transfer,
                                                       const void *data, size_t size) {
   const int status = chttp_file_sink_transfer_append(transfer, data, size);
-  if (status != TURBO_OK) return CHTTP_FILE_SINK_ERROR;
+  if (status != SALTS_OK) return CHTTP_FILE_SINK_ERROR;
   return chttp_file_sink_transfer_advance(transfer);
 }
 
@@ -197,7 +197,7 @@ chttp_file_sink_result chttp_file_sink_transfer_flush(chttp_file_sink_transfer *
   cflow_io_lease_id lease;
   chttp_file_sink_result write_result;
   if (transfer == NULL || transfer->file.impl == NULL) return CHTTP_FILE_SINK_ERROR;
-  if (transfer->status != TURBO_OK) return CHTTP_FILE_SINK_ERROR;
+  if (transfer->status != SALTS_OK) return CHTTP_FILE_SINK_ERROR;
   write_result = chttp_file_sink_transfer_advance(transfer);
   if (write_result != CHTTP_FILE_SINK_READY) return write_result;
   if (transfer->flushed) return CHTTP_FILE_SINK_READY;
@@ -218,23 +218,23 @@ chttp_file_sink_result chttp_file_sink_transfer_flush(chttp_file_sink_transfer *
 int chttp_file_sink_transfer_flush_drain(chttp_file_sink_transfer *transfer,
                                          cflow_io_file_runtime *runtime) {
   chttp_file_sink_result result;
-  if (transfer == NULL || runtime == NULL || transfer->file.impl == NULL) return TURBO_EINVAL;
+  if (transfer == NULL || runtime == NULL || transfer->file.impl == NULL) return SALTS_EINVAL;
   if (!cflow_io_file_operation_supported(&transfer->file, CFLOW_IO_NATIVE_FILE_FLUSH))
-    return TURBO_ENOTSUP;
+    return SALTS_ENOTSUP;
   result = chttp_file_sink_transfer_flush(transfer);
   while (result == CHTTP_FILE_SINK_WAIT) {
     size_t progressed = 0u;
     int status = cflow_io_file_runtime_run_ready(runtime, 64u, &progressed);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     result = chttp_file_sink_transfer_flush(transfer);
-    if (result == CHTTP_FILE_SINK_WAIT && progressed == 0u) turbo_thread_yield();
+    if (result == CHTTP_FILE_SINK_WAIT && progressed == 0u) salts_thread_yield();
   }
-  return result == CHTTP_FILE_SINK_READY ? TURBO_OK
+  return result == CHTTP_FILE_SINK_READY ? SALTS_OK
                                          : chttp_file_sink_transfer_status(transfer, NULL);
 }
 
 bool chttp_file_sink_transfer_ready(const chttp_file_sink_transfer *transfer) {
-  return transfer != NULL && (transfer->status != TURBO_OK || !transfer->pending);
+  return transfer != NULL && (transfer->status != SALTS_OK || !transfer->pending);
 }
 
 size_t chttp_file_sink_transfer_transferred(const chttp_file_sink_transfer *transfer) {
@@ -243,19 +243,19 @@ size_t chttp_file_sink_transfer_transferred(const chttp_file_sink_transfer *tran
 
 int chttp_file_sink_transfer_status(const chttp_file_sink_transfer *transfer,
                                     int *out_native_status) {
-  if (transfer == NULL) return TURBO_EINVAL;
+  if (transfer == NULL) return SALTS_EINVAL;
   if (out_native_status != NULL) *out_native_status = transfer->native_status;
   return transfer->status;
 }
 
 int chttp_file_sink_transfer_close(chttp_file_sink_transfer *transfer) {
   int status;
-  if (transfer == NULL || transfer->file.impl == NULL) return TURBO_EINVAL;
-  if (transfer->close_requested) return TURBO_OK;
+  if (transfer == NULL || transfer->file.impl == NULL) return SALTS_EINVAL;
+  if (transfer->close_requested) return SALTS_OK;
   chttp_file_sink_transfer_set_ready(transfer, NULL, NULL);
   status = cflow_io_file_close(&transfer->file);
-  if (status == TURBO_OK || status == TURBO_EALREADY) transfer->close_requested = true;
-  return status == TURBO_EALREADY ? TURBO_OK : status;
+  if (status == SALTS_OK || status == SALTS_EALREADY) transfer->close_requested = true;
+  return status == SALTS_EALREADY ? SALTS_OK : status;
 }
 
 int chttp_file_sink_transfer_destroy(chttp_file_sink_transfer *transfer) {
@@ -263,12 +263,12 @@ int chttp_file_sink_transfer_destroy(chttp_file_sink_transfer *transfer) {
   int terminal_status;
   int native_status;
   int status;
-  if (transfer == NULL) return TURBO_EINVAL;
+  if (transfer == NULL) return SALTS_EINVAL;
   if (transfer->file.impl != NULL) {
     if (!transfer->close_requested || !cflow_io_file_is_quiescent(&transfer->file))
-      return TURBO_EBUSY;
+      return SALTS_EBUSY;
     status = cflow_io_file_destroy(&transfer->file);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
   }
   transferred = transfer->transferred;
   terminal_status = transfer->status;
@@ -278,33 +278,33 @@ int chttp_file_sink_transfer_destroy(chttp_file_sink_transfer *transfer) {
   transfer->transferred = transferred;
   transfer->status = terminal_status;
   transfer->native_status = native_status;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int chttp_file_sink_transfer_drain_destroy(chttp_file_sink_transfer *transfer,
                                            cflow_io_file_runtime *runtime) {
-  int first_status = TURBO_OK;
+  int first_status = SALTS_OK;
   int status;
-  if (transfer == NULL || runtime == NULL) return TURBO_EINVAL;
-  if (transfer->file.impl == NULL) return TURBO_OK;
+  if (transfer == NULL || runtime == NULL) return SALTS_EINVAL;
+  if (transfer->file.impl == NULL) return SALTS_OK;
   for (;;) {
     status = chttp_file_sink_transfer_close(transfer);
-    if (status == TURBO_OK) break;
-    if (status != TURBO_ENOBUFS) return status;
+    if (status == SALTS_OK) break;
+    if (status != SALTS_ENOBUFS) return status;
     {
       size_t progressed = 0u;
       status = cflow_io_file_runtime_run_ready(runtime, 64u, &progressed);
-      if (status != TURBO_OK) return status;
-      if (progressed == 0u) turbo_thread_yield();
+      if (status != SALTS_OK) return status;
+      if (progressed == 0u) salts_thread_yield();
     }
   }
   while (!cflow_io_file_is_quiescent(&transfer->file)) {
     size_t progressed = 0u;
     status = cflow_io_file_runtime_run_ready(runtime, 64u, &progressed);
-    if (status != TURBO_OK && first_status == TURBO_OK) first_status = status;
-    if (status != TURBO_OK) break;
-    if (progressed == 0u) turbo_thread_yield();
+    if (status != SALTS_OK && first_status == SALTS_OK) first_status = status;
+    if (status != SALTS_OK) break;
+    if (progressed == 0u) salts_thread_yield();
   }
-  if (first_status != TURBO_OK) return first_status;
+  if (first_status != SALTS_OK) return first_status;
   return chttp_file_sink_transfer_destroy(transfer);
 }

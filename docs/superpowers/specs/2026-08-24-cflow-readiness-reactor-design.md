@@ -30,7 +30,7 @@ arm、代际验证、quiescent close”的事实源。
 采用两层实现，保持单向依赖：
 
 ```text
-Platform turbo_readiness_reactor
+Platform salts_readiness_reactor
   owns: native fd wait, bounded slots, generation, backend errors, quiescence
                      |
                      v
@@ -38,22 +38,22 @@ CFlow reactor Source adapter
   owns: read/WOULD_BLOCK, WAIT arm, wake coalescing, Source cancel/destroy
 ```
 
-Platform 在 `<turbo/readiness.h>` 暴露 opaque reactor/registration、通用事件位和
+Platform 在 `<salts/readiness.h>` 暴露 opaque reactor/registration、通用事件位和
 精确 `int` 状态码。只有 Platform 的注册入口接收 native resource；
 `<cflow/readiness.h>` 只接收一个已经注册的 opaque registration，并以 move
 方式取得所有权。CFlow API 因而不出现 epoll fd、kqueue ident、IOCP port 或
 OVERLAPPED。
 
-`TurboUtils::CFlow` 对 `TurboUtils::Platform` 的链接从 PRIVATE 调整为 PUBLIC，
+`Salts::CFlow` 对 `Salts::Platform` 的链接从 PRIVATE 调整为 PUBLIC，
 因为新公开头文件引用 Platform 的 opaque registration 类型。依赖方向仍是
 `CFlow -> Platform`，不存在反向依赖。
 
 ### 首个生产后端
 
 首个生产后端是 Linux epoll，并由显式 CMake option
-`TURBO_ENABLE_EPOLL_READINESS` 控制。Linux Release user preset 和 Linux CI
+`SALTS_ENABLE_EPOLL_READINESS` 控制。Linux Release user preset 和 Linux CI
 显式打开它；Windows、macOS、Android 保持关闭。关闭或不支持时，native
-reactor factory 返回 `TURBO_ENOTSUP`，不自动选择 poll/select、定时扫描或
+reactor factory 返回 `SALTS_ENOTSUP`，不自动选择 poll/select、定时扫描或
 thread-per-handle。
 
 选择 epoll 的原因：
@@ -73,19 +73,19 @@ completion Source/operation adapter 进入，不能伪装成本期 readiness bac
 Platform 新增下列概念；具体拼写在 RED header test 固定后实现：
 
 ```c
-typedef struct turbo_readiness_reactor { void *impl; }
-    turbo_readiness_reactor;
-typedef struct turbo_readiness_registration { void *impl; }
-    turbo_readiness_registration;
+typedef struct salts_readiness_reactor { void *impl; }
+    salts_readiness_reactor;
+typedef struct salts_readiness_registration { void *impl; }
+    salts_readiness_registration;
 
-typedef uint32_t turbo_readiness_events;
+typedef uint32_t salts_readiness_events;
 
-typedef struct turbo_readiness_config {
+typedef struct salts_readiness_config {
     size_t registration_capacity;
     size_t event_batch_capacity;
-} turbo_readiness_config;
+} salts_readiness_config;
 
-typedef struct turbo_readiness_stats {
+typedef struct salts_readiness_stats {
     size_t capacity;
     size_t registered_count;
     size_t armed_count;
@@ -94,7 +94,7 @@ typedef struct turbo_readiness_stats {
     uint64_t stale_events;
     uint64_t duplicate_events;
     uint64_t backend_errors;
-} turbo_readiness_stats;
+} salts_readiness_stats;
 ```
 
 控制面 API 使用 `0` 成功、稳定负错误码失败：
@@ -111,27 +111,27 @@ continuation 的最小用法如下；真实 callback 必须把 `blocked` 替换�
 I/O 尝试结果：
 
 ```c
-#include <turbo/readiness.h>
+#include <salts/readiness.h>
 
 #include <stdbool.h>
 
-static turbo_readiness_callback_result continue_read(
-    void *user, turbo_readiness_events events, int status) {
-  const bool blocked = status == TURBO_OK && events != 0u &&
+static salts_readiness_callback_result continue_read(
+    void *user, salts_readiness_events events, int status) {
+  const bool blocked = status == SALTS_OK && events != 0u &&
                        *(const bool *)user;
-  return (turbo_readiness_callback_result){
-      blocked ? TURBO_READINESS_REARM : TURBO_READINESS_COMPLETE,
-      blocked ? TURBO_READINESS_EVENT_READ : 0u};
+  return (salts_readiness_callback_result){
+      blocked ? SALTS_READINESS_REARM : SALTS_READINESS_COMPLETE,
+      blocked ? SALTS_READINESS_EVENT_READ : 0u};
 }
 
-int arm_read(turbo_readiness_registration *registration, bool *blocked) {
-  return turbo_readiness_arm_continuation(
-      registration, TURBO_READINESS_EVENT_READ, continue_read, blocked);
+int arm_read(salts_readiness_registration *registration, bool *blocked) {
+  return salts_readiness_arm_continuation(
+      registration, SALTS_READINESS_EVENT_READ, continue_read, blocked);
 }
 ```
 
-错误映射使用已有 `TURBO_EINVAL`、`TURBO_ENOMEM`、`TURBO_ENOBUFS`、
-`TURBO_EALREADY`、`TURBO_EBUSY`、`TURBO_ESHUTDOWN`、`TURBO_ENOTSUP`
+错误映射使用已有 `SALTS_EINVAL`、`SALTS_ENOMEM`、`SALTS_ENOBUFS`、
+`SALTS_EALREADY`、`SALTS_EBUSY`、`SALTS_ESHUTDOWN`、`SALTS_ENOTSUP`
 以及负 errno。不会新增含义重叠的 CFlow 私有错误域。
 
 CFlow 新增 `cflow_source_from_reactor_registration(...)`，返回精确 `int`。
@@ -187,7 +187,7 @@ capacity <= UINT32_MAX - 1
 ```
 
 slot table 和 event batch 只在 init 分配。register/arm/wake/unarm 不 realloc。
-slot 满时 register 返回 `TURBO_ENOBUFS` 并增加 `rejected_full`；不阻塞、不扩容。
+slot 满时 register 返回 `SALTS_ENOBUFS` 并增加 `rejected_full`；不阻塞、不扩容。
 
 ### 状态机
 
@@ -214,7 +214,7 @@ delivery。关键线性化点为：
   `OPEN + ARMED + NONE` 原子改为 `RESERVED`；
 - close 先关闭 handle admission，native close 成功后等待 callback、API borrow
   和 arm waiter quiescent，最后清空 handle 并回收或 retire slot；
-- generation 无可表示的后继时 retire 并返回 `TURBO_EOVERFLOW`，不回绕。
+- generation 无可表示的后继时 retire 并返回 `SALTS_EOVERFLOW`，不回绕。
 
 Reactor：
 
@@ -223,7 +223,7 @@ OPEN --shutdown--> STOPPING --thread joined--> CLOSED --destroy--> EMPTY
 ```
 
 在 reactor callback 内发起同 registration arm/unarm/close 或同 reactor shutdown
-时不得阻塞等待自身，统一返回 `TURBO_EBUSY` 且不提交状态迁移。外部 arm 若在
+时不得阻塞等待自身，统一返回 `SALTS_EBUSY` 且不提交状态迁移。外部 arm 若在
 `delivery CALLBACK` 期间到达则等待 epilogue，再完整重检 lifecycle、terminal、
 reactor admission、generation、interest 和 control。CFlow adapter
 持有 callback reference，Source destroy 只释放 owner reference，因此 shutdown
@@ -251,7 +251,7 @@ during callback 不会释放 callback 正在使用的 state/user resource。
 - `EPOLLERR/EPOLLHUP` 作为 readiness event 交给 user read 解释；read 可以先排空
   数据，再返回 DONE/ERROR。
 - reactor shutdown 关闭 admission、唤醒 epoll thread、使所有 ARMED registration
-  收到 `TURBO_ESHUTDOWN`、join thread，然后进入 CLOSED。
+  收到 `SALTS_ESHUTDOWN`、join thread，然后进入 CLOSED。
 - 正常释放顺序是 `cflow_run_close -> source/registration quiescent close -> user
   resource close -> reactor shutdown/destroy`。
 
@@ -286,7 +286,7 @@ C/Lean 对应关系仍由共享 contract、native differential 与 TSan 验证�
 - register/arm/wake/rearm/unarm/close；
 - duplicate/stale event、slot generation 和 simulated resource reuse；
 - callback 中 close、外部 close 与 inflight callback 竞态；
-- reactor shutdown、callback 内 shutdown 的 `TURBO_EBUSY`、backend error fan-out、
+- reactor shutdown、callback 内 shutdown 的 `SALTS_EBUSY`、backend error fan-out、
   统计计数和重复 shutdown。
 
 Linux native suite 使用 nonblocking pipe/socketpair 验证：
@@ -308,11 +308,11 @@ Windows/macOS/Android 验证公共头、fake suite、CFlow adapter 和明确 ENO
 - 用户可逐个把 raw arm/cancel driver 迁移为 Platform registration，无需改变
   read callback 或值类型；
 - 若 epoll backend 出现 host 回归，可关闭
-  `TURBO_ENABLE_EPOLL_READINESS`，保留 fake contract 和 CFlow adapter，不回退到
+  `SALTS_ENABLE_EPOLL_READINESS`，保留 fake contract 和 CFlow adapter，不回退到
   polling；若公共契约本身有缺陷，可完整回滚新增 header/source/tests，旧 API
   仍可工作。
 
-`turbo_readiness_arm_continuation()` 不改变旧 arm 的 callback 内 `TURBO_EBUSY` 判定。
+`salts_readiness_arm_continuation()` 不改变旧 arm 的 callback 内 `SALTS_EBUSY` 判定。
 continuation 只返回 `COMPLETE` 或 `REARM + interests`；Platform 在 callback 返回后与
 close/unarm/external arm/shutdown 共用同一 control gate 提交后续 backend arm。terminal
 callback 忽略返回值，backend rearm 失败则以 `events == 0` 和精确错误再投递一次 terminal

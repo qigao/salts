@@ -1,6 +1,6 @@
 #include "io_native_internal.h"
 
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 #include <limits.h>
 
@@ -192,15 +192,15 @@ int cflow_io_native_backend_init(
     cflow_io_native_backend *backend,
     const cflow_io_native_backend_config *config) {
     if (backend == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     backend->impl = NULL;
     if (config == NULL || config->request_capacity == 0u ||
         config->completion_batch_capacity == 0u ||
         config->completion_batch_capacity > config->request_capacity ||
         config->request_capacity > UINT32_MAX)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (!cflow_io_native_backend_supported(config->kind))
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
 
     switch (config->kind) {
 #if defined(CFLOW_HAS_NATIVE_EPOLL) || defined(CFLOW_HAS_NATIVE_KQUEUE) || \
@@ -219,7 +219,7 @@ int cflow_io_native_backend_init(
             return cflow_io_native_io_uring_init(backend, config);
 #endif
         default:
-            return TURBO_ENOTSUP;
+            return SALTS_ENOTSUP;
     }
 }
 
@@ -236,7 +236,7 @@ static int native_actor_submit(void *backend_user,
     if (impl == NULL || impl->ops == NULL || impl->ops->submit == NULL ||
         actor == NULL || request_id == 0u ||
         !cflow_io_native_operation_valid(operation))
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return impl->ops->submit(impl, actor, request_id, operation);
 }
 
@@ -246,7 +246,7 @@ static int native_actor_cancel(void *backend_user,
     cflow_io_native_impl *impl = native_impl(backend);
     if (impl == NULL || impl->ops == NULL || impl->ops->cancel == NULL ||
         request_id == 0u)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return impl->ops->cancel(impl, request_id);
 }
 
@@ -263,11 +263,11 @@ static int native_vector_actor_submit(void *backend_user,
     if (impl == NULL || impl->ops == NULL || actor == NULL ||
         request_id == 0u ||
         !cflow_io_native_vector_operation_valid(operation))
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (impl->ops->submit_vector == NULL ||
         !cflow_io_native_backend_vector_operation_supported(
             impl->kind, operation->kind))
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     return impl->ops->submit_vector(impl, actor, request_id, operation);
 }
 
@@ -284,9 +284,9 @@ static int native_pipe_actor_submit(void *backend_user,
     if (impl == NULL || impl->ops == NULL || actor == NULL ||
         request_id == 0u ||
         !cflow_io_native_pipe_operation_valid(operation))
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (impl->ops->submit_pipe == NULL)
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     return impl->ops->submit_pipe(impl, actor, request_id, operation);
 }
 
@@ -303,11 +303,11 @@ static int native_file_actor_submit(void *backend_user,
     if (impl == NULL || impl->ops == NULL || actor == NULL ||
         request_id == 0u ||
         !cflow_io_native_file_operation_valid(operation))
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (impl->ops->submit_file == NULL ||
         !cflow_io_native_backend_file_operation_supported(impl->kind,
                                                           operation->kind))
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     return impl->ops->submit_file(impl, actor, request_id, operation);
 }
 
@@ -347,7 +347,7 @@ int cflow_io_native_backend_forget_socket(
     cflow_io_native_impl *impl = native_impl(backend);
     if (impl == NULL || impl->ops == NULL ||
         impl->ops->forget_socket == NULL || closed_socket == UINTPTR_MAX)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return impl->ops->forget_socket(impl, closed_socket);
 }
 
@@ -355,9 +355,9 @@ int cflow_io_native_backend_forget_pipe(
     cflow_io_native_backend *backend, uintptr_t closed_handle) {
     cflow_io_native_impl *impl = native_impl(backend);
     if (impl == NULL || impl->ops == NULL || closed_handle == UINTPTR_MAX)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (impl->ops->forget_pipe == NULL)
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     return impl->ops->forget_pipe(impl, closed_handle);
 }
 
@@ -365,16 +365,16 @@ int cflow_io_native_backend_forget_file(
     cflow_io_native_backend *backend, uintptr_t closed_handle) {
     cflow_io_native_impl *impl = native_impl(backend);
     if (impl == NULL || impl->ops == NULL || closed_handle == UINTPTR_MAX)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (impl->ops->forget_file == NULL)
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     return impl->ops->forget_file(impl, closed_handle);
 }
 
 int cflow_io_native_backend_shutdown(cflow_io_native_backend *backend) {
     cflow_io_native_impl *impl = native_impl(backend);
     if (impl == NULL || impl->ops == NULL || impl->ops->shutdown == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return impl->ops->shutdown(impl);
 }
 
@@ -382,9 +382,9 @@ int cflow_io_native_backend_destroy(cflow_io_native_backend *backend) {
     cflow_io_native_impl *impl = native_impl(backend);
     int status;
     if (impl == NULL || impl->ops == NULL || impl->ops->destroy == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     status = impl->ops->destroy(impl);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         backend->impl = NULL;
     return status;
 }

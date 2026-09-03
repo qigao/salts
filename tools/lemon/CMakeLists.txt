@@ -1,6 +1,6 @@
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
   cmake_minimum_required(VERSION 3.23)
-  project(RocidaLemonHost LANGUAGES C)
+  project(SaltsLemonHost LANGUAGES C)
 endif()
 
 if(CMAKE_CROSSCOMPILING)
@@ -29,7 +29,7 @@ if(CMAKE_CROSSCOMPILING)
   endif()
 
   ExternalProject_Add(
-    turbo_utils_lemon_host
+    salts_lemon_host
     SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}"
     BINARY_DIR "${lemon_host_binary_dir}"
     CMAKE_GENERATOR "${CMAKE_GENERATOR}"
@@ -43,12 +43,12 @@ if(CMAKE_CROSSCOMPILING)
 
   add_executable(lemon IMPORTED GLOBAL)
   set_target_properties(lemon PROPERTIES IMPORTED_LOCATION "${lemon_host_executable}")
-  add_dependencies(lemon turbo_utils_lemon_host)
+  add_dependencies(lemon salts_lemon_host)
 else()
   add_executable(lemon lemon.c)
   target_compile_features(lemon PRIVATE c_std_11)
   set_target_properties(lemon PROPERTIES FOLDER tools)
 endif()
 
-add_executable(Rocida::Lemon ALIAS lemon)
+add_executable(Salts::Lemon ALIAS lemon)
 

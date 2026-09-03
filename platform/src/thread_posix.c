@@ -1,4 +1,4 @@
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 #include <errno.h>
 #include <pthread.h>
@@ -7,16 +7,16 @@
 #include <time.h>
 #include <unistd.h>
 
-struct turbo_thread_wrapper_ctx {
-  turbo_thread_cb entry;
+struct salts_thread_wrapper_ctx {
+  salts_thread_cb entry;
   void *arg;
 };
 
-typedef struct turbo_posix_cond_s {
+typedef struct salts_posix_cond_s {
   pthread_cond_t native;
-} turbo_posix_cond_t;
+} salts_posix_cond_t;
 
-void turbo_mutex_init(turbo_mutex_t *mutex) {
+void salts_mutex_init(salts_mutex_t *mutex) {
   pthread_mutex_t *native;
   if (mutex == NULL) return;
   *mutex = NULL;
@@ -29,24 +29,24 @@ void turbo_mutex_init(turbo_mutex_t *mutex) {
   *mutex = native;
 }
 
-void turbo_mutex_destroy(turbo_mutex_t *mutex) {
+void salts_mutex_destroy(salts_mutex_t *mutex) {
   if (mutex == NULL || *mutex == NULL) return;
   (void)pthread_mutex_destroy((pthread_mutex_t *)*mutex);
   free(*mutex);
   *mutex = NULL;
 }
 
-void turbo_mutex_lock(turbo_mutex_t *mutex) {
+void salts_mutex_lock(salts_mutex_t *mutex) {
   if (mutex == NULL || *mutex == NULL) return;
   (void)pthread_mutex_lock((pthread_mutex_t *)*mutex);
 }
 
-void turbo_mutex_unlock(turbo_mutex_t *mutex) {
+void salts_mutex_unlock(salts_mutex_t *mutex) {
   if (mutex == NULL || *mutex == NULL) return;
   (void)pthread_mutex_unlock((pthread_mutex_t *)*mutex);
 }
 
-int turbo_rwlock_init(turbo_rwlock_t *lock) {
+int salts_rwlock_init(salts_rwlock_t *lock) {
   pthread_rwlock_t *native;
   int rc;
   if (lock == NULL) return -EINVAL;
@@ -62,40 +62,40 @@ int turbo_rwlock_init(turbo_rwlock_t *lock) {
   return 0;
 }
 
-void turbo_rwlock_destroy(turbo_rwlock_t *lock) {
+void salts_rwlock_destroy(salts_rwlock_t *lock) {
   if (lock == NULL || *lock == NULL) return;
   (void)pthread_rwlock_destroy((pthread_rwlock_t *)*lock);
   free(*lock);
   *lock = NULL;
 }
 
-void turbo_rwlock_rdlock(turbo_rwlock_t *lock) {
+void salts_rwlock_rdlock(salts_rwlock_t *lock) {
   if (lock == NULL || *lock == NULL) return;
   (void)pthread_rwlock_rdlock((pthread_rwlock_t *)*lock);
 }
 
-void turbo_rwlock_rdunlock(turbo_rwlock_t *lock) {
+void salts_rwlock_rdunlock(salts_rwlock_t *lock) {
   if (lock == NULL || *lock == NULL) return;
   (void)pthread_rwlock_unlock((pthread_rwlock_t *)*lock);
 }
 
-void turbo_rwlock_wrlock(turbo_rwlock_t *lock) {
+void salts_rwlock_wrlock(salts_rwlock_t *lock) {
   if (lock == NULL || *lock == NULL) return;
   (void)pthread_rwlock_wrlock((pthread_rwlock_t *)*lock);
 }
 
-void turbo_rwlock_wrunlock(turbo_rwlock_t *lock) {
+void salts_rwlock_wrunlock(salts_rwlock_t *lock) {
   if (lock == NULL || *lock == NULL) return;
   (void)pthread_rwlock_unlock((pthread_rwlock_t *)*lock);
 }
 
-void turbo_cond_init(turbo_cond_t *cond) {
-  turbo_posix_cond_t *wrapper;
+void salts_cond_init(salts_cond_t *cond) {
+  salts_posix_cond_t *wrapper;
   int rc;
 
   if (cond == NULL) return;
   *cond = NULL;
-  wrapper = (turbo_posix_cond_t *)malloc(sizeof(*wrapper));
+  wrapper = (salts_posix_cond_t *)malloc(sizeof(*wrapper));
   if (wrapper == NULL) return;
 
 #if defined(__APPLE__)
@@ -121,38 +121,38 @@ void turbo_cond_init(turbo_cond_t *cond) {
   *cond = wrapper;
 }
 
-void turbo_cond_destroy(turbo_cond_t *cond) {
-  turbo_posix_cond_t *wrapper;
+void salts_cond_destroy(salts_cond_t *cond) {
+  salts_posix_cond_t *wrapper;
   if (cond == NULL || *cond == NULL) return;
-  wrapper = (turbo_posix_cond_t *)*cond;
+  wrapper = (salts_posix_cond_t *)*cond;
   (void)pthread_cond_destroy(&wrapper->native);
   free(wrapper);
   *cond = NULL;
 }
 
-void turbo_cond_signal(turbo_cond_t *cond) {
-  turbo_posix_cond_t *wrapper;
+void salts_cond_signal(salts_cond_t *cond) {
+  salts_posix_cond_t *wrapper;
   if (cond == NULL || *cond == NULL) return;
-  wrapper = (turbo_posix_cond_t *)*cond;
+  wrapper = (salts_posix_cond_t *)*cond;
   (void)pthread_cond_signal(&wrapper->native);
 }
 
-void turbo_cond_broadcast(turbo_cond_t *cond) {
-  turbo_posix_cond_t *wrapper;
+void salts_cond_broadcast(salts_cond_t *cond) {
+  salts_posix_cond_t *wrapper;
   if (cond == NULL || *cond == NULL) return;
-  wrapper = (turbo_posix_cond_t *)*cond;
+  wrapper = (salts_posix_cond_t *)*cond;
   (void)pthread_cond_broadcast(&wrapper->native);
 }
 
-void turbo_cond_wait(turbo_cond_t *cond, turbo_mutex_t *mutex) {
-  turbo_posix_cond_t *wrapper;
+void salts_cond_wait(salts_cond_t *cond, salts_mutex_t *mutex) {
+  salts_posix_cond_t *wrapper;
   if (cond == NULL || *cond == NULL || mutex == NULL || *mutex == NULL) return;
-  wrapper = (turbo_posix_cond_t *)*cond;
+  wrapper = (salts_posix_cond_t *)*cond;
   (void)pthread_cond_wait(&wrapper->native, (pthread_mutex_t *)*mutex);
 }
 
 #if !defined(__APPLE__)
-static void turbo_timespec_add_ns(struct timespec *ts, uint64_t timeout_ns) {
+static void salts_timespec_add_ns(struct timespec *ts, uint64_t timeout_ns) {
   uint64_t seconds = timeout_ns / 1000000000ULL;
   uint64_t nanos = timeout_ns % 1000000000ULL;
   ts->tv_sec += (time_t)seconds;
@@ -164,15 +164,15 @@ static void turbo_timespec_add_ns(struct timespec *ts, uint64_t timeout_ns) {
 }
 #endif
 
-int turbo_cond_timedwait(turbo_cond_t *cond, turbo_mutex_t *mutex,
+int salts_cond_timedwait(salts_cond_t *cond, salts_mutex_t *mutex,
                          uint64_t timeout_ns) {
-  turbo_posix_cond_t *wrapper;
+  salts_posix_cond_t *wrapper;
   struct timespec deadline;
   int rc;
 
   if (cond == NULL || *cond == NULL || mutex == NULL || *mutex == NULL)
     return -EINVAL;
-  wrapper = (turbo_posix_cond_t *)*cond;
+  wrapper = (salts_posix_cond_t *)*cond;
 
 #if defined(__APPLE__)
   deadline.tv_sec = (time_t)(timeout_ns / 1000000000ULL);
@@ -182,7 +182,7 @@ int turbo_cond_timedwait(turbo_cond_t *cond, turbo_mutex_t *mutex,
                                           &deadline);
 #else
   if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0) return -errno;
-  turbo_timespec_add_ns(&deadline, timeout_ns);
+  salts_timespec_add_ns(&deadline, timeout_ns);
   rc = pthread_cond_timedwait(&wrapper->native,
                               (pthread_mutex_t *)*mutex,
                               &deadline);
@@ -192,24 +192,24 @@ int turbo_cond_timedwait(turbo_cond_t *cond, turbo_mutex_t *mutex,
   return rc == ETIMEDOUT ? -ETIMEDOUT : -rc;
 }
 
-static void *turbo_thread_entry_wrapper_pthread(void *arg) {
-  struct turbo_thread_wrapper_ctx *ctx =
-      (struct turbo_thread_wrapper_ctx *)arg;
-  turbo_thread_cb entry = ctx->entry;
+static void *salts_thread_entry_wrapper_pthread(void *arg) {
+  struct salts_thread_wrapper_ctx *ctx =
+      (struct salts_thread_wrapper_ctx *)arg;
+  salts_thread_cb entry = ctx->entry;
   void *real_arg = ctx->arg;
   free(ctx);
   entry(real_arg);
   return NULL;
 }
 
-int turbo_thread_create(turbo_thread_t *thread, turbo_thread_cb entry, void *arg) {
-  struct turbo_thread_wrapper_ctx *ctx;
+int salts_thread_create(salts_thread_t *thread, salts_thread_cb entry, void *arg) {
+  struct salts_thread_wrapper_ctx *ctx;
   pthread_t *native;
   int rc;
 
   if (thread == NULL || entry == NULL) return -EINVAL;
   *thread = NULL;
-  ctx = (struct turbo_thread_wrapper_ctx *)malloc(sizeof(*ctx));
+  ctx = (struct salts_thread_wrapper_ctx *)malloc(sizeof(*ctx));
   if (ctx == NULL) return -ENOMEM;
   native = (pthread_t *)malloc(sizeof(*native));
   if (native == NULL) {
@@ -218,7 +218,7 @@ int turbo_thread_create(turbo_thread_t *thread, turbo_thread_cb entry, void *arg
   }
   ctx->entry = entry;
   ctx->arg = arg;
-  rc = pthread_create(native, NULL, turbo_thread_entry_wrapper_pthread, ctx);
+  rc = pthread_create(native, NULL, salts_thread_entry_wrapper_pthread, ctx);
   if (rc != 0) {
     free(native);
     free(ctx);
@@ -228,7 +228,7 @@ int turbo_thread_create(turbo_thread_t *thread, turbo_thread_cb entry, void *arg
   return 0;
 }
 
-int turbo_thread_join(turbo_thread_t *thread) {
+int salts_thread_join(salts_thread_t *thread) {
   pthread_t *native;
   int rc;
   if (thread == NULL || *thread == NULL) return -EINVAL;
@@ -240,7 +240,7 @@ int turbo_thread_join(turbo_thread_t *thread) {
   return 0;
 }
 
-void turbo_thread_destroy(turbo_thread_t *thread) {
+void salts_thread_destroy(salts_thread_t *thread) {
   pthread_t *native;
   if (thread == NULL || *thread == NULL) return;
   native = (pthread_t *)*thread;
@@ -249,7 +249,7 @@ void turbo_thread_destroy(turbo_thread_t *thread) {
   *thread = NULL;
 }
 
-void turbo_once(turbo_once_t *guard, void (*callback)(void)) {
+void salts_once(salts_once_t *guard, void (*callback)(void)) {
   int expected;
   if (guard == NULL || callback == NULL) return;
   expected = 0;
@@ -263,7 +263,7 @@ void turbo_once(turbo_once_t *guard, void (*callback)(void)) {
     (void)sched_yield();
 }
 
-void turbo_sleep_ms(uint32_t ms) {
+void salts_sleep_ms(uint32_t ms) {
   struct timespec request;
   struct timespec remaining;
   request.tv_sec = (time_t)(ms / 1000U);
@@ -272,9 +272,9 @@ void turbo_sleep_ms(uint32_t ms) {
     request = remaining;
 }
 
-void turbo_thread_yield(void) { (void)sched_yield(); }
+void salts_thread_yield(void) { (void)sched_yield(); }
 
-int turbo_cpu_count(void) {
+int salts_cpu_count(void) {
   long count = sysconf(_SC_NPROCESSORS_ONLN);
   return count > 0 ? (int)count : 4;
 }

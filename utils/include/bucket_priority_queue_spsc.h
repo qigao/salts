@@ -1,5 +1,5 @@
-#ifndef ROCIDA_BUCKET_PRIORITY_QUEUE_SPSC_H
-#define ROCIDA_BUCKET_PRIORITY_QUEUE_SPSC_H
+#ifndef SALTS_BUCKET_PRIORITY_QUEUE_SPSC_H
+#define SALTS_BUCKET_PRIORITY_QUEUE_SPSC_H
 
 #include "platform.h"
 #include "ring_buffer_spsc.h"
@@ -46,21 +46,21 @@ typedef struct {
  * - ONE consumer thread calls pop/peek operations
  * - Lock-free implementation using ring_buffer_spsc
  */
-TURBO_C_API bool bucket_priority_queue_spsc_init(bucket_priority_queue_spsc_t *queue,
+SALTS_C_API bool bucket_priority_queue_spsc_init(bucket_priority_queue_spsc_t *queue,
                                                size_t capacity_per_bucket);
 
 /* Releases all memory owned by queue. Safe to call on zero-initialized queue. */
-TURBO_C_API void bucket_priority_queue_spsc_destroy(bucket_priority_queue_spsc_t *queue);
+SALTS_C_API void bucket_priority_queue_spsc_destroy(bucket_priority_queue_spsc_t *queue);
 
 /* Removes all items but keeps allocated memory. NOT thread-safe. */
-TURBO_C_API void bucket_priority_queue_spsc_clear(bucket_priority_queue_spsc_t *queue);
+SALTS_C_API void bucket_priority_queue_spsc_clear(bucket_priority_queue_spsc_t *queue);
 
 /* Ensures each bucket has at least `capacity_per_bucket` entries of capacity. NOT thread-safe. */
-TURBO_C_API bool bucket_priority_queue_spsc_reserve(bucket_priority_queue_spsc_t *queue,
+SALTS_C_API bool bucket_priority_queue_spsc_reserve(bucket_priority_queue_spsc_t *queue,
                                                   size_t capacity_per_bucket);
 
 /* FIFO push in selected priority bucket. Returns false on invalid input or OOM. Thread-safe for producer. */
-TURBO_C_API bool bucket_priority_queue_spsc_push(bucket_priority_queue_spsc_t *queue,
+SALTS_C_API bool bucket_priority_queue_spsc_push(bucket_priority_queue_spsc_t *queue,
                                                bucket_priority_spsc_t priority,
                                                bucket_priority_spsc_value_t value);
 
@@ -69,7 +69,7 @@ TURBO_C_API bool bucket_priority_queue_spsc_push(bucket_priority_queue_spsc_t *q
  * Returns false when queue is empty or arguments are invalid.
  * Thread-safe for consumer.
  */
-TURBO_C_API bool bucket_priority_queue_spsc_pop(bucket_priority_queue_spsc_t *queue,
+SALTS_C_API bool bucket_priority_queue_spsc_pop(bucket_priority_queue_spsc_t *queue,
                                               bucket_priority_spsc_value_t *out_value);
 
 /*
@@ -77,7 +77,7 @@ TURBO_C_API bool bucket_priority_queue_spsc_pop(bucket_priority_queue_spsc_t *qu
  * Returns false when queue is empty or arguments are invalid.
  * Thread-safe for consumer.
  */
-TURBO_C_API bool bucket_priority_queue_spsc_peek(const bucket_priority_queue_spsc_t *queue,
+SALTS_C_API bool bucket_priority_queue_spsc_peek(const bucket_priority_queue_spsc_t *queue,
                                                bucket_priority_spsc_value_t *out_value);
 
 /*
@@ -85,20 +85,20 @@ TURBO_C_API bool bucket_priority_queue_spsc_peek(const bucket_priority_queue_sps
  * Returns actual popped count.
  * Thread-safe for consumer.
  */
-TURBO_C_API size_t bucket_priority_queue_spsc_pop_batch(bucket_priority_queue_spsc_t *queue,
+SALTS_C_API size_t bucket_priority_queue_spsc_pop_batch(bucket_priority_queue_spsc_t *queue,
                                                       size_t max_items,
                                                       bucket_priority_spsc_value_t *out_values);
 
 /* Query helpers - thread-safe */
-TURBO_C_API bool bucket_priority_queue_spsc_empty(const bucket_priority_queue_spsc_t *queue);
-TURBO_C_API size_t bucket_priority_queue_spsc_size(const bucket_priority_queue_spsc_t *queue);
-TURBO_C_API size_t bucket_priority_queue_spsc_size_at(const bucket_priority_queue_spsc_t *queue,
+SALTS_C_API bool bucket_priority_queue_spsc_empty(const bucket_priority_queue_spsc_t *queue);
+SALTS_C_API size_t bucket_priority_queue_spsc_size(const bucket_priority_queue_spsc_t *queue);
+SALTS_C_API size_t bucket_priority_queue_spsc_size_at(const bucket_priority_queue_spsc_t *queue,
                                                     bucket_priority_spsc_t priority);
-TURBO_C_API size_t bucket_priority_queue_spsc_capacity_at(const bucket_priority_queue_spsc_t *queue,
+SALTS_C_API size_t bucket_priority_queue_spsc_capacity_at(const bucket_priority_queue_spsc_t *queue,
                                                         bucket_priority_spsc_t priority);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* ROCIDA_BUCKET_PRIORITY_QUEUE_SPSC_H */
+#endif /* SALTS_BUCKET_PRIORITY_QUEUE_SPSC_H */

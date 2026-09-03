@@ -8,13 +8,13 @@
 **Goal:** Implement the independent CNet client/session layer described by
 issue #194, backed by NativeIO and unrelated to CFlow Actor or Reactive APIs.
 
-**Architecture:** `TurboUtils::CNet` owns generation-checked sessions,
+**Architecture:** `Salts::CNet` owns generation-checked sessions,
 protocols, bounded command/payload storage, I/O owner shards, and callback
 dispatch. NativeIO remains its raw operation dependency. CFlow Graph/Event,
 Actor, and Reactive are separate modules; Actor and Reactive depend on NativeIO
 directly and none of them depends on CNet.
 
-**Tech Stack:** C11, NativeIO, TurboUtils Concurrency (`turbo_threadpool` and
+**Tech Stack:** C11, NativeIO, Salts Concurrency (`salts_threadpool` and
 `disruptor`), TinyTest, CMake Presets, BoringSSL, c-ares, llhttp,
 `tools/wsparser`, and upstream KCP.
 
@@ -55,10 +55,10 @@ directly and none of them depends on CNet.
 - Modify: `cmake/VerifyInstalledPackage.cmake`
 
 - [ ] Add a configure test that proves the disabled experimental gate creates no
-  `TurboUtils::CNet` target and installs no CNet header.
+  `Salts::CNet` target and installs no CNet header.
 - [x] Add a temporary experimental gate defaulting to `OFF`; conditionally add the
   `cnet/` subdirectory only when enabled.
-- [x] Create private `turbo_cnet_experimental` and TinyTest targets without an
+- [x] Create private `salts_cnet_experimental` and TinyTest targets without an
   install rule, export name, or public header.
 - [ ] Configure, build, and run the boundary test with the actual Windows preset
   selected through the `cmake-presets` skill.
@@ -105,7 +105,7 @@ directly and none of them depends on CNet.
 - [x] Write failing tests for payload ownership, full-ring rejection,
   oversize rejection, checked resident-memory arithmetic, close/drain, and
   exact view release.
-- [x] Build the command plane with TurboUtils `disruptor`; one shard has one
+- [x] Build the command plane with Salts `disruptor`; one shard has one
   consumer and any number of producers. Inline each bounded payload in its
   claimed entry; validate before claim so every successful claim publishes.
 - [x] Add debug counters for live/peak commands, queued bytes, rejected
@@ -120,7 +120,7 @@ directly and none of them depends on CNet.
 
 **Files:**
 
-- Modify: `native-io/include/turbo/native_io.h`
+- Modify: `native-io/include/salts/native_io.h`
 - Modify: `native-io/src/native_io.c`
 - Modify: `native-io/src/native_io_internal.h`
 - Modify: `native-io/src/native_io_iocp.c`
@@ -171,7 +171,7 @@ bounded connect command.
 
 The internal shard set now performs that stable round-robin reservation and
 routing for already-normalized connect payloads. It runs exactly one long-lived
-owner task per shard on `turbo_threadpool`, routes send/receive/close commands
+owner task per shard on `salts_threadpool`, routes send/receive/close commands
 without migration, propagates the first owner failure, and supports bounded
 quiescent stop. Real TCP tests exercise two independent owner tasks in both
 directions. This is an implementation detail rather than a new user-visible
@@ -288,14 +288,14 @@ destruction.
 
 - Modify: `cflow/CMakeLists.txt`
 - Modify: `cflow/tests/CMakeLists.txt`
-- Modify: `cmake/TurboUtilsConfig.cmake.in`
+- Modify: `cmake/SaltsConfig.cmake.in`
 - Modify: `cmake/VerifyInstalledPackage.cmake`
 
 - [ ] Characterize the current Graph/Stream, Event, Actor, and Reactive public
   headers and link dependencies before moving sources.
-- [ ] Export I/O-neutral `TurboUtils::CFlow`, `TurboUtils::CFlowEvent`, and the
-  NativeIO-dependent `TurboUtils::CFlowActor` and
-  `TurboUtils::CFlowReactive` targets without compatibility aliases.
+- [ ] Export I/O-neutral `Salts::CFlow`, `Salts::CFlowEvent`, and the
+  NativeIO-dependent `Salts::CFlowActor` and
+  `Salts::CFlowReactive` targets without compatibility aliases.
 - [ ] Keep Event independent from NativeIO. Actor and Reactive link NativeIO
   directly and contain no CNet include, type, or session adapter.
 - [ ] Add installed-package C and C++ link tests for all four targets and rerun
@@ -386,15 +386,15 @@ destruction.
 - Modify: `cnet/CMakeLists.txt`
 - Modify: `CMakeLists.txt`
 - Modify: `cmake/VerifyInstalledPackage.cmake`
-- Modify: `cmake/TurboUtilsConfig.cmake.in`
+- Modify: `cmake/SaltsConfig.cmake.in`
 - Modify: `README.md`
 - Modify: `cnet/README.md`
 - Create: `cmake/verify/cnet_consumer/CMakeLists.txt`
 - Create: `cmake/verify/cnet_consumer/main.c`
 
-- [ ] Add installed-package tests that link `TurboUtils::CNet` from C and C++,
+- [ ] Add installed-package tests that link `Salts::CNet` from C and C++,
   with every enabled protocol feature represented in package metadata.
-- [ ] Remove the `experimental` target spelling, export `TurboUtils::CNet`, and
+- [ ] Remove the `experimental` target spelling, export `Salts::CNet`, and
   install only complete public headers.
 - [ ] Remove the temporary experimental gate and build/install the stable base CNet
   module unconditionally, matching NativeIO and CFlow; preserve explicit

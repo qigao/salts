@@ -1,7 +1,7 @@
-#ifndef TURBO_READINESS_CONTRACT_SUITE_H
-#define TURBO_READINESS_CONTRACT_SUITE_H
+#ifndef SALTS_READINESS_CONTRACT_SUITE_H
+#define SALTS_READINESS_CONTRACT_SUITE_H
 
-#include <turbo/readiness.h>
+#include <salts/readiness.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -18,19 +18,19 @@ typedef enum readiness_contract_hook {
 } readiness_contract_hook;
 
 typedef struct readiness_contract_factory {
-  readiness_contract_fixture *(*create)(turbo_readiness_config config,
-                                        turbo_readiness_reactor *reactor, int *status);
+  readiness_contract_fixture *(*create)(salts_readiness_config config,
+                                        salts_readiness_reactor *reactor, int *status);
   void (*destroy)(readiness_contract_fixture *fixture);
   int (*emit_resource)(readiness_contract_fixture *fixture, intptr_t native_resource,
-                       turbo_readiness_events events);
+                       salts_readiness_events events);
   int (*emit_token)(readiness_contract_fixture *fixture, uint64_t token,
-                    turbo_readiness_events events, int status);
+                    salts_readiness_events events, int status);
   int (*fail_backend)(readiness_contract_fixture *fixture, int status);
   uint64_t (*token_for_resource)(readiness_contract_fixture *fixture, intptr_t native_resource);
   uint64_t (*arm_token_for_resource)(readiness_contract_fixture *fixture,
                                      intptr_t native_resource);
   int (*emit_arm_token)(readiness_contract_fixture *fixture, uint64_t token,
-                        uint64_t arm_token, turbo_readiness_events events);
+                        uint64_t arm_token, salts_readiness_events events);
   void (*fail_next_arm)(readiness_contract_fixture *fixture, int status);
   void (*fail_hook)(readiness_contract_fixture *fixture, readiness_contract_hook hook, int status,
                     size_t calls);

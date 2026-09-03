@@ -7,7 +7,7 @@ tables and scalar payload layouts remain byte-for-byte unchanged. Programs
 that contain inline XML/text or a non-scalar CMeta content location require a
 v3 table and fail session admission when only v1/v2 is supplied.
 
-The public boundary never exposes `turbo_xml_node` or cxml objects. Inline
+The public boundary never exposes `salts_xml_node` or cxml objects. Inline
 content is compiled into one immutable UTF-8 fragment owned by the SCXML
 program:
 

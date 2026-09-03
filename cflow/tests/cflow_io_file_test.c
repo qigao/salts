@@ -1,8 +1,8 @@
 #include <cflow/io_file.h>
 
-#include <turbo/clock.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/clock.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include "tinytest.h"
 
@@ -102,39 +102,39 @@ static void file_test_runtime_wake(void *user) {
 
 static int file_test_runtime_wait(cflow_io_file_runtime *runtime, file_completion_probe *first,
                                   file_completion_probe *second) {
-  const uint64_t started = turbo_hrtime();
+  const uint64_t started = salts_hrtime();
   for (;;) {
     cflow_io_file_runtime_stats stats = {0};
     size_t progressed = 0u;
     int status = cflow_io_file_runtime_run_ready(runtime, 64u, &progressed);
-    if (status != TURBO_OK) return status;
-    if (!cflow_io_file_runtime_get_stats(runtime, &stats)) return TURBO_EINVAL;
+    if (status != SALTS_OK) return status;
+    if (!cflow_io_file_runtime_get_stats(runtime, &stats)) return SALTS_EINVAL;
     if (first->count == 1u && second->count == 1u && stats.operation_slots_in_use == 0u)
-      return TURBO_OK;
-    if (turbo_hrtime() - started >= FILE_TEST_TIMEOUT_NS) return TURBO_ETIMEDOUT;
-    if (progressed == 0u) turbo_thread_yield();
+      return SALTS_OK;
+    if (salts_hrtime() - started >= FILE_TEST_TIMEOUT_NS) return SALTS_ETIMEDOUT;
+    if (progressed == 0u) salts_thread_yield();
   }
 }
 
 static int file_test_wait(cflow_io_file *file, file_completion_probe *probe,
                           size_t expected_count) {
-  const uint64_t started = turbo_hrtime();
+  const uint64_t started = salts_hrtime();
   for (;;) {
     cflow_io_file_stats stats = {0};
     size_t progressed = 0u;
     int status = cflow_io_file_run_ready(file, 64u, &progressed);
-    if (status != TURBO_OK) return status;
-    if (!cflow_io_file_get_stats(file, &stats)) return TURBO_EINVAL;
-    if (probe->count >= expected_count && stats.operation_slots_in_use == 0u) return TURBO_OK;
-    if (turbo_hrtime() - started >= FILE_TEST_TIMEOUT_NS) return TURBO_ETIMEDOUT;
-    if (progressed == 0u) turbo_thread_yield();
+    if (status != SALTS_OK) return status;
+    if (!cflow_io_file_get_stats(file, &stats)) return SALTS_EINVAL;
+    if (probe->count >= expected_count && stats.operation_slots_in_use == 0u) return SALTS_OK;
+    if (salts_hrtime() - started >= FILE_TEST_TIMEOUT_NS) return SALTS_ETIMEDOUT;
+    if (progressed == 0u) salts_thread_yield();
   }
 }
 
 static void file_test_close_destroy(cflow_io_file *file) {
-  check_equal(cflow_io_file_close(file), TURBO_OK);
+  check_equal(cflow_io_file_close(file), SALTS_OK);
   check_true(cflow_io_file_is_quiescent(file));
-  check_equal(cflow_io_file_destroy(file), TURBO_OK);
+  check_equal(cflow_io_file_destroy(file), SALTS_OK);
 }
 
 spec("CFlow async file facade") {
@@ -159,7 +159,7 @@ spec("CFlow async file facade") {
     check_not_null(second_path);
     status = cflow_io_file_runtime_init(&runtime, &runtime_config);
 #if !defined(_WIN32)
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(first_path), 0);
       check_equal(tt_remove_file(second_path), 0);
@@ -168,7 +168,7 @@ spec("CFlow async file facade") {
       return;
     }
 #endif
-    check_equal(status, TURBO_OK);
+    check_equal(status, SALTS_OK);
     first_config.backend_kind = 0;
     first_config.request_capacity = 0u;
     first_config.command_capacity = 0u;
@@ -182,8 +182,8 @@ spec("CFlow async file facade") {
     second_config.runtime = &runtime;
     second_config.completion_user = &second_probe;
 
-    check_equal(cflow_io_file_open(&first, first_path, &first_config), TURBO_OK);
-    check_equal(cflow_io_file_open(&second, second_path, &second_config), TURBO_OK);
+    check_equal(cflow_io_file_open(&first, first_path, &first_config), SALTS_OK);
+    check_equal(cflow_io_file_open(&second, second_path, &second_config), SALTS_OK);
     check_true(cflow_io_file_runtime_get_stats(&runtime, &stats));
     check_equal(stats.open_files, (size_t)2u);
 
@@ -193,17 +193,17 @@ spec("CFlow async file facade") {
     submitted =
         cflow_io_file_try_write_at(&second, 102u, second_payload, sizeof(second_payload) - 1u, 0u);
     check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_ACCEPTED);
-    check_equal(file_test_runtime_wait(&runtime, &first_probe, &second_probe), TURBO_OK);
+    check_equal(file_test_runtime_wait(&runtime, &first_probe, &second_probe), SALTS_OK);
     check_equal(first_probe.completions[0].kind, CFLOW_IO_COMPLETION_OK);
     check_equal(second_probe.completions[0].kind, CFLOW_IO_COMPLETION_OK);
 
-    check_equal(cflow_io_file_close(&first), TURBO_OK);
-    check_equal(cflow_io_file_destroy(&first), TURBO_OK);
-    check_equal(cflow_io_file_close(&second), TURBO_OK);
-    check_equal(cflow_io_file_destroy(&second), TURBO_OK);
-    check_equal(cflow_io_file_runtime_close(&runtime), TURBO_OK);
+    check_equal(cflow_io_file_close(&first), SALTS_OK);
+    check_equal(cflow_io_file_destroy(&first), SALTS_OK);
+    check_equal(cflow_io_file_close(&second), SALTS_OK);
+    check_equal(cflow_io_file_destroy(&second), SALTS_OK);
+    check_equal(cflow_io_file_runtime_close(&runtime), SALTS_OK);
     check_true(cflow_io_file_runtime_is_quiescent(&runtime));
-    check_equal(cflow_io_file_runtime_destroy(&runtime), TURBO_OK);
+    check_equal(cflow_io_file_runtime_destroy(&runtime), SALTS_OK);
 
     check_equal(tt_remove_file(first_path), 0);
     check_equal(tt_remove_file(second_path), 0);
@@ -226,7 +226,7 @@ spec("CFlow async file facade") {
     runtime_config.file_capacity = 1u;
     status = cflow_io_file_runtime_init(&runtime, &runtime_config);
 #if !defined(_WIN32)
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(first_path), 0);
       check_equal(tt_remove_file(second_path), 0);
@@ -235,19 +235,19 @@ spec("CFlow async file facade") {
       return;
     }
 #endif
-    check_equal(status, TURBO_OK);
+    check_equal(status, SALTS_OK);
     config.backend_kind = 0;
     config.request_capacity = 0u;
     config.command_capacity = 0u;
     config.completion_batch_capacity = 0u;
     config.runtime = &runtime;
-    check_equal(cflow_io_file_open(&first, first_path, &config), TURBO_OK);
-    check_equal(cflow_io_file_open(&second, second_path, &config), TURBO_ENOBUFS);
+    check_equal(cflow_io_file_open(&first, first_path, &config), SALTS_OK);
+    check_equal(cflow_io_file_open(&second, second_path, &config), SALTS_ENOBUFS);
     check_null(second.impl);
-    check_equal(cflow_io_file_close(&first), TURBO_OK);
-    check_equal(cflow_io_file_destroy(&first), TURBO_OK);
-    check_equal(cflow_io_file_runtime_close(&runtime), TURBO_OK);
-    check_equal(cflow_io_file_runtime_destroy(&runtime), TURBO_OK);
+    check_equal(cflow_io_file_close(&first), SALTS_OK);
+    check_equal(cflow_io_file_destroy(&first), SALTS_OK);
+    check_equal(cflow_io_file_runtime_close(&runtime), SALTS_OK);
+    check_equal(cflow_io_file_runtime_destroy(&runtime), SALTS_OK);
     check_equal(tt_remove_file(first_path), 0);
     check_equal(tt_remove_file(second_path), 0);
     free(first_path);
@@ -276,28 +276,28 @@ spec("CFlow async file facade") {
     runtime_config.wake_user = &wake_count;
     status = cflow_io_file_runtime_init(&runtime, &runtime_config);
 #if !defined(_WIN32)
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
       free(path);
       return;
     }
 #endif
-    check_equal(status, TURBO_OK);
+    check_equal(status, SALTS_OK);
     config.backend_kind = 0;
     config.request_capacity = 0u;
     config.command_capacity = 0u;
     config.completion_batch_capacity = 0u;
     config.runtime = &runtime;
     config.completion_user = &probe;
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_OK);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_OK);
     submitted = cflow_io_file_try_write_at(&file, 201u, payload, sizeof(payload) - 1u, 0u);
     check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_ACCEPTED);
     check_greater(atomic_load_explicit(&wake_count, memory_order_acquire), 0);
-    check_equal(file_test_wait(&file, &probe, 1u), TURBO_OK);
+    check_equal(file_test_wait(&file, &probe, 1u), SALTS_OK);
     file_test_close_destroy(&file);
-    check_equal(cflow_io_file_runtime_close(&runtime), TURBO_OK);
-    check_equal(cflow_io_file_runtime_destroy(&runtime), TURBO_OK);
+    check_equal(cflow_io_file_runtime_close(&runtime), SALTS_OK);
+    check_equal(cflow_io_file_runtime_destroy(&runtime), SALTS_OK);
     check_equal(tt_remove_file(path), 0);
     free(path);
   }
@@ -351,48 +351,48 @@ spec("CFlow async file facade") {
     int status;
 
     check_not_null(path);
-    check_equal(cflow_io_file_open(NULL, path, &config), TURBO_EINVAL);
-    check_equal(cflow_io_file_open(&file, NULL, &config), TURBO_EINVAL);
-    check_equal(cflow_io_file_open(&file, "", &config), TURBO_EINVAL);
-    check_equal(cflow_io_file_open(&file, path, NULL), TURBO_EINVAL);
+    check_equal(cflow_io_file_open(NULL, path, &config), SALTS_EINVAL);
+    check_equal(cflow_io_file_open(&file, NULL, &config), SALTS_EINVAL);
+    check_equal(cflow_io_file_open(&file, "", &config), SALTS_EINVAL);
+    check_equal(cflow_io_file_open(&file, path, NULL), SALTS_EINVAL);
 
     config.open_flags = 0u;
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_EINVAL);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_EINVAL);
     config = file_test_config(CFLOW_IO_FILE_READ | (1u << 31));
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_EINVAL);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_EINVAL);
     config = file_test_config(CFLOW_IO_FILE_READ | CFLOW_IO_FILE_CREATE);
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_EINVAL);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_EINVAL);
     config = file_test_config(CFLOW_IO_FILE_READ | CFLOW_IO_FILE_TRUNCATE);
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_EINVAL);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_EINVAL);
     config = file_test_config(CFLOW_IO_FILE_READ);
     config.create_mode = 0600u;
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_EINVAL);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_EINVAL);
     config = file_test_config(CFLOW_IO_FILE_WRITE | CFLOW_IO_FILE_CREATE);
     config.create_mode = 01000u;
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_EINVAL);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_EINVAL);
     config = file_test_config(CFLOW_IO_FILE_READ);
     config.request_capacity = 0u;
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_EINVAL);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_EINVAL);
     config = file_test_config(CFLOW_IO_FILE_READ);
     config.command_capacity = 0u;
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_EINVAL);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_EINVAL);
     config = file_test_config(CFLOW_IO_FILE_READ);
     config.completion_batch_capacity = 0u;
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_EINVAL);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_EINVAL);
     config = file_test_config(CFLOW_IO_FILE_READ);
     config.completion = NULL;
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_EINVAL);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_EINVAL);
 
     file.impl = &file;
     config = file_test_config(CFLOW_IO_FILE_READ);
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_EINVAL);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_EINVAL);
     check_true(file.impl == &file);
     file.impl = NULL;
 
     check_equal(tt_remove_file(path), 0);
     config = file_test_config(CFLOW_IO_FILE_READ);
     status = cflow_io_file_open(&file, path, &config);
-    check_not_equal(status, TURBO_OK);
+    check_not_equal(status, SALTS_OK);
     check_null(file.impl);
     free(path);
   }
@@ -408,7 +408,7 @@ spec("CFlow async file facade") {
     check_not_null(path);
     check_equal(tt_remove_file(path), 0);
     config.backend_kind = CFLOW_IO_NATIVE_POLL;
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_ENOTSUP);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_ENOTSUP);
     check_null(file.impl);
     contents = tt_read_file(path, &length);
     check_null(contents);
@@ -426,33 +426,33 @@ spec("CFlow async file facade") {
     check_not_null(path);
     status = cflow_io_file_open(&file, path, &config);
 #if !defined(_WIN32)
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
       free(path);
       return;
     }
 #endif
-    check_equal(status, TURBO_OK);
+    check_equal(status, SALTS_OK);
     check_not_null(file.impl);
     check_true(cflow_io_file_operation_supported(&file, CFLOW_IO_NATIVE_FILE_READ_AT));
     check_true(cflow_io_file_operation_supported(&file, CFLOW_IO_NATIVE_FILE_WRITE_AT));
     check_true(cflow_io_file_get_stats(&file, &stats));
     check_equal(stats.operation_slots_in_use, (size_t)0u);
     check_false(stats.close_requested);
-    check_equal(cflow_io_file_destroy(&file), TURBO_EBUSY);
-    check_equal(cflow_io_file_close(&file), TURBO_OK);
-    check_equal(cflow_io_file_close(&file), TURBO_EALREADY);
+    check_equal(cflow_io_file_destroy(&file), SALTS_EBUSY);
+    check_equal(cflow_io_file_close(&file), SALTS_OK);
+    check_equal(cflow_io_file_close(&file), SALTS_EALREADY);
     check_true(cflow_io_file_is_quiescent(&file));
     check_true(cflow_io_file_get_stats(&file, &stats));
     check_true(stats.close_requested);
-    check_equal(cflow_io_file_destroy(&file), TURBO_OK);
+    check_equal(cflow_io_file_destroy(&file), SALTS_OK);
     check_null(file.impl);
 
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_OK);
-    check_equal(cflow_io_file_close(&file), TURBO_OK);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_OK);
+    check_equal(cflow_io_file_close(&file), SALTS_OK);
     check_true(cflow_io_file_is_quiescent(&file));
-    check_equal(cflow_io_file_destroy(&file), TURBO_OK);
+    check_equal(cflow_io_file_destroy(&file), SALTS_OK);
     check_null(file.impl);
 
     check_equal(tt_remove_file(path), 0);
@@ -474,30 +474,30 @@ spec("CFlow async file facade") {
     config.completion_user = &probe;
     status = cflow_io_file_open(&file, path, &config);
 #if !defined(_WIN32)
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
       free(path);
       return;
     }
 #endif
-    check_equal(status, TURBO_OK);
+    check_equal(status, SALTS_OK);
 
     probe.reentrant_file = &file;
     submitted = cflow_io_file_try_write_at(&file, 11u, payload, sizeof(payload) - 1u, 7u);
     check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_ACCEPTED);
     check_not_equal(submitted.request_id, (cflow_io_request_id)0u);
-    check_equal(file_test_wait(&file, &probe, 1u), TURBO_OK);
+    check_equal(file_test_wait(&file, &probe, 1u), SALTS_OK);
     check_equal(probe.lease_ids[0], (cflow_io_lease_id)11u);
     check_equal(probe.operation_kinds[0], CFLOW_IO_NATIVE_FILE_WRITE_AT);
     check_equal(probe.completions[0].kind, CFLOW_IO_COMPLETION_OK);
     check_equal(probe.completions[0].bytes, sizeof(payload) - 1u);
-    check_equal(probe.reentrant_status, TURBO_EBUSY);
+    check_equal(probe.reentrant_status, SALTS_EBUSY);
     check_equal(probe.reentrant_progressed, (size_t)0u);
 
     submitted = cflow_io_file_try_read_at(&file, 12u, received, sizeof(received), 7u);
     check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_ACCEPTED);
-    check_equal(file_test_wait(&file, &probe, 2u), TURBO_OK);
+    check_equal(file_test_wait(&file, &probe, 2u), SALTS_OK);
     check_equal(probe.lease_ids[1], (cflow_io_lease_id)12u);
     check_equal(probe.operation_kinds[1], CFLOW_IO_NATIVE_FILE_READ_AT);
     check_equal(probe.completions[1].kind, CFLOW_IO_COMPLETION_OK);
@@ -525,18 +525,18 @@ spec("CFlow async file facade") {
     config.completion_user = &probe;
     status = cflow_io_file_open(&file, path, &config);
 #if !defined(_WIN32)
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
       free(path);
       return;
     }
 #endif
-    check_equal(status, TURBO_OK);
+    check_equal(status, SALTS_OK);
     submitted = cflow_io_file_try_flush(&file, 51u);
     if (cflow_io_file_operation_supported(&file, CFLOW_IO_NATIVE_FILE_FLUSH)) {
       check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_ACCEPTED);
-      check_equal(file_test_wait(&file, &probe, 1u), TURBO_OK);
+      check_equal(file_test_wait(&file, &probe, 1u), SALTS_OK);
       check_equal(probe.operation_kinds[0], CFLOW_IO_NATIVE_FILE_FLUSH);
       check_equal(probe.completions[0].kind, CFLOW_IO_COMPLETION_OK);
       check_equal(probe.completions[0].bytes, (size_t)0u);
@@ -562,14 +562,14 @@ spec("CFlow async file facade") {
     config.completion_user = &probe;
     status = cflow_io_file_open(&file, path, &config);
 #if !defined(_WIN32)
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
       free(path);
       return;
     }
 #endif
-    check_equal(status, TURBO_OK);
+    check_equal(status, SALTS_OK);
     submitted = cflow_io_file_try_read_at(&file, 1u, NULL, 1u, 0u);
     check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_INVALID_ARGUMENT);
     submitted = cflow_io_file_try_read_at(&file, 1u, &byte, 0u, 0u);
@@ -586,7 +586,7 @@ spec("CFlow async file facade") {
     memset(&file, 0, sizeof(file));
     config = file_test_config(CFLOW_IO_FILE_WRITE);
     config.completion_user = &probe;
-    check_equal(cflow_io_file_open(&file, path, &config), TURBO_OK);
+    check_equal(cflow_io_file_open(&file, path, &config), SALTS_OK);
     submitted = cflow_io_file_try_read_at(&file, 2u, &byte, 1u, 0u);
     check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_ACCESS_DENIED);
 #if defined(_WIN32)
@@ -615,22 +615,22 @@ spec("CFlow async file facade") {
     config.completion_user = &probe;
     status = cflow_io_file_open(&file, path, &config);
 #if !defined(_WIN32)
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
       free(path);
       return;
     }
 #endif
-    check_equal(status, TURBO_OK);
+    check_equal(status, SALTS_OK);
     submitted = cflow_io_file_try_write_at(&file, 21u, first, sizeof(first) - 1u, 0u);
     check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_ACCEPTED);
     submitted = cflow_io_file_try_write_at(&file, 22u, second, sizeof(second) - 1u, 16u);
     check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_FULL);
-    check_equal(file_test_wait(&file, &probe, 1u), TURBO_OK);
+    check_equal(file_test_wait(&file, &probe, 1u), SALTS_OK);
     submitted = cflow_io_file_try_write_at(&file, 22u, second, sizeof(second) - 1u, 16u);
     check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_ACCEPTED);
-    check_equal(file_test_wait(&file, &probe, 2u), TURBO_OK);
+    check_equal(file_test_wait(&file, &probe, 2u), SALTS_OK);
     file_test_close_destroy(&file);
     check_equal(tt_remove_file(path), 0);
     free(path);
@@ -649,23 +649,23 @@ spec("CFlow async file facade") {
     config.completion_user = &probe;
     status = cflow_io_file_open(&file, path, &config);
 #if !defined(_WIN32)
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
       free(path);
       return;
     }
 #endif
-    check_equal(status, TURBO_OK);
+    check_equal(status, SALTS_OK);
     submitted = cflow_io_file_try_write_at(&file, 31u, payload, sizeof(payload) - 1u, 0u);
     check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_ACCEPTED);
-    check_equal(cflow_io_file_close(&file), TURBO_OK);
-    check_equal(cflow_io_file_destroy(&file), TURBO_EBUSY);
-    check_equal(file_test_wait(&file, &probe, 1u), TURBO_OK);
+    check_equal(cflow_io_file_close(&file), SALTS_OK);
+    check_equal(cflow_io_file_destroy(&file), SALTS_EBUSY);
+    check_equal(file_test_wait(&file, &probe, 1u), SALTS_OK);
     check_equal(probe.count, (size_t)1u);
     check_equal(probe.completions[0].kind, CFLOW_IO_COMPLETION_CANCELLED);
     check_true(cflow_io_file_is_quiescent(&file));
-    check_equal(cflow_io_file_destroy(&file), TURBO_OK);
+    check_equal(cflow_io_file_destroy(&file), SALTS_OK);
     check_equal(tt_remove_file(path), 0);
     free(path);
   }
@@ -683,18 +683,18 @@ spec("CFlow async file facade") {
     config.completion_user = &probe;
     status = cflow_io_file_open(&file, path, &config);
 #if !defined(_WIN32)
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
       free(path);
       return;
     }
 #endif
-    check_equal(status, TURBO_OK);
+    check_equal(status, SALTS_OK);
     submitted = cflow_io_file_try_write_at(&file, 41u, payload, sizeof(payload) - 1u, 0u);
     check_equal(submitted.status, CFLOW_IO_FILE_SUBMIT_ACCEPTED);
     check_equal(cflow_io_file_try_cancel(&file, submitted.request_id), CFLOW_IO_CANCEL_ACCEPTED);
-    check_equal(file_test_wait(&file, &probe, 1u), TURBO_OK);
+    check_equal(file_test_wait(&file, &probe, 1u), SALTS_OK);
     check_equal(probe.count, (size_t)1u);
     check_equal(probe.completions[0].kind, CFLOW_IO_COMPLETION_CANCELLED);
     file_test_close_destroy(&file);

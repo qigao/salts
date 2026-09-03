@@ -126,16 +126,16 @@ static bool chttp_h2_server_forbidden_header(const char *name, size_t size) {
 static int chttp_h2_server_decimal(const char *value, size_t size, size_t *out_value) {
   size_t result = 0u;
   size_t index;
-  if (value == NULL || size == 0u || out_value == NULL) return TURBO_EPROTO;
+  if (value == NULL || size == 0u || out_value == NULL) return SALTS_EPROTO;
   for (index = 0u; index < size; ++index) {
     const unsigned char digit = (unsigned char)value[index];
     if (digit < (unsigned char)'0' || digit > (unsigned char)'9' ||
         result > (SIZE_MAX - (size_t)(digit - (unsigned char)'0')) / 10u)
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     result = result * 10u + (size_t)(digit - (unsigned char)'0');
   }
   *out_value = result;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static chttp_method chttp_h2_server_method(const char *value, size_t size,
@@ -164,8 +164,8 @@ static int chttp_h2_server_config_disabled(const chttp_server_config *config) {
   return config->h2_stream_capacity == 0u && config->h2_input_buffer_bytes == 0u &&
                  config->h2_output_buffer_bytes == 0u &&
                  config->h2_hpack_dynamic_table_bytes == 0u && config->h2_max_settings_count == 0u
-             ? TURBO_OK
-             : TURBO_EINVAL;
+             ? SALTS_OK
+             : SALTS_EINVAL;
 }
 
 int chttp_h2_server_config_validate(const chttp_server_config *config,
@@ -182,7 +182,7 @@ int chttp_h2_server_config_validate(const chttp_server_config *config,
   size_t all_stream_bytes;
   if (config == NULL || out_protocol_config == NULL ||
       (config->enable_http2 != 0 && config->enable_http2 != 1))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   *out_protocol_config = (chttp_h2_proto_config){0};
   if (!config->enable_http2) return chttp_h2_server_config_disabled(config);
   if (config->h2_stream_capacity == 0u || config->h2_stream_capacity > UINT32_MAX ||
@@ -196,7 +196,7 @@ int chttp_h2_server_config_validate(const chttp_server_config *config,
       config->h2_hpack_dynamic_table_bytes == 0u ||
       config->h2_hpack_dynamic_table_bytes > UINT32_MAX || config->h2_max_settings_count == 0u ||
       config->h2_max_settings_count > SIZE_MAX / sizeof(uint32_t))
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   if (!chttp_h2_server_multiply(config->max_header_count, 2u, &header_storage_bytes) ||
       !chttp_h2_server_add(header_storage_bytes, config->max_header_bytes, &header_storage_bytes) ||
       !chttp_h2_server_add(config->max_target_bytes, 1u, &target_storage_bytes) ||
@@ -229,7 +229,7 @@ int chttp_h2_server_config_validate(const chttp_server_config *config,
       !chttp_h2_server_multiply(per_stream_bytes, config->h2_stream_capacity, &all_stream_bytes) ||
       !chttp_h2_server_multiply(all_stream_bytes, config->network.connection_capacity,
                                 &all_stream_bytes))
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   protocol_config = (chttp_h2_proto_config){
       .stream_capacity = config->h2_stream_capacity,
       .output_buffer_bytes = config->h2_output_buffer_bytes,
@@ -243,9 +243,9 @@ int chttp_h2_server_config_validate(const chttp_server_config *config,
                                     ? config->max_header_bytes
                                     : config->max_response_header_bytes,
       .max_settings_count = config->h2_max_settings_count};
-  if (!chttp_h2_proto_config_valid(&protocol_config)) return TURBO_EMSGSIZE;
+  if (!chttp_h2_proto_config_valid(&protocol_config)) return SALTS_EMSGSIZE;
   *out_protocol_config = protocol_config;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void chttp_h2_server_stream_reset(chttp_h2_server_stream *stream) {
@@ -304,7 +304,7 @@ static int chttp_h2_server_stream_init(chttp_h2_server_stream *stream,
                            &stream->header_storage_capacity) ||
       !chttp_h2_server_add(config->max_target_bytes, 1u, &target_stride) ||
       config->max_response_header_count > SIZE_MAX - 2u)
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   stream->owner = owner;
   stream->response_header_capacity = config->max_response_header_count + 2u;
   stream->headers = (chttp_header *)calloc(config->max_header_count, sizeof(*stream->headers));
@@ -320,16 +320,16 @@ static int chttp_h2_server_stream_init(chttp_h2_server_stream *stream,
       stream->header_storage == NULL || stream->target_storage == NULL ||
       stream->authority == NULL || stream->body == NULL || stream->websocket_output == NULL) {
     chttp_h2_server_stream_destroy(stream);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   status = chttp_server_request_state_init(&stream->request_state, owner->connection->server);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     chttp_h2_server_stream_destroy(stream);
     return status;
   }
   chttp_h2_server_stream_reset(stream);
   stream->owner = owner;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static chttp_h2_server_stream *chttp_h2_server_stream_find(chttp_h2_server_connection *h2,
@@ -359,10 +359,10 @@ static chttp_h2_server_stream *chttp_h2_server_stream_acquire(chttp_h2_server_co
 }
 
 static int chttp_h2_server_copy(char *output, size_t capacity, const char *input, size_t size) {
-  if (output == NULL || input == NULL || size >= capacity) return TURBO_EMSGSIZE;
+  if (output == NULL || input == NULL || size >= capacity) return SALTS_EMSGSIZE;
   memcpy(output, input, size);
   output[size] = '\0';
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_h2_server_target(chttp_h2_server_stream *stream, const char *value, size_t size) {
@@ -375,16 +375,16 @@ static int chttp_h2_server_target(chttp_h2_server_stream *stream, const char *va
   if (size == 0u || size > config->max_target_bytes ||
       (value[0] != '/' &&
        !(stream->method == CHTTP_METHOD_OPTIONS && size == 1u && value[0] == '*')))
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   for (index = 0u; index < size; ++index) {
     const unsigned char byte = (unsigned char)value[index];
-    if (byte <= 0x20u || byte >= 0x7fu || byte == (unsigned char)'#') return TURBO_EPROTO;
+    if (byte <= 0x20u || byte >= 0x7fu || byte == (unsigned char)'#') return SALTS_EPROTO;
   }
-  if (chttp_h2_server_copy(stream->target_storage, stride, value, size) != TURBO_OK)
-    return TURBO_EMSGSIZE;
+  if (chttp_h2_server_copy(stream->target_storage, stride, value, size) != SALTS_OK)
+    return SALTS_EMSGSIZE;
   query = memchr(value, '?', size);
   path_size = query == NULL ? size : (size_t)(query - value);
-  if (path_size == 0u) return TURBO_EPROTO;
+  if (path_size == 0u) return SALTS_EPROTO;
   path = stream->target_storage + stride;
   return chttp_h2_server_copy(path, stride, value, path_size);
 }
@@ -403,16 +403,16 @@ static int chttp_h2_server_regular_header(chttp_h2_server_stream *stream, const 
       needed > stream->header_storage_capacity - stream->header_storage_used ||
       !chttp_h2_server_header_value(value, value_size) ||
       chttp_h2_server_forbidden_header(name, name_size))
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   for (index = 0u; index < name_size; ++index)
-    if (!chttp_h2_server_header_name_byte((unsigned char)name[index])) return TURBO_EPROTO;
+    if (!chttp_h2_server_header_name_byte((unsigned char)name[index])) return SALTS_EPROTO;
   if (chttp_h2_server_ascii_equal_n(name, name_size, "te") &&
       !chttp_h2_server_ascii_equal_n(value, value_size, "trailers"))
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   if (stream->extended_connect) {
     if (chttp_h2_server_ascii_equal_n(name, name_size, "sec-websocket-version")) {
       if (stream->websocket_version_seen || !chttp_h2_server_ascii_equal_n(value, value_size, "13"))
-        return TURBO_EPROTO;
+        return SALTS_EPROTO;
       stream->websocket_version_seen = true;
     } else if (chttp_h2_server_ascii_equal_n(name, name_size, "sec-websocket-key") ||
                chttp_h2_server_ascii_equal_n(name, name_size, "sec-websocket-accept") ||
@@ -420,14 +420,14 @@ static int chttp_h2_server_regular_header(chttp_h2_server_stream *stream, const 
                chttp_h2_server_ascii_equal_n(name, name_size, "sec-websocket-protocol") ||
                chttp_h2_server_ascii_equal_n(name, name_size, "content-length") ||
                chttp_h2_server_ascii_equal_n(name, name_size, "te")) {
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     }
   }
   if (chttp_h2_server_ascii_equal_n(name, name_size, "content-length")) {
     size_t content_length;
     if (stream->trailers || stream->content_length_seen ||
-        chttp_h2_server_decimal(value, value_size, &content_length) != TURBO_OK)
-      return TURBO_EPROTO;
+        chttp_h2_server_decimal(value, value_size, &content_length) != SALTS_OK)
+      return SALTS_EPROTO;
     stream->content_length_seen = true;
     stream->content_length = content_length;
   }
@@ -439,7 +439,7 @@ static int chttp_h2_server_regular_header(chttp_h2_server_stream *stream, const 
   value_copy[value_size] = '\0';
   stream->headers[stream->header_count++] = (chttp_header){name_copy, value_copy};
   stream->header_storage_used += needed;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_h2_server_begin_headers(void *user, int32_t stream_id) {
@@ -473,7 +473,7 @@ static int chttp_h2_server_header(void *user, int32_t stream_id, const char *nam
   if (name[0] != ':') {
     if (stream->trailers) return -1;
     stream->regular_header_seen = true;
-    return chttp_h2_server_regular_header(stream, name, name_size, value, value_size) == TURBO_OK
+    return chttp_h2_server_regular_header(stream, name, name_size, value, value_size) == SALTS_OK
                ? 0
                : -1;
   }
@@ -494,7 +494,7 @@ static int chttp_h2_server_header(void *user, int32_t stream_id, const char *nam
     return 0;
   }
   if (chttp_h2_server_ascii_equal_n(name, name_size, ":path")) {
-    if (stream->path_seen || chttp_h2_server_target(stream, value, value_size) != TURBO_OK)
+    if (stream->path_seen || chttp_h2_server_target(stream, value, value_size) != SALTS_OK)
       return -1;
     stream->path_seen = true;
     return 0;
@@ -509,7 +509,7 @@ static int chttp_h2_server_header(void *user, int32_t stream_id, const char *nam
           byte == (unsigned char)'?' || byte == (unsigned char)'#' || byte == (unsigned char)'@')
         return -1;
     }
-    if (chttp_h2_server_copy(stream->authority, capacity, value, value_size) != TURBO_OK) return -1;
+    if (chttp_h2_server_copy(stream->authority, capacity, value, value_size) != SALTS_OK) return -1;
     stream->authority_seen = true;
     return 0;
   }
@@ -542,12 +542,12 @@ static void chttp_h2_server_file_ready(void *user) {
   if (builder->file_transfer == NULL || !chttp_file_transfer_ready(builder->file_transfer)) return;
   connection = stream->owner->connection;
   if (chttp_h2_proto_resume_source(stream->owner->protocol, stream->stream_id) != 0) {
-    chttp_server_response_builder_close_source(builder, TURBO_EPROTO);
+    chttp_server_response_builder_close_source(builder, SALTS_EPROTO);
     chttp_server_connection_close(connection);
     return;
   }
   status = chttp_h2_server_connection_flush(stream->owner);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     chttp_server_response_builder_close_source(builder, status);
     chttp_server_connection_close(connection);
     return;
@@ -571,14 +571,14 @@ chttp_h2_server_response_source_read(void *user, uint8_t *buffer, size_t capacit
   source = &builder->body_source;
   if (source->content_length_known) {
     if (builder->source_transferred > source->content_length) {
-      chttp_server_response_builder_close_source(builder, TURBO_EPROTO);
+      chttp_server_response_builder_close_source(builder, SALTS_EPROTO);
       return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
     }
     remaining = source->content_length - builder->source_transferred;
     if (remaining != 0u && capacity > remaining) capacity = remaining;
   } else {
     if (builder->source_transferred > builder->source_capacity) {
-      chttp_server_response_builder_close_source(builder, TURBO_EMSGSIZE);
+      chttp_server_response_builder_close_source(builder, SALTS_EMSGSIZE);
       return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
     }
     remaining = builder->source_capacity - builder->source_transferred;
@@ -591,28 +591,28 @@ chttp_h2_server_response_source_read(void *user, uint8_t *buffer, size_t capacit
       return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_WAIT, 0u};
     if (result == CHTTP_FILE_SOURCE_ERROR) {
       status = chttp_file_transfer_status(builder->file_transfer, NULL);
-      chttp_server_response_builder_close_source(builder, status == TURBO_OK ? TURBO_EIO : status);
+      chttp_server_response_builder_close_source(builder, status == SALTS_OK ? SALTS_EIO : status);
       return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
     }
     if (result == CHTTP_FILE_SOURCE_EOF) size = 0u;
   } else {
     status = source->read(source->user, buffer, capacity, &size);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       chttp_server_response_builder_close_source(builder, status);
       return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
     }
   }
   if (size > capacity || (remaining == 0u && size != 0u)) {
     chttp_server_response_builder_close_source(
-        builder, source->content_length_known ? TURBO_EPROTO : TURBO_EMSGSIZE);
+        builder, source->content_length_known ? SALTS_EPROTO : SALTS_EMSGSIZE);
     return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
   }
   if (source->content_length_known && remaining != 0u && size == 0u) {
-    chttp_server_response_builder_close_source(builder, TURBO_EPROTO);
+    chttp_server_response_builder_close_source(builder, SALTS_EPROTO);
     return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
   }
   if (size == 0u) {
-    chttp_server_response_builder_close_source(builder, TURBO_OK);
+    chttp_server_response_builder_close_source(builder, SALTS_OK);
     return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_EOF, 0u};
   }
   builder->source_transferred += size;
@@ -634,7 +634,7 @@ static int chttp_h2_server_submit_response(chttp_h2_server_stream *stream) {
   int length_size = 0;
   int submit_status;
   status_size = snprintf(status_text, sizeof(status_text), "%u", builder->status_code);
-  if (status_size != 3) return TURBO_EPROTO;
+  if (status_size != 3) return SALTS_EPROTO;
   stream->response_headers[header_count++] =
       (chttp_h2_hpack_header){":status", sizeof(":status") - 1u, status_text, (size_t)status_size};
   for (index = 0u; index < builder->header_count; ++index) {
@@ -646,7 +646,7 @@ static int chttp_h2_server_submit_response(chttp_h2_server_stream *stream) {
     name_size = strlen(name);
     for (byte_index = 0u; byte_index < name_size; ++byte_index)
       name[byte_index] = (char)chttp_h2_server_ascii_lower((unsigned char)name[byte_index]);
-    if (header_count >= stream->response_header_capacity) return TURBO_ENOBUFS;
+    if (header_count >= stream->response_header_capacity) return SALTS_ENOBUFS;
     stream->response_headers[header_count++] =
         (chttp_h2_hpack_header){header->name, name_size, header->value, strlen(header->value)};
   }
@@ -655,12 +655,12 @@ static int chttp_h2_server_submit_response(chttp_h2_server_stream *stream) {
     length_size = snprintf(content_length, sizeof(content_length), "%zu", builder->body_size);
     if (length_size <= 0 || (size_t)length_size >= sizeof(content_length) ||
         header_count >= stream->response_header_capacity)
-      return TURBO_EMSGSIZE;
+      return SALTS_EMSGSIZE;
     stream->response_headers[header_count++] = (chttp_h2_hpack_header){
         "content-length", sizeof("content-length") - 1u, content_length, (size_t)length_size};
   }
   if (source_response && !stream_source)
-    chttp_server_response_builder_close_source(builder, TURBO_OK);
+    chttp_server_response_builder_close_source(builder, SALTS_OK);
   if (stream_source && builder->file_transfer != NULL)
     chttp_file_transfer_set_ready(builder->file_transfer, chttp_h2_server_file_ready, stream);
   stream->response_submitted = true;
@@ -670,12 +670,12 @@ static int chttp_h2_server_submit_response(chttp_h2_server_stream *stream) {
       stream_source ? chttp_h2_server_response_source_read : NULL, stream_source ? stream : NULL);
   if (submit_status != 0) {
     stream->response_submitted = false;
-    chttp_server_response_builder_close_source(builder, TURBO_ENOBUFS);
+    chttp_server_response_builder_close_source(builder, SALTS_ENOBUFS);
     chttp_session_request_abort(&stream->request_state);
-    return TURBO_ENOBUFS;
+    return SALTS_ENOBUFS;
   }
   chttp_server_stats_response(server);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static chttp_server_request_view
@@ -700,20 +700,20 @@ static int chttp_h2_server_websocket_write(void *transport, const uint8_t *data,
   chttp_h2_server_stream *stream = (chttp_h2_server_stream *)transport;
   if (stream == NULL || !stream->active || data == NULL || size == 0u ||
       stream->websocket_peer.phase == CHTTP_SERVER_WEBSOCKET_NONE)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (stream->websocket_peer.phase == CHTTP_SERVER_WEBSOCKET_HANDSHAKE ||
       stream->websocket_output_size != 0u ||
       chttp_h2_proto_stream_output_pending(stream->owner->protocol, stream->stream_id))
-    return TURBO_EBUSY;
-  if (size > stream->websocket_output_capacity) return TURBO_EMSGSIZE;
+    return SALTS_EBUSY;
+  if (size > stream->websocket_output_capacity) return SALTS_EMSGSIZE;
   memcpy(stream->websocket_output, data, size);
   stream->websocket_output_size = size;
   if (chttp_h2_proto_submit_data(stream->owner->protocol, stream->stream_id,
                                  stream->websocket_output, size, 0) != 0) {
     stream->websocket_output_size = 0u;
-    return TURBO_ENOBUFS;
+    return SALTS_ENOBUFS;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_h2_server_websocket_status(chttp_h2_server_stream *stream,
@@ -721,16 +721,16 @@ static int chttp_h2_server_websocket_status(chttp_h2_server_stream *stream,
   char status_text[4];
   chttp_h2_hpack_header header;
   const int size = snprintf(status_text, sizeof(status_text), "%u", status_code);
-  if (size != 3) return TURBO_EINVAL;
+  if (size != 3) return SALTS_EINVAL;
   header = (chttp_h2_hpack_header){":status", sizeof(":status") - 1u, status_text, (size_t)size};
   stream->response_submitted = true;
   if (chttp_h2_proto_submit_response(stream->owner->protocol, stream->stream_id, &header, 1u, NULL,
                                      0u) != 0) {
     stream->response_submitted = false;
-    return TURBO_ENOBUFS;
+    return SALTS_ENOBUFS;
   }
   chttp_server_stats_response(stream->owner->connection->server);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_h2_server_websocket_accept(chttp_h2_server_stream *stream) {
@@ -746,7 +746,7 @@ static int chttp_h2_server_websocket_accept(chttp_h2_server_stream *stream) {
     size_t name_size = strlen(name);
     size_t byte_index;
     if (chttp_h2_server_response_header_forbidden(name)) continue;
-    if (header_count >= stream->response_header_capacity) return TURBO_ENOBUFS;
+    if (header_count >= stream->response_header_capacity) return SALTS_ENOBUFS;
     for (byte_index = 0u; byte_index < name_size; ++byte_index)
       name[byte_index] = (char)chttp_h2_server_ascii_lower((unsigned char)name[byte_index]);
     stream->response_headers[header_count++] =
@@ -756,7 +756,7 @@ static int chttp_h2_server_websocket_accept(chttp_h2_server_stream *stream) {
   if (chttp_h2_proto_submit_headers(stream->owner->protocol, stream->stream_id,
                                     stream->response_headers, header_count, 0) != 0) {
     stream->response_submitted = false;
-    return TURBO_ENOBUFS;
+    return SALTS_ENOBUFS;
   }
   chttp_server_stats_response(stream->owner->connection->server);
   chttp_server_websocket_peer_open(&stream->websocket_peer);
@@ -767,16 +767,16 @@ static int chttp_h2_server_websocket_dispatch(chttp_h2_server_stream *stream) {
   chttp_server_request_view request;
   chttp_server_route_record *route;
   unsigned int allowed_methods = 0u;
-  int route_status = TURBO_OK;
+  int route_status = SALTS_OK;
   int status;
   if (!stream->extended_connect || !stream->protocol_seen || !stream->websocket_version_seen ||
       stream->content_length_seen || stream->body_size != 0u)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   request = chttp_h2_server_request_view(stream);
   route = chttp_server_route_find(&stream->request_state, CHTTP_METHOD_GET, request.path,
                                   &allowed_methods, &route_status);
   (void)allowed_methods;
-  if (route_status != TURBO_OK) return route_status;
+  if (route_status != SALTS_OK) return route_status;
   if (route == NULL || !route->websocket) {
     chttp_server_stats_request(stream->owner->connection->server);
     return chttp_h2_server_websocket_status(stream, 404u);
@@ -784,17 +784,17 @@ static int chttp_h2_server_websocket_dispatch(chttp_h2_server_stream *stream) {
   status =
       chttp_server_websocket_peer_init(&stream->websocket_peer, stream->owner->connection->server,
                                        route, chttp_h2_server_websocket_write, stream);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status = chttp_server_websocket_route_open(&stream->websocket_peer, &stream->request_state, route,
                                              &request);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     chttp_server_websocket_peer_reset(&stream->websocket_peer);
     return chttp_h2_server_websocket_status(stream, 500u);
   }
   if (stream->request_state.response_builder.replied) {
     if (stream->request_state.response_builder.source_enabled) {
       chttp_server_response_builder_close_source(&stream->request_state.response_builder,
-                                                 TURBO_ENOTSUP);
+                                                 SALTS_ENOTSUP);
       chttp_server_websocket_peer_reset(&stream->websocket_peer);
       return chttp_h2_server_websocket_status(stream, 500u);
     }
@@ -812,13 +812,13 @@ static int chttp_h2_server_dispatch(chttp_h2_server_stream *stream) {
       stream->protocol_seen ||
       (stream->target_storage[0] == '*' && stream->method != CHTTP_METHOD_OPTIONS) ||
       (stream->content_length_seen && stream->content_length != stream->body_size)) {
-    chttp_server_request_body_close(&stream->request_state, TURBO_EPROTO);
-    return TURBO_EPROTO;
+    chttp_server_request_body_close(&stream->request_state, SALTS_EPROTO);
+    return SALTS_EPROTO;
   }
-  chttp_server_request_body_close(&stream->request_state, TURBO_OK);
+  chttp_server_request_body_close(&stream->request_state, SALTS_OK);
   request = chttp_h2_server_request_view(stream);
   status = chttp_server_dispatch_request(&stream->request_state, &request);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   return chttp_h2_server_submit_response(stream);
 }
 
@@ -827,8 +827,8 @@ static int chttp_h2_server_dispatch_or_reset(chttp_h2_server_stream *stream) {
   const int32_t stream_id = stream->stream_id;
   const int status = chttp_h2_server_dispatch(stream);
   const uint32_t error_code =
-      status == TURBO_EPROTO ? CHTTP_H2_ERR_PROTOCOL_ERROR : CHTTP_H2_ERR_INTERNAL_ERROR;
-  if (status == TURBO_OK) return 0;
+      status == SALTS_EPROTO ? CHTTP_H2_ERR_PROTOCOL_ERROR : CHTTP_H2_ERR_INTERNAL_ERROR;
+  if (status == SALTS_OK) return 0;
   /* submit_rst_stream synchronously releases the application stream, so only
    * the stable protocol and stream id captured above may be used afterwards. */
   return chttp_h2_proto_submit_rst_stream(protocol, stream_id, error_code) == 0 ? 0 : -1;
@@ -849,9 +849,9 @@ static int chttp_h2_server_end_headers(void *user, int32_t stream_id, int end_st
   if (!stream->trailers && (stream->extended_connect || stream->protocol_seen)) {
     if (end_stream) return -1;
     status = chttp_h2_server_websocket_dispatch(stream);
-    if (status == TURBO_OK) return 0;
+    if (status == SALTS_OK) return 0;
     return chttp_h2_proto_submit_rst_stream(h2->protocol, stream_id,
-                                            status == TURBO_EPROTO
+                                            status == SALTS_EPROTO
                                                 ? CHTTP_H2_ERR_PROTOCOL_ERROR
                                                 : CHTTP_H2_ERR_INTERNAL_ERROR) == 0
                ? 0
@@ -860,7 +860,7 @@ static int chttp_h2_server_end_headers(void *user, int32_t stream_id, int end_st
   if (!stream->trailers) {
     request = chttp_h2_server_request_view(stream);
     status = chttp_server_request_body_open(&stream->request_state, &request, &sink);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       chttp_server_request_body_close(&stream->request_state, status);
       return chttp_h2_proto_submit_rst_stream(h2->protocol, stream_id,
                                               CHTTP_H2_ERR_INTERNAL_ERROR) == 0
@@ -880,13 +880,13 @@ static int chttp_h2_server_data(void *user, int32_t stream_id, const uint8_t *da
       (size != 0u && data == NULL))
     return -1;
   if (stream->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_NONE) {
-    int websocket_status = TURBO_OK;
+    int websocket_status = SALTS_OK;
     if (size != 0u)
       websocket_status = chttp_server_websocket_peer_feed(&stream->websocket_peer, data, size);
     if (size != 0u && (chttp_h2_proto_consume_stream(h2->protocol, stream_id, size) != 0 ||
                        chttp_h2_proto_consume_connection(h2->protocol, size) != 0))
       return -1;
-    if (websocket_status != TURBO_OK) {
+    if (websocket_status != SALTS_OK) {
       chttp_server_stats_protocol_error(h2->connection->server);
       return chttp_h2_proto_submit_rst_stream(h2->protocol, stream_id,
                                               CHTTP_H2_ERR_PROTOCOL_ERROR) == 0
@@ -900,7 +900,7 @@ static int chttp_h2_server_data(void *user, int32_t stream_id, const uint8_t *da
   if (stream->response_submitted) return -1;
   if (stream->body_size > capacity || size > capacity - stream->body_size) {
     if (size != 0u && chttp_h2_proto_consume_connection(h2->protocol, size) != 0) return -1;
-    chttp_server_request_body_close(&stream->request_state, TURBO_EMSGSIZE);
+    chttp_server_request_body_close(&stream->request_state, SALTS_EMSGSIZE);
     return chttp_h2_proto_submit_rst_stream(h2->protocol, stream_id,
                                             CHTTP_H2_ERR_ENHANCE_YOUR_CALM) == 0
                ? 0
@@ -909,7 +909,7 @@ static int chttp_h2_server_data(void *user, int32_t stream_id, const uint8_t *da
   if (size != 0u) {
     if (chttp_server_request_body_streaming(&stream->request_state)) {
       const int sink_status = chttp_server_request_body_write(&stream->request_state, data, size);
-      if (sink_status != TURBO_OK) {
+      if (sink_status != SALTS_OK) {
         if (chttp_h2_proto_consume_connection(h2->protocol, size) != 0) return -1;
         chttp_server_request_body_close(&stream->request_state, sink_status);
         return chttp_h2_proto_submit_rst_stream(h2->protocol, stream_id,
@@ -954,37 +954,37 @@ int chttp_h2_server_connection_init(chttp_h2_server_connection **out_h2,
   int status;
   if (out_h2 == NULL || connection == NULL || connection->server == NULL ||
       !connection->server->config.enable_http2)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   *out_h2 = NULL;
   h2 = (chttp_h2_server_connection *)calloc(1u, sizeof(*h2));
-  if (h2 == NULL) return TURBO_ENOMEM;
+  if (h2 == NULL) return SALTS_ENOMEM;
   h2->connection = connection;
   h2->stream_capacity = connection->server->config.h2_stream_capacity;
   status = chttp_h2_server_config_validate(&connection->server->config, &h2->protocol_config);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     free(h2);
     return status;
   }
   h2->streams = (chttp_h2_server_stream *)calloc(h2->stream_capacity, sizeof(*h2->streams));
   if (h2->streams == NULL) {
     free(h2);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   for (index = 0u; index < h2->stream_capacity; ++index) {
     status = chttp_h2_server_stream_init(&h2->streams[index], h2);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       chttp_h2_server_connection_destroy(h2);
       return status;
     }
   }
   *out_h2 = h2;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int chttp_h2_server_connection_prepare(chttp_h2_server_connection *h2) {
   chttp_h2_proto_callbacks callbacks = {0};
   size_t index;
-  if (h2 == NULL || h2->connection == NULL) return TURBO_EINVAL;
+  if (h2 == NULL || h2->connection == NULL) return SALTS_EINVAL;
   chttp_h2_proto_destroy(h2->protocol);
   h2->protocol = NULL;
   h2->active_streams = 0u;
@@ -1007,7 +1007,7 @@ int chttp_h2_server_connection_prepare(chttp_h2_server_connection *h2) {
     chttp_h2_proto_set_local_enable_connect_protocol(h2->protocol, 1u);
     chttp_h2_proto_set_send_chunk(h2->protocol, h2->connection->server->config.stream_chunk_bytes);
   }
-  return h2->protocol == NULL ? TURBO_ENOMEM : TURBO_OK;
+  return h2->protocol == NULL ? SALTS_ENOMEM : SALTS_OK;
 }
 
 void chttp_h2_server_connection_release(chttp_h2_server_connection *h2) {
@@ -1042,16 +1042,16 @@ void chttp_h2_server_connection_cancel_file_sources(chttp_h2_server_connection *
   for (index = 0u; index < h2->stream_capacity; ++index) {
     chttp_server_response_builder *builder = &h2->streams[index].request_state.response_builder;
     if (builder->file_transfer != NULL)
-      chttp_server_response_builder_close_source(builder, TURBO_ECANCELED);
+      chttp_server_response_builder_close_source(builder, SALTS_ECANCELED);
   }
 }
 
 int chttp_h2_server_connection_receive(chttp_h2_server_connection *h2, const void *data,
                                        size_t size) {
   ptrdiff_t consumed;
-  if (h2 == NULL || h2->protocol == NULL || (size != 0u && data == NULL)) return TURBO_EINVAL;
+  if (h2 == NULL || h2->protocol == NULL || (size != 0u && data == NULL)) return SALTS_EINVAL;
   consumed = chttp_h2_proto_recv(h2->protocol, (const uint8_t *)data, size);
-  return consumed >= 0 && (size_t)consumed == size ? TURBO_OK : TURBO_EPROTO;
+  return consumed >= 0 && (size_t)consumed == size ? SALTS_OK : SALTS_EPROTO;
 }
 
 static int chttp_h2_server_websockets_drive(chttp_h2_server_connection *h2) {
@@ -1065,29 +1065,29 @@ static int chttp_h2_server_websockets_drive(chttp_h2_server_connection *h2) {
       stream->websocket_output_size = 0u;
     if (stream->websocket_output_size == 0u && !stream->websocket_end_submitted) {
       status = chttp_server_websocket_peer_flush(&stream->websocket_peer);
-      if (status != TURBO_OK) return status;
+      if (status != SALTS_OK) return status;
     }
     if (!stream->websocket_end_submitted && stream->websocket_output_size == 0u &&
         !chttp_h2_proto_stream_output_pending(h2->protocol, stream->stream_id) &&
         chttp_server_websocket_peer_terminal(&stream->websocket_peer)) {
       if (chttp_h2_proto_submit_data(h2->protocol, stream->stream_id, NULL, 0u, 1) != 0)
-        return TURBO_ENOBUFS;
+        return SALTS_ENOBUFS;
       stream->websocket_end_submitted = true;
     }
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int chttp_h2_server_connection_flush(chttp_h2_server_connection *h2) {
   chttp_server_connection *connection;
   const uint8_t *wire = NULL;
   ptrdiff_t wire_size;
-  if (h2 == NULL || h2->protocol == NULL) return TURBO_EINVAL;
+  if (h2 == NULL || h2->protocol == NULL) return SALTS_EINVAL;
   connection = h2->connection;
-  if (connection->outbound_size != 0u || connection->writing) return TURBO_OK;
+  if (connection->outbound_size != 0u || connection->writing) return SALTS_OK;
   {
     const int websocket_status = chttp_h2_server_websockets_drive(h2);
-    if (websocket_status != TURBO_OK) return websocket_status;
+    if (websocket_status != SALTS_OK) return websocket_status;
   }
   /* A matching ACK crosses the wire after every preceding response byte and
    * avoids closing a Windows socket while late flow-control frames are still
@@ -1095,27 +1095,27 @@ int chttp_h2_server_connection_flush(chttp_h2_server_connection *h2) {
   if (h2->draining && h2->active_streams == 0u && !h2->drain_ping_sent &&
       !chttp_h2_proto_want_write(h2->protocol)) {
     if (chttp_h2_proto_submit_ping(h2->protocol, CHTTP_H2_SERVER_DRAIN_PING) != 0)
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     h2->drain_ping_sent = true;
   }
   wire_size = chttp_h2_proto_send(h2->protocol, &wire);
-  if (wire_size < 0) return TURBO_EPROTO;
-  if ((size_t)wire_size > connection->outbound_capacity) return TURBO_EMSGSIZE;
+  if (wire_size < 0) return SALTS_EPROTO;
+  if ((size_t)wire_size > connection->outbound_capacity) return SALTS_EMSGSIZE;
   if (wire_size != 0) memcpy(connection->outbound, wire, (size_t)wire_size);
   connection->outbound_size = (size_t)wire_size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int chttp_h2_server_connection_begin_stop(chttp_h2_server_connection *h2) {
-  if (h2 == NULL || h2->protocol == NULL || h2->draining) return TURBO_OK;
+  if (h2 == NULL || h2->protocol == NULL || h2->draining) return SALTS_OK;
   if (chttp_h2_proto_submit_goaway(h2->protocol,
                                    chttp_h2_proto_get_last_proc_stream_id(h2->protocol),
                                    CHTTP_H2_ERR_NO_ERROR) != 0)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   h2->draining = true;
   h2->drain_ping_sent = false;
   h2->drain_ping_acked = false;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 bool chttp_h2_server_connection_draining(const chttp_h2_server_connection *h2) {

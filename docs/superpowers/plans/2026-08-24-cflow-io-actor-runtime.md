@@ -11,7 +11,7 @@ a single-consumer Disruptor mailbox accepts concurrent submit/cancel commands;
 backend strategy callbacks cover Reactor and Proactor models; existing
 `cflow_executor` performs completion delivery.
 
-**Tech Stack:** C11, TurboUtils Disruptor/thread primitives/error codes,
+**Tech Stack:** C11, Salts Disruptor/thread primitives/error codes,
 CFlow Executor, TinyTest, CMake presets, Lean 4 conformance model.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-cflow-io-actor-runtime-design.md`
@@ -55,7 +55,7 @@ CFlow Executor, TinyTest, CMake presets, Lean 4 conformance model.
 1. Close command admission once, cancel admitted/ready requests and request
    cancellation for backend-pending work.
 2. Add stats derived from the request table and exact rejection/error counters.
-3. Make destroy fail with `TURBO_EBUSY` until commands, requests, driver and
+3. Make destroy fail with `SALTS_EBUSY` until commands, requests, driver and
    delivery callbacks are quiescent.
 4. Test close drain, unacknowledged completion, pending backend and terminal
    accounting.

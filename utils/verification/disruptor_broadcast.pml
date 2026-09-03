@@ -1,5 +1,5 @@
 /*
- * Rocida Disruptor broadcast protocol model.
+ * Salts Disruptor broadcast protocol model.
  *
  * Scope:
  *   - one publisher and two registered consumers

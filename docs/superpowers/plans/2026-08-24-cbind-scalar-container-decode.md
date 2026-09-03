@@ -17,7 +17,7 @@ through an appended construction lifecycle callback on failure.
 **Files:**
 
 - Modify: `cmeta/include/cmeta/range.h`
-- Modify: `cmeta/src/container_type.c`
+- Modify: `cmeta/src/cstl_type.c`
 - Modify: `cmeta/tests/cmeta_container_type_test.c`
 - Modify: `cmeta/tests/cmeta_header_cpp_test.cpp`
 
@@ -33,12 +33,12 @@ prefix only in the new façade.
 **Verify:** Build and run `cmeta_container_type_test` and
 `cmeta_header_cpp_test`.
 
-## Task 2: Implement restore-zero for TurboSTL providers
+## Task 2: Implement restore-zero for Container providers
 
 **Files:**
 
-- Modify: `turbostl/src/construction_meta.c`
-- Modify: `turbostl/tests/turbostl_construction_binding_test.c`
+- Modify: `cstl/src/construction_meta.c`
+- Modify: `cstl/tests/cstl_construction_binding_test.c`
 
 **RED:** For representative sequence, set, and map handles, test zero,
 bound-uninitialized, populated/committed, and repeated restore calls. Assert the
@@ -49,7 +49,7 @@ destroy operation when necessary and clear the full handle. Register each
 wrapper in the corresponding construction ops table; do not expose layouts to
 CBind.
 
-**Verify:** Run `turbostl_construction_binding_test` plus the existing TurboSTL
+**Verify:** Run `cstl_construction_binding_test` plus the existing Container
 collector tests.
 
 ## Task 3: Extend CBind ABI tails and scalar token reuse
@@ -133,8 +133,8 @@ retaining `target_status`.
 Run, in order:
 
 1. CBind and CMeta targeted tests.
-2. TurboSTL construction and Collector tests.
-3. all `cbind_*`, `cmeta_*`, and relevant `turbostl_*` CTest entries.
+2. Container construction and Collector tests.
+3. all `cbind_*`, `cmeta_*`, and relevant `cstl_*` CTest entries.
 4. install-consumer C and C++ builds/tests.
 5. the repository release preset test suite if the focused sets are green.
 

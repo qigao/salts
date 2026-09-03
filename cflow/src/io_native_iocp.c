@@ -1,7 +1,7 @@
 #include "io_native_internal.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #if defined(interface)
 #undef interface
@@ -60,9 +60,9 @@ typedef struct cflow_iocp_resource_record {
 
 typedef struct cflow_iocp_impl {
     cflow_io_native_impl base;
-    turbo_mutex_t gate;
-    turbo_cond_t changed;
-    turbo_thread_t worker;
+    salts_mutex_t gate;
+    salts_cond_t changed;
+    salts_thread_t worker;
     HANDLE port;
     cflow_iocp_record *records;
     cflow_iocp_resource_record *resources;
@@ -90,7 +90,7 @@ static void iocp_counter_increment(uint64_t *counter) {
 }
 
 static int iocp_error(DWORD error) {
-    return error == ERROR_SUCCESS ? TURBO_EIO : -(int)error;
+    return error == ERROR_SUCCESS ? SALTS_EIO : -(int)error;
 }
 
 static int iocp_accept_extension(SOCKET socket_value,
@@ -100,7 +100,7 @@ static int iocp_accept_extension(SOCKET socket_value,
     if (WSAIoctl(socket_value, SIO_GET_EXTENSION_FUNCTION_POINTER,
                  &id, sizeof(id), out, sizeof(*out), &bytes,
                  NULL, NULL) == 0)
-        return TURBO_OK;
+        return SALTS_OK;
     return -(int)WSAGetLastError();
 }
 
@@ -111,7 +111,7 @@ static int iocp_connect_extension(SOCKET socket_value,
     if (WSAIoctl(socket_value, SIO_GET_EXTENSION_FUNCTION_POINTER,
                  &id, sizeof(id), out, sizeof(*out), &bytes,
                  NULL, NULL) == 0)
-        return TURBO_OK;
+        return SALTS_OK;
     return -(int)WSAGetLastError();
 }
 
@@ -128,7 +128,7 @@ static int iocp_create_accept_socket(SOCKET listener, SOCKET *out) {
     if (accepted == INVALID_SOCKET)
         return -(int)WSAGetLastError();
     *out = accepted;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int iocp_bind_connect_socket(SOCKET socket_value) {
@@ -141,7 +141,7 @@ static int iocp_bind_connect_socket(SOCKET socket_value) {
     memset(&local, 0, sizeof(local));
     if (getsockname(socket_value, (struct sockaddr *)&local,
                     &local_length) == 0)
-        return TURBO_OK;
+        return SALTS_OK;
     error = WSAGetLastError();
     if (error != WSAEINVAL)
         return -(int)error;
@@ -157,16 +157,16 @@ static int iocp_bind_connect_socket(SOCKET socket_value) {
         ipv6->sin6_family = AF_INET6;
         bind_length = (int)sizeof(*ipv6);
     } else {
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     }
     if (bind(socket_value, (const struct sockaddr *)&local,
              bind_length) == 0)
-        return TURBO_OK;
+        return SALTS_OK;
     error = WSAGetLastError();
     /* Winsock may report WSAEINVAL from getsockname for a socket already
        bound to ADDR_ANY. In that case ConnectEx remains the authoritative
        state check; every other bind error is terminal here. */
-    return error == WSAEINVAL ? TURBO_OK : -(int)error;
+    return error == WSAEINVAL ? SALTS_OK : -(int)error;
 }
 
 static cflow_iocp_record *iocp_find_free_locked(cflow_iocp_impl *impl) {
@@ -228,11 +228,11 @@ static int iocp_begin_operation(cflow_iocp_record *record) {
                 (DWORD)(sizeof(SOCKADDR_STORAGE) + 16u);
             status = iocp_accept_extension(record->socket_value,
                                            &accept_ex);
-            if (status != TURBO_OK)
+            if (status != SALTS_OK)
                 return status;
             status = iocp_create_accept_socket(
                 record->socket_value, &record->accepted_socket);
-            if (status != TURBO_OK)
+            if (status != SALTS_OK)
                 return status;
             status = accept_ex(
                          record->socket_value, record->accepted_socket,
@@ -246,10 +246,10 @@ static int iocp_begin_operation(cflow_iocp_record *record) {
             LPFN_CONNECTEX connect_ex = NULL;
             status = iocp_connect_extension(record->socket_value,
                                             &connect_ex);
-            if (status != TURBO_OK)
+            if (status != SALTS_OK)
                 return status;
             status = iocp_bind_connect_socket(record->socket_value);
-            if (status != TURBO_OK)
+            if (status != SALTS_OK)
                 return status;
             status = connect_ex(
                          record->socket_value,
@@ -261,12 +261,12 @@ static int iocp_begin_operation(cflow_iocp_record *record) {
             break;
         }
         default:
-            return TURBO_EINVAL;
+            return SALTS_EINVAL;
     }
     if (status == 0)
-        return TURBO_OK;
+        return SALTS_OK;
     status = WSAGetLastError();
-    return status == WSA_IO_PENDING ? TURBO_OK : -(int)status;
+    return status == WSA_IO_PENDING ? SALTS_OK : -(int)status;
 }
 
 static int iocp_begin_vector_operation(cflow_iocp_record *record) {
@@ -283,9 +283,9 @@ static int iocp_begin_vector_operation(cflow_iocp_record *record) {
                          &record->overlapped, NULL);
     }
     if (status == 0)
-        return TURBO_OK;
+        return SALTS_OK;
     status = WSAGetLastError();
-    return status == WSA_IO_PENDING ? TURBO_OK : -(int)status;
+    return status == WSA_IO_PENDING ? SALTS_OK : -(int)status;
 }
 
 static int iocp_begin_pipe_operation(cflow_iocp_record *record) {
@@ -303,9 +303,9 @@ static int iocp_begin_pipe_operation(cflow_iocp_record *record) {
                             &record->overlapped);
     }
     if (started)
-        return TURBO_OK;
+        return SALTS_OK;
     error = GetLastError();
-    return error == ERROR_IO_PENDING ? TURBO_OK : iocp_error(error);
+    return error == ERROR_IO_PENDING ? SALTS_OK : iocp_error(error);
 }
 
 static int iocp_begin_file_operation(cflow_iocp_impl *impl,
@@ -326,18 +326,18 @@ static int iocp_begin_file_operation(cflow_iocp_impl *impl,
                             (DWORD)operation->length, NULL,
                             &record->overlapped);
     } else {
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     }
     if (started)
-        return TURBO_OK;
+        return SALTS_OK;
     error = GetLastError();
     if (error == ERROR_IO_PENDING)
-        return TURBO_OK;
+        return SALTS_OK;
     if (operation->kind == CFLOW_IO_NATIVE_FILE_READ_AT &&
         error == ERROR_HANDLE_EOF) {
         return PostQueuedCompletionStatus(
                    impl->port, 0u, 0u, &record->overlapped)
-                   ? TURBO_OK : iocp_error(GetLastError());
+                   ? SALTS_OK : iocp_error(GetLastError());
     }
     return iocp_error(error);
 }
@@ -355,22 +355,22 @@ static int iocp_finish_accept(SOCKET listener,
     if (ioctlsocket(accepted_socket, FIONBIO, &nonblocking) != 0)
         return -(int)WSAGetLastError();
     if (operation->address == NULL)
-        return TURBO_OK;
+        return SALTS_OK;
     memset(&peer, 0, sizeof(peer));
     if (getpeername(accepted_socket, (struct sockaddr *)&peer,
                     &peer_length) != 0)
         return -(int)WSAGetLastError();
     if ((size_t)peer_length > operation->address_capacity)
-        return TURBO_ERANGE;
+        return SALTS_ERANGE;
     memcpy(operation->address, &peer, (size_t)peer_length);
     operation->address_length = (size_t)peer_length;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int iocp_finish_connect(SOCKET socket_value) {
     if (setsockopt(socket_value, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT,
                    NULL, 0) == 0)
-        return TURBO_OK;
+        return SALTS_OK;
     return -(int)WSAGetLastError();
 }
 
@@ -392,10 +392,10 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     DWORD vector_buffer_count;
     bool cancelled;
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (record->phase != CFLOW_IOCP_RECORD_PENDING) {
         iocp_counter_increment(&impl->stale_native_completions);
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         return;
     }
     actor = record->actor;
@@ -432,22 +432,22 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
     iocp_counter_increment(&impl->completed);
     if (cancelled)
         iocp_counter_increment(&impl->cancelled);
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     if (cancelled) {
         completion = (cflow_io_completion){
-            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, SALTS_OK};
     } else if (resource_kind == CFLOW_IOCP_RESOURCE_PIPE &&
                pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ &&
                (native_error == ERROR_BROKEN_PIPE ||
                 native_error == ERROR_HANDLE_EOF)) {
         completion = (cflow_io_completion){
-            CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_EOF, 0u, SALTS_OK};
     } else if (resource_kind == CFLOW_IOCP_RESOURCE_FILE &&
                file_operation->kind == CFLOW_IO_NATIVE_FILE_READ_AT &&
                native_error == ERROR_HANDLE_EOF) {
         completion = (cflow_io_completion){
-            CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_EOF, 0u, SALTS_OK};
     } else if (native_error != ERROR_SUCCESS) {
         completion = (cflow_io_completion){
             CFLOW_IO_COMPLETION_FAILED, 0u, iocp_error(native_error)};
@@ -455,50 +455,50 @@ static void iocp_finish_record(cflow_iocp_impl *impl,
         completion = pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ &&
                              bytes == 0u
                          ? (cflow_io_completion){
-                               CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK}
+                               CFLOW_IO_COMPLETION_EOF, 0u, SALTS_OK}
                          : (cflow_io_completion){
                                CFLOW_IO_COMPLETION_OK, (size_t)bytes,
-                               TURBO_OK};
+                               SALTS_OK};
     } else if (resource_kind == CFLOW_IOCP_RESOURCE_FILE) {
         completion = file_operation->kind == CFLOW_IO_NATIVE_FILE_READ_AT &&
                              bytes == 0u
                          ? (cflow_io_completion){
-                               CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK}
+                               CFLOW_IO_COMPLETION_EOF, 0u, SALTS_OK}
                          : (cflow_io_completion){
                                CFLOW_IO_COMPLETION_OK, (size_t)bytes,
-                               TURBO_OK};
+                               SALTS_OK};
     } else if (vector_buffer_count != 0u) {
         completion = vector_kind == CFLOW_IO_NATIVE_TCP_RECV_VECTOR &&
                              bytes == 0u
                          ? (cflow_io_completion){
-                               CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK}
+                               CFLOW_IO_COMPLETION_EOF, 0u, SALTS_OK}
                          : (cflow_io_completion){
                                CFLOW_IO_COMPLETION_OK, (size_t)bytes,
-                               TURBO_OK};
+                               SALTS_OK};
     } else if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT) {
         const int status = iocp_finish_accept(
             socket_value, operation, accepted_socket);
-        if (status == TURBO_OK) {
+        if (status == SALTS_OK) {
             operation->result_socket = (uintptr_t)accepted_socket;
             completion = (cflow_io_completion){
-                CFLOW_IO_COMPLETION_OK, 0u, TURBO_OK};
+                CFLOW_IO_COMPLETION_OK, 0u, SALTS_OK};
         } else {
             completion = (cflow_io_completion){
                 CFLOW_IO_COMPLETION_FAILED, 0u, status};
         }
     } else if (operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT) {
         const int status = iocp_finish_connect(socket_value);
-        completion = status == TURBO_OK
+        completion = status == SALTS_OK
                          ? (cflow_io_completion){
-                               CFLOW_IO_COMPLETION_OK, 0u, TURBO_OK}
+                               CFLOW_IO_COMPLETION_OK, 0u, SALTS_OK}
                          : (cflow_io_completion){
                                CFLOW_IO_COMPLETION_FAILED, 0u, status};
     } else if (operation->kind == CFLOW_IO_NATIVE_TCP_RECV && bytes == 0u) {
         completion = (cflow_io_completion){
-            CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_EOF, 0u, SALTS_OK};
     } else {
         completion = (cflow_io_completion){
-            CFLOW_IO_COMPLETION_OK, (size_t)bytes, TURBO_OK};
+            CFLOW_IO_COMPLETION_OK, (size_t)bytes, SALTS_OK};
     }
     delivery_status = cflow_io_actor_complete(
         actor, request_id, &completion);
@@ -541,43 +541,43 @@ static int iocp_associate_resource(cflow_iocp_impl *impl,
     HANDLE associated;
     DWORD association_error = ERROR_SUCCESS;
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     for (;;) {
         resource_record = iocp_find_resource_locked(impl, native_handle);
         if (resource_record == NULL || !resource_record->associating)
             break;
-        turbo_cond_wait(&impl->changed, &impl->gate);
+        salts_cond_wait(&impl->changed, &impl->gate);
     }
     if (resource_record != NULL) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_OK;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_OK;
     }
     resource_record = iocp_find_free_resource_locked(impl);
     if (resource_record == NULL) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
     resource_record->native_handle = native_handle;
     resource_record->active = true;
     resource_record->associating = true;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     associated = CreateIoCompletionPort(native_handle, impl->port, 0u, 0u);
     if (associated != impl->port)
         association_error = GetLastError();
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (associated != impl->port) {
         resource_record->native_handle = INVALID_HANDLE_VALUE;
         resource_record->active = false;
         resource_record->associating = false;
-        turbo_cond_broadcast(&impl->changed);
-        turbo_mutex_unlock(&impl->gate);
+        salts_cond_broadcast(&impl->changed);
+        salts_mutex_unlock(&impl->gate);
         return iocp_error(association_error);
     }
     resource_record->associating = false;
-    turbo_cond_broadcast(&impl->changed);
-    turbo_mutex_unlock(&impl->gate);
-    return TURBO_OK;
+    salts_cond_broadcast(&impl->changed);
+    salts_mutex_unlock(&impl->gate);
+    return SALTS_OK;
 }
 
 static void iocp_worker(void *user) {
@@ -608,9 +608,9 @@ static void iocp_worker(void *user) {
     }
 
 stopped:
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     impl->worker_running = false;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 }
 
 static int iocp_submit_record(
@@ -624,16 +624,16 @@ static int iocp_submit_record(
     cflow_iocp_record *record;
     int status;
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (!impl->admission_open) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_ESHUTDOWN;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_ESHUTDOWN;
     }
     record = iocp_find_free_locked(impl);
     if (record == NULL) {
         iocp_counter_increment(&impl->rejected_full);
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
     memset(&record->overlapped, 0, sizeof(record->overlapped));
     record->phase = CFLOW_IOCP_RECORD_PENDING;
@@ -659,10 +659,10 @@ static int iocp_submit_record(
     record->cancel_requested = false;
     record->resource_kind = resource_kind;
     ++impl->active_requests;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     status = iocp_associate_resource(impl, record->native_handle);
-    if (status == TURBO_OK) {
+    if (status == SALTS_OK) {
         if (resource_kind == CFLOW_IOCP_RESOURCE_SOCKET)
             status = record->vector_buffer_count != 0u
                          ? iocp_begin_vector_operation(record)
@@ -672,14 +672,14 @@ static int iocp_submit_record(
         else
             status = iocp_begin_file_operation(impl, record);
     }
-    if (status == TURBO_OK) {
-        turbo_mutex_lock(&impl->gate);
+    if (status == SALTS_OK) {
+        salts_mutex_lock(&impl->gate);
         iocp_counter_increment(&impl->submitted);
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_OK;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_OK;
     }
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     record->phase = CFLOW_IOCP_RECORD_FREE;
     record->request_id = 0u;
     record->actor = NULL;
@@ -694,7 +694,7 @@ static int iocp_submit_record(
     record->accepted_socket = INVALID_SOCKET;
     --impl->active_requests;
     iocp_counter_increment(&impl->native_submit_errors);
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     return status;
 }
 
@@ -731,23 +731,23 @@ static int iocp_submit_pipe(cflow_io_native_impl *base,
     DWORD error;
 
     if ((operation->flags & CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE) == 0u)
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     if (handle == NULL || handle == INVALID_HANDLE_VALUE)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     SetLastError(ERROR_SUCCESS);
     file_type = GetFileType(handle);
     error = GetLastError();
     if (file_type == FILE_TYPE_UNKNOWN && error != ERROR_SUCCESS)
         return iocp_error(error);
     if (file_type != FILE_TYPE_PIPE)
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     if (!GetNamedPipeInfo(handle, &pipe_flags, NULL, NULL, NULL)) {
         error = GetLastError();
         if (error != ERROR_ACCESS_DENIED ||
             operation->kind != CFLOW_IO_NATIVE_PIPE_WRITE)
             return iocp_error(error);
     } else if ((pipe_flags & PIPE_TYPE_MESSAGE) != 0u) {
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     }
     return iocp_submit_record(
         impl, actor, request_id, CFLOW_IOCP_RESOURCE_PIPE, NULL, NULL,
@@ -764,18 +764,18 @@ static int iocp_submit_file(cflow_io_native_impl *base,
     DWORD error;
 
     if (operation->kind == CFLOW_IO_NATIVE_FILE_FLUSH)
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     if ((operation->flags & CFLOW_IO_NATIVE_FILE_ASYNC_CAPABLE) == 0u)
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     if (handle == NULL || handle == INVALID_HANDLE_VALUE)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     SetLastError(ERROR_SUCCESS);
     file_type = GetFileType(handle);
     error = GetLastError();
     if (file_type == FILE_TYPE_UNKNOWN && error != ERROR_SUCCESS)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (file_type != FILE_TYPE_DISK)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return iocp_submit_record(
         impl, actor, request_id, CFLOW_IOCP_RESOURCE_FILE, NULL, NULL,
         NULL, operation, handle, INVALID_SOCKET);
@@ -789,32 +789,32 @@ static int iocp_cancel(cflow_io_native_impl *base,
     OVERLAPPED *overlapped;
     DWORD error;
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     record = iocp_find_request_locked(impl, request_id);
     if (record == NULL) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_ENOENT;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_ENOENT;
     }
     record->cancel_requested = true;
     native_handle = record->native_handle;
     overlapped = &record->overlapped;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     if (CancelIoEx(native_handle, overlapped))
-        return TURBO_OK;
+        return SALTS_OK;
     error = GetLastError();
     if (error == ERROR_NOT_FOUND)
-        return TURBO_OK;
-    turbo_mutex_lock(&impl->gate);
+        return SALTS_OK;
+    salts_mutex_lock(&impl->gate);
     iocp_counter_increment(&impl->native_cancel_errors);
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     return iocp_error(error);
 }
 
 static bool iocp_get_stats(const cflow_io_native_impl *base,
                            cflow_io_native_backend_stats *out) {
     cflow_iocp_impl *impl = (cflow_iocp_impl *)base;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     *out = (cflow_io_native_backend_stats){
         impl->request_capacity,
         impl->active_requests,
@@ -828,7 +828,7 @@ static bool iocp_get_stats(const cflow_io_native_impl *base,
         impl->admission_open,
         impl->worker_running,
         impl->shutdown_complete};
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     return true;
 }
 
@@ -838,27 +838,27 @@ static int iocp_forget_resource(cflow_io_native_impl *base,
     cflow_iocp_resource_record *resource_record;
     HANDLE native_handle = (HANDLE)closed_identity;
     size_t index;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     for (index = 0u; index < impl->request_capacity; ++index) {
         if (impl->records[index].phase == CFLOW_IOCP_RECORD_PENDING &&
             impl->records[index].native_handle == native_handle) {
-            turbo_mutex_unlock(&impl->gate);
-            return TURBO_EBUSY;
+            salts_mutex_unlock(&impl->gate);
+            return SALTS_EBUSY;
         }
     }
     resource_record = iocp_find_resource_locked(impl, native_handle);
     if (resource_record == NULL) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_ENOENT;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_ENOENT;
     }
     if (resource_record->associating) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
     resource_record->native_handle = INVALID_HANDLE_VALUE;
     resource_record->active = false;
-    turbo_mutex_unlock(&impl->gate);
-    return TURBO_OK;
+    salts_mutex_unlock(&impl->gate);
+    return SALTS_OK;
 }
 
 static int iocp_forget_socket(cflow_io_native_impl *base,
@@ -879,49 +879,49 @@ static int iocp_forget_file(cflow_io_native_impl *base,
 static int iocp_shutdown(cflow_io_native_impl *base) {
     cflow_iocp_impl *impl = (cflow_iocp_impl *)base;
     int join_status;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (impl->shutdown_complete) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EALREADY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EALREADY;
     }
     impl->admission_open = false;
     if (impl->active_requests != 0u) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     if (!PostQueuedCompletionStatus(impl->port, 0u,
                                     CFLOW_IOCP_STOP_KEY, NULL))
         return iocp_error(GetLastError());
-    join_status = turbo_thread_join(&impl->worker);
-    if (join_status != TURBO_OK)
+    join_status = salts_thread_join(&impl->worker);
+    if (join_status != SALTS_OK)
         return join_status;
-    turbo_thread_destroy(&impl->worker);
+    salts_thread_destroy(&impl->worker);
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     impl->shutdown_complete = true;
-    turbo_mutex_unlock(&impl->gate);
-    return TURBO_OK;
+    salts_mutex_unlock(&impl->gate);
+    return SALTS_OK;
 }
 
 static int iocp_destroy(cflow_io_native_impl *base) {
     cflow_iocp_impl *impl = (cflow_iocp_impl *)base;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (!impl->shutdown_complete) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     (void)CloseHandle(impl->port);
     if (impl->winsock_started)
         (void)WSACleanup();
-    turbo_cond_destroy(&impl->changed);
-    turbo_mutex_destroy(&impl->gate);
+    salts_cond_destroy(&impl->changed);
+    salts_mutex_destroy(&impl->gate);
     free(impl->resources);
     free(impl->records);
     free(impl);
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static const cflow_io_native_impl_ops iocp_ops = {
@@ -946,10 +946,10 @@ int cflow_io_native_iocp_init(cflow_io_native_backend *backend,
     if (config->request_capacity > SIZE_MAX / sizeof(cflow_iocp_record) ||
         config->request_capacity >
             SIZE_MAX / sizeof(cflow_iocp_resource_record))
-        return TURBO_ERANGE;
+        return SALTS_ERANGE;
     impl = (cflow_iocp_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL)
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     impl->records = (cflow_iocp_record *)calloc(
         config->request_capacity, sizeof(*impl->records));
     impl->resources = (cflow_iocp_resource_record *)calloc(
@@ -958,28 +958,28 @@ int cflow_io_native_iocp_init(cflow_io_native_backend *backend,
         free(impl->resources);
         free(impl->records);
         free(impl);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
     impl->base.ops = &iocp_ops;
     impl->base.kind = config->kind;
     impl->request_capacity = config->request_capacity;
     impl->completion_batch_capacity = config->completion_batch_capacity;
     impl->admission_open = true;
-    turbo_mutex_init(&impl->gate);
-    turbo_cond_init(&impl->changed);
+    salts_mutex_init(&impl->gate);
+    salts_cond_init(&impl->changed);
     if (impl->gate == NULL || impl->changed == NULL) {
-        turbo_cond_destroy(&impl->changed);
-        turbo_mutex_destroy(&impl->gate);
+        salts_cond_destroy(&impl->changed);
+        salts_mutex_destroy(&impl->gate);
         free(impl->resources);
         free(impl->records);
         free(impl);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
 
     status = WSAStartup(MAKEWORD(2, 2), &winsock_data);
     if (status != 0) {
-        turbo_cond_destroy(&impl->changed);
-        turbo_mutex_destroy(&impl->gate);
+        salts_cond_destroy(&impl->changed);
+        salts_mutex_destroy(&impl->gate);
         free(impl->resources);
         free(impl->records);
         free(impl);
@@ -990,19 +990,19 @@ int cflow_io_native_iocp_init(cflow_io_native_backend *backend,
     if (impl->port == NULL) {
         status = iocp_error(GetLastError());
         (void)WSACleanup();
-        turbo_cond_destroy(&impl->changed);
-        turbo_mutex_destroy(&impl->gate);
+        salts_cond_destroy(&impl->changed);
+        salts_mutex_destroy(&impl->gate);
         free(impl->resources);
         free(impl->records);
         free(impl);
         return status;
     }
-    status = turbo_thread_create(&impl->worker, iocp_worker, impl);
-    if (status != TURBO_OK) {
+    status = salts_thread_create(&impl->worker, iocp_worker, impl);
+    if (status != SALTS_OK) {
         (void)CloseHandle(impl->port);
         (void)WSACleanup();
-        turbo_cond_destroy(&impl->changed);
-        turbo_mutex_destroy(&impl->gate);
+        salts_cond_destroy(&impl->changed);
+        salts_mutex_destroy(&impl->gate);
         free(impl->resources);
         free(impl->records);
         free(impl);
@@ -1010,5 +1010,5 @@ int cflow_io_native_iocp_init(cflow_io_native_backend *backend,
     }
     impl->worker_running = true;
     backend->impl = impl;
-    return TURBO_OK;
+    return SALTS_OK;
 }

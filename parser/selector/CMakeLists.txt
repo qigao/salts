@@ -1,4 +1,4 @@
-set(TARGET_NAME turbo_selector)
+set(TARGET_NAME salts_selector)
 set(TARGET_FOLDER "parser/selector")
 
 cmake_add_grammar(SELECTOR_V1
@@ -8,7 +8,7 @@ cmake_add_grammar(SELECTOR_V1
   FOLDER "${TARGET_FOLDER}/grammar")
 
 add_library(${TARGET_NAME} STATIC
-  src/turbo_selector.c
+  src/salts_selector.c
   ${SELECTOR_V1_LEXER_GEN}
   ${SELECTOR_V1_GRAMMAR_GEN})
 add_dependencies(${TARGET_NAME}
@@ -22,18 +22,18 @@ target_include_directories(${TARGET_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}/parser
     ${CMAKE_CURRENT_BINARY_DIR})
 cmake_config_target(${TARGET_NAME}
-  ALIAS Rocida::Selector
+  ALIAS Salts::Selector
   EXPORT_NAME Selector
   FOLDER "${TARGET_FOLDER}")
 
 install(TARGETS ${TARGET_NAME}
-  EXPORT RocidaTargets
+  EXPORT SaltsTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(FILES include/turbo_selector.h DESTINATION include/selector)
+install(FILES include/salts_selector.h DESTINATION include/selector)
 
 if(BUILD_TESTING)
-  cmake_add_test(test_turbo_selector
-    SOURCES test/test_turbo_selector.c
-    LIBS ${TARGET_NAME} Rocida::TinyTest
+  cmake_add_test(test_salts_selector
+    SOURCES test/test_salts_selector.c
+    LIBS ${TARGET_NAME} Salts::TinyTest
     FOLDER "${TARGET_FOLDER}/tests")
 endif()

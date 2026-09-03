@@ -1,4 +1,4 @@
-# Rocida CMake Utilities
+# Salts CMake Utilities
 
 function(cmake_config_target target_name)
     set(options)

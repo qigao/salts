@@ -41,7 +41,7 @@ regular-file example reports that no asynchronous regular-file backend is
 declared and exits 77.
 
 `verify_installed_package` compiles these exact three source files against the
-installed `Rocida::CFlow` target. It does not substitute separate smoke-test
+installed `Salts::CFlow` target. It does not substitute separate smoke-test
 programs.
 
 ## Lifecycle and ownership

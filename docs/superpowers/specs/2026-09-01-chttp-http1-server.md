@@ -25,7 +25,7 @@ below.
   listener or accepted-socket admission path.
 
 The server follows Iris's application-facing shape, but uses CHTTP names,
-Turbo error codes, hard capacities, CNet connection handles, and C11 ownership
+Salts error codes, hard capacities, CNet connection handles, and C11 ownership
 rules. It does not copy Iris's global default application or unbounded route and
 request allocation behavior.
 
@@ -108,7 +108,7 @@ the selected representation's Content-Length.
 Global middleware wraps matched and built-in 404/405 dispatch. Route
 middleware then runs in registration order. A middleware can call
 `chttp_server_next_call()` once or short-circuit by completing the response.
-Calling the same continuation twice returns `TURBO_EALREADY`.
+Calling the same continuation twice returns `SALTS_EALREADY`.
 
 Strict llhttp request parsing supports fragmented messages, Content-Length and
 chunked bodies, HTTP/1.0, HTTP/1.1, sequential keep-alive requests, and bounded
@@ -183,7 +183,7 @@ error where possible, then closes the connection. No path converts bounded
 pressure into unbounded allocation.
 
 Expired Session records are reclaimed before allocation. If every Session slot
-is still live, a new `chttp_session_set()` returns `TURBO_ENOBUFS`; it does not
+is still live, a new `chttp_session_set()` returns `SALTS_ENOBUFS`; it does not
 silently evict live application state. `chttp_session_invalidate()` clears the
 record and emits an expired Cookie. Session state is owner-thread-only and does
 not require a handler-side lock.
@@ -209,7 +209,7 @@ signatures remain source compatible; listener and send-and-close functions are
 additive, and `cnet_observer.on_send` is appended after the pre-existing fields
 so positional initializers keep their meaning. Close admission now immediately
 enforces the documented closing semantics: a second close returns
-`TURBO_EALREADY`, while later send/receive admission returns `TURBO_EBUSY` even
+`SALTS_EALREADY`, while later send/receive admission returns `SALTS_EBUSY` even
 before the owner polls the first close. Installed C and C++ consumers compile
 the new declarations.
 

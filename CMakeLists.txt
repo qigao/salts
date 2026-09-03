@@ -7,7 +7,7 @@ if(POLICY CMP0167)
 endif()
 
 project(
-  Rocida
+  Salts
   VERSION 1.1.0
   LANGUAGES C CXX)
 
@@ -21,7 +21,7 @@ get_filename_component(CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}" ABSOLUTE)
 
 # Project description
 set(PROJECT_DESCRIPTION "common library for C/C++")
-set(PROJECT_HOMEPAGE_URL "https://github.com/qigao/turbo-utils")
+set(PROJECT_HOMEPAGE_URL "https://github.com/qigao/salts")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # Language standards - unified approach
@@ -65,7 +65,7 @@ add_subdirectory(cnet)
 add_subdirectory(chttp)
 add_subdirectory(cserde)
 add_subdirectory(cbind)
-add_subdirectory(turbostl)
+add_subdirectory(cstl)
 add_subdirectory(utils)
 add_subdirectory(cflow-process)
 add_subdirectory(parser)
@@ -74,24 +74,24 @@ add_subdirectory(crpc)
 add_subdirectory(cflow-fs)
 
 set(verify_installed_dependencies
-    turbo_platform
-    turbo_concurrency
-    turbo_coroutine
-    turbo_native_io
-    turbo_cnet
-    turbo_chttp
-    turbo_cmeta
-    turbo_cserde
-    turbo_cbind
-    turbo_cflow
-    turbo_stl
-    turbo_stl_stream
-    turbo_utils
-    turbo_cflow_process
-    turbo_cflow_fs
-    turbo_crpc
-    ${ROCIDA_PARSER_TARGETS}
-    turbo_selector)
+    salts_platform
+    salts_concurrency
+    salts_coroutine
+    salts_native_io
+    salts_cnet
+    salts_chttp
+    salts_cmeta
+    salts_cserde
+    salts_cbind
+    salts_cflow
+    salts_cstl
+    salts_cstl_stream
+    salts
+    salts_cflow_process
+    salts_cflow_fs
+    salts_crpc
+    ${SALTS_PARSER_TARGETS}
+    salts_selector)
 add_custom_target(
   verify_installed_package
   COMMAND
@@ -113,29 +113,29 @@ include(CMakePackageConfigHelpers)
 
 # Generate the config file
 configure_package_config_file(
-  "${CMAKE_SOURCE_DIR}/cmake/RocidaConfig.cmake.in"
-  "${CMAKE_BINARY_DIR}/RocidaConfig.cmake"
-  INSTALL_DESTINATION "lib/cmake/Rocida")
+  "${CMAKE_SOURCE_DIR}/cmake/SaltsConfig.cmake.in"
+  "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"
+  INSTALL_DESTINATION "lib/cmake/Salts")
 
 # Generate the version file
 write_basic_package_version_file(
-  "${CMAKE_BINARY_DIR}/RocidaConfigVersion.cmake"
+  "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
   VERSION ${PROJECT_VERSION}
   COMPATIBILITY AnyNewerVersion)
 
 # Install the config files
-install(FILES "${CMAKE_BINARY_DIR}/RocidaConfig.cmake"
-              "${CMAKE_BINARY_DIR}/RocidaConfigVersion.cmake"
-        DESTINATION "lib/cmake/Rocida")
+install(FILES "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"
+              "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
+        DESTINATION "lib/cmake/Salts")
 
 # Install the export set
 export(
-  EXPORT RocidaTargets
-  FILE "${CMAKE_BINARY_DIR}/RocidaTargets.cmake"
-  NAMESPACE Rocida::)
+  EXPORT SaltsTargets
+  FILE "${CMAKE_BINARY_DIR}/SaltsTargets.cmake"
+  NAMESPACE Salts::)
 
 install(
-  EXPORT RocidaTargets
-  FILE RocidaTargets.cmake
-  NAMESPACE Rocida::
-  DESTINATION "lib/cmake/Rocida")
+  EXPORT SaltsTargets
+  FILE SaltsTargets.cmake
+  NAMESPACE Salts::
+  DESTINATION "lib/cmake/Salts")

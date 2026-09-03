@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remove duplicate business-layer arity/variadic engines, split raw versus formatted logging calls, and move TurboSTL-specific typed-container code generation out of CMeta while preserving runtime behavior and strict-C11 portability.
+**Goal:** Remove duplicate business-layer arity/variadic engines, split raw versus formatted logging calls, and move Container-specific typed-container code generation out of CMeta while preserving runtime behavior and strict-C11 portability.
 
-**Architecture:** CMeta remains the main repository's one finite PP kernel, while standalone TinyTest keeps its independent TinyMeta kernel. `fmt` and TLog consume those kernels without empty-variadic tricks. CMeta owns the generic container protocol; TurboSTL owns concrete typed-facade generation.
+**Architecture:** CMeta remains the main repository's one finite PP kernel, while standalone TinyTest keeps its independent TinyMeta kernel. `fmt` and TLog consume those kernels without empty-variadic tricks. CMeta owns the generic container protocol; Container owns concrete typed-facade generation.
 
 **Tech Stack:** strict C11, C++17 compatibility tests, CMake presets, CTest, CMeta `Schema/Replay/CMETA_PP_FOR_EACH`, TinyMeta PP primitives, GCC/Clang/MSVC.
 
@@ -14,12 +14,12 @@
 
 - Do not add a generic empty-`__VA_ARGS__` detector to CMeta or TinyMeta.
 - TinyTest remains independently usable and must not depend on CMeta.
-- `fmt_print`, `turbo_log_str`, and `turbo_log_typed` signatures do not change.
+- `fmt_print`, `salts_log_str`, and `salts_log_typed` signatures do not change.
 - `fmt_text(buf, size, text)` is the zero-format-argument API; `fmt(buf, size, pattern, ...)` requires at least one formatting argument.
 - Raw TLog macros keep the existing non-`F` names; formatted calls use new `*F` names.
 - Compatibility aliases that preserve `##__VA_ARGS__` are not allowed.
-- CMeta owns only range/container/collector protocol concepts; TurboSTL owns raw-prefix and operation-specific wrapper generation.
-- Do not redesign the format parser, TurboSTL algorithms, CFlow callable semantics, or Lean proofs.
+- CMeta owns only range/cstl/collector protocol concepts; Container owns raw-prefix and operation-specific wrapper generation.
+- Do not redesign the format parser, Container algorithms, CFlow callable semantics, or Lean proofs.
 - Verification uses the existing `linux-release-user` and `win-release-user` presets.
 
 ---
@@ -128,8 +128,8 @@ Expected: selected fmt tests pass.
 - Migrate all repository TLog callers found by Step 5.
 
 **Interfaces:**
-- Consumes: Task 1 `FMT_ARGS`/`FMT_ARG_COUNT`; unchanged `turbo_log_str` and `turbo_log_typed`.
-- Produces: raw `TLOG_DEBUG/INFO/WARN/ERROR/FATAL(message)`, raw `TURBO_LOG_*`, formatted `TLOG_*F`, formatted `TURBO_LOG_*F`, raw generic `TURBO_LOG`, formatted generic `TURBO_LOGF`.
+- Consumes: Task 1 `FMT_ARGS`/`FMT_ARG_COUNT`; unchanged `salts_log_str` and `salts_log_typed`.
+- Produces: raw `TLOG_DEBUG/INFO/WARN/ERROR/FATAL(message)`, raw `SALTS_LOG_*`, formatted `TLOG_*F`, formatted `SALTS_LOG_*F`, raw generic `SALTS_LOG`, formatted generic `SALTS_LOGF`.
 
 - [ ] **Step 1: Add RED tests for both call shapes**
 
@@ -138,8 +138,8 @@ C and C++ tests must exercise:
 ```c
 TLOG_INFO("ready");
 TLOG_INFOF("value={}", 7);
-TURBO_LOG_INFO(logger, "worker", "ready");
-TURBO_LOG_INFOF(logger, "worker", "value={}", 7);
+SALTS_LOG_INFO(logger, "worker", "ready");
+SALTS_LOG_INFOF(logger, "worker", "value={}", 7);
 ```
 
 Reuse existing capture sinks to verify message, level, component, file, and line.
@@ -157,45 +157,45 @@ Expected: compile failure because `*F` macros are not defined.
 Add one internal helper:
 
 ```c
-#define TURBO_LOG_RAW_IMPL(logger_expr, lvl, comp, message_expr) \
+#define SALTS_LOG_RAW_IMPL(logger_expr, lvl, comp, message_expr) \
   do { \
     tlog_t *_log_ptr = (logger_expr); \
     if (_log_ptr && (lvl) >= tlog_get_level(_log_ptr)) { \
       const char *_log_message = (message_expr); \
-      turbo_log_str(_log_ptr, (lvl), (comp), TURBO_LOG_SOURCE_FILE, \
-                    TURBO_LOG_SOURCE_LINE, _log_message, \
+      salts_log_str(_log_ptr, (lvl), (comp), SALTS_LOG_SOURCE_FILE, \
+                    SALTS_LOG_SOURCE_LINE, _log_message, \
                     _log_message ? strlen(_log_message) : 0U); \
     } \
   } while (0)
 ```
 
-Define non-variadic DEBUG/INFO/WARN/ERROR/FATAL wrappers and `TURBO_LOG(logger,level,component,message)` on top of it.
+Define non-variadic DEBUG/INFO/WARN/ERROR/FATAL wrappers and `SALTS_LOG(logger,level,component,message)` on top of it.
 
 - [ ] **Step 4: Implement non-empty formatted logging**
 
 For C:
 
 ```c
-#define TURBO_LOG_FORMAT_IMPL(logger_expr, lvl, comp, pattern, ...) \
+#define SALTS_LOG_FORMAT_IMPL(logger_expr, lvl, comp, pattern, ...) \
   do { \
     tlog_t *_log_ptr = (logger_expr); \
     if (_log_ptr && (lvl) >= tlog_get_level(_log_ptr)) { \
-      turbo_log_typed(_log_ptr, (lvl), (comp), TURBO_LOG_SOURCE_FILE, \
-                      TURBO_LOG_SOURCE_LINE, (pattern), FMT_ARGS(__VA_ARGS__), \
+      salts_log_typed(_log_ptr, (lvl), (comp), SALTS_LOG_SOURCE_FILE, \
+                      SALTS_LOG_SOURCE_LINE, (pattern), FMT_ARGS(__VA_ARGS__), \
                       (size_t)FMT_ARG_COUNT(__VA_ARGS__)); \
     } \
   } while (0)
 ```
 
-Define `TLOG_DEBUGF/INFOF/WARNF/ERRORF/FATALF`, `TURBO_LOG_DEBUGF/...`, and `TURBO_LOGF`. Each formatted macro requires at least one argument after `pattern`.
+Define `TLOG_DEBUGF/INFOF/WARNF/ERRORF/FATALF`, `SALTS_LOG_DEBUGF/...`, and `SALTS_LOGF`. Each formatted macro requires at least one argument after `pattern`.
 
 For C++, keep the existing variadic-template helper, but call it only from the `*F` macros with plain `__VA_ARGS__`; delete `##__VA_ARGS__`.
 
 - [ ] **Step 5: Migrate callers**
 
 ```bash
-git grep -nE '\b(TLOG|TURBO_LOG)_(DEBUG|INFO|WARN|ERROR|FATAL)\(' -- ':!docs/**' ':!vendor/**'
-git grep -nE '\bTURBO_LOG\(' -- ':!docs/**' ':!vendor/**'
+git grep -nE '\b(TLOG|SALTS_LOG)_(DEBUG|INFO|WARN|ERROR|FATAL)\(' -- ':!docs/**' ':!vendor/**'
+git grep -nE '\bSALTS_LOG\(' -- ':!docs/**' ':!vendor/**'
 ```
 
 Rule: calls with only fixed raw parameters keep their name; calls with format arguments after the pattern change to the corresponding `*F` name.
@@ -358,19 +358,19 @@ git commit -m "refactor(tinytest): centralize preprocessor dispatch"
 
 ---
 
-### Task 4: Move typed-container facade generation from CMeta to TurboSTL
+### Task 4: Move typed-container facade generation from CMeta to Container
 
 **Files:**
 - Modify: `cmeta/include/cmeta/range.h`
 - Rewrite: `cmeta/include/cmeta/container.h`
 - Modify: `cmeta/include/cmeta/meta.h`
-- Create: `turbostl/include/turbostl/detail/typed_facade.h`
-- Modify: `turbostl/include/turbostl/meta.h`
-- Modify tests: `cmeta/tests/cmeta_core_test.c`, `cmeta/tests/cmeta_language_surface_test.c`, `turbostl/tests/turbostl_typed_test.c`, `turbostl/tests/turbostl_header_typed_test.c`, `turbostl/tests/turbostl_header_typed_cpp_test.cpp`
+- Create: `cstl/include/cstl/detail/typed_facade.h`
+- Modify: `cstl/include/cstl/meta.h`
+- Modify tests: `cmeta/tests/cmeta_core_test.c`, `cmeta/tests/cmeta_language_surface_test.c`, `cstl/tests/cstl_typed_test.c`, `cstl/tests/cstl_header_typed_test.c`, `cstl/tests/cstl_header_typed_cpp_test.cpp`
 
 **Interfaces:**
 - CMeta produces: `cmeta_container_view`, `cmeta_container_desc`, `cmeta_container_header`, `cmeta_container_descriptor`, `cmeta_container_range_view` from `cmeta/container.h`.
-- TurboSTL internally produces the old facade generator under a `TURBO_STL_TYPED_*` namespace.
+- Container internally produces the old facade generator under a `SALTS_STL_TYPED_*` namespace.
 
 - [ ] **Step 1: Add RED boundary coverage**
 
@@ -380,7 +380,7 @@ Add to `cmeta_language_surface_test.c`:
 
 ```c
 #ifdef CMETA_CONTAINER1_DEFINE
-#error "TurboSTL typed facade generator leaked into CMeta"
+#error "Container typed facade generator leaked into CMeta"
 #endif
 ```
 
@@ -390,7 +390,7 @@ Before the move this guard is expected to fail.
 
 Keep only `cmeta_range*`, cursor, flags, range helpers, and `cmeta_range_factory_fn` in `range.h`.
 
-Move these unchanged in behavior to the small `container.h`:
+Move these unchanged in behavior to the small `cstl.h`:
 
 ```text
 cmeta_container_view
@@ -400,51 +400,51 @@ cmeta_container_descriptor
 cmeta_container_range_view
 ```
 
-`container.h` includes `range.h`; `range.h` does not include `container.h`. Add `container.h` to `cmeta/meta.h` where the aggregate exposes runtime protocols.
+`cstl.h` includes `range.h`; `range.h` does not include `cstl.h`. Add `cstl.h` to `cmeta/meta.h` where the aggregate exposes runtime protocols.
 
 - [ ] **Step 3: Move and rename the concrete generator**
 
-Create `turbostl/include/turbostl/detail/typed_facade.h` and move the raw-prefix/operation-specific generator body from old `cmeta/container.h` into it.
+Create `cstl/include/cstl/detail/typed_facade.h` and move the raw-prefix/operation-specific generator body from old `cmeta/container.h` into it.
 
 Apply these namespace rules mechanically:
 
 ```text
-CMETA_CONTAINER1_DEFINE             -> TURBO_STL_TYPED_CONTAINER1_DEFINE
-CMETA_CONTAINER2_DEFINE             -> TURBO_STL_TYPED_CONTAINER2_DEFINE
-CMETA_CONTAINER1_INDEX_RANGE_DEFINE -> TURBO_STL_TYPED_CONTAINER1_INDEX_RANGE_DEFINE
-CMETA_CONTAINER1_LINK_RANGE_DEFINE  -> TURBO_STL_TYPED_CONTAINER1_LINK_RANGE_DEFINE
-CMETA_C1_INLINE_*                   -> TURBO_STL_TYPED_C1_INLINE_*
-CMETA_C2_INLINE_*                   -> TURBO_STL_TYPED_C2_INLINE_*
+CMETA_CONTAINER1_DEFINE             -> SALTS_STL_TYPED_CONTAINER1_DEFINE
+CMETA_CONTAINER2_DEFINE             -> SALTS_STL_TYPED_CONTAINER2_DEFINE
+CMETA_CONTAINER1_INDEX_RANGE_DEFINE -> SALTS_STL_TYPED_CONTAINER1_INDEX_RANGE_DEFINE
+CMETA_CONTAINER1_LINK_RANGE_DEFINE  -> SALTS_STL_TYPED_CONTAINER1_LINK_RANGE_DEFINE
+CMETA_C1_INLINE_*                   -> SALTS_STL_TYPED_C1_INLINE_*
+CMETA_C2_INLINE_*                   -> SALTS_STL_TYPED_C2_INLINE_*
 ```
 
-Every other moved facade-only `CMETA_CONTAINER*` helper receives the same `TURBO_STL_TYPED_` ownership prefix. Generic `cmeta_*` protocol types are not renamed.
+Every other moved facade-only `CMETA_CONTAINER*` helper receives the same `SALTS_STL_TYPED_` ownership prefix. Generic `cmeta_*` protocol types are not renamed.
 
-- [ ] **Step 4: Rewire TurboSTL**
+- [ ] **Step 4: Rewire Container**
 
-`turbostl/include/turbostl/meta.h` must include:
+`cstl/include/cstl/meta.h` must include:
 
 ```c
 #include <cmeta/container.h>
-#include <turbostl/detail/typed_facade.h>
+#include <cstl/detail/typed_facade.h>
 ```
 
-Update its generator invocations to the new names. Do not change `TURBO_STL_KIND_ROW_*`, Range flags, collectors, or raw algorithm prefixes.
+Update its generator invocations to the new names. Do not change `SALTS_STL_KIND_ROW_*`, Range flags, collectors, or raw algorithm prefixes.
 
 - [ ] **Step 5: Verify ownership boundary and GREEN**
 
 ```bash
-git grep -nE 'turbo_(vec|list|map|hash_map)|TURBO_META_|CMETA_C[12]_INLINE_|CMETA_CONTAINER[12]_DEFINE' -- cmeta/include cmeta/src || true
+git grep -nE 'salts_(vec|list|map|hash_map)|SALTS_META_|CMETA_C[12]_INLINE_|CMETA_CONTAINER[12]_DEFINE' -- cmeta/include cmeta/src || true
 cmake --build --preset linux-release-user
-ctest --preset linux-release-user -R '^(cmeta_|turbostl_)' --output-on-failure
+ctest --preset linux-release-user -R '^(cmeta_|cstl_)' --output-on-failure
 ```
 
-Expected: grep has no facade-generation match in CMeta; all CMeta/TurboSTL tests pass.
+Expected: grep has no facade-generation match in CMeta; all CMeta/Container tests pass.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add cmeta/include cmeta/tests turbostl/include turbostl/tests
-git commit -m "refactor(turbostl): own typed facade generation"
+git add cmeta/include cmeta/tests cstl/include cstl/tests
+git commit -m "refactor(container): own typed facade generation"
 ```
 
 ---
@@ -455,7 +455,7 @@ git commit -m "refactor(turbostl): own typed facade generation"
 - Inspect: `cflow/include/cflow/meta.h`, `cflow/include/cflow/operators.h`
 - Modify only literal forwarding aliases that add no CFlow semantics.
 - Modify: `.github/workflows/cmeta.yml`
-- Modify docs: `cmeta/LANGUAGE_REFERENCE.md`, `cmeta/README.md`, `turbostl/README.md`, comments in `fmt.h`/`tlog.h`
+- Modify docs: `cmeta/LANGUAGE_REFERENCE.md`, `cmeta/README.md`, `cstl/README.md`, comments in `fmt.h`/`tlog.h`
 - Create: `docs/superpowers/plans/2026-08-22-pp-variadic-surface-cleanup-audit.md`
 
 **Interfaces:**
@@ -546,8 +546,8 @@ Expected: configure/build exit 0 and CTest reports 0 failed tests.
 - [ ] **Step 7: Commit and open PR**
 
 ```bash
-git add .github/workflows/cmeta.yml cflow cmeta/LANGUAGE_REFERENCE.md cmeta/README.md turbostl/README.md utils/include/fmt.h utils/include/tlog.h docs/superpowers/plans/2026-08-22-pp-variadic-surface-cleanup-audit.md
+git add .github/workflows/cmeta.yml cflow cmeta/LANGUAGE_REFERENCE.md cmeta/README.md cstl/README.md utils/include/fmt.h utils/include/tlog.h docs/superpowers/plans/2026-08-22-pp-variadic-surface-cleanup-audit.md
 git commit -m "chore: enforce canonical PP surface"
 ```
 
-PR description must state that fmt private arity helpers are removed, TLog raw/formatted APIs are split, TinyTest uses TinyMeta as its sole PP kernel, TurboSTL owns typed-facade generation, CFlow semantics are unchanged, and full Linux/Windows release-preset CTest passed. Merge only the exact PR head that produced both successful workflows.
+PR description must state that fmt private arity helpers are removed, TLog raw/formatted APIs are split, TinyTest uses TinyMeta as its sole PP kernel, Container owns typed-facade generation, CFlow semantics are unchanged, and full Linux/Windows release-preset CTest passed. Merge only the exact PR head that produced both successful workflows.

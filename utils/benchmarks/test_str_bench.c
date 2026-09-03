@@ -8,8 +8,8 @@
 #include <string.h>
 
 #include "tinytest.h"
-#include "turbo_str.h"
-#include "turbo_vstr.h"
+#include "salts_str.h"
+#include "salts_vstr.h"
 #include "sds.h"
 
 #define BENCH_ITERS 200000

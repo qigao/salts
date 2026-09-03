@@ -35,7 +35,7 @@ CHTTP 已经具备 HTTP/1.1 WebSocket/WSS、HTTP/2 client/server 与 CNet WebSoc
 - 一块有硬上限的 outbound frame staging buffer；
 - `HANDSHAKE / OPEN / CLOSING / CLOSED` 传输状态。
 
-收到的 DATA 是 H2 callback 内借用 view，只在 callback 内同步喂给 CNet engine，不跨 callback 或协程挂起保存。CNet write callback 产生的 frame 会复制到 stream-owned staging buffer；H2 engine 借用该 buffer，直到 `chttp_h2_proto_stream_output_pending()` 为 false 才释放占用。一个 stream 同时最多保留一帧，满时显式返回 `TURBO_EBUSY`/`TURBO_ENOBUFS`，由 CNet engine 的 flush 协议重试，不做无界分配。
+收到的 DATA 是 H2 callback 内借用 view，只在 callback 内同步喂给 CNet engine，不跨 callback 或协程挂起保存。CNet write callback 产生的 frame 会复制到 stream-owned staging buffer；H2 engine 借用该 buffer，直到 `chttp_h2_proto_stream_output_pending()` 为 false 才释放占用。一个 stream 同时最多保留一帧，满时显式返回 `SALTS_EBUSY`/`SALTS_ENOBUFS`，由 CNet engine 的 flush 协议重试，不做无界分配。
 
 H1 行为不变：connection 仍是会话 owner，只是通过相同 peer/adapter 进入已有 outbound send path。
 
@@ -62,11 +62,11 @@ H1 行为不变：connection 仍是会话 owner，只是通过相同 peer/adapte
 
 ## 错误语义
 
-- 参数、URI、H1/H2 TLS profile 不匹配：`TURBO_EINVAL` 或 `TURBO_EPROTONOSUPPORT`，连接前 fail fast。
-- peer 未发布 Extended CONNECT：`TURBO_EPROTONOSUPPORT`。
+- 参数、URI、H1/H2 TLS profile 不匹配：`SALTS_EINVAL` 或 `SALTS_EPROTONOSUPPORT`，连接前 fail fast。
+- peer 未发布 Extended CONNECT：`SALTS_EPROTONOSUPPORT`。
 - 非 200：返回 HTTP rejection，`out_http_status` 保留状态码。
 - WebSocket frame 违反 RFC 6455：当前 H2 stream `RST_STREAM(PROTOCOL_ERROR)`。
-- bounded input/output 超限：当前 stream `RST_STREAM(ENHANCE_YOUR_CALM)` 或公开 `TURBO_EMSGSIZE/TURBO_ENOBUFS`。
+- bounded input/output 超限：当前 stream `RST_STREAM(ENHANCE_YOUR_CALM)` 或公开 `SALTS_EMSGSIZE/SALTS_ENOBUFS`。
 - connection-level H2 framing/HPACK 错误：沿用 H2 engine 的 GOAWAY/connection close。
 
 ## 兼容性、迁移与回滚

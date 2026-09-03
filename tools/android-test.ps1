@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-Builds, deploys, runs, or debugs one Rocida test on an Android device.
+Builds, deploys, runs, or debugs one Salts test on an Android device.
 
 .DESCRIPTION
 Uses the repository's Android CMake preset to build one EXCLUDE_FROM_ALL test
@@ -12,7 +12,7 @@ lldb-server, forwards its localhost TCP listener through ADB, and launches the
 matching host LLDB.
 
 .PARAMETER Target
-The CMake executable target to build and run, for example test_turbo_error.
+The CMake executable target to build and run, for example test_salts_error.
 
 .PARAMETER Preset
 The Android build preset. Its associated configure preset and binaryDir are
@@ -62,13 +62,13 @@ Host and device localhost TCP port used for the LLDB connection.
 Uses an already-built test executable without invoking CMake.
 
 .EXAMPLE
-./tools/android-test.ps1 test_turbo_error -Tap
+./tools/android-test.ps1 test_salts_error -Tap
 
 .EXAMPLE
-./tools/android-test.ps1 test_turbo_error -Filter "known error" -JUnit artifacts/test_turbo_error.xml
+./tools/android-test.ps1 test_salts_error -Filter "known error" -JUnit artifacts/test_salts_error.xml
 
 .EXAMPLE
-./tools/android-test.ps1 test_turbo_error -Lldb -Serial adb-DEVICE._adb-tls-connect._tcp
+./tools/android-test.ps1 test_salts_error -Lldb -Serial adb-DEVICE._adb-tls-connect._tcp
 #>
 param(
     [Parameter(Mandatory, Position = 0)]
@@ -82,7 +82,7 @@ param(
     [string]$BuildDirectory,
 
     [ValidatePattern('^/data/local/tmp/[A-Za-z0-9._/-]+$')]
-    [string]$RemoteDirectory = '/data/local/tmp/rocida-tests',
+    [string]$RemoteDirectory = '/data/local/tmp/salts-tests',
 
     [string]$Filter,
     [switch]$Tap,

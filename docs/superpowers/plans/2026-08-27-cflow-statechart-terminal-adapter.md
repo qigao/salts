@@ -6,7 +6,7 @@
 
 **Architecture:** A thin adapter borrows the opaque Statechart instance and reuses the existing `cflow_resumable`, `cflow_source`, `cflow_waitable`, and terminal-waker protocols. The instance remains the sole state owner; one attached adapter stores at most one downstream waiter and one terminal waiter under the existing instance mutex.
 
-**Tech Stack:** C11, CMeta interfaces, CFlow Runtime/Source/Executor/Statechart, Turbo synchronization, TinyTest, CMake Presets.
+**Tech Stack:** C11, CMeta interfaces, CFlow Runtime/Source/Executor/Statechart, Salts synchronization, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-27-cflow-statechart-terminal-adapter-design.md`
 
@@ -153,6 +153,6 @@
 - Windows ASan: Runtime, Statechart runtime, terminal adapter, and C++ public
   header tests passed 4/4 with AddressSanitizer enabled.
 - Installed package smoke verification installed the public header and linked
-  all 18 C/C++ consumer targets, including `TurboUtils::CFlow`.
+  all 18 C/C++ consumer targets, including `Salts::CFlow`.
 - `codegraph affected` selected the focused adapter test, `.codegraph/` stayed
   ignored, and `git diff --check` passed.

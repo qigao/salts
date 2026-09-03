@@ -46,7 +46,7 @@ typedef struct {
  * @param[in] Size of data array
  * @retval None
  */
-TURBO_C_API void ring_init(ring_data_type *inst, uint8_t *data_array, size_t size);
+SALTS_C_API void ring_init(ring_data_type *inst, uint8_t *data_array, size_t size);
 
 /**
  * @brief Acquires a linear region in the bipartite buffer for writing
@@ -54,7 +54,7 @@ TURBO_C_API void ring_init(ring_data_type *inst, uint8_t *data_array, size_t siz
  * @param[in] Free linear space in the buffer required
  * @retval Pointer to the beginning of the linear space
  */
-TURBO_C_API uint8_t *ring_write_acquire(ring_data_type *inst, size_t free_required);
+SALTS_C_API uint8_t *ring_write_acquire(ring_data_type *inst, size_t free_required);
 
 /**
  * @brief Releases the bipartite buffer after a write
@@ -62,7 +62,7 @@ TURBO_C_API uint8_t *ring_write_acquire(ring_data_type *inst, size_t free_requir
  * @param[in] Bytes written to the linear space
  * @retval None
  */
-TURBO_C_API void ring_write_release(ring_data_type *inst, size_t written);
+SALTS_C_API void ring_write_release(ring_data_type *inst, size_t written);
 
 /**
  * @brief Acquires a linear region in the bipartite buffer for reading
@@ -70,7 +70,7 @@ TURBO_C_API void ring_write_release(ring_data_type *inst, size_t written);
  * @param[out] Available linear data in the buffer
  * @retval Pointer to the beginning of the data
  */
-TURBO_C_API uint8_t *ring_read_acquire(ring_data_type *inst, size_t *available);
+SALTS_C_API uint8_t *ring_read_acquire(ring_data_type *inst, size_t *available);
 
 /**
  * @brief Releases the bipartite buffer after a read
@@ -78,7 +78,7 @@ TURBO_C_API uint8_t *ring_read_acquire(ring_data_type *inst, size_t *available);
  * @param[in] Bytes read from the linear region
  * @retval None
  */
-TURBO_C_API void ring_read_release(ring_data_type *inst, size_t read);
+SALTS_C_API void ring_read_release(ring_data_type *inst, size_t read);
 
 #ifdef __cplusplus
 }

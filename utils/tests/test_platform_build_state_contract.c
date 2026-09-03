@@ -1,25 +1,25 @@
-#include "turbo_api.h"
+#include "salts_api.h"
 #include "platform.h"
 #include "tinytest.h"
 
-#ifdef TURBO_BUILD_SHARED
-#error "TURBO_BUILD_SHARED must not be required by Rocida consumers"
+#ifdef SALTS_BUILD_SHARED
+#error "SALTS_BUILD_SHARED must not be required by Salts consumers"
 #endif
 
-#ifdef TURBO_USE_SHARED
-#error "TURBO_USE_SHARED must not leak to Rocida consumers"
+#ifdef SALTS_USE_SHARED
+#error "SALTS_USE_SHARED must not leak to Salts consumers"
 #endif
 
-#ifdef turbo_utils_EXPORTS
-#error "turbo_utils_EXPORTS is a CMake implementation detail and must not reach consumers"
+#ifdef salts_EXPORTS
+#error "salts_EXPORTS is a CMake implementation detail and must not reach consumers"
 #endif
 
-#ifndef TURBO_API
-#error "Rocida::Core consumers must receive TURBO_API through the target contract"
+#ifndef SALTS_API
+#error "Salts::Core consumers must receive SALTS_API through the target contract"
 #endif
 
-#ifndef TURBO_C_API
-#error "Rocida::Core consumers must receive TURBO_C_API through the target contract"
+#ifndef SALTS_C_API
+#error "Salts::Core consumers must receive SALTS_C_API through the target contract"
 #endif
 
 spec("platform build-state contract") {

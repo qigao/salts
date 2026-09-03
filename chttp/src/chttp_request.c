@@ -15,14 +15,14 @@ static bool chttp_size_add(size_t left, size_t right, size_t *out) {
 
 static int chttp_bounded_length(const char *text, size_t limit, size_t *out_length) {
   size_t index;
-  if (text == NULL || out_length == NULL) return TURBO_EINVAL;
+  if (text == NULL || out_length == NULL) return SALTS_EINVAL;
   for (index = 0u; index <= limit; ++index) {
     if (text[index] == '\0') {
       *out_length = index;
-      return TURBO_OK;
+      return SALTS_OK;
     }
   }
-  return TURBO_EMSGSIZE;
+  return SALTS_EMSGSIZE;
 }
 
 static unsigned char chttp_ascii_lower(unsigned char value) {
@@ -56,42 +56,42 @@ static int chttp_header_valid(const chttp_header *header, size_t limit, size_t *
   size_t value_size = 0u;
   size_t index;
   int status;
-  if (header == NULL || out_name_size == NULL || out_value_size == NULL) return TURBO_EINVAL;
+  if (header == NULL || out_name_size == NULL || out_value_size == NULL) return SALTS_EINVAL;
   status = chttp_bounded_length(header->name, limit, &name_size);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status = chttp_bounded_length(header->value, limit, &value_size);
-  if (status != TURBO_OK) return status;
-  if (name_size == 0u) return TURBO_EINVAL;
+  if (status != SALTS_OK) return status;
+  if (name_size == 0u) return SALTS_EINVAL;
   for (index = 0u; index < name_size; ++index)
-    if (!chttp_header_name_byte((unsigned char)header->name[index])) return TURBO_EINVAL;
+    if (!chttp_header_name_byte((unsigned char)header->name[index])) return SALTS_EINVAL;
   for (index = 0u; index < value_size; ++index) {
     const unsigned char value = (unsigned char)header->value[index];
-    if ((value < 0x20u && value != '\t') || value == 0x7fu) return TURBO_EINVAL;
+    if ((value < 0x20u && value != '\t') || value == 0x7fu) return SALTS_EINVAL;
   }
   if (chttp_ascii_equal(header->name, "host") ||
       chttp_ascii_equal(header->name, "content-length") ||
       chttp_ascii_equal(header->name, "transfer-encoding") ||
       chttp_ascii_equal(header->name, "connection"))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   *out_name_size = name_size;
   *out_value_size = value_size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_authority_valid(const char *authority, size_t limit, size_t *out_size) {
   size_t size = 0u;
   size_t index;
   int status = chttp_bounded_length(authority, limit, &size);
-  if (status != TURBO_OK) return status;
-  if (size == 0u) return TURBO_EINVAL;
+  if (status != SALTS_OK) return status;
+  if (size == 0u) return SALTS_EINVAL;
   for (index = 0u; index < size; ++index) {
     const unsigned char value = (unsigned char)authority[index];
     if (value <= 0x20u || value >= 0x7fu || value == '/' || value == '?' || value == '#' ||
         value == '@')
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
   }
   *out_size = size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_target_valid(const char *target, size_t limit, chttp_method method,
@@ -99,16 +99,16 @@ static int chttp_target_valid(const char *target, size_t limit, chttp_method met
   size_t size = 0u;
   size_t index;
   int status = chttp_bounded_length(target, limit, &size);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   if (size == 0u || (target[0] != '/' && !(method == CHTTP_METHOD_OPTIONS && target[0] == '*')))
-    return TURBO_EINVAL;
-  if (target[0] == '*' && size != 1u) return TURBO_EINVAL;
+    return SALTS_EINVAL;
+  if (target[0] == '*' && size != 1u) return SALTS_EINVAL;
   for (index = 0u; index < size; ++index) {
     const unsigned char value = (unsigned char)target[index];
-    if (value <= 0x20u || value >= 0x7fu || value == '#') return TURBO_EINVAL;
+    if (value <= 0x20u || value >= 0x7fu || value == '#') return SALTS_EINVAL;
   }
   *out_size = size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static const char *chttp_method_name(chttp_method method) {
@@ -168,7 +168,7 @@ int chttp_request_build(const chttp_request_options *options, const chttp_limits
   unsigned char *cursor;
   int status;
 
-  if (out_data == NULL || out_size == NULL) return TURBO_EINVAL;
+  if (out_data == NULL || out_size == NULL) return SALTS_EINVAL;
   *out_data = NULL;
   *out_size = 0u;
   if (options == NULL || limits == NULL || options->connection_uri == NULL ||
@@ -178,44 +178,44 @@ int chttp_request_build(const chttp_request_options *options, const chttp_limits
        (options->body != NULL || options->body_size != 0u || options->body_source->read == NULL ||
         (options->body_source->content_length_known != 0 &&
          options->body_source->content_length_known != 1))))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   declared_body_size = options->body_source != NULL && options->body_source->content_length_known
                            ? options->body_source->content_length
                            : options->body_size;
   serialized_body_size = options->body_source == NULL ? options->body_size : 0u;
-  if (declared_body_size > limits->max_request_body_bytes) return TURBO_EMSGSIZE;
+  if (declared_body_size > limits->max_request_body_bytes) return SALTS_EMSGSIZE;
   if (options->header_count > SIZE_MAX - CHTTP_GENERATED_HEADER_COUNT ||
       options->header_count + CHTTP_GENERATED_HEADER_COUNT > limits->max_header_count)
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
 
   method_name = chttp_method_name(options->method);
-  if (method_name == NULL) return TURBO_EINVAL;
+  if (method_name == NULL) return SALTS_EINVAL;
   method_size = strlen(method_name);
   status = chttp_target_valid(options->target, limits->max_start_line_bytes, options->method,
                               &target_size);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status = chttp_authority_valid(options->authority, limits->max_header_bytes, &authority_size);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
 
   if (!chttp_size_add(method_size, 1u, &request_line_bytes) ||
       !chttp_size_add(request_line_bytes, target_size, &request_line_bytes) ||
       !chttp_size_add(request_line_bytes, sizeof(http_suffix) - 1u, &request_line_bytes))
-    return TURBO_EMSGSIZE;
-  if (request_line_bytes > limits->max_start_line_bytes) return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
+  if (request_line_bytes > limits->max_start_line_bytes) return SALTS_EMSGSIZE;
 
   body_size_chars = snprintf(body_size_text, sizeof(body_size_text), "%zu", declared_body_size);
   if (body_size_chars <= 0 || (size_t)body_size_chars >= sizeof(body_size_text))
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   if (!chttp_add_header_size(sizeof("Host") - 1u, authority_size, &header_bytes) ||
       !chttp_add_header_size(sizeof("Connection") - 1u, sizeof("keep-alive") - 1u, &header_bytes))
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   if (options->body_source != NULL && !options->body_source->content_length_known) {
     if (!chttp_add_header_size(sizeof("Transfer-Encoding") - 1u, sizeof("chunked") - 1u,
                                &header_bytes))
-      return TURBO_EMSGSIZE;
+      return SALTS_EMSGSIZE;
   } else if (!chttp_add_header_size(sizeof("Content-Length") - 1u, (size_t)body_size_chars,
                                     &header_bytes)) {
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   }
 
   for (index = 0u; index < options->header_count; ++index) {
@@ -223,18 +223,18 @@ int chttp_request_build(const chttp_request_options *options, const chttp_limits
     size_t value_size = 0u;
     status = chttp_header_valid(&options->headers[index], limits->max_header_bytes, &name_size,
                                 &value_size);
-    if (status != TURBO_OK) return status;
-    if (!chttp_add_header_size(name_size, value_size, &header_bytes)) return TURBO_EMSGSIZE;
+    if (status != SALTS_OK) return status;
+    if (!chttp_add_header_size(name_size, value_size, &header_bytes)) return SALTS_EMSGSIZE;
   }
-  if (header_bytes > limits->max_header_bytes) return TURBO_EMSGSIZE;
+  if (header_bytes > limits->max_header_bytes) return SALTS_EMSGSIZE;
   if (!chttp_size_add(request_line_bytes, header_bytes, &total_size) ||
       !chttp_size_add(total_size, 2u, &total_size) ||
       !chttp_size_add(total_size, serialized_body_size, &total_size) ||
       total_size > limits->max_request_bytes)
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
 
   data = (unsigned char *)malloc(total_size);
-  if (data == NULL) return TURBO_ENOMEM;
+  if (data == NULL) return SALTS_ENOMEM;
   cursor = data;
   cursor = chttp_copy(cursor, method_name, method_size);
   *cursor++ = ' ';
@@ -263,7 +263,7 @@ int chttp_request_build(const chttp_request_options *options, const chttp_limits
   (void)chttp_copy(cursor, options->body, serialized_body_size);
   *out_data = data;
   *out_size = total_size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 const char *chttp_response_view_header(const chttp_response_view *response, const char *name) {

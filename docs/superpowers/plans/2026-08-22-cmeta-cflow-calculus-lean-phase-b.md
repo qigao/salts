@@ -212,7 +212,7 @@ Run: `rg.exe -n "\b(sorry|admit|axiom)\b" CMetaCFlowCalculus Test`
 
 Expected: no matches.
 
-Run: `git diff --name-only -- cflow cmeta turbostl cmake CMakeLists.txt`
+Run: `git diff --name-only -- cflow cmeta container cmake CMakeLists.txt`
 
 Expected: no Phase B production-code changes; the pre-existing staged preset change remains outside the formal patch.
 

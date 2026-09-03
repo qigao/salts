@@ -10,7 +10,7 @@ edge fact source, test them differentially, and run them beside a valid nested
 RELATION validation path. Keep all candidate storage private, bounded,
 transactional and absent from the public Graph ABI.
 
-**Tech Stack:** C11, CFlow Graph, TurboSTL HashMap, TinyTest benchmarks, CMake
+**Tech Stack:** C11, CFlow Graph, Container HashMap, TinyTest benchmarks, CMake
 Presets, GitHub Actions fixed Release hosts.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-cflow-branching-csr-evaluation-design.md`
@@ -89,7 +89,7 @@ Presets, GitHub Actions fixed Release hosts.
 - [x] **Step 3: Link Task 1 and verify GREEN**
 
   Add `../benchmarks/cflow_branching_views.c` to the test target, link
-  `TurboUtils::CFlow`, `TurboUtils::STL` and `TurboUtils::TinyTest`, then run the
+  `Salts::CFlow`, `Salts::CSTL` and `Salts::TinyTest`, then run the
   executable through CTest.
 
 - [x] **Step 4: Add one-behavior boundary tests**

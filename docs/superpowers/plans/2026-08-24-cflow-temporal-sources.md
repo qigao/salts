@@ -6,7 +6,7 @@
 
 **Architecture:** Each adapter moves one inner `cflow_source`, retains at most one typed value, and schedules at most one task on the existing run scheduler. A mutex protects wake races; callbacks only publish readiness and invoke a copied waker after unlocking.
 
-**Tech Stack:** C11, CMeta lifecycle traits, CFlow Source/Scheduler/Waitable, TurboUtils mutexes, TinyTest, CMake Presets, Lean 4.
+**Tech Stack:** C11, CMeta lifecycle traits, CFlow Source/Scheduler/Waitable, Salts mutexes, TinyTest, CMake Presets, Lean 4.
 
 ---
 

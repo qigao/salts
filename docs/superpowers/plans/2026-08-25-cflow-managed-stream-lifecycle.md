@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task with review checkpoints.
 
-**Goal:** Make interpreted CFlow/TurboSTL `Stream<T>` lifecycle-aware for CMeta managed values while preserving trivial fast paths and byte-storage admission boundaries.
+**Goal:** Make interpreted CFlow/Container `Stream<T>` lifecycle-aware for CMeta managed values while preserving trivial fast paths and byte-storage admission boundaries.
 
 **Architecture:** Keep normalized Graph as the immutable type/topology fact source and replace every interpreted retained byte buffer with the existing `cflow_value_slot` ownership state machine. Generated container ranges construct managed values; Run, SubRun, Coord, and Relation transfer those values through explicit copy/move/destroy transitions.
 
-**Tech Stack:** C11, CMeta type traits/ranges/callables, CFlow Graph/Run/Resumable/Relation, TurboSTL typed containers, TinyTest, CMake presets.
+**Tech Stack:** C11, CMeta type traits/ranges/callables, CFlow Graph/Run/Resumable/Relation, Container typed containers, TinyTest, CMake presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-cflow-managed-stream-lifecycle-design.md`
 
@@ -16,7 +16,7 @@
 - Keep compiled plans, direct byte results, and `to_array()` trivial-only.
 - A callback failure leaves destination storage empty; no implicit fallback.
 - Every live slot is moved once or destroyed once on DONE/ERROR/CANCEL/CLOSE.
-- Use existing CMeta traits and TurboSTL containers; add no dependency.
+- Use existing CMeta traits and Container containers; add no dependency.
 
 ---
 
@@ -24,7 +24,7 @@
 
 **Files:**
 - Modify: `cflow/tests/cflow_runtime_test.c`
-- Modify: `turbostl/tests/turbostl_entry_test.c`
+- Modify: `cstl/tests/cstl_entry_test.c`
 
 - [x] Add a managed generated-container Range test that requires
   `CMETA_RANGE_CONSTRUCTS_VALUES` and an independent copy.
@@ -51,14 +51,14 @@
 
 **Files:**
 - Modify: `cmeta/include/cmeta/container.h`
-- Modify: `turbostl/include/turbostl/detail/typed_facade.h` if required
-- Test: `turbostl/tests/turbostl_entry_test.c`
+- Modify: `cstl/include/cstl/detail/typed_facade.h` if required
+- Test: `cstl/tests/cstl_entry_test.c`
 
 - [x] Route index/link/slot/key/value/entry range output through the element
   descriptor's copy constructor.
 - [x] Compute `CMETA_RANGE_CONSTRUCTS_VALUES` from the actual element type.
 - [x] Verify failed construction does not advance ownership or leak.
-- [x] Run focused TurboSTL range tests.
+- [x] Run focused Container range tests.
 
 ### Task 4: Convert the linear Run operator path
 
@@ -92,11 +92,11 @@
 ### Task 6: Regression verification and delivery
 
 **Files:**
-- Modify: user-facing CFlow/TurboSTL documentation only where lifecycle boundary
+- Modify: user-facing CFlow/Container documentation only where lifecycle boundary
   statements are now stale.
 
 - [x] Configure/build with `win-release-user`; run focused tests first.
-- [x] Run all CFlow and TurboSTL tests, then the relevant preset suite.
+- [x] Run all CFlow and Container tests, then the relevant preset suite.
 - [x] Inspect `git diff --check`, public ABI changes, ownership transitions, and
   accidental `.codegraph` inclusion.
 - [ ] Commit the coherent implementation, push `feat/cflow-managed-stream`, and

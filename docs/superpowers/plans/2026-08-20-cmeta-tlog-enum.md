@@ -2,9 +2,9 @@
 
 > **For Codex:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 保持单一 `TurboUtils::CMeta` 目标，将它提升为 `TurboUtils::Core` 的基础依赖，并以 CMeta `Enum` 作为日志级别的单一事实源。
+**Goal:** 保持单一 `Salts::CMeta` 目标，将它提升为 `Salts::Core` 的基础依赖，并以 CMeta `Enum` 作为日志级别的单一事实源。
 
-**Architecture:** 根工程先定义 `TurboUtils::CMeta`，`TurboUtils::Core` 通过 PUBLIC 链接获得其头文件和目标依赖。`tlog.h` 生成枚举及头文件内元数据，`tlog.c` 复用语义元数据但保留旧的文本解析输入集合和 INFO 回退行为。
+**Architecture:** 根工程先定义 `Salts::CMeta`，`Salts::Core` 通过 PUBLIC 链接获得其头文件和目标依赖。`tlog.h` 生成枚举及头文件内元数据，`tlog.c` 复用语义元数据但保留旧的文本解析输入集合和 INFO 回退行为。
 
 **Tech Stack:** C11、CMake Presets、CMeta `Enum`、TinyTest、MSVC/Ninja。
 
@@ -25,16 +25,16 @@
 
 ```c
 it("should expose log level metadata without changing legacy parsing") {
-  const cmeta_enum_desc *meta = turbo_log_level_t_meta();
+  const cmeta_enum_desc *meta = salts_log_level_t_meta();
 
   check_equal((int)meta->count, 5);
-  check_equal(TURBO_LOG_LEVEL_DEBUG, 0);
-  check_equal(TURBO_LOG_LEVEL_FATAL, 4);
-  check_equal(turbo_log_level_t_to_string(TURBO_LOG_LEVEL_ERROR), "ERROR");
-  check_equal(turbo_log_level_name((turbo_log_level_t)99), "UNKNOWN");
-  check_equal(turbo_log_level_from_name("TURBO_LOG_LEVEL_ERROR"),
-              TURBO_LOG_LEVEL_INFO);
-  check_equal(turbo_log_level_from_name(NULL), TURBO_LOG_LEVEL_INFO);
+  check_equal(SALTS_LOG_LEVEL_DEBUG, 0);
+  check_equal(SALTS_LOG_LEVEL_FATAL, 4);
+  check_equal(salts_log_level_t_to_string(SALTS_LOG_LEVEL_ERROR), "ERROR");
+  check_equal(salts_log_level_name((salts_log_level_t)99), "UNKNOWN");
+  check_equal(salts_log_level_from_name("SALTS_LOG_LEVEL_ERROR"),
+              SALTS_LOG_LEVEL_INFO);
+  check_equal(salts_log_level_from_name(NULL), SALTS_LOG_LEVEL_INFO);
 }
 ```
 
@@ -46,7 +46,7 @@ Run:
 cmd /c "call \"C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat\" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target test_tlog"
 ```
 
-Expected: compilation fails because `turbo_log_level_t_meta` and generated helpers do not exist yet.
+Expected: compilation fails because `salts_log_level_t_meta` and generated helpers do not exist yet.
 
 **Step 4: Commit only the test**
 
@@ -71,7 +71,7 @@ git commit --only -m "test: specify tlog level metadata" -- utils/tests/test_tlo
 在 `utils/CMakeLists.txt` 的链接声明中添加：
 
 ```cmake
-target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::CMeta)
+target_link_libraries(${TARGET_NAME} PUBLIC Salts::CMeta)
 ```
 
 保留现有 PRIVATE 依赖及导出名称。
@@ -81,12 +81,12 @@ target_link_libraries(${TARGET_NAME} PUBLIC TurboUtils::CMeta)
 在 `tlog.h` 引入 `<cmeta/enum.h>`，并用单个声明替换 X-list：
 
 ```c
-Enum(turbo_log_level_t,
-     (TURBO_LOG_LEVEL_DEBUG, 0, "DEBUG"),
-     (TURBO_LOG_LEVEL_INFO, 1, "INFO"),
-     (TURBO_LOG_LEVEL_WARN, 2, "WARN"),
-     (TURBO_LOG_LEVEL_ERROR, 3, "ERROR"),
-     (TURBO_LOG_LEVEL_FATAL, 4, "FATAL"));
+Enum(salts_log_level_t,
+     (SALTS_LOG_LEVEL_DEBUG, 0, "DEBUG"),
+     (SALTS_LOG_LEVEL_INFO, 1, "INFO"),
+     (SALTS_LOG_LEVEL_WARN, 2, "WARN"),
+     (SALTS_LOG_LEVEL_ERROR, 3, "ERROR"),
+     (SALTS_LOG_LEVEL_FATAL, 4, "FATAL"));
 ```
 
 **Step 4: Build and run the focused test to verify GREEN**
@@ -116,22 +116,22 @@ git commit --only -m "refactor: make cmeta the tlog enum source" -- CMakeLists.t
 **Step 1: Replace validation with metadata lookup**
 
 ```c
-static int log_level_is_valid(turbo_log_level_t level) {
-  return cmeta_enum_item_by_value(turbo_log_level_t_meta(), (int64_t)level) != NULL;
+static int log_level_is_valid(salts_log_level_t level) {
+  return cmeta_enum_item_by_value(salts_log_level_t_meta(), (int64_t)level) != NULL;
 }
 ```
 
 **Step 2: Replace display-name lookup**
 
-`turbo_log_level_name()` 调用生成的 `turbo_log_level_t_to_string()`，并只在返回 NULL 时返回 `"UNKNOWN"`。
+`salts_log_level_name()` 调用生成的 `salts_log_level_t_to_string()`，并只在返回 NULL 时返回 `"UNKNOWN"`。
 
 **Step 3: Preserve text-only legacy parsing**
 
-`turbo_log_level_from_name()` 遍历 `turbo_log_level_t_meta()->items`，只比较 `item->text`；不得调用同时接受 symbol 的 `turbo_log_level_t_from_string()`。
+`salts_log_level_from_name()` 遍历 `salts_log_level_t_meta()->items`，只比较 `item->text`；不得调用同时接受 symbol 的 `salts_log_level_t_from_string()`。
 
 **Step 4: Remove the duplicated table and run the focused test**
 
-删除 `TURBO_LOG_LEVEL_TABLE_ITEMS`、`turbo_log_level_entry_t`、静态表和表长度宏。
+删除 `SALTS_LOG_LEVEL_TABLE_ITEMS`、`salts_log_level_entry_t`、静态表和表长度宏。
 
 Run:
 
@@ -154,7 +154,7 @@ git commit --only -m "refactor: reuse cmeta log level metadata" -- utils/src/tlo
 - Verify: `utils/tests/test_tlog_cpp.cpp`
 - Verify: `cmeta/tests/cmeta_core_test.c`
 - Verify: `utils/tests/test_fmt.c`
-- Verify: generated `build/Msvc-Release/TurboUtilsTargets.cmake`
+- Verify: generated `build/Msvc-Release/SaltsTargets.cmake`
 
 **Step 1: Build adjacent targets**
 
@@ -177,10 +177,10 @@ Expected: 4/4 tests pass.
 Run:
 
 ```powershell
-rg.exe -n "TurboUtils::CMeta" build\Msvc-Release\TurboUtilsTargets.cmake
+rg.exe -n "Salts::CMeta" build\Msvc-Release\SaltsTargets.cmake
 ```
 
-Expected: exported Core target contains `TurboUtils::CMeta` in its interface link libraries.
+Expected: exported Core target contains `Salts::CMeta` in its interface link libraries.
 
 **Step 4: Check the patch boundary**
 

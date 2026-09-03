@@ -5,7 +5,7 @@
 #include "chttp_server_internal.h"
 
 #include <cnet/websocket.h>
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -16,7 +16,7 @@ typedef struct chttp_server_connection chttp_server_connection;
 typedef struct chttp_server_request_state chttp_server_request_state;
 typedef struct chttp_h2_server_connection chttp_h2_server_connection;
 
-extern TURBO_THREAD_LOCAL chttp_server_impl *chttp_active_callback_server;
+extern SALTS_THREAD_LOCAL chttp_server_impl *chttp_active_callback_server;
 
 typedef enum chttp_server_wire_protocol {
   CHTTP_SERVER_WIRE_UNKNOWN = 0,
@@ -181,9 +181,9 @@ struct chttp_server_impl {
   cflow_io_file_runtime file_runtime;
   chttp_file_transfer **file_transfers;
   size_t file_transfer_capacity;
-  turbo_mutex_t mutex;
-  turbo_cond_t changed;
-  turbo_thread_t thread;
+  salts_mutex_t mutex;
+  salts_cond_t changed;
+  salts_thread_t thread;
   chttp_server_stats stats;
   bool sync_initialized;
   bool network_initialized;

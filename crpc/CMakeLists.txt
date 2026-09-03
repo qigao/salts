@@ -1,4 +1,4 @@
-set(TARGET_NAME turbo_crpc)
+set(TARGET_NAME salts_crpc)
 set(CRPC_ABI_VERSION 2)
 
 add_library(${TARGET_NAME} STATIC
@@ -8,11 +8,11 @@ add_library(${TARGET_NAME} STATIC
   src/crpc_request_reply.c
   src/crpc_server.c)
 cmake_config_target(${TARGET_NAME}
-  ALIAS Rocida::CRPC
+  ALIAS Salts::CRPC
   FOLDER "crpc"
   EXPORT_NAME CRPC)
 set_target_properties(${TARGET_NAME} PROPERTIES
-  OUTPUT_NAME "turbo_crpc-${CRPC_ABI_VERSION}")
+  OUTPUT_NAME "salts_crpc-${CRPC_ABI_VERSION}")
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
 target_include_directories(
   ${TARGET_NAME}
@@ -21,10 +21,10 @@ target_include_directories(
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC Rocida::CHTTP Rocida::CMeta Rocida::CSerde
-  PRIVATE Rocida::JsonCSerdeAdapter Rocida::Core)
+  PUBLIC Salts::CHTTP Salts::CMeta Salts::CSerde
+  PRIVATE Salts::JsonCSerdeAdapter Salts::Core)
 
-install(TARGETS ${TARGET_NAME} EXPORT RocidaTargets)
+install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
 install(
   DIRECTORY include/crpc
   DESTINATION include

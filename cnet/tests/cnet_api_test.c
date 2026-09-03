@@ -3,8 +3,8 @@
 #include "tinytest.h"
 #include <cnet/cnet.h>
 
-#include <turbo/clock.h>
-#include <turbo/thread.h>
+#include <salts/clock.h>
+#include <salts/thread.h>
 
 #include <errno.h>
 #include <stdatomic.h>
@@ -66,6 +66,7 @@ typedef struct cnet_api_test_listener_probe {
   atomic_int terminal;
   atomic_int failed;
   unsigned char received_value;
+  size_t expected_send_size;
 } cnet_api_test_listener_probe;
 
 typedef struct cnet_api_test_wake_probe {
@@ -85,14 +86,14 @@ typedef struct cnet_api_test_interrupt_probe {
 } cnet_api_test_interrupt_probe;
 #endif
 
-static TURBO_THREAD_LOCAL int cnet_api_test_thread_marker;
+static SALTS_THREAD_LOCAL int cnet_api_test_thread_marker;
 
 static void cnet_api_test_blocking_poll(void *user) {
   cnet_api_test_wake_probe *probe = (cnet_api_test_wake_probe *)user;
-  const uint64_t started_ms = turbo_monotonic_ms();
+  const uint64_t started_ms = salts_monotonic_ms();
   atomic_store_explicit(&probe->started, 1, memory_order_release);
   probe->status = cnet_client_poll(probe->client, 1000u, &probe->events);
-  probe->elapsed_ms = turbo_monotonic_ms() - started_ms;
+  probe->elapsed_ms = salts_monotonic_ms() - started_ms;
   atomic_store_explicit(&probe->finished, 1, memory_order_release);
 }
 
@@ -102,8 +103,8 @@ static void cnet_api_test_signal_handler(int signal_number) { (void)signal_numbe
 static void cnet_api_test_interrupt_wait(void *user) {
   cnet_api_test_interrupt_probe *probe = (cnet_api_test_interrupt_probe *)user;
   while (atomic_load_explicit(&probe->armed, memory_order_acquire) == 0)
-    turbo_thread_yield();
-  turbo_sleep_ms(10u);
+    salts_thread_yield();
+  salts_sleep_ms(10u);
   atomic_store_explicit(&probe->signal_status, pthread_kill(probe->target, SIGUSR1),
                         memory_order_release);
 }
@@ -123,15 +124,15 @@ static int cnet_api_test_set_receive_timeout(cnet_api_test_socket socket_value) 
   const DWORD timeout_ms = CNET_API_TEST_TIMEOUT_MS;
   return setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms,
                     (int)sizeof(timeout_ms)) == 0
-             ? TURBO_OK
-             : TURBO_EIO;
+             ? SALTS_OK
+             : SALTS_EIO;
 #else
   const struct timeval timeout = {CNET_API_TEST_TIMEOUT_MS / 1000,
                                   (CNET_API_TEST_TIMEOUT_MS % 1000) * 1000};
   return setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, &timeout, (socklen_t)sizeof(timeout)) ==
                  0
-             ? TURBO_OK
-             : TURBO_EIO;
+             ? SALTS_OK
+             : SALTS_EIO;
 #endif
 }
 
@@ -143,7 +144,7 @@ static int cnet_api_test_listener(cnet_api_test_socket *out_listener, uint16_t *
   socklen_t length = (socklen_t)sizeof(address);
 #endif
   *out_listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (*out_listener == CNET_API_TEST_INVALID_SOCKET) return TURBO_EIO;
+  if (*out_listener == CNET_API_TEST_INVALID_SOCKET) return SALTS_EIO;
   memset(&address, 0, sizeof(address));
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -152,26 +153,26 @@ static int cnet_api_test_listener(cnet_api_test_socket *out_listener, uint16_t *
       listen(*out_listener, 2) != 0) {
     cnet_api_test_close_socket(*out_listener);
     *out_listener = CNET_API_TEST_INVALID_SOCKET;
-    return TURBO_EIO;
+    return SALTS_EIO;
   }
   *out_port = ntohs(address.sin_port);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int cnet_api_test_wait_pipe_read(cnet_shared_test_named_pipe *pipe, void *data,
                                         size_t size) {
 #if !defined(_WIN32)
-  const uint64_t deadline = turbo_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
+  const uint64_t deadline = salts_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
 #endif
   for (;;) {
     const int status = cnet_shared_test_named_pipe_peer_read(pipe, data, size);
-    if (status == TURBO_OK) return TURBO_OK;
+    if (status == SALTS_OK) return SALTS_OK;
 #if defined(_WIN32)
     return status;
 #else
     if (status != -EAGAIN && status != -EWOULDBLOCK && status != -EINTR) return status;
-    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
-    turbo_thread_yield();
+    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    salts_thread_yield();
 #endif
   }
 }
@@ -192,7 +193,7 @@ static void cnet_api_test_state(void *user, cnet_connection connection, cnet_con
     atomic_fetch_add_explicit(&probe->terminal, 1, memory_order_release);
     while (atomic_load_explicit(&probe->block_terminal, memory_order_acquire) != 0 &&
            atomic_load_explicit(&probe->release_terminal, memory_order_acquire) == 0)
-      turbo_thread_yield();
+      salts_thread_yield();
   }
 }
 
@@ -221,7 +222,7 @@ static void cnet_api_test_poll_state(void *user, cnet_connection connection,
   if (state == CNET_CONNECTION_CONNECTED) {
     atomic_store_explicit(&probe->callback_thread_marker, cnet_api_test_thread_marker,
                           memory_order_release);
-    if (cnet_close(probe->client, connection) != TURBO_OK)
+    if (cnet_close(probe->client, connection) != SALTS_OK)
       atomic_store_explicit(&probe->failed, 1, memory_order_release);
     atomic_store_explicit(&probe->connected, 1, memory_order_release);
   } else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
@@ -232,14 +233,14 @@ static void cnet_api_test_poll_state(void *user, cnet_connection connection,
 }
 
 static int cnet_api_test_poll_until(cnet_client *client, atomic_int *value, int expected) {
-  const uint64_t deadline = turbo_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
+  const uint64_t deadline = salts_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
   while (atomic_load_explicit(value, memory_order_acquire) < expected) {
     size_t events = 0u;
     const int status = cnet_client_poll(client, 1u, &events);
-    if (status != TURBO_OK) return status;
-    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
+    if (status != SALTS_OK) return status;
+    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void cnet_api_test_batch_state(void *user, cnet_connection connection,
@@ -290,8 +291,9 @@ static void cnet_api_test_listener_receive(void *user, cnet_connection connectio
 
 static void cnet_api_test_listener_send(void *user, cnet_connection connection, size_t size) {
   cnet_api_test_listener_probe *probe = (cnet_api_test_listener_probe *)user;
+  const size_t expected_size = probe->expected_send_size != 0u ? probe->expected_send_size : 1u;
   (void)connection;
-  if (size != 1u) atomic_store_explicit(&probe->failed, 1, memory_order_release);
+  if (size != expected_size) atomic_store_explicit(&probe->failed, 1, memory_order_release);
   atomic_fetch_add_explicit(&probe->sent, 1, memory_order_release);
 }
 
@@ -320,17 +322,17 @@ spec("CNet public client API") {
     cnet_tls_client_config config = {.size = sizeof(config)};
     cnet_tls_client_config invalid = {0};
 
-    check_equal(cnet_tls_client_init(NULL, &config), TURBO_EINVAL);
-    check_equal(cnet_tls_client_init(&client, NULL), TURBO_EINVAL);
-    check_equal(cnet_tls_client_init(&client, &invalid), TURBO_EINVAL);
+    check_equal(cnet_tls_client_init(NULL, &config), SALTS_EINVAL);
+    check_equal(cnet_tls_client_init(&client, NULL), SALTS_EINVAL);
+    check_equal(cnet_tls_client_init(&client, &invalid), SALTS_EINVAL);
     check_null(client.impl);
-    check_equal(cnet_tls_client_init(&client, &config), TURBO_OK);
+    check_equal(cnet_tls_client_init(&client, &config), SALTS_OK);
     check_not_null(client.impl);
-    check_equal(cnet_tls_client_init(&client, &config), TURBO_EALREADY);
-    check_equal(cnet_tls_client_destroy(NULL), TURBO_EINVAL);
-    check_equal(cnet_tls_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_tls_client_init(&client, &config), SALTS_EALREADY);
+    check_equal(cnet_tls_client_destroy(NULL), SALTS_EINVAL);
+    check_equal(cnet_tls_client_destroy(&client), SALTS_OK);
     check_null(client.impl);
-    check_equal(cnet_tls_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_tls_client_destroy(&client), SALTS_OK);
   }
 
   it("rejects ambiguous or plaintext reusable TLS profiles") {
@@ -345,32 +347,32 @@ spec("CNet public client API") {
 
     config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
     config.tls_handshake_timeout_ms = 1000u;
-    check_equal(cnet_tls_client_init(&tls_client, &tls_config), TURBO_OK);
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
-    check_equal(cnet_connect(&client, &options, &connection), TURBO_EINVAL);
+    check_equal(cnet_tls_client_init(&tls_client, &tls_config), SALTS_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_EINVAL);
     check_equal(connection.slot, 0u);
     check_equal(connection.generation, 0u);
 
     options.uri = "tls://127.0.0.1:443";
     options.tls = &tls_config;
-    check_equal(cnet_connect(&client, &options, &connection), TURBO_EINVAL);
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_EINVAL);
     check_equal(connection.slot, 0u);
     check_equal(connection.generation, 0u);
 
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
-    check_equal(cnet_tls_client_destroy(&tls_client), TURBO_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    check_equal(cnet_tls_client_destroy(&tls_client), SALTS_OK);
   }
 
   it("rejects malformed TLS server configuration without publishing a context") {
     cnet_tls_server server = {0};
     cnet_tls_server_config config = {.size = sizeof(config)};
 
-    check_equal(cnet_tls_server_init(NULL, &config), TURBO_EINVAL);
-    check_equal(cnet_tls_server_init(&server, NULL), TURBO_EINVAL);
-    check_equal(cnet_tls_server_init(&server, &config), TURBO_EINVAL);
+    check_equal(cnet_tls_server_init(NULL, &config), SALTS_EINVAL);
+    check_equal(cnet_tls_server_init(&server, NULL), SALTS_EINVAL);
+    check_equal(cnet_tls_server_init(&server, &config), SALTS_EINVAL);
     check_null(server.impl);
-    check_equal(cnet_tls_server_destroy(&server), TURBO_OK);
+    check_equal(cnet_tls_server_destroy(&server), SALTS_OK);
   }
 
   it("keeps TLS disabled when bounded TLS storage is not configured") {
@@ -380,12 +382,12 @@ spec("CNet public client API") {
     cnet_connect_options options = {.uri = "tls://localhost:443",
                                     .observer = {.on_state = cnet_api_test_ignore_state}};
 
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
-    check_equal(cnet_connect(&client, &options, &connection), TURBO_ENOTSUP);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_ENOTSUP);
     check_equal(connection.slot, 0u);
     check_equal(connection.generation, 0u);
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
   }
 
   it("requires a complete bounded TLS client allocation policy") {
@@ -393,18 +395,18 @@ spec("CNet public client API") {
     cnet_client_config config = cnet_api_test_config();
 
     config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
-    check_equal(cnet_client_init(&client, &config), TURBO_EINVAL);
+    check_equal(cnet_client_init(&client, &config), SALTS_EINVAL);
     check_null(client.impl);
 
     config.tls_handshake_timeout_ms = 1000u;
     config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES - 1u;
-    check_equal(cnet_client_init(&client, &config), TURBO_EINVAL);
+    check_equal(cnet_client_init(&client, &config), SALTS_EINVAL);
     check_null(client.impl);
 
     config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
   }
 
   it("returns a portable address-in-use error for listener bind conflicts") {
@@ -415,13 +417,13 @@ spec("CNet public client API") {
         .backend = client_config.backend, .host = "127.0.0.1", .port = 0u, .backlog = 2u};
     uint16_t port = 0u;
 
-    check_equal(cnet_listener_init(&first, &config), TURBO_OK);
-    check_equal(cnet_listener_port(&first, &port), TURBO_OK);
+    check_equal(cnet_listener_init(&first, &config), SALTS_OK);
+    check_equal(cnet_listener_port(&first, &port), SALTS_OK);
     config.port = port;
-    check_equal(cnet_listener_init(&second, &config), TURBO_EADDRINUSE);
+    check_equal(cnet_listener_init(&second, &config), SALTS_EADDRINUSE);
     check_null(second.impl);
-    check_equal(cnet_listener_close(&first), TURBO_OK);
-    check_equal(cnet_listener_destroy(&first), TURBO_OK);
+    check_equal(cnet_listener_close(&first), SALTS_OK);
+    check_equal(cnet_listener_destroy(&first), SALTS_OK);
   }
 
 #if !defined(_WIN32)
@@ -431,7 +433,7 @@ spec("CNet public client API") {
     cnet_listener_config config = {
         .backend = client_config.backend, .host = "127.0.0.1", .port = 0u, .backlog = 2u};
     cnet_api_test_interrupt_probe probe;
-    turbo_thread_t interrupter = {0};
+    salts_thread_t interrupter = {0};
     void (*previous_handler)(int);
     int ready = -1;
 
@@ -440,16 +442,16 @@ spec("CNet public client API") {
     probe.target = pthread_self();
     previous_handler = signal(SIGUSR1, cnet_api_test_signal_handler);
     check_true(previous_handler != SIG_ERR);
-    check_equal(cnet_listener_init(&listener, &config), TURBO_OK);
-    check_equal(turbo_thread_create(&interrupter, cnet_api_test_interrupt_wait, &probe), TURBO_OK);
+    check_equal(cnet_listener_init(&listener, &config), SALTS_OK);
+    check_equal(salts_thread_create(&interrupter, cnet_api_test_interrupt_wait, &probe), SALTS_OK);
     atomic_store_explicit(&probe.armed, 1, memory_order_release);
-    check_equal(cnet_listener_wait(&listener, 100u, &ready), TURBO_OK);
+    check_equal(cnet_listener_wait(&listener, 100u, &ready), SALTS_OK);
     check_equal(ready, 0);
-    check_equal(turbo_thread_join(&interrupter), TURBO_OK);
+    check_equal(salts_thread_join(&interrupter), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.signal_status, memory_order_acquire), 0);
     check_true(signal(SIGUSR1, previous_handler) != SIG_ERR);
-    check_equal(cnet_listener_close(&listener), TURBO_OK);
-    check_equal(cnet_listener_destroy(&listener), TURBO_OK);
+    check_equal(cnet_listener_close(&listener), SALTS_OK);
+    check_equal(cnet_listener_destroy(&listener), SALTS_OK);
   }
 #endif
 
@@ -459,7 +461,7 @@ spec("CNet public client API") {
     cnet_client_config config = cnet_api_test_config();
     cnet_listener_config listener_config = {
         .backend = config.backend, .host = "127.0.0.1", .port = 0u, .backlog = 2u};
-    cnet_api_test_listener_probe probe;
+    cnet_api_test_listener_probe probe = {0};
     cnet_api_test_socket peer = CNET_API_TEST_INVALID_SOCKET;
     struct sockaddr_in address;
     cnet_connection connection = {0};
@@ -482,65 +484,65 @@ spec("CNet public client API") {
     atomic_init(&probe.failed, 0);
     probe.received_value = 0u;
 
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
     check_true(native_io_backend_kind_supported(listener_config.backend));
     check_equal(cnet_transport_parse_bind_address(listener_config.host, listener_config.port,
                                                   parsed_address, sizeof(parsed_address),
                                                   &parsed_address_length),
-                TURBO_OK);
+                SALTS_OK);
     check_true(parsed_address_length != 0u);
-    check_equal(cnet_listener_init(&listener, &listener_config), TURBO_OK);
-    check_equal(cnet_listener_port(&listener, &port), TURBO_OK);
+    check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
+    check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
     check_true(port != 0u);
 
     peer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     check_true(peer != CNET_API_TEST_INVALID_SOCKET);
-    check_equal(cnet_api_test_set_receive_timeout(peer), TURBO_OK);
+    check_equal(cnet_api_test_set_receive_timeout(peer), SALTS_OK);
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     address.sin_port = htons(port);
     check_equal(connect(peer, (const struct sockaddr *)&address, (int)sizeof(address)), 0);
 
-    check_equal(cnet_listener_wait(&listener, CNET_API_TEST_TIMEOUT_MS, &ready), TURBO_OK);
+    check_equal(cnet_listener_wait(&listener, CNET_API_TEST_TIMEOUT_MS, &ready), SALTS_OK);
     check_equal(ready, 1);
-    check_equal(cnet_listener_accept(&listener, &client, &observer, &connection), TURBO_OK);
+    check_equal(cnet_listener_accept(&listener, &client, &observer, &connection), SALTS_OK);
     {
       cnet_connection no_peer = {0};
-      check_equal(cnet_listener_accept(&listener, &client, &observer, &no_peer), TURBO_ETIMEDOUT);
+      check_equal(cnet_listener_accept(&listener, &client, &observer, &no_peer), SALTS_ETIMEDOUT);
       check_equal(no_peer.slot, 0u);
       check_equal(no_peer.generation, 0u);
     }
-    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), TURBO_OK);
-    check_equal(cnet_receive(&client, connection, 1u), TURBO_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+    check_equal(cnet_receive(&client, connection, 1u), SALTS_OK);
     check_equal(send(peer, (const char *)&request_value, (int)sizeof(request_value), 0),
                 (int)sizeof(request_value));
-    check_equal(cnet_api_test_poll_until(&client, &probe.received, 1), TURBO_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.received, 1), SALTS_OK);
     check_equal(probe.received_value, request_value);
 
     check_equal(cnet_send_and_close(&client, connection, &response_value, sizeof(response_value)),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(cnet_send(&client, connection, &response_value, sizeof(response_value)),
-                TURBO_EBUSY);
-    check_equal(cnet_receive(&client, connection, 1u), TURBO_EBUSY);
-    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), TURBO_OK);
+                SALTS_EBUSY);
+    check_equal(cnet_receive(&client, connection, 1u), SALTS_EBUSY);
+    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
     check_equal(recv(peer, (char *)&received, (int)sizeof(received), 0), (int)sizeof(received));
     check_equal(received, response_value);
     check_equal(recv(peer, (char *)&received, (int)sizeof(received), 0), 0);
     check_equal(atomic_load_explicit(&probe.sent, memory_order_acquire), 1);
     check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
 
-    check_equal(cnet_listener_close(&listener), TURBO_OK);
-    check_equal(cnet_listener_destroy(&listener), TURBO_OK);
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_listener_close(&listener), SALTS_OK);
+    check_equal(cnet_listener_destroy(&listener), SALTS_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
     cnet_api_test_close_socket(peer);
   }
 
   it("rejects new work as soon as close is admitted") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
-    cnet_api_test_listener_probe probe;
+    cnet_api_test_listener_probe probe = {0};
     cnet_api_test_socket listener = CNET_API_TEST_INVALID_SOCKET;
     cnet_api_test_socket peer = CNET_API_TEST_INVALID_SOCKET;
     cnet_connection connection = {0};
@@ -555,28 +557,28 @@ spec("CNet public client API") {
     atomic_init(&probe.terminal, 0);
     atomic_init(&probe.failed, 0);
     probe.received_value = 0u;
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
-    check_equal(cnet_api_test_listener(&listener, &port), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_api_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     options = (cnet_connect_options){.uri = uri,
                                      .observer = {.on_state = cnet_api_test_listener_state,
                                                   .on_receive = cnet_api_test_listener_receive,
                                                   .on_send = cnet_api_test_listener_send,
                                                   .user = &probe}};
-    check_equal(cnet_connect(&client, &options, &connection), TURBO_OK);
-    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), TURBO_OK);
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
     peer = accept(listener, NULL, NULL);
     check_true(peer != CNET_API_TEST_INVALID_SOCKET);
 
-    check_equal(cnet_close(&client, connection), TURBO_OK);
-    check_equal(cnet_close(&client, connection), TURBO_EALREADY);
-    check_equal(cnet_send(&client, connection, &value, sizeof(value)), TURBO_EBUSY);
-    check_equal(cnet_receive(&client, connection, 1u), TURBO_EBUSY);
-    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), TURBO_OK);
+    check_equal(cnet_close(&client, connection), SALTS_OK);
+    check_equal(cnet_close(&client, connection), SALTS_EALREADY);
+    check_equal(cnet_send(&client, connection, &value, sizeof(value)), SALTS_EBUSY);
+    check_equal(cnet_receive(&client, connection, 1u), SALTS_EBUSY);
+    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
 
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
     cnet_api_test_close_socket(peer);
     cnet_api_test_close_socket(listener);
   }
@@ -586,36 +588,36 @@ spec("CNet public client API") {
     cnet_client_config config = cnet_api_test_config();
     size_t events = SIZE_MAX;
 
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
-    check_equal(cnet_client_poll(&client, 0u, &events), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
     check_equal(events, (size_t)0u);
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
   }
 
   it("wakes an idle poll from another thread without publishing a callback") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
     cnet_api_test_wake_probe probe = {.client = &client};
-    turbo_thread_t poller;
+    salts_thread_t poller;
 
     atomic_init(&probe.started, 0);
     atomic_init(&probe.finished, 0);
-    check_equal(cnet_client_wake(NULL), TURBO_EINVAL);
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
-    check_equal(turbo_thread_create(&poller, cnet_api_test_blocking_poll, &probe), TURBO_OK);
+    check_equal(cnet_client_wake(NULL), SALTS_EINVAL);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(salts_thread_create(&poller, cnet_api_test_blocking_poll, &probe), SALTS_OK);
     while (atomic_load_explicit(&probe.started, memory_order_acquire) == 0)
-      turbo_thread_yield();
-    turbo_sleep_ms(20u);
-    check_equal(cnet_client_wake(&client), TURBO_OK);
-    check_equal(turbo_thread_join(&poller), TURBO_OK);
+      salts_thread_yield();
+    salts_sleep_ms(20u);
+    check_equal(cnet_client_wake(&client), SALTS_OK);
+    check_equal(salts_thread_join(&poller), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.finished, memory_order_acquire), 1);
-    check_equal(probe.status, TURBO_OK);
+    check_equal(probe.status, SALTS_OK);
     check_equal(probe.events, (size_t)0u);
     check_less(probe.elapsed_ms, (uint64_t)900u);
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_wake(&client), TURBO_ESHUTDOWN);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_wake(&client), SALTS_ESHUTDOWN);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
   }
 
   it("invokes connection callbacks on the polling thread") {
@@ -628,19 +630,19 @@ spec("CNet public client API") {
     char uri[64];
     uint16_t port = 0u;
 
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
-    check_equal(cnet_api_test_listener(&listener, &port), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_api_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned)port), 0);
     cnet_api_test_thread_marker = 73;
     options = (cnet_connect_options){
         .uri = uri, .observer = {.on_state = cnet_api_test_poll_state, .user = &probe}};
-    check_equal(cnet_connect(&client, &options, &connection), TURBO_OK);
-    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), TURBO_OK);
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.callback_thread_marker, memory_order_acquire), 73);
-    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), TURBO_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
     cnet_api_test_close_socket(listener);
   }
 
@@ -648,19 +650,19 @@ spec("CNet public client API") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
 
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
   }
 
   it("rejects invalid configuration without publishing a client") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
 
-    check_equal(cnet_client_init(NULL, &config), TURBO_EINVAL);
-    check_equal(cnet_client_init(&client, NULL), TURBO_EINVAL);
+    check_equal(cnet_client_init(NULL, &config), SALTS_EINVAL);
+    check_equal(cnet_client_init(&client, NULL), SALTS_EINVAL);
     config.command_capacity = 0u;
-    check_equal(cnet_client_init(&client, &config), TURBO_EINVAL);
+    check_equal(cnet_client_init(&client, &config), SALTS_EINVAL);
     check_null(client.impl);
   }
 
@@ -671,14 +673,14 @@ spec("CNet public client API") {
     cnet_connect_options options = {.uri = "unknown://endpoint",
                                     .observer = {.on_state = cnet_api_test_ignore_state}};
 
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
     check_not_null(client.impl);
-    check_equal(cnet_connect(&client, &options, &connection), TURBO_ENOTSUP);
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_ENOTSUP);
     check_equal(connection.slot, 0u);
     check_equal(connection.generation, 0u);
-    check_equal(cnet_client_destroy(&client), TURBO_EBUSY);
-    check_equal(cnet_client_stop(&client, 5000u), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_EBUSY);
+    check_equal(cnet_client_stop(&client, 5000u), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
     check_null(client.impl);
   }
 
@@ -696,61 +698,128 @@ spec("CNet public client API") {
     const unsigned char expected_outbound = 41u;
     const unsigned char expected_inbound = 73u;
     cnet_connect_options options;
-    int stale_status = TURBO_OK;
+    int stale_status = SALTS_OK;
     uint64_t stale_deadline;
 
     atomic_init(&probe.connected, 0);
     atomic_init(&probe.received, 0);
     atomic_init(&probe.terminal, 0);
-    atomic_init(&probe.callback_stop_status, TURBO_OK);
-    atomic_init(&probe.callback_operation_status, TURBO_EIO);
+    atomic_init(&probe.callback_stop_status, SALTS_OK);
+    atomic_init(&probe.callback_operation_status, SALTS_EIO);
     atomic_init(&probe.failed, 0);
     atomic_init(&probe.block_terminal, 0);
     atomic_init(&probe.release_terminal, 0);
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
-    check_equal(cnet_api_test_listener(&listener, &port), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_api_test_listener(&listener, &port), SALTS_OK);
     (void)snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port);
     options = (cnet_connect_options){.uri = uri,
                                      .observer = {.on_state = cnet_api_test_state,
                                                   .on_receive = cnet_api_test_receive,
                                                   .user = &probe}};
-    check_equal(cnet_connect(&client, &options, &connection), TURBO_OK);
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
     memset(uri, 'x', strlen(uri));
     options.observer = (cnet_observer){0};
 
-    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), TURBO_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CNET_API_TEST_INVALID_SOCKET);
     check_equal(atomic_load_explicit(&probe.callback_stop_status, memory_order_acquire),
-                TURBO_EBUSY);
+                SALTS_EBUSY);
     check_equal(atomic_load_explicit(&probe.callback_operation_status, memory_order_acquire),
-                TURBO_OK);
+                SALTS_OK);
 
-    check_equal(cnet_send(&client, connection, &send_value, sizeof(send_value)), TURBO_OK);
-    check_equal(cnet_send(&client, connection, &send_value, sizeof(send_value)), TURBO_EBUSY);
+    check_equal(cnet_send(&client, connection, &send_value, sizeof(send_value)), SALTS_OK);
+    check_equal(cnet_send(&client, connection, &send_value, sizeof(send_value)), SALTS_EBUSY);
     send_value = 99u;
     {
       size_t events = 0u;
-      check_equal(cnet_client_poll(&client, 0u, &events), TURBO_OK);
+      check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
     }
     check_equal(recv(accepted, (char *)&outbound, (int)sizeof(outbound), 0), (int)sizeof(outbound));
     check_equal(outbound, expected_outbound);
     check_equal(send(accepted, (const char *)&expected_inbound, (int)sizeof(expected_inbound), 0),
                 (int)sizeof(expected_inbound));
-    check_equal(cnet_api_test_poll_until(&client, &probe.received, 1), TURBO_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.received, 1), SALTS_OK);
     check_equal(probe.received_value, expected_inbound);
-    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), TURBO_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
 
-    stale_deadline = turbo_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
+    stale_deadline = salts_monotonic_ms() + CNET_API_TEST_TIMEOUT_MS;
     do {
       stale_status = cnet_send(&client, connection, &expected_outbound, sizeof(expected_outbound));
-      if (stale_status == TURBO_ENOENT) break;
-      turbo_thread_yield();
-    } while (turbo_monotonic_ms() < stale_deadline);
-    check_equal(stale_status, TURBO_ENOENT);
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+      if (stale_status == SALTS_ENOENT) break;
+      salts_thread_yield();
+    } while (salts_monotonic_ms() < stale_deadline);
+    check_equal(stale_status, SALTS_ENOENT);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    cnet_api_test_close_socket(accepted);
+    cnet_api_test_close_socket(listener);
+  }
+
+  it("copies a bounded TCP vector before returning from admission") {
+    static const unsigned char expected[] = {11u, 13u, 17u, 19u, 23u};
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_api_test_listener_probe probe = {.expected_send_size = sizeof(expected)};
+    cnet_api_test_socket listener = CNET_API_TEST_INVALID_SOCKET;
+    cnet_api_test_socket accepted = CNET_API_TEST_INVALID_SOCKET;
+    cnet_connection connection = {0};
+    cnet_connect_options options;
+    unsigned char first[] = {11u, 13u};
+    unsigned char second[] = {17u, 19u, 23u};
+    unsigned char received[sizeof(expected)] = {0};
+    unsigned char oversized[257] = {0};
+    cnet_const_buffer segments[] = {{first, sizeof(first)},
+                                    {second, sizeof(second)}};
+    cnet_const_buffer null_data = {NULL, 1u};
+    cnet_const_buffer empty = {first, 0u};
+    cnet_const_buffer too_large = {oversized, sizeof(oversized)};
+    char uri[64];
+    uint16_t port = 0u;
+
+    atomic_init(&probe.connected, 0);
+    atomic_init(&probe.received, 0);
+    atomic_init(&probe.sent, 0);
+    atomic_init(&probe.terminal, 0);
+    atomic_init(&probe.failed, 0);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_api_test_listener(&listener, &port), SALTS_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u",
+                           (unsigned int)port),
+                  0);
+    options = (cnet_connect_options){
+        .uri = uri,
+        .observer = {.on_state = cnet_api_test_listener_state,
+                     .on_send = cnet_api_test_listener_send,
+                     .user = &probe}};
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+    accepted = accept(listener, NULL, NULL);
+    check_true(accepted != CNET_API_TEST_INVALID_SOCKET);
+    check_equal(cnet_api_test_set_receive_timeout(accepted), SALTS_OK);
+
+    check_equal(cnet_sendv(NULL, connection, segments, 2u), SALTS_EINVAL);
+    check_equal(cnet_sendv(&client, connection, NULL, 2u), SALTS_EINVAL);
+    check_equal(cnet_sendv(&client, connection, segments, 0u), SALTS_EINVAL);
+    check_equal(cnet_sendv(&client, connection, &null_data, 1u), SALTS_EINVAL);
+    check_equal(cnet_sendv(&client, connection, &empty, 1u), SALTS_EINVAL);
+    check_equal(cnet_sendv(&client, connection, &too_large, 1u), SALTS_EMSGSIZE);
+    check_equal(cnet_sendv(&client, connection, segments, 2u), SALTS_OK);
+    check_equal(cnet_sendv(&client, connection, segments, 2u), SALTS_EBUSY);
+    memset(first, 0, sizeof(first));
+    memset(second, 0, sizeof(second));
+    check_equal(cnet_api_test_poll_until(&client, &probe.sent, 1), SALTS_OK);
+    check_equal(recv(accepted, (char *)received, (int)sizeof(received), 0),
+                (int)sizeof(received));
+    check_equal(received, expected, sizeof(expected));
+    check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
+
+    check_equal(cnet_close(&client, connection), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
+    check_equal(cnet_sendv(&client, connection, segments, 2u), SALTS_ENOENT);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
     cnet_api_test_close_socket(accepted);
     cnet_api_test_close_socket(listener);
   }
@@ -769,26 +838,26 @@ spec("CNet public client API") {
     atomic_init(&probe.connected, 0);
     atomic_init(&probe.received, 0);
     atomic_init(&probe.terminal, 0);
-    atomic_init(&probe.callback_stop_status, TURBO_OK);
-    atomic_init(&probe.callback_operation_status, TURBO_EIO);
+    atomic_init(&probe.callback_stop_status, SALTS_OK);
+    atomic_init(&probe.callback_operation_status, SALTS_EIO);
     atomic_init(&probe.failed, 0);
     atomic_init(&probe.block_terminal, 0);
     atomic_init(&probe.release_terminal, 0);
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
-    check_equal(cnet_api_test_listener(&listener, &port), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_api_test_listener(&listener, &port), SALTS_OK);
     (void)snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port);
     options = (cnet_connect_options){.uri = uri,
                                      .observer = {.on_state = cnet_api_test_state,
                                                   .on_receive = cnet_api_test_receive,
                                                   .user = &probe}};
-    check_equal(cnet_connect(&client, &options, &connection), TURBO_OK);
-    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), TURBO_OK);
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CNET_API_TEST_INVALID_SOCKET);
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.terminal, memory_order_acquire), 1);
     check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
     cnet_api_test_close_socket(accepted);
     cnet_api_test_close_socket(listener);
   }
@@ -817,15 +886,15 @@ spec("CNet public client API") {
     atomic_init(&probe.connected, 0);
     atomic_init(&probe.received, 0);
     atomic_init(&probe.terminal, 0);
-    atomic_init(&probe.callback_stop_status, TURBO_OK);
-    atomic_init(&probe.callback_operation_status, TURBO_EIO);
+    atomic_init(&probe.callback_stop_status, SALTS_OK);
+    atomic_init(&probe.callback_operation_status, SALTS_EIO);
     atomic_init(&probe.failed, 0);
     atomic_init(&probe.block_terminal, 0);
     atomic_init(&probe.release_terminal, 0);
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
     server = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     check_true(server != CNET_API_TEST_INVALID_SOCKET);
-    check_equal(cnet_api_test_set_receive_timeout(server), TURBO_OK);
+    check_equal(cnet_api_test_set_receive_timeout(server), SALTS_OK);
     memset(&server_address, 0, sizeof(server_address));
     server_address.sin_family = AF_INET;
     server_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -838,13 +907,13 @@ spec("CNet public client API") {
                                      .observer = {.on_state = cnet_api_test_state,
                                                   .on_receive = cnet_api_test_receive,
                                                   .user = &probe}};
-    check_equal(cnet_connect(&client, &options, &connection), TURBO_OK);
-    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), TURBO_OK);
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
     check_equal(cnet_send(&client, connection, &expected_outbound, sizeof(expected_outbound)),
-                TURBO_OK);
+                SALTS_OK);
     {
       size_t events = 0u;
-      check_equal(cnet_client_poll(&client, 0u, &events), TURBO_OK);
+      check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
     }
     check_equal(recvfrom(server, (char *)&outbound, (int)sizeof(outbound), 0,
                          (struct sockaddr *)&client_address, &client_length),
@@ -853,12 +922,12 @@ spec("CNet public client API") {
     check_equal(sendto(server, (const char *)&expected_inbound, (int)sizeof(expected_inbound), 0,
                        (const struct sockaddr *)&client_address, client_length),
                 (int)sizeof(expected_inbound));
-    check_equal(cnet_api_test_poll_until(&client, &probe.received, 1), TURBO_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.received, 1), SALTS_OK);
     check_equal(probe.received_value, expected_inbound);
-    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), TURBO_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
     cnet_api_test_close_socket(server);
   }
 
@@ -879,7 +948,7 @@ spec("CNet public client API") {
     cnet_connection connection = {0};
     cnet_connect_options options;
     char uri[64];
-    int exchange_status = TURBO_OK;
+    int exchange_status = SALTS_OK;
 
     atomic_init(&probe.connected, 0);
     atomic_init(&probe.received, 0);
@@ -887,10 +956,10 @@ spec("CNet public client API") {
     atomic_init(&probe.failed, 0);
     probe.received_value = 0u;
     config.connection_capacity = 64u;
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
     server = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     check_true(server != CNET_API_TEST_INVALID_SOCKET);
-    check_equal(cnet_api_test_set_receive_timeout(server), TURBO_OK);
+    check_equal(cnet_api_test_set_receive_timeout(server), SALTS_OK);
     memset(&server_address, 0, sizeof(server_address));
     server_address.sin_family = AF_INET;
     server_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -903,42 +972,42 @@ spec("CNet public client API") {
                                      .observer = {.on_state = cnet_api_test_batch_state,
                                                   .on_receive = cnet_api_test_batch_receive,
                                                   .user = &probe}};
-    check_equal(cnet_connect(&client, &options, &connection), TURBO_OK);
-    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), TURBO_OK);
-    check_equal(cnet_receive(&client, connection, CNET_API_TEST_BATCH_DATAGRAMS), TURBO_OK);
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+    check_equal(cnet_receive(&client, connection, CNET_API_TEST_BATCH_DATAGRAMS), SALTS_OK);
 
-    for (int index = 0; exchange_status == TURBO_OK && index < CNET_API_TEST_BATCH_DATAGRAMS;
+    for (int index = 0; exchange_status == SALTS_OK && index < CNET_API_TEST_BATCH_DATAGRAMS;
          ++index) {
       unsigned char outbound = 0u;
       const unsigned char expected = (unsigned char)(index + 1);
       exchange_status = cnet_send(&client, connection, &expected, sizeof(expected));
-      if (exchange_status == TURBO_OK) {
+      if (exchange_status == SALTS_OK) {
         size_t events = 0u;
         exchange_status = cnet_client_poll(&client, 0u, &events);
       }
-      if (exchange_status == TURBO_OK) {
+      if (exchange_status == SALTS_OK) {
         const int received = recvfrom(server, (char *)&outbound, (int)sizeof(outbound), 0,
                                       (struct sockaddr *)&client_address, &client_length);
-        if (received != (int)sizeof(outbound) || outbound != expected) exchange_status = TURBO_EIO;
+        if (received != (int)sizeof(outbound) || outbound != expected) exchange_status = SALTS_EIO;
       }
-      if (exchange_status == TURBO_OK) {
+      if (exchange_status == SALTS_OK) {
         const int sent = sendto(server, (const char *)&expected, (int)sizeof(expected), 0,
                                 (const struct sockaddr *)&client_address, client_length);
-        if (sent != (int)sizeof(expected)) exchange_status = TURBO_EIO;
+        if (sent != (int)sizeof(expected)) exchange_status = SALTS_EIO;
       }
-      if (exchange_status == TURBO_OK)
+      if (exchange_status == SALTS_OK)
         exchange_status = cnet_api_test_poll_until(&client, &probe.received, index + 1);
-      if (exchange_status == TURBO_OK &&
+      if (exchange_status == SALTS_OK &&
           (probe.received_value != expected ||
            atomic_load_explicit(&probe.failed, memory_order_acquire) != 0))
-        exchange_status = TURBO_EIO;
+        exchange_status = SALTS_EIO;
     }
-    check_equal(exchange_status, TURBO_OK);
+    check_equal(exchange_status, SALTS_OK);
 
-    check_equal(cnet_close(&client, connection), TURBO_OK);
-    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), TURBO_OK);
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_close(&client, connection), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
     cnet_api_test_close_socket(server);
   }
 
@@ -958,43 +1027,43 @@ spec("CNet public client API") {
     atomic_init(&probe.connected, 0);
     atomic_init(&probe.received, 0);
     atomic_init(&probe.terminal, 0);
-    atomic_init(&probe.callback_stop_status, TURBO_OK);
-    atomic_init(&probe.callback_operation_status, TURBO_EIO);
+    atomic_init(&probe.callback_stop_status, SALTS_OK);
+    atomic_init(&probe.callback_operation_status, SALTS_EIO);
     atomic_init(&probe.failed, 0);
     atomic_init(&probe.block_terminal, 0);
     atomic_init(&probe.release_terminal, 0);
-    check_equal(cnet_shared_test_named_pipe_start(&pipe), TURBO_OK);
-    check_equal(cnet_client_init(&client, &config), TURBO_OK);
+    check_equal(cnet_shared_test_named_pipe_start(&pipe), SALTS_OK);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
     uri_length = snprintf(uri, sizeof(uri), "pipe://%s", pipe.name);
     check_true(uri_length > 0 && (size_t)uri_length < sizeof(uri));
     options = (cnet_connect_options){.uri = uri,
                                      .observer = {.on_state = cnet_api_test_state,
                                                   .on_receive = cnet_api_test_receive,
                                                   .user = &probe}};
-    check_equal(cnet_connect(&client, &options, &connection), TURBO_OK);
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
     {
       size_t events = 0u;
-      check_equal(cnet_client_poll(&client, 0u, &events), TURBO_OK);
+      check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
     }
-    check_equal(cnet_shared_test_named_pipe_finish(&pipe), TURBO_OK);
-    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), TURBO_OK);
+    check_equal(cnet_shared_test_named_pipe_finish(&pipe), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
     check_equal(cnet_send(&client, connection, &expected_outbound, sizeof(expected_outbound)),
-                TURBO_OK);
+                SALTS_OK);
     {
       size_t events = 0u;
-      check_equal(cnet_client_poll(&client, 0u, &events), TURBO_OK);
+      check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
     }
-    check_equal(cnet_api_test_wait_pipe_read(&pipe, &outbound, sizeof(outbound)), TURBO_OK);
+    check_equal(cnet_api_test_wait_pipe_read(&pipe, &outbound, sizeof(outbound)), SALTS_OK);
     check_equal(outbound, expected_outbound);
     check_equal(
         cnet_shared_test_named_pipe_peer_write(&pipe, &expected_inbound, sizeof(expected_inbound)),
-        TURBO_OK);
-    check_equal(cnet_api_test_poll_until(&client, &probe.received, 1), TURBO_OK);
+        SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.received, 1), SALTS_OK);
     check_equal(probe.received_value, expected_inbound);
-    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), TURBO_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
-    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
     cnet_shared_test_named_pipe_close(&pipe);
   }
 }

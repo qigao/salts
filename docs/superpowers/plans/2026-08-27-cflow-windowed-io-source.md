@@ -6,7 +6,7 @@
 
 **Architecture:** Runtime writes its current downstream-value demand into `cflow_resume_ctx` before every resume. The existing I/O Source implementation is generalized to a fixed array of at most 64 entries, while the old constructor selects capacity one and a new constructor selects an explicit window. Actor request state remains authoritative; adapter entries only reserve demand and retain encoded results until Runtime consumes them.
 
-**Tech Stack:** C11, CMeta type descriptors, CFlow Runtime/Source/Waitable, CFlow I/O Actor and manual Executor, Turbo mutex/condition primitives, TinyTest, CMake Presets.
+**Tech Stack:** C11, CMeta type descriptors, CFlow Runtime/Source/Waitable, CFlow I/O Actor and manual Executor, Salts mutex/condition primitives, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-27-cflow-windowed-io-source-design.md`
 
@@ -130,13 +130,13 @@
 
   ```c
   check_equal(cflow_source_from_io_actor_windowed(
-      &source, &owner, &config, 0u), TURBO_EINVAL);
+      &source, &owner, &config, 0u), SALTS_EINVAL);
   check_false(cflow_source_valid(&source));
   check_null(owner.impl);
 
   check_equal(cflow_source_from_io_actor_windowed(
       &source, &owner, &config,
-      CFLOW_IO_SOURCE_MAX_WINDOW + 1u), TURBO_EINVAL);
+      CFLOW_IO_SOURCE_MAX_WINDOW + 1u), SALTS_EINVAL);
   check_false(cflow_source_valid(&source));
   check_null(owner.impl);
   ```
@@ -347,7 +347,7 @@
   accepted operations, encoder DONE, VALUE_AND_DONE and ERROR with other operations live, and
   cancellation before/after completion. Assert the exact prefix of emitted values, one terminal
   notification, later completion drain without encode/value, release count equal accepted count,
-  `owner_close == TURBO_EBUSY` before quiescence, and final close success. Preserve the existing
+  `owner_close == SALTS_EBUSY` before quiescence, and final close success. Preserve the existing
   completion-before-arm and two driver-tail barrier cases.
 
 - [x] **Step 6: Run focused race and adjacent tests**

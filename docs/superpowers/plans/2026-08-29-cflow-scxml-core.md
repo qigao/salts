@@ -4,7 +4,7 @@
 
 **Goal:** Add an optional, source-located SCXML Core frontend that compiles into the existing native CFlow Statechart IR without coupling CFlow to XML or CSerde.
 
-**Architecture:** Encapsulate a private, minimally patched cxml implementation behind `TurboUtils::XmlParser`; build a separate owning `TurboUtils::CFlowScxml` frontend over XmlParser and CFlow. Keep compilation transactional, bounded, deterministic, and fail-fast.
+**Architecture:** Encapsulate a private, minimally patched cxml implementation behind `Salts::XmlParser`; build a separate owning `Salts::CFlowScxml` frontend over XmlParser and CFlow. Keep compilation transactional, bounded, deterministic, and fail-fast.
 
 **Tech Stack:** C11, vendored cxml, CMeta, CFlow Statechart, TinyTest, CMake Presets, MSVC Release.
 
@@ -29,7 +29,7 @@
 **Files:**
 
 - Create: `parser/xml_parser/vendor/cxml/` production sources and upstream license/readme.
-- Create: `parser/xml_parser/vendor/cxml/TURBOUTILS_VENDOR.md`
+- Create: `parser/xml_parser/vendor/cxml/SALTS_VENDOR.md`
 - Create: `parser/xml_parser/vendor/CMakeLists.txt`
 - Modify: vendored lexer/parser files needed for structured diagnostics and locations.
 
@@ -108,9 +108,9 @@
 - Modify: installed consumer fixture files selected by that verification script.
 - Modify: `README.md`
 
-- [x] Export/install `TurboUtils::XmlParser` while keeping cxml private.
-- [x] Export/install `TurboUtils::CFlowScxml` and its header only when `CFLOW_ENABLE_SCXML=ON`.
-- [x] Assert `TurboUtils::CFlow` has no XmlParser/cxml/CSerde link dependency.
+- [x] Export/install `Salts::XmlParser` while keeping cxml private.
+- [x] Export/install `Salts::CFlowScxml` and its header only when `CFLOW_ENABLE_SCXML=ON`.
+- [x] Assert `Salts::CFlow` has no XmlParser/cxml/CSerde link dependency.
 - [x] Assert CFlowScxml exposes exactly CFlow and XmlParser at its public boundary.
 - [x] Document the supported subset, limits, ownership, null data model, and non-conformance boundary.
 - [x] Verify both disabled and enabled configure/install/consumer paths.

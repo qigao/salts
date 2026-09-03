@@ -20,7 +20,7 @@
 
 ### 方案 C：统一 source/sink，协议适配器内部实现（采用）
 
-公开 API 只描述“读取下一块”和“消费下一块”。H1 适配器选择 Content-Length 或 chunked framing，H2 适配器选择 Content-Length 或无长度 DATA 流。文件便利层复用 CFlow 的共享异步文件 runtime；路径查询、打开、关闭与原子 rename 仍通过 `turbo_fs` 完成，不向下游暴露 llhttp、H2 引擎、CFlow runtime 或平台文件句柄。
+公开 API 只描述“读取下一块”和“消费下一块”。H1 适配器选择 Content-Length 或 chunked framing，H2 适配器选择 Content-Length 或无长度 DATA 流。文件便利层复用 CFlow 的共享异步文件 runtime；路径查询、打开、关闭与原子 rename 仍通过 `salts_fs` 完成，不向下游暴露 llhttp、H2 引擎、CFlow runtime 或平台文件句柄。
 
 ## 公开接口
 
@@ -77,7 +77,7 @@ int chttp_server_response_file(chttp_server_response *, unsigned int,
 ### 数据单元和事实源
 
 - source 的事实源是调用方拥有的 reader 状态；CHTTP 只复制回调描述符，不复制该状态。
-- sink 的事实源是调用方拥有的 writer 状态；只有 sink 返回 `TURBO_OK` 后，CHTTP 才计入已消费字节并恢复 H2 flow-control credit。
+- sink 的事实源是调用方拥有的 writer 状态；只有 sink 返回 `SALTS_OK` 后，CHTTP 才计入已消费字节并恢复 H2 flow-control credit。
 - 文件上传的事实源是打开后 stat 得到的固定长度文件；读取不足或超出声明长度均为协议错误。
 - 文件下载的事实源是同目录唯一临时文件；仅在 2xx、正文完整、`fsync` 和 close 成功后通过 rename 一次性成为目标文件。
 - 每个 async client 或 server owner 懒创建一个共享 CFlow file runtime；runtime 是 native backend、Actor、Executor、operation slot 与 completion lane 的唯一事实源。单个 transfer 只拥有文件句柄、一个有界 chunk lease 和传输状态。
@@ -121,11 +121,11 @@ int chttp_server_response_file(chttp_server_response *, unsigned int,
 ## 错误语义
 
 - 参数冲突、缺失回调、零 chunk 配置或声明长度超限在 admission/init 阶段 fail fast。
-- source 失败使用其负错误码；长度不一致返回 `TURBO_EPROTO`，stage 为 `request-source` 或 `request-source-length`。
+- source 失败使用其负错误码；长度不一致返回 `SALTS_EPROTO`，stage 为 `request-source` 或 `request-source-length`。
 - sink 失败使用其负错误码，stage 为 `response-sink`。
-- 文件 open/stat/read/write/fsync/rename 失败保留 native Rocida 状态，stage 分别为 `file-open`、`file-stat`、`file-read`、`file-write`、`file-sync`、`file-commit`。
-- Windows IOCP 没有异步 flush；下载正文仍为异步 write，完成并关闭句柄后仅用同步 `turbo_fs_fsync` 作为原子 rename 前的 durability barrier。Linux io_uring 使用原生异步 flush。其他不支持异步 regular-file read/write 的 backend 在打开前 fail fast，不降级成阻塞数据路径。
-- 非 2xx 下载不是 transport 失败：返回 `TURBO_OK` 和 owning HTTP response，删除临时文件且保持原目标不变。
+- 文件 open/stat/read/write/fsync/rename 失败保留 native Salts 状态，stage 分别为 `file-open`、`file-stat`、`file-read`、`file-write`、`file-sync`、`file-commit`。
+- Windows IOCP 没有异步 flush；下载正文仍为异步 write，完成并关闭句柄后仅用同步 `salts_fs_fsync` 作为原子 rename 前的 durability barrier。Linux io_uring 使用原生异步 flush。其他不支持异步 regular-file read/write 的 backend 在打开前 fail fast，不降级成阻塞数据路径。
+- 非 2xx 下载不是 transport 失败：返回 `SALTS_OK` 和 owning HTTP response，删除临时文件且保持原目标不变。
 - server request sink 失败时，H1 关闭该连接；H2 RST 该 stream。`body_close` 恰好调用一次并接收终态。
 
 ## 架构与现有行为影响

@@ -1,4 +1,4 @@
-set(TARGET_NAME turbo_cserde)
+set(TARGET_NAME salts_cserde)
 
 add_library(${TARGET_NAME}
   src/token.c
@@ -7,7 +7,7 @@ add_library(${TARGET_NAME}
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS Rocida::CSerde
+  ALIAS Salts::CSerde
   FOLDER "cserde"
   EXPORT_NAME CSerde)
 
@@ -19,7 +19,7 @@ target_include_directories(
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT RocidaTargets
+  EXPORT SaltsTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

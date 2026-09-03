@@ -6,7 +6,7 @@
 
 **Architecture:** Extend CNet with a nonblocking TCP listener, accepted-socket ownership transfer, ordered write completion, and send-then-close. Build one background-owner CHTTP server over those primitives, strict llhttp request parsing, an immutable static/dynamic route and middleware table, bounded Cookie Sessions, borrowed request views, and copying response builders.
 
-**Tech Stack:** C11, CNet, NativeIO, llhttp, TurboUtils platform threads, TinyTest, CMake Presets.
+**Tech Stack:** C11, CNet, NativeIO, llhttp, Salts platform threads, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-09-01-chttp-http1-server.md`
 

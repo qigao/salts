@@ -5,7 +5,7 @@ foreach(example_name IN ITEMS
   cmake_add_test(
     ${example_name}
     SOURCES ${example_name}.c
-    LIBS Rocida::CFlow
+    LIBS Salts::CFlow
     FOLDER "cflow/examples")
   set_tests_properties(${example_name} PROPERTIES SKIP_RETURN_CODE 77)
 endforeach()

@@ -1,16 +1,16 @@
-#include <turbo/spsc_ring.h>
+#include <salts/spsc_ring.h>
 
 #include <assert.h>
 
-static bool turbo_spsc_ring_power_of_two(size_t value) {
+static bool salts_spsc_ring_power_of_two(size_t value) {
   return value != 0u && (value & (value - 1u)) == 0u;
 }
 
-bool turbo_spsc_ring_init(turbo_spsc_ring *ring, uint8_t *storage, size_t size) {
+bool salts_spsc_ring_init(salts_spsc_ring *ring, uint8_t *storage, size_t size) {
   assert(ring != NULL);
   assert(storage != NULL);
   assert(size != 0u);
-  if (!turbo_spsc_ring_power_of_two(size)) return false;
+  if (!salts_spsc_ring_power_of_two(size)) return false;
 
   ring->data = storage;
   ring->size = size;
@@ -23,7 +23,7 @@ bool turbo_spsc_ring_init(turbo_spsc_ring *ring, uint8_t *storage, size_t size) 
   return true;
 }
 
-uint8_t *turbo_spsc_ring_write_acquire(turbo_spsc_ring *ring, size_t required) {
+uint8_t *salts_spsc_ring_write_acquire(salts_spsc_ring *ring, size_t required) {
   size_t write;
   size_t read;
   size_t used;
@@ -52,7 +52,7 @@ uint8_t *turbo_spsc_ring_write_acquire(turbo_spsc_ring *ring, size_t required) {
   return &ring->data[offset];
 }
 
-void turbo_spsc_ring_write_release(turbo_spsc_ring *ring, size_t written) {
+void salts_spsc_ring_write_release(salts_spsc_ring *ring, size_t written) {
   size_t write;
   assert(ring != NULL);
   assert(ring->data != NULL);
@@ -68,7 +68,7 @@ void turbo_spsc_ring_write_release(turbo_spsc_ring *ring, size_t written) {
   atomic_store_explicit(&ring->write_pos, write + written, memory_order_release);
 }
 
-uint8_t *turbo_spsc_ring_read_acquire(turbo_spsc_ring *ring, size_t *available) {
+uint8_t *salts_spsc_ring_read_acquire(salts_spsc_ring *ring, size_t *available) {
   size_t read;
   size_t write;
   size_t wrap_len;
@@ -105,7 +105,7 @@ uint8_t *turbo_spsc_ring_read_acquire(turbo_spsc_ring *ring, size_t *available) 
   return &ring->data[offset];
 }
 
-void turbo_spsc_ring_read_release(turbo_spsc_ring *ring, size_t read) {
+void salts_spsc_ring_read_release(salts_spsc_ring *ring, size_t read) {
   size_t position;
   assert(ring != NULL);
   assert(ring->data != NULL);
@@ -113,7 +113,7 @@ void turbo_spsc_ring_read_release(turbo_spsc_ring *ring, size_t read) {
   atomic_store_explicit(&ring->read_pos, position + read, memory_order_release);
 }
 
-size_t turbo_spsc_ring_write_available(const turbo_spsc_ring *ring) {
+size_t salts_spsc_ring_write_available(const salts_spsc_ring *ring) {
   size_t write;
   size_t read;
   assert(ring != NULL);
@@ -122,7 +122,7 @@ size_t turbo_spsc_ring_write_available(const turbo_spsc_ring *ring) {
   return ring->size - (write - read) - 1u;
 }
 
-size_t turbo_spsc_ring_read_available(const turbo_spsc_ring *ring) {
+size_t salts_spsc_ring_read_available(const salts_spsc_ring *ring) {
   size_t write;
   size_t read;
   size_t wrap_len;

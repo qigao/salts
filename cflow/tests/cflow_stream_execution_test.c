@@ -1,5 +1,5 @@
 #include <cflow/cflow.h>
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 #include "subscription_internal.h"
 #include "tinytest.h"
@@ -202,7 +202,7 @@ static cmeta_status execution_collector_accept(void *context,
     }
     atomic_store(&state->accept_entered, 1);
     while (state->block_accept && !atomic_load(&state->accept_gate))
-        turbo_sleep_ms(1u);
+        salts_sleep_ms(1u);
     state->pending[state->pending_count++] = *(const int *)value;
     return CMETA_OK;
 }
@@ -262,8 +262,8 @@ static void execution_destroy_release_thread(void *user) {
     execution_destroy_release_args *args =
         (execution_destroy_release_args *)user;
     while (!atomic_load(&args->destroy_entered))
-        turbo_sleep_ms(1u);
-    turbo_sleep_ms(50u);
+        salts_sleep_ms(1u);
+    salts_sleep_ms(50u);
     atomic_store(&args->observed_pending,
                  !atomic_load(&args->destroy_returned));
     atomic_store(&args->collector->accept_gate, 1);
@@ -514,7 +514,7 @@ suite("CFlow Stream execution") {
         cflow_stream_execution execution = {0};
         cflow_stream_execution_snapshot snapshot = {0};
         cflow_scheduler workers = {0};
-        turbo_thread_t cancel_thread = NULL;
+        salts_thread_t cancel_thread = NULL;
 
         collector_state.block_accept = true;
         collector_state.execution = &execution;
@@ -525,7 +525,7 @@ suite("CFlow Stream execution") {
                         execution_collector(&collector_state, 2u)),
                     CFLOW_STREAM_EXECUTION_OK);
         while (!atomic_load(&collector_state.accept_entered))
-            turbo_sleep_ms(1u);
+            salts_sleep_ms(1u);
         check_equal(collector_state.wait_in_callback,
                     CFLOW_STREAM_EXECUTION_WOULD_BLOCK);
         check_equal(collector_state.cancel_in_callback,
@@ -534,13 +534,13 @@ suite("CFlow Stream execution") {
                     CFLOW_STREAM_EXECUTION_WOULD_BLOCK);
 
         cancel_args.execution = &execution;
-        check_equal(turbo_thread_create(
+        check_equal(salts_thread_create(
                         &cancel_thread, execution_cancel_thread, &cancel_args),
                     0);
         while (!atomic_load(&cancel_args.entered))
-            turbo_sleep_ms(1u);
+            salts_sleep_ms(1u);
         atomic_store(&collector_state.accept_gate, 1);
-        check_equal(turbo_thread_join(&cancel_thread), 0);
+        check_equal(salts_thread_join(&cancel_thread), 0);
         check_true(cancel_args.status == CFLOW_STREAM_EXECUTION_OK ||
                    cancel_args.status == CFLOW_STREAM_EXECUTION_TERMINATED);
         check_true(cflow_stream_execution_get_snapshot(&execution, &snapshot));
@@ -570,7 +570,7 @@ suite("CFlow Stream execution") {
         cflow_stream stream = {0};
         cflow_stream_execution execution = {0};
         cflow_scheduler workers = {0};
-        turbo_thread_t release_thread = NULL;
+        salts_thread_t release_thread = NULL;
         cflow_stream_execution_status destroy_status;
 
         collector_state.block_accept = true;
@@ -585,8 +585,8 @@ suite("CFlow Stream execution") {
                         execution_collector(&collector_state, 2u)),
                     CFLOW_STREAM_EXECUTION_OK);
         while (!atomic_load(&collector_state.accept_entered))
-            turbo_sleep_ms(1u);
-        check_equal(turbo_thread_create(
+            salts_sleep_ms(1u);
+        check_equal(salts_thread_create(
                         &release_thread,
                         execution_destroy_release_thread,
                         &release_args),
@@ -595,7 +595,7 @@ suite("CFlow Stream execution") {
         atomic_store(&release_args.destroy_entered, 1);
         destroy_status = cflow_stream_execution_destroy(&execution);
         atomic_store(&release_args.destroy_returned, 1);
-        check_equal(turbo_thread_join(&release_thread), 0);
+        check_equal(salts_thread_join(&release_thread), 0);
 
         check_true(atomic_load(&release_args.observed_pending));
         check_equal(destroy_status, CFLOW_STREAM_EXECUTION_OK);

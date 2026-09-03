@@ -1,6 +1,6 @@
 cmake_add_executable(junit_to_html
   SOURCES junit_to_html.c
-  LIBS Rocida::Core Rocida::CmdParser Rocida::XmlParser
+  LIBS Salts::Core Salts::CmdParser Salts::XmlParser
   FOLDER "tinytest/tools")
 
 target_compile_features(junit_to_html PRIVATE c_std_11)

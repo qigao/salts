@@ -105,7 +105,7 @@ int cflow_io_file_runtime_init(cflow_io_file_runtime *runtime,
 /**
  * Drives at most max_steps state transitions and file completion callbacks.
  * Exactly one thread may drive a runtime; reentrant or concurrent drive is
- * rejected with TURBO_EBUSY.
+ * rejected with SALTS_EBUSY.
  */
 int cflow_io_file_runtime_run_ready(cflow_io_file_runtime *runtime, size_t max_steps,
                                     size_t *progressed);
@@ -121,7 +121,7 @@ bool cflow_io_file_runtime_get_stats(const cflow_io_file_runtime *runtime,
                                      cflow_io_file_runtime_stats *out);
 
 /**
- * Destroys a closed quiescent runtime with no open files. TURBO_EBUSY leaves
+ * Destroys a closed quiescent runtime with no open files. SALTS_EBUSY leaves
  * the runtime owned and retryable.
  */
 int cflow_io_file_runtime_destroy(cflow_io_file_runtime *runtime);
@@ -139,7 +139,7 @@ int cflow_io_file_runtime_destroy(cflow_io_file_runtime *runtime);
  * @param file Zero-initialized destination handle
  * @param path Non-empty platform path
  * @param config Capacities, explicit backend, access flags, and callback
- * @return TURBO_OK, TURBO_EINVAL, TURBO_ENOTSUP, TURBO_ENOMEM, or a negative
+ * @return SALTS_OK, SALTS_EINVAL, SALTS_ENOTSUP, SALTS_ENOMEM, or a negative
  *         native path/open error
  */
 int cflow_io_file_open(cflow_io_file *file, const char *path, const cflow_io_file_config *config);
@@ -181,13 +181,13 @@ cflow_io_cancel_status cflow_io_file_try_cancel(cflow_io_file *file,
  * Drives at most max_steps Actor, callback, or acknowledgement actions.
  *
  * Exactly one thread may drive a file. Completion callbacks run synchronously
- * on that driver thread. Reentrant/concurrent drive returns TURBO_EBUSY and
+ * on that driver thread. Reentrant/concurrent drive returns SALTS_EBUSY and
  * leaves progressed unchanged.
  *
  * @param file Open facade
  * @param max_steps Nonzero hard work bound
  * @param progressed Receives the number of completed driver actions
- * @return TURBO_OK, TURBO_EINVAL, TURBO_EBUSY, or TURBO_EPROTO
+ * @return SALTS_OK, SALTS_EINVAL, SALTS_EBUSY, or SALTS_EPROTO
  */
 int cflow_io_file_run_ready(cflow_io_file *file, size_t max_steps, size_t *progressed);
 
@@ -205,7 +205,7 @@ bool cflow_io_file_get_stats(const cflow_io_file *file, cflow_io_file_stats *out
  *
  * The caller must stop and join the driver and all submit/cancel producers
  * before destroy. Destroy is an exclusive control-plane operation and must not
- * race any other facade API entry. TURBO_EBUSY leaves the object owned and
+ * race any other facade API entry. SALTS_EBUSY leaves the object owned and
  * retryable. After quiescence, native close errors are returned after remaining
  * owned resources are released and the public handle is cleared.
  */

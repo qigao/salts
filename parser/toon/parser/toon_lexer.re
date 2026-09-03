@@ -18,7 +18,7 @@
 #endif
 
 static inline const char *skip_ws(const char *p, const char *end) {
-    return turbo_simd_skip_horizontal_whitespace(p, end);
+    return salts_simd_skip_horizontal_whitespace(p, end);
 }
 
 static inline int lex_is_bool(const char *s, size_t len, int *val) {
@@ -70,7 +70,7 @@ lex_start:
         }
 
         // Check if the rest of the line is empty or a comment
-        const char *temp = turbo_simd_skip_horizontal_whitespace(YYCURSOR, YYLIMIT);
+        const char *temp = salts_simd_skip_horizontal_whitespace(YYCURSOR, YYLIMIT);
 
         if (temp == YYLIMIT || *temp == '\n' || *temp == '\r' || *temp == '#') {
             // Skip empty lines/comments for indentation purposes
@@ -80,7 +80,7 @@ lex_start:
                 lexer->line++;
                 goto lex_start;
             } else if (temp < YYLIMIT && *temp == '#') {
-                YYCURSOR = turbo_simd_find_any4(temp + 1, YYLIMIT, '\r', '\n', '\0', '\0');
+                YYCURSOR = salts_simd_find_any4(temp + 1, YYLIMIT, '\r', '\n', '\0', '\0');
                 goto lex_start;
             } else if (temp == YYLIMIT) {
                 YYCURSOR = YYLIMIT;
@@ -122,12 +122,12 @@ lex_loop:
     token_start = YYCURSOR;
 
     if (YYCURSOR < YYLIMIT && *YYCURSOR == '#') {
-        YYCURSOR = turbo_simd_find_any4(YYCURSOR + 1, YYLIMIT, '\r', '\n', '\0', '\0');
+        YYCURSOR = salts_simd_find_any4(YYCURSOR + 1, YYLIMIT, '\r', '\n', '\0', '\0');
         goto lex_start;
     }
 
     if (YYCURSOR < YYLIMIT && *YYCURSOR == '"') {
-        const char *string_end = turbo_simd_find_any4(YYCURSOR + 1, YYLIMIT,
+        const char *string_end = salts_simd_find_any4(YYCURSOR + 1, YYLIMIT,
                                                        '"', '\r', '\n', '\0');
         if (string_end < YYLIMIT && *string_end == '"') {
             token->type = TOON_TOKEN_VALUE;

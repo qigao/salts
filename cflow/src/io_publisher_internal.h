@@ -3,7 +3,7 @@
 
 #include <cflow/io_publisher.h>
 
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 #include "value_storage.h"
 
@@ -31,8 +31,8 @@ typedef struct cflow_io_publisher_state {
     cflow_executor executor;
     cflow_value_slot result;
     cflow_io_publisher_entry *entries;
-    turbo_mutex_t gate;
-    turbo_cond_t changed;
+    salts_mutex_t gate;
+    salts_cond_t changed;
     cflow_waker source_waker;
     cflow_io_request_id request_id;
     size_t wake_inflight;

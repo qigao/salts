@@ -1,7 +1,7 @@
 #include "crpc_internal.h"
 
 #include <json_cserde_reader.h>
-#include <turbo_vstr.h>
+#include <salts_vstr.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -93,14 +93,14 @@ static bool crpc_server_batch_minimum_response_size(size_t item_count, size_t *o
 
 static int crpc_server_bounded_length(const char *text, size_t limit, size_t *out_size) {
   size_t index;
-  if (text == NULL || out_size == NULL) return TURBO_EINVAL;
+  if (text == NULL || out_size == NULL) return SALTS_EINVAL;
   for (index = 0u; index <= limit; ++index) {
     if (text[index] == '\0') {
       *out_size = index;
-      return TURBO_OK;
+      return SALTS_OK;
     }
   }
-  return TURBO_ENAMETOOLONG;
+  return SALTS_ENAMETOOLONG;
 }
 
 static int crpc_server_config_validate(const crpc_server_config *config, size_t *out_target_bytes,
@@ -113,18 +113,18 @@ static int crpc_server_config_validate(const crpc_server_config *config, size_t 
       config->http.max_response_body_bytes == 0u ||
       config->http.max_buffered_response_body_bytes == 0u || out_target_bytes == NULL ||
       out_method_bytes == NULL)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (config->method_capacity > SIZE_MAX / sizeof(crpc_server_method_record) ||
       config->max_batch_items > SIZE_MAX / sizeof(crpc_encoded_request) ||
       !crpc_server_batch_minimum_response_size(config->max_batch_items, &minimum_response_size))
-    return TURBO_ERANGE;
-  if (config->http.max_buffered_response_body_bytes < minimum_response_size) return TURBO_EMSGSIZE;
+    return SALTS_ERANGE;
+  if (config->http.max_buffered_response_body_bytes < minimum_response_size) return SALTS_EMSGSIZE;
   if (!crpc_server_multiply(config->method_capacity, config->http.max_target_bytes + 1u,
                             out_target_bytes) ||
       !crpc_server_multiply(config->method_capacity, config->max_method_bytes + 1u,
                             out_method_bytes))
-    return TURBO_ERANGE;
-  return TURBO_OK;
+    return SALTS_ERANGE;
+  return SALTS_OK;
 }
 
 static void crpc_server_impl_free(crpc_server_impl *impl) {
@@ -163,7 +163,7 @@ static int crpc_server_protocol_error(crpc_server_impl *server, size_t response_
   int status =
       crpc_json_encode_error(null_id, request_id, code, message, NULL, NULL,
                              server->config.max_json_depth, response_body_limit, &out->encoded);
-  if (status == TURBO_OK) out->emit = true;
+  if (status == SALTS_OK) out->emit = true;
   return status;
 }
 
@@ -222,7 +222,7 @@ static int crpc_server_dispatch_object(crpc_server_impl *server,
   if (!notification_shape || params_count > 1u || id_count > 1u ||
       (params_count == 1u && json_type(params) != JSON_ARRAY && json_type(params) != JSON_OBJECT) ||
       (id_count == 1u && !crpc_json_uint64(id, &request_id))) {
-    if (notification) return TURBO_OK;
+    if (notification) return SALTS_OK;
     return crpc_server_protocol_error(server, response_body_limit, true, 0u, CRPC_INVALID_REQUEST,
                                       "Invalid Request", out);
   }
@@ -231,14 +231,14 @@ static int crpc_server_dispatch_object(crpc_server_impl *server,
       crpc_server_find_method(server, http_request->path,
                               (const unsigned char *)json_string(method), json_string_len(method));
   if (record == NULL) {
-    if (notification) return TURBO_OK;
+    if (notification) return SALTS_OK;
     return crpc_server_protocol_error(server, response_body_limit, false, request_id,
                                       CRPC_METHOD_NOT_FOUND, "Method not found", out);
   }
   if (params_count == 1u) {
     params_reader = json_cserde_reader_create(params, server->config.max_json_depth);
     if (params_reader == NULL) {
-      if (notification) return TURBO_OK;
+      if (notification) return SALTS_OK;
       return crpc_server_protocol_error(server, response_body_limit, false, request_id,
                                         CRPC_INTERNAL_ERROR, "Internal error", out);
     }
@@ -264,15 +264,15 @@ static int crpc_server_dispatch_object(crpc_server_impl *server,
 
   if (notification) {
     crpc_encoded_request_destroy(&response_context.encoded);
-    return TURBO_OK;
+    return SALTS_OK;
   }
-  if (handler_status != TURBO_OK || !response_context.completed) {
+  if (handler_status != SALTS_OK || !response_context.completed) {
     crpc_encoded_request_destroy(&response_context.encoded);
     return crpc_server_protocol_error(server, response_body_limit, false, request_id,
                                       CRPC_INTERNAL_ERROR, "Internal error", out);
   }
-  status = response_context.encoded.data != NULL ? TURBO_OK : TURBO_EPROTO;
-  if (status == TURBO_OK) {
+  status = response_context.encoded.data != NULL ? SALTS_OK : SALTS_EPROTO;
+  if (status == SALTS_OK) {
     out->emit = true;
     out->encoded = response_context.encoded;
   }
@@ -290,44 +290,44 @@ static int crpc_server_batch(crpc_server_impl *server,
   size_t framing_size;
   size_t item_response_limit;
   size_t index;
-  int status = TURBO_OK;
+  int status = SALTS_OK;
 
   *out = (crpc_server_dispatch_result){0};
   if (item_count == 0u || item_count > server->config.max_batch_items)
     return crpc_server_protocol_error(server, server->response_body_limit, true, 0u,
                                       CRPC_INVALID_REQUEST, "Invalid Request", out);
   if (!crpc_server_add(item_count, 1u, &framing_size) || framing_size > server->response_body_limit)
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   item_response_limit = (server->response_body_limit - framing_size) / item_count;
-  if (item_response_limit < sizeof(CRPC_SERVER_LARGEST_PROTOCOL_ERROR) - 1u) return TURBO_EMSGSIZE;
+  if (item_response_limit < sizeof(CRPC_SERVER_LARGEST_PROTOCOL_ERROR) - 1u) return SALTS_EMSGSIZE;
   responses = (crpc_encoded_request *)calloc(item_count, sizeof(*responses));
-  if (responses == NULL) return TURBO_ENOMEM;
+  if (responses == NULL) return SALTS_ENOMEM;
   for (index = 0u; index < item_count; ++index) {
     const int item_status = crpc_server_dispatch_object(
         server, http_request, json_array_get(array, index), item_response_limit, &item_result);
-    if (item_status != TURBO_OK) {
-      if (status == TURBO_OK) status = item_status;
+    if (item_status != SALTS_OK) {
+      if (status == SALTS_OK) status = item_status;
       crpc_encoded_request_destroy(&item_result.encoded);
       continue;
     }
     if (item_result.emit) {
       const size_t separator_size = response_count == 0u ? 0u : 1u;
-      if (status != TURBO_OK || aggregate_size > server->response_body_limit ||
+      if (status != SALTS_OK || aggregate_size > server->response_body_limit ||
           separator_size > server->response_body_limit - aggregate_size ||
           item_result.encoded.size >
               server->response_body_limit - aggregate_size - separator_size) {
         crpc_encoded_request_destroy(&item_result.encoded);
-        if (status == TURBO_OK) status = TURBO_EMSGSIZE;
+        if (status == SALTS_OK) status = SALTS_EMSGSIZE;
         continue;
       }
       aggregate_size += separator_size + item_result.encoded.size;
       responses[response_count++] = item_result.encoded;
     }
   }
-  if (status == TURBO_OK && response_count != 0u) {
+  if (status == SALTS_OK && response_count != 0u) {
     status = crpc_json_encode_batch(responses, response_count, server->response_body_limit,
                                     &out->encoded);
-    if (status == TURBO_OK) out->emit = true;
+    if (status == SALTS_OK) out->emit = true;
   }
   for (index = 0u; index < response_count; ++index)
     crpc_encoded_request_destroy(&responses[index]);
@@ -342,7 +342,7 @@ static int crpc_server_route_handler(void *user, const chttp_server_request_view
   json_value_t *root = NULL;
   int status;
 
-  if (server == NULL || request == NULL || response == NULL) return TURBO_EINVAL;
+  if (server == NULL || request == NULL || response == NULL) return SALTS_EINVAL;
   if (request->body == NULL || request->body_size == 0u) {
     status = crpc_server_protocol_error(server, server->response_body_limit, true, 0u,
                                         CRPC_PARSE_ERROR, "Parse error", &result);
@@ -361,7 +361,7 @@ static int crpc_server_route_handler(void *user, const chttp_server_request_view
       status =
           crpc_server_dispatch_object(server, request, root, server->response_body_limit, &result);
   }
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = result.emit ? chttp_server_reply(response, 200u, "application/json",
                                               result.encoded.data, result.encoded.size)
                          : chttp_server_reply(response, 204u, NULL, NULL, 0u);
@@ -376,12 +376,12 @@ int crpc_server_init(crpc_server *server, const crpc_server_config *config) {
   size_t method_bytes;
   int status;
 
-  if (server == NULL || config == NULL) return TURBO_EINVAL;
-  if (server->impl != NULL) return TURBO_EALREADY;
+  if (server == NULL || config == NULL) return SALTS_EINVAL;
+  if (server->impl != NULL) return SALTS_EALREADY;
   status = crpc_server_config_validate(config, &target_bytes, &method_bytes);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   impl = (crpc_server_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   impl->methods =
       (crpc_server_method_record *)calloc(config->method_capacity, sizeof(*impl->methods));
   impl->target_storage = (char *)calloc(target_bytes, 1u);
@@ -390,10 +390,10 @@ int crpc_server_init(crpc_server *server, const crpc_server_config *config) {
   if (impl->methods == NULL || impl->target_storage == NULL || impl->method_storage == NULL ||
       impl->method_scratch == NULL) {
     crpc_server_impl_free(impl);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   status = chttp_server_init(&impl->http, &config->http);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     crpc_server_impl_free(impl);
     return status;
   }
@@ -401,7 +401,7 @@ int crpc_server_init(crpc_server *server, const crpc_server_config *config) {
   impl->config.http.tls = NULL;
   impl->response_body_limit = config->http.max_buffered_response_body_bytes;
   server->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 chttp_server *crpc_server_http(crpc_server *server) {
@@ -420,19 +420,19 @@ int crpc_server_register(crpc_server *server, const char *target, const crpc_met
   size_t index;
   int status;
 
-  if (impl == NULL || target == NULL || method == NULL || handler == NULL) return TURBO_EINVAL;
-  if (impl->started) return TURBO_EBUSY;
+  if (impl == NULL || target == NULL || method == NULL || handler == NULL) return SALTS_EINVAL;
+  if (impl->started) return SALTS_EBUSY;
   status = crpc_server_bounded_length(target, impl->config.http.max_target_bytes, &target_size);
-  if (status != TURBO_OK || target_size == 0u) return status != TURBO_OK ? status : TURBO_EINVAL;
-  if (memchr(target, ':', target_size) != NULL) return TURBO_EINVAL;
+  if (status != SALTS_OK || target_size == 0u) return status != SALTS_OK ? status : SALTS_EINVAL;
+  if (memchr(target, ':', target_size) != NULL) return SALTS_EINVAL;
   status = crpc_method_format(method, impl->config.max_method_bytes, impl->method_scratch,
                               impl->config.max_method_bytes + 1u);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   for (index = 0u; index < impl->method_count; ++index)
     if (strcmp(impl->methods[index].target, target) == 0 &&
         strcmp(impl->methods[index].method, impl->method_scratch) == 0)
-      return TURBO_EALREADY;
-  if (impl->method_count == impl->config.method_capacity) return TURBO_ENOBUFS;
+      return SALTS_EALREADY;
+  if (impl->method_count == impl->config.method_capacity) return SALTS_ENOBUFS;
   record = &impl->methods[impl->method_count];
   record->target =
       impl->target_storage + impl->method_count * (impl->config.http.max_target_bytes + 1u);
@@ -440,36 +440,36 @@ int crpc_server_register(crpc_server *server, const char *target, const crpc_met
   memcpy(record->target, target, target_size + 1u);
   memcpy(record->method, impl->method_scratch, strlen(impl->method_scratch) + 1u);
   status = crpc_bind_callable(method->callable, &callable, &has_callable);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   target_exists = crpc_server_target_registered(impl, record->target);
   if (!target_exists) {
     status = chttp_server_post(&impl->http, record->target, crpc_server_route_handler, impl);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
   }
   record->callable = callable;
   record->has_callable = has_callable;
   record->handler = handler;
   record->user = user;
   ++impl->method_count;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int crpc_server_response_result(crpc_server_response *response, crpc_encode_value_fn encode,
                                 void *user) {
   crpc_server_response_context *context;
   int status;
-  if (response == NULL || response->impl == NULL) return TURBO_EINVAL;
+  if (response == NULL || response->impl == NULL) return SALTS_EINVAL;
   context = (crpc_server_response_context *)response->impl;
-  if (context->magic != CRPC_SERVER_RESPONSE_MAGIC || context->server == NULL) return TURBO_EINVAL;
-  if (context->completed) return TURBO_EALREADY;
+  if (context->magic != CRPC_SERVER_RESPONSE_MAGIC || context->server == NULL) return SALTS_EINVAL;
+  if (context->completed) return SALTS_EALREADY;
   if (context->notification) {
     context->completed = true;
-    return TURBO_OK;
+    return SALTS_OK;
   }
   status = crpc_json_encode_result(context->request_id, encode, user,
                                    context->server->config.max_json_depth,
                                    context->response_body_limit, &context->encoded);
-  if (status == TURBO_OK) context->completed = true;
+  if (status == SALTS_OK) context->completed = true;
   return status;
 }
 
@@ -477,28 +477,28 @@ int crpc_server_response_error(crpc_server_response *response, int64_t code, con
                                crpc_encode_value_fn encode_data, void *data_user) {
   crpc_server_response_context *context;
   int status;
-  if (response == NULL || response->impl == NULL || message == NULL) return TURBO_EINVAL;
+  if (response == NULL || response->impl == NULL || message == NULL) return SALTS_EINVAL;
   context = (crpc_server_response_context *)response->impl;
-  if (context->magic != CRPC_SERVER_RESPONSE_MAGIC || context->server == NULL) return TURBO_EINVAL;
-  if (context->completed) return TURBO_EALREADY;
+  if (context->magic != CRPC_SERVER_RESPONSE_MAGIC || context->server == NULL) return SALTS_EINVAL;
+  if (context->completed) return SALTS_EALREADY;
   if (context->notification) {
     context->completed = true;
-    return TURBO_OK;
+    return SALTS_OK;
   }
   status = crpc_json_encode_error(false, context->request_id, code, message, encode_data, data_user,
                                   context->server->config.max_json_depth,
                                   context->response_body_limit, &context->encoded);
-  if (status == TURBO_OK) context->completed = true;
+  if (status == SALTS_OK) context->completed = true;
   return status;
 }
 
 int crpc_server_start(crpc_server *server) {
   crpc_server_impl *impl = crpc_server_get(server);
   int status;
-  if (impl == NULL) return TURBO_EINVAL;
-  if (impl->started) return TURBO_EALREADY;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->started) return SALTS_EALREADY;
   status = chttp_server_start(&impl->http);
-  if (status == TURBO_OK) impl->started = true;
+  if (status == SALTS_OK) impl->started = true;
   return status;
 }
 
@@ -506,25 +506,25 @@ int crpc_server_port(const crpc_server *server, uint16_t *out_port) {
   const crpc_server_impl *impl = crpc_server_get_const(server);
   if (impl == NULL) {
     if (out_port != NULL) *out_port = 0u;
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   }
   return chttp_server_port(&impl->http, out_port);
 }
 
 int crpc_server_stop(crpc_server *server, uint32_t timeout_ms) {
   crpc_server_impl *impl = crpc_server_get(server);
-  return impl != NULL ? chttp_server_stop(&impl->http, timeout_ms) : TURBO_EINVAL;
+  return impl != NULL ? chttp_server_stop(&impl->http, timeout_ms) : SALTS_EINVAL;
 }
 
 int crpc_server_destroy(crpc_server *server) {
   crpc_server_impl *impl;
   int status;
-  if (server == NULL) return TURBO_EINVAL;
+  if (server == NULL) return SALTS_EINVAL;
   impl = crpc_server_get(server);
-  if (impl == NULL) return TURBO_OK;
+  if (impl == NULL) return SALTS_OK;
   status = chttp_server_destroy(&impl->http);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   crpc_server_impl_free(impl);
   server->impl = NULL;
-  return TURBO_OK;
+  return SALTS_OK;
 }

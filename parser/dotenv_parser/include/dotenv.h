@@ -1,5 +1,5 @@
-#ifndef ROCIDA_DOTENV_H
-#define ROCIDA_DOTENV_H
+#ifndef SALTS_DOTENV_H
+#define SALTS_DOTENV_H
 
 #include <stdbool.h>
 
@@ -43,4 +43,4 @@ int dotenv_sync_environment(const char *name);
 }
 #endif
 
-#endif // ROCIDA_DOTENV_H
+#endif // SALTS_DOTENV_H

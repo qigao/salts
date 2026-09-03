@@ -1,8 +1,8 @@
 #ifndef CNET_CNET_H
 #define CNET_CNET_H
 
-#include <turbo/error_codes.h>
-#include <turbo/native_io.h>
+#include <salts/error_codes.h>
+#include <salts/native_io.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -60,6 +60,12 @@ typedef struct cnet_receive_view {
   size_t size;
   cnet_message_kind kind;
 } cnet_receive_view;
+
+/** One immutable byte range borrowed by a synchronous CNet admission call. */
+typedef struct cnet_const_buffer {
+  const void *data;
+  size_t size;
+} cnet_const_buffer;
 
 typedef void (*cnet_state_fn)(void *user, cnet_connection connection, cnet_connection_state state,
                               const cnet_error *error);
@@ -177,7 +183,7 @@ typedef struct cnet_listener_config {
  *
  * @param client Zero-initialized output owner.
  * @param config Borrowed configuration copied during initialization.
- * @return `TURBO_OK`, `TURBO_EINVAL` for an invalid bound/backend, or a
+ * @return `SALTS_OK`, `SALTS_EINVAL` for an invalid bound/backend, or a
  * resource/backend initialization error. No partial client is published.
  */
 int cnet_client_init(cnet_client *client, const cnet_client_config *config);
@@ -186,8 +192,8 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config);
  * Copies all options needed after return. On immediate failure `out_connection`
  * remains zero and no callback is delivered. `observer.on_state` is required.
  *
- * @return `TURBO_OK` for asynchronous admission, a URI/configuration error,
- * `TURBO_ENOBUFS` at the hard connection/command bound, or `TURBO_ESHUTDOWN`
+ * @return `SALTS_OK` for asynchronous admission, a URI/configuration error,
+ * `SALTS_ENOBUFS` at the hard connection/command bound, or `SALTS_ESHUTDOWN`
  * after stop begins.
  */
 int cnet_connect(cnet_client *client, const cnet_connect_options *options,
@@ -196,11 +202,23 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
 /**
  * Copies `size` bytes into bounded command storage before returning success.
  * If `observer.on_send` is present it runs once after the full write completes.
- * @return `TURBO_OK`, `TURBO_EMSGSIZE`, `TURBO_ENOENT` for a stale handle,
- * `TURBO_EBUSY` before connected, while another write is pending, or while
+ * @return `SALTS_OK`, `SALTS_EMSGSIZE`, `SALTS_ENOENT` for a stale handle,
+ * `SALTS_EBUSY` before connected, while another write is pending, or while
  * closing, plus a bounded queue error.
  */
 int cnet_send(cnet_client *client, cnet_connection connection, const void *data, size_t size);
+
+/**
+ * Copies the ordered concatenation of immutable, non-empty `segments` into
+ * one bounded command slot before returning success. The descriptor array and
+ * its backing ranges are borrowed only for this call. Completion, ordering,
+ * busy-state, and queue errors are identical to `cnet_send`; `on_send` reports
+ * the checked total byte count once. NULL data, empty segments, or zero count
+ * return `SALTS_EINVAL`; an overflowing or oversized total returns
+ * `SALTS_EMSGSIZE` without admitting a write.
+ */
+int cnet_sendv(cnet_client *client, cnet_connection connection,
+               const cnet_const_buffer *segments, size_t segment_count);
 
 /**
  * Copies one final byte message and closes the stream only after that write
@@ -213,13 +231,13 @@ int cnet_send_and_close(cnet_client *client, cnet_connection connection, const v
 /**
  * Requests exactly `demand` future receive values. `on_receive` is required.
  * @return The same handle/state/queue errors as `cnet_send`; zero demand is
- * `TURBO_EINVAL`.
+ * `SALTS_EINVAL`.
  */
 int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand);
 
 /**
  * Asynchronously begins an idempotence-checked close transition.
- * @return `TURBO_OK`, `TURBO_EALREADY`, `TURBO_ENOENT`, `TURBO_ESHUTDOWN`, or
+ * @return `SALTS_OK`, `SALTS_EALREADY`, `SALTS_ENOENT`, `SALTS_ESHUTDOWN`, or
  * a bounded queue error.
  */
 int cnet_close(cnet_client *client, cnet_connection connection);
@@ -237,8 +255,8 @@ int cnet_close(cnet_client *client, cnet_connection connection);
  * @param client Initialized client owned by the calling progress thread.
  * @param timeout_ms Maximum time to wait for progress.
  * @param out_events Receives the number of callbacks delivered by this call.
- * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_EBUSY` for concurrent or
- * recursive polling, `TURBO_ESHUTDOWN` after stop begins, or the first owner
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EBUSY` for concurrent or
+ * recursive polling, `SALTS_ESHUTDOWN` after stop begins, or the first owner
  * progress error.
  */
 int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_events);
@@ -249,16 +267,16 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
  * may be called concurrently from a non-owner thread. Concurrent wakes are
  * coalesced. Wake callers must stop before client destroy.
  *
- * @return TURBO_OK, TURBO_EINVAL, TURBO_ESHUTDOWN, or a native wake error.
+ * @return SALTS_OK, SALTS_EINVAL, SALTS_ESHUTDOWN, or a native wake error.
  */
 int cnet_client_wake(cnet_client *client);
 
 /**
  * Closes admission and live connections, then drives terminal callbacks and
  * coroutine completions to quiescence within `timeout_ms`. Retry after
- * `TURBO_ETIMEDOUT`.
- * Calling from this client's callback returns `TURBO_EBUSY`.
- * @return `TURBO_OK` only after quiescence, or the first drain/progress error.
+ * `SALTS_ETIMEDOUT`.
+ * Calling from this client's callback returns `SALTS_EBUSY`.
+ * @return `SALTS_OK` only after quiescence, or the first drain/progress error.
  * A non-timeout progress error may be returned after quiescence was reached;
  * the caller must still attempt `cnet_client_destroy()` to release the client.
  */
@@ -266,7 +284,7 @@ int cnet_client_stop(cnet_client *client, uint32_t timeout_ms);
 
 /**
  * Requires a completed stop. Calling from this client's callback is rejected.
- * A NULL internal implementation is already destroyed and returns `TURBO_OK`.
+ * A NULL internal implementation is already destroyed and returns `SALTS_OK`.
  */
 int cnet_client_destroy(cnet_client *client);
 
@@ -277,8 +295,8 @@ int cnet_client_destroy(cnet_client *client);
  *
  * @param client Zero-initialized reusable output profile.
  * @param config Explicit trust, client identity, SNI, and ALPN policy.
- * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_EALREADY`, `TURBO_ERANGE`,
- * `TURBO_ENOMEM`, or `TURBO_EIO` for trust/certificate/BoringSSL setup failure.
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EALREADY`, `SALTS_ERANGE`,
+ * `SALTS_ENOMEM`, or `SALTS_EIO` for trust/certificate/BoringSSL setup failure.
  */
 int cnet_tls_client_init(cnet_tls_client *client, const cnet_tls_client_config *config);
 
@@ -287,7 +305,7 @@ int cnet_tls_client_init(cnet_tls_client *client, const cnet_tls_client_config *
  * this profile retain their own reference. Repeated destroy is successful.
  * This control-plane call must not overlap init or connect using the same
  * wrapper.
- * @return `TURBO_OK`, or `TURBO_EINVAL` for a NULL wrapper.
+ * @return `SALTS_OK`, or `SALTS_EINVAL` for a NULL wrapper.
  */
 int cnet_tls_client_destroy(cnet_tls_client *client);
 
@@ -298,8 +316,8 @@ int cnet_tls_client_destroy(cnet_tls_client *client);
  *
  * @param server Zero-initialized reusable output context.
  * @param config Synchronously consumed certificate, trust, client-auth, and ALPN policy.
- * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_EALREADY`, `TURBO_ERANGE`,
- * `TURBO_ENOMEM`, or `TURBO_EIO` for certificate/BoringSSL setup failure.
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EALREADY`, `SALTS_ERANGE`,
+ * `SALTS_ENOMEM`, or `SALTS_EIO` for certificate/BoringSSL setup failure.
  */
 int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *config);
 
@@ -307,16 +325,16 @@ int cnet_tls_server_init(cnet_tls_server *server, const cnet_tls_server_config *
  * Releases the public context reference. Existing accepted sessions retain
  * their own reference. This control-plane call must not overlap init or accept
  * using the same `server` wrapper.
- * @return `TURBO_OK` (including an already destroyed wrapper), or `TURBO_EINVAL`.
+ * @return `SALTS_OK` (including an already destroyed wrapper), or `SALTS_EINVAL`.
  */
 int cnet_tls_server_destroy(cnet_tls_server *server);
 
 /**
  * Copies the negotiated ALPN protocol into `buffer` after a TLS connection is
  * open. `capacity` includes the trailing NUL and `out_size` excludes it.
- * Returns `TURBO_ENOENT` when no protocol was negotiated and `TURBO_ENOTSUP`
- * for a plaintext connection. Other errors are `TURBO_ENOTCONN`,
- * `TURBO_EMSGSIZE`, and the standard invalid/stale-handle statuses.
+ * Returns `SALTS_ENOENT` when no protocol was negotiated and `SALTS_ENOTSUP`
+ * for a plaintext connection. Other errors are `SALTS_ENOTCONN`,
+ * `SALTS_EMSGSIZE`, and the standard invalid/stale-handle statuses.
  */
 int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, char *buffer,
                              size_t capacity, size_t *out_size);
@@ -340,7 +358,7 @@ int cnet_listener_wait(cnet_listener *listener, uint32_t timeout_ms, int *out_re
 /**
  * Accepts at most one pending TCP peer and transfers its socket into `client`.
  * Success publishes a generation-checked handle and guarantees a later state
- * callback. No pending peer returns `TURBO_ETIMEDOUT`. Admission failure closes
+ * callback. No pending peer returns `SALTS_ETIMEDOUT`. Admission failure closes
  * the native peer and leaves `out_connection` zero.
  */
 int cnet_listener_accept(cnet_listener *listener, cnet_client *client,
@@ -349,8 +367,8 @@ int cnet_listener_accept(cnet_listener *listener, cnet_client *client,
 /**
  * Accepts one TCP peer and begins a server-side TLS handshake before
  * CONNECTED. The caller must not destroy `server` concurrently with this call.
- * @return The plaintext accept statuses, plus `TURBO_ENOTSUP` when `client`
- * has no bounded TLS storage or `TURBO_EINVAL` for an invalid TLS context.
+ * @return The plaintext accept statuses, plus `SALTS_ENOTSUP` when `client`
+ * has no bounded TLS storage or `SALTS_EINVAL` for an invalid TLS context.
  */
 int cnet_listener_accept_tls(cnet_listener *listener, cnet_client *client,
                              const cnet_tls_server *server, const cnet_observer *observer,

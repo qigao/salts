@@ -12,7 +12,7 @@ the existing non-blocking Machine Mailbox admission API exactly once, then
 records the terminal result. No scheduler or Machine execution path is added.
 
 **Tech stack:** C11, CMeta descriptors, CFlow Clock/TimerQueue/Mailbox/Machine,
-Turbo Platform synchronization, TinyTest, CMake Presets, Lean 4.
+Salts Platform synchronization, TinyTest, CMake Presets, Lean 4.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-cflow-timer-events-design.md`
 

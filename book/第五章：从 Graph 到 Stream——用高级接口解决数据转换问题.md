@@ -1265,7 +1265,7 @@ Collector
 Vec_push_back
 ```
 
-那么它就知道太多 Rocida STL 细节。
+那么它就知道太多 CSTL 细节。
 
 更好的结构是：
 
@@ -1309,21 +1309,21 @@ Collector
 
 这也是模块边界逐渐成熟的表现。
 
-### 22.1 当前 Rocida STL 如何落地这条边界
+### 22.1 当前 CSTL 如何落地这条边界
 
-当前仓库中，Rocida STL 是 CMeta finite generic 的容器提供者。一次：
+当前仓库中，CSTL 是 CMeta finite generic 的容器提供者。一次：
 
 ```c
 typed(List, IntList, int);
 ```
 
-会生成具体 wrapper、类型与容器描述、borrowed Range 和 transactional Collector；但 list storage、节点分配、插入和销毁算法仍归 Rocida STL 所有。CFlow 只读取 Range，并通过 Collector terminal 写入 caller-owned zero-state 输出。
+会生成具体 wrapper、类型与容器描述、borrowed Range 和 transactional Collector；但 list storage、节点分配、插入和销毁算法仍归 CSTL 所有。CFlow 只读取 Range，并通过 Collector terminal 写入 caller-owned zero-state 输出。
 
-下面是当前 `Rocida::STLStream` 接口的一条完整最小路径：
+下面是当前 `Salts::CSTLStream` 接口的一条完整最小路径：
 
 ```c
 #include <stdbool.h>
-#include <rocida/stl/stream.h>
+#include <cstl/stream.h>
 
 typed(List, IntList, int);
 typed(List, LongList, long);
@@ -1339,8 +1339,8 @@ typed(map, value, long, square, (int value)) {
 int main(void) {
     IntList input = {0};
     LongList output = {0};
-    turbostl_stream_t pipeline = {0};
-    turbostl_collect_result result = {0};
+    cstl_stream_t pipeline = {0};
+    cstl_collect_result result = {0};
     int exit_code = 1;
 
     if (IntList_init(&input, 4u) != STL_OK) goto cleanup;
@@ -1356,7 +1356,7 @@ int main(void) {
 
 cleanup:
     LongList_destroy(&output);
-    turbostl_stream_destroy(&pipeline);
+    cstl_stream_destroy(&pipeline);
     IntList_destroy(&input);
     return exit_code;
 }

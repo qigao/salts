@@ -4,8 +4,8 @@
 
 #include "native_io_readiness.h"
 
-#include <turbo/clock.h>
-#include <turbo/error_codes.h>
+#include <salts/clock.h>
+#include <salts/error_codes.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -19,34 +19,34 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-enum { TURBO_IO_INDEX_NONE = UINT32_MAX };
+enum { SALTS_IO_INDEX_NONE = UINT32_MAX };
 
-typedef enum turbo_io_readiness_phase {
-  TURBO_IO_READINESS_FREE = 0,
-  TURBO_IO_READINESS_PENDING,
-  TURBO_IO_READINESS_TERMINAL
-} turbo_io_readiness_phase;
+typedef enum salts_io_readiness_phase {
+  SALTS_IO_READINESS_FREE = 0,
+  SALTS_IO_READINESS_PENDING,
+  SALTS_IO_READINESS_TERMINAL
+} salts_io_readiness_phase;
 
-typedef struct turbo_io_readiness_lane {
+typedef struct salts_io_readiness_lane {
   uint32_t head;
   uint32_t tail;
-} turbo_io_readiness_lane;
+} salts_io_readiness_lane;
 
-typedef struct turbo_io_readiness_endpoint {
+typedef struct salts_io_readiness_endpoint {
   int fd;
   uint32_t generation;
   size_t active_requests;
   uint32_t interests;
-  turbo_io_readiness_lane read_lane;
-  turbo_io_readiness_lane write_lane;
-  turbo_io_resource_kind resource_kind;
+  salts_io_readiness_lane read_lane;
+  salts_io_readiness_lane write_lane;
+  salts_io_resource_kind resource_kind;
   bool connected;
   bool connect_active;
   bool active;
-} turbo_io_readiness_endpoint;
+} salts_io_readiness_endpoint;
 
-typedef struct turbo_io_readiness_request {
-  turbo_io_readiness_phase phase;
+typedef struct salts_io_readiness_request {
+  salts_io_readiness_phase phase;
   native_io_request request;
   native_io_endpoint endpoint;
   native_io_operation operation;
@@ -55,15 +55,15 @@ typedef struct turbo_io_readiness_request {
   uint32_t next;
   bool write_lane;
   bool connect_started;
-} turbo_io_readiness_request;
+} salts_io_readiness_request;
 
-typedef struct turbo_io_readiness_impl {
-  turbo_io_impl base;
-  const turbo_io_readiness_driver_ops *driver_ops;
+typedef struct salts_io_readiness_impl {
+  salts_io_impl base;
+  const salts_io_readiness_driver_ops *driver_ops;
   void *driver_state;
-  turbo_io_readiness_endpoint *endpoints;
-  turbo_io_readiness_request *requests;
-  turbo_io_ready_event *ready_events;
+  salts_io_readiness_endpoint *endpoints;
+  salts_io_readiness_request *requests;
+  salts_io_ready_event *ready_events;
   uint32_t *free_endpoints;
   uint32_t *free_requests;
   uint32_t *terminal_requests;
@@ -85,14 +85,14 @@ typedef struct turbo_io_readiness_impl {
   uint64_t native_cancel_errors;
   bool admission_open;
   atomic_bool wake_pending;
-} turbo_io_readiness_impl;
+} salts_io_readiness_impl;
 
-typedef struct turbo_io_sigpipe_guard {
+typedef struct salts_io_sigpipe_guard {
   sigset_t blocked;
   sigset_t previous;
   bool active;
   bool had_pending;
-} turbo_io_sigpipe_guard;
+} salts_io_sigpipe_guard;
 
 static void readiness_counter_increment(uint64_t *counter) {
   if (*counter != UINT64_MAX) ++*counter;
@@ -107,26 +107,26 @@ static uint64_t readiness_endpoint_token(uint32_t index, uint32_t generation) {
   return ((uint64_t)generation << 32u) | (uint64_t)(index + 1u);
 }
 
-static turbo_io_readiness_endpoint *readiness_endpoint(turbo_io_readiness_impl *impl,
+static salts_io_readiness_endpoint *readiness_endpoint(salts_io_readiness_impl *impl,
                                                        native_io_endpoint endpoint) {
-  turbo_io_readiness_endpoint *record;
+  salts_io_readiness_endpoint *record;
   if (!native_io_endpoint_valid(endpoint) || endpoint.slot > impl->endpoint_capacity) return NULL;
   record = &impl->endpoints[endpoint.slot - 1u];
   return record->active && record->generation == endpoint.generation ? record : NULL;
 }
 
-static turbo_io_readiness_request *readiness_request(turbo_io_readiness_impl *impl,
+static salts_io_readiness_request *readiness_request(salts_io_readiness_impl *impl,
                                                      native_io_request request) {
-  turbo_io_readiness_request *record;
+  salts_io_readiness_request *record;
   if (!native_io_request_valid(request) || request.slot > impl->request_capacity) return NULL;
   record = &impl->requests[request.slot - 1u];
-  return record->phase != TURBO_IO_READINESS_FREE &&
+  return record->phase != SALTS_IO_READINESS_FREE &&
                  record->request.generation == request.generation
              ? record
              : NULL;
 }
 
-static int readiness_sigpipe_begin(turbo_io_sigpipe_guard *guard) {
+static int readiness_sigpipe_begin(salts_io_sigpipe_guard *guard) {
   sigset_t pending;
   int status;
   memset(guard, 0, sizeof(*guard));
@@ -136,10 +136,10 @@ static int readiness_sigpipe_begin(turbo_io_sigpipe_guard *guard) {
   if (status != 0) return -status;
   guard->active = true;
   if (sigpending(&pending) == 0) guard->had_pending = sigismember(&pending, SIGPIPE) == 1;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static void readiness_sigpipe_end(turbo_io_sigpipe_guard *guard) {
+static void readiness_sigpipe_end(salts_io_sigpipe_guard *guard) {
   sigset_t pending;
   if (guard == NULL || !guard->active) return;
   if (!guard->had_pending && sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE) == 1) {
@@ -158,79 +158,79 @@ static bool readiness_is_write(native_io_operation_kind kind) {
          kind == NATIVE_IO_OPERATION_PIPE_WRITE || kind == NATIVE_IO_OPERATION_TCP_CONNECT;
 }
 
-static turbo_io_readiness_lane *readiness_lane(turbo_io_readiness_endpoint *endpoint,
+static salts_io_readiness_lane *readiness_lane(salts_io_readiness_endpoint *endpoint,
                                                bool write_lane) {
   return write_lane ? &endpoint->write_lane : &endpoint->read_lane;
 }
 
-static uint32_t readiness_derived_interests(const turbo_io_readiness_endpoint *endpoint) {
+static uint32_t readiness_derived_interests(const salts_io_readiness_endpoint *endpoint) {
   uint32_t interests = 0u;
-  if (endpoint->read_lane.head != TURBO_IO_INDEX_NONE) interests |= TURBO_IO_READY_READ;
-  if (endpoint->write_lane.head != TURBO_IO_INDEX_NONE) interests |= TURBO_IO_READY_WRITE;
+  if (endpoint->read_lane.head != SALTS_IO_INDEX_NONE) interests |= SALTS_IO_READY_READ;
+  if (endpoint->write_lane.head != SALTS_IO_INDEX_NONE) interests |= SALTS_IO_READY_WRITE;
   return interests;
 }
 
-static int readiness_update_interests(turbo_io_readiness_impl *impl,
+static int readiness_update_interests(salts_io_readiness_impl *impl,
                                       native_io_endpoint endpoint_handle,
-                                      turbo_io_readiness_endpoint *endpoint) {
+                                      salts_io_readiness_endpoint *endpoint) {
   const uint32_t next = readiness_derived_interests(endpoint);
   int status;
-  if (next == endpoint->interests) return TURBO_OK;
+  if (next == endpoint->interests) return SALTS_OK;
   status = impl->driver_ops->update(
       impl->driver_state, endpoint->fd,
       readiness_endpoint_token(endpoint_handle.slot - 1u, endpoint->generation),
       endpoint->interests, next);
-  if (status == TURBO_OK) endpoint->interests = next;
+  if (status == SALTS_OK) endpoint->interests = next;
   return status;
 }
 
-static void readiness_lane_push(turbo_io_readiness_impl *impl,
-                                turbo_io_readiness_endpoint *endpoint, uint32_t index) {
-  turbo_io_readiness_request *request = &impl->requests[index];
-  turbo_io_readiness_lane *lane = readiness_lane(endpoint, request->write_lane);
+static void readiness_lane_push(salts_io_readiness_impl *impl,
+                                salts_io_readiness_endpoint *endpoint, uint32_t index) {
+  salts_io_readiness_request *request = &impl->requests[index];
+  salts_io_readiness_lane *lane = readiness_lane(endpoint, request->write_lane);
   request->previous = lane->tail;
-  request->next = TURBO_IO_INDEX_NONE;
-  if (lane->tail == TURBO_IO_INDEX_NONE) lane->head = index;
+  request->next = SALTS_IO_INDEX_NONE;
+  if (lane->tail == SALTS_IO_INDEX_NONE) lane->head = index;
   else impl->requests[lane->tail].next = index;
   lane->tail = index;
 }
 
-static void readiness_lane_remove(turbo_io_readiness_impl *impl,
-                                  turbo_io_readiness_endpoint *endpoint, uint32_t index) {
-  turbo_io_readiness_request *request = &impl->requests[index];
-  turbo_io_readiness_lane *lane = readiness_lane(endpoint, request->write_lane);
-  if (request->previous == TURBO_IO_INDEX_NONE) lane->head = request->next;
+static void readiness_lane_remove(salts_io_readiness_impl *impl,
+                                  salts_io_readiness_endpoint *endpoint, uint32_t index) {
+  salts_io_readiness_request *request = &impl->requests[index];
+  salts_io_readiness_lane *lane = readiness_lane(endpoint, request->write_lane);
+  if (request->previous == SALTS_IO_INDEX_NONE) lane->head = request->next;
   else impl->requests[request->previous].next = request->next;
-  if (request->next == TURBO_IO_INDEX_NONE) lane->tail = request->previous;
+  if (request->next == SALTS_IO_INDEX_NONE) lane->tail = request->previous;
   else impl->requests[request->next].previous = request->previous;
-  request->previous = TURBO_IO_INDEX_NONE;
-  request->next = TURBO_IO_INDEX_NONE;
+  request->previous = SALTS_IO_INDEX_NONE;
+  request->next = SALTS_IO_INDEX_NONE;
 }
 
-static void readiness_release_request(turbo_io_readiness_impl *impl,
-                                      turbo_io_readiness_request *request, uint32_t index) {
-  turbo_io_readiness_endpoint *endpoint = readiness_endpoint(impl, request->endpoint);
+static void readiness_release_request(salts_io_readiness_impl *impl,
+                                      salts_io_readiness_request *request, uint32_t index) {
+  salts_io_readiness_endpoint *endpoint = readiness_endpoint(impl, request->endpoint);
   if (endpoint != NULL && endpoint->active_requests != 0u) --endpoint->active_requests;
-  request->phase = TURBO_IO_READINESS_FREE;
+  request->phase = SALTS_IO_READINESS_FREE;
   request->operation = (native_io_operation){0};
   request->completion = (native_io_completion){0};
   impl->free_requests[impl->free_request_count++] = index;
   --impl->active_requests;
 }
 
-static void readiness_publish_terminal(turbo_io_readiness_impl *impl,
-                                       turbo_io_readiness_request *request, uint32_t index,
+static void readiness_publish_terminal(salts_io_readiness_impl *impl,
+                                       salts_io_readiness_request *request, uint32_t index,
                                        native_io_completion_kind kind, size_t bytes, int status,
                                        uint32_t native_status, size_t address_length) {
   const size_t tail = (impl->terminal_head + impl->terminal_count) % impl->request_capacity;
   if (request->operation.kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
-    turbo_io_readiness_endpoint *endpoint = readiness_endpoint(impl, request->endpoint);
+    salts_io_readiness_endpoint *endpoint = readiness_endpoint(impl, request->endpoint);
     if (endpoint != NULL) {
       endpoint->connect_active = false;
       endpoint->connected = kind == NATIVE_IO_COMPLETION_OK;
     }
   }
-  request->phase = TURBO_IO_READINESS_TERMINAL;
+  request->phase = SALTS_IO_READINESS_TERMINAL;
   request->completion = (native_io_completion){request->request,
                                               request->endpoint,
                                               kind,
@@ -246,14 +246,14 @@ static void readiness_publish_terminal(turbo_io_readiness_impl *impl,
   if (kind == NATIVE_IO_COMPLETION_FAILED) readiness_counter_increment(&impl->failed);
 }
 
-static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
-                                turbo_io_readiness_request *request, size_t *out_bytes,
+static int readiness_try_socket(salts_io_readiness_endpoint *endpoint,
+                                salts_io_readiness_request *request, size_t *out_bytes,
                                 size_t *out_address_length) {
-  turbo_io_sigpipe_guard guard;
+  salts_io_sigpipe_guard guard;
   ssize_t result;
   int saved_error = 0;
   int flags = MSG_DONTWAIT;
-  int guard_status = TURBO_OK;
+  int guard_status = SALTS_OK;
   socklen_t address_length = (socklen_t)request->operation.address_capacity;
   if (request->operation.kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
     int connect_error = 0;
@@ -266,7 +266,7 @@ static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
       if (result == 0 || (result < 0 && errno == EISCONN)) {
         *out_bytes = 0u;
         *out_address_length = 0u;
-        return TURBO_OK;
+        return SALTS_OK;
       }
       if (errno != EINPROGRESS && errno != EALREADY && errno != EAGAIN && errno != EWOULDBLOCK)
         return -errno;
@@ -281,7 +281,7 @@ static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
     if (connect_error != 0) return -connect_error;
     *out_bytes = 0u;
     *out_address_length = 0u;
-    return TURBO_OK;
+    return SALTS_OK;
   }
 #if defined(MSG_NOSIGNAL)
   if (request->write_lane) flags |= MSG_NOSIGNAL;
@@ -289,7 +289,7 @@ static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
 #if !defined(MSG_NOSIGNAL)
   if (request->write_lane) {
     guard_status = readiness_sigpipe_begin(&guard);
-    if (guard_status != TURBO_OK) return guard_status;
+    if (guard_status != SALTS_OK) return guard_status;
   }
 #else
   (void)guard;
@@ -325,18 +325,18 @@ static int readiness_try_socket(turbo_io_readiness_endpoint *endpoint,
               request->operation.address != NULL
           ? (size_t)address_length
           : 0u;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static int readiness_try_pipe(turbo_io_readiness_endpoint *endpoint,
-                              turbo_io_readiness_request *request, size_t *out_bytes) {
-  turbo_io_sigpipe_guard guard;
+static int readiness_try_pipe(salts_io_readiness_endpoint *endpoint,
+                              salts_io_readiness_request *request, size_t *out_bytes) {
+  salts_io_sigpipe_guard guard;
   ssize_t result;
   int saved_error = 0;
-  int guard_status = TURBO_OK;
+  int guard_status = SALTS_OK;
   if (request->write_lane) {
     guard_status = readiness_sigpipe_begin(&guard);
-    if (guard_status != TURBO_OK) return guard_status;
+    if (guard_status != SALTS_OK) return guard_status;
   }
   do {
     result = request->write_lane
@@ -347,27 +347,27 @@ static int readiness_try_pipe(turbo_io_readiness_endpoint *endpoint,
   if (request->write_lane) readiness_sigpipe_end(&guard);
   if (result < 0) return -saved_error;
   *out_bytes = (size_t)result;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static int readiness_try_operation(turbo_io_readiness_endpoint *endpoint,
-                                   turbo_io_readiness_request *request, size_t *out_bytes,
+static int readiness_try_operation(salts_io_readiness_endpoint *endpoint,
+                                   salts_io_readiness_request *request, size_t *out_bytes,
                                    size_t *out_address_length) {
   if (native_io_resource_kind_is_socket(endpoint->resource_kind))
     return readiness_try_socket(endpoint, request, out_bytes, out_address_length);
-  if (endpoint->resource_kind == TURBO_IO_RESOURCE_BYTE_PIPE) {
+  if (endpoint->resource_kind == SALTS_IO_RESOURCE_BYTE_PIPE) {
     *out_address_length = 0u;
     return readiness_try_pipe(endpoint, request, out_bytes);
   }
-  return TURBO_EINVAL;
+  return SALTS_EINVAL;
 }
 
 static bool readiness_would_block(int status) {
   return status == -EAGAIN || status == -EWOULDBLOCK;
 }
 
-static void readiness_finish_attempt(turbo_io_readiness_impl *impl,
-                                     turbo_io_readiness_request *request, uint32_t index,
+static void readiness_finish_attempt(salts_io_readiness_impl *impl,
+                                     salts_io_readiness_request *request, uint32_t index,
                                      int status, size_t bytes, size_t address_length) {
   if (status < 0) {
     readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_FAILED, 0u, status,
@@ -375,160 +375,160 @@ static void readiness_finish_attempt(turbo_io_readiness_impl *impl,
   } else if ((request->operation.kind == NATIVE_IO_OPERATION_TCP_RECV ||
               request->operation.kind == NATIVE_IO_OPERATION_PIPE_READ) &&
              bytes == 0u) {
-    readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_EOF, 0u, TURBO_EOF, 0u,
+    readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_EOF, 0u, SALTS_EOF, 0u,
                                0u);
   } else {
-    readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_OK, bytes, TURBO_OK, 0u,
+    readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_OK, bytes, SALTS_OK, 0u,
                                address_length);
   }
 }
 
-static int readiness_attach_endpoint(turbo_io_readiness_impl *impl, int fd,
-                                     turbo_io_resource_kind resource_kind,
+static int readiness_attach_endpoint(salts_io_readiness_impl *impl, int fd,
+                                     salts_io_resource_kind resource_kind,
                                      native_io_endpoint *out_endpoint) {
-  turbo_io_readiness_endpoint *endpoint;
+  salts_io_readiness_endpoint *endpoint;
   uint32_t index;
   size_t cursor;
-  if (!impl->admission_open) return TURBO_ESHUTDOWN;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
   for (cursor = 0u; cursor < impl->endpoint_capacity; ++cursor)
     if (impl->endpoints[cursor].active && impl->endpoints[cursor].fd == fd)
-      return TURBO_EALREADY;
-  if (impl->free_endpoint_count == 0u) return TURBO_ENOBUFS;
+      return SALTS_EALREADY;
+  if (impl->free_endpoint_count == 0u) return SALTS_ENOBUFS;
   index = impl->free_endpoints[--impl->free_endpoint_count];
   endpoint = &impl->endpoints[index];
   endpoint->fd = fd;
   endpoint->generation = readiness_next_generation(endpoint->generation);
   endpoint->active_requests = 0u;
   endpoint->interests = 0u;
-  endpoint->read_lane = (turbo_io_readiness_lane){TURBO_IO_INDEX_NONE, TURBO_IO_INDEX_NONE};
-  endpoint->write_lane = (turbo_io_readiness_lane){TURBO_IO_INDEX_NONE, TURBO_IO_INDEX_NONE};
+  endpoint->read_lane = (salts_io_readiness_lane){SALTS_IO_INDEX_NONE, SALTS_IO_INDEX_NONE};
+  endpoint->write_lane = (salts_io_readiness_lane){SALTS_IO_INDEX_NONE, SALTS_IO_INDEX_NONE};
   endpoint->resource_kind = resource_kind;
   endpoint->connected = false;
   endpoint->connect_active = false;
   endpoint->active = true;
   ++impl->endpoint_count;
   *out_endpoint = (native_io_endpoint){index + 1u, endpoint->generation};
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static int readiness_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
+static int readiness_attach_socket(salts_io_impl *base, uintptr_t native_socket,
                                    native_io_endpoint *out_endpoint) {
-  turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
-  turbo_io_resource_kind resource_kind;
+  salts_io_readiness_impl *impl = (salts_io_readiness_impl *)base;
+  salts_io_resource_kind resource_kind;
   int socket_type = 0;
   struct sockaddr_storage peer_address;
   socklen_t peer_address_length = (socklen_t)sizeof(peer_address);
   bool connected = false;
   int status;
   socklen_t option_length = (socklen_t)sizeof(socket_type);
-  if (!impl->admission_open) return TURBO_ESHUTDOWN;
-  if (native_socket > (uintptr_t)INT_MAX) return TURBO_EINVAL;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  if (native_socket > (uintptr_t)INT_MAX) return SALTS_EINVAL;
   if (getsockopt((int)native_socket, SOL_SOCKET, SO_TYPE, &socket_type, &option_length) != 0)
     return -errno;
   if (socket_type == SOCK_STREAM)
-    resource_kind = TURBO_IO_RESOURCE_STREAM_SOCKET;
+    resource_kind = SALTS_IO_RESOURCE_STREAM_SOCKET;
   else if (socket_type == SOCK_DGRAM)
-    resource_kind = TURBO_IO_RESOURCE_DATAGRAM_SOCKET;
+    resource_kind = SALTS_IO_RESOURCE_DATAGRAM_SOCKET;
   else
-    return TURBO_ENOTSUP;
-  if (resource_kind == TURBO_IO_RESOURCE_STREAM_SOCKET) {
+    return SALTS_ENOTSUP;
+  if (resource_kind == SALTS_IO_RESOURCE_STREAM_SOCKET) {
     if (getpeername((int)native_socket, (struct sockaddr *)&peer_address, &peer_address_length) == 0)
       connected = true;
     else if (errno != ENOTCONN)
       return -errno;
   }
   status = readiness_attach_endpoint(impl, (int)native_socket, resource_kind, out_endpoint);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     impl->endpoints[out_endpoint->slot - 1u].connected = connected;
   return status;
 }
 
-static int readiness_attach_pipe(turbo_io_impl *base, uintptr_t native_handle, uint32_t flags,
+static int readiness_attach_pipe(salts_io_impl *base, uintptr_t native_handle, uint32_t flags,
                                  native_io_endpoint *out_endpoint) {
   struct stat descriptor_stat;
   int descriptor_flags;
   int fd;
   (void)flags;
-  if (native_handle > (uintptr_t)INT_MAX) return TURBO_EINVAL;
+  if (native_handle > (uintptr_t)INT_MAX) return SALTS_EINVAL;
   fd = (int)native_handle;
   descriptor_flags = fcntl(fd, F_GETFL, 0);
   if (descriptor_flags < 0) return -errno;
-  if ((descriptor_flags & O_NONBLOCK) == 0) return TURBO_EINVAL;
+  if ((descriptor_flags & O_NONBLOCK) == 0) return SALTS_EINVAL;
   if (fstat(fd, &descriptor_stat) != 0) return -errno;
-  if (!S_ISFIFO(descriptor_stat.st_mode)) return TURBO_EINVAL;
-  return readiness_attach_endpoint((turbo_io_readiness_impl *)base, fd,
-                                   TURBO_IO_RESOURCE_BYTE_PIPE, out_endpoint);
+  if (!S_ISFIFO(descriptor_stat.st_mode)) return SALTS_EINVAL;
+  return readiness_attach_endpoint((salts_io_readiness_impl *)base, fd,
+                                   SALTS_IO_RESOURCE_BYTE_PIPE, out_endpoint);
 }
 
-static int readiness_release_endpoint(turbo_io_readiness_impl *impl,
+static int readiness_release_endpoint(salts_io_readiness_impl *impl,
                                       native_io_endpoint endpoint_handle,
                                       bool socket_endpoint) {
-  turbo_io_readiness_endpoint *endpoint = readiness_endpoint(impl, endpoint_handle);
+  salts_io_readiness_endpoint *endpoint = readiness_endpoint(impl, endpoint_handle);
   uint32_t index;
-  if (endpoint == NULL) return TURBO_ENOENT;
+  if (endpoint == NULL) return SALTS_ENOENT;
   if (socket_endpoint ? !native_io_resource_kind_is_socket(endpoint->resource_kind)
-                      : endpoint->resource_kind != TURBO_IO_RESOURCE_BYTE_PIPE)
-    return TURBO_EINVAL;
-  if (endpoint->active_requests != 0u || endpoint->interests != 0u) return TURBO_EBUSY;
+                      : endpoint->resource_kind != SALTS_IO_RESOURCE_BYTE_PIPE)
+    return SALTS_EINVAL;
+  if (endpoint->active_requests != 0u || endpoint->interests != 0u) return SALTS_EBUSY;
   index = endpoint_handle.slot - 1u;
   endpoint->active = false;
   endpoint->fd = -1;
-  endpoint->resource_kind = (turbo_io_resource_kind)0;
+  endpoint->resource_kind = (salts_io_resource_kind)0;
   endpoint->connected = false;
   endpoint->connect_active = false;
   impl->free_endpoints[impl->free_endpoint_count++] = index;
   --impl->endpoint_count;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static int readiness_release_socket(turbo_io_impl *base, native_io_endpoint endpoint_handle) {
-  return readiness_release_endpoint((turbo_io_readiness_impl *)base, endpoint_handle, true);
+static int readiness_release_socket(salts_io_impl *base, native_io_endpoint endpoint_handle) {
+  return readiness_release_endpoint((salts_io_readiness_impl *)base, endpoint_handle, true);
 }
 
-static int readiness_release_pipe(turbo_io_impl *base, native_io_endpoint endpoint_handle) {
-  return readiness_release_endpoint((turbo_io_readiness_impl *)base, endpoint_handle, false);
+static int readiness_release_pipe(salts_io_impl *base, native_io_endpoint endpoint_handle) {
+  return readiness_release_endpoint((salts_io_readiness_impl *)base, endpoint_handle, false);
 }
 
-static int readiness_submit(turbo_io_impl *base, const native_io_operation *operation,
+static int readiness_submit(salts_io_impl *base, const native_io_operation *operation,
                             native_io_request *out_request) {
-  turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
-  turbo_io_readiness_endpoint *endpoint;
-  turbo_io_readiness_request *request;
+  salts_io_readiness_impl *impl = (salts_io_readiness_impl *)base;
+  salts_io_readiness_endpoint *endpoint;
+  salts_io_readiness_request *request;
   uint32_t index;
   size_t bytes = 0u;
   size_t address_length = 0u;
   int status;
-  if (!impl->admission_open) return TURBO_ESHUTDOWN;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
   endpoint = readiness_endpoint(impl, operation->endpoint);
-  if (endpoint == NULL) return TURBO_ENOENT;
+  if (endpoint == NULL) return SALTS_ENOENT;
   if (native_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
-    if (endpoint->connected || endpoint->connect_active) return TURBO_EALREADY;
-    if (endpoint->active_requests != 0u) return TURBO_EBUSY;
+    if (endpoint->connected || endpoint->connect_active) return SALTS_EALREADY;
+    if (endpoint->active_requests != 0u) return SALTS_EBUSY;
   } else if (operation->kind == NATIVE_IO_OPERATION_TCP_RECV ||
              operation->kind == NATIVE_IO_OPERATION_TCP_SEND) {
-    if (endpoint->connect_active) return TURBO_EBUSY;
-    if (!endpoint->connected) return TURBO_EINVAL;
+    if (endpoint->connect_active) return SALTS_EBUSY;
+    if (!endpoint->connected) return SALTS_EINVAL;
   }
   if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
     const int descriptor_flags = fcntl(endpoint->fd, F_GETFL, 0);
     if (descriptor_flags < 0) return -errno;
-    if ((descriptor_flags & O_NONBLOCK) == 0) return TURBO_EINVAL;
+    if ((descriptor_flags & O_NONBLOCK) == 0) return SALTS_EINVAL;
   }
   if (impl->free_request_count == 0u) {
     readiness_counter_increment(&impl->rejected_full);
-    return TURBO_ENOBUFS;
+    return SALTS_ENOBUFS;
   }
   index = impl->free_requests[--impl->free_request_count];
   request = &impl->requests[index];
-  request->phase = TURBO_IO_READINESS_PENDING;
+  request->phase = SALTS_IO_READINESS_PENDING;
   request->request =
       (native_io_request){index + 1u, readiness_next_generation(request->request.generation)};
   request->endpoint = operation->endpoint;
   request->operation = *operation;
-  request->previous = TURBO_IO_INDEX_NONE;
-  request->next = TURBO_IO_INDEX_NONE;
+  request->previous = SALTS_IO_INDEX_NONE;
+  request->next = SALTS_IO_INDEX_NONE;
   request->write_lane = readiness_is_write(operation->kind);
   request->connect_started = false;
   ++endpoint->active_requests;
@@ -538,7 +538,7 @@ static int readiness_submit(turbo_io_impl *base, const native_io_operation *oper
   if (readiness_would_block(status)) {
     readiness_lane_push(impl, endpoint, index);
     status = readiness_update_interests(impl, operation->endpoint, endpoint);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       readiness_lane_remove(impl, endpoint, index);
       endpoint->connect_active = false;
       readiness_release_request(impl, request, index);
@@ -554,38 +554,38 @@ static int readiness_submit(turbo_io_impl *base, const native_io_operation *oper
   }
   readiness_counter_increment(&impl->submitted);
   *out_request = request->request;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static int readiness_cancel(turbo_io_impl *base, native_io_request request_handle) {
-  turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
-  turbo_io_readiness_request *request = readiness_request(impl, request_handle);
-  turbo_io_readiness_endpoint *endpoint;
+static int readiness_cancel(salts_io_impl *base, native_io_request request_handle) {
+  salts_io_readiness_impl *impl = (salts_io_readiness_impl *)base;
+  salts_io_readiness_request *request = readiness_request(impl, request_handle);
+  salts_io_readiness_endpoint *endpoint;
   uint32_t index;
   int status;
-  if (request == NULL) return TURBO_ENOENT;
-  if (request->phase == TURBO_IO_READINESS_TERMINAL) return TURBO_EALREADY;
+  if (request == NULL) return SALTS_ENOENT;
+  if (request->phase == SALTS_IO_READINESS_TERMINAL) return SALTS_EALREADY;
   endpoint = readiness_endpoint(impl, request->endpoint);
-  if (endpoint == NULL) return TURBO_ENOENT;
+  if (endpoint == NULL) return SALTS_ENOENT;
   index = request_handle.slot - 1u;
   readiness_lane_remove(impl, endpoint, index);
   status = readiness_update_interests(impl, request->endpoint, endpoint);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     readiness_lane_push(impl, endpoint, index);
     readiness_counter_increment(&impl->native_cancel_errors);
     return status;
   }
   readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_CANCELLED, 0u,
-                             TURBO_ECANCELED, (uint32_t)ECANCELED, 0u);
-  return TURBO_OK;
+                             SALTS_ECANCELED, (uint32_t)ECANCELED, 0u);
+  return SALTS_OK;
 }
 
-static int readiness_drive_lane(turbo_io_readiness_impl *impl, native_io_endpoint endpoint_handle,
-                                turbo_io_readiness_endpoint *endpoint, bool write_lane) {
-  turbo_io_readiness_lane *lane = readiness_lane(endpoint, write_lane);
-  while (lane->head != TURBO_IO_INDEX_NONE) {
+static int readiness_drive_lane(salts_io_readiness_impl *impl, native_io_endpoint endpoint_handle,
+                                salts_io_readiness_endpoint *endpoint, bool write_lane) {
+  salts_io_readiness_lane *lane = readiness_lane(endpoint, write_lane);
+  while (lane->head != SALTS_IO_INDEX_NONE) {
     const uint32_t index = lane->head;
-    turbo_io_readiness_request *request = &impl->requests[index];
+    salts_io_readiness_request *request = &impl->requests[index];
     size_t bytes = 0u;
     size_t address_length = 0u;
     const int status = readiness_try_operation(endpoint, request, &bytes, &address_length);
@@ -596,11 +596,11 @@ static int readiness_drive_lane(turbo_io_readiness_impl *impl, native_io_endpoin
   return readiness_update_interests(impl, endpoint_handle, endpoint);
 }
 
-static void readiness_drain_terminals(turbo_io_readiness_impl *impl, native_io_completion *events,
+static void readiness_drain_terminals(salts_io_readiness_impl *impl, native_io_completion *events,
                                       size_t limit, size_t *out_count) {
   while (*out_count < limit && impl->terminal_count != 0u) {
     const uint32_t index = impl->terminal_requests[impl->terminal_head];
-    turbo_io_readiness_request *request = &impl->requests[index];
+    salts_io_readiness_request *request = &impl->requests[index];
     impl->terminal_head = (impl->terminal_head + 1u) % impl->request_capacity;
     --impl->terminal_count;
     events[(*out_count)++] = request->completion;
@@ -611,30 +611,30 @@ static void readiness_drain_terminals(turbo_io_readiness_impl *impl, native_io_c
 static uint32_t readiness_remaining_timeout(uint64_t started_ms, uint32_t timeout_ms) {
   uint64_t elapsed;
   if (timeout_ms == UINT32_MAX) return UINT32_MAX;
-  elapsed = turbo_monotonic_ms() - started_ms;
+  elapsed = salts_monotonic_ms() - started_ms;
   return elapsed >= timeout_ms ? 0u : timeout_ms - (uint32_t)elapsed;
 }
 
-static int readiness_observe(turbo_io_impl *base, native_io_completion *events,
+static int readiness_observe(salts_io_impl *base, native_io_completion *events,
                              size_t event_capacity, uint32_t timeout_ms, size_t *out_count) {
-  turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
+  salts_io_readiness_impl *impl = (salts_io_readiness_impl *)base;
   const size_t limit = event_capacity < impl->completion_batch_capacity
                            ? event_capacity
                            : impl->completion_batch_capacity;
-  const uint64_t started_ms = turbo_monotonic_ms();
+  const uint64_t started_ms = salts_monotonic_ms();
   uint32_t wait_timeout = timeout_ms;
   readiness_drain_terminals(impl, events, limit, out_count);
-  if (*out_count != 0u) return TURBO_OK;
+  if (*out_count != 0u) return SALTS_OK;
   for (;;) {
     size_t ready_count = 0u;
     bool saw_wake = false;
     int status =
         impl->driver_ops->wait(impl->driver_state, impl->ready_events,
                                impl->completion_batch_capacity, wait_timeout, &ready_count);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     for (size_t cursor = 0u; cursor < ready_count; ++cursor) {
-      const turbo_io_ready_event *ready = &impl->ready_events[cursor];
-      if ((ready->interests & TURBO_IO_READY_WAKE) != 0u) {
+      const salts_io_ready_event *ready = &impl->ready_events[cursor];
+      if ((ready->interests & SALTS_IO_READY_WAKE) != 0u) {
         atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
         saw_wake = true;
         continue;
@@ -642,50 +642,50 @@ static int readiness_observe(turbo_io_impl *base, native_io_completion *events,
       const uint32_t slot = (uint32_t)ready->token;
       const uint32_t generation = (uint32_t)(ready->token >> 32u);
       native_io_endpoint handle = {slot, generation};
-      turbo_io_readiness_endpoint *endpoint = readiness_endpoint(impl, handle);
+      salts_io_readiness_endpoint *endpoint = readiness_endpoint(impl, handle);
       if (endpoint == NULL) continue;
-      if ((ready->interests & (TURBO_IO_READY_READ | TURBO_IO_READY_ERROR)) != 0u) {
+      if ((ready->interests & (SALTS_IO_READY_READ | SALTS_IO_READY_ERROR)) != 0u) {
         status = readiness_drive_lane(impl, handle, endpoint, false);
-        if (status != TURBO_OK) return status;
+        if (status != SALTS_OK) return status;
       }
-      if ((ready->interests & (TURBO_IO_READY_WRITE | TURBO_IO_READY_ERROR)) != 0u) {
+      if ((ready->interests & (SALTS_IO_READY_WRITE | SALTS_IO_READY_ERROR)) != 0u) {
         status = readiness_drive_lane(impl, handle, endpoint, true);
-        if (status != TURBO_OK) return status;
+        if (status != SALTS_OK) return status;
       }
     }
     readiness_drain_terminals(impl, events, limit, out_count);
-    if (*out_count != 0u) return TURBO_OK;
-    if (saw_wake) return TURBO_OK;
+    if (*out_count != 0u) return SALTS_OK;
+    if (saw_wake) return SALTS_OK;
     wait_timeout = readiness_remaining_timeout(started_ms, timeout_ms);
-    if (wait_timeout == 0u) return TURBO_ETIMEDOUT;
+    if (wait_timeout == 0u) return SALTS_ETIMEDOUT;
   }
 }
 
-static int readiness_wake(turbo_io_impl *base) {
-  turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
+static int readiness_wake(salts_io_impl *base) {
+  salts_io_readiness_impl *impl = (salts_io_readiness_impl *)base;
   bool expected = false;
   int status;
-  if (!impl->admission_open) return TURBO_ESHUTDOWN;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
   if (!atomic_compare_exchange_strong_explicit(&impl->wake_pending, &expected, true,
                                                memory_order_acq_rel, memory_order_acquire))
-    return TURBO_OK;
+    return SALTS_OK;
   status = impl->driver_ops->wake(impl->driver_state);
-  if (status == TURBO_OK) return TURBO_OK;
+  if (status == SALTS_OK) return SALTS_OK;
   atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
   return status;
 }
 
-static int readiness_close(turbo_io_impl *base) {
-  turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
-  if (!impl->admission_open) return TURBO_EALREADY;
+static int readiness_close(salts_io_impl *base) {
+  salts_io_readiness_impl *impl = (salts_io_readiness_impl *)base;
+  if (!impl->admission_open) return SALTS_EALREADY;
   impl->admission_open = false;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static int readiness_destroy(turbo_io_impl *base) {
-  turbo_io_readiness_impl *impl = (turbo_io_readiness_impl *)base;
+static int readiness_destroy(salts_io_impl *base) {
+  salts_io_readiness_impl *impl = (salts_io_readiness_impl *)base;
   if (impl->admission_open || impl->active_requests != 0u || impl->endpoint_count != 0u)
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   impl->driver_ops->destroy(impl->driver_state);
   free(impl->terminal_requests);
   free(impl->free_requests);
@@ -695,11 +695,11 @@ static int readiness_destroy(turbo_io_impl *base) {
   free(impl->endpoints);
   free(impl->driver_state);
   free(impl);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static bool readiness_get_stats(const turbo_io_impl *base, native_io_backend_stats *out_stats) {
-  const turbo_io_readiness_impl *impl = (const turbo_io_readiness_impl *)base;
+static bool readiness_get_stats(const salts_io_impl *base, native_io_backend_stats *out_stats) {
+  const salts_io_readiness_impl *impl = (const salts_io_readiness_impl *)base;
   *out_stats = (native_io_backend_stats){impl->endpoint_capacity,
                                         impl->endpoint_count,
                                         impl->request_capacity,
@@ -715,7 +715,7 @@ static bool readiness_get_stats(const turbo_io_impl *base, native_io_backend_sta
   return true;
 }
 
-static const turbo_io_impl_ops readiness_ops = {
+static const salts_io_impl_ops readiness_ops = {
     readiness_attach_socket, readiness_release_socket, readiness_submit,  readiness_cancel,
     readiness_observe,       readiness_wake,            readiness_close,  readiness_destroy,
     readiness_get_stats,     readiness_attach_pipe,     readiness_release_pipe};
@@ -724,29 +724,29 @@ static bool readiness_array_fits(size_t count, size_t element_size) {
   return element_size != 0u && count <= SIZE_MAX / element_size;
 }
 
-int turbo_io_readiness_backend_init(native_io_backend *backend,
+int salts_io_readiness_backend_init(native_io_backend *backend,
                                     const native_io_backend_config *config,
-                                    const turbo_io_readiness_driver_ops *driver_ops,
+                                    const salts_io_readiness_driver_ops *driver_ops,
                                     size_t driver_state_size) {
-  turbo_io_readiness_impl *impl;
+  salts_io_readiness_impl *impl;
   int status;
   if (driver_ops == NULL || driver_ops->init == NULL || driver_ops->update == NULL ||
       driver_ops->wait == NULL || driver_ops->wake == NULL || driver_ops->destroy == NULL ||
       driver_state_size == 0u ||
-      !readiness_array_fits(config->endpoint_capacity, sizeof(turbo_io_readiness_endpoint)) ||
-      !readiness_array_fits(config->request_capacity, sizeof(turbo_io_readiness_request)) ||
-      !readiness_array_fits(config->completion_batch_capacity, sizeof(turbo_io_ready_event)) ||
+      !readiness_array_fits(config->endpoint_capacity, sizeof(salts_io_readiness_endpoint)) ||
+      !readiness_array_fits(config->request_capacity, sizeof(salts_io_readiness_request)) ||
+      !readiness_array_fits(config->completion_batch_capacity, sizeof(salts_io_ready_event)) ||
       !readiness_array_fits(config->endpoint_capacity, sizeof(uint32_t)) ||
       !readiness_array_fits(config->request_capacity, sizeof(uint32_t)))
-    return TURBO_ERANGE;
-  impl = (turbo_io_readiness_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+    return SALTS_ERANGE;
+  impl = (salts_io_readiness_impl *)calloc(1u, sizeof(*impl));
+  if (impl == NULL) return SALTS_ENOMEM;
   impl->driver_state = calloc(1u, driver_state_size);
   impl->endpoints =
-      (turbo_io_readiness_endpoint *)calloc(config->endpoint_capacity, sizeof(*impl->endpoints));
+      (salts_io_readiness_endpoint *)calloc(config->endpoint_capacity, sizeof(*impl->endpoints));
   impl->requests =
-      (turbo_io_readiness_request *)calloc(config->request_capacity, sizeof(*impl->requests));
-  impl->ready_events = (turbo_io_ready_event *)calloc(config->completion_batch_capacity,
+      (salts_io_readiness_request *)calloc(config->request_capacity, sizeof(*impl->requests));
+  impl->ready_events = (salts_io_ready_event *)calloc(config->completion_batch_capacity,
                                                       sizeof(*impl->ready_events));
   impl->free_endpoints = (uint32_t *)calloc(config->endpoint_capacity, sizeof(uint32_t));
   impl->free_requests = (uint32_t *)calloc(config->request_capacity, sizeof(uint32_t));
@@ -754,7 +754,7 @@ int turbo_io_readiness_backend_init(native_io_backend *backend,
   if (impl->driver_state == NULL || impl->endpoints == NULL || impl->requests == NULL ||
       impl->ready_events == NULL || impl->free_endpoints == NULL || impl->free_requests == NULL ||
       impl->terminal_requests == NULL) {
-    status = TURBO_ENOMEM;
+    status = SALTS_ENOMEM;
     goto failed;
   }
   impl->base.ops = &readiness_ops;
@@ -774,9 +774,9 @@ int turbo_io_readiness_backend_init(native_io_backend *backend,
   for (size_t index = 0u; index < config->request_capacity; ++index)
     impl->free_requests[index] = (uint32_t)(config->request_capacity - index - 1u);
   status = driver_ops->init(impl->driver_state, config->completion_batch_capacity);
-  if (status != TURBO_OK) goto failed;
+  if (status != SALTS_OK) goto failed;
   backend->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 
 failed:
   free(impl->terminal_requests);

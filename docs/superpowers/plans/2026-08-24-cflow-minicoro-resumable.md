@@ -4,18 +4,18 @@
 
 **Goal:** Add an optional minicoro-backed implementation of the public `cflow_resumable` contract without changing core CFlow semantics or making CFlow headers depend on minicoro.
 
-**Architecture:** A separate `TurboUtils::CFlowMinicoro` static adapter target owns an opaque coroutine frame and translates explicit coroutine suspension calls into `VALUE`, `VALUE_AND_DONE`, `WAIT`, `DONE`, and `ERROR`. Its public header includes only `cflow/runtime.h`; its implementation privately compiles a static-symbol copy of the vendored minicoro header and selects the Fiber/ucontext fallback on the supported desktop hosts so fixed assembly labels do not escape the archive. Neither `TurboUtils::CFlow` nor installed consumers need a minicoro target. The adapter is single-owner: `resume`, `cancel`, and `destroy` are serialized by the caller, while a returned CFlow waitable may wake through the existing scheduler contract without directly resuming the coroutine frame.
+**Architecture:** A separate `Salts::CFlowMinicoro` static adapter target owns an opaque coroutine frame and translates explicit coroutine suspension calls into `VALUE`, `VALUE_AND_DONE`, `WAIT`, `DONE`, and `ERROR`. Its public header includes only `cflow/runtime.h`; its implementation privately compiles a static-symbol copy of the vendored minicoro header and selects the Fiber/ucontext fallback on the supported desktop hosts so fixed assembly labels do not escape the archive. Neither `Salts::CFlow` nor installed consumers need a minicoro target. The adapter is single-owner: `resume`, `cancel`, and `destroy` are serialized by the caller, while a returned CFlow waitable may wake through the existing scheduler contract without directly resuming the coroutine frame.
 
 **Tech Stack:** C11, CFlow Resumable/Waitable APIs, vendored minicoro, CMake Presets, TinyTest, AddressSanitizer CI.
 
-**Spec:** https://github.com/qigao/turbo-utils/issues/67
+**Spec:** https://github.com/qigao/salts/issues/67
 
 ## Global Constraints
 
 - `CFLOW_ENABLE_MINICORO` defaults to `OFF`.
-- `TurboUtils::CFlow`, `<cflow/cflow.h>`, and all existing CFlow headers retain their current source and link contract when the option is off.
+- `Salts::CFlow`, `<cflow/cflow.h>`, and all existing CFlow headers retain their current source and link contract when the option is off.
 - The optional public header is `<cflow/minicoro.h>` and exposes no `mco_*` or `coro_*` type.
-- The adapter target is `TurboUtils::CFlowMinicoro`; no private scheduler or demand counter is introduced.
+- The adapter target is `Salts::CFlowMinicoro`; no private scheduler or demand counter is introduced.
 - The coroutine frame and adapter state are owned by the returned `cflow_resumable` and are released only by its `destroy` operation.
 - `name`, `output_type`, entry `user`, error text, and waitable state are borrowed for the documented lifetime; emitted values are copied into `out_value` before `resume` returns.
 - A value pointer passed at a suspension point must remain valid only until that suspension produces its `cflow_step`; it is never retained across the next resume.
@@ -182,8 +182,8 @@ any quiescent state      --destroy--> DESTROYED
 - [x] **Step 4: Run focused and adjacent tests to verify GREEN**
 
 ```text
-cmake --build --preset win-release-user --target cflow_minicoro_test cflow_runtime_test test_turbo_coro
-ctest --preset win-release-user -R "^(cflow_minicoro_test|cflow_runtime_test|test_turbo_coro)$" --output-on-failure
+cmake --build --preset win-release-user --target cflow_minicoro_test cflow_runtime_test test_salts_coro
+ctest --preset win-release-user -R "^(cflow_minicoro_test|cflow_runtime_test|test_salts_coro)$" --output-on-failure
 ```
 
 Expected: all three test executables pass.
@@ -204,11 +204,11 @@ Run `git diff --check` and review ownership comments against the state machine; 
 
 **Interfaces:**
 - Consumes: Task 1 adapter library/header.
-- Produces: optional exported target `TurboUtils::CFlowMinicoro` and an installed consumer check that appears only when that target is installed.
+- Produces: optional exported target `Salts::CFlowMinicoro` and an installed consumer check that appears only when that target is installed.
 
 - [x] **Step 1: Add package-consumer behavior before export wiring**
 
-When `TARGET TurboUtils::CFlowMinicoro` exists, add a consumer that includes `<cflow/minicoro.h>`, constructs an immediate-completion adapter, resumes it to literal `CFLOW_STEP_DONE`, and destroys it. The same consumer project must configure unchanged when the target is absent.
+When `TARGET Salts::CFlowMinicoro` exists, add a consumer that includes `<cflow/minicoro.h>`, constructs an immediate-completion adapter, resumes it to literal `CFLOW_STEP_DONE`, and destroys it. The same consumer project must configure unchanged when the target is absent.
 
 - [x] **Step 2: Verify the package consumer fails with feature ON before export wiring**
 
@@ -217,11 +217,11 @@ cmake --preset win-release-user -DCFLOW_ENABLE_MINICORO=ON
 cmake --build --preset win-release-user --target verify_installed_package
 ```
 
-Expected: installed consumer configure or link fails because `TurboUtils::CFlowMinicoro` is not yet exported/installed.
+Expected: installed consumer configure or link fails because `Salts::CFlowMinicoro` is not yet exported/installed.
 
 - [x] **Step 3: Add optional install/export wiring**
 
-Install the adapter archive and its header only when `CFLOW_ENABLE_MINICORO=ON`. Export it through `TurboUtilsTargets` with public dependency `TurboUtils::CFlow`. Keep the vendored include directory private and do not export `TurboUtils::MinicoroVendor` or a raw minicoro include path. Add the optional adapter target to `verify_installed_package` dependencies only when enabled.
+Install the adapter archive and its header only when `CFLOW_ENABLE_MINICORO=ON`. Export it through `SaltsTargets` with public dependency `Salts::CFlow`. Keep the vendored include directory private and do not export `Salts::MinicoroVendor` or a raw minicoro include path. Add the optional adapter target to `verify_installed_package` dependencies only when enabled.
 
 - [x] **Step 4: Verify feature ON package GREEN**
 
@@ -236,7 +236,7 @@ Expected: install, consumer configure, compile, and link all succeed.
 
 ```text
 cmake --preset win-release-user -DCFLOW_ENABLE_MINICORO=OFF
-cmake --build --preset win-release-user --target turbo_cflow cflow_header_cpp_test verify_installed_package
+cmake --build --preset win-release-user --target salts_cflow cflow_header_cpp_test verify_installed_package
 ctest --preset win-release-user -R "^(cflow_header_cpp_test|cflow_runtime_test)$" --output-on-failure
 ```
 

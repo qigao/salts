@@ -5,8 +5,8 @@
  */
 
 #include "fmt_lexer.h"
-#include "../include/turbo_simd_scan.h"
-#include "../include/turbo_vstr.h"
+#include "../include/salts_simd_scan.h"
+#include "../include/salts_vstr.h"
 
 fmt_token_t fmt_scan_v_n(const char **cursor, const char *end, vstr *token) {
     const char *start;
@@ -24,7 +24,7 @@ fmt_token_t fmt_scan_v_n(const char **cursor, const char *end, vstr *token) {
     token->len = 0;
 
     if (*start != '{' && *start != '}') {
-        const char *text_end = turbo_scan_to_any2(start, end, '{', '}');
+        const char *text_end = salts_scan_to_any2(start, end, '{', '}');
         token->data = start;
         token->len = (size_t)(text_end - start);
         *cursor = text_end;

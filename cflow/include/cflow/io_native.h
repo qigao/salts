@@ -203,7 +203,7 @@ bool cflow_io_native_backend_file_operation_supported(
 
 /**
  * Initializes one explicitly selected bounded backend. Unsupported kinds return
- * TURBO_ENOTSUP without fallback. The backend handle must be zero-initialized.
+ * SALTS_ENOTSUP without fallback. The backend handle must be zero-initialized.
  */
 int cflow_io_native_backend_init(
     cflow_io_native_backend *backend,
@@ -232,9 +232,9 @@ bool cflow_io_native_backend_get_stats(
  * and one write lane per identity so duplicate descriptors and registrations
  * scale with live sockets instead of operations. This explicit boundary makes
  * each bounded socket table reusable without guessing whether the OS recycled
- * a handle. TURBO_EBUSY means this socket is not yet quiescent and bounded
+ * a handle. SALTS_EBUSY means this socket is not yet quiescent and bounded
  * shutdown code may retry it after yielding; completion delivery can precede
- * readiness callback unwind. TURBO_ENOENT means the identity is unknown or was
+ * readiness callback unwind. SALTS_ENOENT means the identity is unknown or was
  * already forgotten. io_uring retains no identity and only validates its
  * existing global quiescence contract.
  */
@@ -253,13 +253,13 @@ int cflow_io_native_backend_forget_file(
     cflow_io_native_backend *backend, uintptr_t closed_handle);
 
 /**
- * Closes admission. Returns TURBO_EBUSY while native requests remain active;
- * retry after Actor cancellation/completion drain. TURBO_OK joins any backend
+ * Closes admission. Returns SALTS_EBUSY while native requests remain active;
+ * retry after Actor cancellation/completion drain. SALTS_OK joins any backend
  * worker; readiness adapters rely only on the Platform reactor worker.
  */
 int cflow_io_native_backend_shutdown(cflow_io_native_backend *backend);
 
-/** Returns TURBO_EBUSY until shutdown succeeds; TURBO_OK clears the handle. */
+/** Returns SALTS_EBUSY until shutdown succeeds; SALTS_OK clears the handle. */
 int cflow_io_native_backend_destroy(cflow_io_native_backend *backend);
 
 #ifdef __cplusplus

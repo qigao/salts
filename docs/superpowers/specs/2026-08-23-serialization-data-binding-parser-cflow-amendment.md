@@ -9,7 +9,7 @@
 原设计的基础 ownership 保持有效：
 
 ```text
-TurboUtils owns CMeta + CSerde + CBind + CFlow.
+Salts owns CMeta + CSerde + CBind + CFlow.
 TurboParser owns concrete parsers, DataBind, TBE, format projection and parser-specific composition.
 ```
 
@@ -18,20 +18,20 @@ CBind 不迁入 TurboParser。
 固定依赖：
 
 ```text
-TurboUtils::CBind -> TurboUtils::CMeta + TurboUtils::CSerde
+Salts::CBind -> Salts::CMeta + Salts::CSerde
 ```
 
-TurboUtils 不反向依赖 TurboParser。
+Salts 不反向依赖 TurboParser。
 
 ## 2. Parser adapter direction
 
-TurboParser concrete parser/event model 投影到 canonical data contract，再消费 `TurboUtils::CBind`：
+TurboParser concrete parser/event model 投影到 canonical data contract，再消费 `Salts::CBind`：
 
 ```text
 TurboParser parser/*
     -> format projection adapter
     -> CSerde canonical tokens
-    -> TurboUtils::CBind
+    -> Salts::CBind
     -> native C object
 ```
 
@@ -86,13 +86,13 @@ CSerde v1 的 CBind public substrate 是 pull `cserde_reader`。TurboParser 的�
 
 ## 5. Direct format convenience
 
-TurboParser 可以在后续提供 direct JSON/YAML/XML/CSV -> native object API，但这些 API 属于 format adapter/composition，不属于 `TurboUtils::CBind` core。
+TurboParser 可以在后续提供 direct JSON/YAML/XML/CSV -> native object API，但这些 API 属于 format adapter/composition，不属于 `Salts::CBind` core。
 
 具体函数名和 target 名未在本 amendment 锁定。
 
 ## 6. DataBind / TBE
 
-DataBind 仍是 runtime schema / dynamic value / compatibility / query host，并可逐步把 generic native binding 委托给 `TurboUtils::CBind`。
+DataBind 仍是 runtime schema / dynamic value / compatibility / query host，并可逐步把 generic native binding 委托给 `Salts::CBind`。
 
 TBE 继续独占 specialized wire/layout metadata：
 
@@ -110,7 +110,7 @@ variable data
 ## 7. Final dependency truth
 
 ```text
-TurboSTL -> CMeta
+Container -> CMeta
 CSerde   -> minimal C runtime
 CBind    -> CMeta + CSerde
 CFlow    -> CMeta

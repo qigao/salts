@@ -6,7 +6,7 @@ foreach(benchmark_source ${BENCHMARK_SOURCES})
   cmake_add_benchmark(${benchmark_name}
     SOURCES ${benchmark_source}
     FOLDER "parser/${TARGET_NAME}/benchmarks"
-    LIBS json_parser Rocida::TinyTest
+    LIBS json_parser Salts::TinyTest
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../include
              ${CMAKE_CURRENT_SOURCE_DIR}/../parser
              ${SIMDE_INCLUDE_DIRS})

@@ -15,7 +15,7 @@
 - Public synchronous and asynchronous function signatures remain unchanged.
 - Pool key is the exact validated pair `connection_uri + authority`; `target` does not participate.
 - Capacity unit is one CHTTP slot/connection and remains bounded by `request_capacity <= network.connection_capacity`.
-- A full pool rejects advanced admission with `TURBO_ENOBUFS`; the blocking facade drives bounded idle eviction before retrying admission, without growing or queuing requests implicitly.
+- A full pool rejects advanced admission with `SALTS_ENOBUFS`; the blocking facade drives bounded idle eviction before retrying admission, without growing or queuing requests implicitly.
 - CHTTP and CNet retain one progress owner; no internal thread, lock, executor, retry, or pipelining is added.
 - A successful response is reusable only when llhttp reports protocol keep-alive and the request was not cancelled and stop has not begun.
 - `network.read_timeout_ms` remains the only read/idle deadline; zero continues to disable it.
@@ -87,7 +87,7 @@
 
 - [x] **Step 6: Preserve blocking semantics**
 
-  Treat an idle completed handle as stale so `chttp_requests_wait_recycled()` returns immediately, while a close-pending completed request remains `TURBO_EALREADY` until its slot reaches terminal state.
+  Treat an idle completed handle as stale so `chttp_requests_wait_recycled()` returns immediately, while a close-pending completed request remains `SALTS_EALREADY` until its slot reaches terminal state.
 
 - [x] **Step 7: Verify GREEN and adjacent lifecycle cases**
 

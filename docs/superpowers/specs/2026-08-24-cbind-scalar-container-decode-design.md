@@ -27,7 +27,7 @@ struct elements, nested containers, heap-like containers, or multimap semantics.
 - Any failure after destination preparation restores the complete root object to
   its canonical empty state.
 - Unknown, duplicate, and missing struct fields keep the D2 behavior.
-- CBind production code depends only on CMeta and CSerde. TurboSTL remains one
+- CBind production code depends only on CMeta and CSerde. Container remains one
   provider used by tests and consumers.
 - Existing `cbind_context`, `cbind_error`, and status values retain their ABI-v1
   prefixes and numeric meanings.
@@ -203,7 +203,7 @@ the observable destination after return is canonical empty.
 - **Provider compatibility:** old CMeta construction providers still bind through
   the old prefix, but cannot participate in transactional CBind container decode.
 - **Data format:** no CSerde token or external serialized representation changes.
-- **Linkage:** CBind keeps CMeta + CSerde production dependencies; TurboSTL gains
+- **Linkage:** CBind keeps CMeta + CSerde production dependencies; Container gains
   implementations for its existing concrete construction providers.
 - **Migration cost:** container consumers opt into the four-argument context
   macro and receive an explicit per-container bound.

@@ -1,5 +1,5 @@
 /*
- * Rocida byte-buffer invalid-input protocol model.
+ * Salts byte-buffer invalid-input protocol model.
  *
  * Scope:
  *   - invalid initialization does not mutate the caller object
@@ -113,7 +113,7 @@ proctype Owner() {
         :: phase == 7 ->
             invalid_view_rejected = 0;
             save_snapshot();
-            /* append(NULL, 0) is TURBO_OK and does not mutate the buffer. */
+            /* append(NULL, 0) is SALTS_OK and does not mutate the buffer. */
             assert_snapshot_unchanged();
             null_zero_append_ok = 1;
             phase = 8

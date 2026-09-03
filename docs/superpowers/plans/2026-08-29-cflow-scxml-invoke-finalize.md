@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the native Statechart configuration as the sole active-state fact source. Add optional versioned native lifecycle hooks at stable macrostep and external-event preprocessing boundaries, plus an opaque tagged external-event admission API. Lower each SCXML invocation into immutable program descriptors and implicit inline entry/exit actions; an owning SCXML session maintains one bounded lifecycle row per declaration and calls a versioned invocation adapter without holding runtime or registry mutexes.
 
-**Tech Stack:** C11, CFlow Statechart runtime, TurboUtils XML parser, CMeta descriptors, Turbo mutexes/atomics, TinyTest, CMake Presets.
+**Tech Stack:** C11, CFlow Statechart runtime, Salts XML parser, CMeta descriptors, Salts mutexes/atomics, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-cflow-scxml-phase3-remaining-design.md`
 

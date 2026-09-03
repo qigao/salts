@@ -33,7 +33,7 @@ source_group(TREE "${tinytest_include_dir}" PREFIX "Header Files"
   FILES ${tinytest_public_headers} ${tinytest_meta_headers})
 
 cmake_config_target(tinytest
-  ALIAS Rocida::TinyTest
+  ALIAS Salts::TinyTest
   FOLDER "tinytest"
   EXPORT_NAME TinyTest)
 
@@ -43,7 +43,7 @@ target_include_directories(tinytest
     $<INSTALL_INTERFACE:include>)
 
 install(TARGETS tinytest
-  EXPORT RocidaTargets
+  EXPORT SaltsTargets
   COMPONENT TinyTest)
 install(FILES ${tinytest_public_headers}
   DESTINATION include

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Preserve `CFlow -> CMeta`; do not introduce a CFlow dependency on TurboSTL or CBind.
+- Preserve `CFlow -> CMeta`; do not introduce a CFlow dependency on Container or CBind.
 - Preserve legacy trivial Source, Range, Plan, and result behavior.
 - Do not admit managed values to the existing by-value typed callable ABI.
 - Allocation must honor `cmeta_type_desc.align` and reject overflow.
@@ -100,5 +100,5 @@
 
 - [x] **Step 1: Add a test proving managed operator graphs and managed legacy Sources remain rejected without ownership transfer.**
 - [x] **Step 2: Document source construction, callback borrowing, and remaining trivial-only paths.**
-- [x] **Step 3: Run focused CMeta/CFlow/TurboSTL tests, then full Release configure, build, CTest, and install.**
+- [x] **Step 3: Run focused CMeta/CFlow/Container tests, then full Release configure, build, CTest, and install.**
 - [x] **Step 4: Run `git diff --check`, placeholder scan, and CodeGraph sync.**

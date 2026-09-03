@@ -102,7 +102,7 @@ Enum / Struct / Traits / typed 等语义声明
     ↓
 type identity / callable / interface / range / collector
     ↓
-Rocida STL、CFlow 等普通 C 模块消费这些知识
+CSTL、CFlow 等普通 C 模块消费这些知识
     ↓
 控制面完成检查、归一化与计划构造
     ↓
@@ -123,7 +123,7 @@ Rocida STL、CFlow 等普通 C 模块消费这些知识
 
 第六，**所有权、容量和终态属于语义本身**。borrowed Range 不延长容器生命周期；Collector 只有 `finish` 才提交，失败通过 `abort` 恢复 zero state；Publisher 成功订阅后移动进 Subscription；有界队列满、关闭、取消和类型不匹配必须可区分。
 
-第七，**CMeta 只生成知识和薄入口，不窃取算法归属**。容器的分配、插入、哈希、树平衡属于 Rocida STL；Graph、Reactive、Machine、Statechart 和 Actor 的状态推进属于 CFlow；CMeta 提供它们共同使用的类型与协议语言。
+第七，**CMeta 只生成知识和薄入口，不窃取算法归属**。容器的分配、插入、哈希、树平衡属于 CSTL；Graph、Reactive、Machine、Statechart 和 Actor 的状态推进属于 CFlow；CMeta 提供它们共同使用的类型与协议语言。
 
 当前实现可以压缩为下面这张依赖图：
 
@@ -132,9 +132,9 @@ flowchart TD
     PP["CMeta Schema / Replay"]
     SEM["Type / Traits / Callable / Interface"]
     PROTO["Range / Collector / Semantic Identity"]
-    STL["Rocida::STL<br/>container algorithms + typed facade"]
-    FLOW["Rocida::CFlow<br/>Graph / Reactive / Machine / Statechart / Actor"]
-    STLS["Rocida::STLStream<br/>Rocida STL + CFlow facade"]
+    STL["Salts::CSTL<br/>container algorithms + typed facade"]
+    FLOW["Salts::CFlow<br/>Graph / Reactive / Machine / Statechart / Actor"]
+    STLS["Salts::CSTLStream<br/>CSTL + CFlow facade"]
 
     PP --> SEM --> PROTO
     PROTO --> STL
@@ -144,9 +144,9 @@ flowchart TD
     FLOW --> STLS
 ```
 
-## 0.1 Rocida STL：CMeta generic 的具体提供者
+## 0.1 CSTL：CMeta generic 的具体提供者
 
-`typed(List, IntList, int)` 不是让 CMeta 实现 linked list。`<rocida/stl/typed.h>` 注册有限的容器 kind，并让一次 `typed(...)` 声明生成：
+`typed(List, IntList, int)` 不是让 CMeta 实现 linked list。`<cstl/typed.h>` 注册有限的容器 kind，并让一次 `typed(...)` 声明生成：
 
 ```text
 concrete wrapper type
@@ -156,11 +156,11 @@ borrowed Range views
 transactional Collector
 ```
 
-真正的 storage 与算法仍在 Rocida STL。`Rocida::STL` 公开这一容器层并链接 `Rocida::CMeta`；`Rocida::STLStream` 再组合 `Rocida::STL` 与 `Rocida::CFlow`。因此正确的依赖方向是：
+真正的 storage 与算法仍在 CSTL。`Salts::CSTL` 公开这一容器层并链接 `Salts::CMeta`；`Salts::CSTLStream` 再组合 `Salts::CSTL` 与 `Salts::CFlow`。因此正确的依赖方向是：
 
 ```text
 CMeta 描述类型和协议
-Rocida STL 实现容器
+CSTL 实现容器
 CFlow 实现计算与执行
 STLStream 提供面向容器用户的 fluent facade
 ```
@@ -210,7 +210,7 @@ lifecycle and statistics
 
 `cflow_actor_ref_try_send()` 是 MPMC producer admission：成功时把 trivial payload 复制进 Actor 拥有的有界邮箱；它不阻塞、不重试、不覆盖、不静默丢弃，也不在满额时临时分配。状态改变仍由被借用的 Serial Executor 串行化，而大量 Actor 可以共享少量 worker 资源。
 
-从 Rocida STL 到 Actor，这些高级应用并不是为了证明 CMeta“什么都能做”，而是反复验证同一个边界：
+从 CSTL 到 Actor，这些高级应用并不是为了证明 CMeta“什么都能做”，而是反复验证同一个边界：
 
 > **CMeta 负责让模块共享知识；具体模块负责拥有数据、算法、线程和状态机。**
 

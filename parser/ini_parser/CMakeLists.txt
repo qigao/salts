@@ -14,7 +14,7 @@ add_library(${TARGET_NAME} STATIC ${SOURCE_FILES} ${INI_LEXER_GEN}
 add_dependencies(${TARGET_NAME} ${INI_LEXER_TARGET} ${INI_GRAMMAR_TARGET})
 
 cmake_config_target(${TARGET_NAME}
-  ALIAS Rocida::IniParser
+  ALIAS Salts::IniParser
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME IniParser)
 
@@ -26,7 +26,7 @@ target_include_directories(
           ${CMAKE_CURRENT_SOURCE_DIR}/..)
 find_path(SIMDE_INCLUDE_DIRS NAMES simde/x86/sse2.h REQUIRED)
 target_include_directories(${TARGET_NAME} PRIVATE ${SIMDE_INCLUDE_DIRS})
-target_link_libraries(${TARGET_NAME} PUBLIC Rocida::Core)
+target_link_libraries(${TARGET_NAME} PUBLIC Salts::Core)
 
 # Suppress warnings for generated code
 if(MSVC)

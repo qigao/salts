@@ -2,19 +2,19 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Expose read-only CMeta metadata for `fmt_type_t` and `turbo_log_entry_t` while preserving the existing fmt/tlog API, ABI, ownership, output, and hot paths.
+**Goal:** Expose read-only CMeta metadata for `fmt_type_t` and `salts_log_entry_t` while preserving the existing fmt/tlog API, ABI, ownership, output, and hot paths.
 
 **Architecture:** Add shared header-generation attributes and cross-language alignment spelling to `cmeta/pp.h`, then reuse them from CMeta's generated Enum/Struct/Interface/Container surfaces. Extend fmt's existing storage Schema to generate enum metadata, and express the unchanged log-entry layout through CMeta `Struct(...)`; runtime formatting and logging implementations remain untouched.
 
-**Tech Stack:** C11, C++17 consumer headers, CMeta `Schema/Replay`, CMeta Enum/Struct descriptors, TurboUtils fmt/tlog, TinyTest, CMake Presets, MSVC Release, Clang strict-warning syntax checks.
+**Tech Stack:** C11, C++17 consumer headers, CMeta `Schema/Replay`, CMeta Enum/Struct descriptors, Salts fmt/tlog, TinyTest, CMake Presets, MSVC Release, Clang strict-warning syntax checks.
 
 **Spec:** `docs/superpowers/specs/2026-08-21-cmeta-utils-metadata-design.md`
 
 ## Global Constraints
 
 - Preserve `FMT_TYPE_NONE == 0`, all existing fmt tag values `1..14`, every `fmt_arg_t` union member, and the full `fmt_arg_t` size/alignment/layout.
-- Preserve `turbo_log_level_t` values `0..4` and every `turbo_log_entry_t` field type, order, offset, size, and alignment.
-- Preserve `FMT_ARG`, `FMT_ARGS`, `FMT_WRAP_0..8`, `fmt`, `TLOG_*`, `TURBO_LOG_*`, exported functions, sink callbacks, errors, allocations, ownership, and output.
+- Preserve `salts_log_level_t` values `0..4` and every `salts_log_entry_t` field type, order, offset, size, and alignment.
+- Preserve `FMT_ARG`, `FMT_ARGS`, `FMT_WRAP_0..8`, `fmt`, `TLOG_*`, `SALTS_LOG_*`, exported functions, sink callbacks, errors, allocations, ownership, and output.
 - Metadata is immutable and TU-local. Compare descriptor contents, never addresses across translation units.
 - `component`, `file`, and `message` remain borrowed for the existing sink-callback lifetime.
 - Do not modify `utils/src/fmt.c`, `utils/src/tlog.c`, string algorithms, queueing, sinks, or runtime registry unless a failing test proves the approved design impossible; stop for user review before expanding scope.
@@ -94,7 +94,7 @@ foreach ($entry in $commands) {
 Record Release sizes:
 
 ```powershell
-Get-Item build/Msvc-Release/bin/turbo_utils.dll,
+Get-Item build/Msvc-Release/bin/salts.dll,
          build/Msvc-Release/bin/test_fmt.exe,
          build/Msvc-Release/bin/test_fmt_cpp.exe,
          build/Msvc-Release/bin/test_tlog.exe,
@@ -140,7 +140,7 @@ Add this target to `cmeta/tests/CMakeLists.txt` after `cmeta_core_test`:
 ```cmake
 cmake_add_test(cmeta_header_cpp_test
   SOURCES cmeta_header_cpp_test.cpp
-  LIBS TurboUtils::CMeta TurboUtils::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 set_target_properties(cmeta_header_cpp_test PROPERTIES
@@ -180,7 +180,7 @@ Add this block near the top of `cmeta/include/cmeta/pp.h`, after the include gua
 
 Apply these exact mechanical changes:
 
-- In `container.h`, delete `CMETA_CONTAINER_UNUSED`, `CMETA_CONTAINER_INLINE`, and `CMETA_CONTAINER_LOCAL`; replace all `CMETA_CONTAINER_INLINE` with `CMETA_INLINE` and all `CMETA_CONTAINER_LOCAL` with `CMETA_LOCAL`.
+- In `cstl.h`, delete `CMETA_CONTAINER_UNUSED`, `CMETA_CONTAINER_INLINE`, and `CMETA_CONTAINER_LOCAL`; replace all `CMETA_CONTAINER_INLINE` with `CMETA_INLINE` and all `CMETA_CONTAINER_LOCAL` with `CMETA_LOCAL`.
 - In `interface.h`, delete `CMETA_IFACE_UNUSED` and `CMETA_IFACE_INLINE`; replace all `CMETA_IFACE_INLINE` with `CMETA_INLINE`. Change generated method metadata, interface descriptors, concrete vtables, and other generated `static const` declarations to `CMETA_LOCAL const`.
 - In `enum.h`, replace generic and generated `static inline` helpers with `CMETA_INLINE`, and generated metadata arrays/descriptors with `CMETA_LOCAL const`.
 - In `struct.h`, replace generic and generated `static inline` helpers with `CMETA_INLINE`, generated metadata arrays/descriptors with `CMETA_LOCAL const`, and both `_Alignof(type)` spellings with `CMETA_ALIGNOF(type)`.
@@ -239,7 +239,7 @@ typedef struct fmt_arg_legacy_layout {
     size_t sz;
     int b;
     vstr sv;
-    turbo_timeval_t tv;
+    salts_timeval_t tv;
   } val;
 } fmt_arg_legacy_layout;
 
@@ -347,7 +347,7 @@ Change every `FMT_DETAIL_TYPE_SCHEMA` row to this six-column form, preserving th
          (FMT_TYPE_SIZE, 11, "size", size_t, sz, fmt_arg_size), \
          (FMT_TYPE_BOOL, 12, "bool", int, b, fmt_arg_bool), \
          (FMT_TYPE_STRV, 13, "strv", vstr, sv, fmt_arg_strv), \
-         (FMT_TYPE_TIME, 14, "time", turbo_timeval_t, tv, fmt_arg_timeval))
+         (FMT_TYPE_TIME, 14, "time", salts_timeval_t, tv, fmt_arg_timeval))
 ```
 
 Update `FMT_TYPE_ITEM`, `FMT_TYPE_FIELD`, and `FMT_MAKE_FN` to accept the added `text` parameter without changing generated declarations.
@@ -414,7 +414,7 @@ Expected: only the approved schema metadata, ABI mirror, and tests layered on th
 
 ---
 
-### Task 3: Reflected `turbo_log_entry_t` with unchanged ABI
+### Task 3: Reflected `salts_log_entry_t` with unchanged ABI
 
 **Files:**
 - Modify: `utils/include/tlog.h`
@@ -422,16 +422,16 @@ Expected: only the approved schema metadata, ABI mirror, and tests layered on th
 - Modify: `utils/tests/test_tlog_cpp.cpp`
 
 **Interfaces:**
-- Consumes: CMeta `Struct(...)`, `CMETA_ALIGNOF`, and the existing `turbo_log_level_t`.
-- Produces: `turbo_log_entry_t_meta()` returning `const cmeta_struct_desc *`.
+- Consumes: CMeta `Struct(...)`, `CMETA_ALIGNOF`, and the existing `salts_log_level_t`.
+- Produces: `salts_log_entry_t_meta()` returning `const cmeta_struct_desc *`.
 
 - [ ] **Step 1: Add the C RED metadata and ABI tests**
 
 In `utils/tests/test_tlog.c`, after includes and before callback fixtures, add:
 
 ```c
-typedef struct turbo_log_entry_legacy_layout {
-  turbo_log_level_t level;
+typedef struct salts_log_entry_legacy_layout {
+  salts_log_level_t level;
   uint64_t timestamp_ms;
   uint32_t thread_id;
   const char *component;
@@ -439,17 +439,17 @@ typedef struct turbo_log_entry_legacy_layout {
   int line;
   const char *message;
   size_t message_len;
-} turbo_log_entry_legacy_layout;
+} salts_log_entry_legacy_layout;
 
-_Static_assert(sizeof(turbo_log_entry_t) == sizeof(turbo_log_entry_legacy_layout),
-               "turbo_log_entry_t size changed");
-_Static_assert(CMETA_ALIGNOF(turbo_log_entry_t) ==
-                   CMETA_ALIGNOF(turbo_log_entry_legacy_layout),
-               "turbo_log_entry_t alignment changed");
+_Static_assert(sizeof(salts_log_entry_t) == sizeof(salts_log_entry_legacy_layout),
+               "salts_log_entry_t size changed");
+_Static_assert(CMETA_ALIGNOF(salts_log_entry_t) ==
+                   CMETA_ALIGNOF(salts_log_entry_legacy_layout),
+               "salts_log_entry_t alignment changed");
 #define TLOG_ASSERT_ENTRY_OFFSET(field) \
-  _Static_assert(offsetof(turbo_log_entry_t, field) == \
-                     offsetof(turbo_log_entry_legacy_layout, field), \
-                 "turbo_log_entry_t offset changed: " #field)
+  _Static_assert(offsetof(salts_log_entry_t, field) == \
+                     offsetof(salts_log_entry_legacy_layout, field), \
+                 "salts_log_entry_t offset changed: " #field)
 TLOG_ASSERT_ENTRY_OFFSET(level);
 TLOG_ASSERT_ENTRY_OFFSET(timestamp_ms);
 TLOG_ASSERT_ENTRY_OFFSET(thread_id);
@@ -465,36 +465,36 @@ Add this behavior after the existing log-level metadata test:
 
 ```c
 it("should expose the stable log entry layout as read-only metadata") {
-  const cmeta_struct_desc *meta = turbo_log_entry_t_meta();
+  const cmeta_struct_desc *meta = salts_log_entry_t_meta();
   const char *names[] = {
       "level", "timestamp_ms", "thread_id", "component",
       "file", "line", "message", "message_len"};
   const char *types[] = {
-      "turbo_log_level_t", "uint64_t", "uint32_t", "const char *",
+      "salts_log_level_t", "uint64_t", "uint32_t", "const char *",
       "const char *", "int", "const char *", "size_t"};
   const size_t offsets[] = {
-      offsetof(turbo_log_entry_t, level),
-      offsetof(turbo_log_entry_t, timestamp_ms),
-      offsetof(turbo_log_entry_t, thread_id),
-      offsetof(turbo_log_entry_t, component),
-      offsetof(turbo_log_entry_t, file),
-      offsetof(turbo_log_entry_t, line),
-      offsetof(turbo_log_entry_t, message),
-      offsetof(turbo_log_entry_t, message_len)};
+      offsetof(salts_log_entry_t, level),
+      offsetof(salts_log_entry_t, timestamp_ms),
+      offsetof(salts_log_entry_t, thread_id),
+      offsetof(salts_log_entry_t, component),
+      offsetof(salts_log_entry_t, file),
+      offsetof(salts_log_entry_t, line),
+      offsetof(salts_log_entry_t, message),
+      offsetof(salts_log_entry_t, message_len)};
   const size_t sizes[] = {
-      sizeof(turbo_log_level_t), sizeof(uint64_t), sizeof(uint32_t),
+      sizeof(salts_log_level_t), sizeof(uint64_t), sizeof(uint32_t),
       sizeof(const char *), sizeof(const char *), sizeof(int),
       sizeof(const char *), sizeof(size_t)};
   const size_t aligns[] = {
-      CMETA_ALIGNOF(turbo_log_level_t), CMETA_ALIGNOF(uint64_t),
+      CMETA_ALIGNOF(salts_log_level_t), CMETA_ALIGNOF(uint64_t),
       CMETA_ALIGNOF(uint32_t), CMETA_ALIGNOF(const char *),
       CMETA_ALIGNOF(const char *), CMETA_ALIGNOF(int),
       CMETA_ALIGNOF(const char *), CMETA_ALIGNOF(size_t)};
 
   check_not_null(meta);
-  check_equal(meta->name, "turbo_log_entry_t");
-  check_equal(meta->size, sizeof(turbo_log_entry_t));
-  check_equal(meta->align, CMETA_ALIGNOF(turbo_log_entry_t));
+  check_equal(meta->name, "salts_log_entry_t");
+  check_equal(meta->size, sizeof(salts_log_entry_t));
+  check_equal(meta->align, CMETA_ALIGNOF(salts_log_entry_t));
   check_equal(meta->field_count, (size_t)8);
   for (size_t i = 0; i < meta->field_count; ++i) {
     check_equal(meta->fields[i].name, names[i]);
@@ -517,12 +517,12 @@ Add this behavior at the start of `spec("TLog C++ Tests")`:
 
 ```cpp
 it("should expose log entry metadata to C++ consumers") {
-  const cmeta_struct_desc *meta = turbo_log_entry_t_meta();
+  const cmeta_struct_desc *meta = salts_log_entry_t_meta();
 
   check_not_null(meta);
   check_equal(meta->field_count, static_cast<size_t>(8));
-  check_equal(meta->fields[0].offset, offsetof(turbo_log_entry_t, level));
-  check_equal(meta->fields[7].offset, offsetof(turbo_log_entry_t, message_len));
+  check_equal(meta->fields[0].offset, offsetof(salts_log_entry_t, level));
+  check_equal(meta->fields[7].offset, offsetof(salts_log_entry_t, message_len));
 }
 ```
 
@@ -532,11 +532,11 @@ it("should expose log entry metadata to C++ consumers") {
 cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target test_tlog test_tlog_cpp"
 ```
 
-Expected: compile failures naming `turbo_log_entry_t_meta`. ABI static assertions must compile before the missing-API errors.
+Expected: compile failures naming `salts_log_entry_t_meta`. ABI static assertions must compile before the missing-API errors.
 
 - [ ] **Step 4: Declare the unchanged entry through CMeta Struct**
 
-In `utils/include/tlog.h`, include `<cmeta/struct.h>` next to `<cmeta/enum.h>`. Replace only the explicit `turbo_log_entry_t` typedef with:
+In `utils/include/tlog.h`, include `<cmeta/struct.h>` next to `<cmeta/enum.h>`. Replace only the explicit `salts_log_entry_t` typedef with:
 
 ```c
 /**
@@ -545,8 +545,8 @@ In `utils/include/tlog.h`, include `<cmeta/struct.h>` next to `<cmeta/enum.h>`. 
  * component, file, and message are borrowed for the callback duration. The
  * reflected descriptor does not own or extend the lifetime of these strings.
  */
-Struct(turbo_log_entry_t,
-    (turbo_log_level_t, level),
+Struct(salts_log_entry_t,
+    (salts_log_level_t, level),
     (uint64_t, timestamp_ms),
     (uint32_t, thread_id),
     (const char *, component),
@@ -598,7 +598,7 @@ clang -std=c11 -fsyntax-only -Wall -Wextra -Werror -I cmeta/include -I utils/inc
 clang -std=c11 -fsyntax-only -Wall -Wextra -Werror -I cmeta/include -I utils/include -I utils/parser -I tinytest/include utils/tests/test_tlog.c
 clang++ -std=c++17 -fsyntax-only -Wall -Wextra -Werror -I cmeta/include -I utils/include -I utils/parser -I tinytest/include utils/tests/test_fmt_cpp.cpp
 clang++ -std=c++17 -fsyntax-only -Wall -Wextra -Werror -I cmeta/include -I utils/include -I utils/parser -I tinytest/include utils/tests/test_tlog_cpp.cpp
-rg.exe -n "CXX_C_API.*(fmt_type_t_meta|turbo_log_entry_t_meta)|extern.*(fmt_type_t_meta|turbo_log_entry_t_meta)" cmeta utils
+rg.exe -n "CXX_C_API.*(fmt_type_t_meta|salts_log_entry_t_meta)|extern.*(fmt_type_t_meta|salts_log_entry_t_meta)" cmeta utils
 ```
 
 Expected: all four compiles succeed; `rg.exe` finds no exported/extern declaration for the TU-local helpers.
@@ -606,7 +606,7 @@ Expected: all four compiles succeed; `rg.exe` finds no exported/extern declarati
 - [ ] **Step 2: Run the focused and adjacent regression matrix**
 
 ```powershell
-cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target cmeta_core_test cmeta_header_cpp_test test_fmt test_fmt_cpp test_fmt_re2c test_tlog test_tlog_cpp test_turbo_str && ctest --preset win-release-user -R ""^(cmeta_core_test|cmeta_header_cpp_test|test_fmt|test_fmt_cpp|test_fmt_re2c|test_tlog|test_tlog_cpp|test_turbo_str)$"" --output-on-failure"
+cmd /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\Tools\VsDevCmd.bat"" -arch=x64 -host_arch=x64 >nul && cmake --build --preset win-release-user --target cmeta_core_test cmeta_header_cpp_test test_fmt test_fmt_cpp test_fmt_re2c test_tlog test_tlog_cpp test_salts_str && ctest --preset win-release-user -R ""^(cmeta_core_test|cmeta_header_cpp_test|test_fmt|test_fmt_cpp|test_fmt_re2c|test_tlog|test_tlog_cpp|test_salts_str)$"" --output-on-failure"
 ```
 
 Expected: 8/8 tests pass.
@@ -636,7 +636,7 @@ Compare median `avg(us)` and `ops/s` for the six named rows from Task 1. A confi
 - [ ] **Step 5: Compare Release sizes**
 
 ```powershell
-Get-Item build/Msvc-Release/bin/turbo_utils.dll,
+Get-Item build/Msvc-Release/bin/salts.dll,
          build/Msvc-Release/bin/test_fmt.exe,
          build/Msvc-Release/bin/test_fmt_cpp.exe,
          build/Msvc-Release/bin/test_tlog.exe,
@@ -660,7 +660,7 @@ Expected: build exit code 0 and every discovered CTest passes.
 codegraph sync .
 codegraph affected -p . cmeta/include/cmeta/pp.h cmeta/include/cmeta/enum.h cmeta/include/cmeta/struct.h cmeta/include/cmeta/interface.h cmeta/include/cmeta/container.h utils/include/fmt.h utils/include/tlog.h
 rg.exe -n "CMETA_(CONTAINER|IFACE)_(UNUSED|INLINE|LOCAL)" cmeta/include/cmeta
-rg.exe -n "fmt_type_t_meta|turbo_log_entry_t_meta" cmeta utils
+rg.exe -n "fmt_type_t_meta|salts_log_entry_t_meta" cmeta utils
 git diff --check -- cmeta/include/cmeta/pp.h cmeta/include/cmeta/enum.h cmeta/include/cmeta/struct.h cmeta/include/cmeta/interface.h cmeta/include/cmeta/container.h cmeta/tests/CMakeLists.txt cmeta/tests/cmeta_header_cpp_test.cpp utils/include/fmt.h utils/include/tlog.h utils/tests/test_fmt.c utils/tests/test_fmt_cpp.cpp utils/tests/test_tlog.c utils/tests/test_tlog_cpp.cpp
 git status --short
 ```

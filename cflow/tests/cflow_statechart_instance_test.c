@@ -5,8 +5,8 @@
 #include "statechart_instance_internal.h"
 #include "tinytest.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -118,7 +118,7 @@ static bool runtime_wait_flag(atomic_bool *flag) {
     size_t attempt;
     for (attempt = 0u; attempt < RUNTIME_SHARED_WAIT_ATTEMPTS; ++attempt) {
         if (atomic_load(flag)) return true;
-        turbo_sleep_ms(1u);
+        salts_sleep_ms(1u);
     }
     return atomic_load(flag);
 }
@@ -127,7 +127,7 @@ static void runtime_unrelated_blocker(void *user) {
     runtime_shared_executor_probe *probe =
         (runtime_shared_executor_probe *)user;
     atomic_store(&probe->blocker_entered, true);
-    while (!atomic_load(&probe->blocker_release)) turbo_thread_yield();
+    while (!atomic_load(&probe->blocker_release)) salts_thread_yield();
 }
 
 static void runtime_queue_unrelated_after_statechart_idle(void *user) {
@@ -1341,7 +1341,7 @@ suite("CFlow Statechart instance initial configuration") {
         runtime_fixture fixture;
         cflow_statechart_instance_config config;
         runtime_shared_executor_probe probe;
-        turbo_thread_t thread = NULL;
+        salts_thread_t thread = NULL;
         bool returned_while_blocked;
         nested_compound_fixture(&fixture);
         check_equal(cflow_statechart_build(
@@ -1368,13 +1368,13 @@ suite("CFlow Statechart instance initial configuration") {
         atomic_init(&probe.init_status, -1);
         atomic_init(&probe.destroy_status, -1);
 
-        check_equal(turbo_thread_create(
+        check_equal(salts_thread_create(
                         &thread, runtime_init_on_shared_executor, &probe),
-                    TURBO_OK);
+                    SALTS_OK);
         check_true(runtime_wait_flag(&probe.blocker_entered));
         returned_while_blocked = runtime_wait_flag(&probe.init_done);
         atomic_store(&probe.blocker_release, true);
-        check_equal(turbo_thread_join(&thread), TURBO_OK);
+        check_equal(salts_thread_join(&thread), SALTS_OK);
 
         check_equal(atomic_load(&probe.hook_status), 0);
         check_equal(atomic_load(&probe.init_status),
@@ -1390,7 +1390,7 @@ suite("CFlow Statechart instance initial configuration") {
     it("destroys after its own work settles while shared work remains") {
         runtime_fixture fixture;
         runtime_shared_executor_probe probe;
-        turbo_thread_t thread = NULL;
+        salts_thread_t thread = NULL;
         bool returned_while_blocked;
         nested_compound_fixture(&fixture);
         check_equal(runtime_fixture_init(&fixture),
@@ -1409,12 +1409,12 @@ suite("CFlow Statechart instance initial configuration") {
                         &fixture.executor, runtime_unrelated_blocker, &probe),
                     CFLOW_ADMISSION_ACCEPTED);
         check_true(runtime_wait_flag(&probe.blocker_entered));
-        check_equal(turbo_thread_create(
+        check_equal(salts_thread_create(
                         &thread, runtime_destroy_on_shared_executor, &probe),
-                    TURBO_OK);
+                    SALTS_OK);
         returned_while_blocked = runtime_wait_flag(&probe.destroy_done);
         atomic_store(&probe.blocker_release, true);
-        check_equal(turbo_thread_join(&thread), TURBO_OK);
+        check_equal(salts_thread_join(&thread), SALTS_OK);
 
         check_equal(atomic_load(&probe.destroy_status),
                     (int)CFLOW_STATECHART_INSTANCE_OK);
@@ -2939,7 +2939,7 @@ suite("CFlow Statechart deterministic transition selection") {
         size_t count = 0u;
         uint64_t version = 0u;
         selection_error_reader_probe reader_probe;
-        turbo_thread_t reader = NULL;
+        salts_thread_t reader = NULL;
         size_t attempt;
         selection_fixture(&fixture);
         fixture.guards[0] = (cflow_statechart_guard){
@@ -2960,19 +2960,19 @@ suite("CFlow Statechart deterministic transition selection") {
         atomic_init(&reader_probe.started, false);
         atomic_init(&reader_probe.stop, false);
         atomic_init(&reader_probe.observed, false);
-        check_equal(turbo_thread_create(
+        check_equal(salts_thread_create(
                         &reader, selection_error_reader, &reader_probe),
-                    TURBO_OK);
-        while (!atomic_load(&reader_probe.started)) turbo_thread_yield();
+                    SALTS_OK);
+        while (!atomic_load(&reader_probe.started)) salts_thread_yield();
         check_equal(select_event(&fixture, &selected),
                     CFLOW_STATECHART_INSTANCE_GUARD_FAILED);
         for (attempt = 0u;
              attempt < (size_t)SELECTION_ERROR_OBSERVE_ATTEMPTS &&
                  !atomic_load(&reader_probe.observed);
              ++attempt)
-            turbo_sleep_ms(1u);
+            salts_sleep_ms(1u);
         atomic_store(&reader_probe.stop, true);
-        check_equal(turbo_thread_join(&reader), TURBO_OK);
+        check_equal(salts_thread_join(&reader), SALTS_OK);
         check_true(atomic_load(&reader_probe.observed));
         check_equal(selected.transition_count, (size_t)0u);
         check_equal(first_guard.calls, (size_t)1u);
@@ -3114,7 +3114,7 @@ static bool microstep_action(void *user,
     ++probe->calls;
     if (probe->block_first && call == 1u) {
         atomic_store(&probe->block_entered, true);
-        while (!atomic_load(&probe->block_release)) turbo_thread_yield();
+        while (!atomic_load(&probe->block_release)) salts_thread_yield();
     }
     *(int *)out_state = *(const int *)state + 1;
     *out_error = NULL;
@@ -3242,7 +3242,7 @@ static bool effect_staging_action(
         }
         if (probe->block_after_stage) {
             atomic_store(&probe->block_entered, true);
-            while (!atomic_load(&probe->block_release)) turbo_thread_yield();
+            while (!atomic_load(&probe->block_release)) salts_thread_yield();
         }
     }
     if (context->event == NULL) {
@@ -3549,7 +3549,7 @@ static void microstep_block_executor(void *user) {
     microstep_executor_blocker *blocker =
         (microstep_executor_blocker *)user;
     atomic_store(&blocker->entered, true);
-    while (!atomic_load(&blocker->release)) turbo_thread_yield();
+    while (!atomic_load(&blocker->release)) salts_thread_yield();
 }
 
 static void microstep_noop(void *user) {
@@ -4090,7 +4090,7 @@ suite("CFlow Statechart ordered atomic microsteps") {
         check_equal(cflow_statechart_instance_try_microstep_internal(
                         &fixture.instance, &trigger, &selection),
                     CFLOW_ADMISSION_ACCEPTED);
-        while (!atomic_load(&probe.block_entered)) turbo_thread_yield();
+        while (!atomic_load(&probe.block_entered)) salts_thread_yield();
         payload = 99;
         check_equal(cflow_statechart_instance_select_internal(
                         &fixture.instance, &trigger, &rejected),
@@ -4275,7 +4275,7 @@ suite("CFlow Statechart ordered atomic microsteps") {
         check_equal(cflow_executor_try_post_task(
                         &fixture.executor, &blocking_task),
                     CFLOW_ADMISSION_ACCEPTED);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         check_equal(cflow_executor_try_post_task(
                         &fixture.executor, &queued_task),
                     CFLOW_ADMISSION_ACCEPTED);
@@ -4526,7 +4526,7 @@ suite("CFlow Statechart ordered atomic microsteps") {
                     CFLOW_STATECHART_INSTANCE_OK);
         check_equal(microstep_submit_event(&fixture, &selection),
                     CFLOW_ADMISSION_ACCEPTED);
-        while (!atomic_load(&probe.block_entered)) turbo_thread_yield();
+        while (!atomic_load(&probe.block_entered)) salts_thread_yield();
         cflow_statechart_instance_cancel(&fixture.instance);
         atomic_store(&probe.block_release, true);
         check_true(cflow_executor_wait_idle(&fixture.executor));
@@ -4668,7 +4668,7 @@ suite("CFlow Statechart ordered atomic microsteps") {
         check_equal(cflow_executor_try_post_task(
                         &fixture.executor, &blocking_task),
                     CFLOW_ADMISSION_ACCEPTED);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         check_equal(microstep_submit_event(&fixture, &selection),
                     CFLOW_ADMISSION_ACCEPTED);
         check_true(cflow_executor_as_control(&fixture.executor, &control));
@@ -5484,7 +5484,7 @@ static bool rtc_action(void *user, cflow_statechart_action_phase phase,
         if (event->id == RTC_GO && fixture->block_transition_action) {
             atomic_store(&fixture->transition_action_entered, true);
             while (!atomic_load(&fixture->transition_action_release))
-                turbo_thread_yield();
+                salts_thread_yield();
         }
         if (event->id == RTC_GO && fixture->queue_cancel_after_commit &&
             cflow_executor_try_post(&fixture->executor, rtc_cancel_instance,
@@ -5603,7 +5603,7 @@ static void rtc_stats_poller(void *user) {
                     (uint64_t)stats.external_pending,
                     (uint64_t)stats.external_in_flight))
             atomic_fetch_add(context->violations, 1);
-        turbo_thread_yield();
+        salts_thread_yield();
     }
 }
 
@@ -5898,7 +5898,7 @@ static void check_explicit_control_survives_driver_cancel(bool cancel) {
     check_equal(cflow_executor_try_post(
                     &fixture.executor, microstep_block_executor, &blocker),
                 CFLOW_ADMISSION_ACCEPTED);
-    while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+    while (!atomic_load(&blocker.entered)) salts_thread_yield();
     check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
                 CFLOW_MAILBOX_OK);
     if (cancel)
@@ -5938,7 +5938,7 @@ static void check_control_wins_before_external_receive(bool cancel) {
         &fixture.instance, &hooks));
     check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
                 CFLOW_MAILBOX_OK);
-    while (!atomic_load(&receive_blocker.entered)) turbo_thread_yield();
+    while (!atomic_load(&receive_blocker.entered)) salts_thread_yield();
     if (cancel)
         cflow_statechart_instance_cancel(&fixture.instance);
     else
@@ -6064,7 +6064,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
                     CFLOW_MAILBOX_OK);
         while (!atomic_load(&fixture.transition_action_entered))
-            turbo_thread_yield();
+            salts_thread_yield();
         cflow_statechart_instance_request_exit(&fixture.instance);
         atomic_store(&fixture.transition_action_release, true);
         check_true(cflow_executor_wait_idle(&fixture.executor));
@@ -6417,7 +6417,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
                         &fixture.executor,
                         microstep_block_executor, &blocker),
                     CFLOW_ADMISSION_ACCEPTED);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         check_equal(cflow_statechart_instance_try_send_tagged(
                         &fixture.instance, &other, UINT64_C(77)),
                     CFLOW_MAILBOX_OK);
@@ -6744,7 +6744,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
                         &fixture.executor,
                         microstep_block_executor, &blocker),
                     CFLOW_ADMISSION_ACCEPTED);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
                     CFLOW_MAILBOX_OK);
         check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
@@ -6782,7 +6782,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
                         &fixture.executor,
                         microstep_block_executor, &blocker),
                     CFLOW_ADMISSION_ACCEPTED);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         check_equal(cflow_statechart_instance_try_send(
                         &fixture.instance, &external),
                     CFLOW_MAILBOX_OK);
@@ -6821,7 +6821,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
                         &fixture.executor,
                         microstep_block_executor, &blocker),
                     CFLOW_ADMISSION_ACCEPTED);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         check_equal(cflow_statechart_instance_try_send_internal(
                         &fixture.instance, &unknown),
                     CFLOW_MAILBOX_INVALID_ARGUMENT);
@@ -7076,7 +7076,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
             &fixture.instance, &hooks));
         check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
                     CFLOW_MAILBOX_OK);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         cflow_statechart_instance_request_exit(&fixture.instance);
         atomic_store(&blocker.release, true);
         check_true(cflow_executor_wait_idle(&fixture.executor));
@@ -7245,7 +7245,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
                         &fixture.executor,
                         microstep_block_executor, &blocker),
                     CFLOW_ADMISSION_ACCEPTED);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
                     CFLOW_MAILBOX_OK);
         check_equal(cflow_statechart_instance_try_send(
@@ -7484,7 +7484,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
                         &fixture.executor,
                         microstep_block_executor, &blocker),
                     CFLOW_ADMISSION_ACCEPTED);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
                     CFLOW_MAILBOX_OK);
         check_true(cflow_executor_as_control(&fixture.executor, &control));
@@ -7537,7 +7537,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
             &fixture.instance, &hooks));
         check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
                     CFLOW_MAILBOX_OK);
-        while (!atomic_load(&post_blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&post_blocker.entered)) salts_thread_yield();
         cflow_statechart_instance_close(&fixture.instance);
         check_true(cflow_executor_shutdown(&fixture.executor));
         atomic_store(&post_blocker.release, true);
@@ -7580,7 +7580,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
                     CFLOW_STATECHART_INSTANCE_OK);
         check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
                     CFLOW_MAILBOX_OK);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         check_equal(cflow_statechart_instance_try_send(
                         &fixture.instance, &other),
                     CFLOW_MAILBOX_OK);
@@ -7631,7 +7631,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
             &fixture.instance, &hooks));
         check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
                     CFLOW_MAILBOX_OK);
-        while (!atomic_load(&worker_blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&worker_blocker.entered)) salts_thread_yield();
         check_equal(cflow_statechart_instance_try_send(
                         &fixture.instance, &other),
                     CFLOW_MAILBOX_OK);
@@ -7639,7 +7639,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_true(cflow_executor_control_shutdown(
             &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
         atomic_store(&worker_blocker.release, true);
-        while (!atomic_load(&cancel_blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&cancel_blocker.entered)) salts_thread_yield();
         check_true(cflow_statechart_instance_get_stats(
             &fixture.instance, &stats));
         check_equal(stats.last_status,
@@ -7688,7 +7688,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
                     CFLOW_STATECHART_INSTANCE_OK);
         check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
                     CFLOW_MAILBOX_OK);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         check_true(cflow_statechart_instance_get_stats(
             &fixture.instance, &stats));
         check_equal(stats.external_accepted, UINT64_C(1));
@@ -7737,7 +7737,7 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_equal(cflow_executor_try_post(
                         &fixture.executor, microstep_block_executor, &blocker),
                     CFLOW_ADMISSION_ACCEPTED);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         check_equal(cflow_executor_try_post(
                         &fixture.executor, microstep_noop, NULL),
                     CFLOW_ADMISSION_ACCEPTED);
@@ -7768,8 +7768,8 @@ suite("CFlow Statechart public run-to-completion runtime") {
         };
         rtc_fixture fixture;
         rtc_producer_context context;
-        turbo_thread_t producers[PRODUCER_COUNT] = {0};
-        turbo_thread_t poller = {0};
+        salts_thread_t producers[PRODUCER_COUNT] = {0};
+        salts_thread_t poller = {0};
         atomic_int failures;
         atomic_int polls;
         atomic_int violations;
@@ -7795,18 +7795,18 @@ suite("CFlow Statechart public run-to-completion runtime") {
             &fixture.instance, EVENTS_PER_PRODUCER, &failures};
         poller_context = (rtc_stats_poller_context){
             &fixture.instance, &stop, &polls, &violations};
-        check_equal(turbo_thread_create(
+        check_equal(salts_thread_create(
             &poller, rtc_stats_poller, &poller_context), 0);
-        while (atomic_load(&polls) == 0) turbo_thread_yield();
+        while (atomic_load(&polls) == 0) salts_thread_yield();
         for (index = 0u; index < PRODUCER_COUNT; ++index)
-            check_equal(turbo_thread_create(
+            check_equal(salts_thread_create(
                 &producers[index], rtc_producer, &context), 0);
         for (index = 0u; index < PRODUCER_COUNT; ++index)
-            check_equal(turbo_thread_join(&producers[index]), 0);
+            check_equal(salts_thread_join(&producers[index]), 0);
         check_equal(atomic_load(&failures), 0);
         check_true(cflow_executor_wait_idle(&fixture.executor));
         atomic_store(&stop, true);
-        check_equal(turbo_thread_join(&poller), 0);
+        check_equal(salts_thread_join(&poller), 0);
         check_true(atomic_load(&polls) > 0);
         check_equal(atomic_load(&violations), 0);
         check_true(cflow_statechart_instance_get_stats(
@@ -8052,7 +8052,7 @@ suite("CFlow Statechart configuration-scoped timers") {
         check_equal(cflow_executor_try_post(
                         &fixture.executor, microstep_block_executor, &blocker),
                     CFLOW_ADMISSION_ACCEPTED);
-        while (!atomic_load(&blocker.entered)) turbo_thread_yield();
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
         first = statechart_timer_schedule(
             &fixture, TIMER_SC_ROOT, TIMER_SC_LEFT_EVENT, 0u);
         second = statechart_timer_schedule(

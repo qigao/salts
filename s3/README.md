@@ -1,6 +1,6 @@
-# Rocida S3
+# Salts S3
 
-`Rocida::S3` 是建立在 CHTTP 之上的有界 S3 客户端协议层。它提供同一套 HTTP/1.1、HTTP/2
+`Salts::S3` 是建立在 CHTTP 之上的有界 S3 客户端协议层。它提供同一套 HTTP/1.1、HTTP/2
 API，包括 SigV4、path/virtual-hosted addressing、bucket/object CRUD、分页 list、copy、
 presigned URL、SSE、文件上传下载、可恢复 multipart，以及 lifecycle、notification、
 replication 子资源。HTTP/3 不在模块范围内，也不会从 H2 静默回退到 H1。
@@ -12,7 +12,7 @@ S3 client 借用调用方创建的 CHTTP client；S3 不初始化、不轮询、
 CHTTP async client，适合 Executor、Actor 或批量事件循环。
 
 ```text
-application -> Rocida::S3 -> Rocida::CHTTP -> Rocida::CNet -> NativeIO
+application -> Salts::S3 -> Salts::CHTTP -> Salts::CNet -> NativeIO
 ```
 
 `connection_uri` 选择连接目标，`authority` 同时用于 HTTP authority 与 SigV4 host，`protocol`
@@ -45,11 +45,11 @@ s3_client_config s3_config = {
     .timeout_ms = 30000u,
 };
 
-if (chttp_client_init(&http, &http_config) == TURBO_OK &&
-    s3_client_init(&s3, &http, &s3_config) == TURBO_OK) {
+if (chttp_client_init(&http, &http_config) == SALTS_OK &&
+    s3_client_init(&s3, &http, &s3_config) == SALTS_OK) {
   int status = s3_put_object(&s3, "bucket", "key.txt", "hello", 5u,
                              "text/plain", &response, &error);
-  /* status == TURBO_EPROTO preserves a non-2xx HTTP response and parsed S3 error. */
+  /* status == SALTS_EPROTO preserves a non-2xx HTTP response and parsed S3 error. */
   (void)status;
   s3_response_destroy(&response);
   (void)s3_client_destroy(&s3);
@@ -62,7 +62,7 @@ if (chttp_client_init(&http, &http_config) == TURBO_OK &&
 关闭证书或 hostname 校验的开关。
 
 `s3_response` 是 owning result，必须用 `s3_response_destroy()` 释放。非 2xx 响应返回
-`TURBO_EPROTO`，同时保留 HTTP status/body，并在边界内解析 `Code`、`Message`、`RequestId`
+`SALTS_EPROTO`，同时保留 HTTP status/body，并在边界内解析 `Code`、`Message`、`RequestId`
 和 `HostId`。async callback 收到的 `s3_response_view` 仅在 callback 返回前有效。
 
 blocking client 是 single-owner。文件传输和 multipart progress callback 在 owner thread 上
@@ -82,14 +82,14 @@ SSE-C upload 时必须重新提供相同的 `put_options`，checkpoint 不保存
 的 ETag 持久化后才允许
 跳过，成功 complete 后才删除 checkpoint。
 如果 S3 已接受 complete、但最后删除 checkpoint 失败，函数以
-`multipart-checkpoint-remove` 阶段返回 `TURBO_EIO`；对象已经提交，调用方应删除过期
+`multipart-checkpoint-remove` 阶段返回 `SALTS_EIO`；对象已经提交，调用方应删除过期
 checkpoint，不能用它继续 resume。
 
 手动 multipart API 要求 part number 为 1..10000，除最后一块外每块至少 5 MiB，单块最多
 5 GiB。高层文件 API 的 part buffer 还受 `max_multipart_part_bytes` 限制，默认 64 MiB。
 SSE-C handle 会持有后续 `UploadPart` 所需的派生 header，destroy 时清零。即使 HTTP status 是
 200，CompleteMultipartUpload body 为空、格式错误或根节点为 `<Error>` 时仍返回
-`TURBO_EPROTO` 并保持 ACTIVE 状态。
+`SALTS_EPROTO` 并保持 ACTIVE 状态。
 当前 multipart handle 与 blocking client 均为 single-owner，不能跨线程并发上传 parts。
 
 ## 头文件与构建
@@ -105,8 +105,8 @@ SSE-C handle 会持有后续 `UploadPart` 所需的派生 header，destroy 时�
 安装后使用：
 
 ```cmake
-find_package(Rocida CONFIG REQUIRED)
-target_link_libraries(app PRIVATE Rocida::S3)
+find_package(Salts CONFIG REQUIRED)
+target_link_libraries(app PRIVATE Salts::S3)
 ```
 
 BoringSSL、XML parser 和 llhttp 等实现依赖不会以第三方类型出现在 S3 公开 API 中。

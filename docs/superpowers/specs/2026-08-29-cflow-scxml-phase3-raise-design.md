@@ -1,6 +1,6 @@
 # CFlow SCXML Phase 3 Executable Block and Raise Design
 
-**Issue:** [qigao/turbo-utils#122](https://github.com/qigao/turbo-utils/issues/122)
+**Issue:** [qigao/salts#122](https://github.com/qigao/salts/issues/122)
 
 **Date:** 2026-08-29
 
@@ -9,7 +9,7 @@
 ## Scope
 
 This increment establishes the first executable-content path for the optional
-`TurboUtils::CFlowScxml` frontend. It admits bounded executable blocks under
+`Salts::CFlowScxml` frontend. It admits bounded executable blocks under
 `onentry`, `onexit`, and `transition`, compiles the SCXML `raise` element into
 the native Statechart executable/action IR, and exposes the immutable native
 runtime bindings owned by a compiled `cflow_scxml_program`.
@@ -77,8 +77,8 @@ native CFlow instance lifecycle.
 
 This is a source-compatible API addition but changes the installed public
 header dependency from `cflow/statechart.h` alone to also include the runtime
-binding type. `TurboUtils::CFlowScxml` already publicly links
-`TurboUtils::CFlow`, so package linkage does not gain a new target.
+binding type. `Salts::CFlowScxml` already publicly links
+`Salts::CFlow`, so package linkage does not gain a new target.
 
 ## Executable block IR
 

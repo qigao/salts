@@ -2,7 +2,7 @@
 
 #include "chttp_client_internal.h"
 
-#include <turbo/clock.h>
+#include <salts/clock.h>
 
 #include <limits.h>
 #include <stdbool.h>
@@ -56,7 +56,7 @@ void chttp_response_destroy(chttp_response *response) {
 
 static int chttp_requests_copy_response(const chttp_response_view *source, chttp_response *out) {
   size_t index;
-  if (source == NULL || out == NULL) return TURBO_EINVAL;
+  if (source == NULL || out == NULL) return SALTS_EINVAL;
   *out = (chttp_response){.http_major = source->http_major,
                           .http_minor = source->http_minor,
                           .status_code = source->status_code,
@@ -88,14 +88,14 @@ static int chttp_requests_copy_response(const chttp_response_view *source, chttp
     if (out->body == NULL) goto no_memory;
     memcpy(out->body, source->body, source->body_size);
   }
-  return TURBO_OK;
+  return SALTS_OK;
 
 no_memory:
   chttp_response_destroy(out);
-  return TURBO_ENOMEM;
+  return SALTS_ENOMEM;
 protocol_error:
   chttp_response_destroy(out);
-  return TURBO_EPROTO;
+  return SALTS_EPROTO;
 }
 
 static void chttp_requests_complete(void *user, chttp_request request,
@@ -107,11 +107,11 @@ static void chttp_requests_complete(void *user, chttp_request request,
     probe->error = *error;
     probe->copy_status = error->status;
   } else if (response == NULL) {
-    probe->error = (chttp_error){.status = TURBO_EPROTO, .stage = "response"};
-    probe->copy_status = TURBO_EPROTO;
+    probe->error = (chttp_error){.status = SALTS_EPROTO, .stage = "response"};
+    probe->copy_status = SALTS_EPROTO;
   } else {
     probe->copy_status = chttp_requests_copy_response(response, &probe->response);
-    if (probe->copy_status != TURBO_OK)
+    if (probe->copy_status != SALTS_OK)
       probe->error = (chttp_error){.status = probe->copy_status, .stage = "response-copy"};
   }
   probe->done = true;
@@ -122,7 +122,7 @@ static uint64_t chttp_requests_deadline_after(uint64_t now_ms, uint32_t timeout_
 }
 
 static uint32_t chttp_requests_poll_wait(uint64_t deadline_at_ms) {
-  const uint64_t now_ms = turbo_monotonic_ms();
+  const uint64_t now_ms = salts_monotonic_ms();
   const uint64_t remaining = deadline_at_ms > now_ms ? deadline_at_ms - now_ms : 0u;
   return remaining > UINT32_MAX ? UINT32_MAX : (uint32_t)remaining;
 }
@@ -131,13 +131,13 @@ static int chttp_requests_recover(chttp_blocking_client_impl *impl, uint32_t tim
   int status;
   impl->usable = false;
   status = chttp_async_client_stop(&impl->async, timeout_ms);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status = chttp_async_client_destroy(&impl->async);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   chttp_response_destroy(&impl->probe.response);
   impl->probe = (chttp_requests_probe){0};
   status = chttp_async_client_init(&impl->async, &impl->config);
-  if (status == TURBO_OK) impl->usable = true;
+  if (status == SALTS_OK) impl->usable = true;
   return status;
 }
 
@@ -146,29 +146,29 @@ static int chttp_requests_wait_recycled(chttp_blocking_client_impl *impl, chttp_
   int status;
   for (;;) {
     status = chttp_async_request_cancel(&impl->async, request);
-    if (status == TURBO_ENOENT) return TURBO_OK;
-    if (status != TURBO_EALREADY) return status;
+    if (status == SALTS_ENOENT) return SALTS_OK;
+    if (status != SALTS_EALREADY) return status;
     status = chttp_async_client_poll(&impl->async, UINT32_MAX, &completions);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
   }
 }
 
 int chttp_client_init(chttp_client *client, const chttp_client_config *config) {
   chttp_blocking_client_impl *impl;
   int status;
-  if (client == NULL || config == NULL) return TURBO_EINVAL;
-  if (client->impl != NULL) return TURBO_EALREADY;
+  if (client == NULL || config == NULL) return SALTS_EINVAL;
+  if (client->impl != NULL) return SALTS_EALREADY;
   impl = (chttp_blocking_client_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   status = chttp_async_client_init(&impl->async, config);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     free(impl);
     return status;
   }
   impl->config = *config;
   impl->usable = true;
   client->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_requests_perform(chttp_client *client, chttp_method method,
@@ -186,12 +186,12 @@ static int chttp_requests_perform(chttp_client *client, chttp_method method,
   bool admitted = false;
   bool admission_progressed = false;
 
-  if (out_response == NULL || out_error == NULL) return TURBO_EINVAL;
+  if (out_response == NULL || out_error == NULL) return SALTS_EINVAL;
   *out_response = (chttp_response){0};
   *out_error = (chttp_error){0};
-  if (impl == NULL || options == NULL) return TURBO_EINVAL;
-  if (!impl->usable) return TURBO_ESHUTDOWN;
-  if (impl->operation_active) return TURBO_EBUSY;
+  if (impl == NULL || options == NULL) return SALTS_EINVAL;
+  if (!impl->usable) return SALTS_ESHUTDOWN;
+  if (impl->operation_active) return SALTS_EBUSY;
 
   impl->operation_active = true;
   chttp_response_destroy(&impl->probe.response);
@@ -211,7 +211,7 @@ static int chttp_requests_perform(chttp_client *client, chttp_method method,
                                             .tls = options->tls,
                                             .protocol = options->protocol};
   if (options->timeout_ms != 0u)
-    deadline_at_ms = chttp_requests_deadline_after(turbo_monotonic_ms(), options->timeout_ms);
+    deadline_at_ms = chttp_requests_deadline_after(salts_monotonic_ms(), options->timeout_ms);
   for (;;) {
     if (file_transfer != NULL)
       status =
@@ -220,7 +220,7 @@ static int chttp_requests_perform(chttp_client *client, chttp_method method,
       status = chttp_async_client_submit_file_download(&impl->async, &request_options,
                                                        file_sink_transfer, &request);
     else status = chttp_async_client_submit(&impl->async, &request_options, &request);
-    if (status != TURBO_ENOBUFS) break;
+    if (status != SALTS_ENOBUFS) break;
     admission_progressed = true;
     {
       uint32_t wait_ms = UINT32_MAX;
@@ -232,11 +232,11 @@ static int chttp_requests_perform(chttp_client *client, chttp_method method,
         }
       }
       status = chttp_async_client_poll(&impl->async, wait_ms, &completions);
-      if (status != TURBO_OK) break;
+      if (status != SALTS_OK) break;
     }
   }
-  admitted = status == TURBO_OK;
-  while (status == TURBO_OK && !impl->probe.done) {
+  admitted = status == SALTS_OK;
+  while (status == SALTS_OK && !impl->probe.done) {
     uint32_t wait_ms = UINT32_MAX;
     if (deadline_at_ms != 0u) {
       wait_ms = chttp_requests_poll_wait(deadline_at_ms);
@@ -247,25 +247,25 @@ static int chttp_requests_perform(chttp_client *client, chttp_method method,
     }
     status = chttp_async_client_poll(&impl->async, wait_ms, &completions);
   }
-  if (status == TURBO_OK && impl->probe.done) status = chttp_requests_wait_recycled(impl, request);
+  if (status == SALTS_OK && impl->probe.done) status = chttp_requests_wait_recycled(impl, request);
 
   if (!admitted) {
-    if (timed_out) status = TURBO_ETIMEDOUT;
+    if (timed_out) status = SALTS_ETIMEDOUT;
     *out_error = (chttp_error){.status = status,
                                .stage = timed_out              ? "request-deadline"
                                         : admission_progressed ? "request-progress"
                                                                : "request-submit"};
-  } else if (timed_out || status != TURBO_OK) {
-    const int primary_status = timed_out ? TURBO_ETIMEDOUT : status;
+  } else if (timed_out || status != SALTS_OK) {
+    const int primary_status = timed_out ? SALTS_ETIMEDOUT : status;
     const char *primary_stage = timed_out ? "request-deadline" : "request-progress";
     if (!impl->probe.done) {
       if (request.slot != 0u) (void)chttp_async_request_cancel(&impl->async, request);
       if (file_transfer != NULL && file_transfer->file.impl != NULL) {
         cflow_io_file_runtime *runtime = NULL;
         recovery_status = chttp_async_client_file_runtime(&impl->async, &runtime);
-        if (recovery_status == TURBO_OK)
+        if (recovery_status == SALTS_OK)
           recovery_status = chttp_file_transfer_drain_destroy(file_transfer, runtime);
-        if (recovery_status != TURBO_OK) {
+        if (recovery_status != SALTS_OK) {
           status = recovery_status;
           *out_error = (chttp_error){.status = status, .stage = "file-drain"};
           goto finished;
@@ -274,16 +274,16 @@ static int chttp_requests_perform(chttp_client *client, chttp_method method,
       if (file_sink_transfer != NULL && file_sink_transfer->file.impl != NULL) {
         cflow_io_file_runtime *runtime = NULL;
         recovery_status = chttp_async_client_file_runtime(&impl->async, &runtime);
-        if (recovery_status == TURBO_OK)
+        if (recovery_status == SALTS_OK)
           recovery_status = chttp_file_sink_transfer_drain_destroy(file_sink_transfer, runtime);
-        if (recovery_status != TURBO_OK) {
+        if (recovery_status != SALTS_OK) {
           status = recovery_status;
           *out_error = (chttp_error){.status = status, .stage = "file-drain"};
           goto finished;
         }
       }
       recovery_status = chttp_requests_recover(impl, UINT32_MAX);
-      if (recovery_status != TURBO_OK) {
+      if (recovery_status != SALTS_OK) {
         status = recovery_status;
         *out_error = (chttp_error){.status = status, .stage = "request-recover"};
       } else {
@@ -295,9 +295,9 @@ static int chttp_requests_perform(chttp_client *client, chttp_method method,
       *out_error = (chttp_error){.status = status, .stage = primary_stage};
       chttp_response_destroy(&impl->probe.response);
     }
-  } else if (status == TURBO_OK && impl->probe.done) {
+  } else if (status == SALTS_OK && impl->probe.done) {
     status = impl->probe.copy_status;
-    if (status == TURBO_OK) {
+    if (status == SALTS_OK) {
       *out_response = impl->probe.response;
       impl->probe.response = (chttp_response){0};
     } else {
@@ -347,27 +347,27 @@ int chttp_patch(chttp_client *client, const chttp_options *options, chttp_respon
 
 int chttp_client_file_runtime(chttp_client *client, cflow_io_file_runtime **out_runtime) {
   chttp_blocking_client_impl *impl = chttp_client_get_impl(client);
-  if (impl == NULL || out_runtime == NULL || impl->operation_active) return TURBO_EINVAL;
+  if (impl == NULL || out_runtime == NULL || impl->operation_active) return SALTS_EINVAL;
   return chttp_async_client_file_runtime(&impl->async, out_runtime);
 }
 
 int chttp_client_file_sink_capacity(chttp_client *client, size_t *out_capacity) {
   chttp_blocking_client_impl *impl = chttp_client_get_impl(client);
-  if (impl == NULL || out_capacity == NULL || impl->operation_active) return TURBO_EINVAL;
+  if (impl == NULL || out_capacity == NULL || impl->operation_active) return SALTS_EINVAL;
   return chttp_async_client_file_sink_capacity(&impl->async, out_capacity);
 }
 
 int chttp_client_perform_file(chttp_client *client, chttp_method method,
                               const chttp_options *options, chttp_file_transfer *transfer,
                               chttp_response *out_response, chttp_error *out_error) {
-  if (method != CHTTP_METHOD_POST && method != CHTTP_METHOD_PUT) return TURBO_EINVAL;
+  if (method != CHTTP_METHOD_POST && method != CHTTP_METHOD_PUT) return SALTS_EINVAL;
   return chttp_requests_perform(client, method, options, out_response, out_error, transfer, NULL);
 }
 
 int chttp_client_perform_file_download(chttp_client *client, const chttp_options *options,
                                        chttp_file_sink_transfer *transfer,
                                        chttp_response *out_response, chttp_error *out_error) {
-  if (transfer == NULL) return TURBO_EINVAL;
+  if (transfer == NULL) return SALTS_EINVAL;
   return chttp_requests_perform(client, CHTTP_METHOD_GET, options, out_response, out_error, NULL,
                                 transfer);
 }
@@ -383,18 +383,18 @@ const char *chttp_response_header(const chttp_response *response, const char *na
 int chttp_client_destroy(chttp_client *client, uint32_t timeout_ms) {
   chttp_blocking_client_impl *impl;
   int status;
-  if (client == NULL) return TURBO_EINVAL;
+  if (client == NULL) return SALTS_EINVAL;
   impl = chttp_client_get_impl(client);
-  if (impl == NULL) return TURBO_OK;
-  if (impl->operation_active) return TURBO_EBUSY;
+  if (impl == NULL) return SALTS_OK;
+  if (impl->operation_active) return SALTS_EBUSY;
   if (impl->async.impl != NULL) {
     status = chttp_async_client_stop(&impl->async, timeout_ms);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     status = chttp_async_client_destroy(&impl->async);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
   }
   chttp_response_destroy(&impl->probe.response);
   free(impl);
   client->impl = NULL;
-  return TURBO_OK;
+  return SALTS_OK;
 }

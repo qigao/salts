@@ -23,7 +23,7 @@ cyaml was written to support [Dawn](https://github.com/andrewmd5/dawn), which ne
 - Anchor and alias support with cycle detection
 - scanf/printf-style extraction and building
 - Path-based modification (insert, delete, append)
-- Uses Rocida for query execution and regular-expression predicates
+- Uses Salts for query execution and regular-expression predicates
 - Builds on Windows, macOS, Linux, and BSD
 
 ## Building

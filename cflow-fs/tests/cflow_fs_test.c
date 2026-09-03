@@ -1,6 +1,6 @@
 #include <cflow/fs.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 #include <tinytest.h>
 
 #include <stdlib.h>
@@ -54,27 +54,27 @@ static int fs_wait(cflow_fs_service *service, fs_completion_probe *probe,
     while (probe->count < expected && attempts++ < 5000u) {
         size_t completed = 0u;
         int status = cflow_fs_run_ready(service, 8u, &completed);
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             return status;
         if (completed == 0u)
-            turbo_sleep_ms(1u);
+            salts_sleep_ms(1u);
     }
-    return probe->count >= expected ? TURBO_OK : TURBO_ETIMEDOUT;
+    return probe->count >= expected ? SALTS_OK : SALTS_ETIMEDOUT;
 }
 
 static void fs_close_destroy(cflow_fs_service *service,
                              fs_completion_probe *probe) {
     size_t attempts = 0u;
     int close_status = cflow_fs_close(service);
-    check_true(close_status == TURBO_OK || close_status == TURBO_EALREADY);
+    check_true(close_status == SALTS_OK || close_status == SALTS_EALREADY);
     while (!cflow_fs_is_quiescent(service) && attempts++ < 5000u) {
         size_t completed = 0u;
-        check_equal(cflow_fs_run_ready(service, 8u, &completed), TURBO_OK);
+        check_equal(cflow_fs_run_ready(service, 8u, &completed), SALTS_OK);
         if (completed == 0u)
-            turbo_sleep_ms(1u);
+            salts_sleep_ms(1u);
     }
     check_true(cflow_fs_is_quiescent(service));
-    check_equal(cflow_fs_destroy(service), TURBO_OK);
+    check_equal(cflow_fs_destroy(service), SALTS_OK);
     check_null(service->impl);
     (void)probe;
 }
@@ -110,11 +110,11 @@ describe("public contract") {
             default: 0));
         check_true(_Generic(&cflow_fs_try_stat,
             cflow_fs_submit_result (*)(cflow_fs_service *, const char *,
-                                       turbo_fs_stat_t *): 1,
+                                       salts_fs_stat_t *): 1,
             default: 0));
         check_true(_Generic(&cflow_fs_try_lstat,
             cflow_fs_submit_result (*)(cflow_fs_service *, const char *,
-                                       turbo_fs_stat_t *): 1,
+                                       salts_fs_stat_t *): 1,
             default: 0));
         check_true(_Generic(&cflow_fs_try_read_directory,
             cflow_fs_submit_result (*)(cflow_fs_service *, const char *,
@@ -160,7 +160,7 @@ describe("lifecycle and metadata") {
         cflow_fs_service service = {0};
         fs_completion_probe probe = {0};
         cflow_fs_config config = fs_test_config(&probe, 2u);
-        turbo_fs_stat_t stat_result = {0};
+        salts_fs_stat_t stat_result = {0};
         cflow_fs_submit_result submitted;
         char original_path[1024];
 
@@ -168,20 +168,20 @@ describe("lifecycle and metadata") {
         check_less(strlen(path), sizeof(original_path));
         memcpy(original_path, path, strlen(path) + 1u);
         check_equal(tt_write_file(path, "value", 5u), 0);
-        check_equal(cflow_fs_service_init(NULL, &config), TURBO_EINVAL);
-        check_equal(cflow_fs_service_init(&service, NULL), TURBO_EINVAL);
+        check_equal(cflow_fs_service_init(NULL, &config), SALTS_EINVAL);
+        check_equal(cflow_fs_service_init(&service, NULL), SALTS_EINVAL);
         config.worker_count = 0u;
-        check_equal(cflow_fs_service_init(&service, &config), TURBO_EINVAL);
+        check_equal(cflow_fs_service_init(&service, &config), SALTS_EINVAL);
         config = fs_test_config(&probe, 2u);
-        check_equal(cflow_fs_service_init(&service, &config), TURBO_OK);
-        check_equal(cflow_fs_destroy(&service), TURBO_EBUSY);
+        check_equal(cflow_fs_service_init(&service, &config), SALTS_OK);
+        check_equal(cflow_fs_destroy(&service), SALTS_EBUSY);
 
         submitted = cflow_fs_try_stat(&service, path, &stat_result);
         check_equal(submitted.status, CFLOW_FS_SUBMIT_ACCEPTED);
         memset(path, 'x', strlen(path));
-        check_equal(fs_wait(&service, &probe, 1u), TURBO_OK);
+        check_equal(fs_wait(&service, &probe, 1u), SALTS_OK);
         check_equal(probe.operations[0], CFLOW_FS_STAT);
-        check_equal(probe.results[0], TURBO_OK);
+        check_equal(probe.results[0], SALTS_OK);
         check_equal(stat_result.size, (uint64_t)5u);
         check_true(stat_result.is_file);
 
@@ -194,14 +194,14 @@ describe("lifecycle and metadata") {
         cflow_fs_service service = {0};
         fs_completion_probe probe = {0};
         cflow_fs_config config = fs_test_config(&probe, 1u);
-        turbo_fs_stat_t stat_result = {0};
+        salts_fs_stat_t stat_result = {0};
         char path[4] = {'a', 'b', 'c', '\0'};
 
         config.path_capacity = sizeof(path);
-        check_equal(cflow_fs_service_init(&service, &config), TURBO_OK);
+        check_equal(cflow_fs_service_init(&service, &config), SALTS_OK);
         check_equal(cflow_fs_try_stat(&service, path, &stat_result).status,
                     CFLOW_FS_SUBMIT_ACCEPTED);
-        check_equal(fs_wait(&service, &probe, 1u), TURBO_OK);
+        check_equal(fs_wait(&service, &probe, 1u), SALTS_OK);
         path[3] = 'd';
         check_equal(cflow_fs_try_stat(&service, path, &stat_result).status,
                     CFLOW_FS_SUBMIT_INVALID_ARGUMENT);
@@ -213,27 +213,27 @@ describe("lifecycle and metadata") {
         cflow_fs_service service = {0};
         fs_completion_probe probe = {0};
         cflow_fs_config config = fs_test_config(&probe, 1u);
-        turbo_fs_stat_t stat_result = {0};
+        salts_fs_stat_t stat_result = {0};
         cflow_fs_submit_result submitted;
         size_t attempts = 0u;
 
         check_not_null(path);
-        check_equal(cflow_fs_service_init(&service, &config), TURBO_OK);
+        check_equal(cflow_fs_service_init(&service, &config), SALTS_OK);
         submitted = cflow_fs_try_stat(&service, path, &stat_result);
         check_equal(submitted.status, CFLOW_FS_SUBMIT_ACCEPTED);
-        check_equal(cflow_fs_close(&service), TURBO_OK);
+        check_equal(cflow_fs_close(&service), SALTS_OK);
         while (!cflow_fs_is_quiescent(&service) && attempts++ < 5000u) {
             size_t completed = 0u;
-            check_equal(cflow_fs_run_ready(&service, 1u, &completed), TURBO_OK);
+            check_equal(cflow_fs_run_ready(&service, 1u, &completed), SALTS_OK);
             if (completed == 0u)
-                turbo_sleep_ms(1u);
+                salts_sleep_ms(1u);
         }
         check_equal(probe.count, (size_t)1u);
         check_equal(probe.request_ids[0], submitted.request_id);
-        check_true(probe.results[0] == TURBO_OK ||
-                   probe.results[0] == TURBO_ECANCELED);
+        check_true(probe.results[0] == SALTS_OK ||
+                   probe.results[0] == SALTS_ECANCELED);
         check_true(cflow_fs_is_quiescent(&service));
-        check_equal(cflow_fs_destroy(&service), TURBO_OK);
+        check_equal(cflow_fs_destroy(&service), SALTS_OK);
         check_equal(tt_remove_file(path), 0);
         free(path);
     }
@@ -243,25 +243,25 @@ describe("lifecycle and metadata") {
         cflow_fs_service service = {0};
         fs_completion_probe probe = {0};
         cflow_fs_config config = fs_test_config(&probe, 1u);
-        turbo_fs_stat_t first = {0};
-        turbo_fs_stat_t second = {0};
+        salts_fs_stat_t first = {0};
+        salts_fs_stat_t second = {0};
         cflow_fs_submit_result submitted;
         cflow_fs_stats stats = {0};
 
         check_not_null(path);
-        check_equal(cflow_fs_service_init(&service, &config), TURBO_OK);
+        check_equal(cflow_fs_service_init(&service, &config), SALTS_OK);
         submitted = cflow_fs_try_stat(&service, path, &first);
         check_equal(submitted.status, CFLOW_FS_SUBMIT_ACCEPTED);
         probe.reentrant_service = &service;
         submitted = cflow_fs_try_lstat(&service, path, &second);
         check_equal(submitted.status, CFLOW_FS_SUBMIT_FULL);
-        check_equal(fs_wait(&service, &probe, 1u), TURBO_OK);
-        check_equal(probe.reentrant_status, TURBO_EBUSY);
+        check_equal(fs_wait(&service, &probe, 1u), SALTS_OK);
+        check_equal(probe.reentrant_status, SALTS_EBUSY);
         submitted = cflow_fs_try_lstat(&service, path, &second);
         check_equal(submitted.status, CFLOW_FS_SUBMIT_ACCEPTED);
-        check_equal(fs_wait(&service, &probe, 2u), TURBO_OK);
+        check_equal(fs_wait(&service, &probe, 2u), SALTS_OK);
         check_equal(probe.operations[1], CFLOW_FS_LSTAT);
-        check_equal(probe.results[1], TURBO_OK);
+        check_equal(probe.results[1], SALTS_OK);
         check_true(cflow_fs_get_stats(&service, &stats));
         check_equal(stats.capacity, (size_t)1u);
         check_equal(stats.accepted, (size_t)2u);
@@ -269,8 +269,8 @@ describe("lifecycle and metadata") {
         check_equal(stats.in_use, (size_t)0u);
         check_equal(stats.rejected_full, (size_t)1u);
 
-        check_equal(cflow_fs_close(&service), TURBO_OK);
-        check_equal(cflow_fs_close(&service), TURBO_EALREADY);
+        check_equal(cflow_fs_close(&service), SALTS_OK);
+        check_equal(cflow_fs_close(&service), SALTS_EALREADY);
         submitted = cflow_fs_try_stat(&service, path, &first);
         check_equal(submitted.status, CFLOW_FS_SUBMIT_CLOSED);
 
@@ -285,7 +285,7 @@ describe("directory and path mutations") {
         char *root = tt_make_temp_dir("cflow-fs-dir-");
         char child[1024];
         char nested[1024];
-        turbo_fs_dirent_t entries[4] = {0};
+        salts_fs_dirent_t entries[4] = {0};
         char names[128] = {0};
         cflow_fs_dir_buffer directory = {
             .entries = entries,
@@ -301,17 +301,17 @@ describe("directory and path mutations") {
         size_t index;
 
         check_not_null(root);
-        check_equal(turbo_fs_path_join(child, sizeof(child), root,
+        check_equal(salts_fs_path_join(child, sizeof(child), root,
                                        "child.txt"), 0);
-        check_equal(turbo_fs_path_join(nested, sizeof(nested), root,
+        check_equal(salts_fs_path_join(nested, sizeof(nested), root,
                                        "nested"), 0);
         check_equal(tt_write_file(child, "x", 1u), 0);
         check_equal(tt_make_dir(nested), 0);
-        check_equal(cflow_fs_service_init(&service, &config), TURBO_OK);
+        check_equal(cflow_fs_service_init(&service, &config), SALTS_OK);
         check_equal(cflow_fs_try_read_directory(&service, root, &directory).status,
                     CFLOW_FS_SUBMIT_ACCEPTED);
-        check_equal(fs_wait(&service, &probe, 1u), TURBO_OK);
-        check_equal(probe.results[0], TURBO_OK);
+        check_equal(fs_wait(&service, &probe, 1u), SALTS_OK);
+        check_equal(probe.results[0], SALTS_OK);
         check_equal(directory.entry_count, (size_t)2u);
         for (index = 0u; index < directory.entry_count; ++index) {
             if (strcmp(directory.entries[index].name, "child.txt") == 0)
@@ -327,8 +327,8 @@ describe("directory and path mutations") {
         directory.names_used = 99u;
         check_equal(cflow_fs_try_read_directory(&service, root, &directory).status,
                     CFLOW_FS_SUBMIT_ACCEPTED);
-        check_equal(fs_wait(&service, &probe, 2u), TURBO_OK);
-        check_equal(probe.results[1], TURBO_ENOBUFS);
+        check_equal(fs_wait(&service, &probe, 2u), SALTS_OK);
+        check_equal(probe.results[1], SALTS_ENOBUFS);
         check_equal(directory.entry_count, (size_t)0u);
         check_equal(directory.names_used, (size_t)0u);
 
@@ -345,40 +345,40 @@ describe("directory and path mutations") {
         cflow_fs_service service = {0};
         fs_completion_probe probe = {0};
         cflow_fs_config config = fs_test_config(&probe, 2u);
-        turbo_fs_stat_t stat_result = {0};
+        salts_fs_stat_t stat_result = {0};
 
         check_not_null(root);
-        check_equal(turbo_fs_path_join(directory, sizeof(directory), root,
+        check_equal(salts_fs_path_join(directory, sizeof(directory), root,
                                        "created"), 0);
-        check_equal(turbo_fs_path_join(source, sizeof(source), root,
+        check_equal(salts_fs_path_join(source, sizeof(source), root,
                                        "source.txt"), 0);
-        check_equal(turbo_fs_path_join(destination, sizeof(destination), root,
+        check_equal(salts_fs_path_join(destination, sizeof(destination), root,
                                        "destination.txt"), 0);
-        check_equal(cflow_fs_service_init(&service, &config), TURBO_OK);
+        check_equal(cflow_fs_service_init(&service, &config), SALTS_OK);
 
         check_equal(cflow_fs_try_mkdir(&service, directory, 0755).status,
                     CFLOW_FS_SUBMIT_ACCEPTED);
-        check_equal(fs_wait(&service, &probe, 1u), TURBO_OK);
-        check_equal(probe.results[0], TURBO_OK);
-        check_equal(turbo_fs_stat(directory, &stat_result), TURBO_OK);
+        check_equal(fs_wait(&service, &probe, 1u), SALTS_OK);
+        check_equal(probe.results[0], SALTS_OK);
+        check_equal(salts_fs_stat(directory, &stat_result), SALTS_OK);
         check_true(stat_result.is_directory);
 
         check_equal(tt_write_file(source, "move", 4u), 0);
         check_equal(cflow_fs_try_rename(&service, source, destination).status,
                     CFLOW_FS_SUBMIT_ACCEPTED);
-        check_equal(fs_wait(&service, &probe, 2u), TURBO_OK);
-        check_equal(probe.results[1], TURBO_OK);
-        check_less(turbo_fs_stat(source, &stat_result), 0);
-        check_equal(turbo_fs_stat(destination, &stat_result), TURBO_OK);
+        check_equal(fs_wait(&service, &probe, 2u), SALTS_OK);
+        check_equal(probe.results[1], SALTS_OK);
+        check_less(salts_fs_stat(source, &stat_result), 0);
+        check_equal(salts_fs_stat(destination, &stat_result), SALTS_OK);
 
         check_equal(cflow_fs_try_unlink(&service, destination).status,
                     CFLOW_FS_SUBMIT_ACCEPTED);
-        check_equal(fs_wait(&service, &probe, 3u), TURBO_OK);
-        check_equal(probe.results[2], TURBO_OK);
+        check_equal(fs_wait(&service, &probe, 3u), SALTS_OK);
+        check_equal(probe.results[2], SALTS_OK);
         check_equal(cflow_fs_try_rmdir(&service, directory).status,
                     CFLOW_FS_SUBMIT_ACCEPTED);
-        check_equal(fs_wait(&service, &probe, 4u), TURBO_OK);
-        check_equal(probe.results[3], TURBO_OK);
+        check_equal(fs_wait(&service, &probe, 4u), SALTS_OK);
+        check_equal(probe.results[3], SALTS_OK);
 
         fs_close_destroy(&service, &probe);
         check_equal(tt_remove_tree(root), 0);

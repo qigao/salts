@@ -4,24 +4,24 @@
 
 Migrate the capture abstraction from
 `C:\projects\cpp\turbonet\turbomedia\media` into a separately installable
-TurboUtils component named `TurboUtils::Capture`. Preserve the installed
-`turbo_capture.h` include path, C symbol names, enum values, callback
+Salts component named `Salts::Capture`. Preserve the installed
+`salts_capture.h` include path, C symbol names, enum values, callback
 signatures, and device/mode semantics. Do not merge capture into
-`TurboUtils::Core`, and do not migrate playback, codec, RTSP, WebRTC, recorder,
+`Salts::Core`, and do not migrate playback, codec, RTSP, WebRTC, recorder,
 or mobile Java/Swift wrappers.
 
 The migration copies and adapts the capture-owned desktop and mobile native
 backends plus the single miniaudio implementation translation unit. TurboMedia
 continues to own its existing copy until an installed-package consumer test
-proves `TurboUtils::Capture`; switching TurboMedia and deleting its copy is a
+proves `Salts::Capture`; switching TurboMedia and deleting its copy is a
 separate downstream change so rollback remains a link-target change.
 
 ## Component and file boundary
 
 The new `capture/` module owns:
 
-- `include/turbo_capture.h`: the compatible public C API;
-- `include/turbo_capture_export.h`: component-local shared-library decoration;
+- `include/salts_capture.h`: the compatible public C API;
+- `include/salts_capture_export.h`: component-local shared-library decoration;
 - `src/capture_video.c` and `src/capture_video_backend.h`: backend-neutral video
   device/mode adapter;
 - desktop platform dispatchers and audio/video/screen backends under `src/`;
@@ -36,14 +36,14 @@ are removed, so capture does not acquire an unnecessary stb dependency.
 
 ## Build and package contract
 
-`TURBO_ENABLE_CAPTURE` controls the component and defaults to `OFF`. This keeps
-existing TurboUtils configure/build/package behavior unchanged for users who
+`SALTS_ENABLE_CAPTURE` controls the component and defaults to `OFF`. This keeps
+existing Salts configure/build/package behavior unchanged for users who
 do not request media-device support. When enabled, CMake creates the shared
-target `turbo_capture`, build-tree alias and installed export
-`TurboUtils::Capture`, and installs both public headers.
+target `salts_capture`, build-tree alias and installed export
+`Salts::Capture`, and installs both public headers.
 
 The vcpkg manifest feature `capture` owns `miniaudio` and `libyuv`. Dedicated
-Windows and Linux capture user presets enable both `TURBO_ENABLE_CAPTURE` and
+Windows and Linux capture user presets enable both `SALTS_ENABLE_CAPTURE` and
 `VCPKG_MANIFEST_FEATURES=capture` in isolated build trees. Android public
 profiles enable the same pair because Android capture is the platform-native
 implementation of this component. Linux additionally requires PipeWire 0.3
@@ -51,21 +51,21 @@ and X11/Xext through pkg-config/CMake and fails during configure when either is
 missing. Windows links Media Foundation, DirectShow, WASAPI-supporting system
 libraries, D3D11, and DXGI. macOS/iOS links the existing Apple frameworks.
 
-`TurboUtils::Capture` links `TurboUtils::Core` privately for bounded diagnostic
-logging. Private third-party types do not appear in `turbo_capture.h`.
+`Salts::Capture` links `Salts::Core` privately for bounded diagnostic
+logging. Private third-party types do not appear in `salts_capture.h`.
 Installed-package verification conditionally compiles and links a real
-consumer against `TurboUtils::Capture` when the component was built.
+consumer against `Salts::Capture` when the component was built.
 
 ## Public API compatibility
 
-The migration preserves all `turbo_*capture*`, `turbo_video_device_*`, and
-`turbo_video_mode_*` declarations. `TURBO_MEDIA_API` is replaced only as a
-declaration decorator by `TURBO_CAPTURE_API`; this does not rename symbols or
-change C layouts. `turbo_capture_t` remains source-compatible for the first
+The migration preserves all `salts_*capture*`, `salts_video_device_*`, and
+`salts_video_mode_*` declarations. `SALTS_MEDIA_API` is replaced only as a
+declaration decorator by `SALTS_CAPTURE_API`; this does not rename symbols or
+change C layouts. `salts_capture_t` remains source-compatible for the first
 migration so existing consumers can re-link before a later opaque-handle
 redesign is considered.
 
-Errors remain in the `turbo_capture_result_t` domain. Invalid arguments fail
+Errors remain in the `salts_capture_result_t` domain. Invalid arguments fail
 fast with the existing capture error values. Device absence, permissions, and
 unsupported controls are not silently converted into a different backend.
 Native mode IDs remain backend-local and valid only for the open device handle
@@ -90,14 +90,14 @@ and connection that produced them.
 Lifecycle functions and callback setters are control-plane operations and
 require external serialization for a given capture instance. A callback may
 call neither `stop` nor `destroy` on its own capture unless a backend explicitly
-documents reentrant shutdown. `turbo_capture_get_state` is an observation of
+documents reentrant shutdown. `salts_capture_get_state` is an observation of
 the serialized control-plane state, not a synchronization primitive.
 
 ## Logging
 
 Remove direct `fprintf(stderr, ...)` and Android-local logging macros from the
 migrated component. Platform failures are translated once at the public
-operation boundary using TurboUtils `tlog`, with operation, device identifier
+operation boundary using Salts `tlog`, with operation, device identifier
 or mode summary, native error code, and failure phase. Frame callbacks and
 native polling loops do not log per event. Shutdown timeout diagnostics are
 bounded to one message per stop operation.
@@ -117,7 +117,7 @@ Validation order is:
 1. observe the new capture contract test fail before production files exist;
 2. build and run the focused contract test;
 3. build and run Windows capture enumeration/lifecycle integration tests;
-4. run adjacent TurboUtils regressions;
+4. run adjacent Salts regressions;
 5. install to the package-smoke prefix and compile the installed consumer;
 6. configure/build native Linux, Android, macOS, and iOS profiles on their
    corresponding runners before claiming those backends verified.
@@ -134,9 +134,9 @@ Validation order is:
   Windows backend but cannot prove Linux/macOS/iOS runtime behavior. Each
   backend requires its native runner and, for device tests, hardware access.
 - **LOW — export decoration (`事实`)**: the API macro name changes from
-  `TURBO_MEDIA_API` to `TURBO_CAPTURE_API`; C names and layouts remain stable.
+  `SALTS_MEDIA_API` to `SALTS_CAPTURE_API`; C names and layouts remain stable.
 
-Rollback disables `TURBO_ENABLE_CAPTURE` or removes the optional
+Rollback disables `SALTS_ENABLE_CAPTURE` or removes the optional
 `add_subdirectory(capture)` entry. TurboMedia remains on its original component
 until its separate consumer migration is validated, so rollback does not
 require restoring deleted source files.

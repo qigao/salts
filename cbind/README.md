@@ -2,8 +2,8 @@
 
 CBind is the C11, format-neutral decode kernel between a canonical CSerde
 reader and CMeta-described native storage. The production target
-`Rocida::CBind` depends only on `Rocida::CMeta` and
-`Rocida::CSerde`.
+`Salts::CBind` depends only on `Salts::CMeta` and
+`Salts::CSerde`.
 
 ## STRING and BYTES storage
 
@@ -27,9 +27,9 @@ max_container_items, max_buffer_bytes)` for any graph containing STRING or
 BYTES. Older context prefixes remain valid for older scalar graphs, but a
 buffer graph rejects them before consuming input.
 
-Rocida applications can include `turbo_cmeta_data.h` and attach
-`turbo_tstr_cmeta_buffer_ops` for unique-owned storage or
-`turbo_vstr_cmeta_buffer_ops` for borrowed storage. A borrowed decoded view
+Salts applications can include `salts_cmeta_data.h` and attach
+`salts_tstr_cmeta_buffer_ops` for unique-owned storage or
+`salts_vstr_cmeta_buffer_ops` for borrowed storage. A borrowed decoded view
 remains valid only as long as the CSerde reader's backing owner keeps the
 stable slice alive.
 

@@ -1,6 +1,6 @@
 #include "fs_watch_internal.h"
 
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 #include <CoreServices/CoreServices.h>
 #include <dispatch/dispatch.h>
@@ -144,7 +144,7 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
         kFSEventStreamCreateFlagNoDefer;
     backend = (cflow_fs_watch_macos *)calloc(1u, sizeof(*backend));
     if (backend == NULL)
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     /* FSEvents reports physical paths (for example /private/var for /var). */
     backend->root = realpath(path, NULL);
     if (backend->root == NULL) {
@@ -163,7 +163,7 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
     if (root_string == NULL) {
         free(backend->root);
         free(backend);
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     }
     paths = CFArrayCreate(kCFAllocatorDefault,
                           (const void **)&root_string, 1u,
@@ -172,7 +172,7 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
     if (paths == NULL) {
         free(backend->root);
         free(backend);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
     context.info = backend;
     backend->stream = FSEventStreamCreate(
@@ -182,15 +182,15 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
     if (backend->stream == NULL) {
         free(backend->root);
         free(backend);
-        return TURBO_EIO;
+        return SALTS_EIO;
     }
     backend->queue = dispatch_queue_create(
-        "org.rocida.cflow.fs-watch", DISPATCH_QUEUE_SERIAL);
+        "org.salts.cflow.fs-watch", DISPATCH_QUEUE_SERIAL);
     if (backend->queue == NULL) {
         FSEventStreamRelease(backend->stream);
         free(backend->root);
         free(backend);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
     dispatch_queue_set_specific(backend->queue, &watch_macos_queue_key,
                                 backend, NULL);
@@ -203,11 +203,11 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
         dispatch_release(backend->queue);
         free(backend->root);
         free(backend);
-        return TURBO_EIO;
+        return SALTS_EIO;
     }
     /* Match the synchronous readiness guarantee of the other native backends. */
     FSEventStreamFlushSync(backend->stream);
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 void cflow_fs_watch_backend_request_close(cflow_fs_watch_impl *impl) {
@@ -228,11 +228,11 @@ int cflow_fs_watch_backend_destroy(cflow_fs_watch_impl *impl) {
     cflow_fs_watch_macos *backend =
         (cflow_fs_watch_macos *)cflow_fs_watch_backend_get(impl);
     if (backend == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     FSEventStreamRelease(backend->stream);
     dispatch_release(backend->queue);
     free(backend->root);
     free(backend);
     cflow_fs_watch_backend_set(impl, NULL);
-    return TURBO_OK;
+    return SALTS_OK;
 }

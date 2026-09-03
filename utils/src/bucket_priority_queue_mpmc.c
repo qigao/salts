@@ -20,8 +20,8 @@ typedef struct {
 struct bucket_priority_queue_mpmc_impl_s {
   bucket_priority_bucket_mpmc_t buckets[BUCKET_PRIORITY_MPMC_COUNT];
   uint32_t max_consumers;
-  turbo_mutex_t notify_mutex;
-  turbo_cond_t notify_cond;
+  salts_mutex_t notify_mutex;
+  salts_cond_t notify_cond;
 };
 
 static bool bucket_priority_mpmc_valid(bucket_priority_mpmc_t priority) {
@@ -105,8 +105,8 @@ bool bucket_priority_queue_mpmc_init(bucket_priority_queue_mpmc_t *queue,
     impl->buckets[i].next_read_sequence = initial_seq;
   }
 
-  turbo_mutex_init(&impl->notify_mutex);
-  turbo_cond_init(&impl->notify_cond);
+  salts_mutex_init(&impl->notify_mutex);
+  salts_cond_init(&impl->notify_cond);
 
   return true;
 }
@@ -129,8 +129,8 @@ void bucket_priority_queue_mpmc_destroy(bucket_priority_queue_mpmc_t *queue) {
       impl->buckets[i].disruptor = NULL;
     }
   }
-  turbo_cond_destroy(&impl->notify_cond);
-  turbo_mutex_destroy(&impl->notify_mutex);
+  salts_cond_destroy(&impl->notify_cond);
+  salts_mutex_destroy(&impl->notify_mutex);
   free(impl);
   queue->impl = NULL;
 }
@@ -162,9 +162,9 @@ bool bucket_priority_queue_mpmc_try_push(bucket_priority_queue_mpmc_t *queue,
   disruptor_publisher_publish(disruptor, &cursor);
 
   /* Wake any blocked poppers */
-  turbo_mutex_lock(&impl->notify_mutex);
-  turbo_cond_signal(&impl->notify_cond);
-  turbo_mutex_unlock(&impl->notify_mutex);
+  salts_mutex_lock(&impl->notify_mutex);
+  salts_cond_signal(&impl->notify_cond);
+  salts_mutex_unlock(&impl->notify_mutex);
   return true;
 }
 
@@ -192,9 +192,9 @@ void bucket_priority_queue_mpmc_push_blocking(bucket_priority_queue_mpmc_t *queu
   disruptor_publisher_commit_entry_blocking(disruptor, &cursor);
 
   /* Wake any blocked poppers */
-  turbo_mutex_lock(&impl->notify_mutex);
-  turbo_cond_signal(&impl->notify_cond);
-  turbo_mutex_unlock(&impl->notify_mutex);
+  salts_mutex_lock(&impl->notify_mutex);
+  salts_cond_signal(&impl->notify_cond);
+  salts_mutex_unlock(&impl->notify_mutex);
 }
 
 bool bucket_priority_queue_mpmc_try_pop(
@@ -210,10 +210,10 @@ bool bucket_priority_queue_mpmc_try_pop(
     return false;
   }
 
-  turbo_mutex_lock(&impl->notify_mutex);
+  salts_mutex_lock(&impl->notify_mutex);
   {
     bool popped = bucket_priority_queue_mpmc_pop_locked(impl, out_value);
-    turbo_mutex_unlock(&impl->notify_mutex);
+    salts_mutex_unlock(&impl->notify_mutex);
     return popped;
   }
 }
@@ -233,16 +233,16 @@ bool bucket_priority_queue_mpmc_pop_blocking(
   }
 
   uint64_t timeout_ns = (uint64_t)timeout_ms * 1000000ULL;
-  turbo_mutex_lock(&impl->notify_mutex);
+  salts_mutex_lock(&impl->notify_mutex);
   while (!bucket_priority_queue_mpmc_pop_locked(impl, out_value)) {
-    int rc = turbo_cond_timedwait(&impl->notify_cond, &impl->notify_mutex, timeout_ns);
+    int rc = salts_cond_timedwait(&impl->notify_cond, &impl->notify_mutex, timeout_ns);
     if (rc != 0) {
       bool popped = bucket_priority_queue_mpmc_pop_locked(impl, out_value);
-      turbo_mutex_unlock(&impl->notify_mutex);
+      salts_mutex_unlock(&impl->notify_mutex);
       return popped;
     }
   }
-  turbo_mutex_unlock(&impl->notify_mutex);
+  salts_mutex_unlock(&impl->notify_mutex);
   return true;
 }
 

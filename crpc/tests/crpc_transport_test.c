@@ -2,7 +2,7 @@
 #include "tinytest.h"
 
 #include <crpc/crpc.h>
-#include <turbo/clock.h>
+#include <salts/clock.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -110,7 +110,7 @@ static int crpc_transport_test_handler(void *user, const chttp_server_request_vi
       (request->http_major != 1u && request->http_major != 2u) || request->body == NULL ||
       request->body_size != sizeof(expected) - 1u ||
       memcmp(request->body, expected, sizeof(expected) - 1u) != 0)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   if (request->http_major == 2u) ++probe->h2_requests;
   else ++probe->h1_requests;
   return chttp_server_reply(response, 200u, "application/json", body, sizeof(body) - 1u);
@@ -131,22 +131,22 @@ static void crpc_transport_test_complete(void *user, crpc_request request,
   if (response == NULL || response->kind != CRPC_RESPONSE_RESULT ||
       cserde_reader_next(response->value.result, &token) != CSERDE_OK ||
       token.kind != CSERDE_UINT) {
-    completion->status = TURBO_EPROTO;
+    completion->status = SALTS_EPROTO;
     return;
   }
-  completion->status = TURBO_OK;
+  completion->status = SALTS_OK;
   completion->request_id = response->request_id;
   completion->result = token.value.uint;
 }
 
 static int crpc_transport_test_poll_until(crpc_async_client *client,
                                           crpc_transport_test_completion *completion) {
-  const uint64_t deadline = turbo_monotonic_ms() + CRPC_TRANSPORT_TEST_TIMEOUT_MS;
+  const uint64_t deadline = salts_monotonic_ms() + CRPC_TRANSPORT_TEST_TIMEOUT_MS;
   while (!completion->called) {
     size_t count = 0u;
     const int status = crpc_async_client_poll(client, 5u, &count);
-    if (status != TURBO_OK) return status;
-    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
+    if (status != SALTS_OK) return status;
+    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
   return completion->status;
 }
@@ -174,31 +174,31 @@ static int crpc_transport_test_clients(const char *uri, const chttp_tls_profile 
   int status;
 
   status = crpc_client_init(&client, &config);
-  if (status != TURBO_OK) goto done;
+  if (status != SALTS_OK) goto done;
   client_initialized = 1;
   status = crpc_request_reply(&client, &options, &response, &error);
-  if (status != TURBO_OK) goto done;
+  if (status != SALTS_OK) goto done;
   if (response.kind != CRPC_RESPONSE_RESULT || response.request_id != UINT64_C(9) ||
       cserde_reader_next(response.value.result, &token) != CSERDE_OK || token.kind != CSERDE_UINT ||
       token.value.uint != UINT64_C(14)) {
-    status = TURBO_EPROTO;
+    status = SALTS_EPROTO;
     goto done;
   }
   crpc_response_destroy(&response);
   status = crpc_client_destroy(&client, CRPC_TRANSPORT_TEST_TIMEOUT_MS);
   client_initialized = 0;
-  if (status != TURBO_OK) goto done;
+  if (status != SALTS_OK) goto done;
 
   status = crpc_async_client_init(&async_client, &config);
-  if (status != TURBO_OK) goto done;
+  if (status != SALTS_OK) goto done;
   async_initialized = 1;
   status = crpc_async_client_submit(&async_client, &options, crpc_transport_test_complete,
                                     &completion, &request);
-  if (status != TURBO_OK) goto done;
+  if (status != SALTS_OK) goto done;
   status = crpc_transport_test_poll_until(&async_client, &completion);
-  if (status != TURBO_OK || completion.request_id != UINT64_C(9) ||
+  if (status != SALTS_OK || completion.request_id != UINT64_C(9) ||
       completion.result != UINT64_C(14)) {
-    if (status == TURBO_OK) status = TURBO_EPROTO;
+    if (status == SALTS_OK) status = SALTS_EPROTO;
     goto done;
   }
 
@@ -207,12 +207,12 @@ done:
   if (async_initialized) {
     const int stop_status = crpc_async_client_stop(&async_client, CRPC_TRANSPORT_TEST_TIMEOUT_MS);
     const int destroy_status = crpc_async_client_destroy(&async_client);
-    if (status == TURBO_OK && stop_status != TURBO_OK) status = stop_status;
-    if (status == TURBO_OK && destroy_status != TURBO_OK) status = destroy_status;
+    if (status == SALTS_OK && stop_status != SALTS_OK) status = stop_status;
+    if (status == SALTS_OK && destroy_status != SALTS_OK) status = destroy_status;
   }
   if (client_initialized) {
     const int destroy_status = crpc_client_destroy(&client, CRPC_TRANSPORT_TEST_TIMEOUT_MS);
-    if (status == TURBO_OK && destroy_status != TURBO_OK) status = destroy_status;
+    if (status == SALTS_OK && destroy_status != SALTS_OK) status = destroy_status;
   }
   return status;
 }
@@ -225,16 +225,16 @@ spec("CRPC CHTTP transport parity") {
     char uri[64];
     uint16_t port = 0u;
 
-    check_equal(chttp_server_init(&server, &config), TURBO_OK);
-    check_equal(chttp_server_post(&server, "/rpc", crpc_transport_test_handler, &probe), TURBO_OK);
-    check_equal(chttp_server_start(&server), TURBO_OK);
-    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_post(&server, "/rpc", crpc_transport_test_handler, &probe), SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
-    check_equal(crpc_transport_test_clients(uri, NULL, CHTTP_HTTP_2), TURBO_OK);
+    check_equal(crpc_transport_test_clients(uri, NULL, CHTTP_HTTP_2), SALTS_OK);
     check_equal(probe.h1_requests, (size_t)0u);
     check_equal(probe.h2_requests, (size_t)2u);
-    check_equal(chttp_server_stop(&server, CRPC_TRANSPORT_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(chttp_server_stop(&server, CRPC_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
   }
 
   it("supports synchronous and asynchronous JSON-RPC over TLS HTTP/1.1 and HTTP/2") {
@@ -275,25 +275,25 @@ spec("CRPC CHTTP transport parity") {
     h1_tls.alpn_protocols = h1;
     config.tls = &server_tls;
 
-    check_equal(chttp_tls_profile_init(&h2_profile, &h2_tls), TURBO_OK);
-    check_equal(chttp_tls_profile_init(&h1_profile, &h1_tls), TURBO_OK);
-    check_equal(chttp_server_init(&server, &config), TURBO_OK);
-    check_equal(chttp_server_post(&server, "/rpc", crpc_transport_test_handler, &probe), TURBO_OK);
+    check_equal(chttp_tls_profile_init(&h2_profile, &h2_tls), SALTS_OK);
+    check_equal(chttp_tls_profile_init(&h1_profile, &h1_tls), SALTS_OK);
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_post(&server, "/rpc", crpc_transport_test_handler, &probe), SALTS_OK);
     check_equal(tt_remove_file(cert_path), 0);
     check_equal(tt_remove_file(key_path), 0);
     free(cert_path);
     free(key_path);
-    check_equal(chttp_server_start(&server), TURBO_OK);
-    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u", (unsigned int)port), 0);
-    check_equal(crpc_transport_test_clients(uri, &h2_profile, CHTTP_HTTP_2), TURBO_OK);
-    check_equal(crpc_transport_test_clients(uri, &h1_profile, CHTTP_HTTP_1_1), TURBO_OK);
+    check_equal(crpc_transport_test_clients(uri, &h2_profile, CHTTP_HTTP_2), SALTS_OK);
+    check_equal(crpc_transport_test_clients(uri, &h1_profile, CHTTP_HTTP_1_1), SALTS_OK);
     check_equal(probe.h1_requests, (size_t)2u);
     check_equal(probe.h2_requests, (size_t)2u);
-    check_equal(chttp_tls_profile_destroy(&h1_profile), TURBO_OK);
-    check_equal(chttp_tls_profile_destroy(&h2_profile), TURBO_OK);
-    check_equal(chttp_server_stop(&server, CRPC_TRANSPORT_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(chttp_tls_profile_destroy(&h1_profile), SALTS_OK);
+    check_equal(chttp_tls_profile_destroy(&h2_profile), SALTS_OK);
+    check_equal(chttp_server_stop(&server, CRPC_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
   }
 
   it("rejects a TLS ALPN profile that contradicts the selected RPC protocol") {
@@ -313,16 +313,16 @@ spec("CRPC CHTTP transport parity") {
                             .tls = &profile,
                             .protocol = CHTTP_HTTP_1_1};
 
-    check_equal(chttp_tls_profile_init(&profile, &tls), TURBO_OK);
-    check_equal(crpc_async_client_init(&client, &config), TURBO_OK);
+    check_equal(chttp_tls_profile_init(&profile, &tls), SALTS_OK);
+    check_equal(crpc_async_client_init(&client, &config), SALTS_OK);
     check_equal(crpc_async_client_submit(&client, &options, crpc_transport_test_complete,
                                          &completion, &request),
-                TURBO_EPROTONOSUPPORT);
+                SALTS_EPROTONOSUPPORT);
     check_equal(request.slot, 0u);
     check_equal(request.generation, 0u);
     check_equal(completion.called, 0);
-    check_equal(crpc_async_client_stop(&client, CRPC_TRANSPORT_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_async_client_destroy(&client), TURBO_OK);
-    check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
+    check_equal(crpc_async_client_stop(&client, CRPC_TRANSPORT_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_async_client_destroy(&client), SALTS_OK);
+    check_equal(chttp_tls_profile_destroy(&profile), SALTS_OK);
   }
 }

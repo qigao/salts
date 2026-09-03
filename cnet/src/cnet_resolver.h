@@ -1,7 +1,7 @@
 #ifndef CNET_RESOLVER_H
 #define CNET_RESOLVER_H
 
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -51,7 +51,7 @@ bool cnet_resolver_has_pending(cnet_resolver *resolver);
 /** Logical per-query cancellation; the stable slot is recycled only by take. */
 int cnet_resolver_cancel(cnet_resolver *resolver, cnet_resolver_query query);
 
-/** Single-owner nonblocking result take; empty-open returns TURBO_ETIMEDOUT. */
+/** Single-owner nonblocking result take; empty-open returns SALTS_ETIMEDOUT. */
 int cnet_resolver_take(cnet_resolver *resolver, cnet_resolver_result *out_result);
 
 /** Stops admission and synchronously cancels all c-ares channel queries. */

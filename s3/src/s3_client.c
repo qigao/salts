@@ -18,14 +18,14 @@ static int s3_client_config_normalize(s3_client_config *config) {
       (config->addressing_style != S3_ADDRESSING_PATH &&
        config->addressing_style != S3_ADDRESSING_VIRTUAL_HOSTED) ||
       (config->protocol != CHTTP_HTTP_1_1 && config->protocol != CHTTP_HTTP_2))
-    return TURBO_EINVAL;
-  if (strlen(config->region) > S3_MAX_REGION_BYTES) return TURBO_EINVAL;
+    return SALTS_EINVAL;
+  if (strlen(config->region) > S3_MAX_REGION_BYTES) return SALTS_EINVAL;
   for (region_index = 0u; config->region[region_index] != '\0'; ++region_index) {
     const unsigned char value = (unsigned char)config->region[region_index];
     if (!((value >= (unsigned char)'a' && value <= (unsigned char)'z') ||
           (value >= (unsigned char)'A' && value <= (unsigned char)'Z') ||
           (value >= (unsigned char)'0' && value <= (unsigned char)'9') || value == '-'))
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
   }
   if (config->max_bucket_name_bytes == 0u)
     config->max_bucket_name_bytes = S3_DEFAULT_MAX_BUCKET_NAME_BYTES;
@@ -49,28 +49,28 @@ static int s3_client_config_normalize(s3_client_config *config) {
       config->max_multipart_part_bytes < S3_MULTIPART_MIN_PART_BYTES ||
       config->max_multipart_part_bytes > (size_t)INT_MAX ||
       (uint64_t)config->max_multipart_part_bytes > S3_MULTIPART_MAX_PART_BYTES)
-    return TURBO_EINVAL;
-  return TURBO_OK;
+    return SALTS_EINVAL;
+  return SALTS_OK;
 }
 
 int s3_client_base_init(s3_client_base *base, const s3_client_config *config) {
   s3_client_config normalized;
-  if (base == NULL || config == NULL) return TURBO_EINVAL;
+  if (base == NULL || config == NULL) return SALTS_EINVAL;
   *base = (s3_client_base){0};
   normalized = *config;
-  if (s3_client_config_normalize(&normalized) != TURBO_OK) return TURBO_EINVAL;
+  if (s3_client_config_normalize(&normalized) != SALTS_OK) return SALTS_EINVAL;
   base->connection_uri = tstr_dup(normalized.connection_uri);
   base->authority = tstr_dup(normalized.authority);
   base->region = tstr_dup(normalized.region);
   if (base->connection_uri == NULL || base->authority == NULL || base->region == NULL) {
     s3_client_base_destroy(base);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   normalized.connection_uri = base->connection_uri;
   normalized.authority = base->authority;
   normalized.region = base->region;
   base->config = normalized;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 void s3_client_base_destroy(s3_client_base *base) {
@@ -85,18 +85,18 @@ int s3_client_init(s3_client *client, chttp_client *http_client, const s3_client
   s3_client_impl *impl;
   int status;
   if (client == NULL || http_client == NULL || http_client->impl == NULL || config == NULL)
-    return TURBO_EINVAL;
-  if (client->impl != NULL) return TURBO_EALREADY;
+    return SALTS_EINVAL;
+  if (client->impl != NULL) return SALTS_EALREADY;
   impl = (s3_client_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   status = s3_client_base_init(&impl->base, config);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     free(impl);
     return status;
   }
   impl->http_client = http_client;
   client->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int s3_http_call(s3_client_impl *client, const s3_request_options *request,
@@ -126,7 +126,7 @@ static int s3_http_call(s3_client_impl *client, const s3_request_options *reques
   case CHTTP_METHOD_DELETE:
     return chttp_delete(client->http_client, &options, out_response, out_error);
   default:
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   }
 }
 
@@ -139,18 +139,18 @@ int s3_response_is_empty(const s3_response *response) {
 
 static int s3_response_adopt(s3_client_impl *client, chttp_response *http_response,
                              s3_response *out_response, s3_error *out_error) {
-  int status = TURBO_OK;
+  int status = SALTS_OK;
   out_response->http = *http_response;
   *http_response = (chttp_response){0};
   if (out_response->http.status_code < 200u || out_response->http.status_code >= 300u) {
     const int parse_status =
         out_response->http.body == NULL
-            ? TURBO_OK
+            ? SALTS_OK
             : s3_response_parse_service_error(out_response, client->base.config.max_xml_bytes,
                                               client->base.config.max_xml_nodes);
-    status = parse_status == TURBO_OK ? TURBO_EPROTO : parse_status;
+    status = parse_status == SALTS_OK ? SALTS_EPROTO : parse_status;
     s3_error_set(out_error, status, 0,
-                 parse_status == TURBO_OK ? "s3-service" : "s3-service-parse");
+                 parse_status == SALTS_OK ? "s3-service" : "s3-service-parse");
   }
   return status;
 }
@@ -163,25 +163,25 @@ int s3_request(s3_client *client, const s3_request_options *options, s3_response
   chttp_error http_error = {0};
   int status;
   if (out_response == NULL || out_error == NULL || !s3_response_is_empty(out_response))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   *out_response = (s3_response){0};
   *out_error = (s3_error){0};
   if (impl == NULL || options == NULL) {
-    s3_error_set(out_error, TURBO_EINVAL, 0, "s3-request");
-    return TURBO_EINVAL;
+    s3_error_set(out_error, SALTS_EINVAL, 0, "s3-request");
+    return SALTS_EINVAL;
   }
   if (impl->operation_active) {
-    s3_error_set(out_error, TURBO_EBUSY, 0, "s3-request");
-    return TURBO_EBUSY;
+    s3_error_set(out_error, SALTS_EBUSY, 0, "s3-request");
+    return SALTS_EBUSY;
   }
   impl->operation_active = 1;
   status = s3_request_plan_build(&impl->base, options, &plan);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     s3_error_set(out_error, status, 0, "s3-request-plan");
     goto done;
   }
   status = s3_http_call(impl, options, &plan, &http_response, &http_error);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     s3_error_set(out_error, status, http_error.native_status,
                  http_error.stage != NULL ? http_error.stage : "http");
     goto done;
@@ -205,22 +205,22 @@ static int s3_request_file(s3_client *client, const s3_request_options *options,
   chttp_options http_options;
   int status;
   if (out_response == NULL || out_error == NULL || !s3_response_is_empty(out_response))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   *out_response = (s3_response){0};
   *out_error = (s3_error){0};
   if (impl == NULL || options == NULL || path == NULL || path[0] == '\0' ||
       (upload && options->method != S3_METHOD_PUT) ||
       (!upload && options->method != S3_METHOD_GET)) {
-    s3_error_set(out_error, TURBO_EINVAL, 0, upload ? "s3-put-file" : "s3-get-file");
-    return TURBO_EINVAL;
+    s3_error_set(out_error, SALTS_EINVAL, 0, upload ? "s3-put-file" : "s3-get-file");
+    return SALTS_EINVAL;
   }
   if (impl->operation_active) {
-    s3_error_set(out_error, TURBO_EBUSY, 0, upload ? "s3-put-file" : "s3-get-file");
-    return TURBO_EBUSY;
+    s3_error_set(out_error, SALTS_EBUSY, 0, upload ? "s3-put-file" : "s3-get-file");
+    return SALTS_EBUSY;
   }
   impl->operation_active = 1;
   status = s3_request_plan_build(&impl->base, options, &plan);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     s3_error_set(out_error, status, 0, "s3-request-plan");
     goto done;
   }
@@ -236,7 +236,7 @@ static int s3_request_file(s3_client *client, const s3_request_options *options,
                                    &http_response, &http_error)
                   : chttp_download_file(impl->http_client, &http_options, path, progress,
                                         progress_user, &http_response, &http_error);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     s3_error_set(out_error, status, http_error.native_status,
                  http_error.stage != NULL ? http_error.stage : "http-file");
     goto done;
@@ -266,12 +266,12 @@ int s3_request_get_file(s3_client *client, const s3_request_options *options,
 
 int s3_client_destroy(s3_client *client) {
   s3_client_impl *impl;
-  if (client == NULL) return TURBO_EINVAL;
+  if (client == NULL) return SALTS_EINVAL;
   impl = (s3_client_impl *)client->impl;
-  if (impl == NULL) return TURBO_OK;
-  if (impl->operation_active) return TURBO_EBUSY;
+  if (impl == NULL) return SALTS_OK;
+  if (impl->operation_active) return SALTS_EBUSY;
   s3_client_base_destroy(&impl->base);
   free(impl);
   client->impl = NULL;
-  return TURBO_OK;
+  return SALTS_OK;
 }

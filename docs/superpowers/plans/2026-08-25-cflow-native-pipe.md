@@ -6,7 +6,7 @@
 
 **Architecture:** A new pipe-specific public operation and Actor strategy route through additive backend callbacks. Each backend reuses its existing request records, cancellation, completion, capacity, and shutdown machinery while selecting pipe-native read/write primitives and resource validation. Internal descriptor/handle identity storage becomes resource-neutral; existing socket entry points remain compatible wrappers.
 
-**Tech Stack:** C11, CFlow I/O Actor, TurboUtils Platform readiness reactor, Windows IOCP, POSIX `read`/`write`, Linux io_uring, TinyTest, CMake Presets.
+**Tech Stack:** C11, CFlow I/O Actor, Salts Platform readiness reactor, Windows IOCP, POSIX `read`/`write`, Linux io_uring, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-cflow-native-pipe-design.md`
 
@@ -158,7 +158,7 @@ it("reports named pipe peer close as EOF through IOCP") {
 
 it("rejects a pipe handle without the async capability declaration") {
     native_check_pipe_missing_async_flag(CFLOW_IO_NATIVE_IOCP,
-                                         TURBO_ENOTSUP);
+                                         SALTS_ENOTSUP);
 }
 ```
 
@@ -175,7 +175,7 @@ cmd /c 'call "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7
 ```
 
 Expected: the pipe Actor accepts the core shape but IOCP returns
-`TURBO_ENOTSUP` because `submit_pipe` is not implemented.
+`SALTS_ENOTSUP` because `submit_pipe` is not implemented.
 
 - [x] **Step 3: Generalize IOCP records and implement pipe primitives**
 
@@ -196,9 +196,9 @@ static int iocp_begin_pipe_operation(cflow_iocp_record *record) {
         : WriteFile(record->native_handle, operation->buffer,
                     (DWORD)operation->length, NULL, &record->overlapped);
     if (started)
-        return TURBO_OK;
+        return SALTS_OK;
     return GetLastError() == ERROR_IO_PENDING
-        ? TURBO_OK : iocp_error(GetLastError());
+        ? SALTS_OK : iocp_error(GetLastError());
 }
 ```
 
@@ -263,7 +263,7 @@ socket-only identity helpers with internal resource identity helpers while
 leaving public socket names unchanged. A pipe read selects the read lane and a
 pipe write selects the write lane.
 
-Validate the descriptor with `F_GETFL`; return `TURBO_EINVAL` unless
+Validate the descriptor with `F_GETFL`; return `SALTS_EINVAL` unless
 `O_NONBLOCK` is set. Use `read` for pipe reads. For writes, add a local helper
 that blocks `SIGPIPE` on the current thread, records prior pending state,
 performs `write`, consumes only the newly generated signal after `EPIPE`, and
@@ -278,7 +278,7 @@ if (((record->resource_kind == CFLOW_NATIVE_RESOURCE_SOCKET &&
      (record->resource_kind == CFLOW_NATIVE_RESOURCE_PIPE &&
       record->pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ)) &&
     bytes == 0u)
-    return (cflow_io_completion){CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK};
+    return (cflow_io_completion){CFLOW_IO_COMPLETION_EOF, 0u, SALTS_OK};
 ```
 
 - [x] **Step 4: Verify GREEN on each readiness backend**

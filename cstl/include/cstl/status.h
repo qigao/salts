@@ -1,0 +1,15 @@
+#ifndef CSTL_STATUS_H
+#define CSTL_STATUS_H
+
+typedef enum stl_status {
+  STL_OK = 0,
+  STL_INVALID_ARGUMENT,
+  STL_OUT_OF_MEMORY,
+  STL_CAPACITY_EXCEEDED,
+  STL_EMPTY,
+  STL_NOT_FOUND,
+  STL_TYPE_MISMATCH,
+  STL_TRAIT_MISSING
+} stl_status;
+
+#endif /* CSTL_STATUS_H */

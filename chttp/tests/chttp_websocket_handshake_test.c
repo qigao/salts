@@ -23,7 +23,7 @@ spec("CHTTP WebSocket opening handshake") {
     char key[CHTTP_WEBSOCKET_KEY_CAPACITY];
     tn_base64_bytes_result_t decoded;
 
-    check_equal(chttp_websocket_client_key_generate(key, sizeof(key)), TURBO_OK);
+    check_equal(chttp_websocket_client_key_generate(key, sizeof(key)), SALTS_OK);
     check_equal(strlen(key), CHTTP_WEBSOCKET_KEY_BYTES);
     decoded = tn_base64_decode_ex(key);
     check_true(decoded.ok);
@@ -35,7 +35,7 @@ spec("CHTTP WebSocket opening handshake") {
     char accept[CHTTP_WEBSOCKET_ACCEPT_CAPACITY];
 
     check_equal(chttp_websocket_accept_compute("dGhlIHNhbXBsZSBub25jZQ==", accept, sizeof(accept)),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(strcmp(accept, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="), 0);
   }
 
@@ -51,7 +51,7 @@ spec("CHTTP WebSocket opening handshake") {
 
     check_equal(
         chttp_websocket_server_handshake_validate(&request, accept, sizeof(accept), &http_status),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(http_status, 0u);
     check_equal(strcmp(accept, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="), 0);
   }
@@ -93,7 +93,7 @@ spec("CHTTP WebSocket opening handshake") {
       unsigned int http_status = 0u;
       check_equal(
           chttp_websocket_server_handshake_validate(&request, accept, sizeof(accept), &http_status),
-          TURBO_EPROTO);
+          SALTS_EPROTO);
       check_equal(http_status, 400u);
     }
   }
@@ -111,7 +111,7 @@ spec("CHTTP WebSocket opening handshake") {
 
     check_equal(
         chttp_websocket_server_handshake_validate(&request, accept, sizeof(accept), &http_status),
-        TURBO_EPROTONOSUPPORT);
+        SALTS_EPROTONOSUPPORT);
     check_equal(http_status, 426u);
   }
 
@@ -135,7 +135,7 @@ spec("CHTTP WebSocket opening handshake") {
       unsigned int http_status = 0u;
       check_equal(
           chttp_websocket_server_handshake_validate(&request, accept, sizeof(accept), &http_status),
-          TURBO_EPROTO);
+          SALTS_EPROTO);
       check_equal(http_status, 400u);
     }
   }
@@ -148,7 +148,7 @@ spec("CHTTP WebSocket opening handshake") {
 
     check_equal(chttp_websocket_client_handshake_validate(
                     response, sizeof(response) - 1u, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", &http_status),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(http_status, 101u);
   }
 
@@ -175,7 +175,7 @@ spec("CHTTP WebSocket opening handshake") {
       check_equal(
           chttp_websocket_client_handshake_validate(cases[index].wire, cases[index].size,
                                                     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", &http_status),
-          TURBO_EPROTO);
+          SALTS_EPROTO);
       check_equal(http_status, cases[index].status);
     }
   }
@@ -204,7 +204,7 @@ spec("CHTTP WebSocket opening handshake") {
       check_equal(
           chttp_websocket_client_handshake_validate(cases[index].wire, cases[index].size,
                                                     "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", &http_status),
-          TURBO_EPROTO);
+          SALTS_EPROTO);
       check_equal(http_status, 101u);
     }
   }

@@ -7,7 +7,7 @@ This document locks the D4 decode contract for `CMETA_DATA_ENUM` and
 empty-destination transaction model; it does not add a parser, DOM, encoder,
 replace API, or format-specific projection policy.
 
-The implementation remains in TurboUtils:
+The implementation remains in Salts:
 
 ```text
 CMeta   owns semantic shape and native-storage lifecycle adapters
@@ -162,7 +162,7 @@ Preflight validates the complete reachable graph before reading input:
 - maximum simultaneously active struct bitmap scratch.
 
 Variant cases may contain supported scalar, enum, buffer, struct, or variant
-values. A struct case may contain the already-supported TurboSTL containers.
+values. A struct case may contain the already-supported Container containers.
 Direct container cases remain unsupported in D4 because
 `cmeta_data_variant_case` has no declared-container type metadata; preflight
 fails before reader consumption. This is explicit rather than a guessed
@@ -191,10 +191,10 @@ payloads. Provider failures surface as `CBIND_TARGET_ERROR` with the exact
 - Existing descriptor initializers and prefix-sized descriptors remain valid.
 - Existing enum/variant descriptors remain valid CMeta metadata but are
   `CBIND_UNSUPPORTED` until they attach complete ops.
-- `TurboUtils::CBind` keeps production dependencies limited to CMeta + CSerde.
+- `Salts::CBind` keeps production dependencies limited to CMeta + CSerde.
 - No file under `utils/vendor` is changed.
 - TurboParser integration remains a later, separate repository PR consuming
-  installed public TurboUtils targets only.
+  installed public Salts targets only.
 
 ## 9. Verification
 

@@ -1,4 +1,4 @@
-set(TARGET_NAME turbo_cflow)
+set(TARGET_NAME salts_cflow)
 set(CFLOW_LIBRARY_VERSION 4.1.0)
 set(CFLOW_ABI_VERSION 4)
 
@@ -109,7 +109,7 @@ elseif(UNIX)
   elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(${TARGET_NAME} PRIVATE src/io_native_io_uring.c)
     target_compile_definitions(${TARGET_NAME} PRIVATE CFLOW_HAS_NATIVE_IO_URING=1)
-    if(TURBO_ENABLE_EPOLL_READINESS)
+    if(SALTS_ENABLE_EPOLL_READINESS)
       target_compile_definitions(${TARGET_NAME} PRIVATE CFLOW_HAS_NATIVE_EPOLL=1)
     endif()
   endif()
@@ -117,7 +117,7 @@ endif()
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS Rocida::CFlow
+  ALIAS Salts::CFlow
   FOLDER "cflow"
   EXPORT_NAME CFlow
   VERSION ${CFLOW_LIBRARY_VERSION}
@@ -125,7 +125,7 @@ cmake_config_target(
 
 if(WIN32 AND BUILD_SHARED_LIBS)
   set_target_properties(${TARGET_NAME} PROPERTIES
-    OUTPUT_NAME "turbo_cflow-${CFLOW_ABI_VERSION}")
+    OUTPUT_NAME "salts_cflow-${CFLOW_ABI_VERSION}")
 endif()
 
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
@@ -147,12 +147,12 @@ target_include_directories(
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC Rocida::CMeta Rocida::NativeIO Rocida::Platform
-  PRIVATE Rocida::Concurrency)
+  PUBLIC Salts::CMeta Salts::NativeIO Salts::Platform
+  PRIVATE Salts::Concurrency)
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT RocidaTargets
+  EXPORT SaltsTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

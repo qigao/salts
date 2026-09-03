@@ -1,11 +1,11 @@
 # TinyTest self-tests and output/diagnostic executables.
 #
-# The public headers and static runtime are provided through Rocida::TinyTest,
+# The public headers and static runtime are provided through Salts::TinyTest,
 # so each target only lists the test source it owns.
 
 cmake_add_executable(math_test
   SOURCES math_test.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 if(UNIX)
@@ -14,37 +14,37 @@ endif()
 
 cmake_add_executable(test_tree_test
   SOURCES test-tree.c test-tree.h
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_executable(array_test
   SOURCES array.c array.h
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_executable(dynamic_test
   SOURCES dynamic-test.c array.h
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_executable(before_after
   SOURCES before-after.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_test(tinytest_regression_fixes
   SOURCES regression_fixes.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_test(tinytest_regression_runtime
   SOURCES regression_runtime.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_test(c11_generic_test
   SOURCES c11_generic_test.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -53,12 +53,12 @@ endif()
 
 cmake_add_test(tinytest_cmeta_equal_test
   SOURCES cmeta_equal_test.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 function(tinytest_add_compile_failure_test target_name source expected_diagnostic)
   add_executable(${target_name} EXCLUDE_FROM_ALL ${source})
-  target_link_libraries(${target_name} PRIVATE Rocida::TinyTest)
+  target_link_libraries(${target_name} PRIVATE Salts::TinyTest)
   set_target_properties(${target_name} PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
@@ -82,7 +82,7 @@ endif()
 
 cmake_add_test(tinytest_result_x_macro
   SOURCES result_x_macro_test.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 add_test(
@@ -109,42 +109,42 @@ add_test(
 
 cmake_add_test(tinymock_test
   SOURCES tinymock_test.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_executable(tinytest_focus_output
   SOURCES focus_output_cases.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_executable(tinytest_filter_output
   SOURCES filter_output_cases.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_executable(tinytest_junit_color
   SOURCES junit_color_cases.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_executable(tinytest_benchmark_invalid
   SOURCES benchmark_invalid_cases.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_executable(tinytest_benchmark_invalid_ops
   SOURCES benchmark_invalid_ops_cases.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_executable(tinytest_benchmark_invalid_bytes
   SOURCES benchmark_invalid_bytes_cases.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 cmake_add_executable(tinytest_benchmark_output
   SOURCES benchmark_output_cases.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 set(tinytest_benchmark_decimal_regex "[0-9]+\\.[0-9][0-9][0-9]")
@@ -172,7 +172,7 @@ set_tests_properties(tinytest_benchmark_table_output PROPERTIES
 
 cmake_add_executable(tinytest_benchmark_output_plain
   SOURCES benchmark_output_cases.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
 target_compile_definitions(tinytest_benchmark_output_plain
@@ -188,7 +188,7 @@ set_tests_properties(tinytest_benchmark_plain_output PROPERTIES
 if(CMAKE_CXX_COMPILER OR CMAKE_CXX_COMPILER_ID)
   cmake_add_test(tinytest_regression_cpp
     SOURCES regression_cpp.cpp
-    LIBS Rocida::TinyTest
+    LIBS Salts::TinyTest
     FOLDER "tinytest/tests")
   set_target_properties(tinytest_regression_cpp PROPERTIES
     CXX_STANDARD 17
@@ -196,7 +196,7 @@ if(CMAKE_CXX_COMPILER OR CMAKE_CXX_COMPILER_ID)
 
   cmake_add_test(tinymock_cpp_test
     SOURCES tinymock_cpp_test.cpp
-    LIBS Rocida::TinyTest
+    LIBS Salts::TinyTest
     FOLDER "tinytest/tests")
   set_target_properties(tinymock_cpp_test PROPERTIES
     CXX_STANDARD 17

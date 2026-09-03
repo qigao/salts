@@ -1,6 +1,6 @@
 cmake_add_test(disruptor_test
   SOURCES disruptor_test.c
-  LIBS Rocida::Concurrency Rocida::TinyTest
+  LIBS Salts::Concurrency Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "concurrency/tests")
 set_target_properties(disruptor_test PROPERTIES
@@ -10,7 +10,7 @@ set_target_properties(disruptor_test PROPERTIES
 
 cmake_add_test(thread_pool_test
   SOURCES thread_pool_test.c
-  LIBS Rocida::Concurrency Rocida::TinyTest
+  LIBS Salts::Concurrency Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../src
   FOLDER "concurrency/tests")
 set_target_properties(thread_pool_test PROPERTIES
@@ -20,7 +20,7 @@ set_target_properties(thread_pool_test PROPERTIES
 
 cmake_add_test(concurrency_deadline_queue_test
   SOURCES deadline_queue_test.c
-  LIBS Rocida::Concurrency Rocida::TinyTest
+  LIBS Salts::Concurrency Salts::TinyTest
   FOLDER "concurrency/tests")
 set_target_properties(concurrency_deadline_queue_test PROPERTIES
   C_STANDARD 11
@@ -29,7 +29,7 @@ set_target_properties(concurrency_deadline_queue_test PROPERTIES
 
 cmake_add_test(concurrency_header_cpp_test
   SOURCES concurrency_header_cpp_test.cpp
-  LIBS Rocida::Concurrency
+  LIBS Salts::Concurrency
   FOLDER "concurrency/tests")
 set_target_properties(concurrency_header_cpp_test PROPERTIES
   CXX_STANDARD 17

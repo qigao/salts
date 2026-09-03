@@ -2,7 +2,7 @@
 
 **状态：** Proposed
 
-**Issue：** [qigao/turbo-utils#122](https://github.com/qigao/turbo-utils/issues/122)
+**Issue：** [qigao/salts#122](https://github.com/qigao/salts/issues/122)
 
 **日期：** 2026-08-30
 
@@ -14,7 +14,7 @@
 
 新增一个可选的、默认拒绝宿主能力的 `datamodel="quickjs-sandbox"`，用
 QuickJS 执行 SCXML 条件、值表达式、位置表达式和 `<script>`。该模型是
-TurboUtils 扩展，不宣称等同于 W3C `datamodel="ecmascript"`。
+Salts 扩展，不宣称等同于 W3C `datamodel="ecmascript"`。
 
 核心决策如下：
 
@@ -28,7 +28,7 @@ TurboUtils 扩展，不宣称等同于 W3C `datamodel="ecmascript"`。
 - 持久数据限制为 CMeta/CSerde 可无损表达的受限值域。函数、Promise、Symbol、
   循环引用和 native object 不得进入 session state。
 - Bearer 认证、tenant/session 鉴权、HTTP ingress 和 HTTP egress 位于上层
-  TurboHTTP/Iris 服务。Bearer token 永不进入 QuickJS 或 `_event.data`。
+  legacy HTTP repository/Iris 服务。Bearer token 永不进入 QuickJS 或 `_event.data`。
 - 外部 HTTP 副作用只能由 SCXML `<send>`/`<invoke>` 经现有 v3 adapter 的
   prepare/commit/discard 协议产生。JS 不提供 `fetch()`。
 - 第一阶段 session 是内存态并绑定一个服务进程。持久化/迁移必须先补充完整的
@@ -93,7 +93,7 @@ TurboUtils 扩展，不宣称等同于 W3C `datamodel="ecmascript"`。
 - 不实现浏览器 DOM、HTML、Web API 或 Node.js API；
 - 不允许用户在请求中上传并立即执行任意 XML/JS；
 - 不声明完整 W3C ECMAScript datamodel conformance；
-- 不在 TurboUtils 中实现 Bearer/JWT、数据库或 HTTP server；
+- 不在 Salts 中实现 Bearer/JWT、数据库或 HTTP server；
 - 不在第一阶段实现跨进程 session 迁移、灾难恢复或 exactly-once HTTP；
 - 不用 QuickJS bytecode 作为持久化、缓存或 wire format；
 - 不改变现有 `null` 与 `cmeta` profile 的公开行为。
@@ -102,10 +102,10 @@ TurboUtils 扩展，不宣称等同于 W3C `datamodel="ecmascript"`。
 
 ```text
 Client
-  -> TLS + Bearer middleware                         TurboHTTP / Iris
+  -> TLS + Bearer middleware                         legacy HTTP repository / Iris
   -> tenant/workflow/session authorization           service layer
   -> CSerde/CBind decode + optional CMeta event lambda
-  -> cflow_scxml_session_try_send_v3()                TurboUtils
+  -> cflow_scxml_session_try_send_v3()                Salts
   -> SCXML run-to-completion
        -> QuickJS sandbox expression/script           optional private engine
        -> staged CMeta state
@@ -114,7 +114,7 @@ Client
        -> published state/configuration
        -> committed adapter tickets
   -> HTTP response and/or service outbox
-  -> TurboHttp::TurboHttp
+  -> the legacy HTTP facade
   -> downstream HTTP server
 ```
 
@@ -122,17 +122,17 @@ Client
 
 ```text
 private vendored QuickJS
-        -> TurboUtils::CFlowScxml (optional implementation)
-        -> TurboUtils::CFlow
-        -> TurboUtils::CMeta
+        -> Salts::CFlowScxml (optional implementation)
+        -> Salts::CFlow
+        -> Salts::CMeta
 
-TurboHttp::Iris service
-        -> TurboUtils::CFlowScxml
+the legacy Iris service
+        -> Salts::CFlowScxml
 
-TurboUtils -X-> TurboHTTP
+Salts -X-> legacy HTTP repository
 ```
 
-QuickJS 作为 `TurboUtils::CFlowScxml` 的可选 PRIVATE 实现依赖，不安装
+QuickJS 作为 `Salts::CFlowScxml` 的可选 PRIVATE 实现依赖，不安装
 `quickjs.h`，不在 public struct 中暴露 `JSRuntime`、`JSContext` 或 `JSValue`。
 本阶段不引入全局 datamodel registry 或动态插件系统；当前 frontend 是封闭的
 `null/cmeta` 选择，直接加入一个内部 adapter 比公开服务定位器更小且更安全。
@@ -332,7 +332,7 @@ CSerde/CBind 位于格式适配器边界：
 - 不序列化 QuickJS heap、JSValue、native pointer 或 QuickJS bytecode；
 - 不在 CSerde/CBind 中执行 expression、推进 session 或维护业务事实源。
 
-TurboUtils SCXML core 不依赖 TurboParser DataBind facade；需要 DataBind 的上层服务可在
+Salts SCXML core 不依赖 TurboParser DataBind facade；需要 DataBind 的上层服务可在
 自己的 target 中适配为 exact CMeta/event envelope。
 
 ## 9. QuickJS runtime 生命周期
@@ -519,7 +519,7 @@ checkpoint。
 
 ## 12. HTTP session 服务契约
 
-HTTP server 属于 TurboHTTP/Iris 或应用仓库，不加入 TurboUtils target。
+HTTP server 属于 legacy HTTP repository/Iris 或应用仓库，不加入 Salts target。
 
 ### 12.1 创建 session
 
@@ -632,7 +632,7 @@ SCXML <send target="payment-service">
   -> prepare reserves bounded outbox row and copies callback-scoped data
   -> Statechart publishes state
   -> ticket commit makes outbox row visible
-  -> TurboHTTP worker sends downstream request
+  -> legacy HTTP repository worker sends downstream request
 ```
 
 `target` 解析为服务端配置的 destination ID，不能直接接受 event data 中的 URL。
@@ -756,7 +756,7 @@ interrupt handler、hot guard 和每个 property conversion 不记录日志。
 
 ### 19.4 Data/transaction
 
-- CMeta ↔ JS every supported scalar/container/struct round trip；
+- CMeta ↔ JS every supported scalar/cstl/struct round trip；
 - exact integer boundary、non-finite number、UTF-8 invalid/limit、nested limit；
 - `<assign>` 单写、`<script>` 多写、exception after write 全部 atomic；
 - `_event` metadata/data retention through eventless microsteps and replacement；
@@ -794,7 +794,7 @@ interrupt handler、hot guard 和每个 property conversion 不记录日志。
 5. guard/value/location/`<assign>`；
 6. transactional `<script>`；
 7. v3 Event I/O integration；
-8. 独立 TurboHTTP/Iris session service 与 outbox；
+8. 独立 legacy HTTP repository/Iris session service 与 outbox；
 9. durable checkpoint 作为单独架构增量。
 
 任何阶段都不能让未实现能力被 public admission 接受。回滚时关闭
@@ -812,7 +812,7 @@ SCXML 决定“状态如何迁移”
 QuickJS sandbox 决定“受限表达式如何求值”
 CMeta staged state 决定“事务内业务数据的唯一真值”
 Event I/O adapter 决定“哪些副作用可以被预留并提交”
-TurboHTTP outbox worker 决定“如何可靠地访问下游 HTTP server”
+legacy HTTP repository outbox worker 决定“如何可靠地访问下游 HTTP server”
 ```
 
 这些职责不能相互穿透：认证资料不进入脚本，脚本不执行 I/O，HTTP worker 不直接

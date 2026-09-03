@@ -1,6 +1,6 @@
 #include <cflow/io_pipe.h>
 
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 #include <limits.h>
 #include <stdlib.h>
@@ -90,14 +90,14 @@ bool cflow_io_pipe_endpoint_is_valid(const cflow_io_pipe_endpoint *endpoint) {
 
 int cflow_io_pipe_endpoint_close(cflow_io_pipe_endpoint *endpoint) {
   uintptr_t handle;
-  if (endpoint == NULL) return TURBO_EINVAL;
-  if (!cflow_io_pipe_endpoint_is_valid(endpoint)) return TURBO_OK;
+  if (endpoint == NULL) return SALTS_EINVAL;
+  if (!cflow_io_pipe_endpoint_is_valid(endpoint)) return SALTS_OK;
   handle = endpoint->handle;
   cflow_io_pipe_endpoint_init(endpoint);
 #if defined(_WIN32)
-  return CloseHandle((HANDLE)handle) ? TURBO_OK : -(int)GetLastError();
+  return CloseHandle((HANDLE)handle) ? SALTS_OK : -(int)GetLastError();
 #else
-  return close((int)handle) == 0 ? TURBO_OK : -errno;
+  return close((int)handle) == 0 ? SALTS_OK : -errno;
 #endif
 }
 
@@ -141,7 +141,7 @@ static void pipe_slot_poll(cflow_io_pipe_slot *slot) {
   error = GetLastError();
   if (error == ERROR_OPERATION_ABORTED) {
     slot->phase = CFLOW_IO_PIPE_SLOT_READY_CANCELLED;
-    slot->error = TURBO_OK;
+    slot->error = SALTS_OK;
   } else {
     slot->phase = CFLOW_IO_PIPE_SLOT_READY_FAILED;
     slot->error = -(int)error;
@@ -162,20 +162,20 @@ int cflow_io_pipe_server_init(cflow_io_pipe_server *server,
       config->input_buffer_size == 0u || config->input_buffer_size > UINT32_MAX ||
       config->output_buffer_size == 0u || config->output_buffer_size > UINT32_MAX ||
       config->completion == NULL)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   name_length = strlen(config->name);
   if (name_length >= CFLOW_IO_PIPE_NAME_CAPACITY ||
       config->request_capacity > SIZE_MAX / sizeof(cflow_io_pipe_slot))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   impl = (cflow_io_pipe_server_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   impl->slots = (cflow_io_pipe_slot *)calloc(config->request_capacity, sizeof(*impl->slots));
   impl->name = (char *)malloc(name_length + 1u);
   if (impl->slots == NULL || impl->name == NULL) {
     free(impl->name);
     free(impl->slots);
     free(impl);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   memcpy(impl->name, config->name, name_length + 1u);
   impl->capacity = config->request_capacity;
@@ -188,11 +188,11 @@ int cflow_io_pipe_server_init(cflow_io_pipe_server *server,
   for (index = 0u; index < impl->capacity; ++index)
     impl->slots[index].handle = UINTPTR_MAX;
   server->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 #else
   (void)server;
   (void)config;
-  return TURBO_ENOTSUP;
+  return SALTS_ENOTSUP;
 #endif
 }
 
@@ -205,15 +205,15 @@ cflow_io_pipe_submit_result cflow_io_pipe_server_try_accept(cflow_io_pipe_server
   DWORD error;
   size_t index;
   if (impl == NULL)
-    return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_INVALID_ARGUMENT, 0u, TURBO_EINVAL);
+    return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_INVALID_ARGUMENT, 0u, SALTS_EINVAL);
   if (impl->close_requested)
-    return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_CLOSED, 0u, TURBO_EALREADY);
+    return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_CLOSED, 0u, SALTS_EALREADY);
   if (impl->active == impl->capacity) {
     ++impl->rejected_full;
-    return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_FULL, 0u, TURBO_EBUSY);
+    return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_FULL, 0u, SALTS_EBUSY);
   }
   if (impl->next_request_id == 0u)
-    return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_ID_EXHAUSTED, 0u, TURBO_ERANGE);
+    return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_ID_EXHAUSTED, 0u, SALTS_ERANGE);
   for (index = 0u; index < impl->capacity; ++index) {
     if (impl->slots[index].phase == CFLOW_IO_PIPE_SLOT_FREE) {
       slot = &impl->slots[index];
@@ -222,7 +222,7 @@ cflow_io_pipe_submit_result cflow_io_pipe_server_try_accept(cflow_io_pipe_server
   }
   if (slot == NULL) {
     ++impl->rejected_full;
-    return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_FULL, 0u, TURBO_EBUSY);
+    return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_FULL, 0u, SALTS_EBUSY);
   }
   slot->event = CreateEventW(NULL, TRUE, FALSE, NULL);
   if (slot->event == NULL)
@@ -256,10 +256,10 @@ cflow_io_pipe_submit_result cflow_io_pipe_server_try_accept(cflow_io_pipe_server
   }
   ++impl->active;
   ++impl->submitted;
-  return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_ACCEPTED, slot->request_id, TURBO_OK);
+  return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_ACCEPTED, slot->request_id, SALTS_OK);
 #else
   (void)server;
-  return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_UNSUPPORTED, 0u, TURBO_ENOTSUP);
+  return pipe_submit_result(CFLOW_IO_PIPE_SUBMIT_UNSUPPORTED, 0u, SALTS_ENOTSUP);
 #endif
 }
 
@@ -293,9 +293,9 @@ int cflow_io_pipe_server_run_ready(cflow_io_pipe_server *server, size_t max_step
   cflow_io_pipe_server_impl *impl =
       server != NULL ? (cflow_io_pipe_server_impl *)server->impl : NULL;
   size_t visited = 0u;
-  if (impl == NULL || max_steps == 0u || progressed == NULL) return TURBO_EINVAL;
+  if (impl == NULL || max_steps == 0u || progressed == NULL) return SALTS_EINVAL;
   *progressed = 0u;
-  if (impl->driver_active) return TURBO_EBUSY;
+  if (impl->driver_active) return SALTS_EBUSY;
   impl->driver_active = true;
   while (*progressed < max_steps && visited < impl->capacity) {
     cflow_io_pipe_slot *slot = &impl->slots[impl->cursor];
@@ -332,12 +332,12 @@ int cflow_io_pipe_server_run_ready(cflow_io_pipe_server *server, size_t max_step
     }
   }
   impl->driver_active = false;
-  return TURBO_OK;
+  return SALTS_OK;
 #else
   (void)server;
   (void)max_steps;
   if (progressed != NULL) *progressed = 0u;
-  return TURBO_ENOTSUP;
+  return SALTS_ENOTSUP;
 #endif
 }
 
@@ -346,8 +346,8 @@ int cflow_io_pipe_server_close(cflow_io_pipe_server *server) {
   cflow_io_pipe_server_impl *impl =
       server != NULL ? (cflow_io_pipe_server_impl *)server->impl : NULL;
   size_t index;
-  if (impl == NULL) return TURBO_EINVAL;
-  if (impl->close_requested) return TURBO_OK;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->close_requested) return SALTS_OK;
   impl->close_requested = true;
   for (index = 0u; index < impl->capacity; ++index) {
     cflow_io_pipe_slot *slot = &impl->slots[index];
@@ -355,10 +355,10 @@ int cflow_io_pipe_server_close(cflow_io_pipe_server *server) {
     if (slot->phase == CFLOW_IO_PIPE_SLOT_PENDING)
       (void)CancelIoEx((HANDLE)slot->handle, &slot->overlapped);
   }
-  return TURBO_OK;
+  return SALTS_OK;
 #else
   (void)server;
-  return TURBO_ENOTSUP;
+  return SALTS_ENOTSUP;
 #endif
 }
 
@@ -386,13 +386,13 @@ bool cflow_io_pipe_server_get_stats(const cflow_io_pipe_server *server,
 int cflow_io_pipe_server_destroy(cflow_io_pipe_server *server) {
   cflow_io_pipe_server_impl *impl =
       server != NULL ? (cflow_io_pipe_server_impl *)server->impl : NULL;
-  if (impl == NULL) return TURBO_EINVAL;
-  if (!impl->close_requested || impl->active != 0u || impl->driver_active) return TURBO_EBUSY;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->close_requested || impl->active != 0u || impl->driver_active) return SALTS_EBUSY;
   free(impl->name);
   free(impl->slots);
   free(impl);
   server->impl = NULL;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cflow_io_pipe_client_connect(const char *name, cflow_io_pipe_direction direction,
@@ -402,23 +402,23 @@ int cflow_io_pipe_client_connect(const char *name, cflow_io_pipe_direction direc
   DWORD error;
   if (name == NULL || name[0] == '\0' || !pipe_direction_valid(direction) || out == NULL ||
       cflow_io_pipe_endpoint_is_valid(out))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   handle = CreateFileA(name, pipe_client_access(direction), 0u, NULL, OPEN_EXISTING,
                        FILE_FLAG_OVERLAPPED, NULL);
   if (handle == INVALID_HANDLE_VALUE) {
     error = GetLastError();
-    if (error == ERROR_PIPE_BUSY) return TURBO_EBUSY;
-    if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return TURBO_ENOENT;
+    if (error == ERROR_PIPE_BUSY) return SALTS_EBUSY;
+    if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) return SALTS_ENOENT;
     return -(int)error;
   }
   out->handle = (uintptr_t)handle;
   out->flags = CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE;
-  return TURBO_OK;
+  return SALTS_OK;
 #else
   (void)name;
   (void)direction;
   (void)out;
-  return TURBO_ENOTSUP;
+  return SALTS_ENOTSUP;
 #endif
 }
 
@@ -428,14 +428,14 @@ int cflow_io_fifo_open(const char *path, cflow_io_pipe_direction direction,
   (void)path;
   (void)direction;
   (void)out;
-  return TURBO_ENOTSUP;
+  return SALTS_ENOTSUP;
 #else
   struct stat info;
   int flags;
   int descriptor;
   if (path == NULL || path[0] == '\0' || out == NULL || cflow_io_pipe_endpoint_is_valid(out) ||
       (direction != CFLOW_IO_PIPE_READ && direction != CFLOW_IO_PIPE_WRITE))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   flags = direction == CFLOW_IO_PIPE_READ ? O_RDONLY : O_WRONLY;
   flags |= O_NONBLOCK;
   #if defined(O_CLOEXEC)
@@ -444,7 +444,7 @@ int cflow_io_fifo_open(const char *path, cflow_io_pipe_direction direction,
   do {
     descriptor = open(path, flags);
   } while (descriptor < 0 && errno == EINTR);
-  if (descriptor < 0) return errno == ENXIO ? TURBO_EPIPE : -errno;
+  if (descriptor < 0) return errno == ENXIO ? SALTS_EPIPE : -errno;
   if (fstat(descriptor, &info) != 0) {
     int status = -errno;
     (void)close(descriptor);
@@ -452,7 +452,7 @@ int cflow_io_fifo_open(const char *path, cflow_io_pipe_direction direction,
   }
   if (!S_ISFIFO(info.st_mode)) {
     (void)close(descriptor);
-    return TURBO_ENOTSUP;
+    return SALTS_ENOTSUP;
   }
   #if !defined(O_CLOEXEC)
   if (fcntl(descriptor, F_SETFD, FD_CLOEXEC) != 0) {
@@ -463,6 +463,6 @@ int cflow_io_fifo_open(const char *path, cflow_io_pipe_direction direction,
   #endif
   out->handle = (uintptr_t)descriptor;
   out->flags = CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE;
-  return TURBO_OK;
+  return SALTS_OK;
 #endif
 }

@@ -1,37 +1,37 @@
-set(TARGET_NAME turbo_platform)
+set(TARGET_NAME salts_platform)
 
 if(WIN32)
-  set(TURBO_PLATFORM_THREAD_SOURCE src/thread_win32.c)
+  set(SALTS_PLATFORM_THREAD_SOURCE src/thread_win32.c)
 else()
-  set(TURBO_PLATFORM_THREAD_SOURCE src/thread_posix.c)
+  set(SALTS_PLATFORM_THREAD_SOURCE src/thread_posix.c)
 endif()
 
 add_library(${TARGET_NAME} STATIC
   src/clock.c
   src/random.c
   src/readiness.c
-  ${TURBO_PLATFORM_THREAD_SOURCE})
+  ${SALTS_PLATFORM_THREAD_SOURCE})
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-   TURBO_ENABLE_EPOLL_READINESS)
+   SALTS_ENABLE_EPOLL_READINESS)
   target_sources(${TARGET_NAME} PRIVATE src/readiness_epoll.c)
   target_compile_definitions(${TARGET_NAME}
-    PRIVATE TURBO_ENABLE_EPOLL_READINESS=1)
+    PRIVATE SALTS_ENABLE_EPOLL_READINESS=1)
 elseif(APPLE)
   target_sources(${TARGET_NAME} PRIVATE src/readiness_kqueue.c)
   target_compile_definitions(${TARGET_NAME}
-    PRIVATE TURBO_ENABLE_KQUEUE_READINESS=1)
+    PRIVATE SALTS_ENABLE_KQUEUE_READINESS=1)
 endif()
 
 if(UNIX)
   target_sources(${TARGET_NAME} PRIVATE src/readiness_poll.c)
   target_compile_definitions(${TARGET_NAME}
-    PRIVATE TURBO_ENABLE_POLL_READINESS=1)
+    PRIVATE SALTS_ENABLE_POLL_READINESS=1)
 endif()
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS Rocida::Platform
+  ALIAS Salts::Platform
   FOLDER "platform"
   EXPORT_NAME Platform)
 
@@ -56,13 +56,13 @@ endif()
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT RocidaTargets
+  EXPORT SaltsTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(
-  DIRECTORY include/turbo
+  DIRECTORY include/salts
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
 

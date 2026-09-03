@@ -47,7 +47,7 @@ int cnet_dispatcher_wait_idle(cnet_dispatcher *dispatcher, uint32_t timeout_ms);
 
 /**
  * Closes admission and live connections, then drives all terminal callbacks.
- * Retry after TURBO_ETIMEDOUT; do not call from an inline callback.
+ * Retry after SALTS_ETIMEDOUT; do not call from an inline callback.
  */
 int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms);
 bool cnet_dispatcher_drained(const cnet_dispatcher *dispatcher);

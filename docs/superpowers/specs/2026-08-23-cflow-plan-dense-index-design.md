@@ -107,7 +107,7 @@ Release matrix supplies the multi-host evidence after push.
 
 ## Future Work
 
-- [ ] [#46: benchmark a private CSR view for branching Graphs](https://github.com/qigao/turbo-utils/issues/46)
+- [ ] [#46: benchmark a private CSR view for branching Graphs](https://github.com/qigao/salts/issues/46)
   tracks the general-adjacency follow-up. CSR is not a Plan replacement and
   must not enter the public Graph ABI. Adoption requires a measured branching
   hot path, flat-edge/CSR differential equivalence, preserved outgoing-edge

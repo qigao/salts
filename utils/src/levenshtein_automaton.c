@@ -1,7 +1,7 @@
 #include "levenshtein_automaton.h"
-#include "turbo_error.h"
-#include "turbostl_status_internal.h"
-#include <rocida/stl/vec.h>
+#include "salts_error.h"
+#include "cstl_status_internal.h"
+#include <cstl/vec.h>
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -32,17 +32,17 @@ static int lev_init_common(lev_automaton_t *lev, vstr pattern,
   stl_status status;
   if (!lev || (!pattern.data && pattern.len != 0U) ||
       max_distance > LEVENSHTEIN_INF)
-    return TURBO_EINVAL;
-  if (lev->initialized) return TURBO_EINVAL;
+    return SALTS_EINVAL;
+  if (lev->initialized) return SALTS_EINVAL;
 
-  if (utf8_pattern && !vstr_utf8_valid(pattern)) return TURBO_EINVAL;
-  if (pattern.len == 0U) return TURBO_EINVAL;
+  if (utf8_pattern && !vstr_utf8_valid(pattern)) return SALTS_EINVAL;
+  if (pattern.len == 0U) return SALTS_EINVAL;
 
   status = vec_init_bytes(
       &lev->pattern, utf8_pattern ? sizeof(uint32_t) : sizeof(uint8_t),
       utf8_pattern ? _Alignof(uint32_t) : _Alignof(uint8_t), pattern.len);
   if (status != STL_OK)
-    return turbo_core_status_from_stl(status);
+    return salts_core_status_from_stl(status);
 
   if (utf8_pattern) {
     vstr rest = pattern;
@@ -50,12 +50,12 @@ static int lev_init_common(lev_automaton_t *lev, vstr pattern,
     while (rest.len > 0U) {
       if (!vstr_utf8_next(&rest, &cp)) {
         vec_destroy(&lev->pattern);
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
       }
       status = vec_push(&lev->pattern, &cp);
       if (status != STL_OK) {
         vec_destroy(&lev->pattern);
-        return turbo_core_status_from_stl(status);
+        return salts_core_status_from_stl(status);
       }
     }
   } else {
@@ -64,14 +64,14 @@ static int lev_init_common(lev_automaton_t *lev, vstr pattern,
       status = vec_push(&lev->pattern, &byte);
       if (status != STL_OK) {
         vec_destroy(&lev->pattern);
-        return turbo_core_status_from_stl(status);
+        return salts_core_status_from_stl(status);
       }
     }
   }
 
   lev->max_distance = max_distance;
   lev->initialized = true;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int lev_automaton_init(lev_automaton_t *lev, vstr pattern, size_t max_distance) {
@@ -132,7 +132,7 @@ static int lev_match_bytes(const uint8_t *pattern, size_t pattern_len, size_t ma
     free(curr_dp);
     free(prev_start);
     free(curr_start);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
 
   for (size_t j = 0; j <= pattern_len; ++j) {
@@ -171,7 +171,7 @@ static int lev_match_bytes(const uint8_t *pattern, size_t pattern_len, size_t ma
         free(curr_dp);
         free(prev_start);
         free(curr_start);
-        return TURBO_OK;
+        return SALTS_OK;
       }
     }
 
@@ -187,17 +187,17 @@ static int lev_match_bytes(const uint8_t *pattern, size_t pattern_len, size_t ma
   free(curr_dp);
   free(prev_start);
   free(curr_start);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int lev_automaton_match(const lev_automaton_t *lev, vstr text, levenshtein_match_cb cb, void *user_data) {
   size_t pattern_len = 0;
   const uint8_t *pattern = NULL;
 
-  if (!lev || !lev->initialized || (!text.data && text.len != 0U) || !cb) return TURBO_EINVAL;
+  if (!lev || !lev->initialized || (!text.data && text.len != 0U) || !cb) return SALTS_EINVAL;
   pattern_len = vec_size(&lev->pattern);
   pattern = (const uint8_t *)vec_data_const(&lev->pattern);
-  if (!pattern || pattern_len == 0U) return TURBO_EINVAL;
+  if (!pattern || pattern_len == 0U) return SALTS_EINVAL;
 
   return lev_match_bytes(pattern, pattern_len, lev->max_distance, text, cb, user_data);
 }
@@ -215,7 +215,7 @@ static int lev_match_utf8(const uint32_t *pattern, size_t pattern_len, size_t ma
   vstr rest = text;
   uint32_t cp = 0U;
 
-  if (!vstr_utf8_valid(text)) return TURBO_EINVAL;
+  if (!vstr_utf8_valid(text)) return SALTS_EINVAL;
   prev_dp = (size_t *)malloc((pattern_len + 1U) * sizeof(size_t));
   curr_dp = (size_t *)malloc((pattern_len + 1U) * sizeof(size_t));
   prev_start = (size_t *)malloc((pattern_len + 1U) * sizeof(size_t));
@@ -225,7 +225,7 @@ static int lev_match_utf8(const uint32_t *pattern, size_t pattern_len, size_t ma
     free(curr_dp);
     free(prev_start);
     free(curr_start);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
 
   while (rest.len > 0U) {
@@ -234,7 +234,7 @@ static int lev_match_utf8(const uint32_t *pattern, size_t pattern_len, size_t ma
       free(curr_dp);
       free(prev_start);
       free(curr_start);
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
     }
     uint32_t *new_text = (uint32_t *)realloc(text_cps, (text_cp_len + 1U) * sizeof(uint32_t));
     if (!new_text) {
@@ -243,7 +243,7 @@ static int lev_match_utf8(const uint32_t *pattern, size_t pattern_len, size_t ma
       free(curr_dp);
       free(prev_start);
       free(curr_start);
-      return TURBO_ENOMEM;
+      return SALTS_ENOMEM;
     }
     text_cps = new_text;
     text_cps[text_cp_len++] = cp;
@@ -286,7 +286,7 @@ static int lev_match_utf8(const uint32_t *pattern, size_t pattern_len, size_t ma
         free(prev_start);
         free(curr_start);
         free(text_cps);
-        return TURBO_OK;
+        return SALTS_OK;
       }
     }
 
@@ -303,7 +303,7 @@ static int lev_match_utf8(const uint32_t *pattern, size_t pattern_len, size_t ma
   free(prev_start);
   free(curr_start);
   free(text_cps);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int lev_utf8_automaton_match(const lev_utf8_automaton_t *lev, vstr text,
@@ -311,10 +311,10 @@ int lev_utf8_automaton_match(const lev_utf8_automaton_t *lev, vstr text,
   size_t pattern_len = 0;
   const uint32_t *pattern = NULL;
 
-  if (!lev || !lev->initialized || (!text.data && text.len != 0U) || !cb) return TURBO_EINVAL;
+  if (!lev || !lev->initialized || (!text.data && text.len != 0U) || !cb) return SALTS_EINVAL;
   pattern_len = vec_size(&lev->pattern);
   pattern = (const uint32_t *)vec_data_const(&lev->pattern);
-  if (!pattern || pattern_len == 0U) return TURBO_EINVAL;
+  if (!pattern || pattern_len == 0U) return SALTS_EINVAL;
 
   return lev_match_utf8(pattern, pattern_len, lev->max_distance, text, cb, user_data);
 }

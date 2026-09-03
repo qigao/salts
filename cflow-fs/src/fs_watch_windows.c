@@ -1,7 +1,7 @@
 #include "fs_watch_internal.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #if defined(interface)
 #undef interface
@@ -18,7 +18,7 @@ typedef struct cflow_fs_watch_windows {
     HANDLE stop_event;
     HANDLE io_event;
     HANDLE ready_event;
-    turbo_thread_t thread;
+    salts_thread_t thread;
     unsigned char *buffer;
     DWORD buffer_capacity;
     DWORD notify_filter;
@@ -37,17 +37,17 @@ static int watch_windows_path(const char *path, wchar_t **out) {
     count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
                                 path, -1, NULL, 0);
     if (count <= 0)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     wide = (wchar_t *)malloc((size_t)count * sizeof(*wide));
     if (wide == NULL)
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
                             path, -1, wide, count) != count) {
         free(wide);
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     }
     *out = wide;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int watch_windows_name(const FILE_NOTIFY_INFORMATION *native,
@@ -58,17 +58,17 @@ static int watch_windows_name(const FILE_NOTIFY_INFORMATION *native,
                                      NULL, 0, NULL, NULL);
     size_t index;
     if (needed <= 0 || (size_t)needed >= capacity)
-        return TURBO_ENOBUFS;
+        return SALTS_ENOBUFS;
     if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
                             native->FileName, wide_count,
                             out, needed, NULL, NULL) != needed)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     out[needed] = '\0';
     for (index = 0u; index < (size_t)needed; ++index) {
         if (out[index] == '\\')
             out[index] = '/';
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static void watch_windows_process(cflow_fs_watch_windows *backend,
@@ -87,7 +87,7 @@ static void watch_windows_process(cflow_fs_watch_windows *backend,
             break;
         }
         int status = watch_windows_name(native, path, backend->path_capacity);
-        if (status != TURBO_OK) {
+        if (status != SALTS_OK) {
             backend->rename_pending = false;
             cflow_fs_watch_publish_loss(backend->owner);
         } else {
@@ -183,7 +183,7 @@ static void watch_windows_thread(void *user) {
             break;
         }
         if (first_request) {
-            InterlockedExchange(&backend->start_status, TURBO_OK);
+            InterlockedExchange(&backend->start_status, SALTS_OK);
             SetEvent(backend->ready_event);
             first_request = false;
         }
@@ -222,9 +222,9 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
     int path_status;
     backend = (cflow_fs_watch_windows *)calloc(1u, sizeof(*backend));
     if (backend == NULL)
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     path_status = watch_windows_path(path, &wide_path);
-    if (path_status != TURBO_OK) {
+    if (path_status != SALTS_OK) {
         free(backend);
         return path_status;
     }
@@ -257,7 +257,7 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
         free(backend->rename_old_path);
         free(backend->buffer);
         free(backend);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
     backend->owner = impl;
     backend->buffer_capacity = (DWORD)config->native_buffer_capacity;
@@ -267,11 +267,11 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
         FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
         FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_SIZE |
         FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_CREATION;
-    backend->start_status = TURBO_EBUSY;
+    backend->start_status = SALTS_EBUSY;
     cflow_fs_watch_backend_set(impl, backend);
-    thread_status = turbo_thread_create(
+    thread_status = salts_thread_create(
         &backend->thread, watch_windows_thread, backend);
-    if (thread_status != TURBO_OK) {
+    if (thread_status != SALTS_OK) {
         cflow_fs_watch_backend_set(impl, NULL);
         CloseHandle(backend->io_event);
         CloseHandle(backend->stop_event);
@@ -284,10 +284,10 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
         return thread_status;
     }
     if (WaitForSingleObject(backend->ready_event, INFINITE) != WAIT_OBJECT_0 ||
-        InterlockedCompareExchange(&backend->start_status, 0, 0) != TURBO_OK) {
+        InterlockedCompareExchange(&backend->start_status, 0, 0) != SALTS_OK) {
         const int status =
             (int)InterlockedCompareExchange(&backend->start_status, 0, 0);
-        (void)turbo_thread_join(&backend->thread);
+        (void)salts_thread_join(&backend->thread);
         cflow_fs_watch_backend_set(impl, NULL);
         CloseHandle(backend->io_event);
         CloseHandle(backend->stop_event);
@@ -297,9 +297,9 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
         free(backend->rename_old_path);
         free(backend->buffer);
         free(backend);
-        return status == TURBO_EBUSY ? TURBO_EIO : status;
+        return status == SALTS_EBUSY ? SALTS_EIO : status;
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 void cflow_fs_watch_backend_request_close(cflow_fs_watch_impl *impl) {
@@ -314,18 +314,18 @@ void cflow_fs_watch_backend_request_close(cflow_fs_watch_impl *impl) {
 int cflow_fs_watch_backend_destroy(cflow_fs_watch_impl *impl) {
     cflow_fs_watch_windows *backend =
         (cflow_fs_watch_windows *)cflow_fs_watch_backend_get(impl);
-    int status = TURBO_OK;
+    int status = SALTS_OK;
     if (backend == NULL)
-        return TURBO_EINVAL;
-    if (turbo_thread_join(&backend->thread) != TURBO_OK)
-        status = TURBO_EIO;
-    if (!CloseHandle(backend->io_event) && status == TURBO_OK)
+        return SALTS_EINVAL;
+    if (salts_thread_join(&backend->thread) != SALTS_OK)
+        status = SALTS_EIO;
+    if (!CloseHandle(backend->io_event) && status == SALTS_OK)
         status = -(int)GetLastError();
-    if (!CloseHandle(backend->stop_event) && status == TURBO_OK)
+    if (!CloseHandle(backend->stop_event) && status == SALTS_OK)
         status = -(int)GetLastError();
-    if (!CloseHandle(backend->ready_event) && status == TURBO_OK)
+    if (!CloseHandle(backend->ready_event) && status == SALTS_OK)
         status = -(int)GetLastError();
-    if (!CloseHandle(backend->directory) && status == TURBO_OK)
+    if (!CloseHandle(backend->directory) && status == SALTS_OK)
         status = -(int)GetLastError();
     free(backend->scratch_path);
     free(backend->rename_old_path);

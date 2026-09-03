@@ -19,7 +19,7 @@ legacy compatibility surface remains.
 Reactive NativeIO uses two independent bounded worker roles:
 
 1. A Publisher/NativeIO owner task runs on a dedicated one-worker
-   `turbo_threadpool_t`. It alone submits, cancels, observes, correlates, and
+   `salts_threadpool_t`. It alone submits, cancels, observes, correlates, and
    acknowledges NativeIO operations.
 2. A Subscriber pump runs on a one-worker CFlow Worker Scheduler. It owns
    downstream demand, Graph operators, and Subscriber callbacks.

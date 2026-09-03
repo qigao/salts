@@ -1,4 +1,4 @@
-set(TARGET_NAME turbo_chttp)
+set(TARGET_NAME salts_chttp)
 set(CHTTP_LIBRARY_VERSION 2.0.0)
 set(CHTTP_ABI_VERSION 2)
 
@@ -29,14 +29,14 @@ target_sources(${TARGET_NAME} PRIVATE src/chttp_websocket_server.c)
 target_sources(${TARGET_NAME} PRIVATE src/chttp_websocket_client.c)
 target_sources(${TARGET_NAME} PRIVATE src/chttp_websocket_pool.c)
 cmake_config_target(${TARGET_NAME}
-  ALIAS Rocida::CHTTP
+  ALIAS Salts::CHTTP
   FOLDER "chttp"
   EXPORT_NAME CHTTP
   VERSION ${CHTTP_LIBRARY_VERSION}
   SOVERSION ${CHTTP_ABI_VERSION})
 if(WIN32)
   set_target_properties(${TARGET_NAME} PROPERTIES
-    OUTPUT_NAME "turbo_chttp-${CHTTP_ABI_VERSION}")
+    OUTPUT_NAME "salts_chttp-${CHTTP_ABI_VERSION}")
 endif()
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
 # BoringSSL archives contain C++ objects even though CHTTP exposes a C API.
@@ -50,13 +50,13 @@ target_include_directories(
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(
   ${TARGET_NAME}
-  PUBLIC Rocida::CNet
-  PRIVATE llhttp::llhttp_static Rocida::Platform Rocida::Core Rocida::CFlow Rocida::UriParser
+  PUBLIC Salts::CNet
+  PRIVATE llhttp::llhttp_static Salts::Platform Salts::Core Salts::CFlow Salts::UriParser
           OpenSSL::Crypto)
 
-install(TARGETS ${TARGET_NAME} EXPORT RocidaTargets)
+install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
 install(FILES "${llhttp_DIR}/copyright"
-        DESTINATION share/licenses/Rocida/llhttp)
+        DESTINATION share/licenses/Salts/llhttp)
 install(
   DIRECTORY include/chttp
   DESTINATION include

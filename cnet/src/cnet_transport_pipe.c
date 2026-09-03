@@ -2,7 +2,7 @@
 
 #include "cnet_uri.h"
 
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -31,15 +31,15 @@ static void cnet_transport_pipe_reset(cnet_transport *transport) {
 
 static int cnet_transport_pipe_name_length(const char *name, size_t *out_length) {
   size_t length;
-  if (name == NULL || out_length == NULL) return TURBO_EINVAL;
+  if (name == NULL || out_length == NULL) return SALTS_EINVAL;
   for (length = 0u; length < CNET_URI_PATH_CAPACITY; ++length) {
     if (name[length] == '\0') {
-      if (length == 0u) return TURBO_EINVAL;
+      if (length == 0u) return SALTS_EINVAL;
       *out_length = length;
-      return TURBO_OK;
+      return SALTS_OK;
     }
   }
-  return TURBO_ERANGE;
+  return SALTS_ERANGE;
 }
 
 #if defined(_WIN32)
@@ -57,10 +57,10 @@ static int cnet_transport_pipe_open(const char *name, size_t name_length, uintpt
                        FILE_FLAG_OVERLAPPED, NULL);
   if (handle == INVALID_HANDLE_VALUE) {
     const DWORD error = GetLastError();
-    return error != ERROR_SUCCESS ? -(int)error : TURBO_EIO;
+    return error != ERROR_SUCCESS ? -(int)error : SALTS_EIO;
   }
   *out_read = *out_write = (uintptr_t)handle;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void cnet_transport_pipe_close_handles(uintptr_t read_handle, uintptr_t write_handle) {
@@ -72,7 +72,7 @@ static void cnet_transport_pipe_close_handles(uintptr_t read_handle, uintptr_t w
 static int cnet_transport_pipe_set_close_on_exec(int descriptor) {
   const int flags = fcntl(descriptor, F_GETFD, 0);
   if (flags < 0 || fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) != 0) return -errno;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int cnet_transport_pipe_open(const char *name, size_t name_length, uintptr_t *out_read,
@@ -90,17 +90,17 @@ static int cnet_transport_pipe_open(const char *name, size_t name_length, uintpt
   read_descriptor = open(read_name, O_RDONLY | O_NONBLOCK);
   if (read_descriptor < 0) return -errno;
   status = cnet_transport_pipe_set_close_on_exec(read_descriptor);
-  if (status != TURBO_OK) goto failed;
+  if (status != SALTS_OK) goto failed;
   write_descriptor = open(write_name, O_WRONLY | O_NONBLOCK);
   if (write_descriptor < 0) {
     status = -errno;
     goto failed;
   }
   status = cnet_transport_pipe_set_close_on_exec(write_descriptor);
-  if (status != TURBO_OK) goto failed;
+  if (status != SALTS_OK) goto failed;
   *out_read = (uintptr_t)read_descriptor;
   *out_write = (uintptr_t)write_descriptor;
-  return TURBO_OK;
+  return SALTS_OK;
 
 failed:
   if (write_descriptor >= 0) (void)close(write_descriptor);
@@ -120,17 +120,17 @@ int cnet_transport_pipe_connect(cnet_transport *transport, native_io_backend *ba
   uintptr_t write_handle = UINTPTR_MAX;
   size_t name_length = 0u;
   int status;
-  if (transport == NULL) return TURBO_EINVAL;
+  if (transport == NULL) return SALTS_EINVAL;
   cnet_transport_pipe_reset(transport);
-  if (backend == NULL) return TURBO_EINVAL;
+  if (backend == NULL) return SALTS_EINVAL;
   if (!native_io_backend_kind_supported(backend_kind) ||
       !native_io_backend_kind_supports_pipe(backend_kind))
-    return TURBO_ENOTSUP;
+    return SALTS_ENOTSUP;
   status = cnet_transport_pipe_name_length(name, &name_length);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status = cnet_transport_pipe_open(name, name_length, &read_handle, &write_handle);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status = cnet_transport_adopt_pipe(transport, backend, read_handle, write_handle);
-  if (status != TURBO_OK) cnet_transport_pipe_close_handles(read_handle, write_handle);
+  if (status != SALTS_OK) cnet_transport_pipe_close_handles(read_handle, write_handle);
   return status;
 }

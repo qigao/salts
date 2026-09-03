@@ -1,6 +1,6 @@
 #include "crpc_internal.h"
 
-#include <turbo/clock.h>
+#include <salts/clock.h>
 
 #include <limits.h>
 #include <stdbool.h>
@@ -108,9 +108,9 @@ static void crpc_slot_complete(void *user, chttp_request http_request,
   impl = slot->client;
   slot->result_delivered = true;
   if (slot->deadline_expired || (!impl->stop_active && slot->deadline_at_ms != 0u &&
-                                 turbo_monotonic_ms() >= slot->deadline_at_ms)) {
+                                 salts_monotonic_ms() >= slot->deadline_at_ms)) {
     slot->deadline_expired = true;
-    error = (crpc_error){.status = TURBO_ETIMEDOUT, .stage = "rpc-deadline"};
+    error = (crpc_error){.status = SALTS_ETIMEDOUT, .stage = "rpc-deadline"};
     error_view = &error;
   } else if (http_error != NULL) {
     error = (crpc_error){.status = http_error->status,
@@ -118,13 +118,13 @@ static void crpc_slot_complete(void *user, chttp_request http_request,
                          .stage = http_error->stage};
     error_view = &error;
   } else if (http_response == NULL) {
-    error = (crpc_error){.status = TURBO_EPROTO, .stage = "http-response"};
+    error = (crpc_error){.status = SALTS_EPROTO, .stage = "http-response"};
     error_view = &error;
   } else {
     status = crpc_json_decode_response(
         http_response->body, http_response->body_size, slot->request_id, http_response->status_code,
         impl->max_json_depth, slot->has_callable ? &slot->callable : NULL, &decoded, &stage);
-    if (status == TURBO_OK) {
+    if (status == SALTS_OK) {
       response_view = &decoded.response;
     } else {
       error =
@@ -145,16 +145,16 @@ int crpc_async_client_init(crpc_async_client *client, const crpc_client_config *
   crpc_async_client_impl *impl;
   size_t index;
   int status;
-  if (client == NULL || config == NULL) return TURBO_EINVAL;
-  if (client->impl != NULL) return TURBO_EALREADY;
+  if (client == NULL || config == NULL) return SALTS_EINVAL;
+  if (client->impl != NULL) return SALTS_EALREADY;
   if (!crpc_client_config_valid(config) || config->request_capacity > SIZE_MAX / sizeof(crpc_slot))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   impl = (crpc_async_client_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   impl->slots = (crpc_slot *)calloc(config->request_capacity, sizeof(*impl->slots));
   if (impl->slots == NULL) {
     free(impl);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   impl->request_capacity = config->request_capacity;
   impl->max_method_bytes = config->max_method_bytes;
@@ -164,14 +164,14 @@ int crpc_async_client_init(crpc_async_client *client, const crpc_client_config *
   for (index = 0u; index < impl->request_capacity; ++index)
     impl->slots[index].client = impl;
   status = chttp_async_client_init(&impl->http, &config->http);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     free(impl->slots);
     free(impl);
     return status;
   }
   impl->admission_open = true;
   client->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int crpc_async_client_submit(crpc_async_client *client, const crpc_options *options,
@@ -184,24 +184,24 @@ int crpc_async_client_submit(crpc_async_client *client, const crpc_options *opti
   uint64_t started_ms;
   int status;
 
-  if (out_request == NULL) return TURBO_EINVAL;
+  if (out_request == NULL) return SALTS_EINVAL;
   *out_request = (crpc_request){0};
-  if (impl == NULL || options == NULL || on_complete == NULL) return TURBO_EINVAL;
+  if (impl == NULL || options == NULL || on_complete == NULL) return SALTS_EINVAL;
   if (impl->submit_active || impl->poll_active || impl->callback_active || impl->stop_active)
-    return TURBO_EBUSY;
-  if (!impl->admission_open) return TURBO_ESHUTDOWN;
-  if (crpc_request_id_active(impl, options->request_id)) return TURBO_EALREADY;
+    return SALTS_EBUSY;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  if (crpc_request_id_active(impl, options->request_id)) return SALTS_EALREADY;
   slot = crpc_slot_find_free(impl);
-  if (slot == NULL) return TURBO_ENOBUFS;
+  if (slot == NULL) return SALTS_ENOBUFS;
 
   impl->submit_active = true;
-  started_ms = turbo_monotonic_ms();
+  started_ms = salts_monotonic_ms();
   status = crpc_prepare_call(options, impl->max_method_bytes, impl->max_json_depth,
                              impl->max_body_bytes, impl->max_http_header_count, &prepared);
-  if (status == TURBO_OK && options->deadline_ms != 0u &&
-      turbo_monotonic_ms() - started_ms >= options->deadline_ms)
-    status = TURBO_ETIMEDOUT;
-  if (status != TURBO_OK) goto done;
+  if (status == SALTS_OK && options->deadline_ms != 0u &&
+      salts_monotonic_ms() - started_ms >= options->deadline_ms)
+    status = SALTS_ETIMEDOUT;
+  if (status != SALTS_OK) goto done;
 
   slot_index = (size_t)(slot - impl->slots);
   slot->generation = crpc_next_generation(slot->generation);
@@ -215,9 +215,9 @@ int crpc_async_client_submit(crpc_async_client *client, const crpc_options *opti
   slot->callable = prepared.callable;
   slot->has_callable = prepared.has_callable;
   slot->active = true;
-  if (options->deadline_ms != 0u && turbo_monotonic_ms() >= slot->deadline_at_ms) {
+  if (options->deadline_ms != 0u && salts_monotonic_ms() >= slot->deadline_at_ms) {
     crpc_slot_release(slot);
-    status = TURBO_ETIMEDOUT;
+    status = SALTS_ETIMEDOUT;
     goto done;
   }
   http_options = (chttp_request_options){.connection_uri = options->connection_uri,
@@ -233,7 +233,7 @@ int crpc_async_client_submit(crpc_async_client *client, const crpc_options *opti
                                          .tls = options->tls,
                                          .protocol = options->protocol};
   status = chttp_async_client_submit(&impl->http, &http_options, &slot->http_request);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     crpc_slot_release(slot);
     goto done;
   }
@@ -249,20 +249,20 @@ int crpc_async_request_cancel(crpc_async_client *client, crpc_request request) {
   crpc_async_client_impl *impl = crpc_async_client_get(client);
   crpc_slot *slot;
   int status;
-  if (impl == NULL) return TURBO_EINVAL;
-  if ((impl->poll_active && !impl->callback_active) || impl->submit_active) return TURBO_EBUSY;
+  if (impl == NULL) return SALTS_EINVAL;
+  if ((impl->poll_active && !impl->callback_active) || impl->submit_active) return SALTS_EBUSY;
   slot = crpc_slot_find(impl, request);
-  if (slot == NULL) return TURBO_ENOENT;
+  if (slot == NULL) return SALTS_ENOENT;
   if (slot->result_delivered || slot->cancel_requested || slot->deadline_expired)
-    return TURBO_EALREADY;
+    return SALTS_EALREADY;
   status = chttp_async_request_cancel(&impl->http, slot->http_request);
-  if (status == TURBO_OK) slot->cancel_requested = true;
+  if (status == SALTS_OK) slot->cancel_requested = true;
   return status;
 }
 
 static int crpc_expire_deadlines(crpc_async_client_impl *impl) {
-  const uint64_t now_ms = turbo_monotonic_ms();
-  int first_status = TURBO_OK;
+  const uint64_t now_ms = salts_monotonic_ms();
+  int first_status = SALTS_OK;
   size_t index;
   for (index = 0u; index < impl->request_capacity; ++index) {
     crpc_slot *slot = &impl->slots[index];
@@ -272,15 +272,15 @@ static int crpc_expire_deadlines(crpc_async_client_impl *impl) {
       continue;
     slot->deadline_expired = true;
     status = chttp_async_request_cancel(&impl->http, slot->http_request);
-    if (status != TURBO_OK && status != TURBO_EALREADY && status != TURBO_ENOENT &&
-        first_status == TURBO_OK)
+    if (status != SALTS_OK && status != SALTS_EALREADY && status != SALTS_ENOENT &&
+        first_status == SALTS_OK)
       first_status = status;
   }
   return first_status;
 }
 
 static uint32_t crpc_poll_wait(const crpc_async_client_impl *impl, uint32_t timeout_ms) {
-  const uint64_t now_ms = turbo_monotonic_ms();
+  const uint64_t now_ms = salts_monotonic_ms();
   uint64_t wait_ms = timeout_ms;
   size_t index;
   for (index = 0u; index < impl->request_capacity; ++index) {
@@ -302,21 +302,21 @@ int crpc_async_client_poll(crpc_async_client *client, uint32_t timeout_ms,
   int deadline_status;
   int after_status;
   int status;
-  if (impl == NULL || out_completions == NULL) return TURBO_EINVAL;
+  if (impl == NULL || out_completions == NULL) return SALTS_EINVAL;
   *out_completions = 0u;
   if (impl->submit_active || impl->poll_active || impl->callback_active || impl->stop_active)
-    return TURBO_EBUSY;
-  if (impl->stopped) return TURBO_ESHUTDOWN;
+    return SALTS_EBUSY;
+  if (impl->stopped) return SALTS_ESHUTDOWN;
   impl->poll_active = true;
   impl->completion_count = 0u;
   deadline_status = crpc_expire_deadlines(impl);
   status =
       chttp_async_client_poll(&impl->http, crpc_poll_wait(impl, timeout_ms), &http_completions);
   after_status = crpc_expire_deadlines(impl);
-  if (deadline_status == TURBO_OK) deadline_status = after_status;
+  if (deadline_status == SALTS_OK) deadline_status = after_status;
   *out_completions = impl->completion_count;
   impl->poll_active = false;
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   return deadline_status;
 }
 
@@ -330,16 +330,16 @@ static bool crpc_has_active_requests(const crpc_async_client_impl *impl) {
 int crpc_async_client_stop(crpc_async_client *client, uint32_t timeout_ms) {
   crpc_async_client_impl *impl = crpc_async_client_get(client);
   int status;
-  if (impl == NULL) return TURBO_EINVAL;
-  if (impl->submit_active || impl->poll_active || impl->callback_active) return TURBO_EBUSY;
-  if (impl->stopped) return TURBO_OK;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->submit_active || impl->poll_active || impl->callback_active) return SALTS_EBUSY;
+  if (impl->stopped) return SALTS_OK;
   impl->admission_open = false;
   impl->stop_active = true;
   impl->completion_count = 0u;
   status = chttp_async_client_stop(&impl->http, timeout_ms);
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) {
     impl->stopped = true;
-    if (crpc_has_active_requests(impl)) status = TURBO_EPROTO;
+    if (crpc_has_active_requests(impl)) status = SALTS_EPROTO;
   }
   return status;
 }
@@ -347,15 +347,15 @@ int crpc_async_client_stop(crpc_async_client *client, uint32_t timeout_ms) {
 int crpc_async_client_destroy(crpc_async_client *client) {
   crpc_async_client_impl *impl;
   int status;
-  if (client == NULL) return TURBO_EINVAL;
+  if (client == NULL) return SALTS_EINVAL;
   impl = crpc_async_client_get(client);
-  if (impl == NULL) return TURBO_OK;
+  if (impl == NULL) return SALTS_OK;
   if (impl->submit_active || impl->poll_active || impl->callback_active || !impl->stopped)
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   status = chttp_async_client_destroy(&impl->http);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   free(impl->slots);
   free(impl);
   client->impl = NULL;
-  return TURBO_OK;
+  return SALTS_OK;
 }

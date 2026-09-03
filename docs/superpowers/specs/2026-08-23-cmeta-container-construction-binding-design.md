@@ -29,14 +29,14 @@ existing Collector
 future CBind
 ```
 
-CBind 不参与本阶段实现。它以后只编排该链路，不解析 Vec/Map，不复制 T/K/V，也不认识 TurboSTL handle 布局。
+CBind 不参与本阶段实现。它以后只编排该链路，不解析 Vec/Map，不复制 T/K/V，也不认识 Container handle 布局。
 
 ## 目标
 
 1. 为 CMeta 增加静态、只读的 declared generic type 表示，使字段元数据能够表达 `TYPE(Vec, int)` 和 `TYPE(Map, int, long)`，而不依赖对象内容或运行时 registry。
 2. 在 `cmeta_container_ext` 末尾追加可选 construction capability，并保持 `.type`、`.data` 既有 ABI prefix 兼容。
 3. 提供唯一公开入口 `cmeta_container_bind_types(void *object, const cmeta_declared_type *declared)`，由声明侧 construction ops 驱动全零/未初始化 handle 的 T/K/V 绑定。
-4. 为所有已存在 canonical generic metadata 的 TurboSTL 容器提供 construction binding：Vec、Deque、List、Stack、Queue、Heap、Set、HashSet、HashMap、Map、MultiMap、BTree、BPlusTree。
+4. 为所有已存在 canonical generic metadata 的 Container 容器提供 construction binding：Vec、Deque、List、Stack、Queue、Heap、Set、HashSet、HashMap、Map、MultiMap、BTree、BPlusTree。
 5. 证明绑定后的空 handle 可以直接进入现有 Collector，不修改 Collector 协议。
 6. 让 C/C++17 公共头都能读取新增字段类型元数据，并继续接受旧 `cmeta_container_ext` prefix。
 
@@ -46,7 +46,7 @@ CBind 不参与本阶段实现。它以后只编排该链路，不解析 Vec/Map
 - 不给 `cmeta_data_desc` 增加 T/K/V；semantic metadata 继续只有抽象类别。
 - 不增加 constructor matcher、全局 type application registry、动态 descriptor cache 或进程级初始化。
 - 不让 Collector 推导、缓存或拥有 declared T/K/V。
-- 不改变 TurboSTL raw container 算法、容量语义、树/哈希实现或现有 natural instance API。
+- 不改变 Container raw container 算法、容量语义、树/哈希实现或现有 natural instance API。
 - 不在本 PR 引入“容器作为另一个容器的 owning element”所需的整容器 copy/move/destroy traits。因此 nested `TYPE(...)` owning element 以及容器值的 ownership 不属于本阶段。
 - 不以展示字符串作为类型判断依据；字符串只用于展示。
 
@@ -76,7 +76,7 @@ builtin atom identity（例如 int 对应 identity）目前是 `cmeta.c` 内部 
 
 这样 declared metadata 是“可构造声明”，不是第二套 type-identity 系统。
 
-### TurboSTL handle 保存的是 `cmeta_type_desc *`
+### Container handle 保存的是 `cmeta_type_desc *`
 
 运行时 Vec/Set 等保存 `element_type`，Map/HashMap/BTree 等保存 `key_type` / `value_type`。绑定的最终产物必须仍是这些 descriptor 指针，不能把 handle 改成保存 CBind 私有 schema 或字符串。
 
@@ -139,7 +139,7 @@ typedef struct cmeta_declared_type {
 
 语义：
 
-- `storage_type` 描述字段的实际 C storage：size / align / kind。对 TurboSTL TYPE field，它是 provider 的 canonical handle-storage descriptor，identity 可以为 NULL，因为 generic application identity 不由 storage layout 决定。
+- `storage_type` 描述字段的实际 C storage：size / align / kind。对 Container TYPE field，它是 provider 的 canonical handle-storage descriptor，identity 可以为 NULL，因为 generic application identity 不由 storage layout 决定。
 - `constructor` 是 canonical generic constructor。
 - `arguments` 是直接写入 runtime handle 的即时参数 descriptor。
 - `arity` 必须被 constructor 接受。
@@ -179,7 +179,7 @@ Struct(Payload,
 
 - `TYPE(Vec, int)` 的实际 C storage 是 `vec_t`。
 - `TYPE(Map, int, long)` 的实际 C storage 是 `map_t`。
-- provider header（例如 `<turbostl/typed.h>`）注册 kind → storage C type / storage descriptor / generic constructor / construction ops 的编译期映射。
+- provider header（例如 `<cstl/typed.h>`）注册 kind → storage C type / storage descriptor / generic constructor / construction ops 的编译期映射。
 - 未注册 kind 在编译期失败，不 fallback 到字符串或 runtime lookup。
 - 本阶段 TYPE argument 必须是 `CMETA_TYPEOF(...)` 能解析到合法 descriptor 的普通具体 C type；nested `TYPE(...)` argument 不在 C3 grammar 中。
 
@@ -212,7 +212,7 @@ const cmeta_declared_type *declared_type;
 - `(TYPE(Vec, int), values)`：`type == declared_type->storage_type`，`declared_type != NULL`。
 - `type_name` 保持展示用途；TYPE 字段允许保留 source spelling `TYPE(Vec, int)`，不参与 equality 或 binding。
 
-TurboSTL provider 为每个 handle kind 暴露 canonical storage descriptor，例如概念上：
+Container provider 为每个 handle kind 暴露 canonical storage descriptor，例如概念上：
 
 ```c
 extern const cmeta_type_desc stl_vec_storage_type;
@@ -285,9 +285,9 @@ CMeta 不读取 zero object 的 descriptor 来发现 provider。
 
 成功 bind 后，runtime object 自己的 `.type` introspection 重新成为 authoritative runtime application；declared metadata 不需要生成另一份 runtime identity object。
 
-## TurboSTL bind contract
+## Container bind contract
 
-TurboSTL 为所有 canonical generic kinds 提供：
+Container 为所有 canonical generic kinds 提供：
 
 1. canonical storage descriptor；
 2. TYPE provider macro registration；
@@ -366,14 +366,14 @@ CMeta type descriptors / identities / Struct metadata
         ↓
 cmeta_declared_type + generic construction protocol
         ↓
-TurboSTL provider registrations + bind adapters
+Container provider registrations + bind adapters
         ↓
-existing TurboSTL Collector adapters
+existing Container Collector adapters
         ↓
 future CBind
 ```
 
-CMeta 不 include TurboSTL。TurboSTL include CMeta 并注册自己的 TYPE provider macros。CBind 未来只依赖 CMeta public protocols；它不 hard-code TurboSTL layout。
+CMeta 不 include Container。Container include CMeta 并注册自己的 TYPE provider macros。CBind 未来只依赖 CMeta public protocols；它不 hard-code Container layout。
 
 ## ABI 与兼容性
 
@@ -382,7 +382,7 @@ CMeta 不 include TurboSTL。TurboSTL include CMeta 并注册自己的 TYPE prov
 - `cmeta_container_ext` 原有 prefix through `.type` 与 `.data` 的 offset/含义不变；construction 只追加在末尾。
 - `cmeta_container_type_ops` 不修改。
 - `cmeta_data_desc` 不修改。
-- TurboSTL public handle 字段顺序、size/align 不因 construction binding 改变。
+- Container public handle 字段顺序、size/align 不因 construction binding 改变。
 - 已存在 `Vec(int, name)` 等 declaration DSL 和 natural instance API 继续工作。
 - 旧 synthetic extension 的 `struct_size` 不覆盖 construction 字段时，`cmeta_container_construction()` 安全返回 NULL。
 - declared TYPE metadata 是 TU-local static metadata；其 constructor equality 依赖 existing stable generic ID，argument equality 依赖 existing descriptor identity semantics，不要求 metadata 地址相等。
@@ -394,8 +394,8 @@ CMeta 不 include TurboSTL。TurboSTL include CMeta 并注册自己的 TYPE prov
 - declared metadata、storage descriptor、construction ops 全部 immutable，不拥有 runtime object。
 - bind 不分配内存，因此不存在 OOM 分支。
 - bind 不取得 payload ownership，也不调用 element/key/value copy/move/destroy。
-- argument descriptor 生命周期必须至少覆盖使用它的 bound handle；CMeta/TurboSTL 生成的字段 metadata 为 static storage duration。
-- live container 的 destroy/init 语义仍由 TurboSTL 现有 API 管理。
+- argument descriptor 生命周期必须至少覆盖使用它的 bound handle；CMeta/Container 生成的字段 metadata 为 static storage duration。
+- live container 的 destroy/init 语义仍由 Container 现有 API 管理。
 - storage descriptor 不提供 shallow handle memcpy 作为 owning copy；后续 whole-container ownership 必须显式实现。
 
 ## TDD 设计
@@ -435,7 +435,7 @@ cmeta_container_bind_types(&payload.values, field->declared_type)
 
 使用 `TYPE(Map, int, long)`，验证 K/V、ordered-entry collector begin 和 put/finish 路径。
 
-### GREEN 3：所有 TurboSTL generic kind construction mapping
+### GREEN 3：所有 Container generic kind construction mapping
 
 用最小 unary/binary matrix 验证 13 个 kind 的 canonical descriptor、arity 与 binding slot，不把 semantic `data` 是否存在作为 construction 前提；因此 Heap/MultiMap 也必须能绑定。
 
@@ -475,13 +475,13 @@ C++17 验证 standard-layout、field tail compatibility、TYPE Struct storage �
 
 ## CI 门槛
 
-每个 TDD 阶段至少运行相关 CMeta/TurboSTL target；最终 exact head 必须满足：
+每个 TDD 阶段至少运行相关 CMeta/Container target；最终 exact head 必须满足：
 
 ```text
 Linux release
   fresh configure
   build
-  selected CMeta/CFlow/TurboSTL tests
+  selected CMeta/CFlow/Container tests
 
 Windows release
   configure
@@ -498,8 +498,8 @@ Windows release
 1. RED：TYPE field + construction/bind contract tests。
 2. CMeta declared-type core、TYPE spec preprocessor dispatch 与 Struct tail metadata。
 3. append-only container construction protocol + validation/accessors。
-4. TurboSTL storage descriptors / TYPE provider registration / unary construction binding。
-5. TurboSTL binary construction binding。
+4. Container storage descriptors / TYPE provider registration / unary construction binding。
+5. Container binary construction binding。
 6. Collector integration tests、negative-state tests、C++ ABI tests。
 7. exact-head Linux + Windows CI，扫描 diff 确认没有 CBind/CSerde/parser/DataBind/TBE 改动。
 
@@ -514,6 +514,6 @@ field metadata
   → existing Collector
 ```
 
-下一 PR 才让 CBind 在遇到 container field 时调用上述 primitive。CBind 不获得新的 TurboSTL-specific switch。
+下一 PR 才让 CBind 在遇到 container field 时调用上述 primitive。CBind 不获得新的 Container-specific switch。
 
 若以后需要真正的 owning-container composition，则另开 ownership PR，为 container application value 提供正确的 whole-container copy/move/destroy traits，并决定 nested `TYPE(...)` argument 的 descriptor/identity 生成方式；不得把 shallow handle memcpy 偷渡进本 construction PR。

@@ -32,7 +32,7 @@ CNet 已提供 TLS 1.2+ 客户端和服务端传输，包含系统/显式信任�
 
 ### B. 每个自定义 TLS 请求禁用连接池
 
-TurboHTTP legacy H1 对自定义 TLS 身份采用过这一保守策略。它安全但不能满足本仓库已经明确提出的“TLS profile 进入连接池键”与连接复用目标。拒绝。
+旧 HTTP codebase 的 H1 对自定义 TLS 身份采用过这一保守策略。它安全但不能满足本仓库已经明确提出的“TLS profile 进入连接池键”与连接复用目标。拒绝。
 
 ### C. CNet 可复用客户端 TLS profile + CHTTP 引用计数 profile
 
@@ -94,7 +94,7 @@ const cnet_tls_server_config *tls;
 - 主事实源：slot 状态机；TLS profile 只是不可变连接策略。
 - 生命周期：profile public ref 从 init 到 destroy；每个新建或空闲 TLS slot 持有一个内部 ref；slot release 恰好释放一次。
 - 线程拓扑：CHTTP client 仍为单 owner；不同 client 可在不同线程共享不可变 profile，引用计数为原子操作。
-- 容量与背压：profile 不改变 `request_capacity` 或 CNet 硬上限；池满仍返回 `TURBO_ENOBUFS`。
+- 容量与背压：profile 不改变 `request_capacity` 或 CNet 硬上限；池满仍返回 `SALTS_ENOBUFS`。
 - 失败：profile/ALPN/URI 组合无效在 submit 前失败；握手错误继续通过现有 `chttp_error` transport stage 传播。
 - 关闭：取消、stop、peer close 和 idle eviction 都先关闭连接，再释放 slot/profile；没有隐式重连或降级。
 
@@ -114,7 +114,7 @@ CHTTP 当前只有 HTTP/1.1 parser。客户端与服务端 TLS 配置只允许�
 - 未配置 ALPN；或
 - 唯一协议 `http/1.1`。
 
-含 `h2` 或其他协议的配置返回 `TURBO_ENOTSUP`。后续引入 H2 时，应把 ALPN 选择提升为 HTTP transport dispatcher，而不是在 H1 parser 内增加 fallback。
+含 `h2` 或其他协议的配置返回 `SALTS_ENOTSUP`。后续引入 H2 时，应把 ALPN 选择提升为 HTTP transport dispatcher，而不是在 H1 parser 内增加 fallback。
 
 ## 兼容性、迁移与回滚
 

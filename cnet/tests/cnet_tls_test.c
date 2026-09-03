@@ -1,7 +1,7 @@
 #include "cnet_tls.h"
 #include "tinytest.h"
 
-#include <turbo/clock.h>
+#include <salts/clock.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,11 +70,11 @@ static int cnet_tls_test_transfer(cnet_tls_state *source, cnet_tls_state *target
   for (;;) {
     size_t size = 0u;
     int status = cnet_tls_take_cipher(source, buffer, sizeof(buffer), &size);
-    if (status == TURBO_ENOENT) return TURBO_OK;
-    if (status != TURBO_OK) return status;
-    if (size == 0u) return TURBO_EPROTO;
+    if (status == SALTS_ENOENT) return SALTS_OK;
+    if (status != SALTS_OK) return status;
+    if (size == 0u) return SALTS_EPROTO;
     status = cnet_tls_feed_cipher(target, buffer, size);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
   }
 }
 
@@ -90,11 +90,11 @@ static int cnet_tls_test_pair_init(cnet_tls_test_pair *pair) {
   memset(pair, 0, sizeof(*pair));
   pair->cert_path = tt_make_temp_file("cnet-cert", ".pem");
   pair->key_path = tt_make_temp_file("cnet-key", ".pem");
-  if (pair->cert_path == NULL || pair->key_path == NULL) return TURBO_ENOMEM;
+  if (pair->cert_path == NULL || pair->key_path == NULL) return SALTS_ENOMEM;
   if (tt_write_file(pair->cert_path, CNET_TLS_TEST_CERTIFICATE,
                     sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u) != 0 ||
       tt_write_file(pair->key_path, CNET_TLS_TEST_KEY, sizeof(CNET_TLS_TEST_KEY) - 1u) != 0)
-    return TURBO_EIO;
+    return SALTS_EIO;
 
   server_config = (cnet_tls_server_config){.size = sizeof(server_config),
                                            .cert_file = pair->cert_path,
@@ -103,16 +103,16 @@ static int cnet_tls_test_pair_init(cnet_tls_test_pair *pair) {
                                            .alpn_protocols = server_alpn,
                                            .alpn_protocol_count = 2u};
   status = cnet_tls_server_init(&pair->server_context, &server_config);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   client_config = (cnet_tls_client_config){.size = sizeof(client_config),
                                            .ca_file = pair->cert_path,
                                            .alpn_protocols = client_alpn,
                                            .alpn_protocol_count = 2u};
   status = cnet_tls_client_context_create(&client_config, &client_context);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status = cnet_tls_state_init(&pair->client, client_context, false, "localhost",
                                CNET_TLS_MIN_IO_BUFFER_BYTES);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     cnet_tls_context_release(client_context);
     return status;
   }
@@ -120,7 +120,7 @@ static int cnet_tls_test_pair_init(cnet_tls_test_pair *pair) {
   cnet_tls_context_retain(server_context);
   status =
       cnet_tls_state_init(&pair->server, server_context, true, NULL, CNET_TLS_MIN_IO_BUFFER_BYTES);
-  if (status != TURBO_OK) cnet_tls_context_release(server_context);
+  if (status != SALTS_OK) cnet_tls_context_release(server_context);
   return status;
 }
 
@@ -144,16 +144,16 @@ static int cnet_tls_test_handshake(cnet_tls_test_pair *pair) {
     bool client_complete = false;
     bool server_complete = false;
     int status = cnet_tls_handshake(&pair->client, &client_complete);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     status = cnet_tls_test_transfer(&pair->client, &pair->server);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     status = cnet_tls_handshake(&pair->server, &server_complete);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     status = cnet_tls_test_transfer(&pair->server, &pair->client);
-    if (status != TURBO_OK) return status;
-    if (client_complete && server_complete) return TURBO_OK;
+    if (status != SALTS_OK) return status;
+    if (client_complete && server_complete) return SALTS_OK;
   }
-  return TURBO_ETIMEDOUT;
+  return SALTS_ETIMEDOUT;
 }
 
 static int cnet_tls_test_reset_client(cnet_tls_test_pair *pair,
@@ -163,10 +163,10 @@ static int cnet_tls_test_reset_client(cnet_tls_test_pair *pair,
   int status;
   cnet_tls_state_destroy(&pair->client);
   status = cnet_tls_client_context_create(config, &context);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status =
       cnet_tls_state_init(&pair->client, context, false, server_name, CNET_TLS_MIN_IO_BUFFER_BYTES);
-  if (status != TURBO_OK) cnet_tls_context_release(context);
+  if (status != SALTS_OK) cnet_tls_context_release(context);
   return status;
 }
 
@@ -255,10 +255,10 @@ static int cnet_tls_network_drive(cnet_client *client, cnet_client *server, cnet
   size_t events = 0u;
   int ready = 0;
   int status = cnet_client_poll(client, 1u, &events);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   if (!*accepted) {
     status = cnet_listener_wait(listener, 0u, &ready);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     if (ready != 0) {
       const cnet_observer observer = {.on_state = cnet_tls_network_state,
                                       .on_receive = cnet_tls_network_receive,
@@ -266,7 +266,7 @@ static int cnet_tls_network_drive(cnet_client *client, cnet_client *server, cnet
                                       .on_send = cnet_tls_network_send};
       status = cnet_listener_accept_tls(listener, server, tls_server, &observer,
                                         &server_probe->connection);
-      if (status != TURBO_OK) return status;
+      if (status != SALTS_OK) return status;
       *accepted = true;
     }
   }
@@ -284,21 +284,21 @@ spec("CNet bounded TLS engine") {
     bool complete = false;
     bool peer_closed = false;
 
-    check_equal(cnet_tls_test_pair_init(&pair), TURBO_OK);
-    check_equal(cnet_tls_test_handshake(&pair), TURBO_OK);
-    check_equal(cnet_tls_get_negotiated_alpn(&pair.client, &alpn, &alpn_size), TURBO_OK);
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+    check_equal(cnet_tls_get_negotiated_alpn(&pair.client, &alpn, &alpn_size), SALTS_OK);
     check_equal(alpn_size, (size_t)2u);
     check_equal(memcmp(alpn, "h2", 2u), 0);
-    check_equal(cnet_tls_get_negotiated_alpn(&pair.server, &alpn, &alpn_size), TURBO_OK);
+    check_equal(cnet_tls_get_negotiated_alpn(&pair.server, &alpn, &alpn_size), SALTS_OK);
     check_equal(alpn_size, (size_t)2u);
     check_equal(memcmp(alpn, "h2", 2u), 0);
 
-    check_equal(cnet_tls_write(&pair.client, request, sizeof(request) - 1u, &complete), TURBO_OK);
+    check_equal(cnet_tls_write(&pair.client, request, sizeof(request) - 1u, &complete), SALTS_OK);
     check_true(complete);
-    check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), TURBO_OK);
+    check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), SALTS_OK);
     check_equal(
         cnet_tls_read(&pair.server, plaintext, sizeof(plaintext), &plaintext_size, &peer_closed),
-        TURBO_OK);
+        SALTS_OK);
     check_false(peer_closed);
     check_equal(plaintext_size, sizeof(request) - 1u);
     check_equal(memcmp(plaintext, request, sizeof(request) - 1u), 0);
@@ -312,14 +312,14 @@ spec("CNet bounded TLS engine") {
     bool notify_generated = false;
     bool peer_closed = false;
 
-    check_equal(cnet_tls_test_pair_init(&pair), TURBO_OK);
-    check_equal(cnet_tls_test_handshake(&pair), TURBO_OK);
-    check_equal(cnet_tls_shutdown(&pair.client, &notify_generated), TURBO_OK);
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+    check_equal(cnet_tls_shutdown(&pair.client, &notify_generated), SALTS_OK);
     check_true(notify_generated);
-    check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), TURBO_OK);
+    check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), SALTS_OK);
     check_equal(
         cnet_tls_read(&pair.server, plaintext, sizeof(plaintext), &plaintext_size, &peer_closed),
-        TURBO_OK);
+        SALTS_OK);
     check_true(peer_closed);
     check_equal(plaintext_size, (size_t)0u);
     cnet_tls_test_pair_destroy(&pair);
@@ -329,10 +329,10 @@ spec("CNet bounded TLS engine") {
     cnet_tls_test_pair pair;
     cnet_tls_client_config config;
 
-    check_equal(cnet_tls_test_pair_init(&pair), TURBO_OK);
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
     config = (cnet_tls_client_config){.size = sizeof(config), .ca_file = pair.cert_path};
-    check_equal(cnet_tls_test_reset_client(&pair, &config, "example.com"), TURBO_OK);
-    check_equal(cnet_tls_test_handshake(&pair), TURBO_ECONNABORTED);
+    check_equal(cnet_tls_test_reset_client(&pair, &config, "example.com"), SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
     cnet_tls_test_pair_destroy(&pair);
   }
 
@@ -340,9 +340,9 @@ spec("CNet bounded TLS engine") {
     cnet_tls_test_pair pair;
     cnet_tls_client_config config = {.size = sizeof(config)};
 
-    check_equal(cnet_tls_test_pair_init(&pair), TURBO_OK);
-    check_equal(cnet_tls_test_reset_client(&pair, &config, "localhost"), TURBO_OK);
-    check_equal(cnet_tls_test_handshake(&pair), TURBO_ECONNABORTED);
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(cnet_tls_test_reset_client(&pair, &config, "localhost"), SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_ECONNABORTED);
     cnet_tls_test_pair_destroy(&pair);
   }
 
@@ -352,27 +352,27 @@ spec("CNet bounded TLS engine") {
     cnet_tls_client_config client_config;
     cnet_tls_context *server_context;
 
-    check_equal(cnet_tls_test_pair_init(&pair), TURBO_OK);
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
     cnet_tls_state_destroy(&pair.client);
     cnet_tls_state_destroy(&pair.server);
-    check_equal(cnet_tls_server_destroy(&pair.server_context), TURBO_OK);
+    check_equal(cnet_tls_server_destroy(&pair.server_context), SALTS_OK);
     server_config = (cnet_tls_server_config){.size = sizeof(server_config),
                                              .cert_file = pair.cert_path,
                                              .key_file = pair.key_path,
                                              .ca_file = pair.cert_path,
                                              .client_auth = CNET_TLS_CLIENT_AUTH_REQUIRED};
-    check_equal(cnet_tls_server_init(&pair.server_context, &server_config), TURBO_OK);
+    check_equal(cnet_tls_server_init(&pair.server_context, &server_config), SALTS_OK);
     client_config = (cnet_tls_client_config){.size = sizeof(client_config),
                                              .ca_file = pair.cert_path,
                                              .cert_file = pair.cert_path,
                                              .key_file = pair.key_path};
-    check_equal(cnet_tls_test_reset_client(&pair, &client_config, "localhost"), TURBO_OK);
+    check_equal(cnet_tls_test_reset_client(&pair, &client_config, "localhost"), SALTS_OK);
     server_context = cnet_tls_server_context(&pair.server_context);
     cnet_tls_context_retain(server_context);
     check_equal(
         cnet_tls_state_init(&pair.server, server_context, true, NULL, CNET_TLS_MIN_IO_BUFFER_BYTES),
-        TURBO_OK);
-    check_equal(cnet_tls_test_handshake(&pair), TURBO_OK);
+        SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
     cnet_tls_test_pair_destroy(&pair);
   }
 
@@ -381,6 +381,11 @@ spec("CNet bounded TLS engine") {
     static const char response[] = "pong";
     static const char *server_alpn[] = {"h2", "http/1.1"};
     static const char *client_alpn[] = {"http/1.1", "h2"};
+    char request_first[] = "pi";
+    char request_second[] = "ng";
+    cnet_const_buffer request_segments[] = {
+        {request_first, sizeof(request_first) - 1u},
+        {request_second, sizeof(request_second) - 1u}};
     cnet_client client = {0};
     cnet_client server = {0};
     cnet_listener listener = {0};
@@ -422,13 +427,13 @@ spec("CNet bounded TLS engine") {
                                                  .alpn_protocols = client_alpn,
                                                  .alpn_protocol_count = 2u};
 
-    check_equal(cnet_tls_server_init(&tls_server, &tls_server_config), TURBO_OK);
-    check_equal(cnet_tls_client_init(&tls_client, &tls_client_config), TURBO_OK);
+    check_equal(cnet_tls_server_init(&tls_server, &tls_server_config), SALTS_OK);
+    check_equal(cnet_tls_client_init(&tls_client, &tls_client_config), SALTS_OK);
     server_name[0] = 'x';
-    check_equal(cnet_client_init(&client, &client_config), TURBO_OK);
-    check_equal(cnet_client_init(&server, &server_client_config), TURBO_OK);
-    check_equal(cnet_listener_init(&listener, &listener_config), TURBO_OK);
-    check_equal(cnet_listener_port(&listener, &port), TURBO_OK);
+    check_equal(cnet_client_init(&client, &client_config), SALTS_OK);
+    check_equal(cnet_client_init(&server, &server_client_config), SALTS_OK);
+    check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
+    check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u", (unsigned int)port), 0);
     connect_options = (cnet_connect_options){.uri = uri,
                                              .observer = {.on_state = cnet_tls_network_state,
@@ -436,70 +441,72 @@ spec("CNet bounded TLS engine") {
                                                           .user = &client_probe,
                                                           .on_send = cnet_tls_network_send},
                                              .tls_client = &tls_client};
-    check_equal(cnet_connect(&client, &connect_options, &client_connection), TURBO_OK);
-    check_equal(cnet_tls_client_destroy(&tls_client), TURBO_OK);
+    check_equal(cnet_connect(&client, &connect_options, &client_connection), SALTS_OK);
+    check_equal(cnet_tls_client_destroy(&tls_client), SALTS_OK);
     check_null(tls_client.impl);
     client_probe.connection = client_connection;
 
-    deadline = turbo_monotonic_ms() + 5000u;
-    while ((!client_probe.connected || !server_probe.connected) && turbo_monotonic_ms() < deadline)
+    deadline = salts_monotonic_ms() + 5000u;
+    while ((!client_probe.connected || !server_probe.connected) && salts_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
-                  TURBO_OK);
+                  SALTS_OK);
     check_true(accepted);
     check_true(client_probe.connected);
     check_true(server_probe.connected);
-    check_equal(client_probe.alpn_status, TURBO_OK);
-    check_equal(server_probe.alpn_status, TURBO_OK);
+    check_equal(client_probe.alpn_status, SALTS_OK);
+    check_equal(server_probe.alpn_status, SALTS_OK);
     check_equal(client_probe.alpn_size, (size_t)2u);
     check_equal(server_probe.alpn_size, (size_t)2u);
     check_equal(memcmp(client_probe.alpn, "h2", 2u), 0);
     check_equal(memcmp(server_probe.alpn, "h2", 2u), 0);
 
-    check_equal(cnet_receive(&server, server_probe.connection, 1u), TURBO_OK);
-    check_equal(cnet_send(&client, client_connection, request, sizeof(request) - 1u), TURBO_OK);
-    deadline = turbo_monotonic_ms() + 5000u;
+    check_equal(cnet_receive(&server, server_probe.connection, 1u), SALTS_OK);
+    check_equal(cnet_sendv(&client, client_connection, request_segments, 2u), SALTS_OK);
+    memset(request_first, 'x', sizeof(request_first) - 1u);
+    memset(request_second, 'x', sizeof(request_second) - 1u);
+    deadline = salts_monotonic_ms() + 5000u;
     while ((server_probe.received_size == 0u || client_probe.sent == 0) &&
-           turbo_monotonic_ms() < deadline)
+           salts_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
-                  TURBO_OK);
+                  SALTS_OK);
     check_equal(server_probe.received_size, sizeof(request) - 1u);
     check_equal(memcmp(server_probe.received, request, sizeof(request) - 1u), 0);
     check_equal(client_probe.sent, 1);
 
-    check_equal(cnet_receive(&client, client_connection, 1u), TURBO_OK);
+    check_equal(cnet_receive(&client, client_connection, 1u), SALTS_OK);
     check_equal(cnet_send(&server, server_probe.connection, response, sizeof(response) - 1u),
-                TURBO_OK);
-    deadline = turbo_monotonic_ms() + 5000u;
+                SALTS_OK);
+    deadline = salts_monotonic_ms() + 5000u;
     while ((client_probe.received_size == 0u || server_probe.sent == 0) &&
-           turbo_monotonic_ms() < deadline)
+           salts_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
-                  TURBO_OK);
+                  SALTS_OK);
     check_equal(client_probe.received_size, sizeof(response) - 1u);
     check_equal(memcmp(client_probe.received, response, sizeof(response) - 1u), 0);
     check_equal(server_probe.sent, 1);
 
-    check_equal(cnet_receive(&server, server_probe.connection, 1u), TURBO_OK);
-    check_equal(cnet_close(&client, client_connection), TURBO_OK);
-    deadline = turbo_monotonic_ms() + 5000u;
-    while ((!client_probe.terminal || !server_probe.terminal) && turbo_monotonic_ms() < deadline)
+    check_equal(cnet_receive(&server, server_probe.connection, 1u), SALTS_OK);
+    check_equal(cnet_close(&client, client_connection), SALTS_OK);
+    deadline = salts_monotonic_ms() + 5000u;
+    while ((!client_probe.terminal || !server_probe.terminal) && salts_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
-                  TURBO_OK);
+                  SALTS_OK);
     check_true(client_probe.terminal);
     check_true(server_probe.terminal);
     check_false(client_probe.failed);
     check_false(server_probe.failed);
 
-    check_equal(cnet_listener_close(&listener), TURBO_OK);
-    check_equal(cnet_listener_destroy(&listener), TURBO_OK);
-    check_equal(cnet_client_stop(&client, 5000u), TURBO_OK);
-    check_equal(cnet_client_stop(&server, 5000u), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
-    check_equal(cnet_client_destroy(&server), TURBO_OK);
-    check_equal(cnet_tls_server_destroy(&tls_server), TURBO_OK);
+    check_equal(cnet_listener_close(&listener), SALTS_OK);
+    check_equal(cnet_listener_destroy(&listener), SALTS_OK);
+    check_equal(cnet_client_stop(&client, 5000u), SALTS_OK);
+    check_equal(cnet_client_stop(&server, 5000u), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    check_equal(cnet_client_destroy(&server), SALTS_OK);
+    check_equal(cnet_tls_server_destroy(&tls_server), SALTS_OK);
     check_equal(tt_remove_file(cert_path), 0);
     check_equal(tt_remove_file(key_path), 0);
     free(cert_path);
@@ -539,10 +546,10 @@ spec("CNet bounded TLS engine") {
     server_config.tls_handshake_timeout_ms = 0u;
     tls_config = (cnet_tls_client_config){
         .size = sizeof(tls_config), .ca_file = cert_path, .server_name = "localhost"};
-    check_equal(cnet_client_init(&client, &client_config), TURBO_OK);
-    check_equal(cnet_client_init(&raw_server, &server_config), TURBO_OK);
-    check_equal(cnet_listener_init(&listener, &listener_config), TURBO_OK);
-    check_equal(cnet_listener_port(&listener, &port), TURBO_OK);
+    check_equal(cnet_client_init(&client, &client_config), SALTS_OK);
+    check_equal(cnet_client_init(&raw_server, &server_config), SALTS_OK);
+    check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
+    check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u", (unsigned int)port), 0);
     options = (cnet_connect_options){.uri = uri,
                                      .observer = {.on_state = cnet_tls_network_state,
@@ -550,38 +557,38 @@ spec("CNet bounded TLS engine") {
                                                   .user = &client_probe,
                                                   .on_send = cnet_tls_network_send},
                                      .tls = &tls_config};
-    check_equal(cnet_connect(&client, &options, &client_connection), TURBO_OK);
-    deadline = turbo_monotonic_ms() + 2000u;
-    while (!client_probe.terminal && turbo_monotonic_ms() < deadline) {
+    check_equal(cnet_connect(&client, &options, &client_connection), SALTS_OK);
+    deadline = salts_monotonic_ms() + 2000u;
+    while (!client_probe.terminal && salts_monotonic_ms() < deadline) {
       size_t events = 0u;
       int ready = 0;
-      check_equal(cnet_client_poll(&client, 1u, &events), TURBO_OK);
+      check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       if (!accepted) {
-        check_equal(cnet_listener_wait(&listener, 0u, &ready), TURBO_OK);
+        check_equal(cnet_listener_wait(&listener, 0u, &ready), SALTS_OK);
         if (ready != 0) {
           check_equal(
               cnet_listener_accept(&listener, &raw_server, &server_observer, &server_connection),
-              TURBO_OK);
+              SALTS_OK);
           server_probe.connection = server_connection;
           accepted = true;
         }
       }
-      check_equal(cnet_client_poll(&raw_server, 1u, &events), TURBO_OK);
+      check_equal(cnet_client_poll(&raw_server, 1u, &events), SALTS_OK);
     }
     check_true(accepted);
     check_true(client_probe.terminal);
     check_true(client_probe.failed);
-    check_equal(client_probe.failure_status, TURBO_ETIMEDOUT);
+    check_equal(client_probe.failure_status, SALTS_ETIMEDOUT);
     check_equal(strcmp(client_probe.failure_stage, "handshake"), 0);
     check_false(client_probe.connected);
 
-    if (!server_probe.terminal) check_equal(cnet_close(&raw_server, server_connection), TURBO_OK);
-    check_equal(cnet_listener_close(&listener), TURBO_OK);
-    check_equal(cnet_listener_destroy(&listener), TURBO_OK);
-    check_equal(cnet_client_stop(&client, 5000u), TURBO_OK);
-    check_equal(cnet_client_stop(&raw_server, 5000u), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
-    check_equal(cnet_client_destroy(&raw_server), TURBO_OK);
+    if (!server_probe.terminal) check_equal(cnet_close(&raw_server, server_connection), SALTS_OK);
+    check_equal(cnet_listener_close(&listener), SALTS_OK);
+    check_equal(cnet_listener_destroy(&listener), SALTS_OK);
+    check_equal(cnet_client_stop(&client, 5000u), SALTS_OK);
+    check_equal(cnet_client_stop(&raw_server, 5000u), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    check_equal(cnet_client_destroy(&raw_server), SALTS_OK);
     check_equal(tt_remove_file(cert_path), 0);
     free(cert_path);
   }
@@ -611,10 +618,10 @@ spec("CNet bounded TLS engine") {
 
     server_config.tls_io_buffer_bytes = 0u;
     server_config.tls_handshake_timeout_ms = 0u;
-    check_equal(cnet_client_init(&client, &client_config), TURBO_OK);
-    check_equal(cnet_client_init(&raw_server, &server_config), TURBO_OK);
-    check_equal(cnet_listener_init(&listener, &listener_config), TURBO_OK);
-    check_equal(cnet_listener_port(&listener, &port), TURBO_OK);
+    check_equal(cnet_client_init(&client, &client_config), SALTS_OK);
+    check_equal(cnet_client_init(&raw_server, &server_config), SALTS_OK);
+    check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
+    check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u", (unsigned int)port), 0);
     options = (cnet_connect_options){.uri = uri,
                                      .observer = {.on_state = cnet_tls_network_state,
@@ -622,43 +629,43 @@ spec("CNet bounded TLS engine") {
                                                   .user = &client_probe,
                                                   .on_send = cnet_tls_network_send},
                                      .tls = &tls_config};
-    check_equal(cnet_connect(&client, &options, &client_connection), TURBO_OK);
+    check_equal(cnet_connect(&client, &options, &client_connection), SALTS_OK);
 
-    deadline = turbo_monotonic_ms() + 2000u;
-    while (!accepted && turbo_monotonic_ms() < deadline) {
+    deadline = salts_monotonic_ms() + 2000u;
+    while (!accepted && salts_monotonic_ms() < deadline) {
       size_t events = 0u;
       int ready = 0;
-      check_equal(cnet_client_poll(&client, 1u, &events), TURBO_OK);
-      check_equal(cnet_listener_wait(&listener, 0u, &ready), TURBO_OK);
+      check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
+      check_equal(cnet_listener_wait(&listener, 0u, &ready), SALTS_OK);
       if (ready != 0) {
         check_equal(
             cnet_listener_accept(&listener, &raw_server, &server_observer, &server_connection),
-            TURBO_OK);
+            SALTS_OK);
         server_probe.connection = server_connection;
         accepted = true;
       }
-      check_equal(cnet_client_poll(&raw_server, 1u, &events), TURBO_OK);
+      check_equal(cnet_client_poll(&raw_server, 1u, &events), SALTS_OK);
     }
     check_true(accepted);
     check_false(client_probe.connected);
-    check_equal(cnet_close(&client, client_connection), TURBO_OK);
+    check_equal(cnet_close(&client, client_connection), SALTS_OK);
 
-    deadline = turbo_monotonic_ms() + 2000u;
-    while (!client_probe.terminal && turbo_monotonic_ms() < deadline) {
+    deadline = salts_monotonic_ms() + 2000u;
+    while (!client_probe.terminal && salts_monotonic_ms() < deadline) {
       size_t events = 0u;
-      check_equal(cnet_client_poll(&client, 1u, &events), TURBO_OK);
-      check_equal(cnet_client_poll(&raw_server, 1u, &events), TURBO_OK);
+      check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
+      check_equal(cnet_client_poll(&raw_server, 1u, &events), SALTS_OK);
     }
     check_true(client_probe.terminal);
     check_false(client_probe.connected);
     check_false(client_probe.failed);
 
-    if (!server_probe.terminal) check_equal(cnet_close(&raw_server, server_connection), TURBO_OK);
-    check_equal(cnet_listener_close(&listener), TURBO_OK);
-    check_equal(cnet_listener_destroy(&listener), TURBO_OK);
-    check_equal(cnet_client_stop(&client, 5000u), TURBO_OK);
-    check_equal(cnet_client_stop(&raw_server, 5000u), TURBO_OK);
-    check_equal(cnet_client_destroy(&client), TURBO_OK);
-    check_equal(cnet_client_destroy(&raw_server), TURBO_OK);
+    if (!server_probe.terminal) check_equal(cnet_close(&raw_server, server_connection), SALTS_OK);
+    check_equal(cnet_listener_close(&listener), SALTS_OK);
+    check_equal(cnet_listener_destroy(&listener), SALTS_OK);
+    check_equal(cnet_client_stop(&client, 5000u), SALTS_OK);
+    check_equal(cnet_client_stop(&raw_server, 5000u), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    check_equal(cnet_client_destroy(&raw_server), SALTS_OK);
   }
 }

@@ -1,5 +1,5 @@
 /*
- * Rocida SPSC byte-ring protocol model.
+ * Salts SPSC byte-ring protocol model.
  *
  * Scope:
  *   - one producer and one consumer

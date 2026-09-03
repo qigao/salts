@@ -43,7 +43,7 @@ derived from that same Graph:
 - one flat-edge scan that resolves zero or one successor;
 - a dense node-id-to-successor array;
 - a pointer-linked degenerate tree for the same linear path;
-- a bounded TurboSTL HashMap from node id to successor; and
+- a bounded Container HashMap from node id to successor; and
 - the compiled Plan's contiguous instruction tape.
 
 The Graph, derived indexes and Plan are constructed before timing. Every timed
@@ -73,7 +73,7 @@ and representation budgets are:
 | One-pass flat edges | none | `Theta(V * E)`; one edge scan per node | none |
 | Dense successor array | `Theta(V + E)` | `Theta(V)` | `V * sizeof(cflow_node_id)` |
 | Linked path tree | `Theta(V + E)` | `Theta(V)` | `V * sizeof(path_node)` including pointer alignment |
-| TurboSTL HashMap | expected `Theta(E)` | expected `Theta(V)` | bounded states, hashes, aligned keys and aligned values at reserved capacity |
+| Container HashMap | expected `Theta(E)` | expected `Theta(V)` | bounded states, hashes, aligned keys and aligned values at reserved capacity |
 | Compiled Plan tape | current compile path includes `Theta(V * E)` Graph scans | `Theta(V)` | Plan implementation, instructions and prepared call-chain payload |
 
 The benchmark fixture reserves peak-bounded dense and linked storage once; the
@@ -104,7 +104,7 @@ flat-edge scans used by `cflow_plan_graph_supported` and `cflow_plan_compile`.
 
 This change does not modify CFlow/CMeta APIs, execution semantics, ownership,
 IR or allocator behavior. It extends only the non-installed benchmark target
-and adds a private benchmark dependency on TurboSTL for the HashMap control.
+and adds a private benchmark dependency on Container for the HashMap control.
 CI cost increases through the added suite within the existing four Release
 jobs. Fixed runner labels reduce OS migration noise, while the uploaded metadata
 preserves the remaining runner-image variability.

@@ -11,7 +11,7 @@
 ```text
 CMeta semantic data descriptor
         ↓
-TurboSTL semantic projection
+Container semantic projection
         ↓
 Struct TYPE(...) + declared construction + zero-handle bind_types
 ```
@@ -21,7 +21,7 @@ Struct TYPE(...) + declared construction + zero-handle bind_types
 仓库当前尚无 CSerde/CBind production module。既有 serialization/data-binding 总体设计已经确定依赖方向：
 
 ```text
-TurboSTL -> CMeta
+Container -> CMeta
 CSerde   -> C runtime only
 CBind    -> CMeta + CSerde
 TurboParser format adapters -> CSerde
@@ -36,7 +36,7 @@ TurboParser::DataBind       -> adapters + CBind
 
 D1 只完成以下能力：
 
-1. 新增独立 `cserde/` module 与 `TurboUtils::CSerde` target。
+1. 新增独立 `cserde/` module 与 `Salts::CSerde` target。
 2. 定义 format-neutral canonical token model。
 3. 定义 pull reader 与 push writer provider protocol。
 4. reader/writer provider ops 从 v1 起使用 `struct_size + abi_version`，按 required-field prefix 验证。
@@ -55,7 +55,7 @@ D1 不实现：
 - TurboParser adapter；
 - DOM/value tree；
 - CMeta semantic descriptor 修改；
-- TurboSTL、Range、Collector、construction 修改；
+- Container、Range、Collector、construction 修改；
 - schema/field policy；
 - unknown/duplicate/missing field policy；
 - owned string allocation；
@@ -96,13 +96,13 @@ cserde/
 CMake：
 
 ```text
-turbo_cserde
-alias: TurboUtils::CSerde
+salts_cserde
+alias: Salts::CSerde
 language: C11
 public dependency: none beyond C runtime
 ```
 
-`cserde` 不 include/link CMeta、CFlow、TurboSTL、TurboParser 或 `utils` Core。后续 CBind 单向依赖 `TurboUtils::CSerde` 与 `TurboUtils::CMeta`。
+`cserde` 不 include/link CMeta、CFlow、Container、TurboParser 或 `utils` Core。后续 CBind 单向依赖 `Salts::CSerde` 与 `Salts::CMeta`。
 
 Top-level `CMakeLists.txt` 加入 `add_subdirectory(cserde)`。CSerde 本身不依赖 CMeta，因此目录顺序不构成语义依赖。
 
@@ -285,7 +285,7 @@ typedef struct cserde_reader {
 } cserde_reader;
 ```
 
-`cserde_reader` 借用 `ops` 与 `context`，不负责销毁 provider context。`context == NULL` 合法，只要 provider callback 能处理。facade 是同一 TurboUtils release 内的 stack value type；跨版本 provider extensibility 由 versioned ops 承担，不把 facade 当插件 ABI extension root。
+`cserde_reader` 借用 `ops` 与 `context`，不负责销毁 provider context。`context == NULL` 合法，只要 provider callback 能处理。facade 是同一 Salts release 内的 stack value type；跨版本 provider extensibility 由 versioned ops 承担，不把 facade 当插件 ABI extension root。
 
 公开入口：
 
@@ -465,7 +465,7 @@ cserde/tests/support/recording.{h,c}
 - 不做 heap allocation；
 - STRING/BYTES slice 默认继续 borrow caller payload；
 - support target 仅在 `BUILD_TESTS` 下存在，并可被后续 `cbind/tests` 复用；
-- 不成为 `TurboUtils::CSerde` public/install surface。
+- 不成为 `Salts::CSerde` public/install surface。
 
 这使 D2 CBind 可以完全在 canonical protocol 上做 RED/GREEN，而不需要先连接真实 JSON parser。
 
@@ -508,14 +508,14 @@ required-field prefix
 
 ## 16. CI / build contract
 
-现有 `.github/workflows/cmeta.yml` 目前没有 `cserde/**` path trigger，也只执行 `^(cmeta_|cflow_|turbostl_)` selected tests。D1 implementation 必须更新为：
+现有 `.github/workflows/cmeta.yml` 目前没有 `cserde/**` path trigger，也只执行 `^(cmeta_|cflow_|cstl_)` selected tests。D1 implementation 必须更新为：
 
 ```text
 paths:
   + cserde/**
 
 selected tests regex:
-  ^(cmeta_|cflow_|turbostl_|cserde_)
+  ^(cmeta_|cflow_|cstl_|cserde_)
 ```
 
 Windows 的 combined configure/build/test 必须同样实际执行 cserde tests，不能只编译。
@@ -525,7 +525,7 @@ Windows 的 combined configure/build/test 必须同样实际执行 cserde tests�
 ```text
 Linux fresh configure
 Linux full build
-Linux selected cmeta/cflow/turbostl/cserde tests
+Linux selected cmeta/cflow/cstl/cserde tests
 Windows configure + build + test
 ```
 
@@ -548,8 +548,8 @@ D1 只有同时证明以下行为才可结束：
 13. writer write/finish terminal state 正确；
 14. recording reader/writer 可作为无 allocation deterministic test codec；
 15. C++17 public include contract 通过；
-16. CSerde target 不依赖 CMeta/CFlow/TurboSTL/utils；
-17. 全仓没有 JSON/YAML/XML/CSV parser implementation 被加入 TurboUtils；
+16. CSerde target 不依赖 CMeta/CFlow/Container/utils；
+17. 全仓没有 JSON/YAML/XML/CSV parser implementation 被加入 Salts；
 18. exact-head Linux + Windows release CI 通过。
 
 ## 18. 后续边界
@@ -573,4 +573,4 @@ field->declared_type
 
 接入 sequence/map decode。
 
-D3 不允许出现 `Vec/Map/HashMap/...` type switch，不允许 CBind link TurboSTL，也不允许 CBind 保存第二份 T/K/V。
+D3 不允许出现 `Vec/Map/HashMap/...` type switch，不允许 CBind link Container，也不允许 CBind 保存第二份 T/K/V。

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:test-driven-development to implement this plan task-by-task.
 
-**Goal:** Add format-neutral, transactional enum and tagged-variant decoding to TurboUtils CBind without guessing native C storage layout.
+**Goal:** Add format-neutral, transactional enum and tagged-variant decoding to Salts CBind without guessing native C storage layout.
 
 **Architecture:** CMeta gains append-only versioned storage lifecycle adapters and checked facades. CBind preflights enum/variant graphs, consumes exact CSerde scalar/array tokens, and reuses its semantic-zero rollback model. TurboParser remains outside this change.
 

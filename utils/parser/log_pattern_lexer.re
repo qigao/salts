@@ -8,7 +8,7 @@
  */
 
 #include "log_pattern_lexer.h"
-#include "../include/turbo_simd_scan.h"
+#include "../include/salts_simd_scan.h"
 #include <string.h>
 
 /**
@@ -29,7 +29,7 @@ log_token_t log_pattern_scan_n(const char **cursor, const char *end,
   *token_len = 0;
 
   if (YYCURSOR < YYLIMIT && *YYCURSOR != '{') {
-    const char *text_end = turbo_scan_to_char(YYCURSOR, YYLIMIT, '{');
+    const char *text_end = salts_scan_to_char(YYCURSOR, YYLIMIT, '{');
     *cursor = text_end;
     *token_len = (size_t)(text_end - start);
     return LOG_TOKEN_TEXT;

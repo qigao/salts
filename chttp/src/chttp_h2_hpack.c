@@ -3,7 +3,7 @@
  * @brief Self-contained HPACK (RFC 7541) encoder/decoder.
  *
  * Static and Huffman tables are RFC 7541 protocol constants. Migrated from
- * qigao/TurboHTTP commit 38f1e389b3f94909db6cb2482a8cbc16522e7e4f.
+ * the legacy HTTP repository commit 38f1e389b3f94909db6cb2482a8cbc16522e7e4f.
  */
 
 #include "chttp_h2_hpack.h"

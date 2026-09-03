@@ -7,9 +7,9 @@
 socket backend：Linux epoll、Apple kqueue、Windows IOCP 和 Linux io_uring。
 
 四者不能统一成 readiness：epoll/kqueue 是 Reactor，IOCP/io_uring 是 Proactor。
-统一边界因此是 Actor backend，而不是把四者都改造成 `turbo_readiness_reactor`。
+统一边界因此是 Actor backend，而不是把四者都改造成 `salts_readiness_reactor`。
 epoll 复用现有 Platform readiness；kqueue 以相同内部 contract 加入 Platform；
-IOCP/io_uring 则直接实现 Actor completion backend。既有 `turbo_readiness_arm()` one-shot
+IOCP/io_uring 则直接实现 Actor completion backend。既有 `salts_readiness_arm()` one-shot
 语义和 CFlow Source 适配保持不变；Platform 另增 callback-return continuation arm，供
 readiness native adapter 在 callback 返回后由状态引擎提交 rearm。
 
@@ -35,7 +35,7 @@ cflow_io_native_backend (显式 backend kind)
 
 连接建立、监听和 socket 配置属于控制面，不在本期异步 operation 集合。公开的四种
 operation 在所有已支持 backend 上都完整实现；不公开 accept/connect 占位接口。
-显式选择当前构建或 OS 不支持的 backend 返回 `TURBO_ENOTSUP`，不得自动转 epoll、
+显式选择当前构建或 OS 不支持的 backend 返回 `SALTS_ENOTSUP`，不得自动转 epoll、
 线程池或阻塞 I/O。
 
 地址通过 caller-owned native `sockaddr` byte storage 传递。TCP operation 不使用地址；
@@ -82,10 +82,10 @@ FREE -> SUBMITTING -> PENDING -> COMPLETING -> FREE
                      `-> native cancel/remove -> completion(CANCELLED)
 ```
 
-- submit 线性化：固定 record 成功保留；满时返回 `TURBO_EBUSY`，不产生 native effect。
+- submit 线性化：固定 record 成功保留；满时返回 `SALTS_EBUSY`，不产生 native effect。
 - terminal 线性化：record 首次从 PENDING 转为 COMPLETING；重复 native event/CQE 计为 stale。
 - epoll/kqueue 在 nonblocking syscall 返回 EAGAIN/EWOULDBLOCK 时通过
-  `turbo_readiness_arm_continuation()` one-shot arm；事件到达后由 reactor callback 重试，
+  `salts_readiness_arm_continuation()` one-shot arm；事件到达后由 reactor callback 重试，
   仍 would-block 则返回 rearm。read/write lane 各自 FIFO，取消可从队列移除非队首请求，
   普通完成不越过同方向队首。
 - readiness terminal error 无法安全 rearm；为保持 accepted request 的 exact-once terminal
@@ -127,20 +127,20 @@ epoll/kqueue 每个已使用方向额外占一个 duplicate descriptor 和一个
 其 Platform registration 容量是 `2 * request_capacity`，event batch 仍使用配置值。IOCP
 每个 request 占一个 `OVERLAPPED`；io_uring 的 SQ/CQ mmap 大小由 kernel 对请求容量取整后的
 entries 决定。
-满额返回 `TURBO_EBUSY`，由 Actor 转为 FAILED completion；不建立 fallback queue，
+满额返回 `SALTS_EBUSY`，由 Actor 转为 FAILED completion；不建立 fallback queue，
 不无界分配，不覆盖旧请求。
 
 ## 错误与关闭协议
 
-- 参数/operation shape 错误：`TURBO_EINVAL`。
-- backend 容量满：`TURBO_EBUSY`。
+- 参数/operation shape 错误：`SALTS_EINVAL`。
+- backend 容量满：`SALTS_EBUSY`。
 - OS 错误：POSIX 返回负 errno，Windows 返回负 Win32/WSA code。
 - TCP recv 零字节映射 EOF；UDP 零长度 datagram 是成功的 OK(0)。
 - native cancellation 映射 CANCELLED；其他 terminal 错误映射 FAILED(error)。
-- `shutdown` 首次关闭 backend admission；active 非零返回 `TURBO_EBUSY`，保留
+- `shutdown` 首次关闭 backend admission；active 非零返回 `SALTS_EBUSY`，保留
   cancel/completion 能力。readiness active 为零时关闭所有 retained lane 后 shutdown/join
   Platform reactor；Proactor 则唤醒、join completion worker。
-- `destroy` 只在 shutdown 成功后释放资源，否则 `TURBO_EBUSY`。
+- `destroy` 只在 shutdown 成功后释放资源，否则 `SALTS_EBUSY`。
 
 调用顺序是：Actor close → drive cancel/completion → Executor drain → acknowledge →
 Actor destroy → native backend shutdown/destroy → Executor shutdown。该顺序保持原 Actor
@@ -148,7 +148,7 @@ Actor destroy → native backend shutdown/destroy → Executor shutdown。该顺
 
 ## 候选方案与取舍
 
-1. 把 IOCP/io_uring 塞进 `turbo_readiness_reactor`：拒绝，completion 不是 readiness，
+1. 把 IOCP/io_uring 塞进 `salts_readiness_reactor`：拒绝，completion 不是 readiness，
    会丢失 buffer/OVERLAPPED 生命周期语义。
 2. 每个平台暴露不同 Actor API：拒绝，会复制 admission、completion credit 与关闭协议。
 3. 复制现有 epoll backend：拒绝。Platform 已有经过 generation/shutdown/race 测试的
@@ -170,7 +170,7 @@ backend、I/O Actor、manual Executor、completion probe 与 socket identity；f
 两者共同借用的 wake latch。benchmark thread 是 submit、pump、completion validation、
 acknowledge 的唯一 owner；backend worker 只发布 completion 并唤醒 latch。每个 endpoint
 最多存在一个 outstanding operation。TCP short send/recv 通过有界循环完成，零字节进展
-视为 `TURBO_EIO`；UDP 以单个 datagram 为数据单元，send/recv 字节数不完整即失败。
+视为 `SALTS_EIO`；UDP 以单个 datagram 为数据单元，send/recv 字节数不完整即失败。
 
 每个传输方向先提交 receiver read，再提交匹配的 sender write，并共同 pump 两个 endpoint；
 两端 completion 均 acknowledge 后再推进下一阶段。benchmark 的 heap operation wrapper

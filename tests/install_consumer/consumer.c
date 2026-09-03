@@ -1,29 +1,29 @@
 #if defined(CONSUME_PLATFORM)
-  #include <turbo/clock.h>
-  #include <turbo/error_codes.h>
-  #include <turbo/random.h>
+  #include <salts/clock.h>
+  #include <salts/error_codes.h>
+  #include <salts/random.h>
 
 int main(void) {
   unsigned char random_byte = 0u;
-  return turbo_platform_secure_random(&random_byte, sizeof(random_byte)) == TURBO_OK &&
-                 turbo_hrtime() != 0u
+  return salts_platform_secure_random(&random_byte, sizeof(random_byte)) == SALTS_OK &&
+                 salts_hrtime() != 0u
              ? 0
              : 1;
 }
 
 #elif defined(CONSUME_CONCURRENCY)
-  #include <turbo/thread_pool.h>
+  #include <salts/thread_pool.h>
 
 int main(void) {
-  turbo_threadpool_t *pool = turbo_threadpool_create(1);
+  salts_threadpool_t *pool = salts_threadpool_create(1);
   if (!pool) return 1;
-  turbo_threadpool_destroy(pool);
+  salts_threadpool_destroy(pool);
   return 0;
 }
 
 #elif defined(CONSUME_COROUTINE)
-  #include <turbo_coro.h>
-  #include <turbo_coro_executor.h>
+  #include <salts_coro.h>
+  #include <salts_coro_executor.h>
 
 static void complete(coro_t *coroutine, void *user_data) {
   int *completed = (int *)user_data;
@@ -32,38 +32,38 @@ static void complete(coro_t *coroutine, void *user_data) {
 }
 
 typedef struct installed_executor_state {
-  turbo_coro_executor_t *executor;
+  salts_coro_executor_t *executor;
   int completed;
   int status;
 } installed_executor_state;
 
 static void complete_with_await(coro_t *coroutine, void *user_data) {
   installed_executor_state *state = (installed_executor_state *)user_data;
-  turbo_coro_executor_await_t await_handle = {0};
-  int completion_status = TURBO_EIO;
+  salts_coro_executor_await_t await_handle = {0};
+  int completion_status = SALTS_EIO;
   (void)coroutine;
 
-  state->status = turbo_coro_executor_yield();
-  if (state->status != TURBO_OK) return;
-  state->status = turbo_coro_executor_await_begin(&await_handle);
-  if (state->status != TURBO_OK) return;
-  state->status = turbo_coro_executor_await_complete(state->executor, await_handle, TURBO_OK);
-  if (state->status != TURBO_OK) return;
-  state->status = turbo_coro_executor_await(await_handle, &completion_status);
-  if (state->status != TURBO_OK || completion_status != TURBO_OK) return;
-  state->status = turbo_coro_executor_await_begin(&await_handle);
-  if (state->status != TURBO_OK) return;
-  state->status = turbo_coro_executor_await_abort(await_handle);
-  if (state->status == TURBO_OK) state->completed = 1;
+  state->status = salts_coro_executor_yield();
+  if (state->status != SALTS_OK) return;
+  state->status = salts_coro_executor_await_begin(&await_handle);
+  if (state->status != SALTS_OK) return;
+  state->status = salts_coro_executor_await_complete(state->executor, await_handle, SALTS_OK);
+  if (state->status != SALTS_OK) return;
+  state->status = salts_coro_executor_await(await_handle, &completion_status);
+  if (state->status != SALTS_OK || completion_status != SALTS_OK) return;
+  state->status = salts_coro_executor_await_begin(&await_handle);
+  if (state->status != SALTS_OK) return;
+  state->status = salts_coro_executor_await_abort(await_handle);
+  if (state->status == SALTS_OK) state->completed = 1;
 }
 
 int main(void) {
   int completed = 0;
   installed_executor_state executor_state = {0};
   coro_t *coroutine = coro_create(complete, &completed, NULL);
-  turbo_coro_executor_config_t config = TURBO_CORO_EXECUTOR_CONFIG_DEFAULT;
-  turbo_coro_executor_task_t task = {complete_with_await, NULL, NULL, &executor_state};
-  turbo_coro_executor_t *executor;
+  salts_coro_executor_config_t config = SALTS_CORO_EXECUTOR_CONFIG_DEFAULT;
+  salts_coro_executor_task_t task = {complete_with_await, NULL, NULL, &executor_state};
+  salts_coro_executor_t *executor;
   if (coroutine == NULL) return 1;
   if (coro_resume(coroutine) != 0 || completed != 1 || coro_alive(coroutine)) {
     coro_destroy(coroutine);
@@ -76,24 +76,24 @@ int main(void) {
   config.queue_capacity_per_worker = 1u;
   config.coroutine_pool.initial_capacity = 0u;
   config.coroutine_pool.max_capacity = 1u;
-  executor = turbo_coro_executor_create(&config);
+  executor = salts_coro_executor_create(&config);
   if (executor == NULL) return 3;
   executor_state.executor = executor;
-  if (turbo_coro_executor_submit(executor, &task) != 0) {
-    turbo_coro_executor_destroy(executor);
+  if (salts_coro_executor_submit(executor, &task) != 0) {
+    salts_coro_executor_destroy(executor);
     return 4;
   }
-  if (turbo_coro_executor_wait(executor) != 0 || executor_state.completed != 1 ||
-      executor_state.status != TURBO_OK) {
-    turbo_coro_executor_destroy(executor);
+  if (salts_coro_executor_wait(executor) != 0 || executor_state.completed != 1 ||
+      executor_state.status != SALTS_OK) {
+    salts_coro_executor_destroy(executor);
     return 5;
   }
-  if (turbo_coro_executor_destroy(executor) != 0) return 6;
+  if (salts_coro_executor_destroy(executor) != 0) return 6;
   return 0;
 }
 
 #elif defined(CONSUME_NATIVE_IO)
-  #include <turbo/native_io.h>
+  #include <salts/native_io.h>
 
 int main(void) {
   return native_io_backend_kind_model(NATIVE_IO_BACKEND_IOCP) == NATIVE_IO_MODEL_COMPLETION ? 0 : 1;
@@ -112,10 +112,10 @@ typedef struct installed_websocket_probe {
 
 static int installed_websocket_write(void *user, const uint8_t *data, size_t size) {
   installed_websocket_probe *probe = (installed_websocket_probe *)user;
-  if (probe == NULL || data == NULL || size > sizeof(probe->frame)) return TURBO_ENOSPC;
+  if (probe == NULL || data == NULL || size > sizeof(probe->frame)) return SALTS_ENOSPC;
   memcpy(probe->frame, data, size);
   probe->frame_size = size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void installed_websocket_event(void *user, cnet_websocket *websocket,
@@ -155,19 +155,19 @@ int main(void) {
       CNET_WEBSOCKET_MAX_CONTROL_BYTES != 125 || CNET_TLS_MIN_IO_BUFFER_BYTES < 16384)
     return 1;
   status = cnet_websocket_init(&websocket, &websocket_config);
-  if (status != TURBO_OK) return 2;
+  if (status != SALTS_OK) return 2;
   status = cnet_websocket_send_text(&websocket, "x", 1u);
-  if (status != TURBO_OK || probe.frame_size == 0u) {
+  if (status != SALTS_OK || probe.frame_size == 0u) {
     (void)cnet_websocket_destroy(&websocket);
     return 3;
   }
   status = cnet_websocket_feed(&websocket, inbound_text, sizeof(inbound_text));
-  if (status != TURBO_OK || probe.event_count != 1u) {
+  if (status != SALTS_OK || probe.event_count != 1u) {
     (void)cnet_websocket_destroy(&websocket);
     return 4;
   }
-  if (cnet_websocket_destroy(&websocket) != TURBO_OK) return 5;
-  return cnet_tls_client_destroy(&tls_client) == TURBO_OK ? 0 : 6;
+  if (cnet_websocket_destroy(&websocket) != SALTS_OK) return 5;
+  return cnet_tls_client_destroy(&tls_client) == SALTS_OK ? 0 : 6;
 }
 
 #elif defined(CONSUME_CHTTP)
@@ -204,18 +204,18 @@ int main(void) {
   (void)response_source_fn;
   (void)response_file_fn;
   chttp_response_destroy(&response);
-  return chttp_server_response_source(NULL, 0u, NULL, NULL) == TURBO_EINVAL &&
-                 chttp_server_response_file(NULL, 0u, NULL, NULL) == TURBO_EINVAL &&
-                 chttp_post_file(NULL, NULL, NULL, NULL, NULL, NULL, NULL) == TURBO_EINVAL &&
-                 chttp_put_file(NULL, NULL, NULL, NULL, NULL, NULL, NULL) == TURBO_EINVAL &&
-                 chttp_download_file(NULL, NULL, NULL, NULL, NULL, NULL, NULL) == TURBO_EINVAL &&
-                 chttp_server_websocket_with(&server, NULL) == TURBO_EINVAL &&
-                 chttp_websocket_state_get(&websocket, NULL) == TURBO_EINVAL &&
-                 chttp_websocket_client_destroy(&websocket_client, 0u) == TURBO_OK &&
-                 chttp_websocket_pool_destroy(&websocket_pool, 0u) == TURBO_OK &&
-                 chttp_client_destroy(&client, 0u) == TURBO_OK &&
-                 chttp_tls_profile_destroy(&tls_profile) == TURBO_OK &&
-                 chttp_server_destroy(&server) == TURBO_OK && session.impl == NULL &&
+  return chttp_server_response_source(NULL, 0u, NULL, NULL) == SALTS_EINVAL &&
+                 chttp_server_response_file(NULL, 0u, NULL, NULL) == SALTS_EINVAL &&
+                 chttp_post_file(NULL, NULL, NULL, NULL, NULL, NULL, NULL) == SALTS_EINVAL &&
+                 chttp_put_file(NULL, NULL, NULL, NULL, NULL, NULL, NULL) == SALTS_EINVAL &&
+                 chttp_download_file(NULL, NULL, NULL, NULL, NULL, NULL, NULL) == SALTS_EINVAL &&
+                 chttp_server_websocket_with(&server, NULL) == SALTS_EINVAL &&
+                 chttp_websocket_state_get(&websocket, NULL) == SALTS_EINVAL &&
+                 chttp_websocket_client_destroy(&websocket_client, 0u) == SALTS_OK &&
+                 chttp_websocket_pool_destroy(&websocket_pool, 0u) == SALTS_OK &&
+                 chttp_client_destroy(&client, 0u) == SALTS_OK &&
+                 chttp_tls_profile_destroy(&tls_profile) == SALTS_OK &&
+                 chttp_server_destroy(&server) == SALTS_OK && session.impl == NULL &&
                  options.protocol == CHTTP_HTTP_1_1 && CHTTP_HTTP_2 != CHTTP_HTTP_1_1 &&
                  config.h2_input_buffer_bytes == 64u * 1024u && server_config.enable_http2 == 1 &&
                  server_config.h2_stream_capacity == 32u && body_source.read == NULL &&
@@ -244,7 +244,7 @@ int main(void) {
   return client.impl == NULL && async_client.impl == NULL && request.slot == 0u &&
                  request.generation == 0u && options.tls == NULL &&
                  options.protocol == CHTTP_HTTP_1_1 && server.impl == NULL &&
-                 crpc_server_destroy(&server) == TURBO_OK
+                 crpc_server_destroy(&server) == SALTS_OK
              ? 0
              : 1;
 }
@@ -271,7 +271,7 @@ int main(void) {
   s3_object_list_destroy(&objects);
   s3_signer_result_destroy(&signature);
   return client.impl == NULL && async_client.impl == NULL &&
-                 s3_multipart_destroy(&multipart) == TURBO_OK && S3_MULTIPART_MAX_PARTS == 10000
+                 s3_multipart_destroy(&multipart) == SALTS_OK && S3_MULTIPART_MAX_PARTS == 10000
              ? 0
              : 1;
 }
@@ -283,7 +283,7 @@ int main(void) { return cmeta_type_equal(&cmeta_type_int, &cmeta_type_int) ? 0 :
 
 #elif defined(CONSUME_CBIND)
   #include <cbind/cbind.h>
-  #include <turbo_cmeta_fixed_width.h>
+  #include <salts_cmeta_fixed_width.h>
 
   #include <stddef.h>
   #include <stdint.h>
@@ -303,7 +303,7 @@ static cserde_status cbind_consumer_next(void *context, cserde_token *out) {
 }
 
 int main(void) {
-  const cmeta_data_desc *fixed_width = &turbo_int32_cmeta_data;
+  const cmeta_data_desc *fixed_width = &salts_int32_cmeta_data;
   cbind_consumer_reader_context source = {0};
   cserde_reader_ops ops = {offsetof(cserde_reader_ops, next) + sizeof(cserde_reader_next_fn),
                            CSERDE_READER_OPS_ABI_VERSION, cbind_consumer_next};
@@ -382,10 +382,10 @@ int main(void) {
 
 int main(void) {
   static const char xml[] = "<installed/>";
-  turbo_xml_document document = {0};
-  turbo_xml_status status = turbo_xml_parse(&document, xml, sizeof(xml) - 1u, NULL, NULL);
-  turbo_xml_document_destroy(&document);
-  return status == TURBO_XML_OK ? 0 : 1;
+  salts_xml_document document = {0};
+  salts_xml_status status = salts_xml_parse(&document, xml, sizeof(xml) - 1u, NULL, NULL);
+  salts_xml_document_destroy(&document);
+  return status == SALTS_XML_OK ? 0 : 1;
 }
 
 #elif defined(CONSUME_CFLOW_PROCESS)
@@ -441,8 +441,8 @@ int main(void) {
   return 0;
 }
 
-#elif defined(CONSUME_STL_STREAM)
-  #include <rocida/stl/stream.h>
+#elif defined(CONSUME_CSTL_STREAM)
+  #include <cstl/stream.h>
 
 typed(List, InstalledStreamInts, int);
 
@@ -450,9 +450,9 @@ int main(void) {
   const int input[] = {1, 2, 1};
   InstalledStreamInts values = {0};
   InstalledStreamInts output = {0};
-  turbostl_stream_t pipeline = {0};
-  turbostl_collect_result result;
-  turbostl_status_result byte_status;
+  cstl_stream_t pipeline = {0};
+  cstl_collect_result result;
+  cstl_status_result byte_status;
   cflow_result bytes = {0};
   size_t index;
 
@@ -464,15 +464,15 @@ int main(void) {
   if (!pipeline.distinct(&pipeline, 2u)) return 4;
   if (!pipeline.sorted(&pipeline, 2u)) return 5;
   byte_status = to_array_result(&pipeline, 2u, &bytes);
-  if (!turbostl_status_result_is_ok(byte_status) || bytes.count != 2u) {
+  if (!cstl_status_result_is_ok(byte_status) || bytes.count != 2u) {
     cflow_result_destroy(&bytes);
-    turbostl_stream_destroy(&pipeline);
+    cstl_stream_destroy(&pipeline);
     InstalledStreamInts_destroy(&values);
     return 6;
   }
   cflow_result_destroy(&bytes);
   result = collect_typed(&pipeline, InstalledStreamInts, &output, 2u);
-  turbostl_stream_destroy(&pipeline);
+  cstl_stream_destroy(&pipeline);
   InstalledStreamInts_destroy(&output);
   InstalledStreamInts_destroy(&values);
   return result.ok && result.flow_status == CFLOW_STATUS_OK && result.status == CMETA_OK &&
@@ -481,8 +481,8 @@ int main(void) {
              : 7;
 }
 
-#elif defined(CONSUME_STL)
-  #include <rocida/stl/typed.h>
+#elif defined(CONSUME_CSTL)
+  #include <cstl/typed.h>
 
 typed(Vec, InstalledInts, int);
 
@@ -530,17 +530,17 @@ int main(void) {
 
 #elif defined(CONSUME_CORE)
   #include <platform.h>
-  #include <turbo_cmeta_data.h>
-  #include <turbo_thread.h>
+  #include <salts_cmeta_data.h>
+  #include <salts_thread.h>
 
 int main(void) {
-  turbo_threadpool_t *pool = turbo_threadpool_create(1);
+  salts_threadpool_t *pool = salts_threadpool_create(1);
   if (!pool) return 1;
-  turbo_threadpool_destroy(pool);
-  if (!turbo_uuid_cmeta_data_valid(&turbo_uuid_cmeta_data)) return 1;
-  return turbo_hrtime() == 0u;
+  salts_threadpool_destroy(pool);
+  if (!salts_uuid_cmeta_data_valid(&salts_uuid_cmeta_data)) return 1;
+  return salts_hrtime() == 0u;
 }
 
 #else
-  #error "one Rocida consumer contract is required"
+  #error "one Salts consumer contract is required"
 #endif

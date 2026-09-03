@@ -2,11 +2,11 @@
 
 ## Status
 
-- Tracking issue: [#194](https://github.com/qigao/turbo-utils/issues/194)
-- Decision scope: a new TurboUtils network module; no production API is added by
+- Tracking issue: [#194](https://github.com/qigao/salts/issues/194)
+- Decision scope: a new Salts network module; no production API is added by
   this design change.
 - Public module name: `CNet`
-- Public CMake target: `TurboUtils::CNet`
+- Public CMake target: `Salts::CNet`
 - Public C header: `<cnet/cnet.h>`
 
 ## Background
@@ -16,7 +16,7 @@ contract accepts already-created native sockets or pipes, submits bounded
 read/write operations, and returns terminal completions. It does not create a
 thread, own a user socket, resolve a host, connect a transport, perform a
 protocol handshake, or publish application events. This boundary is stated in
-`native-io/README.md` and enforced by `native-io/include/turbo/native_io.h`.
+`native-io/README.md` and enforced by `native-io/include/salts/native_io.h`.
 
 CFlow already binds NativeIO completions to a bounded I/O Actor and a Reactive
 Publisher through `cflow_io_native_adapter`. That adapter deliberately receives
@@ -74,13 +74,13 @@ CFlow adapter surface.
 The dependency graph is fixed:
 
 ```text
-TurboUtils::CNet       -> TurboUtils::NativeIO
-TurboUtils::CNet       -> TurboUtils::Concurrency
-TurboUtils::CFlow      -> TurboUtils::CMeta
-TurboUtils::CFlowEvent -> TurboUtils::CFlow
-TurboUtils::CFlowActor -> TurboUtils::CFlowEvent + TurboUtils::NativeIO
-TurboUtils::CFlowReactive -> TurboUtils::CFlow + TurboUtils::NativeIO
-TurboUtils::NativeIO   -> TurboUtils::Platform
+Salts::CNet       -> Salts::NativeIO
+Salts::CNet       -> Salts::Concurrency
+Salts::CFlow      -> Salts::CMeta
+Salts::CFlowEvent -> Salts::CFlow
+Salts::CFlowActor -> Salts::CFlowEvent + Salts::NativeIO
+Salts::CFlowReactive -> Salts::CFlow + Salts::NativeIO
+Salts::NativeIO   -> Salts::Platform
 ```
 
 NativeIO, CFlow, CFlowEvent, CFlowActor, and CFlowReactive cannot include CNet
@@ -241,7 +241,7 @@ one nonblocking progress pass. This prevents backend completion boundaries
 from leaking into the public API while preserving a bounded owner turn.
 
 The owner deadline container is the generic Concurrency
-`turbo_deadline_queue`: a fixed-capacity single-owner min-heap that starts no
+`salts_deadline_queue`: a fixed-capacity single-owner min-heap that starts no
 thread, reads no clock, and invokes no callback. CNet allocates exactly
 `connection_capacity + request_capacity` entries during owner initialization.
 The owner is its only mutator; full storage is an invariant violation reported
@@ -251,7 +251,7 @@ A zero connect/read/write timeout disables that deadline. A connect deadline
 spans hostname resolution and transport admission; read and write deadlines
 begin only after NativeIO accepts the corresponding request. Each owner turn
 processes accepted commands, then expired deadlines, then resolver and NativeIO
-completions. Once expiration records `TURBO_ETIMEDOUT` as the session's first
+completions. Once expiration records `SALTS_ETIMEDOUT` as the session's first
 failure, a late successful completion only retires the request: it cannot
 publish `CONNECTED`, deliver receive data, or replace the terminal cause.
 NativeIO cancellation remains asynchronous, so request and session storage are
@@ -261,7 +261,7 @@ as an owner configuration field.
 
 Process-global protocol dependencies are initialized by the CNet control plane
 before the client is published and are reference counted. A live resolver pins the
-module lifetime, so final shutdown returns `TURBO_EBUSY` instead of destroying
+module lifetime, so final shutdown returns `SALTS_EBUSY` instead of destroying
 c-ares state beneath its caller-driven socket callback. Resolver and client
 destruction must precede final module shutdown. These functions remain internal while CNet
 is experimental; `cnet_client_init` and `cnet_client_destroy` acquire and
@@ -330,10 +330,10 @@ resource lifecycle, not additional transport models.
 `cnet_client_poll` is single-owner and non-reentrant. It processes a bounded
 turn, invokes state and receive callbacks inline, and reports the number of
 callbacks delivered. A zero timeout is non-blocking. An idle timeout returns
-`TURBO_OK` with zero events rather than treating absence of I/O as a failure.
+`SALTS_OK` with zero events rather than treating absence of I/O as a failure.
 
 `cnet_connect` validates and copies the request, reserves a generation handle,
-and publishes one bounded command. `TURBO_OK` means admission succeeded, not
+and publishes one bounded command. `SALTS_OK` means admission succeeded, not
 that the connection is already established. Immediate validation or capacity
 failure leaves `out_connection` zero and produces no callback.
 
@@ -341,25 +341,25 @@ failure leaves `out_connection` zero and produces no callback.
 returning success. Success means CNet owns that copy; it does not mean that the
 peer received or acknowledged it. An asynchronous write failure preserves the
 first error and moves the connection to `FAILED`. Empty sends are rejected with
-`TURBO_EINVAL`. Sending before `CONNECTED` returns `TURBO_EBUSY`; CNet does not
+`SALTS_EINVAL`. Sending before `CONNECTED` returns `SALTS_EBUSY`; CNet does not
 hide connection latency behind an implicit pre-connect queue.
 
 `cnet_receive` adds application receive demand. One unit permits one delivered
 byte chunk or datagram according to transport semantics. Demand overflow is
-detected by the owner, records `TURBO_ERANGE` as the first read-stage failure,
+detected by the owner, records `SALTS_ERANGE` as the first read-stage failure,
 and emits `FAILED`; an already copied command is never reported as synchronously
 rejected. CNet does not arm another application receive when demand is zero.
 
 `cnet_close` stops new send and receive admission for the handle. A second close
-while draining returns `TURBO_EALREADY`. A stale or recycled handle returns
-`TURBO_ENOENT`. Normal close emits `CLOSING` then exactly one `CLOSED`; any
+while draining returns `SALTS_EALREADY`. A stale or recycled handle returns
+`SALTS_ENOENT`. Normal close emits `CLOSING` then exactly one `CLOSED`; any
 failure emits exactly one `FAILED` and never emits `CLOSED` afterward.
 
 `cnet_client_stop` stops new connections, requests close for all live sessions,
 and drives the same caller-owned progress loop until accepted NativeIO requests
 and callbacks settle within the bounded deadline. Timeout returns
-`TURBO_ETIMEDOUT` and preserves the client for another stop attempt. `destroy`
-returns `TURBO_EBUSY` until stop has reached quiescence.
+`SALTS_ETIMEDOUT` and preserves the client for another stop attempt. `destroy`
+returns `SALTS_EBUSY` until stop has reached quiescence.
 If progress has already recorded a fatal error, stop preserves that first error
 as its return value but continues close/recycle work. Once dispatcher and shard
 owners are quiescent, destroy is permitted even though stop reported the
@@ -390,7 +390,7 @@ endpoints. CNet owns and closes each distinct native handle after successful
 adoption; NativeIO only borrows the handles and releases its endpoint metadata
 after all requests are observed. Admission failure leaves both handles with the
 caller. A backend whose `native_io_backend_kind_supports_pipe()` result is false
-returns `TURBO_ENOTSUP`; CNet never changes the configured backend.
+returns `SALTS_ENOTSUP`; CNet never changes the configured backend.
 
 `pipe://name` is resolved by a private CNet platform adapter, never by
 NativeIO. On Windows, `name` is relative to `\\.\pipe\` and `/` separators are
@@ -467,7 +467,7 @@ command lease, deadline, role, and coroutine task handle.
 Coroutine tasks and request records share the same hard
 `request_capacity`. NativeIO creates frames lazily and reuses them after a
 terminal completion, so steady state does not allocate after reaching its peak
-concurrent-await watermark. Pool exhaustion is `TURBO_ENOBUFS`; there is no
+concurrent-await watermark. Pool exhaustion is `SALTS_ENOBUFS`; there is no
 heap fallback. Cancellation does not release either record until the terminal
 completion resumes and retires the frame.
 
@@ -500,7 +500,7 @@ ownership, backpressure, and callback-view lifetime contract.
 Each bounded command entry owns `max_send_bytes` inline bytes. All
 validation happens before claim; after a successful claim the producer only
 copies the descriptor/payload and publishes exactly once. An oversized send
-returns `TURBO_EMSGSIZE`; a full ring returns `TURBO_ENOBUFS`. Resident command
+returns `SALTS_EMSGSIZE`; a full ring returns `SALTS_ENOBUFS`. Resident command
 memory is approximately `command_capacity * aligned_entry_bytes` and
 is validated before allocation. This deliberately avoids another allocator,
 payload pool, or `CNet -> Core -> CFlow` dependency.
@@ -566,11 +566,11 @@ Protocol dependencies must be I/O-neutral:
 - KCP uses the upstream algorithm core. Upstream requires caller-provided UDP
   output and clock/update calls and performs no system calls:
   <https://github.com/skywind3000/kcp>.
-- KCP FEC uses TurboUtils's independently vendored `reed/gf256.c` and
+- KCP FEC uses Salts's independently vendored `reed/gf256.c` and
   `reed/gf256.h`. They retain their provenance from `xtaci/libkcp` commit
   `824a449f6c966f247a8c7c2109e069c2383f360c` and Daniel Fu's MIT license.
 - KCP keyed BLAKE2b, XChaCha20-Poly1305, constant-time verification, and secret
-  wiping use the existing private TurboUtils Monocypher target. No primitive is
+  wiping use the existing private Salts Monocypher target. No primitive is
   reimplemented in CNet.
 
 BoringSSL, c-ares, llhttp, and KCP enter through the existing vcpkg manifest.
@@ -581,7 +581,7 @@ so CNet includes one private C++ linkage translation unit and links its C API
 target with the configured C++ runtime, matching the established repository
 integration. No third-party type or error code enters installed headers.
 
-`reed/gf256` is migrated into TurboUtils rather than referenced through a
+`reed/gf256` is migrated into Salts rather than referenced through a
 sibling repository path. Its public-to-CNet API is extended with a
 caller-provided reconstruction workspace so FEC recovery does not allocate on
 the I/O owner. Initialization may allocate its bounded codec matrix before the
@@ -617,25 +617,25 @@ third-party allocation behavior separately in protocol benchmarks.
 
 ## Error Semantics
 
-Synchronous API failures use Turbo error codes and do not mutate the destination
+Synchronous API failures use Salts error codes and do not mutate the destination
 on validation/admission failure. Asynchronous errors preserve the first useful
 failure in the session, record its stage, and publish `FAILED` exactly once.
-Native status is diagnostic and never replaces the portable Turbo status.
+Native status is diagnostic and never replaces the portable Salts status.
 
 Important mappings include:
 
 | Condition | Result |
 |---|---|
-| invalid URI/options/zero demand/empty payload | `TURBO_EINVAL` |
-| stale generation handle | `TURBO_ENOENT` |
-| command, connection, request, callback, or payload capacity full | `TURBO_ENOBUFS` |
-| checked size/demand arithmetic overflow | `TURBO_EOVERFLOW` |
-| send before `CONNECTED` | `TURBO_EBUSY` |
-| send/receive after close admission | `TURBO_ESHUTDOWN` |
-| second close while draining | `TURBO_EALREADY` |
-| explicit backend or transport unavailable | `TURBO_ENOTSUP` |
-| bounded connect/shutdown deadline elapsed | `TURBO_ETIMEDOUT` |
-| destroy before quiescence | `TURBO_EBUSY` |
+| invalid URI/options/zero demand/empty payload | `SALTS_EINVAL` |
+| stale generation handle | `SALTS_ENOENT` |
+| command, connection, request, callback, or payload capacity full | `SALTS_ENOBUFS` |
+| checked size/demand arithmetic overflow | `SALTS_EOVERFLOW` |
+| send before `CONNECTED` | `SALTS_EBUSY` |
+| send/receive after close admission | `SALTS_ESHUTDOWN` |
+| second close while draining | `SALTS_EALREADY` |
+| explicit backend or transport unavailable | `SALTS_ENOTSUP` |
+| bounded connect/shutdown deadline elapsed | `SALTS_ETIMEDOUT` |
+| destroy before quiescence | `SALTS_EBUSY` |
 
 There is no implicit transport downgrade, certificate-verification bypass,
 backend fallback, message truncation, retry with unbounded allocation, or error
@@ -665,18 +665,18 @@ installed targets or headers until TCP, connected UDP, Pipe, state/error, and
 shutdown conformance pass on Windows, Linux, and macOS.
 
 TLS, WS/WSS, and KCP are separately selectable CNet features. Requesting a
-disabled scheme fails during URI admission with `TURBO_ENOTSUP`; CNet never
+disabled scheme fails during URI admission with `SALTS_ENOTSUP`; CNet never
 downgrades `wss` to `ws` or `tls` to `tcp`.
 
 Replacement of the separate coroutine network stack is a consumer migration,
-not a source, ABI, or runtime dependency in TurboUtils. The authenticated KCP
+not a source, ABI, or runtime dependency in Salts. The authenticated KCP
 wire contract is deliberately preserved and verified with independent golden
 vectors; the C/C++ application API is not treated as compatible. Consumer API
 migration requires a later, independent decision after CNet is stable.
 
 Rollback is safe before installation: disable the experimental option and
 remove the uninstalled module. After installation, semantic versioning and the
-normal TurboUtils export set apply; rollback cannot silently reuse handles or
+normal Salts export set apply; rollback cannot silently reuse handles or
 change a URI scheme's semantics.
 
 ## Verification

@@ -3,7 +3,7 @@
 1. Add failing Scheduler tests for the public inline initializer, immediate
    execution, delayed rejection, shutdown, and descriptor finalization.
 2. Change the existing I/O Publisher synchronous-drive tests to require drive
-   credit coalescing instead of a reentrant `TURBO_EBUSY` callback, and observe
+   credit coalescing instead of a reentrant `SALTS_EBUSY` callback, and observe
    the focused test failure.
 3. Implement the bounded-state Inline Scheduler in `scheduler.c` and expose its
    contract in `scheduler.h`; admit internal task descriptors so finalize runs

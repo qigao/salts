@@ -2,7 +2,7 @@
 #include "ring_buffer_spsc.h"
 #include "tinytest.h"
 #include "platform.h"
-#include "turbo_thread.h"
+#include "salts_thread.h"
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -87,7 +87,7 @@ static void spsc_producer_thread(void *arg) {
     memset(local_buf, 0xAA, sizeof(local_buf));
 
     while (atomic_load(&ctx->start) == 0) {
-        turbo_sleep_ms(1);
+        salts_sleep_ms(1);
     }
 
     size_t produced = 0;
@@ -103,7 +103,7 @@ static void spsc_producer_thread(void *arg) {
             ring_spsc_write_release(ctx->ring, to_write);
             produced += to_write;
         } else {
-            turbo_sleep_ms(0);
+            salts_sleep_ms(0);
         }
     }
 }
@@ -113,7 +113,7 @@ static void spsc_consumer_thread(void *arg) {
     uint8_t local_buf[4096];
 
     while (atomic_load(&ctx->start) == 0) {
-        turbo_sleep_ms(1);
+        salts_sleep_ms(1);
     }
 
     size_t consumed = 0;
@@ -131,7 +131,7 @@ static void spsc_consumer_thread(void *arg) {
             ring_spsc_read_release(ctx->ring, to_read);
             consumed += to_read;
         } else {
-            turbo_sleep_ms(0);
+            salts_sleep_ms(0);
         }
     }
 }
@@ -153,15 +153,15 @@ static void run_spsc_bench(size_t count, size_t batch, bool use_memcpy) {
     ctx.use_memcpy = use_memcpy;
     atomic_store(&ctx.start, 0);
 
-    turbo_thread_t prod, cons;
-    turbo_thread_create(&prod, spsc_producer_thread, &ctx);
-    turbo_thread_create(&cons, spsc_consumer_thread, &ctx);
+    salts_thread_t prod, cons;
+    salts_thread_create(&prod, spsc_producer_thread, &ctx);
+    salts_thread_create(&cons, spsc_consumer_thread, &ctx);
 
-    turbo_sleep_ms(50);
+    salts_sleep_ms(50);
     atomic_store(&ctx.start, 1);
 
-    turbo_thread_join(&prod);
-    turbo_thread_join(&cons);
+    salts_thread_join(&prod);
+    salts_thread_join(&cons);
     free(data);
 }
 

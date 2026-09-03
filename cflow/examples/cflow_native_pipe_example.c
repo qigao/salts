@@ -63,8 +63,8 @@ static int cflow_pipe_example_pair(cflow_example_pipe pipes[2]) {
     if (_snwprintf_s(name, sizeof(name) / sizeof(name[0]), _TRUNCATE,
                      L"\\\\.\\pipe\\cflow-native-example-%lu-%llu",
                      GetCurrentProcessId(),
-                     (unsigned long long)turbo_hrtime()) < 0)
-        return TURBO_ERANGE;
+                     (unsigned long long)salts_hrtime()) < 0)
+        return SALTS_ERANGE;
     pipes[0] = CreateNamedPipeW(
         name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u,
@@ -101,7 +101,7 @@ static int cflow_pipe_example_pair(cflow_example_pipe pipes[2]) {
         }
     }
     (void)CloseHandle(event);
-    return TURBO_OK;
+    return SALTS_OK;
 
 failed:
     cflow_pipe_example_close(pipes[1]);
@@ -135,7 +135,7 @@ static int cflow_pipe_example_set_flags(int pipe_value) {
         if (errno != EINTR)
             return -errno;
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 #endif
 
@@ -144,16 +144,16 @@ static int cflow_pipe_example_pair(cflow_example_pipe pipes[2]) {
     pipes[1] = -1;
 #if defined(__linux__)
     if (pipe2(pipes, O_NONBLOCK | O_CLOEXEC) == 0)
-        return TURBO_OK;
+        return SALTS_OK;
     return -errno;
 #else
     int status;
     if (pipe(pipes) != 0)
         return -errno;
     status = cflow_pipe_example_set_flags(pipes[0]);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
         status = cflow_pipe_example_set_flags(pipes[1]);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         cflow_pipe_example_close(pipes[0]);
         cflow_pipe_example_close(pipes[1]);
         pipes[0] = -1;
@@ -198,20 +198,20 @@ int main(void) {
     status = cflow_native_example_context_init(
         &context, cflow_pipe_example_backend(),
         cflow_io_native_backend_pipe_actor_ops());
-    if (status == TURBO_ENOTSUP) {
+    if (status == SALTS_ENOTSUP) {
         fprintf(stderr,
                 "native pipe example: selected backend is unsupported; "
                 "no fallback was attempted\n");
         return CFLOW_PIPE_EXAMPLE_SKIP;
     }
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native pipe example: backend init failed: %d\n",
                 status);
         (void)cflow_native_example_destroy_context(&context);
         return result;
     }
     status = cflow_pipe_example_pair(pipes);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native pipe example: endpoint setup failed: %d\n",
                 status);
         goto cleanup;
@@ -247,7 +247,7 @@ int main(void) {
     }
     status = cflow_native_example_drive_until(
         &context, CFLOW_NATIVE_EXAMPLE_CAPACITY);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native pipe example: completion drain failed: %d\n",
                 status);
         goto cleanup;
@@ -284,7 +284,7 @@ cleanup:
     require_retained_identity = success;
     if (!success) {
         status = cflow_native_example_close_actor(&context);
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             fprintf(stderr,
                     "native pipe example: Actor cleanup failed: %d\n",
                     status);
@@ -296,8 +296,8 @@ cleanup:
             pipes[index] = CFLOW_EXAMPLE_INVALID_PIPE;
             status = cflow_native_example_forget_until_quiescent(
                 &context, identity, cflow_io_native_backend_forget_pipe);
-            if (status != TURBO_OK &&
-                (require_retained_identity || status != TURBO_ENOENT)) {
+            if (status != SALTS_OK &&
+                (require_retained_identity || status != SALTS_ENOENT)) {
                 fprintf(stderr,
                         "native pipe example: endpoint forget failed: %d\n",
                         status);
@@ -306,13 +306,13 @@ cleanup:
         }
     }
     status = cflow_native_example_close_actor(&context);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native pipe example: Actor close failed: %d\n",
                 status);
         success = false;
     }
     status = cflow_native_example_destroy_context(&context);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native pipe example: context destroy failed: %d\n",
                 status);
         success = false;

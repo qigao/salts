@@ -1,7 +1,7 @@
-#ifndef TURBO_SELECTOR_INTERNAL_H
-#define TURBO_SELECTOR_INTERNAL_H
+#ifndef SALTS_SELECTOR_INTERNAL_H
+#define SALTS_SELECTOR_INTERNAL_H
 
-#include "turbo_selector.h"
+#include "salts_selector.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -50,18 +50,18 @@ typedef struct selector_semantic_s {
 typedef struct selector_parse_ctx_s {
   const char *source;
   size_t source_size;
-  const turbo_selector_schema_v1_t *schema;
-  selector_node_t nodes[TURBO_SELECTOR_MAX_NODES_V1];
+  const salts_selector_schema_v1_t *schema;
+  selector_node_t nodes[SALTS_SELECTOR_MAX_NODES_V1];
   size_t node_count;
-  selector_string_ref_t list_values[TURBO_SELECTOR_MAX_LIST_ITEMS_V1];
+  selector_string_ref_t list_values[SALTS_SELECTOR_MAX_LIST_ITEMS_V1];
   size_t list_value_count;
-  char strings[TURBO_SELECTOR_MAX_SOURCE_BYTES_V1 + 1u];
+  char strings[SALTS_SELECTOR_MAX_SOURCE_BYTES_V1 + 1u];
   size_t string_size;
   size_t predicate_count;
   uint16_t root;
   size_t current_offset;
-  turbo_selector_status_t status;
-  char message[TURBO_SELECTOR_DIAGNOSTIC_BYTES_V1];
+  salts_selector_status_t status;
+  char message[SALTS_SELECTOR_DIAGNOSTIC_BYTES_V1];
 } selector_parse_ctx_t;
 
 typedef struct selector_lexer_s {
@@ -70,9 +70,9 @@ typedef struct selector_lexer_s {
   const char *limit;
   const char *marker;
   size_t parenthesis_depth;
-  turbo_selector_status_t status;
+  salts_selector_status_t status;
   size_t error_offset;
-  char message[TURBO_SELECTOR_DIAGNOSTIC_BYTES_V1];
+  char message[SALTS_SELECTOR_DIAGNOSTIC_BYTES_V1];
 } selector_lexer_t;
 
 void selector_lexer_init(selector_lexer_t *lexer, const char *input,
@@ -81,7 +81,7 @@ int selector_lexer_next(selector_lexer_t *lexer,
                         selector_semantic_t *token);
 
 void selector_ctx_fail(selector_parse_ctx_t *ctx,
-                       turbo_selector_status_t status, size_t offset,
+                       salts_selector_status_t status, size_t offset,
                        const char *message);
 selector_semantic_t selector_make_binary(selector_parse_ctx_t *ctx,
                                          uint8_t kind,

@@ -1,8 +1,8 @@
 #include <cflow/io_file.h>
 
-#include <turbo/clock.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/clock.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -81,36 +81,36 @@ static int cflow_file_example_make_path(
             path, CFLOW_FILE_EXAMPLE_PATH_CAPACITY, _TRUNCATE,
             "%scflow-native-file-%lu-%llu.bin", directory,
             GetCurrentProcessId(),
-            (unsigned long long)turbo_hrtime()) < 0)
-        return TURBO_ERANGE;
-    return TURBO_OK;
+            (unsigned long long)salts_hrtime()) < 0)
+        return SALTS_ERANGE;
+    return SALTS_OK;
 #elif defined(__linux__)
     const int written = snprintf(
         path, CFLOW_FILE_EXAMPLE_PATH_CAPACITY,
         "/tmp/cflow-native-file-%ld-%llu.bin", (long)getpid(),
-        (unsigned long long)turbo_hrtime());
+        (unsigned long long)salts_hrtime());
     return written > 0 && written < CFLOW_FILE_EXAMPLE_PATH_CAPACITY
-        ? TURBO_OK : TURBO_ERANGE;
+        ? SALTS_OK : SALTS_ERANGE;
 #else
     (void)path;
-    return TURBO_ENOTSUP;
+    return SALTS_ENOTSUP;
 #endif
 }
 
 static int cflow_file_example_remove(const char *path) {
     if (path == NULL || path[0] == '\0')
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
 #if defined(_WIN32)
-    return DeleteFileA(path) ? TURBO_OK : -(int)GetLastError();
+    return DeleteFileA(path) ? SALTS_OK : -(int)GetLastError();
 #elif defined(__linux__)
-    return unlink(path) == 0 ? TURBO_OK : -errno;
+    return unlink(path) == 0 ? SALTS_OK : -errno;
 #else
-    return TURBO_ENOTSUP;
+    return SALTS_ENOTSUP;
 #endif
 }
 
 static bool cflow_file_example_runtime_unavailable(int status) {
-    if (status == TURBO_ENOTSUP)
+    if (status == SALTS_ENOTSUP)
         return true;
 #if defined(__linux__)
     return status == -EPERM || status == -EACCES || status == -ENOSYS;
@@ -122,43 +122,43 @@ static bool cflow_file_example_runtime_unavailable(int status) {
 static int cflow_file_example_drive_until(
     cflow_io_file *file, cflow_file_example_state *state,
     size_t expected_completions) {
-    const uint64_t started = turbo_hrtime();
+    const uint64_t started = salts_hrtime();
     for (;;) {
         cflow_io_file_stats stats = {0};
         size_t progressed = 0u;
         const int status = cflow_io_file_run_ready(
             file, CFLOW_FILE_EXAMPLE_MAX_STEPS, &progressed);
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             return status;
         if (!cflow_io_file_get_stats(file, &stats))
-            return TURBO_EPROTO;
+            return SALTS_EPROTO;
         if (state->overflow)
-            return TURBO_ERANGE;
+            return SALTS_ERANGE;
         if (state->count >= expected_completions &&
             stats.operation_slots_in_use == 0u)
-            return TURBO_OK;
-        if (turbo_hrtime() - started >= CFLOW_FILE_EXAMPLE_TIMEOUT_NS)
-            return TURBO_ETIMEDOUT;
+            return SALTS_OK;
+        if (salts_hrtime() - started >= CFLOW_FILE_EXAMPLE_TIMEOUT_NS)
+            return SALTS_ETIMEDOUT;
         if (progressed == 0u)
-            turbo_thread_yield();
+            salts_thread_yield();
     }
 }
 
 static int cflow_file_example_close_destroy(cflow_io_file *file) {
-    const uint64_t started = turbo_hrtime();
+    const uint64_t started = salts_hrtime();
     int status = cflow_io_file_close(file);
-    if (status != TURBO_OK && status != TURBO_EALREADY)
+    if (status != SALTS_OK && status != SALTS_EALREADY)
         return status;
     while (!cflow_io_file_is_quiescent(file)) {
         size_t progressed = 0u;
         status = cflow_io_file_run_ready(
             file, CFLOW_FILE_EXAMPLE_MAX_STEPS, &progressed);
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             return status;
-        if (turbo_hrtime() - started >= CFLOW_FILE_EXAMPLE_TIMEOUT_NS)
-            return TURBO_ETIMEDOUT;
+        if (salts_hrtime() - started >= CFLOW_FILE_EXAMPLE_TIMEOUT_NS)
+            return SALTS_ETIMEDOUT;
         if (progressed == 0u)
-            turbo_thread_yield();
+            salts_thread_yield();
     }
     return cflow_io_file_destroy(file);
 }
@@ -191,7 +191,7 @@ int main(void) {
         return CFLOW_FILE_EXAMPLE_SKIP;
     }
     status = cflow_file_example_make_path(path);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native file example: temp path failed: %d\n",
                 status);
         return result;
@@ -206,14 +206,14 @@ int main(void) {
     config.completion = cflow_file_example_completed;
     config.completion_user = &state;
     status = cflow_io_file_open(&file, path, &config);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         if (cflow_file_example_runtime_unavailable(status)) {
             fprintf(stderr,
                     "native file example: selected backend is unavailable "
                     "at runtime (%d); no fallback was attempted\n",
                     status);
             status = cflow_file_example_remove(path);
-            if (status != TURBO_OK && status != TURBO_ENOENT) {
+            if (status != SALTS_OK && status != SALTS_ENOENT) {
                 fprintf(stderr,
                         "native file example: temp cleanup failed: %d\n",
                         status);
@@ -223,7 +223,7 @@ int main(void) {
         }
         fprintf(stderr, "native file example: open failed: %d\n", status);
         status = cflow_file_example_remove(path);
-        if (status != TURBO_OK && status != TURBO_ENOENT)
+        if (status != SALTS_OK && status != SALTS_ENOENT)
             fprintf(stderr,
                     "native file example: temp cleanup failed: %d\n",
                     status);
@@ -239,7 +239,7 @@ int main(void) {
         goto cleanup;
     }
     status = cflow_file_example_drive_until(&file, &state, 1u);
-    if (status != TURBO_OK ||
+    if (status != SALTS_OK ||
         state.kinds[0] != CFLOW_IO_NATIVE_FILE_WRITE_AT ||
         state.completions[0].kind != CFLOW_IO_COMPLETION_OK ||
         state.completions[0].bytes != sizeof(payload) - 1u) {
@@ -260,7 +260,7 @@ int main(void) {
         goto cleanup;
     }
     status = cflow_file_example_drive_until(&file, &state, 2u);
-    if (status != TURBO_OK ||
+    if (status != SALTS_OK ||
         state.kinds[1] != CFLOW_IO_NATIVE_FILE_READ_AT ||
         state.completions[1].kind != CFLOW_IO_COMPLETION_OK ||
         state.completions[1].bytes != sizeof(payload) - 1u ||
@@ -284,13 +284,13 @@ int main(void) {
 
 cleanup:
     status = cflow_file_example_close_destroy(&file);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native file example: close/drain/destroy failed: %d\n",
                 status);
         result = EXIT_FAILURE;
     }
     status = cflow_file_example_remove(path);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         fprintf(stderr, "native file example: temp cleanup failed: %d\n",
                 status);
         result = EXIT_FAILURE;

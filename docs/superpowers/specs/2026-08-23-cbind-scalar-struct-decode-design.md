@@ -7,7 +7,7 @@ Scope: D2 — format-neutral decode-only POD scalar + struct kernel
 
 ## 1. Context
 
-TurboUtils now has the prerequisites for a real format-neutral binding layer:
+Salts now has the prerequisites for a real format-neutral binding layer:
 
 - CMeta provides stable type identity, semantic `cmeta_data_desc`, reflected struct layout, and generic container construction contracts.
 - CSerde provides a standalone canonical token model plus versioned pull-reader / push-writer facades.
@@ -35,8 +35,8 @@ D2 deliberately implements only the smallest binding kernel whose memory semanti
 
 D2 must:
 
-1. add a standalone `TurboUtils::CBind` C11 module;
-2. depend only on `TurboUtils::CMeta + TurboUtils::CSerde`;
+1. add a standalone `Salts::CBind` C11 module;
+2. depend only on `Salts::CMeta + Salts::CSerde`;
 3. decode canonical CSerde tokens into supported native C storage;
 4. support bool, signed integer, unsigned integer, floating point, and nested semantic structs;
 5. perform precise numeric conversion with explicit range / exactness checks;
@@ -98,20 +98,20 @@ cbind/
 CMake target:
 
 ```text
-concrete target: turbo_cbind
-alias:           TurboUtils::CBind
+concrete target: salts_cbind
+alias:           Salts::CBind
 export name:     CBind
 ```
 
 Production dependency direction is fixed:
 
 ```text
-TurboUtils::CBind
-  -> TurboUtils::CMeta
-  -> TurboUtils::CSerde
+Salts::CBind
+  -> Salts::CMeta
+  -> Salts::CSerde
 ```
 
-CBind must not link TurboSTL, Core/utils, CFlow, TurboParser, or parser libraries.
+CBind must not link Container, Core/utils, CFlow, TurboParser, or parser libraries.
 
 The root module order should place CBind after CSerde and before consumers that may later use it:
 
@@ -782,7 +782,7 @@ cserde_recording_reader_context
 
 CBind must not fork another recording token source.
 
-`cserde_recording_support` remains test-only and is not linked into production `turbo_cbind`.
+`cserde_recording_support` remains test-only and is not linked into production `salts_cbind`.
 
 ## 23. Required test matrix
 
@@ -878,8 +878,8 @@ Tests/audits must prove:
 
 - `<cbind/cbind.h>` compiles in C++17;
 - C++ test calls and links `cbind_decode`;
-- `turbo_cbind` links only CMeta + CSerde;
-- production cbind source does not include TurboSTL/Core/CFlow/TurboParser/parser headers;
+- `salts_cbind` links only CMeta + CSerde;
+- production cbind source does not include Container/Core/CFlow/TurboParser/parser headers;
 - no production `malloc/calloc/realloc/free` is introduced in D2.
 
 ## 24. CI integration
@@ -893,7 +893,7 @@ cbind/**
 Selected test regex becomes:
 
 ```text
-^(cmeta_|cserde_|cbind_|cflow_|turbostl_)
+^(cmeta_|cserde_|cbind_|cflow_|cstl_)
 ```
 
 Final exact-head acceptance requires fresh Linux and Windows release configure/build/test.
@@ -906,7 +906,7 @@ Windows must continue using the repository MSVC/Ninja preset through `VsDevCmd` 
 
 D2 is complete only when all of the following are true:
 
-1. `TurboUtils::CBind` exists and links only CMeta + CSerde.
+1. `Salts::CBind` exists and links only CMeta + CSerde.
 2. Public API is context-first.
 3. Context/error records use versioned field-end prefix validation.
 4. Scalar root decode works with zero scratch and `max_depth=0`.
@@ -964,4 +964,4 @@ CBind strict POD decode kernel
 native C bool/int/long/size_t/float/double/struct storage
 ```
 
-The important property is not feature count. It is that CBind begins with a memory-safe, format-neutral, forward-only transaction model that can be extended later without teaching the core about TurboSTL algorithms, parser syntax, concrete string layouts, or process-global policy.
+The important property is not feature count. It is that CBind begins with a memory-safe, format-neutral, forward-only transaction model that can be extended later without teaching the core about Container algorithms, parser syntax, concrete string layouts, or process-global policy.

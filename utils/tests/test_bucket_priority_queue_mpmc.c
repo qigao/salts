@@ -1,6 +1,6 @@
 #include "bucket_priority_queue_mpmc.h"
 #include "tinytest.h"
-#include "turbo_thread.h"
+#include "salts_thread.h"
 #include <stdatomic.h>
 #include <stdlib.h>
 
@@ -150,7 +150,7 @@ spec("Bucket Priority Queue MPMC") {
 
     // Setup producers
     producer_context_t producers[NUM_PRODUCERS];
-    turbo_thread_t producer_threads[NUM_PRODUCERS];
+    salts_thread_t producer_threads[NUM_PRODUCERS];
 
     for (size_t i = 0; i < NUM_PRODUCERS; ++i) {
       producers[i].queue = queue;
@@ -159,12 +159,12 @@ spec("Bucket Priority Queue MPMC") {
       producers[i].items_to_process = TEST_ITEMS / NUM_PRODUCERS;
       producers[i].thread_id = i;
 
-      check(turbo_thread_create(&producer_threads[i], producer_thread, &producers[i]) == 0);
+      check(salts_thread_create(&producer_threads[i], producer_thread, &producers[i]) == 0);
     }
 
     // Setup consumers
     consumer_context_t consumers[NUM_CONSUMERS];
-    turbo_thread_t consumer_threads[NUM_CONSUMERS];
+    salts_thread_t consumer_threads[NUM_CONSUMERS];
 
     for (size_t i = 0; i < NUM_CONSUMERS; ++i) {
       consumers[i].queue = queue;
@@ -173,7 +173,7 @@ spec("Bucket Priority Queue MPMC") {
       consumers[i].consumed_count = 0;
       consumers[i].target_count = TEST_ITEMS / NUM_CONSUMERS;
 
-      check(turbo_thread_create(&consumer_threads[i], consumer_thread, &consumers[i]) == 0);
+      check(salts_thread_create(&consumer_threads[i], consumer_thread, &consumers[i]) == 0);
     }
 
     // Start all threads
@@ -186,12 +186,12 @@ spec("Bucket Priority Queue MPMC") {
 
     // Wait for completion
     for (size_t i = 0; i < NUM_PRODUCERS; ++i) {
-      turbo_thread_join(&producer_threads[i]);
+      salts_thread_join(&producer_threads[i]);
       check((atomic_load(&producers[i].done) != 0));
     }
 
     for (size_t i = 0; i < NUM_CONSUMERS; ++i) {
-      turbo_thread_join(&consumer_threads[i]);
+      salts_thread_join(&consumer_threads[i]);
       check((atomic_load(&consumers[i].done) != 0));
     }
 

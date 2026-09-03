@@ -1,9 +1,9 @@
-# Rocida Canonical Architecture
+# Salts Canonical Architecture
 
 日期：2026-08-24  
 状态：Canonical repository architecture
 
-本文定义 Rocida 当前仓库级模块边界、public target ownership、依赖方向，以及与
+本文定义 Salts 当前仓库级模块边界、public target ownership、依赖方向，以及与
 TurboParser 的集成边界。专项 API、错误语义、ABI 和阶段能力仍以公开头文件、测试及
 `docs/superpowers/specs/` 中的专项设计为事实源；本文不重复低层契约。
 
@@ -166,18 +166,18 @@ runtime target。Layer 2/3 共同属于 CFlow；Layer 1 是 CMeta 语义工具�
 
 `CSerde` 与 `CBind` 在客户视角中属于 `Cross-Cutting Capabilities`：它们横跨 parser、native
 value、Stream/Graph 等使用场景，但这不改变模块依赖事实。当前 target 仍然是
-`CBind -> CMeta + CSerde`，`CSerde` 不依赖 CFlow/CMeta，CBind 也不依赖 CFlow、Rocida STL、
+`CBind -> CMeta + CSerde`，`CSerde` 不依赖 CFlow/CMeta，CBind 也不依赖 CFlow、CSTL、
 Core 或 TurboParser。
 
 `tinytest/`、vendor、build tools 与 Lean/formal generation 属于测试、构建或验证平面，
 不进入上面的 runtime ownership 图。设备采集与串口子系统由 TurboParser 所有，
-Rocida 不再导出对应 targets。
+Salts 不再导出对应 targets。
 
 ## 2. Single sources of truth
 
 ### CMeta — type and semantic truth
 
-`Rocida::CMeta` 是整个体系最底层的类型与语义事实源，负责：
+`Salts::CMeta` 是整个体系最底层的类型与语义事实源，负责：
 
 - type identity、type traits、Enum/Struct reflection；
 - callable / relation / interface / contract 元数据；
@@ -189,8 +189,8 @@ CMeta 不实现容器算法、不解析具体数据格式，也不拥有 CFlow r
 
 ### CSerde — canonical data-event truth
 
-`Rocida::CSerde` 定义 format-neutral canonical token、reader/writer contract 和 view
-lifetime 语义。它当前没有 Rocida public target 依赖，也不拥有 JSON/YAML/XML/CSV
+`Salts::CSerde` 定义 format-neutral canonical token、reader/writer contract 和 view
+lifetime 语义。它当前没有 Salts public target 依赖，也不拥有 JSON/YAML/XML/CSV
 parser。
 
 具体格式由 parser/codec adapter 将 native syntax/events 投影为 CSerde，而不是在 CSerde
@@ -198,16 +198,16 @@ parser。
 
 ### CBind — native binding truth
 
-`Rocida::CBind` 只依赖 `Rocida::CMeta + Rocida::CSerde`。它负责依据 CMeta
+`Salts::CBind` 只依赖 `Salts::CMeta + Salts::CSerde`。它负责依据 CMeta
 semantic shape 在 canonical CSerde values 与 native C storage 之间绑定。
 
 因此 CBind 是 parser-independent kernel：数据库、IPC、自定义 binary source 或测试
 provider 只要实现 CSerde contract，也可以直接复用 CBind。CBind 不直接依赖
-TurboParser、Rocida STL、CFlow 或 Core。
+TurboParser、CSTL、CFlow 或 Core。
 
 ### CFlow — execution truth
 
-`Rocida::CFlow` 是 typed structured graph/dataflow compiler and runtime。其 public
+`Salts::CFlow` 是 typed structured graph/dataflow compiler and runtime。其 public
 依赖为 CMeta 与 Platform；公开 readiness API 直接暴露 Platform 类型。Concurrency 是
 private execution substrate。
 
@@ -215,18 +215,18 @@ CFlow 不拥有容器算法、不解析 serialization format，也不把 raw `cs
 任意 `filter/map` 的业务 `Stream<T>`。Parser/CBind/CFlow 的组合边界位于完整
 semantic/native value 上。
 
-### Rocida STL — container truth
+### CSTL — container truth
 
-`Rocida::STL` 是标准容器算法和实例 metadata 的事实源，并通过 CMeta container
+`Salts::CSTL` 是标准容器算法和实例 metadata 的事实源，并通过 CMeta container
 contract 暴露类型、Range、Collector 与 construction 能力。
 
-CFlow 本身不依赖 Rocida STL。`Rocida::STLStream` 是显式 INTERFACE composition target，
-只把 `Rocida::STL + Rocida::CFlow` 组合给需要 container stream API 的使用者。
+CFlow 本身不依赖 CSTL。`Salts::CSTLStream` 是显式 INTERFACE composition target，
+只把 `Salts::CSTL + Salts::CFlow` 组合给需要 container stream API 的使用者。
 
 ### Platform / Concurrency — execution substrate
 
-`Rocida::Platform` 提供最底层 platform abstraction，并公开依赖 CMake 的
-`Threads::Threads`。`Rocida::Concurrency` 在其上提供 thread pool、Disruptor 等并发
+`Salts::Platform` 提供最底层 platform abstraction，并公开依赖 CMake 的
+`Threads::Threads`。`Salts::Concurrency` 在其上提供 thread pool、Disruptor 等并发
 基础能力，并公开依赖 Platform。
 
 CFlow 通过公开 readiness API 消费 Platform，并私有消费 Concurrency。因此 CFlow 的 public
@@ -235,7 +235,7 @@ Platform 定义。
 
 ### Core — general utility layer
 
-`Rocida::Core` 保留字符串、文件、日志、正则、进程、内存及其他通用工具。它公开依赖
+`Salts::Core` 保留字符串、文件、日志、正则、进程、内存及其他通用工具。它公开依赖
 CMeta、Platform、Concurrency，并私有消费 STL/CFlow；Core 不应重新成为 container、
 metadata、data binding 或 execution semantics 的第二事实源。
 
@@ -317,44 +317,44 @@ CFlow Stream<T> / Graph / Machine
 关键禁止项：
 
 - `CBind -> TurboParser`；
-- `CBind -> Rocida STL`；
+- `CBind -> CSTL`；
 - `CBind -> CFlow`；
-- `CFlow -> Rocida STL`；
+- `CFlow -> CSTL`；
 - `CSerde -> concrete parser`；
 - 把 `Stream<cserde_token>` 暴露为可任意 `filter/map` 的业务 stream；
 - 在 DataBind/TBE/CFlow 中维护第二套通用 type/semantic/binding truth。
 
-TurboParser 是独立 package，其公共 parser runtime 以 `Rocida::Core` 和独立 parser
+TurboParser 是独立 package，其公共 parser runtime 以 `Salts::Core` 和独立 parser
 component targets 为基础依赖，不依赖 CSerde 或 CBind。具体 parser 与 CSerde 的组合只能位于
-显式 adapter target；例如 `Rocida::JsonCSerdeAdapter` 组合
-`Rocida::JsonParser` 与 `Rocida::CSerde`，而不会把 CSerde 传播给 JsonParser 或
+显式 adapter target；例如 `Salts::JsonCSerdeAdapter` 组合
+`Salts::JsonParser` 与 `Salts::CSerde`，而不会把 CSerde 传播给 JsonParser 或
 TurboParser。
 
 ## 5. Public target dependency matrix
 
 | Target | Public dependencies | Private / composition dependencies | Canonical ownership |
 | --- | --- | --- | --- |
-| `Rocida::CMeta` | none | none | type / semantic metadata |
-| `Rocida::CSerde` | none | none | canonical token protocol |
-| `Rocida::CBind` | `CMeta`, `CSerde` | none | native data binding |
-| `Rocida::Platform` | `Threads::Threads` | platform implementation | platform abstraction |
-| `Rocida::Concurrency` | `Platform` | none | concurrency substrate |
-| `Rocida::CFlow` | `CMeta`, `Platform` | `Concurrency` | graph/dataflow execution |
-| `Rocida::STL` | `CMeta` | none | container algorithms |
-| `Rocida::STLStream` | `STL`, `CFlow` | INTERFACE composition | container stream integration |
-| `Rocida::Core` | `CMeta`, `Platform`, `Concurrency` | `STL`, `CFlow` plus utility vendors | general utilities |
+| `Salts::CMeta` | none | none | type / semantic metadata |
+| `Salts::CSerde` | none | none | canonical token protocol |
+| `Salts::CBind` | `CMeta`, `CSerde` | none | native data binding |
+| `Salts::Platform` | `Threads::Threads` | platform implementation | platform abstraction |
+| `Salts::Concurrency` | `Platform` | none | concurrency substrate |
+| `Salts::CFlow` | `CMeta`, `Platform` | `Concurrency` | graph/dataflow execution |
+| `Salts::CSTL` | `CMeta` | none | container algorithms |
+| `Salts::CSTLStream` | `STL`, `CFlow` | INTERFACE composition | container stream integration |
+| `Salts::Core` | `CMeta`, `Platform`, `Concurrency` | `STL`, `CFlow` plus utility vendors | general utilities |
 
-该表只描述 canonical Rocida public/runtime target graph；具体第三方 vendor 与 build/test
+该表只描述 canonical Salts public/runtime target graph；具体第三方 vendor 与 build/test
 target 不属于此表的 ownership 语义。
 
 ## 6. Architectural invariants
 
 1. **依赖只向基础事实源收敛。** CMeta/CSerde 不因上层使用场景反向依赖 CBind、CFlow、
-   Rocida STL 或 TurboParser。
+   CSTL 或 TurboParser。
 2. **同一语义只保留一个 truth。** 类型与 semantic shape 属于 CMeta；canonical events
    属于 CSerde；native binding 属于 CBind；execution 属于 CFlow；container algorithms
-   属于 Rocida STL。
-3. **repo ownership 与 link dependency 分离。** CBind/CSerde 属于 Rocida；TurboParser
+   属于 CSTL。
+3. **repo ownership 与 link dependency 分离。** CBind/CSerde 属于 Salts；TurboParser
    不消费或重新导出它们，具体格式组合通过独立 adapter target 显式表达。
 4. **组合能力位于 adapter/composition layer。** Parser + CBind、CBind + CFlow、STL + CFlow
    不通过反向依赖污染底层 kernel。
@@ -372,7 +372,7 @@ target 不属于此表的 ownership 语义。
 以当前公开接口、测试和本文的 repo-level ownership 为准：
 
 - `cflow/README.md` — CFlow public surface、lower/IR/runtime/Machine；
-- `docs/superpowers/specs/2026-08-21-container-cmeta-cflow-design.md` — Rocida STL/CMeta/CFlow 分层来源；
+- `docs/superpowers/specs/2026-08-21-container-cmeta-cflow-design.md` — CSTL/CMeta/CFlow 分层来源；
 - `docs/superpowers/specs/2026-08-22-cmeta-cflow-calculus-v1-design.md` — CMeta/CFlow calculus 与 operator policy；
 - `docs/superpowers/specs/2026-08-22-cflow-execution-foundation-design.md` — execution substrate；
 - `docs/superpowers/specs/2026-08-23-serialization-data-binding-design.md` — CMeta/CSerde/CBind/TurboParser data architecture；

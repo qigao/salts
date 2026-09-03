@@ -112,16 +112,16 @@ static int reactive_benchmark_submit(
     reactive_benchmark_fixture *fixture =
         (reactive_benchmark_fixture *)user;
     const cflow_io_completion completion = {
-        CFLOW_IO_COMPLETION_OK, sizeof(int), TURBO_OK};
+        CFLOW_IO_COMPLETION_OK, sizeof(int), SALTS_OK};
 
     (void)lease_id;
     (void)operation_user;
     if (fixture == NULL || actor == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     ++fixture->submitted;
     return cflow_io_actor_complete(actor, request_id, &completion) ==
                    CFLOW_IO_COMPLETE_ACCEPTED
-        ? TURBO_OK : TURBO_EPROTO;
+        ? SALTS_OK : SALTS_EPROTO;
 }
 
 static void reactive_benchmark_drive(void *user) {
@@ -160,10 +160,10 @@ static void reactive_benchmark_subscriber_done(void *user) {
 
 static int reactive_benchmark_destroy(
     reactive_benchmark_fixture *fixture) {
-    int status = TURBO_OK;
+    int status = SALTS_OK;
 
     if (fixture == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (fixture->subscription_initialized) {
         cflow_subscription_close(&fixture->subscription);
         fixture->subscription_initialized = false;
@@ -178,15 +178,15 @@ static int reactive_benchmark_destroy(
             const int drive_status = cflow_io_publisher_owner_run_ready(
                 &fixture->owner, REACTIVE_BENCH_DRIVER_STEPS,
                 &progressed);
-            if (drive_status != TURBO_OK && status == TURBO_OK)
+            if (drive_status != SALTS_OK && status == SALTS_OK)
                 status = drive_status;
-            if (drive_status != TURBO_OK || progressed == 0u)
+            if (drive_status != SALTS_OK || progressed == 0u)
                 break;
         }
         close_status = cflow_io_publisher_owner_close(&fixture->owner);
-        if (status == TURBO_OK)
+        if (status == SALTS_OK)
             status = close_status;
-        if (close_status == TURBO_OK)
+        if (close_status == SALTS_OK)
             fixture->owner_initialized = false;
     }
     if (fixture->scheduler_initialized) {
@@ -207,11 +207,11 @@ static int reactive_benchmark_destroy(
 static int reactive_benchmark_init(
     reactive_benchmark_fixture *fixture, size_t capacity) {
     cflow_io_publisher_config config = {0};
-    int status = TURBO_ENOMEM;
+    int status = SALTS_ENOMEM;
 
     if (fixture == NULL || capacity == 0u ||
         capacity > CFLOW_IO_PUBLISHER_MAX_WINDOW)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     memset(fixture, 0, sizeof(*fixture));
     fixture->normalized.root = CMETA_INVALID_ID;
     cflow_graph_init(&fixture->surface, &cmeta_type_int);
@@ -235,7 +235,7 @@ static int reactive_benchmark_init(
     config.drive_user = fixture;
     status = cflow_publisher_from_io_actor_windowed(
         &fixture->publisher, &fixture->owner, &config, capacity);
-    if (status != TURBO_OK)
+    if (status != SALTS_OK)
         goto cleanup;
     fixture->owner_initialized = true;
     fixture->subscriber_callbacks = (cflow_subscriber_callbacks){
@@ -248,11 +248,11 @@ static int reactive_benchmark_init(
     if (!cflow_subscribe(
             &fixture->subscription, &fixture->normalized, &fixture->publisher,
             &fixture->scheduler, &fixture->subscriber)) {
-        status = TURBO_EIO;
+        status = SALTS_EIO;
         goto cleanup;
     }
     fixture->subscription_initialized = true;
-    return TURBO_OK;
+    return SALTS_OK;
 
 cleanup:
     (void)reactive_benchmark_destroy(fixture);
@@ -265,7 +265,7 @@ static int reactive_benchmark_run_batch(
     size_t loop_limit;
 
     if (fixture == NULL || values == 0u)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     target = fixture->subscriber_values + values;
     loop_limit = values <=
             (SIZE_MAX - REACTIVE_BENCH_LOOP_MARGIN) /
@@ -277,7 +277,7 @@ static int reactive_benchmark_run_batch(
 
     if (target < fixture->subscriber_values ||
         !cflow_subscription_request(&fixture->subscription, values))
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     while (fixture->subscriber_values < target && loops < loop_limit) {
         size_t progressed = 0u;
         int status;
@@ -287,18 +287,18 @@ static int reactive_benchmark_run_batch(
         status = cflow_io_publisher_owner_run_ready(
             &fixture->owner, REACTIVE_BENCH_DRIVER_STEPS,
             &progressed);
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             return status;
         (void)cflow_scheduler_run_until_idle(&fixture->scheduler, 0u);
         if (fixture->subscriber_error != NULL ||
             cflow_subscription_error(&fixture->subscription) != NULL)
-            return TURBO_EIO;
+            return SALTS_EIO;
         if (progressed == 0u && fixture->subscriber_values < target)
-            return TURBO_EPROTO;
+            return SALTS_EPROTO;
         ++loops;
     }
     return fixture->subscriber_values == target
-        ? TURBO_OK : TURBO_ETIMEDOUT;
+        ? SALTS_OK : SALTS_ETIMEDOUT;
 }
 
 suite("CFlow Reactive IO benchmarks") {
@@ -327,28 +327,28 @@ bench("CFlow Reactive Subscription control path") {
         return;
     memset(&fixture, 0, sizeof(fixture));
     init_status = reactive_benchmark_init(&fixture, capacity);
-    check_equal(init_status, TURBO_OK);
-    if (init_status != TURBO_OK)
+    check_equal(init_status, SALTS_OK);
+    if (init_status != SALTS_OK)
         return;
     check_equal(reactive_benchmark_run_batch(
-        &fixture, values_per_sample), TURBO_OK);
+        &fixture, values_per_sample), SALTS_OK);
     check_equal(fixture.prepared, values_per_sample);
     check_equal(fixture.submitted, values_per_sample);
     check_equal(fixture.encoded, values_per_sample);
     check_equal(fixture.released, values_per_sample);
     check_equal(fixture.subscriber_values, values_per_sample);
 
-    run_status = TURBO_OK;
+    run_status = SALTS_OK;
     (void)snprintf(title, sizeof(title),
                    "window=%zu values=%zu", capacity,
                    values_per_sample);
     benchmark_ops(title, samples, values_per_sample) {
-        if (run_status == TURBO_OK)
+        if (run_status == SALTS_OK)
             run_status = reactive_benchmark_run_batch(
                 &fixture, values_per_sample);
     }
 
-    check_equal(run_status, TURBO_OK);
+    check_equal(run_status, SALTS_OK);
     check_true(cflow_io_publisher_owner_get_stats(&fixture.owner, &stats));
     check_true(cflow_io_publisher_owner_get_window_stats(
         &fixture.owner, &window));
@@ -369,6 +369,6 @@ bench("CFlow Reactive Subscription control path") {
            capacity, values_per_sample, samples,
            fixture.drive_calls, fixture.driver_calls,
            window.peak_occupied);
-    check_equal(reactive_benchmark_destroy(&fixture), TURBO_OK);
+    check_equal(reactive_benchmark_destroy(&fixture), SALTS_OK);
 }
 }

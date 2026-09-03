@@ -16,7 +16,7 @@ add_library(${TARGET_NAME} STATIC
 add_dependencies(${TARGET_NAME} ${CMD_ARGER_LEXER_TARGET})
 
 cmake_config_target(${TARGET_NAME}
-  ALIAS Rocida::CmdParser
+  ALIAS Salts::CmdParser
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME CmdParser)
 
@@ -29,6 +29,6 @@ target_include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(${TARGET_NAME} PRIVATE Rocida::DotEnvParser)
+target_link_libraries(${TARGET_NAME} PRIVATE Salts::DotEnvParser)
 
 add_subdirectory(test)

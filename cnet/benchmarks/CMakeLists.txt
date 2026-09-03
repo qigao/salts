@@ -15,7 +15,7 @@ endif()
 
 cmake_add_benchmark(cnet_io_benchmark
   SOURCES cnet_io_benchmark.c cnet_benchmark_stats.c
-  LIBS turbo_cnet Rocida::TinyTest ${CNET_LIBUV_TARGET}
+  LIBS salts_cnet Salts::TinyTest ${CNET_LIBUV_TARGET}
   FOLDER "cnet/benchmarks")
 set_target_properties(cnet_io_benchmark PROPERTIES
   C_STANDARD 11

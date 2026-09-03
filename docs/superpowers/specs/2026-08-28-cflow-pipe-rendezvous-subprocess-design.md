@@ -1,6 +1,6 @@
 # CFlow Pipe Rendezvous and Subprocess Ownership Design
 
-**Issue:** [#133](https://github.com/qigao/turbo-utils/issues/133)
+**Issue:** [#133](https://github.com/qigao/salts/issues/133)
 **Status:** approved, implemented, and verified on Windows and Linux; macOS CI pending
 **Scope:** connection/rendezvous and process-standard-stream ownership only. The
 existing typed byte-pipe read/write data path remains unchanged.
@@ -17,8 +17,8 @@ Split the feature into three explicit layers:
    accept is a real overlapped operation. Windows client connect and POSIX FIFO
    open are synchronous, single-attempt control-plane calls; neither is
    presented as native asynchronous completion.
-3. A separate `TurboUtils::CFlowProcess` adapter combines `TurboUtils::Core`
-   process ownership with `TurboUtils::CFlow` byte-pipe execution. Core gains
+3. A separate `Salts::CFlowProcess` adapter combines `Salts::Core`
+   process ownership with `Salts::CFlow` byte-pipe execution. Core gains
    one additive spawn entry point for borrowed child-side standard handles;
    CFlow itself does not depend on Core and does not duplicate process creation.
 
@@ -37,7 +37,7 @@ message-framing protocol is introduced.
 - `cflow/tests/cflow_io_native_test.c` creates and connects named-pipe pairs
   before submission. It also proves that synchronous `CreatePipe` handles are
   rejected rather than admitted to IOCP.
-- `utils/src/turbo_process.c` is the single process-lifecycle fact source. Its
+- `utils/src/salts_process.c` is the single process-lifecycle fact source. Its
   monitor thread drains captured stdout/stderr and closes those parent
   endpoints. Exporting the same endpoints to CFlow would create two consumers
   and two close paths.
@@ -86,13 +86,13 @@ message-framing protocol is introduced.
 | Named-pipe server accept | supported with overlapped `ConnectNamedPipe` | not applicable | not applicable | Bounded asynchronous rendezvous service |
 | Named-pipe client connect | synchronous single `CreateFile` attempt | not applicable | not applicable | Control plane; busy/missing is returned, never waited internally |
 | FIFO read-side pathname open | not applicable | synchronous `O_RDONLY | O_NONBLOCK` | same | Control plane; success does not claim a writer exists |
-| FIFO write-side pathname open | not applicable | synchronous `O_WRONLY | O_NONBLOCK` | same | Control plane; no reader maps from `ENXIO` to `TURBO_EPIPE` |
-| FIFO accept/connect completion | not applicable | unsupported | unsupported | `TURBO_ENOTSUP`; POSIX exposes no equivalent connection object |
+| FIFO write-side pathname open | not applicable | synchronous `O_WRONLY | O_NONBLOCK` | same | Control plane; no reader maps from `ENXIO` to `SALTS_EPIPE` |
+| FIFO accept/connect completion | not applicable | unsupported | unsupported | `SALTS_ENOTSUP`; POSIX exposes no equivalent connection object |
 | Subprocess async stdin/stdout/stderr | named-pipe parent ends opened overlapped | nonblocking parent pipe ends | nonblocking parent pipe ends | Separate CFlowProcess adapter |
 | Message-mode records / transactions | unsupported | unsupported | unsupported | Outside #133 |
 
 Capability queries describe these distinctions explicitly. Unsupported
-combinations return `TURBO_ENOTSUP`; no backend is selected as a fallback.
+combinations return `SALTS_ENOTSUP`; no backend is selected as a fallback.
 
 ## Ownership model
 
@@ -128,10 +128,10 @@ close. Copying a live endpoint wrapper is forbidden.
 
 ### Subprocess ownership
 
-`turbo_process_t` remains the only owner of the child process, process group or
+`salts_process_t` remains the only owner of the child process, process group or
 Job Object, monitor thread, and terminal result. `cflow_process` owns only:
 
-- the `turbo_process_t` handle;
+- the `salts_process_t` handle;
 - the three parent-side async pipe endpoints that were never captured by the
   Core monitor thread;
 - its bounded native backend, Executor, Actor, and operation slots.
@@ -148,26 +148,26 @@ the repository style during TDD.
 ### Core: borrowed standard-handle spawn
 
 Add a versioned, additive entry point rather than extending
-`turbo_process_options_t`, whose by-value public layout is already compiled into
+`salts_process_options_t`, whose by-value public layout is already compiled into
 consumers:
 
 ```c
-typedef struct turbo_process_stdio_bindings_t {
+typedef struct salts_process_stdio_bindings_t {
     uintptr_t stdin_handle;
     uintptr_t stdout_handle;
     uintptr_t stderr_handle;
-} turbo_process_stdio_bindings_t;
+} salts_process_stdio_bindings_t;
 
-int turbo_process_spawn_with_stdio(
-    const turbo_process_options_t *options,
-    const turbo_process_stdio_bindings_t *bindings,
-    turbo_process_t **out_process);
+int salts_process_spawn_with_stdio(
+    const salts_process_options_t *options,
+    const salts_process_stdio_bindings_t *bindings,
+    salts_process_t **out_process);
 ```
 
 Each binding is either a native handle/descriptor or the documented inherit
 sentinel. The call rejects a supplied stdin binding combined with
-`TURBO_PROCESS_PIPE_STDIN`, and supplied stdout/stderr bindings combined with
-the corresponding capture flag. Existing `turbo_process_spawn()` and its ABI
+`SALTS_PROCESS_PIPE_STDIN`, and supplied stdout/stderr bindings combined with
+the corresponding capture flag. Existing `salts_process_spawn()` and its ABI
 remain unchanged.
 
 On Windows the implementation duplicates supplied handles as inheritable child
@@ -202,7 +202,7 @@ Failure and cancellation callbacks receive an invalid endpoint.
 
 ### CFlowProcess: combined adapter target
 
-Add a static `TurboUtils::CFlowProcess` target after Core and CFlow, exposing
+Add a static `Salts::CFlowProcess` target after Core and CFlow, exposing
 `<cflow/process.h>`. It provides:
 
 - start/poll/terminate and terminal process result observation;
@@ -246,7 +246,7 @@ cancellation; `GetOverlappedResult` supplies the authoritative completion. The
 through the same authoritative completion lane.
 
 Server `close()` stops admission and requests cancellation for pending accepts.
-`destroy()` returns `TURBO_EBUSY` until all terminal callbacks have run and all
+`destroy()` returns `SALTS_EBUSY` until all terminal callbacks have run and all
 slots are free. It never disconnects or closes transferred endpoints.
 
 ### Synchronous open
@@ -257,8 +257,8 @@ Client/FIFO open has no admitted asynchronous request:
 INVALID_OUTPUT --single platform open--> OWNED_ENDPOINT | EXPLICIT_ERROR
 ```
 
-Windows `ERROR_PIPE_BUSY` maps to `TURBO_EBUSY`; missing pipe maps to
-`TURBO_ENOENT`. POSIX FIFO writer `ENXIO` maps to `TURBO_EPIPE`. No sleep,
+Windows `ERROR_PIPE_BUSY` maps to `SALTS_EBUSY`; missing pipe maps to
+`SALTS_ENOENT`. POSIX FIFO writer `ENXIO` maps to `SALTS_EPIPE`. No sleep,
 `WaitNamedPipe`, retry, or worker dispatch occurs internally.
 
 ### CFlowProcess
@@ -281,15 +281,15 @@ completions, then joins/destroys the Core process owner.
 
 ## Error semantics
 
-- Invalid configuration and contradictory ownership flags: `TURBO_EINVAL`.
-- Unsupported platform/backend/semantic combination: `TURBO_ENOTSUP`.
+- Invalid configuration and contradictory ownership flags: `SALTS_EINVAL`.
+- Unsupported platform/backend/semantic combination: `SALTS_ENOTSUP`.
 - Full bounded admission: typed `CFLOW_IO_PIPE_SUBMIT_FULL`; no allocation
   fallback.
 - Closed admission: typed `CFLOW_IO_PIPE_SUBMIT_CLOSED`.
-- Windows missing/busy pipe: `TURBO_ENOENT` / `TURBO_EBUSY`.
-- POSIX FIFO writer without reader: `TURBO_EPIPE`.
+- Windows missing/busy pipe: `SALTS_ENOENT` / `SALTS_EBUSY`.
+- POSIX FIFO writer without reader: `SALTS_EPIPE`.
 - Read after peer close: `CFLOW_IO_COMPLETION_EOF`.
-- Broken write: `CFLOW_IO_COMPLETION_FAILED` with `TURBO_EPIPE`.
+- Broken write: `CFLOW_IO_COMPLETION_FAILED` with `SALTS_EPIPE`.
 - Process termination and I/O cancellation are independent observations; one
   does not overwrite the other.
 - The first control/lifecycle error is retained and later cleanup errors do not
@@ -367,7 +367,7 @@ with its own named bounded-worker API.
   layouts and behavior.
 - The Core spawn addition is a new symbol; existing callers do not migrate.
 - `<cflow/io_pipe.h>` and `<cflow/process.h>` are additive headers.
-- `TurboUtils::CFlowProcess` is an additive exported target; CFlow alone does
+- `Salts::CFlowProcess` is an additive exported target; CFlow alone does
   not acquire a Core dependency.
 - Existing callers that manually create connected handles may continue using
   `cflow_io_native_backend_pipe_actor_ops()` unchanged.
@@ -389,7 +389,7 @@ changing serialized data, existing ABI layouts, or current read/write behavior.
 
 ### POSIX FIFO
 
-- `mkfifo`, nonblocking reader open, writer-without-reader `TURBO_EPIPE`;
+- `mkfifo`, nonblocking reader open, writer-without-reader `SALTS_EPIPE`;
 - reader then writer success and byte transfer;
 - zero-byte read with no writers documented as request EOF, without implicit
   descriptor close;
@@ -408,12 +408,12 @@ Linux tests run remotely on `root@eu`; macOS behavior is verified by CI.
 - only the intended child handles/descriptors are inherited;
 - spawn failure closes every temporary child and parent endpoint;
 - terminate/timeout/close/destroy ordering and repeated resource-count checks;
-- existing `test_turbo_process` behavior remains passing, with additive
+- existing `test_salts_process` behavior remains passing, with additive
   borrowed and crossed-descriptor binding coverage.
 
 ### API and packaging
 
 - C and C++ header compilation for both new headers;
-- CMake install/export consumption of `TurboUtils::CFlowProcess`;
+- CMake install/export consumption of `Salts::CFlowProcess`;
 - focused Debug/Release tests, adjacent native I/O/process regressions, then
   platform CI.

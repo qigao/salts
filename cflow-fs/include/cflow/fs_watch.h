@@ -76,14 +76,14 @@ typedef struct cflow_fs_watch_stats {
  * @param watch Zero-initialized owning destination.
  * @param path Existing directory encoded as UTF-8.
  * @param config Positive capacities and a non-NULL callback.
- * @return TURBO_OK, TURBO_EINVAL, TURBO_ENOMEM, TURBO_ENOTSUP for an
+ * @return SALTS_OK, SALTS_EINVAL, SALTS_ENOMEM, SALTS_ENOTSUP for an
  * unsupported recursive/backend contract, or a negative native error.
  */
 int cflow_fs_watch_open(cflow_fs_watch *watch, const char *path,
                         const cflow_fs_watch_config *config);
 /**
  * Deliver at most max_events callbacks on the calling driver thread.
- * @return TURBO_OK, TURBO_EINVAL, or TURBO_EBUSY for concurrent/reentrant use.
+ * @return SALTS_OK, SALTS_EINVAL, or SALTS_EBUSY for concurrent/reentrant use.
  */
 int cflow_fs_watch_run_ready(cflow_fs_watch *watch, size_t max_events,
                              size_t *delivered);

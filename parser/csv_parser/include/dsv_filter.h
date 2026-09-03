@@ -1,5 +1,5 @@
-#ifndef TURBO_SCRIPT_DSV_FILTER_H
-#define TURBO_SCRIPT_DSV_FILTER_H
+#ifndef SALTS_SCRIPT_DSV_FILTER_H
+#define SALTS_SCRIPT_DSV_FILTER_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -62,4 +62,4 @@ int dsv_filter_index_seek(dsv_filter_t *filter, const dsv_index_t *index,
 }
 #endif
 
-#endif // TURBO_SCRIPT_DSV_FILTER_H
+#endif // SALTS_SCRIPT_DSV_FILTER_H

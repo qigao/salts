@@ -140,7 +140,7 @@ sequence 在 delivery 时分配，不存在“较小但尚未 delivery”的 ent
 - `cflow_io_actor_try_submit()` 保持 MPSC-safe，但 Adapter 自身只有上述单 producer；
 - backend completion 可从任意线程进入 Actor；
 - manual Executor 可由一个 owner driver 消费，encoder 在该 driver 上串行执行；
-- owner driver 仍是 single-driver，并发或重入返回 `TURBO_EBUSY`；
+- owner driver 仍是 single-driver，并发或重入返回 `SALTS_EBUSY`；
 - Source waker 与外部 drive callback 始终在 Adapter gate 外执行。
 
 每个 entry 的公开可观察状态迁移为：
@@ -182,12 +182,12 @@ Adapter 查找最早 ready entry 和可 acknowledge entry 的最坏时间为 O(w
 关闭顺序保持旧协议：停止 Source admission，Actor close，等待 authoritative native
 completion，Executor delivery，Adapter discard/emit 状态结算，Actor acknowledge，
 Source destroy，最后 owner close。Owner close 在任一 occupied entry、callback credit、
-driver credit、live Source 或非 quiescent Actor 存在时返回 `TURBO_EBUSY`。
+driver credit、live Source 或非 quiescent Actor 存在时返回 `SALTS_EBUSY`。
 
 新增错误边界：
 
-- window 为 0 或大于 64：`TURBO_EINVAL`；
-- checked allocation 失败：`TURBO_ENOMEM`；
+- window 为 0 或大于 64：`SALTS_EINVAL`；
+- checked allocation 失败：`SALTS_ENOMEM`；
 - Actor FULL/LEASE/command FULL 在内部容量本应可接纳时：稳定 Source protocol error，
   不 fallback；
 - completion lease 不指向对应 occupied entry、request id 不一致、重复 result 或非法

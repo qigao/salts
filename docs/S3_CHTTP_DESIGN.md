@@ -2,9 +2,9 @@
 
 ## Decision context
 
-TurboHTTP contains an S3 module, but its current `main` revision
+legacy HTTP repository contains an S3 module, but its current `main` revision
 `5f1068f5194f94472e54a185ec51638f421d4fc5` is coupled to CoroNet and the
-`turbo_http` H1/H2/H3 facade. It also contains incomplete presigned-POST and
+`salts_http` H1/H2/H3 facade. It also contains incomplete presigned-POST and
 timestamp parsing paths. The source repository has no root `LICENSE`,
 `COPYING`, or `NOTICE` file. This migration was explicitly requested by the
 repository owner; `s3/PROVENANCE.md` records the exact source and which ideas
@@ -30,9 +30,9 @@ Rejected. This makes the HTTP client responsible for credentials, object
 storage naming, XML schemas, and multipart recovery. It also prevents other
 CHTTP consumers from depending on a narrow HTTP ABI.
 
-### Add a separate Rocida::S3 adapter above CHTTP
+### Add a separate Salts::S3 adapter above CHTTP
 
-Selected. `Rocida::S3` owns S3 request construction and parsing, borrows an
+Selected. `Salts::S3` owns S3 request construction and parsing, borrows an
 injected CHTTP client, and uses the same public call for H1 or H2. CHTTP remains
 the only owner of connections, TLS, HTTP framing, connection pooling, file
 source/sink progress, and protocol shutdown.
@@ -43,16 +43,16 @@ source/sink progress, and protocol shutdown.
 application
     |
     v
-Rocida::S3  -- private --> BoringSSL OpenSSL-compatible Crypto target
-    |        -- private --> Rocida::XmlParser / Rocida::STL / Rocida::Core
+Salts::S3  -- private --> BoringSSL OpenSSL-compatible Crypto target
+    |        -- private --> Salts::XmlParser / Salts::CSTL / Salts::Core
     v
-Rocida::CHTTP
+Salts::CHTTP
     v
-Rocida::CNet -> NativeIO
+Salts::CNet -> NativeIO
 ```
 
-The installed C target is `Rocida::S3`; its implementation library is
-`turbo_s3`, version and SOVERSION 1. Public headers include CHTTP types but do
+The installed C target is `Salts::S3`; its implementation library is
+`salts_s3`, version and SOVERSION 1. Public headers include CHTTP types but do
 not expose BoringSSL, llhttp, the XML engine, CoroNet, or H3 types.
 
 ## Public model
@@ -106,8 +106,8 @@ only through the blocking call or async terminal callback.
 
 `s3_response` owns status, copied response headers/body, and parsed service
 error fields. `s3_response_view` is callback-scoped. A transport or local error
-returns the underlying Turbo status. A non-2xx S3 response returns
-`TURBO_EPROTO`, preserves the HTTP response, and parses bounded `Code`,
+returns the underlying Salts status. A non-2xx S3 response returns
+`SALTS_EPROTO`, preserves the HTTP response, and parses bounded `Code`,
 `Message`, `RequestId`, and `HostId` fields when an XML error body is present.
 
 ## Addressing and signing invariant
@@ -144,17 +144,17 @@ CHTTP bound. The initial defaults are:
 
 | Resource | Default hard bound | Full behavior |
 | --- | ---: | --- |
-| bucket name | 63 bytes | `TURBO_ENAMETOOLONG` |
-| object key | 1,024 bytes | `TURBO_ENAMETOOLONG` |
-| request target | 8 KiB | `TURBO_EMSGSIZE` |
-| query entries | 64 | `TURBO_ENOBUFS` |
-| application plus signing headers | 64 | `TURBO_ENOBUFS` |
-| aggregate header bytes | 32 KiB | `TURBO_EMSGSIZE` |
-| XML response/config document | 4 MiB | `TURBO_EMSGSIZE` |
-| parsed XML nodes | 65,536 | `TURBO_EMSGSIZE` |
-| returned list entries | 10,000 | `TURBO_ENOBUFS` |
-| multipart parts | 10,000 | `TURBO_ENOBUFS` |
-| high-level multipart part buffer | 64 MiB; configurable up to `INT_MAX` | `TURBO_EINVAL` |
+| bucket name | 63 bytes | `SALTS_ENAMETOOLONG` |
+| object key | 1,024 bytes | `SALTS_ENAMETOOLONG` |
+| request target | 8 KiB | `SALTS_EMSGSIZE` |
+| query entries | 64 | `SALTS_ENOBUFS` |
+| application plus signing headers | 64 | `SALTS_ENOBUFS` |
+| aggregate header bytes | 32 KiB | `SALTS_EMSGSIZE` |
+| XML response/config document | 4 MiB | `SALTS_EMSGSIZE` |
+| parsed XML nodes | 65,536 | `SALTS_EMSGSIZE` |
+| returned list entries | 10,000 | `SALTS_ENOBUFS` |
+| multipart parts | 10,000 | `SALTS_ENOBUFS` |
+| high-level multipart part buffer | 64 MiB; configurable up to `INT_MAX` | `SALTS_EINVAL` |
 | file/source chunk | CHTTP `stream_chunk_bytes` | CHTTP backpressure |
 
 Checked addition/multiplication is required before every allocation and target
@@ -188,7 +188,7 @@ document only after the server confirms success. A terminal failure attempts
 AbortMultipartUpload unless resumability was explicitly requested; abort
 failure is returned with the upload id still available for caller recovery.
 If the server has confirmed completion but checkpoint removal fails, the object
-is already committed; the call returns `TURBO_EIO` at
+is already committed; the call returns `SALTS_EIO` at
 `multipart-checkpoint-remove`, and the caller removes the stale checkpoint
 instead of resuming it.
 
@@ -205,13 +205,13 @@ ids, copy responses, and management documents. It disables any need to expose
 the private parser. Lifecycle, notification, and replication operations
 validate the expected root element before sending caller XML and return the
 bounded owned XML response on GET. This keeps the transport adapter complete
-without importing TurboHTTP's partially validated mutable configuration
+without importing legacy HTTP repository's partially validated mutable configuration
 objects. Typed builders may be added later without changing the wire API.
 
 ## Compatibility, migration, and rollback
 
 This adds a new target and headers; it does not change CHTTP, CNet, or CRPC ABI.
-Applications migrating from TurboHTTP must replace CoroNet context ownership
+Applications migrating from legacy HTTP repository must replace CoroNet context ownership
 with an injected CHTTP client and replace `tstr` return values with explicit
 owned response/list destroy calls. H3 is intentionally unavailable and no
 runtime compatibility fallback exists.

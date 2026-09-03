@@ -4,9 +4,9 @@
 
 **Goal:** Complete the `native_io_*` public API migration and replace the serialized NativeIO Reactive helper with a Publisher/Subscriber two-worker execution path.
 
-**Architecture:** NativeIO remains a single-owner, caller-driven backend. A dedicated one-worker Turbo thread pool owns Publisher/NativeIO progress, while a one-worker CFlow Worker Scheduler owns Subscription pumping and Subscriber callbacks. The two roles exchange only bounded control edges; NativeIO request slots, Actor request slots, and Subscription demand remain their respective authoritative states.
+**Architecture:** NativeIO remains a single-owner, caller-driven backend. A dedicated one-worker Salts thread pool owns Publisher/NativeIO progress, while a one-worker CFlow Worker Scheduler owns Subscription pumping and Subscriber callbacks. The two roles exchange only bounded control edges; NativeIO request slots, Actor request slots, and Subscription demand remain their respective authoritative states.
 
-**Tech Stack:** C11/C++17 headers, NativeIO, CFlow Actor/Reactive, Turbo thread pool, TinyTest, CMake Presets.
+**Tech Stack:** C11/C++17 headers, NativeIO, CFlow Actor/Reactive, Salts thread pool, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-31-cflow-threaded-reactive-native-io-design.md`
 
@@ -21,7 +21,7 @@
 
 **Files:**
 - Modify: `native-io/tests/native_io_header_cpp_test.cpp`
-- Modify: `native-io/include/turbo/native_io.h`
+- Modify: `native-io/include/salts/native_io.h`
 - Modify: `native-io/src/*.c`, tests, benchmarks, CFlow consumers, and current user documentation
 
 - [x] Change the C++ header test to instantiate only `native_io_*` types, functions, and `NATIVE_IO_*` constants.

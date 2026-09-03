@@ -9,6 +9,6 @@ endif()
 
 cmake_add_benchmark(benchmark_simd_scan
   SOURCES benchmark_simd_scan.c
-  LIBS Rocida::TinyTest
+  LIBS Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../.. ${SIMDE_INCLUDE_DIRS}
   FOLDER "parser/toon/benchmarks")

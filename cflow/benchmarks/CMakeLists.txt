@@ -6,22 +6,22 @@ cmake_add_benchmark(cflow_direct_benchmark
     cflow_graph_path_benchmark.c
     cflow_branching_views.c
     cflow_branching_csr_benchmark.c
-  LIBS Rocida::CFlow Rocida::STL Rocida::TinyTest
+  LIBS Salts::CFlow Salts::CSTL Salts::TinyTest
   FOLDER "cflow/benchmarks")
 
 cmake_add_benchmark(cflow_parallel_reduce_benchmark
   SOURCES cflow_parallel_reduce_benchmark.c
-  LIBS Rocida::CFlow Rocida::TinyTest
+  LIBS Salts::CFlow Salts::TinyTest
   FOLDER "cflow/benchmarks")
 
 cmake_add_benchmark(cflow_machine_hierarchy_benchmark
   SOURCES cflow_machine_hierarchy_benchmark.c
-  LIBS Rocida::CFlow Rocida::Platform Rocida::TinyTest
+  LIBS Salts::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/benchmarks")
 
 cmake_add_benchmark(cflow_reactive_benchmark
   SOURCES cflow_reactive_benchmark.c
-  LIBS Rocida::CFlow Rocida::TinyTest
+  LIBS Salts::CFlow Salts::TinyTest
   FOLDER "cflow/benchmarks")
 
 set_target_properties(cflow_direct_benchmark PROPERTIES

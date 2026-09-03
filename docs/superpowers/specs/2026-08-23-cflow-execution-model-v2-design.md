@@ -7,7 +7,7 @@ parallel reduction, Phase G-3 Lean/C refinement evidence, and Phase G-4 host
 verification are complete on the execution-model-v2 branch. PR #58 pre-merge
 execution-model head
 `7396925e2b0a6bb592c2122ff9c321a2b5489f3a` passed CMeta conformance run
-[32653089799](https://github.com/qigao/turbo-utils/actions/runs/32653089799)
+[32653089799](https://github.com/qigao/salts/actions/runs/32653089799)
 across Linux, Windows, and native macOS, plus Android arm64 cross-build/install
 evidence. Android device runtime remains outside this evidence boundary.
 
@@ -26,21 +26,21 @@ Each change must pass independently. A failure in a later phase does not weaken 
 
 ## Approved compatibility transition
 
-The existing `turbo_threadpool_submit()` and `turbo_threadpool_try_submit()` return `0` on acceptance and an undocumented `-1` for every failure. Exact CFlow admission reporting cannot distinguish invalid input, full queue, or shutdown while that ambiguity remains.
+The existing `salts_threadpool_submit()` and `salts_threadpool_try_submit()` return `0` on acceptance and an undocumented `-1` for every failure. Exact CFlow admission reporting cannot distinguish invalid input, full queue, or shutdown while that ambiguity remains.
 
-Execution Model v2 defines stable TurboUtils error returns:
+Execution Model v2 defines stable Salts error returns:
 
 | Condition | Return code |
 |---|---|
-| accepted | `TURBO_OK` |
-| invalid pool or callback | `TURBO_EINVAL` |
-| bounded queue full in `try_submit` | `TURBO_ENOBUFS` |
-| pool no longer accepts work | `TURBO_ESHUTDOWN` |
+| accepted | `SALTS_OK` |
+| invalid pool or callback | `SALTS_EINVAL` |
+| bounded queue full in `try_submit` | `SALTS_ENOBUFS` |
+| pool no longer accepts work | `SALTS_ESHUTDOWN` |
 | internal allocation failure during creation | creation returns `NULL` |
 
 Callers that already test `rc != 0` remain source-compatible. A caller that compares exactly with `-1` must migrate. This is an observable return-code change and must be approved before implementation.
 
-The dependency-neutral error constants live in `platform/include/turbo/error_codes.h`; the existing Core `turbo_error.h` includes that header. This preserves the dependency direction `Core -> Concurrency -> Platform` while giving Concurrency and CFlow one error-code fact source.
+The dependency-neutral error constants live in `platform/include/salts/error_codes.h`; the existing Core `salts_error.h` includes that header. This preserves the dependency direction `Core -> Concurrency -> Platform` while giving Concurrency and CFlow one error-code fact source.
 
 Adding checked admission, shutdown, and statistics methods to the generated Executor/Scheduler operation tables also requires external interface implementers to rebuild and provide the new entries. Ordinary callers retain the same `cflow_executor`/`cflow_scheduler` object layout and convenience calls, but an independently compiled custom implementation is not binary-compatible across this v2 boundary. The repository currently exposes no versioned plugin ABI for these interfaces; the change is therefore an explicit v2 ABI transition.
 
@@ -258,14 +258,14 @@ Primary references:
 The macOS job runs the same owner-test regex and installed-package consumer target as Linux/Windows. The Android job builds the exported libraries and installs the package for arm64; it cannot run host executables produced for Android.
 
 The pre-merge execution-model branch verification completed in PR #58 run
-[32653089799](https://github.com/qigao/turbo-utils/actions/runs/32653089799):
+[32653089799](https://github.com/qigao/salts/actions/runs/32653089799):
 
 | Host job | Result | Evidence boundary |
 |---|---|---|
-| [Linux release](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595385) | Passed | Release build, owner tests, Lean refinement check, C certificate binding, and installed-package consumers. |
-| [Windows release](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595405) | Passed | Release configure, build, and test. |
-| [macOS 15 release](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227597826) | Passed | Native Release build, owner tests, and installed-package consumers. |
-| [Android arm64 Release cross-build](https://github.com/qigao/turbo-utils/actions/runs/32653089799/job/97227595331) | Passed | `android-24`/`arm64-v8a` configure, cross-build, install, export checks, and evidence artifact; no runtime execution. |
+| [Linux release](https://github.com/qigao/salts/actions/runs/32653089799/job/97227595385) | Passed | Release build, owner tests, Lean refinement check, C certificate binding, and installed-package consumers. |
+| [Windows release](https://github.com/qigao/salts/actions/runs/32653089799/job/97227595405) | Passed | Release configure, build, and test. |
+| [macOS 15 release](https://github.com/qigao/salts/actions/runs/32653089799/job/97227597826) | Passed | Native Release build, owner tests, and installed-package consumers. |
+| [Android arm64 Release cross-build](https://github.com/qigao/salts/actions/runs/32653089799/job/97227595331) | Passed | `android-24`/`arm64-v8a` configure, cross-build, install, export checks, and evidence artifact; no runtime execution. |
 
 The Android artifact contains the install tree, CMake cache/configure log, NDK
 revision, compiler version, ABI, and API level so a cross-toolchain failure can

@@ -17,9 +17,9 @@ static int chttp_request_test_read(void *user, void *buffer, size_t capacity, si
   (void)user;
   (void)buffer;
   (void)capacity;
-  if (out_size == NULL) return TURBO_EINVAL;
+  if (out_size == NULL) return SALTS_EINVAL;
   *out_size = 0u;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static chttp_limits chttp_request_test_limits(void) {
@@ -56,7 +56,7 @@ spec("CHTTP bounded request serializer") {
     unsigned char *data = NULL;
     size_t size = 0u;
 
-    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_OK);
+    check_equal(chttp_request_build(&options, &limits, &data, &size), SALTS_OK);
     check_equal(size, sizeof(expected) - 1u);
     check_equal(data, expected, size);
     free(data);
@@ -76,9 +76,9 @@ spec("CHTTP bounded request serializer") {
     unsigned char *data = NULL;
     size_t size = 0u;
 
-    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EINVAL);
+    check_equal(chttp_request_build(&options, &limits, &data, &size), SALTS_EINVAL);
     options.headers = injected;
-    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EINVAL);
+    check_equal(chttp_request_build(&options, &limits, &data, &size), SALTS_EINVAL);
     check_null(data);
     check_equal(size, (size_t)0u);
   }
@@ -99,13 +99,13 @@ spec("CHTTP bounded request serializer") {
     size_t size = 0u;
 
     limits.max_start_line_bytes = 16u;
-    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EMSGSIZE);
+    check_equal(chttp_request_build(&options, &limits, &data, &size), SALTS_EMSGSIZE);
     limits = chttp_request_test_limits();
     limits.max_header_count = 3u;
-    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EMSGSIZE);
+    check_equal(chttp_request_build(&options, &limits, &data, &size), SALTS_EMSGSIZE);
     limits = chttp_request_test_limits();
     limits.max_request_body_bytes = 3u;
-    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EMSGSIZE);
+    check_equal(chttp_request_build(&options, &limits, &data, &size), SALTS_EMSGSIZE);
   }
 
   it("validates a borrowed streaming source before admission") {
@@ -121,18 +121,18 @@ spec("CHTTP bounded request serializer") {
     unsigned char *data = NULL;
     size_t size = 0u;
 
-    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EMSGSIZE);
+    check_equal(chttp_request_build(&options, &limits, &data, &size), SALTS_EMSGSIZE);
     source.content_length = 4u;
     options.body = "body";
     options.body_size = 4u;
-    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EINVAL);
+    check_equal(chttp_request_build(&options, &limits, &data, &size), SALTS_EINVAL);
     options.body = NULL;
     options.body_size = 0u;
     source.read = NULL;
-    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EINVAL);
+    check_equal(chttp_request_build(&options, &limits, &data, &size), SALTS_EINVAL);
     source.read = chttp_request_test_read;
     source.content_length_known = 2;
-    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EINVAL);
+    check_equal(chttp_request_build(&options, &limits, &data, &size), SALTS_EINVAL);
     check_null(data);
     check_equal(size, (size_t)0u);
   }

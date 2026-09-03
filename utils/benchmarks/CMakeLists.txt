@@ -5,7 +5,7 @@ find_package(unofficial-sqlite3 CONFIG REQUIRED)
 cmake_add_source(BENCHMARK_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR}
                  PATTERNS "bench_*.c" "test_*_bench.c")
 
-set(COMMON_LIBS Rocida::TinyTest Rocida::Core)
+set(COMMON_LIBS Salts::TinyTest Salts::Core)
 if(WIN32)
   list(APPEND COMMON_LIBS psapi iphlpapi userenv ws2_32)
 endif()
@@ -26,7 +26,7 @@ endforeach()
 
 foreach(tgt test_str_bench)
   if(TARGET ${tgt})
-    target_link_libraries(${tgt} PRIVATE Rocida::SDS)
+    target_link_libraries(${tgt} PRIVATE Salts::SDS)
   endif()
 endforeach()
 

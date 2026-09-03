@@ -1,4 +1,4 @@
-set(TARGET_NAME turbo_native_io)
+set(TARGET_NAME salts_native_io)
 
 add_library(${TARGET_NAME} STATIC src/native_io.c)
 
@@ -30,7 +30,7 @@ endif()
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS Rocida::NativeIO
+  ALIAS Salts::NativeIO
   FOLDER "native-io"
   EXPORT_NAME NativeIO)
 
@@ -40,8 +40,8 @@ target_include_directories(
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(${TARGET_NAME}
-  PUBLIC Rocida::Platform
-  PRIVATE Rocida::Coroutine)
+  PUBLIC Salts::Platform
+  PRIVATE Salts::Coroutine)
 
 if(WIN32)
   target_link_libraries(${TARGET_NAME} PRIVATE ws2_32)
@@ -49,13 +49,13 @@ endif()
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT RocidaTargets
+  EXPORT SaltsTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(
-  DIRECTORY include/turbo
+  DIRECTORY include/salts
   DESTINATION include
   FILES_MATCHING PATTERN "*.h")
 

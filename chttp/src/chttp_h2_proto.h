@@ -2,7 +2,7 @@
  * @file chttp_h2_proto.h
  * @brief Private bounded HTTP/2 protocol engine (RFC 9113).
  *
- * Migrated from qigao/TurboHTTP commit
+ * Migrated from the legacy HTTP repository commit
  * 38f1e389b3f94909db6cb2482a8cbc16522e7e4f. Owns the wire state machine
  * (preface, SETTINGS, frame dispatch, HPACK, stream/flow-control windows,
  * GOAWAY/PING/RST) and

@@ -1,8 +1,8 @@
 #include <cflow/fs.h>
 
 #include <cflow/executor.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <limits.h>
 #include <stdatomic.h>
@@ -28,7 +28,7 @@ typedef struct cflow_fs_slot {
     uint64_t request_id;
     cflow_fs_operation_kind operation;
     union {
-        turbo_fs_stat_t *stat_out;
+        salts_fs_stat_t *stat_out;
         cflow_fs_dir_buffer *directory_out;
         int mode;
     } arguments;
@@ -42,7 +42,7 @@ struct cflow_fs_impl {
     char *paths;
     size_t capacity;
     size_t path_capacity;
-    turbo_mutex_t gate;
+    salts_mutex_t gate;
     uint64_t next_request_id;
     cflow_fs_completion_fn completion;
     void *completion_user;
@@ -90,7 +90,7 @@ static void fs_slot_reset(cflow_fs_slot *slot) {
     slot->request_id = 0u;
     slot->operation = CFLOW_FS_STAT;
     memset(&slot->arguments, 0, sizeof(slot->arguments));
-    slot->result = TURBO_OK;
+    slot->result = SALTS_OK;
     slot->path[0] = '\0';
     slot->second_path[0] = '\0';
     atomic_store(&slot->cancel_requested, false);
@@ -99,26 +99,26 @@ static void fs_slot_reset(cflow_fs_slot *slot) {
 
 static int fs_read_directory(cflow_fs_slot *slot) {
     cflow_fs_dir_buffer *out = slot->arguments.directory_out;
-    turbo_fs_dir_t *directory = NULL;
-    turbo_fs_dirent_t entry;
+    salts_fs_dir_t *directory = NULL;
+    salts_fs_dirent_t entry;
     size_t entry_count = 0u;
     size_t names_used = 0u;
     int status;
 
     out->entry_count = 0u;
     out->names_used = 0u;
-    status = turbo_fs_opendir(slot->path, &directory);
-    if (status != TURBO_OK)
+    status = salts_fs_opendir(slot->path, &directory);
+    if (status != SALTS_OK)
         return status;
     for (;;) {
         size_t name_length;
-        status = turbo_fs_readdir(directory, &entry);
+        status = salts_fs_readdir(directory, &entry);
         if (status <= 0)
             break;
         name_length = strlen(entry.name) + 1u;
         if (entry_count == out->entry_capacity ||
             name_length > out->names_capacity - names_used) {
-            status = TURBO_ENOBUFS;
+            status = SALTS_ENOBUFS;
             break;
         }
         memcpy(out->names + names_used, entry.name, name_length);
@@ -128,38 +128,38 @@ static int fs_read_directory(cflow_fs_slot *slot) {
         ++entry_count;
     }
     {
-        const int close_status = turbo_fs_closedir(directory);
-        if (status == TURBO_OK && close_status != TURBO_OK)
+        const int close_status = salts_fs_closedir(directory);
+        if (status == SALTS_OK && close_status != SALTS_OK)
             status = close_status;
     }
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         out->entry_count = 0u;
         out->names_used = 0u;
         return status;
     }
     out->entry_count = entry_count;
     out->names_used = names_used;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int fs_execute(cflow_fs_slot *slot) {
     switch (slot->operation) {
         case CFLOW_FS_STAT:
-            return turbo_fs_stat(slot->path, slot->arguments.stat_out);
+            return salts_fs_stat(slot->path, slot->arguments.stat_out);
         case CFLOW_FS_LSTAT:
-            return turbo_fs_lstat(slot->path, slot->arguments.stat_out);
+            return salts_fs_lstat(slot->path, slot->arguments.stat_out);
         case CFLOW_FS_READ_DIRECTORY:
             return fs_read_directory(slot);
         case CFLOW_FS_MKDIR:
-            return turbo_fs_mkdir(slot->path, slot->arguments.mode);
+            return salts_fs_mkdir(slot->path, slot->arguments.mode);
         case CFLOW_FS_RMDIR:
-            return turbo_fs_rmdir(slot->path);
+            return salts_fs_rmdir(slot->path);
         case CFLOW_FS_RENAME:
-            return turbo_fs_rename(slot->path, slot->second_path);
+            return salts_fs_rename(slot->path, slot->second_path);
         case CFLOW_FS_UNLINK:
-            return turbo_fs_unlink(slot->path);
+            return salts_fs_unlink(slot->path);
         default:
-            return TURBO_EINVAL;
+            return SALTS_EINVAL;
     }
 }
 
@@ -171,7 +171,7 @@ static void fs_worker_run(void *user) {
                                         CFLOW_FS_SLOT_RUNNING))
         return;
     if (atomic_load(&slot->cancel_requested))
-        slot->result = TURBO_ECANCELED;
+        slot->result = SALTS_ECANCELED;
     else
         slot->result = fs_execute(slot);
     atomic_store(&slot->phase, CFLOW_FS_SLOT_COMPLETE);
@@ -184,7 +184,7 @@ static void fs_worker_cancel(void *user) {
         !atomic_compare_exchange_strong(&slot->phase, &expected,
                                         CFLOW_FS_SLOT_RUNNING))
         return;
-    slot->result = TURBO_ECANCELED;
+    slot->result = SALTS_ECANCELED;
     atomic_store(&slot->phase, CFLOW_FS_SLOT_COMPLETE);
 }
 
@@ -212,14 +212,14 @@ static cflow_fs_submit_result fs_submit(
         return fs_submit_result(CFLOW_FS_SUBMIT_CLOSED, 0u);
     }
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (atomic_load(&impl->close_requested)) {
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         atomic_fetch_add(&impl->rejected_closed, 1u);
         return fs_submit_result(CFLOW_FS_SUBMIT_CLOSED, 0u);
     }
     if (impl->next_request_id == UINT64_MAX) {
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         return fs_submit_result(CFLOW_FS_SUBMIT_ID_EXHAUSTED, 0u);
     }
     for (index = 0u; index < impl->capacity; ++index) {
@@ -229,7 +229,7 @@ static cflow_fs_submit_result fs_submit(
         }
     }
     if (slot == NULL) {
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         atomic_fetch_add(&impl->rejected_full, 1u);
         return fs_submit_result(CFLOW_FS_SUBMIT_FULL, 0u);
     }
@@ -241,12 +241,12 @@ static cflow_fs_submit_result fs_submit(
         slot->second_path[0] = '\0';
     slot->request_id = request_id;
     slot->operation = operation;
-    slot->result = TURBO_OK;
+    slot->result = SALTS_OK;
     atomic_store(&slot->cancel_requested, false);
     switch (operation) {
         case CFLOW_FS_STAT:
         case CFLOW_FS_LSTAT:
-            slot->arguments.stat_out = (turbo_fs_stat_t *)output;
+            slot->arguments.stat_out = (salts_fs_stat_t *)output;
             break;
         case CFLOW_FS_READ_DIRECTORY:
             slot->arguments.directory_out = (cflow_fs_dir_buffer *)output;
@@ -260,7 +260,7 @@ static cflow_fs_submit_result fs_submit(
     }
     atomic_store(&slot->phase, CFLOW_FS_SLOT_QUEUED);
     atomic_fetch_add(&impl->in_use, 1u);
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     task = (cflow_executor_task){
         .run = fs_worker_run,
@@ -270,10 +270,10 @@ static cflow_fs_submit_result fs_submit(
     };
     admission = cflow_executor_try_post_task(&impl->executor, &task);
     if (admission != CFLOW_ADMISSION_ACCEPTED) {
-        turbo_mutex_lock(&impl->gate);
+        salts_mutex_lock(&impl->gate);
         fs_slot_reset(slot);
         atomic_fetch_sub(&impl->in_use, 1u);
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         if (admission == CFLOW_ADMISSION_FULL) {
             atomic_fetch_add(&impl->rejected_full, 1u);
             return fs_submit_result(CFLOW_FS_SUBMIT_FULL, 0u);
@@ -307,24 +307,24 @@ int cflow_fs_service_init(cflow_fs_service *service,
         !fs_checked_multiply(config->path_capacity, 2u, &paths_per_slot) ||
         !fs_checked_multiply(config->request_capacity, paths_per_slot,
                              &path_bytes))
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     impl = (cflow_fs_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL)
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     impl->slots = (cflow_fs_slot *)calloc(1u, slot_bytes);
     impl->paths = (char *)calloc(1u, path_bytes);
     if (impl->slots == NULL || impl->paths == NULL) {
         free(impl->paths);
         free(impl->slots);
         free(impl);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
-    turbo_mutex_init(&impl->gate);
+    salts_mutex_init(&impl->gate);
     if (impl->gate == NULL) {
         free(impl->paths);
         free(impl->slots);
         free(impl);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
     impl->capacity = config->request_capacity;
     impl->path_capacity = config->path_capacity;
@@ -353,25 +353,25 @@ int cflow_fs_service_init(cflow_fs_service *service,
         !cflow_executor_as_control(&impl->executor, &impl->control)) {
         if (executor_initialized)
             cflow_executor_destroy(&impl->executor);
-        turbo_mutex_destroy(&impl->gate);
+        salts_mutex_destroy(&impl->gate);
         free(impl->paths);
         free(impl->slots);
         free(impl);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
     service->impl = impl;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 cflow_fs_submit_result cflow_fs_try_stat(
-    cflow_fs_service *service, const char *path, turbo_fs_stat_t *out) {
+    cflow_fs_service *service, const char *path, salts_fs_stat_t *out) {
     if (out == NULL)
         return fs_submit_result(CFLOW_FS_SUBMIT_INVALID_ARGUMENT, 0u);
     return fs_submit(service, CFLOW_FS_STAT, path, NULL, out, 0);
 }
 
 cflow_fs_submit_result cflow_fs_try_lstat(
-    cflow_fs_service *service, const char *path, turbo_fs_stat_t *out) {
+    cflow_fs_service *service, const char *path, salts_fs_stat_t *out) {
     if (out == NULL)
         return fs_submit_result(CFLOW_FS_SUBMIT_INVALID_ARGUMENT, 0u);
     return fs_submit(service, CFLOW_FS_LSTAT, path, NULL, out, 0);
@@ -415,7 +415,7 @@ cflow_fs_cancel_status cflow_fs_try_cancel(
     if (service == NULL || service->impl == NULL || request_id == 0u)
         return CFLOW_FS_CANCEL_INVALID_ARGUMENT;
     impl = (cflow_fs_impl *)service->impl;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     for (index = 0u; index < impl->capacity; ++index) {
         cflow_fs_slot *slot = &impl->slots[index];
         const int phase = atomic_load(&slot->phase);
@@ -424,20 +424,20 @@ cflow_fs_cancel_status cflow_fs_try_cancel(
         if (phase == CFLOW_FS_SLOT_QUEUED) {
             atomic_store(&slot->cancel_requested, true);
             if (atomic_load(&slot->phase) != CFLOW_FS_SLOT_QUEUED) {
-                turbo_mutex_unlock(&impl->gate);
+                salts_mutex_unlock(&impl->gate);
                 return CFLOW_FS_CANCEL_ALREADY_RUNNING;
             }
-            turbo_mutex_unlock(&impl->gate);
+            salts_mutex_unlock(&impl->gate);
             return CFLOW_FS_CANCEL_REQUESTED;
         }
         if (phase == CFLOW_FS_SLOT_RUNNING) {
-            turbo_mutex_unlock(&impl->gate);
+            salts_mutex_unlock(&impl->gate);
             return CFLOW_FS_CANCEL_ALREADY_RUNNING;
         }
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         return CFLOW_FS_CANCEL_NOT_FOUND;
     }
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     return atomic_load(&impl->close_requested)
         ? CFLOW_FS_CANCEL_CLOSED : CFLOW_FS_CANCEL_NOT_FOUND;
 }
@@ -450,11 +450,11 @@ int cflow_fs_run_ready(cflow_fs_service *service, size_t max_completions,
     size_t index;
     if (service == NULL || service->impl == NULL ||
         max_completions == 0u || completed == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     impl = (cflow_fs_impl *)service->impl;
     *completed = 0u;
     if (!atomic_compare_exchange_strong(&impl->driver_active, &expected, true))
-        return TURBO_EBUSY;
+        return SALTS_EBUSY;
     for (index = 0u; index < impl->capacity && delivered < max_completions;
          ++index) {
         cflow_fs_slot *slot = &impl->slots[index];
@@ -469,36 +469,36 @@ int cflow_fs_run_ready(cflow_fs_service *service, size_t max_completions,
         operation = slot->operation;
         result = slot->result;
         impl->completion(impl->completion_user, request_id, operation, result);
-        if (result == TURBO_ECANCELED)
+        if (result == SALTS_ECANCELED)
             atomic_fetch_add(&impl->cancelled, 1u);
         else
             atomic_fetch_add(&impl->completed, 1u);
-        turbo_mutex_lock(&impl->gate);
+        salts_mutex_lock(&impl->gate);
         fs_slot_reset(slot);
         atomic_fetch_sub(&impl->in_use, 1u);
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         ++delivered;
     }
     atomic_store(&impl->driver_active, false);
     *completed = delivered;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 int cflow_fs_close(cflow_fs_service *service) {
     cflow_fs_impl *impl;
     bool expected = false;
     if (service == NULL || service->impl == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     impl = (cflow_fs_impl *)service->impl;
     if (!atomic_compare_exchange_strong(&impl->close_requested,
                                         &expected, true))
-        return TURBO_EALREADY;
+        return SALTS_EALREADY;
     if (!cflow_executor_control_shutdown(
             &impl->control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING)) {
         atomic_store(&impl->close_requested, false);
-        return TURBO_EBUSY;
+        return SALTS_EBUSY;
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 bool cflow_fs_is_quiescent(const cflow_fs_service *service) {
@@ -546,15 +546,15 @@ bool cflow_fs_get_stats(const cflow_fs_service *service,
 int cflow_fs_destroy(cflow_fs_service *service) {
     cflow_fs_impl *impl;
     if (service == NULL || service->impl == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     impl = (cflow_fs_impl *)service->impl;
     if (atomic_load(&impl->driver_active) || !cflow_fs_is_quiescent(service))
-        return TURBO_EBUSY;
+        return SALTS_EBUSY;
     cflow_executor_destroy(&impl->executor);
-    turbo_mutex_destroy(&impl->gate);
+    salts_mutex_destroy(&impl->gate);
     free(impl->paths);
     free(impl->slots);
     free(impl);
     service->impl = NULL;
-    return TURBO_OK;
+    return SALTS_OK;
 }

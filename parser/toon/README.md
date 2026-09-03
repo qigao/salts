@@ -598,14 +598,14 @@ toonObject *toon = TOONc_parseString("name: Ada\n");
 
 int rc = toon_json_to_value(toon, &json);
 TOONc_free(toon);
-if (rc != TURBO_OK) {
+if (rc != SALTS_OK) {
     return rc;
 }
 
 toonObject *copy = NULL;
 rc = toon_json_from_value(json, &copy);
 json_free(json);
-if (rc != TURBO_OK) {
+if (rc != SALTS_OK) {
     return rc;
 }
 

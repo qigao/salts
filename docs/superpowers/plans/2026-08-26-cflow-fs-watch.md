@@ -1,7 +1,7 @@
 # CFlow Filesystem Watch Implementation Plan
 
 **Goal:** Deliver issue #113 as a bounded native event source in
-`TurboUtils::CFlowFS`.
+`Salts::CFlowFS`.
 
 **Spec:** `docs/superpowers/specs/2026-08-26-cflow-fs-watch-design.md`
 

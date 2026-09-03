@@ -3,8 +3,8 @@
 #include "cnet_test_named_pipe.h"
 #include "cnet_test_pipe.h"
 #include "tinytest.h"
-#include <turbo/clock.h>
-#include <turbo/thread.h>
+#include <salts/clock.h>
+#include <salts/thread.h>
 
 #include <limits.h>
 #include <stdint.h>
@@ -71,7 +71,7 @@ static void cnet_owner_test_udp_echo_entry(void *argument) {
   int received;
   int sent;
 
-  echo->status = TURBO_EIO;
+  echo->status = SALTS_EIO;
   if (echo->expected_size > sizeof(buffer) || echo->reply_size > INT_MAX) return;
 #if defined(_WIN32)
   received = recvfrom(echo->socket_value, (char *)buffer, (int)sizeof(buffer), 0,
@@ -90,7 +90,7 @@ static void cnet_owner_test_udp_echo_entry(void *argument) {
                        (const struct sockaddr *)&peer, peer_length);
   else return;
 #endif
-  if (sent == (int)echo->reply_size) echo->status = TURBO_OK;
+  if (sent == (int)echo->reply_size) echo->status = SALTS_OK;
 }
 
 static size_t
@@ -128,7 +128,7 @@ static int cnet_owner_test_listener(cnet_owner_test_socket *out_listener,
   socklen_t length = (socklen_t)sizeof(*out_address);
 #endif
   *out_listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (*out_listener == CNET_OWNER_TEST_INVALID_SOCKET) return TURBO_EIO;
+  if (*out_listener == CNET_OWNER_TEST_INVALID_SOCKET) return SALTS_EIO;
   memset(out_address, 0, sizeof(*out_address));
   out_address->sin_family = AF_INET;
   out_address->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -137,9 +137,9 @@ static int cnet_owner_test_listener(cnet_owner_test_socket *out_listener,
       listen(*out_listener, 1) != 0) {
     cnet_owner_test_close_socket(*out_listener);
     *out_listener = CNET_OWNER_TEST_INVALID_SOCKET;
-    return TURBO_EIO;
+    return SALTS_EIO;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int cnet_owner_test_udp_peer(cnet_owner_test_socket *out_socket,
@@ -150,7 +150,7 @@ static int cnet_owner_test_udp_peer(cnet_owner_test_socket *out_socket,
   socklen_t length = (socklen_t)sizeof(*out_address);
 #endif
   *out_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  if (*out_socket == CNET_OWNER_TEST_INVALID_SOCKET) return TURBO_EIO;
+  if (*out_socket == CNET_OWNER_TEST_INVALID_SOCKET) return SALTS_EIO;
   memset(out_address, 0, sizeof(*out_address));
   out_address->sin_family = AF_INET;
   out_address->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -158,36 +158,36 @@ static int cnet_owner_test_udp_peer(cnet_owner_test_socket *out_socket,
       getsockname(*out_socket, (struct sockaddr *)out_address, &length) != 0) {
     cnet_owner_test_close_socket(*out_socket);
     *out_socket = CNET_OWNER_TEST_INVALID_SOCKET;
-    return TURBO_EIO;
+    return SALTS_EIO;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int cnet_owner_test_drive_to_state(cnet_owner *owner, cnet_session_table *sessions,
                                           cnet_session_handle handle, cnet_session_state expected) {
-  const uint64_t deadline = turbo_monotonic_ms() + CNET_OWNER_TEST_TIMEOUT_MS;
+  const uint64_t deadline = salts_monotonic_ms() + CNET_OWNER_TEST_TIMEOUT_MS;
   for (;;) {
     cnet_session_state state = CNET_SESSION_FREE;
     int status = cnet_session_table_state(sessions, handle, &state);
-    if (status != TURBO_OK) return status;
-    if (state == expected) return TURBO_OK;
-    if (state == CNET_SESSION_TERMINAL) return TURBO_EIO;
+    if (status != SALTS_OK) return status;
+    if (state == expected) return SALTS_OK;
+    if (state == CNET_SESSION_TERMINAL) return SALTS_EIO;
     status = cnet_owner_drive(owner, 10u);
-    if (status != TURBO_OK) return status;
-    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
+    if (status != SALTS_OK) return status;
+    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
 }
 
 static int cnet_owner_test_drive_to_event(cnet_owner *owner, cnet_event_queue *events,
                                           cnet_event_view *out_event) {
-  const uint64_t deadline = turbo_monotonic_ms() + CNET_OWNER_TEST_TIMEOUT_MS;
+  const uint64_t deadline = salts_monotonic_ms() + CNET_OWNER_TEST_TIMEOUT_MS;
   for (;;) {
     int status = cnet_event_queue_take(events, out_event);
-    if (status == TURBO_OK) return TURBO_OK;
-    if (status != TURBO_ETIMEDOUT) return status;
+    if (status == SALTS_OK) return SALTS_OK;
+    if (status != SALTS_ETIMEDOUT) return status;
     status = cnet_owner_drive(owner, 10u);
-    if (status != TURBO_OK) return status;
-    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
+    if (status != SALTS_OK) return status;
+    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
 }
 
@@ -231,25 +231,25 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   unsigned char received[sizeof(payload)] = {0};
   size_t event_index;
 
-  check_equal(cnet_session_table_init(&sessions, 1u), TURBO_OK);
-  check_equal(cnet_command_queue_init(&commands, &command_config), TURBO_OK);
-  check_equal(cnet_event_queue_init(&events, &event_config), TURBO_OK);
-  check_equal(cnet_owner_init(&owner, &owner_config), TURBO_OK);
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+  check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
   check_true(cnet_owner_get_coroutine_stats(&owner, &coroutine_stats));
   check_equal(coroutine_stats.capacity, owner_config.request_capacity);
   check_equal(coroutine_stats.active, 0u);
   check_equal(coroutine_stats.retained_frames, 0u);
-  check_equal(cnet_owner_test_listener(&listener, &address), TURBO_OK);
-  check_equal(cnet_session_table_reserve(&sessions, &session), TURBO_OK);
+  check_equal(cnet_owner_test_listener(&listener, &address), SALTS_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
   queued_state = (cnet_event){CNET_EVENT_STATE,
                               {UINT32_MAX, UINT32_MAX},
                               CNET_EVENT_STATE_CLOSING,
-                              TURBO_OK,
+                              SALTS_OK,
                               CNET_SESSION_STAGE_NONE,
                               NULL,
                               0u};
   for (event_index = 0u; event_index < event_config.capacity; ++event_index)
-    check_equal(cnet_event_queue_publish(&events, &queued_state), TURBO_OK);
+    check_equal(cnet_event_queue_publish(&events, &queued_state), SALTS_OK);
   connect_payload.scheme = CNET_URI_TCP;
   connect_payload.connect_timeout_ms = timeout == CNET_OWNER_TEST_CONNECT_TIMEOUT ? 10u : 0u;
   connect_payload.read_timeout_ms = timeout == CNET_OWNER_TEST_READ_TIMEOUT ? 10u : 0u;
@@ -263,56 +263,56 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   }
   command =
       (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
   if (timeout == CNET_OWNER_TEST_CONNECT_TIMEOUT) {
     check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
-                TURBO_OK);
+                SALTS_OK);
     for (event_index = 0u; event_index < event_config.capacity; ++event_index) {
-      check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), TURBO_OK);
+      check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), SALTS_OK);
       check_equal(event.state, CNET_EVENT_STATE_CLOSING);
-      check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+      check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
     }
-    check_equal(cnet_owner_drive(&owner, 0u), TURBO_OK);
-    check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+    check_equal(cnet_owner_drive(&owner, 0u), SALTS_OK);
+    check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
     check_equal(event.kind, CNET_EVENT_STATE);
     check_equal(event.state, CNET_EVENT_STATE_FAILED);
-    check_equal(event.status, TURBO_ETIMEDOUT);
+    check_equal(event.status, SALTS_ETIMEDOUT);
     check_equal(event.stage,
                 resolve_host ? CNET_SESSION_STAGE_RESOLVE : CNET_SESSION_STAGE_CONNECT);
-    check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
-    check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), TURBO_OK);
+    check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+    check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
     check_equal(terminal.kind, CNET_SESSION_TERMINAL_FAILED);
-    check_equal(terminal.status, TURBO_ETIMEDOUT);
+    check_equal(terminal.status, SALTS_ETIMEDOUT);
     check_equal(terminal.stage,
                 resolve_host ? CNET_SESSION_STAGE_RESOLVE : CNET_SESSION_STAGE_CONNECT);
-    check_equal(cnet_session_table_recycle(&sessions, session), TURBO_OK);
-    check_equal(cnet_owner_release_session(&owner, session), TURBO_OK);
+    check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+    check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
     goto cleanup;
   }
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
-              TURBO_OK);
+              SALTS_OK);
   coroutine_stats = (native_io_coroutine_stats)NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
   check_true(cnet_owner_get_coroutine_stats(&owner, &coroutine_stats));
   check_equal(coroutine_stats.active, 0u);
   check_true(coroutine_stats.retained_frames >= 1u);
   for (event_index = 0u; event_index < event_config.capacity; ++event_index) {
-    check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+    check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
     check_equal(event.state, CNET_EVENT_STATE_CLOSING);
-    check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+    check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
   }
-  check_equal(cnet_owner_drive(&owner, 0u), TURBO_OK);
-  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+  check_equal(cnet_owner_drive(&owner, 0u), SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
   check_equal(event.kind, CNET_EVENT_STATE);
   check_equal(event.state, CNET_EVENT_STATE_CONNECTED);
   check_equal(event.session.slot, session.slot);
   check_equal(event.session.generation, session.generation);
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
   accepted = accept(listener, NULL, NULL);
   check_true(accepted != CNET_OWNER_TEST_INVALID_SOCKET);
 
   command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_drive(&owner, 0u), TURBO_OK);
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  check_equal(cnet_owner_drive(&owner, 0u), SALTS_OK);
   coroutine_stats = (native_io_coroutine_stats)NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
   check_true(cnet_owner_get_coroutine_stats(&owner, &coroutine_stats));
   check_equal(coroutine_stats.active, 1u);
@@ -322,10 +322,10 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   } else {
     check_equal(send(accepted, (const char *)payload, (int)sizeof(payload), 0),
                 (int)sizeof(payload));
-    check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), TURBO_OK);
+    check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), SALTS_OK);
     check_equal(event.kind, CNET_EVENT_RECEIVE);
     check_equal(event.data, payload, sizeof(payload));
-    check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+    check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
 
     if (timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
       check_equal(clock.calls, 0u);
@@ -335,67 +335,67 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
     command = (cnet_command){timeout == CNET_OWNER_TEST_WRITE_TIMEOUT ? CNET_COMMAND_SEND_CLOSE
                                                                       : CNET_COMMAND_SEND,
                              session, payload, sizeof(payload), 0u};
-    check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+    check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
     if (timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
       check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
-                  TURBO_OK);
+                  SALTS_OK);
     } else {
-      check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), TURBO_OK);
+      check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), SALTS_OK);
       check_equal(recv(accepted, (char *)received, (int)sizeof(received), 0),
                   (int)sizeof(received));
       check_equal(received, payload, sizeof(payload));
-      check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+      check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
       check_equal(event.kind, CNET_EVENT_SEND);
       check_equal(event.argument, sizeof(payload));
-      check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+      check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
 
       command = (cnet_command){CNET_COMMAND_CLOSE, session, NULL, 0u, 0u};
-      check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+      check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
     }
   }
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
-              TURBO_OK);
-  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+              SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
   if (timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
     check_equal(event.state, CNET_EVENT_STATE_CLOSING);
-    check_equal(event.status, TURBO_OK);
-    check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
-    check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+    check_equal(event.status, SALTS_OK);
+    check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+    check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
   }
   check_equal(event.state, timeout != CNET_OWNER_TEST_NO_TIMEOUT ? CNET_EVENT_STATE_FAILED
                                                                  : CNET_EVENT_STATE_CLOSING);
   if (timeout == CNET_OWNER_TEST_READ_TIMEOUT || timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
-    check_equal(event.status, TURBO_ETIMEDOUT);
+    check_equal(event.status, SALTS_ETIMEDOUT);
     check_equal(event.stage, timeout == CNET_OWNER_TEST_READ_TIMEOUT ? CNET_SESSION_STAGE_READ
                                                                      : CNET_SESSION_STAGE_WRITE);
   }
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
   if (timeout == CNET_OWNER_TEST_NO_TIMEOUT) {
-    check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+    check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
     check_equal(event.state, CNET_EVENT_STATE_CLOSED);
-    check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+    check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
   }
-  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), TURBO_OK);
+  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
   check_equal(terminal.kind, timeout != CNET_OWNER_TEST_NO_TIMEOUT ? CNET_SESSION_TERMINAL_FAILED
                                                                    : CNET_SESSION_TERMINAL_CLOSED);
   if (timeout == CNET_OWNER_TEST_READ_TIMEOUT || timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
-    check_equal(terminal.status, TURBO_ETIMEDOUT);
+    check_equal(terminal.status, SALTS_ETIMEDOUT);
     check_equal(terminal.stage, timeout == CNET_OWNER_TEST_READ_TIMEOUT ? CNET_SESSION_STAGE_READ
                                                                         : CNET_SESSION_STAGE_WRITE);
   }
-  check_equal(cnet_session_table_recycle(&sessions, session), TURBO_OK);
-  check_equal(cnet_owner_release_session(&owner, session), TURBO_OK);
+  check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+  check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
 
 cleanup:
   cnet_owner_test_close_socket(accepted);
   cnet_owner_test_close_socket(listener);
-  check_equal(cnet_command_queue_close(&commands), TURBO_OK);
-  check_equal(cnet_owner_close(&owner), TURBO_OK);
-  check_equal(cnet_owner_destroy(&owner), TURBO_OK);
-  check_equal(cnet_event_queue_close(&events), TURBO_OK);
-  check_equal(cnet_event_queue_destroy(&events), TURBO_OK);
-  check_equal(cnet_command_queue_destroy(&commands), TURBO_OK);
-  check_equal(cnet_session_table_destroy(&sessions), TURBO_OK);
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_owner_close(&owner), SALTS_OK);
+  check_equal(cnet_owner_destroy(&owner), SALTS_OK);
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
 }
 
 static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
@@ -419,7 +419,7 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   cnet_owner_test_socket peer = CNET_OWNER_TEST_INVALID_SOCKET;
   struct sockaddr_in peer_address;
   cnet_owner_test_udp_echo echo = {0};
-  turbo_thread_t echo_thread = {0};
+  salts_thread_t echo_thread = {0};
   cnet_session_handle session = {0};
   cnet_owner_connect_payload connect_payload = {0};
   cnet_command command = {0};
@@ -427,83 +427,83 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   cnet_session_terminal terminal = {0};
   int echo_start_status;
 
-  check_equal(cnet_session_table_init(&sessions, 1u), TURBO_OK);
-  check_equal(cnet_command_queue_init(&commands, &command_config), TURBO_OK);
-  check_equal(cnet_event_queue_init(&events, &event_config), TURBO_OK);
-  check_equal(cnet_owner_init(&owner, &owner_config), TURBO_OK);
-  check_equal(cnet_owner_test_udp_peer(&peer, &peer_address), TURBO_OK);
-  check_equal(cnet_session_table_reserve(&sessions, &session), TURBO_OK);
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+  check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
+  check_equal(cnet_owner_test_udp_peer(&peer, &peer_address), SALTS_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
 
   connect_payload.scheme = CNET_URI_UDP;
   connect_payload.address_length = sizeof(peer_address);
   memcpy(connect_payload.address, &peer_address, sizeof(peer_address));
   command =
       (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
-              TURBO_OK);
-  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+              SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
   check_equal(event.kind, CNET_EVENT_STATE);
   check_equal(event.state, CNET_EVENT_STATE_CONNECTED);
   check_equal(event.session.slot, session.slot);
   check_equal(event.session.generation, session.generation);
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
 
   echo = (cnet_owner_test_udp_echo){peer,    outbound,        sizeof(outbound),
-                                    inbound, sizeof(inbound), TURBO_EIO};
-  echo_start_status = turbo_thread_create(&echo_thread, cnet_owner_test_udp_echo_entry, &echo);
-  check_equal(echo_start_status, TURBO_OK);
-  if (echo_start_status == TURBO_OK) {
+                                    inbound, sizeof(inbound), SALTS_EIO};
+  echo_start_status = salts_thread_create(&echo_thread, cnet_owner_test_udp_echo_entry, &echo);
+  check_equal(echo_start_status, SALTS_OK);
+  if (echo_start_status == SALTS_OK) {
     int send_event_seen = 0;
     command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
-    check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+    check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
     command = (cnet_command){CNET_COMMAND_SEND, session, outbound, sizeof(outbound), 0u};
-    check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-    check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+    check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+    check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
     if (event.kind == CNET_EVENT_SEND) {
       check_equal(event.argument, sizeof(outbound));
-      check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+      check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
       send_event_seen = 1;
-      check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), TURBO_OK);
+      check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), SALTS_OK);
     }
     check_equal(event.kind, CNET_EVENT_RECEIVE);
     check_equal(event.data, inbound, sizeof(inbound));
-    check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+    check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
     if (!send_event_seen) {
-      check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), TURBO_OK);
+      check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), SALTS_OK);
       check_equal(event.kind, CNET_EVENT_SEND);
       check_equal(event.argument, sizeof(outbound));
-      check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+      check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
     }
-    check_equal(turbo_thread_join(&echo_thread), TURBO_OK);
-    turbo_thread_destroy(&echo_thread);
-    check_equal(echo.status, TURBO_OK);
+    check_equal(salts_thread_join(&echo_thread), SALTS_OK);
+    salts_thread_destroy(&echo_thread);
+    check_equal(echo.status, SALTS_OK);
   }
 
   command = (cnet_command){CNET_COMMAND_CLOSE, session, NULL, 0u, 0u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
-              TURBO_OK);
-  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+              SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
   check_equal(event.state, CNET_EVENT_STATE_CLOSING);
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
-  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
   check_equal(event.state, CNET_EVENT_STATE_CLOSED);
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
-  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), TURBO_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
   check_equal(terminal.kind, CNET_SESSION_TERMINAL_CLOSED);
-  check_equal(cnet_session_table_recycle(&sessions, session), TURBO_OK);
-  check_equal(cnet_owner_release_session(&owner, session), TURBO_OK);
+  check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+  check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
 
   cnet_owner_test_close_socket(peer);
-  check_equal(cnet_command_queue_close(&commands), TURBO_OK);
-  check_equal(cnet_owner_close(&owner), TURBO_OK);
-  check_equal(cnet_owner_destroy(&owner), TURBO_OK);
-  check_equal(cnet_event_queue_close(&events), TURBO_OK);
-  check_equal(cnet_event_queue_destroy(&events), TURBO_OK);
-  check_equal(cnet_command_queue_destroy(&commands), TURBO_OK);
-  check_equal(cnet_session_table_destroy(&sessions), TURBO_OK);
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_owner_close(&owner), SALTS_OK);
+  check_equal(cnet_owner_destroy(&owner), SALTS_OK);
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
 }
 
 static void cnet_owner_test_resolve_failure(native_io_backend_kind backend_kind) {
@@ -528,37 +528,37 @@ static void cnet_owner_test_resolve_failure(native_io_backend_kind backend_kind)
   cnet_event_view event = {0};
   cnet_session_terminal terminal = {0};
 
-  check_equal(cnet_session_table_init(&sessions, 1u), TURBO_OK);
-  check_equal(cnet_command_queue_init(&commands, &command_config), TURBO_OK);
-  check_equal(cnet_event_queue_init(&events, &event_config), TURBO_OK);
-  check_equal(cnet_owner_init(&owner, &owner_config), TURBO_OK);
-  check_equal(cnet_session_table_reserve(&sessions, &session), TURBO_OK);
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+  check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
 
   connect_payload.scheme = CNET_URI_TCP;
   memcpy(connect_payload.host, "bad host", sizeof("bad host"));
   connect_payload.port = 443u;
   command =
       (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
-              TURBO_OK);
-  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+              SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
   check_equal(event.state, CNET_EVENT_STATE_FAILED);
   check_equal(event.stage, CNET_SESSION_STAGE_RESOLVE);
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
-  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), TURBO_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
   check_equal(terminal.kind, CNET_SESSION_TERMINAL_FAILED);
   check_equal(terminal.stage, CNET_SESSION_STAGE_RESOLVE);
-  check_equal(cnet_session_table_recycle(&sessions, session), TURBO_OK);
-  check_equal(cnet_owner_release_session(&owner, session), TURBO_OK);
+  check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+  check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
 
-  check_equal(cnet_command_queue_close(&commands), TURBO_OK);
-  check_equal(cnet_owner_close(&owner), TURBO_OK);
-  check_equal(cnet_owner_destroy(&owner), TURBO_OK);
-  check_equal(cnet_event_queue_close(&events), TURBO_OK);
-  check_equal(cnet_event_queue_destroy(&events), TURBO_OK);
-  check_equal(cnet_command_queue_destroy(&commands), TURBO_OK);
-  check_equal(cnet_session_table_destroy(&sessions), TURBO_OK);
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_owner_close(&owner), SALTS_OK);
+  check_equal(cnet_owner_destroy(&owner), SALTS_OK);
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
 }
 
 static void cnet_owner_test_pipe_open_failure(native_io_backend_kind backend_kind) {
@@ -583,38 +583,38 @@ static void cnet_owner_test_pipe_open_failure(native_io_backend_kind backend_kin
   cnet_event_view event = {0};
   cnet_session_terminal terminal = {0};
 
-  check_equal(cnet_session_table_init(&sessions, 1u), TURBO_OK);
-  check_equal(cnet_command_queue_init(&commands, &command_config), TURBO_OK);
-  check_equal(cnet_event_queue_init(&events, &event_config), TURBO_OK);
-  check_equal(cnet_owner_init(&owner, &owner_config), TURBO_OK);
-  check_equal(cnet_session_table_reserve(&sessions, &session), TURBO_OK);
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+  check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
 
   connect_payload.scheme = CNET_URI_PIPE;
   memcpy(connect_payload.pipe_name, "cnet-owner-missing-platform-pipe",
          sizeof("cnet-owner-missing-platform-pipe"));
   command =
       (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
-              TURBO_OK);
-  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+              SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
   check_equal(event.state, CNET_EVENT_STATE_FAILED);
-  check(event.status != TURBO_OK);
+  check(event.status != SALTS_OK);
   check_equal(event.stage, CNET_SESSION_STAGE_CONNECT);
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
-  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), TURBO_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
   check_equal(terminal.kind, CNET_SESSION_TERMINAL_FAILED);
   check_equal(terminal.stage, CNET_SESSION_STAGE_CONNECT);
-  check_equal(cnet_session_table_recycle(&sessions, session), TURBO_OK);
-  check_equal(cnet_owner_release_session(&owner, session), TURBO_OK);
+  check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+  check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
 
-  check_equal(cnet_command_queue_close(&commands), TURBO_OK);
-  check_equal(cnet_owner_close(&owner), TURBO_OK);
-  check_equal(cnet_owner_destroy(&owner), TURBO_OK);
-  check_equal(cnet_event_queue_close(&events), TURBO_OK);
-  check_equal(cnet_event_queue_destroy(&events), TURBO_OK);
-  check_equal(cnet_command_queue_destroy(&commands), TURBO_OK);
-  check_equal(cnet_session_table_destroy(&sessions), TURBO_OK);
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_owner_close(&owner), SALTS_OK);
+  check_equal(cnet_owner_destroy(&owner), SALTS_OK);
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
 }
 
 static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
@@ -643,68 +643,68 @@ static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
   cnet_session_terminal terminal = {0};
   unsigned char received[sizeof(outbound)] = {0};
 
-  check_equal(cnet_shared_test_named_pipe_start(&pipe), TURBO_OK);
-  check_equal(cnet_session_table_init(&sessions, 1u), TURBO_OK);
-  check_equal(cnet_command_queue_init(&commands, &command_config), TURBO_OK);
-  check_equal(cnet_event_queue_init(&events, &event_config), TURBO_OK);
-  check_equal(cnet_owner_init(&owner, &owner_config), TURBO_OK);
-  check_equal(cnet_session_table_reserve(&sessions, &session), TURBO_OK);
+  check_equal(cnet_shared_test_named_pipe_start(&pipe), SALTS_OK);
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+  check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
 
   connect_payload.scheme = CNET_URI_PIPE;
   memcpy(connect_payload.pipe_name, pipe.name, strlen(pipe.name) + 1u);
   command =
       (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
-              TURBO_OK);
-  check_equal(cnet_shared_test_named_pipe_finish(&pipe), TURBO_OK);
-  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+              SALTS_OK);
+  check_equal(cnet_shared_test_named_pipe_finish(&pipe), SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
   check_equal(event.kind, CNET_EVENT_STATE);
   check_equal(event.state, CNET_EVENT_STATE_CONNECTED);
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
 
   command = (cnet_command){CNET_COMMAND_SEND, session, outbound, sizeof(outbound), 0u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(cnet_shared_test_named_pipe_peer_read(&pipe, received, sizeof(received)), TURBO_OK);
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_shared_test_named_pipe_peer_read(&pipe, received, sizeof(received)), SALTS_OK);
   check_equal(received, outbound, sizeof(outbound));
-  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
   check_equal(event.kind, CNET_EVENT_SEND);
   check_equal(event.argument, sizeof(outbound));
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
 
   command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
-  check_equal(cnet_owner_drive(&owner, 0u), TURBO_OK);
-  check_equal(cnet_shared_test_named_pipe_peer_write(&pipe, inbound, sizeof(inbound)), TURBO_OK);
-  check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), TURBO_OK);
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  check_equal(cnet_owner_drive(&owner, 0u), SALTS_OK);
+  check_equal(cnet_shared_test_named_pipe_peer_write(&pipe, inbound, sizeof(inbound)), SALTS_OK);
+  check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), SALTS_OK);
   check_equal(event.kind, CNET_EVENT_RECEIVE);
   check_equal(event.data, inbound, sizeof(inbound));
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
 
   command = (cnet_command){CNET_COMMAND_CLOSE, session, NULL, 0u, 0u};
-  check_equal(cnet_command_queue_publish(&commands, &command), TURBO_OK);
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
-              TURBO_OK);
-  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+              SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
   check_equal(event.state, CNET_EVENT_STATE_CLOSING);
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
-  check_equal(cnet_event_queue_take(&events, &event), TURBO_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
   check_equal(event.state, CNET_EVENT_STATE_CLOSED);
-  check_equal(cnet_event_queue_release(&events, &event), TURBO_OK);
-  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), TURBO_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
   check_equal(terminal.kind, CNET_SESSION_TERMINAL_CLOSED);
-  check_equal(cnet_session_table_recycle(&sessions, session), TURBO_OK);
-  check_equal(cnet_owner_release_session(&owner, session), TURBO_OK);
+  check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+  check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
 
   cnet_shared_test_named_pipe_close(&pipe);
-  check_equal(cnet_command_queue_close(&commands), TURBO_OK);
-  check_equal(cnet_owner_close(&owner), TURBO_OK);
-  check_equal(cnet_owner_destroy(&owner), TURBO_OK);
-  check_equal(cnet_event_queue_close(&events), TURBO_OK);
-  check_equal(cnet_event_queue_destroy(&events), TURBO_OK);
-  check_equal(cnet_command_queue_destroy(&commands), TURBO_OK);
-  check_equal(cnet_session_table_destroy(&sessions), TURBO_OK);
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_owner_close(&owner), SALTS_OK);
+  check_equal(cnet_owner_destroy(&owner), SALTS_OK);
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
 }
 
 spec("CNet owner shard") {
@@ -712,101 +712,101 @@ spec("CNet owner shard") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
-    check_equal(cnet_module_init(), TURBO_OK);
+    check_equal(cnet_module_init(), SALTS_OK);
     for (index = 0u; index < count; ++index)
       cnet_owner_test_tcp(backends[index], false, CNET_OWNER_TEST_NO_TIMEOUT);
-    check_equal(cnet_module_shutdown(), TURBO_OK);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 
   it("owns the resolve to TCP connect state transition") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
-    check_equal(cnet_module_init(), TURBO_OK);
+    check_equal(cnet_module_init(), SALTS_OK);
     for (index = 0u; index < count; ++index)
       cnet_owner_test_tcp(backends[index], true, CNET_OWNER_TEST_NO_TIMEOUT);
-    check_equal(cnet_module_shutdown(), TURBO_OK);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 
   it("times out one pending read through the owner deadline queue") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
-    check_equal(cnet_module_init(), TURBO_OK);
+    check_equal(cnet_module_init(), SALTS_OK);
     for (index = 0u; index < count; ++index)
       cnet_owner_test_tcp(backends[index], false, CNET_OWNER_TEST_READ_TIMEOUT);
-    check_equal(cnet_module_shutdown(), TURBO_OK);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 
   it("keeps an expired connect terminal when a native success is already pending") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
-    check_equal(cnet_module_init(), TURBO_OK);
+    check_equal(cnet_module_init(), SALTS_OK);
     for (index = 0u; index < count; ++index)
       cnet_owner_test_tcp(backends[index], false, CNET_OWNER_TEST_CONNECT_TIMEOUT);
-    check_equal(cnet_module_shutdown(), TURBO_OK);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 
   it("expires resolution before accepting a late resolver result") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
-    check_equal(cnet_module_init(), TURBO_OK);
+    check_equal(cnet_module_init(), SALTS_OK);
     for (index = 0u; index < count; ++index)
       cnet_owner_test_tcp(backends[index], true, CNET_OWNER_TEST_CONNECT_TIMEOUT);
-    check_equal(cnet_module_shutdown(), TURBO_OK);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 
   it("keeps an expired write terminal when a native success is already pending") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
-    check_equal(cnet_module_init(), TURBO_OK);
+    check_equal(cnet_module_init(), SALTS_OK);
     for (index = 0u; index < count; ++index)
       cnet_owner_test_tcp(backends[index], false, CNET_OWNER_TEST_WRITE_TIMEOUT);
-    check_equal(cnet_module_shutdown(), TURBO_OK);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 
   it("contains resolver failure in one session and reports its stage") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
-    check_equal(cnet_module_init(), TURBO_OK);
+    check_equal(cnet_module_init(), SALTS_OK);
     for (index = 0u; index < count; ++index)
       cnet_owner_test_resolve_failure(backends[index]);
-    check_equal(cnet_module_shutdown(), TURBO_OK);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 
   it("owns a connected UDP session through bidirectional datagrams and terminal recycle") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
-    check_equal(cnet_module_init(), TURBO_OK);
+    check_equal(cnet_module_init(), SALTS_OK);
     for (index = 0u; index < count; ++index)
       cnet_owner_test_udp(backends[index]);
-    check_equal(cnet_module_shutdown(), TURBO_OK);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 
   it("owns a platform byte-pipe session through bidirectional bytes and terminal recycle") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
-    check_equal(cnet_module_init(), TURBO_OK);
+    check_equal(cnet_module_init(), SALTS_OK);
     for (index = 0u; index < count; ++index)
       if (native_io_backend_kind_supports_pipe(backends[index]))
         cnet_owner_test_pipe(backends[index]);
-    check_equal(cnet_module_shutdown(), TURBO_OK);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 
   it("reports a named platform pipe open failure at the connect stage") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);
     size_t index;
-    check_equal(cnet_module_init(), TURBO_OK);
+    check_equal(cnet_module_init(), SALTS_OK);
     for (index = 0u; index < count; ++index)
       if (native_io_backend_kind_supports_pipe(backends[index]))
         cnet_owner_test_pipe_open_failure(backends[index]);
-    check_equal(cnet_module_shutdown(), TURBO_OK);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 }

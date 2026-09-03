@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the existing fixture-driven black-box harness and native Statechart runtime as the execution boundary. Add self-driving, null-datamodel fixtures derived from the official W3C IR `.txml` sources; transform only the `conf:` result vocabulary, unsupported wildcard failure observers, and unrelated timeout safety nets. No production API or runtime behavior changes are in scope.
 
-**Tech Stack:** C11, CFlow Statechart runtime, TurboUtils SCXML compiler, TinyTest, CMake Presets.
+**Tech Stack:** C11, CFlow Statechart runtime, Salts SCXML compiler, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-cflow-scxml-phase3-remaining-design.md`
 

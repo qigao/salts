@@ -35,7 +35,7 @@ are outside this hardening slice.
 | Topology | The benchmark thread is the sole submit/pump/ack owner. Each endpoint has one native backend, one Actor, and one manual Executor. Native workers may publish completion and signal the shared latch. |
 | Ordering | Prepost server receive, submit client send, finish both; then prepost client receive, submit server send to the captured source address, and finish both. |
 | Capacity | Each endpoint retains the existing fixed request/command capacity. The benchmark has at most one outstanding operation per endpoint. |
-| Backpressure | Non-accepted submit returns `TURBO_EBUSY`; there is no retry queue, fallback, overwrite, or unbounded allocation. |
+| Backpressure | Non-accepted submit returns `SALTS_EBUSY`; there is no retry queue, fallback, overwrite, or unbounded allocation. |
 | Failure | Wrong byte count, absent/oversized or unexpected source endpoint, non-OK completion, timeout, acknowledgement failure, or payload mismatch returns an explicit error. |
 | Shutdown | Existing close, Actor drain/ack, socket identity forget, backend shutdown, and Executor shutdown order remains authoritative. |
 | Observation | Existing errors, rejections, stale completions, P50/P95/P99, CPU, RSS, Echo/s, and application MiB/s fields remain unchanged. |

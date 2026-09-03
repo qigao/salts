@@ -24,7 +24,7 @@
 - 不解析任意 C 预处理器语义；
 - 不在运行期生成新的 C 类型；
 - 不增加 `.cmeta` 文件或第二套语法；
-- 不把 re2c、Lemon 或 TurboParser 链接进 TurboUtils/CMeta；
+- 不把 re2c、Lemon 或 TurboParser 链接进 Salts/CMeta；
 - 不在逐元素 executor 热路径执行 DFA；
 - 不构造通用字节码 VM。
 

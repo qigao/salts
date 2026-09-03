@@ -17,14 +17,14 @@ to:
 
 ```text
 CMeta type-application well-formedness
-    -> real generic consumers (TurboSTL)
+    -> real generic consumers (Container)
     -> semantic shape resolution
     -> CSerde canonical token protocol
     -> CBind
     -> format adapters
 ```
 
-This amendment does not change the approved TurboUtils/TurboParser ownership boundary.
+This amendment does not change the approved Salts/TurboParser ownership boundary.
 
 ## 2. CMeta generic application is foundational
 
@@ -53,16 +53,16 @@ Type well-formedness is intentionally separate from operation capability. For ex
 
 This contract was implemented by `#36`.
 
-## 3. TurboSTL becomes the first real generic consumer
+## 3. Container becomes the first real generic consumer
 
-TurboSTL already stores concrete type bindings on handles:
+Container already stores concrete type bindings on handles:
 
 ```text
 Vec/Deque/List/Stack/Queue/Heap/Set/HashSet -> element_type
 HashMap/Map/MultiMap/BTree/BPlusTree         -> key_type + value_type
 ```
 
-The missing contract was constructor identity. TurboSTL now exposes canonical generic constructors and lets CMeta introspect a concrete instance as:
+The missing contract was constructor identity. Container now exposes canonical generic constructors and lets CMeta introspect a concrete instance as:
 
 ```text
 typed(Vec, IntVec, int)
@@ -73,13 +73,13 @@ typed(HashMap, UserByString, string, User)
 
 without generating a new per-`T` facade or rewriting raw algorithms.
 
-Canonical constructor stable IDs are TurboSTL-owned, including:
+Canonical constructor stable IDs are Container-owned, including:
 
 ```text
-turbostl.Vec
-turbostl.Set
-turbostl.Map
-turbostl.HashMap
+cstl.Vec
+cstl.Set
+cstl.Map
+cstl.HashMap
 ```
 
 The complete supported list and exact arities were implemented by `#37`.
@@ -144,20 +144,20 @@ and tests are the source of truth when they differ from this sequence.
 Completed:
 
 ```text
-0. TurboParser natural TurboSTL migration — turbo-parser PR #1
-1. CMeta generic application contract       — turbo-utils #36
-2. CMeta container versioned extension root — turbo-utils #37
-3. TurboSTL generic constructor/introspection — turbo-utils #37
+0. TurboParser natural Container migration — turbo-parser PR #1
+1. CMeta generic application contract       — salts #36
+2. CMeta container versioned extension root — salts #37
+3. Container generic constructor/introspection — salts #37
 ```
 
 Delivered after the original foundation PRs:
 
 ```text
 4. CMeta semantic data descriptor foundation
-5. TurboSTL semantic projection from proven generic applications
+5. Container semantic projection from proven generic applications
 6. container construction + static nested-field type application
 7. CSerde canonical token protocol
-8. initial CBind scalar/struct/container/string-bytes decode
+8. initial CBind scalar/struct/cstl/string-bytes decode
 ```
 
 Remaining integration work includes:

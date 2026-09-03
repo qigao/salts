@@ -1,7 +1,7 @@
 #include "disruptor.h"
 #include "tinytest.h"
 #include "platform.h"
-#include "turbo_thread.h"
+#include "salts_thread.h"
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -36,7 +36,7 @@ static void producer_thread(void *arg) {
     size_t entry_size = disruptor_entry_size(ctx->disruptor);
 
     while (atomic_load(ctx->start) == 0) {
-        turbo_sleep_ms(1);
+        salts_sleep_ms(1);
     }
 
     size_t produced = 0;
@@ -55,7 +55,7 @@ static void producer_thread(void *arg) {
             disruptor_publisher_publish_range(ctx->disruptor, &range);
             produced += to_write;
         } else {
-            turbo_sleep_ms(0);
+            salts_sleep_ms(0);
         }
     }
 }
@@ -66,7 +66,7 @@ static void consumer_thread(void *arg) {
     size_t entry_size = disruptor_entry_size(ctx->disruptor);
 
     while (atomic_load(ctx->start) == 0) {
-        turbo_sleep_ms(1);
+        salts_sleep_ms(1);
     }
 
     uint64_t next_seq = 1;
@@ -78,7 +78,7 @@ static void consumer_thread(void *arg) {
         
         uint64_t available_seq = c.sequence;
         if (available_seq < next_seq) {
-            turbo_sleep_ms(0);
+            salts_sleep_ms(0);
             continue;
         }
         
@@ -126,8 +126,8 @@ static void run_bench(size_t count, size_t batch, size_t entry_size, bool use_me
 
     producer_ctx_t p_ctx[8];
     consumer_ctx_t c_ctx[8];
-    turbo_thread_t prods[8];
-    turbo_thread_t cons[8];
+    salts_thread_t prods[8];
+    salts_thread_t cons[8];
 
     size_t total_messages = count * num_prods;
 
@@ -138,7 +138,7 @@ static void run_bench(size_t count, size_t batch, size_t entry_size, bool use_me
         c_ctx[i].use_memcpy = use_memcpy;
         c_ctx[i].start = &start_flag;
         disruptor_consumer_register(disruptor, &c_ctx[i].consumer);
-        turbo_thread_create(&cons[i], consumer_thread, &c_ctx[i]);
+        salts_thread_create(&cons[i], consumer_thread, &c_ctx[i]);
     }
 
     for (size_t i = 0; i < num_prods; ++i) {
@@ -147,17 +147,17 @@ static void run_bench(size_t count, size_t batch, size_t entry_size, bool use_me
         p_ctx[i].batch_size = batch;
         p_ctx[i].use_memcpy = use_memcpy;
         p_ctx[i].start = &start_flag;
-        turbo_thread_create(&prods[i], producer_thread, &p_ctx[i]);
+        salts_thread_create(&prods[i], producer_thread, &p_ctx[i]);
     }
 
-    turbo_sleep_ms(50);
+    salts_sleep_ms(50);
     atomic_store(&start_flag, 1);
 
     for (size_t i = 0; i < num_prods; ++i) {
-        turbo_thread_join(&prods[i]);
+        salts_thread_join(&prods[i]);
     }
     for (size_t i = 0; i < num_cons; ++i) {
-        turbo_thread_join(&cons[i]);
+        salts_thread_join(&cons[i]);
     }
     
     for (size_t i = 0; i < num_cons; ++i) {
@@ -170,7 +170,7 @@ static disruptor_t *bench_disruptor;
 static disruptor_consumer_t bench_consumer;
 static uint64_t global_seq = 1;
 
-spec("Turbo Disruptor Benchmarks") {
+spec("Salts Disruptor Benchmarks") {
     before_each() {
         disruptor_config_t cfg = {
             .entry_size = 64,

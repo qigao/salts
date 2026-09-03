@@ -1,7 +1,7 @@
 #include <cflow/executor.h>
 #include "executor_internal.h"
-#include <turbo/error_codes.h>
-#include <turbo/thread_pool.h>
+#include <salts/error_codes.h>
+#include <salts/thread_pool.h>
 
 #include <limits.h>
 #include <stdint.h>
@@ -28,7 +28,7 @@ typedef struct cflow_manual_executor_state {
 } cflow_manual_executor_state;
 
 typedef struct cflow_pool_executor_state {
-    turbo_threadpool_t *pool;
+    salts_threadpool_t *pool;
     _Atomic size_t rejected_full;
     _Atomic size_t rejected_closed;
     _Atomic size_t rejected_would_block;
@@ -278,21 +278,21 @@ CMETA_IMPLEMENTS(cflow_executor_control, manual_control,
 
 static cflow_admission_status pool_admission_status(int status) {
     switch (status) {
-    case TURBO_OK: return CFLOW_ADMISSION_ACCEPTED;
-    case TURBO_EINVAL: return CFLOW_ADMISSION_INVALID_ARGUMENT;
-    case TURBO_ENOBUFS: return CFLOW_ADMISSION_FULL;
-    case TURBO_ESHUTDOWN: return CFLOW_ADMISSION_CLOSED;
+    case SALTS_OK: return CFLOW_ADMISSION_ACCEPTED;
+    case SALTS_EINVAL: return CFLOW_ADMISSION_INVALID_ARGUMENT;
+    case SALTS_ENOBUFS: return CFLOW_ADMISSION_FULL;
+    case SALTS_ESHUTDOWN: return CFLOW_ADMISSION_CLOSED;
     default: return CFLOW_ADMISSION_CLOSED;
     }
 }
 
 static cflow_executor_post_status pool_post_status(int status) {
     switch (status) {
-    case TURBO_OK: return CFLOW_EXECUTOR_POST_ACCEPTED;
-    case TURBO_EINVAL: return CFLOW_EXECUTOR_POST_INVALID_ARGUMENT;
-    case TURBO_ENOBUFS: return CFLOW_EXECUTOR_POST_FULL;
-    case TURBO_ESHUTDOWN: return CFLOW_EXECUTOR_POST_CLOSED;
-    case TURBO_EBUSY: return CFLOW_EXECUTOR_POST_WOULD_BLOCK;
+    case SALTS_OK: return CFLOW_EXECUTOR_POST_ACCEPTED;
+    case SALTS_EINVAL: return CFLOW_EXECUTOR_POST_INVALID_ARGUMENT;
+    case SALTS_ENOBUFS: return CFLOW_EXECUTOR_POST_FULL;
+    case SALTS_ESHUTDOWN: return CFLOW_EXECUTOR_POST_CLOSED;
+    case SALTS_EBUSY: return CFLOW_EXECUTOR_POST_WOULD_BLOCK;
     default: return CFLOW_EXECUTOR_POST_CLOSED;
     }
 }
@@ -305,14 +305,14 @@ static size_t pool_counter_size(int64_t value) {
 
 static void pool_refresh_lifecycle(cflow_pool_executor_state *state) {
     int expected = CFLOW_EXECUTOR_CLOSING;
-    if (state && state->pool && turbo_threadpool_pending(state->pool) == 0)
+    if (state && state->pool && salts_threadpool_pending(state->pool) == 0)
         (void)atomic_compare_exchange_strong(
             &state->lifecycle, &expected, CFLOW_EXECUTOR_CLOSED);
 }
 
-static turbo_threadpool_task_t pool_task_descriptor(
+static salts_threadpool_task_t pool_task_descriptor(
     const cflow_executor_task *task) {
-    return (turbo_threadpool_task_t){
+    return (salts_threadpool_task_t){
         .run = task->run,
         .cancel = task->cancel,
         .finalize = task->finalize,
@@ -323,12 +323,12 @@ static turbo_threadpool_task_t pool_task_descriptor(
 static cflow_admission_status pool_try_post_task_state(
     cflow_pool_executor_state *state, const cflow_executor_task *task) {
     cflow_admission_status status;
-    turbo_threadpool_task_t pool_task;
+    salts_threadpool_task_t pool_task;
     if (!state || !state->pool || !task || !task->run)
         return CFLOW_ADMISSION_INVALID_ARGUMENT;
     pool_task = pool_task_descriptor(task);
     status = pool_admission_status(
-        turbo_threadpool_try_submit_task(state->pool, &pool_task));
+        salts_threadpool_try_submit_task(state->pool, &pool_task));
     if (status == CFLOW_ADMISSION_FULL)
         atomic_fetch_add(&state->rejected_full, 1u);
     else if (status == CFLOW_ADMISSION_CLOSED)
@@ -351,12 +351,12 @@ static cflow_admission_status pool_try_post(void *self, cflow_task_fn fn,
 static cflow_executor_post_status pool_control_post_task_state(
     cflow_pool_executor_state *state, const cflow_executor_task *task) {
     cflow_executor_post_status status;
-    turbo_threadpool_task_t pool_task;
+    salts_threadpool_task_t pool_task;
     if (!state || !state->pool || !task || !task->run)
         return CFLOW_EXECUTOR_POST_INVALID_ARGUMENT;
     pool_task = pool_task_descriptor(task);
     status = pool_post_status(
-        turbo_threadpool_submit_task(state->pool, &pool_task));
+        salts_threadpool_submit_task(state->pool, &pool_task));
     if (status == CFLOW_EXECUTOR_POST_FULL)
         atomic_fetch_add(&state->rejected_full, 1u);
     else if (status == CFLOW_EXECUTOR_POST_CLOSED)
@@ -396,12 +396,12 @@ static cflow_executor_wait_status pool_control_wait_idle(void *self) {
     cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
     int status;
     if (!state || !state->pool) return CFLOW_EXECUTOR_WAIT_INVALID_ARGUMENT;
-    status = turbo_threadpool_wait_status(state->pool);
-    if (status == TURBO_EBUSY) {
+    status = salts_threadpool_wait_status(state->pool);
+    if (status == SALTS_EBUSY) {
         atomic_fetch_add(&state->rejected_would_block, 1u);
         return CFLOW_EXECUTOR_WAIT_WOULD_BLOCK;
     }
-    if (status != TURBO_OK) return CFLOW_EXECUTOR_WAIT_INVALID_ARGUMENT;
+    if (status != SALTS_OK) return CFLOW_EXECUTOR_WAIT_INVALID_ARGUMENT;
     pool_refresh_lifecycle(state);
     return CFLOW_EXECUTOR_WAIT_IDLE;
 }
@@ -414,24 +414,24 @@ static size_t pool_pending(void *self) {
     cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
     int pending;
     if (!state || !state->pool) return 0u;
-    pending = turbo_threadpool_pending(state->pool);
+    pending = salts_threadpool_pending(state->pool);
     return pending > 0 ? (size_t)pending : 0u;
 }
 
 static bool pool_control_shutdown(
     void *self, cflow_executor_shutdown_policy policy) {
     cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
-    turbo_threadpool_shutdown_policy_t pool_policy;
+    salts_threadpool_shutdown_policy_t pool_policy;
     int status;
     if (!state || !state->pool ||
         (policy != CFLOW_EXECUTOR_SHUTDOWN_DRAIN &&
          policy != CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING))
         return false;
     pool_policy = policy == CFLOW_EXECUTOR_SHUTDOWN_DRAIN
-                      ? TURBO_THREADPOOL_SHUTDOWN_DRAIN
-                      : TURBO_THREADPOOL_SHUTDOWN_CANCEL_PENDING;
-    status = turbo_threadpool_shutdown_with_policy(state->pool, pool_policy);
-    if (status != TURBO_OK) return false;
+                      ? SALTS_THREADPOOL_SHUTDOWN_DRAIN
+                      : SALTS_THREADPOOL_SHUTDOWN_CANCEL_PENDING;
+    status = salts_threadpool_shutdown_with_policy(state->pool, pool_policy);
+    if (status != SALTS_OK) return false;
     atomic_store(&state->lifecycle, CFLOW_EXECUTOR_CLOSING);
     pool_refresh_lifecycle(state);
     return true;
@@ -443,9 +443,9 @@ static bool pool_shutdown(void *self) {
 
 static bool pool_get_stats(void *self, cflow_executor_stats *out) {
     cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
-    turbo_threadpool_stats_t pool_stats;
+    salts_threadpool_stats_t pool_stats;
     if (!state || !state->pool || !out) return false;
-    turbo_threadpool_get_stats(state->pool, &pool_stats);
+    salts_threadpool_get_stats(state->pool, &pool_stats);
     *out = (cflow_executor_stats){
         .capacity = pool_stats.queue_capacity,
         .pending = pool_counter_size(pool_stats.pending_tasks),
@@ -459,18 +459,18 @@ static bool pool_get_stats(void *self, cflow_executor_stats *out) {
 static bool pool_control_get_stats(void *self,
                                    cflow_executor_protocol_stats *out) {
     cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
-    turbo_threadpool_stats_t stats;
+    salts_threadpool_stats_t stats;
     size_t queued;
     size_t running;
     size_t completed;
     size_t cancelled;
     if (!state || !state->pool || !out) return false;
-    turbo_threadpool_get_stats(state->pool, &stats);
+    salts_threadpool_get_stats(state->pool, &stats);
     pool_refresh_lifecycle(state);
     queued = pool_counter_size(stats.queued_tasks);
     running = pool_counter_size(stats.active_tasks);
     completed = pool_counter_size(stats.completed_tasks);
-    cancelled = pool_counter_size(turbo_threadpool_cancelled(state->pool));
+    cancelled = pool_counter_size(salts_threadpool_cancelled(state->pool));
     *out = (cflow_executor_protocol_stats){
         .capacity = stats.queue_capacity,
         .accepted = pool_counter_size(stats.submitted_tasks),
@@ -491,7 +491,7 @@ static bool pool_control_get_stats(void *self,
 static void pool_destroy(void *self) {
     cflow_pool_executor_state *state = (cflow_pool_executor_state *)self;
     if (!state) return;
-    turbo_threadpool_destroy(state->pool);
+    salts_threadpool_destroy(state->pool);
     atomic_store(&state->lifecycle, CFLOW_EXECUTOR_CLOSED);
     free(state);
 }
@@ -594,7 +594,7 @@ bool cflow_executor_is_current_internal(const cflow_executor *executor) {
         const cflow_pool_executor_state *state =
             (const cflow_pool_executor_state *)executor->self;
         return state &&
-            turbo_threadpool_is_current_internal(state->pool) != 0;
+            salts_threadpool_is_current_internal(state->pool) != 0;
     }
     return false;
 }
@@ -627,7 +627,7 @@ bool cflow_executor_manual_init(cflow_executor *executor) {
 static bool pool_executor_init(cflow_executor *executor, size_t workers,
                                size_t capacity, bool serial) {
     cflow_pool_executor_state *state;
-    turbo_threadpool_config_t config;
+    salts_threadpool_config_t config;
     if (!executor || executor->self || executor->vtable) return false;
     if (workers == 0u || workers > (size_t)INT_MAX || capacity == 0u)
         return false;
@@ -635,7 +635,7 @@ static bool pool_executor_init(cflow_executor *executor, size_t workers,
     if (!state) return false;
     config.num_threads = (int)workers;
     config.queue_capacity = capacity;
-    state->pool = turbo_threadpool_create_with_config(&config);
+    state->pool = salts_threadpool_create_with_config(&config);
     if (!state->pool) {
         free(state);
         return false;

@@ -8,11 +8,11 @@
 
 Linux epoll、未来的 kqueue、IOCP 与 io_uring 都位于 backend strategy 之后。本期
 不新增 native backend，也不把 completion backend 伪装成 readiness backend。现有
-`turbo_readiness_reactor` 和 `cflow_source_from_reactor_registration` 保持不变。
+`salts_readiness_reactor` 和 `cflow_source_from_reactor_registration` 保持不变。
 
 ## 架构决策
 
-新增公开 opaque handle `cflow_io_actor`，归属 `TurboUtils::CFlow`：
+新增公开 opaque handle `cflow_io_actor`，归属 `Salts::CFlow`：
 
 ```text
 concurrent callers
@@ -113,17 +113,17 @@ FIFO drain。
 
 quiescence 要求 command 为空、无活跃 request、无 Actor driver action、无 Actor
 delivery callback。未确认的 delivered request、尚未返回的 backend operation 或
-Executor backpressure 都会使 destroy 返回 `TURBO_EBUSY`，不得强制释放 lease。
+Executor backpressure 都会使 destroy 返回 `SALTS_EBUSY`，不得强制释放 lease。
 
 completion callback 可由 concurrent Executor 对不同请求并发调用；wake 也可从
 producer、backend completion、delivery 或 acknowledge 线程并发/重入。所有 context
 由调用方同步，callback 参数只在调用期间借用。callback credit 覆盖 completion 与
-wake 的完整执行期，因此 callback 内同步 destroy 返回 `TURBO_EBUSY`；应在返回后
+wake 的完整执行期，因此 callback 内同步 destroy 返回 `SALTS_EBUSY`；应在返回后
 另行调度销毁。
 
 ## 候选方案与取舍
 
-1. 复用 `turbo_threadpool` 作为 command queue：拒绝。worker-pool 是 MPMC work
+1. 复用 `salts_threadpool` 作为 command queue：拒绝。worker-pool 是 MPMC work
    stealing，不能表达单 Actor owner 和 FIFO command observation。
 2. 手写 mutex FIFO：可行但重复已有 bounded ring。本实现选 Disruptor broadcast
    mode + 一个 consumer，并加 logical capacity/close gate。

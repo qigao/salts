@@ -6,14 +6,14 @@
 
 **Architecture:** Keep the existing raw-peer TCP/UDP benchmark behavior as the default. Add an explicit `CFLOW_NETWORK_PEER=native` mode backed by two independent bounded endpoint owners; each endpoint owns one native backend, Actor, manual Executor, completion probe, and socket identity, while both Actors signal one fixture-owned wake latch. The benchmark thread is the only submit/ack owner; each direction preposts the receiver before the matching sender and pumps both endpoints, then the reverse direction runs after the first is complete. Native reactor/completion threads only publish authoritative completions.
 
-**Tech Stack:** C11, CFlow I/O Actor/native backends, TurboUtils Platform synchronization, TinyTest benchmarks, CMake Presets, GitHub Actions PowerShell report aggregation.
+**Tech Stack:** C11, CFlow I/O Actor/native backends, Salts Platform synchronization, TinyTest benchmarks, CMake Presets, GitHub Actions PowerShell report aggregation.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-cflow-native-io-backends-design.md`
 
 ## Global Constraints
 
 - Preserve the existing `cflow-network-benchmark/v1` schema and default raw peer behavior.
-- `CFLOW_NETWORK_PEER=native` supports TCP only and returns `TURBO_ENOTSUP` for UDP rather than falling back.
+- `CFLOW_NETWORK_PEER=native` supports TCP only and returns `SALTS_ENOTSUP` for UDP rather than falling back.
 - Both native endpoints use the same explicitly selected epoll, kqueue, IOCP, or io_uring backend kind.
 - Each endpoint permits at most one outstanding benchmark operation; successful submit owns the heap operation until Actor acknowledge invokes its release callback exactly once.
 - The benchmark thread owns submit, manual Actor/Executor driving, completion validation, and acknowledge. Backend threads may publish completion and signal the shared wake latch.
@@ -34,7 +34,7 @@
 
 - [x] **Step 1: Write a failing parser contract test**
 
-Add a TinyTest case that expects `NULL`/`raw` to select `NETWORK_PEER_RAW`, `native` to select `NETWORK_PEER_NATIVE`, and other strings to return `TURBO_EINVAL`.
+Add a TinyTest case that expects `NULL`/`raw` to select `NETWORK_PEER_RAW`, `native` to select `NETWORK_PEER_NATIVE`, and other strings to return `SALTS_EINVAL`.
 
 - [x] **Step 2: Build to verify RED**
 
@@ -77,7 +77,7 @@ Add a platform-neutral TinyTest case that initializes TCP with `NETWORK_PEER_NAT
 build/Msvc-Release/bin/cflow_network_benchmark.exe --filter "dual native"
 ```
 
-Expected: fixture initialization returns `TURBO_ENOTSUP` until the second endpoint exists.
+Expected: fixture initialization returns `SALTS_ENOTSUP` until the second endpoint exists.
 
 - [x] **Step 3: Refactor the fixture into explicit endpoint owners**
 

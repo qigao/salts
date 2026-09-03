@@ -1,11 +1,11 @@
 # CFlow Filesystem Watch Design
 
-Issue: [#113](https://github.com/qigao/turbo-utils/issues/113)
-Parent: [#111](https://github.com/qigao/turbo-utils/issues/111)
+Issue: [#113](https://github.com/qigao/salts/issues/113)
+Parent: [#111](https://github.com/qigao/salts/issues/111)
 
 ## Decision
 
-Extend `TurboUtils::CFlowFS` with an opaque watch source and platform bridges:
+Extend `Salts::CFlowFS` with an opaque watch source and platform bridges:
 inotify on Linux, overlapped `ReadDirectoryChangesW` on Windows, and FSEvents on
 macOS. The portable contract reports facts common to those sources without
 inventing a stronger per-file or rename guarantee.
@@ -52,7 +52,7 @@ bounds one kernel read buffer.
 
 ## Compatibility and validation
 
-This is additive to `TurboUtils::CFlowFS`; neither `TurboUtils::Core` nor core
+This is additive to `Salts::CFlowFS`; neither `Salts::Core` nor core
 CFlow gains a dependency. Platform tests cover create/modify/rename/remove,
 recursive discovery, overflow/rescan acknowledgement, root removal, close
 races, and fixed-capacity reuse. Each backend is validated on its native OS.

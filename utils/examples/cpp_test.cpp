@@ -34,14 +34,14 @@ std::string user_to_string(const User &u) {
 int main() {
   // 1. Setup logger
   // Note: We use the default logger
-  turbo_console_sink_opts_t opts;
+  salts_console_sink_opts_t opts;
   opts.output = stdout;
   opts.use_colors = 1;
   opts.pattern = "[{time_ms}] [{level}] [{thread}] ({file}:{line}) {message}"; // Without component
 
-  turbo_log_sink_t *console = turbo_sink_console_create(&opts);
+  salts_log_sink_t *console = salts_sink_console_create(&opts);
   tlog_add_sink(tlog_get_default(), console);
-  tlog_set_level(tlog_get_default(), TURBO_LOG_LEVEL_DEBUG);
+  tlog_set_level(tlog_get_default(), SALTS_LOG_LEVEL_DEBUG);
 
   TLOG_INFO("=== C++ TLog Integration Test ===");
 
@@ -113,11 +113,11 @@ int main() {
   // Custom format with chrono
   TLOG_INFOF("Chrono HH:MM:SS: {:%H:%M:%S}", now);
 
-  // turbo_timeval_t auto-detection
-  turbo_timeval_t tv;
+  // salts_timeval_t auto-detection
+  salts_timeval_t tv;
   tv.tv_sec = 1700000000;
   tv.tv_usec = 123000;
-  TLOG_INFOF("turbo_timeval_t: {}", tv);
+  TLOG_INFOF("salts_timeval_t: {}", tv);
 
   TLOG_INFO("=== Test Complete ===");
 

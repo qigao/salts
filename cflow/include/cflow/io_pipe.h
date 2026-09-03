@@ -86,7 +86,7 @@ int cflow_io_pipe_endpoint_close(cflow_io_pipe_endpoint *endpoint);
 
 /**
  * Initializes a bounded Windows overlapped named-pipe accept service.
- * Other platforms return TURBO_ENOTSUP without publishing state.
+ * Other platforms return SALTS_ENOTSUP without publishing state.
  * The server and all of its operations require exclusive external access;
  * run_ready additionally guarantees that callbacks use its single driver.
  */
@@ -122,14 +122,14 @@ bool cflow_io_pipe_server_is_quiescent(const cflow_io_pipe_server *server);
 bool cflow_io_pipe_server_get_stats(const cflow_io_pipe_server *server,
                                     cflow_io_pipe_server_stats *out);
 
-/** Destroys a closed, quiescent server; otherwise returns TURBO_EBUSY. */
+/** Destroys a closed, quiescent server; otherwise returns SALTS_EBUSY. */
 int cflow_io_pipe_server_destroy(cflow_io_pipe_server *server);
 
 /**
  * Performs one synchronous Windows named-pipe client open attempt.
  * It never calls WaitNamedPipe or retries. Success transfers endpoint to out.
- * Missing and busy instances return TURBO_ENOENT and TURBO_EBUSY. Non-Windows
- * hosts return TURBO_ENOTSUP without modifying an initialized invalid output.
+ * Missing and busy instances return SALTS_ENOENT and SALTS_EBUSY. Non-Windows
+ * hosts return SALTS_ENOTSUP without modifying an initialized invalid output.
  */
 int cflow_io_pipe_client_connect(const char *name, cflow_io_pipe_direction direction,
                                  cflow_io_pipe_endpoint *out);
@@ -137,7 +137,7 @@ int cflow_io_pipe_client_connect(const char *name, cflow_io_pipe_direction direc
 /**
  * Opens one POSIX FIFO endpoint with O_NONBLOCK and close-on-exec semantics.
  * Duplex FIFO open is rejected because it has no portable rendezvous meaning.
- * A writer with no reader returns TURBO_EPIPE. Windows returns TURBO_ENOTSUP.
+ * A writer with no reader returns SALTS_EPIPE. Windows returns SALTS_ENOTSUP.
  */
 int cflow_io_fifo_open(const char *path, cflow_io_pipe_direction direction,
                        cflow_io_pipe_endpoint *out);

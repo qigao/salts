@@ -2,8 +2,8 @@
 
 #include "tinytest.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -24,11 +24,11 @@ static int chttp_file_sink_test_drive(cflow_io_file_runtime *runtime,
   for (attempts = 0u; attempts < 100000u; ++attempts) {
     size_t progressed = 0u;
     int status = cflow_io_file_runtime_run_ready(runtime, 32u, &progressed);
-    if (status != TURBO_OK) return status;
-    if (chttp_file_sink_transfer_ready(transfer)) return TURBO_OK;
-    if (progressed == 0u) turbo_thread_yield();
+    if (status != SALTS_OK) return status;
+    if (chttp_file_sink_transfer_ready(transfer)) return SALTS_OK;
+    if (progressed == 0u) salts_thread_yield();
   }
-  return TURBO_ETIMEDOUT;
+  return SALTS_ETIMEDOUT;
 }
 
 spec("CHTTP asynchronous file sink") {
@@ -49,33 +49,33 @@ spec("CHTTP asynchronous file sink") {
     check_not_null(path);
     status = cflow_io_file_runtime_init(&runtime, &runtime_config);
 #if !defined(_WIN32)
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       info("native async file backend unavailable at runtime: %d", status);
       check_equal(tt_remove_file(path), 0);
       free(path);
       return;
     }
 #endif
-    check_equal(status, TURBO_OK);
+    check_equal(status, SALTS_OK);
     check_equal(
         chttp_file_sink_transfer_open(&transfer, &runtime, path, sizeof(payload), NULL, NULL),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(chttp_file_sink_transfer_write(&transfer, payload, sizeof(payload) - 1u),
                 CHTTP_FILE_SINK_WAIT);
-    check_equal(chttp_file_sink_transfer_destroy(&transfer), TURBO_EBUSY);
-    check_equal(chttp_file_sink_test_drive(&runtime, &transfer), TURBO_OK);
+    check_equal(chttp_file_sink_transfer_destroy(&transfer), SALTS_EBUSY);
+    check_equal(chttp_file_sink_test_drive(&runtime, &transfer), SALTS_OK);
     check_equal(chttp_file_sink_transfer_advance(&transfer), CHTTP_FILE_SINK_READY);
     check_equal(chttp_file_sink_transfer_transferred(&transfer), sizeof(payload) - 1u);
 
     if (cflow_io_file_operation_supported(&transfer.file, CFLOW_IO_NATIVE_FILE_FLUSH)) {
       check_equal(chttp_file_sink_transfer_flush(&transfer), CHTTP_FILE_SINK_WAIT);
-      check_equal(chttp_file_sink_test_drive(&runtime, &transfer), TURBO_OK);
+      check_equal(chttp_file_sink_test_drive(&runtime, &transfer), SALTS_OK);
       check_equal(chttp_file_sink_transfer_flush(&transfer), CHTTP_FILE_SINK_READY);
     }
-    check_equal(chttp_file_sink_transfer_drain_destroy(&transfer, &runtime), TURBO_OK);
-    check_equal(cflow_io_file_runtime_close(&runtime), TURBO_OK);
+    check_equal(chttp_file_sink_transfer_drain_destroy(&transfer, &runtime), SALTS_OK);
+    check_equal(cflow_io_file_runtime_close(&runtime), SALTS_OK);
     check_true(cflow_io_file_runtime_is_quiescent(&runtime));
-    check_equal(cflow_io_file_runtime_destroy(&runtime), TURBO_OK);
+    check_equal(cflow_io_file_runtime_destroy(&runtime), SALTS_OK);
 
     contents = tt_read_file(path, &contents_size);
     check_not_null(contents);

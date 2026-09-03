@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the Machine instance as the sole mutable state owner and the SerialExecutor as its sole semantic consumer. Add orthogonal lifecycle/worker phases and arbitrate cancel versus commit under the existing instance mutex; Graph remains a typed output topology and receives the Machine only through its Source adapter.
 
-**Tech Stack:** C11, TurboUtils mutex/executor primitives, CFlow Machine/Mailbox/Actor/Run, TinyTest, Lean 4
+**Tech Stack:** C11, Salts mutex/executor primitives, CFlow Machine/Mailbox/Actor/Run, TinyTest, Lean 4
 
 **Spec:** `docs/superpowers/specs/2026-08-24-cflow-actor-runtime-linearization-design.md`
 

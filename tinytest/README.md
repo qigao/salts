@@ -2,7 +2,7 @@
 
 BDD/TDD testing framework for C and C++. The runtime is a static library with no
 dependency beyond libc. C tests include `tinytest.h`; C++ tests include
-`tinytest.hpp`; both link `Rocida::TinyTest`.
+`tinytest.hpp`; both link `Salts::TinyTest`.
 
 Features: spec/describe/it, given/when/then, TDD TEST_CASE/SECTION, check/check_warn, strict-C11 generic assertions, benchmarking, TAP, JUnit XML, color output, test filtering.
 
@@ -24,7 +24,7 @@ spec("strncmp") {
 
 ```cmake
 add_executable(strncmp_spec strncmp_spec.c)
-target_link_libraries(strncmp_spec PRIVATE Rocida::TinyTest)
+target_link_libraries(strncmp_spec PRIVATE Salts::TinyTest)
 ```
 
 ```

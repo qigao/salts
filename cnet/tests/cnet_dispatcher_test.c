@@ -3,7 +3,7 @@
 #include "cnet_shards.h"
 #include "tinytest.h"
 
-#include <turbo/clock.h>
+#include <salts/clock.h>
 
 #include <stdatomic.h>
 #include <stdint.h>
@@ -50,7 +50,7 @@ static int cnet_dispatcher_test_listener(cnet_dispatcher_test_socket *out_listen
   socklen_t length = (socklen_t)sizeof(*out_address);
 #endif
   *out_listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (*out_listener == CNET_DISPATCHER_TEST_INVALID_SOCKET) return TURBO_EIO;
+  if (*out_listener == CNET_DISPATCHER_TEST_INVALID_SOCKET) return SALTS_EIO;
   memset(out_address, 0, sizeof(*out_address));
   out_address->sin_family = AF_INET;
   out_address->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -59,9 +59,9 @@ static int cnet_dispatcher_test_listener(cnet_dispatcher_test_socket *out_listen
       listen(*out_listener, 2) != 0) {
     cnet_dispatcher_test_close_socket(*out_listener);
     *out_listener = CNET_DISPATCHER_TEST_INVALID_SOCKET;
-    return TURBO_EIO;
+    return SALTS_EIO;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void cnet_dispatcher_test_observe(void *context, const cnet_dispatch_view *view) {
@@ -97,17 +97,17 @@ static void cnet_dispatcher_test_observe(void *context, const cnet_dispatch_view
 
 static int cnet_dispatcher_test_drive_until(cnet_shards *shards, cnet_dispatcher *dispatcher,
                                             atomic_int *value, int expected) {
-  const uint64_t deadline = turbo_monotonic_ms() + CNET_DISPATCHER_TEST_TIMEOUT_MS;
+  const uint64_t deadline = salts_monotonic_ms() + CNET_DISPATCHER_TEST_TIMEOUT_MS;
   while (atomic_load_explicit(value, memory_order_acquire) < expected) {
     int status = cnet_shards_poll(shards, 1u);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     status = cnet_dispatcher_drive(dispatcher, 0u);
-    if (status != TURBO_OK && status != TURBO_ETIMEDOUT && status != TURBO_ENOBUFS &&
-        status != TURBO_EBUSY)
+    if (status != SALTS_OK && status != SALTS_ETIMEDOUT && status != SALTS_ENOBUFS &&
+        status != SALTS_EBUSY)
       return status;
-    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
+    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 spec("CNet event dispatcher") {
@@ -141,64 +141,64 @@ spec("CNet event dispatcher") {
     cnet_dispatcher_test_probe replacement_probe = {0};
     const unsigned char inbound = 23u;
 
-    check_equal(cnet_module_init(), TURBO_OK);
-    check_equal(cnet_dispatcher_test_listener(&listener, &address), TURBO_OK);
-    check_equal(cnet_shards_init(&shards, &shards_config), TURBO_OK);
-    check_equal(cnet_dispatcher_init(&dispatcher, &shards), TURBO_OK);
-    check_equal(cnet_dispatcher_init(&dispatcher, &shards), TURBO_EALREADY);
-    check_equal(cnet_dispatcher_destroy(&dispatcher), TURBO_EBUSY);
+    check_equal(cnet_module_init(), SALTS_OK);
+    check_equal(cnet_dispatcher_test_listener(&listener, &address), SALTS_OK);
+    check_equal(cnet_shards_init(&shards, &shards_config), SALTS_OK);
+    check_equal(cnet_dispatcher_init(&dispatcher, &shards), SALTS_OK);
+    check_equal(cnet_dispatcher_init(&dispatcher, &shards), SALTS_EALREADY);
+    check_equal(cnet_dispatcher_destroy(&dispatcher), SALTS_EBUSY);
 
     payload.scheme = CNET_URI_TCP;
     memcpy(payload.host, "127.0.0.1", sizeof("127.0.0.1"));
     payload.port = ntohs(address.sin_port);
-    check_equal(cnet_shards_connect(&shards, &payload, &connection), TURBO_OK);
+    check_equal(cnet_shards_connect(&shards, &payload, &connection), SALTS_OK);
     check_equal(
         cnet_dispatcher_register(&dispatcher, connection, cnet_dispatcher_test_observe, &probe),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(
         cnet_dispatcher_register(&dispatcher, connection, cnet_dispatcher_test_observe, &probe),
-        TURBO_EALREADY);
+        SALTS_EALREADY);
     check_equal(cnet_dispatcher_test_drive_until(&shards, &dispatcher, &probe.connected, 1),
-                TURBO_OK);
+                SALTS_OK);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CNET_DISPATCHER_TEST_INVALID_SOCKET);
 
-    check_equal(cnet_shards_receive(&shards, connection, 1u), TURBO_OK);
+    check_equal(cnet_shards_receive(&shards, connection, 1u), SALTS_OK);
     check_equal(send(accepted, (const char *)&inbound, (int)sizeof(inbound), 0),
                 (int)sizeof(inbound));
     check_equal(cnet_dispatcher_test_drive_until(&shards, &dispatcher, &probe.received, 1),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(probe.value, inbound);
 
-    check_equal(cnet_shards_close(&shards, connection), TURBO_OK);
+    check_equal(cnet_shards_close(&shards, connection), SALTS_OK);
     check_equal(cnet_dispatcher_test_drive_until(&shards, &dispatcher, &probe.terminal, 1),
-                TURBO_OK);
-    check_equal(cnet_dispatcher_wait_idle(&dispatcher, CNET_DISPATCHER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_shards_connect(&shards, &payload, &replacement), TURBO_OK);
+                SALTS_OK);
+    check_equal(cnet_dispatcher_wait_idle(&dispatcher, CNET_DISPATCHER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_shards_connect(&shards, &payload, &replacement), SALTS_OK);
     check_true(replacement.session.generation != connection.session.generation);
     check_equal(atomic_load_explicit(&probe.order_error, memory_order_acquire), 0);
 
     check_equal(cnet_dispatcher_register(&dispatcher, replacement, cnet_dispatcher_test_observe,
                                          &replacement_probe),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(
         cnet_dispatcher_test_drive_until(&shards, &dispatcher, &replacement_probe.connected, 1),
-        TURBO_OK);
+        SALTS_OK);
     cnet_dispatcher_test_close_socket(accepted);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CNET_DISPATCHER_TEST_INVALID_SOCKET);
-    check_equal(cnet_dispatcher_drain(&dispatcher, CNET_DISPATCHER_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_dispatcher_drain(&dispatcher, CNET_DISPATCHER_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(atomic_load_explicit(&replacement_probe.order_error, memory_order_acquire), 0);
     check_equal(cnet_dispatcher_register(&dispatcher, replacement, cnet_dispatcher_test_observe,
                                          &replacement_probe),
-                TURBO_ESHUTDOWN);
+                SALTS_ESHUTDOWN);
     check_equal(cnet_dispatcher_drain(&dispatcher, CNET_DISPATCHER_TEST_TIMEOUT_MS),
-                TURBO_EALREADY);
-    check_equal(cnet_dispatcher_destroy(&dispatcher), TURBO_OK);
-    check_equal(cnet_shards_stop(&shards, CNET_DISPATCHER_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(cnet_shards_destroy(&shards), TURBO_OK);
+                SALTS_EALREADY);
+    check_equal(cnet_dispatcher_destroy(&dispatcher), SALTS_OK);
+    check_equal(cnet_shards_stop(&shards, CNET_DISPATCHER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_shards_destroy(&shards), SALTS_OK);
     cnet_dispatcher_test_close_socket(accepted);
     cnet_dispatcher_test_close_socket(listener);
-    check_equal(cnet_module_shutdown(), TURBO_OK);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 }

@@ -40,7 +40,7 @@ int s3_multipart_upload_part(s3_client *client, s3_multipart *upload, uint32_t p
 
 /**
  * Completes contiguous parts in ascending order; only the final part may be below 5 MiB.
- * An empty, malformed, or Error-root HTTP 200 response returns TURBO_EPROTO and
+ * An empty, malformed, or Error-root HTTP 200 response returns SALTS_EPROTO and
  * leaves the handle active for retry or abort.
  */
 int s3_multipart_complete(s3_client *client, s3_multipart *upload, s3_response *out_response,
@@ -55,7 +55,7 @@ int s3_multipart_detach(s3_multipart *upload);
 int s3_multipart_state_get(const s3_multipart *upload, s3_multipart_state *out_state);
 const char *s3_multipart_upload_id(const s3_multipart *upload);
 
-/** Active state returns TURBO_EBUSY; terminal or detached state releases all owned data. */
+/** Active state returns SALTS_EBUSY; terminal or detached state releases all owned data. */
 int s3_multipart_destroy(s3_multipart *upload);
 
 typedef struct s3_multipart_file_options {

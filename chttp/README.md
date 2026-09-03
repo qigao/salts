@@ -9,13 +9,13 @@ Application / RPC
     -> CFlow shared file runtime -> NativeIO file terminal completion
 ```
 
-CHTTP 随 Rocida 正常构建，source-tree target 是 `turbo_chttp`；安装后通过
-`Rocida::CHTTP` 与 `<chttp/chttp.h>` 使用。llhttp 是基础依赖，不再由单独的 manifest
+CHTTP 随 Salts 正常构建，source-tree target 是 `salts_chttp`；安装后通过
+`Salts::CHTTP` 与 `<chttp/chttp.h>` 使用。llhttp 是基础依赖，不再由单独的 manifest
 feature 控制。
 
 CHTTP 当前 library version 是 2.0.0，ABI major/SOVERSION 是 2。Unix 安装包提供
-`libturbo_chttp.so.2` SONAME，Windows 产物为 `turbo_chttp-2.dll` 与
-`turbo_chttp-2.lib`；CMake 消费者仍只链接稳定的 `Rocida::CHTTP` target。版本化产物名阻止
+`libsalts_chttp.so.2` SONAME，Windows 产物为 `salts_chttp-2.dll` 与
+`salts_chttp-2.lib`；CMake 消费者仍只链接稳定的 `Salts::CHTTP` target。版本化产物名阻止
 ABI 1 程序意外装载含新公开结构布局的 ABI 2 动态库，但源码使用者仍必须用匹配头文件重新编译。
 
 ## 当前能力与明确边界
@@ -49,7 +49,7 @@ compression、proxy、multipart/Range、异步悬挂 server response 或自动 r
 H1 client serializer 发送
 `Connection: keep-alive`；final response 只有在 llhttp 判定协议允许持久连接时才回到池中，
 `Connection: close`、EOF framing、解析失败、取消和 shutdown 都会关闭该连接。UDP/datagram 在
-admission 前返回 `TURBO_ENOTSUP`。
+admission 前返回 `SALTS_ENOTSUP`。
 
 当前 server 对 HTTP/1.0 的 `Expect`/`Upgrade` 字段按协议忽略；HTTP/1.1 处理
 `Expect: 100-continue`，并只允许显式 WebSocket route 接受 RFC 6455 Upgrade。普通 GET 访问
@@ -92,7 +92,7 @@ GOAWAY，再排空已经接纳的 stream；新 stream 不再进入 handler。最
 
 Server 的 H2 容量必须显式提供：`h2_input_buffer_bytes >= 16393`，
 `16468 <= h2_output_buffer_bytes <= network.max_send_bytes`。不满足时
-`chttp_server_init()` 返回 `TURBO_EMSGSIZE`，不会延迟到首个连接才失败。init 还会根据
+`chttp_server_init()` 返回 `SALTS_EMSGSIZE`，不会延迟到首个连接才失败。init 还会根据
 request/response header count 与 bytes 上限计算 HPACK 最坏编码界；output 放不下该界时同样拒绝。
 
 内部采用协议 Adapter + 共享请求模板流程：H1/llhttp 与 H2 frame/HPACK 分别把 wire input
@@ -109,7 +109,7 @@ callback、线程 handoff 或 coroutine suspension 保存裸指针。
 开启 Session 后，Cookie 只保存 128-bit 随机 session id，实际 key/value 留在 server 的固定容量
 存储中。Cookie 默认带 `Path=/; HttpOnly; SameSite=Lax`，可配置 `Secure`；idle timeout 滑动刷新。
 达到 `session_capacity` 时不会驱逐仍有效的会话，新的 `chttp_session_set()` 返回
-`TURBO_ENOBUFS`。当前 store 是进程内内存，不承诺重启持久化、多进程共享或分布式一致性。
+`SALTS_ENOBUFS`。当前 store 是进程内内存，不承诺重启持久化、多进程共享或分布式一致性。
 
 ```c
 #include <chttp/chttp.h>
@@ -128,7 +128,7 @@ static int add_security_headers(void *user, const chttp_server_request_view *req
   (void)user;
   (void)request;
   status = chttp_server_response_set_header(response, "X-Content-Type-Options", "nosniff");
-  return status == TURBO_OK ? chttp_server_next_call(next) : status;
+  return status == SALTS_OK ? chttp_server_next_call(next) : status;
 }
 
 int main(void) {
@@ -163,22 +163,22 @@ int main(void) {
   };
   int status = chttp_server_init(&server, &config);
   int started = 0;
-  if (status == TURBO_OK) status = chttp_server_use(&server, add_security_headers, NULL);
-  if (status == TURBO_OK) status = chttp_server_get(&server, "/health/:name", health, NULL);
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) status = chttp_server_use(&server, add_security_headers, NULL);
+  if (status == SALTS_OK) status = chttp_server_get(&server, "/health/:name", health, NULL);
+  if (status == SALTS_OK) {
     status = chttp_server_start(&server);
-    started = status == TURBO_OK;
+    started = status == SALTS_OK;
   }
   /* Wait here for the application's shutdown signal. */
   if (started) {
     const int stop_status = chttp_server_stop(&server, 0);
-    if (status == TURBO_OK) status = stop_status;
+    if (status == SALTS_OK) status = stop_status;
   }
   if (server.impl != NULL) {
     const int destroy_status = chttp_server_destroy(&server);
-    if (status == TURBO_OK) status = destroy_status;
+    if (status == SALTS_OK) status = destroy_status;
   }
-  return status == TURBO_OK ? 0 : 1;
+  return status == SALTS_OK ? 0 : 1;
 }
 ```
 
@@ -192,7 +192,7 @@ suspend/resume API。
 ## H1/H2 共用的流式正文与文件 API
 
 `chttp_body_source` 每次向 CHTTP 提供一块数据，`chttp_body_sink` 只在成功消费整块后返回
-`TURBO_OK`。同一调用点通过 `protocol` 选择 H1/H2，不接触 chunked、DATA frame 或 flow-control
+`SALTS_OK`。同一调用点通过 `protocol` 选择 H1/H2，不接触 chunked、DATA frame 或 flow-control
 window。已知长度 source 自动产生 `Content-Length` 并严格检查 EOF；未知长度在 H1.1 使用
 chunked，在 H2 以 END_STREAM 结束且不发送 Content-Length。累计大小仍受
 `max_request_body_bytes`/`max_response_body_bytes` 限制。
@@ -205,8 +205,8 @@ response，同时删除临时文件并保留原目标。sink 模式的 response 
 每个 client/server owner 懒创建一个有硬容量的共享 CFlow file runtime。正文 read/write 通过
 IOCP 或 io_uring 原生异步操作完成；completion callback 仍只在 CHTTP owner 上执行。Windows
 IOCP 不提供异步 flush，因此下载完成关闭异步句柄后，仅 durability barrier 使用同步
-`turbo_fs_fsync`；Linux io_uring 使用异步 flush。不支持 regular-file async I/O 的 backend 在
-file open 前返回 `TURBO_ENOTSUP`，不会把正文数据路径静默降级为同步读写。
+`salts_fs_fsync`；Linux io_uring 使用异步 flush。不支持 regular-file async I/O 的 backend 在
+file open 前返回 `SALTS_ENOTSUP`，不会把正文数据路径静默降级为同步读写。
 
 H1 在文件 write completion 前不再提交 receive。H2 在 write completion 前不归还该 DATA 的
 stream/connection credit，并把其后的 frame 留在有界 protocol input buffer；完成后恢复 input 与
@@ -214,7 +214,7 @@ receive。这个单 lease 设计将每个活跃下载的额外内存固定为一
 文件写等待期间，同连接中排在其后的 sibling frame 会短暂等待。
 
 服务端 route 通过成对的 `body_open/body_close` 接收流式上传。open 在 header 与 route 参数可用后
-执行；最终 middleware、Session 和 handler 只在完整正文成功到达且 close(TURBO_OK) 之后执行。
+执行；最终 middleware、Session 和 handler 只在完整正文成功到达且 close(SALTS_OK) 之后执行。
 最终 request 使用 `body_streamed == 1`、`body == NULL` 和累计 `body_size`。鉴权若必须先于正文
 spool，应在 `body_open` 完成；普通 middleware 保持最终 dispatch 语义。响应使用
 `chttp_server_response_source()` 或 `chttp_server_response_file()`，HEAD 只发送 metadata，不读取
@@ -233,7 +233,7 @@ CHTTP → CNet → NativeIO，返回后 `chttp_response` 的 status、reason、h
 调用方拥有；用户不创建 poller，也不需要提供 Executor 或 worker thread。
 
 一个 client 同一时刻只允许一个调用，并归一个线程所有。需要并行请求时，可以把多个互不
-共享的 client 交给应用已有的 `turbo_threadpool` 或 Executor；不能让多个 worker 同时推进同一个
+共享的 client 交给应用已有的 `salts_threadpool` 或 Executor；不能让多个 worker 同时推进同一个
 client。CHTTP 不创建隐藏的全局线程池，也不会把阻塞工作转交给不可控的后台线程。
 
 `timeout_ms` 限制等待 HTTP result 的时间。到期后 CHTTP 会取消并等待底层 terminal 状态，再让
@@ -249,12 +249,12 @@ request/event capacity、单次 send/receive bytes 和 connect/read/write timeou
 
 | 字段 | 单位与满额行为 |
 |---|---|
-| `request_capacity` | H1 request slot 或 H2 stream 的总量；满时 `TURBO_ENOBUFS` |
-| `max_start_line_bytes` | request/status line；超限 `TURBO_EMSGSIZE` |
-| `max_header_count` | 包含自动生成的 Host、Content-Length、Connection；超限 `TURBO_EMSGSIZE` |
-| `max_header_bytes` | header line bytes（不含最终空行）；超限 `TURBO_EMSGSIZE` |
-| `max_request_body_bytes` | copied/source request body 总量；超限 `TURBO_EMSGSIZE` |
-| `max_response_body_bytes` | buffered/sink response body 总量；超限 `TURBO_EMSGSIZE` |
+| `request_capacity` | H1 request slot 或 H2 stream 的总量；满时 `SALTS_ENOBUFS` |
+| `max_start_line_bytes` | request/status line；超限 `SALTS_EMSGSIZE` |
+| `max_header_count` | 包含自动生成的 Host、Content-Length、Connection；超限 `SALTS_EMSGSIZE` |
+| `max_header_bytes` | header line bytes（不含最终空行）；超限 `SALTS_EMSGSIZE` |
+| `max_request_body_bytes` | copied/source request body 总量；超限 `SALTS_EMSGSIZE` |
+| `max_response_body_bytes` | buffered/sink response body 总量；超限 `SALTS_EMSGSIZE` |
 | `stream_chunk_bytes` | 每个 source 的 chunk 上限；零选择不超过 transport 的 64 KiB |
 | `max_informational_responses` | 一个 final response 前允许的 1xx 数量 |
 | `h2_input_buffer_bytes` | H2 parser input 上限；零选择 128 KiB 或更大的 CNet receive buffer |
@@ -292,7 +292,7 @@ authority 或不同 TLS profile 不做隐式 coalescing。内容相同但分别�
 `request_capacity`。匹配的 H2 session 达到 peer `SETTINGS_MAX_CONCURRENT_STREAMS` 时，client 会先
 尝试其他同 key session；若仍有物理连接容量则新建 session，而不是让一个拥塞 session 阻塞整个
 origin。pool 满且没有可用 session/idle slot 时，高级 submit 返回
-`TURBO_ENOBUFS`；client 会先开始关闭一个没有活动 request/stream 的不匹配 H1 connection 或 H2
+`SALTS_ENOBUFS`；client 会先开始关闭一个没有活动 request/stream 的不匹配 H1 connection 或 H2
 session，调用方 poll 后再重试。H1/H2 之间切换也遵守同一物理容量和驱逐协议。
 requests-style client 则在本次调用 deadline 内自行推进该关闭并重新提交，因此普通用户切换站点
 仍不需要接触 poller。这里的重新提交发生在新 request admission 之前，不是断线后的 HTTP retry。
@@ -339,7 +339,7 @@ stream，不能并发调用；`receive` 返回的 event view 只在下一次 cli
 `chttp_websocket_pool`。pool 只建立一条 TCP/TLS + H2 连接；每次
 `chttp_websocket_pool_open()` 以完整 URI 打开一个独立 RFC 8441 stream，并返回
 generation-checked `chttp_websocket_session`。首个 URI 固定 scheme、authority 和 TLS profile，后续 URI
-可以使用不同 path/query；origin 或 TLS profile 不一致会返回 `TURBO_EINVAL`，不会暗中建立第二条连接。
+可以使用不同 path/query；origin 或 TLS profile 不一致会返回 `SALTS_EINVAL`，不会暗中建立第二条连接。
 关闭一个 session 只完成该 WebSocket Close handshake 和 H2 END_STREAM，其他 session 仍可收发。
 
 调用顺序是：用共享 network/WebSocket limits 和 `session_capacity` 初始化 pool；将
@@ -349,13 +349,13 @@ URI 调用 `open`；此后每次 send/receive/close 都同时传入 pool 与对�
 
 pool 与其所有 session 都由一个 progress owner 串行调用，应用仍不接触 poller。`session_capacity`
 同时是本地 stream 硬上限；peer 的 `SETTINGS_MAX_CONCURRENT_STREAMS` 可能进一步收紧它，满额统一返回
-`TURBO_ENOBUFS`。每个 slot 独立拥有 WebSocket parser、event ring、payload slab 与在途 frame storage；
+`SALTS_ENOBUFS`。每个 slot 独立拥有 WebSocket parser、event ring、payload slab 与在途 frame storage；
 stream parse/容量错误只终止该 handle，物理 transport/H2 connection 错误才终止所有 session。
-pool `receive` 返回的 view 在下一次任意 pool 操作时失效，stale generation 返回 `TURBO_ENOENT`。
+pool `receive` 返回的 view 在下一次任意 pool 操作时失效，stale generation 返回 `SALTS_ENOENT`。
 
 三个 WebSocket 容量同样是硬边界：frame 决定单帧 payload 上限，message 决定 fragment 重组后
 总量，buffered input 决定尚未形成完整 frame 的保留量。client event queue 也受
-`event_capacity` 限制，满额返回 `TURBO_ENOBUFS`，不会静默丢帧或无界扩容。CHTTP 不直接导出
+`event_capacity` 限制，满额返回 `SALTS_ENOBUFS`，不会静默丢帧或无界扩容。CHTTP 不直接导出
 `tools/wsparser`；它由 CNet 私有使用，frame masking、UTF-8、control frame、fragment 与 close
 状态只有一个事实源。H2 DATA 只是这套 byte-stream engine 的 transport adapter；stream flow-control
 credit 在输入被同步消费后归还，Close frame 排空后才发送 END_STREAM。
@@ -376,7 +376,7 @@ credit 在输入被同步消费后归还，Close frame 排空后才发送 END_ST
 CHTTP 与内嵌 CNet 共享一个 progress owner。`submit/cancel/poll/stop/destroy` 不得并发调用；
 completion callback 在 `chttp_async_client_poll()` 或 `chttp_async_client_stop()` 的调用线程内同步执行。
 callback 可以取消另一条已接受 request，但不能递归 poll/stop/destroy，也不能直接 submit 新
-request；submit 必须等 callback 返回后再进行，否则返回 `TURBO_EBUSY`。
+request；submit 必须等 callback 返回后再进行，否则返回 `SALTS_EBUSY`。
 
 ```text
 H1: FREE -> CONNECTING -> BUSY -> IDLE/CLOSING -> TERMINAL -> RECYCLE
@@ -460,9 +460,9 @@ int main(void) {
   };
   int status = chttp_client_init(&client, &config);
 
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = chttp_get(&client, &options, &response, &error);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     (void)fwrite(response.body, 1, response.body_size, stdout);
   else
     (void)fprintf(stderr, "CHTTP failed: status=%d native=%d stage=%s\n",
@@ -472,9 +472,9 @@ int main(void) {
   chttp_response_destroy(&response);
   if (client.impl != NULL) {
     const int destroy_status = chttp_client_destroy(&client, 5000);
-    if (status == TURBO_OK) status = destroy_status;
+    if (status == SALTS_OK) status = destroy_status;
   }
-  return status == TURBO_OK ? 0 : 1;
+  return status == SALTS_OK ? 0 : 1;
 }
 ```
 

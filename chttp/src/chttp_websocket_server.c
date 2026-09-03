@@ -22,7 +22,7 @@ static chttp_server_websocket_peer *chttp_websocket_peer(const chttp_websocket *
 static int chttp_server_websocket_engine_write(void *user, const uint8_t *data, size_t size) {
   chttp_server_websocket_peer *peer = (chttp_server_websocket_peer *)user;
   if (peer == NULL || peer->write == NULL || peer->phase == CHTTP_SERVER_WEBSOCKET_NONE)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   return peer->write(peer->transport, data, size);
 }
 
@@ -31,15 +31,15 @@ static int chttp_server_websocket_h1_write(void *transport, const uint8_t *data,
   int status;
   if (connection == NULL || data == NULL || size == 0u ||
       connection->websocket_peer.phase == CHTTP_SERVER_WEBSOCKET_NONE)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (connection->websocket_peer.phase == CHTTP_SERVER_WEBSOCKET_HANDSHAKE || connection->writing ||
       connection->outbound_size != 0u || connection->pending_action == CHTTP_SERVER_PENDING_SEND)
-    return TURBO_EBUSY;
-  if (size > connection->outbound_capacity) return TURBO_EMSGSIZE;
+    return SALTS_EBUSY;
+  if (size > connection->outbound_capacity) return SALTS_EMSGSIZE;
   memcpy(connection->outbound, data, size);
   connection->outbound_size = size;
   status = chttp_server_send_pending(connection);
-  if (status == TURBO_OK || status == TURBO_EBUSY || status == TURBO_ENOBUFS) return TURBO_OK;
+  if (status == SALTS_OK || status == SALTS_EBUSY || status == SALTS_ENOBUFS) return SALTS_OK;
   connection->outbound_size = 0u;
   return status;
 }
@@ -70,8 +70,8 @@ int chttp_server_websocket_peer_init(chttp_server_websocket_peer *peer, chttp_se
   cnet_websocket_config config;
   int status;
   if (peer == NULL || server == NULL || route == NULL || write == NULL || transport == NULL)
-    return TURBO_EINVAL;
-  if (peer->engine.impl != NULL || peer->phase != CHTTP_SERVER_WEBSOCKET_NONE) return TURBO_EBUSY;
+    return SALTS_EINVAL;
+  if (peer->engine.impl != NULL || peer->phase != CHTTP_SERVER_WEBSOCKET_NONE) return SALTS_EBUSY;
   config =
       (cnet_websocket_config){.size = sizeof(config),
                               .role = CNET_WEBSOCKET_SERVER,
@@ -82,14 +82,14 @@ int chttp_server_websocket_peer_init(chttp_server_websocket_peer *peer, chttp_se
                               .on_event = chttp_server_websocket_event,
                               .user = peer};
   status = cnet_websocket_init(&peer->engine, &config);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   peer->handle.impl = peer;
   peer->server = server;
   peer->route = route;
   peer->write = write;
   peer->transport = transport;
   peer->phase = CHTTP_SERVER_WEBSOCKET_HANDSHAKE;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 void chttp_server_websocket_peer_reset(chttp_server_websocket_peer *peer) {
@@ -106,13 +106,13 @@ void chttp_server_websocket_peer_open(chttp_server_websocket_peer *peer) {
 int chttp_server_websocket_peer_feed(chttp_server_websocket_peer *peer, const void *data,
                                      size_t size) {
   if (peer == NULL || peer->phase != CHTTP_SERVER_WEBSOCKET_OPEN || peer->engine.impl == NULL)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   return cnet_websocket_feed(&peer->engine, data, size);
 }
 
 int chttp_server_websocket_peer_flush(chttp_server_websocket_peer *peer) {
   if (peer == NULL || peer->phase == CHTTP_SERVER_WEBSOCKET_NONE || peer->engine.impl == NULL)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   return cnet_websocket_flush(&peer->engine);
 }
 
@@ -124,7 +124,7 @@ void chttp_server_websocket_peer_transport_closed(chttp_server_websocket_peer *p
 bool chttp_server_websocket_peer_terminal(const chttp_server_websocket_peer *peer) {
   cnet_websocket_state state = CNET_WEBSOCKET_FAILED;
   return peer == NULL || peer->engine.impl == NULL ||
-         (cnet_websocket_state_get(&peer->engine, &state) == TURBO_OK &&
+         (cnet_websocket_state_get(&peer->engine, &state) == SALTS_OK &&
           (state == CNET_WEBSOCKET_CLOSED || state == CNET_WEBSOCKET_FAILED));
 }
 
@@ -153,7 +153,7 @@ int chttp_server_websocket_route_open(chttp_server_websocket_peer *peer,
   int status;
   if (peer == NULL || state == NULL || route == NULL || request == NULL || peer->server == NULL ||
       peer->phase == CHTTP_SERVER_WEBSOCKET_NONE)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   chttp_server_stats_request(peer->server);
   routed_request = *request;
   routed_request.params = state->params;
@@ -172,10 +172,10 @@ int chttp_server_websocket_route_open(chttp_server_websocket_peer *peer,
   chttp_active_callback_server = peer->server;
   status = chttp_server_chain_run(&chain);
   chttp_active_callback_server = previous_callback_server;
-  if (status == TURBO_OK && !open_context.called && !state->response_builder.replied)
-    status = TURBO_EPROTO;
-  if (status == TURBO_OK) status = chttp_session_request_finish(state);
-  if (status != TURBO_OK) {
+  if (status == SALTS_OK && !open_context.called && !state->response_builder.replied)
+    status = SALTS_EPROTO;
+  if (status == SALTS_OK) status = chttp_session_request_finish(state);
+  if (status != SALTS_OK) {
     chttp_session_request_abort(state);
     chttp_server_stats_handler_error(peer->server);
   }
@@ -184,10 +184,10 @@ int chttp_server_websocket_route_open(chttp_server_websocket_peer *peer,
 
 static int chttp_server_websocket_append(unsigned char *output, size_t capacity, size_t *size,
                                          const void *data, size_t data_size) {
-  if (*size > capacity || data_size > capacity - *size) return TURBO_EMSGSIZE;
+  if (*size > capacity || data_size > capacity - *size) return SALTS_EMSGSIZE;
   if (data_size != 0u) memcpy(output + *size, data, data_size);
   *size += data_size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_server_websocket_handshake_serialize(const chttp_server_response_builder *builder,
@@ -199,30 +199,30 @@ static int chttp_server_websocket_handshake_serialize(const chttp_server_respons
   size_t size = 0u;
   size_t index;
   int status;
-  if (builder == NULL || accept == NULL || output == NULL || out_size == NULL) return TURBO_EINVAL;
+  if (builder == NULL || accept == NULL || output == NULL || out_size == NULL) return SALTS_EINVAL;
   status =
       chttp_server_websocket_append(output, output_capacity, &size, prefix, sizeof(prefix) - 1u);
-  for (index = 0u; status == TURBO_OK && index < builder->header_count; ++index) {
+  for (index = 0u; status == SALTS_OK && index < builder->header_count; ++index) {
     const chttp_header *header = &builder->headers[index];
     status = chttp_server_websocket_append(output, output_capacity, &size, header->name,
                                            strlen(header->name));
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
       status = chttp_server_websocket_append(output, output_capacity, &size, ": ", 2u);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
       status = chttp_server_websocket_append(output, output_capacity, &size, header->value,
                                              strlen(header->value));
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
       status = chttp_server_websocket_append(output, output_capacity, &size, "\r\n", 2u);
   }
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = chttp_server_websocket_append(output, output_capacity, &size, required_prefix,
                                            sizeof(required_prefix) - 1u);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = chttp_server_websocket_append(output, output_capacity, &size, accept,
                                            CHTTP_WEBSOCKET_ACCEPT_BYTES);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = chttp_server_websocket_append(output, output_capacity, &size, "\r\n\r\n", 4u);
-  if (status == TURBO_OK) *out_size = size;
+  if (status == SALTS_OK) *out_size = size;
   return status;
 }
 
@@ -233,43 +233,43 @@ int chttp_server_websocket_upgrade(void *user, const chttp_server_request_view *
   chttp_server_request_state *state;
   chttp_server_route_record *route;
   unsigned int allowed_methods = 0u;
-  int route_status = TURBO_OK;
+  int route_status = SALTS_OK;
   char accept[CHTTP_WEBSOCKET_ACCEPT_CAPACITY];
   int status;
   if (connection == NULL || request == NULL || out_action == NULL || out_http_status == NULL)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   *out_action = CHTTP_SERVER_UPGRADE_IGNORE;
   *out_http_status = 0u;
   state = &connection->request_state;
   route = chttp_server_route_find(state, CHTTP_METHOD_GET, request->path, &allowed_methods,
                                   &route_status);
   (void)allowed_methods;
-  if (route_status != TURBO_OK) return route_status;
-  if (route == NULL || !route->websocket) return TURBO_OK;
+  if (route_status != SALTS_OK) return route_status;
+  if (route == NULL || !route->websocket) return SALTS_OK;
   status =
       chttp_websocket_server_handshake_validate(request, accept, sizeof(accept), out_http_status);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status = chttp_server_websocket_peer_init(&connection->websocket_peer, connection->server, route,
                                             chttp_server_websocket_h1_write, connection);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status = chttp_server_websocket_route_open(&connection->websocket_peer, state, route, request);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     chttp_server_websocket_reset(connection);
     *out_http_status = 500u;
     return status;
   }
   if (state->response_builder.replied) {
     if (state->response_builder.source_enabled) {
-      chttp_server_response_builder_close_source(&state->response_builder, TURBO_ENOTSUP);
+      chttp_server_response_builder_close_source(&state->response_builder, SALTS_ENOTSUP);
       chttp_server_websocket_reset(connection);
       *out_http_status = 500u;
-      return TURBO_ENOTSUP;
+      return SALTS_ENOTSUP;
     }
     status =
         chttp_server_response_serialize(&state->response_builder, request, connection->outbound,
                                         connection->outbound_capacity, &connection->outbound_size);
     chttp_server_websocket_reset(connection);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       *out_http_status = 500u;
       return status;
     }
@@ -278,7 +278,7 @@ int chttp_server_websocket_upgrade(void *user, const chttp_server_request_view *
     status = chttp_server_websocket_handshake_serialize(
         &state->response_builder, accept, connection->outbound, connection->outbound_capacity,
         &connection->outbound_size);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       chttp_server_websocket_reset(connection);
       *out_http_status = 500u;
       return status;
@@ -286,30 +286,30 @@ int chttp_server_websocket_upgrade(void *user, const chttp_server_request_view *
   }
   chttp_server_stats_response(connection->server);
   *out_action = CHTTP_SERVER_UPGRADE_STOP;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int chttp_server_websocket_input(chttp_server_connection *connection, const void *data,
                                  size_t size) {
   if (connection == NULL || connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_OPEN)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   return chttp_server_websocket_peer_feed(&connection->websocket_peer, data, size);
 }
 
 int chttp_server_websocket_send_complete(chttp_server_connection *connection) {
   int status;
   if (connection == NULL || connection->websocket_peer.phase == CHTTP_SERVER_WEBSOCKET_NONE)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   chttp_server_websocket_peer_open(&connection->websocket_peer);
   status = chttp_server_websocket_peer_flush(&connection->websocket_peer);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   if (connection->websocket_upgrade_input_size != 0u) {
     const size_t size = connection->websocket_upgrade_input_size;
     connection->websocket_upgrade_input_size = 0u;
     status = chttp_server_websocket_peer_feed(&connection->websocket_peer,
                                               connection->websocket_upgrade_input, size);
   }
-  if (status == TURBO_OK && chttp_server_websocket_peer_terminal(&connection->websocket_peer) &&
+  if (status == SALTS_OK && chttp_server_websocket_peer_terminal(&connection->websocket_peer) &&
       !connection->writing && connection->outbound_size == 0u &&
       connection->pending_action == CHTTP_SERVER_PENDING_NONE)
     chttp_server_connection_close(connection);
@@ -326,35 +326,35 @@ int chttp_websocket_state_get(const chttp_websocket *websocket, chttp_websocket_
   chttp_server_websocket_peer *peer = chttp_websocket_peer(websocket);
   cnet_websocket_state state;
   int status;
-  if (peer == NULL || out_state == NULL) return TURBO_EINVAL;
+  if (peer == NULL || out_state == NULL) return SALTS_EINVAL;
   status = cnet_websocket_state_get(&peer->engine, &state);
-  if (status == TURBO_OK) *out_state = (chttp_websocket_state)state;
+  if (status == SALTS_OK) *out_state = (chttp_websocket_state)state;
   return status;
 }
 
 int chttp_websocket_send_text(chttp_websocket *websocket, const void *data, size_t size) {
   chttp_server_websocket_peer *peer = chttp_websocket_peer(websocket);
-  return peer == NULL ? TURBO_EINVAL : cnet_websocket_send_text(&peer->engine, data, size);
+  return peer == NULL ? SALTS_EINVAL : cnet_websocket_send_text(&peer->engine, data, size);
 }
 
 int chttp_websocket_send_binary(chttp_websocket *websocket, const void *data, size_t size) {
   chttp_server_websocket_peer *peer = chttp_websocket_peer(websocket);
-  return peer == NULL ? TURBO_EINVAL : cnet_websocket_send_binary(&peer->engine, data, size);
+  return peer == NULL ? SALTS_EINVAL : cnet_websocket_send_binary(&peer->engine, data, size);
 }
 
 int chttp_websocket_send_ping(chttp_websocket *websocket, const void *data, size_t size) {
   chttp_server_websocket_peer *peer = chttp_websocket_peer(websocket);
-  return peer == NULL ? TURBO_EINVAL : cnet_websocket_send_ping(&peer->engine, data, size);
+  return peer == NULL ? SALTS_EINVAL : cnet_websocket_send_ping(&peer->engine, data, size);
 }
 
 int chttp_websocket_send_pong(chttp_websocket *websocket, const void *data, size_t size) {
   chttp_server_websocket_peer *peer = chttp_websocket_peer(websocket);
-  return peer == NULL ? TURBO_EINVAL : cnet_websocket_send_pong(&peer->engine, data, size);
+  return peer == NULL ? SALTS_EINVAL : cnet_websocket_send_pong(&peer->engine, data, size);
 }
 
 int chttp_websocket_close(chttp_websocket *websocket, uint16_t code, const void *reason,
                           size_t reason_size) {
   chttp_server_websocket_peer *peer = chttp_websocket_peer(websocket);
-  return peer == NULL ? TURBO_EINVAL
+  return peer == NULL ? SALTS_EINVAL
                       : cnet_websocket_close(&peer->engine, code, reason, reason_size);
 }

@@ -1,6 +1,6 @@
 cmake_add_test(xml_parser_test
   SOURCES xml_parser_test.c
-  LIBS Rocida::XmlParser Rocida::TinyTest
+  LIBS Salts::XmlParser Salts::TinyTest
   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/../include
   FOLDER "parser/xml_parser/test")
 

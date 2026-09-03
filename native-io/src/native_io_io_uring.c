@@ -4,8 +4,8 @@
 
 #include "native_io_internal.h"
 
-#include <turbo/clock.h>
-#include <turbo/error_codes.h>
+#include <salts/clock.h>
+#include <salts/error_codes.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -22,32 +22,32 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
-typedef enum turbo_io_uring_phase {
-  TURBO_IO_URING_FREE = 0,
-  TURBO_IO_URING_PENDING,
-  TURBO_IO_URING_TERMINAL
-} turbo_io_uring_phase;
+typedef enum salts_io_uring_phase {
+  SALTS_IO_URING_FREE = 0,
+  SALTS_IO_URING_PENDING,
+  SALTS_IO_URING_TERMINAL
+} salts_io_uring_phase;
 
-typedef struct turbo_io_uring_lane {
+typedef struct salts_io_uring_lane {
   /* Only the head enters the kernel: concurrent recv SQEs need not consume stream bytes FIFO. */
   uint32_t head;
   uint32_t tail;
-} turbo_io_uring_lane;
+} salts_io_uring_lane;
 
-typedef struct turbo_io_uring_endpoint {
+typedef struct salts_io_uring_endpoint {
   int fd;
   uint32_t generation;
   size_t active_requests;
-  turbo_io_uring_lane read_lane;
-  turbo_io_uring_lane write_lane;
-  turbo_io_resource_kind resource_kind;
+  salts_io_uring_lane read_lane;
+  salts_io_uring_lane write_lane;
+  salts_io_resource_kind resource_kind;
   bool connected;
   bool connect_active;
   bool active;
-} turbo_io_uring_endpoint;
+} salts_io_uring_endpoint;
 
-typedef struct turbo_io_uring_request_record {
-  turbo_io_uring_phase phase;
+typedef struct salts_io_uring_request_record {
+  salts_io_uring_phase phase;
   native_io_request request;
   native_io_endpoint endpoint;
   native_io_operation operation;
@@ -60,12 +60,12 @@ typedef struct turbo_io_uring_request_record {
   bool write_lane;
   bool in_flight;
   bool cancel_requested;
-} turbo_io_uring_request_record;
+} salts_io_uring_request_record;
 
-typedef struct turbo_io_uring_impl {
-  turbo_io_impl base;
-  turbo_io_uring_endpoint *endpoints;
-  turbo_io_uring_request_record *requests;
+typedef struct salts_io_uring_impl {
+  salts_io_impl base;
+  salts_io_uring_endpoint *endpoints;
+  salts_io_uring_request_record *requests;
   uint32_t *free_endpoints;
   uint32_t *free_requests;
   /* Terminal records stay borrowed until observe copies their completion. */
@@ -106,9 +106,9 @@ typedef struct turbo_io_uring_impl {
   bool single_mmap;
   bool admission_open;
   atomic_bool wake_pending;
-} turbo_io_uring_impl;
+} salts_io_uring_impl;
 
-enum { TURBO_IO_URING_CANCEL_TOKEN = 0u, TURBO_IO_URING_INDEX_NONE = UINT32_MAX };
+enum { SALTS_IO_URING_CANCEL_TOKEN = 0u, SALTS_IO_URING_INDEX_NONE = UINT32_MAX };
 
 static void uring_counter_increment(uint64_t *counter) {
   if (*counter != UINT64_MAX) ++*counter;
@@ -123,32 +123,32 @@ static uint64_t uring_request_token(uint32_t index, uint32_t generation) {
   return ((uint64_t)generation << 32u) | (uint64_t)(index + 1u);
 }
 
-static turbo_io_uring_endpoint *uring_endpoint(turbo_io_uring_impl *impl,
+static salts_io_uring_endpoint *uring_endpoint(salts_io_uring_impl *impl,
                                                native_io_endpoint endpoint) {
-  turbo_io_uring_endpoint *record;
+  salts_io_uring_endpoint *record;
   if (!native_io_endpoint_valid(endpoint) || endpoint.slot > impl->endpoint_capacity) return NULL;
   record = &impl->endpoints[endpoint.slot - 1u];
   return record->active && record->generation == endpoint.generation ? record : NULL;
 }
 
-static turbo_io_uring_request_record *uring_request(turbo_io_uring_impl *impl,
+static salts_io_uring_request_record *uring_request(salts_io_uring_impl *impl,
                                                     native_io_request request) {
-  turbo_io_uring_request_record *record;
+  salts_io_uring_request_record *record;
   if (!native_io_request_valid(request) || request.slot > impl->request_capacity) return NULL;
   record = &impl->requests[request.slot - 1u];
-  return record->phase != TURBO_IO_URING_FREE && record->request.generation == request.generation
+  return record->phase != SALTS_IO_URING_FREE && record->request.generation == request.generation
              ? record
              : NULL;
 }
 
-static turbo_io_uring_request_record *uring_record_for_token(turbo_io_uring_impl *impl,
+static salts_io_uring_request_record *uring_record_for_token(salts_io_uring_impl *impl,
                                                              uint64_t token) {
   const uint32_t slot = (uint32_t)token;
   const uint32_t generation = (uint32_t)(token >> 32u);
-  turbo_io_uring_request_record *record;
+  salts_io_uring_request_record *record;
   if (slot == 0u || generation == 0u || slot > impl->request_capacity) return NULL;
   record = &impl->requests[slot - 1u];
-  return record->phase == TURBO_IO_URING_PENDING && record->in_flight &&
+  return record->phase == SALTS_IO_URING_PENDING && record->in_flight &&
                  record->native_token == token
              ? record
              : NULL;
@@ -159,34 +159,34 @@ static bool uring_is_write(native_io_operation_kind kind) {
          kind == NATIVE_IO_OPERATION_TCP_CONNECT;
 }
 
-static turbo_io_uring_lane *uring_lane(turbo_io_uring_endpoint *endpoint, bool write_lane) {
+static salts_io_uring_lane *uring_lane(salts_io_uring_endpoint *endpoint, bool write_lane) {
   return write_lane ? &endpoint->write_lane : &endpoint->read_lane;
 }
 
-static void uring_lane_push(turbo_io_uring_impl *impl, turbo_io_uring_endpoint *endpoint,
+static void uring_lane_push(salts_io_uring_impl *impl, salts_io_uring_endpoint *endpoint,
                             uint32_t index) {
-  turbo_io_uring_request_record *request = &impl->requests[index];
-  turbo_io_uring_lane *lane = uring_lane(endpoint, request->write_lane);
+  salts_io_uring_request_record *request = &impl->requests[index];
+  salts_io_uring_lane *lane = uring_lane(endpoint, request->write_lane);
   request->previous = lane->tail;
-  request->next = TURBO_IO_URING_INDEX_NONE;
-  if (lane->tail == TURBO_IO_URING_INDEX_NONE) lane->head = index;
+  request->next = SALTS_IO_URING_INDEX_NONE;
+  if (lane->tail == SALTS_IO_URING_INDEX_NONE) lane->head = index;
   else impl->requests[lane->tail].next = index;
   lane->tail = index;
 }
 
-static void uring_lane_remove(turbo_io_uring_impl *impl, turbo_io_uring_endpoint *endpoint,
+static void uring_lane_remove(salts_io_uring_impl *impl, salts_io_uring_endpoint *endpoint,
                               uint32_t index) {
-  turbo_io_uring_request_record *request = &impl->requests[index];
-  turbo_io_uring_lane *lane = uring_lane(endpoint, request->write_lane);
-  if (request->previous == TURBO_IO_URING_INDEX_NONE) lane->head = request->next;
+  salts_io_uring_request_record *request = &impl->requests[index];
+  salts_io_uring_lane *lane = uring_lane(endpoint, request->write_lane);
+  if (request->previous == SALTS_IO_URING_INDEX_NONE) lane->head = request->next;
   else impl->requests[request->previous].next = request->next;
-  if (request->next == TURBO_IO_URING_INDEX_NONE) lane->tail = request->previous;
+  if (request->next == SALTS_IO_URING_INDEX_NONE) lane->tail = request->previous;
   else impl->requests[request->next].previous = request->previous;
-  request->previous = TURBO_IO_URING_INDEX_NONE;
-  request->next = TURBO_IO_URING_INDEX_NONE;
+  request->previous = SALTS_IO_URING_INDEX_NONE;
+  request->next = SALTS_IO_URING_INDEX_NONE;
 }
 
-static int uring_enter(turbo_io_uring_impl *impl, unsigned submit, unsigned minimum,
+static int uring_enter(salts_io_uring_impl *impl, unsigned submit, unsigned minimum,
                        unsigned flags) {
   int status;
   do {
@@ -195,25 +195,25 @@ static int uring_enter(turbo_io_uring_impl *impl, unsigned submit, unsigned mini
   return status < 0 ? -errno : status;
 }
 
-static int uring_publish_sqe(turbo_io_uring_impl *impl, const struct io_uring_sqe *prepared) {
+static int uring_publish_sqe(salts_io_uring_impl *impl, const struct io_uring_sqe *prepared) {
   const unsigned head =
       atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
   const unsigned tail =
       atomic_load_explicit((_Atomic unsigned *)impl->sq_tail, memory_order_relaxed);
   unsigned index;
   int submitted;
-  if (tail - head >= *impl->sq_entries) return TURBO_EBUSY;
+  if (tail - head >= *impl->sq_entries) return SALTS_EBUSY;
   index = tail & *impl->sq_mask;
   impl->sqes[index] = *prepared;
   impl->sq_array[index] = index;
   atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail + 1u, memory_order_release);
   submitted = uring_enter(impl, 1u, 0u, 0u);
-  if (submitted == 1) return TURBO_OK;
+  if (submitted == 1) return SALTS_OK;
   atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail, memory_order_release);
-  return submitted < 0 ? submitted : TURBO_EIO;
+  return submitted < 0 ? submitted : SALTS_EIO;
 }
 
-static void uring_prepare_operation(turbo_io_uring_request_record *record, struct io_uring_sqe *sqe,
+static void uring_prepare_operation(salts_io_uring_request_record *record, struct io_uring_sqe *sqe,
                                     int fd) {
   memset(sqe, 0, sizeof(*sqe));
   sqe->fd = fd;
@@ -249,26 +249,26 @@ static void uring_prepare_operation(turbo_io_uring_request_record *record, struc
   }
 }
 
-static int uring_start_request(turbo_io_uring_impl *impl, turbo_io_uring_request_record *request,
+static int uring_start_request(salts_io_uring_impl *impl, salts_io_uring_request_record *request,
                                int fd) {
   struct io_uring_sqe sqe;
   int status;
   uring_prepare_operation(request, &sqe, fd);
   status = uring_publish_sqe(impl, &sqe);
-  if (status == TURBO_OK) request->in_flight = true;
+  if (status == SALTS_OK) request->in_flight = true;
   return status;
 }
 
-static void uring_release_request(turbo_io_uring_impl *impl, turbo_io_uring_request_record *request,
+static void uring_release_request(salts_io_uring_impl *impl, salts_io_uring_request_record *request,
                                   uint32_t index) {
-  turbo_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
+  salts_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
   if (endpoint != NULL && endpoint->active_requests != 0u) --endpoint->active_requests;
-  request->phase = TURBO_IO_URING_FREE;
+  request->phase = SALTS_IO_URING_FREE;
   request->native_token = 0u;
   request->operation = (native_io_operation){0};
   request->completion = (native_io_completion){0};
-  request->previous = TURBO_IO_URING_INDEX_NONE;
-  request->next = TURBO_IO_URING_INDEX_NONE;
+  request->previous = SALTS_IO_URING_INDEX_NONE;
+  request->next = SALTS_IO_URING_INDEX_NONE;
   request->write_lane = false;
   request->in_flight = false;
   request->cancel_requested = false;
@@ -276,11 +276,11 @@ static void uring_release_request(turbo_io_uring_impl *impl, turbo_io_uring_requ
   --impl->active_requests;
 }
 
-static void uring_make_completion(turbo_io_uring_impl *impl, turbo_io_uring_request_record *request,
+static void uring_make_completion(salts_io_uring_impl *impl, salts_io_uring_request_record *request,
                                   int result, native_io_completion *completion) {
   const bool cancelled = request->cancel_requested && result == -ECANCELED;
   if (request->operation.kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
-    turbo_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
+    salts_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
     if (endpoint != NULL) {
       endpoint->connect_active = false;
       endpoint->connected = result == 0;
@@ -290,13 +290,13 @@ static void uring_make_completion(turbo_io_uring_impl *impl, turbo_io_uring_requ
                                       request->endpoint,
                                       NATIVE_IO_COMPLETION_OK,
                                       0u,
-                                      TURBO_OK,
+                                      SALTS_OK,
                                       0u,
                                       request->operation.user_data,
                                       0u};
   if (cancelled) {
     completion->kind = NATIVE_IO_COMPLETION_CANCELLED;
-    completion->status = TURBO_ECANCELED;
+    completion->status = SALTS_ECANCELED;
     completion->native_status = ECANCELED;
     uring_counter_increment(&impl->cancelled);
   } else if (result < 0) {
@@ -306,7 +306,7 @@ static void uring_make_completion(turbo_io_uring_impl *impl, turbo_io_uring_requ
     uring_counter_increment(&impl->failed);
   } else if (request->operation.kind == NATIVE_IO_OPERATION_TCP_RECV && result == 0) {
     completion->kind = NATIVE_IO_COMPLETION_EOF;
-    completion->status = TURBO_EOF;
+    completion->status = SALTS_EOF;
   } else {
     completion->bytes = (size_t)result;
     if (request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM)
@@ -315,35 +315,35 @@ static void uring_make_completion(turbo_io_uring_impl *impl, turbo_io_uring_requ
   uring_counter_increment(&impl->completed);
 }
 
-static void uring_queue_terminal(turbo_io_uring_impl *impl, turbo_io_uring_request_record *request,
+static void uring_queue_terminal(salts_io_uring_impl *impl, salts_io_uring_request_record *request,
                                  uint32_t index, int result) {
   const size_t tail = (impl->terminal_head + impl->terminal_count) % impl->request_capacity;
   request->in_flight = false;
   request->native_token = 0u;
   uring_make_completion(impl, request, result, &request->completion);
-  request->phase = TURBO_IO_URING_TERMINAL;
+  request->phase = SALTS_IO_URING_TERMINAL;
   impl->terminal_requests[tail] = index;
   ++impl->terminal_count;
 }
 
-static void uring_start_lane(turbo_io_uring_impl *impl, turbo_io_uring_endpoint *endpoint,
-                             turbo_io_uring_lane *lane) {
-  while (lane->head != TURBO_IO_URING_INDEX_NONE) {
+static void uring_start_lane(salts_io_uring_impl *impl, salts_io_uring_endpoint *endpoint,
+                             salts_io_uring_lane *lane) {
+  while (lane->head != SALTS_IO_URING_INDEX_NONE) {
     const uint32_t index = lane->head;
-    turbo_io_uring_request_record *request = &impl->requests[index];
+    salts_io_uring_request_record *request = &impl->requests[index];
     const int status = uring_start_request(impl, request, endpoint->fd);
-    if (status == TURBO_OK) return;
+    if (status == SALTS_OK) return;
     uring_lane_remove(impl, endpoint, index);
     uring_counter_increment(&impl->native_submit_errors);
     uring_queue_terminal(impl, request, index, status);
   }
 }
 
-static int uring_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
+static int uring_attach_socket(salts_io_impl *base, uintptr_t native_socket,
                                native_io_endpoint *out_endpoint) {
-  turbo_io_uring_impl *impl = (turbo_io_uring_impl *)base;
-  turbo_io_uring_endpoint *endpoint;
-  turbo_io_resource_kind resource_kind;
+  salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
+  salts_io_uring_endpoint *endpoint;
+  salts_io_resource_kind resource_kind;
   struct sockaddr_storage peer_address;
   socklen_t peer_address_length = (socklen_t)sizeof(peer_address);
   bool connected = false;
@@ -351,17 +351,17 @@ static int uring_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
   socklen_t option_length = (socklen_t)sizeof(socket_type);
   uint32_t index;
   size_t cursor;
-  if (!impl->admission_open) return TURBO_ESHUTDOWN;
-  if (native_socket > (uintptr_t)INT_MAX) return TURBO_EINVAL;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  if (native_socket > (uintptr_t)INT_MAX) return SALTS_EINVAL;
   if (getsockopt((int)native_socket, SOL_SOCKET, SO_TYPE, &socket_type, &option_length) != 0)
     return -errno;
   if (socket_type == SOCK_STREAM)
-    resource_kind = TURBO_IO_RESOURCE_STREAM_SOCKET;
+    resource_kind = SALTS_IO_RESOURCE_STREAM_SOCKET;
   else if (socket_type == SOCK_DGRAM)
-    resource_kind = TURBO_IO_RESOURCE_DATAGRAM_SOCKET;
+    resource_kind = SALTS_IO_RESOURCE_DATAGRAM_SOCKET;
   else
-    return TURBO_ENOTSUP;
-  if (resource_kind == TURBO_IO_RESOURCE_STREAM_SOCKET) {
+    return SALTS_ENOTSUP;
+  if (resource_kind == SALTS_IO_RESOURCE_STREAM_SOCKET) {
     if (getpeername((int)native_socket, (struct sockaddr *)&peer_address, &peer_address_length) == 0)
       connected = true;
     else if (errno != ENOTCONN)
@@ -369,79 +369,79 @@ static int uring_attach_socket(turbo_io_impl *base, uintptr_t native_socket,
   }
   for (cursor = 0u; cursor < impl->endpoint_capacity; ++cursor)
     if (impl->endpoints[cursor].active && impl->endpoints[cursor].fd == (int)native_socket)
-      return TURBO_EALREADY;
-  if (impl->free_endpoint_count == 0u) return TURBO_ENOBUFS;
+      return SALTS_EALREADY;
+  if (impl->free_endpoint_count == 0u) return SALTS_ENOBUFS;
   index = impl->free_endpoints[--impl->free_endpoint_count];
   endpoint = &impl->endpoints[index];
   endpoint->fd = (int)native_socket;
   endpoint->generation = uring_next_generation(endpoint->generation);
   endpoint->active_requests = 0u;
-  endpoint->read_lane = (turbo_io_uring_lane){TURBO_IO_URING_INDEX_NONE, TURBO_IO_URING_INDEX_NONE};
+  endpoint->read_lane = (salts_io_uring_lane){SALTS_IO_URING_INDEX_NONE, SALTS_IO_URING_INDEX_NONE};
   endpoint->write_lane =
-      (turbo_io_uring_lane){TURBO_IO_URING_INDEX_NONE, TURBO_IO_URING_INDEX_NONE};
+      (salts_io_uring_lane){SALTS_IO_URING_INDEX_NONE, SALTS_IO_URING_INDEX_NONE};
   endpoint->resource_kind = resource_kind;
   endpoint->connected = connected;
   endpoint->connect_active = false;
   endpoint->active = true;
   ++impl->endpoint_count;
   *out_endpoint = (native_io_endpoint){index + 1u, endpoint->generation};
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static int uring_release_socket(turbo_io_impl *base, native_io_endpoint endpoint_handle) {
-  turbo_io_uring_impl *impl = (turbo_io_uring_impl *)base;
-  turbo_io_uring_endpoint *endpoint = uring_endpoint(impl, endpoint_handle);
+static int uring_release_socket(salts_io_impl *base, native_io_endpoint endpoint_handle) {
+  salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
+  salts_io_uring_endpoint *endpoint = uring_endpoint(impl, endpoint_handle);
   uint32_t index;
-  if (endpoint == NULL) return TURBO_ENOENT;
-  if (!native_io_resource_kind_is_socket(endpoint->resource_kind)) return TURBO_EINVAL;
-  if (endpoint->active_requests != 0u) return TURBO_EBUSY;
+  if (endpoint == NULL) return SALTS_ENOENT;
+  if (!native_io_resource_kind_is_socket(endpoint->resource_kind)) return SALTS_EINVAL;
+  if (endpoint->active_requests != 0u) return SALTS_EBUSY;
   index = endpoint_handle.slot - 1u;
   endpoint->active = false;
   endpoint->fd = -1;
-  endpoint->resource_kind = (turbo_io_resource_kind)0;
+  endpoint->resource_kind = (salts_io_resource_kind)0;
   endpoint->connected = false;
   endpoint->connect_active = false;
   impl->free_endpoints[impl->free_endpoint_count++] = index;
   --impl->endpoint_count;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static int uring_submit(turbo_io_impl *base, const native_io_operation *operation,
+static int uring_submit(salts_io_impl *base, const native_io_operation *operation,
                         native_io_request *out_request) {
-  turbo_io_uring_impl *impl = (turbo_io_uring_impl *)base;
-  turbo_io_uring_endpoint *endpoint;
-  turbo_io_uring_request_record *request;
-  turbo_io_uring_lane *lane;
+  salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
+  salts_io_uring_endpoint *endpoint;
+  salts_io_uring_request_record *request;
+  salts_io_uring_lane *lane;
   uint32_t index;
   int status;
-  if (!impl->admission_open) return TURBO_ESHUTDOWN;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
   endpoint = uring_endpoint(impl, operation->endpoint);
-  if (endpoint == NULL) return TURBO_ENOENT;
+  if (endpoint == NULL) return SALTS_ENOENT;
   if (native_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
-    if (endpoint->connected || endpoint->connect_active) return TURBO_EALREADY;
-    if (endpoint->active_requests != 0u) return TURBO_EBUSY;
+    if (endpoint->connected || endpoint->connect_active) return SALTS_EALREADY;
+    if (endpoint->active_requests != 0u) return SALTS_EBUSY;
   } else if (operation->kind == NATIVE_IO_OPERATION_TCP_RECV ||
              operation->kind == NATIVE_IO_OPERATION_TCP_SEND) {
-    if (endpoint->connect_active) return TURBO_EBUSY;
-    if (!endpoint->connected) return TURBO_EINVAL;
+    if (endpoint->connect_active) return SALTS_EBUSY;
+    if (!endpoint->connected) return SALTS_EINVAL;
   }
   if (impl->free_request_count == 0u) {
     uring_counter_increment(&impl->rejected_full);
-    return TURBO_ENOBUFS;
+    return SALTS_ENOBUFS;
   }
   index = impl->free_requests[--impl->free_request_count];
   request = &impl->requests[index];
-  request->phase = TURBO_IO_URING_PENDING;
+  request->phase = SALTS_IO_URING_PENDING;
   request->request =
       (native_io_request){index + 1u, uring_next_generation(request->request.generation)};
   request->endpoint = operation->endpoint;
   request->operation = *operation;
   request->native_token = uring_request_token(index, request->request.generation);
   request->completion = (native_io_completion){0};
-  request->previous = TURBO_IO_URING_INDEX_NONE;
-  request->next = TURBO_IO_URING_INDEX_NONE;
+  request->previous = SALTS_IO_URING_INDEX_NONE;
+  request->next = SALTS_IO_URING_INDEX_NONE;
   request->write_lane = uring_is_write(operation->kind);
   request->in_flight = false;
   request->cancel_requested = false;
@@ -452,7 +452,7 @@ static int uring_submit(turbo_io_impl *base, const native_io_operation *operatio
   uring_lane_push(impl, endpoint, index);
   if (lane->head == index) {
     status = uring_start_request(impl, request, endpoint->fd);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       uring_lane_remove(impl, endpoint, index);
       endpoint->connect_active = false;
       uring_release_request(impl, request, index);
@@ -462,43 +462,43 @@ static int uring_submit(turbo_io_impl *base, const native_io_operation *operatio
   }
   uring_counter_increment(&impl->submitted);
   *out_request = request->request;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static int uring_cancel(turbo_io_impl *base, native_io_request request_handle) {
-  turbo_io_uring_impl *impl = (turbo_io_uring_impl *)base;
-  turbo_io_uring_request_record *request = uring_request(impl, request_handle);
-  turbo_io_uring_endpoint *endpoint;
+static int uring_cancel(salts_io_impl *base, native_io_request request_handle) {
+  salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
+  salts_io_uring_request_record *request = uring_request(impl, request_handle);
+  salts_io_uring_endpoint *endpoint;
   struct io_uring_sqe sqe;
   uint32_t index;
   int status;
-  if (request == NULL) return TURBO_ENOENT;
-  if (request->phase == TURBO_IO_URING_TERMINAL) return TURBO_EALREADY;
-  if (request->cancel_requested) return TURBO_EALREADY;
+  if (request == NULL) return SALTS_ENOENT;
+  if (request->phase == SALTS_IO_URING_TERMINAL) return SALTS_EALREADY;
+  if (request->cancel_requested) return SALTS_EALREADY;
   request->cancel_requested = true;
   if (!request->in_flight) {
     endpoint = uring_endpoint(impl, request->endpoint);
-    if (endpoint == NULL) return TURBO_ENOENT;
+    if (endpoint == NULL) return SALTS_ENOENT;
     index = request->request.slot - 1u;
     uring_lane_remove(impl, endpoint, index);
     uring_queue_terminal(impl, request, index, -ECANCELED);
-    return TURBO_OK;
+    return SALTS_OK;
   }
   memset(&sqe, 0, sizeof(sqe));
   sqe.opcode = IORING_OP_ASYNC_CANCEL;
   sqe.fd = -1;
   sqe.addr = request->native_token;
-  sqe.user_data = TURBO_IO_URING_CANCEL_TOKEN;
+  sqe.user_data = SALTS_IO_URING_CANCEL_TOKEN;
   status = uring_publish_sqe(impl, &sqe);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     request->cancel_requested = false;
     uring_counter_increment(&impl->native_cancel_errors);
     return status;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static void uring_process_cq(turbo_io_uring_impl *impl) {
+static void uring_process_cq(salts_io_uring_impl *impl) {
   unsigned head = atomic_load_explicit((_Atomic unsigned *)impl->cq_head, memory_order_relaxed);
   const unsigned tail =
       atomic_load_explicit((_Atomic unsigned *)impl->cq_tail, memory_order_acquire);
@@ -507,17 +507,17 @@ static void uring_process_cq(turbo_io_uring_impl *impl) {
     const uint64_t token = cqe->user_data;
     const int result = cqe->res;
     ++head;
-    if (token == TURBO_IO_URING_CANCEL_TOKEN) {
+    if (token == SALTS_IO_URING_CANCEL_TOKEN) {
       if (result < 0 && result != -ENOENT && result != -EALREADY)
         uring_counter_increment(&impl->native_cancel_errors);
       continue;
     }
     {
-      turbo_io_uring_request_record *request = uring_record_for_token(impl, token);
+      salts_io_uring_request_record *request = uring_record_for_token(impl, token);
       if (request != NULL) {
         const uint32_t index = request->request.slot - 1u;
-        turbo_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
-        turbo_io_uring_lane *lane;
+        salts_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
+        salts_io_uring_lane *lane;
         if (endpoint == NULL) continue;
         lane = uring_lane(endpoint, request->write_lane);
         request->in_flight = false;
@@ -530,11 +530,11 @@ static void uring_process_cq(turbo_io_uring_impl *impl) {
   atomic_store_explicit((_Atomic unsigned *)impl->cq_head, head, memory_order_release);
 }
 
-static void uring_drain_terminals(turbo_io_uring_impl *impl, native_io_completion *events,
+static void uring_drain_terminals(salts_io_uring_impl *impl, native_io_completion *events,
                                   size_t limit, size_t *out_count) {
   while (impl->terminal_count != 0u && *out_count < limit) {
     const uint32_t index = impl->terminal_requests[impl->terminal_head];
-    turbo_io_uring_request_record *request = &impl->requests[index];
+    salts_io_uring_request_record *request = &impl->requests[index];
     events[*out_count] = request->completion;
     ++*out_count;
     impl->terminal_head = (impl->terminal_head + 1u) % impl->request_capacity;
@@ -546,21 +546,21 @@ static void uring_drain_terminals(turbo_io_uring_impl *impl, native_io_completio
 static uint32_t uring_remaining_timeout(uint64_t started_ms, uint32_t timeout_ms) {
   uint64_t elapsed;
   if (timeout_ms == UINT32_MAX) return UINT32_MAX;
-  elapsed = turbo_monotonic_ms() - started_ms;
+  elapsed = salts_monotonic_ms() - started_ms;
   return elapsed >= timeout_ms ? 0u : timeout_ms - (uint32_t)elapsed;
 }
 
-static int uring_observe(turbo_io_impl *base, native_io_completion *events, size_t event_capacity,
+static int uring_observe(salts_io_impl *base, native_io_completion *events, size_t event_capacity,
                          uint32_t timeout_ms, size_t *out_count) {
-  turbo_io_uring_impl *impl = (turbo_io_uring_impl *)base;
+  salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
   const size_t limit = event_capacity < impl->completion_batch_capacity
                            ? event_capacity
                            : impl->completion_batch_capacity;
-  const uint64_t started_ms = turbo_monotonic_ms();
+  const uint64_t started_ms = salts_monotonic_ms();
   uint32_t wait_timeout = timeout_ms;
   uring_process_cq(impl);
   uring_drain_terminals(impl, events, limit, out_count);
-  if (*out_count != 0u) return TURBO_OK;
+  if (*out_count != 0u) return SALTS_OK;
   for (;;) {
     struct pollfd descriptors[2] = {{impl->ring_fd, POLLIN, 0}, {impl->wake_fd, POLLIN, 0}};
     const int native_timeout = wait_timeout == UINT32_MAX         ? -1
@@ -571,13 +571,13 @@ static int uring_observe(turbo_io_impl *base, native_io_completion *events, size
       status = poll(descriptors, 2u, native_timeout);
     } while (status < 0 && errno == EINTR);
     if (status < 0) return -errno;
-    if (status == 0) return TURBO_ETIMEDOUT;
+    if (status == 0) return SALTS_ETIMEDOUT;
     if ((descriptors[0].revents & (POLLERR | POLLNVAL)) != 0 ||
         (descriptors[1].revents & (POLLERR | POLLNVAL)) != 0)
-      return TURBO_EIO;
+      return SALTS_EIO;
     uring_process_cq(impl);
     uring_drain_terminals(impl, events, limit, out_count);
-    if (*out_count != 0u) return TURBO_OK;
+    if (*out_count != 0u) return SALTS_OK;
     if ((descriptors[1].revents & POLLIN) != 0) {
       uint64_t wake_count;
       ssize_t read_status;
@@ -586,38 +586,38 @@ static int uring_observe(turbo_io_impl *base, native_io_completion *events, size
       } while (read_status < 0 && errno == EINTR);
       if (read_status < 0 && errno != EAGAIN) return -errno;
       atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
-      return TURBO_OK;
+      return SALTS_OK;
     }
     wait_timeout = uring_remaining_timeout(started_ms, timeout_ms);
-    if (wait_timeout == 0u) return TURBO_ETIMEDOUT;
+    if (wait_timeout == 0u) return SALTS_ETIMEDOUT;
   }
 }
 
-static int uring_wake(turbo_io_impl *base) {
-  turbo_io_uring_impl *impl = (turbo_io_uring_impl *)base;
+static int uring_wake(salts_io_impl *base) {
+  salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
   const uint64_t signal = 1u;
   bool expected = false;
   ssize_t status;
-  if (!impl->admission_open) return TURBO_ESHUTDOWN;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
   if (!atomic_compare_exchange_strong_explicit(&impl->wake_pending, &expected, true,
                                                memory_order_acq_rel, memory_order_acquire))
-    return TURBO_OK;
+    return SALTS_OK;
   do {
     status = write(impl->wake_fd, &signal, sizeof(signal));
   } while (status < 0 && errno == EINTR);
-  if (status == (ssize_t)sizeof(signal) || (status < 0 && errno == EAGAIN)) return TURBO_OK;
+  if (status == (ssize_t)sizeof(signal) || (status < 0 && errno == EAGAIN)) return SALTS_OK;
   atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
-  return status < 0 ? -errno : TURBO_EIO;
+  return status < 0 ? -errno : SALTS_EIO;
 }
 
-static int uring_close(turbo_io_impl *base) {
-  turbo_io_uring_impl *impl = (turbo_io_uring_impl *)base;
-  if (!impl->admission_open) return TURBO_EALREADY;
+static int uring_close(salts_io_impl *base) {
+  salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
+  if (!impl->admission_open) return SALTS_EALREADY;
   impl->admission_open = false;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static void uring_unmap(turbo_io_uring_impl *impl) {
+static void uring_unmap(salts_io_uring_impl *impl) {
   if (impl->sqes != NULL && impl->sqes != MAP_FAILED) (void)munmap(impl->sqes, impl->sqes_size);
   if (!impl->single_mmap && impl->cq_ring != NULL && impl->cq_ring != MAP_FAILED)
     (void)munmap(impl->cq_ring, impl->cq_ring_size);
@@ -625,10 +625,10 @@ static void uring_unmap(turbo_io_uring_impl *impl) {
     (void)munmap(impl->sq_ring, impl->sq_ring_size);
 }
 
-static int uring_destroy(turbo_io_impl *base) {
-  turbo_io_uring_impl *impl = (turbo_io_uring_impl *)base;
+static int uring_destroy(salts_io_impl *base) {
+  salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
   if (impl->admission_open || impl->active_requests != 0u || impl->endpoint_count != 0u)
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   uring_unmap(impl);
   if (impl->ring_fd >= 0) (void)close(impl->ring_fd);
   if (impl->wake_fd >= 0) (void)close(impl->wake_fd);
@@ -638,11 +638,11 @@ static int uring_destroy(turbo_io_impl *base) {
   free(impl->requests);
   free(impl->endpoints);
   free(impl);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static bool uring_get_stats(const turbo_io_impl *base, native_io_backend_stats *out_stats) {
-  const turbo_io_uring_impl *impl = (const turbo_io_uring_impl *)base;
+static bool uring_get_stats(const salts_io_impl *base, native_io_backend_stats *out_stats) {
+  const salts_io_uring_impl *impl = (const salts_io_uring_impl *)base;
   *out_stats = (native_io_backend_stats){impl->endpoint_capacity,
                                         impl->endpoint_count,
                                         impl->request_capacity,
@@ -658,7 +658,7 @@ static bool uring_get_stats(const turbo_io_impl *base, native_io_backend_stats *
   return true;
 }
 
-static const turbo_io_impl_ops uring_ops = {uring_attach_socket, uring_release_socket, uring_submit,
+static const salts_io_impl_ops uring_ops = {uring_attach_socket, uring_release_socket, uring_submit,
                                             uring_cancel,        uring_observe,        uring_wake,
                                             uring_close,         uring_destroy,        uring_get_stats,
                                             NULL,                NULL};
@@ -677,7 +677,7 @@ static void *uring_field(void *mapping, unsigned offset) {
   return (void *)((unsigned char *)mapping + (size_t)offset);
 }
 
-static int uring_map(turbo_io_uring_impl *impl, const struct io_uring_params *params) {
+static int uring_map(salts_io_uring_impl *impl, const struct io_uring_params *params) {
   size_t shared_size;
   if (params->sq_entries == 0u || params->cq_entries == 0u ||
       !uring_mapped_extent(params->sq_off.array, params->sq_entries, sizeof(unsigned),
@@ -694,7 +694,7 @@ static int uring_map(turbo_io_uring_impl *impl, const struct io_uring_params *pa
       !uring_field_fits(params->cq_off.tail, sizeof(unsigned), impl->cq_ring_size) ||
       !uring_field_fits(params->cq_off.ring_mask, sizeof(unsigned), impl->cq_ring_size) ||
       !uring_field_fits(params->cq_off.cqes, sizeof(struct io_uring_cqe), impl->cq_ring_size))
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   impl->single_mmap = (params->features & IORING_FEAT_SINGLE_MMAP) != 0u;
   shared_size = impl->sq_ring_size > impl->cq_ring_size ? impl->sq_ring_size : impl->cq_ring_size;
   if (impl->single_mmap) impl->sq_ring_size = impl->cq_ring_size = shared_size;
@@ -720,10 +720,10 @@ static int uring_map(turbo_io_uring_impl *impl, const struct io_uring_params *pa
   impl->cq_tail = uring_field(impl->cq_ring, params->cq_off.tail);
   impl->cq_mask = uring_field(impl->cq_ring, params->cq_off.ring_mask);
   impl->cqes = uring_field(impl->cq_ring, params->cq_off.cqes);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
-static void uring_free_partial(turbo_io_uring_impl *impl) {
+static void uring_free_partial(salts_io_uring_impl *impl) {
   uring_unmap(impl);
   if (impl->ring_fd >= 0) (void)close(impl->ring_fd);
   if (impl->wake_fd >= 0) (void)close(impl->wake_fd);
@@ -735,37 +735,37 @@ static void uring_free_partial(turbo_io_uring_impl *impl) {
   free(impl);
 }
 
-int turbo_io_uring_backend_init(native_io_backend *backend, const native_io_backend_config *config) {
-  turbo_io_uring_impl *impl;
+int salts_io_uring_backend_init(native_io_backend *backend, const native_io_backend_config *config) {
+  salts_io_uring_impl *impl;
   struct io_uring_params params;
   unsigned entries;
   int status;
-  if (config->kind != NATIVE_IO_BACKEND_IO_URING) return TURBO_ENOTSUP;
+  if (config->kind != NATIVE_IO_BACKEND_IO_URING) return SALTS_ENOTSUP;
   if (config->request_capacity > UINT32_MAX / 2u ||
-      config->endpoint_capacity > SIZE_MAX / sizeof(turbo_io_uring_endpoint) ||
-      config->request_capacity > SIZE_MAX / sizeof(turbo_io_uring_request_record) ||
+      config->endpoint_capacity > SIZE_MAX / sizeof(salts_io_uring_endpoint) ||
+      config->request_capacity > SIZE_MAX / sizeof(salts_io_uring_request_record) ||
       config->endpoint_capacity > SIZE_MAX / sizeof(uint32_t) ||
       config->request_capacity > SIZE_MAX / sizeof(uint32_t))
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   entries = (unsigned)config->request_capacity * 2u;
-  impl = (turbo_io_uring_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  impl = (salts_io_uring_impl *)calloc(1u, sizeof(*impl));
+  if (impl == NULL) return SALTS_ENOMEM;
   impl->ring_fd = -1;
   impl->wake_fd = -1;
   impl->sq_ring = MAP_FAILED;
   impl->cq_ring = MAP_FAILED;
   impl->sqes = MAP_FAILED;
   impl->endpoints =
-      (turbo_io_uring_endpoint *)calloc(config->endpoint_capacity, sizeof(*impl->endpoints));
+      (salts_io_uring_endpoint *)calloc(config->endpoint_capacity, sizeof(*impl->endpoints));
   impl->requests =
-      (turbo_io_uring_request_record *)calloc(config->request_capacity, sizeof(*impl->requests));
+      (salts_io_uring_request_record *)calloc(config->request_capacity, sizeof(*impl->requests));
   impl->free_endpoints = (uint32_t *)calloc(config->endpoint_capacity, sizeof(uint32_t));
   impl->free_requests = (uint32_t *)calloc(config->request_capacity, sizeof(uint32_t));
   impl->terminal_requests = (uint32_t *)calloc(config->request_capacity, sizeof(uint32_t));
   if (impl->endpoints == NULL || impl->requests == NULL || impl->free_endpoints == NULL ||
       impl->free_requests == NULL || impl->terminal_requests == NULL) {
     uring_free_partial(impl);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   impl->base.ops = &uring_ops;
   impl->base.kind = config->kind;
@@ -796,10 +796,10 @@ int turbo_io_uring_backend_init(native_io_backend *backend, const native_io_back
     return status;
   }
   status = uring_map(impl, &params);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     uring_free_partial(impl);
     return status;
   }
   backend->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 }

@@ -1,7 +1,7 @@
 #include "cnet_event.h"
 
 #include <cnet/cnet.h>
-#include <turbo/disruptor.h>
+#include <salts/disruptor.h>
 
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -55,10 +55,10 @@ static bool cnet_event_power_of_two(uint64_t value) {
 static bool cnet_event_valid(const cnet_event *event) {
   if (event == NULL || !cnet_session_handle_valid(event->session)) return false;
   if (event->kind == CNET_EVENT_RECEIVE)
-    return event->state == CNET_EVENT_STATE_NONE && event->status == TURBO_OK &&
+    return event->state == CNET_EVENT_STATE_NONE && event->status == SALTS_OK &&
            event->stage == CNET_SESSION_STAGE_NONE && (event->data != NULL || event->size == 0u);
   if (event->kind == CNET_EVENT_SEND)
-    return event->state == CNET_EVENT_STATE_NONE && event->status == TURBO_OK &&
+    return event->state == CNET_EVENT_STATE_NONE && event->status == SALTS_OK &&
            event->stage == CNET_SESSION_STAGE_NONE && event->data == NULL && event->size == 0u &&
            event->argument != 0u;
   if (event->kind != CNET_EVENT_STATE) return false;
@@ -72,8 +72,8 @@ static bool cnet_event_valid(const cnet_event *event) {
     return false;
   }
   if (event->state == CNET_EVENT_STATE_FAILED)
-    return event->status != TURBO_OK && event->stage != CNET_SESSION_STAGE_NONE;
-  return event->status == TURBO_OK && event->stage == CNET_SESSION_STAGE_NONE;
+    return event->status != SALTS_OK && event->stage != CNET_SESSION_STAGE_NONE;
+  return event->status == SALTS_OK && event->stage == CNET_SESSION_STAGE_NONE;
 }
 
 static bool cnet_event_reserve_data(cnet_event_queue_impl *impl) {
@@ -92,18 +92,18 @@ int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config
   size_t entry_size;
   size_t index;
 
-  if (queue == NULL) return TURBO_EINVAL;
-  if (queue->impl != NULL) return TURBO_EALREADY;
+  if (queue == NULL) return SALTS_EINVAL;
+  if (queue->impl != NULL) return SALTS_EALREADY;
   if (config == NULL || !cnet_event_power_of_two(config->capacity) || config->data_capacity == 0u ||
       config->data_capacity >= config->capacity || config->max_payload_bytes == 0u)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   if (config->max_payload_bytes > SIZE_MAX - offsetof(cnet_event_entry, payload))
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   entry_size = offsetof(cnet_event_entry, payload) + config->max_payload_bytes;
-  if (config->capacity > SIZE_MAX / entry_size) return TURBO_ERANGE;
+  if (config->capacity > SIZE_MAX / entry_size) return SALTS_ERANGE;
 
   impl = (cnet_event_queue_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   ring_config.entry_size = entry_size;
   ring_config.capacity = config->capacity;
   ring_config.consumer_capacity = 1u;
@@ -111,14 +111,14 @@ int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config
   impl->ring = disruptor_create(&ring_config);
   if (impl->ring == NULL) {
     free(impl);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   impl->borrowed_sequences =
       (_Atomic uint64_t *)calloc((size_t)config->capacity, sizeof(*impl->borrowed_sequences));
   if (impl->borrowed_sequences == NULL) {
     disruptor_destroy(impl->ring);
     free(impl);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   impl->data_capacity = config->data_capacity;
   impl->max_payload_bytes = config->max_payload_bytes;
@@ -132,7 +132,7 @@ int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config
   atomic_init(&impl->close_complete, false);
   atomic_init(&impl->borrowed_count, 0u);
   queue->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 bool cnet_event_queue_get_config(const cnet_event_queue *queue,
@@ -150,23 +150,23 @@ int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event) {
   cnet_event_entry *entry;
   const bool data_event = event != NULL && event->kind == CNET_EVENT_RECEIVE;
 
-  if (impl == NULL || !cnet_event_valid(event)) return TURBO_EINVAL;
-  if (event->size > impl->max_payload_bytes) return TURBO_EMSGSIZE;
-  if (!atomic_load_explicit(&impl->admission_open, memory_order_acquire)) return TURBO_ESHUTDOWN;
+  if (impl == NULL || !cnet_event_valid(event)) return SALTS_EINVAL;
+  if (event->size > impl->max_payload_bytes) return SALTS_EMSGSIZE;
+  if (!atomic_load_explicit(&impl->admission_open, memory_order_acquire)) return SALTS_ESHUTDOWN;
 
   atomic_fetch_add_explicit(&impl->publisher_entrants, 1u, memory_order_acq_rel);
   if (!atomic_load_explicit(&impl->admission_open, memory_order_acquire)) {
     atomic_fetch_sub_explicit(&impl->publisher_entrants, 1u, memory_order_release);
-    return TURBO_ESHUTDOWN;
+    return SALTS_ESHUTDOWN;
   }
   if (data_event && !cnet_event_reserve_data(impl)) {
     atomic_fetch_sub_explicit(&impl->publisher_entrants, 1u, memory_order_release);
-    return TURBO_ENOBUFS;
+    return SALTS_ENOBUFS;
   }
   if (!disruptor_publisher_try_claim(impl->ring, &cursor)) {
     if (data_event) atomic_fetch_sub_explicit(&impl->live_data_events, 1u, memory_order_release);
     atomic_fetch_sub_explicit(&impl->publisher_entrants, 1u, memory_order_release);
-    return TURBO_ENOBUFS;
+    return SALTS_ENOBUFS;
   }
 
   entry = (cnet_event_entry *)disruptor_acquire_entry(impl->ring, &cursor);
@@ -181,7 +181,7 @@ int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event) {
   atomic_fetch_add_explicit(&impl->live_events, 1u, memory_order_release);
   (void)disruptor_publisher_publish(impl->ring, &cursor);
   atomic_fetch_sub_explicit(&impl->publisher_entrants, 1u, memory_order_release);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int cnet_event_queue_take_claimed(cnet_event_queue_impl *impl,
@@ -202,7 +202,7 @@ static int cnet_event_queue_take_claimed(cnet_event_queue_impl *impl,
       &impl->borrowed_sequences[(size_t)((cursor->sequence - 1u) & (impl->borrowed_capacity - 1u))],
       cursor->sequence, memory_order_release);
   atomic_fetch_add_explicit(&impl->borrowed_count, 1u, memory_order_release);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int cnet_event_wait_keep_running(void *context) {
@@ -215,14 +215,14 @@ int cnet_event_queue_take(cnet_event_queue *queue, cnet_event_view *out_view) {
   cnet_event_queue_impl *impl = cnet_event_impl(queue);
   disruptor_cursor_t cursor = {0};
 
-  if (out_view == NULL) return TURBO_EINVAL;
+  if (out_view == NULL) return SALTS_EINVAL;
   memset(out_view, 0, sizeof(*out_view));
-  if (impl == NULL) return TURBO_EINVAL;
+  if (impl == NULL) return SALTS_EINVAL;
   if (!disruptor_worker_try_claim(impl->ring, &cursor)) {
     if (atomic_load_explicit(&impl->close_complete, memory_order_acquire) &&
         atomic_load_explicit(&impl->live_events, memory_order_acquire) == 0u)
-      return TURBO_EOF;
-    return TURBO_ETIMEDOUT;
+      return SALTS_EOF;
+    return SALTS_ETIMEDOUT;
   }
   return cnet_event_queue_take_claimed(impl, &cursor, out_view);
 }
@@ -233,21 +233,21 @@ int cnet_event_queue_take_wait(cnet_event_queue *queue, cnet_event_view *out_vie
   disruptor_cursor_t cursor = {0};
   cnet_event_wait_context wait;
 
-  if (out_view == NULL) return TURBO_EINVAL;
+  if (out_view == NULL) return SALTS_EINVAL;
   memset(out_view, 0, sizeof(*out_view));
-  if (impl == NULL || keep_waiting == NULL) return TURBO_EINVAL;
+  if (impl == NULL || keep_waiting == NULL) return SALTS_EINVAL;
   wait = (cnet_event_wait_context){impl, keep_waiting, context};
   if (!disruptor_worker_claim_wait(impl->ring, &cursor, cnet_event_wait_keep_running, &wait))
-    return atomic_load_explicit(&impl->close_complete, memory_order_acquire) ? TURBO_EOF
-                                                                             : TURBO_ECANCELED;
+    return atomic_load_explicit(&impl->close_complete, memory_order_acquire) ? SALTS_EOF
+                                                                             : SALTS_ECANCELED;
   return cnet_event_queue_take_claimed(impl, &cursor, out_view);
 }
 
 int cnet_event_queue_wake(cnet_event_queue *queue) {
   cnet_event_queue_impl *impl = cnet_event_impl(queue);
-  if (impl == NULL) return TURBO_EINVAL;
+  if (impl == NULL) return SALTS_EINVAL;
   disruptor_worker_wake_all(impl->ring);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_event_queue_release(cnet_event_queue *queue, cnet_event_view *view) {
@@ -256,12 +256,12 @@ int cnet_event_queue_release(cnet_event_queue *queue, cnet_event_view *view) {
   size_t slot;
   uint64_t expected;
 
-  if (impl == NULL || view == NULL || view->_sequence == 0u) return TURBO_EINVAL;
+  if (impl == NULL || view == NULL || view->_sequence == 0u) return SALTS_EINVAL;
   slot = (size_t)((view->_sequence - 1u) & (impl->borrowed_capacity - 1u));
   expected = view->_sequence;
   if (!atomic_compare_exchange_strong_explicit(&impl->borrowed_sequences[slot], &expected, 0u,
                                                memory_order_acq_rel, memory_order_acquire))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   cursor.sequence = view->_sequence;
   disruptor_worker_release_entry(impl->ring, &cursor);
   atomic_fetch_sub_explicit(&impl->live_events, 1u, memory_order_release);
@@ -269,35 +269,35 @@ int cnet_event_queue_release(cnet_event_queue *queue, cnet_event_view *view) {
     atomic_fetch_sub_explicit(&impl->live_data_events, 1u, memory_order_release);
   atomic_fetch_sub_explicit(&impl->borrowed_count, 1u, memory_order_release);
   memset(view, 0, sizeof(*view));
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_event_queue_close(cnet_event_queue *queue) {
   cnet_event_queue_impl *impl = cnet_event_impl(queue);
 
-  if (impl == NULL) return TURBO_EINVAL;
+  if (impl == NULL) return SALTS_EINVAL;
   (void)atomic_exchange_explicit(&impl->admission_open, false, memory_order_acq_rel);
   if (atomic_load_explicit(&impl->publisher_entrants, memory_order_acquire) != 0u)
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   if (atomic_exchange_explicit(&impl->close_complete, true, memory_order_acq_rel))
-    return TURBO_EALREADY;
+    return SALTS_EALREADY;
   disruptor_worker_wake_all(impl->ring);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_event_queue_destroy(cnet_event_queue *queue) {
   cnet_event_queue_impl *impl = cnet_event_impl(queue);
 
-  if (queue == NULL) return TURBO_EINVAL;
-  if (impl == NULL) return TURBO_OK;
+  if (queue == NULL) return SALTS_EINVAL;
+  if (impl == NULL) return SALTS_OK;
   if (!atomic_load_explicit(&impl->close_complete, memory_order_acquire) ||
       atomic_load_explicit(&impl->publisher_entrants, memory_order_acquire) != 0u ||
       atomic_load_explicit(&impl->live_events, memory_order_acquire) != 0u ||
       atomic_load_explicit(&impl->borrowed_count, memory_order_acquire) != 0u)
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   disruptor_destroy(impl->ring);
   free((void *)impl->borrowed_sequences);
   free(impl);
   queue->impl = NULL;
-  return TURBO_OK;
+  return SALTS_OK;
 }

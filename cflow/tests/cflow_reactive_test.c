@@ -1,6 +1,6 @@
 #include <cflow/cflow.h>
-#include <turbo/clock.h>
-#include <turbo/thread.h>
+#include <salts/clock.h>
+#include <salts/thread.h>
 #include <cflow/opt.h>
 #include "cflow_test_ops.h"
 #include "../src/value_storage.h"
@@ -46,8 +46,8 @@ typedef struct rejection_callback_close_state {
 } rejection_callback_close_state;
 
 typedef struct pending_foreign_scheduler_state {
-    turbo_mutex_t mutex;
-    turbo_cond_t changed;
+    salts_mutex_t mutex;
+    salts_cond_t changed;
     cflow_task_fn pending_fn;
     void *pending_user;
     cflow_task_id pending_id;
@@ -75,28 +75,28 @@ static cflow_schedule_result pending_foreign_try_post_after(
     (void)delay;
     if (state == NULL || fn == NULL)
         return (cflow_schedule_result){CFLOW_ADMISSION_INVALID_ARGUMENT, 0u};
-    turbo_mutex_lock(&state->mutex);
+    salts_mutex_lock(&state->mutex);
     if (state->pending_fn != NULL) {
-        turbo_mutex_unlock(&state->mutex);
+        salts_mutex_unlock(&state->mutex);
         return (cflow_schedule_result){CFLOW_ADMISSION_FULL, 0u};
     }
     ++state->post_calls;
     if (state->block_on_post == state->post_calls) {
         atomic_fetch_add(&state->blocked_posts, 1);
-        turbo_cond_broadcast(&state->changed);
+        salts_cond_broadcast(&state->changed);
         while (!state->release_blocked_post)
-            turbo_cond_wait(&state->changed, &state->mutex);
+            salts_cond_wait(&state->changed, &state->mutex);
     }
     id = ++state->next_id;
     if (state->run_inline) {
-        turbo_mutex_unlock(&state->mutex);
+        salts_mutex_unlock(&state->mutex);
         fn(user);
         return (cflow_schedule_result){CFLOW_ADMISSION_ACCEPTED, id};
     }
     state->pending_fn = fn;
     state->pending_user = user;
     state->pending_id = id;
-    turbo_mutex_unlock(&state->mutex);
+    salts_mutex_unlock(&state->mutex);
     return (cflow_schedule_result){CFLOW_ADMISSION_ACCEPTED, id};
 }
 
@@ -110,7 +110,7 @@ static bool pending_foreign_cancel(void *self, cflow_task_id id) {
         (pending_foreign_scheduler_state *)self;
     bool cancelled = false;
     if (state == NULL || id == 0u) return false;
-    turbo_mutex_lock(&state->mutex);
+    salts_mutex_lock(&state->mutex);
     if (state->pending_fn != NULL && state->pending_id == id) {
         state->pending_fn = NULL;
         state->pending_user = NULL;
@@ -118,7 +118,7 @@ static bool pending_foreign_cancel(void *self, cflow_task_id id) {
         state->last_cancelled_id = id;
         cancelled = true;
     }
-    turbo_mutex_unlock(&state->mutex);
+    salts_mutex_unlock(&state->mutex);
     if (cancelled) atomic_fetch_add(&state->cancel_calls, 1);
     return cancelled;
 }
@@ -129,13 +129,13 @@ static bool pending_foreign_run_one(void *self) {
     cflow_task_fn fn;
     void *user;
     if (state == NULL) return false;
-    turbo_mutex_lock(&state->mutex);
+    salts_mutex_lock(&state->mutex);
     fn = state->pending_fn;
     user = state->pending_user;
     state->pending_fn = NULL;
     state->pending_user = NULL;
     state->pending_id = 0u;
-    turbo_mutex_unlock(&state->mutex);
+    salts_mutex_unlock(&state->mutex);
     if (fn == NULL) return false;
     fn(user);
     return true;
@@ -150,10 +150,10 @@ static void pending_foreign_run_one_thread(void *user) {
 
 static void pending_foreign_release_blocked_post(
     pending_foreign_scheduler_state *state) {
-    turbo_mutex_lock(&state->mutex);
+    salts_mutex_lock(&state->mutex);
     state->release_blocked_post = true;
-    turbo_cond_broadcast(&state->changed);
-    turbo_mutex_unlock(&state->mutex);
+    salts_cond_broadcast(&state->changed);
+    salts_mutex_unlock(&state->mutex);
 }
 
 static size_t pending_foreign_run_ready(void *self) {
@@ -178,9 +178,9 @@ static bool pending_foreign_wait_idle(void *self) {
         (pending_foreign_scheduler_state *)self;
     bool idle;
     if (state == NULL) return false;
-    turbo_mutex_lock(&state->mutex);
+    salts_mutex_lock(&state->mutex);
     idle = state->pending_fn == NULL;
-    turbo_mutex_unlock(&state->mutex);
+    salts_mutex_unlock(&state->mutex);
     return idle;
 }
 
@@ -236,12 +236,12 @@ static cflow_schedule_result coalescing_try_post_after(
     atomic_fetch_add(&state->posts, 1);
     atomic_store(&state->entered, true);
     {
-        const uint64_t started = turbo_monotonic_ms();
+        const uint64_t started = salts_monotonic_ms();
         const uint64_t timeout = state->timeout_ms != 0u
             ? state->timeout_ms : RUNTIME_SATURATION_TIMEOUT_MS;
-        while (turbo_monotonic_ms() - started < timeout &&
+        while (salts_monotonic_ms() - started < timeout &&
                !atomic_load(&state->release))
-            turbo_sleep_ms(1u);
+            salts_sleep_ms(1u);
     }
     if (!atomic_load(&state->release))
         atomic_store(&state->timed_out, true);
@@ -722,8 +722,8 @@ static void close_from_sink_done(void *user) {
 
 typedef struct concurrent_close_state {
     cflow_subscription *run;
-    turbo_mutex_t lock;
-    turbo_cond_t changed;
+    salts_mutex_t lock;
+    salts_cond_t changed;
     bool callback_entered;
     bool external_started;
     bool callback_returned;
@@ -737,19 +737,19 @@ static bool concurrent_close_value(void *user,
     if (!state || !cmeta_type_equal(type, &cmeta_type_int) || !value)
         return false;
 
-    turbo_mutex_lock(&state->lock);
+    salts_mutex_lock(&state->lock);
     state->callback_entered = true;
-    turbo_cond_broadcast(&state->changed);
+    salts_cond_broadcast(&state->changed);
     while (!state->external_started)
-        turbo_cond_wait(&state->changed, &state->lock);
-    turbo_mutex_unlock(&state->lock);
+        salts_cond_wait(&state->changed, &state->lock);
+    salts_mutex_unlock(&state->lock);
 
     cflow_subscription_close(state->run);
 
-    turbo_mutex_lock(&state->lock);
+    salts_mutex_lock(&state->lock);
     state->callback_returned = true;
-    turbo_cond_broadcast(&state->changed);
-    turbo_mutex_unlock(&state->lock);
+    salts_cond_broadcast(&state->changed);
+    salts_mutex_unlock(&state->lock);
     return true;
 }
 
@@ -757,17 +757,17 @@ static void concurrent_external_close(void *user) {
     concurrent_close_state *state = (concurrent_close_state *)user;
     if (!state) return;
 
-    turbo_mutex_lock(&state->lock);
+    salts_mutex_lock(&state->lock);
     state->external_started = true;
-    turbo_cond_broadcast(&state->changed);
-    turbo_mutex_unlock(&state->lock);
+    salts_cond_broadcast(&state->changed);
+    salts_mutex_unlock(&state->lock);
 
     cflow_subscription_close(state->run);
 
-    turbo_mutex_lock(&state->lock);
+    salts_mutex_lock(&state->lock);
     state->external_returned = true;
-    turbo_cond_broadcast(&state->changed);
-    turbo_mutex_unlock(&state->lock);
+    salts_cond_broadcast(&state->changed);
+    salts_mutex_unlock(&state->lock);
 }
 
 typedef struct destroy_reentrant_close_state {
@@ -813,8 +813,8 @@ static void readiness_order_close(void *user) {
 }
 
 typedef struct timer_wake_gate {
-    turbo_mutex_t mutex;
-    turbo_cond_t changed;
+    salts_mutex_t mutex;
+    salts_cond_t changed;
     bool entered;
     bool release;
 } timer_wake_gate;
@@ -842,12 +842,12 @@ static void timer_count_wake(void *user) {
 static void timer_blocking_wake(void *user) {
     timer_wake_gate *gate = (timer_wake_gate *)user;
     if (gate == NULL) return;
-    turbo_mutex_lock(&gate->mutex);
+    salts_mutex_lock(&gate->mutex);
     gate->entered = true;
-    turbo_cond_broadcast(&gate->changed);
+    salts_cond_broadcast(&gate->changed);
     while (!gate->release)
-        turbo_cond_wait(&gate->changed, &gate->mutex);
-    turbo_mutex_unlock(&gate->mutex);
+        salts_cond_wait(&gate->changed, &gate->mutex);
+    salts_mutex_unlock(&gate->mutex);
 }
 
 static void source_destroy_thread(void *user) {
@@ -1116,10 +1116,10 @@ static void saturation_sink_done(void *user) {
 
 static bool runtime_wait_until_at_least_for(atomic_int *value, int expected,
                                             uint64_t timeout_ms) {
-    const uint64_t started = turbo_monotonic_ms();
-    while (turbo_monotonic_ms() - started < timeout_ms) {
+    const uint64_t started = salts_monotonic_ms();
+    while (salts_monotonic_ms() - started < timeout_ms) {
         if (atomic_load(value) >= expected) return true;
-        turbo_sleep_ms(1u);
+        salts_sleep_ms(1u);
     }
     return atomic_load(value) >= expected;
 }
@@ -1130,11 +1130,11 @@ static bool runtime_wait_until_at_least(atomic_int *value, int expected) {
 }
 
 static bool runtime_wait_until_true(atomic_bool *value) {
-    const uint64_t started = turbo_monotonic_ms();
-    while (turbo_monotonic_ms() - started <
+    const uint64_t started = salts_monotonic_ms();
+    while (salts_monotonic_ms() - started <
            RUNTIME_SATURATION_TIMEOUT_MS) {
         if (atomic_load(value)) return true;
-        turbo_sleep_ms(1u);
+        salts_sleep_ms(1u);
     }
     return atomic_load(value);
 }
@@ -1343,13 +1343,13 @@ suite("CFlow runtime") {
         cflow_publisher source = {0};
         cflow_subscription run = {0};
         coalescing_close_context close_context = {0};
-        turbo_thread_t close_thread = 0;
+        salts_thread_t close_thread = 0;
         bool cancel_observed;
         bool close_returned_before_rescue;
         bool close_started;
 
-        turbo_mutex_init(&state.mutex);
-        turbo_cond_init(&state.changed);
+        salts_mutex_init(&state.mutex);
+        salts_cond_init(&state.changed);
         scheduler = pending_foreign_scheduler_as_cflow_scheduler(&state);
         normalized.root = CMETA_INVALID_ID;
         cflow_graph_init(&surface, &cmeta_type_int);
@@ -1364,7 +1364,7 @@ suite("CFlow runtime") {
         check_equal(pending_foreign_pending(&state), (size_t)1u);
 
         close_context.run = &run;
-        check_equal(turbo_thread_create(
+        check_equal(salts_thread_create(
             &close_thread, coalescing_close, &close_context), 0);
         close_started = runtime_wait_until_at_least(
             &close_context.started, 1);
@@ -1380,7 +1380,7 @@ suite("CFlow runtime") {
             if (!runtime_wait_until_at_least(&close_context.returned, 1))
                 abort();
         }
-        check_equal(turbo_thread_join(&close_thread), 0);
+        check_equal(salts_thread_join(&close_thread), 0);
         close_thread = 0;
 
         check_true(close_started);
@@ -1391,8 +1391,8 @@ suite("CFlow runtime") {
         check_null(run.impl);
 
         cflow_scheduler_destroy(&scheduler);
-        turbo_cond_destroy(&state.changed);
-        turbo_mutex_destroy(&state.mutex);
+        salts_cond_destroy(&state.changed);
+        salts_mutex_destroy(&state.mutex);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
     }
@@ -1407,14 +1407,14 @@ suite("CFlow runtime") {
         cflow_subscription run = {0};
         pending_foreign_run_context pump_context = {&scheduler_state};
         coalescing_close_context close_context = {&run};
-        turbo_thread_t pump_thread = 0;
-        turbo_thread_t close_thread = 0;
+        salts_thread_t pump_thread = 0;
+        salts_thread_t close_thread = 0;
         bool pump_returned;
         bool close_started;
         bool close_returned_before_rescue;
 
-        turbo_mutex_init(&scheduler_state.mutex);
-        turbo_cond_init(&scheduler_state.changed);
+        salts_mutex_init(&scheduler_state.mutex);
+        salts_cond_init(&scheduler_state.changed);
         scheduler_state.block_on_post = 2u;
         scheduler = pending_foreign_scheduler_as_cflow_scheduler(
             &scheduler_state);
@@ -1428,13 +1428,13 @@ suite("CFlow runtime") {
         check_true(cflow_subscription_request(&run, SIZE_MAX));
         check_equal(pending_foreign_pending(&scheduler_state), (size_t)1u);
 
-        check_equal(turbo_thread_create(
+        check_equal(salts_thread_create(
             &pump_thread, pending_foreign_run_one_thread, &pump_context), 0);
         if (!runtime_wait_until_at_least(
                 &scheduler_state.blocked_posts, 1))
             abort();
 
-        check_equal(turbo_thread_create(
+        check_equal(salts_thread_create(
             &close_thread, coalescing_close, &close_context), 0);
         close_started = runtime_wait_until_at_least(
             &close_context.started, 1);
@@ -1452,8 +1452,8 @@ suite("CFlow runtime") {
                 abort();
         }
 
-        check_equal(turbo_thread_join(&pump_thread), 0);
-        check_equal(turbo_thread_join(&close_thread), 0);
+        check_equal(salts_thread_join(&pump_thread), 0);
+        check_equal(salts_thread_join(&close_thread), 0);
         check_true(pump_context.ran);
         check_true(close_started);
         check_true(close_returned_before_rescue);
@@ -1464,8 +1464,8 @@ suite("CFlow runtime") {
         check_null(run.impl);
 
         cflow_scheduler_destroy(&scheduler);
-        turbo_cond_destroy(&scheduler_state.changed);
-        turbo_mutex_destroy(&scheduler_state.mutex);
+        salts_cond_destroy(&scheduler_state.changed);
+        salts_mutex_destroy(&scheduler_state.mutex);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
     }
@@ -1475,7 +1475,7 @@ suite("CFlow runtime") {
         coalescing_scheduler_state state = {0};
         cflow_scheduler scheduler =
             coalescing_scheduler_as_cflow_scheduler(&state);
-        const uint64_t started = turbo_monotonic_ms();
+        const uint64_t started = salts_monotonic_ms();
         cflow_schedule_result result;
 
         state.timeout_ms = CONTROLLED_BARRIER_TIMEOUT_MS;
@@ -1488,7 +1488,7 @@ suite("CFlow runtime") {
         check_true(atomic_load(&state.timed_out));
         check_false(atomic_load(&state.release));
         check_equal(atomic_load(&state.posts), 1);
-        check_less(turbo_monotonic_ms() - started,
+        check_less(salts_monotonic_ms() - started,
                    (uint64_t)RUNTIME_SATURATION_TIMEOUT_MS);
     }
 
@@ -1656,14 +1656,14 @@ suite("CFlow runtime") {
             &sink_state};
         cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
         coalescing_request_context request = {&run};
-        turbo_thread_t thread = {0};
+        salts_thread_t thread = {0};
 
         cflow_graph_init(&surface, &cmeta_type_int);
         check_true(cflow_graph_normalize(&normalized, &surface));
         check_true(cflow_subscribe(
             &run, &normalized, &source, &scheduler, &sink));
         {
-            const int create_status = turbo_thread_create(
+            const int create_status = salts_thread_create(
                 &thread, coalescing_request, &request);
             check_equal(create_status, 0);
             if (create_status != 0) abort();
@@ -1679,7 +1679,7 @@ suite("CFlow runtime") {
             check_true(returned);
             if (!returned) abort();
         }
-        check_equal(turbo_thread_join(&thread), 0);
+        check_equal(salts_thread_join(&thread), 0);
         check_true(atomic_load(&request.returned));
         check_false(request.result);
         check_equal(atomic_load(&scheduler_state.posts), 1);
@@ -1706,14 +1706,14 @@ suite("CFlow runtime") {
             NULL, rejection_callback_close_error, NULL, &close_state};
         cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
         coalescing_request_context request = {&run};
-        turbo_thread_t thread = {0};
+        salts_thread_t thread = {0};
 
         cflow_graph_init(&surface, &cmeta_type_int);
         check_true(cflow_graph_normalize(&normalized, &surface));
         check_true(cflow_subscribe(
             &run, &normalized, &source, &scheduler, &sink));
         {
-            const int create_status = turbo_thread_create(
+            const int create_status = salts_thread_create(
                 &thread, coalescing_request, &request);
             check_equal(create_status, 0);
             if (create_status != 0) abort();
@@ -1727,7 +1727,7 @@ suite("CFlow runtime") {
             check_true(returned);
             if (!returned) abort();
         }
-        check_equal(turbo_thread_join(&thread), 0);
+        check_equal(salts_thread_join(&thread), 0);
         check_equal(atomic_load(&close_state.errors), 1);
         check_true(atomic_load(&close_state.close_returned));
         check_null(run.impl);
@@ -1759,15 +1759,15 @@ suite("CFlow runtime") {
             cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
             coalescing_request_context request = {&run};
             coalescing_close_context close = {&run};
-            turbo_thread_t request_thread = {0};
-            turbo_thread_t close_thread = {0};
+            salts_thread_t request_thread = {0};
+            salts_thread_t close_thread = {0};
 
             cflow_graph_init(&surface, &cmeta_type_int);
             check_true(cflow_graph_normalize(&normalized, &surface));
             check_true(cflow_subscribe(
                 &run, &normalized, &source, &scheduler, &sink));
             {
-                const int create_status = turbo_thread_create(
+                const int create_status = salts_thread_create(
                     &request_thread, coalescing_request, &request);
                 check_equal(create_status, 0);
                 if (create_status != 0) abort();
@@ -1775,7 +1775,7 @@ suite("CFlow runtime") {
             check_true(runtime_wait_until_at_least(
                 &scheduler_state.posts, 1));
             {
-                const int create_status = turbo_thread_create(
+                const int create_status = salts_thread_create(
                     &close_thread, coalescing_close, &close);
                 check_equal(create_status, 0);
                 if (create_status != 0) abort();
@@ -1792,8 +1792,8 @@ suite("CFlow runtime") {
                 check_true(close_returned);
                 if (!request_returned || !close_returned) abort();
             }
-            check_equal(turbo_thread_join(&request_thread), 0);
-            check_equal(turbo_thread_join(&close_thread), 0);
+            check_equal(salts_thread_join(&request_thread), 0);
+            check_equal(salts_thread_join(&close_thread), 0);
             check_true(atomic_load(&request.returned));
             check_equal(atomic_load(&close.returned), 1);
             check_null(run.impl);
@@ -2678,14 +2678,14 @@ suite("CFlow runtime") {
         timer_wake_gate gate = {0};
         pending_foreign_run_context run_context = {&scheduler_state};
         source_destroy_context destroy_context = {&source};
-        turbo_thread_t run_thread = 0;
-        turbo_thread_t destroy_thread = 0;
+        salts_thread_t run_thread = 0;
+        salts_thread_t destroy_thread = 0;
         size_t output = 0u;
 
-        turbo_mutex_init(&scheduler_state.mutex);
-        turbo_cond_init(&scheduler_state.changed);
-        turbo_mutex_init(&gate.mutex);
-        turbo_cond_init(&gate.changed);
+        salts_mutex_init(&scheduler_state.mutex);
+        salts_cond_init(&scheduler_state.changed);
+        salts_mutex_init(&gate.mutex);
+        salts_cond_init(&gate.changed);
         scheduler = pending_foreign_scheduler_as_cflow_scheduler(
             &scheduler_state);
         resume_context = (cflow_publish_context){&scheduler};
@@ -2694,32 +2694,32 @@ suite("CFlow runtime") {
         check_equal(step.kind, CFLOW_STEP_WAIT);
         check_true(cflow_waitable_arm(
             &step.waitable, (cflow_waker){timer_blocking_wake, &gate}));
-        check_equal(turbo_thread_create(
+        check_equal(salts_thread_create(
             &run_thread, pending_foreign_run_one_thread, &run_context), 0);
-        turbo_mutex_lock(&gate.mutex);
+        salts_mutex_lock(&gate.mutex);
         while (!gate.entered)
-            turbo_cond_wait(&gate.changed, &gate.mutex);
-        turbo_mutex_unlock(&gate.mutex);
-        check_equal(turbo_thread_create(
+            salts_cond_wait(&gate.changed, &gate.mutex);
+        salts_mutex_unlock(&gate.mutex);
+        check_equal(salts_thread_create(
             &destroy_thread, source_destroy_thread, &destroy_context), 0);
         if (!runtime_wait_until_at_least(&destroy_context.started, 1)) abort();
-        turbo_sleep_ms(20u);
+        salts_sleep_ms(20u);
         check_equal(atomic_load(&destroy_context.returned), 0);
 
-        turbo_mutex_lock(&gate.mutex);
+        salts_mutex_lock(&gate.mutex);
         gate.release = true;
-        turbo_cond_broadcast(&gate.changed);
-        turbo_mutex_unlock(&gate.mutex);
-        check_equal(turbo_thread_join(&run_thread), 0);
-        check_equal(turbo_thread_join(&destroy_thread), 0);
+        salts_cond_broadcast(&gate.changed);
+        salts_mutex_unlock(&gate.mutex);
+        check_equal(salts_thread_join(&run_thread), 0);
+        check_equal(salts_thread_join(&destroy_thread), 0);
         check_equal(atomic_load(&destroy_context.returned), 1);
         check_false(cflow_publisher_valid(&source));
 
         cflow_scheduler_destroy(&scheduler);
-        turbo_cond_destroy(&gate.changed);
-        turbo_mutex_destroy(&gate.mutex);
-        turbo_cond_destroy(&scheduler_state.changed);
-        turbo_mutex_destroy(&scheduler_state.mutex);
+        salts_cond_destroy(&gate.changed);
+        salts_mutex_destroy(&gate.mutex);
+        salts_cond_destroy(&scheduler_state.changed);
+        salts_mutex_destroy(&scheduler_state.mutex);
     }
 
     it("survives inline Timer wake destruction during scheduler admission") {
@@ -2731,8 +2731,8 @@ suite("CFlow runtime") {
         reentrant_timer_wake_state wake_state = {&source, false};
         size_t output = 0u;
 
-        turbo_mutex_init(&scheduler_state.mutex);
-        turbo_cond_init(&scheduler_state.changed);
+        salts_mutex_init(&scheduler_state.mutex);
+        salts_cond_init(&scheduler_state.changed);
         scheduler_state.run_inline = true;
         scheduler = pending_foreign_scheduler_as_cflow_scheduler(
             &scheduler_state);
@@ -2747,8 +2747,8 @@ suite("CFlow runtime") {
         check_false(cflow_publisher_valid(&source));
 
         cflow_scheduler_destroy(&scheduler);
-        turbo_cond_destroy(&scheduler_state.changed);
-        turbo_mutex_destroy(&scheduler_state.mutex);
+        salts_cond_destroy(&scheduler_state.changed);
+        salts_mutex_destroy(&scheduler_state.mutex);
     }
 
     it("rearms a Timer only after the prior callback settles") {
@@ -2847,13 +2847,13 @@ suite("CFlow runtime") {
             &state
         };
         cflow_subscriber sink = cflow_subscriber_from_callbacks(&callbacks);
-        turbo_thread_t external_thread;
+        salts_thread_t external_thread;
         const int input = 11;
 
         state.run = &run;
         normalized.root = CMETA_INVALID_ID;
-        turbo_mutex_init(&state.lock);
-        turbo_cond_init(&state.changed);
+        salts_mutex_init(&state.lock);
+        salts_cond_init(&state.changed);
         check_not_null(state.lock);
         check_not_null(state.changed);
         cflow_graph_init(&surface, &cmeta_type_int);
@@ -2865,13 +2865,13 @@ suite("CFlow runtime") {
             &run, &normalized, &source, &scheduler, &sink));
         check_true(cflow_subscription_request(&run, 1u));
 
-        turbo_mutex_lock(&state.lock);
+        salts_mutex_lock(&state.lock);
         while (!state.callback_entered)
-            turbo_cond_wait(&state.changed, &state.lock);
-        turbo_mutex_unlock(&state.lock);
-        check_equal(turbo_thread_create(
+            salts_cond_wait(&state.changed, &state.lock);
+        salts_mutex_unlock(&state.lock);
+        check_equal(salts_thread_create(
             &external_thread, concurrent_external_close, &state), 0);
-        check_equal(turbo_thread_join(&external_thread), 0);
+        check_equal(salts_thread_join(&external_thread), 0);
         check_true(cflow_scheduler_wait_idle(&scheduler));
 
         check_true(state.callback_returned);
@@ -2882,8 +2882,8 @@ suite("CFlow runtime") {
         cflow_scheduler_destroy(&scheduler);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
-        turbo_cond_destroy(&state.changed);
-        turbo_mutex_destroy(&state.lock);
+        salts_cond_destroy(&state.changed);
+        salts_mutex_destroy(&state.lock);
     }
 
     it("allows a source destroy callback to close the same run") {

@@ -1,7 +1,7 @@
 #include <cbind/cbind.h>
-#include <rocida/stl/typed.h>
-#include "turbo_cmeta_data.h"
-#include "turbo_str.h"
+#include <cstl/typed.h>
+#include "salts_cmeta_data.h"
+#include "salts_str.h"
 #include "recording.h"
 #include "tinytest.h"
 
@@ -125,7 +125,7 @@ static void cbind_variant_restore_zero(void *object) {
         (void)cmeta_container_restore_zero(
             &value->payload.pair.items, items->declared_type);
     } else if (value->tag == CBIND_VARIANT_TEXT) {
-        turbo_tstr_cmeta_restore_zero(&value->payload.text);
+        salts_tstr_cmeta_restore_zero(&value->payload.text);
     }
     memset(value, 0, sizeof(*value));
 }
@@ -139,9 +139,9 @@ static const cmeta_data_desc cbind_variant_text_data = {
     .stable_id = "test.cbind.variant.text.data",
     .display_name = "text",
     .kind = CMETA_DATA_STRING,
-    .storage_type = &turbo_tstr_cmeta_type,
+    .storage_type = &salts_tstr_cmeta_type,
     .shape = &cbind_variant_text_shape,
-    .buffer_ops = &turbo_tstr_cmeta_buffer_ops
+    .buffer_ops = &salts_tstr_cmeta_buffer_ops
 };
 
 static const cmeta_data_variant_case cbind_variant_cases[] = {

@@ -13,12 +13,12 @@ typedef struct chttp_response_sink_probe {
 static int chttp_response_test_sink(void *user, const void *data, size_t size) {
   chttp_response_sink_probe *probe = (chttp_response_sink_probe *)user;
   if (probe == NULL || (size != 0u && data == NULL) || size > sizeof(probe->data) - probe->size)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   ++probe->calls;
-  if (probe->status != TURBO_OK) return probe->status;
+  if (probe->status != SALTS_OK) return probe->status;
   memcpy(probe->data + probe->size, data, size);
   probe->size += size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static chttp_limits chttp_response_test_limits(void) {
@@ -44,9 +44,9 @@ spec("CHTTP strict incremental response parser") {
     chttp_response_parser parser;
     size_t index;
 
-    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), TURBO_OK);
+    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), SALTS_OK);
     for (index = 0u; index < sizeof(input) - 1u; ++index)
-      check_equal(chttp_response_parser_execute(&parser, input + index, 1u), TURBO_OK);
+      check_equal(chttp_response_parser_execute(&parser, input + index, 1u), SALTS_OK);
     check_true(parser.complete);
     check_equal(parser.response.http_major, 1u);
     check_equal(parser.response.http_minor, 1u);
@@ -68,8 +68,8 @@ spec("CHTTP strict incremental response parser") {
     chttp_limits limits = chttp_response_test_limits();
     chttp_response_parser parser;
 
-    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_POST, &limits), TURBO_OK);
-    check_equal(chttp_response_parser_execute(&parser, input, sizeof(input) - 1u), TURBO_OK);
+    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_POST, &limits), SALTS_OK);
+    check_equal(chttp_response_parser_execute(&parser, input, sizeof(input) - 1u), SALTS_OK);
     check_true(parser.complete);
     check_equal(parser.informational_responses, (size_t)1u);
     check_equal(parser.response.status_code, 201u);
@@ -83,10 +83,10 @@ spec("CHTTP strict incremental response parser") {
     chttp_limits limits = chttp_response_test_limits();
     chttp_response_parser parser;
 
-    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), TURBO_OK);
-    check_equal(chttp_response_parser_execute(&parser, input, sizeof(input) - 1u), TURBO_OK);
+    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), SALTS_OK);
+    check_equal(chttp_response_parser_execute(&parser, input, sizeof(input) - 1u), SALTS_OK);
     check_false(parser.complete);
-    check_equal(chttp_response_parser_finish(&parser), TURBO_OK);
+    check_equal(chttp_response_parser_finish(&parser), SALTS_OK);
     check_true(parser.complete);
     check_equal(parser.response.body, "legacy", 6u);
     chttp_response_parser_destroy(&parser);
@@ -98,8 +98,8 @@ spec("CHTTP strict incremental response parser") {
     chttp_limits limits = chttp_response_test_limits();
     chttp_response_parser parser;
 
-    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_HEAD, &limits), TURBO_OK);
-    check_equal(chttp_response_parser_execute(&parser, input, sizeof(input) - 1u), TURBO_OK);
+    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_HEAD, &limits), SALTS_OK);
+    check_equal(chttp_response_parser_execute(&parser, input, sizeof(input) - 1u), SALTS_OK);
     check_true(parser.complete);
     check_equal(parser.response.body_size, (size_t)0u);
     chttp_response_parser_destroy(&parser);
@@ -113,17 +113,17 @@ spec("CHTTP strict incremental response parser") {
     chttp_response_parser parser;
 
     limits.max_header_bytes = 16u;
-    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), TURBO_OK);
+    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), SALTS_OK);
     check_equal(
         chttp_response_parser_execute(&parser, oversized_header, sizeof(oversized_header) - 1u),
-        TURBO_EMSGSIZE);
+        SALTS_EMSGSIZE);
     chttp_response_parser_destroy(&parser);
 
     limits = chttp_response_test_limits();
     limits.max_response_body_bytes = 4u;
-    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), TURBO_OK);
+    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), SALTS_OK);
     check_equal(chttp_response_parser_execute(&parser, oversized_body, sizeof(oversized_body) - 1u),
-                TURBO_EMSGSIZE);
+                SALTS_EMSGSIZE);
     chttp_response_parser_destroy(&parser);
   }
 
@@ -137,20 +137,20 @@ spec("CHTTP strict incremental response parser") {
     chttp_limits limits = chttp_response_test_limits();
     chttp_response_parser parser;
 
-    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), TURBO_OK);
+    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), SALTS_OK);
     check_equal(chttp_response_parser_execute(&parser, conflicting, sizeof(conflicting) - 1u),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     chttp_response_parser_destroy(&parser);
 
-    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), TURBO_OK);
+    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), SALTS_OK);
     check_equal(chttp_response_parser_execute(&parser, truncated, sizeof(truncated) - 1u),
-                TURBO_OK);
-    check_equal(chttp_response_parser_finish(&parser), TURBO_EPROTO);
+                SALTS_OK);
+    check_equal(chttp_response_parser_finish(&parser), SALTS_EPROTO);
     chttp_response_parser_destroy(&parser);
 
-    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), TURBO_OK);
+    check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), SALTS_OK);
     check_equal(chttp_response_parser_execute(&parser, trailing, sizeof(trailing) - 1u),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     chttp_response_parser_destroy(&parser);
   }
 
@@ -163,9 +163,9 @@ spec("CHTTP strict incremental response parser") {
     chttp_response_parser parser;
 
     check_equal(chttp_response_parser_init_with_sink(&parser, CHTTP_METHOD_GET, &limits, &sink),
-                TURBO_OK);
-    check_equal(chttp_response_parser_execute(&parser, first, sizeof(first) - 1u), TURBO_OK);
-    check_equal(chttp_response_parser_execute(&parser, second, sizeof(second) - 1u), TURBO_OK);
+                SALTS_OK);
+    check_equal(chttp_response_parser_execute(&parser, first, sizeof(first) - 1u), SALTS_OK);
+    check_equal(chttp_response_parser_execute(&parser, second, sizeof(second) - 1u), SALTS_OK);
     check_true(parser.complete);
     check_equal(probe.data, "hello", 5u);
     check_equal(probe.size, (size_t)5u);
@@ -174,10 +174,10 @@ spec("CHTTP strict incremental response parser") {
     check_equal(parser.response.body_size, (size_t)5u);
     chttp_response_parser_destroy(&parser);
 
-    probe = (chttp_response_sink_probe){.status = TURBO_EIO};
+    probe = (chttp_response_sink_probe){.status = SALTS_EIO};
     check_equal(chttp_response_parser_init_with_sink(&parser, CHTTP_METHOD_GET, &limits, &sink),
-                TURBO_OK);
-    check_equal(chttp_response_parser_execute(&parser, first, sizeof(first) - 1u), TURBO_EIO);
+                SALTS_OK);
+    check_equal(chttp_response_parser_execute(&parser, first, sizeof(first) - 1u), SALTS_EIO);
     check_equal(parser.failure_stage, "response-sink");
     check_equal(probe.calls, (size_t)1u);
     chttp_response_parser_destroy(&parser);

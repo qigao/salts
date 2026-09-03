@@ -5,7 +5,7 @@
 #include <cmeta/cmeta.h>
 #include <cserde/reader.h>
 #include <cserde/writer.h>
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -229,8 +229,8 @@ int crpc_async_client_destroy(crpc_async_client *client);
 
 /**
  * Initializes a stopped JSON-RPC server and its bounded method registry.
- * @return `TURBO_OK`; `TURBO_EINVAL`, `TURBO_EMSGSIZE`, or `TURBO_ERANGE`
- * for invalid bounds; `TURBO_ENOMEM` for allocation failure; otherwise the
+ * @return `SALTS_OK`; `SALTS_EINVAL`, `SALTS_EMSGSIZE`, or `SALTS_ERANGE`
+ * for invalid bounds; `SALTS_ENOMEM` for allocation failure; otherwise the
  * underlying CHTTP initialization error.
  */
 int crpc_server_init(crpc_server *server, const crpc_server_config *config);
@@ -245,8 +245,8 @@ chttp_server *crpc_server_http(crpc_server *server);
  * Registers one fixed origin-form target/method pair before server start.
  * CHTTP `:segment` route patterns are rejected. Target, wire method, and bound
  * callable are copied; handler and user are borrowed through destroy.
- * @return `TURBO_OK`, validation/binding errors, `TURBO_EBUSY` after start,
- * `TURBO_EALREADY` for a duplicate key, or `TURBO_ENOBUFS` when full.
+ * @return `SALTS_OK`, validation/binding errors, `SALTS_EBUSY` after start,
+ * `SALTS_EALREADY` for a duplicate key, or `SALTS_ENOBUFS` when full.
  */
 int crpc_server_register(crpc_server *server, const char *target, const crpc_method *method,
                          crpc_server_method_fn handler, void *user);
@@ -254,7 +254,7 @@ int crpc_server_register(crpc_server *server, const char *target, const crpc_met
 /**
  * Completes one handler call with a JSON-RPC result; NULL encoder writes null.
  * The encoder runs synchronously. Notifications mark completion without bytes.
- * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_EALREADY`, or a bounded encoder error.
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EALREADY`, or a bounded encoder error.
  */
 int crpc_server_response_result(crpc_server_response *response, crpc_encode_value_fn encode,
                                 void *user);
@@ -262,7 +262,7 @@ int crpc_server_response_result(crpc_server_response *response, crpc_encode_valu
 /**
  * Completes one handler call with a JSON-RPC application error. The message
  * and optional data encoder are consumed synchronously.
- * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_EALREADY`, or a bounded encoder error.
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EALREADY`, or a bounded encoder error.
  */
 int crpc_server_response_error(crpc_server_response *response, int64_t code, const char *message,
                                crpc_encode_value_fn encode_data, void *data_user);

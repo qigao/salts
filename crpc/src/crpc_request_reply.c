@@ -1,6 +1,6 @@
 #include "crpc_internal.h"
 
-#include <turbo/clock.h>
+#include <salts/clock.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -18,19 +18,19 @@ static crpc_blocking_client_impl *crpc_client_get(crpc_client *client) {
 
 static int crpc_deadline_remaining(uint64_t started_ms, uint32_t deadline_ms,
                                    uint32_t *out_remaining_ms) {
-  const uint64_t now_ms = turbo_monotonic_ms();
+  const uint64_t now_ms = salts_monotonic_ms();
   const uint64_t elapsed_ms = now_ms >= started_ms ? now_ms - started_ms : 0u;
-  if (out_remaining_ms == NULL) return TURBO_EINVAL;
+  if (out_remaining_ms == NULL) return SALTS_EINVAL;
   if (deadline_ms == 0u) {
     *out_remaining_ms = 0u;
-    return TURBO_OK;
+    return SALTS_OK;
   }
   if (elapsed_ms >= deadline_ms) {
     *out_remaining_ms = 0u;
-    return TURBO_ETIMEDOUT;
+    return SALTS_ETIMEDOUT;
   }
   *out_remaining_ms = deadline_ms - (uint32_t)elapsed_ms;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void crpc_response_take(crpc_decoded_response *decoded, crpc_response *out) {
@@ -47,19 +47,19 @@ static void crpc_response_take(crpc_decoded_response *decoded, crpc_response *ou
 int crpc_client_init(crpc_client *client, const crpc_client_config *config) {
   crpc_blocking_client_impl *impl;
   int status;
-  if (client == NULL || config == NULL) return TURBO_EINVAL;
-  if (client->impl != NULL) return TURBO_EALREADY;
-  if (!crpc_client_config_valid(config)) return TURBO_EINVAL;
+  if (client == NULL || config == NULL) return SALTS_EINVAL;
+  if (client->impl != NULL) return SALTS_EALREADY;
+  if (!crpc_client_config_valid(config)) return SALTS_EINVAL;
   impl = (crpc_blocking_client_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   status = chttp_client_init(&impl->http, &config->http);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     free(impl);
     return status;
   }
   impl->config = *config;
   client->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 void crpc_response_destroy(crpc_response *response) {
@@ -86,23 +86,23 @@ int crpc_request_reply(crpc_client *client, const crpc_options *options,
   uint32_t remaining_ms = 0u;
   int status;
 
-  if (out_response == NULL || out_error == NULL) return TURBO_EINVAL;
+  if (out_response == NULL || out_error == NULL) return SALTS_EINVAL;
   *out_response = (crpc_response){0};
   *out_error = (crpc_error){0};
-  if (impl == NULL || options == NULL) return TURBO_EINVAL;
-  if (impl->operation_active) return TURBO_EBUSY;
+  if (impl == NULL || options == NULL) return SALTS_EINVAL;
+  if (impl->operation_active) return SALTS_EBUSY;
 
   impl->operation_active = true;
-  started_ms = turbo_monotonic_ms();
+  started_ms = salts_monotonic_ms();
   status = crpc_prepare_call(options, impl->config.max_method_bytes, impl->config.max_json_depth,
                              impl->config.http.max_request_body_bytes,
                              impl->config.http.max_header_count, &prepared);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     *out_error = (crpc_error){.status = status, .stage = "rpc-prepare"};
     goto done;
   }
   status = crpc_deadline_remaining(started_ms, options->deadline_ms, &remaining_ms);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     *out_error = (crpc_error){.status = status, .stage = "rpc-deadline"};
     goto done;
   }
@@ -118,13 +118,13 @@ int crpc_request_reply(crpc_client *client, const crpc_options *options,
                                  .tls = options->tls,
                                  .protocol = options->protocol};
   status = chttp_post(&impl->http, &http_options, &http_response, &http_error);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     *out_error = (crpc_error){
         .status = status, .native_status = http_error.native_status, .stage = http_error.stage};
     goto done;
   }
   status = crpc_deadline_remaining(started_ms, options->deadline_ms, &remaining_ms);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     *out_error = (crpc_error){
         .status = status, .http_status = http_response.status_code, .stage = "rpc-deadline"};
     goto done;
@@ -132,7 +132,7 @@ int crpc_request_reply(crpc_client *client, const crpc_options *options,
 
   decoded = (crpc_decoded_response *)calloc(1u, sizeof(*decoded));
   if (decoded == NULL) {
-    status = TURBO_ENOMEM;
+    status = SALTS_ENOMEM;
     *out_error = (crpc_error){
         .status = status, .http_status = http_response.status_code, .stage = "rpc-response"};
     goto done;
@@ -141,13 +141,13 @@ int crpc_request_reply(crpc_client *client, const crpc_options *options,
       crpc_json_decode_response(http_response.body, http_response.body_size, options->request_id,
                                 http_response.status_code, impl->config.max_json_depth,
                                 prepared.has_callable ? &prepared.callable : NULL, decoded, &stage);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     *out_error =
         (crpc_error){.status = status, .http_status = http_response.status_code, .stage = stage};
     goto done;
   }
   status = crpc_deadline_remaining(started_ms, options->deadline_ms, &remaining_ms);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     *out_error = (crpc_error){
         .status = status, .http_status = http_response.status_code, .stage = "rpc-deadline"};
     goto done;
@@ -170,13 +170,13 @@ done:
 int crpc_client_destroy(crpc_client *client, uint32_t timeout_ms) {
   crpc_blocking_client_impl *impl;
   int status;
-  if (client == NULL) return TURBO_EINVAL;
+  if (client == NULL) return SALTS_EINVAL;
   impl = crpc_client_get(client);
-  if (impl == NULL) return TURBO_OK;
-  if (impl->operation_active) return TURBO_EBUSY;
+  if (impl == NULL) return SALTS_OK;
+  if (impl->operation_active) return SALTS_EBUSY;
   status = chttp_client_destroy(&impl->http, timeout_ms);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   free(impl);
   client->impl = NULL;
-  return TURBO_OK;
+  return SALTS_OK;
 }

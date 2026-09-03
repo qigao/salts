@@ -1,24 +1,24 @@
 # CFlow Bounded Async Filesystem Control Design
 
-Issue: [#112](https://github.com/qigao/turbo-utils/issues/112)
-Parent: [#111](https://github.com/qigao/turbo-utils/issues/111)
-Data-plane facade: [#110](https://github.com/qigao/turbo-utils/pull/110)
+Issue: [#112](https://github.com/qigao/salts/issues/112)
+Parent: [#111](https://github.com/qigao/salts/issues/111)
+Data-plane facade: [#110](https://github.com/qigao/salts/pull/110)
 
 ## Decision
 
-Add `TurboUtils::CFlowFS`, a separate adapter target that combines the
-synchronous `turbo_fs` pathname API with CFlow's bounded Worker Executor. The
+Add `Salts::CFlowFS`, a separate adapter target that combines the
+synchronous `salts_fs` pathname API with CFlow's bounded Worker Executor. The
 target exposes `cflow_fs_service` for `stat`, `lstat`, directory enumeration,
 `mkdir`, `rmdir`, `rename`, and `unlink`.
 
 This backend is explicitly worker-backed. It does not claim io_uring or IOCP
-kernel-native semantics and does not restore the removed `turbo_fs_*_async`
-surface. `TurboUtils::CFlow` remains independent of `TurboUtils::Core`, avoiding
+kernel-native semantics and does not restore the removed `salts_fs_*_async`
+surface. `Salts::CFlow` remains independent of `Salts::Core`, avoiding
 the existing `Core -> CFlow` dependency becoming a cycle.
 
 ## Public contract
 
-The public header is `cflow/fs.h`; consumers link `TurboUtils::CFlowFS`.
+The public header is `cflow/fs.h`; consumers link `Salts::CFlowFS`.
 
 ```c
 typedef struct cflow_fs_service { void *impl; } cflow_fs_service;
@@ -42,7 +42,7 @@ typedef enum cflow_fs_submit_status {
 } cflow_fs_submit_status;
 
 typedef struct cflow_fs_dir_buffer {
-    turbo_fs_dirent_t *entries;
+    salts_fs_dirent_t *entries;
     size_t entry_capacity;
     char *names;
     size_t names_capacity;
@@ -68,11 +68,11 @@ allocates exactly `request_capacity` slots plus two `path_capacity` buffers per
 slot. Accepted submissions copy one or two NUL-terminated paths before return.
 Oversized paths are invalid and cause no side effect.
 
-Stat submissions borrow a caller-owned `turbo_fs_stat_t` until callback return.
+Stat submissions borrow a caller-owned `salts_fs_stat_t` until callback return.
 Directory submissions borrow a caller-owned `cflow_fs_dir_buffer`, entry array,
 and name arena until callback return. Every returned entry name points into the
 caller's name arena. If either directory capacity is insufficient, the terminal
-result is `TURBO_ENOBUFS`, both used counts are zero, and no partial listing is
+result is `SALTS_ENOBUFS`, both used counts are zero, and no partial listing is
 committed.
 
 ## Ownership and concurrency
@@ -91,7 +91,7 @@ Successful Executor admission produces exactly one worker `run` or `cancel`
 terminal path. A worker stores its result in the slot; the single driver claims
 completed slots and invokes callbacks. Callback return releases the slot.
 
-Cancellation before syscall start completes with `TURBO_ECANCELED`. Once the
+Cancellation before syscall start completes with `SALTS_ECANCELED`. Once the
 blocking syscall has started, cancellation cannot revoke the OS side effect;
 the actual syscall result remains authoritative. Close stops admission and
 uses cancel-pending shutdown: queued work is cancelled, running work completes.
@@ -100,11 +100,11 @@ uses cancel-pending shutdown: queued work is cancelled, running work completes.
 
 - Rejected submission never borrows result storage and performs no side effect.
 - Accepted operational failures are reported only through the callback as the
-  negative `turbo_fs` result.
+  negative `salts_fs` result.
 - Request IDs are nonzero, monotonically allocated, and exhaustion is distinct.
-- Concurrent or reentrant driving returns `TURBO_EBUSY`.
-- `close` is nonblocking and repeated close returns `TURBO_EALREADY`.
-- `destroy` returns `TURBO_EBUSY` until the Executor is closed and every
+- Concurrent or reentrant driving returns `SALTS_EBUSY`.
+- `close` is nonblocking and repeated close returns `SALTS_EALREADY`.
+- `destroy` returns `SALTS_EBUSY` until the Executor is closed and every
   terminal callback has returned; successful destroy restores the public
   handle to zero.
 
@@ -113,4 +113,4 @@ uses cancel-pending shutdown: queued work is cancelled, running work completes.
 Tests cover all seven operations, missing paths, path bounds, fixed-capacity
 saturation and reuse, transactional directory overflow, cancellation during
 close, callback affinity, repeated lifecycle, C/C++ public-header compilation,
-and adjacent Executor plus `turbo_fs` regressions.
+and adjacent Executor plus `salts_fs` regressions.

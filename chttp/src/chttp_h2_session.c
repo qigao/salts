@@ -70,14 +70,14 @@ static const char *chttp_h2_method_name(chttp_method method) {
 
 static int chttp_h2_bounded_length(const char *text, size_t limit, size_t *out_size) {
   size_t index;
-  if (text == NULL || out_size == NULL) return TURBO_EINVAL;
+  if (text == NULL || out_size == NULL) return SALTS_EINVAL;
   for (index = 0u; index <= limit; ++index) {
     if (text[index] == '\0') {
       *out_size = index;
-      return TURBO_OK;
+      return SALTS_OK;
     }
   }
-  return TURBO_EMSGSIZE;
+  return SALTS_EMSGSIZE;
 }
 
 static bool chttp_h2_header_name_byte(unsigned char value) {
@@ -131,38 +131,38 @@ static int chttp_h2_request_inputs(const chttp_request_options *options,
         (options->body_source->content_length_known != 0 &&
          options->body_source->content_length_known != 1))) ||
       (options->body_sink != NULL && options->body_sink->write == NULL))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   declared_body_size = options->body_source != NULL && options->body_source->content_length_known
                            ? options->body_source->content_length
                            : options->body_size;
-  if (declared_body_size > limits->max_request_body_bytes) return TURBO_EMSGSIZE;
+  if (declared_body_size > limits->max_request_body_bytes) return SALTS_EMSGSIZE;
   method_name = chttp_h2_method_name(options->method);
   status = chttp_h2_bounded_length(options->target, limits->max_start_line_bytes, &target_size);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   if (target_size == 0u ||
       (options->target[0] != '/' && !(options->method == CHTTP_METHOD_OPTIONS &&
                                       target_size == 1u && options->target[0] == '*')))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   for (index = 0u; index < target_size; ++index) {
     const unsigned char value = (unsigned char)options->target[index];
-    if (value <= 0x20u || value >= 0x7fu || value == '#') return TURBO_EINVAL;
+    if (value <= 0x20u || value >= 0x7fu || value == '#') return SALTS_EINVAL;
   }
   status = chttp_h2_bounded_length(options->authority, limits->max_header_bytes, &authority_size);
-  if (status != TURBO_OK) return status;
-  if (authority_size == 0u) return TURBO_EINVAL;
+  if (status != SALTS_OK) return status;
+  if (authority_size == 0u) return SALTS_EINVAL;
   for (index = 0u; index < authority_size; ++index) {
     const unsigned char value = (unsigned char)options->authority[index];
     if (value <= 0x20u || value >= 0x7fu || value == '/' || value == '?' || value == '#' ||
         value == '@')
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
   }
   generated_header_count =
       options->body_source != NULL && !options->body_source->content_length_known ? 4u : 5u;
   if (options->header_count > SIZE_MAX - generated_header_count ||
       options->header_count + generated_header_count > limits->max_header_count)
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   status = snprintf(body_size_text, sizeof(body_size_text), "%zu", declared_body_size);
-  if (status <= 0 || (size_t)status >= sizeof(body_size_text)) return TURBO_ERANGE;
+  if (status <= 0 || (size_t)status >= sizeof(body_size_text)) return SALTS_ERANGE;
   body_size_chars = (size_t)status;
   if (!chttp_h2_header_list_add(sizeof(":method") - 1u, strlen(method_name), &header_bytes) ||
       !chttp_h2_header_list_add(sizeof(":scheme") - 1u,
@@ -173,19 +173,19 @@ static int chttp_h2_request_inputs(const chttp_request_options *options,
                                 &header_bytes) ||
       !chttp_h2_header_list_add(sizeof(":path") - 1u, target_size, &header_bytes) ||
       !chttp_h2_header_list_add(sizeof(":authority") - 1u, authority_size, &header_bytes))
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   if (generated_header_count == 5u &&
       !chttp_h2_header_list_add(sizeof("content-length") - 1u, body_size_chars, &header_bytes))
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   for (index = 0u; index < options->header_count; ++index) {
     const chttp_header *header = &options->headers[index];
     size_t name_size = 0u;
     size_t value_size = 0u;
     size_t byte_index;
     status = chttp_h2_bounded_length(header->name, limits->max_header_bytes, &name_size);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     status = chttp_h2_bounded_length(header->value, limits->max_header_bytes, &value_size);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     if (name_size == 0u || header->name[0] == ':' ||
         chttp_h2_ascii_equal_n(header->name, name_size, "host") ||
         chttp_h2_ascii_equal_n(header->name, name_size, "content-length") ||
@@ -194,16 +194,16 @@ static int chttp_h2_request_inputs(const chttp_request_options *options,
         chttp_h2_ascii_equal_n(header->name, name_size, "keep-alive") ||
         chttp_h2_ascii_equal_n(header->name, name_size, "transfer-encoding") ||
         chttp_h2_ascii_equal_n(header->name, name_size, "upgrade"))
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
     for (byte_index = 0u; byte_index < name_size; ++byte_index)
-      if (!chttp_h2_header_name_byte((unsigned char)header->name[byte_index])) return TURBO_EINVAL;
+      if (!chttp_h2_header_name_byte((unsigned char)header->name[byte_index])) return SALTS_EINVAL;
     if (!chttp_h2_header_value_valid(header->value, value_size) ||
         (chttp_h2_ascii_equal_n(header->name, name_size, "te") &&
          !chttp_h2_ascii_equal_n(header->value, value_size, "trailers")))
-      return TURBO_EINVAL;
-    if (!chttp_h2_header_list_add(name_size, value_size, &header_bytes)) return TURBO_EMSGSIZE;
+      return SALTS_EINVAL;
+    if (!chttp_h2_header_list_add(name_size, value_size, &header_bytes)) return SALTS_EMSGSIZE;
   }
-  return header_bytes <= limits->max_header_bytes ? TURBO_OK : TURBO_EMSGSIZE;
+  return header_bytes <= limits->max_header_bytes ? SALTS_OK : SALTS_EMSGSIZE;
 }
 
 int chttp_h2_protocol_config(const chttp_client_config *config, chttp_h2_proto_config *out_config) {
@@ -211,7 +211,7 @@ int chttp_h2_protocol_config(const chttp_client_config *config, chttp_h2_proto_c
   size_t hpack_dynamic_table_bytes;
   size_t max_settings_count;
   size_t minimum_output;
-  if (config == NULL || out_config == NULL) return TURBO_EINVAL;
+  if (config == NULL || out_config == NULL) return SALTS_EINVAL;
   input_buffer_bytes = config->h2_input_buffer_bytes;
   if (input_buffer_bytes == 0u) {
     input_buffer_bytes = config->network.receive_buffer_bytes > CHTTP_H2_DEFAULT_INPUT_BYTES
@@ -230,7 +230,7 @@ int chttp_h2_protocol_config(const chttp_client_config *config, chttp_h2_proto_c
       input_buffer_bytes < CHTTP_H2_FRAME_HEADER_BYTES + CHTTP_H2_MIN_FRAME_BYTES ||
       input_buffer_bytes > PTRDIFF_MAX || hpack_dynamic_table_bytes > UINT32_MAX ||
       max_settings_count > SIZE_MAX / sizeof(uint32_t))
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   *out_config = (chttp_h2_proto_config){.stream_capacity = config->request_capacity,
                                         .output_buffer_bytes = config->network.max_send_bytes,
                                         .input_buffer_bytes = input_buffer_bytes,
@@ -239,18 +239,18 @@ int chttp_h2_protocol_config(const chttp_client_config *config, chttp_h2_proto_c
                                         .hpack_dynamic_table_bytes = hpack_dynamic_table_bytes,
                                         .max_hpack_string_bytes = config->max_header_bytes,
                                         .max_settings_count = max_settings_count};
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int chttp_h2_request_prepare(chttp_h2_request_state *request, const chttp_request_options *options,
                              const chttp_limits *limits, void *request_user) {
   size_t storage_capacity;
   int status;
-  if (request == NULL || options == NULL || limits == NULL) return TURBO_EINVAL;
+  if (request == NULL || options == NULL || limits == NULL) return SALTS_EINVAL;
   status = chttp_h2_request_inputs(options, limits);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   if (limits->max_header_count > (SIZE_MAX - limits->max_header_bytes - 1u) / 2u)
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   storage_capacity = limits->max_header_bytes + limits->max_header_count * 2u + 1u;
   memset(request, 0, sizeof(*request));
   request->headers = (chttp_header *)calloc(limits->max_header_count, sizeof(*request->headers));
@@ -262,7 +262,7 @@ int chttp_h2_request_prepare(chttp_h2_request_state *request, const chttp_reques
       (options->body_sink == NULL && request->response_body == NULL) ||
       (options->body_size != 0u && request->request_body == NULL)) {
     chttp_h2_request_destroy(request);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   if (options->body_size != 0u) memcpy(request->request_body, options->body, options->body_size);
   request->request_user = request_user;
@@ -285,7 +285,7 @@ int chttp_h2_request_prepare(chttp_h2_request_state *request, const chttp_reques
   request->response.http_major = 2u;
   request->response.http_minor = 0u;
   request->response.protocol_keep_alive = 1;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 void chttp_h2_request_destroy(chttp_h2_request_state *request) {
@@ -352,25 +352,25 @@ static int chttp_h2_response_status(const char *value, size_t value_size,
   unsigned int status;
   if (value == NULL || out_status == NULL || value_size != 3u || value[0] < '1' || value[0] > '9' ||
       value[1] < '0' || value[1] > '9' || value[2] < '0' || value[2] > '9')
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   status = (unsigned int)(value[0] - '0') * 100u + (unsigned int)(value[1] - '0') * 10u +
            (unsigned int)(value[2] - '0');
   *out_status = status;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_h2_decimal_size(const char *value, size_t value_size, size_t *out_size) {
   size_t result = 0u;
   size_t index;
-  if (value == NULL || value_size == 0u || out_size == NULL) return TURBO_EPROTO;
+  if (value == NULL || value_size == 0u || out_size == NULL) return SALTS_EPROTO;
   for (index = 0u; index < value_size; ++index) {
     const unsigned char digit = (unsigned char)value[index];
     if (digit < '0' || digit > '9' || result > (SIZE_MAX - (size_t)(digit - '0')) / 10u)
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     result = result * 10u + (size_t)(digit - '0');
   }
   *out_size = result;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_h2_on_begin_headers(void *user, int32_t stream_id) {
@@ -400,8 +400,8 @@ static int chttp_h2_on_header(void *user, int32_t stream_id, const char *name, s
   if (name[0] == ':') {
     if (request->trailers || request->regular_header_seen || request->status_seen ||
         !chttp_h2_ascii_equal_n(name, name_size, ":status") ||
-        chttp_h2_response_status(value, value_size, &request->current_status) != TURBO_OK) {
-      request->failure_status = TURBO_EPROTO;
+        chttp_h2_response_status(value, value_size, &request->current_status) != SALTS_OK) {
+      request->failure_status = SALTS_EPROTO;
       request->failure_stage = "h2-response-headers";
       return -1;
     }
@@ -411,13 +411,13 @@ static int chttp_h2_on_header(void *user, int32_t stream_id, const char *name, s
   for (index = 0u; index < name_size; ++index) {
     if (!chttp_h2_header_name_byte((unsigned char)name[index]) ||
         (name[index] >= 'A' && name[index] <= 'Z')) {
-      request->failure_status = TURBO_EPROTO;
+      request->failure_status = SALTS_EPROTO;
       request->failure_stage = "h2-response-header-name";
       return -1;
     }
   }
   if (!chttp_h2_header_value_valid(value, value_size)) {
-    request->failure_status = TURBO_EPROTO;
+    request->failure_status = SALTS_EPROTO;
     request->failure_stage = "h2-response-header-value";
     return -1;
   }
@@ -427,16 +427,16 @@ static int chttp_h2_on_header(void *user, int32_t stream_id, const char *name, s
       chttp_h2_ascii_equal_n(name, name_size, "te") ||
       chttp_h2_ascii_equal_n(name, name_size, "transfer-encoding") ||
       chttp_h2_ascii_equal_n(name, name_size, "upgrade")) {
-    request->failure_status = TURBO_EPROTO;
+    request->failure_status = SALTS_EPROTO;
     request->failure_stage = "h2-response-connection-header";
     return -1;
   }
   if (chttp_h2_ascii_equal_n(name, name_size, "content-length")) {
     size_t content_length = 0u;
     if (request->trailers ||
-        chttp_h2_decimal_size(value, value_size, &content_length) != TURBO_OK ||
+        chttp_h2_decimal_size(value, value_size, &content_length) != SALTS_OK ||
         (request->content_length_seen && request->content_length != content_length)) {
-      request->failure_status = TURBO_EPROTO;
+      request->failure_status = SALTS_EPROTO;
       request->failure_stage = "h2-content-length";
       return -1;
     }
@@ -452,7 +452,7 @@ static int chttp_h2_on_header(void *user, int32_t stream_id, const char *name, s
       !chttp_h2_size_add(name_size, value_size, &required) ||
       !chttp_h2_size_add(required, 2u, &required) ||
       required > request->header_storage_capacity - request->header_storage_used) {
-    request->failure_status = TURBO_EMSGSIZE;
+    request->failure_status = SALTS_EMSGSIZE;
     request->failure_stage = "h2-response-headers";
     return -1;
   }
@@ -476,25 +476,25 @@ static int chttp_h2_on_end_headers(void *user, int32_t stream_id, int end_stream
   request->header_block_open = false;
   if (request->trailers) {
     if (request->status_seen || !end_stream) {
-      request->failure_status = TURBO_EPROTO;
+      request->failure_status = SALTS_EPROTO;
       request->failure_stage = "h2-response-trailers";
       return -1;
     }
     return 0;
   }
   if (!request->status_seen) {
-    request->failure_status = TURBO_EPROTO;
+    request->failure_status = SALTS_EPROTO;
     request->failure_stage = "h2-response-status";
     return -1;
   }
   if (request->current_status < 200u) {
     if (end_stream || request->current_status == 101u) {
-      request->failure_status = TURBO_EPROTO;
+      request->failure_status = SALTS_EPROTO;
       request->failure_stage = "h2-informational-response";
       return -1;
     }
     if (request->informational_responses >= request->max_informational_responses) {
-      request->failure_status = TURBO_EMSGSIZE;
+      request->failure_status = SALTS_EMSGSIZE;
       request->failure_stage = "h2-informational-response";
       return -1;
     }
@@ -521,7 +521,7 @@ static int chttp_h2_on_data(void *user, int32_t stream_id, const uint8_t *data, 
         request->response.status_code == 304u) &&
        size != 0u)) {
     if (request != NULL) {
-      request->failure_status = TURBO_EPROTO;
+      request->failure_status = SALTS_EPROTO;
       request->failure_stage = "h2-response-body";
     }
     return -1;
@@ -529,7 +529,7 @@ static int chttp_h2_on_data(void *user, int32_t stream_id, const uint8_t *data, 
   if (!chttp_h2_size_add(request->response.body_size, size, &next_size) ||
       next_size > request->max_response_body_bytes) {
     const bool was_deferred = session->defer_completions;
-    request->failure_status = TURBO_EMSGSIZE;
+    request->failure_status = SALTS_EMSGSIZE;
     request->failure_stage = "h2-response-body";
     if (size != 0u && chttp_h2_proto_consume_connection(session->protocol, size) != 0) return -1;
     session->defer_completions = true;
@@ -549,7 +549,7 @@ static int chttp_h2_on_data(void *user, int32_t stream_id, const uint8_t *data, 
       int native_status = 0;
       request->failure_status =
           chttp_file_sink_transfer_status(request->file_sink_transfer, &native_status);
-      if (request->failure_status == TURBO_OK) request->failure_status = TURBO_EIO;
+      if (request->failure_status == SALTS_OK) request->failure_status = SALTS_EIO;
       request->terminal_native_status = native_status;
       request->failure_stage = "file-write";
       if (chttp_h2_proto_consume_connection(session->protocol, size) != 0) return -1;
@@ -570,7 +570,7 @@ static int chttp_h2_on_data(void *user, int32_t stream_id, const uint8_t *data, 
   }
   if (size != 0u && request->sink_enabled) {
     const int sink_status = request->body_sink.write(request->body_sink.user, data, size);
-    if (sink_status != TURBO_OK) {
+    if (sink_status != SALTS_OK) {
       const bool was_deferred = session->defer_completions;
       request->failure_status = sink_status;
       request->failure_stage = "response-sink";
@@ -592,7 +592,7 @@ static int chttp_h2_on_data(void *user, int32_t stream_id, const uint8_t *data, 
       !request->sink_enabled && next_size != 0u ? request->response_body : NULL;
   if (size != 0u && (chttp_h2_proto_consume_stream(session->protocol, stream_id, size) != 0 ||
                      chttp_h2_proto_consume_connection(session->protocol, size) != 0)) {
-    request->failure_status = TURBO_EPROTO;
+    request->failure_status = SALTS_EPROTO;
     request->failure_stage = "h2-flow-control";
     return -1;
   }
@@ -612,28 +612,28 @@ static int chttp_h2_on_stream_close(void *user, int32_t stream_id, uint32_t erro
   if (request == NULL || request->completed) return 0;
   if (error_code == CHTTP_H2_ERR_NO_ERROR && request->final_headers_seen &&
       content_length_matches) {
-    status = TURBO_OK;
+    status = SALTS_OK;
     stage = NULL;
   } else if (error_code == CHTTP_H2_ERR_NO_ERROR && request->final_headers_seen) {
-    status = TURBO_EPROTO;
+    status = SALTS_EPROTO;
     stage = "h2-content-length";
-  } else if (request->failure_status != TURBO_OK) {
+  } else if (request->failure_status != SALTS_OK) {
     status = request->failure_status;
     stage = request->failure_stage;
   } else if (error_code == CHTTP_H2_ERR_CANCEL) {
-    status = TURBO_ECANCELED;
+    status = SALTS_ECANCELED;
     stage = "h2-cancel";
   } else {
-    status = error_code == CHTTP_H2_ERR_REFUSED_STREAM ? TURBO_ECONNRESET : TURBO_EPROTO;
+    status = error_code == CHTTP_H2_ERR_REFUSED_STREAM ? SALTS_ECONNRESET : SALTS_EPROTO;
     stage = error_code == CHTTP_H2_ERR_REFUSED_STREAM ? "h2-refused-stream" : "h2-stream";
   }
   {
     const int native_status =
-        request->failure_status != TURBO_OK ? request->terminal_native_status : (int)error_code;
+        request->failure_status != SALTS_OK ? request->terminal_native_status : (int)error_code;
     if (session->defer_completions) {
       chttp_h2_session_record_terminal(request, status, native_status, stage);
     } else {
-      chttp_h2_session_complete(session, request, status == TURBO_OK ? &request->response : NULL,
+      chttp_h2_session_complete(session, request, status == SALTS_OK ? &request->response : NULL,
                                 status, native_status, stage);
     }
   }
@@ -653,18 +653,18 @@ static int chttp_h2_session_try_close(chttp_h2_session *session) {
   int status;
   if (session == NULL || session->state == CHTTP_H2_SESSION_FREE ||
       session->state == CHTTP_H2_SESSION_TERMINAL || session->close_admitted)
-    return TURBO_OK;
+    return SALTS_OK;
   status = cnet_close(session->network, session->connection);
-  if (status == TURBO_OK || status == TURBO_EALREADY || status == TURBO_ENOENT ||
-      status == TURBO_ESHUTDOWN) {
+  if (status == SALTS_OK || status == SALTS_EALREADY || status == SALTS_ENOENT ||
+      status == SALTS_ESHUTDOWN) {
     session->close_admitted = true;
     session->close_pending = false;
     session->state = CHTTP_H2_SESSION_CLOSING;
-    return TURBO_OK;
+    return SALTS_OK;
   }
-  if (status == TURBO_ENOBUFS || status == TURBO_EBUSY) {
+  if (status == SALTS_ENOBUFS || status == SALTS_EBUSY) {
     session->close_pending = true;
-    return TURBO_OK;
+    return SALTS_OK;
   }
   return status;
 }
@@ -685,12 +685,12 @@ static int chttp_h2_session_flush(chttp_h2_session *session) {
   if (session == NULL || session->state == CHTTP_H2_SESSION_FREE ||
       session->state == CHTTP_H2_SESSION_CONNECTING ||
       session->state == CHTTP_H2_SESSION_TERMINAL || session->send_active)
-    return TURBO_OK;
+    return SALTS_OK;
   if (session->pending_output_size == 0u && chttp_h2_proto_want_write(session->protocol)) {
     wire_size = chttp_h2_proto_send(session->protocol, &wire);
     if (wire_size < 0 || (size_t)wire_size > session->protocol_config.output_buffer_bytes) {
-      chttp_h2_session_fail(session, TURBO_EPROTO, 0, "h2-write");
-      return TURBO_EPROTO;
+      chttp_h2_session_fail(session, SALTS_EPROTO, 0, "h2-write");
+      return SALTS_EPROTO;
     }
     if (wire_size > 0) {
       memcpy(session->pending_output, wire, (size_t)wire_size);
@@ -700,8 +700,8 @@ static int chttp_h2_session_flush(chttp_h2_session *session) {
   if (session->pending_output_size != 0u) {
     status = cnet_send(session->network, session->connection, session->pending_output,
                        session->pending_output_size);
-    if (status == TURBO_EBUSY || status == TURBO_ENOBUFS) return TURBO_OK;
-    if (status != TURBO_OK) {
+    if (status == SALTS_EBUSY || status == SALTS_ENOBUFS) return SALTS_OK;
+    if (status != SALTS_OK) {
       chttp_h2_session_fail(session, status, 0, "h2-send-admission");
       return status;
     }
@@ -711,14 +711,14 @@ static int chttp_h2_session_flush(chttp_h2_session *session) {
   if (session->close_after_flush && session->pending_output_size == 0u && !session->send_active &&
       !chttp_h2_proto_want_write(session->protocol))
     return chttp_h2_session_try_close(session);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_h2_session_arm_receive(chttp_h2_session *session) {
   int status;
-  if (session->receive_armed || session->close_admitted) return TURBO_OK;
+  if (session->receive_armed || session->close_admitted) return SALTS_OK;
   status = cnet_receive(session->network, session->connection, 1u);
-  if (status == TURBO_OK) session->receive_armed = true;
+  if (status == SALTS_OK) session->receive_armed = true;
   return status;
 }
 
@@ -737,15 +737,15 @@ static void chttp_h2_cnet_state(void *user, cnet_connection connection, cnet_con
       size_t alpn_size = 0u;
       status =
           cnet_tls_negotiated_alpn(session->network, connection, alpn, sizeof(alpn), &alpn_size);
-      if (status != TURBO_OK || alpn_size != sizeof("h2") - 1u ||
+      if (status != SALTS_OK || alpn_size != sizeof("h2") - 1u ||
           memcmp(alpn, "h2", sizeof("h2")) != 0) {
-        chttp_h2_session_fail(session, TURBO_EPROTONOSUPPORT, status, "h2-alpn");
+        chttp_h2_session_fail(session, SALTS_EPROTONOSUPPORT, status, "h2-alpn");
         return;
       }
     }
     session->state = CHTTP_H2_SESSION_ACTIVE;
     status = chttp_h2_session_arm_receive(session);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       chttp_h2_session_fail(session, status, 0, "h2-receive-admission");
       return;
     }
@@ -757,7 +757,7 @@ static void chttp_h2_cnet_state(void *user, cnet_connection connection, cnet_con
   session->send_active = false;
   if (session->active_requests != 0u) {
     const int failure_status =
-        state == CNET_CONNECTION_FAILED && error != NULL ? error->status : TURBO_ECONNRESET;
+        state == CNET_CONNECTION_FAILED && error != NULL ? error->status : SALTS_ECONNRESET;
     const int native_status = error != NULL ? error->native_status : 0;
     const char *stage = error != NULL && error->stage != NULL ? error->stage : "h2-transport";
     chttp_h2_session_fail_requests(session, failure_status, native_status, stage);
@@ -777,17 +777,17 @@ static void chttp_h2_cnet_receive(void *user, cnet_connection connection,
     return;
   session->receive_armed = false;
   if (view->kind != CNET_MESSAGE_BYTES) {
-    chttp_h2_session_fail(session, TURBO_ENOTSUP, 0, "h2-transport-kind");
+    chttp_h2_session_fail(session, SALTS_ENOTSUP, 0, "h2-transport-kind");
     return;
   }
   consumed = chttp_h2_proto_recv(session->protocol, (const uint8_t *)view->data, view->size);
   if (consumed < 0 || (size_t)consumed != view->size) {
-    chttp_h2_session_fail(session, TURBO_EPROTO, 0, "h2-protocol");
+    chttp_h2_session_fail(session, SALTS_EPROTO, 0, "h2-protocol");
     return;
   }
   if (!chttp_h2_proto_input_paused(session->protocol)) {
     status = chttp_h2_session_arm_receive(session);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       chttp_h2_session_fail(session, status, 0, "h2-receive-admission");
       return;
     }
@@ -816,7 +816,7 @@ int chttp_h2_session_open(chttp_h2_session *session, cnet_client *network,
   if (session == NULL || network == NULL || options == NULL || protocol_config == NULL ||
       limits == NULL || callbacks == NULL || callbacks->on_complete == NULL ||
       session->state != CHTTP_H2_SESSION_FREE)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   memset(session, 0, sizeof(*session));
   session->network = network;
   session->limits = *limits;
@@ -833,7 +833,7 @@ int chttp_h2_session_open(chttp_h2_session *session, cnet_client *network,
       session->pending_output == NULL) {
     chttp_h2_session_destroy(session);
     chttp_tls_profile_release(tls_profile);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   session->tls_profile = tls_profile;
   protocol_callbacks.user_data = session;
@@ -847,7 +847,7 @@ int chttp_h2_session_open(chttp_h2_session *session, cnet_client *network,
       chttp_h2_proto_create(CHTTP_H2_PROTO_CLIENT, protocol_config, &protocol_callbacks);
   if (session->protocol == NULL) {
     chttp_h2_session_destroy(session);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   chttp_h2_proto_set_send_chunk(session->protocol, limits->stream_chunk_bytes);
   connect_options =
@@ -858,12 +858,12 @@ int chttp_h2_session_open(chttp_h2_session *session, cnet_client *network,
                                           .on_send = chttp_h2_cnet_send},
                              .tls_client = chttp_tls_profile_client(session->tls_profile)};
   status = cnet_connect(network, &connect_options, &session->connection);
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     chttp_h2_session_destroy(session);
     return status;
   }
   session->state = CHTTP_H2_SESSION_CONNECTING;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 bool chttp_h2_session_matches(const chttp_h2_session *session, const chttp_request_options *options,
@@ -898,7 +898,7 @@ static int chttp_h2_headers_build(const chttp_request_options *options,
   size_t count = options->header_count + generated_count;
   size_t index;
   int body_size_chars;
-  if (out_headers == NULL || out_names == NULL || out_count == NULL) return TURBO_EINVAL;
+  if (out_headers == NULL || out_names == NULL || out_count == NULL) return SALTS_EINVAL;
   *out_headers = NULL;
   *out_names = NULL;
   *out_count = 0u;
@@ -906,25 +906,25 @@ static int chttp_h2_headers_build(const chttp_request_options *options,
                              options->body_source != NULL ? options->body_source->content_length
                                                           : options->body_size);
   if (body_size_chars <= 0 || (size_t)body_size_chars >= sizeof(body_size_text))
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   headers = (chttp_h2_hpack_header *)calloc(count, sizeof(*headers));
-  if (headers == NULL) return TURBO_ENOMEM;
+  if (headers == NULL) return SALTS_ENOMEM;
   for (index = 0u; index < options->header_count; ++index) {
     const size_t name_size = strlen(options->headers[index].name);
     if (!chttp_h2_size_add(names_size, name_size, &names_size)) {
       free(headers);
-      return TURBO_EMSGSIZE;
+      return SALTS_EMSGSIZE;
     }
   }
   if (!chttp_h2_size_add(names_size, include_content_length ? (size_t)body_size_chars : 0u,
                          &storage_size)) {
     free(headers);
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   }
   names = (char *)malloc(storage_size != 0u ? storage_size : 1u);
   if (names == NULL) {
     free(headers);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   {
     size_t offset = 0u;
@@ -953,7 +953,7 @@ static int chttp_h2_headers_build(const chttp_request_options *options,
   *out_headers = headers;
   *out_names = names;
   *out_count = count;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static chttp_h2_proto_source_result chttp_h2_request_source(void *user, uint8_t *buffer,
@@ -964,7 +964,7 @@ static chttp_h2_proto_source_result chttp_h2_request_source(void *user, uint8_t 
   int status;
   if (request == NULL || buffer == NULL || capacity == 0u || !request->source_enabled) {
     if (request != NULL) {
-      request->failure_status = TURBO_EINVAL;
+      request->failure_status = SALTS_EINVAL;
       request->failure_stage = "request-source";
     }
     return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
@@ -984,7 +984,7 @@ static chttp_h2_proto_source_result chttp_h2_request_source(void *user, uint8_t 
     if (source_result == CHTTP_FILE_SOURCE_ERROR) {
       int native_status = 0;
       request->failure_status = chttp_file_transfer_status(request->file_transfer, &native_status);
-      if (request->failure_status == TURBO_OK) request->failure_status = TURBO_EIO;
+      if (request->failure_status == SALTS_OK) request->failure_status = SALTS_EIO;
       request->terminal_native_status = native_status;
       request->failure_stage = "file-read";
       return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
@@ -992,33 +992,33 @@ static chttp_h2_proto_source_result chttp_h2_request_source(void *user, uint8_t 
     if (source_result == CHTTP_FILE_SOURCE_EOF) produced = 0u;
   } else {
     status = request->body_source.read(request->body_source.user, buffer, capacity, &produced);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
       request->failure_status = status;
       request->failure_stage = "request-source";
       return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
     }
   }
   if (produced > capacity) {
-    request->failure_status = TURBO_EPROTO;
+    request->failure_status = SALTS_EPROTO;
     request->failure_stage = "request-source";
     return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
   }
   if (request->body_source.content_length_known) {
     if (available == 0u) {
       if (produced == 0u) return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_EOF, 0u};
-      request->failure_status = TURBO_EPROTO;
+      request->failure_status = SALTS_EPROTO;
       request->failure_stage = "request-source-length";
       return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
     }
     if (produced == 0u) {
-      request->failure_status = TURBO_EPROTO;
+      request->failure_status = SALTS_EPROTO;
       request->failure_stage = "request-source-length";
       return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
     }
   }
   if (request->source_transferred > request->max_request_body_bytes ||
       produced > request->max_request_body_bytes - request->source_transferred) {
-    request->failure_status = TURBO_EMSGSIZE;
+    request->failure_status = SALTS_EMSGSIZE;
     request->failure_stage = "request-source-size";
     return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_ERROR, 0u};
   }
@@ -1031,14 +1031,14 @@ int chttp_h2_session_resume_file_source(chttp_h2_request_state *request) {
   chttp_h2_session *session;
   int status;
   if (request == NULL || request->session == NULL || request->completed || request->stream_id <= 0)
-    return TURBO_ENOENT;
+    return SALTS_ENOENT;
   session = request->session;
   if (chttp_h2_proto_resume_source(session->protocol, request->stream_id) != 0) {
-    chttp_h2_session_fail(session, TURBO_EPROTO, 0, "h2-file-source-resume");
-    return TURBO_EPROTO;
+    chttp_h2_session_fail(session, SALTS_EPROTO, 0, "h2-file-source-resume");
+    return SALTS_EPROTO;
   }
   status = chttp_h2_session_flush(session);
-  if (status != TURBO_OK) chttp_h2_session_fail(session, status, 0, "h2-file-source-resume");
+  if (status != SALTS_OK) chttp_h2_session_fail(session, status, 0, "h2-file-source-resume");
   return status;
 }
 
@@ -1047,49 +1047,49 @@ int chttp_h2_session_resume_file_sink(chttp_h2_request_state *request) {
   chttp_file_sink_result sink_result;
   size_t flow_bytes;
   int native_status = 0;
-  int result_status = TURBO_OK;
-  int progress_status = TURBO_OK;
+  int result_status = SALTS_OK;
+  int progress_status = SALTS_OK;
   if (request == NULL || request->session == NULL || request->completed ||
       request->stream_id <= 0 || request->file_sink_transfer == NULL ||
       !request->sink_write_pending)
-    return TURBO_ENOENT;
+    return SALTS_ENOENT;
   session = request->session;
   sink_result = chttp_file_sink_transfer_advance(request->file_sink_transfer);
-  if (sink_result == CHTTP_FILE_SINK_WAIT) return TURBO_OK;
+  if (sink_result == CHTTP_FILE_SINK_WAIT) return SALTS_OK;
   flow_bytes = request->sink_flow_bytes;
   request->sink_flow_bytes = 0u;
   request->sink_write_pending = false;
   if (sink_result == CHTTP_FILE_SINK_ERROR) {
     request->failure_status =
         chttp_file_sink_transfer_status(request->file_sink_transfer, &native_status);
-    if (request->failure_status == TURBO_OK) request->failure_status = TURBO_EIO;
+    if (request->failure_status == SALTS_OK) request->failure_status = SALTS_EIO;
     request->terminal_native_status = native_status;
     request->failure_stage = "file-write";
     result_status = request->failure_status;
     if (flow_bytes != 0u && chttp_h2_proto_consume_connection(session->protocol, flow_bytes) != 0)
-      progress_status = TURBO_EPROTO;
+      progress_status = SALTS_EPROTO;
     session->defer_completions = true;
-    if (progress_status == TURBO_OK &&
+    if (progress_status == SALTS_OK &&
         chttp_h2_proto_submit_rst_stream(session->protocol, request->stream_id,
                                          CHTTP_H2_ERR_CANCEL) != 0)
-      progress_status = TURBO_EPROTO;
-    if (progress_status == TURBO_OK &&
+      progress_status = SALTS_EPROTO;
+    if (progress_status == SALTS_OK &&
         chttp_h2_proto_resume_input(session->protocol, request->stream_id) != 0)
-      progress_status = TURBO_EPROTO;
+      progress_status = SALTS_EPROTO;
     session->defer_completions = false;
   } else {
     if (flow_bytes != 0u &&
         (chttp_h2_proto_consume_stream(session->protocol, request->stream_id, flow_bytes) != 0 ||
          chttp_h2_proto_consume_connection(session->protocol, flow_bytes) != 0))
-      progress_status = TURBO_EPROTO;
-    if (progress_status == TURBO_OK &&
+      progress_status = SALTS_EPROTO;
+    if (progress_status == SALTS_OK &&
         chttp_h2_proto_resume_input(session->protocol, request->stream_id) != 0)
-      progress_status = TURBO_EPROTO;
+      progress_status = SALTS_EPROTO;
   }
-  if (progress_status == TURBO_OK && !chttp_h2_proto_input_paused(session->protocol))
+  if (progress_status == SALTS_OK && !chttp_h2_proto_input_paused(session->protocol))
     progress_status = chttp_h2_session_arm_receive(session);
-  if (progress_status == TURBO_OK) progress_status = chttp_h2_session_flush(session);
-  if (progress_status != TURBO_OK) {
+  if (progress_status == SALTS_OK) progress_status = chttp_h2_session_flush(session);
+  if (progress_status != SALTS_OK) {
     chttp_h2_session_fail(session, progress_status, 0, "h2-file-sink-resume");
     return progress_status;
   }
@@ -1106,20 +1106,20 @@ int chttp_h2_session_submit(chttp_h2_session *session, chttp_h2_request_state *r
   int status;
   if (session == NULL || request == NULL || options == NULL || request->completed ||
       (session->state != CHTTP_H2_SESSION_CONNECTING && session->state != CHTTP_H2_SESSION_ACTIVE))
-    return TURBO_ESHUTDOWN;
-  if (session->active_requests >= session->request_capacity) return TURBO_EBUSY;
+    return SALTS_ESHUTDOWN;
+  if (session->active_requests >= session->request_capacity) return SALTS_EBUSY;
   for (index = 0u; index < session->request_capacity; ++index)
     if (session->requests[index] == NULL) break;
-  if (index == session->request_capacity) return TURBO_EBUSY;
+  if (index == session->request_capacity) return SALTS_EBUSY;
   status = chttp_h2_headers_build(options, &headers, &header_names, &header_count);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   if (chttp_h2_proto_submit_request_ex(
           session->protocol, headers, header_count, request->request_body, options->body_size,
           request->source_enabled ? chttp_h2_request_source : NULL,
           request->source_enabled ? request : NULL, 0u, 0, 0, &stream_id) != 0) {
     free(header_names);
     free(headers);
-    return TURBO_EBUSY;
+    return SALTS_EBUSY;
   }
   free(header_names);
   free(headers);
@@ -1134,25 +1134,25 @@ int chttp_h2_session_submit(chttp_h2_session *session, chttp_h2_request_state *r
     request->session = NULL;
     (void)chttp_h2_proto_submit_rst_stream(session->protocol, stream_id,
                                            CHTTP_H2_ERR_INTERNAL_ERROR);
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int chttp_h2_session_cancel(chttp_h2_session *session, chttp_h2_request_state *request) {
   int status;
   if (session == NULL || request == NULL || request->session != session || request->completed)
-    return TURBO_ENOENT;
+    return SALTS_ENOENT;
   session->defer_completions = true;
   status = chttp_h2_proto_submit_rst_stream(session->protocol, request->stream_id,
                                             CHTTP_H2_ERR_CANCEL) == 0
-               ? TURBO_OK
-               : TURBO_EPROTO;
-  if (status == TURBO_OK &&
+               ? SALTS_OK
+               : SALTS_EPROTO;
+  if (status == SALTS_OK &&
       chttp_h2_proto_resume_input(session->protocol, request->stream_id) == 0 &&
       !chttp_h2_proto_input_paused(session->protocol)) {
     const int receive_status = chttp_h2_session_arm_receive(session);
-    if (receive_status != TURBO_OK) status = receive_status;
+    if (receive_status != SALTS_OK) status = receive_status;
   }
   session->defer_completions = false;
   return status;
@@ -1163,7 +1163,7 @@ int chttp_h2_session_progress(chttp_h2_session *session) {
   int status;
   if (session == NULL || session->state == CHTTP_H2_SESSION_FREE ||
       session->state == CHTTP_H2_SESSION_TERMINAL)
-    return TURBO_OK;
+    return SALTS_OK;
   for (index = 0u; index < session->request_capacity; ++index) {
     chttp_h2_request_state *request = session->requests[index];
     if (request != NULL && request->terminal_pending) {
@@ -1177,7 +1177,7 @@ int chttp_h2_session_progress(chttp_h2_session *session) {
   }
   if (session->close_pending) {
     status = chttp_h2_session_try_close(session);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
   }
   return chttp_h2_session_flush(session);
 }
@@ -1185,17 +1185,17 @@ int chttp_h2_session_progress(chttp_h2_session *session) {
 int chttp_h2_session_begin_stop(chttp_h2_session *session) {
   if (session == NULL || session->state == CHTTP_H2_SESSION_FREE ||
       session->state == CHTTP_H2_SESSION_TERMINAL || session->state == CHTTP_H2_SESSION_CLOSING)
-    return TURBO_OK;
+    return SALTS_OK;
   if (session->state == CHTTP_H2_SESSION_CONNECTING) return chttp_h2_session_try_close(session);
   if (session->state != CHTTP_H2_SESSION_DRAINING) {
     if (chttp_h2_proto_submit_goaway(session->protocol,
                                      chttp_h2_proto_get_last_proc_stream_id(session->protocol),
                                      CHTTP_H2_ERR_NO_ERROR) != 0)
-      return TURBO_EPROTO;
+      return SALTS_EPROTO;
     session->state = CHTTP_H2_SESSION_DRAINING;
   }
   if (session->active_requests == 0u) session->close_after_flush = true;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 bool chttp_h2_session_stop_ready(const chttp_h2_session *session) {

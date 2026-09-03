@@ -15,7 +15,7 @@
 - Preserve all existing socket and pipe layouts, enumerator values, aggregate initializers, and entry points.
 - `request_capacity` remains the hard shared bound; no overflow allocation is permitted.
 - Every accepted request produces exactly one authoritative terminal completion.
-- No readiness, synchronous-flush, or `turbo_fs_*_async` fallback is allowed.
+- No readiness, synchronous-flush, or `salts_fs_*_async` fallback is allowed.
 - Every transfer is offset-based and leaves a current file position unchanged.
 - Caller-owned operation, handle, and buffer remain valid through callback return.
 - Devices, paths, direct-I/O alignment, vectored I/O, and Windows flush remain out of scope.

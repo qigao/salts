@@ -68,7 +68,7 @@ Validate non-empty bounded stage arrays, exact input/output type continuity, Fil
 
 Normalize the source Graph into zero-state temporary storage, require one exact linear root path containing Source followed by every Stage IR row, compare types and `cmeta_callable_same`, reject extra nodes/edges/branches, commit the witness only on success, and destroy temporary storage on every path.
 
-- [x] **Step 4: Add the implementation to `turbo_cflow`**
+- [x] **Step 4: Add the implementation to `salts_cflow`**
 
 Add `src/direct.c` to the existing library source list without changing target dependencies or installation rules.
 

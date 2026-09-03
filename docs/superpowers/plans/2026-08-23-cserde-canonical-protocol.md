@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add the standalone `TurboUtils::CSerde` C11 module that defines canonical tokens, versioned pull-reader/push-writer facades, bounded nested-value skipping, and deterministic recording test providers for the later CBind layer.
+**Goal:** Add the standalone `Salts::CSerde` C11 module that defines canonical tokens, versioned pull-reader/push-writer facades, bounded nested-value skipping, and deterministic recording test providers for the later CBind layer.
 
-**Architecture:** CSerde is a format-neutral transport protocol with no dependency on CMeta, CFlow, TurboSTL, TurboParser, or Core. Providers implement append-safe versioned ops tables; public facades validate ABI prefixes and callback results, maintain sticky terminal/error state, and never own token payload memory. Reader structural walking exists only in `cserde_reader_skip_value`; writer v1 deliberately does not duplicate a complete nesting validator.
+**Architecture:** CSerde is a format-neutral transport protocol with no dependency on CMeta, CFlow, Container, TurboParser, or Core. Providers implement append-safe versioned ops tables; public facades validate ABI prefixes and callback results, maintain sticky terminal/error state, and never own token payload memory. Reader structural walking exists only in `cserde_reader_skip_value`; writer v1 deliberately does not duplicate a complete nesting validator.
 
 **Tech Stack:** ISO C11, C++17 public-header/linkage compatibility, CMake presets, CTest, TinyTest, GitHub Actions Linux/MSVC release gates.
 
@@ -13,8 +13,8 @@
 ## Global Constraints
 
 - Implementation starts from the final `design/cserde-canonical-protocol` head containing the approved spec and this plan, on execution branch `feat/cserde-canonical-protocol`.
-- Public target name is `TurboUtils::CSerde`; concrete target is `turbo_cserde` with export name `CSerde`.
-- CSerde must not include or link CMeta, CFlow, TurboSTL, TurboParser, or `utils` Core.
+- Public target name is `Salts::CSerde`; concrete target is `salts_cserde` with export name `CSerde`.
+- CSerde must not include or link CMeta, CFlow, Container, TurboParser, or `utils` Core.
 - Public callable declarations in `token.h`, `reader.h`, and `writer.h` must use the standard `#ifdef __cplusplus extern "C" { ... }` guard so the C implementation links correctly from C++17.
 - Canonical token kinds are exactly `NULL/BOOL/SINT/UINT/FLOAT/STRING/BYTES/ARRAY_BEGIN/ARRAY_END/MAP_BEGIN/MAP_END` in D1.
 - `SINT` stores `int64_t`; `UINT` stores `uint64_t`; `FLOAT` stores `double`. Integer producers must never round-trip through `double`.
@@ -154,13 +154,13 @@ bool cserde_token_valid(const cserde_token *token);
 `cserde/CMakeLists.txt`:
 
 ```cmake
-set(TARGET_NAME turbo_cserde)
+set(TARGET_NAME salts_cserde)
 
 add_library(${TARGET_NAME} src/token.c)
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS TurboUtils::CSerde
+  ALIAS Salts::CSerde
   FOLDER "cserde"
   EXPORT_NAME CSerde)
 
@@ -172,7 +172,7 @@ target_include_directories(
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT TurboUtilsTargets
+  EXPORT SaltsTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -200,7 +200,7 @@ Initial `cserde/tests/CMakeLists.txt`:
 ```cmake
 cmake_add_test(cserde_token_test
   SOURCES cserde_token_test.c
-  LIBS TurboUtils::CSerde TurboUtils::TinyTest
+  LIBS Salts::CSerde Salts::TinyTest
   FOLDER "cserde/tests")
 
 set_target_properties(cserde_token_test PROPERTIES
@@ -236,10 +236,10 @@ Modify `.github/workflows/cmeta.yml` in both pull-request and push path filters:
 Change both selected-test regexes to:
 
 ```text
-^(cmeta_|cserde_|cflow_|turbostl_)
+^(cmeta_|cserde_|cflow_|cstl_)
 ```
 
-and rename the Linux test step to `Test CMeta, CSerde, CFlow, and TurboSTL`.
+and rename the Linux test step to `Test CMeta, CSerde, CFlow, and Container`.
 
 - [ ] **Step 2: Write token RED tests**
 
@@ -347,11 +347,11 @@ bool cserde_token_valid(const cserde_token *token) {
 - [ ] **Step 5: Run GREEN and dependency audit**
 
 ```bash
-cmake --build --preset build-default-linux --target cserde_token_test turbo_cserde
+cmake --build --preset build-default-linux --target cserde_token_test salts_cserde
 ctest --preset test-release-linux -R '^cserde_token_test$' --output-on-failure
 ```
 
-Expected: PASS. `cserde/CMakeLists.txt` contains no production `target_link_libraries` dependency on CMeta/CFlow/TurboSTL/Core.
+Expected: PASS. `cserde/CMakeLists.txt` contains no production `target_link_libraries` dependency on CMeta/CFlow/Container/Core.
 
 - [ ] **Step 6: Commit Task 1 GREEN**
 
@@ -482,7 +482,7 @@ git commit -m "test(cserde): define pull reader contract"
 
 - [ ] **Step 3: Implement append-safe reader ABI and state facade**
 
-Add `src/reader.c` to `turbo_cserde` and use a field-end prefix check:
+Add `src/reader.c` to `salts_cserde` and use a field-end prefix check:
 
 ```c
 #define CSERDE_FIELD_END(type, field) \
@@ -773,7 +773,7 @@ git commit -m "test(cserde): define push writer contract"
 
 - [ ] **Step 3: Implement writer ABI/state facade**
 
-Add `src/writer.c` to `turbo_cserde`. Validate ops prefix through `.finish` using the same field-end rule. Init uses temporary-then-commit semantics.
+Add `src/writer.c` to `salts_cserde`. Validate ops prefix through `.finish` using the same field-end rule. Init uses temporary-then-commit semantics.
 
 Write flow:
 
@@ -843,7 +843,7 @@ In `cserde/tests/CMakeLists.txt` add:
 
 ```cmake
 add_library(cserde_recording_support STATIC support/recording.c)
-target_link_libraries(cserde_recording_support PUBLIC TurboUtils::CSerde)
+target_link_libraries(cserde_recording_support PUBLIC Salts::CSerde)
 target_include_directories(
   cserde_recording_support
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/support)
@@ -851,7 +851,7 @@ cmake_config_target(cserde_recording_support FOLDER "cserde/tests")
 
 cmake_add_test(cserde_recording_test
   SOURCES cserde_recording_test.c
-  LIBS cserde_recording_support TurboUtils::TinyTest
+  LIBS cserde_recording_support Salts::TinyTest
   FOLDER "cserde/tests")
 ```
 
@@ -889,7 +889,7 @@ git commit -m "test(cserde): define recording provider harness"
 
 - [ ] **Step 3: Implement fixed-array recording providers**
 
-No `malloc`, `calloc`, `realloc`, `free`, `strdup`, TurboSTL, or Core calls.
+No `malloc`, `calloc`, `realloc`, `free`, `strdup`, Container, or Core calls.
 
 Use exact v1 prefix sizes:
 
@@ -932,7 +932,7 @@ Register:
 ```cmake
 cmake_add_test(cserde_header_cpp_test
   SOURCES cserde_header_cpp_test.cpp
-  LIBS TurboUtils::CSerde TurboUtils::TinyTest
+  LIBS Salts::CSerde Salts::TinyTest
   FOLDER "cserde/tests")
 
 set_target_properties(cserde_header_cpp_test PROPERTIES
@@ -972,7 +972,7 @@ git commit -m "test(cserde): add recording and C++ conformance"
 - [ ] **Step 1: Audit dependency and scope boundaries**
 
 ```bash
-rg -n "cmeta|cflow|turbostl|turbo_parser|TurboParser|malloc|calloc|realloc|free" \
+rg -n "cmeta|cflow|container|salts_parser|TurboParser|malloc|calloc|realloc|free" \
   cserde/include cserde/src cserde/CMakeLists.txt
 ```
 
@@ -1019,7 +1019,7 @@ The preset binary directory is `build/linux-gcc-release`.
 rm -rf build/linux-gcc-release
 cmake --preset release-linux-ninja
 cmake --build --preset build-default-linux
-ctest --preset test-release-linux -R '^(cmeta_|cserde_|cflow_|turbostl_)' --output-on-failure
+ctest --preset test-release-linux -R '^(cmeta_|cserde_|cflow_|cstl_)' --output-on-failure
 ```
 
 Expected: fresh configure PASS, full build PASS, every selected test PASS.
@@ -1032,7 +1032,7 @@ The preset binary directory is `build/Msvc-Release`. In a `VsDevCmd.bat` x64 env
 if exist build\Msvc-Release rmdir /s /q build\Msvc-Release
 cmake --preset release-win-msvc-ninja
 cmake --build --preset build-release-windows
-ctest --preset test-release-windows -R "^(cmeta_|cserde_|cflow_|turbostl_)" --output-on-failure
+ctest --preset test-release-windows -R "^(cmeta_|cserde_|cflow_|cstl_)" --output-on-failure
 ```
 
 Expected: fresh configure/build/test PASS.
@@ -1079,7 +1079,7 @@ Update the existing draft PR body with:
 
 ```text
 D1 scope: canonical token + versioned reader/writer + skip_value + reusable recording harness only.
-No CBind, parser, TurboSTL, CMeta semantic, or container-construction production changes.
+No CBind, parser, Container, CMeta semantic, or container-construction production changes.
 ```
 
 Record the exact final head SHA and the GitHub Actions run ID that executed that SHA. Require both Linux release and Windows release jobs to be `completed/success`. Only then mark the PR Ready for Review.

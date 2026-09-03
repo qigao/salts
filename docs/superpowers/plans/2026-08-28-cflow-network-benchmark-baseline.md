@@ -6,7 +6,7 @@
 
 **Architecture:** Extend the existing benchmark driver boundary with a raw/blocking-only direct mode that reuses the loopback fixture without initializing CFlow runtime objects. Preserve the JSON v1 contract, then update the release workflow to expose Echo/s and paired direct-versus-Actor medians.
 
-**Tech Stack:** C11, TinyTest benchmark macros, TurboUtils Platform sockets/threads, CMake presets, GitHub Actions PowerShell.
+**Tech Stack:** C11, TinyTest benchmark macros, Salts Platform sockets/threads, CMake presets, GitHub Actions PowerShell.
 
 **Spec:** `docs/superpowers/specs/2026-08-28-cflow-network-benchmark-baseline-design.md`
 

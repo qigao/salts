@@ -1,7 +1,7 @@
 #ifndef CNET_TEST_PIPE_H
 #define CNET_TEST_PIPE_H
 
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 #include <errno.h>
 #include <limits.h>
@@ -73,11 +73,11 @@ static inline int cnet_shared_test_make_pipe_pair(cnet_shared_test_pipe_pair *pa
   BOOL pending = FALSE;
   int name_length;
 
-  if (pair == NULL) return TURBO_EINVAL;
+  if (pair == NULL) return SALTS_EINVAL;
   cnet_shared_test_pipe_reset(pair);
   name_length = snprintf(name, sizeof(name), "\\\\.\\pipe\\cnet-owner-test-%lu-%ld",
                          GetCurrentProcessId(), InterlockedIncrement(&sequence));
-  if (name_length < 0 || (size_t)name_length >= sizeof(name)) return TURBO_ERANGE;
+  if (name_length < 0 || (size_t)name_length >= sizeof(name)) return SALTS_ERANGE;
   server =
       CreateNamedPipeA(name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
                        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u, 4096u, 4096u, 0u, NULL);
@@ -108,7 +108,7 @@ static inline int cnet_shared_test_make_pipe_pair(cnet_shared_test_pipe_pair *pa
   (void)CloseHandle(event);
   pair->cnet_read = pair->cnet_write = (uintptr_t)server;
   pair->peer_read = pair->peer_write = (uintptr_t)client;
-  return TURBO_OK;
+  return SALTS_OK;
 
 failed:
   if (client != INVALID_HANDLE_VALUE) (void)CloseHandle(client);
@@ -120,7 +120,7 @@ failed:
   int outbound[2] = {-1, -1};
   int flags;
   int saved_error;
-  if (pair == NULL) return TURBO_EINVAL;
+  if (pair == NULL) return SALTS_EINVAL;
   cnet_shared_test_pipe_reset(pair);
   if (pipe(inbound) != 0 || pipe(outbound) != 0) goto failed;
   flags = fcntl(inbound[0], F_GETFL, 0);
@@ -131,7 +131,7 @@ failed:
   pair->peer_write = (uintptr_t)inbound[1];
   pair->peer_read = (uintptr_t)outbound[0];
   pair->cnet_write = (uintptr_t)outbound[1];
-  return TURBO_OK;
+  return SALTS_OK;
 
 failed:
   saved_error = errno;
@@ -148,10 +148,10 @@ static inline int cnet_shared_test_pipe_peer_write(uintptr_t handle, const void 
 #if defined(_WIN32)
   DWORD written = 0u;
   if (!WriteFile((HANDLE)handle, data, (DWORD)size, &written, NULL)) return -(int)GetLastError();
-  return written == size ? TURBO_OK : TURBO_EIO;
+  return written == size ? SALTS_OK : SALTS_EIO;
 #else
   const ssize_t written = write((int)handle, data, size);
-  return written == (ssize_t)size ? TURBO_OK : (written < 0 ? -errno : TURBO_EIO);
+  return written == (ssize_t)size ? SALTS_OK : (written < 0 ? -errno : SALTS_EIO);
 #endif
 }
 
@@ -159,10 +159,10 @@ static inline int cnet_shared_test_pipe_peer_read(uintptr_t handle, void *data, 
 #if defined(_WIN32)
   DWORD read_bytes = 0u;
   if (!ReadFile((HANDLE)handle, data, (DWORD)size, &read_bytes, NULL)) return -(int)GetLastError();
-  return read_bytes == size ? TURBO_OK : TURBO_EIO;
+  return read_bytes == size ? SALTS_OK : SALTS_EIO;
 #else
   const ssize_t read_bytes = read((int)handle, data, size);
-  return read_bytes == (ssize_t)size ? TURBO_OK : (read_bytes < 0 ? -errno : TURBO_EIO);
+  return read_bytes == (ssize_t)size ? SALTS_OK : (read_bytes < 0 ? -errno : SALTS_EIO);
 #endif
 }
 

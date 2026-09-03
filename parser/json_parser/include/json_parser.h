@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "query_vm.h"
-#include <turbo_vstr.h>
+#include <salts_vstr.h>
 
 #ifdef __cplusplus
 extern "C" {

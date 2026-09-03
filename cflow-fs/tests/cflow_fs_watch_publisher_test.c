@@ -1,8 +1,8 @@
 #include <cflow/fs_watch_publisher.h>
 #include <tinytest.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
-#include <turbo_fs.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
+#include <salts_fs.h>
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -63,8 +63,8 @@ typedef struct wake_probe {
 } wake_probe;
 
 typedef struct blocking_wake_probe {
-  turbo_mutex_t lock;
-  turbo_cond_t changed;
+  salts_mutex_t lock;
+  salts_cond_t changed;
   bool entered;
   bool released;
   bool cancel_started;
@@ -91,25 +91,25 @@ static void count_wake(void *user) {
 static void blocking_wake(void *user) {
   blocking_wake_probe *probe = (blocking_wake_probe *)user;
   if (probe == NULL) return;
-  turbo_mutex_lock(&probe->lock);
+  salts_mutex_lock(&probe->lock);
   probe->entered = true;
-  turbo_cond_broadcast(&probe->changed);
+  salts_cond_broadcast(&probe->changed);
   while (!probe->released)
-    turbo_cond_wait(&probe->changed, &probe->lock);
-  turbo_mutex_unlock(&probe->lock);
+    salts_cond_wait(&probe->changed, &probe->lock);
+  salts_mutex_unlock(&probe->lock);
 }
 
 static void cancel_source(void *user) {
   cancel_context *context = (cancel_context *)user;
-  turbo_mutex_lock(&context->probe->lock);
+  salts_mutex_lock(&context->probe->lock);
   context->probe->cancel_started = true;
-  turbo_cond_broadcast(&context->probe->changed);
-  turbo_mutex_unlock(&context->probe->lock);
+  salts_cond_broadcast(&context->probe->changed);
+  salts_mutex_unlock(&context->probe->lock);
   cflow_publisher_cancel(context->source);
-  turbo_mutex_lock(&context->probe->lock);
+  salts_mutex_lock(&context->probe->lock);
   context->probe->cancel_returned = true;
-  turbo_cond_broadcast(&context->probe->changed);
-  turbo_mutex_unlock(&context->probe->lock);
+  salts_cond_broadcast(&context->probe->changed);
+  salts_mutex_unlock(&context->probe->lock);
 }
 
 static void destroy_source_and_close_owner(void *user) {
@@ -125,8 +125,8 @@ static int close_owner(cflow_fs_watch_publisher_owner *owner) {
   int status;
   do {
     status = cflow_fs_watch_publisher_owner_close(owner);
-    if (status == TURBO_EBUSY) turbo_sleep_ms(1u);
-  } while (status == TURBO_EBUSY && ++attempts < 5000u);
+    if (status == SALTS_EBUSY) salts_sleep_ms(1u);
+  } while (status == SALTS_EBUSY && ++attempts < 5000u);
   return status;
 }
 
@@ -159,15 +159,15 @@ spec("CFlow filesystem watch Publisher") {
     cflow_fs_watch_publisher_owner owner = {0};
     cflow_fs_watch_publisher_config config = source_config();
 
-    check_equal(cflow_fs_watch_publisher_open(NULL, &owner, ".", &config), TURBO_EINVAL);
-    check_equal(cflow_fs_watch_publisher_open(&source, NULL, ".", &config), TURBO_EINVAL);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, NULL, &config), TURBO_EINVAL);
+    check_equal(cflow_fs_watch_publisher_open(NULL, &owner, ".", &config), SALTS_EINVAL);
+    check_equal(cflow_fs_watch_publisher_open(&source, NULL, ".", &config), SALTS_EINVAL);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, NULL, &config), SALTS_EINVAL);
     config.encode = NULL;
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, ".", &config), TURBO_EINVAL);
-    check_equal(cflow_fs_watch_publisher_owner_acknowledge_rescan(NULL), TURBO_EINVAL);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, ".", &config), SALTS_EINVAL);
+    check_equal(cflow_fs_watch_publisher_owner_acknowledge_rescan(NULL), SALTS_EINVAL);
     check_false(cflow_fs_watch_publisher_owner_get_stats(NULL, NULL));
-    check_equal(cflow_fs_watch_publisher_owner_close(NULL), TURBO_EINVAL);
-    check_equal(cflow_fs_watch_publisher_owner_close(&owner), TURBO_OK);
+    check_equal(cflow_fs_watch_publisher_owner_close(NULL), SALTS_EINVAL);
+    check_equal(cflow_fs_watch_publisher_owner_close(&owner), SALTS_OK);
     check_false(cflow_publisher_valid(&source));
     check_null(owner.impl);
   }
@@ -182,19 +182,19 @@ spec("CFlow filesystem watch Publisher") {
     void *saved_owner;
 
     check_not_null(root);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
     saved_source = source;
     saved_owner = owner.impl;
 
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, NULL, &config), TURBO_EINVAL);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, NULL, &config), SALTS_EINVAL);
     check_true(source.self == saved_source.self);
     check_true(owner.impl == saved_owner);
 
     if (!cflow_publisher_valid(&source)) source = saved_source;
     if (owner.impl == NULL) owner.impl = saved_owner;
     cflow_publisher_destroy(&source);
-    check_equal(close_owner(&owner), TURBO_OK);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
+    check_equal(tt_remove_tree(root), SALTS_OK);
     free(root);
   }
 
@@ -213,15 +213,15 @@ spec("CFlow filesystem watch Publisher") {
 
     atomic_init(&wake.count, 0u);
     check_not_null(root);
-    check_equal(turbo_fs_path_join(path, sizeof(path), root, "one.txt"), TURBO_OK);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
+    check_equal(salts_fs_path_join(path, sizeof(path), root, "one.txt"), SALTS_OK);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
 
     step = cflow_publisher_resume(&source, &resume, &value);
     check_equal(step.kind, CFLOW_STEP_WAIT);
     check_true(cflow_waitable_arm(&step.waitable, (cflow_waker){count_wake, &wake}));
-    check_equal(tt_write_file(path, "x", 1u), TURBO_OK);
+    check_equal(tt_write_file(path, "x", 1u), SALTS_OK);
     while (atomic_load(&wake.count) == 0u && attempts++ < 5000u)
-      turbo_sleep_ms(1u);
+      salts_sleep_ms(1u);
     check_equal(atomic_load(&wake.count), (size_t)1u);
 
     attempts = 0u;
@@ -230,7 +230,7 @@ spec("CFlow filesystem watch Publisher") {
       if (step.kind == CFLOW_STEP_VALUE || step.kind == CFLOW_STEP_VALUE_AND_DONE) {
         saw_file = strcmp(value.path, "one.txt") == 0;
         if (value.kind == CFLOW_FS_WATCH_RESCAN_REQUIRED)
-          check_equal(cflow_fs_watch_publisher_owner_acknowledge_rescan(&owner), TURBO_OK);
+          check_equal(cflow_fs_watch_publisher_owner_acknowledge_rescan(&owner), SALTS_OK);
         continue;
       }
       if (step.kind != CFLOW_STEP_WAIT) {
@@ -240,14 +240,14 @@ spec("CFlow filesystem watch Publisher") {
       atomic_store(&wake.count, 0u);
       check_true(cflow_waitable_arm(&step.waitable, (cflow_waker){count_wake, &wake}));
       while (atomic_load(&wake.count) == 0u && attempts++ < 5000u)
-        turbo_sleep_ms(1u);
+        salts_sleep_ms(1u);
     }
     check_true(saw_file);
 
     cflow_publisher_destroy(&source);
-    check_equal(close_owner(&owner), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
     check_null(owner.impl);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(tt_remove_tree(root), SALTS_OK);
     free(root);
   }
 
@@ -266,15 +266,15 @@ spec("CFlow filesystem watch Publisher") {
 
     atomic_init(&wake.count, 0u);
     check_not_null(root);
-    check_equal(turbo_fs_path_join(path, sizeof(path), root, "early.txt"), TURBO_OK);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
+    check_equal(salts_fs_path_join(path, sizeof(path), root, "early.txt"), SALTS_OK);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
     step = cflow_publisher_resume(&source, &resume, &value);
     check_equal(step.kind, CFLOW_STEP_WAIT);
-    check_equal(tt_write_file(path, "x", 1u), TURBO_OK);
+    check_equal(tt_write_file(path, "x", 1u), SALTS_OK);
     while (attempts++ < 5000u) {
       check_true(cflow_fs_watch_publisher_owner_get_stats(&owner, &stats));
       if (stats.queued != 0u) break;
-      turbo_sleep_ms(1u);
+      salts_sleep_ms(1u);
     }
     check_greater(stats.queued, (size_t)0u);
 
@@ -284,8 +284,8 @@ spec("CFlow filesystem watch Publisher") {
     check_equal(step.kind, CFLOW_STEP_VALUE);
 
     cflow_publisher_destroy(&source);
-    check_equal(close_owner(&owner), TURBO_OK);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
+    check_equal(tt_remove_tree(root), SALTS_OK);
     free(root);
   }
 
@@ -296,14 +296,14 @@ spec("CFlow filesystem watch Publisher") {
     cflow_fs_watch_publisher_config config = source_config();
 
     check_not_null(root);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
-    check_equal(cflow_fs_watch_publisher_owner_close(&owner), TURBO_EBUSY);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
+    check_equal(cflow_fs_watch_publisher_owner_close(&owner), SALTS_EBUSY);
     check_not_null(owner.impl);
 
     cflow_publisher_destroy(&source);
-    check_equal(close_owner(&owner), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
     check_null(owner.impl);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(tt_remove_tree(root), SALTS_OK);
     free(root);
   }
 
@@ -319,7 +319,7 @@ spec("CFlow filesystem watch Publisher") {
 
     atomic_init(&wake.count, 0u);
     check_not_null(root);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
     step = cflow_publisher_resume(&source, &resume, &value);
     check_equal(step.kind, CFLOW_STEP_WAIT);
     check_true(cflow_waitable_arm(&step.waitable, (cflow_waker){count_wake, &wake}));
@@ -332,8 +332,8 @@ spec("CFlow filesystem watch Publisher") {
     check_equal(atomic_load(&wake.count), (size_t)1u);
 
     cflow_publisher_destroy(&source);
-    check_equal(close_owner(&owner), TURBO_OK);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
+    check_equal(tt_remove_tree(root), SALTS_OK);
     free(root);
   }
 
@@ -353,51 +353,51 @@ spec("CFlow filesystem watch Publisher") {
     watch_value value = {0};
     blocking_wake_probe wake = {0};
     cancel_context context = {&source, &wake};
-    turbo_thread_t canceller = {0};
+    salts_thread_t canceller = {0};
     size_t waits = 0u;
 
-    turbo_mutex_init(&wake.lock);
-    turbo_cond_init(&wake.changed);
+    salts_mutex_init(&wake.lock);
+    salts_cond_init(&wake.changed);
     check_not_null(wake.lock);
     check_not_null(wake.changed);
     check_not_null(root);
-    check_equal(turbo_fs_path_join(path, sizeof(path), root, "blocked.txt"), TURBO_OK);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
+    check_equal(salts_fs_path_join(path, sizeof(path), root, "blocked.txt"), SALTS_OK);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
     step = cflow_publisher_resume(&source, &resume, &value);
     check_equal(step.kind, CFLOW_STEP_WAIT);
     check_true(cflow_waitable_arm(&step.waitable, (cflow_waker){blocking_wake, &wake}));
-    check_equal(tt_write_file(path, "x", 1u), TURBO_OK);
+    check_equal(tt_write_file(path, "x", 1u), SALTS_OK);
 
-    turbo_mutex_lock(&wake.lock);
+    salts_mutex_lock(&wake.lock);
     while (!wake.entered && waits++ < WAIT_LIMIT)
-      (void)turbo_cond_timedwait(&wake.changed, &wake.lock, WAIT_SLICE_NS);
+      (void)salts_cond_timedwait(&wake.changed, &wake.lock, WAIT_SLICE_NS);
     if (!wake.entered) {
       wake.released = true;
-      turbo_cond_broadcast(&wake.changed);
+      salts_cond_broadcast(&wake.changed);
     }
     check_true(wake.entered);
-    turbo_mutex_unlock(&wake.lock);
-    check_equal(turbo_thread_create(&canceller, cancel_source, &context), TURBO_OK);
-    turbo_mutex_lock(&wake.lock);
+    salts_mutex_unlock(&wake.lock);
+    check_equal(salts_thread_create(&canceller, cancel_source, &context), SALTS_OK);
+    salts_mutex_lock(&wake.lock);
     waits = 0u;
     while (!wake.cancel_started && waits++ < WAIT_LIMIT)
-      (void)turbo_cond_timedwait(&wake.changed, &wake.lock, WAIT_SLICE_NS);
+      (void)salts_cond_timedwait(&wake.changed, &wake.lock, WAIT_SLICE_NS);
     check_true(wake.cancel_started);
     if (!wake.cancel_returned)
-      (void)turbo_cond_timedwait(&wake.changed, &wake.lock, CANCEL_OBSERVATION_NS);
+      (void)salts_cond_timedwait(&wake.changed, &wake.lock, CANCEL_OBSERVATION_NS);
     check_false(wake.cancel_returned);
     wake.released = true;
-    turbo_cond_broadcast(&wake.changed);
-    turbo_mutex_unlock(&wake.lock);
+    salts_cond_broadcast(&wake.changed);
+    salts_mutex_unlock(&wake.lock);
 
-    check_equal(turbo_thread_join(&canceller), TURBO_OK);
-    turbo_thread_destroy(&canceller);
+    check_equal(salts_thread_join(&canceller), SALTS_OK);
+    salts_thread_destroy(&canceller);
     check_true(wake.cancel_returned);
     cflow_publisher_destroy(&source);
-    check_equal(close_owner(&owner), TURBO_OK);
-    turbo_cond_destroy(&wake.changed);
-    turbo_mutex_destroy(&wake.lock);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
+    salts_cond_destroy(&wake.changed);
+    salts_mutex_destroy(&wake.lock);
+    check_equal(tt_remove_tree(root), SALTS_OK);
     free(root);
   }
 
@@ -417,21 +417,21 @@ spec("CFlow filesystem watch Publisher") {
     probe.owner = &owner;
     atomic_init(&probe.completed, false);
     check_not_null(root);
-    check_equal(turbo_fs_path_join(path, sizeof(path), root, "reentrant.txt"), TURBO_OK);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
+    check_equal(salts_fs_path_join(path, sizeof(path), root, "reentrant.txt"), SALTS_OK);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
     step = cflow_publisher_resume(&source, &resume, &value);
     check_equal(step.kind, CFLOW_STEP_WAIT);
     check_true(
         cflow_waitable_arm(&step.waitable, (cflow_waker){destroy_source_and_close_owner, &probe}));
-    check_equal(tt_write_file(path, "x", 1u), TURBO_OK);
+    check_equal(tt_write_file(path, "x", 1u), SALTS_OK);
     while (!atomic_load(&probe.completed) && attempts++ < 5000u)
-      turbo_sleep_ms(1u);
+      salts_sleep_ms(1u);
 
     check_true(atomic_load(&probe.completed));
-    check_equal(probe.close_status, TURBO_EBUSY);
+    check_equal(probe.close_status, SALTS_EBUSY);
     check_not_null(owner.impl);
-    check_equal(close_owner(&owner), TURBO_OK);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
+    check_equal(tt_remove_tree(root), SALTS_OK);
     free(root);
   }
 
@@ -448,19 +448,19 @@ spec("CFlow filesystem watch Publisher") {
 
     config.encode = reject_watch_value;
     check_not_null(root);
-    check_equal(turbo_fs_path_join(path, sizeof(path), root, "bad.txt"), TURBO_OK);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
-    check_equal(tt_write_file(path, "x", 1u), TURBO_OK);
+    check_equal(salts_fs_path_join(path, sizeof(path), root, "bad.txt"), SALTS_OK);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
+    check_equal(tt_write_file(path, "x", 1u), SALTS_OK);
     do {
       step = cflow_publisher_resume(&source, &resume, &value);
-      if (step.kind == CFLOW_STEP_WAIT) turbo_sleep_ms(1u);
+      if (step.kind == CFLOW_STEP_WAIT) salts_sleep_ms(1u);
     } while (step.kind == CFLOW_STEP_WAIT && attempts++ < 5000u);
     check_equal(step.kind, CFLOW_STEP_ERROR);
     check_equal(step.error, "filesystem watch encoder failed");
 
     cflow_publisher_destroy(&source);
-    check_equal(close_owner(&owner), TURBO_OK);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
+    check_equal(tt_remove_tree(root), SALTS_OK);
     free(root);
   }
 
@@ -484,28 +484,28 @@ spec("CFlow filesystem watch Publisher") {
     size_t attempts = 0u;
 
     check_not_null(root);
-    check_equal(turbo_fs_path_join(path, sizeof(path), root, "run.txt"), TURBO_OK);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
+    check_equal(salts_fs_path_join(path, sizeof(path), root, "run.txt"), SALTS_OK);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
     cflow_graph_init(&graph, &watch_value_type);
     check_true(cflow_scheduler_test_init(&scheduler));
     check_true(cflow_subscribe(&run, &graph, &source, &scheduler, &sink));
     check_false(cflow_publisher_valid(&source));
     check_true(cflow_subscription_request(&run, 8u));
     (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
-    check_equal(tt_write_file(path, "x", 1u), TURBO_OK);
+    check_equal(tt_write_file(path, "x", 1u), SALTS_OK);
     while (!probe.saw_expected_path && probe.error == NULL && attempts++ < 5000u) {
       (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
-      if (!probe.saw_expected_path) turbo_sleep_ms(1u);
+      if (!probe.saw_expected_path) salts_sleep_ms(1u);
     }
 
     check_null(probe.error);
     check_greater(probe.values, (size_t)0u);
     check_true(probe.saw_expected_path);
     cflow_subscription_close(&run);
-    check_equal(close_owner(&owner), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
     cflow_scheduler_destroy(&scheduler);
     cflow_graph_destroy(&graph);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(tt_remove_tree(root), SALTS_OK);
     free(root);
   }
 
@@ -530,27 +530,27 @@ spec("CFlow filesystem watch Publisher") {
 
     config.encode = reject_watch_value;
     check_not_null(root);
-    check_equal(turbo_fs_path_join(path, sizeof(path), root, "run-error.txt"), TURBO_OK);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
+    check_equal(salts_fs_path_join(path, sizeof(path), root, "run-error.txt"), SALTS_OK);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
     cflow_graph_init(&graph, &watch_value_type);
     check_true(cflow_scheduler_test_init(&scheduler));
     check_true(cflow_subscribe(&run, &graph, &source, &scheduler, &sink));
     check_true(cflow_subscription_request(&run, 1u));
     (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
-    check_equal(tt_write_file(path, "x", 1u), TURBO_OK);
+    check_equal(tt_write_file(path, "x", 1u), SALTS_OK);
     while (probe.error == NULL && attempts++ < 5000u) {
       (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
-      if (probe.error == NULL) turbo_sleep_ms(1u);
+      if (probe.error == NULL) salts_sleep_ms(1u);
     }
 
     check_equal(probe.error, "filesystem watch encoder failed");
     check_equal(cflow_subscription_error(&run), "filesystem watch encoder failed");
     check_equal(probe.values, (size_t)0u);
     cflow_subscription_close(&run);
-    check_equal(close_owner(&owner), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
     cflow_scheduler_destroy(&scheduler);
     cflow_graph_destroy(&graph);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(tt_remove_tree(root), SALTS_OK);
     free(root);
   }
 
@@ -569,15 +569,15 @@ spec("CFlow filesystem watch Publisher") {
 
     config.event_capacity = 1u;
     check_not_null(root);
-    check_equal(turbo_fs_path_join(first, sizeof(first), root, "one.txt"), TURBO_OK);
-    check_equal(turbo_fs_path_join(second, sizeof(second), root, "two.txt"), TURBO_OK);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
-    check_equal(tt_write_file(first, "1", 1u), TURBO_OK);
-    check_equal(tt_write_file(second, "2", 1u), TURBO_OK);
+    check_equal(salts_fs_path_join(first, sizeof(first), root, "one.txt"), SALTS_OK);
+    check_equal(salts_fs_path_join(second, sizeof(second), root, "two.txt"), SALTS_OK);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
+    check_equal(tt_write_file(first, "1", 1u), SALTS_OK);
+    check_equal(tt_write_file(second, "2", 1u), SALTS_OK);
     while (attempts++ < 5000u) {
       check_true(cflow_fs_watch_publisher_owner_get_stats(&owner, &stats));
       if (stats.awaiting_rescan) break;
-      turbo_sleep_ms(1u);
+      salts_sleep_ms(1u);
     }
     check_true(stats.awaiting_rescan);
     for (attempts = 0u; attempts < 4u && !saw_rescan; ++attempts) {
@@ -586,11 +586,11 @@ spec("CFlow filesystem watch Publisher") {
       saw_rescan = value.kind == CFLOW_FS_WATCH_RESCAN_REQUIRED;
     }
     check_true(saw_rescan);
-    check_equal(cflow_fs_watch_publisher_owner_acknowledge_rescan(&owner), TURBO_OK);
+    check_equal(cflow_fs_watch_publisher_owner_acknowledge_rescan(&owner), SALTS_OK);
 
     cflow_publisher_destroy(&source);
-    check_equal(close_owner(&owner), TURBO_OK);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
+    check_equal(tt_remove_tree(root), SALTS_OK);
     free(root);
   }
 
@@ -614,16 +614,16 @@ spec("CFlow filesystem watch Publisher") {
     atomic_init(&wake.count, 0u);
     config.event_capacity = 1u;
     check_not_null(root);
-    check_equal(turbo_fs_path_join(first, sizeof(first), root, "one.txt"), TURBO_OK);
-    check_equal(turbo_fs_path_join(second, sizeof(second), root, "two.txt"), TURBO_OK);
-    check_equal(turbo_fs_path_join(third, sizeof(third), root, "three.txt"), TURBO_OK);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
-    check_equal(tt_write_file(first, "1", 1u), TURBO_OK);
-    check_equal(tt_write_file(second, "2", 1u), TURBO_OK);
+    check_equal(salts_fs_path_join(first, sizeof(first), root, "one.txt"), SALTS_OK);
+    check_equal(salts_fs_path_join(second, sizeof(second), root, "two.txt"), SALTS_OK);
+    check_equal(salts_fs_path_join(third, sizeof(third), root, "three.txt"), SALTS_OK);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
+    check_equal(tt_write_file(first, "1", 1u), SALTS_OK);
+    check_equal(tt_write_file(second, "2", 1u), SALTS_OK);
     while (attempts++ < 5000u) {
       check_true(cflow_fs_watch_publisher_owner_get_stats(&owner, &stats));
       if (stats.awaiting_rescan) break;
-      turbo_sleep_ms(1u);
+      salts_sleep_ms(1u);
     }
     check_true(stats.awaiting_rescan);
     for (attempts = 0u; attempts < 4u && !saw_rescan; ++attempts) {
@@ -637,25 +637,25 @@ spec("CFlow filesystem watch Publisher") {
     step = cflow_publisher_resume(&source, &resume, &value);
     check_equal(step.kind, CFLOW_STEP_WAIT);
     check_true(cflow_waitable_arm(&step.waitable, (cflow_waker){count_wake, &wake}));
-    check_equal(tt_write_file(third, "3", 1u), TURBO_OK);
+    check_equal(tt_write_file(third, "3", 1u), SALTS_OK);
     attempts = 0u;
     while (attempts++ < 5000u) {
       check_true(cflow_fs_watch_publisher_owner_get_stats(&owner, &stats));
       if (stats.suppressed > delivered_stats.suppressed) break;
-      turbo_sleep_ms(1u);
+      salts_sleep_ms(1u);
     }
     check_greater(stats.suppressed, delivered_stats.suppressed);
     check_equal(atomic_load(&wake.count), (size_t)0u);
 
-    check_equal(cflow_fs_watch_publisher_owner_acknowledge_rescan(&owner), TURBO_OK);
+    check_equal(cflow_fs_watch_publisher_owner_acknowledge_rescan(&owner), SALTS_OK);
     check_equal(atomic_load(&wake.count), (size_t)1u);
     step = cflow_publisher_resume(&source, &resume, &value);
     check_true(step.kind == CFLOW_STEP_VALUE || step.kind == CFLOW_STEP_VALUE_AND_DONE);
     check_equal(value.kind, CFLOW_FS_WATCH_RESCAN_REQUIRED);
 
     cflow_publisher_destroy(&source);
-    check_equal(close_owner(&owner), TURBO_OK);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
+    check_equal(tt_remove_tree(root), SALTS_OK);
     free(root);
   }
 
@@ -678,8 +678,8 @@ spec("CFlow filesystem watch Publisher") {
 
     atomic_init(&wake.count, 0u);
     check_not_null(root);
-    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), TURBO_OK);
-    check_equal(tt_remove_tree(root), TURBO_OK);
+    check_equal(cflow_fs_watch_publisher_open(&source, &owner, root, &config), SALTS_OK);
+    check_equal(tt_remove_tree(root), SALTS_OK);
 
     while ((!saw_root_changed || (require_done && !saw_done)) && attempts++ < 5000u) {
       cflow_step step = cflow_publisher_resume(&source, &resume, &value);
@@ -696,13 +696,13 @@ spec("CFlow filesystem watch Publisher") {
       atomic_store(&wake.count, 0u);
       check_true(cflow_waitable_arm(&step.waitable, (cflow_waker){count_wake, &wake}));
       while (atomic_load(&wake.count) == 0u && attempts++ < 5000u)
-        turbo_sleep_ms(1u);
+        salts_sleep_ms(1u);
     }
 
     check_true(saw_root_changed);
     if (require_done) check_true(saw_done);
     cflow_publisher_destroy(&source);
-    check_equal(close_owner(&owner), TURBO_OK);
+    check_equal(close_owner(&owner), SALTS_OK);
     free(root);
   }
 #endif

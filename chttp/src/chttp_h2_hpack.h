@@ -2,7 +2,7 @@
  * @file chttp_h2_hpack.h
  * @brief Private bounded HPACK codec for CHTTP HTTP/2.
  *
- * Migrated from qigao/TurboHTTP commit
+ * Migrated from the legacy HTTP repository commit
  * 38f1e389b3f94909db6cb2482a8cbc16522e7e4f and adapted to explicit capacity
  * limits. This header is private and is not installed.
  */

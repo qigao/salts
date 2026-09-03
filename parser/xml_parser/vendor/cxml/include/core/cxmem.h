@@ -20,7 +20,7 @@ typedef void (*cxml_failure_handler)(cxml_failure_kind kind,
 
 void cxml_set_failure_handler(cxml_failure_handler handler, void *user);
 
-/* Private fault-injection hook used by the Rocida adapter tests. */
+/* Private fault-injection hook used by the Salts adapter tests. */
 void cxml_test_fail_allocation_after(size_t successful_allocations);
 void cxml_test_clear_allocation_failure(void);
 size_t cxml_test_outstanding_allocations(void);

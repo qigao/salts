@@ -27,11 +27,11 @@ typedef struct s3_client_test_async_probe {
 
 static int s3_client_test_copy_header(char *destination, size_t capacity, const char *source) {
   size_t size;
-  if (destination == NULL || capacity == 0u || source == NULL) return TURBO_EINVAL;
+  if (destination == NULL || capacity == 0u || source == NULL) return SALTS_EINVAL;
   size = strlen(source);
-  if (size >= capacity) return TURBO_EMSGSIZE;
+  if (size >= capacity) return SALTS_EMSGSIZE;
   memcpy(destination, source, size + 1u);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int s3_client_test_success(void *user, const chttp_server_request_view *request,
@@ -43,17 +43,17 @@ static int s3_client_test_success(void *user, const chttp_server_request_view *r
   int status;
   if (probe == NULL || request == NULL || authorization == NULL || date == NULL ||
       payload_hash == NULL)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   status = s3_client_test_copy_header(probe->target, sizeof(probe->target), request->target);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_client_test_copy_header(probe->authorization, sizeof(probe->authorization),
                                         authorization);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_client_test_copy_header(probe->date, sizeof(probe->date), date);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status =
         s3_client_test_copy_header(probe->payload_hash, sizeof(probe->payload_hash), payload_hash);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   probe->http_major = request->http_major;
   ++probe->calls;
   return chttp_server_reply(response, 200u, "application/octet-stream", "object", 6u);
@@ -85,10 +85,10 @@ static void s3_client_test_complete(void *user, s3_request_handle request,
   }
   if (response == NULL || response->http == NULL ||
       response->http->body_size > sizeof(probe->body)) {
-    probe->status = TURBO_EPROTO;
+    probe->status = SALTS_EPROTO;
     return;
   }
-  probe->status = TURBO_OK;
+  probe->status = SALTS_OK;
   probe->response_status = response->http->status_code;
   probe->body_size = response->http->body_size;
   if (probe->body_size != 0u) memcpy(probe->body, response->http->body, probe->body_size);
@@ -112,15 +112,15 @@ static void s3_client_test_run(chttp_protocol protocol) {
   char authority[64];
   uint16_t port = 0u;
 
-  check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
-  check_equal(chttp_server_get(&server, "/bucket/a%20b", s3_client_test_success, &probe), TURBO_OK);
-  check_equal(chttp_server_get(&server, "/bucket/missing", s3_client_test_missing, NULL), TURBO_OK);
-  check_equal(chttp_server_start(&server), TURBO_OK);
-  check_equal(chttp_server_port(&server, &port), TURBO_OK);
+  check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
+  check_equal(chttp_server_get(&server, "/bucket/a%20b", s3_client_test_success, &probe), SALTS_OK);
+  check_equal(chttp_server_get(&server, "/bucket/missing", s3_client_test_missing, NULL), SALTS_OK);
+  check_equal(chttp_server_start(&server), SALTS_OK);
+  check_equal(chttp_server_port(&server, &port), SALTS_OK);
   check_equal(
       s3_test_endpoint(port, connection_uri, sizeof(connection_uri), authority, sizeof(authority)),
-      TURBO_OK);
-  check_equal(chttp_client_init(&http_client, &http_config), TURBO_OK);
+      SALTS_OK);
+  check_equal(chttp_client_init(&http_client, &http_config), SALTS_OK);
 
   config = (s3_client_config){.size = sizeof(config),
                               .connection_uri = connection_uri,
@@ -131,14 +131,14 @@ static void s3_client_test_run(chttp_protocol protocol) {
                               .credentials = s3_credentials_provider_static(&static_credentials),
                               .clock = s3_client_test_clock,
                               .timeout_ms = S3_TEST_TIMEOUT_MS};
-  check_equal(s3_client_init(&client, &http_client, &config), TURBO_OK);
+  check_equal(s3_client_init(&client, &http_client, &config), SALTS_OK);
   options = (s3_request_options){.size = sizeof(options),
                                  .method = S3_METHOD_GET,
                                  .bucket = "bucket",
                                  .key = "a b",
                                  .query = query,
                                  .query_count = sizeof(query) / sizeof(query[0])};
-  check_equal(s3_request(&client, &options, &response, &error), TURBO_OK);
+  check_equal(s3_request(&client, &options, &response, &error), SALTS_OK);
   check_equal(response.http.status_code, 200u);
   check_equal(response.http.body, "object", 6u);
   check_equal(probe.calls, (size_t)1u);
@@ -154,7 +154,7 @@ static void s3_client_test_run(chttp_protocol protocol) {
   options.key = "missing";
   options.query = NULL;
   options.query_count = 0u;
-  check_equal(s3_request(&client, &options, &response, &error), TURBO_EPROTO);
+  check_equal(s3_request(&client, &options, &response, &error), SALTS_EPROTO);
   check_equal(response.http.status_code, 404u);
   check_equal(response.service_error.code, "NoSuchKey");
   check_equal(response.service_error.message, "missing");
@@ -163,10 +163,10 @@ static void s3_client_test_run(chttp_protocol protocol) {
   check_equal(error.stage, "s3-service");
   s3_response_destroy(&response);
 
-  check_equal(s3_client_destroy(&client), TURBO_OK);
-  check_equal(chttp_client_destroy(&http_client, S3_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(chttp_server_stop(&server, S3_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(chttp_server_destroy(&server), TURBO_OK);
+  check_equal(s3_client_destroy(&client), SALTS_OK);
+  check_equal(chttp_client_destroy(&http_client, S3_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(chttp_server_stop(&server, S3_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(chttp_server_destroy(&server), SALTS_OK);
 }
 
 static void s3_client_test_async_run(void) {
@@ -188,15 +188,15 @@ static void s3_client_test_async_run(void) {
   size_t completions = 0u;
   size_t polls = 0u;
 
-  check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
+  check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
   check_equal(chttp_server_get(&server, "/bucket/a%20b", s3_client_test_success, &server_probe),
-              TURBO_OK);
-  check_equal(chttp_server_start(&server), TURBO_OK);
-  check_equal(chttp_server_port(&server, &port), TURBO_OK);
+              SALTS_OK);
+  check_equal(chttp_server_start(&server), SALTS_OK);
+  check_equal(chttp_server_port(&server, &port), SALTS_OK);
   check_equal(
       s3_test_endpoint(port, connection_uri, sizeof(connection_uri), authority, sizeof(authority)),
-      TURBO_OK);
-  check_equal(chttp_async_client_init(&http_client, &http_config), TURBO_OK);
+      SALTS_OK);
+  check_equal(chttp_async_client_init(&http_client, &http_config), SALTS_OK);
   config = (s3_client_config){.size = sizeof(config),
                               .connection_uri = connection_uri,
                               .authority = authority,
@@ -206,29 +206,29 @@ static void s3_client_test_async_run(void) {
                               .credentials = s3_credentials_provider_static(&static_credentials),
                               .clock = s3_client_test_clock,
                               .timeout_ms = S3_TEST_TIMEOUT_MS};
-  check_equal(s3_async_client_init(&client, &http_client, &config), TURBO_OK);
+  check_equal(s3_async_client_init(&client, &http_client, &config), SALTS_OK);
   request = (s3_request_options){
       .size = sizeof(request), .method = S3_METHOD_GET, .bucket = "bucket", .key = "a b"};
   options = (s3_async_request_options){.size = sizeof(options),
                                        .request = &request,
                                        .on_complete = s3_client_test_complete,
                                        .user = &completion};
-  check_equal(s3_async_client_submit(&client, &options, &handle), TURBO_OK);
-  check_equal(s3_async_client_destroy(&client), TURBO_EBUSY);
+  check_equal(s3_async_client_submit(&client, &options, &handle), SALTS_OK);
+  check_equal(s3_async_client_destroy(&client), SALTS_EBUSY);
   while (completion.calls == 0u && polls++ < 40u)
-    check_equal(s3_async_client_poll(&client, 250u, &completions), TURBO_OK);
+    check_equal(s3_async_client_poll(&client, 250u, &completions), SALTS_OK);
   check_equal(completion.calls, (size_t)1u);
-  check_equal(completion.status, TURBO_OK);
+  check_equal(completion.status, SALTS_OK);
   check_equal(completion.response_status, 200u);
   check_equal(completion.body_size, (size_t)6u);
   check_equal(completion.body, "object", 6u);
   check_equal(server_probe.http_major, 2u);
-  check_equal(s3_async_request_cancel(&client, handle), TURBO_ENOENT);
-  check_equal(s3_async_client_destroy(&client), TURBO_OK);
-  check_equal(chttp_async_client_stop(&http_client, S3_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(chttp_async_client_destroy(&http_client), TURBO_OK);
-  check_equal(chttp_server_stop(&server, S3_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(chttp_server_destroy(&server), TURBO_OK);
+  check_equal(s3_async_request_cancel(&client, handle), SALTS_ENOENT);
+  check_equal(s3_async_client_destroy(&client), SALTS_OK);
+  check_equal(chttp_async_client_stop(&http_client, S3_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(chttp_async_client_destroy(&http_client), SALTS_OK);
+  check_equal(chttp_server_stop(&server, S3_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(chttp_server_destroy(&server), SALTS_OK);
 }
 
 spec("S3 CHTTP adapter") {
@@ -244,22 +244,22 @@ spec("S3 CHTTP adapter") {
                                .connection_uri = "tcp://127.0.0.1:1",
                                .authority = "127.0.0.1:1",
                                .region = "us-east-1"};
-    check_equal(chttp_client_init(&http_client, &http_config), TURBO_OK);
-    check_equal(s3_client_init(&client, &http_client, &config), TURBO_EINVAL);
-    check_equal(s3_client_destroy(&client), TURBO_OK);
+    check_equal(chttp_client_init(&http_client, &http_config), SALTS_OK);
+    check_equal(s3_client_init(&client, &http_client, &config), SALTS_EINVAL);
+    check_equal(s3_client_destroy(&client), SALTS_OK);
     config.credentials = s3_credentials_provider_environment();
     config.max_header_count = 2u;
-    check_equal(s3_client_init(&client, &http_client, &config), TURBO_EINVAL);
+    check_equal(s3_client_init(&client, &http_client, &config), SALTS_EINVAL);
 #if SIZE_MAX > INT_MAX
     config.max_header_count = 3u;
     config.max_multipart_part_bytes = (size_t)INT_MAX + 1u;
-    check_equal(s3_client_init(&client, &http_client, &config), TURBO_EINVAL);
+    check_equal(s3_client_init(&client, &http_client, &config), SALTS_EINVAL);
 #endif
     config.max_multipart_part_bytes = 0u;
     config.max_header_count = 3u;
-    check_equal(s3_client_init(&client, &http_client, &config), TURBO_OK);
-    check_equal(s3_client_destroy(&client), TURBO_OK);
-    check_equal(chttp_client_destroy(&http_client, S3_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(s3_client_init(&client, &http_client, &config), SALTS_OK);
+    check_equal(s3_client_destroy(&client), SALTS_OK);
+    check_equal(chttp_client_destroy(&http_client, S3_TEST_TIMEOUT_MS), SALTS_OK);
   }
 
   it("delivers one terminal callback through the advanced HTTP/2 adapter") {

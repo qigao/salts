@@ -6,9 +6,9 @@
 
 **Architecture:** Keep the existing public API unchanged. Socket and typed-pipe examples assemble the public bounded `cflow_io_native_backend`, manual `cflow_executor`, and `cflow_io_actor` directly so acknowledgement, endpoint close, identity forget, Actor drain, backend shutdown, and Executor shutdown remain visible. The regular-file example uses the owning `cflow_io_file` facade and proves the same terminal state through its public statistics and quiescent destroy contract.
 
-**Tech Stack:** ISO C11, CFlow native I/O/Actor/Executor APIs, platform socket/pipe setup APIs, CMake user presets, CTest, installed `TurboUtils::CFlow` package target.
+**Tech Stack:** ISO C11, CFlow native I/O/Actor/Executor APIs, platform socket/pipe setup APIs, CMake user presets, CTest, installed `Salts::CFlow` package target.
 
-**Spec:** https://github.com/qigao/turbo-utils/issues/134
+**Spec:** https://github.com/qigao/salts/issues/134
 
 ## Global Constraints
 
@@ -29,7 +29,7 @@
 - Create: `cflow/examples/CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: `BUILD_EXAMPLES`, `cmake_add_executable()`, `TurboUtils::CFlow`.
+- Consumes: `BUILD_EXAMPLES`, `cmake_add_executable()`, `Salts::CFlow`.
 - Produces: `cflow_native_socket_example`, `cflow_native_pipe_example`, and `cflow_native_file_example` executable/CTest targets.
 
 - [ ] **Step 1: Add the failing build contract**
@@ -144,12 +144,12 @@ Build all three targets and run `ctest --preset win-release-user -R "^cflow_nati
 - Modify: `tests/install_consumer/CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: installed `TurboUtils::CFlow` and the three repository example source files.
+- Consumes: installed `Salts::CFlow` and the three repository example source files.
 - Produces: three installed-package consumer executables; no source-only surrogate.
 
 - [ ] **Step 1: Add the installed-surface build test**
 
-Add executables whose source paths are `${CMAKE_CURRENT_LIST_DIR}/../../cflow/examples/<name>.c`, link each to `TurboUtils::CFlow`, and link the socket example to `ws2_32` on Windows.
+Add executables whose source paths are `${CMAKE_CURRENT_LIST_DIR}/../../cflow/examples/<name>.c`, link each to `Salts::CFlow`, and link the socket example to `ws2_32` on Windows.
 
 - [ ] **Step 2: Verify the test can detect package breakage**
 

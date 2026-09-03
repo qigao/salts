@@ -1,6 +1,6 @@
 # CFlow SCXML Transition Condition Design
 
-**Issue:** [qigao/turbo-utils#122](https://github.com/qigao/turbo-utils/issues/122)
+**Issue:** [qigao/salts#122](https://github.com/qigao/salts/issues/122)
 
 **Date:** 2026-08-29
 

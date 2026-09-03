@@ -1,8 +1,8 @@
 #include "tinytest.h"
 #include <crpc/crpc.h>
 
-#include <turbo/clock.h>
-#include <turbo/thread.h>
+#include <salts/clock.h>
+#include <salts/thread.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -81,15 +81,15 @@ static int crpc_test_set_timeout(crpc_test_socket socket_value) {
   const DWORD timeout_ms = CRPC_TEST_TIMEOUT_MS;
   return setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms,
                     (int)sizeof(timeout_ms)) == 0
-             ? TURBO_OK
-             : TURBO_EIO;
+             ? SALTS_OK
+             : SALTS_EIO;
 #else
   const struct timeval timeout = {CRPC_TEST_TIMEOUT_MS / 1000,
                                   (CRPC_TEST_TIMEOUT_MS % 1000) * 1000};
   return setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, &timeout, (socklen_t)sizeof(timeout)) ==
                  0
-             ? TURBO_OK
-             : TURBO_EIO;
+             ? SALTS_OK
+             : SALTS_EIO;
 #endif
 }
 
@@ -100,9 +100,9 @@ static int crpc_test_listener(crpc_test_socket *out_listener, uint16_t *out_port
 #else
   socklen_t length = (socklen_t)sizeof(address);
 #endif
-  if (out_listener == NULL || out_port == NULL) return TURBO_EINVAL;
+  if (out_listener == NULL || out_port == NULL) return SALTS_EINVAL;
   *out_listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (*out_listener == CRPC_TEST_INVALID_SOCKET) return TURBO_EIO;
+  if (*out_listener == CRPC_TEST_INVALID_SOCKET) return SALTS_EIO;
   memset(&address, 0, sizeof(address));
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -111,30 +111,30 @@ static int crpc_test_listener(crpc_test_socket *out_listener, uint16_t *out_port
       listen(*out_listener, CRPC_TEST_LISTEN_BACKLOG) != 0) {
     crpc_test_close_socket(*out_listener);
     *out_listener = CRPC_TEST_INVALID_SOCKET;
-    return TURBO_EIO;
+    return SALTS_EIO;
   }
   *out_port = ntohs(address.sin_port);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int crpc_test_recv_all(crpc_test_socket socket_value, void *data, size_t size) {
   size_t offset = 0u;
   while (offset < size) {
     const int received = recv(socket_value, (char *)data + offset, (int)(size - offset), 0);
-    if (received <= 0) return TURBO_EIO;
+    if (received <= 0) return SALTS_EIO;
     offset += (size_t)received;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int crpc_test_send_all(crpc_test_socket socket_value, const void *data, size_t size) {
   size_t offset = 0u;
   while (offset < size) {
     const int sent = send(socket_value, (const char *)data + offset, (int)(size - offset), 0);
-    if (sent <= 0) return TURBO_EIO;
+    if (sent <= 0) return SALTS_EIO;
     offset += (size_t)sent;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void crpc_test_serve(void *user) {
@@ -146,7 +146,7 @@ static void crpc_test_serve(void *user) {
   if (server->reuse_connection) {
     accepted = accept(server->listener, NULL, NULL);
     if (accepted == CRPC_TEST_INVALID_SOCKET) {
-      server->status = TURBO_EIO;
+      server->status = SALTS_EIO;
       return;
     }
     server->status = crpc_test_set_timeout(accepted);
@@ -155,26 +155,26 @@ static void crpc_test_serve(void *user) {
     if (!server->reuse_connection) {
       accepted = accept(server->listener, NULL, NULL);
       if (accepted == CRPC_TEST_INVALID_SOCKET) {
-        server->status = TURBO_EIO;
+        server->status = SALTS_EIO;
         return;
       }
       server->status = crpc_test_set_timeout(accepted);
     }
-    if (server->status == TURBO_OK && server->expected_sizes[index] > sizeof(received))
-      server->status = TURBO_EMSGSIZE;
-    if (server->status == TURBO_OK)
+    if (server->status == SALTS_OK && server->expected_sizes[index] > sizeof(received))
+      server->status = SALTS_EMSGSIZE;
+    if (server->status == SALTS_OK)
       server->status = crpc_test_recv_all(accepted, received, server->expected_sizes[index]);
-    if (server->status == TURBO_OK &&
+    if (server->status == SALTS_OK &&
         memcmp(received, server->expected[index], server->expected_sizes[index]) != 0)
-      server->status = TURBO_EPROTO;
-    if (server->status == TURBO_OK)
+      server->status = SALTS_EPROTO;
+    if (server->status == SALTS_OK)
       server->status =
           crpc_test_send_all(accepted, server->responses[index], server->response_sizes[index]);
     if (!server->reuse_connection) {
       crpc_test_close_socket(accepted);
       accepted = CRPC_TEST_INVALID_SOCKET;
     }
-    if (server->status != TURBO_OK) break;
+    if (server->status != SALTS_OK) break;
   }
   crpc_test_close_socket(accepted);
 }
@@ -206,17 +206,17 @@ static void crpc_test_complete(void *user, crpc_request request, const crpc_resp
   if (response == NULL || response->kind != CRPC_RESPONSE_RESULT ||
       cserde_reader_next(response->value.result, &token) != CSERDE_OK ||
       token.kind != CSERDE_UINT || token.value.uint > (uint64_t)INT64_MAX) {
-    probe->status = TURBO_EPROTO;
+    probe->status = SALTS_EPROTO;
     return;
   }
-  probe->status = TURBO_OK;
+  probe->status = SALTS_OK;
   probe->result = (int64_t)token.value.uint;
   probe->request_id = response->request_id;
   probe->http_status = response->http_status;
   if (response->callable != NULL) {
     const cmeta_sig_desc *signature = cmeta_callable_signature(*response->callable);
     if (signature == NULL) {
-      probe->status = TURBO_EPROTO;
+      probe->status = SALTS_EPROTO;
       return;
     }
     probe->callable_signature = signature->sig;
@@ -234,7 +234,7 @@ static void crpc_test_reentrant_complete(void *user, crpc_request request,
   crpc_request nested_request = {7u, 9u};
   (void)response;
   ++probe->called;
-  probe->status = error != NULL ? error->status : TURBO_OK;
+  probe->status = error != NULL ? error->status : SALTS_OK;
   probe->nested_call_status =
       crpc_async_client_submit(probe->client, &probe->nested_options, probe->nested_complete,
                                probe->nested_user, &nested_request);
@@ -279,27 +279,27 @@ static crpc_client_config crpc_test_config(void) {
 }
 
 static int crpc_test_poll_until(crpc_async_client *client, crpc_test_probe *probe) {
-  const uint64_t deadline = turbo_monotonic_ms() + CRPC_TEST_TIMEOUT_MS;
+  const uint64_t deadline = salts_monotonic_ms() + CRPC_TEST_TIMEOUT_MS;
   while (probe->called == 0) {
     size_t completions = 0u;
     const int status = crpc_async_client_poll(client, 5u, &completions);
-    if (status != TURBO_OK) return status;
-    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
+    if (status != SALTS_OK) return status;
+    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int crpc_test_poll_until_both(crpc_async_client *client,
                                      const crpc_test_reentrant_probe *first,
                                      const crpc_test_probe *second) {
-  const uint64_t deadline = turbo_monotonic_ms() + CRPC_TEST_TIMEOUT_MS;
+  const uint64_t deadline = salts_monotonic_ms() + CRPC_TEST_TIMEOUT_MS;
   while (first->called == 0 || second->called == 0) {
     size_t completions = 0u;
     const int status = crpc_async_client_poll(client, 5u, &completions);
-    if (status != TURBO_OK) return status;
-    if (turbo_monotonic_ms() >= deadline) return TURBO_ETIMEDOUT;
+    if (status != SALTS_OK) return status;
+    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 spec("CRPC blocking request/reply client") {
@@ -315,7 +315,7 @@ spec("CRPC blocking request/reply client") {
     crpc_client_config config = crpc_test_config();
     crpc_test_socket listener = CRPC_TEST_INVALID_SOCKET;
     crpc_test_server server = {0};
-    turbo_thread_t thread = NULL;
+    salts_thread_t thread = NULL;
     crpc_response response = {0};
     crpc_error error = {0};
     crpc_options options;
@@ -333,8 +333,8 @@ spec("CRPC blocking request/reply client") {
     uint16_t port = 0u;
     int size;
 
-    check_equal(crpc_client_init(&client, &config), TURBO_OK);
-    check_equal(crpc_test_listener(&listener, &port), TURBO_OK);
+    check_equal(crpc_client_init(&client, &config), SALTS_OK);
+    check_equal(crpc_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     size = snprintf(first_expected, sizeof(first_expected),
@@ -394,7 +394,7 @@ spec("CRPC blocking request/reply client") {
                                 .response_sizes = response_sizes,
                                 .exchange_count = 2u,
                                 .reuse_connection = 1};
-    check_equal(turbo_thread_create(&thread, crpc_test_serve, &server), TURBO_OK);
+    check_equal(salts_thread_create(&thread, crpc_test_serve, &server), SALTS_OK);
 
     options = (crpc_options){
         .connection_uri = uri,
@@ -404,7 +404,7 @@ spec("CRPC blocking request/reply client") {
         .request_id = UINT64_C(9),
         .encode_params = crpc_test_encode_params,
         .deadline_ms = CRPC_TEST_TIMEOUT_MS};
-    check_equal(crpc_request_reply(&client, &options, &response, &error), TURBO_OK);
+    check_equal(crpc_request_reply(&client, &options, &response, &error), SALTS_OK);
     check_equal(response.kind, CRPC_RESPONSE_RESULT);
     check_equal(response.request_id, UINT64_C(9));
     check_not_null(response.callable);
@@ -419,7 +419,7 @@ spec("CRPC blocking request/reply client") {
                              .method = {.service = "system", .name = "status"},
                              .request_id = UINT64_C(10),
                              .deadline_ms = CRPC_TEST_TIMEOUT_MS};
-    check_equal(crpc_request_reply(&client, &options, &response, &error), TURBO_OK);
+    check_equal(crpc_request_reply(&client, &options, &response, &error), SALTS_OK);
     check_equal(response.kind, CRPC_RESPONSE_RESULT);
     check_equal(response.request_id, UINT64_C(10));
     check_equal(cserde_reader_next(response.value.result, &token), CSERDE_OK);
@@ -428,10 +428,10 @@ spec("CRPC blocking request/reply client") {
     check_equal(token.value.slice.data, "ready", 5u);
     crpc_response_destroy(&response);
 
-    check_equal(crpc_client_destroy(&client, CRPC_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(turbo_thread_join(&thread), TURBO_OK);
-    turbo_thread_destroy(&thread);
-    check_equal(server.status, TURBO_OK);
+    check_equal(crpc_client_destroy(&client, CRPC_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(salts_thread_join(&thread), SALTS_OK);
+    salts_thread_destroy(&thread);
+    check_equal(server.status, SALTS_OK);
     crpc_test_close_socket(listener);
   }
 }
@@ -458,8 +458,8 @@ spec("CRPC advanced async client API") {
     int expected_size;
     int response_size;
 
-    check_equal(crpc_async_client_init(&client, &config), TURBO_OK);
-    check_equal(crpc_test_listener(&listener, &port), TURBO_OK);
+    check_equal(crpc_async_client_init(&client, &config), SALTS_OK);
+    check_equal(crpc_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     options = (crpc_options){
@@ -470,14 +470,14 @@ spec("CRPC advanced async client API") {
         .request_id = UINT64_C(9),
         .encode_params = crpc_test_encode_params};
     check_equal(crpc_async_client_submit(&client, &options, crpc_test_complete, &probe, &request),
-                TURBO_OK);
+                SALTS_OK);
     check_true(request.slot != 0u && request.generation != 0u);
-    check_equal(crpc_async_client_poll(&client, CRPC_TEST_TIMEOUT_MS, &completions), TURBO_OK);
+    check_equal(crpc_async_client_poll(&client, CRPC_TEST_TIMEOUT_MS, &completions), SALTS_OK);
     check_equal(completions, (size_t)0u);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CRPC_TEST_INVALID_SOCKET);
-    check_equal(crpc_test_set_timeout(accepted), TURBO_OK);
-    check_equal(crpc_async_client_poll(&client, 10u, &completions), TURBO_OK);
+    check_equal(crpc_test_set_timeout(accepted), SALTS_OK);
+    check_equal(crpc_async_client_poll(&client, 10u, &completions), SALTS_OK);
 
     expected_size = snprintf(expected, sizeof(expected),
                              "POST /rpc HTTP/1.1\r\n"
@@ -490,7 +490,7 @@ spec("CRPC advanced async client API") {
                              "%s",
                              authority, sizeof(request_body) - 1u, request_body);
     check_true(expected_size > 0 && (size_t)expected_size < sizeof(expected));
-    check_equal(crpc_test_recv_all(accepted, received, (size_t)expected_size), TURBO_OK);
+    check_equal(crpc_test_recv_all(accepted, received, (size_t)expected_size), SALTS_OK);
     check_equal(received, expected, (size_t)expected_size);
 
     response_size = snprintf(response, sizeof(response),
@@ -502,10 +502,10 @@ spec("CRPC advanced async client API") {
                              "%s",
                              sizeof(response_body) - 1u, response_body);
     check_true(response_size > 0 && (size_t)response_size < sizeof(response));
-    check_equal(crpc_test_send_all(accepted, response, (size_t)response_size), TURBO_OK);
-    check_equal(crpc_test_poll_until(&client, &probe), TURBO_OK);
+    check_equal(crpc_test_send_all(accepted, response, (size_t)response_size), SALTS_OK);
+    check_equal(crpc_test_poll_until(&client, &probe), SALTS_OK);
     check_equal(probe.called, 1);
-    check_equal(probe.status, TURBO_OK);
+    check_equal(probe.status, SALTS_OK);
     check_equal(probe.result, (int64_t)14);
     check_equal(probe.request_id, UINT64_C(9));
     check_equal(probe.http_status, 200u);
@@ -514,10 +514,10 @@ spec("CRPC advanced async client API") {
     check_equal(probe.callable_protocol, CMETA_FN_PROTOCOL_VALUE);
     check_true(cmeta_effects_are_pure(probe.callable_effects));
     check_true(cmeta_properties_include(probe.callable_properties, CMETA_PROP_IDEMPOTENT));
-    check_equal(crpc_async_request_cancel(&client, request), TURBO_ENOENT);
+    check_equal(crpc_async_request_cancel(&client, request), SALTS_ENOENT);
 
-    check_equal(crpc_async_client_stop(&client, CRPC_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_async_client_destroy(&client), TURBO_OK);
+    check_equal(crpc_async_client_stop(&client, CRPC_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_async_client_destroy(&client), SALTS_OK);
     crpc_test_close_socket(accepted);
     crpc_test_close_socket(listener);
   }
@@ -533,8 +533,8 @@ spec("CRPC advanced async client API") {
     char authority[64];
     uint16_t port = 0u;
 
-    check_equal(crpc_async_client_init(&client, &config), TURBO_OK);
-    check_equal(crpc_test_listener(&listener, &port), TURBO_OK);
+    check_equal(crpc_async_client_init(&client, &config), SALTS_OK);
+    check_equal(crpc_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     options = (crpc_options){.connection_uri = uri,
@@ -544,15 +544,15 @@ spec("CRPC advanced async client API") {
                              .request_id = UINT64_C(11),
                              .deadline_ms = 10u};
     check_equal(crpc_async_client_submit(&client, &options, crpc_test_complete, &probe, &request),
-                TURBO_OK);
-    check_equal(crpc_test_poll_until(&client, &probe), TURBO_OK);
+                SALTS_OK);
+    check_equal(crpc_test_poll_until(&client, &probe), SALTS_OK);
     check_equal(probe.called, 1);
-    check_equal(probe.status, TURBO_ETIMEDOUT);
+    check_equal(probe.status, SALTS_ETIMEDOUT);
     check_equal(probe.stage, "rpc-deadline");
-    check_equal(crpc_async_request_cancel(&client, request), TURBO_ENOENT);
+    check_equal(crpc_async_request_cancel(&client, request), SALTS_ENOENT);
 
-    check_equal(crpc_async_client_stop(&client, CRPC_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_async_client_destroy(&client), TURBO_OK);
+    check_equal(crpc_async_client_stop(&client, CRPC_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_async_client_destroy(&client), SALTS_OK);
     crpc_test_close_socket(listener);
   }
 
@@ -568,8 +568,8 @@ spec("CRPC advanced async client API") {
     char authority[64];
     uint16_t port = 0u;
 
-    check_equal(crpc_async_client_init(&client, &config), TURBO_OK);
-    check_equal(crpc_test_listener(&listener, &port), TURBO_OK);
+    check_equal(crpc_async_client_init(&client, &config), SALTS_OK);
+    check_equal(crpc_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     options = (crpc_options){.connection_uri = uri,
@@ -578,16 +578,16 @@ spec("CRPC advanced async client API") {
                              .method = {.name = "duplicate"},
                              .request_id = UINT64_C(23)};
     check_equal(crpc_async_client_submit(&client, &options, crpc_test_complete, &probe, &first),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(crpc_async_client_submit(&client, &options, crpc_test_complete, &probe, &duplicate),
-                TURBO_EALREADY);
+                SALTS_EALREADY);
     check_equal(duplicate.slot, 0u);
     check_equal(duplicate.generation, 0u);
     check_equal(probe.called, 0);
-    check_equal(crpc_async_request_cancel(&client, first), TURBO_OK);
-    check_equal(crpc_test_poll_until(&client, &probe), TURBO_OK);
-    check_equal(crpc_async_client_stop(&client, CRPC_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_async_client_destroy(&client), TURBO_OK);
+    check_equal(crpc_async_request_cancel(&client, first), SALTS_OK);
+    check_equal(crpc_test_poll_until(&client, &probe), SALTS_OK);
+    check_equal(crpc_async_client_stop(&client, CRPC_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_async_client_destroy(&client), SALTS_OK);
     crpc_test_close_socket(listener);
   }
 
@@ -602,8 +602,8 @@ spec("CRPC advanced async client API") {
     char authority[64];
     uint16_t port = 0u;
 
-    check_equal(crpc_async_client_init(&client, &config), TURBO_OK);
-    check_equal(crpc_test_listener(&listener, &port), TURBO_OK);
+    check_equal(crpc_async_client_init(&client, &config), SALTS_OK);
+    check_equal(crpc_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     options = (crpc_options){.connection_uri = uri,
@@ -612,16 +612,16 @@ spec("CRPC advanced async client API") {
                              .method = {.name = "cancel"},
                              .request_id = UINT64_C(29)};
     check_equal(crpc_async_client_submit(&client, &options, crpc_test_complete, &probe, &request),
-                TURBO_OK);
-    check_equal(crpc_async_request_cancel(&client, request), TURBO_OK);
-    check_equal(crpc_async_request_cancel(&client, request), TURBO_EALREADY);
-    check_equal(crpc_test_poll_until(&client, &probe), TURBO_OK);
+                SALTS_OK);
+    check_equal(crpc_async_request_cancel(&client, request), SALTS_OK);
+    check_equal(crpc_async_request_cancel(&client, request), SALTS_EALREADY);
+    check_equal(crpc_test_poll_until(&client, &probe), SALTS_OK);
     check_equal(probe.called, 1);
-    check_equal(probe.status, TURBO_ECANCELED);
+    check_equal(probe.status, SALTS_ECANCELED);
     check_equal(probe.stage, "cancel");
-    check_equal(crpc_async_request_cancel(&client, request), TURBO_ENOENT);
-    check_equal(crpc_async_client_stop(&client, CRPC_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_async_client_destroy(&client), TURBO_OK);
+    check_equal(crpc_async_request_cancel(&client, request), SALTS_ENOENT);
+    check_equal(crpc_async_client_stop(&client, CRPC_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_async_client_destroy(&client), SALTS_OK);
     crpc_test_close_socket(listener);
   }
 
@@ -640,8 +640,8 @@ spec("CRPC advanced async client API") {
     char authority[64];
     uint16_t port = 0u;
 
-    check_equal(crpc_async_client_init(&client, &config), TURBO_OK);
-    check_equal(crpc_test_listener(&listener, &port), TURBO_OK);
+    check_equal(crpc_async_client_init(&client, &config), SALTS_OK);
+    check_equal(crpc_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
     check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
     other_options = (crpc_options){.connection_uri = uri,
@@ -663,27 +663,27 @@ spec("CRPC advanced async client API") {
     probe.nested_user = &nested_probe;
     check_equal(
         crpc_async_client_submit(&client, &other_options, crpc_test_complete, &other_probe, &other),
-        TURBO_OK);
+        SALTS_OK);
     probe.other_request = other;
     check_equal(crpc_async_client_submit(&client, &first_options, crpc_test_reentrant_complete,
                                          &probe, &first),
-                TURBO_OK);
-    check_equal(crpc_async_request_cancel(&client, first), TURBO_OK);
-    check_equal(crpc_test_poll_until_both(&client, &probe, &other_probe), TURBO_OK);
+                SALTS_OK);
+    check_equal(crpc_async_request_cancel(&client, first), SALTS_OK);
+    check_equal(crpc_test_poll_until_both(&client, &probe, &other_probe), SALTS_OK);
     check_equal(probe.called, 1);
-    check_equal(probe.status, TURBO_ECANCELED);
-    check_equal(probe.nested_call_status, TURBO_EBUSY);
-    check_equal(probe.nested_poll_status, TURBO_EBUSY);
+    check_equal(probe.status, SALTS_ECANCELED);
+    check_equal(probe.nested_call_status, SALTS_EBUSY);
+    check_equal(probe.nested_poll_status, SALTS_EBUSY);
     check_equal(probe.nested_completions, (size_t)0u);
-    check_equal(probe.nested_stop_status, TURBO_EBUSY);
-    check_equal(probe.nested_destroy_status, TURBO_EBUSY);
-    check_equal(probe.own_cancel_status, TURBO_EALREADY);
-    check_equal(probe.other_cancel_status, TURBO_OK);
+    check_equal(probe.nested_stop_status, SALTS_EBUSY);
+    check_equal(probe.nested_destroy_status, SALTS_EBUSY);
+    check_equal(probe.own_cancel_status, SALTS_EALREADY);
+    check_equal(probe.other_cancel_status, SALTS_OK);
     check_equal(other_probe.called, 1);
-    check_equal(other_probe.status, TURBO_ECANCELED);
+    check_equal(other_probe.status, SALTS_ECANCELED);
     check_equal(nested_probe.called, 0);
-    check_equal(crpc_async_client_stop(&client, CRPC_TEST_TIMEOUT_MS), TURBO_OK);
-    check_equal(crpc_async_client_destroy(&client), TURBO_OK);
+    check_equal(crpc_async_client_stop(&client, CRPC_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(crpc_async_client_destroy(&client), SALTS_OK);
     crpc_test_close_socket(listener);
   }
 }

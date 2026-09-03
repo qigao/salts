@@ -6,7 +6,7 @@
 
 **Architecture:** NativeIO keeps one fixed-owner submit/cancel/observe contract and adds an internal endpoint resource discriminator plus pipe operations. NativeIPC owns platform-specific creation/rendezvous and transfers connected endpoints. A bounded CFlow bridge maps one Actor's request IDs to NativeIO request handles; the existing I/O Source supplies the reactive Graph layer.
 
-**Tech Stack:** ISO C11, TurboUtils Platform errors/thread primitives, NativeIO IOCP/epoll/io_uring/kqueue backends, CFlow Actor/Executor/Source, TinyTest, CMake Presets, GitHub Actions.
+**Tech Stack:** ISO C11, Salts Platform errors/thread primitives, NativeIO IOCP/epoll/io_uring/kqueue backends, CFlow Actor/Executor/Source, TinyTest, CMake Presets, GitHub Actions.
 
 **Spec:** `docs/superpowers/specs/2026-08-30-native-io-pipe-ipc-design.md`
 
@@ -30,7 +30,7 @@ sub-agents while executing this plan.
 
 **Files:**
 
-- Modify: `native-io/include/turbo/native_io.h`
+- Modify: `native-io/include/salts/native_io.h`
 - Modify: `native-io/src/native_io.c`
 - Modify: `native-io/src/native_io_internal.h`
 - Modify: `native-io/tests/native_io_test.c`
@@ -89,21 +89,21 @@ calling a platform backend. Clear `out_endpoint` on every attach failure.
 Add a private resource kind and strategy callbacks:
 
 ```c
-typedef enum turbo_io_resource_kind {
-  TURBO_IO_RESOURCE_STREAM_SOCKET = 1,
-  TURBO_IO_RESOURCE_DATAGRAM_SOCKET = 2,
-  TURBO_IO_RESOURCE_BYTE_PIPE = 3
-} turbo_io_resource_kind;
+typedef enum salts_io_resource_kind {
+  SALTS_IO_RESOURCE_STREAM_SOCKET = 1,
+  SALTS_IO_RESOURCE_DATAGRAM_SOCKET = 2,
+  SALTS_IO_RESOURCE_BYTE_PIPE = 3
+} salts_io_resource_kind;
 
-int (*attach_pipe)(turbo_io_impl *, uintptr_t, uint32_t,
+int (*attach_pipe)(salts_io_impl *, uintptr_t, uint32_t,
                    native_io_endpoint *);
-int (*release_pipe)(turbo_io_impl *, native_io_endpoint);
+int (*release_pipe)(salts_io_impl *, native_io_endpoint);
 ```
 
 Every backend endpoint record stores the resource kind. Socket attach derives
 stream versus datagram from `SO_TYPE`; IPv4/IPv6 remain an independent address
 dimension. Operation admission checks kind before retaining a request slot; a
-mismatch returns `TURBO_EINVAL` with no native effect.
+mismatch returns `SALTS_EINVAL` with no native effect.
 
 - [ ] **Step 5: Run focused tests and confirm GREEN**
 
@@ -113,7 +113,7 @@ validation cases remain unchanged.
 - [ ] **Step 6: Commit the contract slice**
 
 ```powershell
-git add native-io/include/turbo/native_io.h native-io/src/native_io.c native-io/src/native_io_internal.h native-io/tests/native_io_test.c native-io/tests/native_io_header_cpp_test.cpp
+git add native-io/include/salts/native_io.h native-io/src/native_io.c native-io/src/native_io_internal.h native-io/tests/native_io_test.c native-io/tests/native_io_header_cpp_test.cpp
 git commit -m "feat(native-io): define typed byte-pipe endpoints"
 ```
 
@@ -146,7 +146,7 @@ Add an explicit blocking-descriptor case:
 check_equal(native_io_backend_attach_pipe(
                 &backend, (uintptr_t)blocking_fd,
                 NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
-            TURBO_EINVAL);
+            SALTS_EINVAL);
 check_false(native_io_endpoint_valid(endpoint));
 ```
 
@@ -156,8 +156,8 @@ From a branch pushed for remote testing, use a fresh remote checkout:
 
 ```bash
 ssh root@eu
-native_io_worktree=$(mktemp -d /tmp/turbo-utils-native-io-pipe.XXXXXX)
-git clone --branch design/native-io-pipe-ipc https://github.com/qigao/turbo-utils.git "$native_io_worktree"
+native_io_worktree=$(mktemp -d /tmp/salts-native-io-pipe.XXXXXX)
+git clone --branch design/native-io-pipe-ipc https://github.com/qigao/salts.git "$native_io_worktree"
 cd "$native_io_worktree"
 cmake --fresh --preset linux-dev-user
 cmake --build --preset linux-dev-user --target native_io_test
@@ -172,12 +172,12 @@ Keep the lane machinery shared, but dispatch at the resource boundary:
 
 ```c
 switch (endpoint->resource_kind) {
-  case TURBO_IO_RESOURCE_SOCKET:
+  case SALTS_IO_RESOURCE_SOCKET:
     return readiness_try_socket(endpoint, request, bytes, address_length);
-  case TURBO_IO_RESOURCE_BYTE_PIPE:
+  case SALTS_IO_RESOURCE_BYTE_PIPE:
     return readiness_try_pipe(endpoint, request, bytes);
   default:
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
 }
 ```
 
@@ -190,7 +190,7 @@ completion. It never changes descriptor flags.
 Verify `O_NONBLOCK`, reject duplicate native identities across both resource
 kinds, allocate from the existing endpoint free stack, and derive epoll/kqueue
 interest only from the two request lanes. Release validates resource kind and
-returns `TURBO_EBUSY` while either lane retains an unobserved request.
+returns `SALTS_EBUSY` while either lane retains an unobserved request.
 
 - [ ] **Step 5: Run Linux and macOS readiness validation**
 
@@ -224,7 +224,7 @@ Create connected byte-mode server/client handles with
 `FILE_FLAG_OVERLAPPED`. Test successful read/write, pending cancellation,
 partial transfer, EOF/broken peer, duplicate attach, capacity, close/drain, and
 handle-number reuse. Assert an anonymous `CreatePipe` handle returns
-`TURBO_ENOTSUP` without entering an operation.
+`SALTS_ENOTSUP` without entering an operation.
 
 - [ ] **Step 2: Run the focused Windows test and confirm RED**
 
@@ -316,7 +316,7 @@ git commit -m "feat(native-io): submit pipe operations through io_uring"
 
 **Files:**
 
-- Create: `native-io/include/turbo/native_ipc.h`
+- Create: `native-io/include/salts/native_ipc.h`
 - Create: `native-io/src/native_ipc.c`
 - Create: `native-io/src/native_ipc_windows.c`
 - Create: `native-io/src/native_ipc_posix.c`
@@ -361,7 +361,7 @@ close, and quiescent destroy exactly as the specification state machine.
 - [ ] **Step 5: Implement POSIX FIFO open**
 
 Perform one `open` with `O_NONBLOCK | O_CLOEXEC`, reject duplex, map writer
-`ENXIO` to `TURBO_EPIPE`, and publish
+`ENXIO` to `SALTS_EPIPE`, and publish
 `NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE` only on success. Do not create, unlink,
 wait, retry, or change permissions.
 
@@ -378,7 +378,7 @@ Run the matching Linux preset remotely and obtain macOS CI evidence.
 - [ ] **Step 7: Commit the control-plane slice**
 
 ```powershell
-git add native-io/include/turbo/native_ipc.h native-io/src/native_ipc.c native-io/src/native_ipc_windows.c native-io/src/native_ipc_posix.c native-io/tests/native_ipc_test.c native-io/tests/native_ipc_header_cpp_test.cpp native-io/CMakeLists.txt native-io/tests/CMakeLists.txt
+git add native-io/include/salts/native_ipc.h native-io/src/native_ipc.c native-io/src/native_ipc_windows.c native-io/src/native_ipc_posix.c native-io/tests/native_ipc_test.c native-io/tests/native_ipc_header_cpp_test.cpp native-io/CMakeLists.txt native-io/tests/CMakeLists.txt
 git commit -m "feat(native-io): add bounded IPC rendezvous control plane"
 ```
 
@@ -439,7 +439,7 @@ contract in documentation and tests.
 - [x] **Step 6: Link CFlow publicly to NativeIO and run focused tests**
 
 Because the public adapter header names NativeIO types, link
-`TurboUtils::CFlow` PUBLIC to `TurboUtils::NativeIO`. Build and run:
+`Salts::CFlow` PUBLIC to `Salts::NativeIO`. Build and run:
 
 ```powershell
 cmake --fresh --preset win-dev-user

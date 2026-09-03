@@ -1,7 +1,7 @@
 #include <cbind/cbind.h>
-#include "turbo_cmeta_data.h"
-#include "turbo_str.h"
-#include "turbo_vstr.h"
+#include "salts_cmeta_data.h"
+#include "salts_str.h"
+#include "salts_vstr.h"
 #include "recording.h"
 #include "tinytest.h"
 
@@ -32,9 +32,9 @@ static const cmeta_data_desc owned_string = {
     .stable_id = "test.cbind.owned-string",
     .display_name = "owned string",
     .kind = CMETA_DATA_STRING,
-    .storage_type = &turbo_tstr_cmeta_type,
+    .storage_type = &salts_tstr_cmeta_type,
     .shape = &owned_shape,
-    .buffer_ops = &turbo_tstr_cmeta_buffer_ops
+    .buffer_ops = &salts_tstr_cmeta_buffer_ops
 };
 static const cmeta_data_desc owned_bytes = {
     .struct_size = sizeof(cmeta_data_desc),
@@ -42,9 +42,9 @@ static const cmeta_data_desc owned_bytes = {
     .stable_id = "test.cbind.owned-bytes",
     .display_name = "owned bytes",
     .kind = CMETA_DATA_BYTES,
-    .storage_type = &turbo_tstr_cmeta_type,
+    .storage_type = &salts_tstr_cmeta_type,
     .shape = &owned_shape,
-    .buffer_ops = &turbo_tstr_cmeta_buffer_ops
+    .buffer_ops = &salts_tstr_cmeta_buffer_ops
 };
 static const cmeta_data_desc borrowed_string = {
     .struct_size = sizeof(cmeta_data_desc),
@@ -52,9 +52,9 @@ static const cmeta_data_desc borrowed_string = {
     .stable_id = "test.cbind.borrowed-string",
     .display_name = "borrowed string",
     .kind = CMETA_DATA_STRING,
-    .storage_type = &turbo_vstr_cmeta_type,
+    .storage_type = &salts_vstr_cmeta_type,
     .shape = &borrowed_shape,
-    .buffer_ops = &turbo_vstr_cmeta_buffer_ops
+    .buffer_ops = &salts_vstr_cmeta_buffer_ops
 };
 
 Struct(cbind_buffer_record,
@@ -158,7 +158,7 @@ static void failing_restore(void *object) {
 
 static const cmeta_data_buffer_ops failing_ops = {
     sizeof(cmeta_data_buffer_ops), CMETA_DATA_BUFFER_OPS_ABI_VERSION,
-    &turbo_tstr_cmeta_type, CMETA_DATA_BUFFER_OWNED,
+    &salts_tstr_cmeta_type, CMETA_DATA_BUFFER_OWNED,
     failing_is_zero, failing_assign, failing_restore
 };
 
@@ -188,7 +188,7 @@ spec("CBind buffer preflight") {
   it("rejects malformed and custom adapters before input") {
     const cserde_token token = TOKEN_SLICE(
         CSERDE_STRING, "x", 1u, CSERDE_VIEW_STABLE);
-    cmeta_data_buffer_ops ops = turbo_tstr_cmeta_buffer_ops;
+    cmeta_data_buffer_ops ops = salts_tstr_cmeta_buffer_ops;
     cmeta_data_buffer_shape shape = owned_shape;
     cmeta_data_desc data = owned_string;
     tstr out = NULL;
@@ -200,9 +200,9 @@ spec("CBind buffer preflight") {
                             &source_index), CBIND_INVALID_SHAPE);
     check_equal(source_index, (size_t)0u);
 
-    ops = turbo_tstr_cmeta_buffer_ops;
+    ops = salts_tstr_cmeta_buffer_ops;
     {
-        cmeta_type_desc forged = turbo_tstr_cmeta_type;
+        cmeta_type_desc forged = salts_tstr_cmeta_type;
         forged.align += 1u;
         ops.storage_type = &forged;
         data = owned_string;
@@ -212,7 +212,7 @@ spec("CBind buffer preflight") {
         check_equal(source_index, (size_t)0u);
     }
 
-    ops = turbo_tstr_cmeta_buffer_ops;
+    ops = salts_tstr_cmeta_buffer_ops;
     ops.ownership = CMETA_DATA_BUFFER_CUSTOM;
     shape.ownership = CMETA_DATA_BUFFER_CUSTOM;
     data.shape = &shape;

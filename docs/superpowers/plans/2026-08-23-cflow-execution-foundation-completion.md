@@ -6,7 +6,7 @@
 
 **Architecture:** Treat the current Platform → Concurrency → CFlow → Core implementation as the source of truth. Add behavior-level coverage for the Platform primitives that the design names, add a reusable external installed-package consumer for every exported foundation target, make Linux/Windows CI exercise those boundaries, and update the historical documents with evidence instead of rewriting their original red/green history.
 
-**Tech Stack:** C11, TinyTest, CMake 3.20+, CMake Presets, GitHub Actions, TurboUtils Platform/Concurrency/CMeta/CFlow/STL/Core targets.
+**Tech Stack:** C11, TinyTest, CMake 3.20+, CMake Presets, GitHub Actions, Salts Platform/Concurrency/CMeta/CFlow/STL/Core targets.
 
 **Spec:** `docs/superpowers/specs/2026-08-22-cflow-execution-foundation-design.md`
 
@@ -27,7 +27,7 @@
 - Modify: `platform/tests/platform_thread_test.c`
 
 **Interfaces:**
-- Consumes: `turbo_thread_create`, `turbo_thread_join`, `turbo_thread_destroy`, `turbo_mutex_*`, `turbo_cond_*`, `turbo_rwlock_*`, `turbo_once`, `TURBO_THREAD_LOCAL`, `turbo_thread_yield`, `turbo_sleep_ms`, and `turbo_cpu_count` from `<turbo/thread.h>`.
+- Consumes: `salts_thread_create`, `salts_thread_join`, `salts_thread_destroy`, `salts_mutex_*`, `salts_cond_*`, `salts_rwlock_*`, `salts_once`, `SALTS_THREAD_LOCAL`, `salts_thread_yield`, `salts_sleep_ms`, and `salts_cpu_count` from `<salts/thread.h>`.
 - Produces: focused behavior evidence for the Platform ownership list in the design.
 
 - [x] **Step 1: Add independent fixtures for synchronization behavior**
@@ -36,16 +36,16 @@ Add `stdatomic.h` and small file-local state objects. Use a mutex/condition hand
 
 ```c
 typedef struct thread_gate {
-  turbo_mutex_t mutex;
-  turbo_cond_t changed;
+  salts_mutex_t mutex;
+  salts_cond_t changed;
   int entered;
   int released;
   int completed;
 } thread_gate;
 
 static atomic_int once_count;
-static turbo_once_t once_guard = TURBO_ONCE_INIT;
-static TURBO_THREAD_LOCAL int tls_value;
+static salts_once_t once_guard = SALTS_ONCE_INIT;
+static SALTS_THREAD_LOCAL int tls_value;
 
 static void count_once(void) { atomic_fetch_add(&once_count, 1); }
 ```
@@ -105,7 +105,7 @@ git commit -m "test(platform): complete primitive behavior coverage"
 - Modify: `CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: installed `TurboUtilsConfig.cmake` and imported targets `TurboUtils::Platform`, `TurboUtils::Concurrency`, `TurboUtils::CMeta`, `TurboUtils::CFlow`, `TurboUtils::STL`, and `TurboUtils::Core`.
+- Consumes: installed `SaltsConfig.cmake` and imported targets `Salts::Platform`, `Salts::Concurrency`, `Salts::CMeta`, `Salts::CFlow`, `Salts::CSTL`, and `Salts::Core`.
 - Produces: build target `verify_installed_package`, which installs the current build into `${CMAKE_BINARY_DIR}/package-smoke/install`, configures an external consumer in `${CMAKE_BINARY_DIR}/package-smoke/consumer`, and builds all six consumers.
 
 - [x] **Step 1: Verify the package-smoke target is absent**
@@ -122,37 +122,37 @@ Create `tests/install_consumer/CMakeLists.txt`:
 
 ```cmake
 cmake_minimum_required(VERSION 3.20)
-project(TurboUtilsInstallConsumer LANGUAGES C)
+project(SaltsInstallConsumer LANGUAGES C)
 
-find_package(TurboUtils CONFIG REQUIRED)
+find_package(Salts CONFIG REQUIRED)
 
-function(add_turboutils_consumer name target contract)
+function(add_salts_consumer name target contract)
   add_executable(${name} consumer.c)
   target_compile_features(${name} PRIVATE c_std_11)
   target_compile_definitions(${name} PRIVATE ${contract}=1)
   target_link_libraries(${name} PRIVATE ${target})
 endfunction()
 
-add_turboutils_consumer(consume_platform TurboUtils::Platform CONSUME_PLATFORM)
-add_turboutils_consumer(consume_concurrency TurboUtils::Concurrency CONSUME_CONCURRENCY)
-add_turboutils_consumer(consume_cmeta TurboUtils::CMeta CONSUME_CMETA)
-add_turboutils_consumer(consume_cflow TurboUtils::CFlow CONSUME_CFLOW)
-add_turboutils_consumer(consume_stl TurboUtils::STL CONSUME_STL)
-add_turboutils_consumer(consume_core TurboUtils::Core CONSUME_CORE)
+add_salts_consumer(consume_platform Salts::Platform CONSUME_PLATFORM)
+add_salts_consumer(consume_concurrency Salts::Concurrency CONSUME_CONCURRENCY)
+add_salts_consumer(consume_cmeta Salts::CMeta CONSUME_CMETA)
+add_salts_consumer(consume_cflow Salts::CFlow CONSUME_CFLOW)
+add_salts_consumer(consume_cstl Salts::CSTL CONSUME_CSTL)
+add_salts_consumer(consume_core Salts::Core CONSUME_CORE)
 ```
 
 Create `consumer.c` with mutually exclusive branches. Each branch must call a non-inline symbol when the target provides one:
 
 ```c
 #if defined(CONSUME_PLATFORM)
-#include <turbo/clock.h>
-int main(void) { return turbo_hrtime() == 0u; }
+#include <salts/clock.h>
+int main(void) { return salts_hrtime() == 0u; }
 #elif defined(CONSUME_CONCURRENCY)
-#include <turbo/thread_pool.h>
+#include <salts/thread_pool.h>
 int main(void) {
-  turbo_threadpool_t *pool = turbo_threadpool_create(1);
+  salts_threadpool_t *pool = salts_threadpool_create(1);
   if (!pool) return 1;
-  turbo_threadpool_destroy(pool);
+  salts_threadpool_destroy(pool);
   return 0;
 }
 #elif defined(CONSUME_CMETA)
@@ -166,8 +166,8 @@ int main(void) {
   cflow_clock_destroy(&clock);
   return 0;
 }
-#elif defined(CONSUME_STL)
-#include <turbostl/typed.h>
+#elif defined(CONSUME_CSTL)
+#include <cstl/typed.h>
 int main(void) {
   Vec(int, values);
   if (vec_init(&values, 1u) != STL_OK) return 1;
@@ -176,15 +176,15 @@ int main(void) {
 }
 #elif defined(CONSUME_CORE)
 #include <platform.h>
-#include <turbo_thread.h>
+#include <salts_thread.h>
 int main(void) {
-  turbo_threadpool_t *pool = turbo_threadpool_create(1);
+  salts_threadpool_t *pool = salts_threadpool_create(1);
   if (!pool) return 1;
-  turbo_threadpool_destroy(pool);
-  return turbo_hrtime() == 0u;
+  salts_threadpool_destroy(pool);
+  return salts_hrtime() == 0u;
 }
 #else
-#error "one TurboUtils consumer contract is required"
+#error "one Salts consumer contract is required"
 #endif
 ```
 
@@ -203,7 +203,7 @@ add_custom_target(verify_installed_package
     -DBUILD_CONFIG=$<CONFIG>
     -DBUILD_GENERATOR=${CMAKE_GENERATOR}
     -P ${CMAKE_SOURCE_DIR}/cmake/VerifyInstalledPackage.cmake
-  DEPENDS turbo_platform turbo_concurrency turbo_cmeta turbo_cflow turbo_stl turbo_utils
+  DEPENDS salts_platform salts_concurrency salts_cmeta salts_cflow salts_stl salts
   VERBATIM)
 set_target_properties(verify_installed_package PROPERTIES FOLDER "cmake")
 ```
@@ -254,7 +254,7 @@ This makes changes to the owners under test trigger the workflow.
 Use the same filter in both jobs:
 
 ```text
-^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cflow_|turbostl_|test_execution_compat$)
+^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cflow_|cstl_|test_execution_compat$)
 ```
 
 Keep the full build step unchanged; the filter narrows only execution.

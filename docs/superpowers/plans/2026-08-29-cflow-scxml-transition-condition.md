@@ -6,7 +6,7 @@
 
 **Architecture:** Extend native guard bindings with an optional contextual callback sharing the existing call-scoped active-state query type. Resolve SCXML state names during compilation, emit bounded program-owned guard rows/users, and pass those bindings into the unchanged deterministic selection pipeline.
 
-**Tech Stack:** C11, CMeta descriptors, CFlow Statechart IR/runtime, TurboUtils XML parser, TinyTest, CMake Presets.
+**Tech Stack:** C11, CMeta descriptors, CFlow Statechart IR/runtime, Salts XML parser, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-cflow-scxml-transition-condition-design.md`
 

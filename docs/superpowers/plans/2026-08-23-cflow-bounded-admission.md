@@ -8,7 +8,7 @@
 
 **Status:** Complete. Implemented in commits `b90abda`, `1466b12`, `4d621ab`, and `50169a0`; documented and verified by the closeout commit for this plan.
 
-**Tech Stack:** C11, CMeta interfaces, TurboUtils Platform/Concurrency, TinyTest, CMake Presets.
+**Tech Stack:** C11, CMeta interfaces, Salts Platform/Concurrency, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-23-cflow-execution-model-v2-design.md`
 
@@ -19,7 +19,7 @@
 - Full, closed, invalid, and allocation failure are distinct checked results.
 - No growing allocation occurs after successful ManualExecutor or TimerQueue initialization.
 - No accepted timer task may be dropped when it moves from TimerQueue to WorkerExecutor.
-- Existing thread-pool callers that test nonzero failure remain source-compatible; exact `-1` comparisons migrate to stable Turbo error codes.
+- Existing thread-pool callers that test nonzero failure remain source-compatible; exact `-1` comparisons migrate to stable Salts error codes.
 
 ---
 
@@ -27,23 +27,23 @@
 
 **Files:**
 - Modify: `concurrency/src/thread_pool.c`
-- Modify: `concurrency/include/turbo/thread_pool.h`
+- Modify: `concurrency/include/salts/thread_pool.h`
 - Modify: `concurrency/tests/thread_pool_test.c`
 
 **Interfaces:**
-- Consumes: `TURBO_OK`, `TURBO_EINVAL`, `TURBO_ENOBUFS`, `TURBO_ESHUTDOWN` from `turbo_error.h`.
-- Produces: exact return codes from `turbo_threadpool_submit()` and `turbo_threadpool_try_submit()`.
+- Consumes: `SALTS_OK`, `SALTS_EINVAL`, `SALTS_ENOBUFS`, `SALTS_ESHUTDOWN` from `salts_error.h`.
+- Produces: exact return codes from `salts_threadpool_submit()` and `salts_threadpool_try_submit()`.
 
 - [x] **Step 1: Write failing exact-status tests**
 
-Add cases that assert invalid arguments return `TURBO_EINVAL`, a saturated nonblocking submission returns `TURBO_ENOBUFS`, and a post-shutdown submission returns `TURBO_ESHUTDOWN`. Keep the gated-task fixture so queue occupancy is deterministic.
+Add cases that assert invalid arguments return `SALTS_EINVAL`, a saturated nonblocking submission returns `SALTS_ENOBUFS`, and a post-shutdown submission returns `SALTS_ESHUTDOWN`. Keep the gated-task fixture so queue occupancy is deterministic.
 
 ```c
-check_equal(turbo_threadpool_try_submit(NULL, gated_task, NULL), TURBO_EINVAL);
-check_equal(turbo_threadpool_try_submit(pool, NULL, NULL), TURBO_EINVAL);
-check_equal(turbo_threadpool_try_submit(pool, gated_task, NULL), TURBO_ENOBUFS);
-turbo_threadpool_shutdown(pool);
-check_equal(turbo_threadpool_try_submit(pool, gated_task, NULL), TURBO_ESHUTDOWN);
+check_equal(salts_threadpool_try_submit(NULL, gated_task, NULL), SALTS_EINVAL);
+check_equal(salts_threadpool_try_submit(pool, NULL, NULL), SALTS_EINVAL);
+check_equal(salts_threadpool_try_submit(pool, gated_task, NULL), SALTS_ENOBUFS);
+salts_threadpool_shutdown(pool);
+check_equal(salts_threadpool_try_submit(pool, gated_task, NULL), SALTS_ESHUTDOWN);
 ```
 
 - [x] **Step 2: Run the focused test and confirm RED**
@@ -52,7 +52,7 @@ Run the configured Windows Release target and `ctest --preset win-release-user -
 
 - [x] **Step 3: Return stable errors from the existing state machine**
 
-Include `<turbo_error.h>`. Validate arguments first, check `accepting` before claiming queue depth, return `TURBO_ENOBUFS` only from nonblocking full admission, and return `TURBO_ESHUTDOWN` when shutdown wakes a blocked submitter. Do not change the claim/publish/release sequence or accepted-task counters.
+Include `<salts_error.h>`. Validate arguments first, check `accepting` before claiming queue depth, return `SALTS_ENOBUFS` only from nonblocking full admission, and return `SALTS_ESHUTDOWN` when shutdown wakes a blocked submitter. Do not change the claim/publish/release sequence or accepted-task counters.
 
 - [x] **Step 4: Run Concurrency owner tests**
 
@@ -103,7 +103,7 @@ Build `cflow_execution_test` and `cflow_scheduler_compat_test`; run their CTest 
 
 - [x] **Step 3: Add the public enum and checked methods**
 
-Define the types exactly as the design spec, including moving the sole `cflow_task_id` typedef into `admission.h`. Extend built-in Executor/Scheduler interface operation tables with checked calls. Implement compatibility `post` as `try_post == ACCEPTED` and compatibility `post_after` as the checked result's task id. Map Turbo errors without collapsing `ENOBUFS` and `ESHUTDOWN`.
+Define the types exactly as the design spec, including moving the sole `cflow_task_id` typedef into `admission.h`. Extend built-in Executor/Scheduler interface operation tables with checked calls. Implement compatibility `post` as `try_post == ACCEPTED` and compatibility `post_after` as the checked result's task id. Map Salts errors without collapsing `ENOBUFS` and `ESHUTDOWN`.
 
 - [x] **Step 4: Verify source compatibility**
 
@@ -143,7 +143,7 @@ At initialization, reject zero and `capacity > SIZE_MAX / sizeof(element)`, allo
 
 - [x] **Step 4: Wire named defaults and WorkerExecutor capacity**
 
-Existing initializers delegate with `CFLOW_EXECUTOR_DEFAULT_CAPACITY` or `CFLOW_TIMER_DEFAULT_CAPACITY`. Worker/Serial initializers call `turbo_threadpool_create_with_config()` using the requested queue capacity.
+Existing initializers delegate with `CFLOW_EXECUTOR_DEFAULT_CAPACITY` or `CFLOW_TIMER_DEFAULT_CAPACITY`. Worker/Serial initializers call `salts_threadpool_create_with_config()` using the requested queue capacity.
 
 - [x] **Step 5: Run CFlow owner tests**
 
@@ -198,7 +198,7 @@ fix(cflow): preserve timers across bounded handoff
 
 - [x] **Step 1: Document migration and resource budget**
 
-Record the `-1` to Turbo error-code migration, default capacities, per-entry byte formula, backpressure policy, shutdown states, and checked/compatibility API mapping.
+Record the `-1` to Salts error-code migration, default capacities, per-entry byte formula, backpressure policy, shutdown states, and checked/compatibility API mapping.
 
 - [x] **Step 2: Run verification in increasing scope**
 

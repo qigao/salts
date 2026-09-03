@@ -22,9 +22,9 @@ int main(void)
 
     rc = toon_json_from_value(json, &toon);
     json_free(json);
-    if (rc != TURBO_OK) {
+    if (rc != SALTS_OK) {
         fprintf(stderr, "JSON to TOON conversion failed: %s\n",
-            turbo_strerror(rc));
+            salts_strerror(rc));
         return 1;
     }
 
@@ -33,9 +33,9 @@ int main(void)
 
     rc = toon_json_to_value(toon, &roundtrip);
     TOONc_free(toon);
-    if (rc != TURBO_OK) {
+    if (rc != SALTS_OK) {
         fprintf(stderr, "TOON to JSON conversion failed: %s\n",
-            turbo_strerror(rc));
+            salts_strerror(rc));
         return 1;
     }
 

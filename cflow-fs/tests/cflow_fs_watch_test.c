@@ -1,7 +1,7 @@
 #include <cflow/fs_watch.h>
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
-#include <turbo_fs.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
+#include <salts_fs.h>
 #include <tinytest.h>
 
 #include <stdlib.h>
@@ -56,12 +56,12 @@ static int watch_drive_until(cflow_fs_watch *watch, watch_probe *probe,
     while (probe->count < minimum && attempts++ < 5000u) {
         size_t delivered = 0u;
         int status = cflow_fs_watch_run_ready(watch, 8u, &delivered);
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             return status;
         if (delivered == 0u)
-            turbo_sleep_ms(1u);
+            salts_sleep_ms(1u);
     }
-    return probe->count >= minimum ? TURBO_OK : TURBO_ETIMEDOUT;
+    return probe->count >= minimum ? SALTS_OK : SALTS_ETIMEDOUT;
 }
 
 static bool probe_saw(const watch_probe *probe,
@@ -90,15 +90,15 @@ static size_t probe_count_kind(const watch_probe *probe,
 static void watch_close_destroy(cflow_fs_watch *watch) {
     size_t attempts = 0u;
     int status = cflow_fs_watch_close(watch);
-    check_true(status == TURBO_OK || status == TURBO_EALREADY);
+    check_true(status == SALTS_OK || status == SALTS_EALREADY);
     while (!cflow_fs_watch_is_quiescent(watch) && attempts++ < 5000u) {
         size_t delivered = 0u;
-        check_equal(cflow_fs_watch_run_ready(watch, 8u, &delivered), TURBO_OK);
+        check_equal(cflow_fs_watch_run_ready(watch, 8u, &delivered), SALTS_OK);
         if (delivered == 0u)
-            turbo_sleep_ms(1u);
+            salts_sleep_ms(1u);
     }
     check_true(cflow_fs_watch_is_quiescent(watch));
-    check_equal(cflow_fs_watch_destroy(watch), TURBO_OK);
+    check_equal(cflow_fs_watch_destroy(watch), SALTS_OK);
     check_null(watch->impl);
 }
 
@@ -160,19 +160,19 @@ spec("CFlow filesystem watch") {
         cflow_fs_watch_config config = watch_config(&probe, 8u);
 
         check_not_null(root);
-        check_equal(turbo_fs_path_join(first, sizeof(first), root,
-                                       "first.txt"), TURBO_OK);
-        check_equal(turbo_fs_path_join(second, sizeof(second), root,
-                                       "second.txt"), TURBO_OK);
-        check_equal(cflow_fs_watch_open(NULL, root, &config), TURBO_EINVAL);
-        check_equal(cflow_fs_watch_open(&watch, root, &config), TURBO_OK);
-        check_equal(tt_write_file(first, "value", 5u), TURBO_OK);
-        check_equal(watch_drive_until(&watch, &probe, 1u), TURBO_OK);
+        check_equal(salts_fs_path_join(first, sizeof(first), root,
+                                       "first.txt"), SALTS_OK);
+        check_equal(salts_fs_path_join(second, sizeof(second), root,
+                                       "second.txt"), SALTS_OK);
+        check_equal(cflow_fs_watch_open(NULL, root, &config), SALTS_EINVAL);
+        check_equal(cflow_fs_watch_open(&watch, root, &config), SALTS_OK);
+        check_equal(tt_write_file(first, "value", 5u), SALTS_OK);
+        check_equal(watch_drive_until(&watch, &probe, 1u), SALTS_OK);
         check_true(probe_saw(&probe, CFLOW_FS_WATCH_CREATED, "first.txt") ||
                    probe_saw(&probe, CFLOW_FS_WATCH_MODIFIED, "first.txt"));
 
-        check_equal(turbo_fs_rename(first, second), TURBO_OK);
-        check_equal(watch_drive_until(&watch, &probe, 2u), TURBO_OK);
+        check_equal(salts_fs_rename(first, second), SALTS_OK);
+        check_equal(watch_drive_until(&watch, &probe, 2u), SALTS_OK);
 #if defined(_WIN32) || defined(__linux__)
         {
             size_t attempts = 0u;
@@ -180,9 +180,9 @@ spec("CFlow filesystem watch") {
                    attempts++ < 5000u) {
                 size_t delivered = 0u;
                 check_equal(cflow_fs_watch_run_ready(
-                                &watch, 8u, &delivered), TURBO_OK);
+                                &watch, 8u, &delivered), SALTS_OK);
                 if (delivered == 0u)
-                    turbo_sleep_ms(1u);
+                    salts_sleep_ms(1u);
             }
             check_true(probe_saw(&probe, CFLOW_FS_WATCH_RENAMED, "second.txt"));
         }
@@ -194,16 +194,16 @@ spec("CFlow filesystem watch") {
                    attempts++ < 5000u) {
                 size_t delivered = 0u;
                 check_equal(cflow_fs_watch_run_ready(
-                                &watch, 8u, &delivered), TURBO_OK);
+                                &watch, 8u, &delivered), SALTS_OK);
                 if (delivered == 0u)
-                    turbo_sleep_ms(1u);
+                    salts_sleep_ms(1u);
             }
             check_true(probe_saw(&probe,
                                  CFLOW_FS_WATCH_RESCAN_REQUIRED, NULL));
-            check_equal(cflow_fs_watch_acknowledge_rescan(&watch), TURBO_OK);
+            check_equal(cflow_fs_watch_acknowledge_rescan(&watch), SALTS_OK);
         }
 #endif
-        check_equal(tt_remove_file(second), TURBO_OK);
+        check_equal(tt_remove_file(second), SALTS_OK);
         {
             size_t attempts = 0u;
 #if defined(__APPLE__)
@@ -219,9 +219,9 @@ spec("CFlow filesystem watch") {
 #endif
                 size_t delivered = 0u;
                 check_equal(cflow_fs_watch_run_ready(
-                                &watch, 8u, &delivered), TURBO_OK);
+                                &watch, 8u, &delivered), SALTS_OK);
                 if (delivered == 0u)
-                    turbo_sleep_ms(1u);
+                    salts_sleep_ms(1u);
             }
 #if defined(__APPLE__)
             check_true(probe_saw(&probe, CFLOW_FS_WATCH_REMOVED, "second.txt") ||
@@ -230,7 +230,7 @@ spec("CFlow filesystem watch") {
                            rescans_before_remove);
             if (probe_count_kind(&probe, CFLOW_FS_WATCH_RESCAN_REQUIRED) >
                 rescans_before_remove) {
-                check_equal(cflow_fs_watch_acknowledge_rescan(&watch), TURBO_OK);
+                check_equal(cflow_fs_watch_acknowledge_rescan(&watch), SALTS_OK);
             }
 #else
             check_true(probe_saw(&probe, CFLOW_FS_WATCH_REMOVED, "second.txt"));
@@ -238,7 +238,7 @@ spec("CFlow filesystem watch") {
         }
 
         watch_close_destroy(&watch);
-        check_equal(tt_remove_tree(root), TURBO_OK);
+        check_equal(tt_remove_tree(root), SALTS_OK);
         free(root);
     }
 
@@ -254,49 +254,49 @@ spec("CFlow filesystem watch") {
         size_t attempts = 0u;
 
         check_not_null(root);
-        check_equal(turbo_fs_path_join(first, sizeof(first), root,
-                                       "one.txt"), TURBO_OK);
-        check_equal(turbo_fs_path_join(second, sizeof(second), root,
-                                       "two.txt"), TURBO_OK);
-        check_equal(turbo_fs_path_join(during_rescan, sizeof(during_rescan),
-                                       root, "during-rescan.txt"), TURBO_OK);
-        check_equal(cflow_fs_watch_open(&watch, root, &config), TURBO_OK);
-        check_equal(tt_write_file(first, "1", 1u), TURBO_OK);
-        check_equal(tt_write_file(second, "2", 1u), TURBO_OK);
+        check_equal(salts_fs_path_join(first, sizeof(first), root,
+                                       "one.txt"), SALTS_OK);
+        check_equal(salts_fs_path_join(second, sizeof(second), root,
+                                       "two.txt"), SALTS_OK);
+        check_equal(salts_fs_path_join(during_rescan, sizeof(during_rescan),
+                                       root, "during-rescan.txt"), SALTS_OK);
+        check_equal(cflow_fs_watch_open(&watch, root, &config), SALTS_OK);
+        check_equal(tt_write_file(first, "1", 1u), SALTS_OK);
+        check_equal(tt_write_file(second, "2", 1u), SALTS_OK);
         while (attempts++ < 5000u) {
             check_true(cflow_fs_watch_get_stats(&watch, &stats));
             if (stats.awaiting_rescan)
                 break;
-            turbo_sleep_ms(1u);
+            salts_sleep_ms(1u);
         }
         check_true(stats.awaiting_rescan);
-        check_equal(watch_drive_until(&watch, &probe, 2u), TURBO_OK);
+        check_equal(watch_drive_until(&watch, &probe, 2u), SALTS_OK);
         check_true(probe_saw(&probe, CFLOW_FS_WATCH_RESCAN_REQUIRED, NULL));
         check_true(cflow_fs_watch_get_stats(&watch, &stats));
         {
             const size_t suppressed_at_delivery = stats.suppressed;
             attempts = 0u;
-            check_equal(tt_write_file(during_rescan, "3", 1u), TURBO_OK);
+            check_equal(tt_write_file(during_rescan, "3", 1u), SALTS_OK);
             while (attempts++ < 5000u) {
                 check_true(cflow_fs_watch_get_stats(&watch, &stats));
                 if (stats.suppressed > suppressed_at_delivery)
                     break;
-                turbo_sleep_ms(1u);
+                salts_sleep_ms(1u);
             }
             check_true(stats.suppressed > suppressed_at_delivery);
         }
-        check_equal(cflow_fs_watch_acknowledge_rescan(&watch), TURBO_OK);
+        check_equal(cflow_fs_watch_acknowledge_rescan(&watch), SALTS_OK);
         check_true(cflow_fs_watch_get_stats(&watch, &stats));
         check_true(stats.awaiting_rescan);
-        check_equal(watch_drive_until(&watch, &probe, 3u), TURBO_OK);
+        check_equal(watch_drive_until(&watch, &probe, 3u), SALTS_OK);
         check_equal(probe_count_kind(&probe,
                         CFLOW_FS_WATCH_RESCAN_REQUIRED), (size_t)2u);
-        check_equal(cflow_fs_watch_acknowledge_rescan(&watch), TURBO_OK);
+        check_equal(cflow_fs_watch_acknowledge_rescan(&watch), SALTS_OK);
         check_true(cflow_fs_watch_get_stats(&watch, &stats));
         check_false(stats.awaiting_rescan);
 
         watch_close_destroy(&watch);
-        check_equal(tt_remove_tree(root), TURBO_OK);
+        check_equal(tt_remove_tree(root), SALTS_OK);
         free(root);
     }
 
@@ -307,9 +307,9 @@ spec("CFlow filesystem watch") {
         cflow_fs_watch_config config = watch_config(&probe, 8u);
 
         check_not_null(root);
-        check_equal(cflow_fs_watch_open(&watch, root, &config), TURBO_OK);
-        check_equal(tt_remove_tree(root), TURBO_OK);
-        check_equal(watch_drive_until(&watch, &probe, 1u), TURBO_OK);
+        check_equal(cflow_fs_watch_open(&watch, root, &config), SALTS_OK);
+        check_equal(tt_remove_tree(root), SALTS_OK);
+        check_equal(watch_drive_until(&watch, &probe, 1u), SALTS_OK);
         check_true(probe_saw(&probe, CFLOW_FS_WATCH_ROOT_CHANGED, NULL));
 
         watch_close_destroy(&watch);
@@ -324,9 +324,9 @@ spec("CFlow filesystem watch") {
         cflow_fs_watch_config config = watch_config(&probe, 1u);
 
         check_not_null(root);
-        check_equal(cflow_fs_watch_open(&watch, root, &config), TURBO_ENOTSUP);
+        check_equal(cflow_fs_watch_open(&watch, root, &config), SALTS_ENOTSUP);
         check_null(watch.impl);
-        check_equal(tt_remove_tree(root), TURBO_OK);
+        check_equal(tt_remove_tree(root), SALTS_OK);
         free(root);
     }
 #endif
@@ -346,52 +346,52 @@ spec("CFlow filesystem watch") {
         config.recursive = true;
         config.watch_capacity = 8u;
         check_not_null(root);
-        check_equal(turbo_fs_path_join(nested, sizeof(nested), root,
-                                       "nested"), TURBO_OK);
-        check_equal(turbo_fs_path_join(child, sizeof(child), nested,
-                                       "child.txt"), TURBO_OK);
-        check_equal(turbo_fs_path_join(dynamic, sizeof(dynamic), root,
-                                       "dynamic"), TURBO_OK);
-        check_equal(turbo_fs_path_join(dynamic_child, sizeof(dynamic_child),
-                                       dynamic, "later.txt"), TURBO_OK);
-        check_equal(tt_make_dir(nested), TURBO_OK);
-        check_equal(cflow_fs_watch_open(&watch, root, &config), TURBO_OK);
-        check_equal(tt_write_file(child, "x", 1u), TURBO_OK);
+        check_equal(salts_fs_path_join(nested, sizeof(nested), root,
+                                       "nested"), SALTS_OK);
+        check_equal(salts_fs_path_join(child, sizeof(child), nested,
+                                       "child.txt"), SALTS_OK);
+        check_equal(salts_fs_path_join(dynamic, sizeof(dynamic), root,
+                                       "dynamic"), SALTS_OK);
+        check_equal(salts_fs_path_join(dynamic_child, sizeof(dynamic_child),
+                                       dynamic, "later.txt"), SALTS_OK);
+        check_equal(tt_make_dir(nested), SALTS_OK);
+        check_equal(cflow_fs_watch_open(&watch, root, &config), SALTS_OK);
+        check_equal(tt_write_file(child, "x", 1u), SALTS_OK);
         while (!probe_saw(&probe, CFLOW_FS_WATCH_CREATED,
                           "nested/child.txt") && attempts++ < 5000u) {
             size_t delivered = 0u;
             check_equal(cflow_fs_watch_run_ready(
-                            &watch, 8u, &delivered), TURBO_OK);
+                            &watch, 8u, &delivered), SALTS_OK);
             if (delivered == 0u)
-                turbo_sleep_ms(1u);
+                salts_sleep_ms(1u);
         }
         check_true(probe_saw(&probe, CFLOW_FS_WATCH_CREATED,
                              "nested/child.txt"));
-        check_equal(tt_make_dir(dynamic), TURBO_OK);
+        check_equal(tt_make_dir(dynamic), SALTS_OK);
         attempts = 0u;
         while (!probe_saw(&probe, CFLOW_FS_WATCH_CREATED, "dynamic") &&
                attempts++ < 5000u) {
             size_t delivered = 0u;
             check_equal(cflow_fs_watch_run_ready(
-                            &watch, 8u, &delivered), TURBO_OK);
+                            &watch, 8u, &delivered), SALTS_OK);
             if (delivered == 0u)
-                turbo_sleep_ms(1u);
+                salts_sleep_ms(1u);
         }
         check_true(probe_saw(&probe, CFLOW_FS_WATCH_CREATED, "dynamic"));
-        check_equal(tt_write_file(dynamic_child, "y", 1u), TURBO_OK);
+        check_equal(tt_write_file(dynamic_child, "y", 1u), SALTS_OK);
         attempts = 0u;
         while (!probe_saw(&probe, CFLOW_FS_WATCH_CREATED,
                           "dynamic/later.txt") && attempts++ < 5000u) {
             size_t delivered = 0u;
             check_equal(cflow_fs_watch_run_ready(
-                            &watch, 8u, &delivered), TURBO_OK);
+                            &watch, 8u, &delivered), SALTS_OK);
             if (delivered == 0u)
-                turbo_sleep_ms(1u);
+                salts_sleep_ms(1u);
         }
         check_true(probe_saw(&probe, CFLOW_FS_WATCH_CREATED,
                              "dynamic/later.txt"));
         watch_close_destroy(&watch);
-        check_equal(tt_remove_tree(root), TURBO_OK);
+        check_equal(tt_remove_tree(root), SALTS_OK);
         free(root);
     }
 #endif

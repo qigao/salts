@@ -4,9 +4,9 @@
 
 **Goal:** Compile bounded SCXML executable blocks containing `raise` into native CFlow Statechart actions and provide borrowed runtime bindings that execute the resulting internal Events.
 
-**Architecture:** `TurboUtils::CFlowScxml` retains immutable block bytecode and binding rows inside the owning program; the native Statechart keeps only typed executable declarations and ordered action references. One frontend callback interprets a block on the existing single-owner Statechart runtime and stages raised Events through the native transactional queue API.
+**Architecture:** `Salts::CFlowScxml` retains immutable block bytecode and binding rows inside the owning program; the native Statechart keeps only typed executable declarations and ordered action references. One frontend callback interprets a block on the existing single-owner Statechart runtime and stages raised Events through the native transactional queue API.
 
-**Tech Stack:** C11, TurboUtils XML parser, CMeta type/effect descriptors, CFlow Statechart IR/runtime, TinyTest, CMake Presets.
+**Tech Stack:** C11, Salts XML parser, CMeta type/effect descriptors, CFlow Statechart IR/runtime, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-cflow-scxml-phase3-raise-design.md`
 
@@ -14,7 +14,7 @@
 
 - Preserve the null data model and its one-byte `cmeta_type_bool` false witness.
 - Do not expose system variables because W3C SCXML 1.0 makes them inaccessible in the null data model.
-- Keep `TurboUtils::CFlow` independent of XML and SCXML; all new behavior remains in optional `TurboUtils::CFlowScxml`.
+- Keep `Salts::CFlow` independent of XML and SCXML; all new behavior remains in optional `Salts::CFlowScxml`.
 - Preserve transactional compilation, deterministic document order, exact source diagnostics, bounded allocation, and fail-fast unsupported-feature behavior.
 - The program must outlive every native runtime instance using its borrowed executable binding users.
 - Do not claim completion of a Phase 3 checkbox from this increment alone.
@@ -235,7 +235,7 @@ git commit -m "test: cover SCXML raise execution semantics"
 - Modify: `docs/superpowers/specs/2026-08-29-cflow-scxml-phase3-raise-design.md`
 
 **Interfaces:**
-- Consumes: installed `TurboUtils::CFlowScxml` header/target and Task 1 binding accessor.
+- Consumes: installed `Salts::CFlowScxml` header/target and Task 1 binding accessor.
 - Produces: documented lifecycle example and installed-consumer compilation of the new public API.
 
 - [x] **Step 1: Add installed-consumer compilation coverage**

@@ -7,7 +7,7 @@
 ## Objective
 
 Add the D3 decode slice for semantic `STRING` and `BYTES` values without
-coupling `TurboUtils::CBind` to a concrete string or byte-buffer layout.
+coupling `Salts::CBind` to a concrete string or byte-buffer layout.
 Support root values and struct fields with explicit owned or borrowed storage,
 bounded payload size, and whole-root transactional rollback.
 
@@ -18,7 +18,7 @@ This slice includes:
 - root `CMETA_DATA_STRING` and `CMETA_DATA_BYTES` values;
 - string/bytes fields in reflected structs;
 - generic, versioned CMeta buffer storage adapters;
-- standard TurboUtils adapters for unique-owned `tstr` and borrowed `vstr`;
+- standard Salts adapters for unique-owned `tstr` and borrowed `vstr`;
 - a per-value `max_buffer_bytes` CBind limit;
 - exact token-kind, source-lifetime, target-error, and rollback behavior.
 
@@ -39,7 +39,7 @@ owner.
 
 `CMeta` describes semantic data and storage types but currently has no storage
 operation contract for string or byte objects. `CBind` links only CMeta and
-CSerde, so it cannot depend on `tstr`, `vstr`, or TurboUtils Core.
+CSerde, so it cannot depend on `tstr`, `vstr`, or Salts Core.
 
 `tstr` is a unique-owned, binary-safe byte string. `vstr` is a borrowed
 `{data,len}` view and never extends its source lifetime.
@@ -61,7 +61,7 @@ CMeta buffer adapter facade
 ```
 
 CMeta owns the adapter ABI and checked facade. CBind owns format-specific
-reader rules. Core owns the concrete TurboUtils storage providers. This keeps
+reader rules. Core owns the concrete Salts storage providers. This keeps
 the dependency direction unchanged:
 
 ```text
@@ -124,15 +124,15 @@ provide no internal synchronization.
 The adapter is format-neutral. It does not mention CSerde lifetime or text
 encoding.
 
-## Standard TurboUtils Providers
+## Standard Salts Providers
 
-Add `turbo_cmeta_data.h` with header-local immutable descriptors and operation
+Add `salts_cmeta_data.h` with header-local immutable descriptors and operation
 tables:
 
-- `turbo_tstr_cmeta_type` / `turbo_tstr_cmeta_buffer_ops`;
-- `turbo_vstr_cmeta_type` / `turbo_vstr_cmeta_buffer_ops`.
+- `salts_tstr_cmeta_type` / `salts_tstr_cmeta_buffer_ops`;
+- `salts_vstr_cmeta_type` / `salts_vstr_cmeta_buffer_ops`.
 
-The stable type identities are `turbo.tstr` and `turbo.vstr`. Header-local
+The stable type identities are `salts.tstr` and `salts.vstr`. Header-local
 metadata follows CMeta's existing multi-translation-unit model and remains
 usable in static C initializers, including when Core is a Windows DLL. Type
 identity is semantic; consumers must not compare descriptor addresses across

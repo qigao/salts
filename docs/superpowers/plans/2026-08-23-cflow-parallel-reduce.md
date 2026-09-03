@@ -6,7 +6,7 @@
 
 **Architecture:** Reuse the sequential Plan prefix evaluator, split its owned values into contiguous chunks, submit one reduction task per chunk, and merge partials by chunk index. A per-evaluation latch owns completion; submission or callback failure aborts transactionally without serial fallback.
 
-**Tech Stack:** C11, CMeta callable metadata, CFlow Plan IR, TurboUtils Executor, TinyTest benchmarks.
+**Tech Stack:** C11, CMeta callable metadata, CFlow Plan IR, Salts Executor, TinyTest benchmarks.
 
 **Spec:** `docs/superpowers/specs/2026-08-23-cflow-execution-model-v2-design.md`
 

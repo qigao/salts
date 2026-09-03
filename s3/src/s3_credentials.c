@@ -8,10 +8,10 @@ static int s3_static_fetch(void *user, s3_credentials *out_credentials) {
   if (credentials == NULL || out_credentials == NULL || credentials->access_key == NULL ||
       credentials->secret_key == NULL || credentials->access_key[0] == '\0' ||
       credentials->secret_key[0] == '\0')
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   *out_credentials = (s3_credentials){credentials->access_key, credentials->secret_key,
                                       credentials->session_token};
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int s3_environment_fetch(void *user, s3_credentials *out_credentials) {
@@ -19,13 +19,13 @@ static int s3_environment_fetch(void *user, s3_credentials *out_credentials) {
   const char *secret_key;
   (void)user;
 
-  if (out_credentials == NULL) return TURBO_EINVAL;
+  if (out_credentials == NULL) return SALTS_EINVAL;
   access_key = getenv("AWS_ACCESS_KEY_ID");
   secret_key = getenv("AWS_SECRET_ACCESS_KEY");
   if (access_key == NULL || secret_key == NULL || access_key[0] == '\0' || secret_key[0] == '\0')
-    return TURBO_ENOENT;
+    return SALTS_ENOENT;
   *out_credentials = (s3_credentials){access_key, secret_key, getenv("AWS_SESSION_TOKEN")};
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 s3_credentials_provider s3_credentials_provider_static(const s3_static_credentials *credentials) {

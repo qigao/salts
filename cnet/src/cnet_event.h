@@ -65,10 +65,10 @@ int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config
 bool cnet_event_queue_get_config(const cnet_event_queue *queue,
                                  cnet_event_queue_config *out_config);
 
-/** MPSC, nonblocking; data and total capacity exhaustion return `TURBO_ENOBUFS`. */
+/** MPSC, nonblocking; data and total capacity exhaustion return `SALTS_ENOBUFS`. */
 int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event);
 
-/** Single-consumer take; empty-open returns `TURBO_ETIMEDOUT`. */
+/** Single-consumer take; empty-open returns `SALTS_ETIMEDOUT`. */
 int cnet_event_queue_take(cnet_event_queue *queue, cnet_event_view *out_view);
 /** Sleeps without polling until an event arrives or `keep_waiting` becomes false and wakes. */
 int cnet_event_queue_take_wait(cnet_event_queue *queue, cnet_event_view *out_view,

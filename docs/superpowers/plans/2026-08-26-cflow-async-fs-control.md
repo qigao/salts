@@ -3,10 +3,10 @@
 > **Execution:** Use `superpowers:executing-plans` task-by-task and preserve a
 > failing-test observation before each implementation increment.
 
-**Goal:** Deliver issue #112 as an installable `TurboUtils::CFlowFS` target.
+**Goal:** Deliver issue #112 as an installable `Salts::CFlowFS` target.
 
 **Architecture:** Fixed operation slots copy paths on admission, run existing
-`turbo_fs` calls through a bounded CFlow Worker Executor, and deliver terminal
+`salts_fs` calls through a bounded CFlow Worker Executor, and deliver terminal
 callbacks through one explicit driver.
 
 **Spec:** `docs/superpowers/specs/2026-08-26-cflow-async-fs-control-design.md`
@@ -42,7 +42,7 @@ callbacks through one explicit driver.
   overflow, mkdir/rmdir, rename replacement, unlink, missing paths, and reuse.
 - [x] Implement directory enumeration into caller-provided bounded storage and
   commit caller counts only after a complete fit.
-- [x] Implement mutation operations by delegating to existing `turbo_fs` APIs.
+- [x] Implement mutation operations by delegating to existing `salts_fs` APIs.
 - [x] Run focused and adjacent Core filesystem tests GREEN.
 
 ### Task 4: Documentation and verification

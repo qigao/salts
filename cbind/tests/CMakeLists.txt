@@ -1,59 +1,59 @@
 cmake_add_test(cbind_scalar_decode_test
   SOURCES cbind_scalar_decode_test.c
-  LIBS Rocida::CBind cserde_recording_support Rocida::TinyTest
+  LIBS Salts::CBind cserde_recording_support Salts::TinyTest
   FOLDER "cbind/tests")
 
 cmake_add_test(cbind_struct_decode_test
   SOURCES cbind_struct_decode_test.c
-  LIBS Rocida::CBind cserde_recording_support Rocida::TinyTest
+  LIBS Salts::CBind cserde_recording_support Salts::TinyTest
   FOLDER "cbind/tests")
 
 cmake_add_test(cbind_struct_runtime_test
   SOURCES cbind_struct_runtime_test.c
-  LIBS Rocida::CBind cserde_recording_support Rocida::TinyTest
+  LIBS Salts::CBind cserde_recording_support Salts::TinyTest
   FOLDER "cbind/tests")
 
 cmake_add_test(cbind_transaction_test
   SOURCES cbind_transaction_test.c
-  LIBS Rocida::CBind cserde_recording_support Rocida::TinyTest
+  LIBS Salts::CBind cserde_recording_support Salts::TinyTest
   FOLDER "cbind/tests")
 
 cmake_add_test(cbind_preflight_order_test
   SOURCES cbind_preflight_order_test.c
-  LIBS Rocida::CBind cserde_recording_support Rocida::TinyTest
+  LIBS Salts::CBind cserde_recording_support Salts::TinyTest
   FOLDER "cbind/tests")
 
 cmake_add_test(cbind_error_attribution_test
   SOURCES cbind_error_attribution_test.c
-  LIBS Rocida::CBind cserde_recording_support Rocida::TinyTest
+  LIBS Salts::CBind cserde_recording_support Salts::TinyTest
   FOLDER "cbind/tests")
 
 cmake_add_test(cbind_header_cpp_test
   SOURCES cbind_header_cpp_test.cpp
-  LIBS Rocida::CBind cserde_recording_support Rocida::TinyTest
+  LIBS Salts::CBind cserde_recording_support Salts::TinyTest
   FOLDER "cbind/tests")
 
 cmake_add_test(cbind_container_decode_test
   SOURCES cbind_container_decode_test.c
-  LIBS Rocida::CBind Rocida::STL cserde_recording_support
-       Rocida::TinyTest
+  LIBS Salts::CBind Salts::CSTL cserde_recording_support
+       Salts::TinyTest
   FOLDER "cbind/tests")
 
 cmake_add_test(cbind_buffer_decode_test
   SOURCES cbind_buffer_decode_test.c
-  LIBS Rocida::CBind Rocida::Core cserde_recording_support
-       Rocida::TinyTest
+  LIBS Salts::CBind Salts::Core cserde_recording_support
+       Salts::TinyTest
   FOLDER "cbind/tests")
 
 cmake_add_test(cbind_enum_decode_test
   SOURCES cbind_enum_decode_test.c
-  LIBS Rocida::CBind cserde_recording_support Rocida::TinyTest
+  LIBS Salts::CBind cserde_recording_support Salts::TinyTest
   FOLDER "cbind/tests")
 
 cmake_add_test(cbind_variant_decode_test
   SOURCES cbind_variant_decode_test.c
-  LIBS Rocida::CBind Rocida::Core Rocida::STL cserde_recording_support
-       Rocida::TinyTest
+  LIBS Salts::CBind Salts::Core Salts::CSTL cserde_recording_support
+       Salts::TinyTest
   FOLDER "cbind/tests")
 
 set_target_properties(

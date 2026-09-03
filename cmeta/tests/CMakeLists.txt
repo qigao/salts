@@ -2,67 +2,67 @@
 
 cmake_add_test(cmeta_core_test
   SOURCES cmeta_core_test.c cmeta_traits_peer.c
-  LIBS Rocida::CMeta Rocida::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_type_identity_test
   SOURCES cmeta_type_identity_test.c cmeta_type_identity_peer.c
-  LIBS Rocida::CMeta Rocida::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_declared_type_test
   SOURCES cmeta_declared_type_test.c
-  LIBS Rocida::CMeta Rocida::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_container_type_test
   SOURCES cmeta_container_type_test.c
-  LIBS Rocida::CMeta Rocida::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_data_test
   SOURCES cmeta_data_test.c
-  LIBS Rocida::CMeta Rocida::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_header_cpp_test
   SOURCES cmeta_header_cpp_test.cpp
-  LIBS Rocida::CMeta Rocida::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_meta_header_test
   SOURCES cmeta_meta_header_test.c
-  LIBS Rocida::CMeta Rocida::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_language_surface_test
   SOURCES cmeta_language_surface_test.c
-  LIBS Rocida::CMeta
+  LIBS Salts::CMeta
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_collector_test
   SOURCES cmeta_collector_test.c
-  LIBS Rocida::CMeta Rocida::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_signature_manifest_test
   SOURCES cmeta_signature_manifest_test.c
-  LIBS Rocida::CMeta Rocida::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_compute_test
   SOURCES cmeta_compute_test.c
-  LIBS Rocida::CMeta Rocida::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_infer_test
   SOURCES cmeta_infer_test.c
-  LIBS Rocida::CMeta Rocida::TinyTest
+  LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
 function(cmeta_add_compile_failure_test target_name source expected_diagnostic)
   add_executable(${target_name} EXCLUDE_FROM_ALL ${source})
-  target_link_libraries(${target_name} PRIVATE Rocida::CMeta)
+  target_link_libraries(${target_name} PRIVATE Salts::CMeta)
   set_target_properties(${target_name} PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON

@@ -1,5 +1,5 @@
 /*
- * Rocida MPMC bucket-priority queue protocol model.
+ * Salts MPMC bucket-priority queue protocol model.
  *
  * Scope:
  *   - four independent priority buckets with a small hard capacity

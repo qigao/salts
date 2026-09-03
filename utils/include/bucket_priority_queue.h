@@ -1,5 +1,5 @@
-#ifndef ROCIDA_BUCKET_PRIORITY_QUEUE_H
-#define ROCIDA_BUCKET_PRIORITY_QUEUE_H
+#ifndef SALTS_BUCKET_PRIORITY_QUEUE_H
+#define SALTS_BUCKET_PRIORITY_QUEUE_H
 
 #include "platform.h"
 #include "ring_buffer.h"
@@ -41,21 +41,21 @@ typedef struct {
  * `capacity_per_bucket` is the initial entry capacity for each priority.
  * 0 means lazy allocation on first push.
  */
-TURBO_C_API bool bucket_priority_queue_init(bucket_priority_queue_t *queue,
+SALTS_C_API bool bucket_priority_queue_init(bucket_priority_queue_t *queue,
                                           size_t capacity_per_bucket);
 
 /* Releases all memory owned by queue. Safe to call on zero-initialized queue. */
-TURBO_C_API void bucket_priority_queue_destroy(bucket_priority_queue_t *queue);
+SALTS_C_API void bucket_priority_queue_destroy(bucket_priority_queue_t *queue);
 
 /* Removes all items but keeps allocated memory. */
-TURBO_C_API void bucket_priority_queue_clear(bucket_priority_queue_t *queue);
+SALTS_C_API void bucket_priority_queue_clear(bucket_priority_queue_t *queue);
 
 /* Ensures each bucket has at least `capacity_per_bucket` entries of capacity. */
-TURBO_C_API bool bucket_priority_queue_reserve(bucket_priority_queue_t *queue,
+SALTS_C_API bool bucket_priority_queue_reserve(bucket_priority_queue_t *queue,
                                              size_t capacity_per_bucket);
 
 /* FIFO push in selected priority bucket. Returns false on invalid input or OOM. */
-TURBO_C_API bool bucket_priority_queue_push(bucket_priority_queue_t *queue,
+SALTS_C_API bool bucket_priority_queue_push(bucket_priority_queue_t *queue,
                                           bucket_priority_t priority,
                                           bucket_priority_value_t value);
 
@@ -63,34 +63,34 @@ TURBO_C_API bool bucket_priority_queue_push(bucket_priority_queue_t *queue,
  * Pops highest-priority available item into `out_value`.
  * Returns false when queue is empty or arguments are invalid.
  */
-TURBO_C_API bool bucket_priority_queue_pop(bucket_priority_queue_t *queue,
+SALTS_C_API bool bucket_priority_queue_pop(bucket_priority_queue_t *queue,
                                          bucket_priority_value_t *out_value);
 
 /*
  * Reads highest-priority available item without removing it.
  * Returns false when queue is empty or arguments are invalid.
  */
-TURBO_C_API bool bucket_priority_queue_peek(const bucket_priority_queue_t *queue,
+SALTS_C_API bool bucket_priority_queue_peek(const bucket_priority_queue_t *queue,
                                           bucket_priority_value_t *out_value);
 
 /*
  * Pops up to `max_items` values into `out_values`.
  * Returns actual popped count.
  */
-TURBO_C_API size_t bucket_priority_queue_pop_batch(bucket_priority_queue_t *queue,
+SALTS_C_API size_t bucket_priority_queue_pop_batch(bucket_priority_queue_t *queue,
                                                  size_t max_items,
                                                  bucket_priority_value_t *out_values);
 
 /* Query helpers */
-TURBO_C_API bool bucket_priority_queue_empty(const bucket_priority_queue_t *queue);
-TURBO_C_API size_t bucket_priority_queue_size(const bucket_priority_queue_t *queue);
-TURBO_C_API size_t bucket_priority_queue_size_at(const bucket_priority_queue_t *queue,
+SALTS_C_API bool bucket_priority_queue_empty(const bucket_priority_queue_t *queue);
+SALTS_C_API size_t bucket_priority_queue_size(const bucket_priority_queue_t *queue);
+SALTS_C_API size_t bucket_priority_queue_size_at(const bucket_priority_queue_t *queue,
                                                bucket_priority_t priority);
-TURBO_C_API size_t bucket_priority_queue_capacity_at(const bucket_priority_queue_t *queue,
+SALTS_C_API size_t bucket_priority_queue_capacity_at(const bucket_priority_queue_t *queue,
                                                    bucket_priority_t priority);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* ROCIDA_BUCKET_PRIORITY_QUEUE_H */
+#endif /* SALTS_BUCKET_PRIORITY_QUEUE_H */

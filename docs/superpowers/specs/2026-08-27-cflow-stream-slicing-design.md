@@ -2,9 +2,9 @@
 
 ## 背景与目标
 
-Issue #125 要求为 TurboSTL Stream 增加常用、语义明确的切片操作。`take` 与
+Issue #125 要求为 Container Stream 增加常用、语义明确的切片操作。`take` 与
 `skip` 依赖值在当前操作位置上的到达次序，因此它们属于 CFlow Graph
-语义，不能只在 TurboSTL terminal 外层截断结果，也不能把可变计数器放进
+语义，不能只在 Container terminal 外层截断结果，也不能把可变计数器放进
 Graph 持有的 callable capture。
 
 本阶段只实现 `take` / `skip`。`count`、匹配、查找和副作用 terminal 后续

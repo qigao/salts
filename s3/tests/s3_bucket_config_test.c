@@ -20,13 +20,13 @@ static int s3_bucket_config_get(void *user, const chttp_server_request_view *req
                                 chttp_server_response *response) {
   s3_bucket_config_probe *probe = (s3_bucket_config_probe *)user;
   const char *body;
-  if (probe == NULL || request == NULL) return TURBO_EPROTO;
+  if (probe == NULL || request == NULL) return SALTS_EPROTO;
   if (strcmp(request->target, "/bucket?lifecycle=") == 0) body = "<LifecycleConfiguration/>";
   else if (strcmp(request->target, "/bucket?notification=") == 0)
     body = "<NotificationConfiguration/>";
   else if (strcmp(request->target, "/bucket?replication=") == 0)
     body = "<ReplicationConfiguration/>";
-  else return TURBO_EPROTO;
+  else return SALTS_EPROTO;
   ++probe->gets;
   return chttp_server_reply(response, 200u, "application/xml", body, strlen(body));
 }
@@ -35,16 +35,16 @@ static int s3_bucket_config_put(void *user, const chttp_server_request_view *req
                                 chttp_server_response *response) {
   s3_bucket_config_probe *probe = (s3_bucket_config_probe *)user;
   const char *root;
-  if (probe == NULL || request == NULL) return TURBO_EPROTO;
+  if (probe == NULL || request == NULL) return SALTS_EPROTO;
   if (strcmp(request->target, "/bucket?lifecycle=") == 0) root = "<LifecycleConfiguration";
   else if (strcmp(request->target, "/bucket?notification=") == 0)
     root = "<NotificationConfiguration";
   else if (strcmp(request->target, "/bucket?replication=") == 0) root = "<ReplicationConfiguration";
-  else return TURBO_EPROTO;
+  else return SALTS_EPROTO;
   if (request->body == NULL || request->body_size < strlen(root) ||
       memcmp(request->body, root, strlen(root)) != 0 ||
       strcmp(chttp_server_request_header(request, "content-type"), "application/xml") != 0)
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   ++probe->puts;
   return chttp_server_reply(response, 200u, NULL, NULL, 0u);
 }
@@ -55,7 +55,7 @@ static int s3_bucket_config_delete(void *user, const chttp_server_request_view *
   if (probe == NULL || request == NULL ||
       (strcmp(request->target, "/bucket?lifecycle=") != 0 &&
        strcmp(request->target, "/bucket?replication=") != 0))
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   ++probe->deletes;
   return chttp_server_reply(response, 204u, NULL, NULL, 0u);
 }
@@ -80,16 +80,16 @@ static void s3_bucket_config_run(chttp_protocol protocol) {
   char authority[64];
   uint16_t port = 0u;
 
-  check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
-  check_equal(chttp_server_get(&server, "/bucket", s3_bucket_config_get, &probe), TURBO_OK);
-  check_equal(chttp_server_put(&server, "/bucket", s3_bucket_config_put, &probe), TURBO_OK);
-  check_equal(chttp_server_delete(&server, "/bucket", s3_bucket_config_delete, &probe), TURBO_OK);
-  check_equal(chttp_server_start(&server), TURBO_OK);
-  check_equal(chttp_server_port(&server, &port), TURBO_OK);
+  check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
+  check_equal(chttp_server_get(&server, "/bucket", s3_bucket_config_get, &probe), SALTS_OK);
+  check_equal(chttp_server_put(&server, "/bucket", s3_bucket_config_put, &probe), SALTS_OK);
+  check_equal(chttp_server_delete(&server, "/bucket", s3_bucket_config_delete, &probe), SALTS_OK);
+  check_equal(chttp_server_start(&server), SALTS_OK);
+  check_equal(chttp_server_port(&server, &port), SALTS_OK);
   check_equal(
       s3_test_endpoint(port, connection_uri, sizeof(connection_uri), authority, sizeof(authority)),
-      TURBO_OK);
-  check_equal(chttp_client_init(&http_client, &http_config), TURBO_OK);
+      SALTS_OK);
+  check_equal(chttp_client_init(&http_client, &http_config), SALTS_OK);
   config = (s3_client_config){.size = sizeof(config),
                               .connection_uri = connection_uri,
                               .authority = authority,
@@ -99,45 +99,45 @@ static void s3_bucket_config_run(chttp_protocol protocol) {
                               .credentials = s3_credentials_provider_static(&credentials),
                               .clock = s3_bucket_config_clock,
                               .timeout_ms = S3_TEST_TIMEOUT_MS};
-  check_equal(s3_client_init(&client, &http_client, &config), TURBO_OK);
+  check_equal(s3_client_init(&client, &http_client, &config), SALTS_OK);
 
   check_equal(s3_put_bucket_lifecycle(&client, "bucket", lifecycle, sizeof(lifecycle) - 1u,
                                       &response, &error),
-              TURBO_OK);
+              SALTS_OK);
   s3_response_destroy(&response);
-  check_equal(s3_get_bucket_lifecycle(&client, "bucket", &response, &error), TURBO_OK);
+  check_equal(s3_get_bucket_lifecycle(&client, "bucket", &response, &error), SALTS_OK);
   check_equal(response.http.body, "<LifecycleConfiguration/>",
               sizeof("<LifecycleConfiguration/>") - 1u);
   s3_response_destroy(&response);
-  check_equal(s3_delete_bucket_lifecycle(&client, "bucket", &response, &error), TURBO_OK);
+  check_equal(s3_delete_bucket_lifecycle(&client, "bucket", &response, &error), SALTS_OK);
   s3_response_destroy(&response);
 
   check_equal(s3_put_bucket_notification(&client, "bucket", notification, sizeof(notification) - 1u,
                                          &response, &error),
-              TURBO_OK);
+              SALTS_OK);
   s3_response_destroy(&response);
-  check_equal(s3_get_bucket_notification(&client, "bucket", &response, &error), TURBO_OK);
+  check_equal(s3_get_bucket_notification(&client, "bucket", &response, &error), SALTS_OK);
   s3_response_destroy(&response);
 
   check_equal(s3_put_bucket_replication(&client, "bucket", replication, sizeof(replication) - 1u,
                                         &response, &error),
-              TURBO_OK);
+              SALTS_OK);
   s3_response_destroy(&response);
-  check_equal(s3_get_bucket_replication(&client, "bucket", &response, &error), TURBO_OK);
+  check_equal(s3_get_bucket_replication(&client, "bucket", &response, &error), SALTS_OK);
   s3_response_destroy(&response);
-  check_equal(s3_delete_bucket_replication(&client, "bucket", &response, &error), TURBO_OK);
+  check_equal(s3_delete_bucket_replication(&client, "bucket", &response, &error), SALTS_OK);
   s3_response_destroy(&response);
 
   check_equal(s3_put_bucket_lifecycle(&client, "bucket", notification, sizeof(notification) - 1u,
                                       &response, &error),
-              TURBO_EPROTO);
+              SALTS_EPROTO);
   check_equal(probe.puts, (size_t)3u);
   check_equal(probe.gets, (size_t)3u);
   check_equal(probe.deletes, (size_t)2u);
-  check_equal(s3_client_destroy(&client), TURBO_OK);
-  check_equal(chttp_client_destroy(&http_client, S3_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(chttp_server_stop(&server, S3_TEST_TIMEOUT_MS), TURBO_OK);
-  check_equal(chttp_server_destroy(&server), TURBO_OK);
+  check_equal(s3_client_destroy(&client), SALTS_OK);
+  check_equal(chttp_client_destroy(&http_client, S3_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(chttp_server_stop(&server, S3_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(chttp_server_destroy(&server), SALTS_OK);
 }
 
 spec("S3 bucket management subresources") {

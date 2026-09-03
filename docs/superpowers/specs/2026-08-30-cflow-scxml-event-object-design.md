@@ -60,4 +60,4 @@ Tests cover every Event field, internal/external/platform classification,
 send/invoke/state-completion metadata, structured copy isolation, retention
 through eventless microsteps, replacement without stale metadata, invalid
 admission without capacity loss, unknown paths, and read-only assignment
-rejection. Focused SCXML tests precede the full TurboUtils CTest suite.
+rejection. Focused SCXML tests precede the full Salts CTest suite.

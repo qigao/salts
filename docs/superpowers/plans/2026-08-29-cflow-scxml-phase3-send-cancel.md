@@ -6,7 +6,7 @@
 
 **Architecture:** Keep one immutable inline step program and one native Statechart configuration fact source. Add generic bounded native effect tickets so callbacks reserve external work but publish only after the native microstep commits. An owning `cflow_scxml_session` supplies per-instance bindings, delayed-send identity, adapter ownership boundaries, and internal adapter-error ingress while adapter-free programs retain the existing direct binding path.
 
-**Tech Stack:** C11, TurboUtils XML parser, CMeta descriptors, CFlow Statechart runtime, Turbo mutexes, TinyTest, CMake Presets.
+**Tech Stack:** C11, Salts XML parser, CMeta descriptors, CFlow Statechart runtime, Salts mutexes, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-29-cflow-scxml-phase3-remaining-design.md`
 

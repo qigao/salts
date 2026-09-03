@@ -17,7 +17,7 @@ add_library(${TARGET_NAME} STATIC
 add_dependencies(${TARGET_NAME} ${DOTENV_LEXER_TARGET})
 
 cmake_config_target(${TARGET_NAME}
-  ALIAS Rocida::DotEnvParser
+  ALIAS Salts::DotEnvParser
   FOLDER "parser/${TARGET_NAME}"
   EXPORT_NAME DotEnvParser)
 
@@ -33,7 +33,7 @@ target_include_directories(
 find_path(SIMDE_INCLUDE_DIRS NAMES simde/x86/sse2.h REQUIRED)
 target_include_directories(${TARGET_NAME} PRIVATE ${SIMDE_INCLUDE_DIRS})
 
-target_link_libraries(${TARGET_NAME} PUBLIC Rocida::Core)
+target_link_libraries(${TARGET_NAME} PUBLIC Salts::Core)
 
 if(BUILD_TESTS)
   add_subdirectory(test)

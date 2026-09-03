@@ -8,7 +8,7 @@
 
 #include "platform.h"
 #include "fmt_lexer.h"
-#include "turbo_str.h"
+#include "salts_str.h"
 #include <cmeta/enum.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -48,7 +48,7 @@ extern "C" {
          (FMT_TYPE_SIZE, 11, "size", size_t, sz, fmt_arg_size),                                  \
          (FMT_TYPE_BOOL, 12, "bool", int, b, fmt_arg_bool),                                      \
          (FMT_TYPE_STRV, 13, "strv", vstr, sv, fmt_arg_strv),                                   \
-         (FMT_TYPE_TIME, 14, "time", turbo_timeval_t, tv, fmt_arg_timeval))
+         (FMT_TYPE_TIME, 14, "time", salts_timeval_t, tv, fmt_arg_timeval))
 
 #define FMT_TYPE_ITEM(name, value, text, type, member, constructor) name = value,
 typedef enum {
@@ -211,7 +211,7 @@ static inline fmt_arg_t fmt_arg_uchar(unsigned char x) {
          (void *, fmt_arg_ptr),                                                                   \
          (const void *, fmt_arg_ptr),                                                             \
          (vstr, fmt_arg_strv),                                                                    \
-         (turbo_timeval_t, fmt_arg_timeval))
+         (salts_timeval_t, fmt_arg_timeval))
 
 #ifdef __cplusplus
 } /* End extern "C" to allow C++ overloading */
@@ -240,7 +240,7 @@ static inline fmt_arg_t fmt_arg_detect(std::chrono::system_clock::time_point tp)
   auto dur = tp.time_since_epoch();
   auto sec = std::chrono::duration_cast<std::chrono::seconds>(dur);
   auto usec = std::chrono::duration_cast<std::chrono::microseconds>(dur - sec);
-  turbo_timeval_t tv;
+  salts_timeval_t tv;
   tv.tv_sec = static_cast<int64_t>(sec.count());
   tv.tv_usec = static_cast<int32_t>(usec.count());
   return fmt_arg_timeval(tv);
@@ -351,7 +351,7 @@ extern "C" { /* Re-open extern "C" */
  * arg_count > 0, or an invalid/incompatible specifier. On valid buf/size,
  * failures leave buf as an empty string.
  */
-TURBO_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
+SALTS_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
                         size_t arg_count);
 
 #define fmt_text(buf, size, text) fmt_print((buf), (size), (text), NULL, 0U)
@@ -376,7 +376,7 @@ TURBO_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg
  * @return Updated tstr. Callers must assign the return value. Invalid input
  *         or an incompatible specifier leaves the existing string unchanged.
  */
-TURBO_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args, size_t arg_count);
+SALTS_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args, size_t arg_count);
 
 /* ============================================================================
  * tstr Integration

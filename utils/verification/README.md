@@ -1,6 +1,6 @@
-# Rocida 队列与内存协议验证
+# Salts 队列与内存协议验证
 
-这些模型用于验证 Rocida 并发原语的有限状态协议。模型抽象了 payload 内容、指针地址和 C11 内存模型，重点检查 claim/publish/observe/release、容量、所有权、关闭和唤醒语义。
+这些模型用于验证 Salts 并发原语的有限状态协议。模型抽象了 payload 内容、指针地址和 C11 内存模型，重点检查 claim/publish/observe/release、容量、所有权、关闭和唤醒语义。
 
 ## 模型范围
 
@@ -20,12 +20,12 @@
 关键事实来源包括：
 
 - `include/disruptor.h` 与 `src/disruptor.c`：Disruptor 的 worker/broadcast/拓扑 API；
-- `../concurrency/include/turbo/spsc_ring.h` 与
+- `../concurrency/include/salts/spsc_ring.h` 与
   `../concurrency/src/spsc_ring.c`：SPSC 角色和原子游标的事实源；
 - `include/ring_buffer_spsc.h` 与 `src/ring_buffer_spsc.c`：旧 Core API 的兼容包装；
-- `include/turbo_buffer.h` 与 `src/turbo_buffer.c`：buffer/slice 引用和 pool 生命周期；
+- `include/salts_buffer.h` 与 `src/salts_buffer.c`：buffer/slice 引用和 pool 生命周期；
 - `src/bucket_priority_queue_mpmc.c`：优先级队列对 Disruptor 和条件变量的包装。
-- `include/turbo_byte_buffer.h`、`src/turbo_byte_buffer.c` 与 `tests/test_turbo_byte_buffer.c`：单 owner 字节缓冲的游标、容量、view 和错误语义。
+- `include/salts_byte_buffer.h`、`src/salts_byte_buffer.c` 与 `tests/test_salts_byte_buffer.c`：单 owner 字节缓冲的游标、容量、view 和错误语义。
 - `tests/test_disruptor.c`：worker wait/wake、consumer dependency 和 topology cycle 测试；
 - `include/bucket_priority_queue_mpmc.h`、`src/bucket_priority_queue_mpmc.c` 与 `tests/test_bucket_priority_queue_mpmc.c`：MPMC try/blocking/timeout 语义。
 
@@ -35,8 +35,8 @@ Spin 6.5.1 在当前环境使用 Clang 预处理器。建议在临时目录运�
 
 ```powershell
 $spin = 'C:\tools\cpp-dev\bin\spin.exe'
-$utils = 'C:\projects\cpp\turbonet\turbo-utils\utils'
-$work = Join-Path ([IO.Path]::GetTempPath()) ('turbo-spin-' + [Guid]::NewGuid().ToString('N'))
+$utils = 'C:\projects\cpp\turbonet\salts\utils'
+$work = Join-Path ([IO.Path]::GetTempPath()) ('salts-spin-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 Push-Location $work
 try {

@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Preserve `CFlow -> CMeta`; do not add a CBind, TurboSTL, or Core dependency.
+- Preserve `CFlow -> CMeta`; do not add a CBind, Container, or Core dependency.
 - Require both `CMETA_TRAIT_TRIVIAL_COPY` and `CMETA_TRAIT_TRIVIAL_DESTROY` for current byte-storage execution.
 - Do not change Graph/Stream construction semantics or any public structure layout.
 - Do not add a contiguous fast path or reinterpret `cmeta_container_data()` as storage.

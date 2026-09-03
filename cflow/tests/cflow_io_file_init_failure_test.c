@@ -4,7 +4,7 @@
 #define TINYTEST_NO_MAIN
 #include "tinytest.h"
 
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 static size_t file_init_failure_backend_calls;
 
@@ -19,7 +19,7 @@ static void file_init_failure_completion(void *user, cflow_io_request_id request
   (void)completion;
 }
 
-static void file_init_failure_mutex_init(turbo_mutex_t *mutex) {
+static void file_init_failure_mutex_init(salts_mutex_t *mutex) {
   if (mutex != NULL) *mutex = NULL;
 }
 
@@ -41,10 +41,10 @@ static int file_init_failure_backend_init(cflow_io_native_backend *backend,
   (void)backend;
   (void)config;
   ++file_init_failure_backend_calls;
-  return TURBO_EIO;
+  return SALTS_EIO;
 }
 
-#define turbo_mutex_init file_init_failure_mutex_init
+#define salts_mutex_init file_init_failure_mutex_init
 #define cflow_io_native_backend_supported file_init_failure_backend_supported
 #define cflow_io_native_backend_file_operation_supported file_init_failure_operation_supported
 #define cflow_io_native_backend_init file_init_failure_backend_init
@@ -88,7 +88,7 @@ int cflow_io_file_runtime_destroy_with_init_failure(cflow_io_file_runtime *runti
 #undef cflow_io_native_backend_init
 #undef cflow_io_native_backend_file_operation_supported
 #undef cflow_io_native_backend_supported
-#undef turbo_mutex_init
+#undef salts_mutex_init
 
 spec("CFlow async file facade initialization failures") {
   it("returns ENOMEM before backend initialization when its mutex is unavailable") {
@@ -102,7 +102,7 @@ spec("CFlow async file facade initialization failures") {
 
     file_init_failure_backend_calls = 0u;
     check_equal(cflow_io_file_open_with_init_failure(&file, "mutex-init-must-fail", &config),
-                TURBO_ENOMEM);
+                SALTS_ENOMEM);
     check_equal(file_init_failure_backend_calls, (size_t)0u);
     check_null(file.impl);
   }

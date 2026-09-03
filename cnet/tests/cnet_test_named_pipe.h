@@ -36,7 +36,7 @@ static void cnet_shared_test_named_pipe_reset(cnet_shared_test_named_pipe *pipe)
 }
 
 static int cnet_shared_test_named_pipe_start(cnet_shared_test_named_pipe *pipe) {
-  if (pipe == NULL) return TURBO_EINVAL;
+  if (pipe == NULL) return SALTS_EINVAL;
   cnet_shared_test_named_pipe_reset(pipe);
 #if defined(_WIN32)
   static LONG sequence = 0;
@@ -45,9 +45,9 @@ static int cnet_shared_test_named_pipe_start(cnet_shared_test_named_pipe *pipe) 
   DWORD error;
   int length = snprintf(pipe->name, sizeof(pipe->name), "cnet-test-%lu-%ld", GetCurrentProcessId(),
                         InterlockedIncrement(&sequence));
-  if (length < 0 || (size_t)length >= sizeof(pipe->name)) return TURBO_ERANGE;
+  if (length < 0 || (size_t)length >= sizeof(pipe->name)) return SALTS_ERANGE;
   length = snprintf(native_name, sizeof(native_name), "\\\\.\\pipe\\%s", pipe->name);
-  if (length < 0 || (size_t)length >= sizeof(native_name)) return TURBO_ERANGE;
+  if (length < 0 || (size_t)length >= sizeof(native_name)) return SALTS_ERANGE;
   server =
       CreateNamedPipeA(native_name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
                        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u, 4096u, 4096u, 0u, NULL);
@@ -70,20 +70,20 @@ static int cnet_shared_test_named_pipe_start(cnet_shared_test_named_pipe *pipe) 
     }
   }
   pipe->pair.peer_read = pipe->pair.peer_write = (uintptr_t)server;
-  return TURBO_OK;
+  return SALTS_OK;
 #else
   int dummy_read;
   int peer_write;
   int saved_errno;
   int length;
   pipe->directory = tt_make_temp_dir("cnetpipe");
-  if (pipe->directory == NULL) return TURBO_EIO;
+  if (pipe->directory == NULL) return SALTS_EIO;
   length = snprintf(pipe->name, sizeof(pipe->name), "%s/endpoint", pipe->directory);
-  if (length < 0 || (size_t)length >= sizeof(pipe->name)) return TURBO_ERANGE;
+  if (length < 0 || (size_t)length >= sizeof(pipe->name)) return SALTS_ERANGE;
   length = snprintf(pipe->read_name, sizeof(pipe->read_name), "%s.rx", pipe->name);
-  if (length < 0 || (size_t)length >= sizeof(pipe->read_name)) return TURBO_ERANGE;
+  if (length < 0 || (size_t)length >= sizeof(pipe->read_name)) return SALTS_ERANGE;
   length = snprintf(pipe->write_name, sizeof(pipe->write_name), "%s.tx", pipe->name);
-  if (length < 0 || (size_t)length >= sizeof(pipe->write_name)) return TURBO_ERANGE;
+  if (length < 0 || (size_t)length >= sizeof(pipe->write_name)) return SALTS_ERANGE;
   if (mkfifo(pipe->read_name, 0600) != 0 || mkfifo(pipe->write_name, 0600) != 0) return -errno;
   pipe->pair.peer_read = (uintptr_t)open(pipe->write_name, O_RDONLY | O_NONBLOCK);
   if ((int)pipe->pair.peer_read < 0) {
@@ -100,12 +100,12 @@ static int cnet_shared_test_named_pipe_start(cnet_shared_test_named_pipe *pipe) 
   }
   (void)close(dummy_read);
   pipe->pair.peer_write = (uintptr_t)peer_write;
-  return TURBO_OK;
+  return SALTS_OK;
 #endif
 }
 
 static int cnet_shared_test_named_pipe_finish(cnet_shared_test_named_pipe *pipe) {
-  if (pipe == NULL) return TURBO_EINVAL;
+  if (pipe == NULL) return SALTS_EINVAL;
 #if defined(_WIN32)
   if (pipe->connect_pending) {
     DWORD transferred = 0u;
@@ -114,9 +114,9 @@ static int cnet_shared_test_named_pipe_finish(cnet_shared_test_named_pipe *pipe)
       return -(int)GetLastError();
     pipe->connect_pending = false;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 #else
-  return pipe->pair.peer_write <= (uintptr_t)INT_MAX ? TURBO_OK : TURBO_EIO;
+  return pipe->pair.peer_write <= (uintptr_t)INT_MAX ? SALTS_OK : SALTS_EIO;
 #endif
 }
 
@@ -144,7 +144,7 @@ static int cnet_shared_test_named_pipe_io(HANDLE handle, void *data, size_t size
     return -(int)error;
   }
   (void)CloseHandle(event);
-  return transferred == size ? TURBO_OK : TURBO_EIO;
+  return transferred == size ? SALTS_OK : SALTS_EIO;
 }
 #endif
 

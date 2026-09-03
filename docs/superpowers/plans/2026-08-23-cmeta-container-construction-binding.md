@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Allow a reflected Struct field declared as `TYPE(Vec, int)` / `TYPE(Map, int, long)` to bind a completely zero TurboSTL handle from static type metadata before the existing Collector runs.
+**Goal:** Allow a reflected Struct field declared as `TYPE(Vec, int)` / `TYPE(Map, int, long)` to bind a completely zero Container handle from static type metadata before the existing Collector runs.
 
-**Architecture:** CMeta gains a lightweight `cmeta_declared_type` that stores storage layout, canonical generic constructor, concrete argument descriptors, and optional construction ops; it does not generate a second `cmeta_type_identity`. `cmeta_container_ext` gains an append-only construction pointer, while TurboSTL supplies canonical storage descriptors and transactional unary/binary bind adapters. `Struct` lowers tagged `TYPE(...)` specs to ordinary handle storage and emits TU-local declared metadata.
+**Architecture:** CMeta gains a lightweight `cmeta_declared_type` that stores storage layout, canonical generic constructor, concrete argument descriptors, and optional construction ops; it does not generate a second `cmeta_type_identity`. `cmeta_container_ext` gains an append-only construction pointer, while Container supplies canonical storage descriptors and transactional unary/binary bind adapters. `Struct` lowers tagged `TYPE(...)` specs to ordinary handle storage and emits TU-local declared metadata.
 
-**Tech Stack:** ISO C11 preprocessor/macros, CMeta type descriptors/type identities, TurboSTL handle metadata, TinyTest, CMake/CTest, C++17 public-header compatibility, GitHub Actions Linux/Windows.
+**Tech Stack:** ISO C11 preprocessor/macros, CMeta type descriptors/type identities, Container handle metadata, TinyTest, CMake/CTest, C++17 public-header compatibility, GitHub Actions Linux/Windows.
 
 **Spec:** `docs/superpowers/specs/2026-08-23-cmeta-container-construction-binding-design.md`
 
@@ -16,7 +16,7 @@
 - Do not add semantic T/K/V fields or a runtime type-application registry.
 - Do not add shallow whole-container copy/move/destroy traits; nested `TYPE(...)` arguments remain out of grammar in this PR.
 - `cmeta_container_ext` changes are append-only; old prefixes through `.type` and `.data` must remain valid.
-- TurboSTL handle layouts and existing `Vec(T,name)` / `Map(K,V,name)` declaration APIs must not change.
+- Container handle layouts and existing `Vec(T,name)` / `Map(K,V,name)` declaration APIs must not change.
 - `cmeta_container_bind_types()` must be allocation-free and transactional.
 - Final exact head must pass Linux release fresh configure/build/selected tests and Windows configure/build/test.
 
@@ -25,24 +25,24 @@
 ### Task 1: Establish the RED contract for TYPE fields and zero-handle binding
 
 **Files:**
-- Create: `turbostl/tests/turbostl_construction_binding_test.c`
-- Modify: `turbostl/tests/CMakeLists.txt`
+- Create: `cstl/tests/cstl_construction_binding_test.c`
+- Modify: `cstl/tests/CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: existing `Struct(...)`, `vec_t`, `map_t`, canonical TurboSTL descriptors.
+- Consumes: existing `Struct(...)`, `vec_t`, `map_t`, canonical Container descriptors.
 - Produces: failing compile-time contract for `TYPE(...)`, `cmeta_field_desc.declared_type`, and `cmeta_container_bind_types()`.
 
 - [ ] **Step 1: Add the failing test target**
 
-Add to `turbostl/tests/CMakeLists.txt`:
+Add to `cstl/tests/CMakeLists.txt`:
 
 ```cmake
-cmake_add_test(turbostl_construction_binding_test
-  SOURCES turbostl_construction_binding_test.c
-  LIBS TurboUtils::STL TurboUtils::TinyTest
-  FOLDER "turbostl/tests")
+cmake_add_test(cstl_construction_binding_test
+  SOURCES cstl_construction_binding_test.c
+  LIBS Salts::CSTL Salts::TinyTest
+  FOLDER "cstl/tests")
 
-set_target_properties(turbostl_construction_binding_test PROPERTIES
+set_target_properties(cstl_construction_binding_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
@@ -50,10 +50,10 @@ set_target_properties(turbostl_construction_binding_test PROPERTIES
 
 - [ ] **Step 2: Write the first failing source**
 
-Create `turbostl/tests/turbostl_construction_binding_test.c` with the minimum contract:
+Create `cstl/tests/cstl_construction_binding_test.c` with the minimum contract:
 
 ```c
-#include <turbostl/typed.h>
+#include <cstl/typed.h>
 #include "tinytest.h"
 
 Struct(construction_payload,
@@ -61,7 +61,7 @@ Struct(construction_payload,
     (TYPE(Map, int, long), index)
 );
 
-suite("TurboSTL construction binding") {
+suite("Container construction binding") {
     it("exposes declared type metadata for container fields") {
         const cmeta_field_desc *values =
             cmeta_struct_find_field(construction_payload_meta(), "values");
@@ -83,9 +83,9 @@ Expected current failure is compile-time and must mention one of the absent prod
 - [ ] **Step 4: Commit**
 
 ```bash
-git add turbostl/tests/CMakeLists.txt \
-        turbostl/tests/turbostl_construction_binding_test.c
-git commit -m "test(turbostl): specify declared construction binding"
+git add cstl/tests/CMakeLists.txt \
+        cstl/tests/cstl_construction_binding_test.c
+git commit -m "test(container): specify declared construction binding"
 ```
 
 ---
@@ -332,7 +332,7 @@ git commit -m "feat(cmeta): add TYPE metadata to reflected fields"
 
 **Files:**
 - Modify: `cmeta/include/cmeta/range.h`
-- Modify: `cmeta/src/container_type.c`
+- Modify: `cmeta/src/cstl_type.c`
 - Modify: `cmeta/include/cmeta/declared_type.h`
 - Modify: `cmeta/tests/cmeta_container_type_test.c`
 - Modify: `cmeta/tests/cmeta_declared_type_test.c`
@@ -409,22 +409,22 @@ Now that construction ops is complete, require valid ABI prefix, descriptor and 
 - [ ] **Step 6: Run CMeta tests and commit**
 
 ```bash
-ctest --test-dir build -R "cmeta_(declared_type|container_type|header_cpp)_test" --output-on-failure
+ctest --test-dir build -R "cmeta_(declared_type|cstl_type|header_cpp)_test" --output-on-failure
 git add cmeta
 git commit -m "feat(cmeta): add container construction protocol"
 ```
 
 ---
 
-### Task 5: Register TurboSTL TYPE providers and implement unary binding
+### Task 5: Register Container TYPE providers and implement unary binding
 
 **Files:**
-- Create: `turbostl/src/construction_meta.c`
-- Modify: `turbostl/CMakeLists.txt`
-- Modify: `turbostl/include/turbostl/detail/instance_meta.h`
-- Modify: `turbostl/include/turbostl/typed.h`
-- Modify: `turbostl/src/generic_meta.c`
-- Modify: `turbostl/tests/turbostl_construction_binding_test.c`
+- Create: `cstl/src/construction_meta.c`
+- Modify: `cstl/CMakeLists.txt`
+- Modify: `cstl/include/cstl/detail/instance_meta.h`
+- Modify: `cstl/include/cstl/typed.h`
+- Modify: `cstl/src/generic_meta.c`
+- Modify: `cstl/tests/cstl_construction_binding_test.c`
 
 **Interfaces:**
 - Produces storage descriptors and construct ops for:
@@ -521,9 +521,9 @@ Verify all eight unary providers bind the correct slot, same uninitialized bindi
 - [ ] **Step 8: Run tests and commit**
 
 ```bash
-ctest --test-dir build -R "turbostl_(construction_binding|semantic_projection|generic_identity|sequence)_test" --output-on-failure
-git add turbostl
-git commit -m "feat(turbostl): bind declared unary container types"
+ctest --test-dir build -R "cstl_(construction_binding|semantic_projection|generic_identity|sequence)_test" --output-on-failure
+git add container
+git commit -m "feat(container): bind declared unary container types"
 ```
 
 ---
@@ -531,8 +531,8 @@ git commit -m "feat(turbostl): bind declared unary container types"
 ### Task 6: Implement binary construction binding and Map Collector integration
 
 **Files:**
-- Modify: `turbostl/src/construction_meta.c`
-- Modify: `turbostl/tests/turbostl_construction_binding_test.c`
+- Modify: `cstl/src/construction_meta.c`
+- Modify: `cstl/tests/cstl_construction_binding_test.c`
 
 **Interfaces:**
 - Produces binding for `HashMap, Map, MultiMap, BTree, BPlusTree`.
@@ -572,10 +572,10 @@ Accept `cmeta_entry` values with `key_type=&cmeta_type_int` and `value_type=&cme
 - [ ] **Step 4: Run tests and commit**
 
 ```bash
-ctest --test-dir build -R "turbostl_(construction_binding|map|entry|semantic_projection)_test" --output-on-failure
-git add turbostl/src/construction_meta.c \
-        turbostl/tests/turbostl_construction_binding_test.c
-git commit -m "feat(turbostl): bind declared associative container types"
+ctest --test-dir build -R "cstl_(construction_binding|map|entry|semantic_projection)_test" --output-on-failure
+git add cstl/src/construction_meta.c \
+        cstl/tests/cstl_construction_binding_test.c
+git commit -m "feat(container): bind declared associative container types"
 ```
 
 ---
@@ -583,17 +583,17 @@ git commit -m "feat(turbostl): bind declared associative container types"
 ### Task 7: Lock C++17/ABI regressions and exact-head CI
 
 **Files:**
-- Modify: `turbostl/tests/turbostl_header_typed_cpp_test.cpp`
+- Modify: `cstl/tests/cstl_header_typed_cpp_test.cpp`
 - Modify: `cmeta/tests/cmeta_header_cpp_test.cpp`
 - Modify: `cmeta/tests/cmeta_container_type_test.c`
-- Modify: `turbostl/tests/CMakeLists.txt` only if stricter warnings are needed
+- Modify: `cstl/tests/CMakeLists.txt` only if stricter warnings are needed
 
 **Interfaces:**
 - Produces final public ABI and cross-language proof.
 
 - [ ] **Step 1: Add C++17 TYPE Struct coverage**
 
-In `turbostl_header_typed_cpp_test.cpp` declare at namespace scope:
+In `cstl_header_typed_cpp_test.cpp` declare at namespace scope:
 
 ```cpp
 Struct(cpp_construction_payload,
@@ -611,7 +611,7 @@ CMeta tests must explicitly construct old-prefix extensions with `struct_size` t
 - [ ] **Step 3: Run selected local-equivalent test matrix**
 
 ```bash
-ctest --test-dir build -R "cmeta_|turbostl_(header_typed_cpp|construction_binding|generic_identity|semantic_projection|sequence|map|entry)_test" --output-on-failure
+ctest --test-dir build -R "cmeta_|cstl_(header_typed_cpp|construction_binding|generic_identity|semantic_projection|sequence|map|entry)_test" --output-on-failure
 ```
 
 - [ ] **Step 4: Scan scope**
@@ -632,8 +632,8 @@ Linux must show configure, build, and selected test steps all successful; Window
 - [ ] **Step 6: Final commit if test-only fixes were needed**
 
 ```bash
-git add cmeta/tests turbostl/tests
-git commit -m "test(cmeta,turbostl): lock construction binding ABI"
+git add cmeta/tests cstl/tests
+git commit -m "test(cmeta,container): lock construction binding ABI"
 ```
 
 If no fixes are needed, do not create an empty commit.

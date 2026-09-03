@@ -2,11 +2,11 @@
 
 #include "csv_grammar_gen.h"
 #include "csv_lexer.h"
-#include <turbo_fs.h>
-#include <turbo_mmap.h>
-#include <turbo_str.h>
-#include <rocida/stl/hash_map.h>
-#include <rocida/stl/vec.h>
+#include <salts_fs.h>
+#include <salts_mmap.h>
+#include <salts_str.h>
+#include <cstl/hash_map.h>
+#include <cstl/vec.h>
 
 #include <float.h>
 #include <limits.h>
@@ -54,8 +54,8 @@ _Static_assert(sizeof(dsv_index_file_header_t) == 96, "unexpected DSV index head
 _Static_assert(sizeof(dsv_index_file_entry_t) == 104, "unexpected DSV index entry layout");
 
 struct dsv_index_s {
-    turbo_mmap_t index_mapping;
-    turbo_mmap_t source_mapping;
+    salts_mmap_t index_mapping;
+    salts_mmap_t source_mapping;
     const dsv_index_file_header_t *header;
     const dsv_index_file_entry_t *entries;
     const char *source_data;
@@ -240,7 +240,7 @@ static int dsv_index_build_internal(dsv_index_t *index, const char *index_path,
     int lexer_rc;
     size_t file_size;
     char *file_data = NULL;
-    turbo_fs_buf_t file_buffer;
+    salts_fs_buf_t file_buffer;
     dsv_index_file_header_t header;
     tstr temporary_path = NULL;
     int rc = -1;
@@ -251,8 +251,8 @@ static int dsv_index_build_internal(dsv_index_t *index, const char *index_path,
         (config->covering_int64_column != DSV_INDEX_NO_COLUMN &&
          config->covering_int64_column > UINT32_MAX))
         return dsv_index_fail(index, "invalid DSV index build configuration");
-    if (turbo_mmap_is_open(&index->index_mapping) ||
-        turbo_mmap_is_open(&index->source_mapping))
+    if (salts_mmap_is_open(&index->index_mapping) ||
+        salts_mmap_is_open(&index->source_mapping))
         return dsv_index_fail(index, "close the DSV index before rebuilding it");
     if (vec_init_bytes(
             &entries, sizeof(dsv_index_file_entry_t), _Alignof(dsv_index_file_entry_t),
@@ -357,11 +357,11 @@ static int dsv_index_build_internal(dsv_index_t *index, const char *index_path,
         dsv_index_fail(index, "out of memory creating temporary index path");
         goto cleanup;
     }
-    if (turbo_fs_write_file(temporary_path, &file_buffer) != 0) {
+    if (salts_fs_write_file(temporary_path, &file_buffer) != 0) {
         dsv_index_fail(index, "failed writing DSV sidecar index");
         goto cleanup;
     }
-    if (turbo_fs_rename(temporary_path, index_path) != 0) {
+    if (salts_fs_rename(temporary_path, index_path) != 0) {
         dsv_index_fail(index, "failed replacing DSV sidecar index");
         goto cleanup;
     }
@@ -369,7 +369,7 @@ static int dsv_index_build_internal(dsv_index_t *index, const char *index_path,
     rc = 0;
 
 cleanup:
-    if (rc != 0 && temporary_path) (void)turbo_fs_unlink(temporary_path);
+    if (rc != 0 && temporary_path) (void)salts_fs_unlink(temporary_path);
     tstr_free(temporary_path);
     free(file_data);
     vec_destroy(&entries);
@@ -379,15 +379,15 @@ cleanup:
 dsv_index_t *dsv_index_create(void) {
     dsv_index_t *index = (dsv_index_t *)calloc(1, sizeof(*index));
     if (!index) return NULL;
-    turbo_mmap_init(&index->index_mapping);
-    turbo_mmap_init(&index->source_mapping);
+    salts_mmap_init(&index->index_mapping);
+    salts_mmap_init(&index->source_mapping);
     return index;
 }
 
 void dsv_index_close(dsv_index_t *index) {
     if (!index) return;
-    turbo_mmap_close(&index->index_mapping);
-    turbo_mmap_close(&index->source_mapping);
+    salts_mmap_close(&index->index_mapping);
+    salts_mmap_close(&index->source_mapping);
     index->header = NULL;
     index->entries = NULL;
     index->source_data = NULL;
@@ -412,20 +412,20 @@ int dsv_index_build_memory(dsv_index_t *index, const char *index_path,
 
 int dsv_index_build_file(dsv_index_t *index, const char *csv_path,
                          const char *index_path, const dsv_index_config_t *config) {
-    turbo_mmap_t source;
-    turbo_fs_stat_t stat;
+    salts_mmap_t source;
+    salts_fs_stat_t stat;
     int rc;
     if (!index || !csv_path || !index_path || !config)
         return dsv_index_fail(index, "invalid DSV index file build arguments");
-    if (turbo_fs_stat(csv_path, &stat) != 0 || !stat.is_file)
+    if (salts_fs_stat(csv_path, &stat) != 0 || !stat.is_file)
         return dsv_index_fail(index, "failed to stat source CSV");
-    turbo_mmap_init(&source);
-    if (turbo_mmap_open(&source, csv_path, TURBO_MMAP_READ) != 0)
+    salts_mmap_init(&source);
+    if (salts_mmap_open(&source, csv_path, SALTS_MMAP_READ) != 0)
         return dsv_index_fail(index, "failed to map source CSV");
     rc = dsv_index_build_internal(index, index_path,
-                                  (const char *)turbo_mmap_data(&source),
-                                  turbo_mmap_size(&source), config, stat.mtime);
-    turbo_mmap_close(&source);
+                                  (const char *)salts_mmap_data(&source),
+                                  salts_mmap_size(&source), config, stat.mtime);
+    salts_mmap_close(&source);
     return rc;
 }
 
@@ -450,18 +450,18 @@ static int dsv_index_open_internal(dsv_index_t *index, const char *index_path,
     size_t expected_size;
 
     if (!index || !index_path || !content) return dsv_index_fail(index, "invalid DSV index open arguments");
-    if (turbo_mmap_open(&index->index_mapping, index_path, TURBO_MMAP_READ) != 0)
+    if (salts_mmap_open(&index->index_mapping, index_path, SALTS_MMAP_READ) != 0)
         return dsv_index_fail(index, "failed to map DSV sidecar index");
-    if (turbo_mmap_size(&index->index_mapping) < sizeof(*header))
+    if (salts_mmap_size(&index->index_mapping) < sizeof(*header))
         return dsv_index_fail(index, "DSV index is truncated");
-    header = (const dsv_index_file_header_t *)turbo_mmap_data(&index->index_mapping);
+    header = (const dsv_index_file_header_t *)salts_mmap_data(&index->index_mapping);
     if (memcmp(header->magic, DSV_INDEX_MAGIC, sizeof(header->magic)) != 0 ||
         header->version != DSV_INDEX_VERSION ||
         header->endian_marker != DSV_INDEX_ENDIAN_MARKER ||
         header->header_size != sizeof(*header) ||
         header->entry_size != sizeof(dsv_index_file_entry_t) ||
         !dsv_index_checked_size(header->entry_count, &expected_size) ||
-        expected_size != turbo_mmap_size(&index->index_mapping))
+        expected_size != salts_mmap_size(&index->index_mapping))
         return dsv_index_fail(index, "DSV index format validation failed");
     if (header->source_size != (uint64_t)len)
         return dsv_index_fail(index, "DSV index source size mismatch");
@@ -477,7 +477,7 @@ static int dsv_index_open_internal(dsv_index_t *index, const char *index_path,
     index->source_data = content;
     index->source_length = len;
     if (dsv_index_validate_entries(index) != 0) return -1;
-    (void)turbo_mmap_advise(&index->index_mapping, TURBO_MMAP_RANDOM);
+    (void)salts_mmap_advise(&index->index_mapping, SALTS_MMAP_RANDOM);
     index->error[0] = '\0';
     return 0;
 }
@@ -487,7 +487,7 @@ int dsv_index_open_memory(dsv_index_t *index, const char *index_path,
     if (!index) return -1;
     dsv_index_close(index);
     if (dsv_index_open_internal(index, index_path, content, len, 0) != 0) {
-        turbo_mmap_close(&index->index_mapping);
+        salts_mmap_close(&index->index_mapping);
         return -1;
     }
     return 0;
@@ -495,22 +495,22 @@ int dsv_index_open_memory(dsv_index_t *index, const char *index_path,
 
 int dsv_index_open_file(dsv_index_t *index, const char *csv_path,
                         const char *index_path) {
-    turbo_fs_stat_t stat;
+    salts_fs_stat_t stat;
     if (!index || !csv_path || !index_path)
         return dsv_index_fail(index, "invalid DSV index file open arguments");
     dsv_index_close(index);
-    if (turbo_fs_stat(csv_path, &stat) != 0 || !stat.is_file)
+    if (salts_fs_stat(csv_path, &stat) != 0 || !stat.is_file)
         return dsv_index_fail(index, "failed to stat source CSV");
-    if (turbo_mmap_open(&index->source_mapping, csv_path, TURBO_MMAP_READ) != 0)
+    if (salts_mmap_open(&index->source_mapping, csv_path, SALTS_MMAP_READ) != 0)
         return dsv_index_fail(index, "failed to map source CSV");
     if (dsv_index_open_internal(index, index_path,
-                                (const char *)turbo_mmap_data(&index->source_mapping),
-                                turbo_mmap_size(&index->source_mapping), stat.mtime) != 0) {
-        turbo_mmap_close(&index->index_mapping);
-        turbo_mmap_close(&index->source_mapping);
+                                (const char *)salts_mmap_data(&index->source_mapping),
+                                salts_mmap_size(&index->source_mapping), stat.mtime) != 0) {
+        salts_mmap_close(&index->index_mapping);
+        salts_mmap_close(&index->source_mapping);
         return -1;
     }
-    (void)turbo_mmap_advise(&index->source_mapping, TURBO_MMAP_RANDOM);
+    (void)salts_mmap_advise(&index->source_mapping, SALTS_MMAP_RANDOM);
     return 0;
 }
 

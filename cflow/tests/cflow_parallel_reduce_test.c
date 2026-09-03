@@ -1,7 +1,7 @@
 #include "tinytest.h"
 
 #include <cflow/cflow.h>
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 #include <stdint.h>
 #include <stdatomic.h>
@@ -42,7 +42,7 @@ static bool cflow_parallel_injected_invoke(
     if (atomic_load(&cflow_parallel_delay_failure)) {
       size_t attempts = 0u;
       while (atomic_load(&cflow_parallel_successes) < 2u && attempts++ < 500u)
-        turbo_sleep_ms(1u);
+        salts_sleep_ms(1u);
     }
     atomic_store(&cflow_parallel_successes_at_failure,
                  atomic_load(&cflow_parallel_successes));
@@ -52,7 +52,7 @@ static bool cflow_parallel_injected_invoke(
   if (!atomic_load(&cflow_parallel_delay_failure)) {
     size_t attempts = 0u;
     while (atomic_load(&cflow_parallel_failures) == 0u && attempts++ < 500u)
-      turbo_sleep_ms(1u);
+      salts_sleep_ms(1u);
   }
   memcpy(out, &left, sizeof(left));
   atomic_fetch_add(&cflow_parallel_successes, 1u);
@@ -68,7 +68,7 @@ static cflow_reduce_callable cflow_parallel_injected_reducer(void) {
 static void cflow_parallel_gate_task(void *user) {
   (void)user;
   atomic_store(&cflow_parallel_gate_started, true);
-  while (!atomic_load(&cflow_parallel_gate_open)) turbo_sleep_ms(1u);
+  while (!atomic_load(&cflow_parallel_gate_open)) salts_sleep_ms(1u);
 }
 
 typedef struct cflow_parallel_eval_thread {
@@ -104,8 +104,8 @@ static void cflow_parallel_callback_eval_run(void *user) {
 }
 
 typedef struct cflow_closing_executor_state {
-  turbo_mutex_t mutex;
-  turbo_cond_t condition;
+  salts_mutex_t mutex;
+  salts_cond_t condition;
   cflow_task_fn accepted_fn;
   void *accepted_user;
   bool second_waiting;
@@ -117,25 +117,25 @@ static cflow_admission_status cflow_closing_try_post(
     void *self, cflow_task_fn fn, void *user) {
   cflow_closing_executor_state *state = (cflow_closing_executor_state *)self;
   if (!state || !fn) return CFLOW_ADMISSION_INVALID_ARGUMENT;
-  turbo_mutex_lock(&state->mutex);
+  salts_mutex_lock(&state->mutex);
   if (state->closed) {
     ++state->rejected_closed;
-    turbo_mutex_unlock(&state->mutex);
+    salts_mutex_unlock(&state->mutex);
     return CFLOW_ADMISSION_CLOSED;
   }
   if (!state->accepted_fn) {
     state->accepted_fn = fn;
     state->accepted_user = user;
-    turbo_cond_broadcast(&state->condition);
-    turbo_mutex_unlock(&state->mutex);
+    salts_cond_broadcast(&state->condition);
+    salts_mutex_unlock(&state->mutex);
     return CFLOW_ADMISSION_ACCEPTED;
   }
   state->second_waiting = true;
-  turbo_cond_broadcast(&state->condition);
+  salts_cond_broadcast(&state->condition);
   while (!state->closed)
-    turbo_cond_wait(&state->condition, &state->mutex);
+    salts_cond_wait(&state->condition, &state->mutex);
   ++state->rejected_closed;
-  turbo_mutex_unlock(&state->mutex);
+  salts_mutex_unlock(&state->mutex);
   return CFLOW_ADMISSION_CLOSED;
 }
 
@@ -157,9 +157,9 @@ static bool cflow_closing_wait_idle(void *self) {
   cflow_closing_executor_state *state = (cflow_closing_executor_state *)self;
   bool idle;
   if (!state) return false;
-  turbo_mutex_lock(&state->mutex);
+  salts_mutex_lock(&state->mutex);
   idle = state->accepted_fn == NULL;
-  turbo_mutex_unlock(&state->mutex);
+  salts_mutex_unlock(&state->mutex);
   return idle;
 }
 
@@ -167,9 +167,9 @@ static size_t cflow_closing_pending(void *self) {
   cflow_closing_executor_state *state = (cflow_closing_executor_state *)self;
   size_t pending;
   if (!state) return 0u;
-  turbo_mutex_lock(&state->mutex);
+  salts_mutex_lock(&state->mutex);
   pending = state->accepted_fn ? 1u : 0u;
-  turbo_mutex_unlock(&state->mutex);
+  salts_mutex_unlock(&state->mutex);
   return pending;
 }
 
@@ -178,14 +178,14 @@ static bool cflow_closing_shutdown(void *self) {
   cflow_task_fn fn;
   void *user;
   if (!state) return false;
-  turbo_mutex_lock(&state->mutex);
+  salts_mutex_lock(&state->mutex);
   state->closed = true;
   fn = state->accepted_fn;
   user = state->accepted_user;
   state->accepted_fn = NULL;
   state->accepted_user = NULL;
-  turbo_cond_broadcast(&state->condition);
-  turbo_mutex_unlock(&state->mutex);
+  salts_cond_broadcast(&state->condition);
+  salts_mutex_unlock(&state->mutex);
   if (fn) fn(user);
   return true;
 }
@@ -193,21 +193,21 @@ static bool cflow_closing_shutdown(void *self) {
 static bool cflow_closing_get_stats(void *self, cflow_executor_stats *out) {
   cflow_closing_executor_state *state = (cflow_closing_executor_state *)self;
   if (!state || !out) return false;
-  turbo_mutex_lock(&state->mutex);
+  salts_mutex_lock(&state->mutex);
   *out = (cflow_executor_stats){
       .capacity = 1u,
       .pending = state->accepted_fn ? 1u : 0u,
       .peak_pending = 1u,
       .rejected_closed = state->rejected_closed};
-  turbo_mutex_unlock(&state->mutex);
+  salts_mutex_unlock(&state->mutex);
   return true;
 }
 
 static void cflow_closing_destroy(void *self) {
   cflow_closing_executor_state *state = (cflow_closing_executor_state *)self;
   if (!state) return;
-  turbo_cond_destroy(&state->condition);
-  turbo_mutex_destroy(&state->mutex);
+  salts_cond_destroy(&state->condition);
+  salts_mutex_destroy(&state->mutex);
 }
 
 CMETA_IMPLEMENTS(cflow_executor, cflow_closing_executor,
@@ -227,8 +227,8 @@ static bool cflow_closing_executor_init(cflow_executor *executor,
                                         cflow_closing_executor_state *state) {
   if (!executor || !state) return false;
   memset(state, 0, sizeof(*state));
-  turbo_mutex_init(&state->mutex);
-  turbo_cond_init(&state->condition);
+  salts_mutex_init(&state->mutex);
+  salts_cond_init(&state->condition);
   if (!state->mutex || !state->condition) {
     cflow_closing_destroy(state);
     return false;
@@ -422,7 +422,7 @@ suite("CFlow ordered parallel reduce") {
         .input_count = 8u,
         .options = state->options
     };
-    turbo_thread_t thread = NULL;
+    salts_thread_t thread = NULL;
     size_t attempts = 0u;
 
     atomic_store(&cflow_parallel_gate_open, false);
@@ -430,22 +430,22 @@ suite("CFlow ordered parallel reduce") {
     check_true(cflow_executor_worker_init_with_capacity(&executor, 1u, 1u));
     check_true(cflow_executor_post(&executor, cflow_parallel_gate_task, NULL));
     while (!atomic_load(&cflow_parallel_gate_started) && attempts++ < 500u)
-      turbo_sleep_ms(1u);
+      salts_sleep_ms(1u);
     check_true(atomic_load(&cflow_parallel_gate_started));
 
     eval.options.executor = &executor;
-    check_equal(turbo_thread_create(
+    check_equal(salts_thread_create(
         &thread, cflow_parallel_eval_thread_run, &eval), 0);
     attempts = 0u;
     do {
       check_true(cflow_executor_get_stats(&executor, &stats));
       if (stats.rejected_full) break;
-      turbo_sleep_ms(1u);
+      salts_sleep_ms(1u);
     } while (attempts++ < 500u);
     check_equal(stats.rejected_full, (size_t)1u);
 
     atomic_store(&cflow_parallel_gate_open, true);
-    check_equal(turbo_thread_join(&thread), 0);
+    check_equal(salts_thread_join(&thread), 0);
     check_false(eval.ok);
     check_null(eval.result.data);
     check_true(cflow_executor_wait_idle(&executor));
@@ -468,24 +468,24 @@ suite("CFlow ordered parallel reduce") {
         .input_count = 8u,
         .options = state->options
     };
-    turbo_thread_t thread = NULL;
+    salts_thread_t thread = NULL;
     size_t attempts = 0u;
     bool second_waiting = false;
 
     check_true(cflow_closing_executor_init(&executor, &closing));
     eval.options.executor = &executor;
-    check_equal(turbo_thread_create(
+    check_equal(salts_thread_create(
         &thread, cflow_parallel_eval_thread_run, &eval), 0);
     do {
-      turbo_mutex_lock(&closing.mutex);
+      salts_mutex_lock(&closing.mutex);
       second_waiting = closing.second_waiting;
-      turbo_mutex_unlock(&closing.mutex);
+      salts_mutex_unlock(&closing.mutex);
       if (second_waiting) break;
-      turbo_sleep_ms(1u);
+      salts_sleep_ms(1u);
     } while (attempts++ < 500u);
 
     check_true(cflow_executor_shutdown(&executor));
-    check_equal(turbo_thread_join(&thread), 0);
+    check_equal(salts_thread_join(&thread), 0);
     check_true(second_waiting);
     check_false(eval.ok);
     check_null(eval.result.data);
@@ -510,7 +510,7 @@ suite("CFlow ordered parallel reduce") {
         .input_count = 8u,
         .options = state->options
     };
-    turbo_thread_t thread = NULL;
+    salts_thread_t thread = NULL;
     size_t attempts = 0u;
 
     atomic_store(&cflow_parallel_gate_open, false);
@@ -519,24 +519,24 @@ suite("CFlow ordered parallel reduce") {
     check_true(cflow_executor_as_control(&executor, &control));
     check_true(cflow_executor_post(&executor, cflow_parallel_gate_task, NULL));
     while (!atomic_load(&cflow_parallel_gate_started) && attempts++ < 500u)
-      turbo_sleep_ms(1u);
+      salts_sleep_ms(1u);
     check_true(atomic_load(&cflow_parallel_gate_started));
 
     eval.options.executor = &executor;
-    check_equal(turbo_thread_create(
+    check_equal(salts_thread_create(
         &thread, cflow_parallel_eval_thread_run, &eval), 0);
     attempts = 0u;
     do {
       check_true(cflow_executor_control_get_stats(&control, &stats));
       if (stats.accepted == 5u) break;
-      turbo_sleep_ms(1u);
+      salts_sleep_ms(1u);
     } while (attempts++ < 500u);
     check_equal(stats.accepted, (size_t)5u);
 
     check_true(cflow_executor_control_shutdown(
         &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
     atomic_store(&cflow_parallel_gate_open, true);
-    check_equal(turbo_thread_join(&thread), 0);
+    check_equal(salts_thread_join(&thread), 0);
 
     check_false(eval.ok);
     check_null(eval.result.data);

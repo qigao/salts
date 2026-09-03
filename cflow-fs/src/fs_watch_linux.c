@@ -1,7 +1,7 @@
 #include "fs_watch_internal.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -23,7 +23,7 @@ typedef struct cflow_fs_watch_linux {
     cflow_fs_watch_impl *owner;
     int inotify_fd;
     int stop_pipe[2];
-    turbo_thread_t thread;
+    salts_thread_t thread;
     unsigned char *buffer;
     cflow_fs_watch_linux_entry *watches;
     char *watch_paths;
@@ -167,7 +167,7 @@ static int watch_linux_update_prefix(cflow_fs_watch_linux *backend,
             size_t suffix_length = strlen(path + old_length);
             if (new_length > SIZE_MAX - suffix_length ||
                 new_length + suffix_length >= backend->path_capacity)
-                return TURBO_ENOBUFS;
+                return SALTS_ENOBUFS;
         }
     }
     for (index = 0u; index < backend->watch_count; ++index) {
@@ -179,7 +179,7 @@ static int watch_linux_update_prefix(cflow_fs_watch_linux *backend,
             memcpy(path, new_prefix, new_length);
         }
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int watch_linux_add(cflow_fs_watch_linux *backend,
@@ -189,7 +189,7 @@ static int watch_linux_add(cflow_fs_watch_linux *backend,
     size_t existing;
     if (strlen(relative) >= backend->path_capacity ||
         !watch_linux_absolute(backend, relative))
-        return TURBO_ENOBUFS;
+        return SALTS_ENOBUFS;
     descriptor = inotify_add_watch(backend->inotify_fd,
                                    backend->absolute_path,
                                    watch_linux_mask);
@@ -197,15 +197,15 @@ static int watch_linux_add(cflow_fs_watch_linux *backend,
         return -errno;
     existing = watch_linux_find(backend, descriptor);
     if (existing != SIZE_MAX)
-        return TURBO_OK;
+        return SALTS_OK;
     if (backend->watch_count == backend->watch_capacity) {
         (void)inotify_rm_watch(backend->inotify_fd, descriptor);
-        return TURBO_ENOBUFS;
+        return SALTS_ENOBUFS;
     }
     entry = &backend->watches[backend->watch_count++];
     entry->descriptor = descriptor;
     memcpy(entry->relative_path, relative, strlen(relative) + 1u);
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int watch_linux_child_is_directory(
@@ -215,33 +215,33 @@ static int watch_linux_child_is_directory(
     *is_directory = false;
     if (child->d_type == DT_DIR) {
         *is_directory = true;
-        return TURBO_OK;
+        return SALTS_OK;
     }
     if (child->d_type != DT_UNKNOWN)
-        return TURBO_OK;
+        return SALTS_OK;
     if (!watch_linux_absolute(backend, relative))
-        return TURBO_ENOBUFS;
+        return SALTS_ENOBUFS;
     if (lstat(backend->absolute_path, &info) != 0)
-        return errno == ENOENT ? TURBO_OK : -errno;
+        return errno == ENOENT ? SALTS_OK : -errno;
     *is_directory = S_ISDIR(info.st_mode);
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int watch_linux_add_tree(cflow_fs_watch_linux *backend,
                                 const char *relative) {
     size_t scan = backend->watch_count;
     int status = watch_linux_add(backend, relative);
-    if (status != TURBO_OK || !backend->recursive)
+    if (status != SALTS_OK || !backend->recursive)
         return status;
     while (scan < backend->watch_count) {
         DIR *directory;
         struct dirent *child;
         if (!watch_linux_absolute(
                 backend, backend->watches[scan].relative_path))
-            return TURBO_ENOBUFS;
+            return SALTS_ENOBUFS;
         directory = opendir(backend->absolute_path);
         if (directory == NULL)
-            return errno == ENOENT ? TURBO_OK : -errno;
+            return errno == ENOENT ? SALTS_OK : -errno;
         errno = 0;
         while ((child = readdir(directory)) != NULL) {
             bool is_directory;
@@ -251,28 +251,28 @@ static int watch_linux_add_tree(cflow_fs_watch_linux *backend,
             if (!watch_linux_join_relative(
                     backend->event_path, backend->path_capacity,
                     backend->watches[scan].relative_path, child->d_name)) {
-                status = TURBO_ENOBUFS;
+                status = SALTS_ENOBUFS;
                 break;
             }
             status = watch_linux_child_is_directory(
                 backend, child, backend->event_path, &is_directory);
-            if (status != TURBO_OK)
+            if (status != SALTS_OK)
                 break;
             if (is_directory) {
                 status = watch_linux_add(backend, backend->event_path);
-                if (status != TURBO_OK)
+                if (status != SALTS_OK)
                     break;
             }
             errno = 0;
         }
-        if (status == TURBO_OK && errno != 0)
+        if (status == SALTS_OK && errno != 0)
             status = -errno;
         (void)closedir(directory);
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             return status;
         ++scan;
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static void watch_linux_process(cflow_fs_watch_linux *backend,
@@ -350,7 +350,7 @@ static void watch_linux_process(cflow_fs_watch_linux *backend,
                 native->cookie != backend->rename_cookie) {
                 if (backend->recursive &&
                     entry_type == CFLOW_FS_WATCH_ENTRY_DIRECTORY &&
-                    watch_linux_add_tree(backend, path) != TURBO_OK)
+                    watch_linux_add_tree(backend, path) != SALTS_OK)
                     watch_linux_loss(backend);
                 else
                     watch_linux_loss(backend);
@@ -358,7 +358,7 @@ static void watch_linux_process(cflow_fs_watch_linux *backend,
                 if (backend->recursive &&
                     entry_type == CFLOW_FS_WATCH_ENTRY_DIRECTORY &&
                     watch_linux_update_prefix(
-                        backend, backend->rename_old_path, path) != TURBO_OK) {
+                        backend, backend->rename_old_path, path) != SALTS_OK) {
                     watch_linux_loss(backend);
                 } else {
                     (void)cflow_fs_watch_publish(
@@ -373,7 +373,7 @@ static void watch_linux_process(cflow_fs_watch_linux *backend,
                 entry_type == CFLOW_FS_WATCH_ENTRY_DIRECTORY) {
                 memcpy(backend->tree_path, path, strlen(path) + 1u);
                 if (watch_linux_add_tree(backend,
-                                         backend->tree_path) != TURBO_OK)
+                                         backend->tree_path) != SALTS_OK)
                     watch_linux_loss(backend);
                 else
                     (void)cflow_fs_watch_publish(
@@ -489,10 +489,10 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
                               &path_storage_bytes) ||
         root_length > SIZE_MAX - 2u ||
         config->path_capacity > SIZE_MAX - root_length - 2u)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     backend = (cflow_fs_watch_linux *)calloc(1u, sizeof(*backend));
     if (backend == NULL)
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     backend->inotify_fd = -1;
     backend->stop_pipe[0] = -1;
     backend->stop_pipe[1] = -1;
@@ -511,7 +511,7 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
         backend->watch_paths == NULL || backend->root_path == NULL ||
         backend->absolute_path == NULL || backend->event_path == NULL) {
         watch_linux_release(backend);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
     backend->tree_path = backend->event_path + config->path_capacity;
     backend->rename_old_path =
@@ -548,19 +548,19 @@ int cflow_fs_watch_backend_open(cflow_fs_watch_impl *impl,
         return status;
     }
     status = watch_linux_add_tree(backend, "");
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         watch_linux_release(backend);
         return status;
     }
     cflow_fs_watch_backend_set(impl, backend);
-    status = turbo_thread_create(&backend->thread,
+    status = salts_thread_create(&backend->thread,
                                  watch_linux_thread, backend);
-    if (status != TURBO_OK) {
+    if (status != SALTS_OK) {
         cflow_fs_watch_backend_set(impl, NULL);
         watch_linux_release(backend);
         return status;
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 void cflow_fs_watch_backend_request_close(cflow_fs_watch_impl *impl) {
@@ -574,12 +574,12 @@ void cflow_fs_watch_backend_request_close(cflow_fs_watch_impl *impl) {
 int cflow_fs_watch_backend_destroy(cflow_fs_watch_impl *impl) {
     cflow_fs_watch_linux *backend =
         (cflow_fs_watch_linux *)cflow_fs_watch_backend_get(impl);
-    int status = TURBO_OK;
+    int status = SALTS_OK;
     if (backend == NULL)
-        return TURBO_EINVAL;
-    if (turbo_thread_join(&backend->thread) != TURBO_OK)
-        status = TURBO_EIO;
-    turbo_thread_destroy(&backend->thread);
+        return SALTS_EINVAL;
+    if (salts_thread_join(&backend->thread) != SALTS_OK)
+        status = SALTS_EIO;
+    salts_thread_destroy(&backend->thread);
     cflow_fs_watch_backend_set(impl, NULL);
     watch_linux_release(backend);
     return status;

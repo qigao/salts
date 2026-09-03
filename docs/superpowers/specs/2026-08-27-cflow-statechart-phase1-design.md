@@ -1,6 +1,6 @@
 # CFlow Format-neutral Statechart Phase 1 Design
 
-**Issue:** qigao/turbo-utils#122
+**Issue:** qigao/salts#122
 
 **Date:** 2026-08-27
 **Reference semantics:** [W3C SCXML 1.0 core constructs and interpretation algorithm](https://www.w3.org/TR/scxml/)

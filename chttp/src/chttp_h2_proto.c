@@ -2,7 +2,7 @@
  * @file chttp_h2_proto.c
  * @brief Private bounded HTTP/2 protocol engine (RFC 9113).
  *
- * Migrated from qigao/TurboHTTP commit
+ * Migrated from the legacy HTTP repository commit
  * 38f1e389b3f94909db6cb2482a8cbc16522e7e4f and adapted to bounded CHTTP storage.
  * Client mode is used by chttp_h2_session.c; server mode by the in-process test
  * peers.  All memory is bounded and checked.

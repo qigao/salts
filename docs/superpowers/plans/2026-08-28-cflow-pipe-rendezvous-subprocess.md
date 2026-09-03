@@ -6,7 +6,7 @@ byte-pipe operations or introducing a hidden blocking worker.
 **Architecture:** Keep connected-byte I/O in CFlow, add an explicit
 rendezvous control plane, extend Core process spawning with borrowed stdio
 bindings, and combine the two existing owners in the separate
-`TurboUtils::CFlowProcess` adapter target.
+`Salts::CFlowProcess` adapter target.
 
 ## Tasks
 
@@ -29,7 +29,7 @@ bindings, and combine the two existing owners in the separate
 
 4. Public and package surface
    - Compile new headers as C and C++.
-   - Export and consume `TurboUtils::CFlowProcess` from an installed package.
+   - Export and consume `Salts::CFlowProcess` from an installed package.
    - Publish capability, ownership, threading, error, and shutdown contracts.
 
 5. Verification

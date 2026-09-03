@@ -4,9 +4,9 @@
 
 **Goal:** Replace the epoll/kqueue native adapter's per-operation fd lifecycle and intermediate worker handoff with persistent per-socket readiness ownership while preserving the public submit/completion API.
 
-**Architecture:** The platform readiness reactor remains the sole blocking poller. A new additive continuation arm lets a callback request the next one-shot interest, which Platform commits only after the callback returns; the existing `turbo_readiness_arm()` callback-reentry behavior remains `TURBO_EBUSY`. The CFlow readiness adapter retains at most two lanes per original socket identity: one duplicated descriptor and registration for FIFO reads, and one for FIFO writes. This avoids mutable combined-interest races while making descriptor lifecycle scale with live sockets instead of operations. Initial nonblocking attempts run on submit and retries run directly from the reactor callback. Fixed-capacity request and socket tables preserve bounded memory and explicit backpressure.
+**Architecture:** The platform readiness reactor remains the sole blocking poller. A new additive continuation arm lets a callback request the next one-shot interest, which Platform commits only after the callback returns; the existing `salts_readiness_arm()` callback-reentry behavior remains `SALTS_EBUSY`. The CFlow readiness adapter retains at most two lanes per original socket identity: one duplicated descriptor and registration for FIFO reads, and one for FIFO writes. This avoids mutable combined-interest races while making descriptor lifecycle scale with live sockets instead of operations. Initial nonblocking attempts run on submit and retries run directly from the reactor callback. Fixed-capacity request and socket tables preserve bounded memory and explicit backpressure.
 
-**Tech Stack:** C11, TurboUtils Platform readiness reactor, CFlow I/O Actor, TinyTest, CMake Presets.
+**Tech Stack:** C11, Salts Platform readiness reactor, CFlow I/O Actor, TinyTest, CMake Presets.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-cflow-native-io-backends-design.md`
 
@@ -25,15 +25,15 @@
 ### Task 0: Add callback-return continuation rearm
 
 **Files:**
-- Modify: `platform/include/turbo/readiness.h`
+- Modify: `platform/include/salts/readiness.h`
 - Modify: `platform/src/readiness.c`
 - Modify: `platform/tests/readiness_contract_suite.c`
 
 **Protocol:**
-- `turbo_readiness_arm()` keeps its public one-shot and callback `TURBO_EBUSY` semantics.
-- `turbo_readiness_arm_continuation()` accepts a callback that returns `COMPLETE` or `REARM` with validated next interests.
+- `salts_readiness_arm()` keeps its public one-shot and callback `SALTS_EBUSY` semantics.
+- `salts_readiness_arm_continuation()` accepts a callback that returns `COMPLETE` or `REARM` with validated next interests.
 - Platform invokes callbacks without its mutex, then serializes the returned decision with shutdown, close, unarm, external arm, generation, and terminal state before calling the backend arm hook.
-- A terminal callback cannot rearm. A malformed result completes without rearm and is reported as `TURBO_EINVAL` by dispatch. A backend rearm failure produces exactly one terminal callback with `events == 0` and the backend error.
+- A terminal callback cannot rearm. A malformed result completes without rearm and is reported as `SALTS_EINVAL` by dispatch. A backend rearm failure produces exactly one terminal callback with `events == 0` and the backend error.
 
 - [x] Write and verify a RED fake-backend contract test for one continuation rearm.
 - [x] Implement the additive public types/API and common arm admission path.
@@ -50,24 +50,24 @@
 
 **Interfaces:**
 - Consumes: `cflow_io_native_backend_forget_socket(cflow_io_native_backend *, uintptr_t)`.
-- Produces: observable readiness behavior where a known quiescent socket is forgotten once and a repeated/unknown identity returns `TURBO_ENOENT`.
+- Produces: observable readiness behavior where a known quiescent socket is forgotten once and a repeated/unknown identity returns `SALTS_ENOENT`.
 
 - [x] **Step 1: Write the failing readiness test**
 
-Add a platform-guarded helper that completes and acknowledges a TCP operation, closes the original socket, expects the first `forget_socket` to return `TURBO_OK`, and expects the second call for the same identity to return `TURBO_ENOENT`.
+Add a platform-guarded helper that completes and acknowledges a TCP operation, closes the original socket, expects the first `forget_socket` to return `SALTS_OK`, and expects the second call for the same identity to return `SALTS_ENOENT`.
 
 ```c
 check_equal(cflow_io_native_backend_forget_socket(
                 &fixture.backend, (uintptr_t)closed_socket),
-            TURBO_OK);
+            SALTS_OK);
 check_equal(cflow_io_native_backend_forget_socket(
                 &fixture.backend, (uintptr_t)closed_socket),
-            TURBO_ENOENT);
+            SALTS_ENOENT);
 ```
 
 - [x] **Step 2: Verify RED**
 
-Run the repository's configured release target and focused test. Expected failure: readiness currently returns `TURBO_OK` for the second unknown identity.
+Run the repository's configured release target and focused test. Expected failure: readiness currently returns `SALTS_OK` for the second unknown identity.
 
 ```powershell
 cmake --build --preset win-release-user --target cflow_io_native_test
@@ -76,7 +76,7 @@ ctest --preset win-release-user -R cflow_io_native_test --output-on-failure
 
 - [x] **Step 3: Document the lifecycle contract**
 
-Update the header comment so all native backends retain bounded identity where their OS model requires it, and require `forget_socket` after close/quiescence. Document `TURBO_EBUSY` and `TURBO_ENOENT`.
+Update the header comment so all native backends retain bounded identity where their OS model requires it, and require `forget_socket` after close/quiescence. Document `SALTS_EBUSY` and `SALTS_ENOENT`.
 
 - [x] **Step 4: Commit with Task 2 after GREEN**
 
@@ -91,7 +91,7 @@ The test intentionally remains failing until the readiness implementation exists
 - Test: `cflow/tests/cflow_io_native_test.c`
 
 **Interfaces:**
-- Consumes: `turbo_readiness_register`, `turbo_readiness_arm_continuation`, `turbo_readiness_close`, Actor completion callback.
+- Consumes: `salts_readiness_register`, `salts_readiness_arm_continuation`, `salts_readiness_close`, Actor completion callback.
 - Produces: the existing `cflow_io_native_impl_ops` table without a separate readiness worker thread.
 
 - [x] **Step 1: Replace per-request descriptors with bounded socket records**
@@ -107,7 +107,7 @@ typedef struct cflow_readiness_socket_record {
 } cflow_readiness_socket_record;
 ```
 
-Each request record borrows its socket record until completion. First use duplicates and registers once; later operations reuse it. Allocation failure, table full, invalid descriptors, and registration errors return the existing explicit Turbo error codes.
+Each request record borrows its socket record until completion. First use duplicates and registers once; later operations reuse it. Allocation failure, table full, invalid descriptors, and registration errors return the existing explicit Salts error codes.
 
 - [x] **Step 2: Execute initial attempts synchronously**
 
@@ -119,7 +119,7 @@ The callback claims pending requests for one lane under the gate, retries normal
 
 - [x] **Step 4: Preserve cancellation and shutdown**
 
-Cancellation transitions a pending record once and publishes `CFLOW_IO_COMPLETION_CANCELLED`. `forget_socket` rejects active requests, closes the persistent registration/duplicate, clears the socket slot, and returns `TURBO_ENOENT` for an unknown identity. Shutdown closes remaining quiescent registrations before reactor destruction.
+Cancellation transitions a pending record once and publishes `CFLOW_IO_COMPLETION_CANCELLED`. `forget_socket` rejects active requests, closes the persistent registration/duplicate, clears the socket slot, and returns `SALTS_ENOENT` for an unknown identity. Shutdown closes remaining quiescent registrations before reactor destruction.
 
 - [x] **Step 5: Verify GREEN**
 

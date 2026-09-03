@@ -2,7 +2,7 @@
 #define CHTTP_CHTTP_H
 
 #include <cnet/cnet.h>
-#include <turbo/error_codes.h>
+#include <salts/error_codes.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -91,7 +91,7 @@ typedef struct chttp_header {
 
 /**
  * Pulls at most `capacity` bytes into callback-scoped storage. Return
- * `TURBO_OK` and set `out_size` to zero for EOF, or return a negative error.
+ * `SALTS_OK` and set `out_size` to zero for EOF, or return a negative error.
  * The callback runs on the CHTTP owner thread and must not perform unbounded blocking or reenter
  * it.
  */
@@ -161,7 +161,7 @@ typedef int (*chttp_server_handler_fn)(void *user, const chttp_server_request_vi
 typedef int (*chttp_server_body_open_fn)(void *user, const chttp_server_request_view *request,
                                          chttp_body_sink *out_sink);
 
-/** Closes a route sink exactly once; status is TURBO_OK only after the complete body arrived. */
+/** Closes a route sink exactly once; status is SALTS_OK only after the complete body arrived. */
 typedef void (*chttp_server_body_close_fn)(void *user, chttp_body_sink *sink, int status);
 
 typedef int (*chttp_server_middleware_fn)(void *user, const chttp_server_request_view *request,
@@ -483,13 +483,13 @@ typedef struct chttp_client_config {
  *
  * @param profile Zero-initialized reusable output profile.
  * @param config Explicit CNet TLS client policy.
- * @return CNet TLS setup errors, or `TURBO_ENOTSUP` for an unsupported ALPN list.
+ * @return CNet TLS setup errors, or `SALTS_ENOTSUP` for an unsupported ALPN list.
  */
 int chttp_tls_profile_init(chttp_tls_profile *profile, const cnet_tls_client_config *config);
 
 /**
  * Releases the public reference; admitted requests and idle slots remain
- * valid. Repeated destroy succeeds; a NULL wrapper returns `TURBO_EINVAL`.
+ * valid. Repeated destroy succeeds; a NULL wrapper returns `SALTS_EINVAL`.
  */
 int chttp_tls_profile_destroy(chttp_tls_profile *profile);
 
@@ -498,7 +498,7 @@ int chttp_tls_profile_destroy(chttp_tls_profile *profile);
  * is published.
  * @param client Zero-initialized output owner.
  * @param config Borrowed configuration copied during initialization.
- * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_ENOMEM`, or a CNet/backend init error.
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_ENOMEM`, or a CNet/backend init error.
  */
 int chttp_async_client_init(chttp_async_client *client, const chttp_client_config *config);
 
@@ -508,21 +508,21 @@ int chttp_async_client_init(chttp_async_client *client, const chttp_client_confi
  * asynchronously connects through CNet.
  * Success guarantees exactly one later completion callback. No callback is
  * delivered for immediate admission failure. Submission from a completion
- * callback returns `TURBO_EBUSY`; defer it until the callback unwinds.
+ * callback returns `SALTS_EBUSY`; defer it until the callback unwinds.
  * A full pool may begin closing one non-matching idle connection and returns
- * `TURBO_ENOBUFS`; poll before retrying admission.
- * @return `TURBO_OK`, an input/size/transport error, `TURBO_ENOBUFS`,
- * `TURBO_EBUSY`, `TURBO_ESHUTDOWN`, or a CNet admission error.
+ * `SALTS_ENOBUFS`; poll before retrying admission.
+ * @return `SALTS_OK`, an input/size/transport error, `SALTS_ENOBUFS`,
+ * `SALTS_EBUSY`, `SALTS_ESHUTDOWN`, or a CNet admission error.
  */
 int chttp_async_client_submit(chttp_async_client *client, const chttp_request_options *options,
                               chttp_request *out_request);
 
 /**
- * Requests cancellation; completion is reported later with `TURBO_ECANCELED`.
+ * Requests cancellation; completion is reported later with `SALTS_ECANCELED`.
  * H1 closes its exclusive connection; H2 sends RST_STREAM(CANCEL) without
  * closing sibling streams. A completed request is stale and returns
- * `TURBO_ENOENT` after recycling.
- * @return `TURBO_OK`, `TURBO_ENOENT`, `TURBO_EALREADY`, or a CNet close error.
+ * `SALTS_ENOENT` after recycling.
+ * @return `SALTS_OK`, `SALTS_ENOENT`, `SALTS_EALREADY`, or a CNet close error.
  */
 int chttp_async_request_cancel(chttp_async_client *client, chttp_request request);
 
@@ -531,7 +531,7 @@ int chttp_async_request_cancel(chttp_async_client *client, chttp_request request
  * thread. Ordinary callers should use chttp_get/post/put and never call this
  * function. `out_completions` counts user completion callbacks, not transport
  * callbacks.
- * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_EBUSY`, `TURBO_ESHUTDOWN`,
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EBUSY`, `SALTS_ESHUTDOWN`,
  * or the first CNet/progress error.
  */
 int chttp_async_client_poll(chttp_async_client *client, uint32_t timeout_ms,
@@ -539,13 +539,13 @@ int chttp_async_client_poll(chttp_async_client *client, uint32_t timeout_ms,
 
 /**
  * Stops admission and drains all accepted requests plus busy and idle CNet connections.
- * Retry after `TURBO_ETIMEDOUT`; calling from poll/callback returns `TURBO_EBUSY`.
+ * Retry after `SALTS_ETIMEDOUT`; calling from poll/callback returns `SALTS_EBUSY`.
  */
 int chttp_async_client_stop(chttp_async_client *client, uint32_t timeout_ms);
 
 /**
  * Requires a completed stop; a null implementation is already destroyed.
- * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_EBUSY`, or a CNet destroy error.
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EBUSY`, or a CNet destroy error.
  */
 int chttp_async_client_destroy(chttp_async_client *client);
 
@@ -604,22 +604,22 @@ const char *chttp_response_header(const chttp_response *response, const char *na
 void chttp_response_destroy(chttp_response *response);
 
 /**
- * Stops and drains the internal client. `TURBO_ETIMEDOUT` is retryable and
+ * Stops and drains the internal client. `SALTS_ETIMEDOUT` is retryable and
  * preserves the client; successful destroy clears `client->impl`.
  */
 int chttp_client_destroy(chttp_client *client, uint32_t timeout_ms);
 
 /**
  * Initializes a stopped server and copies configuration and bounded storage.
- * @return `TURBO_OK`, an invalid/range/aggregate-size error, or `TURBO_ENOMEM`.
+ * @return `SALTS_OK`, an invalid/range/aggregate-size error, or `SALTS_ENOMEM`.
  */
 int chttp_server_init(chttp_server *server, const chttp_server_config *config);
 
 /**
  * Adds one method/path-pattern route before start. Complete `:name` segments
  * bind raw, non-percent-decoded params. The user pointer is borrowed through
- * stop. Returns `TURBO_ENOBUFS` at route/param capacity, `TURBO_EALREADY` for a
- * duplicate method/pattern, or `TURBO_EBUSY` after start.
+ * stop. Returns `SALTS_ENOBUFS` at route/param capacity, `SALTS_EALREADY` for a
+ * duplicate method/pattern, or `SALTS_EBUSY` after start.
  */
 int chttp_server_route(chttp_server *server, chttp_method method, const char *path,
                        chttp_server_handler_fn handler, void *user);
@@ -699,7 +699,7 @@ int chttp_websocket_pool_init(chttp_websocket_pool *pool,
 /**
  * Opens one RFC 8441 stream without exposing a poller. The first call fixes the connection origin
  * and TLS profile; later calls may change only the URI target. Local/peer stream exhaustion returns
- * `TURBO_ENOBUFS`.
+ * `SALTS_ENOBUFS`.
  */
 int chttp_websocket_pool_open(chttp_websocket_pool *pool,
                               const chttp_websocket_connect_options *options,
@@ -728,11 +728,11 @@ int chttp_websocket_pool_destroy(chttp_websocket_pool *pool, uint32_t timeout_ms
 
 /**
  * Appends one global middleware before start. Bindings are copied in
- * registration order. Returns `TURBO_ENOBUFS` at middleware capacity.
+ * registration order. Returns `SALTS_ENOBUFS` at middleware capacity.
  */
 int chttp_server_use(chttp_server *server, chttp_server_middleware_fn middleware, void *user);
 
-/** Runs the next middleware or terminal dispatch; a second call returns `TURBO_EALREADY`. */
+/** Runs the next middleware or terminal dispatch; a second call returns `SALTS_EALREADY`. */
 int chttp_server_next_call(chttp_server_next *next);
 
 /**
@@ -758,14 +758,14 @@ const char *chttp_server_request_param(const chttp_server_request_view *request,
 
 /**
  * Adds or replaces one copied response header within configured count/byte
- * bounds. Framing headers are framework-owned and return `TURBO_EPERM`.
+ * bounds. Framing headers are framework-owned and return `SALTS_EPERM`.
  */
 int chttp_server_response_set_header(chttp_server_response *response, const char *name,
                                      const char *value);
 
 /**
  * Completes the response with a copied content type and body. A second reply
- * returns `TURBO_EALREADY`; an oversized body returns `TURBO_EMSGSIZE`.
+ * returns `SALTS_EALREADY`; an oversized body returns `SALTS_EMSGSIZE`.
  */
 int chttp_server_reply(chttp_server_response *response, unsigned int status_code,
                        const char *content_type, const void *body, size_t body_size);
@@ -784,7 +784,7 @@ int chttp_server_response_file(chttp_server_response *response, unsigned int sta
 /**
  * Session values are NUL-terminated strings borrowed through the handler and
  * copied into the bounded store by set. A first set lazily allocates a Session;
- * a full live-session or entry capacity returns `TURBO_ENOBUFS`.
+ * a full live-session or entry capacity returns `SALTS_ENOBUFS`.
  */
 const char *chttp_session_get(const chttp_session *session, const char *key);
 int chttp_session_set(chttp_session *session, const char *key, const char *value);

@@ -1,6 +1,6 @@
 # CFlow SCXML Phase 3 Conditional Executable Content Design
 
-**Issue:** [qigao/turbo-utils#122](https://github.com/qigao/turbo-utils/issues/122)
+**Issue:** [qigao/salts#122](https://github.com/qigao/salts/issues/122)
 
 **Date:** 2026-08-29
 
@@ -9,7 +9,7 @@
 ## Scope
 
 This increment adds conditional executable content to the optional
-`TurboUtils::CFlowScxml` frontend while retaining the SCXML null data model.
+`Salts::CFlowScxml` frontend while retaining the SCXML null data model.
 It admits nested `if` elements partitioned by zero or more `elseif` markers and
 an optional trailing `else`, resolves null-data-model `In(id)` conditions at
 compile time, and executes only the first matching partition in document order.

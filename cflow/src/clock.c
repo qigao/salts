@@ -1,5 +1,5 @@
 #include <cflow/clock.h>
-#include <turbo/clock.h>
+#include <salts/clock.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +14,7 @@ typedef struct cflow_virtual_clock_state {
 
 static cflow_instant system_clock_now(void *state) {
     (void)state;
-    return (cflow_instant){turbo_hrtime()};
+    return (cflow_instant){salts_hrtime()};
 }
 
 static bool system_clock_advance(void *state, cflow_duration delta) {

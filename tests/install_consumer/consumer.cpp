@@ -19,7 +19,7 @@ int main() {
   s3_bucket_list_destroy(&buckets);
   s3_object_list_destroy(&objects);
   return client.impl == nullptr && async_client.impl == nullptr &&
-                 s3_multipart_destroy(&multipart) == TURBO_OK
+                 s3_multipart_destroy(&multipart) == SALTS_OK
              ? 0
              : 1;
 }
@@ -39,10 +39,10 @@ struct InstalledWebSocketProbe {
 
 static int installed_websocket_write(void *user, const uint8_t *data, size_t size) {
   auto *probe = static_cast<InstalledWebSocketProbe *>(user);
-  if (probe == nullptr || data == nullptr || size > sizeof(probe->frame)) return TURBO_ENOSPC;
+  if (probe == nullptr || data == nullptr || size > sizeof(probe->frame)) return SALTS_ENOSPC;
   std::memcpy(probe->frame, data, size);
   probe->frame_size = size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void installed_websocket_event(void *user, cnet_websocket *,
@@ -90,22 +90,22 @@ int main() {
   (void)http_response_source;
   (void)http_response_file;
 
-  if (chttp_server_response_source(nullptr, 0u, nullptr, nullptr) != TURBO_EINVAL ||
-      chttp_server_response_file(nullptr, 0u, nullptr, nullptr) != TURBO_EINVAL ||
+  if (chttp_server_response_source(nullptr, 0u, nullptr, nullptr) != SALTS_EINVAL ||
+      chttp_server_response_file(nullptr, 0u, nullptr, nullptr) != SALTS_EINVAL ||
       chttp_post_file(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) !=
-          TURBO_EINVAL ||
+          SALTS_EINVAL ||
       chttp_put_file(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) !=
-          TURBO_EINVAL ||
+          SALTS_EINVAL ||
       chttp_download_file(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) !=
-          TURBO_EINVAL ||
-      chttp_server_websocket_with(&server, nullptr) != TURBO_EINVAL ||
-      chttp_websocket_state_get(&http_websocket, nullptr) != TURBO_EINVAL ||
-      chttp_websocket_client_destroy(&http_websocket_client, 0u) != TURBO_OK ||
-      chttp_websocket_pool_destroy(&http_websocket_pool, 0u) != TURBO_OK ||
+          SALTS_EINVAL ||
+      chttp_server_websocket_with(&server, nullptr) != SALTS_EINVAL ||
+      chttp_websocket_state_get(&http_websocket, nullptr) != SALTS_EINVAL ||
+      chttp_websocket_client_destroy(&http_websocket_client, 0u) != SALTS_OK ||
+      chttp_websocket_pool_destroy(&http_websocket_pool, 0u) != SALTS_OK ||
       client.impl != nullptr || async_client.impl != nullptr || request.slot != 0u ||
       request.generation != 0u || rpc_options.tls != nullptr ||
       rpc_options.protocol != CHTTP_HTTP_1_1 || rpc_server.impl != nullptr ||
-      crpc_server_destroy(&rpc_server) != TURBO_OK || server.impl != nullptr ||
+      crpc_server_destroy(&rpc_server) != SALTS_OK || server.impl != nullptr ||
       session.impl != nullptr || http_tls_profile.impl != nullptr ||
       http_options.protocol != CHTTP_HTTP_1_1 || CHTTP_HTTP_2 == CHTTP_HTTP_1_1 ||
       http_config.h2_input_buffer_bytes != 64u * 1024u || http_server_config.enable_http2 != 1 ||
@@ -129,25 +129,25 @@ int main() {
   websocket_config.write = installed_websocket_write;
   websocket_config.on_event = installed_websocket_event;
   websocket_config.user = &probe;
-  if (cnet_websocket_init(&websocket, &websocket_config) != TURBO_OK) return 2;
-  if (cnet_websocket_send_text(&websocket, "x", 1u) != TURBO_OK || probe.frame_size == 0u) {
+  if (cnet_websocket_init(&websocket, &websocket_config) != SALTS_OK) return 2;
+  if (cnet_websocket_send_text(&websocket, "x", 1u) != SALTS_OK || probe.frame_size == 0u) {
     (void)cnet_websocket_destroy(&websocket);
     return 3;
   }
-  if (cnet_websocket_feed(&websocket, inbound_text, sizeof(inbound_text)) != TURBO_OK ||
+  if (cnet_websocket_feed(&websocket, inbound_text, sizeof(inbound_text)) != SALTS_OK ||
       probe.event_count != 1u) {
     (void)cnet_websocket_destroy(&websocket);
     return 4;
   }
-  return cnet_websocket_destroy(&websocket) == TURBO_OK ? 0 : 5;
+  return cnet_websocket_destroy(&websocket) == SALTS_OK ? 0 : 5;
 }
 
 #else
 
-  #include <rocida/stl/typed.h>
-  #include <turbo_uuid.h>
+  #include <cstl/typed.h>
+  #include <salts_uuid.h>
 
-static_assert(sizeof(Rocida::UUID) == TURBO_UUID_SIZE);
+static_assert(sizeof(Salts::UUID) == SALTS_UUID_SIZE);
 
 Struct(InstalledCppPayload, (TYPE(Vec, int), values));
 

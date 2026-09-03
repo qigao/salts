@@ -74,14 +74,14 @@ accepted-connection 路径终止 TLS；CHTTP client/server 复用该路径，并
 请求 `wss` 明确返回 capability error；H2 client 只在 peer 发布
 `SETTINGS_ENABLE_CONNECT_PROTOCOL=1` 后发送 Extended CONNECT，且不回退 H1。
 
-## P2：导入 TurboHTTP HTTP/2
+## P2：导入旧 codebase 的 HTTP/2
 
-来源：`C:\projects\cpp\TurboHTTP\http2`，审查基线 commit
+来源：同一所有者的旧 HTTP codebase，审查基线 commit
 `c804424d8ea57298250f8e0b5af78bb933b9ec5e`。迁移时记录实际源 commit，并保留 frame、HPACK、
 protocol/session 测试的来源映射；不复制 HTTP/3 代码。
 
 - [x] 先导入 transport-independent 的 frame、HPACK 与 protocol engine，并把公开命名、
-  export macro、Turbo error 与 CMake target 适配到 CHTTP。
+  export macro、Salts error 与 CMake target 适配到 CHTTP。
 - [x] 不直接导入 CoroNet socket ownership。将 HTTP/2 session 的 socket/read/write/cancel/
   timer 接口改为依赖 CNet stream；h2c 使用 TCP，HTTPS/ALPN `h2` 依赖 P0 TLS。
 - [x] 在 CHTTP 中定义 H1/H2 共用 request/response ownership，并保留 stream concurrency、
@@ -101,16 +101,16 @@ drain、public-header 与 installed consumer 编译已覆盖。advanced per-stre
 完成条件：CHTTP 可显式使用 h2c，并在 P0 完成后使用经 ALPN 验证的 HTTPS H2；公开 API
 不暴露 CoroNet 或第三方协议类型。
 
-## P3：导入 TurboHTTP S3
+## P3：导入旧 codebase 的 S3
 
-来源：`C:\projects\cpp\TurboHTTP\s3`，审查基线 commit
+来源：同一所有者的旧 HTTP codebase，审查基线 commit
 `5f1068f5194f94472e54a185ec51638f421d4fc5`。S3 是 CHTTP 之上的应用协议模块；不得放入
 CNet 或 NativeIO。迁移时记录实际源 commit，保留 SigV4、URL、XML、multipart 与响应解析
 测试的来源映射，并删除所有 H3 专用策略与测试分支。
 
 - [x] 导入 credential provider、SigV4、path/virtual-hosted URL、error、XML、SSE、bucket、
   object、multipart、lifecycle、notification 与 replication 协议模块。
-- [x] 用注入的 CHTTP client/async client 替换 `TurboHttp::TurboHttp` facade 和 CoroNet
+- [x] 用注入的 CHTTP client/async client 替换旧 HTTP facade 和 CoroNet
   context；S3 借用 client，不能销毁它，且切换 client 时必须无 in-flight request。
 - [x] signing 的 method、canonical path/query/header/body hash、authority、region 与最终
   CHTTP wire request 必须来自同一事实源；禁止签名后修改 transport-visible 字段。
@@ -138,7 +138,7 @@ CNet 或 NativeIO。迁移时记录实际源 commit，保留 SigV4、URL、XML�
 
 ## 统一验证门槛
 
-- 从 TurboHTTP 复制源码前确认并保留许可与 provenance；上述审查基线未发现仓库根目录的
+- 从旧 codebase 迁移源码前确认并保留许可与 provenance；上述审查基线未发现仓库根目录的
   `LICENSE`、`COPYING` 或 `NOTICE`，因此正式迁移必须先补齐这一事实。
 - 每一阶段先增加失败测试，再实现公开 API；未完成能力不得用 experimental flag 暴露。
 - 每个可增长 buffer/queue/pool 都必须有硬上限、checked arithmetic、背压和 shutdown

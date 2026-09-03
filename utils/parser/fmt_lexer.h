@@ -7,7 +7,7 @@
 #define FMT_LEXER_H
 
 #include <stddef.h>
-#include "../include/turbo_vstr.h"
+#include "../include/salts_vstr.h"
 
 #ifdef __cplusplus
 extern "C" {

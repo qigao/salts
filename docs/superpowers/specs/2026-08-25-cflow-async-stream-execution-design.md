@@ -4,7 +4,7 @@
 
 ## 背景与范围
 
-现有 `cflow_scheduler_worker_init()` 已通过 `turbo_threadpool` 提供并发调度，`cflow_run` 也保证同一 Run 的 pump 串行化；但 `cflow_eval_stream()` / `cflow_eval_collect()` 固定创建测试 scheduler，因此 TurboSTL Stream terminal 无法使用调用方已有的 worker scheduler。
+现有 `cflow_scheduler_worker_init()` 已通过 `salts_threadpool` 提供并发调度，`cflow_run` 也保证同一 Run 的 pump 串行化；但 `cflow_eval_stream()` / `cflow_eval_collect()` 固定创建测试 scheduler，因此 Container Stream terminal 无法使用调用方已有的 worker scheduler。
 
 本次增加一个异步 collection terminal。它把一条已绑定 Range 的 `cflow_stream` 提交给调用方提供的并发 scheduler，并返回可等待、可取消、可查询、可销毁的执行句柄。
 
@@ -66,7 +66,7 @@ cflow_stream_execution_status cflow_stream_execution_destroy(
     cflow_stream_execution *execution);
 ```
 
-TurboSTL 只增加薄包装和 typed collector 宏，不另建执行引擎。
+Container 只增加薄包装和 typed collector 宏，不另建执行引擎。
 
 ## 数据与并发协议
 
@@ -110,7 +110,7 @@ ZERO --start/admitted--> RUNNING --done+commit--> COMPLETED
 ## 架构影响与兼容性
 
 - CFlow 新增 terminal facade，复用 `cflow_run`、`cflow_scheduler`、Range Source 和 `cmeta_collector`，依赖方向不变。
-- TurboSTL 继续只是 CFlow 的用户入口；它不拥有 scheduler，也不依赖底层 threadpool 类型。
+- Container 继续只是 CFlow 的用户入口；它不拥有 scheduler，也不依赖底层 threadpool 类型。
 - 现有同步 API 和用户可见行为不变。新 API 是增量兼容改动。
 - 同一 scheduler 可承载多个独立 Stream execution；这提供 pipeline 级并发。单 pipeline 内仍保持确定性顺序。
 
@@ -122,7 +122,7 @@ ZERO --start/admitted--> RUNNING --done+commit--> COMPLETED
 4. 外部 cancel 同步关闭活动 Run，并且 Collector 只 abort 一次。
 5. callback 内 wait/cancel/destroy 返回 WOULD_BLOCK。
 6. 非并发 scheduler、无效 Stream、Collector 类型不匹配均在 admission 阶段拒绝且句柄保持 ZERO。
-7. TurboSTL typed collector 包装可直接启动异步执行。
+7. Container typed collector 包装可直接启动异步执行。
 8. C11、C++ 聚合头、安装/消费与现有完整 CTest 回归通过。
 
 ## 后续工作

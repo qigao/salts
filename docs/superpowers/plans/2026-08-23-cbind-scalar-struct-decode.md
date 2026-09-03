@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add `TurboUtils::CBind`, a C11 format-neutral decode kernel that converts CSerde canonical tokens into proven CMeta bool/integer/float/struct storage with strict preflight, exact numeric conversion, bounded caller scratch, and transactional destination rollback.
+**Goal:** Add `Salts::CBind`, a C11 format-neutral decode kernel that converts CSerde canonical tokens into proven CMeta bool/integer/float/struct storage with strict preflight, exact numeric conversion, bounded caller scratch, and transactional destination rollback.
 
-**Architecture:** `cbind_decode()` is the only D2 public operation. It validates caller ABI records, recursively proves the complete semantic/storage graph and resource budget before reading input, checks that the destination semantic graph is empty, then performs forward-only recursive decode through `cserde_reader`. Scalar conversion is isolated in `scalar.c`; struct graph/scratch/state-machine work is isolated in `struct.c`; `decode.c` owns public orchestration, source-status mapping, rollback, and error attribution. D2 deliberately does not expose an incremental token-fed machine, parser adapter, CFlow adapter, allocator, or container/string lifecycle.
+**Architecture:** `cbind_decode()` is the only D2 public operation. It validates caller ABI records, recursively proves the complete semantic/storage graph and resource budget before reading input, checks that the destination semantic graph is empty, then performs forward-only recursive decode through `cserde_reader`. Scalar conversion is isolated in `scalar.c`; struct graph/scratch/state-machine work is isolated in `struct.c`; `decode.c` owns public orchestration, source-status mapping, rollback, and error attribution. D2 deliberately does not expose an incremental token-fed machine, parser adapter, CFlow adapter, allocator, or cstl/string lifecycle.
 
 **Tech Stack:** ISO C11, C++17 public-header/linkage compatibility, CMeta semantic descriptors/reflection, CSerde canonical reader, TinyTest, CMake presets, CTest, GitHub Actions Linux/MSVC release gates.
 
@@ -14,10 +14,10 @@
 
 ## Global Constraints
 
-- Repository ownership remains `qigao/turbo-utils`; public target is exactly `TurboUtils::CBind`, concrete target `turbo_cbind`, export name `CBind`.
+- Repository ownership remains `qigao/salts`; public target is exactly `Salts::CBind`, concrete target `salts_cbind`, export name `CBind`.
 - Execution starts from the latest `master`, not historical design base `4216bb8c71cf6564bf88fe6cff3c8a1c227c87d3`. At plan-writing time current master is `5972c4ee986d54befebbc3b4dcb535082a9286cd`; if master advances, use the newer exact head.
 - Before Task 1 execution, create an isolated worktree/feature branch `feat/cbind-scalar-struct-decode` from that latest master, then cherry-pick approved docs commits `9d47be11fb2a27a50e6928212c6b172a7761eeb8`, `fa456eb00cd3fcf9672e816b6961ff99f95035f5`, and the commit containing this plan so the spec travels with implementation. Do not base production work on the historical design branch.
-- Production dependency is exactly `TurboUtils::CMeta + TurboUtils::CSerde`. No production CBind file may include/link TurboSTL, Core/utils, CFlow, TurboParser, or concrete parser code.
+- Production dependency is exactly `Salts::CMeta + Salts::CSerde`. No production CBind file may include/link Container, Core/utils, CFlow, TurboParser, or concrete parser code.
 - D2 public API is context-first and decode-only: `cbind_decode(ctx, shape, reader, out, error)`.
 - Supported semantic kinds are exactly `CMETA_DATA_BOOL`, `CMETA_DATA_SINT`, `CMETA_DATA_UINT`, `CMETA_DATA_FLOAT`, and `CMETA_DATA_STRUCT`.
 - Valid STRING/BYTES/ENUM/VARIANT/SEQUENCE/SET/MAP/CUSTOM descriptors return `CBIND_UNSUPPORTED` before reader consumption.
@@ -95,7 +95,7 @@ CMakeLists.txt
 - Modify: `.github/workflows/cmeta.yml`
 
 **Interfaces:**
-- Consumes: `TurboUtils::CMeta`, `TurboUtils::CSerde`, test-only `TurboUtils::TinyTest` and `cserde_recording_support`.
+- Consumes: `Salts::CMeta`, `Salts::CSerde`, test-only `Salts::TinyTest` and `cserde_recording_support`.
 - Produces public declarations:
 
 ```c
@@ -174,14 +174,14 @@ void cbind_error_set(cbind_error *error,
 `cbind/CMakeLists.txt`:
 
 ```cmake
-set(TARGET_NAME turbo_cbind)
+set(TARGET_NAME salts_cbind)
 
 add_library(${TARGET_NAME}
   src/decode.c)
 
 cmake_config_target(
   ${TARGET_NAME}
-  ALIAS TurboUtils::CBind
+  ALIAS Salts::CBind
   FOLDER "cbind"
   EXPORT_NAME CBind)
 
@@ -191,11 +191,11 @@ target_include_directories(
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>)
 target_link_libraries(${TARGET_NAME}
-  PUBLIC TurboUtils::CMeta TurboUtils::CSerde)
+  PUBLIC Salts::CMeta Salts::CSerde)
 
 install(
   TARGETS ${TARGET_NAME}
-  EXPORT TurboUtilsTargets
+  EXPORT SaltsTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -224,7 +224,7 @@ Initial test registration:
 ```cmake
 cmake_add_test(cbind_scalar_decode_test
   SOURCES cbind_scalar_decode_test.c
-  LIBS TurboUtils::CBind cserde_recording_support TurboUtils::TinyTest
+  LIBS Salts::CBind cserde_recording_support Salts::TinyTest
   FOLDER "cbind/tests")
 
 set_target_properties(cbind_scalar_decode_test PROPERTIES
@@ -244,10 +244,10 @@ Modify `.github/workflows/cmeta.yml` in both PR/push path filters:
 Change both selected-test regexes to:
 
 ```text
-^(cmeta_|cserde_|cbind_|cflow_|turbostl_)
+^(cmeta_|cserde_|cbind_|cflow_|cstl_)
 ```
 
-Rename Linux selected step to `Test CMeta, CSerde, CBind, CFlow, and TurboSTL`.
+Rename Linux selected step to `Test CMeta, CSerde, CBind, CFlow, and Container`.
 
 - [ ] **Step 2: Write ABI RED tests**
 
@@ -326,9 +326,9 @@ bool cbind_error_valid(const cbind_error *error) {
 - [ ] **Step 5: Run GREEN and dependency audit**
 
 ```bash
-cmake --build --preset build-default-linux --target turbo_cbind cbind_scalar_decode_test
+cmake --build --preset build-default-linux --target salts_cbind cbind_scalar_decode_test
 ctest --preset test-release-linux -R '^cbind_scalar_decode_test$' --output-on-failure
-rg -n "target_link_libraries|TurboUtils::(STL|Core|CFlow)|TurboParser" cbind CMakeLists.txt
+rg -n "target_link_libraries|Salts::(STL|Core|CFlow)|TurboParser" cbind CMakeLists.txt
 ```
 
 Expected: test PASS; production CBind link line contains only CMeta/CSerde; no forbidden production dependency/include appears.
@@ -760,7 +760,7 @@ Task 4 completes STRUCT preflight/resource proof; runtime struct MAP decode is T
 ```cmake
 cmake_add_test(cbind_struct_decode_test
   SOURCES cbind_struct_decode_test.c
-  LIBS TurboUtils::CBind cserde_recording_support TurboUtils::TinyTest
+  LIBS Salts::CBind cserde_recording_support Salts::TinyTest
   FOLDER "cbind/tests")
 
 set_target_properties(cbind_struct_decode_test PROPERTIES
@@ -1241,7 +1241,7 @@ Expected: PASS. Public declarations use C linkage; no C++ wrapper layer is intro
 - [ ] **Step 3: Run exact dependency/allocation/test-support audit**
 
 ```bash
-rg -n "TurboUtils::(STL|Core|CFlow)|TurboParser|turbostl|cflow/|turbo_parser|parser/" cbind/include cbind/src cbind/CMakeLists.txt
+rg -n "Salts::(STL|Core|CFlow)|TurboParser|container|cflow/|salts_parser|parser/" cbind/include cbind/src cbind/CMakeLists.txt
 rg -n "\b(malloc|calloc|realloc|free)\s*\(" cbind/src cbind/include
 rg -n "^(const )?cserde_reader_ops cserde_recording_reader_ops|typedef struct cserde_recording_reader_context" cbind cserde/tests/support
 ```
@@ -1254,15 +1254,15 @@ second command: no match
 third command: definitions/type declaration occur only under cserde/tests/support; CBind has no duplicate definition
 ```
 
-Also inspect `cbind/CMakeLists.txt`: production `target_link_libraries(turbo_cbind ...)` is exactly PUBLIC CMeta + CSerde. Any mismatch means the responsible earlier task is incomplete; correct that task before continuing.
+Also inspect `cbind/CMakeLists.txt`: production `target_link_libraries(salts_cbind ...)` is exactly PUBLIC CMeta + CSerde. Any mismatch means the responsible earlier task is incomplete; correct that task before continuing.
 
 - [ ] **Step 4: Verify installed export from a clean Linux release tree**
 
 ```bash
-rm -rf build/linux-gcc-release /tmp/turboutils-cbind-install /tmp/cbind-consumer
+rm -rf build/linux-gcc-release /tmp/salts-cbind-install /tmp/cbind-consumer
 cmake --preset release-linux-ninja
 cmake --build --preset build-default-linux
-cmake --install build/linux-gcc-release --prefix /tmp/turboutils-cbind-install
+cmake --install build/linux-gcc-release --prefix /tmp/salts-cbind-install
 ```
 
 Create external consumer:
@@ -1272,9 +1272,9 @@ mkdir -p /tmp/cbind-consumer
 cat > /tmp/cbind-consumer/CMakeLists.txt <<'EOF'
 cmake_minimum_required(VERSION 3.20)
 project(CBindConsumer C)
-find_package(TurboUtils CONFIG REQUIRED)
+find_package(Salts CONFIG REQUIRED)
 add_executable(cbind_consumer main.c)
-target_link_libraries(cbind_consumer PRIVATE TurboUtils::CBind)
+target_link_libraries(cbind_consumer PRIVATE Salts::CBind)
 EOF
 cat > /tmp/cbind-consumer/main.c <<'EOF'
 #include <cbind/cbind.h>
@@ -1285,12 +1285,12 @@ int main(void) {
 }
 EOF
 cmake -S /tmp/cbind-consumer -B /tmp/cbind-consumer/build \
-  -DCMAKE_PREFIX_PATH=/tmp/turboutils-cbind-install
+  -DCMAKE_PREFIX_PATH=/tmp/salts-cbind-install
 cmake --build /tmp/cbind-consumer/build
 /tmp/cbind-consumer/build/cbind_consumer
 ```
 
-Expected: configure/build/run PASS with only `TurboUtils::CBind` named by the consumer.
+Expected: configure/build/run PASS with only `Salts::CBind` named by the consumer.
 
 - [ ] **Step 5: Commit C++ conformance test**
 
@@ -1306,7 +1306,7 @@ rm -rf build/linux-gcc-release
 cmake --preset release-linux-ninja
 cmake --build --preset build-default-linux
 ctest --preset test-release-linux --output-on-failure
-ctest --preset test-release-linux -R '^(cmeta_|cserde_|cbind_|cflow_|turbostl_)' --output-on-failure
+ctest --preset test-release-linux -R '^(cmeta_|cserde_|cbind_|cflow_|cstl_)' --output-on-failure
 ```
 
 Expected: full and selected CTest PASS. Record exact head SHA and test counts.
@@ -1318,7 +1318,7 @@ Existing workflow must execute through `VsDevCmd` and repository presets:
 ```text
 cmake --preset release-win-msvc-ninja
 cmake --build --preset build-release-windows
-ctest --preset test-release-windows -R "^(cmeta_|cserde_|cbind_|cflow_|turbostl_)" --output-on-failure
+ctest --preset test-release-windows -R "^(cmeta_|cserde_|cbind_|cflow_|cstl_)" --output-on-failure
 ```
 
 Expected on the same SHA:
@@ -1335,7 +1335,7 @@ Any Windows `long`/size boundary defect is corrected using `<limits.h>` and actu
 ## Final Review Checklist
 
 ```text
-[ ] TurboUtils::CBind exports/installs correctly.
+[ ] Salts::CBind exports/installs correctly.
 [ ] Production CBind links only CMeta + CSerde.
 [ ] Public D2 surface contains no parser/CFlow/incremental API.
 [ ] Unsupported semantic kinds fail before provider consumption.
@@ -1355,7 +1355,7 @@ Any Windows `long`/size boundary defect is corrected using `<limits.h>` and actu
 [ ] Production heap allocation is absent.
 [ ] CSerde recording support is reused, not duplicated.
 [ ] C11 and C++17 consumers compile/link.
-[ ] Fresh installed consumer links `TurboUtils::CBind`.
+[ ] Fresh installed consumer links `Salts::CBind`.
 [ ] Exact same final head passes Linux and Windows conformance.
 ```
 

@@ -14,7 +14,7 @@ The public Scheduler contract already permits an implementation to execute a
 zero-delay task before admission returns. CFlow also already coalesces I/O
 Publisher drive credits, but currently invokes the external drive callback even
 while the owner is active, so a synchronous callback can only observe
-`TURBO_EBUSY`.
+`SALTS_EBUSY`.
 
 ## Decision
 
@@ -55,7 +55,7 @@ The I/O Publisher state remains the single source of truth for `driver_active`,
 - the active owner consumes that credit before leaving, or releases the driver
   and invokes one callback when its step budget is exhausted.
 
-This removes a callback whose only legal result is `TURBO_EBUSY` without losing
+This removes a callback whose only legal result is `SALTS_EBUSY` without losing
 an edge. The existing gate orders edge publication against driver release.
 
 ### Actor transition selection
@@ -97,7 +97,7 @@ the same backpressure.
 | Ordering | Publisher result order remains authoritative completion-delivery order |
 | Capacity | Existing fixed window, 1..`CFLOW_IO_PUBLISHER_MAX_WINDOW`; no new storage |
 | Backpressure | Full window stops preparation; no retry, drop, fallback, or growth |
-| Failure | Scheduler rejection terminates the Subscription; owner errors remain explicit; `TURBO_EBUSY` remains valid for genuinely concurrent external drivers |
+| Failure | Scheduler rejection terminates the Subscription; owner errors remain explicit; `SALTS_EBUSY` remains valid for genuinely concurrent external drivers |
 | Shutdown | Stop demand, close Subscription, drain/cancel Actor, close owner, then destroy Scheduler and NativeIO |
 | Observation | Existing Scheduler, Actor, Publisher-window, and benchmark stage counters |
 

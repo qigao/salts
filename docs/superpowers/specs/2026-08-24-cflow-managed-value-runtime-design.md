@@ -41,4 +41,4 @@ represent borrowed non-trivial inputs safely.
 - Prove managed Range collection commits an independent owned result.
 - Prove managed operator graphs and legacy managed sources fail before Source
   ownership transfer.
-- Preserve existing CFlow/CMeta/TurboSTL tests and public-header compilation.
+- Preserve existing CFlow/CMeta/Container tests and public-header compilation.

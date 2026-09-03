@@ -62,7 +62,7 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(crpc_json_encode_request(&method, UINT64_C(42), crpc_test_encode_array, NULL, 64u,
                                          8u, 256u, &encoded),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(encoded.size, sizeof(expected) - 1u);
     check_equal(encoded.data, expected, sizeof(expected) - 1u);
     crpc_encoded_request_destroy(&encoded);
@@ -76,7 +76,7 @@ spec("CRPC JSON-RPC codec") {
     crpc_encoded_request encoded = {0};
 
     check_equal(crpc_json_encode_request(&method, UINT64_C(0), NULL, NULL, 32u, 4u, 128u, &encoded),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(encoded.data, expected, sizeof(expected) - 1u);
     crpc_encoded_request_destroy(&encoded);
   }
@@ -89,7 +89,7 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(crpc_json_encode_request(&method, UINT64_C(1), crpc_test_encode_map, NULL, 32u, 4u,
                                          128u, &encoded),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(encoded.data, expected, sizeof(expected) - 1u);
     crpc_encoded_request_destroy(&encoded);
   }
@@ -101,17 +101,17 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(crpc_json_encode_request(&method, UINT64_C(1), crpc_test_encode_scalar, NULL, 32u,
                                          4u, 128u, &encoded),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
     check_null(encoded.data);
     check_equal(crpc_json_encode_request(&method, UINT64_C(1), crpc_test_encode_nested, NULL, 32u,
                                          2u, 128u, &encoded),
-                TURBO_EMSGSIZE);
+                SALTS_EMSGSIZE);
     method.name = "rpc.cancel";
     check_equal(crpc_json_encode_request(&method, UINT64_C(1), NULL, NULL, 32u, 4u, 128u, &encoded),
-                TURBO_EPERM);
+                SALTS_EPERM);
     method.name = (const char *)invalid_utf8;
     check_equal(crpc_json_encode_request(&method, UINT64_C(1), NULL, NULL, 32u, 4u, 128u, &encoded),
-                TURBO_EINVAL);
+                SALTS_EINVAL);
   }
 
   it("enforces the complete request body bound") {
@@ -120,7 +120,7 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(crpc_json_encode_request(&method, UINT64_C(1), crpc_test_encode_array, NULL, 64u,
                                          8u, 24u, &encoded),
-                TURBO_EMSGSIZE);
+                SALTS_EMSGSIZE);
     check_null(encoded.data);
   }
 
@@ -134,20 +134,20 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(
         crpc_json_encode_result(UINT64_C(42), crpc_test_encode_scalar, NULL, 8u, 256u, &encoded),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(encoded.data, scalar, sizeof(scalar) - 1u);
     crpc_encoded_request_destroy(&encoded);
-    check_equal(crpc_json_encode_result(UINT64_C(0), NULL, NULL, 8u, 256u, &encoded), TURBO_OK);
+    check_equal(crpc_json_encode_result(UINT64_C(0), NULL, NULL, 8u, 256u, &encoded), SALTS_OK);
     check_equal(encoded.data, null_value, sizeof(null_value) - 1u);
     crpc_encoded_request_destroy(&encoded);
     check_equal(
         crpc_json_encode_result(UINT64_MAX, crpc_test_encode_array, NULL, 8u, 256u, &encoded),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(encoded.data, structured, sizeof(structured) - 1u);
     crpc_encoded_request_destroy(&encoded);
     check_equal(
         crpc_json_encode_result(UINT64_C(7), crpc_test_encode_map, NULL, 8u, 256u, &encoded),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(encoded.data, map, sizeof(map) - 1u);
     crpc_encoded_request_destroy(&encoded);
   }
@@ -163,12 +163,12 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(crpc_json_encode_error(false, UINT64_C(7), -32602, "bad \"input",
                                        crpc_test_encode_array, NULL, 8u, 256u, &encoded),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(encoded.data, with_data, sizeof(with_data) - 1u);
     crpc_encoded_request_destroy(&encoded);
     check_equal(crpc_json_encode_error(true, UINT64_C(0), -32600, "Invalid Request", NULL, NULL, 8u,
                                        256u, &encoded),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(encoded.data, without_data, sizeof(without_data) - 1u);
     crpc_encoded_request_destroy(&encoded);
   }
@@ -178,13 +178,13 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(
         crpc_json_encode_result(UINT64_C(1), crpc_test_encode_nested, NULL, 2u, 256u, &encoded),
-        TURBO_EMSGSIZE);
+        SALTS_EMSGSIZE);
     check_equal(
         crpc_json_encode_result(UINT64_C(1), crpc_test_encode_array, NULL, 8u, 16u, &encoded),
-        TURBO_EMSGSIZE);
+        SALTS_EMSGSIZE);
     check_equal(
         crpc_json_encode_error(false, UINT64_C(1), -32603, NULL, NULL, NULL, 8u, 256u, &encoded),
-        TURBO_EINVAL);
+        SALTS_EINVAL);
     check_null(encoded.data);
   }
 
@@ -196,11 +196,11 @@ spec("CRPC JSON-RPC codec") {
                                           {second_data, sizeof(second_data) - 1u}};
     crpc_encoded_request encoded = {0};
 
-    check_equal(crpc_json_encode_batch(items, 2u, 64u, &encoded), TURBO_OK);
+    check_equal(crpc_json_encode_batch(items, 2u, 64u, &encoded), SALTS_OK);
     check_equal(encoded.data, expected, sizeof(expected) - 1u);
     crpc_encoded_request_destroy(&encoded);
-    check_equal(crpc_json_encode_batch(items, 2u, sizeof(expected) - 2u, &encoded), TURBO_EMSGSIZE);
-    check_equal(crpc_json_encode_batch(items, 0u, 64u, &encoded), TURBO_EINVAL);
+    check_equal(crpc_json_encode_batch(items, 2u, sizeof(expected) - 2u, &encoded), SALTS_EMSGSIZE);
+    check_equal(crpc_json_encode_batch(items, 0u, 64u, &encoded), SALTS_EINVAL);
   }
 
   it("decodes a result as a callback-scoped CSerde reader") {
@@ -212,7 +212,7 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(crpc_json_decode_response(json, sizeof(json) - 1u, UINT64_MAX, 200u, 8u, NULL,
                                           &decoded, &stage),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(decoded.response.request_id, UINT64_MAX);
     check_equal(decoded.response.http_status, 200u);
     check_equal(decoded.response.kind, CRPC_RESPONSE_RESULT);
@@ -238,7 +238,7 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(crpc_json_decode_response(json, sizeof(json) - 1u, UINT64_C(42), 200u, 4u, NULL,
                                           &decoded, &stage),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(decoded.response.request_id, UINT64_C(42));
     crpc_decoded_response_destroy(&decoded);
   }
@@ -253,13 +253,13 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(crpc_json_decode_response(result_json, sizeof(result_json) - 1u, UINT64_MAX, 200u,
                                           4u, NULL, &decoded, &stage),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(decoded.response.request_id, UINT64_MAX);
     crpc_decoded_response_destroy(&decoded);
 
     check_equal(crpc_json_decode_response(error_json, sizeof(error_json) - 1u, UINT64_C(1), 200u,
                                           4u, NULL, &decoded, &stage),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(decoded.response.value.remote_error.code, INT64_MIN);
     crpc_decoded_response_destroy(&decoded);
   }
@@ -276,13 +276,13 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(crpc_json_decode_response(fractional_id, sizeof(fractional_id) - 1u, UINT64_C(4),
                                           200u, 4u, NULL, &decoded, &stage),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(crpc_json_decode_response(overflow_id, sizeof(overflow_id) - 1u, UINT64_MAX, 200u,
                                           4u, NULL, &decoded, &stage),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(crpc_json_decode_response(overflow_code, sizeof(overflow_code) - 1u, UINT64_C(1),
                                           200u, 4u, NULL, &decoded, &stage),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
   }
 
   it("decodes a remote application error without converting it to transport failure") {
@@ -294,7 +294,7 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(crpc_json_decode_response(json, sizeof(json) - 1u, UINT64_C(7), 200u, 8u, NULL,
                                           &decoded, &stage),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(decoded.response.kind, CRPC_RESPONSE_REMOTE_ERROR);
     check_equal(decoded.response.value.remote_error.code, (int64_t)-32602);
     check_equal(decoded.response.value.remote_error.message.size, (size_t)9u);
@@ -317,17 +317,17 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(crpc_json_decode_response(both, sizeof(both) - 1u, UINT64_C(1), 200u, 8u, NULL,
                                           &decoded, &stage),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(stage, "rpc-envelope");
     check_equal(crpc_json_decode_response(duplicate, sizeof(duplicate) - 1u, UINT64_C(1), 200u, 8u,
                                           NULL, &decoded, &stage),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(crpc_json_decode_response(fractional_code, sizeof(fractional_code) - 1u,
                                           UINT64_C(1), 200u, 8u, NULL, &decoded, &stage),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(crpc_json_decode_response(wrong_version, sizeof(wrong_version) - 1u, UINT64_C(1),
                                           200u, 8u, NULL, &decoded, &stage),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
   }
 
   it("distinguishes HTTP status and JSON depth failures") {
@@ -337,11 +337,11 @@ spec("CRPC JSON-RPC codec") {
 
     check_equal(crpc_json_decode_response(valid, sizeof(valid) - 1u, UINT64_C(1), 503u, 8u, NULL,
                                           &decoded, &stage),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(stage, "http-status");
     check_equal(crpc_json_decode_response(valid, sizeof(valid) - 1u, UINT64_C(1), 200u, 2u, NULL,
                                           &decoded, &stage),
-                TURBO_EMSGSIZE);
+                SALTS_EMSGSIZE);
     check_equal(stage, "json-depth");
   }
 }

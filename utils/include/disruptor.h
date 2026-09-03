@@ -1,6 +1,6 @@
-#ifndef TURBO_DISRUPTOR_COMPAT_H
-#define TURBO_DISRUPTOR_COMPAT_H
+#ifndef SALTS_DISRUPTOR_COMPAT_H
+#define SALTS_DISRUPTOR_COMPAT_H
 
-#include <turbo/disruptor.h>
+#include <salts/disruptor.h>
 
-#endif /* TURBO_DISRUPTOR_COMPAT_H */
+#endif /* SALTS_DISRUPTOR_COMPAT_H */

@@ -2,8 +2,8 @@
 
 #include "fs_watch_internal.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/thread.h>
 
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -26,7 +26,7 @@ struct cflow_fs_watch_impl {
     size_t head;
     size_t tail;
     size_t count;
-    turbo_mutex_t gate;
+    salts_mutex_t gate;
     cflow_fs_watch_event_fn event;
     void *event_user;
     cflow_fs_watch_ready_fn ready;
@@ -57,9 +57,9 @@ static void cflow_fs_watch_notify_prepared(cflow_fs_watch_impl *impl,
     if (!prepared)
         return;
     impl->ready(impl->ready_user);
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     --impl->notifications_inflight;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 }
 
 static bool watch_multiply(size_t left, size_t right, size_t *out) {
@@ -100,10 +100,10 @@ bool cflow_fs_watch_close_requested(const cflow_fs_watch_impl *impl) {
 void cflow_fs_watch_backend_mark_done(cflow_fs_watch_impl *impl) {
     bool notify;
     if (impl != NULL) {
-        turbo_mutex_lock(&impl->gate);
+        salts_mutex_lock(&impl->gate);
         atomic_store(&impl->backend_done, true);
         notify = cflow_fs_watch_prepare_notify_locked(impl);
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         cflow_fs_watch_notify_prepared(impl, notify);
     }
 }
@@ -112,7 +112,7 @@ void cflow_fs_watch_publish_loss(cflow_fs_watch_impl *impl) {
     bool notify = false;
     if (impl == NULL)
         return;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     ++impl->suppressed;
     if (!impl->awaiting_rescan) {
         impl->awaiting_rescan = true;
@@ -121,7 +121,7 @@ void cflow_fs_watch_publish_loss(cflow_fs_watch_impl *impl) {
         ++impl->rescan_required;
         notify = cflow_fs_watch_prepare_notify_locked(impl);
     }
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     cflow_fs_watch_notify_prepared(impl, notify);
 }
 
@@ -138,13 +138,13 @@ int cflow_fs_watch_publish(cflow_fs_watch_impl *impl,
         !watch_path_length(path, impl->path_capacity, &path_length) ||
         !watch_path_length(old_path, impl->path_capacity, &old_length)) {
         cflow_fs_watch_publish_loss(impl);
-        return TURBO_ENOBUFS;
+        return SALTS_ENOBUFS;
     }
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (atomic_load(&impl->close_requested)) {
         ++impl->suppressed;
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_ESHUTDOWN;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_ESHUTDOWN;
     }
     if (impl->awaiting_rescan || impl->count == impl->capacity) {
         ++impl->suppressed;
@@ -154,8 +154,8 @@ int cflow_fs_watch_publish(cflow_fs_watch_impl *impl,
             impl->rescan_delivered = false;
             ++impl->rescan_required;
         }
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_ENOBUFS;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_ENOBUFS;
     }
     slot = &impl->slots[impl->tail];
     slot->kind = kind;
@@ -171,9 +171,9 @@ int cflow_fs_watch_publish(cflow_fs_watch_impl *impl,
     impl->tail = (impl->tail + 1u) % impl->capacity;
     ++impl->count;
     notify = cflow_fs_watch_prepare_notify_locked(impl);
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     cflow_fs_watch_notify_prepared(impl, notify);
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 int cflow_fs_watch_open_notified(cflow_fs_watch *watch, const char *path,
@@ -196,10 +196,10 @@ int cflow_fs_watch_open_notified(cflow_fs_watch *watch, const char *path,
         !watch_multiply(config->path_capacity, 2u, &pair_capacity) ||
         !watch_multiply(config->event_capacity, pair_capacity,
                         &all_path_bytes))
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     impl = (cflow_fs_watch_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL)
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     impl->slots = (cflow_fs_watch_slot *)calloc(1u, slot_bytes);
     impl->paths = (char *)calloc(1u, all_path_bytes);
     impl->delivery_path = (char *)calloc(1u, pair_capacity);
@@ -209,7 +209,7 @@ int cflow_fs_watch_open_notified(cflow_fs_watch *watch, const char *path,
         free(impl->paths);
         free(impl->slots);
         free(impl);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
     impl->delivery_old_path = impl->delivery_path + config->path_capacity;
     impl->capacity = config->event_capacity;
@@ -218,7 +218,7 @@ int cflow_fs_watch_open_notified(cflow_fs_watch *watch, const char *path,
     impl->event_user = config->event_user;
     impl->ready = ready;
     impl->ready_user = ready_user;
-    turbo_mutex_init(&impl->gate);
+    salts_mutex_init(&impl->gate);
     atomic_init(&impl->close_requested, false);
     atomic_init(&impl->backend_done, false);
     atomic_init(&impl->driver_active, false);
@@ -228,8 +228,8 @@ int cflow_fs_watch_open_notified(cflow_fs_watch *watch, const char *path,
             impl->slots[index].path + impl->path_capacity;
     }
     status = cflow_fs_watch_backend_open(impl, path, config);
-    if (status != TURBO_OK) {
-        turbo_mutex_destroy(&impl->gate);
+    if (status != SALTS_OK) {
+        salts_mutex_destroy(&impl->gate);
         free(impl->delivery_path);
         free(impl->paths);
         free(impl->slots);
@@ -237,7 +237,7 @@ int cflow_fs_watch_open_notified(cflow_fs_watch *watch, const char *path,
         return status;
     }
     watch->impl = impl;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 int cflow_fs_watch_open(cflow_fs_watch *watch, const char *path,
@@ -251,10 +251,10 @@ bool cflow_fs_watch_has_ready_or_done(const cflow_fs_watch *watch) {
     if (watch == NULL || watch->impl == NULL)
         return true;
     impl = (const cflow_fs_watch_impl *)watch->impl;
-    turbo_mutex_lock((turbo_mutex_t *)&impl->gate);
+    salts_mutex_lock((salts_mutex_t *)&impl->gate);
     ready = impl->count != 0u || impl->rescan_pending ||
             atomic_load(&impl->backend_done);
-    turbo_mutex_unlock((turbo_mutex_t *)&impl->gate);
+    salts_mutex_unlock((salts_mutex_t *)&impl->gate);
     return ready;
 }
 
@@ -264,10 +264,10 @@ bool cflow_fs_watch_backend_done_and_empty(const cflow_fs_watch *watch) {
     if (watch == NULL || watch->impl == NULL)
         return true;
     impl = (const cflow_fs_watch_impl *)watch->impl;
-    turbo_mutex_lock((turbo_mutex_t *)&impl->gate);
+    salts_mutex_lock((salts_mutex_t *)&impl->gate);
     done = impl->count == 0u && !impl->rescan_pending &&
            atomic_load(&impl->backend_done);
-    turbo_mutex_unlock((turbo_mutex_t *)&impl->gate);
+    salts_mutex_unlock((salts_mutex_t *)&impl->gate);
     return done;
 }
 
@@ -278,15 +278,15 @@ int cflow_fs_watch_run_ready(cflow_fs_watch *watch, size_t max_events,
     size_t count = 0u;
     if (watch == NULL || watch->impl == NULL ||
         max_events == 0u || delivered == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     impl = (cflow_fs_watch_impl *)watch->impl;
     *delivered = 0u;
     if (!atomic_compare_exchange_strong(&impl->driver_active, &expected, true))
-        return TURBO_EBUSY;
+        return SALTS_EBUSY;
     while (count < max_events) {
         cflow_fs_watch_event event;
         bool have_event = false;
-        turbo_mutex_lock(&impl->gate);
+        salts_mutex_lock(&impl->gate);
         if (impl->count != 0u) {
             cflow_fs_watch_slot *slot = &impl->slots[impl->head];
             memcpy(impl->delivery_path, slot->path,
@@ -316,30 +316,30 @@ int cflow_fs_watch_run_ready(cflow_fs_watch *watch, size_t max_events,
             };
             have_event = true;
         }
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         if (!have_event)
             break;
         impl->event(impl->event_user, &event);
-        turbo_mutex_lock(&impl->gate);
+        salts_mutex_lock(&impl->gate);
         ++impl->delivered;
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         ++count;
     }
     atomic_store(&impl->driver_active, false);
     *delivered = count;
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 int cflow_fs_watch_acknowledge_rescan(cflow_fs_watch *watch) {
     cflow_fs_watch_impl *impl;
     bool notify = false;
     if (watch == NULL || watch->impl == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     impl = (cflow_fs_watch_impl *)watch->impl;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (!impl->awaiting_rescan || !impl->rescan_delivered) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EALREADY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EALREADY;
     }
     if (impl->suppressed != impl->rescan_delivery_suppressed) {
         impl->rescan_pending = true;
@@ -350,22 +350,22 @@ int cflow_fs_watch_acknowledge_rescan(cflow_fs_watch *watch) {
         impl->awaiting_rescan = false;
         impl->rescan_delivered = false;
     }
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     cflow_fs_watch_notify_prepared(impl, notify);
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 int cflow_fs_watch_close(cflow_fs_watch *watch) {
     cflow_fs_watch_impl *impl;
     bool expected = false;
     if (watch == NULL || watch->impl == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     impl = (cflow_fs_watch_impl *)watch->impl;
     if (!atomic_compare_exchange_strong(&impl->close_requested,
                                         &expected, true))
-        return TURBO_EALREADY;
+        return SALTS_EALREADY;
     cflow_fs_watch_backend_request_close(impl);
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 bool cflow_fs_watch_is_quiescent(const cflow_fs_watch *watch) {
@@ -374,10 +374,10 @@ bool cflow_fs_watch_is_quiescent(const cflow_fs_watch *watch) {
     if (watch == NULL || watch->impl == NULL)
         return false;
     impl = (const cflow_fs_watch_impl *)watch->impl;
-    turbo_mutex_lock((turbo_mutex_t *)&impl->gate);
+    salts_mutex_lock((salts_mutex_t *)&impl->gate);
     empty = impl->count == 0u && !impl->rescan_pending &&
             impl->notifications_inflight == 0u;
-    turbo_mutex_unlock((turbo_mutex_t *)&impl->gate);
+    salts_mutex_unlock((salts_mutex_t *)&impl->gate);
     return atomic_load(&impl->close_requested) &&
            atomic_load(&impl->backend_done) && empty;
 }
@@ -388,7 +388,7 @@ bool cflow_fs_watch_get_stats(const cflow_fs_watch *watch,
     if (watch == NULL || watch->impl == NULL || out == NULL)
         return false;
     impl = (const cflow_fs_watch_impl *)watch->impl;
-    turbo_mutex_lock((turbo_mutex_t *)&impl->gate);
+    salts_mutex_lock((salts_mutex_t *)&impl->gate);
     *out = (cflow_fs_watch_stats){
         .capacity = impl->capacity,
         .queued = impl->count + (impl->rescan_pending ? 1u : 0u),
@@ -401,7 +401,7 @@ bool cflow_fs_watch_get_stats(const cflow_fs_watch *watch,
             : (atomic_load(&impl->backend_done)
                    ? CFLOW_FS_WATCH_CLOSED : CFLOW_FS_WATCH_CLOSING),
     };
-    turbo_mutex_unlock((turbo_mutex_t *)&impl->gate);
+    salts_mutex_unlock((salts_mutex_t *)&impl->gate);
     return true;
 }
 
@@ -409,13 +409,13 @@ int cflow_fs_watch_destroy(cflow_fs_watch *watch) {
     cflow_fs_watch_impl *impl;
     int status;
     if (watch == NULL || watch->impl == NULL)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     impl = (cflow_fs_watch_impl *)watch->impl;
     if (atomic_load(&impl->driver_active) ||
         !cflow_fs_watch_is_quiescent(watch))
-        return TURBO_EBUSY;
+        return SALTS_EBUSY;
     status = cflow_fs_watch_backend_destroy(impl);
-    turbo_mutex_destroy(&impl->gate);
+    salts_mutex_destroy(&impl->gate);
     free(impl->delivery_path);
     free(impl->paths);
     free(impl->slots);

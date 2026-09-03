@@ -1,7 +1,7 @@
 #ifndef CNET_TRANSPORT_H
 #define CNET_TRANSPORT_H
 
-#include <turbo/native_io.h>
+#include <salts/native_io.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -27,7 +27,7 @@ typedef struct cnet_transport {
 
 /**
  * Converts an IPv4 or IPv6 literal plus host-order port into native sockaddr
- * storage. Returns `TURBO_ENOENT` for a hostname so the caller can route it to
+ * storage. Returns `SALTS_ENOENT` for a hostname so the caller can route it to
  * the resolver. `out_address_length` is cleared on every failure.
  */
 int cnet_transport_parse_numeric_address(const char *host, uint16_t port, void *out_address,

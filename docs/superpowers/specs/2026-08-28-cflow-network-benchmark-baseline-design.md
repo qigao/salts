@@ -22,7 +22,7 @@ The diagnostic payload set is 64 B, 1 KiB, and 64 KiB over TCP. Each pair is bou
 
 ## Error semantics
 
-Unsupported combinations fail during configuration with `TURBO_EINVAL`; there is no fallback from direct to Actor or from blocking to busy mode. Socket errors propagate through the existing Turbo error convention and fail the TinyTest benchmark.
+Unsupported combinations fail during configuration with `SALTS_EINVAL`; there is no fallback from direct to Actor or from blocking to busy mode. Socket errors propagate through the existing Salts error convention and fail the TinyTest benchmark.
 
 ## Deferred work
 

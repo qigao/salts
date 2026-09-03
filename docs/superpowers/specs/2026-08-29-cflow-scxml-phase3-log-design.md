@@ -1,6 +1,6 @@
 # CFlow SCXML Phase 3 Log Executable Content Design
 
-**Issue:** [qigao/turbo-utils#122](https://github.com/qigao/turbo-utils/issues/122)
+**Issue:** [qigao/salts#122](https://github.com/qigao/salts/issues/122)
 
 **Date:** 2026-08-29
 
@@ -9,8 +9,8 @@
 ## Scope
 
 This increment adds the SCXML `log` executable element to the optional
-`TurboUtils::CFlowScxml` null-data-model frontend. A `log` step emits its
-optional `label` through TurboUtils tlog at DEBUG level and then continues the
+`Salts::CFlowScxml` null-data-model frontend. A `log` step emits its
+optional `label` through Salts tlog at DEBUG level and then continues the
 same executable block. It is legal in every currently supported executable
 owner and inside conditional partitions.
 
@@ -40,9 +40,9 @@ Consequently this frontend:
 ## Existing boundaries and evidence
 
 - CFlow Statechart remains format-neutral and does not depend on tlog.
-- `TurboUtils::CFlowScxml` is a static optional frontend currently linking
-  `TurboUtils::CFlow` and `TurboUtils::XmlParser`.
-- tlog is exported by `TurboUtils::Core`; `TLOG_DEBUG` uses
+- `Salts::CFlowScxml` is a static optional frontend currently linking
+  `Salts::CFlow` and `Salts::XmlParser`.
+- tlog is exported by `Salts::Core`; `TLOG_DEBUG` uses
   `tlog_peek_default()`, so it neither constructs a default logger nor emits
   when none is configured.
 - SCXML programs own immutable executable steps after the XML document is
@@ -83,7 +83,7 @@ Each log step points only into that stable program buffer.
 At execution, the contextual SCXML block callback performs:
 
 ```c
-TURBO_LOG_DEBUG(tlog_peek_default(), "cflow.scxml", step->label);
+SALTS_LOG_DEBUG(tlog_peek_default(), "cflow.scxml", step->label);
 ```
 
 The macro is deliberately not followed by a flush or status check. Logger
@@ -118,9 +118,9 @@ drop DEBUG records.
 
 ## Dependency and compatibility impact
 
-- **MED — dependency:** `TurboUtils::CFlowScxml` gains a private/link-only
-  dependency on `TurboUtils::Core`, because Core owns tlog. Public headers do
-  not expose Core types. `TurboUtils::CFlow` remains independent of XML and
+- **MED — dependency:** `Salts::CFlowScxml` gains a private/link-only
+  dependency on `Salts::Core`, because Core owns tlog. Public headers do
+  not expose Core types. `Salts::CFlow` remains independent of XML and
   tlog.
 - **MED — accepted syntax:** documents containing label-only `log` change from
   unsupported to executable. A present `expr` remains fail-fast unsupported

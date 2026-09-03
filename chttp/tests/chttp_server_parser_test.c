@@ -33,13 +33,13 @@ static int chttp_server_parser_test_request(void *user, const chttp_server_reque
   probe->body_size = request->body_size;
   if (request->body_size <= sizeof(probe->body))
     memcpy(probe->body, request->body, request->body_size);
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_server_parser_test_continue(void *user) {
   chttp_server_parser_probe *probe = (chttp_server_parser_probe *)user;
   ++probe->continues;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int chttp_server_parser_test_upgrade(void *user, const chttp_server_request_view *request,
@@ -50,7 +50,7 @@ static int chttp_server_parser_test_upgrade(void *user, const chttp_server_reque
   ++probe->upgrades;
   *out_action = CHTTP_SERVER_UPGRADE_STOP;
   *out_http_status = 0u;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static chttp_server_parser_config
@@ -74,8 +74,8 @@ static int chttp_server_parser_test_execute_fragments(chttp_server_parser *parse
                                                       size_t wire_size, size_t fragment_size,
                                                       unsigned int *out_http_status) {
   size_t offset = 0u;
-  int status = TURBO_OK;
-  while (offset < wire_size && status == TURBO_OK) {
+  int status = SALTS_OK;
+  while (offset < wire_size && status == SALTS_OK) {
     const size_t remaining = wire_size - offset;
     const size_t size = remaining < fragment_size ? remaining : fragment_size;
     status = chttp_server_parser_execute(parser, wire + offset, size, out_http_status);
@@ -102,10 +102,10 @@ spec("CHTTP server request parser") {
     memcpy(wire + sizeof(request) - 1u, frame, sizeof(frame));
     config.max_header_bytes = 256u;
     config.on_upgrade = chttp_server_parser_test_upgrade;
-    check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
     check_equal(
         chttp_server_parser_execute_consumed(&parser, wire, sizeof(wire), &consumed, &http_status),
-        TURBO_OK);
+        SALTS_OK);
     check_equal(consumed, sizeof(request) - 1u);
     check_equal(http_status, 0u);
     check_equal(probe.upgrades, 1);
@@ -113,7 +113,7 @@ spec("CHTTP server request parser") {
     check_equal(memcmp(wire + consumed, frame, sizeof(frame)), 0);
     check_equal(chttp_server_parser_execute_consumed(&parser, frame, sizeof(frame), &consumed,
                                                      &http_status),
-                TURBO_ESHUTDOWN);
+                SALTS_ESHUTDOWN);
     chttp_server_parser_destroy(&parser);
   }
 
@@ -126,7 +126,7 @@ spec("CHTTP server request parser") {
     config.max_header_count = SIZE_MAX / sizeof(chttp_header) + 1u;
     config.max_header_bytes = 1u;
     config.max_body_bytes = 1u;
-    check_equal(chttp_server_parser_init(&parser, &config), TURBO_ERANGE);
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_ERANGE);
     check_null(parser.impl);
   }
 
@@ -139,15 +139,15 @@ spec("CHTTP server request parser") {
     chttp_server_parser parser = {0};
     unsigned int http_status = 99u;
 
-    check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
     check_equal(chttp_server_parser_execute(&parser, first, sizeof(first) - 1u, &http_status),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(http_status, 0u);
     check_equal(chttp_server_parser_execute(&parser, second, sizeof(second) - 1u, &http_status),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(probe.requests, 0);
     check_equal(chttp_server_parser_execute(&parser, third, sizeof(third) - 1u, &http_status),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(probe.requests, 2);
     check_equal(probe.method, CHTTP_METHOD_GET);
     check_equal(probe.target, "/health");
@@ -169,8 +169,8 @@ spec("CHTTP server request parser") {
     chttp_server_parser parser = {0};
     unsigned int http_status = 0u;
 
-    check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
-    check_equal(chttp_server_parser_test_execute(&parser, wire, &http_status), TURBO_OK);
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
+    check_equal(chttp_server_parser_test_execute(&parser, wire, &http_status), SALTS_OK);
     check_equal(http_status, 0u);
     check_equal(probe.continues, 1);
     check_equal(probe.requests, 1);
@@ -190,8 +190,8 @@ spec("CHTTP server request parser") {
     chttp_server_parser parser = {0};
     unsigned int http_status = 0u;
 
-    check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
-    check_equal(chttp_server_parser_test_execute(&parser, wire, &http_status), TURBO_OK);
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
+    check_equal(chttp_server_parser_test_execute(&parser, wire, &http_status), SALTS_OK);
     check_equal(http_status, 0u);
     check_equal(probe.continues, 0);
     check_equal(probe.requests, 1);
@@ -210,8 +210,8 @@ spec("CHTTP server request parser") {
     chttp_server_parser parser = {0};
     unsigned int http_status = 0u;
 
-    check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
-    check_equal(chttp_server_parser_test_execute(&parser, wire, &http_status), TURBO_OK);
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
+    check_equal(chttp_server_parser_test_execute(&parser, wire, &http_status), SALTS_OK);
     check_equal(http_status, 0u);
     check_equal(probe.requests, 1);
     check_equal(probe.target, "/upgrade");
@@ -247,9 +247,9 @@ spec("CHTTP server request parser") {
       chttp_server_parser_config config = chttp_server_parser_test_config(&probe);
       chttp_server_parser parser = {0};
       unsigned int http_status = 0u;
-      check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
+      check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
       check_equal(chttp_server_parser_test_execute(&parser, cases[index].wire, &http_status),
-                  TURBO_EPROTO);
+                  SALTS_EPROTO);
       check_equal(http_status, cases[index].status);
       check_equal(probe.requests, 0);
       chttp_server_parser_destroy(&parser);
@@ -269,10 +269,10 @@ spec("CHTTP server request parser") {
 
     memset(leading_wire, '\r', 200u);
     memcpy(leading_wire + 200u, "GET / HTTP/1.1\r\nHost: x\r\n\r\n", 27u);
-    check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
     check_equal(
         chttp_server_parser_test_execute_fragments(&parser, leading_wire, 227u, 7u, &http_status),
-        TURBO_EPROTO);
+        SALTS_EPROTO);
     check_equal(http_status, 400u);
     check_equal(probe.requests, 0);
     chttp_server_parser_destroy(&parser);
@@ -283,10 +283,10 @@ spec("CHTTP server request parser") {
     memcpy(ows_wire, "GET / HTTP/1.1\r\nHost:", prefix_size);
     memset(ows_wire + prefix_size, ' ', 160u);
     memcpy(ows_wire + prefix_size + 160u, "x\r\n\r\n", 5u);
-    check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
     check_equal(chttp_server_parser_test_execute_fragments(&parser, ows_wire, prefix_size + 165u,
                                                            11u, &http_status),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(http_status, 431u);
     check_equal(probe.requests, 0);
     chttp_server_parser_destroy(&parser);
@@ -297,11 +297,11 @@ spec("CHTTP server request parser") {
     memcpy(spaces_wire, "GET /", prefix_size);
     memset(spaces_wire + prefix_size, ' ', 160u);
     memcpy(spaces_wire + prefix_size + 160u, spaces_suffix, sizeof(spaces_suffix) - 1u);
-    check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
     check_equal(chttp_server_parser_test_execute_fragments(
                     &parser, spaces_wire, prefix_size + 160u + sizeof(spaces_suffix) - 1u, 13u,
                     &http_status),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(http_status, 400u);
     check_equal(probe.requests, 0);
     chttp_server_parser_destroy(&parser);
@@ -322,10 +322,10 @@ spec("CHTTP server request parser") {
     memcpy(wire, prefix, sizeof(prefix) - 1u);
     memset(wire + sizeof(prefix) - 1u, 'a', extension_size);
     memcpy(wire + sizeof(prefix) - 1u + extension_size, suffix, sizeof(suffix) - 1u);
-    check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
     check_equal(
         chttp_server_parser_test_execute_fragments(&parser, wire, wire_size, 9u, &http_status),
-        TURBO_EPROTO);
+        SALTS_EPROTO);
     check_equal(http_status, 413u);
     check_equal(probe.requests, 0);
     chttp_server_parser_destroy(&parser);
@@ -341,10 +341,10 @@ spec("CHTTP server request parser") {
     chttp_server_parser parser = {0};
     unsigned int http_status = 0u;
 
-    check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
     check_equal(chttp_server_parser_test_execute_fragments(&parser, wire, sizeof(wire) - 1u, 5u,
                                                            &http_status),
-                TURBO_EPROTO);
+                SALTS_EPROTO);
     check_equal(http_status, 400u);
     check_equal(probe.requests, 0);
     chttp_server_parser_destroy(&parser);
@@ -361,10 +361,10 @@ spec("CHTTP server request parser") {
     chttp_server_parser parser = {0};
     unsigned int http_status = 0u;
 
-    check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
     check_equal(chttp_server_parser_test_execute_fragments(&parser, wire, sizeof(wire) - 1u, 6u,
                                                            &http_status),
-                TURBO_OK);
+                SALTS_OK);
     check_equal(http_status, 0u);
     check_equal(probe.requests, 2);
     check_equal(probe.method, CHTTP_METHOD_GET);

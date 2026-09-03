@@ -10,11 +10,11 @@ CMeta method semantics + CSerde params/result
     -> NativeIO terminal completion
 ```
 
-CRPC 随 Rocida 正常构建，source-tree target 是 `turbo_crpc`；安装后通过
-`Rocida::CRPC` 与 `<crpc/crpc.h>` 使用。它公开的是纯 C API，不依赖 experimental
+CRPC 随 Salts 正常构建，source-tree target 是 `salts_crpc`；安装后通过
+`Salts::CRPC` 与 `<crpc/crpc.h>` 使用。它公开的是纯 C API，不依赖 experimental
 feature 或编译开关。
 
-当前静态归档的 ABI major 为 2，文件名包含 `turbo_crpc-2`。本 major 在
+当前静态归档的 ABI major 为 2，文件名包含 `salts_crpc-2`。本 major 在
 `crpc_options` 尾部增加 TLS profile 与 HTTP protocol；它保持源码级 designated-initializer
 兼容，但不允许旧目标文件与新归档混链，升级后必须重新编译调用方。
 
@@ -89,7 +89,7 @@ RPC `deadline_ms` 从 call 开始计时，并约束编码、HTTP 和网络等待
 timeout 仍是独立 transport deadline。RPC deadline 到期后只请求下层取消，payload、parser、
 callback state 和 handle 必须保留到 CHTTP/CNet/NativeIO 给出 terminal result 后才能回收。
 
-`crpc_error` 保留四类上下文：Rocida status、native status、HTTP status 与 stable stage。
+`crpc_error` 保留四类上下文：Salts status、native status、HTTP status 与 stable stage。
 合法的 JSON-RPC error object 以 `CRPC_RESPONSE_REMOTE_ERROR` 返回，不伪装成 transport failure。
 metadata 不能覆盖 CRPC 自己拥有的 Content-Type、Accept、Host、Content-Length 或 Connection。
 
@@ -106,7 +106,7 @@ send 之后的断线都按原错误路径交付，不自动重放可能带副作
 `crpc_server_init()` 创建 stopped server，并一次性分配 method registry。用
 `crpc_server_register(server, target, method, handler, user)` 注册 method；同一个 target 可注册多个
 method，同一个 server 也可注册多个 target。注册键是完整的 `target + wire method`，重复键返回
-`TURBO_EALREADY`，达到 `method_capacity` 返回 `TURBO_ENOBUFS`。CRPC endpoint 必须是固定
+`SALTS_EALREADY`，达到 `method_capacity` 返回 `SALTS_ENOBUFS`。CRPC endpoint 必须是固定
 origin-form path，不接受 CHTTP 的 `:segment` 动态 route pattern；注册只允许发生在 start 前。
 
 `crpc_server` 拥有内部 `chttp_server`。`crpc_server_http()` 返回 borrowed pointer，供 start 前安装
@@ -115,7 +115,7 @@ CHTTP middleware、session 或非 RPC route；listener、worker、TLS 和 H1/H2 
 不能从 handler 内 stop/destroy server。
 
 普通 call 必须恰好调用一次 `crpc_server_response_result()` 或
-`crpc_server_response_error()`；第二次完成返回 `TURBO_EALREADY`，没有完成或 handler 失败转换为
+`crpc_server_response_error()`；第二次完成返回 `SALTS_EALREADY`，没有完成或 handler 失败转换为
 JSON-RPC `-32603`。notification 执行已注册 handler，但所有 success/error response 都被抑制；单个
 notification 或全 notification batch 返回 HTTP 204 空 body。
 
@@ -131,8 +131,8 @@ result/error 超过 quota 时只把该项转换为保留原 id 的 `-32603`，�
 
 完整可编译的注册、handler、start/stop 示例见
 [`examples/crpc_server_example.c`](examples/crpc_server_example.c)。`init` 会拒绝无效或溢出的容量；
-`register` 还可能返回 `TURBO_EBUSY`、`TURBO_EALREADY`、`TURBO_ENOBUFS`，response helper 会传播
-encoder/容量错误且第二次完成返回 `TURBO_EALREADY`；`stop` 超时或底层 transport 失败时不得直接
+`register` 还可能返回 `SALTS_EBUSY`、`SALTS_EALREADY`、`SALTS_ENOBUFS`，response helper 会传播
+encoder/容量错误且第二次完成返回 `SALTS_EALREADY`；`stop` 超时或底层 transport 失败时不得直接
 destroy，调用方应按返回码继续完成 shutdown。
 
 ## 构建与验证

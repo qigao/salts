@@ -1,6 +1,6 @@
 #include "cnet_shards.h"
 
-#include <turbo/thread.h>
+#include <salts/thread.h>
 
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -22,7 +22,7 @@ typedef struct cnet_shard_record {
 
 struct cnet_shards_impl {
   cnet_shard_record *records;
-  turbo_mutex_t admission_lock;
+  salts_mutex_t admission_lock;
   size_t shard_count;
   size_t connection_capacity_per_shard;
   size_t max_event_payload_bytes;
@@ -50,14 +50,14 @@ static int cnet_shards_first_error(cnet_shards_impl *impl) {
   for (index = 0u; index < impl->shard_count; ++index) {
     const int status =
         atomic_load_explicit(&impl->records[index].drive_status, memory_order_acquire);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static void cnet_shards_record_error(cnet_shard_record *record, int status) {
-  int expected = TURBO_OK;
-  if (record == NULL || status == TURBO_OK || status == TURBO_ETIMEDOUT) return;
+  int expected = SALTS_OK;
+  if (record == NULL || status == SALTS_OK || status == SALTS_ETIMEDOUT) return;
   (void)atomic_compare_exchange_strong_explicit(&record->drive_status, &expected, status,
                                                 memory_order_acq_rel, memory_order_acquire);
 }
@@ -103,24 +103,24 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
   cnet_shards_impl *impl;
   size_t initialized = 0u;
   size_t index;
-  int status = TURBO_OK;
+  int status = SALTS_OK;
 
-  if (shards == NULL || config == NULL) return TURBO_EINVAL;
-  if (shards->impl != NULL) return TURBO_EALREADY;
+  if (shards == NULL || config == NULL) return SALTS_EINVAL;
+  if (shards->impl != NULL) return SALTS_EALREADY;
   if (config->shard_count != 1u || config->connection_capacity_per_shard == 0u ||
       config->command_capacity_per_shard == 0u || config->request_capacity_per_shard == 0u ||
       config->completion_batch_capacity == 0u || config->event_capacity_per_shard < 2u ||
       config->receive_buffer_bytes == 0u ||
       config->max_command_payload_bytes < sizeof(cnet_owner_connect_payload) ||
       config->shard_count > SIZE_MAX / sizeof(cnet_shard_record))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
 
   impl = (cnet_shards_impl *)calloc(1u, sizeof(*impl));
-  if (impl == NULL) return TURBO_ENOMEM;
+  if (impl == NULL) return SALTS_ENOMEM;
   impl->records = (cnet_shard_record *)calloc(config->shard_count, sizeof(*impl->records));
   if (impl->records == NULL) {
     free(impl);
-    return TURBO_ENOMEM;
+    return SALTS_ENOMEM;
   }
   impl->shard_count = config->shard_count;
   impl->connection_capacity_per_shard = config->connection_capacity_per_shard;
@@ -131,7 +131,7 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
   impl->admission_open = true;
   atomic_init(&impl->event_sink, NULL);
   atomic_init(&impl->event_sink_context, NULL);
-  turbo_mutex_init(&impl->admission_lock);
+  salts_mutex_init(&impl->admission_lock);
 
   for (index = 0u; index < impl->shard_count; ++index) {
     cnet_shard_record *record = &impl->records[index];
@@ -155,24 +155,24 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
 
     record->shards = impl;
     record->shard = (uint32_t)index;
-    atomic_init(&record->drive_status, TURBO_OK);
+    atomic_init(&record->drive_status, SALTS_OK);
     status = cnet_session_table_init(&record->sessions, config->connection_capacity_per_shard);
-    if (status == TURBO_OK) status = cnet_command_queue_init(&record->commands, &command_config);
-    if (status == TURBO_OK) status = cnet_event_queue_init(&record->events, &event_config);
-    if (status == TURBO_OK) status = cnet_owner_init(&record->owner, &owner_config);
+    if (status == SALTS_OK) status = cnet_command_queue_init(&record->commands, &command_config);
+    if (status == SALTS_OK) status = cnet_event_queue_init(&record->events, &event_config);
+    if (status == SALTS_OK) status = cnet_owner_init(&record->owner, &owner_config);
     ++initialized;
-    if (status != TURBO_OK) break;
+    if (status != SALTS_OK) break;
   }
-  if (status != TURBO_OK) {
+  if (status != SALTS_OK) {
     cnet_shards_cleanup_records(impl, initialized);
-    turbo_mutex_destroy(&impl->admission_lock);
+    salts_mutex_destroy(&impl->admission_lock);
     free(impl->records);
     free(impl);
     return status;
   }
 
   shards->impl = impl;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms) {
@@ -180,18 +180,18 @@ int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms) {
   cnet_shard_record *record;
   int first_status;
   int status;
-  if (impl == NULL) return TURBO_EINVAL;
-  if (impl->stopping || impl->stopped) return TURBO_ESHUTDOWN;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->stopping || impl->stopped) return SALTS_ESHUTDOWN;
   first_status = cnet_shards_first_error(impl);
   record = &impl->records[0];
   status = cnet_owner_drive(&record->owner, timeout_ms);
   cnet_shards_record_error(record, status);
-  return first_status != TURBO_OK ? first_status : status;
+  return first_status != SALTS_OK ? first_status : status;
 }
 
 int cnet_shards_wake(cnet_shards *shards) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
-  if (impl == NULL) return TURBO_EINVAL;
+  if (impl == NULL) return SALTS_EINVAL;
   return cnet_owner_wake(&impl->records[0].owner);
 }
 
@@ -199,16 +199,16 @@ int cnet_shards_bind_event_sink(cnet_shards *shards, cnet_shards_event_sink_fn s
                                 void *context) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
 
-  if (impl == NULL || sink == NULL || context == NULL) return TURBO_EINVAL;
-  turbo_mutex_lock(&impl->admission_lock);
+  if (impl == NULL || sink == NULL || context == NULL) return SALTS_EINVAL;
+  salts_mutex_lock(&impl->admission_lock);
   if (atomic_load_explicit(&impl->event_sink, memory_order_relaxed) != NULL) {
-    turbo_mutex_unlock(&impl->admission_lock);
-    return TURBO_EALREADY;
+    salts_mutex_unlock(&impl->admission_lock);
+    return SALTS_EALREADY;
   }
   atomic_store_explicit(&impl->event_sink_context, context, memory_order_relaxed);
   atomic_store_explicit(&impl->event_sink, sink, memory_order_release);
-  turbo_mutex_unlock(&impl->admission_lock);
-  return TURBO_OK;
+  salts_mutex_unlock(&impl->admission_lock);
+  return SALTS_OK;
 }
 
 bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_layout) {
@@ -226,31 +226,31 @@ int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *p
   size_t offset;
   int status;
 
-  if (out_connection == NULL) return TURBO_EINVAL;
+  if (out_connection == NULL) return SALTS_EINVAL;
   memset(out_connection, 0, sizeof(*out_connection));
-  if (impl == NULL || payload == NULL) return TURBO_EINVAL;
+  if (impl == NULL || payload == NULL) return SALTS_EINVAL;
 
-  turbo_mutex_lock(&impl->admission_lock);
+  salts_mutex_lock(&impl->admission_lock);
   status = cnet_shards_first_error(impl);
-  if (!impl->admission_open || status != TURBO_OK) {
-    turbo_mutex_unlock(&impl->admission_lock);
-    return status != TURBO_OK ? status : TURBO_ESHUTDOWN;
+  if (!impl->admission_open || status != SALTS_OK) {
+    salts_mutex_unlock(&impl->admission_lock);
+    return status != SALTS_OK ? status : SALTS_ESHUTDOWN;
   }
-  status = TURBO_ENOBUFS;
+  status = SALTS_ENOBUFS;
   for (offset = 0u; offset < impl->shard_count; ++offset) {
     const size_t shard = (impl->next_shard + offset) % impl->shard_count;
     status = cnet_session_table_reserve(&impl->records[shard].sessions, &connection.session);
-    if (status == TURBO_ENOBUFS) continue;
-    if (status != TURBO_OK) break;
+    if (status == SALTS_ENOBUFS) continue;
+    if (status != SALTS_OK) break;
     connection.shard = (uint32_t)shard;
     break;
   }
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) {
     cnet_shard_record *record = &impl->records[connection.shard];
     const cnet_command command = {CNET_COMMAND_CONNECT, connection.session, payload,
                                   sizeof(*payload), 0u};
     status = cnet_command_queue_publish(&record->commands, &command);
-    if (status == TURBO_OK) {
+    if (status == SALTS_OK) {
       impl->next_shard = ((size_t)connection.shard + 1u) % impl->shard_count;
       ++impl->active_connections;
       *out_connection = connection;
@@ -258,94 +258,122 @@ int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *p
       (void)cnet_session_table_release_reservation(&record->sessions, connection.session);
     }
   }
-  turbo_mutex_unlock(&impl->admission_lock);
+  salts_mutex_unlock(&impl->admission_lock);
   return status;
 }
 
 static int cnet_shards_publish(cnet_shards_impl *impl, cnet_shard_connection connection,
-                               cnet_command_kind kind, const void *data, size_t size,
-                               size_t argument) {
+                               const cnet_command *command) {
   cnet_shard_record *record;
   cnet_session_state state = CNET_SESSION_FREE;
-  cnet_command command;
+  const cnet_command_kind kind = command != NULL ? command->kind : CNET_COMMAND_NONE;
   int status;
 
-  if (!cnet_shard_connection_valid(connection)) return TURBO_ENOENT;
+  if (command == NULL) return SALTS_EINVAL;
+  if (!cnet_shard_connection_valid(connection)) return SALTS_ENOENT;
   record = cnet_shards_get_record(impl, connection.shard);
-  if (record == NULL) return TURBO_ENOENT;
+  if (record == NULL) return SALTS_ENOENT;
 
-  turbo_mutex_lock(&impl->admission_lock);
+  salts_mutex_lock(&impl->admission_lock);
   if (!impl->admission_open) {
-    turbo_mutex_unlock(&impl->admission_lock);
-    return TURBO_ESHUTDOWN;
+    salts_mutex_unlock(&impl->admission_lock);
+    return SALTS_ESHUTDOWN;
   }
   status = cnet_shards_first_error(impl);
-  if (status == TURBO_OK || kind == CNET_COMMAND_CLOSE)
+  if (status == SALTS_OK || kind == CNET_COMMAND_CLOSE)
     status = cnet_session_table_state(&record->sessions, connection.session, &state);
-  if (status == TURBO_OK &&
+  if (status == SALTS_OK &&
       (kind == CNET_COMMAND_SEND || kind == CNET_COMMAND_SEND_CLOSE ||
        kind == CNET_COMMAND_RECEIVE) &&
       state != CNET_SESSION_OPEN)
-    status = TURBO_EBUSY;
-  if (status == TURBO_OK && kind == CNET_COMMAND_CLOSE && state == CNET_SESSION_DRAINING)
-    status = TURBO_EALREADY;
-  if (status == TURBO_OK && state == CNET_SESSION_TERMINAL) status = TURBO_EALREADY;
-  if (status == TURBO_OK) {
-    command = (cnet_command){kind, connection.session, data, size, argument};
-    status = cnet_command_queue_publish(&record->commands, &command);
-  }
-  turbo_mutex_unlock(&impl->admission_lock);
+    status = SALTS_EBUSY;
+  if (status == SALTS_OK && kind == CNET_COMMAND_CLOSE && state == CNET_SESSION_DRAINING)
+    status = SALTS_EALREADY;
+  if (status == SALTS_OK && state == CNET_SESSION_TERMINAL) status = SALTS_EALREADY;
+  if (status == SALTS_OK) status = cnet_command_queue_publish(&record->commands, command);
+  salts_mutex_unlock(&impl->admission_lock);
   return status;
 }
 
 int cnet_shards_send(cnet_shards *shards, cnet_shard_connection connection, const void *data,
                      size_t size) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
-  if (impl == NULL || data == NULL || size == 0u) return TURBO_EINVAL;
-  if (size > impl->max_command_payload_bytes) return TURBO_EMSGSIZE;
-  return cnet_shards_publish(impl, connection, CNET_COMMAND_SEND, data, size, 0u);
+  const cnet_command command = {
+      .kind = CNET_COMMAND_SEND,
+      .connection = connection.session,
+      .data = data,
+      .size = size};
+  if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  if (size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
+  return cnet_shards_publish(impl, connection, &command);
+}
+
+int cnet_shards_sendv(cnet_shards *shards, cnet_shard_connection connection,
+                      const cnet_const_buffer *segments, size_t segment_count,
+                      size_t total_size) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  const cnet_command command = {
+      .kind = CNET_COMMAND_SEND,
+      .connection = connection.session,
+      .size = total_size,
+      .segments = segments,
+      .segment_count = segment_count};
+  if (impl == NULL || segments == NULL || segment_count == 0u || total_size == 0u)
+    return SALTS_EINVAL;
+  if (total_size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
+  return cnet_shards_publish(impl, connection, &command);
 }
 
 int cnet_shards_send_and_close(cnet_shards *shards, cnet_shard_connection connection,
                                const void *data, size_t size) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
-  if (impl == NULL || data == NULL || size == 0u) return TURBO_EINVAL;
-  if (size > impl->max_command_payload_bytes) return TURBO_EMSGSIZE;
-  return cnet_shards_publish(impl, connection, CNET_COMMAND_SEND_CLOSE, data, size, 0u);
+  const cnet_command command = {
+      .kind = CNET_COMMAND_SEND_CLOSE,
+      .connection = connection.session,
+      .data = data,
+      .size = size};
+  if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  if (size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
+  return cnet_shards_publish(impl, connection, &command);
 }
 
 int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, size_t demand) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
-  if (impl == NULL || demand == 0u) return TURBO_EINVAL;
-  return cnet_shards_publish(impl, connection, CNET_COMMAND_RECEIVE, NULL, 0u, demand);
+  const cnet_command command = {.kind = CNET_COMMAND_RECEIVE,
+                                .connection = connection.session,
+                                .argument = demand};
+  if (impl == NULL || demand == 0u) return SALTS_EINVAL;
+  return cnet_shards_publish(impl, connection, &command);
 }
 
 int cnet_shards_close(cnet_shards *shards, cnet_shard_connection connection) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
-  if (impl == NULL) return TURBO_EINVAL;
-  return cnet_shards_publish(impl, connection, CNET_COMMAND_CLOSE, NULL, 0u, 0u);
+  const cnet_command command = {.kind = CNET_COMMAND_CLOSE,
+                                .connection = connection.session};
+  if (impl == NULL) return SALTS_EINVAL;
+  return cnet_shards_publish(impl, connection, &command);
 }
 
 int cnet_shards_state(cnet_shards *shards, cnet_shard_connection connection,
                       cnet_session_state *out_state) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   cnet_shard_record *record;
-  if (out_state == NULL) return TURBO_EINVAL;
+  if (out_state == NULL) return SALTS_EINVAL;
   *out_state = CNET_SESSION_FREE;
-  if (impl == NULL || !cnet_shard_connection_valid(connection)) return TURBO_ENOENT;
+  if (impl == NULL || !cnet_shard_connection_valid(connection)) return SALTS_ENOENT;
   record = cnet_shards_get_record(impl, connection.shard);
   return record != NULL ? cnet_session_table_state(&record->sessions, connection.session, out_state)
-                        : TURBO_ENOENT;
+                        : SALTS_ENOENT;
 }
 
 int cnet_shards_take_event(cnet_shards *shards, uint32_t shard, cnet_event_view *out_event) {
   cnet_shard_record *record = cnet_shards_get_record(cnet_shards_get(shards), shard);
-  return record != NULL ? cnet_event_queue_take(&record->events, out_event) : TURBO_EINVAL;
+  return record != NULL ? cnet_event_queue_take(&record->events, out_event) : SALTS_EINVAL;
 }
 
 int cnet_shards_release_event(cnet_shards *shards, uint32_t shard, cnet_event_view *event) {
   cnet_shard_record *record = cnet_shards_get_record(cnet_shards_get(shards), shard);
-  return record != NULL ? cnet_event_queue_release(&record->events, event) : TURBO_EINVAL;
+  return record != NULL ? cnet_event_queue_release(&record->events, event) : SALTS_EINVAL;
 }
 
 int cnet_shards_recycle(cnet_shards *shards, cnet_shard_connection connection,
@@ -354,22 +382,22 @@ int cnet_shards_recycle(cnet_shards *shards, cnet_shard_connection connection,
   cnet_shard_record *record;
   int status;
 
-  if (impl == NULL || out_terminal == NULL) return TURBO_EINVAL;
+  if (impl == NULL || out_terminal == NULL) return SALTS_EINVAL;
   memset(out_terminal, 0, sizeof(*out_terminal));
-  if (!cnet_shard_connection_valid(connection)) return TURBO_ENOENT;
+  if (!cnet_shard_connection_valid(connection)) return SALTS_ENOENT;
   record = cnet_shards_get_record(impl, connection.shard);
-  if (record == NULL) return TURBO_ENOENT;
+  if (record == NULL) return SALTS_ENOENT;
 
-  turbo_mutex_lock(&impl->admission_lock);
+  salts_mutex_lock(&impl->admission_lock);
   status = cnet_session_table_take_terminal(&record->sessions, connection.session, out_terminal);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = cnet_session_table_recycle(&record->sessions, connection.session);
-  if (status == TURBO_OK) status = cnet_owner_release_session(&record->owner, connection.session);
-  if (status == TURBO_OK) {
-    if (impl->active_connections == 0u) status = TURBO_EPROTO;
+  if (status == SALTS_OK) status = cnet_owner_release_session(&record->owner, connection.session);
+  if (status == SALTS_OK) {
+    if (impl->active_connections == 0u) status = SALTS_EPROTO;
     else --impl->active_connections;
   }
-  turbo_mutex_unlock(&impl->admission_lock);
+  salts_mutex_unlock(&impl->admission_lock);
   return status;
 }
 
@@ -380,39 +408,39 @@ int cnet_shards_stop(cnet_shards *shards, uint32_t timeout_ms) {
   int status;
 
   (void)timeout_ms;
-  if (impl == NULL) return TURBO_EINVAL;
-  turbo_mutex_lock(&impl->admission_lock);
+  if (impl == NULL) return SALTS_EINVAL;
+  salts_mutex_lock(&impl->admission_lock);
   if (impl->stopped) {
-    turbo_mutex_unlock(&impl->admission_lock);
-    return TURBO_EALREADY;
+    salts_mutex_unlock(&impl->admission_lock);
+    return SALTS_EALREADY;
   }
   if (!impl->stopping) {
     if (impl->active_connections != 0u) {
-      turbo_mutex_unlock(&impl->admission_lock);
-      return TURBO_EBUSY;
+      salts_mutex_unlock(&impl->admission_lock);
+      return SALTS_EBUSY;
     }
     impl->admission_open = false;
     for (index = 0u; index < impl->shard_count; ++index) {
       status = cnet_command_queue_close(&impl->records[index].commands);
-      if (status != TURBO_OK) {
-        turbo_mutex_unlock(&impl->admission_lock);
+      if (status != SALTS_OK) {
+        salts_mutex_unlock(&impl->admission_lock);
         return status;
       }
     }
     impl->stopping = true;
   }
-  turbo_mutex_unlock(&impl->admission_lock);
+  salts_mutex_unlock(&impl->admission_lock);
 
   first_status = cnet_shards_first_error(impl);
   for (index = 0u; index < impl->shard_count; ++index) {
     cnet_shard_record *record = &impl->records[index];
     if (!record->owner_closed) {
       status = cnet_owner_close(&record->owner);
-      if (status != TURBO_OK) return status;
+      if (status != SALTS_OK) return status;
       record->owner_closed = true;
     }
     status = cnet_event_queue_close(&record->events);
-    if (status != TURBO_OK && status != TURBO_EALREADY) return status;
+    if (status != SALTS_OK && status != SALTS_EALREADY) return status;
   }
   impl->stopped = true;
   return first_status;
@@ -428,23 +456,23 @@ int cnet_shards_destroy(cnet_shards *shards) {
   size_t index;
   int status;
 
-  if (shards == NULL) return TURBO_EINVAL;
-  if (impl == NULL) return TURBO_OK;
-  if (!impl->stopped || impl->active_connections != 0u) return TURBO_EBUSY;
+  if (shards == NULL) return SALTS_EINVAL;
+  if (impl == NULL) return SALTS_OK;
+  if (!impl->stopped || impl->active_connections != 0u) return SALTS_EBUSY;
   for (index = 0u; index < impl->shard_count; ++index) {
     cnet_shard_record *record = &impl->records[index];
     status = cnet_event_queue_destroy(&record->events);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     status = cnet_owner_destroy(&record->owner);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     status = cnet_command_queue_destroy(&record->commands);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     status = cnet_session_table_destroy(&record->sessions);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
   }
-  turbo_mutex_destroy(&impl->admission_lock);
+  salts_mutex_destroy(&impl->admission_lock);
   free(impl->records);
   free(impl);
   shards->impl = NULL;
-  return TURBO_OK;
+  return SALTS_OK;
 }

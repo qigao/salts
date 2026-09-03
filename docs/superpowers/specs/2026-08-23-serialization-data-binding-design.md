@@ -9,10 +9,10 @@ CSerde 与初始 CBind decode 已分阶段落地；具体 API 以同目录的专
 
 ## 1. 背景
 
-TurboUtils 已经具备三块可以直接成为数据绑定基础的能力：
+Salts 已经具备三块可以直接成为数据绑定基础的能力：
 
 - CMeta 提供类型身份、traits、Enum/Struct 元数据、Range、Collector 和 container descriptor；
-- TurboSTL 已完成 self-describing instance API，标准容器通过 `cmeta_container_desc` 暴露 Range/Collector；
+- Container 已完成 self-describing instance API，标准容器通过 `cmeta_container_desc` 暴露 Range/Collector；
 - CFlow 能消费 Range/Collector，但它是 execution 层，不应成为序列化核心依赖。
 
 同时，独立仓库 `qigao/turbo-parser` 已经存在成熟的 parser/data-binding runtime：
@@ -25,10 +25,10 @@ TurboUtils 已经具备三块可以直接成为数据绑定基础的能力：
 TurboParser 的既有依赖方向是：
 
 ```text
-application -> TurboParser -> TurboUtils
+application -> TurboParser -> Salts
 ```
 
-因此本设计不能让 TurboUtils 反向依赖 TurboParser，也不应该在 TurboUtils 内重新实现一套 JSON/YAML/XML/CSV parser 或第二套 DataBind。
+因此本设计不能让 Salts 反向依赖 TurboParser，也不应该在 Salts 内重新实现一套 JSON/YAML/XML/CSV parser 或第二套 DataBind。
 
 当前真正的缺口是：CMeta 的 `Struct(...)` 只描述 C ABI layout——字段名、类型文本、offset、size、align——并不描述 wire/data 语义。`vstr` 就是直接反例：其 ABI 是 `{ const char *data; size_t len; }`，但数据语义应当是一个 borrowed string view，而不是一个包含 pointer 和 length 的 object。
 
@@ -38,19 +38,19 @@ application -> TurboParser -> TurboUtils
 C layout reflection != semantic data shape != canonical data events != native format syntax/wire
 ```
 
-另有现存模块 `turbo_serial`，含义是 serial-port/串口。新的 serialization 模块不得使用 `serial` / `turbo_serial` 名称，避免概念冲突。
+另有现存模块 `salts_serial`，含义是 serial-port/串口。新的 serialization 模块不得使用 `serial` / `salts_serial` 名称，避免概念冲突。
 
 ## 2. 目标
 
 1. 建立 format-neutral semantic data model，使同一份 C 数据绑定可服务 JSON、YAML、XML、CSV、CBOR、MessagePack、TOML 等格式。
 2. 建立 streaming canonical token reader/writer contract，避免 DOM 成为强制中间表示。
 3. 建立 C object <-> token 的通用 binding engine。
-4. 直接复用 TurboSTL 已有 `Range + Collector + cmeta_container_desc`，不为每种容器生成 serialize facade。
+4. 直接复用 Container 已有 `Range + Collector + cmeta_container_desc`，不为每种容器生成 serialize facade。
 5. 支持 nested struct、enum、variant/union、owned/borrowed string、sequence、map、optional 和 custom adapter。
 6. decode 失败不留下半初始化对象或半构造容器。
 7. 默认严格处理 unknown field、duplicate field、missing required field、numeric overflow 和资源限制。
 8. ownership、reader view lifetime、allocator/limits 必须成为显式 contract。
-9. 复用 TurboParser 已有 parser 作为生产 codec adapter；TurboUtils core 不拥有重复 parser implementation。
+9. 复用 TurboParser 已有 parser 作为生产 codec adapter；Salts core 不拥有重复 parser implementation。
 10. 保留 DataBind 的 runtime/dynamic-value 价值，但逐步把公共 binding semantics 下沉到 CMeta/CSerde/CBind。
 11. 保留 TBE 的专用 binary wire/layout 能力，不把 TBE wire metadata 污染到通用 CMeta semantic descriptor。
 12. 为后续 CFlow streaming adapter 留边界，但 v1 不让 CFlow 进入核心依赖图。
@@ -60,7 +60,7 @@ C layout reflection != semantic data shape != canonical data events != native fo
 v1 不做：
 
 - mandatory DOM/value tree；
-- 在 TurboUtils 中重写 JSON/YAML/XML/CSV parser；
+- 在 Salts 中重写 JSON/YAML/XML/CSV parser；
 - 删除 DataBind 动态对象/runtime-host 能力；
 - 把 TBE fixed-prefix/group/var-data/wire-offset 设计泛化成通用 data shape；
 - runtime network schema registry；
@@ -72,7 +72,7 @@ v1 不做：
 - 自动 migration graph；
 - cyclic object graph/reference identity；
 - CFlow graph execution 集成；
-- 将现有 `turbo_serial` 改造成 serialization 模块。
+- 将现有 `salts_serial` 改造成 serialization 模块。
 
 ## 4. 采用架构
 
@@ -84,7 +84,7 @@ v1 不做：
                     CMeta semantic shape
                            |
                            |
-TurboSTL --implements--> CMeta container contract
+Container --implements--> CMeta container contract
                            |
                            v
                          CBind <---------------- CSerde token contract
@@ -102,11 +102,11 @@ TurboSTL --implements--> CMeta container contract
 等价 target 依赖：
 
 ```text
-TurboSTL -> CMeta
+Container -> CMeta
 CSerde   -> minimal runtime/C runtime only
 CBind    -> CMeta + CSerde
-TurboParser parser adapters -> TurboUtils::CSerde
-TurboParser::DataBind       -> parser adapters + TurboUtils::CBind
+TurboParser parser adapters -> Salts::CSerde
+TurboParser::DataBind       -> parser adapters + Salts::CBind
 CFlow    -> future adapter only
 ```
 
@@ -118,7 +118,7 @@ CFlow    -> future adapter only
 - CBind 永远只消费 `cserde_reader` / `cserde_writer`，不直接 include/link parser；
 - DataBind 可以继续提供动态 `DataBindValue`/`DataBindObject` façade，但 dynamic tree 只是 CBind 的一个可选 sink/source，不是 mandatory core intermediate representation。
 
-拒绝 DOM-first 作为核心，因为它强制完整中间树和额外 allocation/traversal。拒绝 `Type x Format` 代码生成，因为会重新形成 TurboSTL 刚删除的 generated facade 笛卡尔积。
+拒绝 DOM-first 作为核心，因为它强制完整中间树和额外 allocation/traversal。拒绝 `Type x Format` 代码生成，因为会重新形成 Container 刚删除的 generated facade 笛卡尔积。
 
 ## 5. 模块与 ownership
 
@@ -134,7 +134,7 @@ CMeta 不解析 JSON，不分配 parser DOM，不包含 format-specific callback
 
 ### 5.2 CSerde
 
-TurboUtils 新模块：
+Salts 新模块：
 
 ```text
 cserde/
@@ -147,7 +147,7 @@ cserde/
 CMake target：
 
 ```text
-TurboUtils::CSerde
+Salts::CSerde
 ```
 
 职责仅为：
@@ -165,7 +165,7 @@ format-neutral syntax/event errors
 
 ### 5.3 CBind
 
-TurboUtils 新模块：
+Salts 新模块：
 
 ```text
 cbind/
@@ -179,7 +179,7 @@ cbind/
 CMake target：
 
 ```text
-TurboUtils::CBind
+Salts::CBind
 ```
 
 依赖：
@@ -188,7 +188,7 @@ TurboUtils::CBind
 CBind -> CMeta + CSerde
 ```
 
-CBind 不直接 link TurboSTL。任何实现 CMeta container contract 的容器都可以参与 binding。
+CBind 不直接 link Container。任何实现 CMeta container contract 的容器都可以参与 binding。
 
 ### 5.4 TurboParser
 
@@ -573,7 +573,7 @@ CSV 原生是 header/row/column。adapter 根据 header/schema projection 把一
 
 ## 11. TurboParser reference adapters
 
-JSON 是第一个 production reference adapter，但**不在 TurboUtils 重写 JSON parser**。
+JSON 是第一个 production reference adapter，但**不在 Salts 重写 JSON parser**。
 
 现有 TurboParser JSON 已具备：
 
@@ -726,7 +726,7 @@ cmeta_container_bind_types(field, reflected_field->declared_type)
 - 增加 C/C++ initializer/public-header regression；
 - 保证旧 extension prefix 仍可读取，且缺少该 optional tail 时明确返回 unsupported。
 
-## 14. TurboSTL container binding
+## 14. Container container binding
 
 ### 14.1 sequence encode
 
@@ -996,7 +996,7 @@ v1 保证 struct fields 按 semantic descriptor 声明顺序 encode。
 
 ### Phase 0：TurboParser 基线同步
 
-`turbo-parser/main` 当前 `tbe_typed.h` 仍使用旧 TurboSTL public surface（例如旧 `turbo_vec_t` / `turbo_stl_status` / `turbo_vec_*`）。在 DataBind/CMeta integration 前先迁移到最新 natural TurboSTL API：
+`turbo-parser/main` 当前 `tbe_typed.h` 仍使用旧 Container public surface（例如旧 `salts_vec_t` / `salts_stl_status` / `salts_vec_*`）。在 DataBind/CMeta integration 前先迁移到最新 natural Container API：
 
 ```text
 vec_t
@@ -1027,13 +1027,13 @@ vec_* / natural instance API
 14. fuzz/performance/full cross-repo CI；
 15. 最后再决定 `DataStruct(...)` DSL sugar。
 
-关键原则：先用 recording codec 证明 CBind 与任何 concrete format 无关；生产 JSON 验证复用 TurboParser 已有 parser，而不是在 TurboUtils 重写 parser。
+关键原则：先用 recording codec 证明 CBind 与任何 concrete format 无关；生产 JSON 验证复用 TurboParser 已有 parser，而不是在 Salts 重写 parser。
 
 最终验证至少包含：
 
 - C/C++ public-header tests；
 - CMeta/CSerde/CBind unit tests；
-- nested TurboSTL integration；
+- nested Container integration；
 - TurboParser JSON adapter parity tests；
 - DataBind existing behavioral/ABI regression tests；
 - TBE binary wire regression tests；
@@ -1098,12 +1098,12 @@ TbeTyped duplicated semantic metadata -> CMeta semantic descriptor
 
 - CMeta semantic shape 与 C layout reflection 分离；
 - semantic model 覆盖 variant/union，不比现有 DataBind/TBE 表达力倒退；
-- CSerde core 不依赖 CBind/TurboSTL/CFlow/TurboParser；
+- CSerde core 不依赖 CBind/Container/CFlow/TurboParser；
 - v1 CSerde 数值域只包含 `int64_t`/`uint64_t`/`double`，超域 Decimal/BigInt 在 versioned exact-number token 落地前显式拒绝；
-- TurboUtils 不包含重复 JSON/YAML/XML/CSV parser implementation；
+- Salts 不包含重复 JSON/YAML/XML/CSV parser implementation；
 - TurboParser concrete parser 通过 format projection/adapter 实现 CSerde reader/writer；
 - CBind 只依赖 CMeta + CSerde；
-- nested TurboSTL container 不需要 CBind type switch/特判；
+- nested Container container 不需要 CBind type switch/特判；
 - container decode 走 versioned construction extension + Collector；
 - container encode 走 Range；
 - owned/borrowed string lifetime 有可测试 contract；
@@ -1116,7 +1116,7 @@ TbeTyped duplicated semantic metadata -> CMeta semantic descriptor
 - DataBind 关键 public behavior/ABI contract 有回归验证；
 - C/C++ public API 编译通过；
 - Linux + Windows fresh CI 通过；
-- cross-repo TurboUtils -> TurboParser integration CI 通过；
+- cross-repo Salts -> TurboParser integration CI 通过；
 - 没有 `Type x Format` generated facade；
 - 没有 DOM/DataBindValue 作为 mandatory core intermediate representation。
 
@@ -1126,11 +1126,11 @@ TbeTyped duplicated semantic metadata -> CMeta semantic descriptor
 CMeta：知道“数据是什么”、如何识别 semantic identity，以及容器 generic construction contract
 CSerde：定义“binder 可消费/产出的 canonical data events”，不知道 JSON/YAML/XML parser
 CBind：知道“C 对象如何映射 canonical events”，并管理 transaction/ownership/policy/context
-TurboSTL：知道“容器如何存储、遍历、事务构造”
+Container：知道“容器如何存储、遍历、事务构造”
 TurboParser：知道“具体格式如何 parse/emit，并把 native events 投影到 CSerde”
 DataBind：保留 runtime schema/dynamic-value/compatibility host，逐步委托 generic binding 给 CBind
 TBE：保留 specialized binary wire/layout，在 semantic CMeta 之上增加 wire descriptor
 CFlow：以后只知道“这些数据如何流动”
 ```
 
-这使 serialization/data binding 成为 CMeta + TurboSTL 能力的自然延伸，同时直接复用 TurboParser 已经成熟的 parser/DataBind/TBE 契约，而不是在 TurboUtils 内建立第二套 generated facade、parser 或 DOM-first binding 系统。
+这使 serialization/data binding 成为 CMeta + Container 能力的自然延伸，同时直接复用 TurboParser 已经成熟的 parser/DataBind/TBE 契约，而不是在 Salts 内建立第二套 generated facade、parser 或 DOM-first binding 系统。

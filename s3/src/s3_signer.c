@@ -41,26 +41,26 @@ int s3_signer_sha256_hex(const void *data, size_t size,
   unsigned char digest[S3_SHA256_SIZE];
   unsigned int digest_size = 0u;
 
-  if (out_hex == NULL || (data == NULL && size != 0u)) return TURBO_EINVAL;
+  if (out_hex == NULL || (data == NULL && size != 0u)) return SALTS_EINVAL;
   if (EVP_Digest(data != NULL ? data : "", size, digest, &digest_size, EVP_sha256(), NULL) != 1 ||
       digest_size != sizeof(digest)) {
     OPENSSL_cleanse(digest, sizeof(digest));
-    return TURBO_EIO;
+    return SALTS_EIO;
   }
   s3_hex_lower(digest, sizeof(digest), out_hex);
   OPENSSL_cleanse(digest, sizeof(digest));
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int s3_hmac_sha256(const unsigned char *key, size_t key_size, const void *data,
                           size_t data_size, unsigned char output[S3_SHA256_SIZE]) {
   unsigned int output_size = 0u;
   const unsigned char *input = (const unsigned char *)(data != NULL ? data : "");
-  if (key == NULL || (data == NULL && data_size != 0u) || key_size > INT_MAX) return TURBO_EINVAL;
+  if (key == NULL || (data == NULL && data_size != 0u) || key_size > INT_MAX) return SALTS_EINVAL;
   if (HMAC(EVP_sha256(), key, (int)key_size, input, data_size, output, &output_size) == NULL ||
       output_size != S3_SHA256_SIZE)
-    return TURBO_EIO;
-  return TURBO_OK;
+    return SALTS_EIO;
+  return SALTS_OK;
 }
 
 static int s3_signer_date_valid(const char *date) {
@@ -100,19 +100,19 @@ static int s3_header_name_byte(unsigned char value) {
 static int s3_header_name_normalize(const char *name, tstr *out) {
   size_t size;
   size_t index;
-  if (name == NULL || out == NULL || *out != NULL || name[0] == '\0') return TURBO_EINVAL;
+  if (name == NULL || out == NULL || *out != NULL || name[0] == '\0') return SALTS_EINVAL;
   size = strlen(name);
   *out = tstr_dup_len(name, size);
-  if (*out == NULL) return TURBO_ENOMEM;
+  if (*out == NULL) return SALTS_ENOMEM;
   for (index = 0u; index < size; ++index) {
     const unsigned char value = (unsigned char)(*out)[index];
     if (!s3_header_name_byte(value)) {
       tstr_freep(out);
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
     }
     if (value >= 'A' && value <= 'Z') (*out)[index] = (char)(value + ('a' - 'A'));
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int s3_header_value_normalize(const char *value, tstr *out) {
@@ -123,17 +123,17 @@ static int s3_header_value_normalize(const char *value, tstr *out) {
   int in_whitespace = 0;
   int status;
 
-  if (value == NULL || out == NULL || *out != NULL) return TURBO_EINVAL;
+  if (value == NULL || out == NULL || *out != NULL) return SALTS_EINVAL;
   end = strlen(value);
   while (begin < end && (value[begin] == ' ' || value[begin] == '\t'))
     ++begin;
   while (end > begin && (value[end - 1u] == ' ' || value[end - 1u] == '\t'))
     --end;
   status = s3_text_builder_init(&builder, end - begin);
-  for (index = begin; index < end && status == TURBO_OK; ++index) {
+  for (index = begin; index < end && status == SALTS_OK; ++index) {
     const unsigned char byte = (unsigned char)value[index];
     if (byte == '\r' || byte == '\n' || byte == 0x7fu || (byte < 0x20u && byte != '\t')) {
-      status = TURBO_EINVAL;
+      status = SALTS_EINVAL;
       break;
     }
     if (byte == ' ' || byte == '\t') {
@@ -141,11 +141,11 @@ static int s3_header_value_normalize(const char *value, tstr *out) {
     } else {
       if (in_whitespace && tstr_len(builder.text) != 0u)
         status = s3_text_builder_append(&builder, " ", 1u);
-      if (status == TURBO_OK) status = s3_text_builder_append(&builder, &value[index], 1u);
+      if (status == SALTS_OK) status = s3_text_builder_append(&builder, &value[index], 1u);
       in_whitespace = 0;
     }
   }
-  if (status == TURBO_OK) *out = s3_text_builder_release(&builder);
+  if (status == SALTS_OK) *out = s3_text_builder_release(&builder);
   s3_text_builder_destroy(&builder);
   return status;
 }
@@ -181,25 +181,25 @@ static int s3_headers_normalize(const s3_signer_request *request, size_t max_cou
   size_t index;
   int status;
 
-  if (s3_checked_add(request->header_count, 2u, &count) != TURBO_OK) return TURBO_ERANGE;
+  if (s3_checked_add(request->header_count, 2u, &count) != SALTS_OK) return SALTS_ERANGE;
   if (request->session_token != NULL && request->session_token[0] != '\0' &&
-      s3_checked_add(count, 1u, &count) != TURBO_OK)
-    return TURBO_ERANGE;
-  if (count > max_count) return TURBO_ENOBUFS;
-  if (request->header_count != 0u && request->headers == NULL) return TURBO_EINVAL;
-  if (s3_checked_multiply(count, sizeof(*headers), &allocation_size) != TURBO_OK)
-    return TURBO_ERANGE;
+      s3_checked_add(count, 1u, &count) != SALTS_OK)
+    return SALTS_ERANGE;
+  if (count > max_count) return SALTS_ENOBUFS;
+  if (request->header_count != 0u && request->headers == NULL) return SALTS_EINVAL;
+  if (s3_checked_multiply(count, sizeof(*headers), &allocation_size) != SALTS_OK)
+    return SALTS_ERANGE;
   headers = (s3_normalized_header *)calloc(1u, allocation_size);
-  if (headers == NULL) return TURBO_ENOMEM;
-  status = TURBO_OK;
-  for (index = 0u; index < request->header_count && status == TURBO_OK; ++index) {
+  if (headers == NULL) return SALTS_ENOMEM;
+  status = SALTS_OK;
+  for (index = 0u; index < request->header_count && status == SALTS_OK; ++index) {
     status = s3_header_name_normalize(request->headers[index].name, &headers[index].name);
-    if (status == TURBO_OK && s3_header_forbidden(headers[index].name)) status = TURBO_EINVAL;
-    if (status == TURBO_OK)
+    if (status == SALTS_OK && s3_header_forbidden(headers[index].name)) status = SALTS_EINVAL;
+    if (status == SALTS_OK)
       status = s3_header_value_normalize(request->headers[index].value, &headers[index].value);
   }
   index = request->header_count;
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) {
     headers[index].name = tstr_dup("x-amz-content-sha256");
     headers[index++].value = tstr_dup(request->payload_sha256);
     headers[index].name = tstr_dup("x-amz-date");
@@ -209,28 +209,28 @@ static int s3_headers_normalize(const s3_signer_request *request, size_t max_cou
       headers[index++].value = tstr_dup(request->session_token);
     }
     while (index-- > request->header_count) {
-      if (headers[index].name == NULL || headers[index].value == NULL) status = TURBO_ENOMEM;
+      if (headers[index].name == NULL || headers[index].value == NULL) status = SALTS_ENOMEM;
     }
   }
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) {
     qsort(headers, count, sizeof(*headers), s3_header_compare);
     for (index = 0u; index < count; ++index) {
       if (index != 0u && strcmp(headers[index - 1u].name, headers[index].name) == 0) {
-        status = TURBO_EINVAL;
+        status = SALTS_EINVAL;
         break;
       }
-      if (s3_checked_add(aggregate, tstr_len(headers[index].name), &aggregate) != TURBO_OK ||
-          s3_checked_add(aggregate, tstr_len(headers[index].value), &aggregate) != TURBO_OK ||
-          s3_checked_add(aggregate, 2u, &aggregate) != TURBO_OK || aggregate > max_bytes) {
-        status = TURBO_EMSGSIZE;
+      if (s3_checked_add(aggregate, tstr_len(headers[index].name), &aggregate) != SALTS_OK ||
+          s3_checked_add(aggregate, tstr_len(headers[index].value), &aggregate) != SALTS_OK ||
+          s3_checked_add(aggregate, 2u, &aggregate) != SALTS_OK || aggregate > max_bytes) {
+        status = SALTS_EMSGSIZE;
         break;
       }
     }
   }
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) {
     *out_headers = headers;
     *out_count = count;
-    return TURBO_OK;
+    return SALTS_OK;
   }
   s3_headers_destroy(headers, count);
   return status;
@@ -244,33 +244,33 @@ static int s3_build_canonical_headers(const s3_normalized_header *headers, size_
   size_t signed_size = 0u;
   size_t canonical_size = 0u;
   size_t index;
-  int status = TURBO_OK;
+  int status = SALTS_OK;
 
   for (index = 0u; index < count; ++index) {
-    if (s3_checked_add(signed_size, tstr_len(headers[index].name), &signed_size) != TURBO_OK ||
-        (index != 0u && s3_checked_add(signed_size, 1u, &signed_size) != TURBO_OK) ||
+    if (s3_checked_add(signed_size, tstr_len(headers[index].name), &signed_size) != SALTS_OK ||
+        (index != 0u && s3_checked_add(signed_size, 1u, &signed_size) != SALTS_OK) ||
         s3_checked_add(canonical_size, tstr_len(headers[index].name), &canonical_size) !=
-            TURBO_OK ||
+            SALTS_OK ||
         s3_checked_add(canonical_size, tstr_len(headers[index].value), &canonical_size) !=
-            TURBO_OK ||
-        s3_checked_add(canonical_size, 2u, &canonical_size) != TURBO_OK ||
+            SALTS_OK ||
+        s3_checked_add(canonical_size, 2u, &canonical_size) != SALTS_OK ||
         canonical_size > max_header_bytes)
-      return TURBO_EMSGSIZE;
+      return SALTS_EMSGSIZE;
   }
   status = s3_text_builder_init(&signed_builder, signed_size);
-  if (status == TURBO_OK) status = s3_text_builder_init(&canonical_builder, canonical_size);
-  for (index = 0u; index < count && status == TURBO_OK; ++index) {
+  if (status == SALTS_OK) status = s3_text_builder_init(&canonical_builder, canonical_size);
+  for (index = 0u; index < count && status == SALTS_OK; ++index) {
     if (index != 0u) status = s3_text_builder_append(&signed_builder, ";", 1u);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
       status = s3_text_builder_append_cstr(&signed_builder, headers[index].name);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
       status = s3_text_builder_append_cstr(&canonical_builder, headers[index].name);
-    if (status == TURBO_OK) status = s3_text_builder_append(&canonical_builder, ":", 1u);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK) status = s3_text_builder_append(&canonical_builder, ":", 1u);
+    if (status == SALTS_OK)
       status = s3_text_builder_append_cstr(&canonical_builder, headers[index].value);
-    if (status == TURBO_OK) status = s3_text_builder_append(&canonical_builder, "\n", 1u);
+    if (status == SALTS_OK) status = s3_text_builder_append(&canonical_builder, "\n", 1u);
   }
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) {
     *out_signed = s3_text_builder_release(&signed_builder);
     *out_canonical = s3_text_builder_release(&canonical_builder);
   }
@@ -286,27 +286,27 @@ static int s3_build_canonical_request(const s3_signer_request *request, const ch
   size_t required = strlen(request->method);
   int status;
 
-  if (s3_checked_add(required, strlen(request->canonical_uri), &required) != TURBO_OK ||
-      s3_checked_add(required, strlen(canonical_query), &required) != TURBO_OK ||
-      s3_checked_add(required, strlen(canonical_headers), &required) != TURBO_OK ||
-      s3_checked_add(required, strlen(signed_headers), &required) != TURBO_OK ||
-      s3_checked_add(required, strlen(request->payload_sha256), &required) != TURBO_OK ||
-      s3_checked_add(required, 5u, &required) != TURBO_OK)
-    return TURBO_ERANGE;
-  if (required > max_size) return TURBO_EMSGSIZE;
+  if (s3_checked_add(required, strlen(request->canonical_uri), &required) != SALTS_OK ||
+      s3_checked_add(required, strlen(canonical_query), &required) != SALTS_OK ||
+      s3_checked_add(required, strlen(canonical_headers), &required) != SALTS_OK ||
+      s3_checked_add(required, strlen(signed_headers), &required) != SALTS_OK ||
+      s3_checked_add(required, strlen(request->payload_sha256), &required) != SALTS_OK ||
+      s3_checked_add(required, 5u, &required) != SALTS_OK)
+    return SALTS_ERANGE;
+  if (required > max_size) return SALTS_EMSGSIZE;
   status = s3_text_builder_init(&builder, required);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, request->method);
-  if (status == TURBO_OK) status = s3_text_builder_append(&builder, "\n", 1u);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, request->canonical_uri);
-  if (status == TURBO_OK) status = s3_text_builder_append(&builder, "\n", 1u);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, canonical_query);
-  if (status == TURBO_OK) status = s3_text_builder_append(&builder, "\n", 1u);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, canonical_headers);
-  if (status == TURBO_OK) status = s3_text_builder_append(&builder, "\n", 1u);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, signed_headers);
-  if (status == TURBO_OK) status = s3_text_builder_append(&builder, "\n", 1u);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, request->payload_sha256);
-  if (status == TURBO_OK) *out = s3_text_builder_release(&builder);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, request->method);
+  if (status == SALTS_OK) status = s3_text_builder_append(&builder, "\n", 1u);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, request->canonical_uri);
+  if (status == SALTS_OK) status = s3_text_builder_append(&builder, "\n", 1u);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, canonical_query);
+  if (status == SALTS_OK) status = s3_text_builder_append(&builder, "\n", 1u);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, canonical_headers);
+  if (status == SALTS_OK) status = s3_text_builder_append(&builder, "\n", 1u);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, signed_headers);
+  if (status == SALTS_OK) status = s3_text_builder_append(&builder, "\n", 1u);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, request->payload_sha256);
+  if (status == SALTS_OK) *out = s3_text_builder_release(&builder);
   s3_text_builder_destroy(&builder);
   return status;
 }
@@ -315,11 +315,11 @@ static int s3_build_scope(const s3_signer_request *request, tstr *out) {
   s3_text_builder builder = {0};
   const size_t required = 8u + 1u + strlen(request->region) + sizeof("/s3/aws4_request") - 1u;
   int status = s3_text_builder_init(&builder, required);
-  if (status == TURBO_OK) status = s3_text_builder_append(&builder, request->amz_date, 8u);
-  if (status == TURBO_OK) status = s3_text_builder_append(&builder, "/", 1u);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, request->region);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, "/s3/aws4_request");
-  if (status == TURBO_OK) *out = s3_text_builder_release(&builder);
+  if (status == SALTS_OK) status = s3_text_builder_append(&builder, request->amz_date, 8u);
+  if (status == SALTS_OK) status = s3_text_builder_append(&builder, "/", 1u);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, request->region);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, "/s3/aws4_request");
+  if (status == SALTS_OK) *out = s3_text_builder_release(&builder);
   s3_text_builder_destroy(&builder);
   return status;
 }
@@ -331,13 +331,13 @@ static int s3_build_string_to_sign(const s3_signer_request *request, const char 
   const size_t required = sizeof("AWS4-HMAC-SHA256\n") - 1u + S3_SIGNER_AMZ_DATE_SIZE + 1u +
                           strlen(scope) + 1u + S3_SIGNER_SHA256_HEX_SIZE;
   int status = s3_text_builder_init(&builder, required);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, "AWS4-HMAC-SHA256\n");
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, request->amz_date);
-  if (status == TURBO_OK) status = s3_text_builder_append(&builder, "\n", 1u);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, scope);
-  if (status == TURBO_OK) status = s3_text_builder_append(&builder, "\n", 1u);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, canonical_hash);
-  if (status == TURBO_OK) *out = s3_text_builder_release(&builder);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, "AWS4-HMAC-SHA256\n");
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, request->amz_date);
+  if (status == SALTS_OK) status = s3_text_builder_append(&builder, "\n", 1u);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, scope);
+  if (status == SALTS_OK) status = s3_text_builder_append(&builder, "\n", 1u);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, canonical_hash);
+  if (status == SALTS_OK) *out = s3_text_builder_release(&builder);
   s3_text_builder_destroy(&builder);
   return status;
 }
@@ -356,17 +356,17 @@ static int s3_derive_signature(const s3_signer_request *request, const char *str
   memcpy(secret_prefix, "AWS4", 4u);
   memcpy(secret_prefix + 4u, request->secret_key, secret_size);
   status = s3_hmac_sha256(secret_prefix, secret_size + 4u, request->amz_date, 8u, date_key);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_hmac_sha256(date_key, sizeof(date_key), request->region, strlen(request->region),
                             region_key);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_hmac_sha256(region_key, sizeof(region_key), "s3", 2u, service_key);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_hmac_sha256(service_key, sizeof(service_key), "aws4_request", 12u, signing_key);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_hmac_sha256(signing_key, sizeof(signing_key), string_to_sign,
                             strlen(string_to_sign), raw_signature);
-  if (status == TURBO_OK) s3_hex_lower(raw_signature, sizeof(raw_signature), signature);
+  if (status == SALTS_OK) s3_hex_lower(raw_signature, sizeof(raw_signature), signature);
   OPENSSL_cleanse(secret_prefix, sizeof(secret_prefix));
   OPENSSL_cleanse(date_key, sizeof(date_key));
   OPENSSL_cleanse(region_key, sizeof(region_key));
@@ -386,15 +386,15 @@ static int s3_build_authorization(const s3_signer_request *request, const char *
                           strlen(scope) + sizeof(signed_prefix) - 1u + strlen(signed_headers) +
                           sizeof(signature_prefix) - 1u + strlen(signature);
   int status = s3_text_builder_init(&builder, required);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, algorithm);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, request->access_key);
-  if (status == TURBO_OK) status = s3_text_builder_append(&builder, "/", 1u);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, scope);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, signed_prefix);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, signed_headers);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, signature_prefix);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, signature);
-  if (status == TURBO_OK) *out = s3_text_builder_release(&builder);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, algorithm);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, request->access_key);
+  if (status == SALTS_OK) status = s3_text_builder_append(&builder, "/", 1u);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, scope);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, signed_prefix);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, signed_headers);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, signature_prefix);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, signature);
+  if (status == SALTS_OK) *out = s3_text_builder_release(&builder);
   s3_text_builder_destroy(&builder);
   return status;
 }
@@ -414,12 +414,12 @@ static int s3_signer_request_validate(const s3_signer_request *request, size_t m
       (request->session_token != NULL &&
        strlen(request->session_token) > S3_SIGNER_DEFAULT_MAX_HEADER_BYTES) ||
       !s3_signer_hash_valid(request->payload_sha256) || !s3_signer_date_valid(request->amz_date))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   for (index = 0u; request->canonical_uri[index] != '\0'; ++index) {
     const unsigned char value = (unsigned char)request->canonical_uri[index];
-    if (value <= 0x20u || value == 0x7fu) return TURBO_EINVAL;
+    if (value <= 0x20u || value == 0x7fu) return SALTS_EINVAL;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int s3_signer_sign(const s3_signer_request *request, s3_signer_result *out_result) {
@@ -441,7 +441,7 @@ int s3_signer_sign(const s3_signer_request *request, s3_signer_result *out_resul
       out_result->signed_headers != NULL || out_result->signature != NULL ||
       out_result->canonical_query != NULL || out_result->canonical_request != NULL ||
       out_result->string_to_sign != NULL)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   max_header_count = request != NULL && request->max_header_count != 0u
                          ? request->max_header_count
                          : S3_SIGNER_DEFAULT_MAX_HEADER_COUNT;
@@ -455,38 +455,38 @@ int s3_signer_sign(const s3_signer_request *request, s3_signer_result *out_resul
                          ? request->max_target_bytes
                          : S3_SIGNER_DEFAULT_MAX_TARGET_BYTES;
   status = s3_signer_request_validate(request, max_target_bytes);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   status =
       s3_headers_normalize(request, max_header_count, max_header_bytes, &headers, &header_count);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_build_canonical_headers(headers, header_count, max_header_bytes,
                                         (tstr *)&result.signed_headers, &canonical_headers);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_query_canonicalize(request->query, request->query_count, max_query_count,
                                    max_target_bytes, (tstr *)&result.canonical_query);
-  if (s3_checked_add(max_header_bytes, max_target_bytes, &canonical_limit) != TURBO_OK ||
-      s3_checked_add(canonical_limit, max_target_bytes, &canonical_limit) != TURBO_OK)
-    status = TURBO_ERANGE;
-  if (status == TURBO_OK)
+  if (s3_checked_add(max_header_bytes, max_target_bytes, &canonical_limit) != SALTS_OK ||
+      s3_checked_add(canonical_limit, max_target_bytes, &canonical_limit) != SALTS_OK)
+    status = SALTS_ERANGE;
+  if (status == SALTS_OK)
     status = s3_build_canonical_request(request, result.canonical_query, canonical_headers,
                                         result.signed_headers, canonical_limit,
                                         (tstr *)&result.canonical_request);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_signer_sha256_hex(result.canonical_request, strlen(result.canonical_request),
                                   canonical_hash);
-  if (status == TURBO_OK) status = s3_build_scope(request, &scope);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK) status = s3_build_scope(request, &scope);
+  if (status == SALTS_OK)
     status =
         s3_build_string_to_sign(request, scope, canonical_hash, (tstr *)&result.string_to_sign);
-  if (status == TURBO_OK) status = s3_derive_signature(request, result.string_to_sign, signature);
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) status = s3_derive_signature(request, result.string_to_sign, signature);
+  if (status == SALTS_OK) {
     result.signature = tstr_dup(signature);
-    if (result.signature == NULL) status = TURBO_ENOMEM;
+    if (result.signature == NULL) status = SALTS_ENOMEM;
   }
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_build_authorization(request, scope, result.signed_headers, result.signature,
                                     (tstr *)&result.authorization);
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) {
     *out_result = result;
     memset(&result, 0, sizeof(result));
   }
@@ -573,17 +573,17 @@ static int s3_presign_validate(const s3_presign_request *request, size_t max_tar
        strlen(request->session_token) > S3_SIGNER_DEFAULT_MAX_HEADER_BYTES) ||
       !s3_signer_date_valid(request->amz_date) || request->expires_seconds == 0u ||
       request->expires_seconds > 604800u || (request->query_count != 0u && request->query == NULL))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   for (index = 0u; request->canonical_uri[index] != '\0'; ++index) {
     const unsigned char value = (unsigned char)request->canonical_uri[index];
-    if (value <= 0x20u || value == 0x7fu) return TURBO_EINVAL;
+    if (value <= 0x20u || value == 0x7fu) return SALTS_EINVAL;
   }
   for (index = 0u; index < request->query_count; ++index) {
     if (request->query[index].name == NULL || request->query[index].value == NULL ||
         s3_presign_query_reserved(request->query[index].name))
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
   }
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static int s3_presign_canonical_headers(const char *authority, tstr *out) {
@@ -591,14 +591,14 @@ static int s3_presign_canonical_headers(const char *authority, tstr *out) {
   tstr normalized = NULL;
   size_t required;
   int status = s3_header_value_normalize(authority, &normalized);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   required = sizeof("host:\n") - 1u + tstr_len(normalized);
-  if (required > S3_SIGNER_DEFAULT_MAX_HEADER_BYTES) status = TURBO_EMSGSIZE;
-  if (status == TURBO_OK) status = s3_text_builder_init(&builder, required);
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, "host:");
-  if (status == TURBO_OK) status = s3_text_builder_append_cstr(&builder, normalized);
-  if (status == TURBO_OK) status = s3_text_builder_append(&builder, "\n", 1u);
-  if (status == TURBO_OK) *out = s3_text_builder_release(&builder);
+  if (required > S3_SIGNER_DEFAULT_MAX_HEADER_BYTES) status = SALTS_EMSGSIZE;
+  if (status == SALTS_OK) status = s3_text_builder_init(&builder, required);
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, "host:");
+  if (status == SALTS_OK) status = s3_text_builder_append_cstr(&builder, normalized);
+  if (status == SALTS_OK) status = s3_text_builder_append(&builder, "\n", 1u);
+  if (status == SALTS_OK) *out = s3_text_builder_release(&builder);
   tstr_free(normalized);
   s3_text_builder_destroy(&builder);
   return status;
@@ -630,7 +630,7 @@ int s3_signer_presign(const s3_presign_request *request, s3_presign_result *out_
   int written;
   int status;
   if (out_result == NULL || out_result->canonical_query != NULL || out_result->signature != NULL)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   max_query_count = request != NULL && request->max_query_count != 0u
                         ? request->max_query_count
                         : S3_SIGNER_DEFAULT_MAX_QUERY_COUNT;
@@ -638,15 +638,15 @@ int s3_signer_presign(const s3_presign_request *request, s3_presign_result *out_
                          ? request->max_target_bytes
                          : S3_SIGNER_DEFAULT_MAX_TARGET_BYTES;
   status = s3_presign_validate(request, max_target_bytes);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   if (request->session_token != NULL && request->session_token[0] != '\0') ++generated_count;
-  if (s3_checked_add(request->query_count, generated_count, &final_count) != TURBO_OK)
-    return TURBO_ERANGE;
+  if (s3_checked_add(request->query_count, generated_count, &final_count) != SALTS_OK)
+    return SALTS_ERANGE;
   if (final_count > max_query_count ||
-      s3_checked_multiply(final_count, sizeof(*query), &allocation_size) != TURBO_OK)
-    return TURBO_ENOBUFS;
+      s3_checked_multiply(final_count, sizeof(*query), &allocation_size) != SALTS_OK)
+    return SALTS_ENOBUFS;
   query = (s3_signer_query *)calloc(1u, allocation_size);
-  if (query == NULL) return TURBO_ENOMEM;
+  if (query == NULL) return SALTS_ENOMEM;
   for (index = 0u; index < request->query_count; ++index)
     query[index] = request->query[index];
   signer_request = (s3_signer_request){.size = sizeof(signer_request),
@@ -659,54 +659,54 @@ int s3_signer_presign(const s3_presign_request *request, s3_presign_result *out_
                                        .payload_sha256 = unsigned_payload,
                                        .amz_date = request->amz_date};
   status = s3_build_scope(&signer_request, &scope);
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) {
     const size_t required = strlen(request->access_key) + 1u + tstr_len(scope);
     status = s3_text_builder_init(&credential_builder, required);
-    if (status == TURBO_OK)
+    if (status == SALTS_OK)
       status = s3_text_builder_append_cstr(&credential_builder, request->access_key);
-    if (status == TURBO_OK) status = s3_text_builder_append(&credential_builder, "/", 1u);
-    if (status == TURBO_OK) status = s3_text_builder_append_cstr(&credential_builder, scope);
-    if (status == TURBO_OK) credential = s3_text_builder_release(&credential_builder);
+    if (status == SALTS_OK) status = s3_text_builder_append(&credential_builder, "/", 1u);
+    if (status == SALTS_OK) status = s3_text_builder_append_cstr(&credential_builder, scope);
+    if (status == SALTS_OK) credential = s3_text_builder_release(&credential_builder);
   }
   written = snprintf(expires, sizeof(expires), "%u", request->expires_seconds);
-  if (status == TURBO_OK && (written <= 0 || (size_t)written >= sizeof(expires)))
-    status = TURBO_ERANGE;
+  if (status == SALTS_OK && (written <= 0 || (size_t)written >= sizeof(expires)))
+    status = SALTS_ERANGE;
   signing_count = final_count - 1u;
   index = request->query_count;
-  if (status == TURBO_OK) query[index++] = (s3_signer_query){"X-Amz-Algorithm", "AWS4-HMAC-SHA256"};
-  if (status == TURBO_OK) query[index++] = (s3_signer_query){"X-Amz-Credential", credential};
-  if (status == TURBO_OK) query[index++] = (s3_signer_query){"X-Amz-Date", request->amz_date};
-  if (status == TURBO_OK) query[index++] = (s3_signer_query){"X-Amz-Expires", expires};
-  if (status == TURBO_OK) query[index++] = (s3_signer_query){"X-Amz-SignedHeaders", "host"};
-  if (status == TURBO_OK && index < signing_count)
+  if (status == SALTS_OK) query[index++] = (s3_signer_query){"X-Amz-Algorithm", "AWS4-HMAC-SHA256"};
+  if (status == SALTS_OK) query[index++] = (s3_signer_query){"X-Amz-Credential", credential};
+  if (status == SALTS_OK) query[index++] = (s3_signer_query){"X-Amz-Date", request->amz_date};
+  if (status == SALTS_OK) query[index++] = (s3_signer_query){"X-Amz-Expires", expires};
+  if (status == SALTS_OK) query[index++] = (s3_signer_query){"X-Amz-SignedHeaders", "host"};
+  if (status == SALTS_OK && index < signing_count)
     query[index++] = (s3_signer_query){"X-Amz-Security-Token", request->session_token};
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_query_canonicalize(query, signing_count, max_query_count, max_target_bytes,
                                    &canonical_query);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_presign_canonical_headers(request->authority, &canonical_headers);
   if (s3_checked_add(S3_SIGNER_DEFAULT_MAX_HEADER_BYTES, max_target_bytes, &canonical_limit) !=
-          TURBO_OK ||
-      s3_checked_add(canonical_limit, max_target_bytes, &canonical_limit) != TURBO_OK)
-    status = TURBO_ERANGE;
-  if (status == TURBO_OK)
+          SALTS_OK ||
+      s3_checked_add(canonical_limit, max_target_bytes, &canonical_limit) != SALTS_OK)
+    status = SALTS_ERANGE;
+  if (status == SALTS_OK)
     status = s3_build_canonical_request(&signer_request, canonical_query, canonical_headers, "host",
                                         canonical_limit, &canonical_request);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_signer_sha256_hex(canonical_request, tstr_len(canonical_request), canonical_hash);
-  if (status == TURBO_OK)
+  if (status == SALTS_OK)
     status = s3_build_string_to_sign(&signer_request, scope, canonical_hash, &string_to_sign);
-  if (status == TURBO_OK) status = s3_derive_signature(&signer_request, string_to_sign, signature);
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) status = s3_derive_signature(&signer_request, string_to_sign, signature);
+  if (status == SALTS_OK) {
     result.signature = tstr_dup(signature);
-    if (result.signature == NULL) status = TURBO_ENOMEM;
+    if (result.signature == NULL) status = SALTS_ENOMEM;
   }
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) {
     query[signing_count] = (s3_signer_query){"X-Amz-Signature", result.signature};
     status = s3_query_canonicalize(query, final_count, max_query_count, max_target_bytes,
                                    (tstr *)&result.canonical_query);
   }
-  if (status == TURBO_OK) {
+  if (status == SALTS_OK) {
     *out_result = result;
     result = (s3_presign_result){0};
   }

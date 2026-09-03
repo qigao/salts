@@ -5,7 +5,7 @@
 父追踪 Issue #100 要求先说明 portable `poll` backend 的用途，再决定是否实现。当前
 Platform readiness 已有 Linux epoll 和 macOS kqueue backend，CFlow 在其上复用同一个
 bounded socket-lane adapter；没有 epoll/kqueue 的 POSIX 系统只能得到
-`TURBO_ENOTSUP`。本设计增加一个显式选择的 `poll` backend，服务于小规模 descriptor
+`SALTS_ENOTSUP`。本设计增加一个显式选择的 `poll` backend，服务于小规模 descriptor
 集合、兼容性验证和参考语义，不把它包装成可扩展 native backend，也不在其他 backend
 初始化失败时自动降级。
 
@@ -17,7 +17,7 @@ bounded socket-lane adapter；没有 epoll/kqueue 的 POSIX 系统只能得到
   rearm、generation、terminal fanout、callback quiescence 和 shutdown 状态机。
 - `cflow/src/io_native_readiness.c` 已集中实现 TCP/UDP、accept/connect、read/write lane、
   Actor completion、取消和 socket identity；它不依赖 epoll/kqueue 特有数据。
-- epoll/kqueue 只实现 `turbo_readiness_backend_ops`，因此 poll 应作为第三个 Platform
+- epoll/kqueue 只实现 `salts_readiness_backend_ops`，因此 poll 应作为第三个 Platform
   backend，而不是复制 CFlow adapter。
 - POSIX `poll()` 对传入数组逐项检查，`timeout == -1` 可无限等待；listening socket 在
  连接可接受时读就绪，非阻塞 connect 完成时写就绪。regular file 永远读写就绪，因此
@@ -36,23 +36,23 @@ bounded socket-lane adapter；没有 epoll/kqueue 的 POSIX 系统只能得到
 Platform 增加显式 backend selector，同时保留现有默认初始化语义：
 
 ```c
-typedef enum turbo_readiness_backend_kind {
-  TURBO_READINESS_BACKEND_EPOLL = 1,
-  TURBO_READINESS_BACKEND_KQUEUE,
-  TURBO_READINESS_BACKEND_POLL
-} turbo_readiness_backend_kind;
+typedef enum salts_readiness_backend_kind {
+  SALTS_READINESS_BACKEND_EPOLL = 1,
+  SALTS_READINESS_BACKEND_KQUEUE,
+  SALTS_READINESS_BACKEND_POLL
+} salts_readiness_backend_kind;
 
-bool turbo_readiness_backend_supported(turbo_readiness_backend_kind kind);
+bool salts_readiness_backend_supported(salts_readiness_backend_kind kind);
 
-int turbo_readiness_reactor_init_kind(
-    turbo_readiness_reactor *reactor,
-    const turbo_readiness_config *config,
-    turbo_readiness_backend_kind kind);
+int salts_readiness_reactor_init_kind(
+    salts_readiness_reactor *reactor,
+    const salts_readiness_config *config,
+    salts_readiness_backend_kind kind);
 ```
 
-`turbo_readiness_reactor_init()` 继续选择当前平台原有默认值：Linux 构建启用 epoll 时选
-epoll，macOS 选 kqueue，其他没有默认 backend 的平台返回 `TURBO_ENOTSUP`。显式 kind
-不 fallback；未编译的 kind 直接返回 `TURBO_ENOTSUP` 并清空 reactor handle。
+`salts_readiness_reactor_init()` 继续选择当前平台原有默认值：Linux 构建启用 epoll 时选
+epoll，macOS 选 kqueue，其他没有默认 backend 的平台返回 `SALTS_ENOTSUP`。显式 kind
+不 fallback；未编译的 kind 直接返回 `SALTS_ENOTSUP` 并清空 reactor handle。
 
 CFlow 在现有 enum 末尾追加 `CFLOW_IO_NATIVE_POLL`，保持旧数值稳定。CFlow 的
 `backend_supported()` 只报告编译时能力；`backend_init()` 把 epoll/kqueue/poll 精确映射
@@ -69,7 +69,7 @@ CFlow 在现有 enum 末尾追加 `CFLOW_IO_NATIVE_POLL`，保持旧数值稳定
 | 拓扑 | 多控制线程可调用 Platform API；一个 poll worker 消费快照并串行发起 native dispatch |
 | 顺序 | 每个 registration one-shot；CFlow 每 socket 每方向 FIFO 由既有 lane 保证，不承诺跨 descriptor 全局顺序 |
 | 容量 | registration、快照和事件处理均固定上限；数据面不 realloc |
-| 背压 | Platform 满返回 `TURBO_ENOBUFS`；CFlow request 满保持既有 `TURBO_EBUSY`/Actor failed completion |
+| 背压 | Platform 满返回 `SALTS_ENOBUFS`；CFlow request 满保持既有 `SALTS_EBUSY`/Actor failed completion |
 | 失败 | 控制 hook 失败必须回滚 record；worker `poll()` 失败一次 terminalize reactor |
 | 关闭 | 关闭 admission，terminal fanout，设置 stopping，写 control pipe，join worker，再允许 destroy |
 | 观测 | 复用 Platform/CFlow stats；benchmark 单独报告 backend=`poll`，不设跨主机性能阈值 |
@@ -116,7 +116,7 @@ previous record，成功则提交 desired record，不会暴露半提交状态�
 
 普通 fd 事件在 dispatch 前再次锁定并核对：record active、registration token、armed、
 arm token 全部匹配。只有匹配项才把 `armed` 改为 false 并调用
-`turbo_readiness_backend_dispatch_generation()`；旧快照、unarm、close、rearm 与 fd 数值
+`salts_readiness_backend_dispatch_generation()`；旧快照、unarm、close、rearm 与 fd 数值
 复用都不能命中新 generation。
 
 ## 事件与错误语义
@@ -127,7 +127,7 @@ arm token 全部匹配。只有匹配项才把 `armed` 改为 false 并调用
   `events == 0` 的 descriptor 不提供可移植的 terminal notification。CFlow socket lane 已满足
   此条件，不依赖 HANGUP-only arm。
 - worker `poll()` 的 `EINTR` 重试；其他错误以负 errno 调用一次
-  `turbo_readiness_backend_fail()`。
+  `salts_readiness_backend_fail()`。
 - CFlow 只把 generic readiness 当作再次执行 nonblocking socket syscall 的证据；
   terminal syscall/`SO_ERROR` 仍是 operation completion 的事实源。
 - poll backend 不改变 caller socket flags；CFlow 继续 duplicate descriptor，并要求 caller
@@ -136,7 +136,7 @@ arm token 全部匹配。只有匹配项才把 `armed` 改为 false 并调用
 ## 构建、兼容性与回滚
 
 - Platform 在 POSIX 构建编译 poll；Linux 可同时编译 epoll，macOS 可同时编译 kqueue。
-- Windows 只获得 additive enum/function 声明；显式 poll 返回 `TURBO_ENOTSUP`。
+- Windows 只获得 additive enum/function 声明；显式 poll 返回 `SALTS_ENOTSUP`。
 - CFlow 旧 backend enum 数值、默认 Platform initializer、错误码和 operation ABI 不变。
 - 新公开函数需要 C/C++ header test；消费者需要重新链接，不需要数据迁移。
 - 回滚可删除 poll source、selector 的 additive 分支、CFlow enum、测试/CI/doc 条目；既有

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Preserve the current public ABI and accepted document behavior.
-- Do not add HTTP or another transport dependency to TurboUtils.
+- Do not add HTTP or another transport dependency to Salts.
 - Keep W3C source provenance, transformation notes, and license links beside the derived fixtures.
 - Treat the W3C implementation report as a regression source, not as third-party certification.
 - Keep the complete-corpus issue item open until the supported-profile mapping and exclusions are exhaustive.

@@ -1,11 +1,11 @@
 # CFlow Optional USB Adapter Design
 
-Issue: [#114](https://github.com/qigao/turbo-utils/issues/114)
-Parent: [#111](https://github.com/qigao/turbo-utils/issues/111)
+Issue: [#114](https://github.com/qigao/salts/issues/114)
+Parent: [#111](https://github.com/qigao/salts/issues/111)
 
 ## Decision
 
-Add a separate optional `TurboUtils::CFlowUSB` target backed by libusb 1.0.
+Add a separate optional `Salts::CFlowUSB` target backed by libusb 1.0.
 `CFLOW_ENABLE_USB` defaults to `OFF`; vcpkg feature `usb` adds the `libusb`
 port. The target is discovered through `pkg-config` as `libusb-1.0` because the
 current vcpkg port installs the canonical `.pc` metadata and no CMake config.

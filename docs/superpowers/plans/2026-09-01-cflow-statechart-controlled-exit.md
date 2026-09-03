@@ -46,13 +46,13 @@ mirror state or synthesize transitions.
   and destroy semantics.
 - [x] Run focused tests to GREEN, then adjacent Statechart and Actor tests.
 
-## Task 3: Publish and verify the TurboUtils change
+## Task 3: Publish and verify the Salts change
 
 - [x] Run `git diff --check` and inspect the public API documentation.
 - [x] Build all CFlow targets and run all `cflow_*` tests.
 - [x] Run the complete Windows Release test preset.
-- [ ] Commit, push, create the TurboUtils PR, and merge it after checks pass.
-- [ ] Install the merged TurboUtils Release package used by TurboSCXML.
+- [ ] Commit, push, create the Salts PR, and merge it after checks pass.
+- [ ] Install the merged Salts Release package used by TurboSCXML.
 
 ## Task 4: Integrate TurboSCXML and W3C test 250
 

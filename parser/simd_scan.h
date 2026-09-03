@@ -1,18 +1,18 @@
-#ifndef TURBO_PARSER_SIMD_SCAN_H
-#define TURBO_PARSER_SIMD_SCAN_H
+#ifndef SALTS_PARSER_SIMD_SCAN_H
+#define SALTS_PARSER_SIMD_SCAN_H
 
 #include <simde/x86/sse2.h>
 
 #include <stddef.h>
 
-static inline const char *turbo_scalar_skip_horizontal_whitespace(const char *p,
+static inline const char *salts_scalar_skip_horizontal_whitespace(const char *p,
                                                                    const char *end) {
   while (p < end && (*p == ' ' || *p == '\t'))
     ++p;
   return p;
 }
 
-static inline const char *turbo_simd_skip_horizontal_whitespace(const char *p, const char *end) {
+static inline const char *salts_simd_skip_horizontal_whitespace(const char *p, const char *end) {
   const simde__m128i space = simde_mm_set1_epi8(' ');
   const simde__m128i tab = simde_mm_set1_epi8('\t');
 
@@ -33,10 +33,10 @@ static inline const char *turbo_simd_skip_horizontal_whitespace(const char *p, c
     return p;
   }
 
-  return turbo_scalar_skip_horizontal_whitespace(p, end);
+  return salts_scalar_skip_horizontal_whitespace(p, end);
 }
 
-static inline const char *turbo_scalar_find_any4(const char *p, const char *end,
+static inline const char *salts_scalar_find_any4(const char *p, const char *end,
                                                   char first, char second, char third,
                                                   char fourth) {
   while (p < end && *p != first && *p != second && *p != third && *p != fourth)
@@ -44,7 +44,7 @@ static inline const char *turbo_scalar_find_any4(const char *p, const char *end,
   return p;
 }
 
-static inline const char *turbo_simd_find_any4(const char *p, const char *end,
+static inline const char *salts_simd_find_any4(const char *p, const char *end,
                                                 char first, char second, char third,
                                                 char fourth) {
   const simde__m128i first_byte = simde_mm_set1_epi8(first);
@@ -72,10 +72,10 @@ static inline const char *turbo_simd_find_any4(const char *p, const char *end,
     return p;
   }
 
-  return turbo_scalar_find_any4(p, end, first, second, third, fourth);
+  return salts_scalar_find_any4(p, end, first, second, third, fourth);
 }
 
-static inline const char *turbo_scalar_find_any5(const char *p, const char *end,
+static inline const char *salts_scalar_find_any5(const char *p, const char *end,
                                                   char first, char second, char third,
                                                   char fourth, char fifth) {
   while (p < end && *p != first && *p != second && *p != third && *p != fourth &&
@@ -84,7 +84,7 @@ static inline const char *turbo_scalar_find_any5(const char *p, const char *end,
   return p;
 }
 
-static inline const char *turbo_simd_find_any5(const char *p, const char *end,
+static inline const char *salts_simd_find_any5(const char *p, const char *end,
                                                 char first, char second, char third,
                                                 char fourth, char fifth) {
   const simde__m128i first_byte = simde_mm_set1_epi8(first);
@@ -115,7 +115,7 @@ static inline const char *turbo_simd_find_any5(const char *p, const char *end,
     return p;
   }
 
-  return turbo_scalar_find_any5(p, end, first, second, third, fourth, fifth);
+  return salts_scalar_find_any5(p, end, first, second, third, fourth, fifth);
 }
 
 #endif

@@ -20,7 +20,7 @@ int toml_lexer_next(toml_lexer_t *lexer, toml_token_t *token) {
     const char *token_start;
 
 lex_start:
-    const char *whitespace_end = turbo_simd_skip_horizontal_whitespace(YYCURSOR, YYLIMIT);
+    const char *whitespace_end = salts_simd_skip_horizontal_whitespace(YYCURSOR, YYLIMIT);
     if (whitespace_end > YYCURSOR) {
         lexer->column += (int)(whitespace_end - YYCURSOR);
         YYCURSOR = whitespace_end;
@@ -29,7 +29,7 @@ lex_start:
     token_start = YYCURSOR;
 
     if (YYCURSOR < YYLIMIT && *YYCURSOR == '#') {
-        const char *comment_end = turbo_simd_find_any4(YYCURSOR + 1, YYLIMIT,
+        const char *comment_end = salts_simd_find_any4(YYCURSOR + 1, YYLIMIT,
                                                         '\r', '\n', '\0', '\0');
         lexer->column += (int)(comment_end - token_start);
         YYCURSOR = comment_end;
@@ -39,7 +39,7 @@ lex_start:
     if ((size_t)(YYLIMIT - YYCURSOR) < 3U || YYCURSOR[0] != '"' ||
         YYCURSOR[1] != '"' || YYCURSOR[2] != '"') {
         if (YYCURSOR < YYLIMIT && *YYCURSOR == '"') {
-            const char *string_end = turbo_simd_find_any5(YYCURSOR + 1, YYLIMIT,
+            const char *string_end = salts_simd_find_any5(YYCURSOR + 1, YYLIMIT,
                                                            '"', '\\', '\r', '\n', '\0');
             if (string_end < YYLIMIT && *string_end == '"') {
                 token->type = TOML_TOKEN_STRING;

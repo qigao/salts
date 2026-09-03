@@ -6,12 +6,12 @@
 
 ## 背景与目标
 
-TurboUtils CMeta 已能用 `cmeta_data_integer_shape.bits` 描述 8、16、32、64 位整数，
+Salts CMeta 已能用 `cmeta_data_integer_shape.bits` 描述 8、16、32、64 位整数，
 但 CBind 的 scalar preflight 与 decode 仍只接受 `int`、`long`、`size_t` 三个 canonical
 storage identity。该限制无法表达窄整数，也在 Windows LLP64 上把 schema 的精确 64 位
 storage 与 `long` 错误绑定。TurboParser issue #5 需要通用 CBind kernel 支持 descriptor
 声明的精确整数宽度，同时需要把 schema `uuid` 的 canonical string 安全地转换为现有
-`turbo_uuid_t`。
+`salts_uuid_t`。
 
 本改动扩展通用 CBind/CMeta 能力，不引入 DataBind，不改变现有公开函数签名或 ABI
 version，也不修改 struct field 的 offset/size/alignment 校验路径。
@@ -25,8 +25,8 @@ version，也不修改 struct field 的 offset/size/alignment 校验路径。
   因此仅放宽 preflight 会导致错误宽度读写。
 - `cmeta/src/data.c` 已在 `cmeta_data_desc_valid` 中限制 integer bits 为
   `{8,16,32,64}`，并验证 storage type descriptor 的基本结构。
-- `utils/include/turbo_uuid.h` 的 `turbo_uuid_t` 是无堆所有权的固定 16-byte value；
-  现有 `turbo_uuid_parse` 接收 NUL-terminated text，不能直接安全消费 CSerde slice。
+- `utils/include/salts_uuid.h` 的 `salts_uuid_t` 是无堆所有权的固定 16-byte value；
+  现有 `salts_uuid_parse` 接收 NUL-terminated text，不能直接安全消费 CSerde slice。
 
 ## 范围
 
@@ -36,7 +36,7 @@ version，也不修改 struct field 的 offset/size/alignment 校验路径。
 - `CMETA_DATA_UINT` 对 `uint8_t`、`uint16_t`、`uint32_t`、`uint64_t` 宽度；
 - 现有 `int`、`long`、`size_t` descriptor 与 decode 行为保持不变；
 - header-local fixed-width CMeta type/data descriptors；
-- `turbo_uuid_t` 的 Core-exported canonical type descriptor、owned STRING adapter 和 data descriptor。
+- `salts_uuid_t` 的 Core-exported canonical type descriptor、owned STRING adapter 和 data descriptor。
 
 不在范围内：修改 CMeta 全局 builtin registry、增加 token kind、修改 UUID public parse API、
 容器/optional/default/union、DataBind adapter、JIT，以及 vendor 代码。
@@ -93,27 +93,27 @@ zero 检查和 reset 同样按 descriptor bits 使用 exact-width temporary，�
 
 ## Public metadata surfaces
 
-独立的 `turbo_cmeta_fixed_width.h` 提供下列 header-local stable names，并由既有
-`turbo_cmeta_data.h` 继续聚合，保持原 include 的 source compatibility：
+独立的 `salts_cmeta_fixed_width.h` 提供下列 header-local stable names，并由既有
+`salts_cmeta_data.h` 继续聚合，保持原 include 的 source compatibility：
 
-- `turbo_int8_cmeta_type` / `turbo_int8_cmeta_data`，依次覆盖 16/32/64；
-- `turbo_uint8_cmeta_type` / `turbo_uint8_cmeta_data`，依次覆盖 16/32/64。
+- `salts_int8_cmeta_type` / `salts_int8_cmeta_data`，依次覆盖 16/32/64；
+- `salts_uint8_cmeta_type` / `salts_uint8_cmeta_data`，依次覆盖 16/32/64。
 
-每个 type descriptor 使用 `turbo.<ctype>` stable atom identity。descriptor 是
+每个 type descriptor 使用 `salts.<ctype>` stable atom identity。descriptor 是
 header-local immutable metadata；不同 translation unit 的地址不同，消费者必须使用
 `cmeta_type_equal` 或字段语义比较，不能比较地址。窄头只依赖 CMeta 与 C 标准头，编译期
 断言要求 `CHAR_BIT == 8`、每个 exact-width typedef 的 size 符合其名称；因此只使用
 fixed-width metadata 的消费者不继承 Core string/buffer header 或链接依赖。
 
-`turbo_cmeta_data.h` 另外声明 Core-exported `turbo_uuid_cmeta_type`、
-`turbo_uuid_cmeta_shape`、`turbo_uuid_cmeta_buffer_ops`、`turbo_uuid_cmeta_data` 与 validator，
-并断言 `turbo_uuid_t` 恰为 16 bytes。
+`salts_cmeta_data.h` 另外声明 Core-exported `salts_uuid_cmeta_type`、
+`salts_uuid_cmeta_shape`、`salts_uuid_cmeta_buffer_ops`、`salts_uuid_cmeta_data` 与 validator，
+并断言 `salts_uuid_t` 恰为 16 bytes。
 
 ## UUID 所有权、生命周期与容量协议
 
 | 项目 | 契约 |
 |---|---|
-| 数据单元 | canonical 36-byte `8-4-4-4-12` text 转换为固定 16-byte `turbo_uuid_t` |
+| 数据单元 | canonical 36-byte `8-4-4-4-12` text 转换为固定 16-byte `salts_uuid_t` |
 | 事实源 | assign 成功后 destination 的 `bytes[16]`；输入只在调用期间借用 |
 | 所有权 | adapter 标为 `CMETA_DATA_BUFFER_OWNED`，通过值复制拥有结果；无 heap allocation |
 | 生命周期 | 输入 slice 在 assign 返回后不保留；destination 由调用方拥有 |
@@ -131,12 +131,12 @@ fixed-width metadata 的消费者不继承 Core string/buffer header 或链接�
 Generic `cmeta_data_buffer_ops` 只承诺 buffer adapter 的结构、ownership 与 callback 完整性，
 不能证明三个 callback 实现 canonical UUID 语义，也不能安全信任 candidate 自带的
 validation callback。经用户批准，UUID metadata/callback authority 改为
-`TurboUtils::Core` 导出的 process-wide canonical objects：
-`turbo_uuid_cmeta_type`、`turbo_uuid_cmeta_shape`、
-`turbo_uuid_cmeta_buffer_ops`、`turbo_uuid_cmeta_data`。公开名称与声明 object type 保持不变，
+`Salts::Core` 导出的 process-wide canonical objects：
+`salts_uuid_cmeta_type`、`salts_uuid_cmeta_shape`、
+`salts_uuid_cmeta_buffer_ops`、`salts_uuid_cmeta_data`。公开名称与声明 object type 保持不变，
 不再使用 header-local wrapper 或 macro facade。
 
-`turbo_uuid_cmeta_data_valid(candidate)` 是 Core 导出的 candidate-only validator。它先用
+`salts_uuid_cmeta_data_valid(candidate)` 是 Core 导出的 candidate-only validator。它先用
 generic CMeta 完成 descriptor/ops size、ABI、type/shape/ownership validation，再检查 UUID
 stable identity、精确 storage ABI，并把 candidate 的三个 callback identity 与 canonical
 external ops 中的 callbacks 比较。canonical addresses 现在跨 TU 稳定，但 address equality
@@ -146,18 +146,18 @@ external ops 中的 callbacks 比较。canonical addresses 现在跨 TU 稳定�
 因此不存在把 validator 换成 always-true 绕过 callback 检查的路径。
 
 该迁移不修改 `cmeta_data_desc`、`cmeta_data_buffer_ops` layout/ABI version 或 tstr/vstr 行为。
-C 与 C++ compile assertions 验证 `turbo_uuid_cmeta_buffer_ops` 恢复为精确
+C 与 C++ compile assertions 验证 `salts_uuid_cmeta_buffer_ops` 恢复为精确
 `const cmeta_data_buffer_ops` object type，`decltype(name)`、`&name`、field access 与
 `sizeof(name)` 均保持普通 extern object 语义。
 
 ## 架构、依赖与公开行为影响
 
-依赖方向保持 `TurboUtils::Core -> TurboUtils::CMeta` 以及
-`TurboUtils::CBind -> TurboUtils::CMeta + TurboUtils::CSerde`。UUID metadata/validator 由
-Core export，UUID consumer 必须链接 `TurboUtils::Core`；不让 CBind 反向依赖 Core。
-只包含 `turbo_cmeta_fixed_width.h` 的 CMeta/CBind consumer 不引用任何 UUID extern symbol，
+依赖方向保持 `Salts::Core -> Salts::CMeta` 以及
+`Salts::CBind -> Salts::CMeta + Salts::CSerde`。UUID metadata/validator 由
+Core export，UUID consumer 必须链接 `Salts::Core`；不让 CBind 反向依赖 Core。
+只包含 `salts_cmeta_fixed_width.h` 的 CMeta/CBind consumer 不引用任何 UUID extern symbol，
 仍可只链接 CMeta/CBind；installed negative consumer 固化该依赖边界。既有
-`turbo_cmeta_data.h` 仍聚合 fixed-width names，但同时包含 Core-owned tstr/vstr/UUID surface，
+`salts_cmeta_data.h` 仍聚合 fixed-width names，但同时包含 Core-owned tstr/vstr/UUID surface，
 因此 dependency-minimal consumer 应使用窄头。
 
 公开 generic ABI records、enum values 不变。UUID 名称由 header-local object 迁移为 Core
@@ -166,10 +166,10 @@ external object 是用户批准的 linkage/public-surface adjustment；object �
 
 ## 迁移与回滚
 
-消费方可逐字段把自定义 integer descriptor 改为 `turbo_cmeta_fixed_width.h` 提供的
-fixed-width descriptor；既有包含 `turbo_cmeta_data.h` 的代码无需修改，旧
-`cmeta_data_int/long/size` 也无需迁移。UUID 消费方应包含 `turbo_cmeta_data.h`、链接
-`TurboUtils::Core` 并使用 `turbo_uuid_cmeta_data`，不要把 UUID 伪装为普通 `tstr`。
+消费方可逐字段把自定义 integer descriptor 改为 `salts_cmeta_fixed_width.h` 提供的
+fixed-width descriptor；既有包含 `salts_cmeta_data.h` 的代码无需修改，旧
+`cmeta_data_int/long/size` 也无需迁移。UUID 消费方应包含 `salts_cmeta_data.h`、链接
+`Salts::Core` 并使用 `salts_uuid_cmeta_data`，不要把 UUID 伪装为普通 `tstr`。
 
 回滚需同时撤销 Core UUID definitions/exports 与 CBind width dispatch，并把 UUID consumer
 恢复到此前 metadata 方案；没有 wire format、持久化数据或 generic ABI version 迁移。

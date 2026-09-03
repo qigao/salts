@@ -7,9 +7,9 @@
 
 #include "io_native_internal.h"
 
-#include <turbo/error_codes.h>
-#include <turbo/readiness.h>
-#include <turbo/thread.h>
+#include <salts/error_codes.h>
+#include <salts/readiness.h>
+#include <salts/thread.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -73,7 +73,7 @@ typedef struct cflow_readiness_record {
 struct cflow_readiness_lane {
     cflow_readiness_impl *owner;
     cflow_readiness_socket_record *socket_record;
-    turbo_readiness_registration registration;
+    salts_readiness_registration registration;
     size_t head;
     size_t tail;
     int duplicated_fd;
@@ -96,9 +96,9 @@ struct cflow_readiness_socket_record {
 
 struct cflow_readiness_impl {
     cflow_io_native_impl base;
-    turbo_mutex_t gate;
-    turbo_cond_t changed;
-    turbo_readiness_reactor reactor;
+    salts_mutex_t gate;
+    salts_cond_t changed;
+    salts_readiness_reactor reactor;
     cflow_readiness_record *records;
     cflow_readiness_socket_record *sockets;
     size_t request_capacity;
@@ -146,11 +146,11 @@ static unsigned readiness_pipe_lane_kind(
                : CFLOW_READINESS_LANE_WRITE;
 }
 
-static turbo_readiness_events readiness_lane_interest(
+static salts_readiness_events readiness_lane_interest(
     const cflow_readiness_lane *lane) {
     return lane->kind == CFLOW_READINESS_LANE_READ
-               ? TURBO_READINESS_EVENT_READ
-               : TURBO_READINESS_EVENT_WRITE;
+               ? SALTS_READINESS_EVENT_READ
+               : SALTS_READINESS_EVENT_WRITE;
 }
 
 static void readiness_record_reset(cflow_readiness_record *record) {
@@ -256,7 +256,7 @@ static int readiness_normalize_accepted_fd(int accepted_fd) {
         if (errno != EINTR)
             return -errno;
     }
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static int readiness_attempt_connect(cflow_readiness_record *record) {
@@ -270,7 +270,7 @@ static int readiness_attempt_connect(cflow_readiness_record *record) {
                 (socklen_t)operation->address_length);
         } while (result < 0 && errno == EINTR);
         if (result == 0)
-            return TURBO_OK;
+            return SALTS_OK;
         if (errno != EINPROGRESS && errno != EALREADY &&
             errno != EWOULDBLOCK)
             return -errno;
@@ -284,7 +284,7 @@ static int readiness_attempt_connect(cflow_readiness_record *record) {
                        &error_length) != 0)
             return -errno;
         if (socket_error == 0)
-            return TURBO_OK;
+            return SALTS_OK;
         if (socket_error == EINPROGRESS || socket_error == EALREADY ||
             socket_error == EWOULDBLOCK)
             return -EAGAIN;
@@ -392,7 +392,7 @@ static int readiness_attempt(cflow_readiness_record *record,
                 if (result >= 0) {
                     const int normalized =
                         readiness_normalize_accepted_fd((int)result);
-                    if (normalized != TURBO_OK) {
+                    if (normalized != SALTS_OK) {
                         (void)close((int)result);
                         return normalized;
                     }
@@ -403,12 +403,12 @@ static int readiness_attempt(cflow_readiness_record *record,
             case CFLOW_IO_NATIVE_TCP_CONNECT:
                 return readiness_attempt_connect(record);
             default:
-                return TURBO_EINVAL;
+                return SALTS_EINVAL;
         }
     } while (result < 0 && errno == EINTR);
     if (result >= 0) {
         *bytes = (size_t)result;
-        return TURBO_OK;
+        return SALTS_OK;
     }
     return -errno;
 }
@@ -469,8 +469,8 @@ static cflow_io_completion readiness_completion_for(
     const cflow_readiness_record *record, int status, size_t bytes) {
     if (record->cancel_requested)
         return (cflow_io_completion){
-            CFLOW_IO_COMPLETION_CANCELLED, 0u, TURBO_OK};
-    if (status != TURBO_OK)
+            CFLOW_IO_COMPLETION_CANCELLED, 0u, SALTS_OK};
+    if (status != SALTS_OK)
         return (cflow_io_completion){
             CFLOW_IO_COMPLETION_FAILED, 0u, status};
     if (((record->vector_buffer_count != 0u &&
@@ -481,9 +481,9 @@ static cflow_io_completion readiness_completion_for(
           record->pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_READ)) &&
         bytes == 0u)
         return (cflow_io_completion){
-            CFLOW_IO_COMPLETION_EOF, 0u, TURBO_OK};
+            CFLOW_IO_COMPLETION_EOF, 0u, SALTS_OK};
     return (cflow_io_completion){
-        CFLOW_IO_COMPLETION_OK, bytes, TURBO_OK};
+        CFLOW_IO_COMPLETION_OK, bytes, SALTS_OK};
 }
 
 static cflow_readiness_delivery readiness_finish_record_locked(
@@ -494,11 +494,11 @@ static cflow_readiness_delivery readiness_finish_record_locked(
     cflow_readiness_lane *lane = record->lane;
     if (record->operation != NULL &&
         record->operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT &&
-        !record->cancel_requested && status == TURBO_OK) {
+        !record->cancel_requested && status == SALTS_OK) {
         if (record->operation->address != NULL) {
             if ((size_t)record->peer_address_length >
                 record->operation->address_capacity) {
-                status = TURBO_ERANGE;
+                status = SALTS_ERANGE;
             } else {
                 memcpy(record->operation->address,
                        &record->peer_address,
@@ -507,7 +507,7 @@ static cflow_readiness_delivery readiness_finish_record_locked(
                     (size_t)record->peer_address_length;
             }
         }
-        if (status == TURBO_OK)
+        if (status == SALTS_OK)
             record->operation->result_socket = (uintptr_t)accepted_fd;
     }
     delivery = (cflow_readiness_delivery){
@@ -539,81 +539,81 @@ static void readiness_deliver(cflow_readiness_delivery delivery) {
     }
 }
 
-static turbo_readiness_callback_result readiness_drive_lane(
+static salts_readiness_callback_result readiness_drive_lane(
     cflow_readiness_lane *lane, bool from_callback, int status);
 
-static turbo_readiness_callback_result readiness_native_continuation(
-    void *user, turbo_readiness_events events, int status) {
+static salts_readiness_callback_result readiness_native_continuation(
+    void *user, salts_readiness_events events, int status) {
     cflow_readiness_lane *lane = (cflow_readiness_lane *)user;
     cflow_readiness_impl *impl;
     (void)events;
     if (lane == NULL || lane->owner == NULL)
-        return (turbo_readiness_callback_result){
-            TURBO_READINESS_COMPLETE, 0u};
+        return (salts_readiness_callback_result){
+            SALTS_READINESS_COMPLETE, 0u};
     impl = lane->owner;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (!lane->active || lane->socket_record->closing) {
-        turbo_mutex_unlock(&impl->gate);
-        return (turbo_readiness_callback_result){
-            TURBO_READINESS_COMPLETE, 0u};
+        salts_mutex_unlock(&impl->gate);
+        return (salts_readiness_callback_result){
+            SALTS_READINESS_COMPLETE, 0u};
     }
     lane->armed = false;
     lane->arm_pending = false;
     if (lane->driving) {
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             lane->terminal_status = status;
         else
             readiness_counter_increment(&impl->stale_native_completions);
-        turbo_mutex_unlock(&impl->gate);
-        return (turbo_readiness_callback_result){
-            TURBO_READINESS_COMPLETE, 0u};
+        salts_mutex_unlock(&impl->gate);
+        return (salts_readiness_callback_result){
+            SALTS_READINESS_COMPLETE, 0u};
     }
     lane->driving = true;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     return readiness_drive_lane(lane, true, status);
 }
 
-static turbo_readiness_callback_result readiness_arm_lane(
+static salts_readiness_callback_result readiness_arm_lane(
     cflow_readiness_lane *lane) {
     cflow_readiness_impl *impl = lane->owner;
     int status;
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (!lane->active || lane->head == CFLOW_READINESS_INDEX_NONE ||
         lane->socket_record->closing) {
         lane->driving = false;
-        turbo_mutex_unlock(&impl->gate);
-        return (turbo_readiness_callback_result){
-            TURBO_READINESS_COMPLETE, 0u};
+        salts_mutex_unlock(&impl->gate);
+        return (salts_readiness_callback_result){
+            SALTS_READINESS_COMPLETE, 0u};
     }
     lane->driving = false;
     lane->arm_pending = true;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
-    status = turbo_readiness_arm_continuation(
+    status = salts_readiness_arm_continuation(
         &lane->registration, readiness_lane_interest(lane),
         readiness_native_continuation, lane);
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (!lane->arm_pending) {
-        turbo_mutex_unlock(&impl->gate);
-        return (turbo_readiness_callback_result){
-            TURBO_READINESS_COMPLETE, 0u};
+        salts_mutex_unlock(&impl->gate);
+        return (salts_readiness_callback_result){
+            SALTS_READINESS_COMPLETE, 0u};
     }
     lane->arm_pending = false;
-    if (status == TURBO_OK || status == TURBO_EALREADY) {
+    if (status == SALTS_OK || status == SALTS_EALREADY) {
         lane->armed = true;
-        turbo_mutex_unlock(&impl->gate);
-        return (turbo_readiness_callback_result){
-            TURBO_READINESS_COMPLETE, 0u};
+        salts_mutex_unlock(&impl->gate);
+        return (salts_readiness_callback_result){
+            SALTS_READINESS_COMPLETE, 0u};
     }
     lane->driving = true;
     readiness_counter_increment(&impl->native_submit_errors);
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     return readiness_drive_lane(lane, false, status);
 }
 
-static turbo_readiness_callback_result readiness_drive_lane(
+static salts_readiness_callback_result readiness_drive_lane(
     cflow_readiness_lane *lane, bool from_callback, int status) {
     cflow_readiness_impl *impl = lane->owner;
     size_t processed = 0u;
@@ -627,30 +627,30 @@ static turbo_readiness_callback_result readiness_drive_lane(
         int accepted_fd = -1;
         int attempt_status;
 
-        turbo_mutex_lock(&impl->gate);
-        if (lane->terminal_status != TURBO_OK) {
+        salts_mutex_lock(&impl->gate);
+        if (lane->terminal_status != SALTS_OK) {
             terminal_status = lane->terminal_status;
-            lane->terminal_status = TURBO_OK;
+            lane->terminal_status = SALTS_OK;
         }
         if (!lane->active || lane->socket_record->closing) {
             lane->driving = false;
-            turbo_mutex_unlock(&impl->gate);
-            return (turbo_readiness_callback_result){
-                TURBO_READINESS_COMPLETE, 0u};
+            salts_mutex_unlock(&impl->gate);
+            return (salts_readiness_callback_result){
+                SALTS_READINESS_COMPLETE, 0u};
         }
         if (lane->head == CFLOW_READINESS_INDEX_NONE) {
             lane->driving = false;
             lane->armed = false;
-            turbo_mutex_unlock(&impl->gate);
-            return (turbo_readiness_callback_result){
-                TURBO_READINESS_COMPLETE, 0u};
+            salts_mutex_unlock(&impl->gate);
+            return (salts_readiness_callback_result){
+                SALTS_READINESS_COMPLETE, 0u};
         }
 
-        if (terminal_status != TURBO_OK) {
+        if (terminal_status != SALTS_OK) {
             record = &impl->records[lane->head];
             delivery = readiness_finish_record_locked(
                 impl, record, terminal_status, 0u, -1);
-            turbo_mutex_unlock(&impl->gate);
+            salts_mutex_unlock(&impl->gate);
             readiness_deliver(delivery);
             continue;
         }
@@ -658,9 +658,9 @@ static turbo_readiness_callback_result readiness_drive_lane(
         record = readiness_find_cancelled_locked(impl, lane);
         if (record != NULL) {
             delivery = readiness_finish_record_locked(
-                impl, record, TURBO_OK, 0u, -1);
+                impl, record, SALTS_OK, 0u, -1);
             ++processed;
-            turbo_mutex_unlock(&impl->gate);
+            salts_mutex_unlock(&impl->gate);
             readiness_deliver(delivery);
             continue;
         }
@@ -669,28 +669,28 @@ static turbo_readiness_callback_result readiness_drive_lane(
             if (from_callback) {
                 lane->driving = false;
                 lane->armed = true;
-                turbo_mutex_unlock(&impl->gate);
-                return (turbo_readiness_callback_result){
-                    TURBO_READINESS_REARM,
+                salts_mutex_unlock(&impl->gate);
+                return (salts_readiness_callback_result){
+                    SALTS_READINESS_REARM,
                     readiness_lane_interest(lane)};
             }
-            turbo_mutex_unlock(&impl->gate);
+            salts_mutex_unlock(&impl->gate);
             return readiness_arm_lane(lane);
         }
 
         record = &impl->records[lane->head];
         record->phase = CFLOW_READINESS_RECORD_PROCESSING;
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
 
         attempt_status = readiness_attempt(record, &bytes, &accepted_fd);
 
-        turbo_mutex_lock(&impl->gate);
-        if (record->cancel_requested || attempt_status == TURBO_OK ||
+        salts_mutex_lock(&impl->gate);
+        if (record->cancel_requested || attempt_status == SALTS_OK ||
             !readiness_would_block(attempt_status)) {
             delivery = readiness_finish_record_locked(
                 impl, record, attempt_status, bytes, accepted_fd);
             ++processed;
-            turbo_mutex_unlock(&impl->gate);
+            salts_mutex_unlock(&impl->gate);
             readiness_deliver(delivery);
             continue;
         }
@@ -698,12 +698,12 @@ static turbo_readiness_callback_result readiness_drive_lane(
         if (from_callback) {
             lane->driving = false;
             lane->armed = true;
-            turbo_mutex_unlock(&impl->gate);
-            return (turbo_readiness_callback_result){
-                TURBO_READINESS_REARM,
+            salts_mutex_unlock(&impl->gate);
+            return (salts_readiness_callback_result){
+                SALTS_READINESS_REARM,
                 readiness_lane_interest(lane)};
         }
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         return readiness_arm_lane(lane);
     }
 }
@@ -715,24 +715,24 @@ static int readiness_ensure_lane(cflow_readiness_lane *lane,
     int duplicate;
     int status;
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     while (lane->creating)
-        turbo_cond_wait(&impl->changed, &impl->gate);
+        salts_cond_wait(&impl->changed, &impl->gate);
     if (lane->active) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_OK;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_OK;
     }
     if (lane->socket_record->closing) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
     lane->creating = true;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     duplicate = readiness_duplicate_socket(original_fd);
-    status = duplicate < 0 ? duplicate : TURBO_OK;
+    status = duplicate < 0 ? duplicate : SALTS_OK;
 #if defined(F_SETNOSIGPIPE)
-    if (status == TURBO_OK && suppress_sigpipe) {
+    if (status == SALTS_OK && suppress_sigpipe) {
         int result;
         do {
             result = fcntl(duplicate, F_SETNOSIGPIPE, 1);
@@ -743,20 +743,20 @@ static int readiness_ensure_lane(cflow_readiness_lane *lane,
 #else
     (void)suppress_sigpipe;
 #endif
-    if (status == TURBO_OK)
-        status = turbo_readiness_register(
+    if (status == SALTS_OK)
+        status = salts_readiness_register(
             &impl->reactor, duplicate, &lane->registration);
-    if (status != TURBO_OK && duplicate >= 0)
+    if (status != SALTS_OK && duplicate >= 0)
         (void)close(duplicate);
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     lane->creating = false;
-    if (status == TURBO_OK) {
+    if (status == SALTS_OK) {
         lane->duplicated_fd = duplicate;
         lane->active = true;
     }
-    turbo_cond_broadcast(&impl->changed);
-    turbo_mutex_unlock(&impl->gate);
+    salts_cond_broadcast(&impl->changed);
+    salts_mutex_unlock(&impl->gate);
     return status;
 }
 
@@ -772,31 +772,31 @@ static int readiness_submit_record(
     bool start_drive = false;
     int status;
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (!impl->admission_open) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_ESHUTDOWN;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_ESHUTDOWN;
     }
     record = readiness_find_free_locked(impl);
     if (record == NULL) {
         readiness_counter_increment(&impl->rejected_full);
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
     socket_record = readiness_find_socket_locked(impl, identity);
     if (socket_record == NULL) {
         socket_record = readiness_find_free_socket_locked(impl);
         if (socket_record == NULL) {
             readiness_counter_increment(&impl->rejected_full);
-            turbo_mutex_unlock(&impl->gate);
-            return TURBO_EBUSY;
+            salts_mutex_unlock(&impl->gate);
+            return SALTS_EBUSY;
         }
         socket_record->socket_identity = identity;
         socket_record->active = true;
     }
     if (socket_record->closing) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
     lane = &socket_record->lanes[lane_kind];
     record->phase = CFLOW_READINESS_RECORD_RESERVED;
@@ -820,14 +820,14 @@ static int readiness_submit_record(
     record->connect_started = false;
     ++impl->active_requests;
     ++socket_record->active_requests;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     status = readiness_ensure_lane(
         lane, (int)identity,
         pipe_operation != NULL &&
             pipe_operation->kind == CFLOW_IO_NATIVE_PIPE_WRITE);
-    if (status != TURBO_OK) {
-        turbo_mutex_lock(&impl->gate);
+    if (status != SALTS_OK) {
+        salts_mutex_lock(&impl->gate);
         --impl->active_requests;
         --socket_record->active_requests;
         readiness_record_reset(record);
@@ -836,22 +836,22 @@ static int readiness_submit_record(
             !socket_record->lanes[CFLOW_READINESS_LANE_WRITE].active)
             readiness_socket_reset(impl, socket_record);
         readiness_counter_increment(&impl->native_submit_errors);
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         return status;
     }
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     readiness_lane_append_locked(impl, lane, record);
     readiness_counter_increment(&impl->submitted);
     if (!lane->armed && !lane->arm_pending && !lane->driving) {
         lane->driving = true;
         start_drive = true;
     }
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     if (start_drive)
-        (void)readiness_drive_lane(lane, false, TURBO_OK);
-    return TURBO_OK;
+        (void)readiness_drive_lane(lane, false, SALTS_OK);
+    return SALTS_OK;
 }
 
 static int readiness_submit(cflow_io_native_impl *base,
@@ -860,7 +860,7 @@ static int readiness_submit(cflow_io_native_impl *base,
                             cflow_io_native_operation *operation) {
     cflow_readiness_impl *impl = (cflow_readiness_impl *)base;
     if (operation->socket > (uintptr_t)INT_MAX)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     if (operation->kind == CFLOW_IO_NATIVE_TCP_ACCEPT ||
         operation->kind == CFLOW_IO_NATIVE_TCP_CONNECT) {
         int flags;
@@ -870,7 +870,7 @@ static int readiness_submit(cflow_io_native_impl *base,
         if (flags < 0)
             return -errno;
         if ((flags & O_NONBLOCK) == 0)
-            return TURBO_EINVAL;
+            return SALTS_EINVAL;
     }
     return readiness_submit_record(
         impl, actor, request_id, operation, NULL, NULL, operation->socket,
@@ -886,7 +886,7 @@ static int readiness_submit_vector(
         operation->kind == CFLOW_IO_NATIVE_TCP_RECV_VECTOR
             ? CFLOW_READINESS_LANE_READ : CFLOW_READINESS_LANE_WRITE;
     if (operation->socket > (uintptr_t)INT_MAX)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return readiness_submit_record(
         impl, actor, request_id, NULL, operation, NULL, operation->socket,
         lane_kind);
@@ -900,16 +900,16 @@ static int readiness_submit_pipe(
     int flags;
 
     if ((operation->flags & CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE) == 0u)
-        return TURBO_ENOTSUP;
+        return SALTS_ENOTSUP;
     if (operation->handle > (uintptr_t)INT_MAX)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     do {
         flags = fcntl((int)operation->handle, F_GETFL);
     } while (flags < 0 && errno == EINTR);
     if (flags < 0)
         return -errno;
     if ((flags & O_NONBLOCK) == 0)
-        return TURBO_EINVAL;
+        return SALTS_EINVAL;
     return readiness_submit_record(
         impl, actor, request_id, NULL, NULL, operation, operation->handle,
         readiness_pipe_lane_kind(operation));
@@ -922,13 +922,13 @@ static int readiness_cancel(cflow_io_native_impl *base,
     cflow_readiness_lane *lane;
     bool start_drive = false;
     bool unarm = false;
-    int status = TURBO_OK;
+    int status = SALTS_OK;
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     record = readiness_find_request_locked(impl, request_id);
     if (record == NULL) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_ENOENT;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_ENOENT;
     }
     record->cancel_requested = true;
     lane = record->lane;
@@ -940,25 +940,25 @@ static int readiness_cancel(cflow_io_native_impl *base,
         lane->driving = true;
         start_drive = true;
     }
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     if (unarm) {
-        status = turbo_readiness_unarm(&lane->registration);
-        if (status != TURBO_OK && status != TURBO_EALREADY) {
-            turbo_mutex_lock(&impl->gate);
+        status = salts_readiness_unarm(&lane->registration);
+        if (status != SALTS_OK && status != SALTS_EALREADY) {
+            salts_mutex_lock(&impl->gate);
             readiness_counter_increment(&impl->native_cancel_errors);
-            turbo_mutex_unlock(&impl->gate);
+            salts_mutex_unlock(&impl->gate);
         }
     }
     if (start_drive)
-        (void)readiness_drive_lane(lane, false, TURBO_OK);
-    return status == TURBO_EALREADY ? TURBO_OK : status;
+        (void)readiness_drive_lane(lane, false, SALTS_OK);
+    return status == SALTS_EALREADY ? SALTS_OK : status;
 }
 
 static bool readiness_get_stats(const cflow_io_native_impl *base,
                                 cflow_io_native_backend_stats *out) {
     cflow_readiness_impl *impl = (cflow_readiness_impl *)base;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     *out = (cflow_io_native_backend_stats){
         impl->request_capacity,
         impl->active_requests,
@@ -972,7 +972,7 @@ static bool readiness_get_stats(const cflow_io_native_impl *base,
         impl->admission_open,
         false,
         impl->shutdown_complete};
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     return true;
 }
 
@@ -980,63 +980,63 @@ static int readiness_close_lane(cflow_readiness_impl *impl,
                                 cflow_readiness_lane *lane) {
     int fd;
     int status;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (!lane->active) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_OK;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_OK;
     }
     fd = lane->duplicated_fd;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
-    status = turbo_readiness_close(&lane->registration);
-    if (status != TURBO_OK)
+    status = salts_readiness_close(&lane->registration);
+    if (status != SALTS_OK)
         return status;
     (void)close(fd);
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     readiness_lane_reset(lane);
-    turbo_mutex_unlock(&impl->gate);
-    return TURBO_OK;
+    salts_mutex_unlock(&impl->gate);
+    return SALTS_OK;
 }
 
 static int readiness_forget_socket(cflow_io_native_impl *base,
                                    uintptr_t closed_socket) {
     cflow_readiness_impl *impl = (cflow_readiness_impl *)base;
     cflow_readiness_socket_record *socket_record;
-    int status = TURBO_OK;
+    int status = SALTS_OK;
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     socket_record = readiness_find_socket_locked(impl, closed_socket);
     if (socket_record == NULL) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_ENOENT;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_ENOENT;
     }
     if (socket_record->closing || socket_record->active_requests != 0u) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
     for (unsigned kind = 0u; kind < CFLOW_READINESS_LANE_COUNT; ++kind) {
         cflow_readiness_lane *lane = &socket_record->lanes[kind];
         if (lane->creating || lane->driving || lane->arm_pending) {
-            turbo_mutex_unlock(&impl->gate);
-            return TURBO_EBUSY;
+            salts_mutex_unlock(&impl->gate);
+            return SALTS_EBUSY;
         }
     }
     socket_record->closing = true;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     for (unsigned kind = 0u; kind < CFLOW_READINESS_LANE_COUNT; ++kind) {
         status = readiness_close_lane(impl, &socket_record->lanes[kind]);
-        if (status != TURBO_OK)
+        if (status != SALTS_OK)
             break;
     }
 
-    turbo_mutex_lock(&impl->gate);
-    if (status == TURBO_OK)
+    salts_mutex_lock(&impl->gate);
+    if (status == SALTS_OK)
         readiness_socket_reset(impl, socket_record);
     else
         socket_record->closing = false;
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
     return status;
 }
 
@@ -1049,19 +1049,19 @@ static int readiness_shutdown(cflow_io_native_impl *base) {
     cflow_readiness_impl *impl = (cflow_readiness_impl *)base;
     int status;
 
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (impl->shutdown_complete) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EALREADY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EALREADY;
     }
     impl->admission_open = false;
     if (impl->active_requests != 0u) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
     if (impl->shutdown_inflight) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
     impl->shutdown_inflight = true;
     for (size_t index = 0u; index < impl->request_capacity; ++index) {
@@ -1070,7 +1070,7 @@ static int readiness_shutdown(cflow_io_native_impl *base) {
             continue;
         socket_record->closing = true;
     }
-    turbo_mutex_unlock(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
 
     for (size_t index = 0u; index < impl->request_capacity; ++index) {
         cflow_readiness_socket_record *socket_record = &impl->sockets[index];
@@ -1078,50 +1078,50 @@ static int readiness_shutdown(cflow_io_native_impl *base) {
             continue;
         for (unsigned kind = 0u; kind < CFLOW_READINESS_LANE_COUNT; ++kind) {
             status = readiness_close_lane(impl, &socket_record->lanes[kind]);
-            if (status != TURBO_OK) {
-                turbo_mutex_lock(&impl->gate);
+            if (status != SALTS_OK) {
+                salts_mutex_lock(&impl->gate);
                 impl->shutdown_inflight = false;
-                turbo_mutex_unlock(&impl->gate);
+                salts_mutex_unlock(&impl->gate);
                 return status;
             }
         }
     }
 
-    status = turbo_readiness_reactor_shutdown(&impl->reactor);
-    if (status != TURBO_OK && status != TURBO_EALREADY) {
-        turbo_mutex_lock(&impl->gate);
+    status = salts_readiness_reactor_shutdown(&impl->reactor);
+    if (status != SALTS_OK && status != SALTS_EALREADY) {
+        salts_mutex_lock(&impl->gate);
         impl->shutdown_inflight = false;
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         return status;
     }
-    status = turbo_readiness_reactor_destroy(&impl->reactor);
-    if (status != TURBO_OK) {
-        turbo_mutex_lock(&impl->gate);
+    status = salts_readiness_reactor_destroy(&impl->reactor);
+    if (status != SALTS_OK) {
+        salts_mutex_lock(&impl->gate);
         impl->shutdown_inflight = false;
-        turbo_mutex_unlock(&impl->gate);
+        salts_mutex_unlock(&impl->gate);
         return status;
     }
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     impl->shutdown_inflight = false;
     impl->shutdown_complete = true;
-    turbo_mutex_unlock(&impl->gate);
-    return TURBO_OK;
+    salts_mutex_unlock(&impl->gate);
+    return SALTS_OK;
 }
 
 static int readiness_destroy(cflow_io_native_impl *base) {
     cflow_readiness_impl *impl = (cflow_readiness_impl *)base;
-    turbo_mutex_lock(&impl->gate);
+    salts_mutex_lock(&impl->gate);
     if (!impl->shutdown_complete) {
-        turbo_mutex_unlock(&impl->gate);
-        return TURBO_EBUSY;
+        salts_mutex_unlock(&impl->gate);
+        return SALTS_EBUSY;
     }
-    turbo_mutex_unlock(&impl->gate);
-    turbo_cond_destroy(&impl->changed);
-    turbo_mutex_destroy(&impl->gate);
+    salts_mutex_unlock(&impl->gate);
+    salts_cond_destroy(&impl->changed);
+    salts_mutex_destroy(&impl->gate);
     free(impl->sockets);
     free(impl->records);
     free(impl);
-    return TURBO_OK;
+    return SALTS_OK;
 }
 
 static const cflow_io_native_impl_ops readiness_ops = {
@@ -1139,44 +1139,44 @@ int cflow_io_native_readiness_init(
     cflow_io_native_backend *backend,
     const cflow_io_native_backend_config *config) {
     cflow_readiness_impl *impl;
-    turbo_readiness_config reactor_config;
-    turbo_readiness_backend_kind reactor_kind;
+    salts_readiness_config reactor_config;
+    salts_readiness_backend_kind reactor_kind;
     size_t reactor_capacity;
     int status;
 
     switch (config->kind) {
 #if defined(CFLOW_HAS_NATIVE_EPOLL)
         case CFLOW_IO_NATIVE_EPOLL:
-            reactor_kind = TURBO_READINESS_BACKEND_EPOLL;
+            reactor_kind = SALTS_READINESS_BACKEND_EPOLL;
             break;
 #endif
 #if defined(CFLOW_HAS_NATIVE_KQUEUE)
         case CFLOW_IO_NATIVE_KQUEUE:
-            reactor_kind = TURBO_READINESS_BACKEND_KQUEUE;
+            reactor_kind = SALTS_READINESS_BACKEND_KQUEUE;
             break;
 #endif
 #if defined(CFLOW_HAS_NATIVE_POLL)
         case CFLOW_IO_NATIVE_POLL:
-            reactor_kind = TURBO_READINESS_BACKEND_POLL;
+            reactor_kind = SALTS_READINESS_BACKEND_POLL;
             break;
 #endif
         default:
-            return TURBO_ENOTSUP;
+            return SALTS_ENOTSUP;
     }
     if (config->request_capacity > ((size_t)UINT32_MAX - 1u) /
                                        CFLOW_READINESS_LANE_COUNT ||
         config->request_capacity > SIZE_MAX / sizeof(cflow_readiness_record) ||
         config->request_capacity >
             SIZE_MAX / sizeof(cflow_readiness_socket_record))
-        return TURBO_ERANGE;
+        return SALTS_ERANGE;
     reactor_capacity = config->request_capacity *
                        CFLOW_READINESS_LANE_COUNT;
-    reactor_config = (turbo_readiness_config){
+    reactor_config = (salts_readiness_config){
         reactor_capacity, config->completion_batch_capacity};
 
     impl = (cflow_readiness_impl *)calloc(1u, sizeof(*impl));
     if (impl == NULL)
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     impl->records = (cflow_readiness_record *)calloc(
         config->request_capacity, sizeof(*impl->records));
     impl->sockets = (cflow_readiness_socket_record *)calloc(
@@ -1185,7 +1185,7 @@ int cflow_io_native_readiness_init(
         free(impl->sockets);
         free(impl->records);
         free(impl);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
     impl->base.ops = &readiness_ops;
     impl->base.kind = config->kind;
@@ -1198,26 +1198,26 @@ int cflow_io_native_readiness_init(
         readiness_socket_reset(impl, &impl->sockets[index]);
     }
 
-    turbo_mutex_init(&impl->gate);
-    turbo_cond_init(&impl->changed);
+    salts_mutex_init(&impl->gate);
+    salts_cond_init(&impl->changed);
     if (impl->gate == NULL || impl->changed == NULL) {
-        turbo_cond_destroy(&impl->changed);
-        turbo_mutex_destroy(&impl->gate);
+        salts_cond_destroy(&impl->changed);
+        salts_mutex_destroy(&impl->gate);
         free(impl->sockets);
         free(impl->records);
         free(impl);
-        return TURBO_ENOMEM;
+        return SALTS_ENOMEM;
     }
-    status = turbo_readiness_reactor_init_kind(
+    status = salts_readiness_reactor_init_kind(
         &impl->reactor, &reactor_config, reactor_kind);
-    if (status != TURBO_OK) {
-        turbo_cond_destroy(&impl->changed);
-        turbo_mutex_destroy(&impl->gate);
+    if (status != SALTS_OK) {
+        salts_cond_destroy(&impl->changed);
+        salts_mutex_destroy(&impl->gate);
         free(impl->sockets);
         free(impl->records);
         free(impl);
         return status;
     }
     backend->impl = impl;
-    return TURBO_OK;
+    return SALTS_OK;
 }

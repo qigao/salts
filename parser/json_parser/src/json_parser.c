@@ -16,15 +16,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <turbo/thread.h>
-#include <turbo_str.h>
-#include <rocida/stl/hash_map.h>
+#include <salts/thread.h>
+#include <salts_str.h>
+#include <cstl/hash_map.h>
 
 #define MAX_ERROR_LEN 512
 #define JSON_ARRAY_INDEX_THRESHOLD 8U
 #define JSON_OBJECT_INDEX_THRESHOLD 16U
 #define JSON_OBJECT_INDEX_MIN_CAPACITY 16U
-static TURBO_THREAD_LOCAL char g_error[MAX_ERROR_LEN] = {0};
+static SALTS_THREAD_LOCAL char g_error[MAX_ERROR_LEN] = {0};
 
 _Static_assert(sizeof(((json_value_t *)0)->data.object_val) <=
                    sizeof(((json_value_t *)0)->data.array_val),

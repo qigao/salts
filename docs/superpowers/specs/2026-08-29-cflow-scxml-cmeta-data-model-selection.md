@@ -48,7 +48,7 @@ contract. Ordinary CMeta executable blocks now expose that bridge through
 `<foreach>` for exact element/item types with either trivial storage or complete
 `COPY | MOVE | DESTROY` lifecycle traits, plus an optional exact `size_t`
 index. The public positive `max_iterations` option bounds every invocation;
-legacy v1 option prefixes receive the named default. No private TurboSTL
+legacy v1 option prefixes receive the named default. No private Container
 storage convention is inferred by CFlowScxml.
 
 ## Context
@@ -71,7 +71,7 @@ boundary, so it is recorded separately from the remaining Phase 3 roadmap.
 
 ## Decision
 
-Add a TurboUtils extension named `datamodel="cmeta"`. Keep omitted or explicit
+Add a Salts extension named `datamodel="cmeta"`. Keep omitted or explicit
 `datamodel="null"` unchanged. Do not claim ECMAScript, XPath, or W3C Basic data
 model conformance for the extension.
 
@@ -170,7 +170,7 @@ types and errors must not cross into CFlow or CMeta.
 ### ECMAScript
 
 Rejected for this increment. The SCXML ECMAScript model requires a complete
-ECMAScript environment and script semantics. TurboUtils has no such runtime;
+ECMAScript environment and script semantics. Salts has no such runtime;
 adding one would introduce a new dependency, execution sandbox, resource
 accounting, and deployment surface substantially larger than Issue #122.
 
@@ -212,7 +212,7 @@ already exercised by CFlow streams and compiled plans.
 - CFlowScxml publicly depends on CMeta because `<cflow/scxml.h>` exposes the
   schema provider type. CSerde/CBind are not part of this provider boundary;
   CFlow and CMeta do not depend on parser modules.
-- CFlowScxml reuses its existing private TurboUtils Core dependency for UUID
+- CFlowScxml reuses its existing private Salts Core dependency for UUID
   generation; no public link dependency is added.
 
 ## Failure and rollback protocol

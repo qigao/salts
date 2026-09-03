@@ -3,8 +3,8 @@
  * @brief Format-neutral register VM for JSONPath, YPath, and XPath expressions
  */
 
-#ifndef TURBO_QUERY_VM_H
-#define TURBO_QUERY_VM_H
+#ifndef SALTS_QUERY_VM_H
+#define SALTS_QUERY_VM_H
 
 #include <stddef.h>
 #include <stdint.h>

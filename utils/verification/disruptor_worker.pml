@@ -1,5 +1,5 @@
 /*
- * Rocida Disruptor worker-pool protocol model.
+ * Salts Disruptor worker-pool protocol model.
  *
  * Scope:
  *   - bounded publisher claim against the completed cursor

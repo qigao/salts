@@ -26,7 +26,7 @@ transition execution depend on optional formats.
 
 ### A. Built-in bounded processor
 
-TurboUtils would add a registry, router, timer/cancellation registry, ingress
+Salts would add a registry, router, timer/cancellation registry, ingress
 decoder, scheduler, and lifecycle coordinator. This could provide an in-process
 default, but it would introduce a new shared owner across sessions and require
 public registration/configuration APIs. HTTP would still be a separate optional
@@ -48,7 +48,7 @@ adapter.
 
 ### B. Conforming host adapter
 
-Keep the versioned function table as a Bridge/Adapter boundary. TurboUtils owns
+Keep the versioned function table as a Bridge/Adapter boundary. Salts owns
 compilation, one-session execution, internal delivery, transactional reservation
 hooks, bounded Event admission, and precise error conversion. The embedding host
 owns registration, accessibility, routing, transport, decoding, and dispatch.
@@ -73,7 +73,7 @@ owns registration, accessibility, routing, transport, decoding, and dispatch.
 
 Choose option B. The existing versioned adapter is the smallest stable
 dependency-inversion seam. A built-in registry would be a service locator with
-process-global policy and would duplicate application state. TurboUtils does
+process-global policy and would duplicate application state. Salts does
 not claim that the library alone is a standalone mandatory SCXML Event I/O
 Processor.
 

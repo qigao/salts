@@ -1,5 +1,5 @@
 /*
- * Bounded byte-oriented regular expression engine, part of Rocida.
+ * Bounded byte-oriented regular expression engine, part of Salts.
  *
  * Supported syntax: . ^ $ * + ? {m} {m,} {m,n} with lazy variants *? +? ??,
  * character classes, inverted classes, ranges, branches, capturing-style
@@ -13,8 +13,8 @@
  * Backtracking is bounded by the step/depth/workspace budgets in re_limits_t.
  */
 
-#ifndef TURBO_RE_H
-#define TURBO_RE_H
+#ifndef SALTS_RE_H
+#define SALTS_RE_H
 
 #include "platform.h"
 
@@ -71,43 +71,43 @@ typedef struct re_match_result {
 #define RE_NPOS ((size_t)-1)
 
 /* Returns the default bounded configuration by value. */
-TURBO_API re_limits_t re_limits_default(void);
+SALTS_API re_limits_t re_limits_default(void);
 
 /* Validates exactly pattern_len bytes. NULL limits selects the defaults. */
-TURBO_API re_status_t re_validate_n(const char *pattern, size_t pattern_len,
+SALTS_API re_status_t re_validate_n(const char *pattern, size_t pattern_len,
                                  const re_limits_t *limits);
 
 /*
  * Compiles an owned, immutable pattern. The returned handle is independent of
  * every other handle and may be matched concurrently. The caller owns it.
  */
-TURBO_API re_status_t re_compile_n(const char *pattern, size_t pattern_len,
+SALTS_API re_status_t re_compile_n(const char *pattern, size_t pattern_len,
                                 const re_limits_t *limits, re_t *out_pattern);
-TURBO_API void re_destroy(re_t pattern);
+SALTS_API void re_destroy(re_t pattern);
 
 /* Searches exactly text_len bytes using a compiled pattern. */
-TURBO_API re_status_t re_matchn(re_t pattern, const char *text, size_t text_len,
+SALTS_API re_status_t re_matchn(re_t pattern, const char *text, size_t text_len,
                              const re_limits_t *limits,
                              re_match_result_t *out_match);
 
 /* Validates and searches an uncompiled pattern without retaining allocations. */
-TURBO_API re_status_t re_match_n(const char *pattern, size_t pattern_len,
+SALTS_API re_status_t re_match_n(const char *pattern, size_t pattern_len,
                               const char *text, size_t text_len,
                               const re_limits_t *limits,
                               re_match_result_t *out_match);
 
-TURBO_API const char *re_status_string(re_status_t status);
+SALTS_API const char *re_status_string(re_status_t status);
 
 /*
  * NUL-terminated compatibility API. re_compile() returns an owned handle that
  * must be released with re_destroy(). Failure and no-match both map to -1.
  */
-TURBO_API re_t re_compile(const char *pattern);
-TURBO_API int re_matchp(re_t pattern, const char *text, int *matchlength);
-TURBO_API int re_match(const char *pattern, const char *text, int *matchlength);
+SALTS_API re_t re_compile(const char *pattern);
+SALTS_API int re_matchp(re_t pattern, const char *text, int *matchlength);
+SALTS_API int re_match(const char *pattern, const char *text, int *matchlength);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* TURBO_RE_H */
+#endif /* SALTS_RE_H */

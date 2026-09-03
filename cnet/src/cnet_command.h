@@ -3,6 +3,8 @@
 
 #include "cnet_session.h"
 
+#include <cnet/cnet.h>
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -36,8 +38,9 @@ typedef enum cnet_command_kind {
 } cnet_command_kind;
 
 /**
- * One producer-owned descriptor. `data` is borrowed only for the duration of
- * `cnet_command_queue_publish`; successful publication copies `size` bytes.
+ * One producer-owned descriptor. Either `data` or `segments` supplies the
+ * bytes and is borrowed only for `cnet_command_queue_publish`; successful
+ * publication copies the checked `size` bytes into one queue-owned slot.
  */
 typedef struct cnet_command {
   cnet_command_kind kind;
@@ -45,6 +48,8 @@ typedef struct cnet_command {
   const void *data;
   size_t size;
   size_t argument;
+  const cnet_const_buffer *segments;
+  size_t segment_count;
 } cnet_command;
 
 /**
@@ -62,16 +67,16 @@ typedef struct cnet_command_view {
 
 int cnet_command_queue_init(cnet_command_queue *queue, const cnet_command_queue_config *config);
 
-/** Single-owner, nonblocking; full capacity returns `TURBO_ENOBUFS`. */
+/** Single-owner, nonblocking; full capacity returns `SALTS_ENOBUFS`. */
 int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *command);
 
-/** Single-owner, nonblocking; empty-open returns `TURBO_ETIMEDOUT`. */
+/** Single-owner, nonblocking; empty-open returns `SALTS_ETIMEDOUT`. */
 int cnet_command_queue_take(cnet_command_queue *queue, cnet_command_view *out_view);
 int cnet_command_queue_release(cnet_command_queue *queue, cnet_command_view *view);
 
 /**
  * Closes admission on the owner thread. A repeated close returns
- * `TURBO_EALREADY`.
+ * `SALTS_EALREADY`.
  */
 int cnet_command_queue_close(cnet_command_queue *queue);
 

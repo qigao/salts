@@ -8,7 +8,7 @@
 
 **Ownership and bounds:** The program owns the retained document name until program destruction. Each session owns its copied `_name` bytes and its inline UUID text until successful session destruction. Expression results borrow those bytes only for the enclosing guard or executable callback. The document name participates in `max_name_bytes`; all system strings participate in `max_string_bytes`. Session initialization is single-shot; UUID generation failure aborts initialization before attachment.
 
-**Tech stack:** C11, CMeta descriptors, QueryVM, TurboUtils Core UUID, TinyTest, CMake presets.
+**Tech stack:** C11, CMeta descriptors, QueryVM, Salts Core UUID, TinyTest, CMake presets.
 
 ---
 

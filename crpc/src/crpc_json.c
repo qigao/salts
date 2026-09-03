@@ -3,7 +3,7 @@
 #include <fmt.h>
 #include <json_cserde_reader.h>
 #include <json_parser.h>
-#include <turbo_vstr.h>
+#include <salts_vstr.h>
 
 #include <inttypes.h>
 #include <limits.h>
@@ -289,16 +289,16 @@ static const cserde_writer_ops crpc_json_writer_ops = {
 static int crpc_cserde_status(cserde_status status) {
   switch (status) {
   case CSERDE_OK:
-    return TURBO_OK;
+    return SALTS_OK;
   case CSERDE_LIMIT_EXCEEDED:
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   case CSERDE_UNSUPPORTED:
-    return TURBO_ENOTSUP;
+    return SALTS_ENOTSUP;
   case CSERDE_VALUE_OUT_OF_RANGE:
-    return TURBO_ERANGE;
+    return SALTS_ERANGE;
   case CSERDE_SOURCE_ERROR:
   case CSERDE_SINK_ERROR:
-    return TURBO_EIO;
+    return SALTS_EIO;
   case CSERDE_DONE:
   case CSERDE_INVALID_ARGUMENT:
   case CSERDE_INVALID_STATE:
@@ -306,20 +306,20 @@ static int crpc_cserde_status(cserde_status status) {
   case CSERDE_UNEXPECTED_END:
   case CSERDE_CALLBACK_ERROR:
   default:
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   }
 }
 
 static int crpc_bounded_length(const char *text, size_t limit, size_t *out_size) {
   size_t index;
-  if (text == NULL || out_size == NULL) return TURBO_EINVAL;
+  if (text == NULL || out_size == NULL) return SALTS_EINVAL;
   for (index = 0u; index <= limit; ++index) {
     if (text[index] == '\0') {
       *out_size = index;
-      return TURBO_OK;
+      return SALTS_OK;
     }
   }
-  return TURBO_EMSGSIZE;
+  return SALTS_EMSGSIZE;
 }
 
 static bool crpc_method_reserved(const char *service, size_t service_size, const char *name,
@@ -347,27 +347,27 @@ static int crpc_method_validate(const crpc_method *method, size_t max_method_byt
   size_t name_size = 0u;
   size_t combined_size;
   int status;
-  if (method == NULL || method->name == NULL || max_method_bytes == 0u) return TURBO_EINVAL;
+  if (method == NULL || method->name == NULL || max_method_bytes == 0u) return SALTS_EINVAL;
   status = crpc_bounded_length(method->name, max_method_bytes, &name_size);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   if (name_size == 0u || !vstr_utf8_valid(vstr_from_buf(method->name, name_size)))
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   combined_size = name_size;
   if (method->service != NULL) {
     status = crpc_bounded_length(method->service, max_method_bytes, &service_size);
-    if (status != TURBO_OK) return status;
+    if (status != SALTS_OK) return status;
     if (service_size == 0u || !vstr_utf8_valid(vstr_from_buf(method->service, service_size)))
-      return TURBO_EINVAL;
+      return SALTS_EINVAL;
     if (service_size >= max_method_bytes || name_size > max_method_bytes - service_size - 1u)
-      return TURBO_EMSGSIZE;
+      return SALTS_EMSGSIZE;
     combined_size = service_size + 1u + name_size;
   }
-  if (combined_size > max_method_bytes) return TURBO_EMSGSIZE;
+  if (combined_size > max_method_bytes) return SALTS_EMSGSIZE;
   if (crpc_method_reserved(method->service, service_size, method->name, name_size))
-    return TURBO_EPERM;
+    return SALTS_EPERM;
   *out_service_size = service_size;
   *out_name_size = name_size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int crpc_method_format(const crpc_method *method, size_t max_method_bytes, char *out,
@@ -376,12 +376,12 @@ int crpc_method_format(const crpc_method *method, size_t max_method_bytes, char 
   size_t name_size = 0u;
   size_t size;
   int status;
-  if (out == NULL || out_capacity == 0u) return TURBO_EINVAL;
+  if (out == NULL || out_capacity == 0u) return SALTS_EINVAL;
   out[0] = '\0';
   status = crpc_method_validate(method, max_method_bytes, &service_size, &name_size);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   size = service_size == 0u ? name_size : service_size + 1u + name_size;
-  if (size >= out_capacity) return TURBO_EMSGSIZE;
+  if (size >= out_capacity) return SALTS_EMSGSIZE;
   if (service_size != 0u) {
     memcpy(out, method->service, service_size);
     out[service_size] = '.';
@@ -390,7 +390,7 @@ int crpc_method_format(const crpc_method *method, size_t max_method_bytes, char 
     memcpy(out, method->name, name_size);
   }
   out[size] = '\0';
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 static cserde_status crpc_json_encode_value(crpc_buffer *buffer, crpc_encode_value_fn encode,
@@ -448,12 +448,12 @@ int crpc_json_encode_request(const crpc_method *method, uint64_t request_id,
   int id_size;
   int status;
 
-  if (out == NULL) return TURBO_EINVAL;
+  if (out == NULL) return SALTS_EINVAL;
   *out = (crpc_encoded_request){0};
   if (max_json_depth < 2u || max_body_bytes == 0u || max_body_bytes == SIZE_MAX)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   status = crpc_method_validate(method, max_method_bytes, &service_size, &name_size);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
   serde_status = crpc_buffer_append(&buffer, prefix, sizeof(prefix) - 1u);
   if (serde_status == CSERDE_OK && method->service != NULL)
     serde_status =
@@ -477,13 +477,13 @@ int crpc_json_encode_request(const crpc_method *method, uint64_t request_id,
     }
     if (max_json_depth - 1u > SIZE_MAX / sizeof(*writer_context.frames)) {
       free(buffer.data);
-      return TURBO_EMSGSIZE;
+      return SALTS_EMSGSIZE;
     }
     writer_context.frames =
         (crpc_json_frame *)calloc(max_json_depth - 1u, sizeof(*writer_context.frames));
     if (writer_context.frames == NULL) {
       free(buffer.data);
-      return TURBO_ENOMEM;
+      return SALTS_ENOMEM;
     }
     writer_context.buffer = &buffer;
     writer_context.max_depth = max_json_depth - 1u;
@@ -517,7 +517,7 @@ int crpc_json_encode_request(const crpc_method *method, uint64_t request_id,
   }
   out->data = buffer.data;
   out->size = buffer.size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int crpc_json_encode_result(uint64_t request_id, crpc_encode_value_fn encode, void *user,
@@ -528,10 +528,10 @@ int crpc_json_encode_result(uint64_t request_id, crpc_encode_value_fn encode, vo
   crpc_buffer buffer = {.limit = max_body_bytes};
   cserde_status serde_status;
 
-  if (out == NULL) return TURBO_EINVAL;
+  if (out == NULL) return SALTS_EINVAL;
   *out = (crpc_encoded_request){0};
   if (max_json_depth < 2u || max_body_bytes == 0u || max_body_bytes == SIZE_MAX)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   serde_status = crpc_buffer_append(&buffer, prefix, sizeof(prefix) - 1u);
   if (serde_status == CSERDE_OK)
     serde_status = crpc_json_encode_value(&buffer, encode, user, max_json_depth - 1u, false);
@@ -545,7 +545,7 @@ int crpc_json_encode_result(uint64_t request_id, crpc_encode_value_fn encode, vo
   }
   out->data = buffer.data;
   out->size = buffer.size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int crpc_json_encode_error(bool null_id, uint64_t request_id, int64_t code, const char *message,
@@ -560,12 +560,12 @@ int crpc_json_encode_error(bool null_id, uint64_t request_id, int64_t code, cons
   cserde_status serde_status;
   int status;
 
-  if (out == NULL) return TURBO_EINVAL;
+  if (out == NULL) return SALTS_EINVAL;
   *out = (crpc_encoded_request){0};
   if (message == NULL || max_json_depth < 2u || max_body_bytes == 0u || max_body_bytes == SIZE_MAX)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   status = crpc_bounded_length(message, max_body_bytes, &message_size);
-  if (status != TURBO_OK) return status;
+  if (status != SALTS_OK) return status;
 
   serde_status = crpc_buffer_append(&buffer, prefix, sizeof(prefix) - 1u);
   if (serde_status == CSERDE_OK) serde_status = crpc_json_append_int64(&buffer, code);
@@ -590,7 +590,7 @@ int crpc_json_encode_error(bool null_id, uint64_t request_id, int64_t code, cons
   }
   out->data = buffer.data;
   out->size = buffer.size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 int crpc_json_encode_batch(const crpc_encoded_request *items, size_t item_count,
@@ -599,10 +599,10 @@ int crpc_json_encode_batch(const crpc_encoded_request *items, size_t item_count,
   cserde_status serde_status;
   size_t index;
 
-  if (out == NULL) return TURBO_EINVAL;
+  if (out == NULL) return SALTS_EINVAL;
   *out = (crpc_encoded_request){0};
   if (items == NULL || item_count == 0u || max_body_bytes == 0u || max_body_bytes == SIZE_MAX)
-    return TURBO_EINVAL;
+    return SALTS_EINVAL;
   serde_status = crpc_buffer_byte(&buffer, (unsigned char)'[');
   for (index = 0u; serde_status == CSERDE_OK && index < item_count; ++index) {
     if (items[index].data == NULL || items[index].size == 0u) {
@@ -620,7 +620,7 @@ int crpc_json_encode_batch(const crpc_encoded_request *items, size_t item_count,
   }
   out->data = buffer.data;
   out->size = buffer.size;
-  return TURBO_OK;
+  return SALTS_OK;
 }
 
 void crpc_encoded_request_destroy(crpc_encoded_request *request) {
@@ -828,27 +828,27 @@ int crpc_json_decode_response(const void *data, size_t size, uint64_t expected_i
   size_t error_count = 0u;
   uint64_t response_id;
   cserde_reader *reader = NULL;
-  int status = TURBO_EPROTO;
+  int status = SALTS_EPROTO;
 
-  if (out == NULL || out_stage == NULL) return TURBO_EINVAL;
+  if (out == NULL || out_stage == NULL) return SALTS_EINVAL;
   *out = (crpc_decoded_response){0};
   *out_stage = "rpc-envelope";
   if (http_status < 200u || http_status >= 300u) {
     *out_stage = "http-status";
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   }
   if (data == NULL || size == 0u) {
     *out_stage = "json-parse";
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   }
   if (!crpc_json_depth_valid((const unsigned char *)data, size, max_json_depth)) {
     *out_stage = "json-depth";
-    return TURBO_EMSGSIZE;
+    return SALTS_EMSGSIZE;
   }
   root = json_parse((const char *)data, size);
   if (root == NULL) {
     *out_stage = "json-parse";
-    return TURBO_EPROTO;
+    return SALTS_EPROTO;
   }
   if (json_type(root) != JSON_OBJECT) goto fail;
   version = crpc_json_unique_member(root, "jsonrpc", &version_count);
@@ -872,7 +872,7 @@ int crpc_json_decode_response(const void *data, size_t size, uint64_t expected_i
   if (result_count == 1u) {
     reader = json_cserde_reader_create(result, max_json_depth);
     if (reader == NULL) {
-      status = TURBO_ENOMEM;
+      status = SALTS_ENOMEM;
       *out_stage = "result-reader";
       goto fail;
     }
@@ -896,7 +896,7 @@ int crpc_json_decode_response(const void *data, size_t size, uint64_t expected_i
     if (data_count == 1u) {
       reader = json_cserde_reader_create(error_data, max_json_depth);
       if (reader == NULL) {
-        status = TURBO_ENOMEM;
+        status = SALTS_ENOMEM;
         *out_stage = "error-data-reader";
         goto fail;
       }
@@ -910,7 +910,7 @@ int crpc_json_decode_response(const void *data, size_t size, uint64_t expected_i
   }
   out->json_root = root;
   out->reader = reader;
-  return TURBO_OK;
+  return SALTS_OK;
 
 fail:
   json_cserde_reader_destroy(reader);
