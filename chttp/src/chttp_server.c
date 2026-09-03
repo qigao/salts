@@ -176,10 +176,124 @@ static char *chttp_server_string_copy(const char *value) {
   return copy;
 }
 
+static void chttp_server_buffer_peak_update(chttp_server_impl *server, size_t value) {
+  size_t peak = atomic_load_explicit(&server->peak_buffer_bytes, memory_order_relaxed);
+  while (peak < value &&
+         !atomic_compare_exchange_weak_explicit(&server->peak_buffer_bytes, &peak, value,
+                                                memory_order_relaxed, memory_order_relaxed)) {
+  }
+}
+
+static bool chttp_server_buffer_reserve(chttp_server_impl *server, size_t size) {
+  size_t observed;
+  if (size == 0u) return true;
+  observed = atomic_load_explicit(&server->buffer_bytes, memory_order_relaxed);
+  for (;;) {
+    size_t desired;
+    if (observed > server->config.buffer_capacity_bytes ||
+        size > server->config.buffer_capacity_bytes - observed) {
+      atomic_fetch_add_explicit(&server->rejected_buffer_allocations, 1u, memory_order_relaxed);
+      return false;
+    }
+    desired = observed + size;
+    if (atomic_compare_exchange_weak_explicit(&server->buffer_bytes, &observed, desired,
+                                              memory_order_acq_rel, memory_order_relaxed)) {
+      chttp_server_buffer_peak_update(server, desired);
+      return true;
+    }
+  }
+}
+
+int chttp_server_buffer_grow(void *context, unsigned char **buffer, size_t *capacity,
+                             size_t required, size_t limit, size_t preserve_size) {
+  chttp_server_impl *server = (chttp_server_impl *)context;
+  unsigned char *grown;
+  size_t desired;
+  size_t delta;
+  if (server == NULL || buffer == NULL || capacity == NULL || preserve_size > *capacity)
+    return SALTS_EINVAL;
+  if (required > limit) return SALTS_EMSGSIZE;
+  if (required <= *capacity) return SALTS_OK;
+  desired = *capacity == 0u ? 4096u : *capacity;
+  if (desired > limit) desired = limit;
+  while (desired < required) {
+    if (desired > limit - desired) {
+      desired = limit;
+      break;
+    }
+    desired *= 2u;
+  }
+  if (desired < required) desired = required;
+  delta = desired - *capacity;
+  if (!chttp_server_buffer_reserve(server, delta)) return SALTS_ENOBUFS;
+  grown = (unsigned char *)realloc(*buffer, desired);
+  if (grown == NULL) {
+    atomic_fetch_sub_explicit(&server->buffer_bytes, delta, memory_order_release);
+    return SALTS_ENOMEM;
+  }
+  *buffer = grown;
+  *capacity = desired;
+  return SALTS_OK;
+}
+
+void chttp_server_buffer_release(void *context, unsigned char *buffer, size_t capacity) {
+  chttp_server_impl *server = (chttp_server_impl *)context;
+  if (buffer == NULL) return;
+  free(buffer);
+  if (server != NULL && capacity != 0u)
+    atomic_fetch_sub_explicit(&server->buffer_bytes, capacity, memory_order_release);
+}
+
+int chttp_server_connection_reserve_outbound(chttp_server_connection *connection,
+                                              size_t required) {
+  if (connection == NULL || connection->server == NULL) return SALTS_EINVAL;
+  return chttp_server_buffer_grow(connection->server, &connection->outbound,
+                                  &connection->outbound_capacity, required,
+                                  connection->server->config.network.max_send_bytes,
+                                  connection->outbound_size);
+}
+
+void chttp_server_connection_release_outbound(chttp_server_connection *connection) {
+  if (connection == NULL || connection->outbound == NULL) return;
+  chttp_server_buffer_release(connection->server, connection->outbound,
+                              connection->outbound_capacity);
+  connection->outbound = NULL;
+  connection->outbound_capacity = 0u;
+}
+
 static bool chttp_server_multiply(size_t left, size_t right, size_t *out) {
   if (out == NULL || (right != 0u && left > SIZE_MAX / right)) return false;
   *out = left * right;
   return true;
+}
+
+static size_t chttp_server_saturating_add(size_t left, size_t right) {
+  return left > SIZE_MAX - right ? SIZE_MAX : left + right;
+}
+
+static size_t chttp_server_saturating_multiply(size_t left, size_t right) {
+  return right != 0u && left > SIZE_MAX / right ? SIZE_MAX : left * right;
+}
+
+static size_t chttp_server_default_buffer_capacity(const chttp_server_config *config) {
+  size_t per_connection = config->max_request_body_bytes;
+  size_t h2_stream = 0u;
+  per_connection = chttp_server_saturating_add(
+      per_connection,
+      chttp_server_saturating_multiply(config->max_buffered_response_body_bytes, 2u));
+  per_connection = chttp_server_saturating_add(per_connection, config->network.max_send_bytes);
+  per_connection =
+      chttp_server_saturating_add(per_connection, config->network.receive_buffer_bytes);
+  if (config->enable_http2) {
+    h2_stream = chttp_server_saturating_add(config->max_request_body_bytes,
+                                            config->max_buffered_response_body_bytes);
+    h2_stream = chttp_server_saturating_add(h2_stream, config->network.max_send_bytes);
+    per_connection = chttp_server_saturating_add(
+        per_connection,
+        chttp_server_saturating_multiply(h2_stream, config->h2_stream_capacity));
+  }
+  return chttp_server_saturating_multiply(per_connection,
+                                          config->network.connection_capacity);
 }
 
 static uint32_t chttp_server_poll_timeout(const chttp_server_impl *server) {
@@ -304,12 +418,12 @@ int chttp_server_request_state_init(chttp_server_request_state *state, chttp_ser
     chttp_server_request_state_destroy(state);
     return SALTS_ENOMEM;
   }
+  state->response_builder.server = server;
   status = chttp_server_response_builder_init(&state->response_builder, &server->config);
   if (status != SALTS_OK) {
     chttp_server_request_state_destroy(state);
     return status;
   }
-  state->response_builder.server = server;
   state->response.impl = &state->response_builder;
   return SALTS_OK;
 }
@@ -343,8 +457,9 @@ static void chttp_server_connection_destroy(chttp_server_connection *connection)
   chttp_server_parser_destroy(&connection->parser);
   chttp_server_request_state_destroy(&connection->request_state);
   chttp_server_response_builder_destroy(&connection->deferred_builder);
-  free(connection->websocket_upgrade_input);
-  free(connection->outbound);
+  chttp_server_buffer_release(connection->server, connection->websocket_upgrade_input,
+                              connection->websocket_upgrade_input_capacity);
+  chttp_server_connection_release_outbound(connection);
   *connection = (chttp_server_connection){0};
 }
 
@@ -387,22 +502,18 @@ static int chttp_server_connection_init(chttp_server_impl *server,
       .on_body_open = chttp_server_on_body_open,
       .on_body_close = chttp_server_on_body_close,
       .on_upgrade = chttp_server_websocket_upgrade,
+      .buffer_grow = chttp_server_buffer_grow,
+      .buffer_release = chttp_server_buffer_release,
+      .buffer_context = server,
       .user = connection};
   int status;
   connection->server = server;
-  connection->outbound_capacity = server->config.network.max_send_bytes;
-  connection->outbound = (unsigned char *)malloc(connection->outbound_capacity);
-  connection->websocket_upgrade_input_capacity = server->config.network.receive_buffer_bytes;
-  connection->websocket_upgrade_input =
-      (unsigned char *)malloc(connection->websocket_upgrade_input_capacity);
-  if (connection->outbound == NULL || connection->websocket_upgrade_input == NULL)
-    return SALTS_ENOMEM;
   status = chttp_server_request_state_init(&connection->request_state, server);
   if (status != SALTS_OK) return status;
   connection->request_state.response_builder.connection = connection;
+  connection->deferred_builder.server = server;
   status = chttp_server_response_builder_init(&connection->deferred_builder, &server->config);
   if (status != SALTS_OK) return status;
-  connection->deferred_builder.server = server;
   connection->deferred_response.impl = &connection->deferred_builder;
   atomic_init(&connection->deferred_state, CHTTP_SERVER_DEFERRED_IDLE);
   status = chttp_server_parser_init(&connection->parser, &parser_config);
@@ -461,6 +572,11 @@ int chttp_server_init(chttp_server *server, const chttp_server_config *config) {
         config->max_response_body_bytes < buffered_body_limit ? config->max_response_body_bytes
                                                               : buffered_body_limit;
   }
+  if (impl->config.buffer_capacity_bytes == 0u)
+    impl->config.buffer_capacity_bytes = chttp_server_default_buffer_capacity(&impl->config);
+  atomic_init(&impl->buffer_bytes, 0u);
+  atomic_init(&impl->peak_buffer_bytes, 0u);
+  atomic_init(&impl->rejected_buffer_allocations, 0u);
   if (config->tls != NULL) {
     status = cnet_tls_server_init(&impl->tls_server, config->tls);
     if (status != SALTS_OK) {
@@ -724,6 +840,7 @@ static void chttp_server_on_state(void *user, cnet_connection handle, cnet_conne
     connection->deferred_response_writing = false;
     connection->pending_action = CHTTP_SERVER_PENDING_NONE;
     connection->outbound_size = 0u;
+    chttp_server_connection_release_outbound(connection);
     connection->h2_close_after_ms = 0u;
     connection->protocol_prefix_size = 0u;
     connection->wire_protocol = CHTTP_SERVER_WIRE_UNKNOWN;
@@ -732,6 +849,10 @@ static void chttp_server_on_state(void *user, cnet_connection handle, cnet_conne
     connection->handle = (cnet_connection){0};
     chttp_h2_server_connection_release(connection->h2);
     connection->websocket_upgrade_input_size = 0u;
+    chttp_server_buffer_release(connection->server, connection->websocket_upgrade_input,
+                                connection->websocket_upgrade_input_capacity);
+    connection->websocket_upgrade_input = NULL;
+    connection->websocket_upgrade_input_capacity = 0u;
     if (deferred_state == CHTTP_SERVER_DEFERRED_IDLE) {
       chttp_server_request_state_reset(&connection->request_state);
       chttp_server_response_builder_reset(&connection->deferred_builder);
@@ -794,7 +915,10 @@ static int chttp_server_h1_input(chttp_server_connection *connection, const void
     if (connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_HANDSHAKE &&
         deferred_state == CHTTP_SERVER_DEFERRED_IDLE)
       return SALTS_EPROTO;
-    if (remaining > connection->websocket_upgrade_input_capacity) return SALTS_EMSGSIZE;
+    status = chttp_server_buffer_grow(connection->server, &connection->websocket_upgrade_input,
+                                      &connection->websocket_upgrade_input_capacity, remaining,
+                                      connection->server->config.network.receive_buffer_bytes, 0u);
+    if (status != SALTS_OK) return status;
     memmove(connection->websocket_upgrade_input, (const unsigned char *)data + consumed,
             remaining);
     connection->websocket_upgrade_input_size = remaining;
@@ -870,7 +994,9 @@ static void chttp_server_on_receive(void *user, cnet_connection handle,
       if (http_status == 0u) http_status = 500u;
       if (status == SALTS_EPROTO) chttp_server_stats_protocol_error(connection->server);
       else chttp_server_stats_handler_error(connection->server);
-      if (chttp_server_error_serialize(http_status, connection->outbound,
+      if (chttp_server_connection_reserve_outbound(
+              connection, connection->server->max_response_wire_bytes) == SALTS_OK &&
+          chttp_server_error_serialize(http_status, connection->outbound,
                                        connection->outbound_capacity,
                                        &connection->outbound_size) == SALTS_OK)
         chttp_server_stats_response(connection->server);
@@ -899,6 +1025,10 @@ static int chttp_server_response_stream_next(chttp_server_connection *connection
   int status;
   if (connection == NULL || !connection->response_streaming || connection->outbound_size != 0u)
     return SALTS_EINVAL;
+  status = chttp_server_connection_reserve_outbound(
+      connection, connection->server->config.stream_chunk_bytes +
+                      CHTTP_SERVER_CHUNK_PREFIX_RESERVE + CHTTP_SERVER_CHUNK_TRAILER_BYTES);
+  if (status != SALTS_OK) return chttp_server_response_stream_finish(connection, status);
   builder = &connection->request_state.response_builder;
   if (!builder->source_enabled || builder->body_source.read == NULL)
     return chttp_server_response_stream_finish(connection, SALTS_EPROTO);
@@ -998,8 +1128,15 @@ static int chttp_server_deferred_input_resume(chttp_server_connection *connectio
   size = connection->websocket_upgrade_input_size;
   connection->websocket_upgrade_input_size = 0u;
   if (size == 0u) return SALTS_OK;
-  return chttp_server_h1_input(connection, connection->websocket_upgrade_input, size,
-                               &http_status);
+  status = chttp_server_h1_input(connection, connection->websocket_upgrade_input, size,
+                                 &http_status);
+  if (connection->websocket_upgrade_input_size == 0u) {
+    chttp_server_buffer_release(connection->server, connection->websocket_upgrade_input,
+                                connection->websocket_upgrade_input_capacity);
+    connection->websocket_upgrade_input = NULL;
+    connection->websocket_upgrade_input_capacity = 0u;
+  }
+  return status;
 }
 
 static void chttp_server_on_send(void *user, cnet_connection handle, size_t size) {
@@ -1017,6 +1154,10 @@ static void chttp_server_on_send(void *user, cnet_connection handle, size_t size
   if (connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_NONE)
     status = chttp_server_websocket_send_complete(connection);
   if (connection->response_streaming) status = chttp_server_response_stream_next(connection);
+  if (connection->outbound_size == 0u && !connection->response_streaming &&
+      connection->websocket_peer.phase == CHTTP_SERVER_WEBSOCKET_NONE &&
+      connection->wire_protocol != CHTTP_SERVER_WIRE_HTTP_2)
+    chttp_server_connection_release_outbound(connection);
   if (status == SALTS_OK && resume_deferred && !connection->close_after_write)
     status = chttp_server_deferred_input_resume(connection);
   if (status != SALTS_OK) {
@@ -1030,7 +1171,12 @@ static void chttp_server_on_send(void *user, cnet_connection handle, size_t size
 
 static int chttp_server_on_continue(void *user) {
   chttp_server_connection *connection = (chttp_server_connection *)user;
-  if (connection == NULL || connection->outbound_size > connection->outbound_capacity ||
+  int status;
+  if (connection == NULL) return SALTS_EINVAL;
+  status = chttp_server_connection_reserve_outbound(
+      connection, connection->outbound_size + sizeof(CHTTP_SERVER_CONTINUE_RESPONSE) - 1u);
+  if (status != SALTS_OK) return status;
+  if (connection->outbound_size > connection->outbound_capacity ||
       sizeof(CHTTP_SERVER_CONTINUE_RESPONSE) - 1u >
           connection->outbound_capacity - connection->outbound_size)
     return SALTS_EMSGSIZE;
@@ -1178,9 +1324,9 @@ static int chttp_server_on_request(void *user, const chttp_server_request_view *
   int status;
   if (connection == NULL || request == NULL || connection->close_after_write)
     return SALTS_ESHUTDOWN;
-  if (connection->outbound_size > connection->outbound_capacity ||
+  if (connection->outbound_size > connection->server->config.network.max_send_bytes ||
       connection->server->max_response_wire_bytes >
-          connection->outbound_capacity - connection->outbound_size)
+          connection->server->config.network.max_send_bytes - connection->outbound_size)
     return SALTS_ENOBUFS;
   enriched_request = *request;
   chttp_server_request_enrich(connection, &enriched_request);
@@ -1190,6 +1336,10 @@ static int chttp_server_on_request(void *user, const chttp_server_request_view *
   status = chttp_server_dispatch_request(&connection->request_state, request);
   builder->request = NULL;
   if (status == SALTS_OK && builder->deferred) return CHTTP_SERVER_REQUEST_DEFERRED;
+  if (status == SALTS_OK) {
+    status = chttp_server_connection_reserve_outbound(
+        connection, connection->outbound_size + connection->server->max_response_wire_bytes);
+  }
   if (status == SALTS_OK) {
     status =
         chttp_server_response_serialize(builder, request, connection->outbound,
@@ -1304,6 +1454,9 @@ static int chttp_server_deferred_progress(chttp_server_impl *server) {
       continue;
     }
     status = chttp_session_request_finish(&connection->request_state);
+    if (status == SALTS_OK)
+      status = chttp_server_connection_reserve_outbound(
+          connection, connection->outbound_size + server->max_response_wire_bytes);
     if (status == SALTS_OK)
       status = chttp_server_response_serialize(builder, &connection->deferred_request,
                                                connection->outbound,
@@ -1652,5 +1805,10 @@ int chttp_server_get_stats(const chttp_server *server, chttp_server_stats *out_s
   salts_mutex_lock((salts_mutex_t *)&impl->mutex);
   *out_stats = impl->stats;
   salts_mutex_unlock((salts_mutex_t *)&impl->mutex);
+  out_stats->buffer_bytes = atomic_load_explicit(&impl->buffer_bytes, memory_order_acquire);
+  out_stats->peak_buffer_bytes =
+      atomic_load_explicit(&impl->peak_buffer_bytes, memory_order_acquire);
+  out_stats->rejected_buffer_allocations =
+      atomic_load_explicit(&impl->rejected_buffer_allocations, memory_order_acquire);
   return SALTS_OK;
 }

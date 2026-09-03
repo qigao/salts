@@ -507,6 +507,57 @@ static int chttp_server_test_cookie_header(const chttp_response *response, char 
 }
 
 spec("CHTTP background HTTP/1.1 server") {
+  it("does not reserve configured payload maxima during initialization") {
+    enum { LARGE_PAYLOAD_BYTES = 256u * 1024u * 1024u };
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    chttp_server_stats stats = {0};
+
+    config.network.connection_capacity = 128u;
+    config.network.event_capacity = 256u;
+    config.network.receive_buffer_bytes = LARGE_PAYLOAD_BYTES;
+    config.network.event_buffer_bytes = LARGE_PAYLOAD_BYTES;
+    config.network.max_send_bytes = LARGE_PAYLOAD_BYTES + config.max_response_header_bytes + 512u;
+    config.max_response_body_bytes = LARGE_PAYLOAD_BYTES;
+    config.max_buffered_response_body_bytes = LARGE_PAYLOAD_BYTES;
+    config.buffer_capacity_bytes = (size_t)LARGE_PAYLOAD_BYTES * 2u + 4096u;
+
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_get_stats(&server, &stats), SALTS_OK);
+    check_equal(stats.buffer_bytes, (size_t)0u);
+    check_equal(stats.peak_buffer_bytes, (size_t)0u);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("accounts live payload buffers and releases them after a closed request") {
+    static const char request[] = "GET /static HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                                  "Connection: close\r\n\r\n";
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    chttp_server_stats stats = {0};
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    uint16_t port = 0u;
+
+    config.buffer_capacity_bytes = 8192u;
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_get(&server, "/static", chttp_server_test_static, NULL), SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(
+        chttp_server_test_raw_exchange(port, request, response, sizeof(response), &response_size),
+        SALTS_OK);
+    check_not_null(strstr(response, "HTTP/1.1 200 OK"));
+    check_equal(chttp_server_test_wait_active(&server, 0u, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_get_stats(&server, &stats), SALTS_OK);
+    check_equal(stats.buffer_bytes, (size_t)0u);
+    check_true(stats.peak_buffer_bytes != 0u);
+    check_true(stats.peak_buffer_bytes <= config.buffer_capacity_bytes);
+    check_equal(stats.rejected_buffer_allocations, (uint64_t)0u);
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
   it("copies CNet socket tuning before server start") {
     chttp_server server = {0};
     chttp_server_config config = chttp_server_test_config();
@@ -539,6 +590,7 @@ spec("CHTTP background HTTP/1.1 server") {
     chttp_server server = {0};
     chttp_client independent_client = {0};
     chttp_server_config server_config = chttp_server_test_config();
+    chttp_server_stats deferred_stats = {0};
     chttp_client_config client_config = chttp_server_test_client_config();
     chttp_server_test_deferred_probe probe;
     chttp_server_test_socket pipelined = CHTTP_SERVER_TEST_INVALID_SOCKET;
@@ -565,6 +617,8 @@ spec("CHTTP background HTTP/1.1 server") {
            salts_monotonic_ms() < deadline)
       salts_thread_yield();
     check_equal(atomic_load_explicit(&probe.acquired, memory_order_acquire), 1);
+    check_equal(chttp_server_get_stats(&server, &deferred_stats), SALTS_OK);
+    check_true(deferred_stats.buffer_bytes < server_config.network.max_send_bytes);
 
     check_true(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port) > 0);
     check_equal(chttp_client_init(&independent_client, &client_config), SALTS_OK);

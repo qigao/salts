@@ -63,14 +63,13 @@ int chttp_server_response_builder_init(chttp_server_response_builder *builder,
   builder->headers =
       (chttp_header *)calloc(config->max_response_header_count, sizeof(*builder->headers));
   builder->header_storage = (char *)malloc(config->max_response_header_bytes);
-  builder->body = (unsigned char *)malloc(config->max_buffered_response_body_bytes);
-  if (builder->headers == NULL || builder->header_storage == NULL || builder->body == NULL) {
+  if (builder->headers == NULL || builder->header_storage == NULL) {
     chttp_server_response_builder_destroy(builder);
     return SALTS_ENOMEM;
   }
   builder->header_capacity = config->max_response_header_count;
   builder->header_storage_capacity = config->max_response_header_bytes;
-  builder->body_capacity = config->max_buffered_response_body_bytes;
+  builder->body_limit = config->max_buffered_response_body_bytes;
   builder->source_capacity = config->max_response_body_bytes;
   chttp_server_response_builder_reset(builder);
   return SALTS_OK;
@@ -79,6 +78,11 @@ int chttp_server_response_builder_init(chttp_server_response_builder *builder,
 void chttp_server_response_builder_reset(chttp_server_response_builder *builder) {
   if (builder == NULL) return;
   chttp_server_response_builder_close_source(builder, SALTS_ECANCELED);
+  if (builder->body != NULL) {
+    chttp_server_buffer_release(builder->server, builder->body, builder->body_capacity);
+    builder->body = NULL;
+    builder->body_capacity = 0u;
+  }
   builder->header_count = 0u;
   builder->header_storage_used = 0u;
   builder->header_wire_bytes = 0u;
@@ -107,7 +111,8 @@ void chttp_server_response_builder_close_source(chttp_server_response_builder *b
 void chttp_server_response_builder_destroy(chttp_server_response_builder *builder) {
   if (builder == NULL) return;
   chttp_server_response_builder_close_source(builder, SALTS_ECANCELED);
-  free(builder->body);
+  if (builder->body != NULL)
+    chttp_server_buffer_release(builder->server, builder->body, builder->body_capacity);
   free(builder->header_storage);
   free(builder->headers);
   *builder = (chttp_server_response_builder){0};
@@ -229,7 +234,12 @@ int chttp_server_reply(chttp_server_response *response, unsigned int status_code
   builder = (chttp_server_response_builder *)response->impl;
   if (builder->deferred) return SALTS_EALREADY;
   if (builder->replied) return SALTS_EALREADY;
-  if (body_size > builder->body_capacity) return SALTS_EMSGSIZE;
+  if (body_size > builder->body_limit) return SALTS_EMSGSIZE;
+  if (body_size != 0u) {
+    status = chttp_server_buffer_grow(builder->server, &builder->body, &builder->body_capacity,
+                                      body_size, builder->body_limit, 0u);
+    if (status != SALTS_OK) return status;
+  }
   if (content_type != NULL) {
     status = chttp_server_response_set_header(response, "Content-Type", content_type);
     if (status != SALTS_OK) return status;

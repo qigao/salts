@@ -32,6 +32,7 @@ typedef struct chttp_server_parser_impl {
   char *path_storage;
   char *header_storage;
   unsigned char *body_storage;
+  size_t body_storage_capacity;
   size_t max_target_bytes;
   size_t max_header_count;
   size_t max_header_bytes;
@@ -54,6 +55,9 @@ typedef struct chttp_server_parser_impl {
   chttp_server_parser_body_open_fn on_body_open;
   chttp_server_parser_body_close_fn on_body_close;
   chttp_server_parser_upgrade_fn on_upgrade;
+  chttp_server_parser_buffer_grow_fn buffer_grow;
+  chttp_server_parser_buffer_release_fn buffer_release;
+  void *buffer_context;
   chttp_body_sink body_sink;
   void *user;
   bool field_open;
@@ -126,6 +130,14 @@ static bool chttp_server_parser_storage_append(chttp_server_parser_impl *parser,
 }
 
 static void chttp_server_parser_reset_message(chttp_server_parser_impl *parser) {
+  if (parser->body_storage != NULL) {
+    if (parser->buffer_release != NULL)
+      parser->buffer_release(parser->buffer_context, parser->body_storage,
+                             parser->body_storage_capacity);
+    else free(parser->body_storage);
+    parser->body_storage = NULL;
+    parser->body_storage_capacity = 0u;
+  }
   parser->request = (chttp_server_request_view){.target = parser->target_storage,
                                                 .path = parser->path_storage,
                                                 .headers = parser->headers,
@@ -405,14 +417,33 @@ static int chttp_server_parser_on_headers_complete(llhttp_t *llparser) {
 
 static int chttp_server_parser_on_body(llhttp_t *llparser, const char *at, size_t length) {
   chttp_server_parser_impl *parser = chttp_server_parser_context(llparser);
+  size_t required;
   if (parser == NULL || (length != 0u && at == NULL)) return HPE_USER;
   if (parser->request.body_size > parser->max_body_bytes ||
       length > parser->max_body_bytes - parser->request.body_size)
     return chttp_server_parser_fail(parser, 413u);
+  required = parser->request.body_size + length;
   if (length != 0u && parser->body_sink_open) {
     const int status = parser->body_sink.write(parser->body_sink.user, at, length);
     if (status != SALTS_OK) return chttp_server_parser_callback_fail(parser, status);
-  } else if (length != 0u) memcpy(parser->body_storage + parser->request.body_size, at, length);
+  } else if (length != 0u) {
+    int status;
+    if (parser->buffer_grow != NULL)
+      status = parser->buffer_grow(parser->buffer_context, &parser->body_storage,
+                                   &parser->body_storage_capacity, required,
+                                   parser->max_body_bytes, parser->request.body_size);
+    else {
+      unsigned char *grown = (unsigned char *)realloc(parser->body_storage, required);
+      status = grown == NULL ? SALTS_ENOMEM : SALTS_OK;
+      if (grown != NULL) {
+        parser->body_storage = grown;
+        parser->body_storage_capacity = required;
+      }
+    }
+    if (status != SALTS_OK) return chttp_server_parser_callback_fail(parser, status);
+    parser->request.body = parser->body_storage;
+    memcpy(parser->body_storage + parser->request.body_size, at, length);
+  }
   parser->request.body_size += length;
   return 0;
 }
@@ -473,10 +504,8 @@ int chttp_server_parser_init(chttp_server_parser *parser,
   impl->target_storage = (char *)malloc(config->max_target_bytes + 1u);
   impl->path_storage = (char *)malloc(config->max_target_bytes + 1u);
   impl->header_storage = (char *)malloc(storage_capacity);
-  impl->body_storage = (unsigned char *)malloc(config->max_body_bytes);
   if (impl->headers == NULL || impl->target_storage == NULL || impl->path_storage == NULL ||
-      impl->header_storage == NULL || impl->body_storage == NULL) {
-    free(impl->body_storage);
+      impl->header_storage == NULL) {
     free(impl->header_storage);
     free(impl->path_storage);
     free(impl->target_storage);
@@ -496,6 +525,9 @@ int chttp_server_parser_init(chttp_server_parser *parser,
   impl->on_body_open = config->on_body_open;
   impl->on_body_close = config->on_body_close;
   impl->on_upgrade = config->on_upgrade;
+  impl->buffer_grow = config->buffer_grow;
+  impl->buffer_release = config->buffer_release;
+  impl->buffer_context = config->buffer_context;
   impl->user = config->user;
   llhttp_settings_init(&impl->settings);
   impl->settings.on_message_begin = chttp_server_parser_on_message_begin;
@@ -758,7 +790,12 @@ void chttp_server_parser_destroy(chttp_server_parser *parser) {
   if (parser == NULL || parser->impl == NULL) return;
   impl = (chttp_server_parser_impl *)parser->impl;
   chttp_server_parser_close_body(impl, SALTS_ECANCELED);
-  free(impl->body_storage);
+  if (impl->body_storage != NULL) {
+    if (impl->buffer_release != NULL)
+      impl->buffer_release(impl->buffer_context, impl->body_storage,
+                           impl->body_storage_capacity);
+    else free(impl->body_storage);
+  }
   free(impl->header_storage);
   free(impl->path_storage);
   free(impl->target_storage);

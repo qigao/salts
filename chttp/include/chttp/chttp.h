@@ -381,6 +381,12 @@ typedef struct chttp_server_config {
   size_t stream_chunk_bytes;
   /** In-memory reply bound; zero derives the largest value fitting one transport send. */
   size_t max_buffered_response_body_bytes;
+  /**
+   * Aggregate bytes available to live request, response, transport and
+   * WebSocket payload buffers. Zero preserves the legacy logical maximum but
+   * allocates it only on demand. Exhaustion returns `SALTS_ENOBUFS`.
+   */
+  size_t buffer_capacity_bytes;
 } chttp_server_config;
 
 /** Socket policy copied into a stopped HTTP/WebSocket server before start. */
@@ -404,6 +410,9 @@ typedef struct chttp_server_stats {
   uint64_t responses;
   uint64_t protocol_errors;
   uint64_t handler_errors;
+  size_t buffer_bytes;
+  size_t peak_buffer_bytes;
+  uint64_t rejected_buffer_allocations;
   int running;
   int stopping;
   int terminal_status;

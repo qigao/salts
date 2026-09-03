@@ -14,7 +14,16 @@ typedef struct cnet_event_queue_config {
   uint64_t capacity;
   size_t data_capacity;
   size_t max_payload_bytes;
+  size_t payload_capacity_bytes;
 } cnet_event_queue_config;
+
+typedef struct cnet_event_queue_stats {
+  size_t live_events;
+  size_t live_payload_bytes;
+  size_t peak_payload_bytes;
+  uint64_t rejected_payload_bytes;
+  bool admission_open;
+} cnet_event_queue_stats;
 
 typedef enum cnet_event_kind {
   CNET_EVENT_NONE = 0,
@@ -64,6 +73,8 @@ typedef int (*cnet_event_keep_waiting_fn)(void *context);
 int cnet_event_queue_init(cnet_event_queue *queue, const cnet_event_queue_config *config);
 bool cnet_event_queue_get_config(const cnet_event_queue *queue,
                                  cnet_event_queue_config *out_config);
+bool cnet_event_queue_get_stats(const cnet_event_queue *queue,
+                                cnet_event_queue_stats *out_stats);
 
 /** MPSC, nonblocking; data and total capacity exhaustion return `SALTS_ENOBUFS`. */
 int cnet_event_queue_publish(cnet_event_queue *queue, const cnet_event *event);

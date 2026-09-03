@@ -725,6 +725,19 @@ spec("CNet public client API") {
     check_equal(cnet_client_destroy(&client), SALTS_OK);
   }
 
+  it("does not reserve every event slot or connection receive buffer at maximum size") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+
+    config.connection_capacity = 128u;
+    config.event_capacity = 256u;
+    config.receive_buffer_bytes = 256u * 1024u * 1024u;
+    config.event_buffer_bytes = config.receive_buffer_bytes;
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+  }
+
   it("rejects invalid configuration without publishing a client") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
@@ -737,6 +750,11 @@ spec("CNet public client API") {
 
     config = cnet_api_test_config();
     config.command_buffer_bytes = config.max_send_bytes - 1u;
+    check_equal(cnet_client_init(&client, &config), SALTS_EINVAL);
+    check_null(client.impl);
+
+    config = cnet_api_test_config();
+    config.event_buffer_bytes = config.receive_buffer_bytes - 1u;
     check_equal(cnet_client_init(&client, &config), SALTS_EINVAL);
     check_null(client.impl);
   }

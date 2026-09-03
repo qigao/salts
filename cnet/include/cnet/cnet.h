@@ -337,6 +337,12 @@ typedef struct cnet_client_config {
    * cover at least one maximum-sized command and can reduce retained memory.
    */
   size_t command_buffer_bytes;
+  /**
+   * Aggregate bytes available to copied pending events. Zero preserves the
+   * full event_capacity times maximum-event bound without preallocating it. A
+   * non-zero value must cover at least one maximum-sized event.
+   */
+  size_t event_buffer_bytes;
 } cnet_client_config;
 
 /**

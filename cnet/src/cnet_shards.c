@@ -140,7 +140,8 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
                                                       config->command_buffer_bytes};
     const cnet_event_queue_config event_config = {config->event_capacity_per_shard,
                                                   config->event_capacity_per_shard / 2u,
-                                                  impl->max_event_payload_bytes};
+                                                  impl->max_event_payload_bytes,
+                                                  config->event_buffer_bytes};
     const cnet_owner_config owner_config = {
         .backend_kind = config->backend_kind,
         .connection_capacity = config->connection_capacity_per_shard,

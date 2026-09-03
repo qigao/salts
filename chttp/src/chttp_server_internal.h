@@ -17,6 +17,11 @@ typedef int (*chttp_server_parser_body_open_fn)(void *user,
                                                 const chttp_server_request_view *request,
                                                 chttp_body_sink *out_sink);
 typedef void (*chttp_server_parser_body_close_fn)(void *user, chttp_body_sink *sink, int status);
+typedef int (*chttp_server_parser_buffer_grow_fn)(void *context, unsigned char **buffer,
+                                                  size_t *capacity, size_t required,
+                                                  size_t limit, size_t preserve_size);
+typedef void (*chttp_server_parser_buffer_release_fn)(void *context, unsigned char *buffer,
+                                                       size_t capacity);
 
 typedef enum chttp_server_parser_upgrade_action {
   CHTTP_SERVER_UPGRADE_IGNORE = 0,
@@ -37,6 +42,9 @@ typedef struct chttp_server_parser_config {
   chttp_server_parser_body_open_fn on_body_open;
   chttp_server_parser_body_close_fn on_body_close;
   chttp_server_parser_upgrade_fn on_upgrade;
+  chttp_server_parser_buffer_grow_fn buffer_grow;
+  chttp_server_parser_buffer_release_fn buffer_release;
+  void *buffer_context;
   void *user;
 } chttp_server_parser_config;
 

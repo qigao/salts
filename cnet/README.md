@@ -33,6 +33,11 @@ legacy `command_capacity * max_command_payload` bound. Set it explicitly when
 large individual writes must coexist with a smaller retained-memory budget;
 admission over either the slot or byte budget returns `SALTS_ENOBUFS`.
 
+`event_capacity` likewise bounds event descriptors while `event_buffer_bytes`
+bounds their aggregate copied payload. Event payloads and per-connection receive
+buffers are allocated only while in use; configuring a large per-message bound
+therefore no longer reserves its product with every event or connection slot.
+
 TCP and Pipe deliver byte chunks. Connected UDP delivers one datagram per
 receive callback. A receive view is borrowed only until its callback returns.
 TLS delivers verified encrypted byte streams through the same send/receive

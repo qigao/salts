@@ -88,7 +88,6 @@ struct cnet_owner_impl {
   uint32_t *free_requests;
   cnet_session_handle *receive_rearms;
   cnet_owner_pending_event *pending_events;
-  unsigned char *receive_storage;
   native_io_completion *completions;
   size_t connection_capacity;
   size_t request_capacity;
@@ -841,11 +840,13 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
   if (session->peer.socket_options.size == 0u)
     session->peer.socket_options =
         (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
-  session->receive_buffer =
-      &impl->receive_storage[(size_t)(session->handle.slot - 1u) * impl->receive_buffer_bytes];
+  session->receive_buffer = (unsigned char *)malloc(impl->receive_buffer_bytes);
   session->transport.native_handle = UINTPTR_MAX;
   session->occupied = true;
   ++impl->occupied_sessions;
+  if (session->receive_buffer == NULL)
+    return cnet_owner_fail_accepted_command(impl, session, command, SALTS_ENOMEM,
+                                            CNET_SESSION_STAGE_CONNECT);
   if (session->peer.connect_timeout_ms != 0u) {
     status = salts_deadline_queue_schedule(
         &impl->deadlines, cnet_owner_deadline_after(impl, session->peer.connect_timeout_ms),
@@ -1342,7 +1343,6 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
       config->connection_capacity > SIZE_MAX - config->request_capacity ||
       config->connection_capacity > SIZE_MAX / sizeof(cnet_owner_session) ||
       config->connection_capacity > SIZE_MAX / sizeof(cnet_session_handle) ||
-      config->connection_capacity > SIZE_MAX / config->receive_buffer_bytes ||
       config->request_capacity > SIZE_MAX / sizeof(cnet_owner_request) ||
       config->request_capacity > SIZE_MAX / sizeof(uint32_t) ||
       config->completion_batch_capacity > SIZE_MAX / sizeof(native_io_completion) ||
@@ -1359,15 +1359,12 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
       (cnet_session_handle *)calloc(config->connection_capacity, sizeof(*impl->receive_rearms));
   impl->pending_events = (cnet_owner_pending_event *)calloc(config->completion_batch_capacity + 2u,
                                                             sizeof(*impl->pending_events));
-  impl->receive_storage =
-      (unsigned char *)calloc(config->connection_capacity, config->receive_buffer_bytes);
   impl->completions =
       (native_io_completion *)calloc(config->completion_batch_capacity, sizeof(*impl->completions));
   if (impl->session_records == NULL || impl->request_records == NULL ||
       impl->free_requests == NULL || impl->receive_rearms == NULL || impl->pending_events == NULL ||
-      impl->receive_storage == NULL || impl->completions == NULL) {
+      impl->completions == NULL) {
     free(impl->completions);
-    free(impl->receive_storage);
     free(impl->pending_events);
     free(impl->receive_rearms);
     free(impl->free_requests);
@@ -1382,7 +1379,6 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
   status = native_io_backend_init(&impl->backend, &backend_config);
   if (status != SALTS_OK) {
     free(impl->completions);
-    free(impl->receive_storage);
     free(impl->pending_events);
     free(impl->receive_rearms);
     free(impl->free_requests);
@@ -1397,7 +1393,6 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     (void)native_io_backend_close(&impl->backend);
     (void)native_io_backend_destroy(&impl->backend);
     free(impl->completions);
-    free(impl->receive_storage);
     free(impl->pending_events);
     free(impl->receive_rearms);
     free(impl->free_requests);
@@ -1414,7 +1409,6 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     (void)native_io_backend_close(&impl->backend);
     (void)native_io_backend_destroy(&impl->backend);
     free(impl->completions);
-    free(impl->receive_storage);
     free(impl->pending_events);
     free(impl->receive_rearms);
     free(impl->free_requests);
@@ -1555,6 +1549,7 @@ int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session_ha
     return SALTS_EBUSY;
   status = cnet_session_table_state(impl->sessions, session_handle, &state);
   if (status != SALTS_ENOENT) return SALTS_EBUSY;
+  free(session->receive_buffer);
   memset(session, 0, sizeof(*session));
   --impl->occupied_sessions;
   return SALTS_OK;
@@ -1593,7 +1588,6 @@ int cnet_owner_destroy(cnet_owner *owner) {
   status = salts_deadline_queue_destroy(&impl->deadlines);
   if (status != SALTS_OK) return status;
   free(impl->completions);
-  free(impl->receive_storage);
   free(impl->pending_events);
   free(impl->receive_rearms);
   free(impl->free_requests);

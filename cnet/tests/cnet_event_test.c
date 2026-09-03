@@ -55,6 +55,36 @@ spec("CNet bounded callback events") {
     }
   }
 
+  it("bounds copied payload bytes independently of event slots") {
+    static const uint8_t six_bytes[] = {1u, 2u, 3u, 4u, 5u, 6u};
+    static const uint8_t five_bytes[] = {7u, 8u, 9u, 10u, 11u};
+    const cnet_event_queue_config config = {
+        .capacity = 8u, .data_capacity = 4u, .max_payload_bytes = 8u, .payload_capacity_bytes = 10u};
+    cnet_event event = {CNET_EVENT_RECEIVE,      {1u, 1u}, CNET_EVENT_STATE_NONE, SALTS_OK,
+                        CNET_SESSION_STAGE_NONE, six_bytes, sizeof(six_bytes)};
+    cnet_event_view view = {0};
+    cnet_event_queue_stats stats = {0};
+
+    check_equal(cnet_event_queue_init(&events, &config), SALTS_OK);
+    check_equal(cnet_event_queue_publish(&events, &event), SALTS_OK);
+    event.data = five_bytes;
+    event.size = sizeof(five_bytes);
+    check_equal(cnet_event_queue_publish(&events, &event), SALTS_ENOBUFS);
+    check_true(cnet_event_queue_get_stats(&events, &stats));
+    check_equal(stats.live_payload_bytes, sizeof(six_bytes));
+    check_equal(stats.peak_payload_bytes, sizeof(six_bytes));
+    check_equal(stats.rejected_payload_bytes, sizeof(five_bytes));
+
+    check_equal(cnet_event_queue_take(&events, &view), SALTS_OK);
+    check_equal(cnet_event_queue_release(&events, &view), SALTS_OK);
+    check_equal(cnet_event_queue_publish(&events, &event), SALTS_OK);
+    check_true(cnet_event_queue_get_stats(&events, &stats));
+    check_equal(stats.live_payload_bytes, sizeof(five_bytes));
+    check_equal(stats.peak_payload_bytes, sizeof(six_bytes));
+    check_equal(cnet_event_queue_take(&events, &view), SALTS_OK);
+    check_equal(cnet_event_queue_release(&events, &view), SALTS_OK);
+  }
+
   it("reserves state headroom when receive data reaches its own limit") {
     static const uint8_t first[] = {1u};
     static const uint8_t second[] = {2u, 3u};

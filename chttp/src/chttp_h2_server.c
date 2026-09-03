@@ -26,6 +26,7 @@ typedef struct chttp_h2_server_stream {
   size_t header_storage_used;
   size_t header_count;
   size_t body_size;
+  size_t body_capacity;
   size_t response_header_capacity;
   size_t websocket_output_capacity;
   size_t websocket_output_size;
@@ -255,6 +256,14 @@ static void chttp_h2_server_stream_reset(chttp_h2_server_stream *stream) {
     chttp_server_websocket_peer_reset(&stream->websocket_peer);
   }
   chttp_server_request_state_reset(&stream->request_state);
+  chttp_server_buffer_release(stream->owner->connection->server, stream->body,
+                              stream->body_capacity);
+  stream->body = NULL;
+  stream->body_capacity = 0u;
+  chttp_server_buffer_release(stream->owner->connection->server, stream->websocket_output,
+                              stream->websocket_output_capacity);
+  stream->websocket_output = NULL;
+  stream->websocket_output_capacity = 0u;
   stream->header_storage_used = 0u;
   stream->header_count = 0u;
   stream->body_size = 0u;
@@ -284,8 +293,15 @@ static void chttp_h2_server_stream_destroy(chttp_h2_server_stream *stream) {
   if (stream == NULL) return;
   chttp_server_request_state_destroy(&stream->request_state);
   chttp_server_websocket_peer_reset(&stream->websocket_peer);
-  free(stream->websocket_output);
-  free(stream->body);
+  if (stream->owner != NULL) {
+    chttp_server_buffer_release(stream->owner->connection->server, stream->websocket_output,
+                                stream->websocket_output_capacity);
+    chttp_server_buffer_release(stream->owner->connection->server, stream->body,
+                                stream->body_capacity);
+  } else {
+    free(stream->websocket_output);
+    free(stream->body);
+  }
   free(stream->authority);
   free(stream->target_storage);
   free(stream->header_storage);
@@ -313,12 +329,9 @@ static int chttp_h2_server_stream_init(chttp_h2_server_stream *stream,
   stream->header_storage = (char *)malloc(stream->header_storage_capacity);
   stream->target_storage = (char *)malloc(target_stride * 2u);
   stream->authority = (char *)malloc(config->max_header_bytes + 1u);
-  stream->body = (unsigned char *)malloc(config->max_request_body_bytes);
-  stream->websocket_output = (unsigned char *)malloc(config->network.max_send_bytes);
-  stream->websocket_output_capacity = config->network.max_send_bytes;
   if (stream->headers == NULL || stream->response_headers == NULL ||
       stream->header_storage == NULL || stream->target_storage == NULL ||
-      stream->authority == NULL || stream->body == NULL || stream->websocket_output == NULL) {
+      stream->authority == NULL) {
     chttp_h2_server_stream_destroy(stream);
     return SALTS_ENOMEM;
   }
@@ -713,12 +726,24 @@ static int chttp_h2_server_websocket_write(void *transport, const uint8_t *data,
       stream->websocket_output_size != 0u ||
       chttp_h2_proto_stream_output_pending(stream->owner->protocol, stream->stream_id))
     return SALTS_EBUSY;
-  if (size > stream->websocket_output_capacity) return SALTS_EMSGSIZE;
+  if (size > stream->owner->connection->server->config.network.max_send_bytes)
+    return SALTS_EMSGSIZE;
+  {
+    const int status = chttp_server_buffer_grow(
+        stream->owner->connection->server, &stream->websocket_output,
+        &stream->websocket_output_capacity, size,
+        stream->owner->connection->server->config.network.max_send_bytes, 0u);
+    if (status != SALTS_OK) return status;
+  }
   memcpy(stream->websocket_output, data, size);
   stream->websocket_output_size = size;
   if (chttp_h2_proto_submit_data(stream->owner->protocol, stream->stream_id,
                                  stream->websocket_output, size, 0) != 0) {
     stream->websocket_output_size = 0u;
+    chttp_server_buffer_release(stream->owner->connection->server, stream->websocket_output,
+                                stream->websocket_output_capacity);
+    stream->websocket_output = NULL;
+    stream->websocket_output_capacity = 0u;
     return SALTS_ENOBUFS;
   }
   return SALTS_OK;
@@ -926,7 +951,20 @@ static int chttp_h2_server_data(void *user, int32_t stream_id, const uint8_t *da
                    ? 0
                    : -1;
       }
-    } else memcpy(stream->body + stream->body_size, data, size);
+    } else {
+      const int grow_status = chttp_server_buffer_grow(
+          h2->connection->server, &stream->body, &stream->body_capacity,
+          stream->body_size + size, capacity, stream->body_size);
+      if (grow_status != SALTS_OK) {
+        if (chttp_h2_proto_consume_connection(h2->protocol, size) != 0) return -1;
+        chttp_server_request_body_close(&stream->request_state, grow_status);
+        return chttp_h2_proto_submit_rst_stream(h2->protocol, stream_id,
+                                                CHTTP_H2_ERR_INTERNAL_ERROR) == 0
+                   ? 0
+                   : -1;
+      }
+      memcpy(stream->body + stream->body_size, data, size);
+    }
     stream->body_size += size;
     if (chttp_h2_proto_consume_stream(h2->protocol, stream_id, size) != 0 ||
         chttp_h2_proto_consume_connection(h2->protocol, size) != 0)
@@ -1070,8 +1108,13 @@ static int chttp_h2_server_websockets_drive(chttp_h2_server_connection *h2) {
     int status;
     if (!stream->active || stream->websocket_peer.phase == CHTTP_SERVER_WEBSOCKET_NONE) continue;
     if (stream->websocket_output_size != 0u &&
-        !chttp_h2_proto_stream_output_pending(h2->protocol, stream->stream_id))
+        !chttp_h2_proto_stream_output_pending(h2->protocol, stream->stream_id)) {
       stream->websocket_output_size = 0u;
+      chttp_server_buffer_release(h2->connection->server, stream->websocket_output,
+                                  stream->websocket_output_capacity);
+      stream->websocket_output = NULL;
+      stream->websocket_output_capacity = 0u;
+    }
     if (stream->websocket_output_size == 0u && !stream->websocket_end_submitted) {
       status = chttp_server_websocket_peer_flush(&stream->websocket_peer);
       if (status != SALTS_OK) return status;
@@ -1109,7 +1152,11 @@ int chttp_h2_server_connection_flush(chttp_h2_server_connection *h2) {
   }
   wire_size = chttp_h2_proto_send(h2->protocol, &wire);
   if (wire_size < 0) return SALTS_EPROTO;
-  if ((size_t)wire_size > connection->outbound_capacity) return SALTS_EMSGSIZE;
+  {
+    const int status =
+        chttp_server_connection_reserve_outbound(connection, (size_t)wire_size);
+    if (status != SALTS_OK) return status;
+  }
   if (wire_size != 0) memcpy(connection->outbound, wire, (size_t)wire_size);
   connection->outbound_size = (size_t)wire_size;
   return SALTS_OK;

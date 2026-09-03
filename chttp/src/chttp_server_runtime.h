@@ -57,6 +57,7 @@ typedef struct chttp_server_response_builder {
   size_t header_capacity;
   size_t header_storage_capacity;
   size_t body_capacity;
+  size_t body_limit;
   size_t source_capacity;
   size_t header_count;
   size_t header_storage_used;
@@ -225,6 +226,9 @@ struct chttp_server_impl {
   salts_cond_t changed;
   salts_thread_t thread;
   chttp_server_stats stats;
+  atomic_size_t buffer_bytes;
+  atomic_size_t peak_buffer_bytes;
+  _Atomic uint64_t rejected_buffer_allocations;
   bool sync_initialized;
   bool network_initialized;
   bool listener_initialized;
@@ -301,6 +305,12 @@ int chttp_server_file_runtime_ensure(chttp_server_impl *server,
                                      cflow_io_file_runtime **out_runtime);
 int chttp_server_file_transfer_register(chttp_server_impl *server, chttp_file_transfer *transfer);
 int chttp_server_send_pending(chttp_server_connection *connection);
+int chttp_server_buffer_grow(void *context, unsigned char **buffer, size_t *capacity,
+                             size_t required, size_t limit, size_t preserve_size);
+void chttp_server_buffer_release(void *context, unsigned char *buffer, size_t capacity);
+int chttp_server_connection_reserve_outbound(chttp_server_connection *connection,
+                                              size_t required);
+void chttp_server_connection_release_outbound(chttp_server_connection *connection);
 void chttp_server_connection_close(chttp_server_connection *connection);
 void chttp_server_request_enrich(const chttp_server_connection *connection,
                                  chttp_server_request_view *request);

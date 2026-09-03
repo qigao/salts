@@ -37,7 +37,9 @@ static int chttp_server_websocket_h1_write(void *transport, const uint8_t *data,
   if (connection->websocket_peer.phase == CHTTP_SERVER_WEBSOCKET_HANDSHAKE || connection->writing ||
       connection->outbound_size != 0u || connection->pending_action == CHTTP_SERVER_PENDING_SEND)
     return SALTS_EBUSY;
-  if (size > connection->outbound_capacity) return SALTS_EMSGSIZE;
+  if (size > connection->server->config.network.max_send_bytes) return SALTS_EMSGSIZE;
+  status = chttp_server_connection_reserve_outbound(connection, size);
+  if (status != SALTS_OK) return status;
   memcpy(connection->outbound, data, size);
   connection->outbound_size = size;
   status = chttp_server_send_pending(connection);
@@ -259,6 +261,13 @@ int chttp_server_websocket_upgrade(void *user, const chttp_server_request_view *
   status =
       chttp_websocket_server_handshake_validate(request, accept, sizeof(accept), out_http_status);
   if (status != SALTS_OK) return status;
+  if (connection->outbound_size > connection->server->config.network.max_send_bytes ||
+      connection->server->max_response_wire_bytes >
+          connection->server->config.network.max_send_bytes - connection->outbound_size)
+    return SALTS_ENOBUFS;
+  status = chttp_server_connection_reserve_outbound(
+      connection, connection->outbound_size + connection->server->max_response_wire_bytes);
+  if (status != SALTS_OK) return status;
   status = chttp_server_websocket_peer_init(&connection->websocket_peer, connection->server, route,
                                             connection->handle, 0,
                                             chttp_server_websocket_h1_write, connection);
@@ -319,6 +328,10 @@ int chttp_server_websocket_send_complete(chttp_server_connection *connection) {
     connection->websocket_upgrade_input_size = 0u;
     status = chttp_server_websocket_peer_feed(&connection->websocket_peer,
                                               connection->websocket_upgrade_input, size);
+    chttp_server_buffer_release(connection->server, connection->websocket_upgrade_input,
+                                connection->websocket_upgrade_input_capacity);
+    connection->websocket_upgrade_input = NULL;
+    connection->websocket_upgrade_input_capacity = 0u;
   }
   if (status == SALTS_OK && chttp_server_websocket_peer_terminal(&connection->websocket_peer) &&
       !connection->writing && connection->outbound_size == 0u &&

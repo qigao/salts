@@ -75,6 +75,8 @@ static bool cnet_client_config_valid(const cnet_client_config *config) {
       config->max_send_bytes == 0u || config->receive_buffer_bytes == 0u ||
       (config->command_buffer_bytes != 0u &&
        config->command_buffer_bytes < config->max_send_bytes) ||
+      (config->event_buffer_bytes != 0u &&
+       config->event_buffer_bytes < config->receive_buffer_bytes) ||
       ((config->tls_io_buffer_bytes == 0u) != (config->tls_handshake_timeout_ms == 0u)) ||
       (config->tls_io_buffer_bytes != 0u &&
        (config->tls_io_buffer_bytes < CNET_TLS_MIN_IO_BUFFER_BYTES ||
@@ -239,6 +241,8 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   cnet_shards_config shards_config;
   size_t max_command_payload_bytes;
   size_t command_buffer_bytes;
+  size_t max_event_payload_bytes;
+  size_t event_buffer_bytes;
   size_t index;
   int status;
 
@@ -292,6 +296,23 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   command_buffer_bytes = config->command_buffer_bytes != 0u
                              ? config->command_buffer_bytes
                              : config->command_capacity * max_command_payload_bytes;
+  max_event_payload_bytes = config->receive_buffer_bytes;
+  if (config->tls_io_buffer_bytes != 0u &&
+      max_event_payload_bytes < CNET_TLS_ALPN_NAME_MAX_BYTES)
+    max_event_payload_bytes = CNET_TLS_ALPN_NAME_MAX_BYTES;
+  if (config->event_buffer_bytes != 0u &&
+      config->event_buffer_bytes < max_event_payload_bytes) {
+    cnet_client_cleanup_init(impl);
+    return SALTS_EINVAL;
+  }
+  if (config->event_buffer_bytes == 0u &&
+      config->event_capacity > SIZE_MAX / max_event_payload_bytes) {
+    cnet_client_cleanup_init(impl);
+    return SALTS_ERANGE;
+  }
+  event_buffer_bytes = config->event_buffer_bytes != 0u
+                           ? config->event_buffer_bytes
+                           : config->event_capacity * max_event_payload_bytes;
   shards_config = (cnet_shards_config){
       .backend_kind = config->backend,
       .shard_count = 1u,
@@ -304,7 +325,8 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
       .max_state_payload_bytes =
           config->tls_io_buffer_bytes != 0u ? CNET_TLS_ALPN_NAME_MAX_BYTES : 0u,
       .max_command_payload_bytes = max_command_payload_bytes,
-      .command_buffer_bytes = command_buffer_bytes};
+      .command_buffer_bytes = command_buffer_bytes,
+      .event_buffer_bytes = event_buffer_bytes};
   status = cnet_shards_init(&impl->shards, &shards_config);
   if (status != SALTS_OK) {
     cnet_client_cleanup_init(impl);

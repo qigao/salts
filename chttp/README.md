@@ -46,6 +46,11 @@ ABI 1 程序意外装载含新公开结构布局的 ABI 2 动态库，但源码�
 - 使用系统 CSPRNG session id 的有界内存 Cookie Session，支持 get/set/remove/clear/invalidate；
 - start-line、header count、header bytes、request body、response body、request count 的硬上限。
 
+Server 的大型 payload 不在初始化时按槽位乘最大消息尺寸预留。请求体、缓冲响应体、H1/H2
+发送缓冲和 WebSocket 暂存区在需要时增长，合计受 `buffer_capacity_bytes` 硬限制；超过预算返回
+`SALTS_ENOBUFS`。零值按旧配置的逻辑最坏值计算预算，但仍不做物理预分配。可通过
+`chttp_server_get_stats()` 观察当前/峰值字节和预算拒绝次数。
+
 当前有意不提供 HTTP/3、WebSocket extension/subprotocol、通用 CONNECT route、redirect、
 compression、proxy、multipart/Range、HTTP/2 deferred response 或自动 retry。
 H1 client serializer 发送
@@ -159,6 +164,7 @@ int main(void) {
       .command_buffer_bytes = 4 * 1024 * 1024,
       .request_capacity = 256, .completion_batch_capacity = 64,
       .event_capacity = 256, .max_send_bytes = 64 * 1024,
+      .event_buffer_bytes = 2 * 1024 * 1024,
       .receive_buffer_bytes = 16 * 1024,
       .read_timeout_ms = 30000, .write_timeout_ms = 5000,
     },
@@ -179,6 +185,7 @@ int main(void) {
     .h2_output_buffer_bytes = 64 * 1024,
     .h2_hpack_dynamic_table_bytes = 4 * 1024,
     .h2_max_settings_count = 16,
+    .buffer_capacity_bytes = 32 * 1024 * 1024,
   };
   int status = chttp_server_init(&server, &config);
   int started = 0;
