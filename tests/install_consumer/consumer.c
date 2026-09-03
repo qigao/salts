@@ -245,6 +245,33 @@ int main(void) {
              : 1;
 }
 
+#elif defined(CONSUME_S3)
+  #include <s3/s3.h>
+  #include <s3/s3_bucket.h>
+  #include <s3/s3_bucket_config.h>
+  #include <s3/s3_credentials.h>
+  #include <s3/s3_multipart.h>
+  #include <s3/s3_object.h>
+  #include <s3/s3_signer.h>
+
+int main(void) {
+  s3_client client = {0};
+  s3_async_client async_client = {0};
+  s3_response response = {0};
+  s3_bucket_list buckets = {0};
+  s3_object_list objects = {0};
+  s3_multipart multipart = {0};
+  s3_signer_result signature = {0};
+  s3_response_destroy(&response);
+  s3_bucket_list_destroy(&buckets);
+  s3_object_list_destroy(&objects);
+  s3_signer_result_destroy(&signature);
+  return client.impl == NULL && async_client.impl == NULL &&
+                 s3_multipart_destroy(&multipart) == TURBO_OK && S3_MULTIPART_MAX_PARTS == 10000
+             ? 0
+             : 1;
+}
+
 #elif defined(CONSUME_CMETA)
   #include <cmeta/cmeta.h>
 

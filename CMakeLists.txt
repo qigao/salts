@@ -69,6 +69,7 @@ add_subdirectory(turbostl)
 add_subdirectory(utils)
 add_subdirectory(cflow-process)
 add_subdirectory(parser)
+add_subdirectory(s3)
 add_subdirectory(crpc)
 add_subdirectory(cflow-fs)
 

@@ -18,7 +18,7 @@ Rocida 不是另一套运行时，也不会用隐式分配和无界状态隐藏�
 | [Rocida STL](turbostl/README.md) | `Rocida::STL` / `Rocida::STLStream` | C11 类型化容器、算法，以及基于 CFlow 的现代流式 facade |
 | Platform / Concurrency | `Rocida::Platform` / `Rocida::Concurrency` | 跨平台抽象、线程池、Disruptor 与调度基础设施 |
 | [Coroutine](coroutine/README.md) / [NativeIO](native-io/README.md) | `Rocida::Coroutine` / `Rocida::NativeIO` | 有界 coroutine 执行与原生异步 I/O |
-| [CNet](cnet/README.md) / [CHTTP](chttp/README.md) / [CRPC](crpc/README.md) | `Rocida::CNet` / `Rocida::CHTTP` / `Rocida::CRPC` | 网络 transport、HTTP 与 RPC |
+| [CNet](cnet/README.md) / [CHTTP](chttp/README.md) / [CRPC](crpc/README.md) / [S3](s3/README.md) | `Rocida::CNet` / `Rocida::CHTTP` / `Rocida::CRPC` / `Rocida::S3` | 网络 transport、HTTP、RPC 与 S3 对象存储协议 |
 | Parser engines | `Rocida::JsonParser`、`Rocida::XmlParser`、`Rocida::QueryVM` 等 | JSON、YAML、TOML、XML、CSV、URI、协议解析与查询执行 |
 | Core | `Rocida::Core` | 字符串、文件、日志、正则、进程、内存与通用工具 |
 

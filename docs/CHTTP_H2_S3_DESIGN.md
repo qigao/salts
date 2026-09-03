@@ -8,6 +8,10 @@ TurboUtils。审查源为 `C:\projects\cpp\TurboHTTP` commit
 `LICENSE`、`COPYING` 或 `NOTICE`；迁移保留本节的来源、commit 与作者记录，
 不推断或新增许可文本。
 
+S3 协议边界与测试思路另外依据 TurboHTTP commit
+`5f1068f5194f94472e54a185ec51638f421d4fc5` 重建；准确的文件映射和许可事实记录在
+`s3/PROVENANCE.md`。
+
 范围包括 HTTP/2 client/server、h2c、TLS ALPN `h2`、同步 request/reply、异步
 submit/callback、共享 server handler chain、S3 SigV4、对象 CRUD、流式传输与 multipart。HTTP/3 不在范围内，
 也不得成为构建依赖或运行时 fallback。
@@ -155,12 +159,16 @@ ABI 与 handler API 无需随之改变。
 
 ## S3 一致性协议
 
-- credential provider 由调用方或 S3 client 拥有，所有权由 init 选项明确；注入的 CHTTP
-  client 始终 borrowed，并且必须活过 S3 client 与全部请求。
+- credential provider context、TLS profile 与注入的 CHTTP client 始终 borrowed，并且必须
+  活过 S3 client 与全部请求；endpoint、authority 与 region 在 init 中复制。
 - object body、stream chunk、ETag 与 parsed XML 都有明确 owning/view 形式；callback view
   在 callback 返回时失效。
 - multipart 的事实源是 upload id、part number、ETag 与已提交状态。complete 前按 part
-  number 排序并拒绝缺口/重复；任何失败保留可显式 resume/abort 的状态。
+  number 排序并拒绝缺口；HTTP 200 body 为空、格式错误或包含 `<Error>` root 时仍视为
+  protocol/service failure，handle 保持 ACTIVE 以便重试或 abort。SSE-C 的派生请求头由 handle 持有并在每个 UploadPart 重复，
+  destroy 前清零；checkpoint 只保存 key MD5 fingerprint，不保存 raw/base64 key。
+- 高层 multipart checkpoint 通过同目录临时文件、fsync 与原子 rename 更新；只有显式
+  `preserve_on_failure` 且已有有效 checkpoint 时才保留 server upload，否则尝试 abort。
 - 文件下载写入同目录临时文件，校验成功后原子 rename；失败删除临时文件，不覆盖目标。
 - access key、secret、session token、derived key、SSE-C key 与 presigned query 不写日志。
 
