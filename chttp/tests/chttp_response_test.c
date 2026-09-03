@@ -3,6 +3,24 @@
 
 #include <string.h>
 
+typedef struct chttp_response_sink_probe {
+  char data[64];
+  size_t size;
+  size_t calls;
+  int status;
+} chttp_response_sink_probe;
+
+static int chttp_response_test_sink(void *user, const void *data, size_t size) {
+  chttp_response_sink_probe *probe = (chttp_response_sink_probe *)user;
+  if (probe == NULL || (size != 0u && data == NULL) || size > sizeof(probe->data) - probe->size)
+    return TURBO_EINVAL;
+  ++probe->calls;
+  if (probe->status != TURBO_OK) return probe->status;
+  memcpy(probe->data + probe->size, data, size);
+  probe->size += size;
+  return TURBO_OK;
+}
+
 static chttp_limits chttp_response_test_limits(void) {
   const chttp_limits limits = {.max_start_line_bytes = 128u,
                                .max_header_count = 8u,
@@ -133,6 +151,35 @@ spec("CHTTP strict incremental response parser") {
     check_equal(chttp_response_parser_init(&parser, CHTTP_METHOD_GET, &limits), TURBO_OK);
     check_equal(chttp_response_parser_execute(&parser, trailing, sizeof(trailing) - 1u),
                 TURBO_EPROTO);
+    chttp_response_parser_destroy(&parser);
+  }
+
+  it("delivers body fragments to a bounded sink without retaining a body copy") {
+    static const char first[] = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhe";
+    static const char second[] = "llo";
+    chttp_response_sink_probe probe = {0};
+    const chttp_body_sink sink = {.write = chttp_response_test_sink, .user = &probe};
+    chttp_limits limits = chttp_response_test_limits();
+    chttp_response_parser parser;
+
+    check_equal(chttp_response_parser_init_with_sink(&parser, CHTTP_METHOD_GET, &limits, &sink),
+                TURBO_OK);
+    check_equal(chttp_response_parser_execute(&parser, first, sizeof(first) - 1u), TURBO_OK);
+    check_equal(chttp_response_parser_execute(&parser, second, sizeof(second) - 1u), TURBO_OK);
+    check_true(parser.complete);
+    check_equal(probe.data, "hello", 5u);
+    check_equal(probe.size, (size_t)5u);
+    check_equal(probe.calls, (size_t)2u);
+    check_null(parser.response.body);
+    check_equal(parser.response.body_size, (size_t)5u);
+    chttp_response_parser_destroy(&parser);
+
+    probe = (chttp_response_sink_probe){.status = TURBO_EIO};
+    check_equal(chttp_response_parser_init_with_sink(&parser, CHTTP_METHOD_GET, &limits, &sink),
+                TURBO_OK);
+    check_equal(chttp_response_parser_execute(&parser, first, sizeof(first) - 1u), TURBO_EIO);
+    check_equal(parser.failure_stage, "response-sink");
+    check_equal(probe.calls, (size_t)1u);
     chttp_response_parser_destroy(&parser);
   }
 }

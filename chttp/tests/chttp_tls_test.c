@@ -209,8 +209,9 @@ spec("CHTTP HTTPS adapter") {
     check_equal(chttp_server_destroy(&server), TURBO_OK);
   }
 
-  it("validates TLS profile lifecycle and HTTP/1.1 ALPN") {
+  it("validates TLS profile lifecycle and explicit HTTP ALPN") {
     static const char *h2[] = {"h2"};
+    static const char *mixed[] = {"h2", "http/1.1"};
     chttp_tls_profile profile = {0};
     cnet_tls_client_config config = {.size = sizeof(config)};
 
@@ -218,6 +219,11 @@ spec("CHTTP HTTPS adapter") {
     check_equal(chttp_tls_profile_init(&profile, NULL), TURBO_EINVAL);
     config.alpn_protocols = h2;
     config.alpn_protocol_count = 1u;
+    check_equal(chttp_tls_profile_init(&profile, &config), TURBO_OK);
+    check_not_null(profile.impl);
+    check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
+    config.alpn_protocols = mixed;
+    config.alpn_protocol_count = 2u;
     check_equal(chttp_tls_profile_init(&profile, &config), TURBO_ENOTSUP);
     check_null(profile.impl);
     config.alpn_protocols = NULL;
@@ -228,6 +234,31 @@ spec("CHTTP HTTPS adapter") {
     check_equal(chttp_tls_profile_destroy(NULL), TURBO_EINVAL);
     check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
     check_null(profile.impl);
+    check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
+  }
+
+  it("rejects an HTTP/2 TLS profile for a default HTTP/1.1 request") {
+    static const char *h2[] = {"h2"};
+    chttp_async_client client = {0};
+    chttp_tls_profile profile = {0};
+    cnet_tls_client_config tls = {
+        .size = sizeof(tls), .alpn_protocols = h2, .alpn_protocol_count = 1u};
+    chttp_client_config config = chttp_tls_test_client_config();
+    chttp_request request = {9u, 9u};
+    chttp_request_options options = {.connection_uri = "tls://127.0.0.1:443",
+                                     .authority = "localhost",
+                                     .target = "/",
+                                     .method = CHTTP_METHOD_GET,
+                                     .on_complete = chttp_tls_test_noop_complete,
+                                     .tls = &profile};
+
+    check_equal(chttp_tls_profile_init(&profile, &tls), TURBO_OK);
+    check_equal(chttp_async_client_init(&client, &config), TURBO_OK);
+    check_equal(chttp_async_client_submit(&client, &options, &request), TURBO_EPROTONOSUPPORT);
+    check_equal(request.slot, 0u);
+    check_equal(request.generation, 0u);
+    check_equal(chttp_async_client_stop(&client, CHTTP_TLS_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_async_client_destroy(&client), TURBO_OK);
     check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
   }
 

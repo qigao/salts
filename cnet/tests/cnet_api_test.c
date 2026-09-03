@@ -68,6 +68,15 @@ typedef struct cnet_api_test_listener_probe {
   unsigned char received_value;
 } cnet_api_test_listener_probe;
 
+typedef struct cnet_api_test_wake_probe {
+  cnet_client *client;
+  atomic_int started;
+  atomic_int finished;
+  int status;
+  size_t events;
+  uint64_t elapsed_ms;
+} cnet_api_test_wake_probe;
+
 #if !defined(_WIN32)
 typedef struct cnet_api_test_interrupt_probe {
   pthread_t target;
@@ -77,6 +86,15 @@ typedef struct cnet_api_test_interrupt_probe {
 #endif
 
 static TURBO_THREAD_LOCAL int cnet_api_test_thread_marker;
+
+static void cnet_api_test_blocking_poll(void *user) {
+  cnet_api_test_wake_probe *probe = (cnet_api_test_wake_probe *)user;
+  const uint64_t started_ms = turbo_monotonic_ms();
+  atomic_store_explicit(&probe->started, 1, memory_order_release);
+  probe->status = cnet_client_poll(probe->client, 1000u, &probe->events);
+  probe->elapsed_ms = turbo_monotonic_ms() - started_ms;
+  atomic_store_explicit(&probe->finished, 1, memory_order_release);
+}
 
 #if !defined(_WIN32)
 static void cnet_api_test_signal_handler(int signal_number) { (void)signal_number; }
@@ -572,6 +590,31 @@ spec("CNet public client API") {
     check_equal(cnet_client_poll(&client, 0u, &events), TURBO_OK);
     check_equal(events, (size_t)0u);
     check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_client_destroy(&client), TURBO_OK);
+  }
+
+  it("wakes an idle poll from another thread without publishing a callback") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_api_test_wake_probe probe = {.client = &client};
+    turbo_thread_t poller;
+
+    atomic_init(&probe.started, 0);
+    atomic_init(&probe.finished, 0);
+    check_equal(cnet_client_wake(NULL), TURBO_EINVAL);
+    check_equal(cnet_client_init(&client, &config), TURBO_OK);
+    check_equal(turbo_thread_create(&poller, cnet_api_test_blocking_poll, &probe), TURBO_OK);
+    while (atomic_load_explicit(&probe.started, memory_order_acquire) == 0)
+      turbo_thread_yield();
+    turbo_sleep_ms(20u);
+    check_equal(cnet_client_wake(&client), TURBO_OK);
+    check_equal(turbo_thread_join(&poller), TURBO_OK);
+    check_equal(atomic_load_explicit(&probe.finished, memory_order_acquire), 1);
+    check_equal(probe.status, TURBO_OK);
+    check_equal(probe.events, (size_t)0u);
+    check_less(probe.elapsed_ms, (uint64_t)900u);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(cnet_client_wake(&client), TURBO_ESHUTDOWN);
     check_equal(cnet_client_destroy(&client), TURBO_OK);
   }
 

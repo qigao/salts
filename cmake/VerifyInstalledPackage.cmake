@@ -33,6 +33,36 @@ if(NOT install_result EQUAL 0)
   message(FATAL_ERROR "Rocida package install failed: ${install_result}")
 endif()
 
+set(expected_chttp_abi_version 2)
+if(WIN32)
+  set(expected_chttp_runtime
+      "${install_prefix}/bin/turbo_chttp-${expected_chttp_abi_version}.dll")
+  set(expected_chttp_import_library
+      "${install_prefix}/lib/turbo_chttp-${expected_chttp_abi_version}.lib")
+  foreach(expected_chttp_file IN ITEMS
+          "${expected_chttp_runtime}"
+          "${expected_chttp_import_library}")
+    if(NOT EXISTS "${expected_chttp_file}")
+      message(FATAL_ERROR
+              "Rocida install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_file}")
+    endif()
+  endforeach()
+elseif(APPLE)
+  set(expected_chttp_runtime
+      "${install_prefix}/lib/libturbo_chttp.${expected_chttp_abi_version}.dylib")
+  if(NOT EXISTS "${expected_chttp_runtime}")
+    message(FATAL_ERROR
+            "Rocida install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_runtime}")
+  endif()
+else()
+  set(expected_chttp_runtime
+      "${install_prefix}/lib/libturbo_chttp.so.${expected_chttp_abi_version}")
+  if(NOT EXISTS "${expected_chttp_runtime}")
+    message(FATAL_ERROR
+            "Rocida install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_runtime}")
+  endif()
+endif()
+
 foreach(required_package_file IN ITEMS RocidaConfig.cmake RocidaTargets.cmake)
   if(NOT EXISTS
      "${install_prefix}/lib/cmake/Rocida/${required_package_file}")

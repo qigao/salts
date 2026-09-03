@@ -49,6 +49,7 @@ struct cnet_client_impl {
   uint32_t write_timeout_ms;
   uint32_t tls_handshake_timeout_ms;
   atomic_int callback_error;
+  atomic_int external_wake_pending;
   size_t poll_callback_count;
   bool admission_open;
   bool poll_active;
@@ -259,6 +260,7 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   impl->tls_handshake_timeout_ms = config->tls_handshake_timeout_ms;
   impl->admission_open = true;
   atomic_init(&impl->callback_error, TURBO_OK);
+  atomic_init(&impl->external_wake_pending, 0);
   turbo_mutex_init(&impl->lock);
   impl->records = (cnet_client_record *)calloc(impl->record_count, sizeof(*impl->records));
   if (impl->records == NULL) {
@@ -629,10 +631,20 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
   if (status != TURBO_OK) return status;
 
   for (;;) {
+    bool externally_woken = false;
+    if (atomic_exchange_explicit(&impl->external_wake_pending, 0, memory_order_acq_rel) != 0) break;
     status = cnet_shards_poll(&impl->shards, remaining_ms);
     if (status == TURBO_OK)
       status = atomic_load_explicit(&impl->callback_error, memory_order_acquire);
-    if (status != TURBO_OK || impl->poll_callback_count != 0u || timeout_ms == 0u) break;
+    /* A callback may publish a wake after the backend selected its callback
+       event. Preserve that edge for the next poll so native wake coalescing
+       cannot hide later external work. */
+    if (status == TURBO_OK && impl->poll_callback_count == 0u)
+      externally_woken =
+          atomic_exchange_explicit(&impl->external_wake_pending, 0, memory_order_acq_rel) != 0;
+    if (status != TURBO_OK || impl->poll_callback_count != 0u || timeout_ms == 0u ||
+        externally_woken)
+      break;
     {
       const uint64_t elapsed_ms = turbo_monotonic_ms() - started_ms;
       if (elapsed_ms >= timeout_ms) break;
@@ -645,6 +657,18 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
   impl->poll_active = false;
   turbo_mutex_unlock(&impl->lock);
   return status;
+}
+
+int cnet_client_wake(cnet_client *client) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  bool admission_open;
+  if (impl == NULL) return TURBO_EINVAL;
+  turbo_mutex_lock(&impl->lock);
+  admission_open = impl->admission_open && !impl->stopped;
+  turbo_mutex_unlock(&impl->lock);
+  if (!admission_open) return TURBO_ESHUTDOWN;
+  atomic_store_explicit(&impl->external_wake_pending, 1, memory_order_release);
+  return cnet_shards_wake(&impl->shards);
 }
 
 int cnet_client_stop(cnet_client *client, uint32_t timeout_ms) {

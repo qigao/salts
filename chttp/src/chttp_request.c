@@ -150,6 +150,7 @@ int chttp_request_build(const chttp_request_options *options, const chttp_limits
   static const char http_suffix[] = " HTTP/1.1\r\n";
   static const char host_prefix[] = "Host: ";
   static const char length_prefix[] = "Content-Length: ";
+  static const char chunked_header[] = "Transfer-Encoding: chunked\r\n";
   static const char keep_alive_header[] = "Connection: keep-alive\r\n";
   const char *method_name;
   size_t method_size;
@@ -158,6 +159,8 @@ int chttp_request_build(const chttp_request_options *options, const chttp_limits
   size_t header_bytes = 0u;
   size_t request_line_bytes;
   size_t total_size;
+  size_t serialized_body_size;
+  size_t declared_body_size;
   size_t index;
   char body_size_text[3u * sizeof(size_t) + 1u];
   int body_size_chars;
@@ -170,9 +173,17 @@ int chttp_request_build(const chttp_request_options *options, const chttp_limits
   *out_size = 0u;
   if (options == NULL || limits == NULL || options->connection_uri == NULL ||
       options->on_complete == NULL || (options->header_count != 0u && options->headers == NULL) ||
-      (options->body_size != 0u && options->body == NULL))
+      (options->body_size != 0u && options->body == NULL) ||
+      (options->body_source != NULL &&
+       (options->body != NULL || options->body_size != 0u || options->body_source->read == NULL ||
+        (options->body_source->content_length_known != 0 &&
+         options->body_source->content_length_known != 1))))
     return TURBO_EINVAL;
-  if (options->body_size > limits->max_request_body_bytes) return TURBO_EMSGSIZE;
+  declared_body_size = options->body_source != NULL && options->body_source->content_length_known
+                           ? options->body_source->content_length
+                           : options->body_size;
+  serialized_body_size = options->body_source == NULL ? options->body_size : 0u;
+  if (declared_body_size > limits->max_request_body_bytes) return TURBO_EMSGSIZE;
   if (options->header_count > SIZE_MAX - CHTTP_GENERATED_HEADER_COUNT ||
       options->header_count + CHTTP_GENERATED_HEADER_COUNT > limits->max_header_count)
     return TURBO_EMSGSIZE;
@@ -192,14 +203,20 @@ int chttp_request_build(const chttp_request_options *options, const chttp_limits
     return TURBO_EMSGSIZE;
   if (request_line_bytes > limits->max_start_line_bytes) return TURBO_EMSGSIZE;
 
-  body_size_chars = snprintf(body_size_text, sizeof(body_size_text), "%zu", options->body_size);
+  body_size_chars = snprintf(body_size_text, sizeof(body_size_text), "%zu", declared_body_size);
   if (body_size_chars <= 0 || (size_t)body_size_chars >= sizeof(body_size_text))
     return TURBO_ERANGE;
   if (!chttp_add_header_size(sizeof("Host") - 1u, authority_size, &header_bytes) ||
-      !chttp_add_header_size(sizeof("Content-Length") - 1u, (size_t)body_size_chars,
-                             &header_bytes) ||
       !chttp_add_header_size(sizeof("Connection") - 1u, sizeof("keep-alive") - 1u, &header_bytes))
     return TURBO_EMSGSIZE;
+  if (options->body_source != NULL && !options->body_source->content_length_known) {
+    if (!chttp_add_header_size(sizeof("Transfer-Encoding") - 1u, sizeof("chunked") - 1u,
+                               &header_bytes))
+      return TURBO_EMSGSIZE;
+  } else if (!chttp_add_header_size(sizeof("Content-Length") - 1u, (size_t)body_size_chars,
+                                    &header_bytes)) {
+    return TURBO_EMSGSIZE;
+  }
 
   for (index = 0u; index < options->header_count; ++index) {
     size_t name_size = 0u;
@@ -212,7 +229,7 @@ int chttp_request_build(const chttp_request_options *options, const chttp_limits
   if (header_bytes > limits->max_header_bytes) return TURBO_EMSGSIZE;
   if (!chttp_size_add(request_line_bytes, header_bytes, &total_size) ||
       !chttp_size_add(total_size, 2u, &total_size) ||
-      !chttp_size_add(total_size, options->body_size, &total_size) ||
+      !chttp_size_add(total_size, serialized_body_size, &total_size) ||
       total_size > limits->max_request_bytes)
     return TURBO_EMSGSIZE;
 
@@ -226,9 +243,13 @@ int chttp_request_build(const chttp_request_options *options, const chttp_limits
   cursor = chttp_copy(cursor, host_prefix, sizeof(host_prefix) - 1u);
   cursor = chttp_copy(cursor, options->authority, authority_size);
   cursor = chttp_copy(cursor, "\r\n", 2u);
-  cursor = chttp_copy(cursor, length_prefix, sizeof(length_prefix) - 1u);
-  cursor = chttp_copy(cursor, body_size_text, (size_t)body_size_chars);
-  cursor = chttp_copy(cursor, "\r\n", 2u);
+  if (options->body_source != NULL && !options->body_source->content_length_known) {
+    cursor = chttp_copy(cursor, chunked_header, sizeof(chunked_header) - 1u);
+  } else {
+    cursor = chttp_copy(cursor, length_prefix, sizeof(length_prefix) - 1u);
+    cursor = chttp_copy(cursor, body_size_text, (size_t)body_size_chars);
+    cursor = chttp_copy(cursor, "\r\n", 2u);
+  }
   cursor = chttp_copy(cursor, keep_alive_header, sizeof(keep_alive_header) - 1u);
   for (index = 0u; index < options->header_count; ++index) {
     const size_t name_size = strlen(options->headers[index].name);
@@ -239,7 +260,7 @@ int chttp_request_build(const chttp_request_options *options, const chttp_limits
     cursor = chttp_copy(cursor, "\r\n", 2u);
   }
   cursor = chttp_copy(cursor, "\r\n", 2u);
-  (void)chttp_copy(cursor, options->body, options->body_size);
+  (void)chttp_copy(cursor, options->body, serialized_body_size);
   *out_data = data;
   *out_size = total_size;
   return TURBO_OK;

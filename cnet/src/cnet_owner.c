@@ -1502,6 +1502,12 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   }
 }
 
+int cnet_owner_wake(cnet_owner *owner) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  if (impl == NULL) return TURBO_EINVAL;
+  return native_io_backend_wake(&impl->backend);
+}
+
 bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats) {
   const cnet_owner_impl *impl = owner != NULL ? (const cnet_owner_impl *)owner->impl : NULL;
   return impl != NULL && native_io_backend_get_coroutine_stats(&impl->backend, out_stats);

@@ -156,7 +156,7 @@ static const char *chttp_session_cookie_value(const chttp_server_impl *server,
   return NULL;
 }
 
-void chttp_session_request_begin(chttp_server_connection *connection,
+void chttp_session_request_begin(chttp_server_request_state *state,
                                  const chttp_server_request_view *request) {
   chttp_server_impl *server;
   chttp_session_context *context;
@@ -164,11 +164,11 @@ void chttp_session_request_begin(chttp_server_connection *connection,
   size_t id_size = 0u;
   size_t index;
   uint64_t now_ms;
-  if (connection == NULL || connection->server == NULL) return;
-  server = connection->server;
-  context = &connection->session_context;
+  if (state == NULL || state->server == NULL) return;
+  server = state->server;
+  context = &state->session_context;
   *context = (chttp_session_context){.server = server};
-  connection->session.impl = context;
+  state->session.impl = context;
   if (server->config.session_capacity == 0u) return;
   now_ms = turbo_monotonic_ms();
   chttp_session_expire(server, now_ms);
@@ -320,9 +320,9 @@ int chttp_session_invalidate(chttp_session *session) {
   return TURBO_OK;
 }
 
-static int chttp_session_set_cookie(chttp_server_connection *connection, const char *id,
+static int chttp_session_set_cookie(chttp_server_request_state *state, const char *id,
                                     uint32_t max_age_seconds) {
-  chttp_server_impl *server = connection->server;
+  chttp_server_impl *server = state->server;
   char cookie[CHTTP_SESSION_COOKIE_BYTES];
   int cookie_size = snprintf(cookie, sizeof(cookie),
                              "%s=%s; Path=/; HttpOnly; SameSite=Lax; "
@@ -330,23 +330,22 @@ static int chttp_session_set_cookie(chttp_server_connection *connection, const c
                              server->session_cookie_name, id, (unsigned int)max_age_seconds,
                              server->config.session_cookie_secure ? "; Secure" : "");
   if (cookie_size < 0 || (size_t)cookie_size >= sizeof(cookie)) return TURBO_EMSGSIZE;
-  return chttp_server_response_set_header(&connection->response, "Set-Cookie", cookie);
+  return chttp_server_response_set_header(&state->response, "Set-Cookie", cookie);
 }
 
-int chttp_session_request_finish(chttp_server_connection *connection) {
+int chttp_session_request_finish(chttp_server_request_state *state) {
   chttp_session_context *context;
   uint32_t max_age_seconds;
   int status;
-  if (connection == NULL || connection->server == NULL ||
-      connection->server->config.session_capacity == 0u)
+  if (state == NULL || state->server == NULL || state->server->config.session_capacity == 0u)
     return TURBO_OK;
-  context = &connection->session_context;
-  if (context->invalidated) return chttp_session_set_cookie(connection, "", 0u);
+  context = &state->session_context;
+  if (context->invalidated) return chttp_session_set_cookie(state, "", 0u);
   if (context->record == NULL) return TURBO_OK;
-  max_age_seconds = connection->server->config.session_idle_timeout_ms / 1000u;
-  if (connection->server->config.session_idle_timeout_ms % 1000u != 0u) ++max_age_seconds;
+  max_age_seconds = state->server->config.session_idle_timeout_ms / 1000u;
+  if (state->server->config.session_idle_timeout_ms % 1000u != 0u) ++max_age_seconds;
   if (max_age_seconds == 0u) max_age_seconds = 1u;
-  status = chttp_session_set_cookie(connection, context->record->id, max_age_seconds);
+  status = chttp_session_set_cookie(state, context->record->id, max_age_seconds);
   if (status != TURBO_OK && context->created) {
     chttp_session_record_clear(context->server, context->record);
     context->record = NULL;
@@ -354,12 +353,11 @@ int chttp_session_request_finish(chttp_server_connection *connection) {
   return status;
 }
 
-void chttp_session_request_abort(chttp_server_connection *connection) {
+void chttp_session_request_abort(chttp_server_request_state *state) {
   chttp_session_context *context;
-  if (connection == NULL || connection->server == NULL ||
-      connection->server->config.session_capacity == 0u)
+  if (state == NULL || state->server == NULL || state->server->config.session_capacity == 0u)
     return;
-  context = &connection->session_context;
+  context = &state->session_context;
   if (context->created && context->record != NULL)
     chttp_session_record_clear(context->server, context->record);
   context->record = NULL;

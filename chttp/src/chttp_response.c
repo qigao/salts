@@ -1,5 +1,7 @@
 #include "chttp_internal.h"
 
+#include "chttp_file_sink.h"
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,8 +51,10 @@ static bool chttp_response_wire_add(chttp_response_parser *parser, size_t size) 
 }
 
 static void chttp_response_reset_message(chttp_response_parser *parser) {
-  parser->response = (chttp_response_view){
-      .headers = parser->headers, .reason = parser->reason_storage, .body = parser->body_storage};
+  parser->response =
+      (chttp_response_view){.headers = parser->headers,
+                            .reason = parser->reason_storage,
+                            .body = parser->body_sink_enabled ? NULL : parser->body_storage};
   parser->header_storage_used = 0u;
   parser->header_wire_bytes = 0u;
   parser->field_offset = 0u;
@@ -178,12 +182,25 @@ static int chttp_response_on_headers_complete(llhttp_t *llparser) {
 
 static int chttp_response_on_body(llhttp_t *llparser, const char *at, size_t length) {
   chttp_response_parser *parser = chttp_parser_context(llparser);
+  int status;
   if (parser == NULL || (length != 0u && at == NULL)) return HPE_USER;
   if (parser->response.body_size > parser->max_response_body_bytes ||
       length > parser->max_response_body_bytes - parser->response.body_size)
     return chttp_response_fail_data(parser, TURBO_EMSGSIZE, "body",
                                     "HTTP response body exceeds configured bound");
-  if (length != 0u) memcpy(parser->body_storage + parser->response.body_size, at, length);
+  if (length != 0u && parser->file_sink_transfer != NULL) {
+    status = chttp_file_sink_transfer_append(parser->file_sink_transfer, at, length);
+    if (status != TURBO_OK)
+      return chttp_response_fail_data(parser, status, "file-write-buffer",
+                                      "HTTP file sink could not retain body bytes");
+  } else if (length != 0u && parser->body_sink_enabled) {
+    status = parser->body_sink.write(parser->body_sink.user, at, length);
+    if (status != TURBO_OK)
+      return chttp_response_fail_data(parser, status, "response-sink",
+                                      "HTTP response sink rejected body bytes");
+  } else if (length != 0u) {
+    memcpy(parser->body_storage + parser->response.body_size, at, length);
+  }
   parser->response.body_size += length;
   return 0;
 }
@@ -205,11 +222,17 @@ static int chttp_response_on_message_complete(llhttp_t *llparser) {
 
 int chttp_response_parser_init(chttp_response_parser *parser, chttp_method method,
                                const chttp_limits *limits) {
+  return chttp_response_parser_init_with_sink(parser, method, limits, NULL);
+}
+
+int chttp_response_parser_init_with_sink(chttp_response_parser *parser, chttp_method method,
+                                         const chttp_limits *limits, const chttp_body_sink *sink) {
   size_t storage_capacity;
   if (parser == NULL || limits == NULL ||
       limits->max_start_line_bytes <= CHTTP_RESPONSE_LINE_OVERHEAD_BYTES ||
       limits->max_header_count == 0u || limits->max_header_bytes == 0u ||
-      limits->max_response_body_bytes == 0u || limits->max_informational_responses == 0u)
+      limits->max_response_body_bytes == 0u || limits->max_informational_responses == 0u ||
+      (sink != NULL && sink->write == NULL))
     return TURBO_EINVAL;
   if (limits->max_header_bytes == SIZE_MAX || limits->max_start_line_bytes == SIZE_MAX ||
       limits->max_header_count > (SIZE_MAX - limits->max_header_bytes - 1u) / 2u)
@@ -220,9 +243,10 @@ int chttp_response_parser_init(chttp_response_parser *parser, chttp_method metho
   parser->header_storage = (char *)malloc(storage_capacity);
   parser->reason_storage =
       (char *)malloc(limits->max_start_line_bytes - CHTTP_RESPONSE_LINE_OVERHEAD_BYTES + 1u);
-  parser->body_storage = (unsigned char *)malloc(limits->max_response_body_bytes);
+  parser->body_storage =
+      sink == NULL ? (unsigned char *)malloc(limits->max_response_body_bytes) : NULL;
   if (parser->headers == NULL || parser->header_storage == NULL || parser->reason_storage == NULL ||
-      parser->body_storage == NULL) {
+      (sink == NULL && parser->body_storage == NULL)) {
     chttp_response_parser_destroy(parser);
     return TURBO_ENOMEM;
   }
@@ -233,6 +257,10 @@ int chttp_response_parser_init(chttp_response_parser *parser, chttp_method metho
   parser->max_reason_bytes = limits->max_start_line_bytes - CHTTP_RESPONSE_LINE_OVERHEAD_BYTES;
   parser->max_informational_responses = limits->max_informational_responses;
   parser->request_method = method;
+  if (sink != NULL) {
+    parser->body_sink = *sink;
+    parser->body_sink_enabled = true;
+  }
   llhttp_settings_init(&parser->settings);
   parser->settings.on_message_begin = chttp_response_on_message_begin;
   parser->settings.on_status = chttp_response_on_status;

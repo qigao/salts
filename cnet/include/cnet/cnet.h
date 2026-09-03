@@ -244,6 +244,16 @@ int cnet_close(cnet_client *client, cnet_connection connection);
 int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_events);
 
 /**
+ * Wakes a thread blocked in cnet_client_poll without publishing a callback or
+ * changing connection state. This is the only progress-control operation that
+ * may be called concurrently from a non-owner thread. Concurrent wakes are
+ * coalesced. Wake callers must stop before client destroy.
+ *
+ * @return TURBO_OK, TURBO_EINVAL, TURBO_ESHUTDOWN, or a native wake error.
+ */
+int cnet_client_wake(cnet_client *client);
+
+/**
  * Closes admission and live connections, then drives terminal callbacks and
  * coroutine completions to quiescence within `timeout_ms`. Retry after
  * `TURBO_ETIMEDOUT`.

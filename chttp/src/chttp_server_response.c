@@ -56,36 +56,56 @@ static int chttp_server_response_storage_copy(chttp_server_response_builder *bui
 int chttp_server_response_builder_init(chttp_server_response_builder *builder,
                                        const chttp_server_config *config) {
   if (builder == NULL || config == NULL || config->max_response_header_count == 0u ||
-      config->max_response_header_bytes == 0u || config->max_response_body_bytes == 0u)
+      config->max_response_header_bytes == 0u || config->max_response_body_bytes == 0u ||
+      config->max_buffered_response_body_bytes == 0u)
     return TURBO_EINVAL;
   if (config->max_response_header_count > SIZE_MAX / sizeof(*builder->headers)) return TURBO_ERANGE;
   builder->headers =
       (chttp_header *)calloc(config->max_response_header_count, sizeof(*builder->headers));
   builder->header_storage = (char *)malloc(config->max_response_header_bytes);
-  builder->body = (unsigned char *)malloc(config->max_response_body_bytes);
+  builder->body = (unsigned char *)malloc(config->max_buffered_response_body_bytes);
   if (builder->headers == NULL || builder->header_storage == NULL || builder->body == NULL) {
     chttp_server_response_builder_destroy(builder);
     return TURBO_ENOMEM;
   }
   builder->header_capacity = config->max_response_header_count;
   builder->header_storage_capacity = config->max_response_header_bytes;
-  builder->body_capacity = config->max_response_body_bytes;
+  builder->body_capacity = config->max_buffered_response_body_bytes;
+  builder->source_capacity = config->max_response_body_bytes;
   chttp_server_response_builder_reset(builder);
   return TURBO_OK;
 }
 
 void chttp_server_response_builder_reset(chttp_server_response_builder *builder) {
   if (builder == NULL) return;
+  chttp_server_response_builder_close_source(builder, TURBO_ECANCELED);
   builder->header_count = 0u;
   builder->header_storage_used = 0u;
   builder->header_wire_bytes = 0u;
   builder->body_size = 0u;
+  builder->source_transferred = 0u;
   builder->status_code = 0u;
   builder->replied = false;
 }
 
+void chttp_server_response_builder_close_source(chttp_server_response_builder *builder,
+                                                int status) {
+  void (*cleanup)(void *, int);
+  void *cleanup_user;
+  if (builder == NULL || !builder->source_enabled) return;
+  cleanup = builder->source_cleanup;
+  cleanup_user = builder->source_cleanup_user;
+  builder->source_enabled = false;
+  builder->body_source = (chttp_body_source){0};
+  builder->source_cleanup = NULL;
+  builder->source_cleanup_user = NULL;
+  builder->file_transfer = NULL;
+  if (cleanup != NULL) cleanup(cleanup_user, status);
+}
+
 void chttp_server_response_builder_destroy(chttp_server_response_builder *builder) {
   if (builder == NULL) return;
+  chttp_server_response_builder_close_source(builder, TURBO_ECANCELED);
   free(builder->body);
   free(builder->header_storage);
   free(builder->headers);
@@ -107,7 +127,11 @@ int chttp_server_response_set_header(chttp_server_response *response, const char
     return TURBO_EINVAL;
   if (chttp_server_response_ascii_equal(name, "Content-Length") ||
       chttp_server_response_ascii_equal(name, "Connection") ||
-      chttp_server_response_ascii_equal(name, "Transfer-Encoding"))
+      chttp_server_response_ascii_equal(name, "Transfer-Encoding") ||
+      chttp_server_response_ascii_equal(name, "Upgrade") ||
+      chttp_server_response_ascii_equal(name, "Sec-WebSocket-Accept") ||
+      chttp_server_response_ascii_equal(name, "Sec-WebSocket-Extensions") ||
+      chttp_server_response_ascii_equal(name, "Sec-WebSocket-Protocol"))
     return TURBO_EPERM;
   builder = (chttp_server_response_builder *)response->impl;
   name_size = strlen(name);
@@ -166,6 +190,43 @@ int chttp_server_reply(chttp_server_response *response, unsigned int status_code
   builder->status_code = status_code;
   builder->replied = true;
   return TURBO_OK;
+}
+
+int chttp_server_response_source_owned(chttp_server_response *response, unsigned int status_code,
+                                       const char *content_type, const chttp_body_source *source,
+                                       void (*cleanup)(void *user, int status),
+                                       void *cleanup_user) {
+  chttp_server_response_builder *builder;
+  int status;
+  if (response == NULL || response->impl == NULL || status_code < 200u || status_code > 599u ||
+      (content_type != NULL && content_type[0] == '\0') || source == NULL || source->read == NULL ||
+      (source->content_length_known != 0 && source->content_length_known != 1) ||
+      status_code == 204u || status_code == 205u || status_code == 304u)
+    return TURBO_EINVAL;
+  builder = (chttp_server_response_builder *)response->impl;
+  if (builder->replied) return TURBO_EALREADY;
+  if (source->content_length_known && source->content_length > builder->source_capacity)
+    return TURBO_EMSGSIZE;
+  if (content_type != NULL) {
+    status = chttp_server_response_set_header(response, "Content-Type", content_type);
+    if (status != TURBO_OK) return status;
+  }
+  builder->body_source = *source;
+  builder->file_transfer = NULL;
+  builder->source_cleanup = cleanup;
+  builder->source_cleanup_user = cleanup_user;
+  builder->body_size = source->content_length_known ? source->content_length : 0u;
+  builder->source_transferred = 0u;
+  builder->status_code = status_code;
+  builder->source_enabled = true;
+  builder->replied = true;
+  return TURBO_OK;
+}
+
+int chttp_server_response_source(chttp_server_response *response, unsigned int status_code,
+                                 const char *content_type, const chttp_body_source *source) {
+  return chttp_server_response_source_owned(response, status_code, content_type, source, NULL,
+                                            NULL);
 }
 
 static const char *chttp_server_reason(unsigned int status_code) {
@@ -232,7 +293,8 @@ int chttp_server_response_serialize(const chttp_server_response_builder *builder
       !builder->replied)
     return TURBO_EINVAL;
   initial_size = *inout_size;
-  body_size = request->method == CHTTP_METHOD_HEAD ? 0u : builder->body_size;
+  body_size =
+      request->method == CHTTP_METHOD_HEAD || builder->source_enabled ? 0u : builder->body_size;
   line_size =
       snprintf(line, sizeof(line), "HTTP/%u.%u %u %s\r\n", request->http_major, request->http_minor,
                builder->status_code, chttp_server_reason(builder->status_code));
@@ -256,6 +318,13 @@ int chttp_server_response_serialize(const chttp_server_response_builder *builder
     if (builder->status_code == 204u || builder->status_code == 304u)
       line_size = snprintf(line, sizeof(line), "Connection: %s\r\n\r\n",
                            request->protocol_keep_alive ? "keep-alive" : "close");
+    else if (builder->source_enabled && !builder->body_source.content_length_known &&
+             request->http_major == 1u && request->http_minor == 1u)
+      line_size =
+          snprintf(line, sizeof(line), "Transfer-Encoding: chunked\r\nConnection: %s\r\n\r\n",
+                   request->protocol_keep_alive ? "keep-alive" : "close");
+    else if (builder->source_enabled && !builder->body_source.content_length_known)
+      line_size = snprintf(line, sizeof(line), "Connection: close\r\n\r\n");
     else
       line_size =
           snprintf(line, sizeof(line), "Content-Length: %zu\r\nConnection: %s\r\n\r\n",
@@ -279,10 +348,17 @@ int chttp_server_error_serialize(unsigned int status_code, unsigned char *output
   int wire_size;
   if (output == NULL || inout_size == NULL || status_code < 400u || status_code > 599u)
     return TURBO_EINVAL;
-  wire_size = snprintf(wire, sizeof(wire),
-                       "HTTP/1.1 %u %s\r\nContent-Type: text/plain\r\nContent-Length: %zu\r\n"
-                       "Connection: close\r\n\r\n%s",
-                       status_code, reason, strlen(reason), reason);
+  if (status_code == 426u)
+    wire_size =
+        snprintf(wire, sizeof(wire),
+                 "HTTP/1.1 426 %s\r\nSec-WebSocket-Version: 13\r\nContent-Type: text/plain\r\n"
+                 "Content-Length: %zu\r\nConnection: close\r\n\r\n%s",
+                 reason, strlen(reason), reason);
+  else
+    wire_size = snprintf(wire, sizeof(wire),
+                         "HTTP/1.1 %u %s\r\nContent-Type: text/plain\r\nContent-Length: %zu\r\n"
+                         "Connection: close\r\n\r\n%s",
+                         status_code, reason, strlen(reason), reason);
   if (wire_size < 0 || (size_t)wire_size >= sizeof(wire)) return TURBO_EMSGSIZE;
   return chttp_server_output_append(output, output_capacity, inout_size, wire, (size_t)wire_size);
 }

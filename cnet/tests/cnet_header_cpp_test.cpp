@@ -20,6 +20,9 @@ static_assert(CNET_MESSAGE_BYTES != CNET_MESSAGE_DATAGRAM,
               "stream and datagram receive values must remain distinct");
 static_assert(offsetof(cnet_observer, on_send) > offsetof(cnet_observer, user),
               "send completion must remain appended after legacy observer fields");
+using cnet_client_wake_function = int (*)(cnet_client *);
+static_assert(std::is_same<decltype(&cnet_client_wake), cnet_client_wake_function>::value,
+              "client wake must keep its C linkage signature");
 
 int main() {
   cnet_client client{};

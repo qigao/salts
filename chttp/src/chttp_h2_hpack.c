@@ -778,6 +778,7 @@ int chttp_h2_hpack_decode(chttp_h2_hpack *h, const uint8_t *in, size_t in_len, s
                           size_t max_header_list_size) {
   size_t pos = 0;
   size_t list_bytes = 0;
+  int header_list_too_large = 0;
 
   if (!h || !in || !consumed || in_len > h->max_header_block_bytes) {
     return -1;
@@ -798,10 +799,10 @@ int chttp_h2_hpack_decode(chttp_h2_hpack *h, const uint8_t *in, size_t in_len, s
       if (table_get(h, index, &name, &name_len, &value, &value_len) != 0) {
         return -1;
       }
-      if (hpack_add_header_list_size(&list_bytes, name_len, value_len, max_header_list_size) != 0) {
-        return -2; /* header list too large */
-      }
-      if (cb && cb(user_data, name, name_len, value, value_len) != 0) {
+      if (!header_list_too_large &&
+          hpack_add_header_list_size(&list_bytes, name_len, value_len, max_header_list_size) != 0)
+        header_list_too_large = 1;
+      if (!header_list_too_large && cb && cb(user_data, name, name_len, value, value_len) != 0) {
         return -3; /* callback aborted */
       }
     } else if (b & 0x40u) {
@@ -837,12 +838,10 @@ int chttp_h2_hpack_decode(chttp_h2_hpack *h, const uint8_t *in, size_t in_len, s
           return -1;
         }
       }
-      if (hpack_add_header_list_size(&list_bytes, name_len, value_len, max_header_list_size) != 0) {
-        if (n_owned) free((void *)name);
-        if (v_owned) free((void *)value);
-        return -2;
-      }
-      if (cb && cb(user_data, name, name_len, value, value_len) != 0) {
+      if (!header_list_too_large &&
+          hpack_add_header_list_size(&list_bytes, name_len, value_len, max_header_list_size) != 0)
+        header_list_too_large = 1;
+      if (!header_list_too_large && cb && cb(user_data, name, name_len, value, value_len) != 0) {
         if (n_owned) free((void *)name);
         if (v_owned) free((void *)value);
         return -3;
@@ -891,12 +890,10 @@ int chttp_h2_hpack_decode(chttp_h2_hpack *h, const uint8_t *in, size_t in_len, s
           return -1;
         }
       }
-      if (hpack_add_header_list_size(&list_bytes, name_len, value_len, max_header_list_size) != 0) {
-        if (n_owned) free((void *)name);
-        if (v_owned) free((void *)value);
-        return -2;
-      }
-      if (cb && cb(user_data, name, name_len, value, value_len) != 0) {
+      if (!header_list_too_large &&
+          hpack_add_header_list_size(&list_bytes, name_len, value_len, max_header_list_size) != 0)
+        header_list_too_large = 1;
+      if (!header_list_too_large && cb && cb(user_data, name, name_len, value, value_len) != 0) {
         if (n_owned) free((void *)name);
         if (v_owned) free((void *)value);
         return -3;
@@ -906,5 +903,5 @@ int chttp_h2_hpack_decode(chttp_h2_hpack *h, const uint8_t *in, size_t in_len, s
     }
   }
   *consumed = pos;
-  return 0;
+  return header_list_too_large ? -2 : 0;
 }

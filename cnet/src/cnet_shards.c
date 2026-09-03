@@ -189,6 +189,12 @@ int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms) {
   return first_status != TURBO_OK ? first_status : status;
 }
 
+int cnet_shards_wake(cnet_shards *shards) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  if (impl == NULL) return TURBO_EINVAL;
+  return cnet_owner_wake(&impl->records[0].owner);
+}
+
 int cnet_shards_bind_event_sink(cnet_shards *shards, cnet_shards_event_sink_fn sink,
                                 void *context) {
   cnet_shards_impl *impl = cnet_shards_get(shards);

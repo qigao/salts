@@ -43,6 +43,9 @@ bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_l
 /** Advances the single owner on the calling thread. */
 int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms);
 
+/** Thread-safe advisory wake for the single owner blocked in poll. */
+int cnet_shards_wake(cnet_shards *shards);
+
 /**
  * Binds the single event sink called directly by the caller-owned progress loop. The sink
  * must copy or retain event data before returning and must never block.

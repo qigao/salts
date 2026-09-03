@@ -13,6 +13,15 @@ static void chttp_request_test_complete(void *user, chttp_request request,
   (void)error;
 }
 
+static int chttp_request_test_read(void *user, void *buffer, size_t capacity, size_t *out_size) {
+  (void)user;
+  (void)buffer;
+  (void)capacity;
+  if (out_size == NULL) return TURBO_EINVAL;
+  *out_size = 0u;
+  return TURBO_OK;
+}
+
 static chttp_limits chttp_request_test_limits(void) {
   const chttp_limits limits = {.max_start_line_bytes = 128u,
                                .max_header_count = 8u,
@@ -97,5 +106,34 @@ spec("CHTTP bounded request serializer") {
     limits = chttp_request_test_limits();
     limits.max_request_body_bytes = 3u;
     check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EMSGSIZE);
+  }
+
+  it("validates a borrowed streaming source before admission") {
+    chttp_body_source source = {
+        .read = chttp_request_test_read, .content_length = 65u, .content_length_known = 1};
+    chttp_request_options options = {.connection_uri = "tcp://127.0.0.1:80",
+                                     .authority = "example.test",
+                                     .target = "/upload",
+                                     .method = CHTTP_METHOD_POST,
+                                     .body_source = &source,
+                                     .on_complete = chttp_request_test_complete};
+    chttp_limits limits = chttp_request_test_limits();
+    unsigned char *data = NULL;
+    size_t size = 0u;
+
+    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EMSGSIZE);
+    source.content_length = 4u;
+    options.body = "body";
+    options.body_size = 4u;
+    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EINVAL);
+    options.body = NULL;
+    options.body_size = 0u;
+    source.read = NULL;
+    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EINVAL);
+    source.read = chttp_request_test_read;
+    source.content_length_known = 2;
+    check_equal(chttp_request_build(&options, &limits, &data, &size), TURBO_EINVAL);
+    check_null(data);
+    check_equal(size, (size_t)0u);
   }
 }
