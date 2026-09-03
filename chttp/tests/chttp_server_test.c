@@ -57,6 +57,105 @@ typedef struct chttp_server_test_large_probe {
   atomic_int calls;
 } chttp_server_test_large_probe;
 
+typedef struct chttp_server_stream_probe {
+  unsigned char data[64];
+  size_t size;
+  size_t writes;
+  size_t opens;
+  size_t closes;
+  int close_status;
+  int handler_called;
+  int fail_write;
+} chttp_server_stream_probe;
+
+typedef struct chttp_server_response_source_probe {
+  const unsigned char *data;
+  size_t size;
+  size_t offset;
+  size_t chunk_size;
+  size_t calls;
+  int content_length_known;
+  int fail_read;
+} chttp_server_response_source_probe;
+
+static int chttp_server_stream_write(void *user, const void *data, size_t size) {
+  chttp_server_stream_probe *probe = (chttp_server_stream_probe *)user;
+  if (probe == NULL || (data == NULL && size != 0u) || size > sizeof(probe->data) - probe->size)
+    return TURBO_EMSGSIZE;
+  ++probe->writes;
+  if (probe->fail_write) return TURBO_EIO;
+  memcpy(probe->data + probe->size, data, size);
+  probe->size += size;
+  return TURBO_OK;
+}
+
+static int chttp_server_stream_open(void *user, const chttp_server_request_view *request,
+                                    chttp_body_sink *out_sink) {
+  chttp_server_stream_probe *probe = (chttp_server_stream_probe *)user;
+  if (probe == NULL || request == NULL || out_sink == NULL ||
+      strcmp(request->path, "/stream-upload") != 0)
+    return TURBO_EINVAL;
+  ++probe->opens;
+  *out_sink = (chttp_body_sink){.write = chttp_server_stream_write, .user = probe};
+  return TURBO_OK;
+}
+
+static void chttp_server_stream_close(void *user, chttp_body_sink *sink, int status) {
+  chttp_server_stream_probe *probe = (chttp_server_stream_probe *)user;
+  if (probe == NULL || sink == NULL) return;
+  ++probe->closes;
+  probe->close_status = status;
+}
+
+static int chttp_server_stream_handler(void *user, const chttp_server_request_view *request,
+                                       chttp_server_response *response) {
+  chttp_server_stream_probe *probe = (chttp_server_stream_probe *)user;
+  if (probe == NULL || request == NULL || !request->body_streamed || request->body != NULL ||
+      request->body_size != probe->size || probe->closes != 1u || probe->close_status != TURBO_OK)
+    return TURBO_EPROTO;
+  probe->handler_called = 1;
+  return chttp_server_reply(response, 200u, "text/plain", "ok", 2u);
+}
+
+static int chttp_server_response_source_read(void *user, void *buffer, size_t capacity,
+                                             size_t *out_size) {
+  chttp_server_response_source_probe *probe = (chttp_server_response_source_probe *)user;
+  size_t size;
+  if (probe == NULL || buffer == NULL || capacity == 0u || out_size == NULL) return TURBO_EINVAL;
+  ++probe->calls;
+  if (probe->fail_read) return TURBO_EIO;
+  if (probe->offset == probe->size) {
+    *out_size = 0u;
+    return TURBO_OK;
+  }
+  size = probe->size - probe->offset;
+  if (size > probe->chunk_size) size = probe->chunk_size;
+  if (size > capacity) size = capacity;
+  memcpy(buffer, probe->data + probe->offset, size);
+  probe->offset += size;
+  *out_size = size;
+  return TURBO_OK;
+}
+
+static int chttp_server_response_source_handler(void *user,
+                                                const chttp_server_request_view *request,
+                                                chttp_server_response *response) {
+  chttp_server_response_source_probe *probe = (chttp_server_response_source_probe *)user;
+  const chttp_body_source source = {.read = chttp_server_response_source_read,
+                                    .user = probe,
+                                    .content_length = probe == NULL ? 0u : probe->size,
+                                    .content_length_known =
+                                        probe == NULL ? 0 : probe->content_length_known};
+  (void)request;
+  return chttp_server_response_source(response, 200u, "application/octet-stream", &source);
+}
+
+static int chttp_server_response_file_handler(void *user, const chttp_server_request_view *request,
+                                              chttp_server_response *response) {
+  (void)request;
+  return chttp_server_response_file(response, 200u, "application/octet-stream", (const char *)user);
+}
+
 static int chttp_server_test_socket_timeout(chttp_server_test_socket socket_value) {
 #if defined(_WIN32)
   const DWORD timeout_ms = CHTTP_SERVER_TEST_TIMEOUT_MS;
@@ -651,6 +750,225 @@ spec("CHTTP background HTTP/1.1 server") {
 
     check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(chttp_server_destroy(&server), TURBO_OK);
+  }
+
+  it("streams a chunked request into a route sink before final dispatch") {
+    static const char request[] = "POST /stream-upload HTTP/1.1\r\n"
+                                  "Host: 127.0.0.1\r\n"
+                                  "Transfer-Encoding: chunked\r\n"
+                                  "Connection: close\r\n\r\n"
+                                  "4\r\ndata\r\n3\r\n123\r\n0\r\n\r\n";
+    chttp_server_stream_probe probe = {0};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    const chttp_server_route_options route = {.method = CHTTP_METHOD_POST,
+                                              .path = "/stream-upload",
+                                              .handler = chttp_server_stream_handler,
+                                              .user = &probe,
+                                              .body_open = chttp_server_stream_open,
+                                              .body_close = chttp_server_stream_close};
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    uint16_t port = 0u;
+
+    check_equal(chttp_server_init(&server, &config), TURBO_OK);
+    check_equal(chttp_server_route_with(&server, &route), TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_equal(
+        chttp_server_test_raw_exchange(port, request, response, sizeof(response), &response_size),
+        TURBO_OK);
+    check_not_null(strstr(response, "HTTP/1.1 200 OK"));
+    check_not_null(strstr(response, "\r\n\r\nok"));
+    check_equal(probe.opens, (size_t)1u);
+    check_equal(probe.writes, (size_t)2u);
+    check_equal(probe.closes, (size_t)1u);
+    check_equal(probe.close_status, TURBO_OK);
+    check_equal(probe.handler_called, 1);
+    check_equal(probe.size, (size_t)7u);
+    check_equal(probe.data, "data123", 7u);
+
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+  }
+
+  it("closes an HTTP/1.1 route sink once with its original write failure") {
+    static const char request[] = "POST /stream-upload HTTP/1.1\r\n"
+                                  "Host: 127.0.0.1\r\n"
+                                  "Content-Length: 4\r\n"
+                                  "Connection: keep-alive\r\n\r\ndata";
+    chttp_server_stream_probe probe = {.fail_write = 1};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    const chttp_server_route_options route = {.method = CHTTP_METHOD_POST,
+                                              .path = "/stream-upload",
+                                              .handler = chttp_server_stream_handler,
+                                              .user = &probe,
+                                              .body_open = chttp_server_stream_open,
+                                              .body_close = chttp_server_stream_close};
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    uint16_t port = 0u;
+
+    check_equal(chttp_server_init(&server, &config), TURBO_OK);
+    check_equal(chttp_server_route_with(&server, &route), TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_equal(
+        chttp_server_test_raw_exchange(port, request, response, sizeof(response), &response_size),
+        TURBO_OK);
+    check_not_null(strstr(response, "HTTP/1.1 500 Internal Server Error"));
+    check_equal(probe.opens, (size_t)1u);
+    check_equal(probe.writes, (size_t)1u);
+    check_equal(probe.closes, (size_t)1u);
+    check_equal(probe.close_status, TURBO_EIO);
+    check_equal(probe.handler_called, 0);
+
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+  }
+
+  it("streams a known-length response source after the handler returns") {
+    static const unsigned char payload[] = "streamed-response";
+    static const char request[] = "GET /stream-response HTTP/1.1\r\n"
+                                  "Host: 127.0.0.1\r\n"
+                                  "Connection: close\r\n\r\n";
+    chttp_server_response_source_probe probe = {
+        .data = payload, .size = sizeof(payload) - 1u, .chunk_size = 3u, .content_length_known = 1};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    uint16_t port = 0u;
+
+    check_equal(chttp_server_init(&server, &config), TURBO_OK);
+    check_equal(
+        chttp_server_get(&server, "/stream-response", chttp_server_response_source_handler, &probe),
+        TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_equal(
+        chttp_server_test_raw_exchange(port, request, response, sizeof(response), &response_size),
+        TURBO_OK);
+    check_not_null(strstr(response, "HTTP/1.1 200 OK"));
+    check_not_null(strstr(response, "Content-Length: 17"));
+    check_not_null(strstr(response, "\r\n\r\nstreamed-response"));
+    check_equal(probe.offset, sizeof(payload) - 1u);
+    check_equal(probe.calls, (size_t)7u);
+
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+  }
+
+  it("closes HTTP/1.1 after a response source fails behind committed headers") {
+    static const unsigned char payload[] = "data";
+    static const char request[] = "GET /failed-response HTTP/1.1\r\n"
+                                  "Host: 127.0.0.1\r\n"
+                                  "Connection: keep-alive\r\n\r\n";
+    chttp_server_response_source_probe probe = {.data = payload,
+                                                .size = sizeof(payload) - 1u,
+                                                .chunk_size = sizeof(payload) - 1u,
+                                                .content_length_known = 1,
+                                                .fail_read = 1};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    const char *body;
+    uint16_t port = 0u;
+
+    check_equal(chttp_server_init(&server, &config), TURBO_OK);
+    check_equal(
+        chttp_server_get(&server, "/failed-response", chttp_server_response_source_handler, &probe),
+        TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_equal(
+        chttp_server_test_raw_exchange(port, request, response, sizeof(response), &response_size),
+        TURBO_OK);
+    check_not_null(strstr(response, "HTTP/1.1 200 OK"));
+    check_not_null(strstr(response, "Content-Length: 4"));
+    body = strstr(response, "\r\n\r\n");
+    check_not_null(body);
+    check_equal(response_size, (size_t)(body + 4u - response));
+    check_equal(probe.calls, (size_t)1u);
+
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+  }
+
+  it("frames an unknown-length response source with HTTP/1.1 chunked coding") {
+    static const unsigned char payload[] = "abcdefg";
+    static const char request[] = "GET /chunked-response HTTP/1.1\r\n"
+                                  "Host: 127.0.0.1\r\n"
+                                  "Connection: close\r\n\r\n";
+    chttp_server_response_source_probe probe = {
+        .data = payload, .size = sizeof(payload) - 1u, .chunk_size = 3u};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    uint16_t port = 0u;
+
+    check_equal(chttp_server_init(&server, &config), TURBO_OK);
+    check_equal(chttp_server_get(&server, "/chunked-response", chttp_server_response_source_handler,
+                                 &probe),
+                TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_equal(
+        chttp_server_test_raw_exchange(port, request, response, sizeof(response), &response_size),
+        TURBO_OK);
+    check_not_null(strstr(response, "Transfer-Encoding: chunked"));
+    check_null(strstr(response, "Content-Length:"));
+    check_not_null(strstr(response, "\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n1\r\ng\r\n0\r\n\r\n"));
+    check_equal(probe.offset, sizeof(payload) - 1u);
+    check_equal(probe.calls, (size_t)4u);
+
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+  }
+
+  it("streams a file response over HTTP/1.1 without loading it into the response body") {
+    enum { FILE_RESPONSE_BYTES = 6000 };
+    static const char request[] = "GET /file-response HTTP/1.1\r\n"
+                                  "Host: 127.0.0.1\r\n"
+                                  "Connection: close\r\n\r\n";
+    unsigned char payload[FILE_RESPONSE_BYTES];
+    char *path = tt_make_temp_file("chttp-h1-server-file", ".bin");
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    const char *body;
+    uint16_t port = 0u;
+
+    memset(payload, 'x', sizeof(payload));
+    payload[sizeof(payload) - 1u] = 'y';
+    check_not_null(path);
+    check_equal(tt_write_file(path, payload, sizeof(payload)), 0);
+    config.max_response_body_bytes = sizeof(payload);
+    config.network.read_timeout_ms = CHTTP_SERVER_TEST_TIMEOUT_MS * 2u;
+    check_equal(chttp_server_init(&server, &config), TURBO_OK);
+    check_equal(
+        chttp_server_get(&server, "/file-response", chttp_server_response_file_handler, path),
+        TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_equal(
+        chttp_server_test_raw_exchange(port, request, response, sizeof(response), &response_size),
+        TURBO_OK);
+    check_not_null(strstr(response, "Content-Length: 6000"));
+    body = strstr(response, "\r\n\r\n");
+    check_not_null(body);
+    body += 4u;
+    check_true(response_size >= (size_t)(body - response) + sizeof(payload));
+    check_equal(body, payload, sizeof(payload));
+
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(tt_remove_file(path), 0);
+    free(path);
   }
 
   it("serves HTTP/1.0 without requiring a Host header") {

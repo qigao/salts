@@ -128,18 +128,26 @@ spec("CHTTP HTTP/2 HPACK") {
     chttp_h2_hpack_destroy(hpack);
   }
 
-  it("rejects a decoded header list above the caller limit") {
-    static const uint8_t indexed_authority[] = {0x01u, 0x0bu, 'e', 'x', 'a', 'm', 'p',
+  it("preserves decoder state after rejecting an oversized header list") {
+    static const uint8_t indexed_authority[] = {0x41u, 0x0bu, 'e', 'x', 'a', 'm', 'p',
                                                 'l',   'e',   '.', 'c', 'o', 'm'};
+    static const uint8_t dynamic_authority[] = {0xbeu};
     chttp_h2_hpack *hpack = create_hpack();
     hpack_collector collector = {0};
     size_t consumed = 0u;
 
     check_not_null(hpack);
-    check_not_equal(chttp_h2_hpack_decode(hpack, indexed_authority, sizeof(indexed_authority),
-                                          &consumed, collect_header, &collector, 16u),
-                    0);
+    check_equal(chttp_h2_hpack_decode(hpack, indexed_authority, sizeof(indexed_authority),
+                                      &consumed, collect_header, &collector, 16u),
+                -2);
+    check_equal(consumed, sizeof(indexed_authority));
     check_equal(collector.count, (size_t)0u);
+    check_equal(chttp_h2_hpack_decode(hpack, dynamic_authority, sizeof(dynamic_authority),
+                                      &consumed, collect_header, &collector, 1024u),
+                0);
+    check_equal(collector.count, (size_t)1u);
+    check_equal(collector.names[0], ":authority");
+    check_equal(collector.values[0], "example.com");
     chttp_h2_hpack_destroy(hpack);
   }
 

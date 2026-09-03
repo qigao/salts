@@ -31,8 +31,6 @@ enum {
   CHTTP_H2_DEFAULT_MAX_SETTINGS_COUNT = 32,
   CHTTP_H2_DEFAULT_FRAME_BYTES = 16 * 1024,
   CHTTP_H2_MAX_FRAME_BYTES = 0x00ffffff,
-  CHTTP_H2_HPACK_FIELD_OVERHEAD = 15,
-  CHTTP_H2_HPACK_PENDING_UPDATE_BYTES = 12,
   CHTTP_H2_HEADER_LIST_FIELD_OVERHEAD = 32,
   CHTTP_H2_PRIORITY_BYTES = 5
 };
@@ -44,6 +42,7 @@ typedef struct chttp_h2_proto_stream_s {
   int32_t send_window;
   int32_t recv_window;
   int closed;
+  int local_reset;
   int end_stream_sent;
   int remote_end_stream;
   void *user_data;
@@ -58,7 +57,8 @@ typedef struct chttp_h2_proto_stream_s {
    * returns 0; a (size_t)-1 return aborts the stream with RST_STREAM(CANCEL). */
   chttp_h2_proto_source_fn source;
   void *source_ud;
-  int source_done; /*< source returned 0; the final DATA was emitted */
+  int source_done;
+  int source_waiting;
 
   /* Deferred trailer HEADERS (RFC 9113 §8.1): encoded at submit time and
    * emitted right after the body's final DATA. */
@@ -99,6 +99,8 @@ struct chttp_h2_proto_s {
   chttp_h2_proto_stream *streams;
   size_t stream_count;
   size_t stream_cap;
+  int32_t *local_reset_ids;
+  size_t local_reset_cursor;
   int32_t next_stream_id;
   int32_t max_peer_stream_id;
   int32_t last_proc_stream_id;
@@ -119,6 +121,9 @@ struct chttp_h2_proto_s {
   int in_headers;
   int32_t in_headers_stream;
   int in_headers_end_stream; /* END_STREAM seen on the HEADERS */
+  int input_paused;
+  int32_t input_paused_stream;
+  int input_paused_end_stream;
 
   int client_preface_done; /* client: preface emitted */
   int server_preface_seen; /* server: client preface consumed */
@@ -135,6 +140,30 @@ static chttp_h2_proto_stream *proto_find(chttp_h2_proto *p, int32_t id) {
     }
   }
   return NULL;
+}
+
+/* A locally reset stream releases its active slot immediately. Keep only a
+ * bounded history so late peer frames can be drained without retaining the
+ * per-stream application state. */
+static int proto_local_reset_contains(const chttp_h2_proto *p, int32_t id) {
+  size_t index;
+  if (!p || id <= 0) return 0;
+  for (index = 0u; index < p->stream_cap; ++index)
+    if (p->local_reset_ids[index] == id) return 1;
+  return 0;
+}
+
+static void proto_local_reset_record(chttp_h2_proto *p, int32_t id) {
+  if (!p || id <= 0 || proto_local_reset_contains(p, id)) return;
+  p->local_reset_ids[p->local_reset_cursor] = id;
+  p->local_reset_cursor = (p->local_reset_cursor + 1u) % p->stream_cap;
+}
+
+static void proto_local_reset_forget(chttp_h2_proto *p, int32_t id) {
+  size_t index;
+  if (!p || id <= 0) return;
+  for (index = 0u; index < p->stream_cap; ++index)
+    if (p->local_reset_ids[index] == id) p->local_reset_ids[index] = 0;
 }
 
 static chttp_h2_proto_stream *proto_new_stream(chttp_h2_proto *p, int32_t id, void *user_data) {
@@ -157,7 +186,8 @@ initialize:
   s->recv_window = (int32_t)p->local.initial_window_size;
   s->local_window = (int32_t)p->local.initial_window_size;
   s->user_data = user_data;
-  if (id > p->last_proc_stream_id) {
+  if ((p->mode == CHTTP_H2_PROTO_CLIENT ? (id & 1) == 0 : (id & 1) != 0) &&
+      id > p->last_proc_stream_id) {
     p->last_proc_stream_id = id;
   }
   return s;
@@ -205,7 +235,7 @@ static chttp_h2_proto_config proto_default_config(void) {
                                  .max_settings_count = CHTTP_H2_DEFAULT_MAX_SETTINGS_COUNT};
 }
 
-static int proto_config_valid(const chttp_h2_proto_config *config) {
+int chttp_h2_proto_config_valid(const chttp_h2_proto_config *config) {
   return config != NULL && config->stream_capacity != 0u &&
          config->stream_capacity <= SIZE_MAX / sizeof(chttp_h2_proto_stream) &&
          config->output_buffer_bytes >= CHTTP_H2_PREFACE_LEN + 2u * CHTTP_H2_FRAME_HEADER_SIZE +
@@ -232,7 +262,7 @@ chttp_h2_proto *chttp_h2_proto_create(chttp_h2_proto_mode mode, const chttp_h2_p
   chttp_h2_hpack_config hpack_config;
   chttp_h2_proto *p;
   if ((mode != CHTTP_H2_PROTO_CLIENT && mode != CHTTP_H2_PROTO_SERVER) ||
-      !proto_config_valid(selected))
+      !chttp_h2_proto_config_valid(selected))
     return NULL;
   p = (chttp_h2_proto *)calloc(1, sizeof(*p));
   if (!p) return NULL;
@@ -240,12 +270,14 @@ chttp_h2_proto *chttp_h2_proto_create(chttp_h2_proto_mode mode, const chttp_h2_p
   p->config = *selected;
   p->stream_cap = selected->stream_capacity;
   p->streams = (chttp_h2_proto_stream *)calloc(p->stream_cap, sizeof(*p->streams));
+  p->local_reset_ids = (int32_t *)calloc(p->stream_cap, sizeof(*p->local_reset_ids));
   p->settings_ids = (uint32_t *)calloc(selected->max_settings_count, sizeof(*p->settings_ids));
   p->settings_values =
       (uint32_t *)calloc(selected->max_settings_count, sizeof(*p->settings_values));
-  if (!p->streams || !p->settings_ids || !p->settings_values) {
+  if (!p->streams || !p->local_reset_ids || !p->settings_ids || !p->settings_values) {
     free(p->settings_values);
     free(p->settings_ids);
+    free(p->local_reset_ids);
     free(p->streams);
     free(p);
     return NULL;
@@ -260,6 +292,7 @@ chttp_h2_proto *chttp_h2_proto_create(chttp_h2_proto_mode mode, const chttp_h2_p
     chttp_h2_hpack_destroy(p->hpack);
     free(p->settings_values);
     free(p->settings_ids);
+    free(p->local_reset_ids);
     free(p->streams);
     free(p);
     return NULL;
@@ -318,6 +351,7 @@ void chttp_h2_proto_destroy(chttp_h2_proto *p) {
     }
   }
   free(p->streams);
+  free(p->local_reset_ids);
   free(p->settings_values);
   free(p->settings_ids);
   free(p);
@@ -357,8 +391,16 @@ uint32_t chttp_h2_proto_peer_max_concurrent_streams(chttp_h2_proto *p) {
   return p ? p->peer.max_concurrent_streams : 0;
 }
 
+int chttp_h2_proto_settings_acked(const chttp_h2_proto *p) {
+  return p != NULL && p->settings_acked;
+}
+
 uint32_t chttp_h2_proto_peer_initial_window_size(chttp_h2_proto *p) {
   return p ? p->peer.initial_window_size : 0;
+}
+
+int chttp_h2_proto_peer_settings_received(const chttp_h2_proto *p) {
+  return p != NULL && p->peer_settings_received;
 }
 
 void chttp_h2_proto_set_local_enable_connect_protocol(chttp_h2_proto *p, uint32_t enable) {
@@ -399,7 +441,7 @@ static int out_frame(chttp_h2_proto *p, uint8_t type, uint8_t flags, int32_t str
 static int proto_header_bounds(const chttp_h2_proto *p, const chttp_h2_hpack_header *headers,
                                size_t count, size_t *out_encoded_bound, size_t *out_wire_bound,
                                int has_priority) {
-  size_t encoded = CHTTP_H2_HPACK_PENDING_UPDATE_BYTES;
+  size_t encoded = CHTTP_H2_PROTO_HPACK_PENDING_UPDATE_BYTES;
   size_t header_list = 0u;
   size_t payload;
   size_t frame_count;
@@ -413,10 +455,10 @@ static int proto_header_bounds(const chttp_h2_proto *p, const chttp_h2_hpack_hea
         header->name_size > SIZE_MAX - header->value_size)
       return -1;
     field_size = header->name_size + header->value_size;
-    if (field_size > SIZE_MAX - CHTTP_H2_HPACK_FIELD_OVERHEAD ||
-        encoded > SIZE_MAX - (field_size + CHTTP_H2_HPACK_FIELD_OVERHEAD))
+    if (field_size > SIZE_MAX - CHTTP_H2_PROTO_HPACK_FIELD_OVERHEAD_BYTES ||
+        encoded > SIZE_MAX - (field_size + CHTTP_H2_PROTO_HPACK_FIELD_OVERHEAD_BYTES))
       return -1;
-    encoded += field_size + CHTTP_H2_HPACK_FIELD_OVERHEAD;
+    encoded += field_size + CHTTP_H2_PROTO_HPACK_FIELD_OVERHEAD_BYTES;
     if (field_size > SIZE_MAX - CHTTP_H2_HEADER_LIST_FIELD_OVERHEAD ||
         header_list > SIZE_MAX - (field_size + CHTTP_H2_HEADER_LIST_FIELD_OVERHEAD))
       return -1;
@@ -553,6 +595,11 @@ int chttp_h2_proto_submit_settings(chttp_h2_proto *p) {
   return 0;
 }
 
+int chttp_h2_proto_submit_ping(chttp_h2_proto *p, const uint8_t opaque[8]) {
+  if (!p || !opaque || proto_ensure_preface(p) != 0) return -1;
+  return out_frame(p, CHTTP_H2_FRAME_PING, 0u, 0, opaque, 8u);
+}
+
 int chttp_h2_proto_submit_window_update(chttp_h2_proto *p, int32_t stream_id, uint32_t increment) {
   if (!p) return -1;
   if (proto_ensure_preface(p) != 0) {
@@ -600,6 +647,8 @@ int chttp_h2_proto_submit_rst_stream(chttp_h2_proto *p, int32_t stream_id, uint3
   }
   if (!s->closed) {
     s->closed = 1;
+    s->local_reset = 1;
+    proto_local_reset_record(p, stream_id);
     s->body = NULL;
     s->body_len = s->body_off = 0;
     if (s->trailers_pending) {
@@ -721,6 +770,29 @@ int chttp_h2_proto_submit_request(chttp_h2_proto *p, const chttp_h2_hpack_header
                                           out_stream_id);
 }
 
+int chttp_h2_proto_submit_request_headers(chttp_h2_proto *p, const chttp_h2_hpack_header *hdrs,
+                                          size_t count, int end_stream, int32_t *out_stream_id) {
+  chttp_h2_proto_stream *stream;
+  int32_t stream_id;
+  if (p == NULL || p->mode != CHTTP_H2_PROTO_CLIENT || p->draining || p->failed ||
+      out_stream_id == NULL || (end_stream != 0 && end_stream != 1) ||
+      proto_active_local_streams(p) >= p->peer.max_concurrent_streams)
+    return -1;
+  *out_stream_id = 0;
+  stream_id = p->next_stream_id;
+  if (p->next_stream_id > 0x7ffffffe || proto_ensure_preface(p) != 0) return -1;
+  p->next_stream_id += 2;
+  stream = proto_new_stream(p, stream_id, NULL);
+  if (stream == NULL) return -1;
+  stream->end_stream_sent = end_stream;
+  if (out_headers(p, stream_id, hdrs, count, end_stream, 0, 0, 0, 0) != 0) {
+    stream->closed = 1;
+    return -1;
+  }
+  *out_stream_id = stream_id;
+  return 0;
+}
+
 int chttp_h2_proto_submit_headers(chttp_h2_proto *p, int32_t stream_id,
                                   const chttp_h2_hpack_header *hdrs, size_t count, int end_stream) {
   chttp_h2_proto_stream *s;
@@ -742,13 +814,15 @@ int chttp_h2_proto_submit_headers(chttp_h2_proto *p, int32_t stream_id,
   return 0;
 }
 
-int chttp_h2_proto_submit_response(chttp_h2_proto *p, int32_t stream_id,
-                                   const chttp_h2_hpack_header *hdrs, size_t count,
-                                   const uint8_t *body, size_t body_len) {
+int chttp_h2_proto_submit_response_ex(chttp_h2_proto *p, int32_t stream_id,
+                                      const chttp_h2_hpack_header *hdrs, size_t count,
+                                      const uint8_t *body, size_t body_len,
+                                      chttp_h2_proto_source_fn source, void *source_ud) {
   chttp_h2_proto_stream *s;
   int rc;
 
-  if (!p || p->mode != CHTTP_H2_PROTO_SERVER || (body_len != 0u && !body)) {
+  if (!p || p->mode != CHTTP_H2_PROTO_SERVER || (body != NULL && source != NULL) ||
+      (body_len != 0u && body == NULL)) {
     return -1;
   }
   s = proto_find(p, stream_id);
@@ -756,12 +830,15 @@ int chttp_h2_proto_submit_response(chttp_h2_proto *p, int32_t stream_id,
     return -1;
   }
   if (proto_ensure_preface(p) != 0) return -1;
-  s->end_stream_sent = (body_len == 0);
-  rc = out_headers(p, stream_id, hdrs, count, body_len == 0, 0, 0, 0, 0);
+  s->end_stream_sent = body_len == 0u && source == NULL;
+  rc = out_headers(p, stream_id, hdrs, count, s->end_stream_sent, 0, 0, 0, 0);
   if (rc != 0) {
     return -1;
   }
-  if (body_len > 0) {
+  if (source != NULL) {
+    s->source = source;
+    s->source_ud = source_ud;
+  } else if (body_len > 0) {
     s->body = body;
     s->body_len = body_len;
     s->body_off = 0;
@@ -772,10 +849,16 @@ int chttp_h2_proto_submit_response(chttp_h2_proto *p, int32_t stream_id,
   return 0;
 }
 
+int chttp_h2_proto_submit_response(chttp_h2_proto *p, int32_t stream_id,
+                                   const chttp_h2_hpack_header *hdrs, size_t count,
+                                   const uint8_t *body, size_t body_len) {
+  return chttp_h2_proto_submit_response_ex(p, stream_id, hdrs, count, body, body_len, NULL, NULL);
+}
+
 int chttp_h2_proto_submit_data(chttp_h2_proto *p, int32_t stream_id, const uint8_t *data,
                                size_t len, int end_stream) {
   chttp_h2_proto_stream *s;
-  if (!p || p->mode != CHTTP_H2_PROTO_SERVER || (len > 0 && !data) || (len == 0 && !end_stream) ||
+  if (!p || (len > 0 && !data) || (len == 0 && !end_stream) ||
       (end_stream != 0 && end_stream != 1)) {
     return -1;
   }
@@ -850,7 +933,7 @@ static int proto_any_pending_body(chttp_h2_proto *p) {
     if (s->body != NULL && (s->body_off < s->body_len || s->body_eof)) {
       return 1;
     }
-    if (s->source != NULL && !s->source_done) {
+    if (s->source != NULL && !s->source_done && !s->source_waiting) {
       return 1;
     }
   }
@@ -863,13 +946,20 @@ static void proto_emit_data(chttp_h2_proto *p, chttp_h2_proto_stream *s) {
     uint8_t flags = 0;
     uint8_t *payload;
     size_t max = p->peer.max_frame_size;
+    size_t output_remaining;
 
     if (s->closed) return;
+    if (p->out.size > p->config.output_buffer_bytes) {
+      proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
+      return;
+    }
+    output_remaining = p->config.output_buffer_bytes - p->out.size;
 
     /* An empty DATA frame is the wire-level END_STREAM used by streaming
      * response helpers. It does not consume flow-control window. */
     if (s->source == NULL && s->body != NULL && s->body_len == 0 && s->body_off == 0 &&
         s->body_eof) {
+      if (output_remaining < CHTTP_H2_FRAME_HEADER_SIZE) return;
       if (out_frame(p, CHTTP_H2_FRAME_DATA, CHTTP_H2_FLAG_END_STREAM, s->id, NULL, 0) != 0) {
         proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
         return;
@@ -883,11 +973,15 @@ static void proto_emit_data(chttp_h2_proto *p, chttp_h2_proto_stream *s) {
     }
 
     if (p->conn_send_window <= 0 || s->send_window <= 0) return;
+    if (output_remaining <= CHTTP_H2_FRAME_HEADER_SIZE) return;
+    output_remaining -= CHTTP_H2_FRAME_HEADER_SIZE;
+    if (max > output_remaining) max = output_remaining;
 
     if (s->source != NULL) {
       /* Streaming source: pull bytes into the frame payload and emit DATA
        * gated by the flow-control windows.  A 0 return is EOF (empty DATA
        * with END_STREAM); (size_t)-1 aborts the stream (RST_STREAM). */
+      chttp_h2_proto_source_result source_result;
       size_t n;
       if (s->source_done) return;
       chunk = max;
@@ -900,25 +994,47 @@ static void proto_emit_data(chttp_h2_proto *p, chttp_h2_proto_stream *s) {
         return;
       }
       payload = p->out.data + p->out.size + 9;
-      n = s->source(s->source_ud, payload, chunk);
-      if (n == (size_t)-1) {
+      source_result = s->source(s->source_ud, payload, chunk);
+      n = source_result.size;
+      if (source_result.status == CHTTP_H2_PROTO_SOURCE_WAIT) {
+        if (n != 0u) {
+          s->source = NULL;
+          s->source_ud = NULL;
+          proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
+          return;
+        }
+        s->source_waiting = 1;
+        return;
+      }
+      if (source_result.status == CHTTP_H2_PROTO_SOURCE_ERROR) {
         /* Abort: nothing was committed to p->out yet; RST the stream. */
         s->source = NULL;
         s->source_ud = NULL;
         (void)chttp_h2_proto_submit_rst_stream(p, s->id, CHTTP_H2_ERR_CANCEL);
         return;
       }
-      if (n > chunk) {
+      if (source_result.status == CHTTP_H2_PROTO_SOURCE_DATA && (n == 0u || n > chunk)) {
         s->source = NULL;
         s->source_ud = NULL;
         proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
         return;
       }
-      if (n == 0) {
+      if (source_result.status == CHTTP_H2_PROTO_SOURCE_EOF) {
+        if (n != 0u) {
+          s->source = NULL;
+          s->source_ud = NULL;
+          proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
+          return;
+        }
         flags = CHTTP_H2_FLAG_END_STREAM;
         s->source = NULL;
         s->source_ud = NULL;
         s->source_done = 1;
+      } else if (source_result.status != CHTTP_H2_PROTO_SOURCE_DATA) {
+        s->source = NULL;
+        s->source_ud = NULL;
+        proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
+        return;
       }
       if (chttp_h2_frame_header_encode(p->out.data + p->out.size, 9, &(size_t){0}, (uint32_t)n,
                                        CHTTP_H2_FRAME_DATA, flags, (uint32_t)s->id) != 0) {
@@ -926,7 +1042,7 @@ static void proto_emit_data(chttp_h2_proto *p, chttp_h2_proto_stream *s) {
         return;
       }
       p->out.size += 9 + n;
-      if (n == 0) {
+      if (source_result.status == CHTTP_H2_PROTO_SOURCE_EOF) {
         s->end_stream_sent = 1;
         proto_maybe_close(p, s);
         return;
@@ -1076,7 +1192,8 @@ static uint32_t proto_apply_peer_settings(chttp_h2_proto *p, const uint32_t *ids
       p->peer.enable_push = vals[i];
       break;
     case CHTTP_H2_SETTING_ENABLE_CONNECT_PROTOCOL:
-      if (vals[i] > 1u) return CHTTP_H2_ERR_PROTOCOL_ERROR;
+      if (vals[i] > 1u || (p->peer.enable_connect_protocol == 1u && vals[i] == 0u))
+        return CHTTP_H2_ERR_PROTOCOL_ERROR;
       p->peer.enable_connect_protocol = vals[i];
       break;
     case CHTTP_H2_SETTING_MAX_CONCURRENT_STREAMS:
@@ -1117,54 +1234,82 @@ static uint32_t proto_apply_peer_settings(chttp_h2_proto *p, const uint32_t *ids
 typedef struct chttp_h2_header_context_s {
   chttp_h2_proto *p;
   int32_t stream_id;
+  int ignore;
+  int callback_failed;
 } chttp_h2_header_context;
 
 static int chttp_h2_header_decode(void *ud, const char *name, size_t name_len, const char *value,
                                   size_t value_len) {
   chttp_h2_header_context *ctx = (chttp_h2_header_context *)ud;
-  if (!ctx->p->cbs.on_header) {
+  if (ctx->ignore || !ctx->p->cbs.on_header) {
     return 0;
   }
-  return ctx->p->cbs.on_header(ctx->p->cbs.user_data, ctx->stream_id, name, name_len, value,
-                               value_len);
+  if (ctx->p->cbs.on_header(ctx->p->cbs.user_data, ctx->stream_id, name, name_len, value,
+                            value_len) != 0) {
+    ctx->callback_failed = 1;
+    ctx->ignore = 1;
+  }
+  return 0;
 }
 
 static void proto_finish_headers(chttp_h2_proto *p) {
   size_t consumed = 0;
   int rc;
+  int initially_ignored;
+  uint32_t stream_error = CHTTP_H2_ERR_NO_ERROR;
   chttp_h2_proto_stream *s;
   chttp_h2_header_context ctx;
 
   ctx.p = p;
   ctx.stream_id = p->in_headers_stream;
-  if (p->cbs.on_begin_headers &&
+  s = proto_find(p, p->in_headers_stream);
+  initially_ignored = (s != NULL && s->closed && s->local_reset) ||
+                      proto_local_reset_contains(p, p->in_headers_stream);
+  ctx.ignore = initially_ignored;
+  ctx.callback_failed = 0;
+  if (!ctx.ignore && p->cbs.on_begin_headers &&
       p->cbs.on_begin_headers(p->cbs.user_data, p->in_headers_stream) != 0) {
-    proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
-    goto finish;
+    ctx.callback_failed = 1;
+    ctx.ignore = 1;
   }
   rc = chttp_h2_hpack_decode(p->hpack, p->in_block.data, p->in_block.size, &consumed,
                              chttp_h2_header_decode, &ctx, p->local.max_header_list_size);
   if (rc == -2) {
-    proto_fail(p, CHTTP_H2_ERR_ENHANCE_YOUR_CALM); /* ENHANCE_YOUR_CALM */
+    stream_error = CHTTP_H2_ERR_ENHANCE_YOUR_CALM;
   } else if (rc == -3) {
     proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
   } else if (rc != 0) {
     proto_fail(p, CHTTP_H2_ERR_COMPRESSION_ERROR);
   }
-  s = proto_find(p, p->in_headers_stream);
   if (s && p->in_headers_end_stream) {
     s->remote_end_stream = 1;
+    if (s->local_reset) {
+      s->local_reset = 0;
+      proto_local_reset_forget(p, p->in_headers_stream);
+    }
+  } else if (p->in_headers_end_stream && initially_ignored) {
+    proto_local_reset_forget(p, p->in_headers_stream);
   }
-  /* A decode failure already failed the session: do not report a complete
-   * block (on_header may have fired for prefix headers before the error). */
-  if (!p->failed && p->cbs.on_end_headers &&
-      p->cbs.on_end_headers(p->cbs.user_data, p->in_headers_stream) != 0) {
-    proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
+  if (!p->failed && !initially_ignored && stream_error == CHTTP_H2_ERR_NO_ERROR &&
+      ctx.callback_failed)
+    stream_error = CHTTP_H2_ERR_PROTOCOL_ERROR;
+  if (!p->failed && !initially_ignored && stream_error == CHTTP_H2_ERR_NO_ERROR && !ctx.ignore &&
+      p->cbs.on_end_headers &&
+      p->cbs.on_end_headers(p->cbs.user_data, p->in_headers_stream, p->in_headers_end_stream) != 0)
+    stream_error = CHTTP_H2_ERR_PROTOCOL_ERROR;
+  if (!p->failed && !initially_ignored && stream_error != CHTTP_H2_ERR_NO_ERROR && s &&
+      !s->closed) {
+    if (chttp_h2_proto_submit_rst_stream(p, p->in_headers_stream, stream_error) != 0) {
+      proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
+    } else if (p->in_headers_end_stream) {
+      s->local_reset = 0;
+      proto_local_reset_forget(p, p->in_headers_stream);
+    }
   }
-  if (!p->failed && s) {
+  if (!p->failed && !initially_ignored && stream_error == CHTTP_H2_ERR_NO_ERROR && s &&
+      !s->closed) {
     proto_maybe_close(p, s);
   }
-finish:
   p->in_headers = 0;
   p->in_block.size = 0;
 }
@@ -1245,10 +1390,16 @@ static void proto_dispatch(chttp_h2_proto *p, const uint8_t *payload,
       p->conn_send_window += (int32_t)inc;
     } else {
       s = proto_find(p, (int32_t)hdr->stream_id);
-      if (!s || s->closed) {
+      if (!s) {
+        if (proto_local_reset_contains(p, (int32_t)hdr->stream_id)) return;
         proto_fail(p, CHTTP_H2_ERR_PROTOCOL_ERROR);
         return;
       }
+      /* RFC 9113 section 5.1 permits WINDOW_UPDATE to race with the peer's
+       * observation of END_STREAM. A known closed stream therefore ignores
+       * the late credit instead of turning a stream race into connection
+       * failure. */
+      if (s->closed) return;
       if (s->send_window > CHTTP_H2_MAX_WINDOW - (int32_t)inc) {
         proto_fail(p, CHTTP_H2_ERR_FLOW_CONTROL_ERROR);
         return;
@@ -1272,6 +1423,10 @@ static void proto_dispatch(chttp_h2_proto *p, const uint8_t *payload,
     }
     s = proto_find(p, (int32_t)hdr->stream_id);
     if (!s) {
+      if (proto_local_reset_contains(p, (int32_t)hdr->stream_id)) {
+        proto_local_reset_forget(p, (int32_t)hdr->stream_id);
+        return;
+      }
       proto_fail(p, CHTTP_H2_ERR_PROTOCOL_ERROR);
       return;
     }
@@ -1289,6 +1444,8 @@ static void proto_dispatch(chttp_h2_proto *p, const uint8_t *payload,
                                    ((uint32_t)payload[2] << 8) | (uint32_t)payload[3]);
       }
     }
+    s->local_reset = 0;
+    proto_local_reset_forget(p, (int32_t)hdr->stream_id);
     if (p->cbs.on_rst_received) {
       p->cbs.on_rst_received(p->cbs.user_data, (int32_t)hdr->stream_id,
                              ((uint32_t)payload[0] << 24) | ((uint32_t)payload[1] << 16) |
@@ -1343,21 +1500,23 @@ static void proto_dispatch(chttp_h2_proto *p, const uint8_t *payload,
       if (out_frame(p, CHTTP_H2_FRAME_PING, CHTTP_H2_FLAG_ACK, 0, payload, 8) != 0) {
         proto_fail(p, CHTTP_H2_ERR_PROTOCOL_ERROR);
       }
+    } else if (p->cbs.on_ping_ack) {
+      p->cbs.on_ping_ack(p->cbs.user_data, payload);
     }
     return;
 
   case CHTTP_H2_FRAME_DATA: {
     const uint8_t *data = NULL;
     size_t data_len = 0u;
+    size_t hidden_flow_bytes;
+    int data_status = CHTTP_H2_PROTO_DATA_OK;
+    int reset_stream;
     if (hdr->stream_id == 0) {
       proto_fail(p, CHTTP_H2_ERR_PROTOCOL_ERROR);
       return;
     }
     s = proto_find(p, (int32_t)hdr->stream_id);
-    if (!s || s->closed || s->remote_end_stream) {
-      proto_fail(p, CHTTP_H2_ERR_STREAM_CLOSED);
-      return;
-    }
+    reset_stream = proto_local_reset_contains(p, (int32_t)hdr->stream_id);
     if (chttp_h2_frame_data_payload(payload, hdr->length, hdr->flags, &data, &data_len) != 0) {
       proto_fail(p, CHTTP_H2_ERR_PROTOCOL_ERROR);
       return;
@@ -1367,18 +1526,70 @@ static void proto_dispatch(chttp_h2_proto *p, const uint8_t *payload,
       return;
     }
     p->conn_recv_window -= (int32_t)hdr->length;
+    if (!s) {
+      if (!reset_stream) {
+        proto_fail(p, CHTTP_H2_ERR_STREAM_CLOSED);
+        return;
+      }
+      if (hdr->length != 0u && chttp_h2_proto_consume_connection(p, hdr->length) != 0) {
+        proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
+        return;
+      }
+      if (hdr->flags & CHTTP_H2_FLAG_END_STREAM)
+        proto_local_reset_forget(p, (int32_t)hdr->stream_id);
+      return;
+    }
+    if ((s->closed && !s->local_reset) || (s->remote_end_stream && !s->local_reset)) {
+      proto_fail(p, CHTTP_H2_ERR_STREAM_CLOSED);
+      return;
+    }
+    /* RFC 9113 section 5.4.2 requires frames already in flight after our
+     * RST_STREAM to be ignored. DATA still consumes connection flow-control
+     * credit, so restore that credit without surfacing a canceled response. */
+    if (s->local_reset) {
+      if (hdr->length != 0u && chttp_h2_proto_consume_connection(p, hdr->length) != 0) {
+        proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
+        return;
+      }
+      if (hdr->flags & CHTTP_H2_FLAG_END_STREAM) {
+        s->remote_end_stream = 1;
+        s->local_reset = 0;
+        proto_local_reset_forget(p, (int32_t)hdr->stream_id);
+      }
+      return;
+    }
     if ((int32_t)hdr->length > s->recv_window) {
       proto_fail(p, CHTTP_H2_ERR_FLOW_CONTROL_ERROR);
       return;
     }
     s->recv_window -= (int32_t)hdr->length;
-    if (hdr->flags & CHTTP_H2_FLAG_END_STREAM) s->remote_end_stream = 1;
-    if (p->cbs.on_data &&
-        p->cbs.on_data(p->cbs.user_data, (int32_t)hdr->stream_id, data, data_len) != 0) {
+    hidden_flow_bytes = hdr->length - data_len;
+    if (hidden_flow_bytes != 0u &&
+        (chttp_h2_proto_consume_stream(p, (int32_t)hdr->stream_id, hidden_flow_bytes) != 0 ||
+         chttp_h2_proto_consume_connection(p, hidden_flow_bytes) != 0)) {
       proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
       return;
     }
-    if (hdr->flags & CHTTP_H2_FLAG_END_STREAM) proto_maybe_close(p, s);
+    if (hdr->flags & CHTTP_H2_FLAG_END_STREAM) s->remote_end_stream = 1;
+    if (p->cbs.on_data)
+      data_status = p->cbs.on_data(p->cbs.user_data, (int32_t)hdr->stream_id, data, data_len);
+    if (data_status == CHTTP_H2_PROTO_DATA_PAUSE) {
+      p->input_paused = 1;
+      p->input_paused_stream = (int32_t)hdr->stream_id;
+      p->input_paused_end_stream = (hdr->flags & CHTTP_H2_FLAG_END_STREAM) != 0u;
+      return;
+    }
+    if (data_status != CHTTP_H2_PROTO_DATA_OK) {
+      proto_fail(p, CHTTP_H2_ERR_INTERNAL_ERROR);
+      return;
+    }
+    if (hdr->flags & CHTTP_H2_FLAG_END_STREAM) {
+      if (s->local_reset) {
+        s->local_reset = 0;
+        proto_local_reset_forget(p, (int32_t)hdr->stream_id);
+      }
+      proto_maybe_close(p, s);
+    }
     return;
   }
 
@@ -1386,6 +1597,7 @@ static void proto_dispatch(chttp_h2_proto *p, const uint8_t *payload,
     const uint8_t *block;
     size_t block_len;
     int has_pri;
+    int reset_stream;
     if (hdr->stream_id == 0) {
       proto_fail(p, CHTTP_H2_ERR_PROTOCOL_ERROR);
       return;
@@ -1399,10 +1611,11 @@ static void proto_dispatch(chttp_h2_proto *p, const uint8_t *payload,
       proto_fail(p, CHTTP_H2_ERR_PROTOCOL_ERROR);
       return;
     }
+    reset_stream = proto_local_reset_contains(p, (int32_t)hdr->stream_id);
     /* Server: register a new stream for an inbound request. */
     if (p->mode == CHTTP_H2_PROTO_SERVER) {
       s = proto_find(p, (int32_t)hdr->stream_id);
-      if (!s) {
+      if (!s && !reset_stream) {
         if ((hdr->stream_id & 1u) == 0u || hdr->stream_id <= (uint32_t)p->max_peer_stream_id) {
           proto_fail(p, CHTTP_H2_ERR_PROTOCOL_ERROR);
           return;
@@ -1421,7 +1634,8 @@ static void proto_dispatch(chttp_h2_proto *p, const uint8_t *payload,
     } else {
       s = proto_find(p, (int32_t)hdr->stream_id);
     }
-    if (!s || s->closed || s->remote_end_stream) {
+    if (!reset_stream &&
+        (!s || (s->closed && !s->local_reset) || (s->remote_end_stream && !s->local_reset))) {
       proto_fail(p, CHTTP_H2_ERR_STREAM_CLOSED);
       return;
     }
@@ -1485,6 +1699,7 @@ ptrdiff_t chttp_h2_proto_recv(chttp_h2_proto *p, const uint8_t *in, size_t in_le
     memcpy(p->inbuf.data + p->inbuf.size, in, in_len);
     p->inbuf.size += in_len;
   }
+  if (p->input_paused) return (ptrdiff_t)in_len;
   /* Server: consume and verify the client preface. */
   if (p->mode == CHTTP_H2_PROTO_SERVER && !p->server_preface_seen) {
     size_t avail = p->inbuf.size;
@@ -1507,7 +1722,7 @@ ptrdiff_t chttp_h2_proto_recv(chttp_h2_proto *p, const uint8_t *in, size_t in_le
       return -1;
     }
   }
-  while (!p->failed && p->inbuf.size - pos >= CHTTP_H2_FRAME_HEADER_SIZE) {
+  while (!p->failed && !p->input_paused && p->inbuf.size - pos >= CHTTP_H2_FRAME_HEADER_SIZE) {
     chttp_h2_frame_header hdr;
     size_t used = 0;
     if (chttp_h2_frame_header_decode(p->inbuf.data + pos, p->inbuf.size - pos, &used, &hdr,
@@ -1615,6 +1830,33 @@ int chttp_h2_proto_stream_output_pending(chttp_h2_proto *p, int32_t stream_id) {
   if (!s || s->closed) return 0;
   return (s->body != NULL && (s->body_off < s->body_len || s->body_eof)) ||
          (s->source != NULL && !s->source_done);
+}
+
+int chttp_h2_proto_resume_source(chttp_h2_proto *p, int32_t stream_id) {
+  chttp_h2_proto_stream *s;
+  if (!p) return -1;
+  s = proto_find(p, stream_id);
+  if (!s || s->closed || s->source == NULL || !s->source_waiting || s->source_done) return -1;
+  s->source_waiting = 0;
+  if (p->cbs.on_wake_write) p->cbs.on_wake_write(p->cbs.user_data);
+  return 0;
+}
+
+int chttp_h2_proto_input_paused(const chttp_h2_proto *p) { return p != NULL && p->input_paused; }
+
+int chttp_h2_proto_resume_input(chttp_h2_proto *p, int32_t stream_id) {
+  chttp_h2_proto_stream *stream;
+  int end_stream;
+  if (p == NULL || stream_id <= 0 || !p->input_paused || p->input_paused_stream != stream_id)
+    return -1;
+  stream = proto_find(p, stream_id);
+  end_stream = p->input_paused_end_stream;
+  p->input_paused = 0;
+  p->input_paused_stream = 0;
+  p->input_paused_end_stream = 0;
+  if (end_stream && stream != NULL && !stream->closed) proto_maybe_close(p, stream);
+  if (p->failed) return -1;
+  return chttp_h2_proto_recv(p, NULL, 0u) < 0 ? -1 : 0;
 }
 
 /* ── Lifecycle ────────────────────────────────────────────────────── */

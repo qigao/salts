@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
+enum { CHTTP_SERVER_DEFAULT_WEBSOCKET_FRAME_BYTES = 64u * 1024u };
+
 static bool chttp_server_method_valid(chttp_method method) {
   return method >= CHTTP_METHOD_GET && method <= CHTTP_METHOD_OPTIONS;
 }
@@ -63,7 +65,8 @@ int chttp_server_route_register(chttp_server_impl *server,
   size_t index;
   int status;
   if (server == NULL || options == NULL || options->handler == NULL ||
-      (options->middleware_count != 0u && options->middleware == NULL))
+      (options->middleware_count != 0u && options->middleware == NULL) ||
+      ((options->body_open == NULL) != (options->body_close == NULL)))
     return TURBO_EINVAL;
   if (server->start_called) return TURBO_EBUSY;
   if (server->route_count >= server->config.route_capacity ||
@@ -87,6 +90,8 @@ int chttp_server_route_register(chttp_server_impl *server,
   route->param_count = param_count;
   route->handler = options->handler;
   route->user = options->user;
+  route->body_open = options->body_open;
+  route->body_close = options->body_close;
   route->dynamic = param_count != 0u;
   ++server->route_count;
   return TURBO_OK;
@@ -103,6 +108,86 @@ int chttp_server_route(chttp_server *server, chttp_method method, const char *pa
 int chttp_server_route_with(chttp_server *server, const chttp_server_route_options *options) {
   if (server == NULL || server->impl == NULL) return TURBO_EINVAL;
   return chttp_server_route_register((chttp_server_impl *)server->impl, options);
+}
+
+static int chttp_server_websocket_upgrade_required(void *user,
+                                                   const chttp_server_request_view *request,
+                                                   chttp_server_response *response) {
+  int status;
+  (void)user;
+  (void)request;
+  status = chttp_server_response_set_header(response, "Sec-WebSocket-Version", "13");
+  if (status != TURBO_OK) return status;
+  return chttp_server_reply(response, 426u, "text/plain", "Upgrade Required", 16u);
+}
+
+int chttp_server_websocket_route_register(chttp_server_impl *server,
+                                          const chttp_server_websocket_options *options) {
+  chttp_server_route_options route_options;
+  chttp_server_route_record *route;
+  size_t max_frame_bytes;
+  size_t max_message_bytes;
+  size_t max_buffered_input_bytes;
+  size_t output_bytes;
+  int status;
+  if (server == NULL || options == NULL || options->size != sizeof(*options) ||
+      options->on_open == NULL || options->on_event == NULL ||
+      (options->middleware_count != 0u && options->middleware == NULL))
+    return TURBO_EINVAL;
+  if (server->config.network.max_send_bytes <= CNET_WEBSOCKET_MAX_HEADER_BYTES)
+    return TURBO_EMSGSIZE;
+  max_frame_bytes = options->max_frame_bytes;
+  if (max_frame_bytes == 0u) {
+    max_frame_bytes = server->config.network.max_send_bytes - CNET_WEBSOCKET_MAX_HEADER_BYTES;
+    if (max_frame_bytes > CHTTP_SERVER_DEFAULT_WEBSOCKET_FRAME_BYTES)
+      max_frame_bytes = CHTTP_SERVER_DEFAULT_WEBSOCKET_FRAME_BYTES;
+  }
+  max_message_bytes =
+      options->max_message_bytes == 0u ? max_frame_bytes : options->max_message_bytes;
+  if (max_frame_bytes < CNET_WEBSOCKET_MIN_FRAME_BYTES || max_message_bytes < max_frame_bytes ||
+      max_frame_bytes > SIZE_MAX - CNET_WEBSOCKET_MAX_HEADER_BYTES)
+    return TURBO_EINVAL;
+  output_bytes = max_frame_bytes + CNET_WEBSOCKET_MAX_HEADER_BYTES;
+  max_buffered_input_bytes =
+      options->max_buffered_input_bytes == 0u ? output_bytes : options->max_buffered_input_bytes;
+  if (output_bytes > server->config.network.max_send_bytes ||
+      max_buffered_input_bytes < output_bytes)
+    return TURBO_EMSGSIZE;
+  if (max_buffered_input_bytes > SIZE_MAX - max_message_bytes ||
+      max_buffered_input_bytes + max_message_bytes > SIZE_MAX - output_bytes)
+    return TURBO_ERANGE;
+  route_options = (chttp_server_route_options){.method = CHTTP_METHOD_GET,
+                                               .path = options->path,
+                                               .middleware = options->middleware,
+                                               .middleware_count = options->middleware_count,
+                                               .handler = chttp_server_websocket_upgrade_required};
+  status = chttp_server_route_register(server, &route_options);
+  if (status != TURBO_OK) return status;
+  route = &server->routes[server->route_count - 1u];
+  route->websocket_open = options->on_open;
+  route->websocket_event = options->on_event;
+  route->websocket_max_frame_bytes = max_frame_bytes;
+  route->websocket_max_message_bytes = max_message_bytes;
+  route->websocket_max_buffered_input_bytes = max_buffered_input_bytes;
+  route->websocket_user = options->user;
+  route->websocket = true;
+  return TURBO_OK;
+}
+
+int chttp_server_websocket_with(chttp_server *server,
+                                const chttp_server_websocket_options *options) {
+  if (server == NULL || server->impl == NULL) return TURBO_EINVAL;
+  return chttp_server_websocket_route_register((chttp_server_impl *)server->impl, options);
+}
+
+int chttp_server_websocket(chttp_server *server, const char *path, chttp_websocket_open_fn on_open,
+                           chttp_websocket_event_fn on_event, void *user) {
+  const chttp_server_websocket_options options = {.size = sizeof(options),
+                                                  .path = path,
+                                                  .on_open = on_open,
+                                                  .on_event = on_event,
+                                                  .user = user};
+  return chttp_server_websocket_with(server, &options);
 }
 
 #define CHTTP_SERVER_ROUTE_METHOD(name, method_value)                                              \
@@ -131,35 +216,35 @@ int chttp_server_use(chttp_server *server, chttp_server_middleware_fn middleware
   return TURBO_OK;
 }
 
-static int chttp_server_route_param_copy(chttp_server_connection *connection, const char *name,
+static int chttp_server_route_param_copy(chttp_server_request_state *state, const char *name,
                                          size_t name_size, const char *value, size_t value_size) {
   char *name_copy;
   char *value_copy;
   size_t needed;
-  if (connection->param_count >= connection->server->config.max_route_param_count ||
+  if (state->param_count >= state->server->config.max_route_param_count ||
       name_size > SIZE_MAX - value_size - 2u)
     return TURBO_ENOBUFS;
   needed = name_size + value_size + 2u;
-  if (connection->param_storage_used > connection->param_storage_capacity ||
-      needed > connection->param_storage_capacity - connection->param_storage_used)
+  if (state->param_storage_used > state->param_storage_capacity ||
+      needed > state->param_storage_capacity - state->param_storage_used)
     return TURBO_ENOBUFS;
-  name_copy = connection->param_storage + connection->param_storage_used;
+  name_copy = state->param_storage + state->param_storage_used;
   memcpy(name_copy, name, name_size);
   name_copy[name_size] = '\0';
   value_copy = name_copy + name_size + 1u;
   memcpy(value_copy, value, value_size);
   value_copy[value_size] = '\0';
-  connection->params[connection->param_count++] = (chttp_server_param){name_copy, value_copy};
-  connection->param_storage_used += needed;
+  state->params[state->param_count++] = (chttp_server_param){name_copy, value_copy};
+  state->param_storage_used += needed;
   return TURBO_OK;
 }
 
-static int chttp_server_route_match(chttp_server_connection *connection,
+static int chttp_server_route_match(chttp_server_request_state *state,
                                     const chttp_server_route_record *route, const char *path) {
   const char *pattern = route->path;
   const char *actual = path;
-  connection->param_count = 0u;
-  connection->param_storage_used = 0u;
+  state->param_count = 0u;
+  state->param_storage_used = 0u;
   if (!route->dynamic) return strcmp(pattern, path) == 0 ? TURBO_OK : TURBO_ENOENT;
   while (*pattern != '\0' || *actual != '\0') {
     const char *pattern_segment;
@@ -180,7 +265,7 @@ static int chttp_server_route_match(chttp_server_connection *connection,
     actual_size = (size_t)(actual_end - actual_segment);
     if (pattern_size != 0u && pattern_segment[0] == ':') {
       if (actual_size == 0u) return TURBO_ENOENT;
-      status = chttp_server_route_param_copy(connection, pattern_segment + 1u, pattern_size - 1u,
+      status = chttp_server_route_param_copy(state, pattern_segment + 1u, pattern_size - 1u,
                                              actual_segment, actual_size);
       if (status != TURBO_OK) return status;
     } else if (pattern_size != actual_size ||
@@ -198,7 +283,7 @@ static bool chttp_server_route_method_matches(chttp_method request_method,
   return request_method == CHTTP_METHOD_HEAD && route_method == CHTTP_METHOD_GET;
 }
 
-chttp_server_route_record *chttp_server_route_find(chttp_server_connection *connection,
+chttp_server_route_record *chttp_server_route_find(chttp_server_request_state *state,
                                                    chttp_method method, const char *path,
                                                    unsigned int *out_allowed_methods,
                                                    int *out_status) {
@@ -208,11 +293,11 @@ chttp_server_route_record *chttp_server_route_find(chttp_server_connection *conn
   size_t index;
   if (out_allowed_methods != NULL) *out_allowed_methods = 0u;
   if (out_status != NULL) *out_status = TURBO_OK;
-  if (connection == NULL || connection->server == NULL || path == NULL) {
+  if (state == NULL || state->server == NULL || path == NULL) {
     if (out_status != NULL) *out_status = TURBO_EINVAL;
     return NULL;
   }
-  server = connection->server;
+  server = state->server;
   for (fallback = 0u; fallback < 2u; ++fallback) {
     if (fallback != 0u && method != CHTTP_METHOD_HEAD) break;
     for (dynamic = 0u; dynamic < 2u; ++dynamic) {
@@ -222,7 +307,7 @@ chttp_server_route_record *chttp_server_route_find(chttp_server_connection *conn
         if ((size_t)route->dynamic != dynamic ||
             !chttp_server_route_method_matches(method, route->method, fallback != 0u))
           continue;
-        status = chttp_server_route_match(connection, route, path);
+        status = chttp_server_route_match(state, route, path);
         if (status == TURBO_OK) return route;
         if (status != TURBO_ENOENT) {
           if (out_status != NULL) *out_status = status;
@@ -231,11 +316,11 @@ chttp_server_route_record *chttp_server_route_find(chttp_server_connection *conn
       }
     }
   }
-  connection->param_count = 0u;
-  connection->param_storage_used = 0u;
+  state->param_count = 0u;
+  state->param_storage_used = 0u;
   for (index = 0u; index < server->route_count; ++index) {
     chttp_server_route_record *route = &server->routes[index];
-    int status = chttp_server_route_match(connection, route, path);
+    int status = chttp_server_route_match(state, route, path);
     if (status == TURBO_OK && out_allowed_methods != NULL) {
       *out_allowed_methods |= 1u << (unsigned int)route->method;
       if (route->method == CHTTP_METHOD_GET)
@@ -245,8 +330,8 @@ chttp_server_route_record *chttp_server_route_find(chttp_server_connection *conn
       return NULL;
     }
   }
-  connection->param_count = 0u;
-  connection->param_storage_used = 0u;
+  state->param_count = 0u;
+  state->param_storage_used = 0u;
   return NULL;
 }
 
@@ -298,8 +383,12 @@ static int chttp_server_chain_dispatch(chttp_server_chain *chain, size_t index) 
     chttp_server_next next = {&next_impl};
     return binding->handler(binding->user, chain->request, chain->response, &next);
   }
-  if (chain->route != NULL)
-    return chain->route->handler(chain->route->user, chain->request, chain->response);
+  if (chain->route != NULL) {
+    chttp_server_handler_fn terminal =
+        chain->terminal != NULL ? chain->terminal : chain->route->handler;
+    void *terminal_user = chain->terminal != NULL ? chain->terminal_user : chain->route->user;
+    return terminal(terminal_user, chain->request, chain->response);
+  }
   if (chain->fallback_status == 405u) {
     const int status = chttp_server_allow_header(chain->response, chain->allowed_methods);
     if (status != TURBO_OK) return status;

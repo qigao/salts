@@ -4,6 +4,7 @@
 #include <turbo/thread.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(_WIN32)
@@ -65,6 +66,23 @@ typedef struct chttp_requests_test_case {
   const char *response_body;
   size_t response_body_size;
 } chttp_requests_test_case;
+
+typedef struct chttp_requests_progress_probe {
+  size_t calls;
+  size_t transferred;
+  size_t total;
+  int monotonic;
+} chttp_requests_progress_probe;
+
+static void chttp_requests_test_progress(void *user, size_t transferred, size_t total) {
+  chttp_requests_progress_probe *probe = (chttp_requests_progress_probe *)user;
+  if (probe == NULL) return;
+  if (probe->calls == 0u || transferred >= probe->transferred) probe->monotonic = 1;
+  else probe->monotonic = 0;
+  ++probe->calls;
+  probe->transferred = transferred;
+  probe->total = total;
+}
 
 static const char chttp_requests_test_response[] = "HTTP/1.1 201 Created\r\n"
                                                    "X-Mode: requests\r\n"
@@ -653,5 +671,167 @@ spec("CHTTP requests-style client") {
     chttp_requests_test_round_trip(&client, &head_case);
     check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), TURBO_OK);
     check_null(client.impl);
+  }
+
+  it("uploads and atomically downloads files through requests-style helpers") {
+    static const char upload_data[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+    static const char upload_response[] = "HTTP/1.1 201 Created\r\n"
+                                          "Content-Length: 0\r\n"
+                                          "Connection: close\r\n\r\n";
+    static const char download_data[] = "downloaded-file-data";
+    chttp_client client = {0};
+    chttp_client_config config = chttp_requests_test_config();
+    chttp_requests_test_socket listener = CHTTP_REQUESTS_TEST_INVALID_SOCKET;
+    chttp_requests_test_server server = {0};
+    turbo_thread_t thread = NULL;
+    chttp_response response = {0};
+    chttp_error error = {0};
+    chttp_options options;
+    chttp_requests_progress_probe upload_progress = {0};
+    chttp_requests_progress_probe download_progress = {0};
+    char uri[64];
+    char authority[64];
+    char expected[1024];
+    char wire_response[256];
+    char *upload_path = tt_make_temp_file("chttp-upload", ".bin");
+    char *download_path = tt_make_temp_file("chttp-download", ".bin");
+    char *downloaded = NULL;
+    size_t downloaded_size = 0u;
+    uint16_t port = 0u;
+    int expected_size;
+    int wire_response_size;
+
+    check_not_null(upload_path);
+    check_not_null(download_path);
+    check_equal(tt_write_file(upload_path, upload_data, sizeof(upload_data) - 1u), 0);
+    check_equal(tt_write_file(download_path, "sentinel", sizeof("sentinel") - 1u), 0);
+    config.stream_chunk_bytes = 8u;
+    check_equal(chttp_client_init(&client, &config), TURBO_OK);
+
+    check_equal(chttp_requests_test_listener(&listener, &port), TURBO_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
+    check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
+    expected_size = snprintf(expected, sizeof(expected),
+                             "PUT /upload HTTP/1.1\r\n"
+                             "Host: %s\r\n"
+                             "Content-Length: %zu\r\n"
+                             "Connection: keep-alive\r\n\r\n%s",
+                             authority, sizeof(upload_data) - 1u, upload_data);
+    check_true(expected_size > 0 && (size_t)expected_size < sizeof(expected));
+    server = (chttp_requests_test_server){.listener = listener,
+                                          .expected = expected,
+                                          .expected_size = (size_t)expected_size,
+                                          .response = upload_response,
+                                          .response_size = sizeof(upload_response) - 1u};
+    check_equal(turbo_thread_create(&thread, chttp_requests_test_serve, &server), TURBO_OK);
+    options = (chttp_options){.connection_uri = uri,
+                              .authority = authority,
+                              .target = "/upload",
+                              .timeout_ms = CHTTP_REQUESTS_TEST_TIMEOUT_MS};
+    check_equal(chttp_put_file(&client, &options, upload_path, chttp_requests_test_progress,
+                               &upload_progress, &response, &error),
+                TURBO_OK);
+    check_equal(turbo_thread_join(&thread), TURBO_OK);
+    turbo_thread_destroy(&thread);
+    check_equal(server.status, TURBO_OK);
+    check_equal(response.status_code, 201u);
+    check_equal(upload_progress.transferred, sizeof(upload_data) - 1u);
+    check_equal(upload_progress.total, sizeof(upload_data) - 1u);
+    check_equal(upload_progress.monotonic, 1);
+    chttp_response_destroy(&response);
+    chttp_requests_test_close_socket(listener);
+
+    listener = CHTTP_REQUESTS_TEST_INVALID_SOCKET;
+    check_equal(chttp_requests_test_listener(&listener, &port), TURBO_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
+    check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
+    expected_size = snprintf(expected, sizeof(expected),
+                             "GET /download HTTP/1.1\r\n"
+                             "Host: %s\r\n"
+                             "Content-Length: 0\r\n"
+                             "Connection: keep-alive\r\n\r\n",
+                             authority);
+    wire_response_size = snprintf(wire_response, sizeof(wire_response),
+                                  "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n"
+                                  "Connection: close\r\n\r\n%s",
+                                  sizeof(download_data) - 1u, download_data);
+    check_true(expected_size > 0 && (size_t)expected_size < sizeof(expected));
+    check_true(wire_response_size > 0 && (size_t)wire_response_size < sizeof(wire_response));
+    server = (chttp_requests_test_server){.listener = listener,
+                                          .expected = expected,
+                                          .expected_size = (size_t)expected_size,
+                                          .response = wire_response,
+                                          .response_size = (size_t)wire_response_size};
+    check_equal(turbo_thread_create(&thread, chttp_requests_test_serve, &server), TURBO_OK);
+    options = (chttp_options){.connection_uri = uri,
+                              .authority = authority,
+                              .target = "/download",
+                              .timeout_ms = CHTTP_REQUESTS_TEST_TIMEOUT_MS};
+    check_equal(chttp_download_file(&client, &options, download_path, chttp_requests_test_progress,
+                                    &download_progress, &response, &error),
+                TURBO_OK);
+    check_equal(turbo_thread_join(&thread), TURBO_OK);
+    turbo_thread_destroy(&thread);
+    check_equal(server.status, TURBO_OK);
+    check_equal(response.status_code, 200u);
+    check_null(response.body);
+    check_equal(response.body_size, sizeof(download_data) - 1u);
+    downloaded = tt_read_file(download_path, &downloaded_size);
+    check_not_null(downloaded);
+    check_equal(downloaded_size, sizeof(download_data) - 1u);
+    check_equal(downloaded, download_data, sizeof(download_data) - 1u);
+    check_equal(download_progress.transferred, sizeof(download_data) - 1u);
+    check_equal(download_progress.total, sizeof(download_data) - 1u);
+    check_equal(download_progress.monotonic, 1);
+
+    free(downloaded);
+    downloaded = NULL;
+    chttp_response_destroy(&response);
+    chttp_requests_test_close_socket(listener);
+
+    check_equal(tt_write_file(download_path, "sentinel", sizeof("sentinel") - 1u), 0);
+    listener = CHTTP_REQUESTS_TEST_INVALID_SOCKET;
+    check_equal(chttp_requests_test_listener(&listener, &port), TURBO_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
+    check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
+    expected_size = snprintf(expected, sizeof(expected),
+                             "GET /missing HTTP/1.1\r\n"
+                             "Host: %s\r\n"
+                             "Content-Length: 0\r\n"
+                             "Connection: keep-alive\r\n\r\n",
+                             authority);
+    wire_response_size = snprintf(wire_response, sizeof(wire_response),
+                                  "HTTP/1.1 404 Not Found\r\nContent-Length: 7\r\n"
+                                  "Connection: close\r\n\r\nmissing");
+    server = (chttp_requests_test_server){.listener = listener,
+                                          .expected = expected,
+                                          .expected_size = (size_t)expected_size,
+                                          .response = wire_response,
+                                          .response_size = (size_t)wire_response_size};
+    check_equal(turbo_thread_create(&thread, chttp_requests_test_serve, &server), TURBO_OK);
+    options = (chttp_options){.connection_uri = uri,
+                              .authority = authority,
+                              .target = "/missing",
+                              .timeout_ms = CHTTP_REQUESTS_TEST_TIMEOUT_MS};
+    check_equal(
+        chttp_download_file(&client, &options, download_path, NULL, NULL, &response, &error),
+        TURBO_OK);
+    check_equal(turbo_thread_join(&thread), TURBO_OK);
+    turbo_thread_destroy(&thread);
+    check_equal(server.status, TURBO_OK);
+    check_equal(response.status_code, 404u);
+    downloaded = tt_read_file(download_path, &downloaded_size);
+    check_not_null(downloaded);
+    check_equal(downloaded_size, sizeof("sentinel") - 1u);
+    check_equal(downloaded, "sentinel", sizeof("sentinel") - 1u);
+    free(downloaded);
+    chttp_response_destroy(&response);
+
+    check_equal(chttp_client_destroy(&client, CHTTP_REQUESTS_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(tt_remove_file(upload_path), 0);
+    check_equal(tt_remove_file(download_path), 0);
+    free(upload_path);
+    free(download_path);
+    chttp_requests_test_close_socket(listener);
   }
 }

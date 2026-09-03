@@ -1,0 +1,694 @@
+#include "chttp_tls_test_material.h"
+#include "tinytest.h"
+
+#include <chttp/chttp.h>
+
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+enum {
+  CHTTP_WEBSOCKET_TEST_TIMEOUT_MS = 5000,
+  CHTTP_WEBSOCKET_TEST_H2_BUFFER_BYTES = 64u * 1024u,
+  CHTTP_WEBSOCKET_TEST_H2_STREAM_CAPACITY = 8u,
+  CHTTP_WEBSOCKET_TEST_H2_HPACK_BYTES = 4096u,
+  CHTTP_WEBSOCKET_TEST_H2_SETTINGS_COUNT = 16u
+};
+
+typedef struct chttp_websocket_test_probe {
+  atomic_int global_middleware;
+  atomic_int route_middleware;
+  atomic_int opened;
+  atomic_int messages;
+  atomic_int pings;
+  atomic_int pongs;
+  atomic_int closes;
+} chttp_websocket_test_probe;
+
+static native_io_backend_kind chttp_websocket_test_backend(void) {
+#if defined(_WIN32)
+  return NATIVE_IO_BACKEND_IOCP;
+#elif defined(__linux__)
+  return NATIVE_IO_BACKEND_EPOLL;
+#else
+  return NATIVE_IO_BACKEND_KQUEUE;
+#endif
+}
+
+static cnet_client_config chttp_websocket_test_network(size_t connections) {
+  const cnet_client_config config = {.backend = chttp_websocket_test_backend(),
+                                     .connection_capacity = connections,
+                                     .command_capacity = 16u,
+                                     .request_capacity = 8u,
+                                     .completion_batch_capacity = 8u,
+                                     .event_capacity = 16u,
+                                     .max_send_bytes = 4096u,
+                                     .receive_buffer_bytes = 4096u,
+                                     .connect_timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS,
+                                     .read_timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS,
+                                     .write_timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS};
+  return config;
+}
+
+static chttp_server_config chttp_websocket_test_server_config(void) {
+  const chttp_server_config config = {.host = "127.0.0.1",
+                                      .port = 0u,
+                                      .backlog = 8u,
+                                      .network = chttp_websocket_test_network(4u),
+                                      .route_capacity = 4u,
+                                      .middleware_capacity = 2u,
+                                      .max_route_middleware_count = 2u,
+                                      .max_route_param_count = 2u,
+                                      .max_route_param_bytes = 64u,
+                                      .max_target_bytes = 256u,
+                                      .max_header_count = 16u,
+                                      .max_header_bytes = 2048u,
+                                      .max_request_body_bytes = 256u,
+                                      .max_response_header_count = 16u,
+                                      .max_response_header_bytes = 1024u,
+                                      .max_response_body_bytes = 256u,
+                                      .session_capacity = 4u,
+                                      .session_entry_capacity = 4u,
+                                      .max_session_key_bytes = 32u,
+                                      .max_session_value_bytes = 64u,
+                                      .session_idle_timeout_ms = 60000u,
+                                      .session_cookie_name = "ws_sid",
+                                      .poll_slice_ms = 2u};
+  return config;
+}
+
+static chttp_websocket_client_config chttp_websocket_test_client_config(void) {
+  const chttp_websocket_client_config config = {.size = sizeof(config),
+                                                .network = chttp_websocket_test_network(1u),
+                                                .max_handshake_header_bytes = 4096u,
+                                                .event_capacity = 8u};
+  return config;
+}
+
+static void chttp_websocket_test_enable_h2(chttp_server_config *server,
+                                           chttp_websocket_client_config *client) {
+  server->network.max_send_bytes = CHTTP_WEBSOCKET_TEST_H2_BUFFER_BYTES;
+  server->network.receive_buffer_bytes = CHTTP_WEBSOCKET_TEST_H2_BUFFER_BYTES;
+  server->enable_http2 = 1;
+  server->h2_stream_capacity = CHTTP_WEBSOCKET_TEST_H2_STREAM_CAPACITY;
+  server->h2_input_buffer_bytes = CHTTP_WEBSOCKET_TEST_H2_BUFFER_BYTES;
+  server->h2_output_buffer_bytes = CHTTP_WEBSOCKET_TEST_H2_BUFFER_BYTES;
+  server->h2_hpack_dynamic_table_bytes = CHTTP_WEBSOCKET_TEST_H2_HPACK_BYTES;
+  server->h2_max_settings_count = CHTTP_WEBSOCKET_TEST_H2_SETTINGS_COUNT;
+  client->network.max_send_bytes = CHTTP_WEBSOCKET_TEST_H2_BUFFER_BYTES;
+  client->network.receive_buffer_bytes = CHTTP_WEBSOCKET_TEST_H2_BUFFER_BYTES;
+}
+
+static int chttp_websocket_test_global(void *user, const chttp_server_request_view *request,
+                                       chttp_server_response *response, chttp_server_next *next) {
+  chttp_websocket_test_probe *probe = (chttp_websocket_test_probe *)user;
+  (void)request;
+  (void)response;
+  atomic_fetch_add_explicit(&probe->global_middleware, 1, memory_order_relaxed);
+  return chttp_server_next_call(next);
+}
+
+static int chttp_websocket_test_route(void *user, const chttp_server_request_view *request,
+                                      chttp_server_response *response, chttp_server_next *next) {
+  chttp_websocket_test_probe *probe = (chttp_websocket_test_probe *)user;
+  (void)request;
+  (void)response;
+  atomic_fetch_add_explicit(&probe->route_middleware, 1, memory_order_relaxed);
+  return chttp_server_next_call(next);
+}
+
+static int chttp_websocket_test_open(void *user, chttp_websocket *websocket,
+                                     const chttp_server_request_view *request,
+                                     chttp_server_response *response) {
+  chttp_websocket_test_probe *probe = (chttp_websocket_test_probe *)user;
+  const char *id = chttp_server_request_param(request, "id");
+  int status;
+  if (id == NULL || strcmp(id, "42") != 0 || request->session == NULL) return TURBO_EPROTO;
+  if (chttp_server_response_set_header(response, "Sec-WebSocket-Extensions",
+                                       "permessage-deflate") != TURBO_EPERM)
+    return TURBO_EPROTO;
+  status = chttp_session_set(request->session, "peer", id);
+  if (status == TURBO_OK)
+    status = chttp_server_response_set_header(response, "X-WebSocket-Route", "echo");
+  if (status == TURBO_OK) status = chttp_websocket_send_text(websocket, "ready", 5u);
+  if (status == TURBO_OK) atomic_fetch_add_explicit(&probe->opened, 1, memory_order_relaxed);
+  return status;
+}
+
+static int chttp_websocket_test_h2_open(void *user, chttp_websocket *websocket,
+                                        const chttp_server_request_view *request,
+                                        chttp_server_response *response) {
+  if (request == NULL || request->http_major != 2u || request->http_minor != 0u ||
+      request->method != CHTTP_METHOD_CONNECT)
+    return TURBO_EPROTO;
+  return chttp_websocket_test_open(user, websocket, request, response);
+}
+
+static int chttp_websocket_test_reject_open(void *user, chttp_websocket *websocket,
+                                            const chttp_server_request_view *request,
+                                            chttp_server_response *response) {
+  (void)user;
+  (void)websocket;
+  (void)request;
+  (void)response;
+  return TURBO_EPERM;
+}
+
+static int chttp_websocket_test_empty_source(void *user, void *buffer, size_t capacity,
+                                             size_t *out_size) {
+  (void)user;
+  (void)buffer;
+  (void)capacity;
+  *out_size = 0u;
+  return TURBO_OK;
+}
+
+static int chttp_websocket_test_stream_open(void *user, chttp_websocket *websocket,
+                                            const chttp_server_request_view *request,
+                                            chttp_server_response *response) {
+  const chttp_body_source source = {
+      .read = chttp_websocket_test_empty_source, .content_length = 0u, .content_length_known = 1};
+  (void)user;
+  (void)websocket;
+  (void)request;
+  return chttp_server_response_source(response, 200u, "text/plain", &source);
+}
+
+static void chttp_websocket_test_event(void *user, chttp_websocket *websocket,
+                                       const chttp_websocket_event *event) {
+  chttp_websocket_test_probe *probe = (chttp_websocket_test_probe *)user;
+  if (event->kind == CHTTP_WEBSOCKET_EVENT_MESSAGE) {
+    atomic_fetch_add_explicit(&probe->messages, 1, memory_order_relaxed);
+    if (event->size == 5u && memcmp(event->data, "pings", 5u) == 0) {
+      (void)chttp_websocket_send_ping(websocket, "1", 1u);
+      (void)chttp_websocket_send_ping(websocket, "2", 1u);
+    } else {
+      (void)chttp_websocket_send_text(websocket, event->data, event->size);
+    }
+  } else if (event->kind == CHTTP_WEBSOCKET_EVENT_PING) {
+    atomic_fetch_add_explicit(&probe->pings, 1, memory_order_relaxed);
+  } else if (event->kind == CHTTP_WEBSOCKET_EVENT_PONG) {
+    atomic_fetch_add_explicit(&probe->pongs, 1, memory_order_relaxed);
+  } else if (event->kind == CHTTP_WEBSOCKET_EVENT_CLOSE) {
+    atomic_fetch_add_explicit(&probe->closes, 1, memory_order_relaxed);
+  }
+}
+
+spec("CHTTP WebSocket client/server") {
+  it("rejects aggregate WebSocket storage overflow before allocation") {
+    chttp_websocket_test_probe probe;
+    chttp_server server = {0};
+    chttp_server_config server_config = chttp_websocket_test_server_config();
+    chttp_server_websocket_options route = {.size = sizeof(route),
+                                            .path = "/overflow",
+                                            .max_frame_bytes = 2u,
+                                            .max_message_bytes = SIZE_MAX - 5u,
+                                            .max_buffered_input_bytes = 16u,
+                                            .on_open = chttp_websocket_test_open,
+                                            .on_event = chttp_websocket_test_event,
+                                            .user = &probe};
+    chttp_websocket_client client = {0};
+    chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+
+    client_config.max_frame_bytes = 2u;
+    client_config.max_message_bytes = SIZE_MAX - 5u;
+    client_config.max_buffered_input_bytes = 16u;
+    client_config.event_capacity = 1u;
+    check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
+    check_equal(chttp_server_websocket_with(&server, &route), TURBO_ERANGE);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(chttp_websocket_client_init(&client, &client_config), TURBO_ERANGE);
+    check_null(client.impl);
+  }
+
+  it("rejects an HTTP/2 input bound smaller than one peer frame") {
+    chttp_websocket_client client = {0};
+    chttp_websocket_client_config config = chttp_websocket_test_client_config();
+
+    config.h2_input_buffer_bytes = 16u * 1024u;
+    check_equal(chttp_websocket_client_init(&client, &config), TURBO_EMSGSIZE);
+    check_null(client.impl);
+  }
+
+  it("upgrades a routed ws connection without exposing a poller") {
+    chttp_websocket_test_probe probe;
+    chttp_server server = {0};
+    chttp_server_config server_config = chttp_websocket_test_server_config();
+    chttp_server_middleware route_middleware = {chttp_websocket_test_route, &probe};
+    chttp_server_websocket_options route = {.size = sizeof(route),
+                                            .path = "/chat/:id",
+                                            .middleware = &route_middleware,
+                                            .middleware_count = 1u,
+                                            .on_open = chttp_websocket_test_open,
+                                            .on_event = chttp_websocket_test_event,
+                                            .user = &probe};
+    chttp_websocket_client client = {0};
+    chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+    chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options)};
+    chttp_websocket_event event;
+    unsigned int http_status = 0u;
+    uint16_t port = 0u;
+    char uri[128];
+
+    atomic_init(&probe.global_middleware, 0);
+    atomic_init(&probe.route_middleware, 0);
+    atomic_init(&probe.opened, 0);
+    atomic_init(&probe.messages, 0);
+    atomic_init(&probe.pings, 0);
+    atomic_init(&probe.pongs, 0);
+    atomic_init(&probe.closes, 0);
+    check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
+    check_equal(chttp_server_use(&server, chttp_websocket_test_global, &probe), TURBO_OK);
+    check_equal(chttp_server_websocket_with(&server, &route), TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_true(
+        snprintf(uri, sizeof(uri), "ws://127.0.0.1:%u/chat/42?mode=echo", (unsigned int)port) > 0);
+    connect_options.uri = uri;
+    connect_options.timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    check_equal(chttp_websocket_client_init(&client, &client_config), TURBO_OK);
+    check_equal(chttp_websocket_client_connect(&client, &connect_options, &http_status), TURBO_OK);
+    check_equal(http_status, 101u);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.message_type, CHTTP_WEBSOCKET_MESSAGE_TEXT);
+    check_equal(event.size, 5u);
+    check_equal(memcmp(event.data, "ready", 5u), 0);
+    check_equal(
+        chttp_websocket_client_close(&client, 1006u, NULL, 0u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_EINVAL);
+    check_equal(
+        chttp_websocket_client_send_text(&client, "hello", 5u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.size, 5u);
+    check_equal(memcmp(event.data, "hello", 5u), 0);
+    check_equal(chttp_websocket_client_send_ping(&client, "?", 1u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+                TURBO_OK);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_PONG);
+    check_equal(event.size, 1u);
+    check_equal(memcmp(event.data, "?", 1u), 0);
+    check_equal(
+        chttp_websocket_client_send_text(&client, "pings", 5u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_PING);
+    check_equal(event.size, 1u);
+    check_equal(memcmp(event.data, "1", 1u), 0);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_PING);
+    check_equal(event.size, 1u);
+    check_equal(memcmp(event.data, "2", 1u), 0);
+    check_equal(
+        chttp_websocket_client_send_text(&client, "after", 5u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.size, 5u);
+    check_equal(memcmp(event.data, "after", 5u), 0);
+    check_equal(
+        chttp_websocket_client_close(&client, 1000u, NULL, 0u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(chttp_websocket_client_destroy(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(atomic_load_explicit(&probe.global_middleware, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.route_middleware, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.opened, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.messages, memory_order_relaxed), 3);
+    check_equal(atomic_load_explicit(&probe.pings, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.pongs, memory_order_relaxed), 2);
+    check_equal(atomic_load_explicit(&probe.closes, memory_order_relaxed), 1);
+  }
+
+  it("uses the same routed session over verified wss") {
+    static const char *h1_alpn[] = {"http/1.1"};
+    chttp_websocket_test_probe probe;
+    chttp_server server = {0};
+    chttp_server_config server_config = chttp_websocket_test_server_config();
+    cnet_tls_server_config server_tls;
+    cnet_tls_client_config client_tls;
+    chttp_tls_profile profile = {0};
+    chttp_server_websocket_options route = {.size = sizeof(route),
+                                            .path = "/chat/:id",
+                                            .on_open = chttp_websocket_test_open,
+                                            .on_event = chttp_websocket_test_event,
+                                            .user = &probe};
+    chttp_websocket_client client = {0};
+    chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+    chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options)};
+    chttp_websocket_event event;
+    unsigned int http_status = 0u;
+    uint16_t port = 0u;
+    char uri[128];
+    char *cert_path = tt_make_temp_file("chttp-websocket-cert", ".pem");
+    char *key_path = tt_make_temp_file("chttp-websocket-key", ".pem");
+
+    check_not_null(cert_path);
+    check_not_null(key_path);
+    check_equal(tt_write_file(cert_path, CHTTP_TLS_TEST_CERTIFICATE,
+                              sizeof(CHTTP_TLS_TEST_CERTIFICATE) - 1u),
+                0);
+    check_equal(tt_write_file(key_path, CHTTP_TLS_TEST_KEY, sizeof(CHTTP_TLS_TEST_KEY) - 1u), 0);
+    atomic_init(&probe.global_middleware, 0);
+    atomic_init(&probe.route_middleware, 0);
+    atomic_init(&probe.opened, 0);
+    atomic_init(&probe.messages, 0);
+    atomic_init(&probe.pings, 0);
+    atomic_init(&probe.pongs, 0);
+    atomic_init(&probe.closes, 0);
+    server_config.network.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    server_config.network.tls_handshake_timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    client_config.network.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    client_config.network.tls_handshake_timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    server_tls = (cnet_tls_server_config){.size = sizeof(server_tls),
+                                          .cert_file = cert_path,
+                                          .key_file = key_path,
+                                          .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
+                                          .alpn_protocols = h1_alpn,
+                                          .alpn_protocol_count = 1u};
+    client_tls = (cnet_tls_client_config){.size = sizeof(client_tls),
+                                          .ca_file = cert_path,
+                                          .server_name = "localhost",
+                                          .alpn_protocols = h1_alpn,
+                                          .alpn_protocol_count = 1u};
+    server_config.tls = &server_tls;
+
+    check_equal(chttp_tls_profile_init(&profile, &client_tls), TURBO_OK);
+    check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
+    check_equal(chttp_server_websocket_with(&server, &route), TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_true(snprintf(uri, sizeof(uri), "wss://127.0.0.1:%u/chat/42", (unsigned int)port) > 0);
+    connect_options.uri = uri;
+    connect_options.tls = &profile;
+    connect_options.timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    check_equal(chttp_websocket_client_init(&client, &client_config), TURBO_OK);
+    check_equal(chttp_websocket_client_connect(&client, &connect_options, &http_status), TURBO_OK);
+    check_equal(http_status, 101u);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.message_type, CHTTP_WEBSOCKET_MESSAGE_TEXT);
+    check_equal(event.size, 5u);
+    check_equal(memcmp(event.data, "ready", 5u), 0);
+    check_equal(
+        chttp_websocket_client_send_text(&client, "secure", 6u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.size, 6u);
+    check_equal(memcmp(event.data, "secure", 6u), 0);
+    check_equal(
+        chttp_websocket_client_close(&client, 1000u, NULL, 0u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(chttp_websocket_client_destroy(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(atomic_load_explicit(&probe.opened, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.messages, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.closes, memory_order_relaxed), 1);
+    check_equal(tt_remove_file(cert_path), 0);
+    check_equal(tt_remove_file(key_path), 0);
+    free(cert_path);
+    free(key_path);
+  }
+
+  it("uses the blocking API over an RFC 8441 h2c stream") {
+    chttp_websocket_test_probe probe;
+    chttp_server server = {0};
+    chttp_server_config server_config = chttp_websocket_test_server_config();
+    chttp_server_websocket_options route = {.size = sizeof(route),
+                                            .path = "/chat/:id",
+                                            .on_open = chttp_websocket_test_h2_open,
+                                            .on_event = chttp_websocket_test_event,
+                                            .user = &probe};
+    chttp_websocket_client client = {0};
+    chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+    chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options),
+                                                       .protocol = CHTTP_HTTP_2};
+    chttp_websocket_event event;
+    unsigned int http_status = 0u;
+    uint16_t port = 0u;
+    char uri[128];
+
+    atomic_init(&probe.global_middleware, 0);
+    atomic_init(&probe.route_middleware, 0);
+    atomic_init(&probe.opened, 0);
+    atomic_init(&probe.messages, 0);
+    atomic_init(&probe.pings, 0);
+    atomic_init(&probe.pongs, 0);
+    atomic_init(&probe.closes, 0);
+    chttp_websocket_test_enable_h2(&server_config, &client_config);
+
+    check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
+    check_equal(chttp_server_websocket_with(&server, &route), TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_true(snprintf(uri, sizeof(uri), "ws://127.0.0.1:%u/chat/42", (unsigned int)port) > 0);
+    connect_options.uri = uri;
+    connect_options.timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    check_equal(chttp_websocket_client_init(&client, &client_config), TURBO_OK);
+    check_equal(chttp_websocket_client_connect(&client, &connect_options, &http_status), TURBO_OK);
+    check_equal(http_status, 200u);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.message_type, CHTTP_WEBSOCKET_MESSAGE_TEXT);
+    check_equal(event.size, 5u);
+    check_equal(memcmp(event.data, "ready", 5u), 0);
+    check_equal(
+        chttp_websocket_client_send_text(&client, "hello", 5u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.size, 5u);
+    check_equal(memcmp(event.data, "hello", 5u), 0);
+    check_equal(chttp_websocket_client_send_ping(&client, "?", 1u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+                TURBO_OK);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_PONG);
+    check_equal(event.size, 1u);
+    check_equal(memcmp(event.data, "?", 1u), 0);
+    check_equal(
+        chttp_websocket_client_close(&client, 1000u, NULL, 0u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(chttp_websocket_client_destroy(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(atomic_load_explicit(&probe.opened, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.messages, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.pings, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.closes, memory_order_relaxed), 1);
+  }
+
+  it("returns the HTTP status when an RFC 8441 route is absent") {
+    chttp_server server = {0};
+    chttp_server_config server_config = chttp_websocket_test_server_config();
+    chttp_websocket_client client = {0};
+    chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+    chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options),
+                                                       .protocol = CHTTP_HTTP_2};
+    unsigned int http_status = 0u;
+    uint16_t port = 0u;
+    char uri[128];
+
+    chttp_websocket_test_enable_h2(&server_config, &client_config);
+    check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_true(snprintf(uri, sizeof(uri), "ws://127.0.0.1:%u/missing", (unsigned int)port) > 0);
+    connect_options.uri = uri;
+    connect_options.timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    check_equal(chttp_websocket_client_init(&client, &client_config), TURBO_OK);
+    check_equal(chttp_websocket_client_connect(&client, &connect_options, &http_status),
+                TURBO_EPROTO);
+    check_equal(http_status, 404u);
+    check_equal(chttp_websocket_client_destroy(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+  }
+
+  it("keeps H2 opening rejection semantics aligned with H1") {
+    chttp_server server = {0};
+    chttp_server_config server_config = chttp_websocket_test_server_config();
+    chttp_server_websocket_options reject_route = {.size = sizeof(reject_route),
+                                                   .path = "/reject",
+                                                   .on_open = chttp_websocket_test_reject_open,
+                                                   .on_event = chttp_websocket_test_event};
+    chttp_server_websocket_options stream_route = {.size = sizeof(stream_route),
+                                                   .path = "/stream",
+                                                   .on_open = chttp_websocket_test_stream_open,
+                                                   .on_event = chttp_websocket_test_event};
+    chttp_websocket_client reject_client = {0};
+    chttp_websocket_client stream_client = {0};
+    chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+    chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options),
+                                                       .protocol = CHTTP_HTTP_2};
+    unsigned int http_status = 0u;
+    uint16_t port = 0u;
+    char uri[128];
+
+    chttp_websocket_test_enable_h2(&server_config, &client_config);
+    check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
+    check_equal(chttp_server_websocket_with(&server, &reject_route), TURBO_OK);
+    check_equal(chttp_server_websocket_with(&server, &stream_route), TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+
+    check_true(snprintf(uri, sizeof(uri), "ws://127.0.0.1:%u/reject", (unsigned int)port) > 0);
+    connect_options.uri = uri;
+    connect_options.timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    check_equal(chttp_websocket_client_init(&reject_client, &client_config), TURBO_OK);
+    check_equal(chttp_websocket_client_connect(&reject_client, &connect_options, &http_status),
+                TURBO_EPROTO);
+    check_equal(http_status, 500u);
+    check_equal(chttp_websocket_client_destroy(&reject_client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+                TURBO_OK);
+
+    check_true(snprintf(uri, sizeof(uri), "ws://127.0.0.1:%u/stream", (unsigned int)port) > 0);
+    http_status = 0u;
+    check_equal(chttp_websocket_client_init(&stream_client, &client_config), TURBO_OK);
+    check_equal(chttp_websocket_client_connect(&stream_client, &connect_options, &http_status),
+                TURBO_EPROTO);
+    check_equal(http_status, 500u);
+    check_equal(chttp_websocket_client_destroy(&stream_client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+                TURBO_OK);
+
+    check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+  }
+
+  it("uses RFC 8441 over verified WSS with h2 ALPN") {
+    static const char *h2_alpn[] = {"h2"};
+    chttp_websocket_test_probe probe;
+    chttp_server server = {0};
+    chttp_server_config server_config = chttp_websocket_test_server_config();
+    cnet_tls_server_config server_tls;
+    cnet_tls_client_config client_tls;
+    chttp_tls_profile profile = {0};
+    chttp_server_websocket_options route = {.size = sizeof(route),
+                                            .path = "/chat/:id",
+                                            .on_open = chttp_websocket_test_h2_open,
+                                            .on_event = chttp_websocket_test_event,
+                                            .user = &probe};
+    chttp_websocket_client client = {0};
+    chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+    chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options),
+                                                       .protocol = CHTTP_HTTP_2};
+    chttp_websocket_event event;
+    unsigned int http_status = 0u;
+    uint16_t port = 0u;
+    char uri[128];
+    char *cert_path = tt_make_temp_file("chttp-h2-websocket-cert", ".pem");
+    char *key_path = tt_make_temp_file("chttp-h2-websocket-key", ".pem");
+
+    check_not_null(cert_path);
+    check_not_null(key_path);
+    check_equal(tt_write_file(cert_path, CHTTP_TLS_TEST_CERTIFICATE,
+                              sizeof(CHTTP_TLS_TEST_CERTIFICATE) - 1u),
+                0);
+    check_equal(tt_write_file(key_path, CHTTP_TLS_TEST_KEY, sizeof(CHTTP_TLS_TEST_KEY) - 1u), 0);
+    atomic_init(&probe.global_middleware, 0);
+    atomic_init(&probe.route_middleware, 0);
+    atomic_init(&probe.opened, 0);
+    atomic_init(&probe.messages, 0);
+    atomic_init(&probe.pings, 0);
+    atomic_init(&probe.pongs, 0);
+    atomic_init(&probe.closes, 0);
+    chttp_websocket_test_enable_h2(&server_config, &client_config);
+    server_config.network.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    server_config.network.tls_handshake_timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    client_config.network.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    client_config.network.tls_handshake_timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    server_tls = (cnet_tls_server_config){.size = sizeof(server_tls),
+                                          .cert_file = cert_path,
+                                          .key_file = key_path,
+                                          .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
+                                          .alpn_protocols = h2_alpn,
+                                          .alpn_protocol_count = 1u};
+    client_tls = (cnet_tls_client_config){.size = sizeof(client_tls),
+                                          .ca_file = cert_path,
+                                          .server_name = "localhost",
+                                          .alpn_protocols = h2_alpn,
+                                          .alpn_protocol_count = 1u};
+    server_config.tls = &server_tls;
+
+    check_equal(chttp_tls_profile_init(&profile, &client_tls), TURBO_OK);
+    check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
+    check_equal(chttp_server_websocket_with(&server, &route), TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_true(snprintf(uri, sizeof(uri), "wss://127.0.0.1:%u/chat/42", (unsigned int)port) > 0);
+    connect_options.uri = uri;
+    connect_options.tls = &profile;
+    connect_options.timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    check_equal(chttp_websocket_client_init(&client, &client_config), TURBO_OK);
+    check_equal(chttp_websocket_client_connect(&client, &connect_options, &http_status), TURBO_OK);
+    check_equal(http_status, 200u);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.size, 5u);
+    check_equal(memcmp(event.data, "ready", 5u), 0);
+    check_equal(
+        chttp_websocket_client_send_text(&client, "secure", 6u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.size, 6u);
+    check_equal(memcmp(event.data, "secure", 6u), 0);
+    check_equal(
+        chttp_websocket_client_close(&client, 1000u, NULL, 0u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(chttp_websocket_client_destroy(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(atomic_load_explicit(&probe.opened, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.messages, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.closes, memory_order_relaxed), 1);
+    check_equal(tt_remove_file(cert_path), 0);
+    check_equal(tt_remove_file(key_path), 0);
+    free(cert_path);
+    free(key_path);
+  }
+
+  it("rejects an HTTP/2 TLS profile instead of downgrading WSS") {
+    static const char *h2_alpn[] = {"h2"};
+    chttp_tls_profile profile = {0};
+    cnet_tls_client_config tls = {
+        .size = sizeof(tls), .alpn_protocols = h2_alpn, .alpn_protocol_count = 1u};
+    chttp_websocket_client client = {0};
+    chttp_websocket_client_config config = chttp_websocket_test_client_config();
+    chttp_websocket_connect_options options = {.size = sizeof(options),
+                                               .uri = "wss://127.0.0.1:443/chat",
+                                               .tls = &profile,
+                                               .timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS};
+    unsigned int http_status = 99u;
+
+    config.network.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    config.network.tls_handshake_timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    check_equal(chttp_tls_profile_init(&profile, &tls), TURBO_OK);
+    check_equal(chttp_websocket_client_init(&client, &config), TURBO_OK);
+    check_equal(chttp_websocket_client_connect(&client, &options, &http_status),
+                TURBO_EPROTONOSUPPORT);
+    check_equal(http_status, 0u);
+    check_equal(chttp_websocket_client_destroy(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
+  }
+}

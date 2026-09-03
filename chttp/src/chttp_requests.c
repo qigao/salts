@@ -1,5 +1,7 @@
 #include <chttp/chttp.h>
 
+#include "chttp_client_internal.h"
+
 #include <turbo/clock.h>
 
 #include <limits.h>
@@ -81,8 +83,7 @@ static int chttp_requests_copy_response(const chttp_response_view *source, chttp
       out->headers[index] = (chttp_header){name, value};
     }
   }
-  if (source->body_size != 0u) {
-    if (source->body == NULL) goto protocol_error;
+  if (source->body_size != 0u && source->body != NULL) {
     out->body = malloc(source->body_size);
     if (out->body == NULL) goto no_memory;
     memcpy(out->body, source->body, source->body_size);
@@ -172,7 +173,8 @@ int chttp_client_init(chttp_client *client, const chttp_client_config *config) {
 
 static int chttp_requests_perform(chttp_client *client, chttp_method method,
                                   const chttp_options *options, chttp_response *out_response,
-                                  chttp_error *out_error) {
+                                  chttp_error *out_error, chttp_file_transfer *file_transfer,
+                                  chttp_file_sink_transfer *file_sink_transfer) {
   chttp_blocking_client_impl *impl = chttp_client_get_impl(client);
   chttp_request_options request_options;
   chttp_request request = {0};
@@ -202,13 +204,22 @@ static int chttp_requests_perform(chttp_client *client, chttp_method method,
                                             .header_count = options->header_count,
                                             .body = options->body,
                                             .body_size = options->body_size,
+                                            .body_source = options->body_source,
+                                            .body_sink = options->body_sink,
                                             .on_complete = chttp_requests_complete,
                                             .user = &impl->probe,
-                                            .tls = options->tls};
+                                            .tls = options->tls,
+                                            .protocol = options->protocol};
   if (options->timeout_ms != 0u)
     deadline_at_ms = chttp_requests_deadline_after(turbo_monotonic_ms(), options->timeout_ms);
   for (;;) {
-    status = chttp_async_client_submit(&impl->async, &request_options, &request);
+    if (file_transfer != NULL)
+      status =
+          chttp_async_client_submit_file(&impl->async, &request_options, file_transfer, &request);
+    else if (file_sink_transfer != NULL)
+      status = chttp_async_client_submit_file_download(&impl->async, &request_options,
+                                                       file_sink_transfer, &request);
+    else status = chttp_async_client_submit(&impl->async, &request_options, &request);
     if (status != TURBO_ENOBUFS) break;
     admission_progressed = true;
     {
@@ -249,6 +260,28 @@ static int chttp_requests_perform(chttp_client *client, chttp_method method,
     const char *primary_stage = timed_out ? "request-deadline" : "request-progress";
     if (!impl->probe.done) {
       if (request.slot != 0u) (void)chttp_async_request_cancel(&impl->async, request);
+      if (file_transfer != NULL && file_transfer->file.impl != NULL) {
+        cflow_io_file_runtime *runtime = NULL;
+        recovery_status = chttp_async_client_file_runtime(&impl->async, &runtime);
+        if (recovery_status == TURBO_OK)
+          recovery_status = chttp_file_transfer_drain_destroy(file_transfer, runtime);
+        if (recovery_status != TURBO_OK) {
+          status = recovery_status;
+          *out_error = (chttp_error){.status = status, .stage = "file-drain"};
+          goto finished;
+        }
+      }
+      if (file_sink_transfer != NULL && file_sink_transfer->file.impl != NULL) {
+        cflow_io_file_runtime *runtime = NULL;
+        recovery_status = chttp_async_client_file_runtime(&impl->async, &runtime);
+        if (recovery_status == TURBO_OK)
+          recovery_status = chttp_file_sink_transfer_drain_destroy(file_sink_transfer, runtime);
+        if (recovery_status != TURBO_OK) {
+          status = recovery_status;
+          *out_error = (chttp_error){.status = status, .stage = "file-drain"};
+          goto finished;
+        }
+      }
       recovery_status = chttp_requests_recover(impl, UINT32_MAX);
       if (recovery_status != TURBO_OK) {
         status = recovery_status;
@@ -271,38 +304,72 @@ static int chttp_requests_perform(chttp_client *client, chttp_method method,
       *out_error = impl->probe.error;
     }
   }
+finished:
   impl->operation_active = false;
   return status;
 }
 
 int chttp_get(chttp_client *client, const chttp_options *options, chttp_response *out_response,
               chttp_error *out_error) {
-  return chttp_requests_perform(client, CHTTP_METHOD_GET, options, out_response, out_error);
+  return chttp_requests_perform(client, CHTTP_METHOD_GET, options, out_response, out_error, NULL,
+                                NULL);
 }
 
 int chttp_head(chttp_client *client, const chttp_options *options, chttp_response *out_response,
                chttp_error *out_error) {
-  return chttp_requests_perform(client, CHTTP_METHOD_HEAD, options, out_response, out_error);
+  return chttp_requests_perform(client, CHTTP_METHOD_HEAD, options, out_response, out_error, NULL,
+                                NULL);
 }
 
 int chttp_post(chttp_client *client, const chttp_options *options, chttp_response *out_response,
                chttp_error *out_error) {
-  return chttp_requests_perform(client, CHTTP_METHOD_POST, options, out_response, out_error);
+  return chttp_requests_perform(client, CHTTP_METHOD_POST, options, out_response, out_error, NULL,
+                                NULL);
 }
 
 int chttp_put(chttp_client *client, const chttp_options *options, chttp_response *out_response,
               chttp_error *out_error) {
-  return chttp_requests_perform(client, CHTTP_METHOD_PUT, options, out_response, out_error);
+  return chttp_requests_perform(client, CHTTP_METHOD_PUT, options, out_response, out_error, NULL,
+                                NULL);
 }
 
 int chttp_delete(chttp_client *client, const chttp_options *options, chttp_response *out_response,
                  chttp_error *out_error) {
-  return chttp_requests_perform(client, CHTTP_METHOD_DELETE, options, out_response, out_error);
+  return chttp_requests_perform(client, CHTTP_METHOD_DELETE, options, out_response, out_error, NULL,
+                                NULL);
 }
 
 int chttp_patch(chttp_client *client, const chttp_options *options, chttp_response *out_response,
                 chttp_error *out_error) {
-  return chttp_requests_perform(client, CHTTP_METHOD_PATCH, options, out_response, out_error);
+  return chttp_requests_perform(client, CHTTP_METHOD_PATCH, options, out_response, out_error, NULL,
+                                NULL);
+}
+
+int chttp_client_file_runtime(chttp_client *client, cflow_io_file_runtime **out_runtime) {
+  chttp_blocking_client_impl *impl = chttp_client_get_impl(client);
+  if (impl == NULL || out_runtime == NULL || impl->operation_active) return TURBO_EINVAL;
+  return chttp_async_client_file_runtime(&impl->async, out_runtime);
+}
+
+int chttp_client_file_sink_capacity(chttp_client *client, size_t *out_capacity) {
+  chttp_blocking_client_impl *impl = chttp_client_get_impl(client);
+  if (impl == NULL || out_capacity == NULL || impl->operation_active) return TURBO_EINVAL;
+  return chttp_async_client_file_sink_capacity(&impl->async, out_capacity);
+}
+
+int chttp_client_perform_file(chttp_client *client, chttp_method method,
+                              const chttp_options *options, chttp_file_transfer *transfer,
+                              chttp_response *out_response, chttp_error *out_error) {
+  if (method != CHTTP_METHOD_POST && method != CHTTP_METHOD_PUT) return TURBO_EINVAL;
+  return chttp_requests_perform(client, method, options, out_response, out_error, transfer, NULL);
+}
+
+int chttp_client_perform_file_download(chttp_client *client, const chttp_options *options,
+                                       chttp_file_sink_transfer *transfer,
+                                       chttp_response *out_response, chttp_error *out_error) {
+  if (transfer == NULL) return TURBO_EINVAL;
+  return chttp_requests_perform(client, CHTTP_METHOD_GET, options, out_response, out_error, NULL,
+                                transfer);
 }
 
 const char *chttp_response_header(const chttp_response *response, const char *name) {

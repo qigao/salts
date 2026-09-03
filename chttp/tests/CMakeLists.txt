@@ -18,12 +18,51 @@ set_target_properties(chttp_response_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+cmake_add_test(chttp_file_transfer_test
+  SOURCES chttp_file_transfer_test.c
+  LIBS turbo_chttp Rocida::CFlow Rocida::TinyTest
+  INCLUDES ../src
+  FOLDER "chttp/tests")
+set_target_properties(chttp_file_transfer_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(chttp_file_sink_test
+  SOURCES chttp_file_sink_test.c
+  LIBS turbo_chttp Rocida::CFlow Rocida::TinyTest
+  INCLUDES ../src
+  FOLDER "chttp/tests")
+set_target_properties(chttp_file_sink_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 cmake_add_test(chttp_server_parser_test
   SOURCES chttp_server_parser_test.c
   LIBS turbo_chttp llhttp::llhttp_static Rocida::TinyTest
   INCLUDES ../src
   FOLDER "chttp/tests")
 set_target_properties(chttp_server_parser_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(chttp_websocket_handshake_test
+  SOURCES chttp_websocket_handshake_test.c
+  LIBS turbo_chttp Rocida::Core Rocida::TinyTest
+  INCLUDES ../src
+  FOLDER "chttp/tests")
+set_target_properties(chttp_websocket_handshake_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(chttp_websocket_test
+  SOURCES chttp_websocket_test.c
+  LIBS turbo_chttp Rocida::TinyTest
+  FOLDER "chttp/tests")
+set_target_properties(chttp_websocket_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
@@ -99,6 +138,26 @@ cmake_add_test(chttp_h2_proto_test
   INCLUDES ../src
   FOLDER "chttp/tests")
 set_target_properties(chttp_h2_proto_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(chttp_h2_client_test
+  SOURCES chttp_h2_client_test.c
+  LIBS turbo_chttp Rocida::TinyTest
+  INCLUDES ../src
+  FOLDER "chttp/tests")
+set_target_properties(chttp_h2_client_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(chttp_h2_server_test
+  SOURCES chttp_h2_server_test.c
+  LIBS turbo_chttp Rocida::TinyTest
+  INCLUDES ../src
+  FOLDER "chttp/tests")
+set_target_properties(chttp_h2_server_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)

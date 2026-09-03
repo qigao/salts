@@ -16,6 +16,7 @@ typedef struct chttp_server_parser_probe {
   char host[128];
   unsigned char body[128];
   size_t body_size;
+  int upgrades;
 } chttp_server_parser_probe;
 
 static int chttp_server_parser_test_request(void *user, const chttp_server_request_view *request) {
@@ -38,6 +39,17 @@ static int chttp_server_parser_test_request(void *user, const chttp_server_reque
 static int chttp_server_parser_test_continue(void *user) {
   chttp_server_parser_probe *probe = (chttp_server_parser_probe *)user;
   ++probe->continues;
+  return TURBO_OK;
+}
+
+static int chttp_server_parser_test_upgrade(void *user, const chttp_server_request_view *request,
+                                            chttp_server_parser_upgrade_action *out_action,
+                                            unsigned int *out_http_status) {
+  chttp_server_parser_probe *probe = (chttp_server_parser_probe *)user;
+  (void)request;
+  ++probe->upgrades;
+  *out_action = CHTTP_SERVER_UPGRADE_STOP;
+  *out_http_status = 0u;
   return TURBO_OK;
 }
 
@@ -73,6 +85,38 @@ static int chttp_server_parser_test_execute_fragments(chttp_server_parser *parse
 }
 
 spec("CHTTP server request parser") {
+  it("stops exactly after an accepted Upgrade and preserves coalesced frame bytes") {
+    static const char request[] =
+        "GET /chat HTTP/1.1\r\nHost: server.example.com\r\nUpgrade: websocket\r\n"
+        "Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n\r\n";
+    static const unsigned char frame[] = {0x81u, 0x82u, 0x01u, 0x02u, 0x03u, 0x04u, 0x69u, 0x6bu};
+    unsigned char wire[sizeof(request) - 1u + sizeof(frame)];
+    chttp_server_parser_probe probe = {0};
+    chttp_server_parser_config config = chttp_server_parser_test_config(&probe);
+    chttp_server_parser parser = {0};
+    unsigned int http_status = 999u;
+    size_t consumed = 0u;
+
+    memcpy(wire, request, sizeof(request) - 1u);
+    memcpy(wire + sizeof(request) - 1u, frame, sizeof(frame));
+    config.max_header_bytes = 256u;
+    config.on_upgrade = chttp_server_parser_test_upgrade;
+    check_equal(chttp_server_parser_init(&parser, &config), TURBO_OK);
+    check_equal(
+        chttp_server_parser_execute_consumed(&parser, wire, sizeof(wire), &consumed, &http_status),
+        TURBO_OK);
+    check_equal(consumed, sizeof(request) - 1u);
+    check_equal(http_status, 0u);
+    check_equal(probe.upgrades, 1);
+    check_equal(probe.requests, 0);
+    check_equal(memcmp(wire + consumed, frame, sizeof(frame)), 0);
+    check_equal(chttp_server_parser_execute_consumed(&parser, frame, sizeof(frame), &consumed,
+                                                     &http_status),
+                TURBO_ESHUTDOWN);
+    chttp_server_parser_destroy(&parser);
+  }
+
   it("rejects aggregate header descriptor overflow before allocation") {
     chttp_server_parser_probe probe = {0};
     chttp_server_parser_config config = chttp_server_parser_test_config(&probe);

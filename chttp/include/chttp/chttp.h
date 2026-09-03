@@ -26,7 +26,7 @@ typedef struct chttp_tls_profile {
   void *impl;
 } chttp_tls_profile;
 
-/** Background HTTP/1.1 server owner; ordinary callers never drive a poller. */
+/** Background HTTP/1.1 and optional HTTP/2 server owner; callers never drive a poller. */
 typedef struct chttp_server {
   void *impl;
 } chttp_server;
@@ -41,11 +41,24 @@ typedef struct chttp_server_next {
   void *impl;
 } chttp_server_next;
 
+/** Callback-scoped server WebSocket peer. The wrapper becomes invalid when its callback returns. */
+typedef struct chttp_websocket {
+  void *impl;
+} chttp_websocket;
+
+/** Single-owner requests-style WebSocket client; public calls drive CNet internally. */
+typedef struct chttp_websocket_client {
+  void *impl;
+} chttp_websocket_client;
+
 /** Generation-checked request handle; never a pointer or CNet handle. */
 typedef struct chttp_request {
   uint32_t slot;
   uint32_t generation;
 } chttp_request;
+
+/** Wire protocol selected for one request. Zero preserves the HTTP/1.1 default. */
+typedef enum chttp_protocol { CHTTP_HTTP_1_1 = 0, CHTTP_HTTP_2 = 1 } chttp_protocol;
 
 typedef enum chttp_method {
   CHTTP_METHOD_GET = 1,
@@ -54,7 +67,9 @@ typedef enum chttp_method {
   CHTTP_METHOD_PUT,
   CHTTP_METHOD_DELETE,
   CHTTP_METHOD_PATCH,
-  CHTTP_METHOD_OPTIONS
+  CHTTP_METHOD_OPTIONS,
+  /** Observed by RFC 8441 WebSocket callbacks; not a generic routable method. */
+  CHTTP_METHOD_CONNECT
 } chttp_method;
 
 /** Input strings are borrowed until submit returns; response strings are callback-scoped. */
@@ -62,6 +77,36 @@ typedef struct chttp_header {
   const char *name;
   const char *value;
 } chttp_header;
+
+/**
+ * Pulls at most `capacity` bytes into callback-scoped storage. Return
+ * `TURBO_OK` and set `out_size` to zero for EOF, or return a negative error.
+ * The callback runs on the CHTTP owner thread and must not perform unbounded blocking or reenter
+ * it.
+ */
+typedef int (*chttp_body_read_fn)(void *user, void *buffer, size_t capacity, size_t *out_size);
+
+/**
+ * Consumes one callback-scoped body view. A successful return transfers the
+ * whole view; a negative return terminates the request without partial credit.
+ * The callback runs on the CHTTP owner thread and must not perform unbounded blocking or reenter
+ * it.
+ */
+typedef int (*chttp_body_write_fn)(void *user, const void *data, size_t size);
+
+typedef struct chttp_body_source {
+  chttp_body_read_fn read;
+  void *user;
+  size_t content_length;
+  int content_length_known;
+} chttp_body_source;
+
+typedef struct chttp_body_sink {
+  chttp_body_write_fn write;
+  void *user;
+} chttp_body_sink;
+
+typedef void (*chttp_progress_fn)(void *user, size_t transferred, size_t total);
 
 typedef struct chttp_server_param {
   const char *name;
@@ -84,17 +129,29 @@ typedef struct chttp_server_request_view {
   size_t param_count;
   const void *body;
   size_t body_size;
+  /** Non-zero when body bytes were delivered to the route sink and are not retained here. */
+  int body_streamed;
   int protocol_keep_alive;
   chttp_session *session;
 } chttp_server_request_view;
 
-/** Handler-scoped response builder. Response data is copied before the handler returns. */
+/** Handler-scoped response builder. Memory replies are copied; source descriptors are retained. */
 typedef struct chttp_server_response {
   void *impl;
 } chttp_server_response;
 
 typedef int (*chttp_server_handler_fn)(void *user, const chttp_server_request_view *request,
                                        chttp_server_response *response);
+
+/**
+ * Opens a bounded request-body sink after headers and route parameters are available.
+ * Request pointers are borrowed only for this call; the returned sink descriptor is copied.
+ */
+typedef int (*chttp_server_body_open_fn)(void *user, const chttp_server_request_view *request,
+                                         chttp_body_sink *out_sink);
+
+/** Closes a route sink exactly once; status is TURBO_OK only after the complete body arrived. */
+typedef void (*chttp_server_body_close_fn)(void *user, chttp_body_sink *sink, int status);
 
 typedef int (*chttp_server_middleware_fn)(void *user, const chttp_server_request_view *request,
                                           chttp_server_response *response, chttp_server_next *next);
@@ -111,11 +168,108 @@ typedef struct chttp_server_route_options {
   size_t middleware_count;
   chttp_server_handler_fn handler;
   void *user;
+  chttp_server_body_open_fn body_open;
+  chttp_server_body_close_fn body_close;
 } chttp_server_route_options;
+
+typedef enum chttp_websocket_state {
+  CHTTP_WEBSOCKET_OPEN = 1,
+  CHTTP_WEBSOCKET_CLOSING,
+  CHTTP_WEBSOCKET_CLOSED,
+  CHTTP_WEBSOCKET_FAILED
+} chttp_websocket_state;
+
+typedef enum chttp_websocket_message_type {
+  CHTTP_WEBSOCKET_MESSAGE_NONE = 0,
+  CHTTP_WEBSOCKET_MESSAGE_TEXT,
+  CHTTP_WEBSOCKET_MESSAGE_BINARY
+} chttp_websocket_message_type;
+
+typedef enum chttp_websocket_event_kind {
+  CHTTP_WEBSOCKET_EVENT_MESSAGE = 1,
+  CHTTP_WEBSOCKET_EVENT_PING,
+  CHTTP_WEBSOCKET_EVENT_PONG,
+  CHTTP_WEBSOCKET_EVENT_CLOSE
+} chttp_websocket_event_kind;
+
+/** Server event data is borrowed only until the callback returns; client lifetime is documented
+ * below. */
+typedef struct chttp_websocket_event {
+  chttp_websocket_event_kind kind;
+  chttp_websocket_message_type message_type;
+  const uint8_t *data;
+  size_t size;
+  uint16_t close_code;
+} chttp_websocket_event;
+
+/**
+ * Runs as the terminal handler after global and route middleware approve an
+ * HTTP/1.1 Upgrade or HTTP/2 Extended CONNECT. The request method is GET for
+ * H1 and CONNECT for H2. Returning an error rejects with 500. Calling
+ * `chttp_server_reply()` rejects with that in-memory reply; streamed and file
+ * replies are invalid during admission. Otherwise the framework sends 101 for
+ * H1 or 200 for H2. One frame may be admitted here and is retained until the
+ * handshake response write completes.
+ */
+typedef int (*chttp_websocket_open_fn)(void *user, chttp_websocket *websocket,
+                                       const chttp_server_request_view *request,
+                                       chttp_server_response *response);
+
+/** Runs serially on the server owner thread; event and peer are callback-scoped. */
+typedef void (*chttp_websocket_event_fn)(void *user, chttp_websocket *websocket,
+                                         const chttp_websocket_event *event);
+
+typedef struct chttp_server_websocket_options {
+  size_t size;
+  const char *path;
+  const chttp_server_middleware *middleware;
+  size_t middleware_count;
+  /** Zero selects the largest payload that fits one bounded CNet send, capped at 64 KiB. */
+  size_t max_frame_bytes;
+  /** Zero selects max_frame_bytes. Must be at least max_frame_bytes. */
+  size_t max_message_bytes;
+  /** Zero selects max_frame_bytes plus the maximum RFC 6455 frame header. */
+  size_t max_buffered_input_bytes;
+  chttp_websocket_open_fn on_open;
+  chttp_websocket_event_fn on_event;
+  void *user;
+} chttp_server_websocket_options;
+
+typedef struct chttp_websocket_client_config {
+  size_t size;
+  cnet_client_config network;
+  size_t max_frame_bytes;
+  size_t max_message_bytes;
+  size_t max_buffered_input_bytes;
+  size_t max_handshake_header_bytes;
+  /** Completed event queue hard bound; zero selects network.event_capacity. */
+  size_t event_capacity;
+  /** HTTP/2 parser input hard bound; zero selects 128 KiB. */
+  size_t h2_input_buffer_bytes;
+  /** HTTP/2 HPACK dynamic table hard bound; zero selects 4096 bytes. */
+  size_t h2_hpack_dynamic_table_bytes;
+  /** HTTP/2 SETTINGS entries accepted per frame; zero selects 16. */
+  size_t h2_max_settings_count;
+} chttp_websocket_client_config;
+
+typedef struct chttp_websocket_connect_options {
+  size_t size;
+  /** Complete ws:// or wss:// URI, including target path and optional query. */
+  const char *uri;
+  /** Extra copied HTTP headers; handshake-owned fields cannot be overridden. */
+  const chttp_header *headers;
+  size_t header_count;
+  /** Required for custom WSS trust; invalid for ws:// and ALPN must match `protocol`. */
+  const chttp_tls_profile *tls;
+  uint32_t timeout_ms;
+  /** HTTP/1.1 Upgrade by default; HTTP/2 selects RFC 8441 Extended CONNECT. */
+  chttp_protocol protocol;
+} chttp_websocket_connect_options;
 
 /**
  * Every capacity is a hard bound. `network.connection_capacity` bounds active
- * accepted connections. Routes are origin-form paths, may contain named
+ * accepted connections. When HTTP/2 is enabled, its stream, parser, output,
+ * HPACK and SETTINGS limits are per connection. Routes are origin-form paths, may contain named
  * `:segment` parameters, and exclude the query string. The server invokes
  * handlers serially on its owner thread, so a handler must not block or call
  * stop/destroy. Session capacity zero disables Sessions; otherwise the Cookie
@@ -148,6 +302,22 @@ typedef struct chttp_server_config {
   uint32_t poll_slice_ms;
   /** Optional HTTPS/mTLS policy consumed during server initialization. */
   const cnet_tls_server_config *tls;
+  /** Zero preserves the HTTP/1.1-only listener. One also accepts HTTP/2. */
+  int enable_http2;
+  /** Per-connection HTTP/2 stream hard bound and advertised concurrency limit. */
+  size_t h2_stream_capacity;
+  /** HTTP/2 parser input hard bound; must be at least 16,393 bytes. */
+  size_t h2_input_buffer_bytes;
+  /** H2 output bound; >=16,468, <=max_send_bytes, and large enough for response HPACK bounds. */
+  size_t h2_output_buffer_bytes;
+  /** HTTP/2 HPACK dynamic-table hard bound. */
+  size_t h2_hpack_dynamic_table_bytes;
+  /** Maximum SETTINGS entries accepted in one HTTP/2 frame. */
+  size_t h2_max_settings_count;
+  /** Per-response source chunk bound; zero selects up to 64 KiB within transport limits. */
+  size_t stream_chunk_bytes;
+  /** In-memory reply bound; zero derives the largest value fitting one transport send. */
+  size_t max_buffered_response_body_bytes;
 } chttp_server_config;
 
 /** Thread-safe snapshot of server lifecycle and bounded admission counters. */
@@ -202,12 +372,13 @@ typedef void (*chttp_complete_fn)(void *user, chttp_request request,
                                   const chttp_response_view *response, const chttp_error *error);
 
 /**
- * One admitted request owns one bounded parser state and either opens or
- * exclusively leases one CNet connection from this client's bounded pool.
- * `connection_uri` accepts `tcp://`, `tls://`, and `pipe://`. `authority`
- * becomes the Host header, while `target` is an origin-form target beginning
- * with `/` (or `*` for OPTIONS). Header/body/options are copied before submit
- * succeeds. `user` remains borrowed until the terminal callback returns.
+ * One admitted request owns one bounded response state. HTTP/1.1 exclusively
+ * leases a pooled CNet connection; HTTP/2 leases one stream from a multiplexed
+ * session. `connection_uri` accepts `tcp://` and `tls://` for both protocols,
+ * plus `pipe://` for HTTP/1.1. `authority` becomes Host or `:authority`, while
+ * `target` is an origin-form target beginning with `/` (or `*` for OPTIONS).
+ * Header/body/options are copied before submit succeeds. `user` remains
+ * borrowed until the terminal callback returns.
  */
 typedef struct chttp_request_options {
   const char *connection_uri;
@@ -218,10 +389,16 @@ typedef struct chttp_request_options {
   size_t header_count;
   const void *body;
   size_t body_size;
+  /** Borrowed through the terminal callback; mutually exclusive with `body/body_size`. */
+  const chttp_body_source *body_source;
+  /** Borrowed through the terminal callback; streamed responses expose `body == NULL`. */
+  const chttp_body_sink *body_sink;
   chttp_complete_fn on_complete;
   void *user;
   /** Optional reusable TLS profile; valid only with a `tls://` connection URI. */
   const chttp_tls_profile *tls;
+  /** Explicit wire protocol. HTTP/2 never falls back to HTTP/1.1. */
+  chttp_protocol protocol;
 } chttp_request_options;
 
 /**
@@ -239,18 +416,26 @@ typedef struct chttp_options {
   size_t header_count;
   const void *body;
   size_t body_size;
+  /** Borrowed for the duration of this blocking call; mutually exclusive with `body/body_size`. */
+  const chttp_body_source *body_source;
+  /** Borrowed for the duration of this blocking call; streamed responses expose `body == NULL`. */
+  const chttp_body_sink *body_sink;
   uint32_t timeout_ms;
   /** Optional reusable TLS profile; valid only with a `tls://` connection URI. */
   const chttp_tls_profile *tls;
+  /** Explicit wire protocol. HTTP/2 never falls back to HTTP/1.1. */
+  chttp_protocol protocol;
 } chttp_options;
 
 /**
  * All capacities are hard bounds. CHTTP uses strict llhttp parsing, buffers one
- * complete response, and admits at most one request at a time per connection.
- * `request_capacity` also bounds retained idle connections and cannot exceed
- * `network.connection_capacity`. `network.read_timeout_ms` applies while an
- * idle connection observes its peer. Serialized requests are additionally
- * bounded by `network.max_send_bytes`.
+ * complete response, and admits at most one HTTP/1.1 request at a time per
+ * connection. `request_capacity` bounds request slots and HTTP/2 streams;
+ * `network.connection_capacity` independently bounds live physical H1
+ * connections and H2 sessions, so it may be smaller than `request_capacity`.
+ * `network.read_timeout_ms` applies while an idle connection observes its
+ * peer. Serialized requests are additionally bounded by
+ * `network.max_send_bytes`.
  */
 typedef struct chttp_client_config {
   cnet_client_config network;
@@ -261,16 +446,25 @@ typedef struct chttp_client_config {
   size_t max_request_body_bytes;
   size_t max_response_body_bytes;
   size_t max_informational_responses;
+  /** Per-request source buffer bound; zero selects up to 64 KiB within transport limits. */
+  size_t stream_chunk_bytes;
+  /** HTTP/2 parser input hard bound; zero selects 128 KiB or the larger CNet receive buffer. */
+  size_t h2_input_buffer_bytes;
+  /** HTTP/2 HPACK dynamic-table hard bound; zero selects 4 KiB. */
+  size_t h2_hpack_dynamic_table_bytes;
+  /** Maximum SETTINGS entries accepted in one HTTP/2 frame; zero selects 32. */
+  size_t h2_max_settings_count;
 } chttp_client_config;
 
 /**
  * Builds a reusable verified TLS profile. Configuration is consumed before
- * return. ALPN must be absent or contain only `http/1.1`. The same public
+ * return. ALPN must be absent or contain exactly one of `http/1.1` or `h2`.
+ * A profile is protocol-specific and cannot be shared across H1 and H2 requests. The same public
  * wrapper must not be initialized/destroyed concurrently with submit.
  *
  * @param profile Zero-initialized reusable output profile.
  * @param config Explicit CNet TLS client policy.
- * @return CNet TLS setup errors, or `TURBO_ENOTSUP` for non-HTTP/1.1 ALPN.
+ * @return CNet TLS setup errors, or `TURBO_ENOTSUP` for an unsupported ALPN list.
  */
 int chttp_tls_profile_init(chttp_tls_profile *profile, const cnet_tls_client_config *config);
 
@@ -290,8 +484,9 @@ int chttp_tls_profile_destroy(chttp_tls_profile *profile);
 int chttp_async_client_init(chttp_async_client *client, const chttp_client_config *config);
 
 /**
- * Serializes and copies a request, then reuses an idle exact
- * `connection_uri + authority` connection or asynchronously connects through CNet.
+ * Serializes and copies a request, then reuses an H1 connection or H2 session
+ * keyed by exact `connection_uri + authority + TLS profile + protocol`, or
+ * asynchronously connects through CNet.
  * Success guarantees exactly one later completion callback. No callback is
  * delivered for immediate admission failure. Submission from a completion
  * callback returns `TURBO_EBUSY`; defer it until the callback unwinds.
@@ -305,8 +500,9 @@ int chttp_async_client_submit(chttp_async_client *client, const chttp_request_op
 
 /**
  * Requests cancellation; completion is reported later with `TURBO_ECANCELED`.
- * A completed request whose connection is idle in the pool is already stale
- * and returns `TURBO_ENOENT`.
+ * H1 closes its exclusive connection; H2 sends RST_STREAM(CANCEL) without
+ * closing sibling streams. A completed request is stale and returns
+ * `TURBO_ENOENT` after recycling.
  * @return `TURBO_OK`, `TURBO_ENOENT`, `TURBO_EALREADY`, or a CNet close error.
  */
 int chttp_async_request_cancel(chttp_async_client *client, chttp_request request);
@@ -358,6 +554,30 @@ int chttp_delete(chttp_client *client, const chttp_options *options, chttp_respo
 int chttp_patch(chttp_client *client, const chttp_options *options, chttp_response *out_response,
                 chttp_error *out_error);
 
+/**
+ * Blocking requests-style file uploads using an exact Content-Length obtained
+ * from `path`. File reads are submitted through the client's private shared
+ * asynchronous file runtime while this call drives network and file progress.
+ * File and progress callback state is confined to the call. `progress` may be
+ * NULL; when present it observes monotonically increasing byte counts.
+ */
+int chttp_post_file(chttp_client *client, const chttp_options *options, const char *path,
+                    chttp_progress_fn progress, void *progress_user, chttp_response *out_response,
+                    chttp_error *out_error);
+int chttp_put_file(chttp_client *client, const chttp_options *options, const char *path,
+                   chttp_progress_fn progress, void *progress_user, chttp_response *out_response,
+                   chttp_error *out_error);
+
+/**
+ * Streams a GET response through native asynchronous writes into a
+ * same-directory temporary file. A 2xx response is fsynced, closed, then
+ * atomically renamed over `output_path`; HTTP errors keep the owning response
+ * but leave the destination unchanged.
+ */
+int chttp_download_file(chttp_client *client, const chttp_options *options, const char *output_path,
+                        chttp_progress_fn progress, void *progress_user,
+                        chttp_response *out_response, chttp_error *out_error);
+
 /** Returns the first case-insensitive matching owning response header. */
 const char *chttp_response_header(const chttp_response *response, const char *name);
 
@@ -399,6 +619,56 @@ int chttp_server_patch(chttp_server *server, const char *path, chttp_server_hand
                        void *user);
 int chttp_server_options(chttp_server *server, const char *path, chttp_server_handler_fn handler,
                          void *user);
+
+/** Registers one explicit H1 Upgrade/H2 Extended CONNECT WebSocket route before server start. */
+int chttp_server_websocket_with(chttp_server *server,
+                                const chttp_server_websocket_options *options);
+
+/** Convenience WebSocket route using bounded defaults and no route middleware. */
+int chttp_server_websocket(chttp_server *server, const char *path, chttp_websocket_open_fn on_open,
+                           chttp_websocket_event_fn on_event, void *user);
+
+/** Server WebSocket operations are valid only from that peer's callbacks. */
+int chttp_websocket_state_get(const chttp_websocket *websocket, chttp_websocket_state *out_state);
+int chttp_websocket_send_text(chttp_websocket *websocket, const void *data, size_t size);
+int chttp_websocket_send_binary(chttp_websocket *websocket, const void *data, size_t size);
+int chttp_websocket_send_ping(chttp_websocket *websocket, const void *data, size_t size);
+int chttp_websocket_send_pong(chttp_websocket *websocket, const void *data, size_t size);
+int chttp_websocket_close(chttp_websocket *websocket, uint16_t code, const void *reason,
+                          size_t reason_size);
+
+/**
+ * Initializes a disconnected, single-owner requests-style client. Every
+ * capacity is a hard bound; zero WebSocket limits select bounded defaults.
+ */
+int chttp_websocket_client_init(chttp_websocket_client *client,
+                                const chttp_websocket_client_config *config);
+
+/** Connects through HTTP/1.1 Upgrade or RFC 8441 Extended CONNECT. No protocol fallback occurs. */
+int chttp_websocket_client_connect(chttp_websocket_client *client,
+                                   const chttp_websocket_connect_options *options,
+                                   unsigned int *out_http_status);
+
+/** Blocking sends; callers never drive a poller. The client is not concurrently callable. */
+int chttp_websocket_client_send_text(chttp_websocket_client *client, const void *data, size_t size,
+                                     uint32_t timeout_ms);
+int chttp_websocket_client_send_binary(chttp_websocket_client *client, const void *data,
+                                       size_t size, uint32_t timeout_ms);
+int chttp_websocket_client_send_ping(chttp_websocket_client *client, const void *data, size_t size,
+                                     uint32_t timeout_ms);
+int chttp_websocket_client_send_pong(chttp_websocket_client *client, const void *data, size_t size,
+                                     uint32_t timeout_ms);
+
+/** Returns one borrowed event view, valid until the next client operation. */
+int chttp_websocket_client_receive(chttp_websocket_client *client, uint32_t timeout_ms,
+                                   chttp_websocket_event *out_event);
+
+/** Performs the close handshake within the deadline, then closes the transport. */
+int chttp_websocket_client_close(chttp_websocket_client *client, uint16_t code, const void *reason,
+                                 size_t reason_size, uint32_t timeout_ms);
+
+/** Drains and releases CNet; active connections are closed within timeout_ms. */
+int chttp_websocket_client_destroy(chttp_websocket_client *client, uint32_t timeout_ms);
 
 /**
  * Appends one global middleware before start. Bindings are copied in
@@ -443,6 +713,17 @@ int chttp_server_response_set_header(chttp_server_response *response, const char
  */
 int chttp_server_reply(chttp_server_response *response, unsigned int status_code,
                        const char *content_type, const void *body, size_t body_size);
+
+/**
+ * Streams a response after the handler returns. The source descriptor is copied, but its user
+ * state must remain valid until EOF or connection/stream cancellation.
+ */
+int chttp_server_response_source(chttp_server_response *response, unsigned int status_code,
+                                 const char *content_type, const chttp_body_source *source);
+
+/** Streams a regular file through the server's shared asynchronous file runtime. */
+int chttp_server_response_file(chttp_server_response *response, unsigned int status_code,
+                               const char *content_type, const char *path);
 
 /**
  * Session values are NUL-terminated strings borrowed through the handler and

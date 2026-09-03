@@ -15,7 +15,10 @@ typedef struct chttp_limits {
   size_t max_response_body_bytes;
   size_t max_informational_responses;
   size_t max_request_bytes;
+  size_t stream_chunk_bytes;
 } chttp_limits;
+
+typedef struct chttp_file_sink_transfer chttp_file_sink_transfer;
 
 typedef struct chttp_response_parser {
   llhttp_t parser;
@@ -25,6 +28,8 @@ typedef struct chttp_response_parser {
   char *header_storage;
   char *reason_storage;
   unsigned char *body_storage;
+  chttp_body_sink body_sink;
+  chttp_file_sink_transfer *file_sink_transfer;
   size_t header_storage_capacity;
   size_t header_storage_used;
   size_t header_wire_bytes;
@@ -45,6 +50,7 @@ typedef struct chttp_response_parser {
   bool value_open;
   bool reason_terminated;
   bool complete;
+  bool body_sink_enabled;
 } chttp_response_parser;
 
 int chttp_request_build(const chttp_request_options *options, const chttp_limits *limits,
@@ -52,6 +58,8 @@ int chttp_request_build(const chttp_request_options *options, const chttp_limits
 
 int chttp_response_parser_init(chttp_response_parser *parser, chttp_method method,
                                const chttp_limits *limits);
+int chttp_response_parser_init_with_sink(chttp_response_parser *parser, chttp_method method,
+                                         const chttp_limits *limits, const chttp_body_sink *sink);
 void chttp_response_parser_destroy(chttp_response_parser *parser);
 int chttp_response_parser_execute(chttp_response_parser *parser, const void *data, size_t size);
 int chttp_response_parser_finish(chttp_response_parser *parser);

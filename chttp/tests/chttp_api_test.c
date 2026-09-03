@@ -30,7 +30,44 @@ typedef struct chttp_test_probe {
   char content_type[64];
   unsigned char body[128];
   size_t body_size;
+  int response_body_is_null;
 } chttp_test_probe;
+
+typedef struct chttp_test_source {
+  const unsigned char *data;
+  size_t size;
+  size_t offset;
+  size_t chunk_size;
+  size_t calls;
+} chttp_test_source;
+
+static int chttp_test_source_read(void *user, void *buffer, size_t capacity, size_t *out_size) {
+  chttp_test_source *source = (chttp_test_source *)user;
+  size_t size;
+  if (source == NULL || buffer == NULL || out_size == NULL || capacity == 0u) return TURBO_EINVAL;
+  ++source->calls;
+  if (source->offset == source->size) {
+    *out_size = 0u;
+    return TURBO_OK;
+  }
+  size = source->size - source->offset;
+  if (size > source->chunk_size) size = source->chunk_size;
+  if (size > capacity) size = capacity;
+  memcpy(buffer, source->data + source->offset, size);
+  source->offset += size;
+  *out_size = size;
+  return TURBO_OK;
+}
+
+static int chttp_test_response_sink(void *user, const void *data, size_t size) {
+  chttp_test_probe *probe = (chttp_test_probe *)user;
+  if (probe == NULL || (data == NULL && size != 0u) ||
+      size > sizeof(probe->body) - probe->body_size)
+    return TURBO_EMSGSIZE;
+  memcpy(probe->body + probe->body_size, data, size);
+  probe->body_size += size;
+  return TURBO_OK;
+}
 
 static int chttp_test_server_handler(void *user, const chttp_server_request_view *request,
                                      chttp_server_response *response) {
@@ -126,9 +163,10 @@ static void chttp_test_complete(void *user, chttp_request request,
   if (content_type != NULL)
     (void)snprintf(probe->content_type, sizeof(probe->content_type), "%s", content_type);
   probe->body_size = response->body_size;
-  if (probe->body_size <= sizeof(probe->body))
+  probe->response_body_is_null = response->body == NULL;
+  if (response->body != NULL && probe->body_size <= sizeof(probe->body))
     memcpy(probe->body, response->body, probe->body_size);
-  else probe->status = TURBO_EMSGSIZE;
+  else if (response->body != NULL) probe->status = TURBO_EMSGSIZE;
 }
 
 static chttp_client_config chttp_test_config(void) {
@@ -253,6 +291,97 @@ spec("CHTTP advanced async client API") {
     check_equal(probe.content_type, "text/plain");
     check_equal(probe.body_size, (size_t)11u);
     check_equal(probe.body, "hello world", 11u);
+
+    check_equal(chttp_async_client_stop(&client, CHTTP_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_async_client_destroy(&client), TURBO_OK);
+    chttp_test_close_socket(accepted);
+    chttp_test_close_socket(listener);
+  }
+
+  it("streams an unknown-length H1 request and response without retaining response bytes") {
+    static const char response[] = "HTTP/1.1 200 OK\r\n"
+                                   "Content-Length: 5\r\n"
+                                   "Connection: close\r\n"
+                                   "\r\n"
+                                   "world";
+    static const char upload[] = "hello";
+    static const char chunk1[] = "2\r\nhe\r\n";
+    static const char chunk2[] = "2\r\nll\r\n";
+    static const char chunk3[] = "1\r\no\r\n";
+    static const char chunk_end[] = "0\r\n\r\n";
+    chttp_async_client client = {0};
+    chttp_client_config config = chttp_test_config();
+    chttp_test_probe probe = {0};
+    chttp_test_source source_state = {
+        .data = (const unsigned char *)upload, .size = sizeof(upload) - 1u, .chunk_size = 2u};
+    const chttp_body_source source = {.read = chttp_test_source_read, .user = &source_state};
+    const chttp_body_sink sink = {.write = chttp_test_response_sink, .user = &probe};
+    chttp_test_socket listener = CHTTP_TEST_INVALID_SOCKET;
+    chttp_test_socket accepted = CHTTP_TEST_INVALID_SOCKET;
+    chttp_request request = {0};
+    chttp_request_options options;
+    char uri[64];
+    char authority[64];
+    char expected_head[512];
+    unsigned char received[512];
+    uint16_t port = 0u;
+    int expected_head_size;
+    size_t completions = 0u;
+
+    config.stream_chunk_bytes = 2u;
+    check_equal(chttp_async_client_init(&client, &config), TURBO_OK);
+    check_equal(chttp_test_listener(&listener, &port), TURBO_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
+    check_greater(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port), 0);
+    options = (chttp_request_options){.connection_uri = uri,
+                                      .authority = authority,
+                                      .target = "/stream",
+                                      .method = CHTTP_METHOD_POST,
+                                      .body_source = &source,
+                                      .body_sink = &sink,
+                                      .on_complete = chttp_test_complete,
+                                      .user = &probe};
+    check_equal(chttp_async_client_submit(&client, &options, &request), TURBO_OK);
+    check_equal(chttp_async_client_poll(&client, CHTTP_TEST_TIMEOUT_MS, &completions), TURBO_OK);
+    accepted = accept(listener, NULL, NULL);
+    check_true(accepted != CHTTP_TEST_INVALID_SOCKET);
+    check_equal(chttp_test_set_timeout(accepted), TURBO_OK);
+    check_equal(chttp_async_client_poll(&client, 10u, &completions), TURBO_OK);
+
+    expected_head_size = snprintf(expected_head, sizeof(expected_head),
+                                  "POST /stream HTTP/1.1\r\n"
+                                  "Host: %s\r\n"
+                                  "Transfer-Encoding: chunked\r\n"
+                                  "Connection: keep-alive\r\n"
+                                  "\r\n",
+                                  authority);
+    check_true(expected_head_size > 0 && (size_t)expected_head_size < sizeof(expected_head));
+    check_equal(chttp_test_recv_all(accepted, received, (size_t)expected_head_size), TURBO_OK);
+    check_equal(received, expected_head, (size_t)expected_head_size);
+
+    check_equal(chttp_async_client_poll(&client, 10u, &completions), TURBO_OK);
+    check_equal(chttp_test_recv_all(accepted, received, sizeof(chunk1) - 1u), TURBO_OK);
+    check_equal(received, chunk1, sizeof(chunk1) - 1u);
+    check_equal(chttp_async_client_poll(&client, 10u, &completions), TURBO_OK);
+    check_equal(chttp_test_recv_all(accepted, received, sizeof(chunk2) - 1u), TURBO_OK);
+    check_equal(received, chunk2, sizeof(chunk2) - 1u);
+    check_equal(chttp_async_client_poll(&client, 10u, &completions), TURBO_OK);
+    check_equal(chttp_test_recv_all(accepted, received, sizeof(chunk3) - 1u), TURBO_OK);
+    check_equal(received, chunk3, sizeof(chunk3) - 1u);
+    check_equal(chttp_async_client_poll(&client, 10u, &completions), TURBO_OK);
+    check_equal(chttp_test_recv_all(accepted, received, sizeof(chunk_end) - 1u), TURBO_OK);
+    check_equal(received, chunk_end, sizeof(chunk_end) - 1u);
+
+    check_equal(chttp_test_send_all(accepted, response, sizeof(response) - 1u), TURBO_OK);
+    check_equal(chttp_test_poll_until(&client, &probe), TURBO_OK);
+    check_equal(probe.called, 1);
+    check_equal(probe.status, TURBO_OK);
+    check_equal(probe.response_status, 200u);
+    check_equal(probe.response_body_is_null, 1);
+    check_equal(probe.body_size, (size_t)5u);
+    check_equal(probe.body, "world", 5u);
+    check_equal(source_state.offset, (size_t)5u);
+    check_equal(source_state.calls, (size_t)4u);
 
     check_equal(chttp_async_client_stop(&client, CHTTP_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(chttp_async_client_destroy(&client), TURBO_OK);

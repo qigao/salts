@@ -62,6 +62,9 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config);
 /** Processes bounded commands and one NativeIO completion batch. */
 int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms);
 
+/** Thread-safe advisory wake for an owner blocked in drive. */
+int cnet_owner_wake(cnet_owner *owner);
+
 /** Reports the bounded NativeIO coroutine state owned by this shard. */
 bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats);
 

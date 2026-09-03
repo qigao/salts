@@ -51,11 +51,17 @@ typedef struct chttp_server_parser_impl {
   int callback_status;
   chttp_server_parser_request_fn on_request;
   chttp_server_parser_continue_fn on_continue;
+  chttp_server_parser_body_open_fn on_body_open;
+  chttp_server_parser_body_close_fn on_body_close;
+  chttp_server_parser_upgrade_fn on_upgrade;
+  chttp_body_sink body_sink;
   void *user;
   bool field_open;
   bool value_open;
   bool target_terminated;
+  bool body_sink_open;
   bool terminal;
+  bool upgrade_stopped;
   bool wire_previous_was_cr;
   chttp_server_wire_phase wire_phase;
 } chttp_server_parser_impl;
@@ -97,6 +103,15 @@ static int chttp_server_parser_fail(chttp_server_parser_impl *parser, unsigned i
 static int chttp_server_parser_callback_fail(chttp_server_parser_impl *parser, int status) {
   parser->callback_status = status == TURBO_OK ? TURBO_EIO : status;
   return HPE_USER;
+}
+
+static void chttp_server_parser_close_body(chttp_server_parser_impl *parser, int status) {
+  chttp_body_sink sink;
+  if (parser == NULL || !parser->body_sink_open) return;
+  sink = parser->body_sink;
+  parser->body_sink_open = false;
+  parser->body_sink = (chttp_body_sink){0};
+  if (parser->on_body_close != NULL) parser->on_body_close(parser->user, &sink, status);
 }
 
 static bool chttp_server_parser_storage_append(chttp_server_parser_impl *parser, const char *data,
@@ -340,8 +355,40 @@ static int chttp_server_parser_on_headers_complete(llhttp_t *llparser) {
   if ((llparser->flags & F_CONTENT_LENGTH) != 0u &&
       llparser->content_length > (uint64_t)parser->max_body_bytes)
     return chttp_server_parser_fail(parser, 413u);
-  if (llhttp_get_upgrade(llparser) != 0u) llparser->upgrade = 0u;
   status = chttp_server_parser_validate_headers(parser);
+  if (status == 0 && llhttp_get_upgrade(llparser) != 0u) {
+    if (parser->on_upgrade != NULL) {
+      chttp_server_parser_upgrade_action action = CHTTP_SERVER_UPGRADE_IGNORE;
+      unsigned int http_status = 0u;
+      parser->request.protocol_keep_alive = 1;
+      status = parser->on_upgrade(parser->user, &parser->request, &action, &http_status);
+      if (status != TURBO_OK) {
+        parser->failure_http_status = http_status;
+        return chttp_server_parser_callback_fail(parser, status);
+      }
+      if (action == CHTTP_SERVER_UPGRADE_STOP) {
+        parser->failure_http_status = http_status;
+        parser->upgrade_stopped = true;
+        return 2;
+      }
+      if (action != CHTTP_SERVER_UPGRADE_IGNORE)
+        return chttp_server_parser_callback_fail(parser, TURBO_EPROTO);
+    }
+    llparser->upgrade = 0u;
+  }
+  if (status == 0) {
+    if (parser->on_body_open != NULL) {
+      chttp_body_sink sink = {0};
+      status = parser->on_body_open(parser->user, &parser->request, &sink);
+      if (status != TURBO_OK) return chttp_server_parser_callback_fail(parser, status);
+      if (sink.write != NULL) {
+        parser->body_sink = sink;
+        parser->body_sink_open = true;
+        parser->request.body = NULL;
+        parser->request.body_streamed = 1;
+      }
+    }
+  }
   if (status == 0) {
     if ((llparser->flags & F_CHUNKED) != 0u) {
       parser->wire_line_bytes = 0u;
@@ -361,7 +408,10 @@ static int chttp_server_parser_on_body(llhttp_t *llparser, const char *at, size_
   if (parser->request.body_size > parser->max_body_bytes ||
       length > parser->max_body_bytes - parser->request.body_size)
     return chttp_server_parser_fail(parser, 413u);
-  if (length != 0u) memcpy(parser->body_storage + parser->request.body_size, at, length);
+  if (length != 0u && parser->body_sink_open) {
+    const int status = parser->body_sink.write(parser->body_sink.user, at, length);
+    if (status != TURBO_OK) return chttp_server_parser_callback_fail(parser, status);
+  } else if (length != 0u) memcpy(parser->body_storage + parser->request.body_size, at, length);
   parser->request.body_size += length;
   return 0;
 }
@@ -372,6 +422,8 @@ static int chttp_server_parser_on_message_complete(llhttp_t *llparser) {
   if (parser == NULL) return HPE_USER;
   chttp_server_parser_reset_wire(parser);
   parser->request.protocol_keep_alive = llhttp_should_keep_alive(llparser);
+  chttp_server_parser_close_body(parser, TURBO_OK);
+  if (parser->upgrade_stopped) return 0;
   status = parser->on_request(parser->user, &parser->request);
   if (status != TURBO_OK) return chttp_server_parser_callback_fail(parser, status);
   return 0;
@@ -401,7 +453,8 @@ int chttp_server_parser_init(chttp_server_parser *parser,
   size_t storage_capacity;
   if (parser == NULL || config == NULL || parser->impl != NULL || config->max_target_bytes == 0u ||
       config->max_header_count == 0u || config->max_header_bytes == 0u ||
-      config->max_body_bytes == 0u || config->on_request == NULL)
+      config->max_body_bytes == 0u || config->on_request == NULL ||
+      ((config->on_body_open == NULL) != (config->on_body_close == NULL)))
     return TURBO_EINVAL;
   if (config->max_target_bytes > SIZE_MAX - CHTTP_SERVER_REQUEST_LINE_OVERHEAD_BYTES ||
       config->max_header_bytes == SIZE_MAX ||
@@ -435,6 +488,9 @@ int chttp_server_parser_init(chttp_server_parser *parser,
   impl->header_storage_capacity = storage_capacity;
   impl->on_request = config->on_request;
   impl->on_continue = config->on_continue;
+  impl->on_body_open = config->on_body_open;
+  impl->on_body_close = config->on_body_close;
+  impl->on_upgrade = config->on_upgrade;
   impl->user = config->user;
   llhttp_settings_init(&impl->settings);
   impl->settings.on_message_begin = chttp_server_parser_on_message_begin;
@@ -460,8 +516,13 @@ static int chttp_server_parser_execute_llhttp(chttp_server_parser_impl *parser, 
                                               size_t size, unsigned int *out_http_status) {
   const llhttp_errno_t status = llhttp_execute(&parser->parser, data, size);
   if (status == HPE_OK) return TURBO_OK;
+  if (status == HPE_PAUSED_UPGRADE && parser->upgrade_stopped) return TURBO_OK;
   parser->terminal = true;
-  if (parser->callback_status != TURBO_OK) return parser->callback_status;
+  if (parser->callback_status != TURBO_OK) {
+    chttp_server_parser_close_body(parser, parser->callback_status);
+    return parser->callback_status;
+  }
+  chttp_server_parser_close_body(parser, TURBO_EPROTO);
   if (parser->failure_http_status == 0u)
     parser->failure_http_status = status == HPE_INVALID_VERSION ? 505u : 400u;
   *out_http_status = parser->failure_http_status;
@@ -472,6 +533,7 @@ static int chttp_server_parser_wire_fail(chttp_server_parser_impl *parser, unsig
                                          unsigned int *out_http_status) {
   parser->failure_http_status = http_status;
   parser->terminal = true;
+  chttp_server_parser_close_body(parser, TURBO_EPROTO);
   *out_http_status = http_status;
   return TURBO_EPROTO;
 }
@@ -574,16 +636,18 @@ static int chttp_server_parser_scan_trailers(chttp_server_parser_impl *parser, c
   return TURBO_OK;
 }
 
-int chttp_server_parser_execute(chttp_server_parser *parser, const void *data, size_t size,
-                                unsigned int *out_http_status) {
+int chttp_server_parser_execute_consumed(chttp_server_parser *parser, const void *data, size_t size,
+                                         size_t *out_consumed, unsigned int *out_http_status) {
   chttp_server_parser_impl *impl;
   const char *cursor = (const char *)data;
   size_t remaining = size;
+  if (out_consumed != NULL) *out_consumed = 0u;
   if (out_http_status != NULL) *out_http_status = 0u;
   if (parser == NULL || parser->impl == NULL || data == NULL || size == 0u ||
-      out_http_status == NULL)
+      out_consumed == NULL || out_http_status == NULL)
     return TURBO_EINVAL;
   impl = (chttp_server_parser_impl *)parser->impl;
+  if (impl->upgrade_stopped) return TURBO_ESHUTDOWN;
   if (impl->terminal) {
     *out_http_status = impl->failure_http_status;
     return impl->callback_status != TURBO_OK ? impl->callback_status : TURBO_EPROTO;
@@ -632,22 +696,41 @@ int chttp_server_parser_execute(chttp_server_parser *parser, const void *data, s
     case CHTTP_SERVER_WIRE_TRAILERS_PENDING:
       return chttp_server_parser_wire_fail(impl, 400u, out_http_status);
     }
-    if (status != TURBO_OK) return status;
+    if (status != TURBO_OK) {
+      *out_consumed = size - remaining;
+      return status;
+    }
     status = chttp_server_parser_execute_llhttp(impl, cursor, segment_size, out_http_status);
-    if (status != TURBO_OK) return status;
+    if (status != TURBO_OK) {
+      *out_consumed = size - remaining;
+      return status;
+    }
     cursor += segment_size;
     remaining -= segment_size;
+    if (impl->upgrade_stopped) break;
   }
+  *out_consumed = size - remaining;
+  *out_http_status = impl->failure_http_status;
   return TURBO_OK;
+}
+
+int chttp_server_parser_execute(chttp_server_parser *parser, const void *data, size_t size,
+                                unsigned int *out_http_status) {
+  size_t consumed = 0u;
+  const int status =
+      chttp_server_parser_execute_consumed(parser, data, size, &consumed, out_http_status);
+  return status == TURBO_OK && consumed != size ? TURBO_EBUSY : status;
 }
 
 int chttp_server_parser_reset(chttp_server_parser *parser) {
   chttp_server_parser_impl *impl;
   if (parser == NULL || parser->impl == NULL) return TURBO_EINVAL;
   impl = (chttp_server_parser_impl *)parser->impl;
+  chttp_server_parser_close_body(impl, TURBO_ECANCELED);
   llhttp_reset(&impl->parser);
   impl->parser.data = impl;
   impl->terminal = false;
+  impl->upgrade_stopped = false;
   chttp_server_parser_reset_message(impl);
   chttp_server_parser_reset_wire(impl);
   return TURBO_OK;
@@ -657,6 +740,7 @@ void chttp_server_parser_destroy(chttp_server_parser *parser) {
   chttp_server_parser_impl *impl;
   if (parser == NULL || parser->impl == NULL) return;
   impl = (chttp_server_parser_impl *)parser->impl;
+  chttp_server_parser_close_body(impl, TURBO_ECANCELED);
   free(impl->body_storage);
   free(impl->header_storage);
   free(impl->path_storage);

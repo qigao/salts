@@ -4,17 +4,19 @@
 
 截至当前基线，CNet 已提供 TCP、TLS、UDP、Pipe、TCP listener、plain/TLS accepted-socket
 接管、有序 send completion、send-and-close，以及独立于 transport 的有界 WebSocket session
-engine；CHTTP 已在其上提供 HTTP/1.1/HTTPS client/server、
+engine；CHTTP 已在其上提供 HTTP/1.1/HTTPS client/server、显式 h2c/TLS HTTP/2 client/server、
 静态与命名参数路由、中间件、有界内存 Cookie Session，以及不要求用户调用 poller 的
-后台 server owner。
+后台 server owner，以及 H1 Upgrade/RFC 8441 H2 Extended CONNECT 的 `ws://`/verified `wss://`
+client/server。
 
 CHTTP server 的网络命令采用每连接单 owner pending-action 状态机：callback 遇到有界 CNet
 command ring 满额时保留 receive/send/close 动作和相关 buffer，worker 以 round-robin 公平重试。
 该状态不跨线程写入，不通过无界分配绕过背压；动作成功提交或收到终态事件后才清除。
 
-CHTTP 已通过可复用 TLS profile 把 CNet TLS 接入 client/server，但尚未实现 WebSocket
-Upgrade/route。以下能力不得在对应公开文档、示例或 capability negotiation 中声明为可用：
-KCP、WS/WSS endpoint、HTTP/2 与 S3。
+CHTTP 已通过可复用 TLS profile 把 CNet TLS 接入 H1/H2 client/server，并用同一 CNet
+WebSocket engine 实现 HTTP/1.1 Upgrade 与 RFC 8441 Extended CONNECT route，以及
+`ws://`/`wss://` 同步 client。以下能力不得在对应公开文档、示例或 capability negotiation 中
+声明为可用：KCP 与 S3。
 HTTP/3 明确不在本路线范围内。
 
 ## P0：CNet TLS transport
@@ -54,21 +56,22 @@ accepted-connection 路径终止 TLS；CHTTP client/server 复用该路径，并
 - [x] 在 `tools/wsparser` 语法结果之上实现 RFC 6455 session 状态机；client frame 必须 mask，
   控制帧、fragmentation 和 close handshake 必须严格校验。
 - [x] CNet WebSocket engine 只依赖有序双向 byte stream，不解析 HTTP header；同一 frame/
-  message/session 状态机同时承载 CHTTP HTTP/1.1 Upgrade 与未来 HTTP/2 RFC 8441 stream。
-- [ ] CHTTP 使用现有 llhttp request parser 完成 opening handshake 的 header/route 校验；Upgrade
+  message/session 状态机同时承载 CHTTP HTTP/1.1 Upgrade 与 HTTP/2 RFC 8441 stream。
+- [x] CHTTP 使用现有 llhttp request parser 完成 opening handshake 的 header/route 校验；Upgrade
   成功前不得把字节或 stream 所有权交给 CNet WebSocket session。
-- [ ] 为 `ws://` 和 `wss://` client 实现 HTTP Upgrade；`wss` 必须复用 P0 TLS transport。
-- [ ] 在 CHTTP server 增加显式 WebSocket route。CHTTP 负责路由与 Upgrade header 校验，
+- [x] 为 `ws://` 和 `wss://` client 实现 HTTP Upgrade；`wss` 必须复用 P0 TLS transport。
+- [x] 在 CHTTP server 增加显式 WebSocket route。CHTTP 负责路由与 Upgrade header 校验，
   成功后把 accepted stream 的所有权一次性移交给 CNet WebSocket engine。
-- [ ] HTTP/2 导入后由 CHTTP 校验 extended CONNECT 与 `:protocol = websocket`，再把该 H2
+- [x] HTTP/2 由 CHTTP 校验 extended CONNECT 与 `:protocol = websocket`，再把该 H2
   stream 适配给同一 CNet WebSocket engine；不得为 H1/H2 复制两套 WS 状态机。
-- [ ] 明确移交状态机：HTTP parser 不得继续消费已移交字节；失败必须发送 HTTP 错误并关闭；
+- [x] 明确移交状态机：HTTP parser 不得继续消费已移交字节；失败必须发送 HTTP 错误并关闭；
   成功后 response builder、Session view 和 request view 立即失效。
-- [ ] 覆盖 Upgrade 拒绝、mask violation、fragment 重组、oversize、ping/pong、双方 close、
-  abrupt EOF、WS/WSS 与跨线程 mailbox 驱动测试。
+- [x] 覆盖 opening handshake、mask violation、fragment 重组、oversize、ping/pong、双方 close、
+  abrupt EOF 与 WS/WSS；跨线程 mailbox 驱动仍属于 future async client adapter 范围。
 
 完成条件：普通 handler API 不受影响；WebSocket route 不需要用户调用 poller；缺少 TLS 时
-请求 `wss` 明确返回 capability error。
+请求 `wss` 明确返回 capability error；H2 client 只在 peer 发布
+`SETTINGS_ENABLE_CONNECT_PROTOCOL=1` 后发送 Extended CONNECT，且不回退 H1。
 
 ## P2：导入 TurboHTTP HTTP/2
 
@@ -76,17 +79,23 @@ accepted-connection 路径终止 TLS；CHTTP client/server 复用该路径，并
 `c804424d8ea57298250f8e0b5af78bb933b9ec5e`。迁移时记录实际源 commit，并保留 frame、HPACK、
 protocol/session 测试的来源映射；不复制 HTTP/3 代码。
 
-- [ ] 先导入 transport-independent 的 frame、HPACK 与 protocol engine，并把公开命名、
+- [x] 先导入 transport-independent 的 frame、HPACK 与 protocol engine，并把公开命名、
   export macro、Turbo error 与 CMake target 适配到 CHTTP。
-- [ ] 不直接导入 CoroNet socket ownership。将 HTTP/2 session 的 socket/read/write/cancel/
+- [x] 不直接导入 CoroNet socket ownership。将 HTTP/2 session 的 socket/read/write/cancel/
   timer 接口改为依赖 CNet stream；h2c 使用 TCP，HTTPS/ALPN `h2` 依赖 P0 TLS。
-- [ ] 在 CHTTP 中定义 H1/H2 共用 request/response ownership，并保留 stream concurrency、
+- [x] 在 CHTTP 中定义 H1/H2 共用 request/response ownership，并保留 stream concurrency、
   SETTINGS、flow control、header list、HPACK dynamic table、GOAWAY 与 per-stream cancellation
   的硬边界。
-- [ ] 明确选择策略：显式 H2 失败不得降级；AUTO 只有在请求体尚未开始消费且策略允许时
+- [x] 明确选择策略：显式 H2 失败不得降级；AUTO 只有在请求体尚未开始消费且策略允许时
   才能选择 H1。
-- [ ] 迁移 frame、HPACK、protocol、session、streaming、shutdown 与 public-header 测试；
+- [x] 迁移 frame、HPACK、protocol、session、streaming、shutdown 与 public-header 测试；
   增加 CNet transport adapter 和 installed consumer 测试。
+
+当前 frame、HPACK、protocol、CNet client/server adapter、h2c、TLS ALPN、multiplex、peer stream limit、跨
+origin/H1-H2 idle eviction、per-stream cancel/response-error 隔离、GOAWAY、阻塞调用 deadline、
+H2 server route/middleware/Session、双向 body source/sink、文件传输、stream 隔离、flow-control
+drain、public-header 与 installed consumer 编译已覆盖。advanced per-stream timer 仍是后续增强，
+但不再阻塞 HTTP/2 协议引擎与统一 H1/H2 API 的完成状态。
 
 完成条件：CHTTP 可显式使用 h2c，并在 P0 完成后使用经 ALPN 验证的 HTTPS H2；公开 API
 不暴露 CoroNet 或第三方协议类型。
@@ -119,10 +128,10 @@ CNet 或 NativeIO。迁移时记录实际源 commit，保留 SigV4、URL、XML�
 | HTTP/1.1 route、参数、middleware | 已实现 | CHTTP server |
 | 有界内存 Cookie Session | 已实现 | CHTTP server；持久化/分布式 backend 不在当前路线 |
 | 同步 template/static response | 可组合 | handler 内使用现有 parser/fs 能力 |
-| TLS listener / HTTPS | 已实现 | CNet TLS transport + CHTTP H1 adapter；支持 verified TLS/mTLS |
-| WebSocket session / WS/WSS route | CNet session engine 已实现；route 未实现 | CHTTP Upgrade，P1 |
+| TLS listener / HTTPS | 已实现 | CNet TLS transport + CHTTP H1/H2 client/server；支持 verified TLS/mTLS 与 ALPN |
+| WebSocket session / WS/WSS route | H1/H2 client/server 已实现 | CNet session engine + CHTTP H1 Upgrade/RFC 8441 Extended CONNECT |
 | KCP transport | 未实现 | NativeIO UDP + CNet KCP session，P1 |
-| HTTP/2 | 待从 TurboHTTP 导入 | CHTTP protocol + CNet stream，P2 |
+| HTTP/2 | client/server 已实现 | 同一 CHTTP API；h2c prior knowledge 或 TLS ALPN；body streaming 已实现，advanced timer 待增强 |
 | S3 | 待从 TurboHTTP 导入 | CHTTP 之上的应用协议，P3 |
 | HTTP/3 | 不在范围内 | 不导入、不提供隐式 fallback |
 

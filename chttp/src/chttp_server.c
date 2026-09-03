@@ -1,3 +1,4 @@
+#include "chttp_h2_server.h"
 #include "chttp_server_runtime.h"
 #include "chttp_tls.h"
 
@@ -11,14 +12,158 @@
 enum {
   CHTTP_SERVER_ERROR_RESPONSE_BYTES = 256,
   CHTTP_SERVER_COOKIE_NAME_BYTES = 64,
-  CHTTP_SERVER_GENERATED_RESPONSE_BYTES = 256
+  CHTTP_SERVER_GENERATED_RESPONSE_BYTES = 256,
+  CHTTP_SERVER_H2_DRAIN_ACK_GRACE_SLICES = 64,
+  CHTTP_SERVER_DEFAULT_STREAM_CHUNK_BYTES = 64 * 1024,
+  CHTTP_SERVER_CHUNK_PREFIX_RESERVE = 32,
+  CHTTP_SERVER_CHUNK_TRAILER_BYTES = 2
 };
 
 static const char CHTTP_SERVER_CONTINUE_RESPONSE[] = "HTTP/1.1 100 Continue\r\n\r\n";
-static TURBO_THREAD_LOCAL chttp_server_impl *chttp_active_callback_server;
+static const unsigned char CHTTP_SERVER_H2_PREFACE[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+TURBO_THREAD_LOCAL chttp_server_impl *chttp_active_callback_server;
 
 static int chttp_server_on_request(void *user, const chttp_server_request_view *request);
 static int chttp_server_on_continue(void *user);
+static int chttp_server_on_body_open(void *user, const chttp_server_request_view *request,
+                                     chttp_body_sink *out_sink);
+static void chttp_server_on_body_close(void *user, chttp_body_sink *sink, int status);
+static int chttp_server_response_stream_next(chttp_server_connection *connection);
+static void chttp_server_h1_file_ready(void *user);
+
+static cflow_io_native_backend_kind chttp_server_file_backend(void) {
+#if defined(_WIN32)
+  return CFLOW_IO_NATIVE_IOCP;
+#elif defined(__linux__)
+  return CFLOW_IO_NATIVE_IO_URING;
+#else
+  return CFLOW_IO_NATIVE_POLL;
+#endif
+}
+
+static void chttp_server_file_wake(void *user) {
+  chttp_server_impl *server = (chttp_server_impl *)user;
+  if (server != NULL && server->network_initialized) (void)cnet_client_wake(&server->network);
+}
+
+int chttp_server_file_runtime_ensure(chttp_server_impl *server,
+                                     cflow_io_file_runtime **out_runtime) {
+  cflow_io_file_runtime_config config;
+  size_t command_capacity;
+  int status;
+  if (server == NULL || out_runtime == NULL || !server->network_initialized ||
+      server->file_transfer_capacity == 0u)
+    return TURBO_EINVAL;
+  *out_runtime = NULL;
+  if (!server->file_runtime_initialized) {
+    command_capacity = server->file_transfer_capacity <= SIZE_MAX / 2u
+                           ? server->file_transfer_capacity * 2u
+                           : server->file_transfer_capacity;
+    config =
+        (cflow_io_file_runtime_config){.backend_kind = chttp_server_file_backend(),
+                                       .file_capacity = server->file_transfer_capacity,
+                                       .request_capacity = server->file_transfer_capacity,
+                                       .command_capacity = command_capacity,
+                                       .completion_batch_capacity = server->file_transfer_capacity,
+                                       .wake = chttp_server_file_wake,
+                                       .wake_user = server};
+    status = cflow_io_file_runtime_init(&server->file_runtime, &config);
+    if (status != TURBO_OK) return status;
+    server->file_runtime_initialized = true;
+  }
+  *out_runtime = &server->file_runtime;
+  return TURBO_OK;
+}
+
+int chttp_server_file_transfer_register(chttp_server_impl *server, chttp_file_transfer *transfer) {
+  size_t index;
+  if (server == NULL || transfer == NULL || transfer->file.impl == NULL) return TURBO_EINVAL;
+  for (index = 0u; index < server->file_transfer_capacity; ++index) {
+    if (server->file_transfers[index] == NULL) {
+      server->file_transfers[index] = transfer;
+      return TURBO_OK;
+    }
+  }
+  return TURBO_ENOBUFS;
+}
+
+static int chttp_server_file_progress(chttp_server_impl *server) {
+  size_t progressed = 0u;
+  size_t max_steps;
+  size_t index;
+  int status;
+  if (server == NULL || !server->file_runtime_initialized) return TURBO_OK;
+  max_steps = server->file_transfer_capacity <= SIZE_MAX / 4u ? server->file_transfer_capacity * 4u
+                                                              : SIZE_MAX;
+  status = cflow_io_file_runtime_run_ready(&server->file_runtime, max_steps, &progressed);
+  if (status != TURBO_OK) return status;
+  for (index = 0u; index < server->file_transfer_capacity; ++index) {
+    chttp_file_transfer *transfer = server->file_transfers[index];
+    if (transfer == NULL) continue;
+    if (transfer->owner_release_requested && !transfer->close_requested) {
+      status = chttp_file_transfer_close(transfer);
+      if (status != TURBO_OK && status != TURBO_ENOBUFS) return status;
+    }
+    if (!transfer->close_requested) continue;
+    if (!cflow_io_file_is_quiescent(&transfer->file)) continue;
+    status = chttp_file_transfer_destroy(transfer);
+    if (status != TURBO_OK) return status;
+    free(transfer);
+    server->file_transfers[index] = NULL;
+  }
+  return TURBO_OK;
+}
+
+static bool chttp_server_files_active(const chttp_server_impl *server) {
+  size_t index;
+  if (server == NULL) return false;
+  for (index = 0u; index < server->file_transfer_capacity; ++index)
+    if (server->file_transfers[index] != NULL) return true;
+  return false;
+}
+
+static int chttp_server_files_cleanup(chttp_server_impl *server) {
+  size_t index;
+  int status;
+  if (server == NULL || !server->file_runtime_initialized) return TURBO_OK;
+  for (index = 0u; index < server->config.network.connection_capacity; ++index) {
+    chttp_server_connection *connection = &server->connections[index];
+    chttp_server_response_builder *builder = &connection->request_state.response_builder;
+    if (builder->file_transfer != NULL)
+      chttp_server_response_builder_close_source(builder, TURBO_ECANCELED);
+    chttp_h2_server_connection_cancel_file_sources(connection->h2);
+  }
+  for (index = 0u; index < server->file_transfer_capacity; ++index) {
+    chttp_file_transfer *transfer = server->file_transfers[index];
+    if (transfer == NULL) continue;
+    chttp_file_transfer_set_ready(transfer, NULL, NULL);
+    transfer->owner_release_requested = true;
+    status = chttp_file_transfer_close(transfer);
+    if (status != TURBO_OK && status != TURBO_ENOBUFS) return status;
+  }
+  while (chttp_server_files_active(server)) {
+    status = chttp_server_file_progress(server);
+    if (status != TURBO_OK) return status;
+    for (index = 0u; index < server->file_transfer_capacity; ++index) {
+      chttp_file_transfer *transfer = server->file_transfers[index];
+      if (transfer == NULL || transfer->close_requested) continue;
+      transfer->owner_release_requested = true;
+      status = chttp_file_transfer_close(transfer);
+      if (status != TURBO_OK && status != TURBO_ENOBUFS) return status;
+    }
+    turbo_thread_yield();
+  }
+  status = cflow_io_file_runtime_close(&server->file_runtime);
+  if (status != TURBO_OK && status != TURBO_EALREADY) return status;
+  while (!cflow_io_file_runtime_is_quiescent(&server->file_runtime)) {
+    status = chttp_server_file_progress(server);
+    if (status != TURBO_OK) return status;
+    turbo_thread_yield();
+  }
+  status = cflow_io_file_runtime_destroy(&server->file_runtime);
+  if (status == TURBO_OK) server->file_runtime_initialized = false;
+  return status;
+}
 
 static char *chttp_server_string_copy(const char *value) {
   size_t size;
@@ -35,6 +180,18 @@ static bool chttp_server_multiply(size_t left, size_t right, size_t *out) {
   if (out == NULL || (right != 0u && left > SIZE_MAX / right)) return false;
   *out = left * right;
   return true;
+}
+
+static uint32_t chttp_server_poll_timeout(const chttp_server_impl *server) {
+  enum { CHTTP_SERVER_FILE_PROGRESS_POLL_MS = 1u };
+  if (server != NULL && chttp_server_files_active(server) &&
+      server->config.poll_slice_ms > CHTTP_SERVER_FILE_PROGRESS_POLL_MS)
+    return CHTTP_SERVER_FILE_PROGRESS_POLL_MS;
+  return server == NULL ? 0u : server->config.poll_slice_ms;
+}
+
+static uint64_t chttp_server_deadline_after(uint64_t now_ms, uint64_t delay_ms) {
+  return delay_ms > UINT64_MAX - now_ms ? UINT64_MAX : now_ms + delay_ms;
 }
 
 static bool chttp_server_cookie_name_valid(const char *name) {
@@ -58,8 +215,11 @@ static bool chttp_server_power_of_two(size_t value) {
 }
 
 static int chttp_server_config_validate(const chttp_server_config *config) {
-  size_t response_bound;
+  chttp_h2_proto_config h2_config;
+  size_t buffered_body_bytes;
+  size_t buffered_body_limit;
   const char *cookie_name;
+  int status;
   if (config == NULL || config->host == NULL || config->host[0] == '\0' || config->backlog == 0u ||
       config->backlog > INT_MAX || !native_io_backend_kind_supported(config->network.backend) ||
       config->network.connection_capacity == 0u ||
@@ -75,10 +235,21 @@ static int chttp_server_config_validate(const chttp_server_config *config) {
       config->max_response_header_count == 0u || config->max_response_header_bytes == 0u ||
       config->max_response_body_bytes == 0u || config->poll_slice_ms == 0u)
     return TURBO_EINVAL;
+  if (config->max_buffered_response_body_bytes > config->max_response_body_bytes)
+    return TURBO_EINVAL;
+  if (config->stream_chunk_bytes != 0u &&
+      (config->network.max_send_bytes <=
+           CHTTP_SERVER_CHUNK_PREFIX_RESERVE + CHTTP_SERVER_CHUNK_TRAILER_BYTES ||
+       config->stream_chunk_bytes > config->network.max_send_bytes -
+                                        CHTTP_SERVER_CHUNK_PREFIX_RESERVE -
+                                        CHTTP_SERVER_CHUNK_TRAILER_BYTES))
+    return TURBO_EMSGSIZE;
+  status = chttp_h2_server_config_validate(config, &h2_config);
+  if (status != TURBO_OK) return status;
   if (config->tls != NULL) {
     if (config->tls->size != sizeof(*config->tls)) return TURBO_EINVAL;
-    const int alpn_status = chttp_tls_http1_alpn_validate(config->tls->alpn_protocols,
-                                                          config->tls->alpn_protocol_count);
+    const int alpn_status = chttp_tls_server_alpn_validate(
+        config->tls->alpn_protocols, config->tls->alpn_protocol_count, config->enable_http2);
     if (alpn_status != TURBO_OK) return alpn_status;
     if (config->network.tls_io_buffer_bytes == 0u || config->network.tls_handshake_timeout_ms == 0u)
       return TURBO_EINVAL;
@@ -89,16 +260,25 @@ static int chttp_server_config_validate(const chttp_server_config *config) {
       config->max_route_param_count > SIZE_MAX / sizeof(chttp_server_param) ||
       config->route_capacity > SIZE_MAX / sizeof(chttp_server_route_record) ||
       config->network.connection_capacity > SIZE_MAX / sizeof(chttp_server_connection) ||
-      config->network.connection_capacity > UINT32_MAX ||
-      config->max_response_body_bytes > SIZE_MAX - config->max_response_header_bytes ||
-      config->max_response_body_bytes + config->max_response_header_bytes >
-          SIZE_MAX - CHTTP_SERVER_GENERATED_RESPONSE_BYTES)
+      config->network.connection_capacity > UINT32_MAX)
     return TURBO_ERANGE;
-  response_bound = config->max_response_body_bytes + config->max_response_header_bytes +
-                   CHTTP_SERVER_GENERATED_RESPONSE_BYTES;
-  if (response_bound >
-      config->network.max_send_bytes - (sizeof(CHTTP_SERVER_CONTINUE_RESPONSE) - 1u))
+  if (config->network.max_send_bytes <= sizeof(CHTTP_SERVER_CONTINUE_RESPONSE) - 1u ||
+      config->max_response_header_bytes >
+          config->network.max_send_bytes - (sizeof(CHTTP_SERVER_CONTINUE_RESPONSE) - 1u) ||
+      CHTTP_SERVER_GENERATED_RESPONSE_BYTES > config->network.max_send_bytes -
+                                                  (sizeof(CHTTP_SERVER_CONTINUE_RESPONSE) - 1u) -
+                                                  config->max_response_header_bytes)
     return TURBO_EMSGSIZE;
+  buffered_body_limit = config->network.max_send_bytes -
+                        (sizeof(CHTTP_SERVER_CONTINUE_RESPONSE) - 1u) -
+                        config->max_response_header_bytes - CHTTP_SERVER_GENERATED_RESPONSE_BYTES;
+  if (buffered_body_limit == 0u) return TURBO_EMSGSIZE;
+  buffered_body_bytes = config->max_buffered_response_body_bytes;
+  if (buffered_body_bytes == 0u)
+    buffered_body_bytes = config->max_response_body_bytes < buffered_body_limit
+                              ? config->max_response_body_bytes
+                              : buffered_body_limit;
+  if (buffered_body_bytes > buffered_body_limit) return TURBO_EMSGSIZE;
   if (config->session_capacity == 0u) return TURBO_OK;
   cookie_name = config->session_cookie_name == NULL ? "chttp_sid" : config->session_cookie_name;
   if (config->session_entry_capacity == 0u || config->max_session_key_bytes == 0u ||
@@ -108,13 +288,62 @@ static int chttp_server_config_validate(const chttp_server_config *config) {
   return TURBO_OK;
 }
 
+int chttp_server_request_state_init(chttp_server_request_state *state, chttp_server_impl *server) {
+  int status;
+  if (state == NULL || server == NULL) return TURBO_EINVAL;
+  *state = (chttp_server_request_state){0};
+  state->server = server;
+  state->param_storage_capacity = server->config.max_route_param_bytes;
+  if (server->config.max_route_param_count != 0u)
+    state->params =
+        (chttp_server_param *)calloc(server->config.max_route_param_count, sizeof(*state->params));
+  if (server->config.max_route_param_bytes != 0u)
+    state->param_storage = (char *)malloc(server->config.max_route_param_bytes);
+  if ((server->config.max_route_param_count != 0u && state->params == NULL) ||
+      (server->config.max_route_param_bytes != 0u && state->param_storage == NULL)) {
+    chttp_server_request_state_destroy(state);
+    return TURBO_ENOMEM;
+  }
+  status = chttp_server_response_builder_init(&state->response_builder, &server->config);
+  if (status != TURBO_OK) {
+    chttp_server_request_state_destroy(state);
+    return status;
+  }
+  state->response_builder.server = server;
+  state->response.impl = &state->response_builder;
+  return TURBO_OK;
+}
+
+void chttp_server_request_state_reset(chttp_server_request_state *state) {
+  if (state == NULL) return;
+  chttp_server_request_body_close(state, TURBO_ECANCELED);
+  chttp_server_response_builder_reset(&state->response_builder);
+  state->param_storage_used = 0u;
+  state->param_count = 0u;
+  state->session.impl = NULL;
+  state->session_context = (chttp_session_context){0};
+  state->body_route = NULL;
+  state->body_sink = (chttp_body_sink){0};
+  state->body_was_streamed = false;
+}
+
+void chttp_server_request_state_destroy(chttp_server_request_state *state) {
+  if (state == NULL) return;
+  chttp_server_request_body_close(state, TURBO_ECANCELED);
+  chttp_server_response_builder_destroy(&state->response_builder);
+  free(state->param_storage);
+  free(state->params);
+  *state = (chttp_server_request_state){0};
+}
+
 static void chttp_server_connection_destroy(chttp_server_connection *connection) {
   if (connection == NULL) return;
+  chttp_server_websocket_reset(connection);
+  chttp_h2_server_connection_destroy(connection->h2);
   chttp_server_parser_destroy(&connection->parser);
-  chttp_server_response_builder_destroy(&connection->response_builder);
+  chttp_server_request_state_destroy(&connection->request_state);
+  free(connection->websocket_upgrade_input);
   free(connection->outbound);
-  free(connection->param_storage);
-  free(connection->params);
   *connection = (chttp_server_connection){0};
 }
 
@@ -125,6 +354,7 @@ static void chttp_server_impl_free(chttp_server_impl *impl) {
     for (index = 0u; index < impl->config.network.connection_capacity; ++index)
       chttp_server_connection_destroy(&impl->connections[index]);
   chttp_session_store_destroy(impl);
+  free(impl->file_transfers);
   free(impl->connections);
   free(impl->middleware);
   free(impl->route_middleware);
@@ -149,25 +379,24 @@ static int chttp_server_connection_init(chttp_server_impl *server,
       .max_body_bytes = server->config.max_request_body_bytes,
       .on_request = chttp_server_on_request,
       .on_continue = chttp_server_on_continue,
+      .on_body_open = chttp_server_on_body_open,
+      .on_body_close = chttp_server_on_body_close,
+      .on_upgrade = chttp_server_websocket_upgrade,
       .user = connection};
   int status;
   connection->server = server;
-  connection->param_storage_capacity = server->config.max_route_param_bytes;
   connection->outbound_capacity = server->config.network.max_send_bytes;
-  if (server->config.max_route_param_count != 0u)
-    connection->params = (chttp_server_param *)calloc(server->config.max_route_param_count,
-                                                      sizeof(*connection->params));
-  if (server->config.max_route_param_bytes != 0u)
-    connection->param_storage = (char *)malloc(server->config.max_route_param_bytes);
   connection->outbound = (unsigned char *)malloc(connection->outbound_capacity);
-  if ((server->config.max_route_param_count != 0u && connection->params == NULL) ||
-      (server->config.max_route_param_bytes != 0u && connection->param_storage == NULL) ||
-      connection->outbound == NULL)
+  connection->websocket_upgrade_input_capacity = server->config.network.receive_buffer_bytes;
+  connection->websocket_upgrade_input =
+      (unsigned char *)malloc(connection->websocket_upgrade_input_capacity);
+  if (connection->outbound == NULL || connection->websocket_upgrade_input == NULL)
     return TURBO_ENOMEM;
-  status = chttp_server_response_builder_init(&connection->response_builder, &server->config);
+  status = chttp_server_request_state_init(&connection->request_state, server);
   if (status != TURBO_OK) return status;
-  connection->response.impl = &connection->response_builder;
   status = chttp_server_parser_init(&connection->parser, &parser_config);
+  if (status == TURBO_OK && server->config.enable_http2)
+    status = chttp_h2_server_connection_init(&connection->h2, connection);
   return status;
 }
 
@@ -177,6 +406,7 @@ int chttp_server_init(chttp_server *server, const chttp_server_config *config) {
   size_t route_path_stride;
   size_t route_path_bytes;
   size_t route_middleware_count;
+  size_t file_transfer_capacity;
   size_t index;
   int status;
   if (server == NULL) return TURBO_EINVAL;
@@ -184,16 +414,41 @@ int chttp_server_init(chttp_server *server, const chttp_server_config *config) {
   status = chttp_server_config_validate(config);
   if (status != TURBO_OK) return status;
   route_path_stride = config->max_target_bytes + 1u;
+  file_transfer_capacity = config->network.connection_capacity;
+  if (config->enable_http2 &&
+      (!chttp_server_multiply(config->network.connection_capacity, config->h2_stream_capacity,
+                              &file_transfer_capacity) ||
+       file_transfer_capacity == 0u))
+    return TURBO_ERANGE;
   if (route_path_stride == 0u ||
       !chttp_server_multiply(config->route_capacity, route_path_stride, &route_path_bytes) ||
       !chttp_server_multiply(config->route_capacity, config->max_route_middleware_count,
                              &route_middleware_count) ||
       (route_middleware_count != 0u &&
-       route_middleware_count > SIZE_MAX / sizeof(chttp_server_middleware)))
+       route_middleware_count > SIZE_MAX / sizeof(chttp_server_middleware)) ||
+      file_transfer_capacity > SIZE_MAX / sizeof(chttp_file_transfer *))
     return TURBO_ERANGE;
   impl = (chttp_server_impl *)calloc(1u, sizeof(*impl));
   if (impl == NULL) return TURBO_ENOMEM;
   impl->config = *config;
+  impl->file_transfer_capacity = file_transfer_capacity;
+  if (impl->config.stream_chunk_bytes == 0u) {
+    const size_t transport_chunk_bytes = config->network.max_send_bytes -
+                                         CHTTP_SERVER_CHUNK_PREFIX_RESERVE -
+                                         CHTTP_SERVER_CHUNK_TRAILER_BYTES;
+    impl->config.stream_chunk_bytes =
+        transport_chunk_bytes < CHTTP_SERVER_DEFAULT_STREAM_CHUNK_BYTES
+            ? transport_chunk_bytes
+            : CHTTP_SERVER_DEFAULT_STREAM_CHUNK_BYTES;
+  }
+  if (impl->config.max_buffered_response_body_bytes == 0u) {
+    const size_t buffered_body_limit =
+        config->network.max_send_bytes - (sizeof(CHTTP_SERVER_CONTINUE_RESPONSE) - 1u) -
+        config->max_response_header_bytes - CHTTP_SERVER_GENERATED_RESPONSE_BYTES;
+    impl->config.max_buffered_response_body_bytes =
+        config->max_response_body_bytes < buffered_body_limit ? config->max_response_body_bytes
+                                                              : buffered_body_limit;
+  }
   if (config->tls != NULL) {
     status = cnet_tls_server_init(&impl->tls_server, config->tls);
     if (status != TURBO_OK) {
@@ -203,8 +458,8 @@ int chttp_server_init(chttp_server *server, const chttp_server_config *config) {
     impl->tls_initialized = true;
     impl->config.tls = NULL;
   }
-  impl->max_response_wire_bytes = config->max_response_body_bytes +
-                                  config->max_response_header_bytes +
+  impl->max_response_wire_bytes = impl->config.max_buffered_response_body_bytes +
+                                  impl->config.max_response_header_bytes +
                                   CHTTP_SERVER_GENERATED_RESPONSE_BYTES;
   cookie_name = config->session_cookie_name == NULL ? "chttp_sid" : config->session_cookie_name;
   impl->host = chttp_server_string_copy(config->host);
@@ -219,11 +474,13 @@ int chttp_server_init(chttp_server *server, const chttp_server_config *config) {
         (chttp_server_middleware *)calloc(config->middleware_capacity, sizeof(*impl->middleware));
   impl->connections = (chttp_server_connection *)calloc(config->network.connection_capacity,
                                                         sizeof(*impl->connections));
+  impl->file_transfers =
+      (chttp_file_transfer **)calloc(file_transfer_capacity, sizeof(*impl->file_transfers));
   if (impl->host == NULL || impl->session_cookie_name == NULL || impl->routes == NULL ||
       impl->route_paths == NULL ||
       (route_middleware_count != 0u && impl->route_middleware == NULL) ||
       (config->middleware_capacity != 0u && impl->middleware == NULL) ||
-      impl->connections == NULL) {
+      impl->connections == NULL || impl->file_transfers == NULL) {
     chttp_server_impl_free(impl);
     return TURBO_ENOMEM;
   }
@@ -339,7 +596,7 @@ static int chttp_server_connection_retry(chttp_server_connection *connection) {
   return status;
 }
 
-static void chttp_server_connection_close(chttp_server_connection *connection) {
+void chttp_server_connection_close(chttp_server_connection *connection) {
   int status;
   if (connection == NULL || !connection->active) return;
   connection->close_after_write = true;
@@ -359,35 +616,154 @@ static int chttp_server_connection_receive(chttp_server_connection *connection) 
   return status;
 }
 
+static int chttp_server_select_tls_protocol(chttp_server_connection *connection) {
+  char alpn[16];
+  size_t alpn_size = 0u;
+  int status;
+  if (!connection->server->tls_initialized) {
+    connection->wire_protocol = connection->server->config.enable_http2
+                                    ? CHTTP_SERVER_WIRE_UNKNOWN
+                                    : CHTTP_SERVER_WIRE_HTTP_1_1;
+    return TURBO_OK;
+  }
+  if (!connection->server->config.enable_http2) {
+    connection->wire_protocol = CHTTP_SERVER_WIRE_HTTP_1_1;
+    return TURBO_OK;
+  }
+  status = cnet_tls_negotiated_alpn(&connection->server->network, connection->handle, alpn,
+                                    sizeof(alpn), &alpn_size);
+  if (status == TURBO_ENOENT) {
+    connection->wire_protocol = CHTTP_SERVER_WIRE_HTTP_1_1;
+    return TURBO_OK;
+  }
+  if (status != TURBO_OK) return status;
+  if (alpn_size == sizeof("h2") - 1u && memcmp(alpn, "h2", alpn_size) == 0) {
+    connection->wire_protocol = CHTTP_SERVER_WIRE_HTTP_2;
+    return connection->h2 == NULL ? TURBO_EPROTO : TURBO_OK;
+  }
+  if (alpn_size == sizeof("http/1.1") - 1u && memcmp(alpn, "http/1.1", alpn_size) == 0) {
+    connection->wire_protocol = CHTTP_SERVER_WIRE_HTTP_1_1;
+    return TURBO_OK;
+  }
+  return TURBO_EPROTONOSUPPORT;
+}
+
 static void chttp_server_on_state(void *user, cnet_connection handle, cnet_connection_state state,
                                   const cnet_error *error) {
   chttp_server_connection *connection = (chttp_server_connection *)user;
   (void)error;
   if (!chttp_server_connection_matches(connection, handle)) return;
   if (state == CNET_CONNECTION_CONNECTED) {
+    const int status = chttp_server_select_tls_protocol(connection);
     connection->connected = true;
-    (void)chttp_server_connection_receive(connection);
+    if (status == TURBO_OK) (void)chttp_server_connection_receive(connection);
+    else {
+      chttp_server_stats_protocol_error(connection->server);
+      chttp_server_connection_close(connection);
+    }
   } else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
+    chttp_server_websocket_transport_closed(connection);
     connection->active = false;
     connection->connected = false;
     connection->writing = false;
     connection->close_after_write = false;
+    connection->response_streaming = false;
+    connection->response_source_chunked = false;
+    connection->response_close_after_stream = false;
     connection->pending_action = CHTTP_SERVER_PENDING_NONE;
     connection->outbound_size = 0u;
+    connection->h2_close_after_ms = 0u;
+    connection->protocol_prefix_size = 0u;
+    connection->wire_protocol = CHTTP_SERVER_WIRE_UNKNOWN;
     connection->handle = (cnet_connection){0};
-    chttp_server_response_builder_reset(&connection->response_builder);
+    chttp_h2_server_connection_release(connection->h2);
+    chttp_server_request_state_reset(&connection->request_state);
     (void)chttp_server_parser_reset(&connection->parser);
     chttp_server_stats_connection_close(connection->server);
   }
 }
 
-static int chttp_server_send_pending(chttp_server_connection *connection) {
+int chttp_server_send_pending(chttp_server_connection *connection) {
   int status;
+  if (connection->wire_protocol == CHTTP_SERVER_WIRE_HTTP_2 && connection->outbound_size == 0u) {
+    status = chttp_h2_server_connection_flush(connection->h2);
+    if (status != TURBO_OK) {
+      chttp_server_connection_close(connection);
+      return status;
+    }
+    if (connection->outbound_size == 0u && chttp_h2_server_connection_stop_ready(connection->h2)) {
+      connection->h2_close_after_ms = 0u;
+      chttp_server_connection_close(connection);
+      return TURBO_OK;
+    }
+    if (connection->outbound_size == 0u &&
+        chttp_h2_server_connection_stop_waiting(connection->h2)) {
+      if (connection->h2_close_after_ms == 0u) {
+        const uint64_t quiet_ms = (uint64_t)connection->server->config.poll_slice_ms *
+                                  CHTTP_SERVER_H2_DRAIN_ACK_GRACE_SLICES;
+        connection->h2_close_after_ms = chttp_server_deadline_after(turbo_monotonic_ms(), quiet_ms);
+      }
+      return chttp_server_connection_receive(connection);
+    }
+  }
   if (connection->outbound_size == 0u) return chttp_server_connection_receive(connection);
   connection->pending_action = CHTTP_SERVER_PENDING_SEND;
   status = chttp_server_connection_retry(connection);
   if (status != TURBO_OK && !chttp_server_action_pressure(status))
     chttp_server_connection_close(connection);
+  return status;
+}
+
+static int chttp_server_h1_input(chttp_server_connection *connection, const void *data, size_t size,
+                                 unsigned int *http_status) {
+  size_t consumed = 0u;
+  int status;
+  if (size == 0u) return TURBO_OK;
+  if (connection->websocket_peer.phase == CHTTP_SERVER_WEBSOCKET_OPEN)
+    return chttp_server_websocket_input(connection, data, size);
+  status =
+      chttp_server_parser_execute_consumed(&connection->parser, data, size, &consumed, http_status);
+  if (status != TURBO_OK) return status;
+  if (consumed < size) {
+    const size_t remaining = size - consumed;
+    if (connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_HANDSHAKE)
+      return TURBO_EPROTO;
+    if (remaining > connection->websocket_upgrade_input_capacity) return TURBO_EMSGSIZE;
+    memcpy(connection->websocket_upgrade_input, (const unsigned char *)data + consumed, remaining);
+    connection->websocket_upgrade_input_size = remaining;
+  }
+  return TURBO_OK;
+}
+
+static int chttp_server_protocol_input(chttp_server_connection *connection, const void *data,
+                                       size_t size, unsigned int *http_status) {
+  const unsigned char *bytes = (const unsigned char *)data;
+  size_t offset = 0u;
+  int status;
+  if (connection->wire_protocol == CHTTP_SERVER_WIRE_HTTP_1_1)
+    return chttp_server_h1_input(connection, data, size, http_status);
+  if (connection->wire_protocol == CHTTP_SERVER_WIRE_HTTP_2)
+    return chttp_h2_server_connection_receive(connection->h2, data, size);
+  while (offset < size && connection->protocol_prefix_size < sizeof(CHTTP_SERVER_H2_PREFACE) - 1u) {
+    const size_t prefix_index = connection->protocol_prefix_size;
+    const unsigned char byte = bytes[offset++];
+    connection->protocol_prefix[prefix_index] = byte;
+    ++connection->protocol_prefix_size;
+    if (byte != CHTTP_SERVER_H2_PREFACE[prefix_index]) {
+      connection->wire_protocol = CHTTP_SERVER_WIRE_HTTP_1_1;
+      status = chttp_server_h1_input(connection, connection->protocol_prefix,
+                                     connection->protocol_prefix_size, http_status);
+      if (status == TURBO_OK && offset < size)
+        status = chttp_server_h1_input(connection, bytes + offset, size - offset, http_status);
+      return status;
+    }
+  }
+  if (connection->protocol_prefix_size != sizeof(CHTTP_SERVER_H2_PREFACE) - 1u) return TURBO_OK;
+  connection->wire_protocol = CHTTP_SERVER_WIRE_HTTP_2;
+  status = chttp_h2_server_connection_receive(connection->h2, connection->protocol_prefix,
+                                              connection->protocol_prefix_size);
+  if (status == TURBO_OK && offset < size)
+    status = chttp_h2_server_connection_receive(connection->h2, bytes + offset, size - offset);
   return status;
 }
 
@@ -397,26 +773,155 @@ static void chttp_server_on_receive(void *user, cnet_connection handle,
   unsigned int http_status = 0u;
   int status;
   if (!chttp_server_connection_matches(connection, handle) || view == NULL ||
-      view->kind != CNET_MESSAGE_BYTES || connection->writing) {
+      view->kind != CNET_MESSAGE_BYTES ||
+      (connection->wire_protocol != CHTTP_SERVER_WIRE_HTTP_2 && connection->writing)) {
     chttp_server_connection_close(connection);
     return;
   }
-  status = chttp_server_parser_execute(&connection->parser, view->data, view->size, &http_status);
+  if (connection->websocket_peer.phase == CHTTP_SERVER_WEBSOCKET_OPEN) {
+    status = chttp_server_websocket_input(connection, view->data, view->size);
+    if (status != TURBO_OK) {
+      chttp_server_stats_protocol_error(connection->server);
+      connection->close_after_write = true;
+      if (!connection->writing && connection->outbound_size == 0u)
+        chttp_server_connection_close(connection);
+    } else if (!connection->writing && connection->outbound_size == 0u) {
+      (void)chttp_server_send_pending(connection);
+    }
+    return;
+  }
+  if (connection->wire_protocol == CHTTP_SERVER_WIRE_HTTP_2 &&
+      chttp_h2_server_connection_draining(connection->h2))
+    connection->h2_close_after_ms = 0u;
+  status = chttp_server_protocol_input(connection, view->data, view->size, &http_status);
   if (status != TURBO_OK) {
-    if (http_status == 0u) http_status = 500u;
-    if (status == TURBO_EPROTO) chttp_server_stats_protocol_error(connection->server);
-    else chttp_server_stats_handler_error(connection->server);
-    if (chttp_server_error_serialize(http_status, connection->outbound,
-                                     connection->outbound_capacity,
-                                     &connection->outbound_size) == TURBO_OK)
-      chttp_server_stats_response(connection->server);
+    if (connection->wire_protocol == CHTTP_SERVER_WIRE_HTTP_2) {
+      chttp_server_stats_protocol_error(connection->server);
+      (void)chttp_h2_server_connection_flush(connection->h2);
+    } else {
+      if (http_status == 0u) http_status = 500u;
+      if (status == TURBO_EPROTO) chttp_server_stats_protocol_error(connection->server);
+      else chttp_server_stats_handler_error(connection->server);
+      if (chttp_server_error_serialize(http_status, connection->outbound,
+                                       connection->outbound_capacity,
+                                       &connection->outbound_size) == TURBO_OK)
+        chttp_server_stats_response(connection->server);
+    }
     connection->close_after_write = true;
   }
   (void)chttp_server_send_pending(connection);
 }
 
+static int chttp_server_response_stream_finish(chttp_server_connection *connection, int status) {
+  chttp_server_response_builder *builder = &connection->request_state.response_builder;
+  chttp_server_response_builder_close_source(builder, status);
+  connection->response_streaming = false;
+  if (status == TURBO_OK) connection->close_after_write = connection->response_close_after_stream;
+  return status;
+}
+
+static int chttp_server_response_stream_next(chttp_server_connection *connection) {
+  static const char final_chunk[] = "0\r\n\r\n";
+  chttp_server_response_builder *builder;
+  chttp_body_source *source;
+  unsigned char *body_output;
+  size_t capacity;
+  size_t size = 0u;
+  size_t remaining = 0u;
+  int status;
+  if (connection == NULL || !connection->response_streaming || connection->outbound_size != 0u)
+    return TURBO_EINVAL;
+  builder = &connection->request_state.response_builder;
+  if (!builder->source_enabled || builder->body_source.read == NULL)
+    return chttp_server_response_stream_finish(connection, TURBO_EPROTO);
+  source = &builder->body_source;
+  capacity = connection->outbound_capacity;
+  body_output = connection->outbound;
+  if (connection->response_source_chunked) {
+    if (capacity <= CHTTP_SERVER_CHUNK_PREFIX_RESERVE + CHTTP_SERVER_CHUNK_TRAILER_BYTES)
+      return chttp_server_response_stream_finish(connection, TURBO_EMSGSIZE);
+    body_output += CHTTP_SERVER_CHUNK_PREFIX_RESERVE;
+    capacity -= CHTTP_SERVER_CHUNK_PREFIX_RESERVE + CHTTP_SERVER_CHUNK_TRAILER_BYTES;
+  }
+  if (capacity > connection->server->config.stream_chunk_bytes)
+    capacity = connection->server->config.stream_chunk_bytes;
+  if (source->content_length_known) {
+    if (builder->source_transferred > source->content_length)
+      return chttp_server_response_stream_finish(connection, TURBO_EPROTO);
+    remaining = source->content_length - builder->source_transferred;
+    if (remaining != 0u && capacity > remaining) capacity = remaining;
+  } else {
+    if (builder->source_transferred > builder->source_capacity)
+      return chttp_server_response_stream_finish(connection, TURBO_EMSGSIZE);
+    remaining = builder->source_capacity - builder->source_transferred;
+    if (remaining != 0u && capacity > remaining) capacity = remaining;
+  }
+  if (capacity == 0u) capacity = 1u;
+  if (builder->file_transfer != NULL) {
+    const chttp_file_source_result result =
+        chttp_file_transfer_read(builder->file_transfer, body_output, capacity, &size);
+    if (result == CHTTP_FILE_SOURCE_WAIT) return TURBO_OK;
+    if (result == CHTTP_FILE_SOURCE_ERROR) {
+      status = chttp_file_transfer_status(builder->file_transfer, NULL);
+      return chttp_server_response_stream_finish(connection,
+                                                 status == TURBO_OK ? TURBO_EIO : status);
+    }
+    if (result == CHTTP_FILE_SOURCE_EOF) size = 0u;
+  } else {
+    status = source->read(source->user, body_output, capacity, &size);
+    if (status != TURBO_OK) return chttp_server_response_stream_finish(connection, status);
+  }
+  if (size > capacity) return chttp_server_response_stream_finish(connection, TURBO_EPROTO);
+  if (source->content_length_known) {
+    if (remaining == 0u)
+      return size == 0u ? chttp_server_response_stream_finish(connection, TURBO_OK)
+                        : chttp_server_response_stream_finish(connection, TURBO_EPROTO);
+    if (size == 0u) return chttp_server_response_stream_finish(connection, TURBO_EPROTO);
+  } else if (remaining == 0u && size != 0u)
+    return chttp_server_response_stream_finish(connection, TURBO_EMSGSIZE);
+  if (size == 0u) {
+    if (connection->response_source_chunked) {
+      memcpy(connection->outbound, final_chunk, sizeof(final_chunk) - 1u);
+      connection->outbound_size = sizeof(final_chunk) - 1u;
+    }
+    return chttp_server_response_stream_finish(connection, TURBO_OK);
+  }
+  builder->source_transferred += size;
+  if (connection->response_source_chunked) {
+    char prefix[CHTTP_SERVER_CHUNK_PREFIX_RESERVE];
+    const int prefix_size = snprintf(prefix, sizeof(prefix), "%zx\r\n", size);
+    if (prefix_size <= 0 || (size_t)prefix_size >= sizeof(prefix))
+      return chttp_server_response_stream_finish(connection, TURBO_EMSGSIZE);
+    memmove(connection->outbound + (size_t)prefix_size, body_output, size);
+    memcpy(connection->outbound, prefix, (size_t)prefix_size);
+    memcpy(connection->outbound + (size_t)prefix_size + size, "\r\n",
+           CHTTP_SERVER_CHUNK_TRAILER_BYTES);
+    connection->outbound_size = (size_t)prefix_size + size + CHTTP_SERVER_CHUNK_TRAILER_BYTES;
+  } else connection->outbound_size = size;
+  return TURBO_OK;
+}
+
+static void chttp_server_h1_file_ready(void *user) {
+  chttp_server_connection *connection = (chttp_server_connection *)user;
+  chttp_server_response_builder *builder;
+  int status;
+  if (connection == NULL || !connection->active || !connection->response_streaming ||
+      connection->writing || connection->outbound_size != 0u)
+    return;
+  builder = &connection->request_state.response_builder;
+  if (builder->file_transfer == NULL || !chttp_file_transfer_ready(builder->file_transfer)) return;
+  status = chttp_server_response_stream_next(connection);
+  if (status != TURBO_OK) {
+    chttp_server_connection_close(connection);
+    return;
+  }
+  if (connection->outbound_size != 0u) (void)chttp_server_send_pending(connection);
+  else if (connection->close_after_write) chttp_server_connection_close(connection);
+}
+
 static void chttp_server_on_send(void *user, cnet_connection handle, size_t size) {
   chttp_server_connection *connection = (chttp_server_connection *)user;
+  int status = TURBO_OK;
   if (!chttp_server_connection_matches(connection, handle) || !connection->writing ||
       size != connection->outbound_size) {
     chttp_server_connection_close(connection);
@@ -424,8 +929,16 @@ static void chttp_server_on_send(void *user, cnet_connection handle, size_t size
   }
   connection->writing = false;
   connection->outbound_size = 0u;
-  if (connection->close_after_write) chttp_server_connection_close(connection);
-  else (void)chttp_server_connection_receive(connection);
+  if (connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_NONE)
+    status = chttp_server_websocket_send_complete(connection);
+  if (connection->response_streaming) status = chttp_server_response_stream_next(connection);
+  if (status != TURBO_OK) {
+    chttp_server_connection_close(connection);
+    return;
+  }
+  if (connection->outbound_size != 0u) (void)chttp_server_send_pending(connection);
+  else if (connection->close_after_write) chttp_server_connection_close(connection);
+  else (void)chttp_server_send_pending(connection);
 }
 
 static int chttp_server_on_continue(void *user) {
@@ -440,8 +953,91 @@ static int chttp_server_on_continue(void *user) {
   return TURBO_OK;
 }
 
-static int chttp_server_on_request(void *user, const chttp_server_request_view *request) {
+int chttp_server_request_body_open(chttp_server_request_state *state,
+                                   const chttp_server_request_view *request,
+                                   chttp_body_sink *out_sink) {
+  chttp_server_request_view routed_request;
+  chttp_server_route_record *route;
+  chttp_server_impl *previous_callback_server;
+  unsigned int allowed_methods = 0u;
+  int route_status = TURBO_OK;
+  int status;
+  if (state == NULL || state->server == NULL || request == NULL || out_sink == NULL)
+    return TURBO_EINVAL;
+  *out_sink = (chttp_body_sink){0};
+  if (state->body_sink_open) return TURBO_EBUSY;
+  state->body_route = NULL;
+  state->body_sink = (chttp_body_sink){0};
+  state->body_was_streamed = false;
+  route = chttp_server_route_find(state, request->method, request->path, &allowed_methods,
+                                  &route_status);
+  (void)allowed_methods;
+  if (route_status != TURBO_OK) return route_status;
+  if (route == NULL || route->body_open == NULL) return TURBO_OK;
+  routed_request = *request;
+  routed_request.params = state->params;
+  routed_request.param_count = state->param_count;
+  routed_request.session = NULL;
+  previous_callback_server = chttp_active_callback_server;
+  chttp_active_callback_server = state->server;
+  status = route->body_open(route->user, &routed_request, out_sink);
+  chttp_active_callback_server = previous_callback_server;
+  if (status != TURBO_OK) {
+    *out_sink = (chttp_body_sink){0};
+    return status;
+  }
+  if (out_sink->write == NULL) return TURBO_EINVAL;
+  state->body_route = route;
+  state->body_sink = *out_sink;
+  state->body_sink_open = true;
+  state->body_was_streamed = true;
+  return TURBO_OK;
+}
+
+int chttp_server_request_body_write(chttp_server_request_state *state, const void *data,
+                                    size_t size) {
+  if (state == NULL || !state->body_sink_open || state->body_sink.write == NULL ||
+      (data == NULL && size != 0u))
+    return TURBO_EINVAL;
+  return size == 0u ? TURBO_OK : state->body_sink.write(state->body_sink.user, data, size);
+}
+
+void chttp_server_request_body_close(chttp_server_request_state *state, int status) {
+  chttp_server_route_record *route;
+  chttp_body_sink sink;
+  chttp_server_impl *previous_callback_server;
+  if (state == NULL || !state->body_sink_open) return;
+  route = state->body_route;
+  sink = state->body_sink;
+  state->body_sink_open = false;
+  state->body_route = NULL;
+  state->body_sink = (chttp_body_sink){0};
+  if (route == NULL || route->body_close == NULL) return;
+  previous_callback_server = chttp_active_callback_server;
+  chttp_active_callback_server = state->server;
+  route->body_close(route->user, &sink, status);
+  chttp_active_callback_server = previous_callback_server;
+}
+
+bool chttp_server_request_body_streaming(const chttp_server_request_state *state) {
+  return state != NULL && state->body_was_streamed;
+}
+
+static int chttp_server_on_body_open(void *user, const chttp_server_request_view *request,
+                                     chttp_body_sink *out_sink) {
   chttp_server_connection *connection = (chttp_server_connection *)user;
+  if (connection == NULL) return TURBO_EINVAL;
+  return chttp_server_request_body_open(&connection->request_state, request, out_sink);
+}
+
+static void chttp_server_on_body_close(void *user, chttp_body_sink *sink, int status) {
+  chttp_server_connection *connection = (chttp_server_connection *)user;
+  (void)sink;
+  if (connection != NULL) chttp_server_request_body_close(&connection->request_state, status);
+}
+
+int chttp_server_dispatch_request(chttp_server_request_state *state,
+                                  const chttp_server_request_view *request) {
   chttp_server_impl *server;
   chttp_server_request_view routed_request;
   chttp_server_route_record *route;
@@ -451,27 +1047,23 @@ static int chttp_server_on_request(void *user, const chttp_server_request_view *
   chttp_server_impl *previous_callback_server;
   int route_status = TURBO_OK;
   int status;
-  if (connection == NULL || request == NULL || connection->close_after_write)
-    return TURBO_ESHUTDOWN;
-  server = connection->server;
+  if (state == NULL || state->server == NULL || request == NULL) return TURBO_EINVAL;
+  server = state->server;
   chttp_server_stats_request(server);
-  if (connection->outbound_size > connection->outbound_capacity ||
-      server->max_response_wire_bytes > connection->outbound_capacity - connection->outbound_size)
-    return TURBO_ENOBUFS;
-  route = chttp_server_route_find(connection, request->method, request->path, &allowed_methods,
+  route = chttp_server_route_find(state, request->method, request->path, &allowed_methods,
                                   &route_status);
   fallback_status = allowed_methods != 0u ? 405u : 404u;
   if (route_status == TURBO_ENOBUFS) fallback_status = 414u;
   else if (route_status != TURBO_OK) return route_status;
   routed_request = *request;
-  routed_request.params = connection->params;
-  routed_request.param_count = connection->param_count;
-  routed_request.session = server->config.session_capacity == 0u ? NULL : &connection->session;
-  chttp_session_request_begin(connection, &routed_request);
-  chttp_server_response_builder_reset(&connection->response_builder);
+  routed_request.params = state->params;
+  routed_request.param_count = state->param_count;
+  routed_request.session = server->config.session_capacity == 0u ? NULL : &state->session;
+  chttp_session_request_begin(state, &routed_request);
+  chttp_server_response_builder_reset(&state->response_builder);
   chain = (chttp_server_chain){.server = server,
                                .request = &routed_request,
-                               .response = &connection->response,
+                               .response = &state->response,
                                .route = route,
                                .fallback_status = fallback_status,
                                .allowed_methods = allowed_methods};
@@ -479,25 +1071,52 @@ static int chttp_server_on_request(void *user, const chttp_server_request_view *
   chttp_active_callback_server = server;
   status = chttp_server_chain_run(&chain);
   chttp_active_callback_server = previous_callback_server;
-  if (status == TURBO_OK && !connection->response_builder.replied)
-    status = chttp_server_reply(&connection->response, 204u, NULL, NULL, 0u);
-  if (status == TURBO_OK) status = chttp_session_request_finish(connection);
+  if (status == TURBO_OK && !state->response_builder.replied)
+    status = chttp_server_reply(&state->response, 204u, NULL, NULL, 0u);
+  if (status == TURBO_OK) status = chttp_session_request_finish(state);
   if (status != TURBO_OK) {
-    chttp_session_request_abort(connection);
+    chttp_session_request_abort(state);
     chttp_server_stats_handler_error(server);
-    chttp_server_response_builder_reset(&connection->response_builder);
+    chttp_server_response_builder_reset(&state->response_builder);
+    status = chttp_server_reply(&state->response, 500u, "text/plain", "Internal Server Error", 21u);
+  }
+  return status;
+}
+
+static int chttp_server_on_request(void *user, const chttp_server_request_view *request) {
+  chttp_server_connection *connection = (chttp_server_connection *)user;
+  chttp_server_response_builder *builder;
+  int status;
+  if (connection == NULL || request == NULL || connection->close_after_write)
+    return TURBO_ESHUTDOWN;
+  if (connection->outbound_size > connection->outbound_capacity ||
+      connection->server->max_response_wire_bytes >
+          connection->outbound_capacity - connection->outbound_size)
+    return TURBO_ENOBUFS;
+  status = chttp_server_dispatch_request(&connection->request_state, request);
+  builder = &connection->request_state.response_builder;
+  if (status == TURBO_OK) {
     status =
-        chttp_server_reply(&connection->response, 500u, "text/plain", "Internal Server Error", 21u);
+        chttp_server_response_serialize(builder, request, connection->outbound,
+                                        connection->outbound_capacity, &connection->outbound_size);
+    if (status != TURBO_OK) chttp_session_request_abort(&connection->request_state);
   }
   if (status == TURBO_OK) {
-    status = chttp_server_response_serialize(&connection->response_builder, &routed_request,
-                                             connection->outbound, connection->outbound_capacity,
-                                             &connection->outbound_size);
-    if (status != TURBO_OK) chttp_session_request_abort(connection);
-  }
-  if (status == TURBO_OK) {
-    chttp_server_stats_response(server);
-    if (!routed_request.protocol_keep_alive) connection->close_after_write = true;
+    chttp_server_stats_response(connection->server);
+    if (builder->source_enabled && request->method != CHTTP_METHOD_HEAD) {
+      connection->response_streaming = true;
+      connection->response_source_chunked = !builder->body_source.content_length_known &&
+                                            request->http_major == 1u && request->http_minor == 1u;
+      connection->response_close_after_stream =
+          !request->protocol_keep_alive ||
+          (!builder->body_source.content_length_known && !connection->response_source_chunked);
+      if (builder->file_transfer != NULL)
+        chttp_file_transfer_set_ready(builder->file_transfer, chttp_server_h1_file_ready,
+                                      connection);
+    } else {
+      if (builder->source_enabled) chttp_server_response_builder_close_source(builder, TURBO_OK);
+      if (!request->protocol_keep_alive) connection->close_after_write = true;
+    }
   }
   return status;
 }
@@ -532,14 +1151,29 @@ static int chttp_server_accept_ready(chttp_server_impl *server) {
       return TURBO_OK;
     }
     if (status != TURBO_OK) return status;
+    if (server->config.enable_http2) {
+      status = chttp_h2_server_connection_prepare(connection->h2);
+      if (status != TURBO_OK) {
+        (void)cnet_close(&server->network, handle);
+        return status;
+      }
+    }
     connection->handle = handle;
     connection->active = true;
     connection->connected = false;
     connection->writing = false;
     connection->close_after_write = false;
+    connection->response_streaming = false;
+    connection->response_source_chunked = false;
+    connection->response_close_after_stream = false;
     connection->pending_action = CHTTP_SERVER_PENDING_NONE;
     connection->outbound_size = 0u;
-    chttp_server_response_builder_reset(&connection->response_builder);
+    connection->h2_close_after_ms = 0u;
+    connection->protocol_prefix_size = 0u;
+    connection->wire_protocol =
+        server->config.enable_http2 ? CHTTP_SERVER_WIRE_UNKNOWN : CHTTP_SERVER_WIRE_HTTP_1_1;
+    chttp_server_websocket_reset(connection);
+    chttp_server_request_state_reset(&connection->request_state);
     status = chttp_server_parser_reset(&connection->parser);
     if (status != TURBO_OK) return status;
     chttp_server_stats_connection_open(server);
@@ -568,6 +1202,49 @@ static bool chttp_server_should_stop(chttp_server_impl *server) {
   stop = server->stop_requested;
   turbo_mutex_unlock(&server->mutex);
   return stop;
+}
+
+static bool chttp_server_connections_active(const chttp_server_impl *server) {
+  size_t index;
+  for (index = 0u; index < server->config.network.connection_capacity; ++index)
+    if (server->connections[index].active) return true;
+  return false;
+}
+
+static int chttp_server_begin_shutdown(chttp_server_impl *server) {
+  size_t index;
+  int status;
+  if (server->listener_initialized) {
+    status = cnet_listener_close(&server->listener);
+    if (status != TURBO_OK && status != TURBO_EALREADY) return status;
+  }
+  for (index = 0u; index < server->config.network.connection_capacity; ++index) {
+    chttp_server_connection *connection = &server->connections[index];
+    if (!connection->active) continue;
+    if (connection->wire_protocol == CHTTP_SERVER_WIRE_HTTP_2) {
+      status = chttp_h2_server_connection_begin_stop(connection->h2);
+      if (status != TURBO_OK) return status;
+      status = chttp_server_send_pending(connection);
+      if (status != TURBO_OK && !chttp_server_action_pressure(status)) return status;
+    } else {
+      chttp_server_connection_close(connection);
+    }
+  }
+  return TURBO_OK;
+}
+
+static void chttp_server_progress_shutdown(chttp_server_impl *server) {
+  const uint64_t now_ms = turbo_monotonic_ms();
+  size_t index;
+  for (index = 0u; index < server->config.network.connection_capacity; ++index) {
+    chttp_server_connection *connection = &server->connections[index];
+    if (!connection->active || connection->wire_protocol != CHTTP_SERVER_WIRE_HTTP_2 ||
+        connection->h2_close_after_ms == 0u || now_ms < connection->h2_close_after_ms ||
+        !chttp_h2_server_connection_stop_waiting(connection->h2))
+      continue;
+    connection->h2_close_after_ms = 0u;
+    chttp_server_connection_close(connection);
+  }
 }
 
 static void chttp_server_worker_finish(chttp_server_impl *server, int terminal_status) {
@@ -613,6 +1290,8 @@ static void chttp_server_worker(void *user) {
   while (!chttp_server_should_stop(server)) {
     int ready = 0;
     size_t events = 0u;
+    status = chttp_server_file_progress(server);
+    if (status != TURBO_OK) break;
     status = chttp_server_retry_pending(server);
     if (status != TURBO_OK) break;
     status = cnet_listener_wait(&server->listener, 0u, &ready);
@@ -621,10 +1300,32 @@ static void chttp_server_worker(void *user) {
       status = chttp_server_accept_ready(server);
       if (status != TURBO_OK) break;
     }
-    status = cnet_client_poll(&server->network, server->config.poll_slice_ms, &events);
+    status = cnet_client_poll(&server->network, chttp_server_poll_timeout(server), &events);
+    if (status != TURBO_OK) break;
+    status = chttp_server_file_progress(server);
     if (status != TURBO_OK) break;
     status = chttp_server_retry_pending(server);
     if (status != TURBO_OK) break;
+  }
+  if (status == TURBO_OK) {
+    status = chttp_server_begin_shutdown(server);
+    while (status == TURBO_OK && chttp_server_connections_active(server)) {
+      size_t events = 0u;
+      status = chttp_server_file_progress(server);
+      if (status != TURBO_OK) break;
+      status = chttp_server_retry_pending(server);
+      if (status != TURBO_OK) break;
+      status = cnet_client_poll(&server->network, chttp_server_poll_timeout(server), &events);
+      if (status != TURBO_OK) break;
+      status = chttp_server_file_progress(server);
+      if (status != TURBO_OK) break;
+      status = chttp_server_retry_pending(server);
+      if (status == TURBO_OK) chttp_server_progress_shutdown(server);
+    }
+  }
+  {
+    const int file_status = chttp_server_files_cleanup(server);
+    if (status == TURBO_OK && file_status != TURBO_OK) status = file_status;
   }
   {
     const int cleanup_status = chttp_server_cleanup_network(server, true);
@@ -758,6 +1459,10 @@ int chttp_server_destroy(chttp_server *server) {
   }
   {
     const int cleanup_status = chttp_server_cleanup_network(impl, false);
+    if (cleanup_status != TURBO_OK) return cleanup_status;
+  }
+  {
+    const int cleanup_status = chttp_server_files_cleanup(impl);
     if (cleanup_status != TURBO_OK) return cleanup_status;
   }
   if (impl->network_initialized || impl->listener_initialized) return TURBO_EBUSY;

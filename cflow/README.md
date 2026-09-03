@@ -1292,13 +1292,24 @@ After terminal completion and acknowledgement, close the file and call
 `cflow_io_native_backend_forget_file()` for a retained IOCP identity. Backend
 shutdown neither closes nor implicitly flushes caller files.
 
-For ordinary consumers, `<cflow/io_file.h>` owns that assembly as one bounded
-facade. `cflow_io_file_open()` performs pathname resolution synchronously on the
-calling thread, opens an IOCP-compatible overlapped handle or a close-on-exec
-POSIX descriptor, and owns the native backend, manual Executor, Actor, handle,
-and exactly `request_capacity` operation slots. `try_read_at`, `try_write_at`,
-and supported `try_flush` remain native asynchronous operations. There is no
+For ordinary consumers, `<cflow/io_file.h>` owns that assembly as a bounded
+facade. Without an injected runtime, `cflow_io_file_open()` preserves the
+single-file form: it performs pathname resolution synchronously on the calling
+thread, opens an IOCP-compatible overlapped handle or a close-on-exec POSIX
+descriptor, and privately owns the native backend, manual Executor, Actor, and
+exactly `request_capacity` operation slots. `try_read_at`, `try_write_at`, and
+supported `try_flush` remain native asynchronous operations. There is no
 readiness or blocking-worker fallback.
+
+Owners with multiple files should instead initialize one
+`cflow_io_file_runtime`, set its `file_capacity` and `request_capacity` hard
+bounds, and inject its address through `cflow_io_file_config.runtime`. Files
+then own only their native handle and callback state while sharing the backend,
+Actor, Executor, completion lane, and operation slots. Exactly one owner thread
+calls `cflow_io_file_runtime_run_ready()`; concurrent and reentrant drive is
+rejected. Close every file and drain it before closing the runtime, then drive
+the runtime to quiescence and destroy it. A borrowed runtime must outlive all
+files, and accepted buffers remain borrowed through terminal callback return.
 
 ```c
 #include <cflow/io_file.h>

@@ -32,17 +32,56 @@ int main() {
   crpc_request request{};
   chttp_server server{};
   chttp_session session{};
+  chttp_websocket http_websocket{};
+  chttp_websocket_client http_websocket_client{};
   chttp_tls_profile http_tls_profile{};
+  chttp_options http_options{};
+  chttp_client_config http_config{};
+  chttp_server_config http_server_config{};
+  chttp_body_source http_body_source{};
+  chttp_body_sink http_body_sink{};
+  chttp_websocket_client_config http_websocket_config{};
+  chttp_websocket_connect_options http_websocket_options{};
+  auto *http_response_source = &chttp_server_response_source;
+  auto *http_response_file = &chttp_server_response_file;
   cnet_tls_client tls_client{};
   cnet_tls_server tls_server{};
   cnet_tls_client_config tls_client_config{};
   cnet_websocket websocket{};
   InstalledWebSocketProbe probe{};
   cnet_websocket_config websocket_config{};
+  http_config.h2_input_buffer_bytes = 64u * 1024u;
+  http_server_config.enable_http2 = 1;
+  http_server_config.h2_stream_capacity = 32u;
+  http_websocket_config.h2_input_buffer_bytes = 128u * 1024u;
+  http_websocket_config.h2_hpack_dynamic_table_bytes = 4096u;
+  http_websocket_config.h2_max_settings_count = 16u;
+  (void)http_response_source;
+  (void)http_response_file;
 
-  if (client.impl != nullptr || async_client.impl != nullptr || request.slot != 0u ||
+  if (chttp_server_response_source(nullptr, 0u, nullptr, nullptr) != TURBO_EINVAL ||
+      chttp_server_response_file(nullptr, 0u, nullptr, nullptr) != TURBO_EINVAL ||
+      chttp_post_file(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) !=
+          TURBO_EINVAL ||
+      chttp_put_file(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) !=
+          TURBO_EINVAL ||
+      chttp_download_file(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) !=
+          TURBO_EINVAL ||
+      chttp_server_websocket_with(&server, nullptr) != TURBO_EINVAL ||
+      chttp_websocket_state_get(&http_websocket, nullptr) != TURBO_EINVAL ||
+      chttp_websocket_client_destroy(&http_websocket_client, 0u) != TURBO_OK ||
+      client.impl != nullptr || async_client.impl != nullptr || request.slot != 0u ||
       request.generation != 0u || server.impl != nullptr || session.impl != nullptr ||
-      http_tls_profile.impl != nullptr || tls_client.impl != nullptr ||
+      http_tls_profile.impl != nullptr || http_options.protocol != CHTTP_HTTP_1_1 ||
+      CHTTP_HTTP_2 == CHTTP_HTTP_1_1 || http_config.h2_input_buffer_bytes != 64u * 1024u ||
+      http_server_config.enable_http2 != 1 || http_server_config.h2_stream_capacity != 32u ||
+      http_body_source.read != nullptr || http_body_sink.write != nullptr ||
+      http_websocket_config.size != 0u ||
+      http_websocket_config.h2_input_buffer_bytes != 128u * 1024u ||
+      http_websocket_config.h2_hpack_dynamic_table_bytes != 4096u ||
+      http_websocket_config.h2_max_settings_count != 16u || http_websocket_options.size != 0u ||
+      http_websocket_options.protocol != CHTTP_HTTP_1_1 ||
+      CHTTP_METHOD_CONNECT == CHTTP_METHOD_OPTIONS || tls_client.impl != nullptr ||
       tls_server.impl != nullptr || tls_client_config.size != 0u || websocket.impl != nullptr)
     return 1;
   websocket_config.size = sizeof(websocket_config);
