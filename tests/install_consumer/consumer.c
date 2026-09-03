@@ -238,9 +238,13 @@ int main(void) {
   crpc_async_client async_client = {0};
   crpc_request request = {0};
   crpc_response response = {0};
+  crpc_options options = {0};
+  crpc_server server = {0};
   crpc_response_destroy(&response);
   return client.impl == NULL && async_client.impl == NULL && request.slot == 0u &&
-                 request.generation == 0u
+                 request.generation == 0u && options.tls == NULL &&
+                 options.protocol == CHTTP_HTTP_1_1 && server.impl == NULL &&
+                 crpc_server_destroy(&server) == TURBO_OK
              ? 0
              : 1;
 }

@@ -39,7 +39,7 @@ static bool crpc_metadata_reserved(const crpc_metadata *metadata) {
          crpc_ascii_equal(metadata->name, "accept");
 }
 
-static int crpc_bind_callable(const cmeta_callable *input, cmeta_callable *out, bool *out_present) {
+int crpc_bind_callable(const cmeta_callable *input, cmeta_callable *out, bool *out_present) {
   const cmeta_sig_desc *signature;
   if (out == NULL || out_present == NULL) return TURBO_EINVAL;
   *out = (cmeta_callable){0};

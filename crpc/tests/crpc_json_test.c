@@ -38,6 +38,21 @@ static cserde_status crpc_test_encode_nested(void *user, cserde_writer *writer) 
   return status;
 }
 
+static cserde_status crpc_test_encode_map(void *user, cserde_writer *writer) {
+  static const unsigned char key[] = "ok";
+  cserde_status status;
+  (void)user;
+  status = crpc_test_write(writer, (cserde_token){.kind = CSERDE_MAP_BEGIN});
+  if (status == CSERDE_OK)
+    status = crpc_test_write(
+        writer, (cserde_token){.kind = CSERDE_STRING,
+                               .value.slice = {key, sizeof(key) - 1u, CSERDE_VIEW_STABLE}});
+  if (status == CSERDE_OK)
+    status = crpc_test_write(writer, (cserde_token){.kind = CSERDE_BOOL, .value.boolean = true});
+  if (status == CSERDE_OK) status = crpc_test_write(writer, (cserde_token){.kind = CSERDE_MAP_END});
+  return status;
+}
+
 spec("CRPC JSON-RPC codec") {
   it("encodes a bounded CSerde params array and explicit id") {
     const crpc_method method = {.service = "users", .name = "find\"one"};
@@ -61,6 +76,19 @@ spec("CRPC JSON-RPC codec") {
     crpc_encoded_request encoded = {0};
 
     check_equal(crpc_json_encode_request(&method, UINT64_C(0), NULL, NULL, 32u, 4u, 128u, &encoded),
+                TURBO_OK);
+    check_equal(encoded.data, expected, sizeof(expected) - 1u);
+    crpc_encoded_request_destroy(&encoded);
+  }
+
+  it("encodes a CSerde params map") {
+    const crpc_method method = {.name = "health"};
+    static const char expected[] =
+        "{\"jsonrpc\":\"2.0\",\"method\":\"health\",\"params\":{\"ok\":true},\"id\":1}";
+    crpc_encoded_request encoded = {0};
+
+    check_equal(crpc_json_encode_request(&method, UINT64_C(1), crpc_test_encode_map, NULL, 32u, 4u,
+                                         128u, &encoded),
                 TURBO_OK);
     check_equal(encoded.data, expected, sizeof(expected) - 1u);
     crpc_encoded_request_destroy(&encoded);
@@ -94,6 +122,85 @@ spec("CRPC JSON-RPC codec") {
                                          8u, 24u, &encoded),
                 TURBO_EMSGSIZE);
     check_null(encoded.data);
+  }
+
+  it("encodes scalar, null, and structured server results") {
+    static const char scalar[] = "{\"jsonrpc\":\"2.0\",\"result\":1,\"id\":42}";
+    static const char null_value[] = "{\"jsonrpc\":\"2.0\",\"result\":null,\"id\":0}";
+    static const char structured[] =
+        "{\"jsonrpc\":\"2.0\",\"result\":[7,\"Ada\"],\"id\":18446744073709551615}";
+    static const char map[] = "{\"jsonrpc\":\"2.0\",\"result\":{\"ok\":true},\"id\":7}";
+    crpc_encoded_request encoded = {0};
+
+    check_equal(
+        crpc_json_encode_result(UINT64_C(42), crpc_test_encode_scalar, NULL, 8u, 256u, &encoded),
+        TURBO_OK);
+    check_equal(encoded.data, scalar, sizeof(scalar) - 1u);
+    crpc_encoded_request_destroy(&encoded);
+    check_equal(crpc_json_encode_result(UINT64_C(0), NULL, NULL, 8u, 256u, &encoded), TURBO_OK);
+    check_equal(encoded.data, null_value, sizeof(null_value) - 1u);
+    crpc_encoded_request_destroy(&encoded);
+    check_equal(
+        crpc_json_encode_result(UINT64_MAX, crpc_test_encode_array, NULL, 8u, 256u, &encoded),
+        TURBO_OK);
+    check_equal(encoded.data, structured, sizeof(structured) - 1u);
+    crpc_encoded_request_destroy(&encoded);
+    check_equal(
+        crpc_json_encode_result(UINT64_C(7), crpc_test_encode_map, NULL, 8u, 256u, &encoded),
+        TURBO_OK);
+    check_equal(encoded.data, map, sizeof(map) - 1u);
+    crpc_encoded_request_destroy(&encoded);
+  }
+
+  it("encodes server errors with optional data and a null id") {
+    static const char with_data[] =
+        "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"bad \\\"input\","
+        "\"data\":[7,\"Ada\"]},\"id\":7}";
+    static const char without_data[] =
+        "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Invalid "
+        "Request\"},\"id\":null}";
+    crpc_encoded_request encoded = {0};
+
+    check_equal(crpc_json_encode_error(false, UINT64_C(7), -32602, "bad \"input",
+                                       crpc_test_encode_array, NULL, 8u, 256u, &encoded),
+                TURBO_OK);
+    check_equal(encoded.data, with_data, sizeof(with_data) - 1u);
+    crpc_encoded_request_destroy(&encoded);
+    check_equal(crpc_json_encode_error(true, UINT64_C(0), -32600, "Invalid Request", NULL, NULL, 8u,
+                                       256u, &encoded),
+                TURBO_OK);
+    check_equal(encoded.data, without_data, sizeof(without_data) - 1u);
+    crpc_encoded_request_destroy(&encoded);
+  }
+
+  it("rejects invalid server encoders and response overflow") {
+    crpc_encoded_request encoded = {0};
+
+    check_equal(
+        crpc_json_encode_result(UINT64_C(1), crpc_test_encode_nested, NULL, 2u, 256u, &encoded),
+        TURBO_EMSGSIZE);
+    check_equal(
+        crpc_json_encode_result(UINT64_C(1), crpc_test_encode_array, NULL, 8u, 16u, &encoded),
+        TURBO_EMSGSIZE);
+    check_equal(
+        crpc_json_encode_error(false, UINT64_C(1), -32603, NULL, NULL, NULL, 8u, 256u, &encoded),
+        TURBO_EINVAL);
+    check_null(encoded.data);
+  }
+
+  it("joins bounded response fragments in batch order") {
+    static unsigned char first_data[] = "{\"id\":1}";
+    static unsigned char second_data[] = "{\"id\":2}";
+    static const char expected[] = "[{\"id\":1},{\"id\":2}]";
+    const crpc_encoded_request items[] = {{first_data, sizeof(first_data) - 1u},
+                                          {second_data, sizeof(second_data) - 1u}};
+    crpc_encoded_request encoded = {0};
+
+    check_equal(crpc_json_encode_batch(items, 2u, 64u, &encoded), TURBO_OK);
+    check_equal(encoded.data, expected, sizeof(expected) - 1u);
+    crpc_encoded_request_destroy(&encoded);
+    check_equal(crpc_json_encode_batch(items, 2u, sizeof(expected) - 2u, &encoded), TURBO_EMSGSIZE);
+    check_equal(crpc_json_encode_batch(items, 0u, 64u, &encoded), TURBO_EINVAL);
   }
 
   it("decodes a result as a callback-scoped CSerde reader") {

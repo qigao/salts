@@ -2256,8 +2256,9 @@ NativeIO
 Actor 或事件循环适配层使用 `crpc_async_client_*`。两种风格共享 `connection_uri`、`authority`、
 `target` 与 method/deadline 语义，并直接继承 CHTTP pool：同站点不同 target 的顺序 JSON-RPC call
 可以复用一条允许 keep-alive 的 TCP socket。CRPC 不维护第二份 pool，也不因断线自动重放 method。
-当前 `crpc_options` 尚未暴露 CHTTP TLS profile，因此不能据 CHTTP 已有 HTTPS 推断 CRPC 已支持
-HTTPS；这一适配仍需要单独扩展、文档化所有权并测试。
+`crpc_options` 还显式携带 borrowed CHTTP TLS profile 与协议选择：h2c 使用 `tcp://` 与
+`CHTTP_HTTP_2`，HTTPS H1/H2 使用 `tls://`、匹配 ALPN 的 profile 与对应 protocol；配置矛盾会
+fail fast，不做 H2 到 H1 的隐式 fallback。同步和异步路径都经过相同的 transport 适配。
 
 如果是自定义二进制 RPC，则可以跳过 CHTTP，但仍应有独立 framing/session 层：
 
@@ -2274,7 +2275,10 @@ listener、accepted socket ownership transfer、generation-checked connection �
 send-and-close。CHTTP server 使用的 accepted data path 因而仍经过 CNet/NativeIO，没有另建一套
 socket runtime。这里实现的是明文与 TLS HTTP/1.1/HTTP/2 application server，以及 H1 Upgrade/
 H2 RFC 8441 WS/WSS route/client。CNet TLS 与 WebSocket session engine、CHTTP H1/H2 client/server adapter
-与两种 WebSocket opening handshake 已实现；完整 RPC server 尚未实现，HTTP/3 也不在当前导入范围内。
+与两种 WebSocket opening handshake 已实现。CRPC server 在其上提供 `target + method` registry、
+CMeta callable snapshot、CSerde params/result、notification suppression 与有界有序 batch；普通 HTTP
+middleware、Session 和非 RPC route 仍通过其内部 CHTTP owner 组合。HTTP/3 与 RPC streaming 不在
+当前实现范围内。
 
 ## 24.4 异步文件与 CNet 复用底层协议，但不强行复用同一个上层模型
 

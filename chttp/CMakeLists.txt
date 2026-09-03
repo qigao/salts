@@ -39,7 +39,10 @@ if(WIN32)
     OUTPUT_NAME "turbo_chttp-${CHTTP_ABI_VERSION}")
 endif()
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
-set_target_properties(${TARGET_NAME} PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+# BoringSSL archives contain C++ objects even though CHTTP exposes a C API.
+set_target_properties(${TARGET_NAME} PROPERTIES
+  WINDOWS_EXPORT_ALL_SYMBOLS ON
+  LINKER_LANGUAGE CXX)
 target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

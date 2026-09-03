@@ -726,8 +726,7 @@ static int chttp_server_h1_input(chttp_server_connection *connection, const void
   if (status != TURBO_OK) return status;
   if (consumed < size) {
     const size_t remaining = size - consumed;
-    if (connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_HANDSHAKE)
-      return TURBO_EPROTO;
+    if (connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_HANDSHAKE) return TURBO_EPROTO;
     if (remaining > connection->websocket_upgrade_input_capacity) return TURBO_EMSGSIZE;
     memcpy(connection->websocket_upgrade_input, (const unsigned char *)data + consumed, remaining);
     connection->websocket_upgrade_input_size = remaining;
@@ -917,6 +916,7 @@ static void chttp_server_h1_file_ready(void *user) {
   }
   if (connection->outbound_size != 0u) (void)chttp_server_send_pending(connection);
   else if (connection->close_after_write) chttp_server_connection_close(connection);
+  else if (!connection->response_streaming) (void)chttp_server_send_pending(connection);
 }
 
 static void chttp_server_on_send(void *user, cnet_connection handle, size_t size) {
@@ -938,7 +938,7 @@ static void chttp_server_on_send(void *user, cnet_connection handle, size_t size
   }
   if (connection->outbound_size != 0u) (void)chttp_server_send_pending(connection);
   else if (connection->close_after_write) chttp_server_connection_close(connection);
-  else (void)chttp_server_send_pending(connection);
+  else if (!connection->response_streaming) (void)chttp_server_send_pending(connection);
 }
 
 static int chttp_server_on_continue(void *user) {

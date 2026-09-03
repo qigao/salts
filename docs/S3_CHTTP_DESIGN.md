@@ -43,7 +43,7 @@ source/sink progress, and protocol shutdown.
 application
     |
     v
-Rocida::S3  -- private --> OpenSSL::Crypto
+Rocida::S3  -- private --> BoringSSL OpenSSL-compatible Crypto target
     |        -- private --> Rocida::XmlParser / Rocida::STL / Rocida::Core
     v
 Rocida::CHTTP
@@ -53,7 +53,7 @@ Rocida::CNet -> NativeIO
 
 The installed C target is `Rocida::S3`; its implementation library is
 `turbo_s3`, version and SOVERSION 1. Public headers include CHTTP types but do
-not expose OpenSSL, llhttp, the XML engine, CoroNet, or H3 types.
+not expose BoringSSL, llhttp, the XML engine, CoroNet, or H3 types.
 
 ## Public model
 

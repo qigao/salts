@@ -114,7 +114,9 @@ int crpc_request_reply(crpc_client *client, const crpc_options *options,
                                  .header_count = prepared.header_count,
                                  .body = prepared.encoded.data,
                                  .body_size = prepared.encoded.size,
-                                 .timeout_ms = remaining_ms};
+                                 .timeout_ms = remaining_ms,
+                                 .tls = options->tls,
+                                 .protocol = options->protocol};
   status = chttp_post(&impl->http, &http_options, &http_response, &http_error);
   if (status != TURBO_OK) {
     *out_error = (crpc_error){

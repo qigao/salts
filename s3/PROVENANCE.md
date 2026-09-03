@@ -13,7 +13,7 @@ The migration retains the following conceptual mapping:
 
 | TurboHTTP source | Rocida destination | Adaptation |
 | --- | --- | --- |
-| `s3/src/s3_signer.c` | `s3/src/s3_signer.c` | Rebuilt on OpenSSL with strict bounds, duplicate handling, key cleansing, and AWS vectors |
+| `s3/src/s3_signer.c` | `s3/src/s3_signer.c` | Rebuilt on BoringSSL's OpenSSL-compatible API with strict bounds, duplicate handling, key cleansing, and AWS vectors |
 | `s3/src/s3_url.c`, `s3/src/s3_multimap.c` | `s3/src/s3_request.c` | One encoded/sorted request-plan fact source; repeated query names retained |
 | `s3/src/s3_http.c` | `s3/src/s3_client.c` | Replaced TurboHTTP/CoroNet/H3 facade with injected CHTTP H1/H2 clients |
 | `s3/src/s3_response.c` | `s3/src/s3_xml.c` | Replaced unbounded parser use and timestamp placeholders with the bounded Rocida XML facade |

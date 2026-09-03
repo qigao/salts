@@ -320,7 +320,6 @@ destruction.
 - Modify: `vendor/CMakeLists.txt`
 - Modify: `CMakeOptions.cmake`
 - Create: `cnet/src/cnet_tls.c`
-- Create: `cnet/src/boringssl_linkage.cpp`
 - Create: `cnet/src/cnet_websocket.c`
 - Create: `cnet/src/cnet_kcp.c`
 - Create: `cnet/src/cnet_kcp_secure.c`
@@ -349,8 +348,9 @@ destruction.
 - [ ] Write TLS tests for mandatory chain/hostname verification, partial
   records, WANT_READ/WANT_WRITE, connect timeout, and orderly/abrupt shutdown.
 - [ ] Implement TLS with BoringSSL memory BIOs so all encrypted bytes still flow
-  through CNet buffers and NativeIO. Add the private C++ linkage translation
-  unit required by BoringSSL while keeping installed CNet headers C11-only.
+  through CNet buffers and NativeIO. Resolve BoringSSL only through its
+  OpenSSL-compatible `find_package(OpenSSL REQUIRED)` targets and keep installed
+  CNet headers C11-only.
 - [ ] Write WebSocket corpus tests for Upgrade validation, fragmented
   text/binary messages, masking, control frames, invalid lengths/UTF-8, bounded
   reassembly, and close handshake.

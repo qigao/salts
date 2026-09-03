@@ -24,6 +24,11 @@ typedef struct crpc_async_client {
   void *impl;
 } crpc_async_client;
 
+/** Background JSON-RPC server owner; callers never drive a poller. */
+typedef struct crpc_server {
+  void *impl;
+} crpc_server;
+
 /** Generation-checked local request handle; distinct from the JSON-RPC id. */
 typedef struct crpc_request {
   uint32_t slot;
@@ -53,6 +58,9 @@ typedef struct crpc_metadata {
  * Array or Map. CRPC owns writer finalization; the callback must not finish it.
  */
 typedef cserde_status (*crpc_encode_params_fn)(void *user, cserde_writer *writer);
+
+/** Emits exactly one JSON value. CRPC owns writer finalization. */
+typedef cserde_status (*crpc_encode_value_fn)(void *user, cserde_writer *writer);
 
 typedef enum crpc_response_kind {
   CRPC_RESPONSE_RESULT = 1,
@@ -125,6 +133,10 @@ typedef struct crpc_options {
   uint32_t deadline_ms;
   crpc_encode_params_fn encode_params;
   void *params_user;
+  /** Optional reusable TLS profile; valid only with a `tls://` connection URI. */
+  const chttp_tls_profile *tls;
+  /** Explicit wire protocol. HTTP/2 never falls back to HTTP/1.1. */
+  chttp_protocol protocol;
 } crpc_options;
 
 /**
@@ -137,6 +149,42 @@ typedef struct crpc_client_config {
   size_t max_method_bytes;
   size_t max_json_depth;
 } crpc_client_config;
+
+/**
+ * Handler-scoped request view. Every pointer and the single-pass params reader
+ * become invalid when the handler returns.
+ */
+typedef struct crpc_server_request_view {
+  const chttp_server_request_view *http;
+  const char *target;
+  const char *method;
+  uint64_t request_id;
+  int notification;
+  cserde_reader *params;
+  const cmeta_callable *callable;
+} crpc_server_request_view;
+
+/** Handler-scoped response completion handle. */
+typedef struct crpc_server_response {
+  void *impl;
+} crpc_server_response;
+
+typedef int (*crpc_server_method_fn)(void *user, const crpc_server_request_view *request,
+                                     crpc_server_response *response);
+
+/**
+ * All method, JSON, HTTP, and network capacities are hard bounds. The server
+ * owns one background CHTTP worker and dispatches handlers serially. CRPC
+ * requires an explicit nonzero http.max_buffered_response_body_bytes large
+ * enough to carry every built-in JSON-RPC protocol error.
+ */
+typedef struct crpc_server_config {
+  chttp_server_config http;
+  size_t method_capacity;
+  size_t max_method_bytes;
+  size_t max_json_depth;
+  size_t max_batch_items;
+} crpc_server_config;
 
 /** Initializes an ordinary sequential request/reply client. */
 int crpc_client_init(crpc_client *client, const crpc_client_config *config);
@@ -178,6 +226,54 @@ int crpc_async_client_stop(crpc_async_client *client, uint32_t timeout_ms);
 
 /** Requires a completed stop; a null implementation is already destroyed. */
 int crpc_async_client_destroy(crpc_async_client *client);
+
+/**
+ * Initializes a stopped JSON-RPC server and its bounded method registry.
+ * @return `TURBO_OK`; `TURBO_EINVAL`, `TURBO_EMSGSIZE`, or `TURBO_ERANGE`
+ * for invalid bounds; `TURBO_ENOMEM` for allocation failure; otherwise the
+ * underlying CHTTP initialization error.
+ */
+int crpc_server_init(crpc_server *server, const crpc_server_config *config);
+
+/**
+ * Returns the borrowed CHTTP owner for pre-start middleware and route setup.
+ * Listener and worker lifecycle remain owned by crpc_server_*.
+ */
+chttp_server *crpc_server_http(crpc_server *server);
+
+/**
+ * Registers one fixed origin-form target/method pair before server start.
+ * CHTTP `:segment` route patterns are rejected. Target, wire method, and bound
+ * callable are copied; handler and user are borrowed through destroy.
+ * @return `TURBO_OK`, validation/binding errors, `TURBO_EBUSY` after start,
+ * `TURBO_EALREADY` for a duplicate key, or `TURBO_ENOBUFS` when full.
+ */
+int crpc_server_register(crpc_server *server, const char *target, const crpc_method *method,
+                         crpc_server_method_fn handler, void *user);
+
+/**
+ * Completes one handler call with a JSON-RPC result; NULL encoder writes null.
+ * The encoder runs synchronously. Notifications mark completion without bytes.
+ * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_EALREADY`, or a bounded encoder error.
+ */
+int crpc_server_response_result(crpc_server_response *response, crpc_encode_value_fn encode,
+                                void *user);
+
+/**
+ * Completes one handler call with a JSON-RPC application error. The message
+ * and optional data encoder are consumed synchronously.
+ * @return `TURBO_OK`, `TURBO_EINVAL`, `TURBO_EALREADY`, or a bounded encoder error.
+ */
+int crpc_server_response_error(crpc_server_response *response, int64_t code, const char *message,
+                               crpc_encode_value_fn encode_data, void *data_user);
+
+/** Starts the listener and background CHTTP owner thread; propagates CHTTP errors. */
+int crpc_server_start(crpc_server *server);
+int crpc_server_port(const crpc_server *server, uint16_t *out_port);
+/** Stops admission and drains the CHTTP owner; timeout and transport errors propagate. */
+int crpc_server_stop(crpc_server *server, uint32_t timeout_ms);
+/** Releases a stopped server; a zero server is already destroyed. */
+int crpc_server_destroy(crpc_server *server);
 
 #ifdef __cplusplus
 }

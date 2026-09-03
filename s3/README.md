@@ -109,7 +109,7 @@ find_package(Rocida CONFIG REQUIRED)
 target_link_libraries(app PRIVATE Rocida::S3)
 ```
 
-OpenSSL、XML parser 和 llhttp 等实现依赖不会以第三方类型出现在 S3 公开 API 中。
+BoringSSL、XML parser 和 llhttp 等实现依赖不会以第三方类型出现在 S3 公开 API 中。
 
 实现边界、容量、错误与 rollback 设计见
 [`docs/S3_CHTTP_DESIGN.md`](../docs/S3_CHTTP_DESIGN.md)，迁移来源见

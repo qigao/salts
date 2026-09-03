@@ -37,6 +37,7 @@ typedef struct crpc_json_writer_context {
   size_t max_depth;
   bool root_written;
   bool root_structured;
+  bool require_structured_root;
 } crpc_json_writer_context;
 
 static cserde_status crpc_buffer_reserve(crpc_buffer *buffer, size_t extra) {
@@ -203,7 +204,7 @@ static cserde_status crpc_json_writer_write(void *opaque, const cserde_token *to
   if (context == NULL || token == NULL) return CSERDE_SINK_ERROR;
   if (context->depth != 0u) {
     frame = &context->frames[context->depth - 1u];
-    if (frame->kind == CRPC_JSON_MAP && frame->expecting_key) {
+    if (frame->kind == CRPC_JSON_MAP && frame->expecting_key && token->kind != CSERDE_MAP_END) {
       if (token->kind != CSERDE_STRING) return CSERDE_INVALID_TOKEN;
       if (frame->count != 0u) {
         status = crpc_buffer_byte(context->buffer, (unsigned char)',');
@@ -275,7 +276,8 @@ static cserde_status crpc_json_writer_write(void *opaque, const cserde_token *to
 static cserde_status crpc_json_writer_finish(void *opaque) {
   crpc_json_writer_context *context = (crpc_json_writer_context *)opaque;
   if (context == NULL) return CSERDE_SINK_ERROR;
-  if (!context->root_written || !context->root_structured || context->depth != 0u)
+  if (!context->root_written || (context->require_structured_root && !context->root_structured) ||
+      context->depth != 0u)
     return CSERDE_SINK_ERROR;
   return CSERDE_OK;
 }
@@ -368,6 +370,68 @@ static int crpc_method_validate(const crpc_method *method, size_t max_method_byt
   return TURBO_OK;
 }
 
+int crpc_method_format(const crpc_method *method, size_t max_method_bytes, char *out,
+                       size_t out_capacity) {
+  size_t service_size = 0u;
+  size_t name_size = 0u;
+  size_t size;
+  int status;
+  if (out == NULL || out_capacity == 0u) return TURBO_EINVAL;
+  out[0] = '\0';
+  status = crpc_method_validate(method, max_method_bytes, &service_size, &name_size);
+  if (status != TURBO_OK) return status;
+  size = service_size == 0u ? name_size : service_size + 1u + name_size;
+  if (size >= out_capacity) return TURBO_EMSGSIZE;
+  if (service_size != 0u) {
+    memcpy(out, method->service, service_size);
+    out[service_size] = '.';
+    memcpy(out + service_size + 1u, method->name, name_size);
+  } else {
+    memcpy(out, method->name, name_size);
+  }
+  out[size] = '\0';
+  return TURBO_OK;
+}
+
+static cserde_status crpc_json_encode_value(crpc_buffer *buffer, crpc_encode_value_fn encode,
+                                            void *user, size_t max_depth,
+                                            bool require_structured_root) {
+  crpc_json_writer_context context = {
+      .buffer = buffer,
+      .max_depth = max_depth,
+      .require_structured_root = require_structured_root,
+  };
+  cserde_token null_token = {.kind = CSERDE_NULL};
+  cserde_status status;
+
+  if (max_depth != 0u) {
+    if (max_depth > SIZE_MAX / sizeof(*context.frames)) return CSERDE_LIMIT_EXCEEDED;
+    context.frames = (crpc_json_frame *)calloc(max_depth, sizeof(*context.frames));
+    if (context.frames == NULL) return CSERDE_SINK_ERROR;
+  }
+  status = cserde_writer_init(&context.writer, &crpc_json_writer_ops, &context);
+  if (status == CSERDE_OK)
+    status = encode != NULL ? encode(user, &context.writer)
+                            : cserde_writer_write(&context.writer, &null_token);
+  if (status == CSERDE_OK) status = cserde_writer_finish(&context.writer);
+  free(context.frames);
+  return status;
+}
+
+static cserde_status crpc_json_append_uint64(crpc_buffer *buffer, uint64_t value) {
+  char text[3u * sizeof(value) + 1u];
+  const int size = snprintf(text, sizeof(text), "%" PRIu64, value);
+  if (size <= 0 || (size_t)size >= sizeof(text)) return CSERDE_SINK_ERROR;
+  return crpc_buffer_append(buffer, text, (size_t)size);
+}
+
+static cserde_status crpc_json_append_int64(crpc_buffer *buffer, int64_t value) {
+  char text[3u * sizeof(value) + 2u];
+  const int size = snprintf(text, sizeof(text), "%" PRId64, value);
+  if (size <= 0 || (size_t)size >= sizeof(text)) return CSERDE_SINK_ERROR;
+  return crpc_buffer_append(buffer, text, (size_t)size);
+}
+
 int crpc_json_encode_request(const crpc_method *method, uint64_t request_id,
                              crpc_encode_params_fn encode_params, void *params_user,
                              size_t max_method_bytes, size_t max_json_depth, size_t max_body_bytes,
@@ -423,6 +487,7 @@ int crpc_json_encode_request(const crpc_method *method, uint64_t request_id,
     }
     writer_context.buffer = &buffer;
     writer_context.max_depth = max_json_depth - 1u;
+    writer_context.require_structured_root = true;
     serde_status =
         cserde_writer_init(&writer_context.writer, &crpc_json_writer_ops, &writer_context);
     if (serde_status == CSERDE_OK)
@@ -455,13 +520,116 @@ int crpc_json_encode_request(const crpc_method *method, uint64_t request_id,
   return TURBO_OK;
 }
 
+int crpc_json_encode_result(uint64_t request_id, crpc_encode_value_fn encode, void *user,
+                            size_t max_json_depth, size_t max_body_bytes,
+                            crpc_encoded_request *out) {
+  static const char prefix[] = "{\"jsonrpc\":\"2.0\",\"result\":";
+  static const char id_prefix[] = ",\"id\":";
+  crpc_buffer buffer = {.limit = max_body_bytes};
+  cserde_status serde_status;
+
+  if (out == NULL) return TURBO_EINVAL;
+  *out = (crpc_encoded_request){0};
+  if (max_json_depth < 2u || max_body_bytes == 0u || max_body_bytes == SIZE_MAX)
+    return TURBO_EINVAL;
+  serde_status = crpc_buffer_append(&buffer, prefix, sizeof(prefix) - 1u);
+  if (serde_status == CSERDE_OK)
+    serde_status = crpc_json_encode_value(&buffer, encode, user, max_json_depth - 1u, false);
+  if (serde_status == CSERDE_OK)
+    serde_status = crpc_buffer_append(&buffer, id_prefix, sizeof(id_prefix) - 1u);
+  if (serde_status == CSERDE_OK) serde_status = crpc_json_append_uint64(&buffer, request_id);
+  if (serde_status == CSERDE_OK) serde_status = crpc_buffer_byte(&buffer, (unsigned char)'}');
+  if (serde_status != CSERDE_OK) {
+    free(buffer.data);
+    return crpc_cserde_status(serde_status);
+  }
+  out->data = buffer.data;
+  out->size = buffer.size;
+  return TURBO_OK;
+}
+
+int crpc_json_encode_error(bool null_id, uint64_t request_id, int64_t code, const char *message,
+                           crpc_encode_value_fn encode_data, void *data_user, size_t max_json_depth,
+                           size_t max_body_bytes, crpc_encoded_request *out) {
+  static const char prefix[] = "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":";
+  static const char message_prefix[] = ",\"message\":";
+  static const char data_prefix[] = ",\"data\":";
+  static const char id_prefix[] = "},\"id\":";
+  crpc_buffer buffer = {.limit = max_body_bytes};
+  size_t message_size = 0u;
+  cserde_status serde_status;
+  int status;
+
+  if (out == NULL) return TURBO_EINVAL;
+  *out = (crpc_encoded_request){0};
+  if (message == NULL || max_json_depth < 2u || max_body_bytes == 0u || max_body_bytes == SIZE_MAX)
+    return TURBO_EINVAL;
+  status = crpc_bounded_length(message, max_body_bytes, &message_size);
+  if (status != TURBO_OK) return status;
+
+  serde_status = crpc_buffer_append(&buffer, prefix, sizeof(prefix) - 1u);
+  if (serde_status == CSERDE_OK) serde_status = crpc_json_append_int64(&buffer, code);
+  if (serde_status == CSERDE_OK)
+    serde_status = crpc_buffer_append(&buffer, message_prefix, sizeof(message_prefix) - 1u);
+  if (serde_status == CSERDE_OK)
+    serde_status = crpc_json_string(&buffer, (const unsigned char *)message, message_size);
+  if (serde_status == CSERDE_OK && encode_data != NULL)
+    serde_status = crpc_buffer_append(&buffer, data_prefix, sizeof(data_prefix) - 1u);
+  if (serde_status == CSERDE_OK && encode_data != NULL)
+    serde_status =
+        crpc_json_encode_value(&buffer, encode_data, data_user, max_json_depth - 2u, false);
+  if (serde_status == CSERDE_OK)
+    serde_status = crpc_buffer_append(&buffer, id_prefix, sizeof(id_prefix) - 1u);
+  if (serde_status == CSERDE_OK)
+    serde_status = null_id ? crpc_buffer_append(&buffer, "null", 4u)
+                           : crpc_json_append_uint64(&buffer, request_id);
+  if (serde_status == CSERDE_OK) serde_status = crpc_buffer_byte(&buffer, (unsigned char)'}');
+  if (serde_status != CSERDE_OK) {
+    free(buffer.data);
+    return crpc_cserde_status(serde_status);
+  }
+  out->data = buffer.data;
+  out->size = buffer.size;
+  return TURBO_OK;
+}
+
+int crpc_json_encode_batch(const crpc_encoded_request *items, size_t item_count,
+                           size_t max_body_bytes, crpc_encoded_request *out) {
+  crpc_buffer buffer = {.limit = max_body_bytes};
+  cserde_status serde_status;
+  size_t index;
+
+  if (out == NULL) return TURBO_EINVAL;
+  *out = (crpc_encoded_request){0};
+  if (items == NULL || item_count == 0u || max_body_bytes == 0u || max_body_bytes == SIZE_MAX)
+    return TURBO_EINVAL;
+  serde_status = crpc_buffer_byte(&buffer, (unsigned char)'[');
+  for (index = 0u; serde_status == CSERDE_OK && index < item_count; ++index) {
+    if (items[index].data == NULL || items[index].size == 0u) {
+      serde_status = CSERDE_INVALID_TOKEN;
+      break;
+    }
+    if (index != 0u) serde_status = crpc_buffer_byte(&buffer, (unsigned char)',');
+    if (serde_status == CSERDE_OK)
+      serde_status = crpc_buffer_append(&buffer, items[index].data, items[index].size);
+  }
+  if (serde_status == CSERDE_OK) serde_status = crpc_buffer_byte(&buffer, (unsigned char)']');
+  if (serde_status != CSERDE_OK) {
+    free(buffer.data);
+    return crpc_cserde_status(serde_status);
+  }
+  out->data = buffer.data;
+  out->size = buffer.size;
+  return TURBO_OK;
+}
+
 void crpc_encoded_request_destroy(crpc_encoded_request *request) {
   if (request == NULL) return;
   free(request->data);
   *request = (crpc_encoded_request){0};
 }
 
-static bool crpc_json_depth_valid(const unsigned char *data, size_t size, size_t max_depth) {
+bool crpc_json_depth_valid(const unsigned char *data, size_t size, size_t max_depth) {
   size_t depth = 0u;
   size_t index;
   bool in_string = false;
@@ -488,8 +656,8 @@ static bool crpc_json_depth_valid(const unsigned char *data, size_t size, size_t
   return depth == 0u;
 }
 
-static json_value_t *crpc_json_unique_member(const json_value_t *object, const char *name,
-                                             size_t *out_count) {
+json_value_t *crpc_json_unique_member(const json_value_t *object, const char *name,
+                                      size_t *out_count) {
   const size_t name_size = strlen(name);
   const size_t count = json_object_size(object);
   json_value_t *found = NULL;
@@ -617,7 +785,7 @@ static bool crpc_decimal_integer(const char *text, size_t size, bool *negative,
   return true;
 }
 
-static bool crpc_json_uint64(const json_value_t *value, uint64_t *out) {
+bool crpc_json_uint64(const json_value_t *value, uint64_t *out) {
   const char *text;
   size_t size = 0u;
   bool negative;

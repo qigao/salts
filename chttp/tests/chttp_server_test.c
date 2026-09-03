@@ -971,6 +971,59 @@ spec("CHTTP background HTTP/1.1 server") {
     free(path);
   }
 
+  it("keeps a connection reusable while asynchronous file EOF is pending") {
+    enum { FILE_RESPONSE_BYTES = 6000, FILE_RESPONSE_ROUNDS = 32 };
+    unsigned char payload[FILE_RESPONSE_BYTES];
+    char *path = tt_make_temp_file("chttp-h1-server-file-keepalive", ".bin");
+    chttp_server server = {0};
+    chttp_client client = {0};
+    chttp_server_config server_config = chttp_server_test_config();
+    chttp_client_config client_config = chttp_server_test_client_config();
+    chttp_response response = {0};
+    chttp_server_stats stats = {0};
+    char uri[64];
+    uint16_t port = 0u;
+    size_t round;
+
+    memset(payload, 'k', sizeof(payload));
+    payload[sizeof(payload) - 1u] = 'z';
+    check_not_null(path);
+    check_equal(tt_write_file(path, payload, sizeof(payload)), 0);
+    server_config.max_response_body_bytes = sizeof(payload);
+    server_config.network.read_timeout_ms = CHTTP_SERVER_TEST_TIMEOUT_MS * 2u;
+    client_config.max_response_body_bytes = sizeof(payload);
+    check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
+    check_equal(
+        chttp_server_get(&server, "/file-keepalive", chttp_server_response_file_handler, path),
+        TURBO_OK);
+    check_equal(chttp_server_get(&server, "/static", chttp_server_test_static, NULL), TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_true(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port) > 0);
+    check_equal(chttp_client_init(&client, &client_config), TURBO_OK);
+
+    for (round = 0u; round < FILE_RESPONSE_ROUNDS; ++round) {
+      check_equal(chttp_server_test_call(&client, uri, "/file-keepalive", NULL, 0u, &response),
+                  TURBO_OK);
+      check_equal(response.status_code, 200u);
+      check_equal(response.body_size, sizeof(payload));
+      check_equal(response.body, payload, sizeof(payload));
+      chttp_response_destroy(&response);
+      check_equal(chttp_server_test_call(&client, uri, "/static", NULL, 0u, &response), TURBO_OK);
+      check_equal(response.status_code, 200u);
+      check_equal(response.body, "static", 6u);
+      chttp_response_destroy(&response);
+    }
+    check_equal(chttp_server_get_stats(&server, &stats), TURBO_OK);
+    check_equal(stats.accepted_connections, (uint64_t)1u);
+
+    check_equal(chttp_client_destroy(&client, CHTTP_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(tt_remove_file(path), 0);
+    free(path);
+  }
+
   it("serves HTTP/1.0 without requiring a Host header") {
     static const char request[] = "GET /static HTTP/1.0\r\n"
                                   "Expect: 100-continue\r\n"
