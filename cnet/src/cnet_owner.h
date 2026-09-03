@@ -67,6 +67,9 @@ int cnet_owner_wake(cnet_owner *owner);
 
 /** Reports the bounded NativeIO coroutine state owned by this shard. */
 bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats);
+int cnet_owner_tls_peer_certificate_sha256(
+    cnet_owner *owner, cnet_session_handle session,
+    char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
 
 /** Clears owner metadata after the terminal notification recycled the handle. */
 int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session);

@@ -134,6 +134,9 @@ After CONNECTED, `cnet_tls_negotiated_alpn()` copies the selected protocol. It
 can be called from the CONNECTED callback because CNet records ALPN before
 invoking user code. No overlap returns `SALTS_ENOENT`; protocol layers such as
 HTTP/2 must treat that result as a policy decision rather than assume `h2`.
+`cnet_tls_peer_certificate_sha256()` copies the verified peer leaf certificate
+fingerprint while the TLS connection remains open; a server session whose peer
+did not present a client certificate returns `SALTS_ENOENT`.
 
 Servers initialize one reusable `cnet_tls_server`, accept sockets with
 `cnet_listener_accept_tls()`, and destroy the public context after closing

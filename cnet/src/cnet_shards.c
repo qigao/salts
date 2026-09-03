@@ -366,6 +366,20 @@ int cnet_shards_state(cnet_shards *shards, cnet_shard_connection connection,
                         : SALTS_ENOENT;
 }
 
+int cnet_shards_tls_peer_certificate_sha256(
+    cnet_shards *shards, cnet_shard_connection connection,
+    char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  if (buffer == NULL) return SALTS_EINVAL;
+  buffer[0] = '\0';
+  if (impl == NULL || !cnet_shard_connection_valid(connection)) return SALTS_ENOENT;
+  record = cnet_shards_get_record(impl, connection.shard);
+  return record != NULL
+             ? cnet_owner_tls_peer_certificate_sha256(&record->owner, connection.session, buffer)
+             : SALTS_ENOENT;
+}
+
 int cnet_shards_take_event(cnet_shards *shards, uint32_t shard, cnet_event_view *out_event) {
   cnet_shard_record *record = cnet_shards_get_record(cnet_shards_get(shards), shard);
   return record != NULL ? cnet_event_queue_take(&record->events, out_event) : SALTS_EINVAL;

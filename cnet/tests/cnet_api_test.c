@@ -474,6 +474,7 @@ spec("CNet public client API") {
     size_t parsed_address_length = 0u;
     int ready = 0;
     unsigned char received = 0u;
+    char peer_certificate_sha256[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
     const unsigned char request_value = 31u;
     const unsigned char response_value = 47u;
 
@@ -514,6 +515,9 @@ spec("CNet public client API") {
       check_equal(no_peer.generation, 0u);
     }
     check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+    check_equal(cnet_tls_peer_certificate_sha256(&client, connection,
+                                                 peer_certificate_sha256),
+                SALTS_ENOTSUP);
     check_equal(cnet_receive(&client, connection, 1u), SALTS_OK);
     check_equal(send(peer, (const char *)&request_value, (int)sizeof(request_value), 0),
                 (int)sizeof(request_value));

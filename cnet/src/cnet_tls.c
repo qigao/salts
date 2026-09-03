@@ -615,3 +615,31 @@ int cnet_tls_get_negotiated_alpn(const cnet_tls_state *state, const unsigned cha
   *out_size = state->negotiated_alpn_size;
   return SALTS_OK;
 }
+
+int cnet_tls_state_peer_certificate_sha256(
+    const cnet_tls_state *state,
+    char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
+  static const char hex[] = "0123456789abcdef";
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int digest_size = 0u;
+  X509 *certificate;
+  size_t index;
+
+  if (state == NULL || buffer == NULL) return SALTS_EINVAL;
+  buffer[0] = '\0';
+  if (state->ssl == NULL || !state->handshake_complete) return SALTS_ENOTCONN;
+  certificate = SSL_get_peer_certificate((const SSL *)state->ssl);
+  if (certificate == NULL) return SALTS_ENOENT;
+  if (X509_digest(certificate, EVP_sha256(), digest, &digest_size) != 1) {
+    X509_free(certificate);
+    return SALTS_EIO;
+  }
+  X509_free(certificate);
+  if (digest_size != 32u) return SALTS_EIO;
+  for (index = 0u; index < digest_size; ++index) {
+    buffer[index * 2u] = hex[digest[index] >> 4u];
+    buffer[index * 2u + 1u] = hex[digest[index] & 0x0fu];
+  }
+  buffer[digest_size * 2u] = '\0';
+  return SALTS_OK;
+}

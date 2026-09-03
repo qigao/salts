@@ -401,6 +401,7 @@ spec("CNet bounded TLS engine") {
     cnet_tls_network_probe server_probe = {.client = &server};
     cnet_connect_options connect_options;
     cnet_connection client_connection = {0};
+    char peer_certificate_sha256[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
     char server_name[] = "localhost";
     char *cert_path = tt_make_temp_file("cnet-cert", ".pem");
     char *key_path = tt_make_temp_file("cnet-key", ".pem");
@@ -460,6 +461,15 @@ spec("CNet bounded TLS engine") {
     check_equal(server_probe.alpn_size, (size_t)2u);
     check_equal(memcmp(client_probe.alpn, "h2", 2u), 0);
     check_equal(memcmp(server_probe.alpn, "h2", 2u), 0);
+    check_equal(cnet_tls_peer_certificate_sha256(&client, client_connection,
+                                                 peer_certificate_sha256),
+                SALTS_OK);
+    check_equal(strcmp(peer_certificate_sha256,
+                       "ebd76f304bc43bc2be697fca2f054206978c0558931529a7c1b2bb7d82a7a3c4"),
+                0);
+    check_equal(cnet_tls_peer_certificate_sha256(&server, server_probe.connection,
+                                                 peer_certificate_sha256),
+                SALTS_ENOENT);
 
     check_equal(cnet_receive(&server, server_probe.connection, 1u), SALTS_OK);
     check_equal(cnet_sendv(&client, client_connection, request_segments, 2u), SALTS_OK);
@@ -499,6 +509,9 @@ spec("CNet bounded TLS engine") {
     check_true(server_probe.terminal);
     check_false(client_probe.failed);
     check_false(server_probe.failed);
+    check_equal(cnet_tls_peer_certificate_sha256(&client, client_connection,
+                                                 peer_certificate_sha256),
+                SALTS_ENOENT);
 
     check_equal(cnet_listener_close(&listener), SALTS_OK);
     check_equal(cnet_listener_destroy(&listener), SALTS_OK);

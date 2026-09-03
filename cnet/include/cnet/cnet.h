@@ -83,6 +83,8 @@ typedef struct cnet_observer {
 
 enum {
   CNET_TLS_ALPN_NAME_MAX_BYTES = 255,
+  /** Lowercase SHA-256 hexadecimal digest plus the trailing NUL. */
+  CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY = 65,
   /** Minimum fixed capacity of each TLS network BIO and scratch buffer. */
   CNET_TLS_MIN_IO_BUFFER_BYTES = 17 * 1024
 };
@@ -338,6 +340,18 @@ int cnet_tls_server_destroy(cnet_tls_server *server);
  */
 int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, char *buffer,
                              size_t capacity, size_t *out_size);
+
+/**
+ * Copies the verified peer leaf certificate SHA-256 digest as 64 lowercase
+ * hexadecimal characters plus a trailing NUL. The query is valid only while
+ * the TLS connection remains open. A server connection without a presented
+ * client certificate returns `SALTS_ENOENT`; plaintext returns `SALTS_ENOTSUP`.
+ * Other errors are `SALTS_ENOTCONN` and the standard invalid/stale-handle
+ * statuses.
+ */
+int cnet_tls_peer_certificate_sha256(
+    cnet_client *client, cnet_connection connection,
+    char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
 
 /**
  * Creates a nonblocking TCP listener. The listener has one owner thread;

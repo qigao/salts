@@ -1513,6 +1513,19 @@ bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine
   return impl != NULL && native_io_backend_get_coroutine_stats(&impl->backend, out_stats);
 }
 
+int cnet_owner_tls_peer_certificate_sha256(
+    cnet_owner *owner, cnet_session_handle session_handle,
+    char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (impl == NULL || buffer == NULL) return SALTS_EINVAL;
+  buffer[0] = '\0';
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (session->peer.scheme != CNET_URI_TLS) return SALTS_ENOTSUP;
+  return cnet_tls_state_peer_certificate_sha256(&session->tls, buffer);
+}
+
 int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session_handle) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
   cnet_owner_session *session = cnet_owner_find_session(impl, session_handle);
