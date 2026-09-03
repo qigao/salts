@@ -23,6 +23,18 @@ static cnet_command make_send(uint32_t slot, const void *data, size_t size) {
   return command;
 }
 
+static cnet_command make_sendv(uint32_t slot, const cnet_const_buffer *segments,
+                               size_t segment_count, size_t size) {
+  cnet_command command = {0};
+  command.kind = CNET_COMMAND_SEND;
+  command.connection.slot = slot;
+  command.connection.generation = 1u;
+  command.size = size;
+  command.segments = segments;
+  command.segment_count = segment_count;
+  return command;
+}
+
 spec("CNet bounded command queue") {
   before_each() { memset(&queue, 0, sizeof(queue)); }
 
@@ -150,6 +162,82 @@ spec("CNet bounded command queue") {
       check_equal(view.size, sizeof(expected));
       check_equal(view.data, expected, sizeof(expected));
       check_equal(cnet_command_queue_release(&queue, &view), TURBO_OK);
+    }
+
+    it("copies ordered vector segments into one queue-owned payload") {
+      static const uint8_t expected[] = {1u, 2u, 3u, 4u, 5u};
+      uint8_t first[] = {1u, 2u};
+      uint8_t second[] = {3u, 4u, 5u};
+      cnet_const_buffer segments[] = {{first, sizeof(first)},
+                                      {second, sizeof(second)}};
+      cnet_command_view view = {0};
+      cnet_command command;
+      const cnet_command_queue_config config = {
+          .capacity = TEST_COMMAND_CAPACITY,
+          .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
+
+      check_equal(cnet_command_queue_init(&queue, &config), TURBO_OK);
+      command = make_sendv(1u, segments, 2u, sizeof(expected));
+      check_equal(cnet_command_queue_publish(&queue, &command), TURBO_OK);
+      memset(first, 0, sizeof(first));
+      memset(second, 0, sizeof(second));
+      check_equal(cnet_command_queue_take(&queue, &view), TURBO_OK);
+      check_equal(view.size, sizeof(expected));
+      check_equal(view.data, expected, sizeof(expected));
+      check_equal(cnet_command_queue_release(&queue, &view), TURBO_OK);
+    }
+
+    it("rejects invalid vector segments before consuming a slot") {
+      static const uint8_t payload[] = {1u, 2u};
+      cnet_const_buffer valid = {payload, sizeof(payload)};
+      cnet_const_buffer null_data = {NULL, sizeof(payload)};
+      cnet_const_buffer empty = {payload, 0u};
+      cnet_command command;
+      cnet_command_queue_stats stats = {0};
+      const cnet_command_queue_config config = {
+          .capacity = 1u, .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
+
+      check_equal(cnet_command_queue_init(&queue, &config), TURBO_OK);
+      command = make_sendv(1u, NULL, 1u, sizeof(payload));
+      check_equal(cnet_command_queue_publish(&queue, &command), TURBO_EINVAL);
+      command = make_sendv(1u, &valid, 0u, sizeof(payload));
+      check_equal(cnet_command_queue_publish(&queue, &command), TURBO_EINVAL);
+      command = make_sendv(1u, &null_data, 1u, sizeof(payload));
+      check_equal(cnet_command_queue_publish(&queue, &command), TURBO_EINVAL);
+      command = make_sendv(1u, &empty, 1u, sizeof(payload));
+      check_equal(cnet_command_queue_publish(&queue, &command), TURBO_EINVAL);
+      command = make_sendv(1u, &valid, 1u, sizeof(payload) + 1u);
+      check_equal(cnet_command_queue_publish(&queue, &command), TURBO_EINVAL);
+      check_true(cnet_command_queue_get_stats(&queue, &stats));
+      check_equal(stats.live_commands, 0u);
+      command = make_sendv(1u, &valid, 1u, sizeof(payload));
+      check_equal(cnet_command_queue_publish(&queue, &command), TURBO_OK);
+      {
+        cnet_command_view view = {0};
+        check_equal(cnet_command_queue_take(&queue, &view), TURBO_OK);
+        check_equal(cnet_command_queue_release(&queue, &view), TURBO_OK);
+      }
+    }
+
+    it("reports an oversized vector as one rejected command") {
+      static const uint8_t first[TEST_PAYLOAD_CAPACITY] = {0};
+      static const uint8_t second = 1u;
+      const cnet_const_buffer segments[] = {{first, sizeof(first)},
+                                            {&second, sizeof(second)}};
+      cnet_command_queue_stats stats = {0};
+      cnet_command command;
+      const cnet_command_queue_config config = {
+          .capacity = TEST_COMMAND_CAPACITY,
+          .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
+
+      check_equal(cnet_command_queue_init(&queue, &config), TURBO_OK);
+      command = make_sendv(1u, segments, 2u, sizeof(first) + sizeof(second));
+      check_equal(cnet_command_queue_publish(&queue, &command), TURBO_EMSGSIZE);
+      check_true(cnet_command_queue_get_stats(&queue, &stats));
+      check_equal(stats.live_commands, 0u);
+      check_equal(stats.rejected_commands, UINT64_C(1));
+      check_equal(stats.rejected_bytes,
+                  (uint64_t)(sizeof(first) + sizeof(second)));
     }
 
     it("rejects a payload larger than the configured slot") {

@@ -3,6 +3,8 @@
 
 #include "cnet_session.h"
 
+#include <cnet/cnet.h>
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -36,8 +38,9 @@ typedef enum cnet_command_kind {
 } cnet_command_kind;
 
 /**
- * One producer-owned descriptor. `data` is borrowed only for the duration of
- * `cnet_command_queue_publish`; successful publication copies `size` bytes.
+ * One producer-owned descriptor. Either `data` or `segments` supplies the
+ * bytes and is borrowed only for `cnet_command_queue_publish`; successful
+ * publication copies the checked `size` bytes into one queue-owned slot.
  */
 typedef struct cnet_command {
   cnet_command_kind kind;
@@ -45,6 +48,8 @@ typedef struct cnet_command {
   const void *data;
   size_t size;
   size_t argument;
+  const cnet_const_buffer *segments;
+  size_t segment_count;
 } cnet_command;
 
 /**

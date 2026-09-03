@@ -17,6 +17,8 @@ Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 - `cnet_connect` with `tcp://host:port`, `tls://host:port`, `udp://host:port`, or
   `pipe://name`;
 - `cnet_send` to transfer one bounded payload copy into CNet;
+- `cnet_sendv` to concatenate non-empty borrowed ranges directly into that
+  same final bounded command slot without caller-side staging;
 - `observer.on_send` to observe completion before admitting the next ordered
   write on that connection;
 - `cnet_receive` to add explicit receive demand;
@@ -174,8 +176,12 @@ retains the payload, request record, and frame until a terminal completion is
 observed.
 
 The URI, observer, and send bytes are copied before their admitting call returns
-success. A callback may call `cnet_send`, `cnet_receive`, or `cnet_close` for its
-client. Calling `cnet_client_poll`, `cnet_client_stop`, or
+success. For `cnet_sendv`, both the descriptor array and its immutable backing
+ranges are borrowed only during the call; successful admission has copied their
+ordered concatenation and `on_send` reports its total size once. Empty ranges
+are rejected so segment count is bounded by the configured byte limit. A
+callback may call `cnet_send`, `cnet_sendv`, `cnet_receive`, or `cnet_close` for
+its client. Calling `cnet_client_poll`, `cnet_client_stop`, or
 `cnet_client_destroy` recursively from that callback returns `TURBO_EBUSY`.
 Each connection admits one write at a time; another send returns `TURBO_EBUSY`
 until its send event is observed. `cnet_send_and_close()` reserves the final

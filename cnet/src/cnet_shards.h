@@ -54,6 +54,9 @@ int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *p
                         cnet_shard_connection *out_connection);
 int cnet_shards_send(cnet_shards *shards, cnet_shard_connection connection, const void *data,
                      size_t size);
+int cnet_shards_sendv(cnet_shards *shards, cnet_shard_connection connection,
+                      const cnet_const_buffer *segments, size_t segment_count,
+                      size_t total_size);
 int cnet_shards_send_and_close(cnet_shards *shards, cnet_shard_connection connection,
                                const void *data, size_t size);
 int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, size_t demand);

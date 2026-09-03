@@ -76,6 +76,7 @@ static bool cnet_is_power_of_two(uint64_t value) {
 }
 
 static bool cnet_command_valid(const cnet_command *command) {
+  size_t segment_bytes = 0u;
   if (command == NULL || command->kind <= CNET_COMMAND_NONE || command->kind > CNET_COMMAND_STOP)
     return false;
 
@@ -84,12 +85,28 @@ static bool cnet_command_valid(const cnet_command *command) {
            command->size == 0u;
 
   if (!cnet_session_handle_valid(command->connection)) return false;
-  if (command->kind == CNET_COMMAND_CONNECT || command->kind == CNET_COMMAND_SEND ||
-      command->kind == CNET_COMMAND_SEND_CLOSE)
-    return command->data != NULL && command->size != 0u && command->argument == 0u;
+  if (command->kind == CNET_COMMAND_CONNECT)
+    return command->data != NULL && command->size != 0u && command->argument == 0u &&
+           command->segments == NULL && command->segment_count == 0u;
+  if (command->kind == CNET_COMMAND_SEND || command->kind == CNET_COMMAND_SEND_CLOSE) {
+    if (command->size == 0u || command->argument != 0u) return false;
+    if (command->segments == NULL || command->segment_count == 0u)
+      return command->data != NULL && command->segments == NULL && command->segment_count == 0u;
+    if (command->data != NULL || command->segment_count > command->size) return false;
+    for (size_t index = 0u; index < command->segment_count; ++index) {
+      const cnet_const_buffer *segment = &command->segments[index];
+      if (segment->data == NULL || segment->size == 0u ||
+          segment->size > command->size - segment_bytes)
+        return false;
+      segment_bytes += segment->size;
+    }
+    return segment_bytes == command->size;
+  }
   if (command->kind == CNET_COMMAND_RECEIVE)
-    return command->data == NULL && command->size == 0u && command->argument != 0u;
-  return command->data == NULL && command->size == 0u && command->argument == 0u;
+    return command->data == NULL && command->size == 0u && command->argument != 0u &&
+           command->segments == NULL && command->segment_count == 0u;
+  return command->data == NULL && command->size == 0u && command->argument == 0u &&
+         command->segments == NULL && command->segment_count == 0u;
 }
 
 int cnet_command_queue_init(cnet_command_queue *queue, const cnet_command_queue_config *config) {
@@ -165,7 +182,16 @@ int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *co
   entry->argument = command->argument;
   entry->generation = cnet_command_next_generation(entry->generation);
   entry->state = CNET_COMMAND_ENTRY_QUEUED;
-  if (command->size != 0u) memcpy(entry->payload, command->data, command->size);
+  if (command->segment_count != 0u) {
+    size_t offset = 0u;
+    for (size_t index = 0u; index < command->segment_count; ++index) {
+      memcpy(entry->payload + offset, command->segments[index].data,
+             command->segments[index].size);
+      offset += command->segments[index].size;
+    }
+  } else if (command->size != 0u) {
+    memcpy(entry->payload, command->data, command->size);
+  }
 
   queue_tail = (impl->queued_head + impl->queued_count) & impl->mask;
   impl->queued_slots[queue_tail] = (uint32_t)slot;

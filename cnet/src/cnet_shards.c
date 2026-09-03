@@ -257,13 +257,13 @@ int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *p
 }
 
 static int cnet_shards_publish(cnet_shards_impl *impl, cnet_shard_connection connection,
-                               cnet_command_kind kind, const void *data, size_t size,
-                               size_t argument) {
+                               const cnet_command *command) {
   cnet_shard_record *record;
   cnet_session_state state = CNET_SESSION_FREE;
-  cnet_command command;
+  const cnet_command_kind kind = command != NULL ? command->kind : CNET_COMMAND_NONE;
   int status;
 
+  if (command == NULL) return TURBO_EINVAL;
   if (!cnet_shard_connection_valid(connection)) return TURBO_ENOENT;
   record = cnet_shards_get_record(impl, connection.shard);
   if (record == NULL) return TURBO_ENOENT;
@@ -284,10 +284,7 @@ static int cnet_shards_publish(cnet_shards_impl *impl, cnet_shard_connection con
   if (status == TURBO_OK && kind == CNET_COMMAND_CLOSE && state == CNET_SESSION_DRAINING)
     status = TURBO_EALREADY;
   if (status == TURBO_OK && state == CNET_SESSION_TERMINAL) status = TURBO_EALREADY;
-  if (status == TURBO_OK) {
-    command = (cnet_command){kind, connection.session, data, size, argument};
-    status = cnet_command_queue_publish(&record->commands, &command);
-  }
+  if (status == TURBO_OK) status = cnet_command_queue_publish(&record->commands, command);
   turbo_mutex_unlock(&impl->admission_lock);
   return status;
 }
@@ -295,29 +292,60 @@ static int cnet_shards_publish(cnet_shards_impl *impl, cnet_shard_connection con
 int cnet_shards_send(cnet_shards *shards, cnet_shard_connection connection, const void *data,
                      size_t size) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
+  const cnet_command command = {
+      .kind = CNET_COMMAND_SEND,
+      .connection = connection.session,
+      .data = data,
+      .size = size};
   if (impl == NULL || data == NULL || size == 0u) return TURBO_EINVAL;
   if (size > impl->max_command_payload_bytes) return TURBO_EMSGSIZE;
-  return cnet_shards_publish(impl, connection, CNET_COMMAND_SEND, data, size, 0u);
+  return cnet_shards_publish(impl, connection, &command);
+}
+
+int cnet_shards_sendv(cnet_shards *shards, cnet_shard_connection connection,
+                      const cnet_const_buffer *segments, size_t segment_count,
+                      size_t total_size) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  const cnet_command command = {
+      .kind = CNET_COMMAND_SEND,
+      .connection = connection.session,
+      .size = total_size,
+      .segments = segments,
+      .segment_count = segment_count};
+  if (impl == NULL || segments == NULL || segment_count == 0u || total_size == 0u)
+    return TURBO_EINVAL;
+  if (total_size > impl->max_command_payload_bytes) return TURBO_EMSGSIZE;
+  return cnet_shards_publish(impl, connection, &command);
 }
 
 int cnet_shards_send_and_close(cnet_shards *shards, cnet_shard_connection connection,
                                const void *data, size_t size) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
+  const cnet_command command = {
+      .kind = CNET_COMMAND_SEND_CLOSE,
+      .connection = connection.session,
+      .data = data,
+      .size = size};
   if (impl == NULL || data == NULL || size == 0u) return TURBO_EINVAL;
   if (size > impl->max_command_payload_bytes) return TURBO_EMSGSIZE;
-  return cnet_shards_publish(impl, connection, CNET_COMMAND_SEND_CLOSE, data, size, 0u);
+  return cnet_shards_publish(impl, connection, &command);
 }
 
 int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, size_t demand) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
+  const cnet_command command = {.kind = CNET_COMMAND_RECEIVE,
+                                .connection = connection.session,
+                                .argument = demand};
   if (impl == NULL || demand == 0u) return TURBO_EINVAL;
-  return cnet_shards_publish(impl, connection, CNET_COMMAND_RECEIVE, NULL, 0u, demand);
+  return cnet_shards_publish(impl, connection, &command);
 }
 
 int cnet_shards_close(cnet_shards *shards, cnet_shard_connection connection) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
+  const cnet_command command = {.kind = CNET_COMMAND_CLOSE,
+                                .connection = connection.session};
   if (impl == NULL) return TURBO_EINVAL;
-  return cnet_shards_publish(impl, connection, CNET_COMMAND_CLOSE, NULL, 0u, 0u);
+  return cnet_shards_publish(impl, connection, &command);
 }
 
 int cnet_shards_state(cnet_shards *shards, cnet_shard_connection connection,

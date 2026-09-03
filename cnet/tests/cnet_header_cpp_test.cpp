@@ -12,6 +12,8 @@ static_assert(std::is_standard_layout<cnet_tls_server>::value,
               "TLS server must be a C value wrapper");
 static_assert(std::is_standard_layout<cnet_tls_client>::value,
               "TLS client must be a C value wrapper");
+static_assert(std::is_standard_layout<cnet_const_buffer>::value,
+              "send segments must remain C value descriptors");
 static_assert(std::is_standard_layout<cnet_websocket>::value,
               "WebSocket must be a C value wrapper");
 static_assert(CNET_CONNECTION_CONNECTED != CNET_CONNECTION_FAILED,
@@ -34,6 +36,7 @@ int main() {
   cnet_tls_server_config tls_server_config{};
   cnet_connect_options options{};
   cnet_receive_view view{};
+  cnet_const_buffer buffer{};
   cnet_error error{};
   cnet_websocket_config websocket_config{};
   (void)client;
@@ -48,6 +51,7 @@ int main() {
   (void)tls_server_config;
   (void)options;
   (void)view;
+  (void)buffer;
   (void)error;
   (void)websocket_config;
   return 0;

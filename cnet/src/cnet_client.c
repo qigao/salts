@@ -539,8 +539,16 @@ static int cnet_client_operation(cnet_client_impl *impl, cnet_connection connect
   return TURBO_OK;
 }
 
+typedef struct cnet_client_send_input {
+  const void *data;
+  const cnet_const_buffer *segments;
+  size_t size;
+  size_t segment_count;
+  bool close_after_send;
+} cnet_client_send_input;
+
 static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connection,
-                                  const void *data, size_t size, bool close_after_send) {
+                                  const cnet_client_send_input *input) {
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
   int status;
@@ -551,11 +559,16 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
     if (record == NULL) status = TURBO_ENOENT;
     else if (record->write_pending || record->closing_pending) status = TURBO_EBUSY;
     else {
-      status = close_after_send ? cnet_shards_send_and_close(&impl->shards, internal, data, size)
-                                : cnet_shards_send(&impl->shards, internal, data, size);
+      if (input->segments != NULL)
+        status = cnet_shards_sendv(&impl->shards, internal, input->segments,
+                                   input->segment_count, input->size);
+      else if (input->close_after_send)
+        status = cnet_shards_send_and_close(&impl->shards, internal, input->data, input->size);
+      else
+        status = cnet_shards_send(&impl->shards, internal, input->data, input->size);
       if (status == TURBO_OK) {
         record->write_pending = true;
-        record->closing_pending = close_after_send;
+        record->closing_pending = input->close_after_send;
       }
     }
   }
@@ -565,17 +578,34 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
 
 int cnet_send(cnet_client *client, cnet_connection connection, const void *data, size_t size) {
   cnet_client_impl *impl = cnet_client_get(client);
+  const cnet_client_send_input input = {.data = data, .size = size};
   if (impl == NULL || data == NULL || size == 0u) return TURBO_EINVAL;
   if (size > impl->max_send_bytes) return TURBO_EMSGSIZE;
-  return cnet_client_send_admit(impl, connection, data, size, false);
+  return cnet_client_send_admit(impl, connection, &input);
+}
+
+int cnet_sendv(cnet_client *client, cnet_connection connection,
+               const cnet_const_buffer *segments, size_t segment_count) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_client_send_input input = {.segments = segments,
+                                  .segment_count = segment_count};
+  if (impl == NULL || segments == NULL || segment_count == 0u) return TURBO_EINVAL;
+  for (size_t index = 0u; index < segment_count; ++index) {
+    if (segments[index].data == NULL || segments[index].size == 0u) return TURBO_EINVAL;
+    if (segments[index].size > impl->max_send_bytes - input.size) return TURBO_EMSGSIZE;
+    input.size += segments[index].size;
+  }
+  return cnet_client_send_admit(impl, connection, &input);
 }
 
 int cnet_send_and_close(cnet_client *client, cnet_connection connection, const void *data,
                         size_t size) {
   cnet_client_impl *impl = cnet_client_get(client);
+  const cnet_client_send_input input = {
+      .data = data, .size = size, .close_after_send = true};
   if (impl == NULL || data == NULL || size == 0u) return TURBO_EINVAL;
   if (size > impl->max_send_bytes) return TURBO_EMSGSIZE;
-  return cnet_client_send_admit(impl, connection, data, size, true);
+  return cnet_client_send_admit(impl, connection, &input);
 }
 
 int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand) {

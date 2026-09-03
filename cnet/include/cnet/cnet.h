@@ -61,6 +61,12 @@ typedef struct cnet_receive_view {
   cnet_message_kind kind;
 } cnet_receive_view;
 
+/** One immutable byte range borrowed by a synchronous CNet admission call. */
+typedef struct cnet_const_buffer {
+  const void *data;
+  size_t size;
+} cnet_const_buffer;
+
 typedef void (*cnet_state_fn)(void *user, cnet_connection connection, cnet_connection_state state,
                               const cnet_error *error);
 typedef void (*cnet_receive_fn)(void *user, cnet_connection connection,
@@ -201,6 +207,18 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
  * closing, plus a bounded queue error.
  */
 int cnet_send(cnet_client *client, cnet_connection connection, const void *data, size_t size);
+
+/**
+ * Copies the ordered concatenation of immutable, non-empty `segments` into
+ * one bounded command slot before returning success. The descriptor array and
+ * its backing ranges are borrowed only for this call. Completion, ordering,
+ * busy-state, and queue errors are identical to `cnet_send`; `on_send` reports
+ * the checked total byte count once. NULL data, empty segments, or zero count
+ * return `TURBO_EINVAL`; an overflowing or oversized total returns
+ * `TURBO_EMSGSIZE` without admitting a write.
+ */
+int cnet_sendv(cnet_client *client, cnet_connection connection,
+               const cnet_const_buffer *segments, size_t segment_count);
 
 /**
  * Copies one final byte message and closes the stream only after that write

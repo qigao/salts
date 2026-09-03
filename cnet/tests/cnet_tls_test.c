@@ -381,6 +381,11 @@ spec("CNet bounded TLS engine") {
     static const char response[] = "pong";
     static const char *server_alpn[] = {"h2", "http/1.1"};
     static const char *client_alpn[] = {"http/1.1", "h2"};
+    char request_first[] = "pi";
+    char request_second[] = "ng";
+    cnet_const_buffer request_segments[] = {
+        {request_first, sizeof(request_first) - 1u},
+        {request_second, sizeof(request_second) - 1u}};
     cnet_client client = {0};
     cnet_client server = {0};
     cnet_listener listener = {0};
@@ -457,7 +462,9 @@ spec("CNet bounded TLS engine") {
     check_equal(memcmp(server_probe.alpn, "h2", 2u), 0);
 
     check_equal(cnet_receive(&server, server_probe.connection, 1u), TURBO_OK);
-    check_equal(cnet_send(&client, client_connection, request, sizeof(request) - 1u), TURBO_OK);
+    check_equal(cnet_sendv(&client, client_connection, request_segments, 2u), TURBO_OK);
+    memset(request_first, 'x', sizeof(request_first) - 1u);
+    memset(request_second, 'x', sizeof(request_second) - 1u);
     deadline = turbo_monotonic_ms() + 5000u;
     while ((server_probe.received_size == 0u || client_probe.sent == 0) &&
            turbo_monotonic_ms() < deadline)
