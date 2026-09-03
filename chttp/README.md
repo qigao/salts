@@ -156,6 +156,7 @@ int main(void) {
     .network = {
       .backend = NATIVE_IO_BACKEND_IOCP,
       .connection_capacity = 128, .command_capacity = 256,
+      .command_buffer_bytes = 4 * 1024 * 1024,
       .request_capacity = 256, .completion_batch_capacity = 64,
       .event_capacity = 256, .max_send_bytes = 64 * 1024,
       .receive_buffer_bytes = 16 * 1024,
@@ -347,7 +348,8 @@ callback，不能跨 callback、线程或协程挂起保存；text/binary/ping/p
 `chttp_server_websocket_session_capture()` 取得 generation-checked
 `chttp_server_websocket_session`，再从任意线程调用
 `chttp_server_websocket_send_text()`、`chttp_server_websocket_send_binary()`、ping/pong 或 close。
-提交会在返回前复制 payload，并受 `network.command_capacity` 与 `network.max_send_bytes` 约束；队列满
+提交会在返回前复制 payload，并受 `network.command_capacity`、`network.command_buffer_bytes` 与
+`network.max_send_bytes` 约束；任一队列预算耗尽
 返回 `SALTS_ENOBUFS`，已经关闭或复用的 connection/stream handle 只会丢弃对应旧命令，不会误投到
 新会话。该 value 不延长连接或 server 生命周期，所有提交者必须在 `chttp_server_destroy()` 前静默。
 
@@ -460,6 +462,7 @@ int main(void) {
       .backend = NATIVE_IO_BACKEND_IOCP,
       .connection_capacity = 1,
       .command_capacity = 8,
+      .command_buffer_bytes = 256 * 1024,
       .request_capacity = 4,
       .completion_batch_capacity = 4,
       .event_capacity = 8,

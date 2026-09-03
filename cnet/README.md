@@ -26,6 +26,13 @@ Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 - `cnet_client_poll` to advance I/O and invoke callbacks on the caller;
 - `cnet_client_stop` followed by `cnet_client_destroy` for shutdown.
 
+`command_capacity` bounds the number of live copied commands,
+`max_send_bytes` bounds one send, and `command_buffer_bytes` independently
+bounds their aggregate copied payload. A zero aggregate budget preserves the
+legacy `command_capacity * max_command_payload` bound. Set it explicitly when
+large individual writes must coexist with a smaller retained-memory budget;
+admission over either the slot or byte budget returns `SALTS_ENOBUFS`.
+
 TCP and Pipe deliver byte chunks. Connected UDP delivers one datagram per
 receive callback. A receive view is borrowed only until its callback returns.
 TLS delivers verified encrypted byte streams through the same send/receive

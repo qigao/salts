@@ -85,7 +85,7 @@ target_include_directories(
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC Salts::NativeIO Salts::Concurrency
-  PRIVATE Salts::UriParser Salts::Platform Salts::CSTL monocypher salts_reed
+  PRIVATE Salts::UriParser Salts::Platform Salts::CSTL Salts::Core monocypher salts_reed
           ${cnet_cares_link_items} kcp::kcp
           OpenSSL::SSL OpenSSL::Crypto
           $<$<PLATFORM_ID:Windows>:crypt32>)

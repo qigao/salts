@@ -73,6 +73,8 @@ static bool cnet_client_config_valid(const cnet_client_config *config) {
       config->completion_batch_capacity > config->request_capacity ||
       !cnet_power_of_two(config->event_capacity) || config->event_capacity < 2u ||
       config->max_send_bytes == 0u || config->receive_buffer_bytes == 0u ||
+      (config->command_buffer_bytes != 0u &&
+       config->command_buffer_bytes < config->max_send_bytes) ||
       ((config->tls_io_buffer_bytes == 0u) != (config->tls_handshake_timeout_ms == 0u)) ||
       (config->tls_io_buffer_bytes != 0u &&
        (config->tls_io_buffer_bytes < CNET_TLS_MIN_IO_BUFFER_BYTES ||
@@ -235,6 +237,8 @@ static void cnet_client_cleanup_init(cnet_client_impl *impl) {
 int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   cnet_client_impl *impl;
   cnet_shards_config shards_config;
+  size_t max_command_payload_bytes;
+  size_t command_buffer_bytes;
   size_t index;
   int status;
 
@@ -272,6 +276,22 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   for (index = 0u; index < impl->record_count; ++index)
     impl->records[index].client = impl;
 
+  max_command_payload_bytes = config->max_send_bytes > sizeof(cnet_owner_connect_payload)
+                                  ? config->max_send_bytes
+                                  : sizeof(cnet_owner_connect_payload);
+  if (config->command_buffer_bytes != 0u &&
+      config->command_buffer_bytes < max_command_payload_bytes) {
+    cnet_client_cleanup_init(impl);
+    return SALTS_EINVAL;
+  }
+  if (config->command_buffer_bytes == 0u &&
+      config->command_capacity > SIZE_MAX / max_command_payload_bytes) {
+    cnet_client_cleanup_init(impl);
+    return SALTS_ERANGE;
+  }
+  command_buffer_bytes = config->command_buffer_bytes != 0u
+                             ? config->command_buffer_bytes
+                             : config->command_capacity * max_command_payload_bytes;
   shards_config = (cnet_shards_config){
       .backend_kind = config->backend,
       .shard_count = 1u,
@@ -283,9 +303,8 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
       .receive_buffer_bytes = config->receive_buffer_bytes,
       .max_state_payload_bytes =
           config->tls_io_buffer_bytes != 0u ? CNET_TLS_ALPN_NAME_MAX_BYTES : 0u,
-      .max_command_payload_bytes = config->max_send_bytes > sizeof(cnet_owner_connect_payload)
-                                       ? config->max_send_bytes
-                                       : sizeof(cnet_owner_connect_payload)};
+      .max_command_payload_bytes = max_command_payload_bytes,
+      .command_buffer_bytes = command_buffer_bytes};
   status = cnet_shards_init(&impl->shards, &shards_config);
   if (status != SALTS_OK) {
     cnet_client_cleanup_init(impl);
@@ -310,8 +329,7 @@ int cnet_client_set_stream_socket_options(cnet_client *client,
   if (impl == NULL) return SALTS_EINVAL;
   salts_mutex_lock(&impl->lock);
   if (!impl->admission_open || impl->stopped) status = SALTS_ESHUTDOWN;
-  else if (impl->active_count != 0u || impl->poll_active || impl->stop_active)
-    status = SALTS_EBUSY;
+  else if (impl->active_count != 0u || impl->poll_active || impl->stop_active) status = SALTS_EBUSY;
   else impl->socket_options = *options;
   salts_mutex_unlock(&impl->lock);
   return status;
@@ -534,9 +552,8 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
   return status;
 }
 
-int cnet_tls_peer_certificate_sha256(
-    cnet_client *client, cnet_connection connection,
-    char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
+int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connection,
+                                     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]) {
   cnet_client_impl *impl = cnet_client_get(client);
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
@@ -553,9 +570,8 @@ int cnet_tls_peer_certificate_sha256(
   return status;
 }
 
-int cnet_tls_export_channel_binding(
-    cnet_client *client, cnet_connection connection,
-    uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {
+int cnet_tls_export_channel_binding(cnet_client *client, cnet_connection connection,
+                                    uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {
   cnet_client_impl *impl = cnet_client_get(client);
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
@@ -620,12 +636,11 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
     else if (record->write_pending || record->closing_pending) status = SALTS_EBUSY;
     else {
       if (input->segments != NULL)
-        status = cnet_shards_sendv(&impl->shards, internal, input->segments,
-                                   input->segment_count, input->size);
+        status = cnet_shards_sendv(&impl->shards, internal, input->segments, input->segment_count,
+                                   input->size);
       else if (input->close_after_send)
         status = cnet_shards_send_and_close(&impl->shards, internal, input->data, input->size);
-      else
-        status = cnet_shards_send(&impl->shards, internal, input->data, input->size);
+      else status = cnet_shards_send(&impl->shards, internal, input->data, input->size);
       if (status == SALTS_OK) {
         record->write_pending = true;
         record->closing_pending = input->close_after_send;
@@ -644,11 +659,10 @@ int cnet_send(cnet_client *client, cnet_connection connection, const void *data,
   return cnet_client_send_admit(impl, connection, &input);
 }
 
-int cnet_sendv(cnet_client *client, cnet_connection connection,
-               const cnet_const_buffer *segments, size_t segment_count) {
+int cnet_sendv(cnet_client *client, cnet_connection connection, const cnet_const_buffer *segments,
+               size_t segment_count) {
   cnet_client_impl *impl = cnet_client_get(client);
-  cnet_client_send_input input = {.segments = segments,
-                                  .segment_count = segment_count};
+  cnet_client_send_input input = {.segments = segments, .segment_count = segment_count};
   if (impl == NULL || segments == NULL || segment_count == 0u) return SALTS_EINVAL;
   for (size_t index = 0u; index < segment_count; ++index) {
     if (segments[index].data == NULL || segments[index].size == 0u) return SALTS_EINVAL;
@@ -661,8 +675,7 @@ int cnet_sendv(cnet_client *client, cnet_connection connection,
 int cnet_send_and_close(cnet_client *client, cnet_connection connection, const void *data,
                         size_t size) {
   cnet_client_impl *impl = cnet_client_get(client);
-  const cnet_client_send_input input = {
-      .data = data, .size = size, .close_after_send = true};
+  const cnet_client_send_input input = {.data = data, .size = size, .close_after_send = true};
   if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
   if (size > impl->max_send_bytes) return SALTS_EMSGSIZE;
   return cnet_client_send_admit(impl, connection, &input);

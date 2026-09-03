@@ -15,6 +15,8 @@ typedef struct cnet_command_queue {
 typedef struct cnet_command_queue_config {
   uint64_t capacity;
   size_t max_payload_bytes;
+  /** Aggregate live payload budget; zero preserves capacity times max payload. */
+  size_t payload_capacity_bytes;
 } cnet_command_queue_config;
 
 typedef struct cnet_command_queue_stats {

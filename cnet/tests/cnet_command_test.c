@@ -144,6 +144,35 @@ spec("CNet bounded command queue") {
       check_equal(stats.peak_queued_bytes, 3u);
     }
 
+    it("bounds aggregate payload bytes independently from command slots") {
+      static const uint8_t first_payload[6] = {1u};
+      static const uint8_t second_payload[5] = {2u};
+      static const uint8_t fitting_payload[4] = {3u};
+      const cnet_command_queue_config config = {.capacity = 4u,
+                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY,
+                                                .payload_capacity_bytes = 10u};
+      cnet_command_queue_stats stats = {0};
+      cnet_command_view view = {0};
+      cnet_command command;
+
+      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+      command = make_send(1u, first_payload, sizeof(first_payload));
+      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
+      command = make_send(2u, second_payload, sizeof(second_payload));
+      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_ENOBUFS);
+      command = make_send(3u, fitting_payload, sizeof(fitting_payload));
+      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
+      check_true(cnet_command_queue_get_stats(&queue, &stats));
+      check_equal(stats.live_commands, 2u);
+      check_equal(stats.queued_bytes, 10u);
+      check_equal(stats.rejected_commands, (uint64_t)1u);
+      check_equal(stats.rejected_bytes, (uint64_t)sizeof(second_payload));
+      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+    }
+
     it("copies payload into queue-owned storage") {
       static const uint8_t expected[] = {1u, 2u, 3u, 4u};
       uint8_t source[] = {1u, 2u, 3u, 4u};
@@ -168,13 +197,11 @@ spec("CNet bounded command queue") {
       static const uint8_t expected[] = {1u, 2u, 3u, 4u, 5u};
       uint8_t first[] = {1u, 2u};
       uint8_t second[] = {3u, 4u, 5u};
-      cnet_const_buffer segments[] = {{first, sizeof(first)},
-                                      {second, sizeof(second)}};
+      cnet_const_buffer segments[] = {{first, sizeof(first)}, {second, sizeof(second)}};
       cnet_command_view view = {0};
       cnet_command command;
-      const cnet_command_queue_config config = {
-          .capacity = TEST_COMMAND_CAPACITY,
-          .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
+      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
+                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
 
       check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
       command = make_sendv(1u, segments, 2u, sizeof(expected));
@@ -194,8 +221,8 @@ spec("CNet bounded command queue") {
       cnet_const_buffer empty = {payload, 0u};
       cnet_command command;
       cnet_command_queue_stats stats = {0};
-      const cnet_command_queue_config config = {
-          .capacity = 1u, .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
+      const cnet_command_queue_config config = {.capacity = 1u,
+                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
 
       check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
       command = make_sendv(1u, NULL, 1u, sizeof(payload));
@@ -222,13 +249,11 @@ spec("CNet bounded command queue") {
     it("reports an oversized vector as one rejected command") {
       static const uint8_t first[TEST_PAYLOAD_CAPACITY] = {0};
       static const uint8_t second = 1u;
-      const cnet_const_buffer segments[] = {{first, sizeof(first)},
-                                            {&second, sizeof(second)}};
+      const cnet_const_buffer segments[] = {{first, sizeof(first)}, {&second, sizeof(second)}};
       cnet_command_queue_stats stats = {0};
       cnet_command command;
-      const cnet_command_queue_config config = {
-          .capacity = TEST_COMMAND_CAPACITY,
-          .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
+      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
+                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
 
       check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
       command = make_sendv(1u, segments, 2u, sizeof(first) + sizeof(second));
@@ -236,8 +261,7 @@ spec("CNet bounded command queue") {
       check_true(cnet_command_queue_get_stats(&queue, &stats));
       check_equal(stats.live_commands, 0u);
       check_equal(stats.rejected_commands, UINT64_C(1));
-      check_equal(stats.rejected_bytes,
-                  (uint64_t)(sizeof(first) + sizeof(second)));
+      check_equal(stats.rejected_bytes, (uint64_t)(sizeof(first) + sizeof(second)));
     }
 
     it("rejects a payload larger than the configured slot") {

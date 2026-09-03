@@ -136,7 +136,8 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
   for (index = 0u; index < impl->shard_count; ++index) {
     cnet_shard_record *record = &impl->records[index];
     const cnet_command_queue_config command_config = {config->command_capacity_per_shard,
-                                                      config->max_command_payload_bytes};
+                                                      config->max_command_payload_bytes,
+                                                      config->command_buffer_bytes};
     const cnet_event_queue_config event_config = {config->event_capacity_per_shard,
                                                   config->event_capacity_per_shard / 2u,
                                                   impl->max_event_payload_bytes};
@@ -299,25 +300,20 @@ int cnet_shards_send(cnet_shards *shards, cnet_shard_connection connection, cons
                      size_t size) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   const cnet_command command = {
-      .kind = CNET_COMMAND_SEND,
-      .connection = connection.session,
-      .data = data,
-      .size = size};
+      .kind = CNET_COMMAND_SEND, .connection = connection.session, .data = data, .size = size};
   if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
   if (size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
   return cnet_shards_publish(impl, connection, &command);
 }
 
 int cnet_shards_sendv(cnet_shards *shards, cnet_shard_connection connection,
-                      const cnet_const_buffer *segments, size_t segment_count,
-                      size_t total_size) {
+                      const cnet_const_buffer *segments, size_t segment_count, size_t total_size) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
-  const cnet_command command = {
-      .kind = CNET_COMMAND_SEND,
-      .connection = connection.session,
-      .size = total_size,
-      .segments = segments,
-      .segment_count = segment_count};
+  const cnet_command command = {.kind = CNET_COMMAND_SEND,
+                                .connection = connection.session,
+                                .size = total_size,
+                                .segments = segments,
+                                .segment_count = segment_count};
   if (impl == NULL || segments == NULL || segment_count == 0u || total_size == 0u)
     return SALTS_EINVAL;
   if (total_size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
@@ -327,11 +323,10 @@ int cnet_shards_sendv(cnet_shards *shards, cnet_shard_connection connection,
 int cnet_shards_send_and_close(cnet_shards *shards, cnet_shard_connection connection,
                                const void *data, size_t size) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
-  const cnet_command command = {
-      .kind = CNET_COMMAND_SEND_CLOSE,
-      .connection = connection.session,
-      .data = data,
-      .size = size};
+  const cnet_command command = {.kind = CNET_COMMAND_SEND_CLOSE,
+                                .connection = connection.session,
+                                .data = data,
+                                .size = size};
   if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
   if (size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
   return cnet_shards_publish(impl, connection, &command);
@@ -339,17 +334,15 @@ int cnet_shards_send_and_close(cnet_shards *shards, cnet_shard_connection connec
 
 int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, size_t demand) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
-  const cnet_command command = {.kind = CNET_COMMAND_RECEIVE,
-                                .connection = connection.session,
-                                .argument = demand};
+  const cnet_command command = {
+      .kind = CNET_COMMAND_RECEIVE, .connection = connection.session, .argument = demand};
   if (impl == NULL || demand == 0u) return SALTS_EINVAL;
   return cnet_shards_publish(impl, connection, &command);
 }
 
 int cnet_shards_close(cnet_shards *shards, cnet_shard_connection connection) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
-  const cnet_command command = {.kind = CNET_COMMAND_CLOSE,
-                                .connection = connection.session};
+  const cnet_command command = {.kind = CNET_COMMAND_CLOSE, .connection = connection.session};
   if (impl == NULL) return SALTS_EINVAL;
   return cnet_shards_publish(impl, connection, &command);
 }
@@ -380,9 +373,8 @@ int cnet_shards_tls_peer_certificate_sha256(
              : SALTS_ENOENT;
 }
 
-int cnet_shards_tls_export_channel_binding(
-    cnet_shards *shards, cnet_shard_connection connection,
-    uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {
+int cnet_shards_tls_export_channel_binding(cnet_shards *shards, cnet_shard_connection connection,
+                                           uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   cnet_shard_record *record;
   if (output == NULL) return SALTS_EINVAL;
