@@ -1853,7 +1853,7 @@ server 还提供复用 middleware/Session 的显式 WebSocket route，同一 rou
 CHTTP 的 TLS profile 接受默认/H1 ALPN 或精确的 `h2`，profile 与 request protocol
 必须一致，显式 H2 失败不会降级为 H1；底层握手、加密 I/O、close-notify 和 TLS listener accept 继续由 CNet 拥有。
 
-当前 HTTP/2 client 已从 TurboHTTP 导入；后续协议演进只要求导入 S3，不要求 HTTP/3。依赖方向保持为：
+当前 HTTP/2 client/server 与 S3 应用协议层均已完成；HTTP/3 不在本阶段范围。依赖方向保持为：
 
 ```text
 S3 application protocol
@@ -1868,6 +1868,12 @@ NativeIO
 HTTP/2 的 frame、HPACK、SETTINGS、flow-control 与 stream lifecycle 属于 CHTTP；S3 的签名、
 对象与 multipart 一致性属于 CHTTP 之上的应用协议。二者都不应下沉进 CNet 或 NativeIO，
 HTTP/3 也不作为这条迁移路径的 fallback。
+
+公开的 `Rocida::S3` 借用 `chttp_client` 或 `chttp_async_client`，不复制 transport owner。
+同步风格覆盖 bucket/object CRUD、分页 list、copy、presigned URL、SSE、文件传输、可恢复
+multipart 与 bucket 配置子资源；高级 async 风格保留给 Executor、Actor 与批量事件循环。
+H1/H2 的连接复用、TLS、流控和文件 source/sink 继续由 CHTTP 拥有，SigV4 canonical request、
+XML service error、upload id、part/ETag 与 checkpoint 状态由 S3 拥有。
 
 多路复用也要求错误边界落在正确层级：单个响应的 header/body 上限或 HTTP 语义错误发送
 RST_STREAM，只结束该 request；HPACK block 仍完整解码以维护 connection-scoped 动态表，兄弟
@@ -1928,9 +1934,9 @@ LRU 驱逐掩盖资源压力。默认 Cookie 属性包含 HttpOnly、SameSite=La
 | 文件上传/下载 | client 使用 post/put/download file convenience；server 用 route body sink 接收、response source/file 发送 |
 | 数据库/ORM、密码哈希、业务鉴权 | 由 TurboDB/安全模块实现，通过 middleware/handler 组合，不进入 HTTP kernel |
 | 异步 DB、异步文件、Actor continuation | 需要未来 owning request token + owner mailbox 的 suspend/resume API |
-| TLS、KCP、WebSocket | CNet TLS 与 WebSocket session engine、CHTTP HTTPS 均已实现；CHTTP Upgrade/route 与 CNet KCP 尚未实现 |
+| TLS、KCP、WebSocket | CNet TLS/WebSocket engine 与 CHTTP H1 Upgrade、H2 RFC 8441、WS/WSS route/client 已实现；CNet KCP 尚未实现 |
 | HTTP/2 | client/server 已导入 frame/HPACK/protocol 并使用 CNet stream；server 复用 H1 route/middleware/Session API |
-| S3 | 从 TurboHTTP 导入到 CHTTP 上层，复用 H1/H2；当前未实现 |
+| S3 | `Rocida::S3` 已在 CHTTP 上层实现，复用 H1/H2、TLS、连接池与异步文件 source/sink |
 | HTTP/3 | 不在当前范围内，不作为隐式 fallback |
 
 因此“Castle 功能可以建立在 CHTTP 之上”不等于“全部代码都应该塞进 CHTTP”。当前可以直接迁移
