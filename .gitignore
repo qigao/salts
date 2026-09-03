@@ -21,6 +21,7 @@ coverage.xml
 *.swp
 *~
 _ReSharper*
+.lake/
 *.log
 .cache/
 
