@@ -11,6 +11,14 @@ int main(void) {
              : 1;
 }
 
+#elif defined(CONSUME_CRYPTO)
+  #include <salts/crypto.h>
+
+int main(void) {
+  uint8_t signature[SALTS_CRYPTO_ED448_SIGNATURE_SIZE] = {0};
+  return salts_crypto_ed448_verify(NULL, NULL, 0U, signature) == SALTS_CRYPTO_EINVAL ? 0 : 1;
+}
+
 #elif defined(CONSUME_CONCURRENCY)
   #include <salts/thread_pool.h>
 

@@ -103,6 +103,7 @@ foreach(required_cstl_header IN ITEMS cstl.h cstl/typed.h cstl/stream.h)
 endforeach()
 foreach(required_core_header IN ITEMS
     clock.h
+    crypto.h
     thread_pool.h
     coroutine_module.h
     native_io.h)

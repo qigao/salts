@@ -55,6 +55,7 @@ include(FindTools)
 add_subdirectory(vendor)
 add_subdirectory(tinytest)
 add_subdirectory(platform)
+add_subdirectory(crypto)
 add_subdirectory(concurrency)
 add_subdirectory(coroutine)
 add_subdirectory(native-io)
@@ -75,6 +76,7 @@ add_subdirectory(cflow-fs)
 
 set(verify_installed_dependencies
     salts_platform
+    salts_crypto
     salts_concurrency
     salts_coroutine
     salts_native_io

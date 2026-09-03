@@ -11,6 +11,7 @@ function(add_salts_consumer name target contract)
 endfunction()
 
 add_salts_consumer(consume_platform Salts::Platform CONSUME_PLATFORM)
+add_salts_consumer(consume_crypto Salts::Crypto CONSUME_CRYPTO)
 add_salts_consumer(consume_concurrency Salts::Concurrency
                        CONSUME_CONCURRENCY)
 add_salts_consumer(consume_coroutine Salts::Coroutine
