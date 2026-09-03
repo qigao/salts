@@ -61,6 +61,7 @@ typedef struct chttp_server_parser_impl {
   bool target_terminated;
   bool body_sink_open;
   bool terminal;
+  bool paused;
   bool upgrade_stopped;
   bool wire_previous_was_cr;
   chttp_server_wire_phase wire_phase;
@@ -425,6 +426,10 @@ static int chttp_server_parser_on_message_complete(llhttp_t *llparser) {
   chttp_server_parser_close_body(parser, SALTS_OK);
   if (parser->upgrade_stopped) return 0;
   status = parser->on_request(parser->user, &parser->request);
+  if (status == CHTTP_SERVER_REQUEST_DEFERRED) {
+    parser->paused = true;
+    return 0;
+  }
   if (status != SALTS_OK) return chttp_server_parser_callback_fail(parser, status);
   return 0;
 }
@@ -647,6 +652,7 @@ int chttp_server_parser_execute_consumed(chttp_server_parser *parser, const void
       out_consumed == NULL || out_http_status == NULL)
     return SALTS_EINVAL;
   impl = (chttp_server_parser_impl *)parser->impl;
+  if (impl->paused) return SALTS_EBUSY;
   if (impl->upgrade_stopped) return SALTS_ESHUTDOWN;
   if (impl->terminal) {
     *out_http_status = impl->failure_http_status;
@@ -707,7 +713,7 @@ int chttp_server_parser_execute_consumed(chttp_server_parser *parser, const void
     }
     cursor += segment_size;
     remaining -= segment_size;
-    if (impl->upgrade_stopped) break;
+    if (impl->upgrade_stopped || impl->paused) break;
   }
   *out_consumed = size - remaining;
   *out_http_status = impl->failure_http_status;
@@ -722,6 +728,16 @@ int chttp_server_parser_execute(chttp_server_parser *parser, const void *data, s
   return status == SALTS_OK && consumed != size ? SALTS_EBUSY : status;
 }
 
+int chttp_server_parser_resume(chttp_server_parser *parser) {
+  chttp_server_parser_impl *impl;
+  if (parser == NULL || parser->impl == NULL) return SALTS_EINVAL;
+  impl = (chttp_server_parser_impl *)parser->impl;
+  if (!impl->paused) return SALTS_EALREADY;
+  if (impl->terminal || impl->upgrade_stopped) return SALTS_ESHUTDOWN;
+  impl->paused = false;
+  return SALTS_OK;
+}
+
 int chttp_server_parser_reset(chttp_server_parser *parser) {
   chttp_server_parser_impl *impl;
   if (parser == NULL || parser->impl == NULL) return SALTS_EINVAL;
@@ -730,6 +746,7 @@ int chttp_server_parser_reset(chttp_server_parser *parser) {
   llhttp_reset(&impl->parser);
   impl->parser.data = impl;
   impl->terminal = false;
+  impl->paused = false;
   impl->upgrade_stopped = false;
   chttp_server_parser_reset_message(impl);
   chttp_server_parser_reset_wire(impl);

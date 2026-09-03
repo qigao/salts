@@ -57,6 +57,11 @@ typedef struct chttp_server_test_large_probe {
   atomic_int calls;
 } chttp_server_test_large_probe;
 
+typedef struct chttp_server_test_deferred_probe {
+  chttp_server_deferred handle;
+  atomic_int acquired;
+} chttp_server_test_deferred_probe;
+
 typedef struct chttp_server_stream_probe {
   unsigned char data[64];
   size_t size;
@@ -386,6 +391,20 @@ static int chttp_server_test_static(void *user, const chttp_server_request_view 
   return chttp_server_reply(response, 200u, "text/plain", "static", 6u);
 }
 
+static int chttp_server_test_deferred(void *user, const chttp_server_request_view *request,
+                                      chttp_server_response *response) {
+  chttp_server_test_deferred_probe *probe = (chttp_server_test_deferred_probe *)user;
+  chttp_server_deferred handle = CHTTP_SERVER_DEFERRED_INIT;
+  int status;
+  (void)request;
+  if (probe == NULL) return SALTS_EINVAL;
+  status = chttp_server_response_defer(response, &handle);
+  if (status != SALTS_OK) return status;
+  probe->handle = handle;
+  atomic_store_explicit(&probe->acquired, 1, memory_order_release);
+  return SALTS_OK;
+}
+
 static int chttp_server_test_dynamic(void *user, const chttp_server_request_view *request,
                                      chttp_server_response *response) {
   (void)user;
@@ -488,6 +507,73 @@ static int chttp_server_test_cookie_header(const chttp_response *response, char 
 }
 
 spec("CHTTP background HTTP/1.1 server") {
+  it("keeps polling and preserves pipelined order while a response is deferred") {
+    static const char requests[] =
+        "GET /deferred HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+        "GET /static HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    static const chttp_header response_headers[] = {{"X-Deferred", "yes"}};
+    const chttp_server_deferred_response deferred_response = {
+        .size = sizeof(chttp_server_deferred_response),
+        .status_code = 200u,
+        .content_type = "text/plain",
+        .headers = response_headers,
+        .header_count = sizeof(response_headers) / sizeof(response_headers[0]),
+        .body = "delayed",
+        .body_size = 7u};
+    chttp_server server = {0};
+    chttp_client independent_client = {0};
+    chttp_server_config server_config = chttp_server_test_config();
+    chttp_client_config client_config = chttp_server_test_client_config();
+    chttp_server_test_deferred_probe probe;
+    chttp_server_test_socket pipelined = CHTTP_SERVER_TEST_INVALID_SOCKET;
+    chttp_response independent_response = {0};
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    char uri[64];
+    size_t response_size = 0u;
+    uint64_t deadline;
+    uint16_t port = 0u;
+
+    memset(&probe, 0, sizeof(probe));
+    atomic_init(&probe.acquired, 0);
+    server_config.session_capacity = 0u;
+    check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
+    check_equal(chttp_server_get(&server, "/deferred", chttp_server_test_deferred, &probe),
+                SALTS_OK);
+    check_equal(chttp_server_get(&server, "/static", chttp_server_test_static, NULL), SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_server_test_raw_connect(port, &pipelined), SALTS_OK);
+    check_equal(chttp_server_test_raw_send(pipelined, requests, sizeof(requests) - 1u), SALTS_OK);
+    deadline = salts_monotonic_ms() + CHTTP_SERVER_TEST_TIMEOUT_MS;
+    while (atomic_load_explicit(&probe.acquired, memory_order_acquire) == 0 &&
+           salts_monotonic_ms() < deadline)
+      salts_thread_yield();
+    check_equal(atomic_load_explicit(&probe.acquired, memory_order_acquire), 1);
+
+    check_true(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port) > 0);
+    check_equal(chttp_client_init(&independent_client, &client_config), SALTS_OK);
+    check_equal(chttp_server_test_call(&independent_client, uri, "/static", NULL, 0u,
+                                       &independent_response),
+                SALTS_OK);
+    check_equal(independent_response.status_code, 200u);
+    check_equal(independent_response.body, "static", 6u);
+    chttp_response_destroy(&independent_response);
+    check_equal(chttp_client_destroy(&independent_client, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+
+    check_equal(chttp_server_deferred_reply(&probe.handle, &deferred_response), SALTS_OK);
+    check_equal(chttp_server_test_raw_receive(pipelined, response, sizeof(response), &response_size,
+                                              true, NULL),
+                SALTS_OK);
+    check_equal(chttp_server_test_count(response, "HTTP/1.1 200 OK"), (size_t)2u);
+    check_not_null(strstr(response, "X-Deferred: yes"));
+    check_not_null(strstr(response, "\r\n\r\ndelayedHTTP/1.1 200 OK"));
+    check_not_null(strstr(response, "\r\n\r\nstatic"));
+
+    chttp_server_test_close_socket(pipelined);
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
   it("runs Castle-style route middleware and bounded cookie sessions without caller polling") {
     chttp_server server = {0};
     chttp_client client = {0};

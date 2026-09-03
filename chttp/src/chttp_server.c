@@ -342,6 +342,7 @@ static void chttp_server_connection_destroy(chttp_server_connection *connection)
   chttp_h2_server_connection_destroy(connection->h2);
   chttp_server_parser_destroy(&connection->parser);
   chttp_server_request_state_destroy(&connection->request_state);
+  chttp_server_response_builder_destroy(&connection->deferred_builder);
   free(connection->websocket_upgrade_input);
   free(connection->outbound);
   *connection = (chttp_server_connection){0};
@@ -394,6 +395,12 @@ static int chttp_server_connection_init(chttp_server_impl *server,
     return SALTS_ENOMEM;
   status = chttp_server_request_state_init(&connection->request_state, server);
   if (status != SALTS_OK) return status;
+  connection->request_state.response_builder.connection = connection;
+  status = chttp_server_response_builder_init(&connection->deferred_builder, &server->config);
+  if (status != SALTS_OK) return status;
+  connection->deferred_builder.server = server;
+  connection->deferred_response.impl = &connection->deferred_builder;
+  atomic_init(&connection->deferred_state, CHTTP_SERVER_DEFERRED_IDLE);
   status = chttp_server_parser_init(&connection->parser, &parser_config);
   if (status == SALTS_OK && server->config.enable_http2)
     status = chttp_h2_server_connection_init(&connection->h2, connection);
@@ -648,13 +655,28 @@ static int chttp_server_select_tls_protocol(chttp_server_connection *connection)
   return SALTS_EPROTONOSUPPORT;
 }
 
+void chttp_server_request_enrich(const chttp_server_connection *connection,
+                                 chttp_server_request_view *request) {
+  if (connection == NULL || request == NULL) return;
+  request->peer = &connection->peer;
+  request->peer_certificate_sha256 = connection->peer_certificate_sha256[0] != '\0'
+                                         ? connection->peer_certificate_sha256
+                                         : NULL;
+}
+
 static void chttp_server_on_state(void *user, cnet_connection handle, cnet_connection_state state,
                                   const cnet_error *error) {
   chttp_server_connection *connection = (chttp_server_connection *)user;
   (void)error;
   if (!chttp_server_connection_matches(connection, handle)) return;
   if (state == CNET_CONNECTION_CONNECTED) {
-    const int status = chttp_server_select_tls_protocol(connection);
+    int status = chttp_server_select_tls_protocol(connection);
+    connection->peer_certificate_sha256[0] = '\0';
+    if (status == SALTS_OK && connection->server->tls_initialized) {
+      status = cnet_tls_peer_certificate_sha256(&connection->server->network, connection->handle,
+                                                connection->peer_certificate_sha256);
+      if (status == SALTS_ENOENT) status = SALTS_OK;
+    }
     connection->connected = true;
     if (status == SALTS_OK) (void)chttp_server_connection_receive(connection);
     else {
@@ -662,6 +684,8 @@ static void chttp_server_on_state(void *user, cnet_connection handle, cnet_conne
       chttp_server_connection_close(connection);
     }
   } else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
+    const int deferred_state =
+        atomic_load_explicit(&connection->deferred_state, memory_order_acquire);
     chttp_server_websocket_transport_closed(connection);
     connection->active = false;
     connection->connected = false;
@@ -670,21 +694,33 @@ static void chttp_server_on_state(void *user, cnet_connection handle, cnet_conne
     connection->response_streaming = false;
     connection->response_source_chunked = false;
     connection->response_close_after_stream = false;
+    connection->deferred_response_writing = false;
     connection->pending_action = CHTTP_SERVER_PENDING_NONE;
     connection->outbound_size = 0u;
     connection->h2_close_after_ms = 0u;
     connection->protocol_prefix_size = 0u;
     connection->wire_protocol = CHTTP_SERVER_WIRE_UNKNOWN;
+    connection->peer = (cnet_stream_peer){0};
+    connection->peer_certificate_sha256[0] = '\0';
     connection->handle = (cnet_connection){0};
     chttp_h2_server_connection_release(connection->h2);
-    chttp_server_request_state_reset(&connection->request_state);
-    (void)chttp_server_parser_reset(&connection->parser);
+    connection->websocket_upgrade_input_size = 0u;
+    if (deferred_state == CHTTP_SERVER_DEFERRED_IDLE) {
+      chttp_server_request_state_reset(&connection->request_state);
+      chttp_server_response_builder_reset(&connection->deferred_builder);
+      (void)chttp_server_parser_reset(&connection->parser);
+    } else {
+      connection->deferred_disconnected = true;
+    }
     chttp_server_stats_connection_close(connection->server);
   }
 }
 
 int chttp_server_send_pending(chttp_server_connection *connection) {
   int status;
+  if (atomic_load_explicit(&connection->deferred_state, memory_order_acquire) !=
+      CHTTP_SERVER_DEFERRED_IDLE)
+    return SALTS_OK;
   if (connection->wire_protocol == CHTTP_SERVER_WIRE_HTTP_2 && connection->outbound_size == 0u) {
     status = chttp_h2_server_connection_flush(connection->h2);
     if (status != SALTS_OK) {
@@ -726,10 +762,14 @@ static int chttp_server_h1_input(chttp_server_connection *connection, const void
   if (status != SALTS_OK) return status;
   if (consumed < size) {
     const size_t remaining = size - consumed;
-    if (connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_HANDSHAKE)
+    const int deferred_state =
+        atomic_load_explicit(&connection->deferred_state, memory_order_acquire);
+    if (connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_HANDSHAKE &&
+        deferred_state == CHTTP_SERVER_DEFERRED_IDLE)
       return SALTS_EPROTO;
     if (remaining > connection->websocket_upgrade_input_capacity) return SALTS_EMSGSIZE;
-    memcpy(connection->websocket_upgrade_input, (const unsigned char *)data + consumed, remaining);
+    memmove(connection->websocket_upgrade_input, (const unsigned char *)data + consumed,
+            remaining);
     connection->websocket_upgrade_input_size = remaining;
   }
   return SALTS_OK;
@@ -920,8 +960,23 @@ static void chttp_server_h1_file_ready(void *user) {
   else if (!connection->response_streaming) (void)chttp_server_send_pending(connection);
 }
 
+static int chttp_server_deferred_input_resume(chttp_server_connection *connection) {
+  unsigned int http_status = 0u;
+  size_t size;
+  int status;
+  if (connection == NULL) return SALTS_EINVAL;
+  status = chttp_server_parser_resume(&connection->parser);
+  if (status != SALTS_OK) return status;
+  size = connection->websocket_upgrade_input_size;
+  connection->websocket_upgrade_input_size = 0u;
+  if (size == 0u) return SALTS_OK;
+  return chttp_server_h1_input(connection, connection->websocket_upgrade_input, size,
+                               &http_status);
+}
+
 static void chttp_server_on_send(void *user, cnet_connection handle, size_t size) {
   chttp_server_connection *connection = (chttp_server_connection *)user;
+  const bool resume_deferred = connection != NULL && connection->deferred_response_writing;
   int status = SALTS_OK;
   if (!chttp_server_connection_matches(connection, handle) || !connection->writing ||
       size != connection->outbound_size) {
@@ -930,9 +985,12 @@ static void chttp_server_on_send(void *user, cnet_connection handle, size_t size
   }
   connection->writing = false;
   connection->outbound_size = 0u;
+  connection->deferred_response_writing = false;
   if (connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_NONE)
     status = chttp_server_websocket_send_complete(connection);
   if (connection->response_streaming) status = chttp_server_response_stream_next(connection);
+  if (status == SALTS_OK && resume_deferred && !connection->close_after_write)
+    status = chttp_server_deferred_input_resume(connection);
   if (status != SALTS_OK) {
     chttp_server_connection_close(connection);
     return;
@@ -1072,6 +1130,7 @@ int chttp_server_dispatch_request(chttp_server_request_state *state,
   chttp_active_callback_server = server;
   status = chttp_server_chain_run(&chain);
   chttp_active_callback_server = previous_callback_server;
+  if (status == SALTS_OK && state->response_builder.deferred) return SALTS_OK;
   if (status == SALTS_OK && !state->response_builder.replied)
     status = chttp_server_reply(&state->response, 204u, NULL, NULL, 0u);
   if (status == SALTS_OK) status = chttp_session_request_finish(state);
@@ -1086,6 +1145,7 @@ int chttp_server_dispatch_request(chttp_server_request_state *state,
 
 static int chttp_server_on_request(void *user, const chttp_server_request_view *request) {
   chttp_server_connection *connection = (chttp_server_connection *)user;
+  chttp_server_request_view enriched_request;
   chttp_server_response_builder *builder;
   int status;
   if (connection == NULL || request == NULL || connection->close_after_write)
@@ -1094,8 +1154,14 @@ static int chttp_server_on_request(void *user, const chttp_server_request_view *
       connection->server->max_response_wire_bytes >
           connection->outbound_capacity - connection->outbound_size)
     return SALTS_ENOBUFS;
-  status = chttp_server_dispatch_request(&connection->request_state, request);
+  enriched_request = *request;
+  chttp_server_request_enrich(connection, &enriched_request);
+  request = &enriched_request;
   builder = &connection->request_state.response_builder;
+  builder->request = request;
+  status = chttp_server_dispatch_request(&connection->request_state, request);
+  builder->request = NULL;
+  if (status == SALTS_OK && builder->deferred) return CHTTP_SERVER_REQUEST_DEFERRED;
   if (status == SALTS_OK) {
     status =
         chttp_server_response_serialize(builder, request, connection->outbound,
@@ -1125,7 +1191,10 @@ static int chttp_server_on_request(void *user, const chttp_server_request_view *
 static chttp_server_connection *chttp_server_free_connection(chttp_server_impl *server) {
   size_t index;
   for (index = 0u; index < server->config.network.connection_capacity; ++index)
-    if (!server->connections[index].active) return &server->connections[index];
+    if (!server->connections[index].active &&
+        atomic_load_explicit(&server->connections[index].deferred_state, memory_order_acquire) ==
+            CHTTP_SERVER_DEFERRED_IDLE)
+      return &server->connections[index];
   return NULL;
 }
 
@@ -1134,6 +1203,7 @@ static int chttp_server_accept_ready(chttp_server_impl *server) {
     chttp_server_connection *connection = chttp_server_free_connection(server);
     cnet_observer observer;
     cnet_connection handle = {0};
+    cnet_stream_peer peer = {0};
     int status;
     if (connection == NULL) return SALTS_OK;
     observer = (cnet_observer){.on_state = chttp_server_on_state,
@@ -1141,9 +1211,10 @@ static int chttp_server_accept_ready(chttp_server_impl *server) {
                                .on_send = chttp_server_on_send,
                                .user = connection};
     status = server->tls_initialized
-                 ? cnet_listener_accept_tls(&server->listener, &server->network,
-                                            &server->tls_server, &observer, &handle)
-                 : cnet_listener_accept(&server->listener, &server->network, &observer, &handle);
+                 ? cnet_listener_accept_tls_peer(&server->listener, &server->network,
+                                                 &server->tls_server, &observer, &handle, &peer)
+                 : cnet_listener_accept_peer(&server->listener, &server->network, &observer,
+                                             &handle, &peer);
     if (status == SALTS_ETIMEDOUT) return SALTS_OK;
     if (status == SALTS_ENOBUFS) {
       salts_mutex_lock(&server->mutex);
@@ -1160,6 +1231,8 @@ static int chttp_server_accept_ready(chttp_server_impl *server) {
       }
     }
     connection->handle = handle;
+    connection->peer = peer;
+    connection->peer_certificate_sha256[0] = '\0';
     connection->active = true;
     connection->connected = false;
     connection->writing = false;
@@ -1167,6 +1240,8 @@ static int chttp_server_accept_ready(chttp_server_impl *server) {
     connection->response_streaming = false;
     connection->response_source_chunked = false;
     connection->response_close_after_stream = false;
+    connection->deferred_disconnected = false;
+    connection->deferred_response_writing = false;
     connection->pending_action = CHTTP_SERVER_PENDING_NONE;
     connection->outbound_size = 0u;
     connection->h2_close_after_ms = 0u;
@@ -1179,6 +1254,52 @@ static int chttp_server_accept_ready(chttp_server_impl *server) {
     if (status != SALTS_OK) return status;
     chttp_server_stats_connection_open(server);
   }
+}
+
+static int chttp_server_deferred_progress(chttp_server_impl *server) {
+  size_t index;
+  for (index = 0u; index < server->config.network.connection_capacity; ++index) {
+    chttp_server_connection *connection = &server->connections[index];
+    chttp_server_response_builder *builder = &connection->deferred_builder;
+    int status;
+    if (atomic_load_explicit(&connection->deferred_state, memory_order_acquire) !=
+        CHTTP_SERVER_DEFERRED_READY)
+      continue;
+    if (connection->deferred_disconnected || !connection->active || !connection->connected) {
+      chttp_session_request_abort(&connection->request_state);
+      chttp_server_request_state_reset(&connection->request_state);
+      chttp_server_response_builder_reset(builder);
+      (void)chttp_server_parser_reset(&connection->parser);
+      connection->deferred_disconnected = false;
+      atomic_store_explicit(&connection->deferred_state, CHTTP_SERVER_DEFERRED_IDLE,
+                            memory_order_release);
+      continue;
+    }
+    status = chttp_session_request_finish(&connection->request_state);
+    if (status == SALTS_OK)
+      status = chttp_server_response_serialize(builder, &connection->deferred_request,
+                                               connection->outbound,
+                                               connection->outbound_capacity,
+                                               &connection->outbound_size);
+    if (status != SALTS_OK) {
+      chttp_session_request_abort(&connection->request_state);
+      chttp_server_stats_handler_error(server);
+      chttp_server_request_state_reset(&connection->request_state);
+      chttp_server_response_builder_reset(builder);
+      atomic_store_explicit(&connection->deferred_state, CHTTP_SERVER_DEFERRED_IDLE,
+                            memory_order_release);
+      chttp_server_connection_close(connection);
+      continue;
+    }
+    if (!connection->deferred_request.protocol_keep_alive) connection->close_after_write = true;
+    connection->deferred_response_writing = true;
+    chttp_server_stats_response(server);
+    atomic_store_explicit(&connection->deferred_state, CHTTP_SERVER_DEFERRED_IDLE,
+                          memory_order_release);
+    status = chttp_server_send_pending(connection);
+    if (status != SALTS_OK && !chttp_server_action_pressure(status)) return status;
+  }
+  return SALTS_OK;
 }
 
 static int chttp_server_retry_pending(chttp_server_impl *server) {
@@ -1208,7 +1329,10 @@ static bool chttp_server_should_stop(chttp_server_impl *server) {
 static bool chttp_server_connections_active(const chttp_server_impl *server) {
   size_t index;
   for (index = 0u; index < server->config.network.connection_capacity; ++index)
-    if (server->connections[index].active) return true;
+    if (server->connections[index].active ||
+        atomic_load_explicit(&server->connections[index].deferred_state, memory_order_acquire) !=
+            CHTTP_SERVER_DEFERRED_IDLE)
+      return true;
   return false;
 }
 
@@ -1293,6 +1417,8 @@ static void chttp_server_worker(void *user) {
     size_t events = 0u;
     status = chttp_server_file_progress(server);
     if (status != SALTS_OK) break;
+    status = chttp_server_deferred_progress(server);
+    if (status != SALTS_OK) break;
     status = chttp_server_retry_pending(server);
     if (status != SALTS_OK) break;
     status = cnet_listener_wait(&server->listener, 0u, &ready);
@@ -1305,6 +1431,8 @@ static void chttp_server_worker(void *user) {
     if (status != SALTS_OK) break;
     status = chttp_server_file_progress(server);
     if (status != SALTS_OK) break;
+    status = chttp_server_deferred_progress(server);
+    if (status != SALTS_OK) break;
     status = chttp_server_retry_pending(server);
     if (status != SALTS_OK) break;
   }
@@ -1314,11 +1442,15 @@ static void chttp_server_worker(void *user) {
       size_t events = 0u;
       status = chttp_server_file_progress(server);
       if (status != SALTS_OK) break;
+      status = chttp_server_deferred_progress(server);
+      if (status != SALTS_OK) break;
       status = chttp_server_retry_pending(server);
       if (status != SALTS_OK) break;
       status = cnet_client_poll(&server->network, chttp_server_poll_timeout(server), &events);
       if (status != SALTS_OK) break;
       status = chttp_server_file_progress(server);
+      if (status != SALTS_OK) break;
+      status = chttp_server_deferred_progress(server);
       if (status != SALTS_OK) break;
       status = chttp_server_retry_pending(server);
       if (status == SALTS_OK) chttp_server_progress_shutdown(server);

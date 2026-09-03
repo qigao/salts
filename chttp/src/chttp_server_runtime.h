@@ -9,6 +9,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdatomic.h>
 #include <stdint.h>
 
 typedef struct chttp_server_impl chttp_server_impl;
@@ -48,6 +49,8 @@ typedef struct chttp_server_route_record {
 
 typedef struct chttp_server_response_builder {
   chttp_server_impl *server;
+  chttp_server_connection *connection;
+  const chttp_server_request_view *request;
   chttp_header *headers;
   char *header_storage;
   unsigned char *body;
@@ -67,6 +70,7 @@ typedef struct chttp_server_response_builder {
   chttp_file_transfer *file_transfer;
   bool replied;
   bool source_enabled;
+  bool deferred;
 } chttp_server_response_builder;
 
 typedef struct chttp_session_entry {
@@ -131,11 +135,21 @@ typedef enum chttp_server_pending_action {
   CHTTP_SERVER_PENDING_CLOSE
 } chttp_server_pending_action;
 
+typedef enum chttp_server_deferred_state {
+  CHTTP_SERVER_DEFERRED_IDLE = 0,
+  CHTTP_SERVER_DEFERRED_PENDING,
+  CHTTP_SERVER_DEFERRED_WRITING,
+  CHTTP_SERVER_DEFERRED_READY
+} chttp_server_deferred_state;
+
 struct chttp_server_connection {
   chttp_server_impl *server;
   cnet_connection handle;
   chttp_server_parser parser;
   chttp_server_request_state request_state;
+  chttp_server_response_builder deferred_builder;
+  chttp_server_response deferred_response;
+  chttp_server_request_view deferred_request;
   chttp_h2_server_connection *h2;
   chttp_server_websocket_peer websocket_peer;
   unsigned char *websocket_upgrade_input;
@@ -148,6 +162,10 @@ struct chttp_server_connection {
   unsigned char protocol_prefix[24];
   size_t protocol_prefix_size;
   chttp_server_wire_protocol wire_protocol;
+  cnet_stream_peer peer;
+  char peer_certificate_sha256[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY];
+  atomic_int deferred_state;
+  uint32_t deferred_generation;
   bool active;
   bool connected;
   bool writing;
@@ -155,6 +173,8 @@ struct chttp_server_connection {
   bool response_streaming;
   bool response_source_chunked;
   bool response_close_after_stream;
+  bool deferred_disconnected;
+  bool deferred_response_writing;
   chttp_server_pending_action pending_action;
 };
 
@@ -261,5 +281,7 @@ int chttp_server_file_runtime_ensure(chttp_server_impl *server,
 int chttp_server_file_transfer_register(chttp_server_impl *server, chttp_file_transfer *transfer);
 int chttp_server_send_pending(chttp_server_connection *connection);
 void chttp_server_connection_close(chttp_server_connection *connection);
+void chttp_server_request_enrich(const chttp_server_connection *connection,
+                                 chttp_server_request_view *request);
 
 #endif /* CHTTP_SERVER_RUNTIME_H */

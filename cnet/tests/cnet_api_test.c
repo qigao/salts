@@ -465,6 +465,7 @@ spec("CNet public client API") {
     cnet_api_test_socket peer = CNET_API_TEST_INVALID_SOCKET;
     struct sockaddr_in address;
     cnet_connection connection = {0};
+    cnet_stream_peer stream_peer = {0};
     cnet_observer observer = {.on_state = cnet_api_test_listener_state,
                               .on_receive = cnet_api_test_listener_receive,
                               .on_send = cnet_api_test_listener_send,
@@ -507,7 +508,9 @@ spec("CNet public client API") {
 
     check_equal(cnet_listener_wait(&listener, CNET_API_TEST_TIMEOUT_MS, &ready), SALTS_OK);
     check_equal(ready, 1);
-    check_equal(cnet_listener_accept(&listener, &client, &observer, &connection), SALTS_OK);
+    check_equal(cnet_listener_accept_peer(&listener, &client, &observer, &connection,
+                                          &stream_peer),
+                SALTS_OK);
     {
       cnet_connection no_peer = {0};
       check_equal(cnet_listener_accept(&listener, &client, &observer, &no_peer), SALTS_ETIMEDOUT);
@@ -515,6 +518,12 @@ spec("CNet public client API") {
       check_equal(no_peer.generation, 0u);
     }
     check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+    check_equal(stream_peer.family, CNET_DATAGRAM_ADDRESS_IPV4);
+    check_equal(stream_peer.address[0], (uint8_t)127u);
+    check_equal(stream_peer.address[1], (uint8_t)0u);
+    check_equal(stream_peer.address[2], (uint8_t)0u);
+    check_equal(stream_peer.address[3], (uint8_t)1u);
+    check_true(stream_peer.port != 0u);
     check_equal(cnet_tls_peer_certificate_sha256(&client, connection,
                                                  peer_certificate_sha256),
                 SALTS_ENOTSUP);

@@ -683,7 +683,7 @@ chttp_h2_server_request_view(const chttp_h2_server_stream *stream) {
   const chttp_server_config *config = &stream->owner->connection->server->config;
   const size_t stride = config->max_target_bytes + 1u;
   const bool streamed = chttp_server_request_body_streaming(&stream->request_state);
-  return (chttp_server_request_view){.http_major = 2u,
+  chttp_server_request_view request = {.http_major = 2u,
                                      .http_minor = 0u,
                                      .method = stream->method,
                                      .target = stream->target_storage,
@@ -694,6 +694,8 @@ chttp_h2_server_request_view(const chttp_h2_server_stream *stream) {
                                      .body_size = stream->body_size,
                                      .body_streamed = streamed ? 1 : 0,
                                      .protocol_keep_alive = 1};
+  chttp_server_request_enrich(stream->owner->connection, &request);
+  return request;
 }
 
 static int chttp_h2_server_websocket_write(void *transport, const uint8_t *data, size_t size) {

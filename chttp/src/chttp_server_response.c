@@ -86,6 +86,7 @@ void chttp_server_response_builder_reset(chttp_server_response_builder *builder)
   builder->source_transferred = 0u;
   builder->status_code = 0u;
   builder->replied = false;
+  builder->deferred = false;
 }
 
 void chttp_server_response_builder_close_source(chttp_server_response_builder *builder,
@@ -134,6 +135,7 @@ int chttp_server_response_set_header(chttp_server_response *response, const char
       chttp_server_response_ascii_equal(name, "Sec-WebSocket-Protocol"))
     return SALTS_EPERM;
   builder = (chttp_server_response_builder *)response->impl;
+  if (builder->deferred) return SALTS_EALREADY;
   name_size = strlen(name);
   value_size = strlen(value);
   if (name_size > SIZE_MAX - value_size - 4u) return SALTS_ERANGE;
@@ -179,6 +181,7 @@ int chttp_server_reply(chttp_server_response *response, unsigned int status_code
   if ((status_code == 204u || status_code == 205u || status_code == 304u) && body_size != 0u)
     return SALTS_EINVAL;
   builder = (chttp_server_response_builder *)response->impl;
+  if (builder->deferred) return SALTS_EALREADY;
   if (builder->replied) return SALTS_EALREADY;
   if (body_size > builder->body_capacity) return SALTS_EMSGSIZE;
   if (content_type != NULL) {
@@ -189,6 +192,100 @@ int chttp_server_reply(chttp_server_response *response, unsigned int status_code
   builder->body_size = body_size;
   builder->status_code = status_code;
   builder->replied = true;
+  return SALTS_OK;
+}
+
+int chttp_server_response_defer(chttp_server_response *response,
+                                chttp_server_deferred *out_deferred) {
+  chttp_server_response_builder *builder;
+  chttp_server_connection *connection;
+  int expected = CHTTP_SERVER_DEFERRED_IDLE;
+  if (out_deferred != NULL)
+    *out_deferred = (chttp_server_deferred)CHTTP_SERVER_DEFERRED_INIT;
+  if (response == NULL || response->impl == NULL || out_deferred == NULL) return SALTS_EINVAL;
+  builder = (chttp_server_response_builder *)response->impl;
+  connection = builder->connection;
+  if (connection == NULL || builder->request == NULL || builder->server == NULL)
+    return SALTS_ENOTSUP;
+  if (chttp_active_callback_server != builder->server) return SALTS_EBUSY;
+  if (connection->wire_protocol != CHTTP_SERVER_WIRE_HTTP_1_1) return SALTS_ENOTSUP;
+  if (builder->request->session != NULL) return SALTS_ENOTSUP;
+  if (builder->replied || builder->deferred) return SALTS_EALREADY;
+  if (!atomic_compare_exchange_strong_explicit(
+          &connection->deferred_state, &expected, CHTTP_SERVER_DEFERRED_WRITING,
+          memory_order_acq_rel, memory_order_acquire))
+    return SALTS_EALREADY;
+
+  chttp_server_response_builder_reset(&connection->deferred_builder);
+  connection->deferred_request = *builder->request;
+  connection->deferred_request.target = NULL;
+  connection->deferred_request.path = NULL;
+  connection->deferred_request.headers = NULL;
+  connection->deferred_request.header_count = 0u;
+  connection->deferred_request.params = NULL;
+  connection->deferred_request.param_count = 0u;
+  connection->deferred_request.body = NULL;
+  connection->deferred_request.body_size = 0u;
+  connection->deferred_request.peer = NULL;
+  connection->deferred_request.peer_certificate_sha256 = NULL;
+  connection->deferred_request.session = NULL;
+  ++connection->deferred_generation;
+  if (connection->deferred_generation == 0u) ++connection->deferred_generation;
+  connection->deferred_disconnected = false;
+  builder->deferred = true;
+  out_deferred->impl = connection;
+  out_deferred->generation = connection->deferred_generation;
+  atomic_store_explicit(&connection->deferred_state, CHTTP_SERVER_DEFERRED_PENDING,
+                        memory_order_release);
+  return SALTS_OK;
+}
+
+int chttp_server_deferred_reply(chttp_server_deferred *deferred,
+                                const chttp_server_deferred_response *response) {
+  chttp_server_connection *connection;
+  chttp_server_response_builder *base;
+  size_t index;
+  int expected = CHTTP_SERVER_DEFERRED_PENDING;
+  int status = SALTS_OK;
+  if (deferred == NULL || deferred->impl == NULL || deferred->generation == 0u ||
+      response == NULL || response->size < sizeof(*response) ||
+      (response->header_count != 0u && response->headers == NULL) ||
+      (response->body_size != 0u && response->body == NULL))
+    return SALTS_EINVAL;
+  connection = (chttp_server_connection *)deferred->impl;
+  if (connection->deferred_generation != deferred->generation) return SALTS_ENOENT;
+  if (!atomic_compare_exchange_strong_explicit(
+          &connection->deferred_state, &expected, CHTTP_SERVER_DEFERRED_WRITING,
+          memory_order_acq_rel, memory_order_acquire))
+    return expected == CHTTP_SERVER_DEFERRED_IDLE ? SALTS_ENOENT : SALTS_EALREADY;
+
+  base = &connection->request_state.response_builder;
+  chttp_server_response_builder_reset(&connection->deferred_builder);
+  for (index = 0u; status == SALTS_OK && index < base->header_count; ++index)
+    status = chttp_server_response_set_header(&connection->deferred_response,
+                                              base->headers[index].name,
+                                              base->headers[index].value);
+  for (index = 0u; status == SALTS_OK && index < response->header_count; ++index) {
+    if (response->headers[index].name == NULL || response->headers[index].value == NULL)
+      status = SALTS_EINVAL;
+    else
+      status = chttp_server_response_set_header(&connection->deferred_response,
+                                                response->headers[index].name,
+                                                response->headers[index].value);
+  }
+  if (status == SALTS_OK)
+    status = chttp_server_reply(&connection->deferred_response, response->status_code,
+                                response->content_type, response->body, response->body_size);
+  if (status != SALTS_OK) {
+    chttp_server_response_builder_reset(&connection->deferred_builder);
+    atomic_store_explicit(&connection->deferred_state, CHTTP_SERVER_DEFERRED_PENDING,
+                          memory_order_release);
+    return status;
+  }
+  atomic_store_explicit(&connection->deferred_state, CHTTP_SERVER_DEFERRED_READY,
+                        memory_order_release);
+  *deferred = (chttp_server_deferred)CHTTP_SERVER_DEFERRED_INIT;
+  (void)cnet_client_wake(&connection->server->network);
   return SALTS_OK;
 }
 
@@ -204,6 +301,7 @@ int chttp_server_response_source_owned(chttp_server_response *response, unsigned
       status_code == 204u || status_code == 205u || status_code == 304u)
     return SALTS_EINVAL;
   builder = (chttp_server_response_builder *)response->impl;
+  if (builder->deferred) return SALTS_EALREADY;
   if (builder->replied) return SALTS_EALREADY;
   if (source->content_length_known && source->content_length > builder->source_capacity)
     return SALTS_EMSGSIZE;

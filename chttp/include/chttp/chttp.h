@@ -31,6 +31,19 @@ typedef struct chttp_server {
   void *impl;
 } chttp_server;
 
+/**
+ * One generation-checked deferred HTTP/1.1 response. The handle is completed
+ * exactly once by `chttp_server_deferred_reply()` and must not outlive the
+ * server's successful stop.
+ */
+typedef struct chttp_server_deferred {
+  void *impl;
+  uint32_t generation;
+  uint32_t reserved;
+} chttp_server_deferred;
+
+#define CHTTP_SERVER_DEFERRED_INIT {NULL, 0u, 0u}
+
 /** Handler-scoped server-side session. */
 typedef struct chttp_session {
   void *impl;
@@ -143,6 +156,10 @@ typedef struct chttp_server_request_view {
   /** Non-zero when body bytes were delivered to the route sink and are not retained here. */
   int body_streamed;
   int protocol_keep_alive;
+  /** Borrowed portable TCP peer endpoint, available for network-backed server requests. */
+  const cnet_stream_peer *peer;
+  /** Verified TLS peer leaf SHA-256, or NULL for plaintext/no presented client certificate. */
+  const char *peer_certificate_sha256;
   chttp_session *session;
 } chttp_server_request_view;
 
@@ -150,6 +167,17 @@ typedef struct chttp_server_request_view {
 typedef struct chttp_server_response {
   void *impl;
 } chttp_server_response;
+
+/** Borrowed deferred response input copied before submission returns. */
+typedef struct chttp_server_deferred_response {
+  size_t size;
+  unsigned int status_code;
+  const char *content_type;
+  const chttp_header *headers;
+  size_t header_count;
+  const void *body;
+  size_t body_size;
+} chttp_server_deferred_response;
 
 typedef int (*chttp_server_handler_fn)(void *user, const chttp_server_request_view *request,
                                        chttp_server_response *response);
@@ -762,6 +790,28 @@ const char *chttp_server_request_param(const chttp_server_request_view *request,
  */
 int chttp_server_response_set_header(chttp_server_response *response, const char *name,
                                      const char *value);
+
+/**
+ * Seals the current HTTP/1.1 response and returns a cross-thread completion
+ * handle. Request views remain callback-borrowed and must be copied by the
+ * application before the handler returns. Existing response headers are
+ * retained; response mutation after this call returns `SALTS_EALREADY`.
+ *
+ * Each connection admits at most one deferred response, so total outstanding
+ * work is bounded by `network.connection_capacity`. HTTP/2 currently returns
+ * `SALTS_ENOTSUP`.
+ */
+int chttp_server_response_defer(chttp_server_response *response,
+                               chttp_server_deferred *out_deferred);
+
+/**
+ * Thread-safe terminal completion for a deferred response. Headers and body
+ * are copied into configured CHTTP bounds before success; failure leaves the
+ * handle retryable. A successful call clears the handle and wakes the server
+ * owner. Server stop waits for every admitted handle to complete.
+ */
+int chttp_server_deferred_reply(chttp_server_deferred *deferred,
+                                const chttp_server_deferred_response *response);
 
 /**
  * Completes the response with a copied content type and body. A second reply

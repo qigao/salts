@@ -2,12 +2,22 @@
 #include <cnet/websocket.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <type_traits>
 
 static_assert(std::is_standard_layout<cnet_client>::value, "client must be a C value wrapper");
 static_assert(std::is_standard_layout<cnet_connection>::value,
               "connection must be a C value handle");
 static_assert(std::is_standard_layout<cnet_listener>::value, "listener must be a C value wrapper");
+static_assert(std::is_standard_layout<cnet_datagram>::value,
+              "datagram must be a C value wrapper");
+static_assert(std::is_standard_layout<cnet_kcp>::value, "KCP must be a C value wrapper");
+static_assert(std::is_standard_layout<cnet_secure_kcp>::value,
+              "secure KCP must be a C value wrapper");
+static_assert(std::is_standard_layout<cnet_packet_endpoint>::value,
+              "packet endpoint must be a C value wrapper");
+static_assert(std::is_standard_layout<cnet_packet_session>::value,
+              "packet session must be a C value handle");
 static_assert(std::is_standard_layout<cnet_tls_server>::value,
               "TLS server must be a C value wrapper");
 static_assert(std::is_standard_layout<cnet_tls_client>::value,
@@ -25,16 +35,29 @@ static_assert(offsetof(cnet_observer, on_send) > offsetof(cnet_observer, user),
 using cnet_client_wake_function = int (*)(cnet_client *);
 static_assert(std::is_same<decltype(&cnet_client_wake), cnet_client_wake_function>::value,
               "client wake must keep its C linkage signature");
+using cnet_packet_poll_function = int (*)(cnet_packet_endpoint *, std::uint32_t, std::size_t *);
+static_assert(std::is_same<decltype(&cnet_packet_poll), cnet_packet_poll_function>::value,
+              "packet poll must keep its C linkage signature");
 
 int main() {
   cnet_client client{};
   cnet_listener listener{};
+  cnet_datagram datagram{};
+  cnet_kcp kcp{};
+  cnet_secure_kcp secure_kcp{};
+  cnet_packet_endpoint packet_endpoint{};
+  cnet_packet_session packet_session{};
+  cnet_packet_session_info packet_session_info{};
   cnet_tls_server tls_server{};
   cnet_tls_client tls_client{};
   cnet_connection connection{};
   cnet_websocket websocket{};
   cnet_client_config config{};
   cnet_listener_config listener_config{};
+  cnet_datagram_config datagram_config = CNET_DATAGRAM_CONFIG_INIT;
+  cnet_kcp_config kcp_config = CNET_KCP_CONFIG_INIT;
+  cnet_secure_kcp_config secure_kcp_config = CNET_SECURE_KCP_CONFIG_INIT;
+  cnet_packet_endpoint_config packet_config = CNET_PACKET_ENDPOINT_CONFIG_INIT;
   cnet_tls_client_config tls_client_config{};
   cnet_tls_server_config tls_server_config{};
   cnet_connect_options options{};
@@ -44,12 +67,22 @@ int main() {
   cnet_websocket_config websocket_config{};
   (void)client;
   (void)listener;
+  (void)datagram;
+  (void)kcp;
+  (void)secure_kcp;
+  (void)packet_endpoint;
+  (void)packet_session;
+  (void)packet_session_info;
   (void)tls_server;
   (void)tls_client;
   (void)connection;
   (void)websocket;
   (void)config;
   (void)listener_config;
+  (void)datagram_config;
+  (void)kcp_config;
+  (void)secure_kcp_config;
+  (void)packet_config;
   (void)tls_client_config;
   (void)tls_server_config;
   (void)options;

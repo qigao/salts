@@ -12,6 +12,8 @@ enum { CHTTP_TLS_TEST_TIMEOUT_MS = 5000 };
 
 typedef struct chttp_tls_test_probe {
   size_t middleware_calls;
+  cnet_stream_peer peer;
+  char peer_certificate_sha256[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY];
 } chttp_tls_test_probe;
 
 typedef struct chttp_tls_async_probe {
@@ -93,7 +95,10 @@ static int chttp_tls_test_middleware(void *user, const chttp_server_request_view
                                      chttp_server_response *response, chttp_server_next *next) {
   chttp_tls_test_probe *probe = (chttp_tls_test_probe *)user;
   int status;
-  (void)request;
+  if (request->peer != NULL) probe->peer = *request->peer;
+  if (request->peer_certificate_sha256 != NULL)
+    memcpy(probe->peer_certificate_sha256, request->peer_certificate_sha256,
+           CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY);
   ++probe->middleware_calls;
   status = chttp_server_response_set_header(response, "X-TLS-Middleware", "yes");
   return status == SALTS_OK ? chttp_server_next_call(next) : status;
@@ -377,6 +382,10 @@ spec("CHTTP HTTPS adapter") {
     check_equal(stats.accepted_connections, (uint64_t)2u);
     check_equal(stats.requests, (uint64_t)3u);
     check_equal(probe.middleware_calls, (size_t)3u);
+    check_equal(probe.peer.family, CNET_DATAGRAM_ADDRESS_IPV4);
+    check_equal(probe.peer.address[0], (uint8_t)127u);
+    check_true(probe.peer.port != 0u);
+    check_equal(strlen(probe.peer_certificate_sha256), (size_t)64u);
 
     async_options = (chttp_request_options){.connection_uri = uri,
                                             .authority = "localhost",

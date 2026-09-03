@@ -21,6 +21,32 @@ typedef struct cnet_listener {
   void *impl;
 } cnet_listener;
 
+/** Caller-driven bound UDP socket over NativeIO. The wrapper address stays stable until destroy. */
+typedef struct cnet_datagram {
+  void *impl;
+} cnet_datagram;
+
+/** Caller-driven bounded KCP protocol session. The wrapper address stays stable until destroy. */
+typedef struct cnet_kcp {
+  void *impl;
+} cnet_kcp;
+
+/** Caller-driven authenticated KCP v1 session with Reed-Solomon FEC. */
+typedef struct cnet_secure_kcp {
+  void *impl;
+} cnet_secure_kcp;
+
+/** Unified bound endpoint for unreliable UDP or reliable ordered KCP messages. */
+typedef struct cnet_packet_endpoint {
+  void *impl;
+} cnet_packet_endpoint;
+
+/** Generation-checked packet peer/session handle; never an OS descriptor or pointer. */
+typedef struct cnet_packet_session {
+  uint32_t slot;
+  uint32_t generation;
+} cnet_packet_session;
+
 /** Reusable immutable TLS client context. */
 typedef struct cnet_tls_client {
   void *impl;
@@ -66,6 +92,121 @@ typedef struct cnet_const_buffer {
   const void *data;
   size_t size;
 } cnet_const_buffer;
+
+typedef enum cnet_datagram_address_family {
+  CNET_DATAGRAM_ADDRESS_IPV4 = 4,
+  CNET_DATAGRAM_ADDRESS_IPV6 = 6
+} cnet_datagram_address_family;
+
+/** Portable copied UDP peer address. Multi-byte scalar fields are in host byte order. */
+typedef struct cnet_datagram_peer {
+  cnet_datagram_address_family family;
+  uint16_t port;
+  uint32_t scope_id;
+  uint8_t address[16];
+} cnet_datagram_peer;
+
+/** Portable copied TCP peer address. Multi-byte scalar fields are in host byte order. */
+typedef struct cnet_stream_peer {
+  cnet_datagram_address_family family;
+  uint16_t port;
+  uint32_t scope_id;
+  uint8_t address[16];
+} cnet_stream_peer;
+
+typedef void (*cnet_datagram_receive_fn)(void *user, cnet_datagram *datagram,
+                                         const cnet_datagram_peer *peer,
+                                         const cnet_receive_view *view);
+/** Terminal result for one successfully admitted copied datagram, including its copied tag. */
+typedef void (*cnet_datagram_send_fn)(void *user, cnet_datagram *datagram,
+                                      const cnet_datagram_peer *peer, size_t size, int status,
+                                      uint64_t tag);
+
+typedef struct cnet_datagram_observer {
+  cnet_datagram_receive_fn on_receive;
+  cnet_datagram_send_fn on_send;
+  void *user;
+} cnet_datagram_observer;
+
+/** Borrowed wire packet that must be copied or synchronously admitted before return. */
+typedef int (*cnet_kcp_output_fn)(void *user, cnet_kcp *session, const void *data, size_t size);
+/** Borrowed complete message valid only for the duration of the callback. */
+typedef void (*cnet_kcp_receive_fn)(void *user, cnet_kcp *session,
+                                    const cnet_receive_view *view);
+
+typedef struct cnet_kcp_observer {
+  cnet_kcp_output_fn output;
+  cnet_kcp_receive_fn on_receive;
+  void *user;
+} cnet_kcp_observer;
+
+typedef enum cnet_secure_kcp_role {
+  CNET_SECURE_KCP_CLIENT = 1,
+  CNET_SECURE_KCP_SERVER = 2
+} cnet_secure_kcp_role;
+
+typedef enum cnet_kcp_security_mode {
+  CNET_KCP_SECURITY_NONE = 0,
+  /** CoroNet-compatible TKSH/TKSR/TKF1 authenticated encryption and FEC. */
+  CNET_KCP_SECURITY_PSK_V1 = 1
+} cnet_kcp_security_mode;
+
+typedef enum cnet_kcp_fec_backend {
+  CNET_KCP_FEC_NONE = 0,
+  CNET_KCP_FEC_REED_SOLOMON = 1
+} cnet_kcp_fec_backend;
+
+typedef int (*cnet_secure_kcp_output_fn)(void *user, cnet_secure_kcp *session,
+                                         const void *data, size_t size);
+typedef void (*cnet_secure_kcp_receive_fn)(void *user, cnet_secure_kcp *session,
+                                           const cnet_receive_view *view);
+typedef void (*cnet_secure_kcp_established_fn)(void *user, cnet_secure_kcp *session);
+
+typedef struct cnet_secure_kcp_observer {
+  cnet_secure_kcp_output_fn output;
+  cnet_secure_kcp_receive_fn on_receive;
+  cnet_secure_kcp_established_fn on_established;
+  void *user;
+} cnet_secure_kcp_observer;
+
+typedef enum cnet_packet_protocol {
+  CNET_PACKET_UDP = 1,
+  CNET_PACKET_KCP = 2
+} cnet_packet_protocol;
+
+typedef struct cnet_packet_session_info {
+  cnet_packet_protocol protocol;
+  cnet_datagram_peer peer;
+  uint32_t conversation;
+} cnet_packet_session_info;
+
+typedef enum cnet_packet_session_state {
+  CNET_PACKET_SESSION_OPEN = 1,
+  CNET_PACKET_SESSION_CLOSED = 2,
+  CNET_PACKET_SESSION_CONNECTING = 3
+} cnet_packet_session_state;
+
+/** Return SALTS_OK to admit an unknown inbound peer/session; any other value rejects it. */
+typedef int (*cnet_packet_admit_fn)(void *user, cnet_packet_endpoint *endpoint,
+                                    cnet_packet_protocol protocol,
+                                    const cnet_datagram_peer *peer, uint32_t conversation);
+typedef void (*cnet_packet_state_fn)(void *user, cnet_packet_endpoint *endpoint,
+                                     cnet_packet_session session,
+                                     cnet_packet_session_state state,
+                                     const cnet_datagram_peer *peer, uint32_t conversation);
+typedef void (*cnet_packet_receive_fn)(void *user, cnet_packet_endpoint *endpoint,
+                                       cnet_packet_session session,
+                                       const cnet_receive_view *view);
+typedef void (*cnet_packet_error_fn)(void *user, cnet_packet_endpoint *endpoint,
+                                     cnet_packet_session session, int status);
+
+typedef struct cnet_packet_observer {
+  cnet_packet_admit_fn on_admit;
+  cnet_packet_state_fn on_state;
+  cnet_packet_receive_fn on_receive;
+  cnet_packet_error_fn on_error;
+  void *user;
+} cnet_packet_observer;
 
 typedef void (*cnet_state_fn)(void *user, cnet_connection connection, cnet_connection_state state,
                               const cnet_error *error);
@@ -174,6 +315,135 @@ typedef struct cnet_listener_config {
   uint16_t port;
   size_t backlog;
 } cnet_listener_config;
+
+enum { CNET_DATAGRAM_MAX_PAYLOAD_BYTES = 65507u };
+
+/**
+ * Every capacity is a hard bound. One request is reserved for receive, so
+ * request_capacity must be greater than send_capacity. The receive buffer must
+ * cover max_datagram_bytes; truncation is never reported as a successful value.
+ */
+typedef struct cnet_datagram_config {
+  size_t size;
+  native_io_backend_kind backend;
+  const char *host;
+  uint16_t port;
+  size_t send_capacity;
+  size_t request_capacity;
+  size_t completion_batch_capacity;
+  size_t max_datagram_bytes;
+  size_t receive_buffer_bytes;
+  cnet_datagram_observer observer;
+} cnet_datagram_config;
+
+#define CNET_DATAGRAM_CONFIG_INIT                                                                  \
+  {sizeof(cnet_datagram_config), (native_io_backend_kind)0, NULL, 0u, 0u, 0u, 0u, 0u, 0u,          \
+   {NULL, NULL, NULL}}
+
+enum {
+  CNET_KCP_DEFAULT_MTU = 1400,
+  CNET_KCP_DEFAULT_WINDOW = 128,
+  CNET_KCP_DEFAULT_INTERVAL_MS = 10,
+  CNET_KCP_DEFAULT_FAST_RESEND = 2,
+  CNET_KCP_DEFAULT_SEND_SEGMENT_CAPACITY = 1024,
+  CNET_KCP_DEFAULT_MAX_MESSAGE_BYTES = 1024 * 1024
+};
+
+/**
+ * KCP is a reliable ordered protocol over untrusted datagrams; it provides no
+ * encryption or peer authentication. All protocol calls belong to one owner.
+ * send_segment_capacity bounds retained outbound KCP segments, receive_window
+ * bounds inbound segments, and max_message_bytes bounds callback storage.
+ */
+typedef struct cnet_kcp_config {
+  size_t size;
+  uint32_t conversation;
+  uint32_t mtu;
+  uint32_t send_window;
+  uint32_t receive_window;
+  uint32_t interval_ms;
+  uint32_t fast_resend;
+  bool no_congestion_window;
+  bool stream_mode;
+  size_t send_segment_capacity;
+  size_t max_message_bytes;
+  cnet_kcp_observer observer;
+} cnet_kcp_config;
+
+#define CNET_KCP_CONFIG_INIT                                                                       \
+  {sizeof(cnet_kcp_config), 0u, CNET_KCP_DEFAULT_MTU, CNET_KCP_DEFAULT_WINDOW,                     \
+   CNET_KCP_DEFAULT_WINDOW, CNET_KCP_DEFAULT_INTERVAL_MS, CNET_KCP_DEFAULT_FAST_RESEND, false,     \
+   false, CNET_KCP_DEFAULT_SEND_SEGMENT_CAPACITY, CNET_KCP_DEFAULT_MAX_MESSAGE_BYTES,              \
+   {NULL, NULL, NULL}}
+
+enum {
+  CNET_KCP_PSK_BYTES = 32,
+  CNET_KCP_SECURE_RECORD_OVERHEAD = 48,
+  CNET_KCP_DEFAULT_HANDSHAKE_RETRY_MS = 200,
+  CNET_KCP_DEFAULT_FEC_DATA_SHARDS = 8,
+  CNET_KCP_DEFAULT_FEC_PARITY_SHARDS = 2,
+  CNET_KCP_DEFAULT_FEC_MAX_PAYLOAD_BYTES = 1248,
+  CNET_KCP_DEFAULT_FEC_RECEIVE_GROUPS = 16
+};
+
+typedef struct cnet_kcp_fec_config {
+  cnet_kcp_fec_backend backend;
+  uint16_t data_shards;
+  uint16_t parity_shards;
+  uint16_t max_payload_bytes;
+  uint16_t receive_group_count;
+} cnet_kcp_fec_config;
+
+/** Copied PSK v1 policy. A zero key, NONE FEC, or partial FEC config is rejected. */
+typedef struct cnet_kcp_security_config {
+  size_t size;
+  cnet_kcp_security_mode mode;
+  uint8_t pre_shared_key[CNET_KCP_PSK_BYTES];
+  uint32_t handshake_retry_ms;
+  cnet_kcp_fec_config fec;
+} cnet_kcp_security_config;
+
+#define CNET_KCP_SECURITY_CONFIG_INIT                                                              \
+  {sizeof(cnet_kcp_security_config), CNET_KCP_SECURITY_NONE, {0},                                  \
+   CNET_KCP_DEFAULT_HANDSHAKE_RETRY_MS,                                                            \
+   {CNET_KCP_FEC_REED_SOLOMON, CNET_KCP_DEFAULT_FEC_DATA_SHARDS,                                  \
+    CNET_KCP_DEFAULT_FEC_PARITY_SHARDS, CNET_KCP_DEFAULT_FEC_MAX_PAYLOAD_BYTES,                    \
+    CNET_KCP_DEFAULT_FEC_RECEIVE_GROUPS}}
+
+/**
+ * Protocol-only secure session. The embedded KCP conversation and observer
+ * fields must be zero because the authenticated session derives and owns them.
+ */
+typedef struct cnet_secure_kcp_config {
+  size_t size;
+  cnet_secure_kcp_role role;
+  cnet_kcp_config kcp;
+  cnet_kcp_security_config security;
+  cnet_secure_kcp_observer observer;
+} cnet_secure_kcp_config;
+
+#define CNET_SECURE_KCP_CONFIG_INIT                                                               \
+  {sizeof(cnet_secure_kcp_config), (cnet_secure_kcp_role)0, CNET_KCP_CONFIG_INIT,                  \
+   CNET_KCP_SECURITY_CONFIG_INIT, {NULL, NULL, NULL, NULL}}
+
+/**
+ * Unified packet endpoint configuration. datagram and kcp observer fields
+ * must remain zero because the endpoint owns their internal composition.
+ * session_capacity is a hard bound for the pre-reserved peer index and slots.
+ */
+typedef struct cnet_packet_endpoint_config {
+  size_t size;
+  cnet_packet_protocol protocol;
+  size_t session_capacity;
+  cnet_datagram_config datagram;
+  cnet_kcp_config kcp;
+  cnet_kcp_security_config security;
+  cnet_packet_observer observer;
+} cnet_packet_endpoint_config;
+
+#define CNET_PACKET_ENDPOINT_CONFIG_INIT                                                           \
+  {sizeof(cnet_packet_endpoint_config), (cnet_packet_protocol)0, 0u, CNET_DATAGRAM_CONFIG_INIT,    \
+   CNET_KCP_CONFIG_INIT, CNET_KCP_SECURITY_CONFIG_INIT, {NULL, NULL, NULL, NULL, NULL}}
 
 /**
  * Initializes one caller-driven NativeIO owner without creating an I/O worker
@@ -379,6 +649,14 @@ int cnet_listener_accept(cnet_listener *listener, cnet_client *client,
                          const cnet_observer *observer, cnet_connection *out_connection);
 
 /**
+ * Accepts one plaintext TCP peer and also copies its portable remote endpoint.
+ * `out_peer` is cleared on failure and remains independent of the connection lifetime.
+ */
+int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
+                              const cnet_observer *observer, cnet_connection *out_connection,
+                              cnet_stream_peer *out_peer);
+
+/**
  * Accepts one TCP peer and begins a server-side TLS handshake before
  * CONNECTED. The caller must not destroy `server` concurrently with this call.
  * @return The plaintext accept statuses, plus `SALTS_ENOTSUP` when `client`
@@ -388,11 +666,152 @@ int cnet_listener_accept_tls(cnet_listener *listener, cnet_client *client,
                              const cnet_tls_server *server, const cnet_observer *observer,
                              cnet_connection *out_connection);
 
+/** TLS counterpart of `cnet_listener_accept_peer()`. */
+int cnet_listener_accept_tls_peer(cnet_listener *listener, cnet_client *client,
+                                  const cnet_tls_server *server,
+                                  const cnet_observer *observer,
+                                  cnet_connection *out_connection, cnet_stream_peer *out_peer);
+
 /** Closes listener admission. Existing CNet connections are unaffected. */
 int cnet_listener_close(cnet_listener *listener);
 
 /** Requires a closed listener and releases its platform-module reference. */
 int cnet_listener_destroy(cnet_listener *listener);
+
+/**
+ * Binds one numeric IPv4/IPv6 UDP endpoint and preallocates all request,
+ * receive, send and completion storage. No worker thread is created.
+ */
+int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *config);
+
+/** Returns the host-order bound port, including an OS-selected ephemeral port. */
+int cnet_datagram_port(const cnet_datagram *datagram, uint16_t *out_port);
+
+/**
+ * Adds exactly demand receive values. Each successful callback consumes one;
+ * overflow fails without changing current demand.
+ */
+int cnet_datagram_receive(cnet_datagram *datagram, size_t demand);
+
+/**
+ * Copies peer and payload into one bounded send slot before returning success.
+ * The opaque tag is copied with the peer and payload. A successful call
+ * publishes exactly one terminal on_send callback with the same tag.
+ */
+int cnet_datagram_send(cnet_datagram *datagram, const cnet_datagram_peer *peer,
+                       const void *data, size_t size, uint64_t tag);
+
+/**
+ * Advances NativeIO and invokes callbacks inline on the non-overlapping owner.
+ * An idle timeout is successful with zero events.
+ */
+int cnet_datagram_poll(cnet_datagram *datagram, uint32_t timeout_ms, size_t *out_events);
+
+/** The only datagram operation allowed concurrently from a non-owner thread. */
+int cnet_datagram_wake(cnet_datagram *datagram);
+
+/** Closes admission, cancels retained I/O and drains terminal send callbacks. */
+int cnet_datagram_stop(cnet_datagram *datagram, uint32_t timeout_ms);
+
+/** Requires a completed stop and releases all fixed storage. */
+int cnet_datagram_destroy(cnet_datagram *datagram);
+
+/**
+ * Creates one protocol-only session from a zero-initialized owner and
+ * preallocates its receive message buffer. A live owner returns SALTS_EALREADY.
+ */
+int cnet_kcp_init(cnet_kcp *session, const cnet_kcp_config *config);
+
+/**
+ * Copies one ordered message into KCP after conservative segment-capacity admission.
+ * Returns SALTS_ENOBUFS without retaining input when the hard bound would be exceeded.
+ */
+int cnet_kcp_send(cnet_kcp *session, const void *data, size_t size);
+
+/** Borrows one wire datagram until return and synchronously emits complete messages. */
+int cnet_kcp_input(cnet_kcp *session, const void *data, size_t size);
+
+/** Advances the KCP clock and synchronously emits wire packets through output. */
+int cnet_kcp_update(cnet_kcp *session, uint32_t now_ms);
+
+/** Returns KCP's next absolute 32-bit millisecond update time. */
+int cnet_kcp_check(const cnet_kcp *session, uint32_t now_ms, uint32_t *out_next_ms);
+
+/** Releases all queued segments and receive storage; no UDP/timer calls may overlap. */
+int cnet_kcp_destroy(cnet_kcp *session);
+
+/** Creates a zero-initialized PSK v1/FEC session without emitting wire data. */
+int cnet_secure_kcp_init(cnet_secure_kcp *session, const cnet_secure_kcp_config *config);
+
+/** Starts the role state machine; a client synchronously emits its first authenticated hello. */
+int cnet_secure_kcp_start(cnet_secure_kcp *session, uint32_t now_ms);
+
+/** Returns true only after the authenticated hello exchange and KCP activation complete. */
+bool cnet_secure_kcp_established(const cnet_secure_kcp *session);
+
+/** Copies the session-derived non-zero KCP conversation after establishment. */
+int cnet_secure_kcp_conversation(const cnet_secure_kcp *session, uint32_t *out_conversation);
+
+/** Copies one application message into bounded KCP storage; handshaking returns SALTS_EBUSY. */
+int cnet_secure_kcp_send(cnet_secure_kcp *session, const void *data, size_t size);
+
+/** Borrows one complete TKSH or TKF1 datagram and authenticates it before state mutation. */
+int cnet_secure_kcp_input(cnet_secure_kcp *session, const void *data, size_t size);
+
+/** Advances handshake retry and established KCP timers. */
+int cnet_secure_kcp_update(cnet_secure_kcp *session, uint32_t now_ms);
+
+/** Returns the next absolute millisecond deadline for handshake or KCP progress. */
+int cnet_secure_kcp_check(const cnet_secure_kcp *session, uint32_t now_ms,
+                          uint32_t *out_next_ms);
+
+/** Releases KCP/FEC storage and wipes copied and derived secret material. */
+int cnet_secure_kcp_destroy(cnet_secure_kcp *session);
+
+/**
+ * Initializes a zero-initialized fixed-capacity UDP/KCP endpoint and arms
+ * continuous bounded receive. A live owner returns SALTS_EALREADY.
+ */
+int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
+                              const cnet_packet_endpoint_config *config);
+
+/** Returns the host-order UDP port shared by all endpoint sessions. */
+int cnet_packet_endpoint_port(const cnet_packet_endpoint *endpoint, uint16_t *out_port);
+
+bool cnet_packet_session_valid(cnet_packet_session session);
+
+/** Copies immutable protocol, peer and conversation identity for a live session. */
+int cnet_packet_session_get_info(const cnet_packet_endpoint *endpoint,
+                                 cnet_packet_session session,
+                                 cnet_packet_session_info *out_info);
+
+/**
+ * Explicitly opens one peer mapping. UDP requires conversation zero. Plain KCP
+ * requires a non-zero conversation id; authenticated KCP requires zero because
+ * its conversation id is derived during the handshake. Duplicate keys return
+ * SALTS_EALREADY.
+ */
+int cnet_packet_session_open(cnet_packet_endpoint *endpoint, const cnet_datagram_peer *peer,
+                             uint32_t conversation, cnet_packet_session *out_session);
+
+/** Closes one generation-checked session after its copied UDP writes drain. */
+int cnet_packet_session_close(cnet_packet_endpoint *endpoint, cnet_packet_session session);
+
+/** Copies and admits one UDP datagram or one reliable ordered KCP message. */
+int cnet_packet_send(cnet_packet_endpoint *endpoint, cnet_packet_session session,
+                     const void *data, size_t size);
+
+/** Drives socket completions and all due KCP timers on the caller-owned lane. */
+int cnet_packet_poll(cnet_packet_endpoint *endpoint, uint32_t timeout_ms, size_t *out_events);
+
+/** The only packet endpoint operation allowed concurrently from a non-owner thread. */
+int cnet_packet_wake(cnet_packet_endpoint *endpoint);
+
+/** Stops admission, KCP timers and UDP I/O, then drains terminal socket writes. */
+int cnet_packet_endpoint_stop(cnet_packet_endpoint *endpoint, uint32_t timeout_ms);
+
+/** Requires completed stop and releases the peer index and all fixed storage. */
+int cnet_packet_endpoint_destroy(cnet_packet_endpoint *endpoint);
 
 #ifdef __cplusplus
 }

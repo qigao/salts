@@ -9,6 +9,8 @@ typedef struct chttp_server_parser {
   void *impl;
 } chttp_server_parser;
 
+enum { CHTTP_SERVER_REQUEST_DEFERRED = 1 };
+
 typedef int (*chttp_server_parser_request_fn)(void *user, const chttp_server_request_view *request);
 typedef int (*chttp_server_parser_continue_fn)(void *user);
 typedef int (*chttp_server_parser_body_open_fn)(void *user,
@@ -43,6 +45,7 @@ int chttp_server_parser_execute(chttp_server_parser *parser, const void *data, s
                                 unsigned int *out_http_status);
 int chttp_server_parser_execute_consumed(chttp_server_parser *parser, const void *data, size_t size,
                                          size_t *out_consumed, unsigned int *out_http_status);
+int chttp_server_parser_resume(chttp_server_parser *parser);
 int chttp_server_parser_reset(chttp_server_parser *parser);
 void chttp_server_parser_destroy(chttp_server_parser *parser);
 

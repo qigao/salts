@@ -37,6 +37,8 @@ ABI 1 程序意外装载含新公开结构布局的 ABI 2 动态库，但源码�
 - 用户不接触 poller 的后台 HTTP/1.1/HTTP/2 server；同一 route、middleware、Session 和
   GET/HEAD/POST/PUT/DELETE/PATCH/OPTIONS handler API 同时服务两种协议；
 - route-scoped 流式 request sink、服务端 response source 与文件响应；
+- HTTP/1.1 handler 可交出 generation-checked deferred response，在应用 worker 完成后从任意线程
+  复制提交响应并唤醒 owner；
 - 同一个显式 WebSocket route 同时支持 HTTP/1.1 Upgrade 与 RFC 8441 HTTP/2 Extended CONNECT，
   并提供无需用户驱动 poller 的 `ws://`/verified `wss://` 同步 client；两种协议继续复用
   全局/路由 middleware、Session 与同一 CNet WebSocket engine；
@@ -45,7 +47,7 @@ ABI 1 程序意外装载含新公开结构布局的 ABI 2 动态库，但源码�
 - start-line、header count、header bytes、request body、response body、request count 的硬上限。
 
 当前有意不提供 HTTP/3、WebSocket extension/subprotocol、通用 CONNECT route、redirect、
-compression、proxy、multipart/Range、异步悬挂 server response 或自动 retry。
+compression、proxy、multipart/Range、HTTP/2 deferred response 或自动 retry。
 H1 client serializer 发送
 `Connection: keep-alive`；final response 只有在 llhttp 判定协议允许持久连接时才回到池中，
 `Connection: close`、EOF framing、解析失败、取消和 shutdown 都会关闭该连接。UDP/datagram 在
@@ -101,10 +103,24 @@ response builder。协议选择只发生在连接边界；公开 ABI 不暴露�
 CMeta interface/vtable。未来若加入第三种 wire protocol，可在保持公开 API 不变的前提下把该私有
 边界提升为 Strategy。
 
+网络-backed handler 还可从 request view 读取 borrowed `peer`；HTTPS/mTLS 在客户端提交并通过
+验证时同时提供 `peer_certificate_sha256`。明文连接或未提交客户端证书时指纹为 `NULL`，因此应用
+无需从 HTTP header 信任客户端自报的来源身份。
+
 全局 middleware 先于 route middleware 执行。middleware 可以调用一次
 `chttp_server_next_call()`，也可以直接 `chttp_server_reply()` 形成认证、CORS、限流或错误处理中断。
 request、route param、header、body、session value 与 response builder 都是 handler-scoped；不得跨
 callback、线程 handoff 或 coroutine suspension 保存裸指针。
+
+需要阻塞数据库或外部服务时，HTTP/1.1 handler 先复制业务所需的 request 字段，再调用
+`chttp_server_response_defer()` 封住当前 builder，并把拥有型 job 投递到应用已有的有界 worker
+队列。worker 最终调用一次 `chttp_server_deferred_reply()`；该调用在返回前复制 headers/body，
+因此 job 随后即可释放响应内存。每条连接最多挂起一个响应，总量受
+`network.connection_capacity` 约束；同连接的后续流水请求会保留并在前一响应完整写出后恢复。
+队列 admission 失败时，handler 应直接同步返回 429/503，不得先 defer。deferred 当前要求
+`session_capacity == 0` 且只支持 HTTP/1.1；应用级 Session 应随 job 自行解析与持有。停服会等待
+已经交出的 handle 完成，未完成时有超时的 `chttp_server_stop()` 返回 `SALTS_ETIMEDOUT`，调用方
+必须先终结工作再重试 stop。
 
 开启 Session 后，Cookie 只保存 128-bit 随机 session id，实际 key/value 留在 server 的固定容量
 存储中。Cookie 默认带 `Path=/; HttpOnly; SameSite=Lax`，可配置 `Secure`；idle timeout 滑动刷新。
@@ -186,8 +202,7 @@ int main(void) {
 串行执行，不能做阻塞数据库 I/O，也不能从 handler 调用 stop/destroy。Castle 风格的预加载
 模板/静态资源可以直接 reply；`chttp_server_response_file()` 在 handler 返回后通过 server 共享的
 CFlow file runtime 按有界 chunk 异步读取文件，完成事件唤醒 owner，并且只恢复对应的 H1 connection
-或 H2 stream。异步数据库与通用 Actor continuation 仍需要 owning request token + owner mailbox 的
-suspend/resume API。
+或 H2 stream。阻塞业务工作使用上述 deferred handle，不把 borrowed request view 交给 worker。
 
 ## H1/H2 共用的流式正文与文件 API
 

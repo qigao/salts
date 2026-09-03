@@ -131,6 +131,46 @@ set_target_properties(cnet_api_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+cmake_add_test(cnet_datagram_test
+  SOURCES cnet_datagram_test.c
+  LIBS salts_cnet Salts::TinyTest
+  INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_datagram_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(cnet_kcp_test
+  SOURCES cnet_kcp_test.c
+  LIBS salts_cnet Salts::TinyTest
+  INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_kcp_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(cnet_secure_kcp_test
+  SOURCES cnet_secure_kcp_test.c
+  LIBS salts_cnet Salts::TinyTest
+  INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_secure_kcp_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(cnet_packet_endpoint_test
+  SOURCES cnet_packet_endpoint_test.c
+  LIBS salts_cnet Salts::TinyTest
+  INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_packet_endpoint_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 cmake_add_test(cnet_benchmark_stats_test
   SOURCES cnet_benchmark_stats_test.c ../benchmarks/cnet_benchmark_stats.c
   LIBS Salts::Platform Salts::TinyTest

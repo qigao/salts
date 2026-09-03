@@ -1,6 +1,7 @@
 set(TARGET_NAME salts_cnet)
 
 find_package(c-ares CONFIG REQUIRED)
+find_package(kcp CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 get_target_property(cnet_cares_configurations c-ares::cares
@@ -46,6 +47,12 @@ endforeach()
 add_library(${TARGET_NAME} SHARED
   src/cnet_client.c
   src/cnet_command.c
+  src/cnet_datagram.c
+  src/cnet_kcp.c
+  src/cnet_kcp_fec.c
+  src/cnet_kcp_secure.c
+  src/cnet_secure_kcp.c
+  src/cnet_packet_endpoint.c
   src/cnet_dispatcher.c
   src/cnet_event.c
   src/cnet_listener.c
@@ -78,7 +85,9 @@ target_include_directories(
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC Salts::NativeIO Salts::Concurrency
-  PRIVATE Salts::UriParser Salts::Platform ${cnet_cares_link_items} OpenSSL::SSL OpenSSL::Crypto
+  PRIVATE Salts::UriParser Salts::Platform Salts::CSTL monocypher salts_reed
+          ${cnet_cares_link_items} kcp::kcp
+          OpenSSL::SSL OpenSSL::Crypto
           $<$<PLATFORM_ID:Windows>:crypt32>)
 
 install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
@@ -87,6 +96,10 @@ if(WIN32)
 endif()
 install(FILES "${c-ares_DIR}/copyright"
         DESTINATION share/licenses/Salts/c-ares)
+install(FILES "${kcp_DIR}/copyright"
+        DESTINATION share/licenses/Salts/kcp)
+install(FILES "${CMAKE_SOURCE_DIR}/vendor/reed/LICENSE"
+        DESTINATION share/licenses/Salts/reed)
 install(
   DIRECTORY include/cnet
   DESTINATION include

@@ -29,12 +29,50 @@ Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 TCP and Pipe deliver byte chunks. Connected UDP delivers one datagram per
 receive callback. A receive view is borrowed only until its callback returns.
 TLS delivers verified encrypted byte streams through the same send/receive
-contract. WebSocket and KCP are not exposed by this base header. CNet parses
+contract. The same header also exposes bound UDP, the KCP session engine, and
+their unified packet endpoint; WebSocket remains in `<cnet/websocket.h>`. CNet parses
 TCP, TLS, and UDP URIs through Salts UriParser and then applies
 transport-specific constraints: network URIs require an explicit port and reject
 userinfo, path, query, and fragment components instead of accepting truncated or
 ambiguous input. Pipe is a scheme-specific IPC endpoint rather than a network
 authority, so its bounded name after `pipe://` is preserved byte-for-byte.
+
+## Unified UDP/KCP packet endpoint
+
+`cnet_packet_endpoint` is the application-facing interface for bound UDP and
+KCP. Select `CNET_PACKET_UDP` or `CNET_PACKET_KCP`; both use the same explicit
+session open, copied send, poll, session close, stop, and destroy operations.
+Sessions are generation-checked values indexed by a fixed-capacity `(peer,
+conversation)` table. UDP requires conversation zero. Plain KCP requires a
+non-zero conversation and retains message boundaries while adding ordering,
+ACKs, retransmission, and fragmentation. Authenticated KCP is selected
+explicitly with `CNET_KCP_SECURITY_PSK_V1`; callers open it with conversation
+zero, observe `CONNECTING`, and receive `OPEN` only after the PSK handshake
+derives the read-only conversation id.
+
+An unknown inbound key is admitted only when `observer.on_admit` returns
+`SALTS_OK`. This decision is synchronous on the poll owner; a missing callback
+rejects unknown peers. Capacity exhaustion reports `SALTS_ENOBUFS` rather than
+growing or evicting live sessions. `cnet_packet_send()` means that CNet copied
+and admitted the message. It does not claim remote delivery: KCP can emit and
+retransmit multiple UDP packets for one application message, so the facade does
+not invent a per-message ACK callback. Asynchronous socket failures and KCP
+output backpressure arrive through the generation-checked `on_error` callback.
+
+The lower-level `cnet_datagram` API remains available for protocols that need
+raw peer-addressed UDP. Each successful send retains its caller tag and reports
+that tag exactly once in the terminal send callback. `cnet_kcp` remains
+available as a socket-independent engine for applications with an existing
+datagram transport. Its `output` callback is borrowed, `input` consumes one
+borrowed wire packet synchronously, and `update/check` make timer ownership
+explicit.
+
+Plain `cnet_kcp` provides reliability, not confidentiality or peer
+authentication. `cnet_secure_kcp` and the packet endpoint's explicit PSK v1
+mode add the CoroNet-compatible authenticated handshake, XChaCha20-Poly1305
+records, replay rejection, and Reed-Solomon FEC. There is no plaintext fallback
+or wire sniffing. Unknown peers reach `on_admit` only after their client hello
+passes a stateless PSK MAC check.
 
 ## WebSocket session engine
 
@@ -137,6 +175,12 @@ HTTP/2 must treat that result as a policy decision rather than assume `h2`.
 `cnet_tls_peer_certificate_sha256()` copies the verified peer leaf certificate
 fingerprint while the TLS connection remains open; a server session whose peer
 did not present a client certificate returns `SALTS_ENOENT`.
+
+Servers that need transport identity can use `cnet_listener_accept_peer()` or
+`cnet_listener_accept_tls_peer()`. They preserve the existing accept lifecycle
+while also returning an owning `cnet_stream_peer` value containing the remote
+IPv4/IPv6 address, scope id and host-order port. The original accept helpers
+remain source-compatible wrappers when endpoint metadata is not needed.
 
 Servers initialize one reusable `cnet_tls_server`, accept sockets with
 `cnet_listener_accept_tls()`, and destroy the public context after closing
