@@ -37,6 +37,23 @@ userinfo, path, query, and fragment components instead of accepting truncated or
 ambiguous input. Pipe is a scheme-specific IPC endpoint rather than a network
 authority, so its bounded name after `pipe://` is preserved byte-for-byte.
 
+## Socket tuning
+
+`cnet_stream_socket_options` is the public, versioned TCP policy shared by
+outgoing TCP/TLS connections and adopted listener sockets. Set it on a stopped
+`cnet_client` with `cnet_client_set_stream_socket_options()`; listener owners use
+`cnet_listener_init_ex()` with versioned `cnet_listener_options`. The policy
+exposes OS receive/send buffers, keepalive enable plus idle/interval/probe count,
+and linger. `cnet_datagram_config.reuse_port` exposes the same listener-port
+sharing decision for UDP and the unified UDP/KCP packet endpoint.
+
+Zero-valued buffer and timing fields preserve platform defaults. Keepalive
+detail without `keepalive` is invalid; enabled linger with zero milliseconds is
+an abortive close. CNet copies every policy into its owner command, so no caller
+pointer is retained. Unsupported platform options return `SALTS_ENOTSUP` before
+the socket is published, and invalid sizes or combinations fail without a
+silent fallback.
+
 ## Unified UDP/KCP packet endpoint
 
 `cnet_packet_endpoint` is the application-facing interface for bound UDP and
@@ -94,9 +111,9 @@ callback and becomes `CLOSED` only after any retained echo Close is transferred.
 The engine owns protocol state but performs no socket I/O and creates no thread.
 It is single-owner and can therefore be driven by a CNet callback, Executor,
 Actor mailbox, or another ordered byte-stream adapter. CHTTP remains responsible
-for HTTP/1.1 Upgrade routing/header validation and future HTTP/2 extended
-CONNECT. `cnet_connect()` does not currently accept `ws://` or `wss://`, and
-CHTTP does not yet expose WebSocket routes.
+for HTTP/1.1 Upgrade routing/header validation and HTTP/2 extended CONNECT.
+`cnet_connect()` does not accept `ws://` or `wss://`; applications use CHTTP's
+WebSocket routes and clients, which adapt those sessions onto this engine.
 
 The following complete adapter example sends one server-side text frame into a
 bounded transport sink:

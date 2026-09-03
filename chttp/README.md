@@ -64,14 +64,16 @@ Authorization 错当成普通 header。
 
 HTTP/2 的 transport-independent 引擎及 client/server CNet adapter 已导入；后续只把 S3 作为
 CHTTP 上层模块导入，HTTP/3 不在范围内。TLS 与 WebSocket frame/session 状态归 CNet，CHTTP 负责
-HTTPS policy、H1 Upgrade、H2 Extended CONNECT、路由和 byte-stream Adapter；KCP 仍是后续
-CNet 能力。
+HTTPS policy、H1 Upgrade、H2 Extended CONNECT、路由和 byte-stream Adapter；UDP/KCP 由 CNet
+的统一 packet endpoint 独立承载，不进入 HTTP transport。
 详细阶段与验证门槛见
 `../docs/CHTTP_CNET_PROTOCOL_TODO.md`。
 
 这里的 keep-alive 是 HTTP/1.1 顺序复用或 HTTP/2 session 多 stream 复用，不等于内核
-`SO_KEEPALIVE` 探测参数。TCP keepalive idle/interval/probe count 仍应作为未来 CNet transport
-profile，而不是伪装成 CHTTP pool 配置。
+`SO_KEEPALIVE` 探测参数。内核 socket policy 统一使用 CNet 的
+`cnet_stream_socket_options`：server 在启动前调用 `chttp_server_set_socket_options()`，同步
+WebSocket client 通过 `chttp_websocket_client_config.socket_options` 配置。零值保留系统默认；
+平台不支持的细分选项返回 `SALTS_ENOTSUP`，不回退到另一套语义。
 
 `cnet_send()` admission 成功只证明 bytes 已复制进有界 command storage；`observer.on_send`
 在完整 ordered write terminal 后报告一次完成。H1 server 只在该 callback 后重新申请 receive；
@@ -340,6 +342,14 @@ response，否则 H1 发送 101、H2 发送 200 且保持 stream 打开。`on_op
 该帧会在 opening response 完整写出后才进入 wire。`on_event` 与 `chttp_websocket` 都属于 server owner
 callback，不能跨 callback、线程或协程挂起保存；text/binary/ping/pong/close 均委托给 CNet 的
 同一有界 RFC 6455 engine。
+
+业务需要在 callback 返回后异步回包时，必须在 callback 内调用
+`chttp_server_websocket_session_capture()` 取得 generation-checked
+`chttp_server_websocket_session`，再从任意线程调用
+`chttp_server_websocket_send_text()`、`chttp_server_websocket_send_binary()`、ping/pong 或 close。
+提交会在返回前复制 payload，并受 `network.command_capacity` 与 `network.max_send_bytes` 约束；队列满
+返回 `SALTS_ENOBUFS`，已经关闭或复用的 connection/stream handle 只会丢弃对应旧命令，不会误投到
+新会话。该 value 不延长连接或 server 生命周期，所有提交者必须在 `chttp_server_destroy()` 前静默。
 
 普通 client 使用 `chttp_websocket_client_init()`、`chttp_websocket_client_connect()`、阻塞
 send/receive/close 与 `chttp_websocket_client_destroy()`；这些调用内部推进 CNet，应用不接触

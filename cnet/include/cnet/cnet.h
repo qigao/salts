@@ -63,6 +63,9 @@ typedef struct cnet_connection {
   uint32_t generation;
 } cnet_connection;
 
+/** Fixed RFC 9266-style TLS exporter binding used to bind application handshakes to one connection. */
+#define CNET_TLS_CHANNEL_BINDING_BYTES 32u
+
 typedef enum cnet_connection_state {
   CNET_CONNECTION_CONNECTING = 1,
   CNET_CONNECTION_CONNECTED,
@@ -282,6 +285,37 @@ typedef struct cnet_connect_options {
 } cnet_connect_options;
 
 /**
+ * Optional OS policy for future TCP-backed connections owned by one client.
+ * Zero buffer sizes preserve platform defaults. Millisecond durations are
+ * rounded up when a platform exposes only whole-second socket options.
+ * Keepalive detail requires `keepalive == 1`; `linger_ms == 0` with
+ * `linger == 1` requests abortive close.
+ */
+typedef struct cnet_stream_socket_options {
+  size_t size;
+  size_t receive_buffer_bytes;
+  size_t send_buffer_bytes;
+  uint32_t keepalive_idle_ms;
+  uint32_t keepalive_interval_ms;
+  uint32_t keepalive_count;
+  uint32_t linger_ms;
+  int keepalive;
+  int linger;
+} cnet_stream_socket_options;
+
+#define CNET_STREAM_SOCKET_OPTIONS_INIT                                                           \
+  {sizeof(cnet_stream_socket_options), 0u, 0u, 0u, 0u, 0u, 0u, 0, 0}
+
+/** Optional listener policy consumed synchronously by `cnet_listener_init_ex()`. */
+typedef struct cnet_listener_options {
+  size_t size;
+  /** Request SO_REUSEPORT. Unsupported platforms return `SALTS_ENOTSUP`. */
+  int reuse_port;
+} cnet_listener_options;
+
+#define CNET_LISTENER_OPTIONS_INIT {sizeof(cnet_listener_options), 0}
+
+/**
  * All capacities are hard bounds and must be positive. Command and event
  * capacities must be powers of two. Completion batch capacity cannot exceed
  * request capacity. Zero connect/read/write timeouts disable that deadline.
@@ -334,11 +368,13 @@ typedef struct cnet_datagram_config {
   size_t max_datagram_bytes;
   size_t receive_buffer_bytes;
   cnet_datagram_observer observer;
+  /** Request SO_REUSEPORT before bind. Unsupported platforms return `SALTS_ENOTSUP`. */
+  int reuse_port;
 } cnet_datagram_config;
 
 #define CNET_DATAGRAM_CONFIG_INIT                                                                  \
   {sizeof(cnet_datagram_config), (native_io_backend_kind)0, NULL, 0u, 0u, 0u, 0u, 0u, 0u,          \
-   {NULL, NULL, NULL}}
+   {NULL, NULL, NULL}, 0}
 
 enum {
   CNET_KCP_DEFAULT_MTU = 1400,
@@ -459,6 +495,16 @@ typedef struct cnet_packet_endpoint_config {
  * resource/backend initialization error. No partial client is published.
  */
 int cnet_client_init(cnet_client *client, const cnet_client_config *config);
+
+/** Validates bounds and option dependencies without touching a socket. */
+int cnet_stream_socket_options_validate(const cnet_stream_socket_options *options);
+
+/**
+ * Copies policy for future TCP/TLS connections. No active connection may
+ * exist while replacing this client-global policy.
+ */
+int cnet_client_set_stream_socket_options(cnet_client *client,
+                                          const cnet_stream_socket_options *options);
 
 /**
  * Copies all options needed after return. On immediate failure `out_connection`
@@ -624,11 +670,28 @@ int cnet_tls_peer_certificate_sha256(
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
 
 /**
+ * Exports exactly CNET_TLS_CHANNEL_BINDING_BYTES using the
+ * `EXPORTER-Channel-Binding` label and an explicit empty context. The query is
+ * valid only while the TLS connection remains open. Plaintext returns
+ * `SALTS_ENOTSUP`; incomplete TLS handshakes return `SALTS_ENOTCONN`.
+ */
+int cnet_tls_export_channel_binding(
+    cnet_client *client, cnet_connection connection,
+    uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]);
+
+/**
  * Creates a nonblocking TCP listener. The listener has one owner thread;
  * ownership may move from initialization to a worker before the first wait or
  * accept, but calls must not overlap.
  */
 int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *config);
+
+/** Validates the versioned listener policy without creating a socket. */
+int cnet_listener_options_validate(const cnet_listener_options *options);
+
+/** Creates a listener with an explicit, synchronously copied socket policy. */
+int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
+                          const cnet_listener_options *options);
 
 /** Returns the bound host-order port, including an OS-selected ephemeral port. */
 int cnet_listener_port(const cnet_listener *listener, uint16_t *out_port);

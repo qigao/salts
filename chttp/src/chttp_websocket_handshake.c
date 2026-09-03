@@ -115,14 +115,17 @@ typedef struct chttp_websocket_client_handshake_parser {
   char *field;
   char *value;
   const char *expected_accept;
+  const char *expected_subprotocol;
   size_t capacity;
   size_t field_size;
   size_t value_size;
   size_t accept_count;
+  size_t subprotocol_count;
   unsigned int http_status;
   bool upgrade;
   bool connection_upgrade;
   bool accept_matches;
+  bool subprotocol_matches;
   bool headers_complete;
   bool protocol_version;
   bool invalid_framing;
@@ -188,9 +191,16 @@ static int chttp_websocket_client_header_value_complete(llhttp_t *parser) {
                                            "Transfer-Encoding"))
     context->invalid_framing = true;
   else if (chttp_websocket_ascii_equal_n(context->field, context->field_size,
-                                         "Sec-WebSocket-Extensions") ||
-           chttp_websocket_ascii_equal_n(context->field, context->field_size,
-                                         "Sec-WebSocket-Protocol"))
+                                         "Sec-WebSocket-Protocol")) {
+    size_t size = 0u;
+    const char *trimmed = chttp_websocket_trim_ows(context->value, &size);
+    ++context->subprotocol_count;
+    context->subprotocol_matches =
+        context->expected_subprotocol != NULL && trimmed != NULL &&
+        size == strlen(context->expected_subprotocol) &&
+        memcmp(trimmed, context->expected_subprotocol, size) == 0;
+  } else if (chttp_websocket_ascii_equal_n(context->field, context->field_size,
+                                            "Sec-WebSocket-Extensions"))
     context->unsupported_negotiation = true;
   context->field_size = 0u;
   context->value_size = 0u;
@@ -210,6 +220,7 @@ static int chttp_websocket_client_headers_complete(llhttp_t *parser) {
 
 int chttp_websocket_client_handshake_validate(const void *data, size_t size,
                                               const char *expected_accept,
+                                              const char *expected_subprotocol,
                                               unsigned int *out_http_status) {
   chttp_websocket_client_handshake_parser context = {0};
   llhttp_errno_t parse_status;
@@ -226,6 +237,7 @@ int chttp_websocket_client_handshake_validate(const void *data, size_t size,
     goto cleanup;
   }
   context.expected_accept = expected_accept;
+  context.expected_subprotocol = expected_subprotocol;
   context.capacity = size + 1u;
   llhttp_settings_init(&context.settings);
   context.settings.on_header_field = chttp_websocket_client_header_field;
@@ -240,6 +252,9 @@ int chttp_websocket_client_handshake_validate(const void *data, size_t size,
   if ((parse_status == HPE_PAUSED_UPGRADE || parse_status == HPE_OK) && context.headers_complete &&
       context.protocol_version && context.http_status == 101u && context.upgrade &&
       context.connection_upgrade && context.accept_count == 1u && context.accept_matches &&
+      ((expected_subprotocol == NULL && context.subprotocol_count == 0u) ||
+       (expected_subprotocol != NULL && context.subprotocol_count == 1u &&
+        context.subprotocol_matches)) &&
       !context.invalid_framing && !context.unsupported_negotiation)
     status = SALTS_OK;
   else if (context.overflow) status = SALTS_EMSGSIZE;

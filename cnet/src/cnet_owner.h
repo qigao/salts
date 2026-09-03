@@ -32,6 +32,7 @@ typedef struct cnet_owner_connect_payload {
   uint32_t write_timeout_ms;
   uint32_t tls_handshake_timeout_ms;
   size_t tls_io_buffer_bytes;
+  cnet_stream_socket_options socket_options;
   bool adopted;
   bool tls_server;
 } cnet_owner_connect_payload;
@@ -70,6 +71,9 @@ bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
+int cnet_owner_tls_export_channel_binding(
+    cnet_owner *owner, cnet_session_handle session,
+    uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]);
 
 /** Clears owner metadata after the terminal notification recycled the handle. */
 int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session);

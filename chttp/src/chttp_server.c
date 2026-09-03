@@ -351,11 +351,15 @@ static void chttp_server_connection_destroy(chttp_server_connection *connection)
 static void chttp_server_impl_free(chttp_server_impl *impl) {
   size_t index;
   if (impl == NULL) return;
+  if (impl->websocket_commands != NULL)
+    for (index = 0u; index < impl->config.network.command_capacity; ++index)
+      free(impl->websocket_commands[index].data);
   if (impl->connections != NULL)
     for (index = 0u; index < impl->config.network.connection_capacity; ++index)
       chttp_server_connection_destroy(&impl->connections[index]);
   chttp_session_store_destroy(impl);
   free(impl->file_transfers);
+  free(impl->websocket_commands);
   free(impl->connections);
   free(impl->middleware);
   free(impl->route_middleware);
@@ -438,6 +442,7 @@ int chttp_server_init(chttp_server *server, const chttp_server_config *config) {
   impl = (chttp_server_impl *)calloc(1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
   impl->config = *config;
+  impl->socket_options = (chttp_server_socket_options)CHTTP_SERVER_SOCKET_OPTIONS_INIT;
   impl->file_transfer_capacity = file_transfer_capacity;
   if (impl->config.stream_chunk_bytes == 0u) {
     const size_t transport_chunk_bytes = config->network.max_send_bytes -
@@ -483,11 +488,14 @@ int chttp_server_init(chttp_server *server, const chttp_server_config *config) {
                                                         sizeof(*impl->connections));
   impl->file_transfers =
       (chttp_file_transfer **)calloc(file_transfer_capacity, sizeof(*impl->file_transfers));
+  impl->websocket_commands = (chttp_server_websocket_command *)calloc(
+      config->network.command_capacity, sizeof(*impl->websocket_commands));
   if (impl->host == NULL || impl->session_cookie_name == NULL || impl->routes == NULL ||
       impl->route_paths == NULL ||
       (route_middleware_count != 0u && impl->route_middleware == NULL) ||
       (config->middleware_capacity != 0u && impl->middleware == NULL) ||
-      impl->connections == NULL || impl->file_transfers == NULL) {
+      impl->connections == NULL || impl->file_transfers == NULL ||
+      impl->websocket_commands == NULL) {
     chttp_server_impl_free(impl);
     return SALTS_ENOMEM;
   }
@@ -516,6 +524,25 @@ int chttp_server_init(chttp_server *server, const chttp_server_config *config) {
   impl->sync_initialized = true;
   impl->stats.terminal_status = SALTS_OK;
   server->impl = impl;
+  return SALTS_OK;
+}
+
+int chttp_server_set_socket_options(chttp_server *server,
+                                    const chttp_server_socket_options *options) {
+  chttp_server_impl *impl;
+  int status;
+  if (server == NULL || server->impl == NULL || options == NULL ||
+      options->size != sizeof(*options))
+    return SALTS_EINVAL;
+  status = cnet_stream_socket_options_validate(&options->stream);
+  if (status != SALTS_OK) return status;
+  status = cnet_listener_options_validate(&options->listener);
+  if (status != SALTS_OK) return status;
+  impl = (chttp_server_impl *)server->impl;
+  if (impl->start_called || impl->thread_started || impl->network_initialized ||
+      impl->listener_initialized)
+    return SALTS_EBUSY;
+  impl->socket_options = *options;
   return SALTS_OK;
 }
 
@@ -814,7 +841,8 @@ static void chttp_server_on_receive(void *user, cnet_connection handle,
   int status;
   if (!chttp_server_connection_matches(connection, handle) || view == NULL ||
       view->kind != CNET_MESSAGE_BYTES ||
-      (connection->wire_protocol != CHTTP_SERVER_WIRE_HTTP_2 && connection->writing)) {
+      (connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_OPEN &&
+       connection->wire_protocol != CHTTP_SERVER_WIRE_HTTP_2 && connection->writing)) {
     chttp_server_connection_close(connection);
     return;
   }
@@ -1419,6 +1447,8 @@ static void chttp_server_worker(void *user) {
     if (status != SALTS_OK) break;
     status = chttp_server_deferred_progress(server);
     if (status != SALTS_OK) break;
+    status = chttp_server_websocket_commands_progress(server);
+    if (status != SALTS_OK) break;
     status = chttp_server_retry_pending(server);
     if (status != SALTS_OK) break;
     status = cnet_listener_wait(&server->listener, 0u, &ready);
@@ -1432,6 +1462,8 @@ static void chttp_server_worker(void *user) {
     status = chttp_server_file_progress(server);
     if (status != SALTS_OK) break;
     status = chttp_server_deferred_progress(server);
+    if (status != SALTS_OK) break;
+    status = chttp_server_websocket_commands_progress(server);
     if (status != SALTS_OK) break;
     status = chttp_server_retry_pending(server);
     if (status != SALTS_OK) break;
@@ -1478,11 +1510,18 @@ int chttp_server_start(chttp_server *server) {
   status = cnet_client_init(&impl->network, &impl->config.network);
   if (status != SALTS_OK) return status;
   impl->network_initialized = true;
+  status = cnet_client_set_stream_socket_options(&impl->network,
+                                                 &impl->socket_options.stream);
+  if (status != SALTS_OK) {
+    (void)chttp_server_cleanup_network(impl, false);
+    return status;
+  }
   listener_config = (cnet_listener_config){.backend = impl->config.network.backend,
                                            .host = impl->host,
                                            .port = impl->config.port,
                                            .backlog = impl->config.backlog};
-  status = cnet_listener_init(&impl->listener, &listener_config);
+  status = cnet_listener_init_ex(&impl->listener, &listener_config,
+                                 &impl->socket_options.listener);
   if (status == SALTS_OK) {
     impl->listener_initialized = true;
     status = cnet_listener_port(&impl->listener, &port);

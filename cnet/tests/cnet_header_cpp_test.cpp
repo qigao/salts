@@ -24,6 +24,10 @@ static_assert(std::is_standard_layout<cnet_tls_client>::value,
               "TLS client must be a C value wrapper");
 static_assert(std::is_standard_layout<cnet_const_buffer>::value,
               "send segments must remain C value descriptors");
+static_assert(std::is_standard_layout<cnet_stream_socket_options>::value,
+              "stream socket policy must remain C ABI data");
+static_assert(std::is_standard_layout<cnet_listener_options>::value,
+              "listener socket policy must remain C ABI data");
 static_assert(std::is_standard_layout<cnet_websocket>::value,
               "WebSocket must be a C value wrapper");
 static_assert(CNET_CONNECTION_CONNECTED != CNET_CONNECTION_FAILED,
@@ -54,6 +58,8 @@ int main() {
   cnet_websocket websocket{};
   cnet_client_config config{};
   cnet_listener_config listener_config{};
+  cnet_stream_socket_options stream_socket_options = CNET_STREAM_SOCKET_OPTIONS_INIT;
+  cnet_listener_options listener_options = CNET_LISTENER_OPTIONS_INIT;
   cnet_datagram_config datagram_config = CNET_DATAGRAM_CONFIG_INIT;
   cnet_kcp_config kcp_config = CNET_KCP_CONFIG_INIT;
   cnet_secure_kcp_config secure_kcp_config = CNET_SECURE_KCP_CONFIG_INIT;
@@ -79,6 +85,8 @@ int main() {
   (void)websocket;
   (void)config;
   (void)listener_config;
+  (void)stream_socket_options;
+  (void)listener_options;
   (void)datagram_config;
   (void)kcp_config;
   (void)secure_kcp_config;

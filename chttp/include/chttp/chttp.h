@@ -59,6 +59,18 @@ typedef struct chttp_websocket {
   void *impl;
 } chttp_websocket;
 
+/**
+ * Generation-checked server WebSocket session captured from a callback-scoped
+ * peer. The value does not keep the connection alive and must not outlive its
+ * server.
+ */
+typedef struct chttp_server_websocket_session {
+  void *impl;
+  uint32_t connection_slot;
+  uint32_t connection_generation;
+  int32_t stream_id;
+} chttp_server_websocket_session;
+
 /** Single-owner requests-style WebSocket client; public calls drive CNet internally. */
 typedef struct chttp_websocket_client {
   void *impl;
@@ -289,6 +301,8 @@ typedef struct chttp_websocket_client_config {
   size_t h2_hpack_dynamic_table_bytes;
   /** HTTP/2 SETTINGS entries accepted per frame; zero selects 16. */
   size_t h2_max_settings_count;
+  /** Optional CNet socket policy; zeroed size preserves platform defaults. */
+  cnet_stream_socket_options socket_options;
 } chttp_websocket_client_config;
 
 typedef struct chttp_websocket_connect_options {
@@ -303,6 +317,8 @@ typedef struct chttp_websocket_connect_options {
   uint32_t timeout_ms;
   /** HTTP/1.1 Upgrade by default; HTTP/2 selects RFC 8441 Extended CONNECT. */
   chttp_protocol protocol;
+  /** Optional single protocol token; the server must select it exactly. */
+  const char *subprotocol;
 } chttp_websocket_connect_options;
 
 typedef struct chttp_websocket_pool_config {
@@ -366,6 +382,17 @@ typedef struct chttp_server_config {
   /** In-memory reply bound; zero derives the largest value fitting one transport send. */
   size_t max_buffered_response_body_bytes;
 } chttp_server_config;
+
+/** Socket policy copied into a stopped HTTP/WebSocket server before start. */
+typedef struct chttp_server_socket_options {
+  size_t size;
+  cnet_stream_socket_options stream;
+  cnet_listener_options listener;
+} chttp_server_socket_options;
+
+#define CHTTP_SERVER_SOCKET_OPTIONS_INIT                                                          \
+  {sizeof(chttp_server_socket_options), CNET_STREAM_SOCKET_OPTIONS_INIT,                           \
+   CNET_LISTENER_OPTIONS_INIT}
 
 /** Thread-safe snapshot of server lifecycle and bounded admission counters. */
 typedef struct chttp_server_stats {
@@ -643,6 +670,10 @@ int chttp_client_destroy(chttp_client *client, uint32_t timeout_ms);
  */
 int chttp_server_init(chttp_server *server, const chttp_server_config *config);
 
+/** Replaces socket policy before listener/network start; later calls return `SALTS_EBUSY`. */
+int chttp_server_set_socket_options(chttp_server *server,
+                                    const chttp_server_socket_options *options);
+
 /**
  * Adds one method/path-pattern route before start. Complete `:name` segments
  * bind raw, non-percent-decoded params. The user pointer is borrowed through
@@ -683,6 +714,27 @@ int chttp_websocket_send_ping(chttp_websocket *websocket, const void *data, size
 int chttp_websocket_send_pong(chttp_websocket *websocket, const void *data, size_t size);
 int chttp_websocket_close(chttp_websocket *websocket, uint16_t code, const void *reason,
                           size_t reason_size);
+
+/** Capture a stable server session value while inside on_open/on_event. */
+int chttp_server_websocket_session_capture(const chttp_websocket *websocket,
+                                            chttp_server_websocket_session *out_session);
+
+/**
+ * Thread-safe copied command admission for a captured server WebSocket.
+ * SALTS_OK means the bounded server queue owns a copy; SALTS_ENOBUFS applies
+ * backpressure and SALTS_ENOENT means the captured connection is no longer
+ * current.
+ */
+int chttp_server_websocket_send_text(const chttp_server_websocket_session *session,
+                                     const void *data, size_t size);
+int chttp_server_websocket_send_binary(const chttp_server_websocket_session *session,
+                                       const void *data, size_t size);
+int chttp_server_websocket_send_ping(const chttp_server_websocket_session *session,
+                                     const void *data, size_t size);
+int chttp_server_websocket_send_pong(const chttp_server_websocket_session *session,
+                                     const void *data, size_t size);
+int chttp_server_websocket_close(const chttp_server_websocket_session *session, uint16_t code,
+                                 const void *reason, size_t reason_size);
 
 /**
  * Initializes a disconnected, single-owner requests-style client. Every
@@ -790,6 +842,14 @@ const char *chttp_server_request_param(const chttp_server_request_view *request,
  */
 int chttp_server_response_set_header(chttp_server_response *response, const char *name,
                                      const char *value);
+
+/**
+ * Selects one case-sensitive WebSocket subprotocol token offered by the
+ * current upgrade request. The selected token is copied into the handshake.
+ */
+int chttp_server_response_select_websocket_subprotocol(
+    chttp_server_response *response, const chttp_server_request_view *request,
+    const char *subprotocol);
 
 /**
  * Seals the current HTTP/1.1 response and returns a cross-thread completion

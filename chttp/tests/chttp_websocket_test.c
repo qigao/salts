@@ -26,6 +26,12 @@ typedef struct chttp_websocket_test_probe {
   atomic_int closes;
 } chttp_websocket_test_probe;
 
+typedef struct chttp_websocket_test_server_session_probe {
+  chttp_server_websocket_session session;
+  atomic_int captured;
+  atomic_int peer_present;
+} chttp_websocket_test_server_session_probe;
+
 static native_io_backend_kind chttp_websocket_test_backend(void) {
 #if defined(_WIN32)
   return NATIVE_IO_BACKEND_IOCP;
@@ -145,6 +151,14 @@ static int chttp_websocket_test_h2_open(void *user, chttp_websocket *websocket,
   return chttp_websocket_test_open(user, websocket, request, response);
 }
 
+static int chttp_websocket_test_subprotocol_open(void *user, chttp_websocket *websocket,
+                                                 const chttp_server_request_view *request,
+                                                 chttp_server_response *response) {
+  int status = chttp_server_response_select_websocket_subprotocol(response, request, "mqtt");
+  if (status != SALTS_OK) return status;
+  return chttp_websocket_test_open(user, websocket, request, response);
+}
+
 static int chttp_websocket_test_pool_open(void *user, chttp_websocket *websocket,
                                           const chttp_server_request_view *request,
                                           chttp_server_response *response) {
@@ -168,6 +182,28 @@ static int chttp_websocket_test_reject_open(void *user, chttp_websocket *websock
   (void)request;
   (void)response;
   return SALTS_EPERM;
+}
+
+static int chttp_websocket_test_capture_open(void *user, chttp_websocket *websocket,
+                                              const chttp_server_request_view *request,
+                                              chttp_server_response *response) {
+  chttp_websocket_test_server_session_probe *probe =
+      (chttp_websocket_test_server_session_probe *)user;
+  int status;
+  (void)response;
+  atomic_store_explicit(&probe->peer_present, request != NULL && request->peer != NULL,
+                        memory_order_release);
+  status = chttp_server_websocket_session_capture(websocket, &probe->session);
+  if (status == SALTS_OK)
+    atomic_store_explicit(&probe->captured, 1, memory_order_release);
+  return status;
+}
+
+static void chttp_websocket_test_capture_event(void *user, chttp_websocket *websocket,
+                                                const chttp_websocket_event *event) {
+  (void)user;
+  (void)websocket;
+  (void)event;
 }
 
 static int chttp_websocket_test_empty_source(void *user, void *buffer, size_t capacity,
@@ -213,6 +249,117 @@ static void chttp_websocket_test_event(void *user, chttp_websocket *websocket,
 }
 
 spec("CHTTP WebSocket client/server") {
+  it("admits a copied server WebSocket send from outside the callback thread") {
+    chttp_websocket_test_server_session_probe probe;
+    chttp_server server = {0};
+    chttp_server_config server_config = chttp_websocket_test_server_config();
+    chttp_server_websocket_options route = {.size = sizeof(route),
+                                            .path = "/async",
+                                            .on_open = chttp_websocket_test_capture_open,
+                                            .on_event = chttp_websocket_test_capture_event,
+                                            .user = &probe};
+    chttp_websocket_client client = {0};
+    chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+    chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options)};
+    chttp_websocket_event event;
+    unsigned int http_status = 0u;
+    uint16_t port = 0u;
+    char uri[128];
+
+    memset(&probe, 0, sizeof(probe));
+    atomic_init(&probe.captured, 0);
+    atomic_init(&probe.peer_present, 0);
+    check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
+    check_equal(chttp_server_websocket_with(&server, &route), SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_true(snprintf(uri, sizeof(uri), "ws://127.0.0.1:%u/async", (unsigned int)port) > 0);
+    connect_options.uri = uri;
+    connect_options.timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    check_equal(chttp_websocket_client_init(&client, &client_config), SALTS_OK);
+    check_equal(chttp_websocket_client_connect(&client, &connect_options, &http_status), SALTS_OK);
+    check_equal(http_status, 101u);
+    check_equal(atomic_load_explicit(&probe.captured, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&probe.peer_present, memory_order_acquire), 1);
+    check_equal(chttp_server_websocket_send_binary(&probe.session, "mqtt", 4u), SALTS_OK);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                SALTS_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.message_type, CHTTP_WEBSOCKET_MESSAGE_BINARY);
+    check_equal(event.size, 4u);
+    check_equal(memcmp(event.data, "mqtt", 4u), 0);
+    check_equal(chttp_server_websocket_close(&probe.session, 1000u, NULL, 0u), SALTS_OK);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                SALTS_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_CLOSE);
+    check_equal(chttp_websocket_client_destroy(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("routes a copied server WebSocket send to the captured HTTP/2 stream") {
+    chttp_websocket_test_server_session_probe probe;
+    chttp_server server = {0};
+    chttp_server_config server_config = chttp_websocket_test_server_config();
+    chttp_server_websocket_options route = {.size = sizeof(route),
+                                            .path = "/async-h2",
+                                            .on_open = chttp_websocket_test_capture_open,
+                                            .on_event = chttp_websocket_test_capture_event,
+                                            .user = &probe};
+    chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+    chttp_websocket_pool_config pool_config;
+    chttp_websocket_pool pool = {0};
+    chttp_websocket_session client_session = {0};
+    chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options),
+                                                       .protocol = CHTTP_HTTP_2,
+                                                       .timeout_ms =
+                                                           CHTTP_WEBSOCKET_TEST_TIMEOUT_MS};
+    chttp_websocket_event event;
+    unsigned int http_status = 0u;
+    uint16_t port = 0u;
+    char uri[128];
+
+    memset(&probe, 0, sizeof(probe));
+    atomic_init(&probe.captured, 0);
+    atomic_init(&probe.peer_present, 0);
+    chttp_websocket_test_enable_h2(&server_config, &client_config);
+    pool_config = (chttp_websocket_pool_config){.size = sizeof(pool_config),
+                                                .client = client_config,
+                                                .session_capacity = 2u};
+    check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
+    check_equal(chttp_server_websocket_with(&server, &route), SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_true(
+        snprintf(uri, sizeof(uri), "ws://127.0.0.1:%u/async-h2", (unsigned int)port) > 0);
+    connect_options.uri = uri;
+    check_equal(chttp_websocket_pool_init(&pool, &pool_config), SALTS_OK);
+    check_equal(chttp_websocket_pool_open(&pool, &connect_options, &client_session, &http_status),
+                SALTS_OK);
+    check_equal(http_status, 200u);
+    check_equal(atomic_load_explicit(&probe.captured, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&probe.peer_present, memory_order_acquire), 1);
+    check_equal(chttp_server_websocket_send_binary(&probe.session, "h2", 2u), SALTS_OK);
+    check_equal(chttp_websocket_pool_receive(&pool, client_session,
+                                             CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                SALTS_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.message_type, CHTTP_WEBSOCKET_MESSAGE_BINARY);
+    check_equal(event.size, 2u);
+    check_equal(memcmp(event.data, "h2", 2u), 0);
+    check_equal(chttp_server_websocket_close(&probe.session, 1000u, NULL, 0u), SALTS_OK);
+    check_equal(chttp_websocket_pool_receive(&pool, client_session,
+                                             CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                SALTS_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_CLOSE);
+    check_equal(chttp_websocket_pool_close(&pool, client_session, 1000u, NULL, 0u,
+                                           CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+                SALTS_OK);
+    check_equal(chttp_websocket_pool_destroy(&pool, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
   it("rejects aggregate WebSocket storage overflow before allocation") {
     chttp_websocket_test_probe probe;
     chttp_server server = {0};
@@ -275,12 +422,13 @@ spec("CHTTP WebSocket client/server") {
                                             .path = "/chat/:id",
                                             .middleware = &route_middleware,
                                             .middleware_count = 1u,
-                                            .on_open = chttp_websocket_test_open,
+                                            .on_open = chttp_websocket_test_subprotocol_open,
                                             .on_event = chttp_websocket_test_event,
                                             .user = &probe};
     chttp_websocket_client client = {0};
     chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
-    chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options)};
+    chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options),
+                                                       .subprotocol = "mqtt"};
     chttp_websocket_event event;
     unsigned int http_status = 0u;
     uint16_t port = 0u;
@@ -317,11 +465,19 @@ spec("CHTTP WebSocket client/server") {
     check_equal(
         chttp_websocket_client_send_text(&client, "hello", 5u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
         SALTS_OK);
+    check_equal(
+        chttp_websocket_client_send_text(&client, "again", 5u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        SALTS_OK);
     check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
                 SALTS_OK);
     check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
     check_equal(event.size, 5u);
     check_equal(memcmp(event.data, "hello", 5u), 0);
+    check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                SALTS_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.size, 5u);
+    check_equal(memcmp(event.data, "again", 5u), 0);
     check_equal(chttp_websocket_client_send_ping(&client, "?", 1u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
                 SALTS_OK);
     check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
@@ -359,7 +515,7 @@ spec("CHTTP WebSocket client/server") {
     check_equal(atomic_load_explicit(&probe.global_middleware, memory_order_relaxed), 1);
     check_equal(atomic_load_explicit(&probe.route_middleware, memory_order_relaxed), 1);
     check_equal(atomic_load_explicit(&probe.opened, memory_order_relaxed), 1);
-    check_equal(atomic_load_explicit(&probe.messages, memory_order_relaxed), 3);
+    check_equal(atomic_load_explicit(&probe.messages, memory_order_relaxed), 4);
     check_equal(atomic_load_explicit(&probe.pings, memory_order_relaxed), 1);
     check_equal(atomic_load_explicit(&probe.pongs, memory_order_relaxed), 2);
     check_equal(atomic_load_explicit(&probe.closes, memory_order_relaxed), 1);
@@ -466,13 +622,14 @@ spec("CHTTP WebSocket client/server") {
     chttp_server_config server_config = chttp_websocket_test_server_config();
     chttp_server_websocket_options route = {.size = sizeof(route),
                                             .path = "/chat/:id",
-                                            .on_open = chttp_websocket_test_h2_open,
+                                            .on_open = chttp_websocket_test_subprotocol_open,
                                             .on_event = chttp_websocket_test_event,
                                             .user = &probe};
     chttp_websocket_client client = {0};
     chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
     chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options),
-                                                       .protocol = CHTTP_HTTP_2};
+                                                       .protocol = CHTTP_HTTP_2,
+                                                       .subprotocol = "mqtt"};
     chttp_websocket_event event;
     unsigned int http_status = 0u;
     uint16_t port = 0u;

@@ -1,5 +1,6 @@
 #include "cnet_test_named_pipe.h"
 #include "cnet_test_pipe.h"
+#include "cnet_module.h"
 #include "cnet_transport.h"
 #include "tinytest.h"
 #include <salts/native_io.h>
@@ -87,6 +88,39 @@ static int cnet_test_udp_peer(cnet_test_socket *out_socket, struct sockaddr_in *
     return SALTS_EIO;
   }
   return SALTS_OK;
+}
+
+static void cnet_test_stream_socket_options(void) {
+  cnet_test_socket socket_value;
+  cnet_stream_socket_options options = CNET_STREAM_SOCKET_OPTIONS_INIT;
+  struct linger linger_value = {0};
+  int keepalive = 0;
+#if defined(_WIN32)
+  int option_size = (int)sizeof(keepalive);
+#else
+  socklen_t option_size = (socklen_t)sizeof(keepalive);
+#endif
+
+  check_equal(cnet_module_init(), SALTS_OK);
+  socket_value = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  check_true(socket_value != CNET_TEST_INVALID_SOCKET);
+  options.receive_buffer_bytes = 32768u;
+  options.send_buffer_bytes = 32768u;
+  options.keepalive = 1;
+  options.linger = 1;
+  options.linger_ms = 0u;
+  check_equal(cnet_transport_apply_stream_socket_options((uintptr_t)socket_value, &options),
+              SALTS_OK);
+  check_equal(getsockopt(socket_value, SOL_SOCKET, SO_KEEPALIVE, (char *)&keepalive, &option_size),
+              0);
+  check_equal(keepalive, 1);
+  option_size = (int)sizeof(linger_value);
+  check_equal(getsockopt(socket_value, SOL_SOCKET, SO_LINGER, (char *)&linger_value, &option_size),
+              0);
+  check_equal(linger_value.l_onoff, 1);
+  check_equal(linger_value.l_linger, 0);
+  cnet_test_close_socket(socket_value);
+  check_equal(cnet_module_shutdown(), SALTS_OK);
 }
 
 static void cnet_test_tcp_transport(native_io_backend_kind kind) {
@@ -258,6 +292,10 @@ static void cnet_test_named_pipe_transport(native_io_backend_kind kind) {
 }
 
 spec("CNet NativeIO transport ownership") {
+  it("applies bounded stream socket options before transport admission") {
+    cnet_test_stream_socket_options();
+  }
+
   it("converts numeric IPv4 and IPv6 endpoints without resolver state") {
     struct sockaddr_storage address;
     size_t address_length = SIZE_MAX;

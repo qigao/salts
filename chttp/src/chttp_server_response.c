@@ -113,8 +113,9 @@ void chttp_server_response_builder_destroy(chttp_server_response_builder *builde
   *builder = (chttp_server_response_builder){0};
 }
 
-int chttp_server_response_set_header(chttp_server_response *response, const char *name,
-                                     const char *value) {
+static int chttp_server_response_set_header_impl(chttp_server_response *response, const char *name,
+                                                 const char *value,
+                                                 bool allow_websocket_protocol) {
   chttp_server_response_builder *builder;
   size_t name_size;
   size_t value_size;
@@ -132,7 +133,8 @@ int chttp_server_response_set_header(chttp_server_response *response, const char
       chttp_server_response_ascii_equal(name, "Upgrade") ||
       chttp_server_response_ascii_equal(name, "Sec-WebSocket-Accept") ||
       chttp_server_response_ascii_equal(name, "Sec-WebSocket-Extensions") ||
-      chttp_server_response_ascii_equal(name, "Sec-WebSocket-Protocol"))
+      (!allow_websocket_protocol &&
+       chttp_server_response_ascii_equal(name, "Sec-WebSocket-Protocol")))
     return SALTS_EPERM;
   builder = (chttp_server_response_builder *)response->impl;
   if (builder->deferred) return SALTS_EALREADY;
@@ -169,6 +171,50 @@ int chttp_server_response_set_header(chttp_server_response *response, const char
   builder->headers[builder->header_count++] = (chttp_header){name_copy, value_copy};
   builder->header_wire_bytes += wire_size;
   return SALTS_OK;
+}
+
+int chttp_server_response_set_header(chttp_server_response *response, const char *name,
+                                     const char *value) {
+  return chttp_server_response_set_header_impl(response, name, value, false);
+}
+
+static bool chttp_server_response_subprotocol_offered(const chttp_server_request_view *request,
+                                                      const char *subprotocol) {
+  const size_t wanted_size = strlen(subprotocol);
+  size_t header_index;
+  for (header_index = 0u; header_index < request->header_count; ++header_index) {
+    const chttp_header *header = &request->headers[header_index];
+    const char *cursor;
+    if (!chttp_server_response_ascii_equal(header->name, "Sec-WebSocket-Protocol")) continue;
+    cursor = header->value;
+    while (cursor != NULL && *cursor != '\0') {
+      const char *end = strchr(cursor, ',');
+      const char *token_end;
+      if (end == NULL) end = cursor + strlen(cursor);
+      while (cursor != end && (*cursor == ' ' || *cursor == '\t'))
+        ++cursor;
+      token_end = end;
+      while (token_end != cursor && (token_end[-1] == ' ' || token_end[-1] == '\t'))
+        --token_end;
+      if ((size_t)(token_end - cursor) == wanted_size &&
+          memcmp(cursor, subprotocol, wanted_size) == 0)
+        return true;
+      cursor = *end == ',' ? end + 1 : end;
+    }
+  }
+  return false;
+}
+
+int chttp_server_response_select_websocket_subprotocol(
+    chttp_server_response *response, const chttp_server_request_view *request,
+    const char *subprotocol) {
+  if (response == NULL || response->impl == NULL || request == NULL ||
+      (request->header_count != 0u && request->headers == NULL) ||
+      !chttp_server_response_token(subprotocol))
+    return SALTS_EINVAL;
+  if (!chttp_server_response_subprotocol_offered(request, subprotocol)) return SALTS_EPROTO;
+  return chttp_server_response_set_header_impl(response, "Sec-WebSocket-Protocol", subprotocol,
+                                               true);
 }
 
 int chttp_server_reply(chttp_server_response *response, unsigned int status_code,

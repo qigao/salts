@@ -142,6 +142,22 @@ typedef enum chttp_server_deferred_state {
   CHTTP_SERVER_DEFERRED_READY
 } chttp_server_deferred_state;
 
+typedef enum chttp_server_websocket_command_kind {
+  CHTTP_SERVER_WEBSOCKET_COMMAND_TEXT = 1,
+  CHTTP_SERVER_WEBSOCKET_COMMAND_BINARY,
+  CHTTP_SERVER_WEBSOCKET_COMMAND_PING,
+  CHTTP_SERVER_WEBSOCKET_COMMAND_PONG,
+  CHTTP_SERVER_WEBSOCKET_COMMAND_CLOSE
+} chttp_server_websocket_command_kind;
+
+typedef struct chttp_server_websocket_command {
+  chttp_server_websocket_session session;
+  unsigned char *data;
+  size_t size;
+  uint16_t close_code;
+  chttp_server_websocket_command_kind kind;
+} chttp_server_websocket_command;
+
 struct chttp_server_connection {
   chttp_server_impl *server;
   cnet_connection handle;
@@ -180,6 +196,7 @@ struct chttp_server_connection {
 
 struct chttp_server_impl {
   chttp_server_config config;
+  chttp_server_socket_options socket_options;
   char *host;
   char *session_cookie_name;
   chttp_server_route_record *routes;
@@ -201,6 +218,9 @@ struct chttp_server_impl {
   cflow_io_file_runtime file_runtime;
   chttp_file_transfer **file_transfers;
   size_t file_transfer_capacity;
+  chttp_server_websocket_command *websocket_commands;
+  size_t websocket_command_head;
+  size_t websocket_command_count;
   salts_mutex_t mutex;
   salts_cond_t changed;
   salts_thread_t thread;
@@ -261,6 +281,7 @@ int chttp_server_websocket_input(chttp_server_connection *connection, const void
 int chttp_server_websocket_send_complete(chttp_server_connection *connection);
 void chttp_server_websocket_transport_closed(chttp_server_connection *connection);
 void chttp_server_websocket_reset(chttp_server_connection *connection);
+int chttp_server_websocket_commands_progress(chttp_server_impl *server);
 
 int chttp_session_store_init(chttp_server_impl *server);
 void chttp_session_store_destroy(chttp_server_impl *server);

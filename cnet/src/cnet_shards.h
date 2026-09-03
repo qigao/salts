@@ -70,6 +70,9 @@ int cnet_shards_state(cnet_shards *shards, cnet_shard_connection connection,
 int cnet_shards_tls_peer_certificate_sha256(
     cnet_shards *shards, cnet_shard_connection connection,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);
+int cnet_shards_tls_export_channel_binding(
+    cnet_shards *shards, cnet_shard_connection connection,
+    uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]);
 int cnet_shards_take_event(cnet_shards *shards, uint32_t shard, cnet_event_view *out_event);
 int cnet_shards_release_event(cnet_shards *shards, uint32_t shard, cnet_event_view *event);
 

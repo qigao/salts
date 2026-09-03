@@ -643,3 +643,15 @@ int cnet_tls_state_peer_certificate_sha256(
   buffer[digest_size * 2u] = '\0';
   return SALTS_OK;
 }
+
+int cnet_tls_state_export_channel_binding(
+    const cnet_tls_state *state, uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {
+  static const char exporter_label[] = "EXPORTER-Channel-Binding";
+  if (output == NULL) return SALTS_EINVAL;
+  memset(output, 0, CNET_TLS_CHANNEL_BINDING_BYTES);
+  if (state == NULL || state->ssl == NULL || !state->handshake_complete) return SALTS_ENOTCONN;
+  return SSL_export_keying_material((SSL *)state->ssl, output, CNET_TLS_CHANNEL_BINDING_BYTES,
+                                    exporter_label, sizeof(exporter_label) - 1u, NULL, 0u, 1) == 1
+             ? SALTS_OK
+             : SALTS_EIO;
+}

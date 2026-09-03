@@ -317,6 +317,54 @@ static cnet_client_config cnet_api_test_config(void) {
 }
 
 spec("CNet public client API") {
+  it("validates typed stream socket tuning before admission") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_stream_socket_options options = CNET_STREAM_SOCKET_OPTIONS_INIT;
+
+    check_equal(cnet_stream_socket_options_validate(&options), SALTS_OK);
+    options.size = 0u;
+    check_equal(cnet_stream_socket_options_validate(&options), SALTS_EINVAL);
+    options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
+    options.receive_buffer_bytes = (size_t)INT_MAX + 1u;
+    check_equal(cnet_stream_socket_options_validate(&options), SALTS_ERANGE);
+    options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
+    options.keepalive_idle_ms = 1000u;
+    check_equal(cnet_stream_socket_options_validate(&options), SALTS_EINVAL);
+    options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
+    options.linger_ms = 1000u;
+    check_equal(cnet_stream_socket_options_validate(&options), SALTS_EINVAL);
+
+    options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
+    options.receive_buffer_bytes = 32768u;
+    options.send_buffer_bytes = 32768u;
+    options.keepalive = 1;
+    options.linger = 1;
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_client_set_stream_socket_options(&client, &options), SALTS_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+  }
+
+  it("validates versioned listener tuning") {
+    cnet_listener listener = {0};
+    cnet_client_config client_config = cnet_api_test_config();
+    cnet_listener_config config = {
+        .backend = client_config.backend, .host = "127.0.0.1", .port = 0u, .backlog = 2u};
+    cnet_listener_options options = CNET_LISTENER_OPTIONS_INIT;
+
+    check_equal(cnet_listener_options_validate(&options), SALTS_OK);
+    options.size = 0u;
+    check_equal(cnet_listener_options_validate(&options), SALTS_EINVAL);
+    options = (cnet_listener_options)CNET_LISTENER_OPTIONS_INIT;
+    options.reuse_port = 2;
+    check_equal(cnet_listener_options_validate(&options), SALTS_EINVAL);
+    options = (cnet_listener_options)CNET_LISTENER_OPTIONS_INIT;
+    check_equal(cnet_listener_init_ex(&listener, &config, &options), SALTS_OK);
+    check_equal(cnet_listener_close(&listener), SALTS_OK);
+    check_equal(cnet_listener_destroy(&listener), SALTS_OK);
+  }
+
   it("validates reusable TLS client profile lifecycle") {
     cnet_tls_client client = {0};
     cnet_tls_client_config config = {.size = sizeof(config)};

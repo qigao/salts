@@ -342,6 +342,13 @@ static chttp_h2_server_stream *chttp_h2_server_stream_find(chttp_h2_server_conne
   return NULL;
 }
 
+chttp_server_websocket_peer *chttp_h2_server_websocket_peer_find(
+    chttp_h2_server_connection *h2, int32_t stream_id) {
+  chttp_h2_server_stream *stream = chttp_h2_server_stream_find(h2, stream_id);
+  if (stream == NULL || stream->websocket_peer.phase == CHTTP_SERVER_WEBSOCKET_NONE) return NULL;
+  return &stream->websocket_peer;
+}
+
 static chttp_h2_server_stream *chttp_h2_server_stream_acquire(chttp_h2_server_connection *h2,
                                                               int32_t stream_id) {
   size_t index;
@@ -417,7 +424,6 @@ static int chttp_h2_server_regular_header(chttp_h2_server_stream *stream, const 
     } else if (chttp_h2_server_ascii_equal_n(name, name_size, "sec-websocket-key") ||
                chttp_h2_server_ascii_equal_n(name, name_size, "sec-websocket-accept") ||
                chttp_h2_server_ascii_equal_n(name, name_size, "sec-websocket-extensions") ||
-               chttp_h2_server_ascii_equal_n(name, name_size, "sec-websocket-protocol") ||
                chttp_h2_server_ascii_equal_n(name, name_size, "content-length") ||
                chttp_h2_server_ascii_equal_n(name, name_size, "te")) {
       return SALTS_EPROTO;
@@ -785,7 +791,8 @@ static int chttp_h2_server_websocket_dispatch(chttp_h2_server_stream *stream) {
   }
   status =
       chttp_server_websocket_peer_init(&stream->websocket_peer, stream->owner->connection->server,
-                                       route, chttp_h2_server_websocket_write, stream);
+                                       route, stream->owner->connection->handle, stream->stream_id,
+                                       chttp_h2_server_websocket_write, stream);
   if (status != SALTS_OK) return status;
   status = chttp_server_websocket_route_open(&stream->websocket_peer, &stream->request_state, route,
                                              &request);

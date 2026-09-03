@@ -20,7 +20,8 @@ enum {
   CHTTP_WEBSOCKET_CLIENT_H2_MIN_FRAME_BYTES = 16u * 1024u,
   CHTTP_WEBSOCKET_CLIENT_H2_INPUT_BYTES = 128u * 1024u,
   CHTTP_WEBSOCKET_CLIENT_H2_HPACK_BYTES = 4096u,
-  CHTTP_WEBSOCKET_CLIENT_H2_SETTINGS_COUNT = 16u
+  CHTTP_WEBSOCKET_CLIENT_H2_SETTINGS_COUNT = 16u,
+  CHTTP_WEBSOCKET_CLIENT_H2_REQUIRED_HEADER_COUNT = 6u
 };
 
 typedef enum chttp_websocket_client_phase {
@@ -42,6 +43,7 @@ typedef struct chttp_websocket_client_impl {
   cnet_websocket websocket;
   chttp_h2_proto *h2_protocol;
   chttp_tls_profile_impl *tls_profile;
+  const char *expected_subprotocol;
   unsigned char *send_buffer;
   unsigned char *handshake_buffer;
   unsigned char *event_payloads;
@@ -78,6 +80,7 @@ typedef struct chttp_websocket_client_impl {
   bool h2_header_block_open;
   bool h2_regular_header_seen;
   bool h2_status_seen;
+  bool h2_subprotocol_seen;
   bool h2_stream_terminal;
   bool h2_end_submitted;
   bool h2_close_requested;
@@ -213,6 +216,7 @@ static int chttp_websocket_client_h2_begin_headers(void *user, int32_t stream_id
   client->h2_header_block_open = true;
   client->h2_regular_header_seen = false;
   client->h2_status_seen = false;
+  client->h2_subprotocol_seen = false;
   client->handshake_http_status = 0u;
   return 0;
 }
@@ -240,6 +244,14 @@ static int chttp_websocket_client_h2_header(void *user, int32_t stream_id, const
     return 0;
   }
   client->h2_regular_header_seen = true;
+  if (chttp_websocket_client_h2_name(name, name_size, "sec-websocket-protocol")) {
+    if (client->h2_subprotocol_seen || client->expected_subprotocol == NULL ||
+        value_size != strlen(client->expected_subprotocol) ||
+        memcmp(value, client->expected_subprotocol, value_size) != 0)
+      return -1;
+    client->h2_subprotocol_seen = true;
+    return 0;
+  }
   if (chttp_websocket_client_h2_name(name, name_size, "connection") ||
       chttp_websocket_client_h2_name(name, name_size, "proxy-connection") ||
       chttp_websocket_client_h2_name(name, name_size, "keep-alive") ||
@@ -248,8 +260,7 @@ static int chttp_websocket_client_h2_header(void *user, int32_t stream_id, const
       chttp_websocket_client_h2_name(name, name_size, "te") ||
       chttp_websocket_client_h2_name(name, name_size, "upgrade") ||
       chttp_websocket_client_h2_name(name, name_size, "sec-websocket-accept") ||
-      chttp_websocket_client_h2_name(name, name_size, "sec-websocket-extensions") ||
-      chttp_websocket_client_h2_name(name, name_size, "sec-websocket-protocol"))
+      chttp_websocket_client_h2_name(name, name_size, "sec-websocket-extensions"))
     return -1;
   return 0;
 }
@@ -266,6 +277,9 @@ static int chttp_websocket_client_h2_end_headers(void *user, int32_t stream_id, 
     client->phase = CHTTP_WEBSOCKET_CLIENT_TERMINAL;
     return 0;
   }
+  if ((client->expected_subprotocol == NULL && client->h2_subprotocol_seen) ||
+      (client->expected_subprotocol != NULL && !client->h2_subprotocol_seen))
+    return -1;
   if (end_stream) return -1;
   status = chttp_websocket_client_engine_init(client);
   if (status != SALTS_OK) {
@@ -351,6 +365,7 @@ static void chttp_websocket_client_on_receive(void *user, cnet_connection connec
     header_size = (size_t)(header_end - client->handshake_buffer);
     status = chttp_websocket_client_handshake_validate(client->handshake_buffer, header_size,
                                                        client->expected_accept,
+                                                       client->expected_subprotocol,
                                                        &client->handshake_http_status);
     if (status == SALTS_OK) status = chttp_websocket_client_engine_init(client);
     if (status == SALTS_OK) client->phase = CHTTP_WEBSOCKET_CLIENT_OPEN;
@@ -583,6 +598,7 @@ static int chttp_websocket_client_request_build(chttp_websocket_client_impl *cli
   static const char upgrade[] =
       "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n";
   static const char key_prefix[] = "Sec-WebSocket-Key: ";
+  static const char protocol_prefix[] = "Sec-WebSocket-Protocol: ";
   size_t size = 0u;
   size_t index;
   int status;
@@ -612,6 +628,15 @@ static int chttp_websocket_client_request_build(chttp_websocket_client_impl *cli
     status = chttp_websocket_client_append(client, &size, key_prefix, sizeof(key_prefix) - 1u);
   if (status == SALTS_OK)
     status = chttp_websocket_client_append(client, &size, key, CHTTP_WEBSOCKET_KEY_BYTES);
+  if (status == SALTS_OK && options->subprotocol != NULL) {
+    status = chttp_websocket_client_append(client, &size, "\r\n", 2u);
+    if (status == SALTS_OK)
+      status = chttp_websocket_client_append(client, &size, protocol_prefix,
+                                             sizeof(protocol_prefix) - 1u);
+    if (status == SALTS_OK)
+      status = chttp_websocket_client_append(client, &size, options->subprotocol,
+                                             strlen(options->subprotocol));
+  }
   if (status == SALTS_OK) status = chttp_websocket_client_append(client, &size, "\r\n\r\n", 4u);
   if (status == SALTS_OK) *out_size = size;
   return status;
@@ -646,12 +671,15 @@ static int chttp_websocket_client_h2_submit(chttp_websocket_client_impl *client,
                                             bool secure) {
   chttp_h2_hpack_header *headers;
   size_t header_count;
+  size_t required_header_count;
   size_t header_bytes = 0u;
   size_t name_storage_used = 0u;
   size_t index;
   int status = SALTS_OK;
-  if (options->header_count > SIZE_MAX - 6u) return SALTS_ERANGE;
-  header_count = options->header_count + 6u;
+  required_header_count = CHTTP_WEBSOCKET_CLIENT_H2_REQUIRED_HEADER_COUNT +
+                          (options->subprotocol != NULL ? 1u : 0u);
+  if (options->header_count > SIZE_MAX - required_header_count) return SALTS_ERANGE;
+  header_count = options->header_count + required_header_count;
   if (header_count > client->handshake_capacity / sizeof(*headers)) return SALTS_EMSGSIZE;
   headers = (chttp_h2_hpack_header *)calloc(header_count, sizeof(*headers));
   if (headers == NULL) return SALTS_ENOMEM;
@@ -666,7 +694,12 @@ static int chttp_websocket_client_h2_submit(chttp_websocket_client_impl *client,
                                        strlen(authority)};
   headers[5] = (chttp_h2_hpack_header){"sec-websocket-version",
                                        sizeof("sec-websocket-version") - 1u, "13", 2u};
-  for (index = 0u; index < 6u; ++index) {
+  if (options->subprotocol != NULL)
+    headers[CHTTP_WEBSOCKET_CLIENT_H2_REQUIRED_HEADER_COUNT] =
+        (chttp_h2_hpack_header){"sec-websocket-protocol",
+                                sizeof("sec-websocket-protocol") - 1u, options->subprotocol,
+                                strlen(options->subprotocol)};
+  for (index = 0u; index < required_header_count; ++index) {
     size_t field_bytes;
     if (headers[index].name_size > SIZE_MAX - headers[index].value_size - 32u) {
       status = SALTS_EMSGSIZE;
@@ -703,7 +736,8 @@ static int chttp_websocket_client_h2_submit(chttp_websocket_client_impl *client,
       name[byte_index] = (char)(value >= 'A' && value <= 'Z' ? value + ('a' - 'A') : value);
     }
     name_storage_used += name_size;
-    headers[6u + index] = (chttp_h2_hpack_header){name, name_size, input->value, value_size};
+    headers[required_header_count + index] =
+        (chttp_h2_hpack_header){name, name_size, input->value, value_size};
     header_bytes += name_size + value_size + 32u;
   }
   if (chttp_h2_proto_submit_request_headers(client->h2_protocol, headers, header_count, 0,
@@ -729,6 +763,10 @@ int chttp_websocket_client_init(chttp_websocket_client *client,
   if (client == NULL || config == NULL || client->impl != NULL || config->size != sizeof(*config) ||
       config->network.max_send_bytes <= CNET_WEBSOCKET_MAX_HEADER_BYTES)
     return SALTS_EINVAL;
+  if (config->socket_options.size != 0u) {
+    status = cnet_stream_socket_options_validate(&config->socket_options);
+    if (status != SALTS_OK) return status;
+  }
   frame_bytes = config->max_frame_bytes;
   if (frame_bytes == 0u) {
     frame_bytes = config->network.max_send_bytes - CNET_WEBSOCKET_MAX_HEADER_BYTES;
@@ -799,10 +837,18 @@ int chttp_websocket_client_init(chttp_websocket_client *client,
     impl->events[index].payload = impl->event_payloads + index * event_payload_capacity;
   status = cnet_client_init(&impl->network, &config->network);
   if (status != SALTS_OK) goto fail;
+  if (config->socket_options.size != 0u) {
+    status = cnet_client_set_stream_socket_options(&impl->network, &config->socket_options);
+    if (status != SALTS_OK) goto fail;
+  }
   client->impl = impl;
   return SALTS_OK;
 
 fail:
+  if (impl->network.impl != NULL) {
+    (void)cnet_client_stop(&impl->network, 0u);
+    (void)cnet_client_destroy(&impl->network);
+  }
   free(impl->h2_frame_buffer);
   free(impl->event_payloads);
   free(impl->events);
@@ -831,13 +877,16 @@ int chttp_websocket_client_connect(chttp_websocket_client *client,
   if (client == NULL || client->impl == NULL || options == NULL ||
       options->size != sizeof(*options) || options->uri == NULL || out_http_status == NULL ||
       (options->header_count != 0u && options->headers == NULL) ||
-      (options->protocol != CHTTP_HTTP_1_1 && options->protocol != CHTTP_HTTP_2))
+      (options->protocol != CHTTP_HTTP_1_1 && options->protocol != CHTTP_HTTP_2) ||
+      (options->subprotocol != NULL &&
+       !chttp_websocket_client_header_token(options->subprotocol)))
     return SALTS_EINVAL;
   impl = (chttp_websocket_client_impl *)client->impl;
   if (impl->operation_active) return SALTS_EBUSY;
   if (impl->phase != CHTTP_WEBSOCKET_CLIENT_DISCONNECTED) return SALTS_EALREADY;
   impl->operation_active = true;
   impl->protocol = options->protocol;
+  impl->expected_subprotocol = options->subprotocol;
   status = chttp_websocket_client_uri(options->uri, &uri, &secure, transport, sizeof(transport),
                                       authority, sizeof(authority), target, sizeof(target));
   if (status != SALTS_OK) goto done;
@@ -954,6 +1003,7 @@ done:
     chttp_tls_profile_release(impl->tls_profile);
     impl->tls_profile = NULL;
   }
+  impl->expected_subprotocol = NULL;
   impl->operation_active = false;
   return status;
 }

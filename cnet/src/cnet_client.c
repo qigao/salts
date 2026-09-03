@@ -44,6 +44,7 @@ struct cnet_client_impl {
   size_t active_count;
   size_t max_send_bytes;
   size_t tls_io_buffer_bytes;
+  cnet_stream_socket_options socket_options;
   uint32_t connect_timeout_ms;
   uint32_t read_timeout_ms;
   uint32_t write_timeout_ms;
@@ -258,6 +259,7 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   impl->read_timeout_ms = config->read_timeout_ms;
   impl->write_timeout_ms = config->write_timeout_ms;
   impl->tls_handshake_timeout_ms = config->tls_handshake_timeout_ms;
+  impl->socket_options = (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
   impl->admission_open = true;
   atomic_init(&impl->callback_error, SALTS_OK);
   atomic_init(&impl->external_wake_pending, 0);
@@ -300,6 +302,21 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   return SALTS_OK;
 }
 
+int cnet_client_set_stream_socket_options(cnet_client *client,
+                                          const cnet_stream_socket_options *options) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  int status = cnet_stream_socket_options_validate(options);
+  if (status != SALTS_OK) return status;
+  if (impl == NULL) return SALTS_EINVAL;
+  salts_mutex_lock(&impl->lock);
+  if (!impl->admission_open || impl->stopped) status = SALTS_ESHUTDOWN;
+  else if (impl->active_count != 0u || impl->poll_active || impl->stop_active)
+    status = SALTS_EBUSY;
+  else impl->socket_options = *options;
+  salts_mutex_unlock(&impl->lock);
+  return status;
+}
+
 static cnet_client_record *cnet_client_find_record(cnet_client_impl *impl,
                                                    cnet_connection connection,
                                                    cnet_shard_connection *out_internal) {
@@ -318,6 +335,7 @@ static cnet_client_record *cnet_client_find_record(cnet_client_impl *impl,
 static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_payload *payload,
                              cnet_uri_scheme scheme, const cnet_observer *observer,
                              cnet_connection *out_connection, bool *out_transferred) {
+  cnet_owner_connect_payload admitted_payload;
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
   size_t index;
@@ -333,7 +351,9 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
     salts_mutex_unlock(&impl->lock);
     return SALTS_ENOBUFS;
   }
-  status = cnet_shards_connect(&impl->shards, payload, &internal);
+  admitted_payload = *payload;
+  admitted_payload.socket_options = impl->socket_options;
+  status = cnet_shards_connect(&impl->shards, &admitted_payload, &internal);
   if (status != SALTS_OK) {
     salts_mutex_unlock(&impl->lock);
     return status;
@@ -529,6 +549,25 @@ int cnet_tls_peer_certificate_sha256(
   else if (record->scheme != CNET_URI_TLS) status = SALTS_ENOTSUP;
   else if (!record->connected) status = SALTS_ENOTCONN;
   else status = cnet_shards_tls_peer_certificate_sha256(&impl->shards, internal, buffer);
+  salts_mutex_unlock(&impl->lock);
+  return status;
+}
+
+int cnet_tls_export_channel_binding(
+    cnet_client *client, cnet_connection connection,
+    uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_shard_connection internal = {0};
+  cnet_client_record *record;
+  int status;
+  if (impl == NULL || output == NULL) return SALTS_EINVAL;
+  memset(output, 0, CNET_TLS_CHANNEL_BINDING_BYTES);
+  salts_mutex_lock(&impl->lock);
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) status = SALTS_ENOENT;
+  else if (record->scheme != CNET_URI_TLS) status = SALTS_ENOTSUP;
+  else if (!record->connected) status = SALTS_ENOTCONN;
+  else status = cnet_shards_tls_export_channel_binding(&impl->shards, internal, output);
   salts_mutex_unlock(&impl->lock);
   return status;
 }

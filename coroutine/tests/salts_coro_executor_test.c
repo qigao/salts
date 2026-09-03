@@ -82,6 +82,19 @@ typedef struct {
 } await_task_state;
 
 typedef struct {
+  salts_coro_executor_t *executor;
+  salts_coro_executor_await_t await_handle;
+  atomic_int handle_ready;
+  atomic_int resumed;
+  uint32_t timeout_ms;
+  int begin_status;
+  int await_status;
+  int completion_status;
+  size_t before_shard;
+  size_t after_shard;
+} timed_await_task_state;
+
+typedef struct {
   salts_coro_executor_await_t await_handle;
   atomic_int finished;
   int begin_status;
@@ -218,6 +231,20 @@ static void await_abort_task(coro_t *coroutine, void *arg) {
   atomic_store_explicit(&state->finished, 1, memory_order_release);
 }
 
+static void timed_await_task(coro_t *coroutine, void *arg) {
+  timed_await_task_state *state = (timed_await_task_state *)arg;
+  (void)coroutine;
+
+  state->before_shard = salts_coro_executor_current_shard(state->executor);
+  state->begin_status = salts_coro_executor_await_begin(&state->await_handle);
+  atomic_store_explicit(&state->handle_ready, 1, memory_order_release);
+  if (state->begin_status == SALTS_OK)
+    state->await_status = salts_coro_executor_await_for(
+        state->await_handle, state->timeout_ms, &state->completion_status);
+  state->after_shard = salts_coro_executor_current_shard(state->executor);
+  atomic_store_explicit(&state->resumed, 1, memory_order_release);
+}
+
 static void await_unconsumed_task(coro_t *coroutine, void *arg) {
   await_abort_state *state = (await_abort_state *)arg;
   (void)coroutine;
@@ -340,6 +367,49 @@ spec("Salts coroutine executor") {
     check_equal(atomic_load_explicit(&state.resumed, memory_order_acquire), 1);
     check_equal(salts_coro_executor_await_complete(executor, state.await_handle, SALTS_OK),
                 SALTS_ENOENT);
+    check_equal(salts_coro_executor_destroy(executor), SALTS_OK);
+  }
+
+  it("times out a bounded await on its owning shard") {
+    salts_coro_executor_t *executor = create_single_slot_executor();
+    timed_await_task_state state = {0};
+    salts_coro_executor_task_t task = {timed_await_task, NULL, NULL, &state};
+
+    check_not_null(executor);
+    state.executor = executor;
+    state.timeout_ms = 20u;
+    check_equal(salts_coro_executor_submit(executor, &task), SALTS_OK);
+    check_equal(salts_coro_executor_wait(executor), SALTS_OK);
+    check_equal(state.begin_status, SALTS_OK);
+    check_equal(state.await_status, SALTS_OK);
+    check_equal(state.completion_status, SALTS_ETIMEDOUT);
+    check_equal(state.before_shard, (size_t)0);
+    check_equal(state.after_shard, (size_t)0);
+    check_equal(atomic_load_explicit(&state.resumed, memory_order_acquire), 1);
+    check_equal(salts_coro_executor_await_complete(executor, state.await_handle, SALTS_OK),
+                SALTS_ENOENT);
+    check_equal(salts_coro_executor_destroy(executor), SALTS_OK);
+  }
+
+  it("lets external completion win a bounded await before its deadline") {
+    salts_coro_executor_t *executor = create_single_slot_executor();
+    timed_await_task_state state = {0};
+    salts_coro_executor_task_t task = {timed_await_task, NULL, NULL, &state};
+
+    check_not_null(executor);
+    state.executor = executor;
+    state.timeout_ms = 1000u;
+    check_equal(salts_coro_executor_submit(executor, &task), SALTS_OK);
+    check_true(wait_atomic_at_least(&state.handle_ready, 1));
+    check_equal(salts_coro_executor_await_complete(executor, state.await_handle, SALTS_EINTR),
+                SALTS_OK);
+    check_equal(salts_coro_executor_wait(executor), SALTS_OK);
+    check_equal(state.begin_status, SALTS_OK);
+    check_equal(state.await_status, SALTS_OK);
+    check_equal(state.completion_status, SALTS_EINTR);
+    check_equal(state.before_shard, (size_t)0);
+    check_equal(state.after_shard, (size_t)0);
+    check_equal(atomic_load_explicit(&state.resumed, memory_order_acquire), 1);
     check_equal(salts_coro_executor_destroy(executor), SALTS_OK);
   }
 

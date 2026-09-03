@@ -1,6 +1,8 @@
 #include "chttp_server_runtime.h"
+#include "chttp_h2_server.h"
 #include "chttp_websocket_handshake.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct chttp_websocket_open_context {
@@ -65,11 +67,13 @@ static void chttp_server_websocket_event(void *user, cnet_websocket *websocket,
 }
 
 int chttp_server_websocket_peer_init(chttp_server_websocket_peer *peer, chttp_server_impl *server,
-                                     chttp_server_route_record *route,
+                                     chttp_server_route_record *route, cnet_connection connection,
+                                     int32_t stream_id,
                                      chttp_server_websocket_write_fn write, void *transport) {
   cnet_websocket_config config;
   int status;
-  if (peer == NULL || server == NULL || route == NULL || write == NULL || transport == NULL)
+  if (peer == NULL || server == NULL || route == NULL || connection.slot == 0u ||
+      connection.generation == 0u || stream_id < 0 || write == NULL || transport == NULL)
     return SALTS_EINVAL;
   if (peer->engine.impl != NULL || peer->phase != CHTTP_SERVER_WEBSOCKET_NONE) return SALTS_EBUSY;
   config =
@@ -86,6 +90,8 @@ int chttp_server_websocket_peer_init(chttp_server_websocket_peer *peer, chttp_se
   peer->handle.impl = peer;
   peer->server = server;
   peer->route = route;
+  peer->connection = connection;
+  peer->stream_id = stream_id;
   peer->write = write;
   peer->transport = transport;
   peer->phase = CHTTP_SERVER_WEBSOCKET_HANDSHAKE;
@@ -230,6 +236,7 @@ int chttp_server_websocket_upgrade(void *user, const chttp_server_request_view *
                                    chttp_server_parser_upgrade_action *out_action,
                                    unsigned int *out_http_status) {
   chttp_server_connection *connection = (chttp_server_connection *)user;
+  chttp_server_request_view enriched_request;
   chttp_server_request_state *state;
   chttp_server_route_record *route;
   unsigned int allowed_methods = 0u;
@@ -240,6 +247,9 @@ int chttp_server_websocket_upgrade(void *user, const chttp_server_request_view *
     return SALTS_EINVAL;
   *out_action = CHTTP_SERVER_UPGRADE_IGNORE;
   *out_http_status = 0u;
+  enriched_request = *request;
+  chttp_server_request_enrich(connection, &enriched_request);
+  request = &enriched_request;
   state = &connection->request_state;
   route = chttp_server_route_find(state, CHTTP_METHOD_GET, request->path, &allowed_methods,
                                   &route_status);
@@ -250,6 +260,7 @@ int chttp_server_websocket_upgrade(void *user, const chttp_server_request_view *
       chttp_websocket_server_handshake_validate(request, accept, sizeof(accept), out_http_status);
   if (status != SALTS_OK) return status;
   status = chttp_server_websocket_peer_init(&connection->websocket_peer, connection->server, route,
+                                            connection->handle, 0,
                                             chttp_server_websocket_h1_write, connection);
   if (status != SALTS_OK) return status;
   status = chttp_server_websocket_route_open(&connection->websocket_peer, state, route, request);
@@ -357,4 +368,160 @@ int chttp_websocket_close(chttp_websocket *websocket, uint16_t code, const void 
   chttp_server_websocket_peer *peer = chttp_websocket_peer(websocket);
   return peer == NULL ? SALTS_EINVAL
                       : cnet_websocket_close(&peer->engine, code, reason, reason_size);
+}
+
+int chttp_server_websocket_session_capture(const chttp_websocket *websocket,
+                                            chttp_server_websocket_session *out_session) {
+  chttp_server_websocket_peer *peer;
+  if (out_session == NULL) return SALTS_EINVAL;
+  *out_session = (chttp_server_websocket_session){0};
+  peer = chttp_websocket_peer(websocket);
+  if (peer == NULL || chttp_active_callback_server != peer->server) return SALTS_EINVAL;
+  *out_session = (chttp_server_websocket_session){.impl = peer->server,
+                                                  .connection_slot = peer->connection.slot,
+                                                  .connection_generation =
+                                                      peer->connection.generation,
+                                                  .stream_id = peer->stream_id};
+  return SALTS_OK;
+}
+
+static int chttp_server_websocket_command_submit(
+    const chttp_server_websocket_session *session, chttp_server_websocket_command_kind kind,
+    uint16_t close_code, const void *data, size_t size) {
+  chttp_server_impl *server;
+  chttp_server_websocket_command *command;
+  unsigned char *copy = NULL;
+  size_t tail;
+  if (session == NULL || session->impl == NULL || session->connection_slot == 0u ||
+      session->connection_generation == 0u || session->stream_id < 0 ||
+      (data == NULL && size != 0u))
+    return SALTS_EINVAL;
+  server = (chttp_server_impl *)session->impl;
+  if (size > server->config.network.max_send_bytes) return SALTS_EMSGSIZE;
+  if ((kind == CHTTP_SERVER_WEBSOCKET_COMMAND_PING ||
+       kind == CHTTP_SERVER_WEBSOCKET_COMMAND_PONG) &&
+      size > CNET_WEBSOCKET_MAX_CONTROL_BYTES)
+    return SALTS_EMSGSIZE;
+  if (kind == CHTTP_SERVER_WEBSOCKET_COMMAND_CLOSE &&
+      size > CNET_WEBSOCKET_MAX_CONTROL_BYTES - sizeof(uint16_t))
+    return SALTS_EMSGSIZE;
+  if (size != 0u) {
+    copy = (unsigned char *)malloc(size);
+    if (copy == NULL) return SALTS_ENOMEM;
+    memcpy(copy, data, size);
+  }
+  salts_mutex_lock(&server->mutex);
+  if (!server->stats.running || server->stats.stopping || server->worker_done) {
+    salts_mutex_unlock(&server->mutex);
+    free(copy);
+    return SALTS_ESHUTDOWN;
+  }
+  if (server->websocket_command_count == server->config.network.command_capacity) {
+    salts_mutex_unlock(&server->mutex);
+    free(copy);
+    return SALTS_ENOBUFS;
+  }
+  tail = (server->websocket_command_head + server->websocket_command_count) %
+         server->config.network.command_capacity;
+  command = &server->websocket_commands[tail];
+  *command = (chttp_server_websocket_command){.session = *session,
+                                              .data = copy,
+                                              .size = size,
+                                              .close_code = close_code,
+                                              .kind = kind};
+  ++server->websocket_command_count;
+  salts_mutex_unlock(&server->mutex);
+  (void)cnet_client_wake(&server->network);
+  return SALTS_OK;
+}
+
+int chttp_server_websocket_send_text(const chttp_server_websocket_session *session,
+                                     const void *data, size_t size) {
+  return chttp_server_websocket_command_submit(
+      session, CHTTP_SERVER_WEBSOCKET_COMMAND_TEXT, 0u, data, size);
+}
+
+int chttp_server_websocket_send_binary(const chttp_server_websocket_session *session,
+                                       const void *data, size_t size) {
+  return chttp_server_websocket_command_submit(
+      session, CHTTP_SERVER_WEBSOCKET_COMMAND_BINARY, 0u, data, size);
+}
+
+int chttp_server_websocket_send_ping(const chttp_server_websocket_session *session,
+                                     const void *data, size_t size) {
+  return chttp_server_websocket_command_submit(
+      session, CHTTP_SERVER_WEBSOCKET_COMMAND_PING, 0u, data, size);
+}
+
+int chttp_server_websocket_send_pong(const chttp_server_websocket_session *session,
+                                     const void *data, size_t size) {
+  return chttp_server_websocket_command_submit(
+      session, CHTTP_SERVER_WEBSOCKET_COMMAND_PONG, 0u, data, size);
+}
+
+int chttp_server_websocket_close(const chttp_server_websocket_session *session, uint16_t code,
+                                 const void *reason, size_t reason_size) {
+  return chttp_server_websocket_command_submit(
+      session, CHTTP_SERVER_WEBSOCKET_COMMAND_CLOSE, code, reason, reason_size);
+}
+
+static chttp_server_websocket_peer *chttp_server_websocket_command_peer(
+    chttp_server_impl *server, const chttp_server_websocket_session *session,
+    chttp_server_connection **out_connection) {
+  chttp_server_connection *connection;
+  const size_t index = (size_t)session->connection_slot - 1u;
+  if (out_connection != NULL) *out_connection = NULL;
+  if (index >= server->config.network.connection_capacity) return NULL;
+  connection = &server->connections[index];
+  if (!connection->active || connection->handle.slot != session->connection_slot ||
+      connection->handle.generation != session->connection_generation)
+    return NULL;
+  if (out_connection != NULL) *out_connection = connection;
+  if (session->stream_id == 0)
+    return connection->websocket_peer.phase == CHTTP_SERVER_WEBSOCKET_NONE
+               ? NULL
+               : &connection->websocket_peer;
+  return chttp_h2_server_websocket_peer_find(connection->h2, session->stream_id);
+}
+
+int chttp_server_websocket_commands_progress(chttp_server_impl *server) {
+  for (;;) {
+    chttp_server_websocket_command *command;
+    chttp_server_websocket_peer *peer;
+    chttp_server_connection *connection = NULL;
+    int status;
+    salts_mutex_lock(&server->mutex);
+    if (server->websocket_command_count == 0u) {
+      salts_mutex_unlock(&server->mutex);
+      return SALTS_OK;
+    }
+    command = &server->websocket_commands[server->websocket_command_head];
+    salts_mutex_unlock(&server->mutex);
+    peer = chttp_server_websocket_command_peer(server, &command->session, &connection);
+    if (peer == NULL)
+      status = SALTS_ENOENT;
+    else if (command->kind == CHTTP_SERVER_WEBSOCKET_COMMAND_TEXT)
+      status = cnet_websocket_send_text(&peer->engine, command->data, command->size);
+    else if (command->kind == CHTTP_SERVER_WEBSOCKET_COMMAND_BINARY)
+      status = cnet_websocket_send_binary(&peer->engine, command->data, command->size);
+    else if (command->kind == CHTTP_SERVER_WEBSOCKET_COMMAND_PING)
+      status = cnet_websocket_send_ping(&peer->engine, command->data, command->size);
+    else if (command->kind == CHTTP_SERVER_WEBSOCKET_COMMAND_PONG)
+      status = cnet_websocket_send_pong(&peer->engine, command->data, command->size);
+    else
+      status = cnet_websocket_close(&peer->engine, command->close_code, command->data,
+                                    command->size);
+    if (status == SALTS_OK && command->session.stream_id != 0) {
+      status = chttp_server_send_pending(connection);
+      if (status == SALTS_EBUSY || status == SALTS_ENOBUFS) status = SALTS_OK;
+    }
+    if (status == SALTS_EBUSY || status == SALTS_ENOBUFS) return SALTS_OK;
+    salts_mutex_lock(&server->mutex);
+    free(command->data);
+    *command = (chttp_server_websocket_command){0};
+    server->websocket_command_head =
+        (server->websocket_command_head + 1u) % server->config.network.command_capacity;
+    --server->websocket_command_count;
+    salts_mutex_unlock(&server->mutex);
+  }
 }

@@ -507,6 +507,22 @@ static int chttp_server_test_cookie_header(const chttp_response *response, char 
 }
 
 spec("CHTTP background HTTP/1.1 server") {
+  it("copies CNet socket tuning before server start") {
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    chttp_server_socket_options options = CHTTP_SERVER_SOCKET_OPTIONS_INIT;
+
+    options.stream.receive_buffer_bytes = 32768u;
+    options.stream.send_buffer_bytes = 32768u;
+    options.stream.keepalive = 1;
+    options.stream.linger = 1;
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_set_socket_options(&server, &options), SALTS_OK);
+    options.size = 0u;
+    check_equal(chttp_server_set_socket_options(&server, &options), SALTS_EINVAL);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
   it("keeps polling and preserves pipelined order while a response is deferred") {
     static const char requests[] =
         "GET /deferred HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"

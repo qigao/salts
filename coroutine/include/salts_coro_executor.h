@@ -191,6 +191,24 @@ SALTS_COROUTINE_C_API int salts_coro_executor_await(salts_coro_executor_await_t 
                                                     int *out_status);
 
 /**
+ * Suspend until completion wins or the relative timeout expires.
+ *
+ * Timeout is measured from this call, not from await_begin. A completion and
+ * timeout race has exactly one winner under the owning shard lock. The handle
+ * is consumed on success, including timeout; out_status receives
+ * SALTS_ETIMEDOUT when the deadline wins.
+ *
+ * @param await_handle Handle returned by await_begin on this coroutine.
+ * @param timeout_ms Positive relative timeout in milliseconds.
+ * @param out_status Receives the external completion status or SALTS_ETIMEDOUT.
+ * @return SALTS_OK, SALTS_EINVAL, SALTS_ENOENT, SALTS_EALREADY, SALTS_EIO, or
+ *         SALTS_EPROTO under the same ownership rules as await.
+ */
+SALTS_COROUTINE_C_API int
+salts_coro_executor_await_for(salts_coro_executor_await_t await_handle, uint32_t timeout_ms,
+                             int *out_status);
+
+/**
  * Publish one terminal completion from any external thread.
  *
  * The function never resumes a coroutine on the caller thread. It copies the

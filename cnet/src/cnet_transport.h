@@ -1,6 +1,7 @@
 #ifndef CNET_TRANSPORT_H
 #define CNET_TRANSPORT_H
 
+#include <cnet/cnet.h>
 #include <salts/native_io.h>
 
 #include <stdbool.h>
@@ -25,6 +26,10 @@ typedef struct cnet_transport {
   bool write_attached;
 } cnet_transport;
 
+/** Applies one validated policy to an unattached TCP socket. */
+int cnet_transport_apply_stream_socket_options(
+    uintptr_t native_socket, const cnet_stream_socket_options *options);
+
 /**
  * Converts an IPv4 or IPv6 literal plus host-order port into native sockaddr
  * storage. Returns `SALTS_ENOENT` for a hostname so the caller can route it to
@@ -40,7 +45,9 @@ int cnet_transport_parse_bind_address(const char *host, uint16_t port, void *out
 /** Creates and attaches a TCP socket, then describes its connect operation. */
 int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_backend *backend,
                                        native_io_backend_kind backend_kind, const void *address,
-                                       size_t address_length, uintptr_t user_data,
+                                       size_t address_length,
+                                       const cnet_stream_socket_options *socket_options,
+                                       uintptr_t user_data,
                                        native_io_operation *out_operation);
 
 /**
@@ -57,7 +64,8 @@ int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *bac
  * The handle is closed on every failure after argument validation.
  */
 int cnet_transport_adopt_tcp(cnet_transport *transport, native_io_backend *backend,
-                             uintptr_t native_socket);
+                             uintptr_t native_socket,
+                             const cnet_stream_socket_options *socket_options);
 
 /** Closes one unattached native socket transferred through a failed command. */
 void cnet_transport_close_socket(uintptr_t native_socket);

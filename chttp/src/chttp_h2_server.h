@@ -10,6 +10,7 @@
 
 typedef struct chttp_server_connection chttp_server_connection;
 typedef struct chttp_h2_server_connection chttp_h2_server_connection;
+typedef struct chttp_server_websocket_peer chttp_server_websocket_peer;
 
 int chttp_h2_server_config_validate(const chttp_server_config *config,
                                     chttp_h2_proto_config *out_protocol_config);
@@ -26,5 +27,7 @@ int chttp_h2_server_connection_begin_stop(chttp_h2_server_connection *h2);
 bool chttp_h2_server_connection_draining(const chttp_h2_server_connection *h2);
 bool chttp_h2_server_connection_stop_ready(const chttp_h2_server_connection *h2);
 bool chttp_h2_server_connection_stop_waiting(const chttp_h2_server_connection *h2);
+chttp_server_websocket_peer *chttp_h2_server_websocket_peer_find(
+    chttp_h2_server_connection *h2, int32_t stream_id);
 
 #endif /* CHTTP_H2_SERVER_H */

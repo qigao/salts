@@ -147,7 +147,8 @@ spec("CHTTP WebSocket opening handshake") {
     unsigned int http_status = 0u;
 
     check_equal(chttp_websocket_client_handshake_validate(
-                    response, sizeof(response) - 1u, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", &http_status),
+                    response, sizeof(response) - 1u, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", NULL,
+                    &http_status),
                 SALTS_OK);
     check_equal(http_status, 101u);
   }
@@ -174,7 +175,8 @@ spec("CHTTP WebSocket opening handshake") {
       unsigned int http_status = 0u;
       check_equal(
           chttp_websocket_client_handshake_validate(cases[index].wire, cases[index].size,
-                                                    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", &http_status),
+                                                    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", NULL,
+                                                    &http_status),
           SALTS_EPROTO);
       check_equal(http_status, cases[index].status);
     }
@@ -203,9 +205,42 @@ spec("CHTTP WebSocket opening handshake") {
       unsigned int http_status = 0u;
       check_equal(
           chttp_websocket_client_handshake_validate(cases[index].wire, cases[index].size,
-                                                    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", &http_status),
+                                                    "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", NULL,
+                                                    &http_status),
           SALTS_EPROTO);
       check_equal(http_status, 101u);
     }
+  }
+
+  it("requires the server to select the requested WebSocket subprotocol exactly once") {
+    static const char matching[] =
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+        "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
+        "Sec-WebSocket-Protocol: mqtt\r\n\r\n";
+    static const char missing[] =
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+        "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
+    static const char mismatched[] =
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+        "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"
+        "Sec-WebSocket-Protocol: MQTT\r\n\r\n";
+    unsigned int http_status = 0u;
+
+    check_equal(chttp_websocket_client_handshake_validate(
+                    matching, sizeof(matching) - 1u, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", "mqtt",
+                    &http_status),
+                SALTS_OK);
+    check_equal(chttp_websocket_client_handshake_validate(
+                    missing, sizeof(missing) - 1u, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", "mqtt",
+                    &http_status),
+                SALTS_EPROTO);
+    check_equal(chttp_websocket_client_handshake_validate(
+                    mismatched, sizeof(mismatched) - 1u, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", "mqtt",
+                    &http_status),
+                SALTS_EPROTO);
+    check_equal(chttp_websocket_client_handshake_validate(
+                    matching, sizeof(matching) - 1u, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", NULL,
+                    &http_status),
+                SALTS_EPROTO);
   }
 }

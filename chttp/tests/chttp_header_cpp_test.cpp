@@ -21,6 +21,8 @@ static_assert(std::is_standard_layout<chttp_tls_profile>::value, "TLS profile mu
 static_assert(std::is_standard_layout<chttp_body_source>::value, "body source must be C ABI data");
 static_assert(std::is_standard_layout<chttp_body_sink>::value, "body sink must be C ABI data");
 static_assert(std::is_standard_layout<chttp_websocket>::value, "WebSocket peer must be C ABI data");
+static_assert(std::is_standard_layout<chttp_server_websocket_session>::value,
+              "server WebSocket session must be C ABI data");
 static_assert(std::is_standard_layout<chttp_websocket_client>::value,
               "WebSocket client must be C ABI data");
 static_assert(std::is_standard_layout<chttp_websocket_pool>::value,
@@ -44,7 +46,9 @@ int main() {
   chttp_body_source body_source{};
   chttp_body_sink body_sink{};
   chttp_websocket_client websocket_client{};
+  chttp_server_websocket_session server_websocket_session{};
   chttp_websocket_client_config websocket_config{};
+  chttp_server_socket_options server_socket_options = CHTTP_SERVER_SOCKET_OPTIONS_INIT;
   chttp_websocket_connect_options websocket_options{};
   chttp_websocket_pool websocket_pool{};
   chttp_websocket_pool_config websocket_pool_config{};
@@ -73,6 +77,8 @@ int main() {
   websocket_config.h2_input_buffer_bytes = 128u * 1024u;
   websocket_config.h2_hpack_dynamic_table_bytes = 4096u;
   websocket_config.h2_max_settings_count = 16u;
+  websocket_config.socket_options = CNET_STREAM_SOCKET_OPTIONS_INIT;
+  server_socket_options.stream.keepalive = 1;
   return client.impl == nullptr && async_client.impl == nullptr && request.slot == 0u &&
                  request.generation == 0u && async_options.protocol == CHTTP_HTTP_1_1 &&
                  options.protocol == CHTTP_HTTP_1_1 &&
@@ -83,7 +89,9 @@ int main() {
                  server_config.h2_output_buffer_bytes == 64u * 1024u &&
                  body_source.read == nullptr && body_sink.write == nullptr &&
                  server.impl == nullptr && websocket_client.impl == nullptr &&
+                 server_websocket_session.impl == nullptr &&
                  websocket_config.h2_input_buffer_bytes == 128u * 1024u &&
+                 server_socket_options.stream.keepalive == 1 &&
                  websocket_config.h2_hpack_dynamic_table_bytes == 4096u &&
                  websocket_config.h2_max_settings_count == 16u &&
                  websocket_options.protocol == CHTTP_HTTP_1_1 && websocket_pool.impl == nullptr &&

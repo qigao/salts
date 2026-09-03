@@ -192,7 +192,15 @@ static int cnet_listener_bound_port(cnet_listener_socket socket_value, uint16_t 
   return *out_port != 0u ? SALTS_OK : SALTS_EPROTO;
 }
 
-int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *config) {
+int cnet_listener_options_validate(const cnet_listener_options *options) {
+  if (options == NULL || options->size != sizeof(*options) ||
+      (options->reuse_port != 0 && options->reuse_port != 1))
+    return SALTS_EINVAL;
+  return SALTS_OK;
+}
+
+int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
+                          const cnet_listener_options *options) {
   cnet_listener_impl *impl;
   unsigned char address[CNET_LISTENER_ADDRESS_CAPACITY];
   size_t address_length = 0u;
@@ -204,6 +212,11 @@ int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *conf
 
   if (listener == NULL || config == NULL) return SALTS_EINVAL;
   if (listener->impl != NULL) return SALTS_EALREADY;
+  status = cnet_listener_options_validate(options);
+  if (status != SALTS_OK) return status;
+#if !defined(SO_REUSEPORT)
+  if (options->reuse_port) return SALTS_ENOTSUP;
+#endif
   if (config->host == NULL || config->backlog == 0u || config->backlog > INT_MAX ||
       !native_io_backend_kind_supported(config->backend))
     return SALTS_EINVAL;
@@ -237,6 +250,19 @@ int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *conf
                                        (socklen_t)sizeof(reuse_address)) != 0)
     status = cnet_listener_native_error();
 #endif
+#if defined(SO_REUSEPORT)
+  if (status == SALTS_OK && options->reuse_port) {
+    const int reuse_port = 1;
+#if defined(_WIN32)
+    if (setsockopt(impl->socket_value, SOL_SOCKET, SO_REUSEPORT, (const char *)&reuse_port,
+                   (int)sizeof(reuse_port)) != 0)
+#else
+    if (setsockopt(impl->socket_value, SOL_SOCKET, SO_REUSEPORT, &reuse_port,
+                   (socklen_t)sizeof(reuse_port)) != 0)
+#endif
+      status = cnet_listener_native_error();
+  }
+#endif
   if (status == SALTS_OK) status = cnet_listener_set_nonblocking(impl->socket_value);
   if (status == SALTS_OK &&
       bind(impl->socket_value, (const struct sockaddr *)address, (int)address_length) != 0)
@@ -252,6 +278,11 @@ int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *conf
   }
   listener->impl = impl;
   return SALTS_OK;
+}
+
+int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *config) {
+  const cnet_listener_options options = CNET_LISTENER_OPTIONS_INIT;
+  return cnet_listener_init_ex(listener, config, &options);
 }
 
 int cnet_listener_port(const cnet_listener *listener, uint16_t *out_port) {

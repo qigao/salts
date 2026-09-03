@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <salts/disruptor.h>
+#include <salts/clock.h>
 #include <salts/error_codes.h>
 #include <salts/thread.h>
 #include <salts/thread_pool.h>
@@ -15,9 +16,11 @@ typedef struct salts_coro_executor_await_slot_s {
   coro_t *coroutine;
   uint32_t generation;
   int completion_status;
+  uint64_t deadline_ms;
   int active;
   int waiting;
   int completion_ready;
+  int timeout_enabled;
 } salts_coro_executor_await_slot_t;
 
 struct salts_coro_executor_shard_s {
@@ -284,6 +287,40 @@ static int salts_coro_executor_dispatch_wake(salts_coro_executor_shard_t *shard)
   return 1;
 }
 
+static int salts_coro_executor_dispatch_timeouts(salts_coro_executor_shard_t *shard) {
+  const uint64_t now_ms = salts_monotonic_ms();
+  int progressed = 0;
+  if (atomic_load(&shard->active_await_count) == 0u) return 0;
+  salts_mutex_lock(&shard->mutex);
+  for (size_t index = 0u; index < shard->await_capacity; ++index) {
+    salts_coro_executor_await_slot_t *slot = &shard->await_slots[index];
+    if (!slot->active || !slot->waiting || !slot->timeout_enabled || slot->completion_ready ||
+        slot->deadline_ms > now_ms)
+      continue;
+    slot->completion_status = SALTS_ETIMEDOUT;
+    slot->completion_ready = 1;
+    coro_set_waiting_for_io(slot->coroutine, 0);
+    progressed = 1;
+  }
+  salts_mutex_unlock(&shard->mutex);
+  return progressed;
+}
+
+static uint64_t salts_coro_executor_next_timeout_ns_locked(
+    const salts_coro_executor_shard_t *shard) {
+  const uint64_t now_ms = salts_monotonic_ms();
+  uint64_t earliest_ms = UINT64_MAX;
+  for (size_t index = 0u; index < shard->await_capacity; ++index) {
+    const salts_coro_executor_await_slot_t *slot = &shard->await_slots[index];
+    if (slot->active && slot->waiting && slot->timeout_enabled && !slot->completion_ready &&
+        slot->deadline_ms < earliest_ms)
+      earliest_ms = slot->deadline_ms;
+  }
+  if (earliest_ms == UINT64_MAX) return UINT64_MAX;
+  if (earliest_ms <= now_ms) return 1u;
+  return (earliest_ms - now_ms) * UINT64_C(1000000);
+}
+
 static void salts_coro_executor_start_task(salts_coro_executor_shard_t *shard,
                                            const salts_coro_executor_task_t *task) {
   salts_coro_executor_t *executor = shard->executor;
@@ -358,6 +395,7 @@ static void salts_coro_executor_worker(void *arg) {
     for (;;) {
       int progressed = 0;
 
+      if (salts_coro_executor_dispatch_timeouts(shard)) progressed = 1;
       while (salts_coro_executor_dispatch_wake(shard))
         progressed = 1;
 
@@ -379,11 +417,16 @@ static void salts_coro_executor_worker(void *arg) {
         break;
       }
       if (!progressed) {
-        while (!salts_coro_executor_shard_should_exit(shard) && shard->wake_depth == 0u &&
-               !(shard->queued_depth > 0u &&
-                 salts_coro_pool_active_count(shard->pool) < executor->pool_config.max_capacity) &&
-               !coro_scheduler_has_ready(shard->scheduler))
-          salts_cond_wait(&shard->work_available, &shard->mutex);
+        if (!salts_coro_executor_shard_should_exit(shard) && shard->wake_depth == 0u &&
+            !(shard->queued_depth > 0u &&
+              salts_coro_pool_active_count(shard->pool) < executor->pool_config.max_capacity) &&
+            !coro_scheduler_has_ready(shard->scheduler)) {
+          const uint64_t timeout_ns = salts_coro_executor_next_timeout_ns_locked(shard);
+          if (timeout_ns == UINT64_MAX)
+            salts_cond_wait(&shard->work_available, &shard->mutex);
+          else
+            (void)salts_cond_timedwait(&shard->work_available, &shard->mutex, timeout_ns);
+        }
       }
       salts_mutex_unlock(&shard->mutex);
     }
@@ -735,7 +778,9 @@ int salts_coro_executor_await_complete(salts_coro_executor_t *executor,
   return SALTS_OK;
 }
 
-int salts_coro_executor_await(salts_coro_executor_await_t await_handle, int *out_status) {
+static int salts_coro_executor_await_internal(salts_coro_executor_await_t await_handle,
+                                              uint32_t timeout_ms, int timeout_enabled,
+                                              int *out_status) {
   salts_coro_executor_shard_t *shard;
   salts_coro_executor_await_slot_t *slot;
   coro_t *coroutine;
@@ -772,6 +817,12 @@ int salts_coro_executor_await(salts_coro_executor_await_t await_handle, int *out
     return SALTS_EALREADY;
   }
 
+  if (timeout_enabled) {
+    const uint64_t now_ms = salts_monotonic_ms();
+    slot->deadline_ms =
+        now_ms > UINT64_MAX - (uint64_t)timeout_ms ? UINT64_MAX : now_ms + timeout_ms;
+    slot->timeout_enabled = 1;
+  }
   slot->waiting = 1;
   atomic_fetch_add(&shard->executor->waiting_awaits, 1u);
   coro_set_waiting_for_io(coroutine, 1);
@@ -800,6 +851,19 @@ int salts_coro_executor_await(salts_coro_executor_await_t await_handle, int *out
   salts_mutex_unlock(&shard->mutex);
   *out_status = status;
   return SALTS_OK;
+}
+
+int salts_coro_executor_await(salts_coro_executor_await_t await_handle, int *out_status) {
+  return salts_coro_executor_await_internal(await_handle, 0u, 0, out_status);
+}
+
+int salts_coro_executor_await_for(salts_coro_executor_await_t await_handle, uint32_t timeout_ms,
+                                  int *out_status) {
+  if (timeout_ms == 0u) {
+    if (out_status != NULL) *out_status = 0;
+    return SALTS_EINVAL;
+  }
+  return salts_coro_executor_await_internal(await_handle, timeout_ms, 1, out_status);
 }
 
 int salts_coro_executor_await_abort(salts_coro_executor_await_t await_handle) {

@@ -740,7 +740,8 @@ static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session 
 
   status = cnet_transport_tcp_prepare_connect(&session->transport, &impl->backend,
                                               impl->backend_kind, session->peer.address,
-                                              session->peer.address_length, 0u, &operation);
+                                              session->peer.address_length,
+                                              &session->peer.socket_options, 0u, &operation);
   if (status != SALTS_OK)
     return command != NULL
                ? cnet_owner_fail_accepted_command(impl, session, command, status,
@@ -837,6 +838,9 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
   memset(session, 0, sizeof(*session));
   session->handle = command->connection;
   session->peer = *payload;
+  if (session->peer.socket_options.size == 0u)
+    session->peer.socket_options =
+        (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
   session->receive_buffer =
       &impl->receive_storage[(size_t)(session->handle.slot - 1u) * impl->receive_buffer_bytes];
   session->transport.native_handle = UINTPTR_MAX;
@@ -861,8 +865,9 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
                                             CNET_SESSION_STAGE_CONNECT);
 
   if (has_adopted) {
-    status =
-        cnet_transport_adopt_tcp(&session->transport, &impl->backend, session->peer.adopted_socket);
+    status = cnet_transport_adopt_tcp(&session->transport, &impl->backend,
+                                      session->peer.adopted_socket,
+                                      &session->peer.socket_options);
     session->peer.adopted_socket = UINTPTR_MAX;
     session->peer.adopted = false;
     if (status == SALTS_OK) {
@@ -1524,6 +1529,19 @@ int cnet_owner_tls_peer_certificate_sha256(
   if (session == NULL) return SALTS_ENOENT;
   if (session->peer.scheme != CNET_URI_TLS) return SALTS_ENOTSUP;
   return cnet_tls_state_peer_certificate_sha256(&session->tls, buffer);
+}
+
+int cnet_owner_tls_export_channel_binding(
+    cnet_owner *owner, cnet_session_handle session_handle,
+    uint8_t output[CNET_TLS_CHANNEL_BINDING_BYTES]) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  if (impl == NULL || output == NULL) return SALTS_EINVAL;
+  memset(output, 0, CNET_TLS_CHANNEL_BINDING_BYTES);
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  if (session->peer.scheme != CNET_URI_TLS) return SALTS_ENOTSUP;
+  return cnet_tls_state_export_channel_binding(&session->tls, output);
 }
 
 int cnet_owner_release_session(cnet_owner *owner, cnet_session_handle session_handle) {

@@ -279,9 +279,13 @@ int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *conf
       config->receive_buffer_bytes < config->max_datagram_bytes ||
       config->receive_buffer_bytes > CNET_DATAGRAM_MAX_PAYLOAD_BYTES ||
       config->observer.on_receive == NULL || config->observer.on_send == NULL ||
+      (config->reuse_port != 0 && config->reuse_port != 1) ||
       !native_io_backend_kind_supported(config->backend) ||
       config->send_capacity > SIZE_MAX / config->max_datagram_bytes)
     return SALTS_EINVAL;
+#if !defined(SO_REUSEPORT)
+  if (config->reuse_port) return SALTS_ENOTSUP;
+#endif
   status = cnet_transport_parse_bind_address(config->host, config->port, native_address,
                                              sizeof(native_address), &native_address_size);
   if (status != SALTS_OK) return status;
@@ -336,6 +340,21 @@ int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *conf
     status = cnet_datagram_native_error();
     goto fail;
   }
+#if defined(SO_REUSEPORT)
+  if (config->reuse_port) {
+    const int reuse_port = 1;
+#if defined(_WIN32)
+    if (setsockopt(impl->socket_value, SOL_SOCKET, SO_REUSEPORT, (const char *)&reuse_port,
+                   (int)sizeof(reuse_port)) != 0) {
+#else
+    if (setsockopt(impl->socket_value, SOL_SOCKET, SO_REUSEPORT, &reuse_port,
+                   (socklen_t)sizeof(reuse_port)) != 0) {
+#endif
+      status = cnet_datagram_native_error();
+      goto fail;
+    }
+  }
+#endif
   if (bind(impl->socket_value, (const struct sockaddr *)native_address,
            (int)native_address_size) != 0) {
     status = cnet_datagram_native_error();

@@ -1,5 +1,5 @@
 set(TARGET_NAME salts_chttp)
-set(CHTTP_LIBRARY_VERSION 2.1.0)
+set(CHTTP_LIBRARY_VERSION 2.2.0)
 set(CHTTP_ABI_VERSION 2)
 
 find_package(llhttp CONFIG REQUIRED)

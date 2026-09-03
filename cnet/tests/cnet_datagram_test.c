@@ -129,6 +129,10 @@ spec("CNet bound UDP datagram") {
     config.receive_buffer_bytes = config.max_datagram_bytes - 1u;
     check_equal(cnet_datagram_init(&datagram, &config), SALTS_EINVAL);
     check_null(datagram.impl);
+    config = cnet_datagram_test_config(&probe);
+    config.reuse_port = 2;
+    check_equal(cnet_datagram_init(&datagram, &config), SALTS_EINVAL);
+    check_null(datagram.impl);
   }
 
   it("preserves peer identity and copied payloads in both directions") {
