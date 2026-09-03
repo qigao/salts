@@ -51,6 +51,17 @@ typedef struct chttp_websocket_client {
   void *impl;
 } chttp_websocket_client;
 
+/** Single-owner RFC 8441 session pool; public calls drive one shared H2 connection internally. */
+typedef struct chttp_websocket_pool {
+  void *impl;
+} chttp_websocket_pool;
+
+/** Generation-checked WebSocket stream handle; never a pointer or CNet handle. */
+typedef struct chttp_websocket_session {
+  uint32_t slot;
+  uint32_t generation;
+} chttp_websocket_session;
+
 /** Generation-checked request handle; never a pointer or CNet handle. */
 typedef struct chttp_request {
   uint32_t slot;
@@ -265,6 +276,14 @@ typedef struct chttp_websocket_connect_options {
   /** HTTP/1.1 Upgrade by default; HTTP/2 selects RFC 8441 Extended CONNECT. */
   chttp_protocol protocol;
 } chttp_websocket_connect_options;
+
+typedef struct chttp_websocket_pool_config {
+  size_t size;
+  /** Shared transport limits plus the per-session WebSocket and event bounds. */
+  chttp_websocket_client_config client;
+  /** Concurrent RFC 8441 streams on the one physical H2 connection. */
+  size_t session_capacity;
+} chttp_websocket_pool_config;
 
 /**
  * Every capacity is a hard bound. `network.connection_capacity` bounds active
@@ -669,6 +688,43 @@ int chttp_websocket_client_close(chttp_websocket_client *client, uint16_t code, 
 
 /** Drains and releases CNet; active connections are closed within timeout_ms. */
 int chttp_websocket_client_destroy(chttp_websocket_client *client, uint32_t timeout_ms);
+
+/**
+ * Initializes a disconnected HTTP/2 WebSocket pool. All capacities are hard bounds and storage is
+ * reserved before success. The pool is single-owner and not concurrently callable.
+ */
+int chttp_websocket_pool_init(chttp_websocket_pool *pool,
+                              const chttp_websocket_pool_config *config);
+
+/**
+ * Opens one RFC 8441 stream without exposing a poller. The first call fixes the connection origin
+ * and TLS profile; later calls may change only the URI target. Local/peer stream exhaustion returns
+ * `TURBO_ENOBUFS`.
+ */
+int chttp_websocket_pool_open(chttp_websocket_pool *pool,
+                              const chttp_websocket_connect_options *options,
+                              chttp_websocket_session *out_session, unsigned int *out_http_status);
+
+int chttp_websocket_pool_send_text(chttp_websocket_pool *pool, chttp_websocket_session session,
+                                   const void *data, size_t size, uint32_t timeout_ms);
+int chttp_websocket_pool_send_binary(chttp_websocket_pool *pool, chttp_websocket_session session,
+                                     const void *data, size_t size, uint32_t timeout_ms);
+int chttp_websocket_pool_send_ping(chttp_websocket_pool *pool, chttp_websocket_session session,
+                                   const void *data, size_t size, uint32_t timeout_ms);
+int chttp_websocket_pool_send_pong(chttp_websocket_pool *pool, chttp_websocket_session session,
+                                   const void *data, size_t size, uint32_t timeout_ms);
+
+/** Returns one borrowed event view, valid until the next operation on this pool. */
+int chttp_websocket_pool_receive(chttp_websocket_pool *pool, chttp_websocket_session session,
+                                 uint32_t timeout_ms, chttp_websocket_event *out_event);
+
+/** Closes and releases only this HTTP/2 stream; sibling sessions remain usable. */
+int chttp_websocket_pool_close(chttp_websocket_pool *pool, chttp_websocket_session session,
+                               uint16_t code, const void *reason, size_t reason_size,
+                               uint32_t timeout_ms);
+
+/** Closes active streams, then drains and releases the one shared CNet connection. */
+int chttp_websocket_pool_destroy(chttp_websocket_pool *pool, uint32_t timeout_ms);
 
 /**
  * Appends one global middleware before start. Bindings are copied in

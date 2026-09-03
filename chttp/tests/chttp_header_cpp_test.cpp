@@ -23,6 +23,10 @@ static_assert(std::is_standard_layout<chttp_body_sink>::value, "body sink must b
 static_assert(std::is_standard_layout<chttp_websocket>::value, "WebSocket peer must be C ABI data");
 static_assert(std::is_standard_layout<chttp_websocket_client>::value,
               "WebSocket client must be C ABI data");
+static_assert(std::is_standard_layout<chttp_websocket_pool>::value,
+              "WebSocket pool must be C ABI data");
+static_assert(std::is_standard_layout<chttp_websocket_session>::value,
+              "WebSocket session must be C ABI data");
 static_assert(CHTTP_HTTP_1_1 == 0, "zero-initialized requests must remain HTTP/1.1");
 static_assert(CHTTP_HTTP_2 != CHTTP_HTTP_1_1, "HTTP/2 must be an explicit protocol selection");
 
@@ -42,6 +46,9 @@ int main() {
   chttp_websocket_client websocket_client{};
   chttp_websocket_client_config websocket_config{};
   chttp_websocket_connect_options websocket_options{};
+  chttp_websocket_pool websocket_pool{};
+  chttp_websocket_pool_config websocket_pool_config{};
+  chttp_websocket_session websocket_session{};
   auto *response_source = &chttp_server_response_source;
   auto *response_file = &chttp_server_response_file;
   auto *post_file = &chttp_post_file;
@@ -79,8 +86,9 @@ int main() {
                  websocket_config.h2_input_buffer_bytes == 128u * 1024u &&
                  websocket_config.h2_hpack_dynamic_table_bytes == 4096u &&
                  websocket_config.h2_max_settings_count == 16u &&
-                 websocket_options.protocol == CHTTP_HTTP_1_1 &&
-                 CHTTP_METHOD_CONNECT != CHTTP_METHOD_OPTIONS
+                 websocket_options.protocol == CHTTP_HTTP_1_1 && websocket_pool.impl == nullptr &&
+                 websocket_pool_config.session_capacity == 0u && websocket_session.slot == 0u &&
+                 websocket_session.generation == 0u && CHTTP_METHOD_CONNECT != CHTTP_METHOD_OPTIONS
              ? 0
              : 1;
 }

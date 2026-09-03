@@ -145,6 +145,21 @@ static int chttp_websocket_test_h2_open(void *user, chttp_websocket *websocket,
   return chttp_websocket_test_open(user, websocket, request, response);
 }
 
+static int chttp_websocket_test_pool_open(void *user, chttp_websocket *websocket,
+                                          const chttp_server_request_view *request,
+                                          chttp_server_response *response) {
+  chttp_websocket_test_probe *probe = (chttp_websocket_test_probe *)user;
+  const char *id = chttp_server_request_param(request, "id");
+  int status;
+  (void)response;
+  if (request == NULL || request->http_major != 2u || request->http_minor != 0u ||
+      request->method != CHTTP_METHOD_CONNECT || id == NULL)
+    return TURBO_EPROTO;
+  status = chttp_websocket_send_text(websocket, id, strlen(id));
+  if (status == TURBO_OK) atomic_fetch_add_explicit(&probe->opened, 1, memory_order_relaxed);
+  return status;
+}
+
 static int chttp_websocket_test_reject_open(void *user, chttp_websocket *websocket,
                                             const chttp_server_request_view *request,
                                             chttp_server_response *response) {
@@ -180,7 +195,9 @@ static void chttp_websocket_test_event(void *user, chttp_websocket *websocket,
   chttp_websocket_test_probe *probe = (chttp_websocket_test_probe *)user;
   if (event->kind == CHTTP_WEBSOCKET_EVENT_MESSAGE) {
     atomic_fetch_add_explicit(&probe->messages, 1, memory_order_relaxed);
-    if (event->size == 5u && memcmp(event->data, "pings", 5u) == 0) {
+    if (event->size == 12u && memcmp(event->data, "server-close", 12u) == 0) {
+      (void)chttp_websocket_close(websocket, 1000u, NULL, 0u);
+    } else if (event->size == 5u && memcmp(event->data, "pings", 5u) == 0) {
       (void)chttp_websocket_send_ping(websocket, "1", 1u);
       (void)chttp_websocket_send_ping(websocket, "2", 1u);
     } else {
@@ -229,6 +246,24 @@ spec("CHTTP WebSocket client/server") {
     config.h2_input_buffer_bytes = 16u * 1024u;
     check_equal(chttp_websocket_client_init(&client, &config), TURBO_EMSGSIZE);
     check_null(client.impl);
+  }
+
+  it("rejects invalid WebSocket pool bounds before allocation") {
+    chttp_websocket_pool pool = {0};
+    chttp_websocket_pool_config config = {.size = sizeof(config),
+                                          .client = chttp_websocket_test_client_config(),
+                                          .session_capacity = 0u};
+
+    check_equal(chttp_websocket_pool_init(&pool, &config), TURBO_EINVAL);
+    check_null(pool.impl);
+    config.session_capacity = 2u;
+    config.client.size = 0u;
+    check_equal(chttp_websocket_pool_init(&pool, &config), TURBO_EINVAL);
+    check_null(pool.impl);
+    config.client = chttp_websocket_test_client_config();
+    config.client.h2_input_buffer_bytes = 16u * 1024u;
+    check_equal(chttp_websocket_pool_init(&pool, &config), TURBO_EMSGSIZE);
+    check_null(pool.impl);
   }
 
   it("upgrades a routed ws connection without exposing a poller") {
@@ -495,6 +530,206 @@ spec("CHTTP WebSocket client/server") {
     check_equal(atomic_load_explicit(&probe.closes, memory_order_relaxed), 1);
   }
 
+  it("multiplexes bounded RFC 8441 sessions on one H2 connection") {
+    chttp_websocket_test_probe probe;
+    chttp_server server = {0};
+    chttp_server_config server_config = chttp_websocket_test_server_config();
+    chttp_server_websocket_options route = {.size = sizeof(route),
+                                            .path = "/pool/:id",
+                                            .on_open = chttp_websocket_test_pool_open,
+                                            .on_event = chttp_websocket_test_event,
+                                            .user = &probe};
+    chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+    chttp_websocket_pool_config pool_config = {
+        .size = sizeof(pool_config), .client = client_config, .session_capacity = 2u};
+    chttp_websocket_pool pool = {0};
+    chttp_websocket_session first = {0};
+    chttp_websocket_session second = {0};
+    chttp_websocket_session rejected = {0};
+    chttp_websocket_session replacement = {0};
+    chttp_websocket_connect_options options = {.size = sizeof(options),
+                                               .protocol = CHTTP_HTTP_2,
+                                               .timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS};
+    chttp_websocket_event event;
+    chttp_server_stats stats;
+    unsigned int http_status = 0u;
+    uint16_t port = 0u;
+    char first_uri[128];
+    char second_uri[128];
+    char other_origin_uri[128];
+
+    atomic_init(&probe.global_middleware, 0);
+    atomic_init(&probe.route_middleware, 0);
+    atomic_init(&probe.opened, 0);
+    atomic_init(&probe.messages, 0);
+    atomic_init(&probe.pings, 0);
+    atomic_init(&probe.pongs, 0);
+    atomic_init(&probe.closes, 0);
+    chttp_websocket_test_enable_h2(&server_config, &pool_config.client);
+    check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
+    check_equal(chttp_server_websocket_with(&server, &route), TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_true(snprintf(first_uri, sizeof(first_uri), "ws://127.0.0.1:%u/pool/first",
+                        (unsigned int)port) > 0);
+    check_true(snprintf(second_uri, sizeof(second_uri), "ws://127.0.0.1:%u/pool/second",
+                        (unsigned int)port) > 0);
+    check_true(snprintf(other_origin_uri, sizeof(other_origin_uri), "ws://localhost:%u/pool/other",
+                        (unsigned int)port) > 0);
+
+    check_equal(chttp_websocket_pool_init(&pool, &pool_config), TURBO_OK);
+    options.uri = first_uri;
+    check_equal(chttp_websocket_pool_open(&pool, &options, &first, &http_status), TURBO_OK);
+    check_equal(http_status, 200u);
+    options.uri = second_uri;
+    check_equal(chttp_websocket_pool_open(&pool, &options, &second, &http_status), TURBO_OK);
+    check_equal(http_status, 200u);
+    check_not_equal(first.slot, 0u);
+    check_not_equal(second.slot, 0u);
+    check_not_equal(first.slot, second.slot);
+
+    options.uri = first_uri;
+    check_equal(chttp_websocket_pool_open(&pool, &options, &rejected, &http_status), TURBO_ENOBUFS);
+    check_equal(rejected.slot, 0u);
+    check_equal(rejected.generation, 0u);
+    options.uri = other_origin_uri;
+    check_equal(chttp_websocket_pool_open(&pool, &options, &rejected, &http_status), TURBO_EINVAL);
+    options.uri = first_uri;
+    options.protocol = CHTTP_HTTP_1_1;
+    check_equal(chttp_websocket_pool_open(&pool, &options, &rejected, &http_status),
+                TURBO_EPROTONOSUPPORT);
+    options.protocol = CHTTP_HTTP_2;
+
+    check_equal(chttp_websocket_pool_receive(&pool, first, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.size, 5u);
+    check_equal(memcmp(event.data, "first", 5u), 0);
+    check_equal(
+        chttp_websocket_pool_receive(&pool, second, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+        TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_MESSAGE);
+    check_equal(event.size, 6u);
+    check_equal(memcmp(event.data, "second", 6u), 0);
+
+    check_equal(
+        chttp_websocket_pool_send_text(&pool, first, "one", 3u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(
+        chttp_websocket_pool_send_text(&pool, second, "two", 3u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(
+        chttp_websocket_pool_receive(&pool, second, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+        TURBO_OK);
+    check_equal(event.size, 3u);
+    check_equal(memcmp(event.data, "two", 3u), 0);
+    check_equal(chttp_websocket_pool_receive(&pool, first, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(event.size, 3u);
+    check_equal(memcmp(event.data, "one", 3u), 0);
+
+    check_equal(
+        chttp_websocket_pool_close(&pool, first, 1000u, NULL, 0u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(
+        chttp_websocket_pool_send_text(&pool, first, "stale", 5u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_ENOENT);
+    options.uri = first_uri;
+    check_equal(chttp_websocket_pool_open(&pool, &options, &replacement, &http_status), TURBO_OK);
+    check_equal(http_status, 200u);
+    check_equal(replacement.slot, first.slot);
+    check_not_equal(replacement.generation, first.generation);
+    check_equal(
+        chttp_websocket_pool_receive(&pool, replacement, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+        TURBO_OK);
+    check_equal(event.size, 5u);
+    check_equal(memcmp(event.data, "first", 5u), 0);
+    check_equal(chttp_websocket_pool_send_text(&pool, replacement, "server-close", 12u,
+                                               CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+                TURBO_OK);
+    check_equal(
+        chttp_websocket_pool_receive(&pool, replacement, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+        TURBO_OK);
+    check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_CLOSE);
+    check_equal(chttp_websocket_pool_close(&pool, replacement, 1000u, NULL, 0u,
+                                           CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+                TURBO_OK);
+    check_equal(
+        chttp_websocket_pool_send_text(&pool, second, "alive", 5u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(
+        chttp_websocket_pool_receive(&pool, second, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+        TURBO_OK);
+    check_equal(event.size, 5u);
+    check_equal(memcmp(event.data, "alive", 5u), 0);
+    check_equal(chttp_server_get_stats(&server, &stats), TURBO_OK);
+    check_equal(stats.accepted_connections, (uint64_t)1u);
+
+    check_equal(
+        chttp_websocket_pool_close(&pool, second, 1000u, NULL, 0u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(chttp_websocket_pool_destroy(&pool, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(atomic_load_explicit(&probe.opened, memory_order_relaxed), 3);
+    check_equal(atomic_load_explicit(&probe.messages, memory_order_relaxed), 4);
+    check_equal(atomic_load_explicit(&probe.closes, memory_order_relaxed), 3);
+  }
+
+  it("honors the peer stream limit and drains active sessions on pool destroy") {
+    chttp_websocket_test_probe probe;
+    chttp_server server = {0};
+    chttp_server_config server_config = chttp_websocket_test_server_config();
+    chttp_server_websocket_options route = {.size = sizeof(route),
+                                            .path = "/limited/:id",
+                                            .on_open = chttp_websocket_test_pool_open,
+                                            .on_event = chttp_websocket_test_event,
+                                            .user = &probe};
+    chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+    chttp_websocket_pool_config pool_config = {
+        .size = sizeof(pool_config), .client = client_config, .session_capacity = 2u};
+    chttp_websocket_pool pool = {0};
+    chttp_websocket_session admitted = {0};
+    chttp_websocket_session rejected = {0};
+    chttp_websocket_connect_options options = {.size = sizeof(options),
+                                               .protocol = CHTTP_HTTP_2,
+                                               .timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS};
+    unsigned int http_status = 0u;
+    uint16_t port = 0u;
+    char first_uri[128];
+    char second_uri[128];
+
+    atomic_init(&probe.global_middleware, 0);
+    atomic_init(&probe.route_middleware, 0);
+    atomic_init(&probe.opened, 0);
+    atomic_init(&probe.messages, 0);
+    atomic_init(&probe.pings, 0);
+    atomic_init(&probe.pongs, 0);
+    atomic_init(&probe.closes, 0);
+    chttp_websocket_test_enable_h2(&server_config, &pool_config.client);
+    server_config.h2_stream_capacity = 1u;
+    check_equal(chttp_server_init(&server, &server_config), TURBO_OK);
+    check_equal(chttp_server_websocket_with(&server, &route), TURBO_OK);
+    check_equal(chttp_server_start(&server), TURBO_OK);
+    check_equal(chttp_server_port(&server, &port), TURBO_OK);
+    check_true(snprintf(first_uri, sizeof(first_uri), "ws://127.0.0.1:%u/limited/first",
+                        (unsigned int)port) > 0);
+    check_true(snprintf(second_uri, sizeof(second_uri), "ws://127.0.0.1:%u/limited/second",
+                        (unsigned int)port) > 0);
+    check_equal(chttp_websocket_pool_init(&pool, &pool_config), TURBO_OK);
+    options.uri = first_uri;
+    check_equal(chttp_websocket_pool_open(&pool, &options, &admitted, &http_status), TURBO_OK);
+    check_equal(http_status, 200u);
+    options.uri = second_uri;
+    check_equal(chttp_websocket_pool_open(&pool, &options, &rejected, &http_status), TURBO_ENOBUFS);
+    check_equal(rejected.slot, 0u);
+    check_equal(chttp_websocket_pool_destroy(&pool, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+    check_equal(chttp_server_destroy(&server), TURBO_OK);
+    check_equal(atomic_load_explicit(&probe.opened, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.closes, memory_order_relaxed), 1);
+  }
+
   it("returns the HTTP status when an RFC 8441 route is absent") {
     chttp_server server = {0};
     chttp_server_config server_config = chttp_websocket_test_server_config();
@@ -587,12 +822,17 @@ spec("CHTTP WebSocket client/server") {
                                             .user = &probe};
     chttp_websocket_client client = {0};
     chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+    chttp_websocket_pool pool = {0};
+    chttp_websocket_pool_config pool_config;
+    chttp_websocket_session first = {0};
+    chttp_websocket_session second = {0};
     chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options),
                                                        .protocol = CHTTP_HTTP_2};
     chttp_websocket_event event;
     unsigned int http_status = 0u;
     uint16_t port = 0u;
     char uri[128];
+    char second_uri[128];
     char *cert_path = tt_make_temp_file("chttp-h2-websocket-cert", ".pem");
     char *key_path = tt_make_temp_file("chttp-h2-websocket-key", ".pem");
 
@@ -656,12 +896,35 @@ spec("CHTTP WebSocket client/server") {
         chttp_websocket_client_close(&client, 1000u, NULL, 0u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
         TURBO_OK);
     check_equal(chttp_websocket_client_destroy(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
+
+    pool_config = (chttp_websocket_pool_config){
+        .size = sizeof(pool_config), .client = client_config, .session_capacity = 2u};
+    check_true(snprintf(second_uri, sizeof(second_uri), "wss://127.0.0.1:%u/chat/42?stream=two",
+                        (unsigned int)port) > 0);
+    check_equal(chttp_websocket_pool_init(&pool, &pool_config), TURBO_OK);
+    connect_options.uri = uri;
+    check_equal(chttp_websocket_pool_open(&pool, &connect_options, &first, &http_status), TURBO_OK);
+    connect_options.uri = second_uri;
+    check_equal(chttp_websocket_pool_open(&pool, &connect_options, &second, &http_status),
+                TURBO_OK);
+    check_equal(chttp_websocket_pool_receive(&pool, first, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+                TURBO_OK);
+    check_equal(
+        chttp_websocket_pool_receive(&pool, second, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+        TURBO_OK);
+    check_equal(
+        chttp_websocket_pool_close(&pool, first, 1000u, NULL, 0u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(
+        chttp_websocket_pool_close(&pool, second, 1000u, NULL, 0u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        TURBO_OK);
+    check_equal(chttp_websocket_pool_destroy(&pool, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(chttp_tls_profile_destroy(&profile), TURBO_OK);
     check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), TURBO_OK);
     check_equal(chttp_server_destroy(&server), TURBO_OK);
-    check_equal(atomic_load_explicit(&probe.opened, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.opened, memory_order_relaxed), 3);
     check_equal(atomic_load_explicit(&probe.messages, memory_order_relaxed), 1);
-    check_equal(atomic_load_explicit(&probe.closes, memory_order_relaxed), 1);
+    check_equal(atomic_load_explicit(&probe.closes, memory_order_relaxed), 3);
     check_equal(tt_remove_file(cert_path), 0);
     check_equal(tt_remove_file(key_path), 0);
     free(cert_path);

@@ -27,6 +27,7 @@ add_library(${TARGET_NAME} SHARED
 target_sources(${TARGET_NAME} PRIVATE src/chttp_websocket_handshake.c)
 target_sources(${TARGET_NAME} PRIVATE src/chttp_websocket_server.c)
 target_sources(${TARGET_NAME} PRIVATE src/chttp_websocket_client.c)
+target_sources(${TARGET_NAME} PRIVATE src/chttp_websocket_pool.c)
 cmake_config_target(${TARGET_NAME}
   ALIAS Rocida::CHTTP
   FOLDER "chttp"

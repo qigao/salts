@@ -335,6 +335,24 @@ WSS 则额外要求 TLS profile 精确使用 `h2` ALPN。能力未发布、ALPN 
 明确报错，不回退 H1 或明文。client 是 single-owner，一次只拥有一条物理连接上的一个 WebSocket
 stream，不能并发调用；`receive` 返回的 event view 只在下一次 client 操作前有效。
 
+需要在同一站点保持多条长连接逻辑通道时，使用 HTTP/2 专用的
+`chttp_websocket_pool`。pool 只建立一条 TCP/TLS + H2 连接；每次
+`chttp_websocket_pool_open()` 以完整 URI 打开一个独立 RFC 8441 stream，并返回
+generation-checked `chttp_websocket_session`。首个 URI 固定 scheme、authority 和 TLS profile，后续 URI
+可以使用不同 path/query；origin 或 TLS profile 不一致会返回 `TURBO_EINVAL`，不会暗中建立第二条连接。
+关闭一个 session 只完成该 WebSocket Close handshake 和 H2 END_STREAM，其他 session 仍可收发。
+
+调用顺序是：用共享 network/WebSocket limits 和 `session_capacity` 初始化 pool；将
+`chttp_websocket_connect_options.protocol` 设为 `CHTTP_HTTP_2`，分别以 `/chat`、`/notices` 等完整
+URI 调用 `open`；此后每次 send/receive/close 都同时传入 pool 与对应 session handle；所有 handle
+关闭后销毁 pool。WSS 的每次 open 都传入首个连接使用的同一个 `h2` TLS profile。
+
+pool 与其所有 session 都由一个 progress owner 串行调用，应用仍不接触 poller。`session_capacity`
+同时是本地 stream 硬上限；peer 的 `SETTINGS_MAX_CONCURRENT_STREAMS` 可能进一步收紧它，满额统一返回
+`TURBO_ENOBUFS`。每个 slot 独立拥有 WebSocket parser、event ring、payload slab 与在途 frame storage；
+stream parse/容量错误只终止该 handle，物理 transport/H2 connection 错误才终止所有 session。
+pool `receive` 返回的 view 在下一次任意 pool 操作时失效，stale generation 返回 `TURBO_ENOENT`。
+
 三个 WebSocket 容量同样是硬边界：frame 决定单帧 payload 上限，message 决定 fragment 重组后
 总量，buffered input 决定尚未形成完整 frame 的保留量。client event queue 也受
 `event_capacity` 限制，满额返回 `TURBO_ENOBUFS`，不会静默丢帧或无界扩容。CHTTP 不直接导出
