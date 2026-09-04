@@ -13,6 +13,11 @@ cmake_add_test(cstl_header_typed_test
   LIBS Salts::CSTL Salts::TinyTest
   FOLDER "cstl/tests")
 
+cmake_add_test(cstl_tinytest_test
+  SOURCES cstl_tinytest_test.c
+  LIBS Salts::CSTL Salts::TinyTest
+  FOLDER "cstl/tests")
+
 cmake_add_test(cstl_header_typed_cpp_test
   SOURCES cstl_header_typed_cpp_test.cpp
   LIBS Salts::CSTL Salts::TinyTest
@@ -153,6 +158,7 @@ set_target_properties(
   cstl_ownership_test
   cstl_hash_test
   cstl_typed_test
+  cstl_tinytest_test
   cstl_tree_test
   cstl_list_test
   cstl_map_test

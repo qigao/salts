@@ -134,6 +134,36 @@ as `map_init(&scores, 100u)`, `map_put(&scores, &key, &value)`, and
 `map_destroy(&scores)` remain ordinary functions; typed declarations never
 intercept or reinterpret their C expressions.
 
+## TinyTest equality bridge
+
+`<cstl/tinytest.h>` supplies pointer-based TinyTest assertions for a finite
+set of explicitly declared typed containers. It never copies a storage-owning
+CSTL handle. Define a comparator for each test type, then pass its type name to
+`check_cstl_equal`:
+
+```c
+#include <cstl/typed.h>
+
+typed(Vec, IntVec, int);
+
+#include <cstl/tinytest.h>
+
+CSTL_TINYTEST_DEFINE_SEQUENCE_EQUAL(IntVec, int)
+
+/* ... after IntVec values have been initialized ... */
+check_cstl_equal(IntVec, actual, expected);
+```
+
+`CSTL_TINYTEST_DEFINE_SEQUENCE_EQUAL` requires an ordered Range and the
+element `EQUAL` trait. `CSTL_TINYTEST_DEFINE_ORDERED_MAP_EQUAL` compares both
+keys and values as ordered pairs, so it supports `Map`, `MultiMap`, `BTree`,
+and `BPlusTree` when their key and value types provide `EQUAL`; duplicate keys
+remain significant by traversal order. `HashMap` is unordered and is rejected
+by these comparators. The type arguments must be the same types used in the
+`typed(...)` declaration; the bridge validates CMeta type identity when it is
+available and always validates destination size and alignment before reading a
+Range value.
+
 ## CFlow bridge
 
 Link `Salts::CSTLStream` for the optional modern container-operation facade.

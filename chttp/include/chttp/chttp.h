@@ -114,6 +114,61 @@ typedef struct chttp_header {
   const char *value;
 } chttp_header;
 
+/** Optional registered claims used to issue one HS256 JWT. Zero time values are omitted. */
+typedef struct chttp_jwt_claims {
+  const char *issuer;
+  const char *subject;
+  const char *audience;
+  const char *jwt_id;
+  int64_t issued_at;
+  int64_t not_before;
+  int64_t expires_at;
+} chttp_jwt_claims;
+
+/**
+ * Verified JWT claims borrowed from the active server callback. Time pointers
+ * are NULL when the corresponding registered claim was not present.
+ */
+typedef struct chttp_jwt_claims_view {
+  const char *issuer;
+  const char *subject;
+  const char *jwt_id;
+  const char *const *audiences;
+  size_t audience_count;
+  const int64_t *issued_at;
+  const int64_t *not_before;
+  const int64_t *expires_at;
+} chttp_jwt_claims_view;
+
+/**
+ * Configuration copied by chttp_jwt_bearer_validator_init(). Issuer and
+ * audience checks are optional when their corresponding pointers are NULL.
+ */
+typedef struct chttp_jwt_bearer_validator_options {
+  size_t size;
+  const void *key;
+  size_t key_size;
+  int64_t clock_skew_seconds;
+  const char *expected_issuer;
+  const char *expected_audience;
+} chttp_jwt_bearer_validator_options;
+
+/** Owns the key and expected claim values used by Bearer middleware. */
+typedef struct chttp_jwt_bearer_validator {
+  void *impl;
+} chttp_jwt_bearer_validator;
+
+/** Creates an owned compact HS256 JWT. The caller releases it with chttp_jwt_token_destroy(). */
+int chttp_jwt_hs256_token_create(const chttp_jwt_claims *claims, const void *key, size_t key_size,
+                                  char **out_token);
+
+/** Releases a token returned by chttp_jwt_hs256_token_create(); NULL is accepted. */
+void chttp_jwt_token_destroy(char *token);
+
+/** Formats a borrowed Authorization header in caller-owned storage. */
+int chttp_jwt_bearer_header(const char *token, char *buffer, size_t buffer_size,
+                             chttp_header *out_header);
+
 /**
  * Pulls at most `capacity` bytes into callback-scoped storage. Return
  * `SALTS_OK` and set `out_size` to zero for EOF, or return a negative error.
@@ -173,6 +228,8 @@ typedef struct chttp_server_request_view {
   /** Verified TLS peer leaf SHA-256, or NULL for plaintext/no presented client certificate. */
   const char *peer_certificate_sha256;
   chttp_session *session;
+  /** NULL unless JWT Bearer middleware authenticated this callback. */
+  const chttp_jwt_claims_view *jwt_claims;
 } chttp_server_request_view;
 
 /** Handler-scoped response builder. Memory replies are copied; source descriptors are retained. */
@@ -206,6 +263,18 @@ typedef void (*chttp_server_body_close_fn)(void *user, chttp_body_sink *sink, in
 
 typedef int (*chttp_server_middleware_fn)(void *user, const chttp_server_request_view *request,
                                           chttp_server_response *response, chttp_server_next *next);
+
+/** Copies Bearer validation configuration. Stop all users before destroying the validator. */
+int chttp_jwt_bearer_validator_init(
+    chttp_jwt_bearer_validator *validator,
+    const chttp_jwt_bearer_validator_options *options);
+
+/** Releases copied validation material. The validator must no longer be registered on a server. */
+int chttp_jwt_bearer_validator_destroy(chttp_jwt_bearer_validator *validator);
+
+/** Validates one HS256 Authorization: Bearer header and exposes claims to subsequent handlers. */
+int chttp_jwt_bearer_middleware(void *user, const chttp_server_request_view *request,
+                                 chttp_server_response *response, chttp_server_next *next);
 
 typedef struct chttp_server_middleware {
   chttp_server_middleware_fn handler;
@@ -692,6 +761,11 @@ int chttp_server_set_socket_options(chttp_server *server,
 int chttp_server_route(chttp_server *server, chttp_method method, const char *path,
                        chttp_server_handler_fn handler, void *user);
 int chttp_server_route_with(chttp_server *server, const chttp_server_route_options *options);
+
+/** Registers one route protected by the supplied HS256 Bearer validator. */
+int chttp_server_route_with_jwt_bearer(chttp_server *server,
+                                       const chttp_server_route_options *options,
+                                       chttp_jwt_bearer_validator *validator);
 int chttp_server_get(chttp_server *server, const char *path, chttp_server_handler_fn handler,
                      void *user);
 int chttp_server_head(chttp_server *server, const char *path, chttp_server_handler_fn handler,

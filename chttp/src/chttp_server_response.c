@@ -401,6 +401,8 @@ static const char *chttp_server_reason(unsigned int status_code) {
     return "Not Modified";
   case 400u:
     return "Bad Request";
+  case 401u:
+    return "Unauthorized";
   case 404u:
     return "Not Found";
   case 405u:

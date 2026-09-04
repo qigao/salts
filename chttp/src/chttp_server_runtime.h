@@ -35,6 +35,7 @@ typedef struct chttp_server_route_record {
   void *user;
   chttp_server_body_open_fn body_open;
   chttp_server_body_close_fn body_close;
+  chttp_jwt_bearer_validator *jwt_bearer_validator;
   chttp_websocket_open_fn websocket_open;
   chttp_websocket_event_fn websocket_event;
   size_t websocket_max_frame_bytes;
@@ -106,6 +107,9 @@ struct chttp_server_request_state {
   size_t param_count;
   chttp_session session;
   chttp_session_context session_context;
+  void *jwt_owner;
+  chttp_jwt_claims_view jwt_claims;
+  bool jwt_body_rejected;
   chttp_server_route_record *body_route;
   chttp_body_sink body_sink;
   bool body_sink_open;
@@ -114,6 +118,7 @@ struct chttp_server_request_state {
 
 typedef struct chttp_server_chain {
   chttp_server_impl *server;
+  chttp_server_request_state *request_state;
   const chttp_server_request_view *request;
   chttp_server_response *response;
   chttp_server_route_record *route;

@@ -26,6 +26,25 @@ static const uint8_t rfc8032_signature[SALTS_CRYPTO_ED448_SIGNATURE_SIZE] = {
     0x71, 0xd9, 0x58, 0x08, 0xff, 0x2e, 0x65, 0x26, 0x00};
 
 spec("Salts crypto Ed448") {
+  it("computes SHA-256 one-shot and streaming digests") {
+    static const uint8_t expected[SALTS_CRYPTO_SHA256_DIGEST_SIZE] = {
+        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40,
+        0xde, 0x5d, 0xae, 0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17,
+        0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad};
+    uint8_t digest[SALTS_CRYPTO_SHA256_DIGEST_SIZE];
+    salts_crypto_sha256_ctx_t context;
+
+    check_equal(salts_crypto_sha256("abc", 3u, digest), SALTS_CRYPTO_OK);
+    check_equal(digest, expected, sizeof(digest));
+    check_equal(salts_crypto_sha256_init(&context), SALTS_CRYPTO_OK);
+    check_equal(salts_crypto_sha256_update(&context, "a", 1u), SALTS_CRYPTO_OK);
+    check_equal(salts_crypto_sha256_update(&context, "bc", 2u), SALTS_CRYPTO_OK);
+    check_equal(salts_crypto_sha256_final(&context, digest), SALTS_CRYPTO_OK);
+    check_equal(digest, expected, sizeof(digest));
+    check_equal(salts_crypto_sha256_final(&context, digest), SALTS_CRYPTO_ESTATE);
+    check_equal(salts_crypto_sha256(NULL, 1u, digest), SALTS_CRYPTO_EINVAL);
+  }
+
   it("matches the RFC 8032 empty-message vector") {
     uint8_t public_key[SALTS_CRYPTO_ED448_PUBLIC_KEY_SIZE];
     uint8_t signature[SALTS_CRYPTO_ED448_SIGNATURE_SIZE];

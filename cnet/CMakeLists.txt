@@ -6,43 +6,6 @@ find_package(OpenSSL REQUIRED)
 
 get_target_property(cnet_cares_configurations c-ares::cares
                     IMPORTED_CONFIGURATIONS)
-if(NOT cnet_cares_configurations)
-  set(cnet_cares_configurations NOCONFIG)
-endif()
-
-set(cnet_cares_link_items)
-foreach(cnet_cares_configuration IN LISTS cnet_cares_configurations)
-  if(cnet_cares_configuration STREQUAL "NOCONFIG")
-    set(cnet_cares_configuration_suffix "")
-  else()
-    set(cnet_cares_configuration_suffix "_${cnet_cares_configuration}")
-  endif()
-
-  if(WIN32)
-    get_target_property(
-      cnet_cares_link_file c-ares::cares
-      "IMPORTED_IMPLIB${cnet_cares_configuration_suffix}")
-  else()
-    get_target_property(
-      cnet_cares_link_file c-ares::cares
-      "IMPORTED_LOCATION${cnet_cares_configuration_suffix}")
-  endif()
-  if(NOT cnet_cares_link_file
-     OR cnet_cares_link_file MATCHES "-NOTFOUND$")
-    message(
-      FATAL_ERROR
-        "c-ares does not provide a link file for ${cnet_cares_configuration}")
-  endif()
-
-  if(cnet_cares_configuration STREQUAL "NOCONFIG")
-    list(APPEND cnet_cares_link_items "${cnet_cares_link_file}")
-  else()
-    list(
-      APPEND
-      cnet_cares_link_items
-      "$<$<CONFIG:${cnet_cares_configuration}>:${cnet_cares_link_file}>")
-  endif()
-endforeach()
 
 add_library(${TARGET_NAME} SHARED
   src/cnet_client.c
@@ -86,7 +49,7 @@ target_link_libraries(
   ${TARGET_NAME}
   PUBLIC Salts::NativeIO Salts::Concurrency
   PRIVATE Salts::UriParser Salts::Platform Salts::CSTL Salts::Core monocypher salts_reed
-          ${cnet_cares_link_items} kcp::kcp
+          ${cnet_cares_link_items} kcp::kcp c-ares::cares
           OpenSSL::SSL OpenSSL::Crypto
           $<$<PLATFORM_ID:Windows>:crypt32>)
 

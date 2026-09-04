@@ -5,6 +5,24 @@ set(CHTTP_ABI_VERSION 2)
 find_package(llhttp CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 
+set(CHTTP_CJWT_ROOT "${PROJECT_SOURCE_DIR}/vendor/cjwt")
+add_library(chttp_cjwt STATIC
+  "${CHTTP_CJWT_ROOT}/src/cjwt.c"
+  "${CHTTP_CJWT_ROOT}/src/jwe_openssl_3.c"
+  "${CHTTP_CJWT_ROOT}/src/jws_openssl_3.c"
+  "${CHTTP_CJWT_ROOT}/src/print.c"
+  "${CHTTP_CJWT_ROOT}/src/utils.c")
+set_target_properties(chttp_cjwt PROPERTIES FOLDER "chttp/internal")
+target_compile_features(chttp_cjwt PRIVATE c_std_11)
+target_include_directories(
+  chttp_cjwt
+  PRIVATE "${CHTTP_CJWT_ROOT}/include"
+          "${CHTTP_CJWT_ROOT}/include/cjwt"
+          "${CHTTP_CJWT_ROOT}/src")
+target_link_libraries(
+  chttp_cjwt
+  PRIVATE Salts::JsonParser OpenSSL::Crypto turbo_crypto)
+
 add_library(${TARGET_NAME} SHARED
   src/chttp_client.c
   src/chttp_file_sink.c
@@ -15,6 +33,7 @@ add_library(${TARGET_NAME} SHARED
   src/chttp_h2_proto.c
   src/chttp_h2_session.c
   src/chttp_h2_server.c
+  src/chttp_jwt.c
   src/chttp_requests.c
   src/chttp_request.c
   src/chttp_response.c
@@ -47,12 +66,13 @@ target_include_directories(
   ${TARGET_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CHTTP_CJWT_ROOT}/include)
 target_link_libraries(
   ${TARGET_NAME}
   PUBLIC Salts::CNet
-  PRIVATE llhttp::llhttp_static Salts::Platform Salts::Core Salts::CFlow Salts::UriParser
-          OpenSSL::Crypto)
+  PRIVATE llhttp::llhttp_static Salts::Platform Salts::Core Salts::CFlow Salts::UriParser Salts::JsonParser
+          OpenSSL::Crypto chttp_cjwt)
 
 install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
 install(FILES "${llhttp_DIR}/copyright"
@@ -64,4 +84,5 @@ install(
 
 if(BUILD_TESTS)
   add_subdirectory(tests)
+  add_subdirectory("${CHTTP_CJWT_ROOT}/tests" "${CMAKE_CURRENT_BINARY_DIR}/cjwt-tests")
 endif()

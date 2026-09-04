@@ -119,6 +119,22 @@ CMeta interface/vtable。未来若加入第三种 wire protocol，可在保持�
 request、route param、header、body、session value 与 response builder 都是 handler-scoped；不得跨
 callback、线程 handoff 或 coroutine suspension 保存裸指针。
 
+### JWT Bearer（HS256）
+
+CHTTP 公开的是小型 JWT 边界，不公开 CJWT 类型或头文件。客户端用
+`chttp_jwt_hs256_token_create()` 以共享密钥生成拥有型 token，随后用
+`chttp_jwt_bearer_header()` 填充调用方持有的 header buffer，并把所得 `chttp_header` 放入
+`chttp_options.headers`；请求提交完成后用 `chttp_jwt_token_destroy()` 释放 token。
+
+服务端先以 `chttp_jwt_bearer_validator_init()` 复制 key、可选 issuer 与 audience，然后在 start
+之前将 `chttp_jwt_bearer_middleware` 与 validator 注册到 `chttp_server_use()` 或 route middleware。
+它只接受一个 `Authorization: Bearer <HS256 JWT>` header；缺失、重复、格式错误、签名/时间窗口/issuer/
+audience 不匹配均终止 dispatch，并回复 `401 Unauthorized` 与 `WWW-Authenticate: Bearer`。通过验证后，
+后续 middleware、HTTP handler 和 WebSocket opening callback 可从 `request->jwt_claims` 读取 claims；该
+view 与 request 同为 callback-scoped，不能保存。停掉并销毁所有注册它的 server 后，再调用
+`chttp_jwt_bearer_validator_destroy()`。完整的可运行客户端与 server 测试分别见
+`chttp/tests/chttp_jwt_test.c` 与 `chttp/tests/chttp_server_test.c`。
+
 需要阻塞数据库或外部服务时，HTTP/1.1 handler 先复制业务所需的 request 字段，再调用
 `chttp_server_response_defer()` 封住当前 builder，并把拥有型 job 投递到应用已有的有界 worker
 队列。worker 最终调用一次 `chttp_server_deferred_reply()`；该调用在返回前复制 headers/body，

@@ -40,6 +40,11 @@ typedef struct chttp_server_test_probe {
   size_t order_size;
 } chttp_server_test_probe;
 
+typedef struct chttp_server_test_jwt_probe {
+  size_t calls;
+  char subject[32];
+} chttp_server_test_jwt_probe;
+
 typedef struct chttp_server_test_blocking_probe {
   atomic_int entered;
   atomic_int release;
@@ -98,7 +103,8 @@ static int chttp_server_stream_open(void *user, const chttp_server_request_view 
                                     chttp_body_sink *out_sink) {
   chttp_server_stream_probe *probe = (chttp_server_stream_probe *)user;
   if (probe == NULL || request == NULL || out_sink == NULL ||
-      strcmp(request->path, "/stream-upload") != 0)
+      (strcmp(request->path, "/stream-upload") != 0 &&
+       strcmp(request->path, "/protected-upload") != 0))
     return SALTS_EINVAL;
   ++probe->opens;
   *out_sink = (chttp_body_sink){.write = chttp_server_stream_write, .user = probe};
@@ -506,7 +512,120 @@ static int chttp_server_test_cookie_header(const chttp_response *response, char 
   return SALTS_OK;
 }
 
+static int chttp_server_test_jwt_handler(void *user, const chttp_server_request_view *request,
+                                         chttp_server_response *response) {
+  chttp_server_test_jwt_probe *probe = (chttp_server_test_jwt_probe *)user;
+  const chttp_jwt_claims_view *claims;
+  size_t subject_size;
+  if (probe == NULL || request == NULL || response == NULL || request->jwt_claims == NULL)
+    return SALTS_EPROTO;
+  claims = request->jwt_claims;
+  if (claims->issuer == NULL || strcmp(claims->issuer, "issuer.example") != 0 ||
+      claims->subject == NULL || claims->audience_count != 1u || claims->audiences == NULL ||
+      strcmp(claims->audiences[0], "api.example") != 0 || claims->expires_at == NULL)
+    return SALTS_EPROTO;
+  subject_size = strlen(claims->subject);
+  if (subject_size >= sizeof(probe->subject)) return SALTS_ENOBUFS;
+  memcpy(probe->subject, claims->subject, subject_size + 1u);
+  ++probe->calls;
+  return chttp_server_reply(response, 200u, "text/plain", "protected", 9u);
+}
+
 spec("CHTTP background HTTP/1.1 server") {
+  it("validates an HS256 Bearer token before invoking the route") {
+    static const unsigned char key[] = "server-test-key";
+    const chttp_jwt_claims claims = {.issuer = "issuer.example",
+                                     .subject = "alice",
+                                     .audience = "api.example",
+                                     .issued_at = INT64_C(1700000000),
+                                     .not_before = INT64_C(1700000000),
+                                     .expires_at = INT64_C(3000000000)};
+    const chttp_jwt_bearer_validator_options validator_options = {
+        .size = sizeof(validator_options),
+        .key = key,
+        .key_size = sizeof(key) - 1u,
+        .expected_issuer = "issuer.example",
+        .expected_audience = "api.example"};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    chttp_server_test_jwt_probe probe = {0};
+    chttp_jwt_bearer_validator validator = {0};
+    char *token = NULL;
+    char authorization[512];
+    chttp_header header = {0};
+    char authorized_request[768];
+    static const char unauthorized_upload[] = "POST /protected-upload HTTP/1.1\r\n"
+                                              "Host: 127.0.0.1\r\n"
+                                              "Content-Length: 4\r\n"
+                                              "Connection: close\r\n\r\n"
+                                              "data";
+    static const char anonymous_request[] = "GET /protected HTTP/1.1\r\n"
+                                            "Host: 127.0.0.1\r\n"
+                                            "Connection: close\r\n\r\n";
+    chttp_server_stream_probe upload_probe = {0};
+    const chttp_server_route_options protected_route = {
+        .method = CHTTP_METHOD_GET,
+        .path = "/protected",
+        .handler = chttp_server_test_jwt_handler,
+        .user = &probe};
+    const chttp_server_route_options upload_route = {
+        .method = CHTTP_METHOD_POST,
+        .path = "/protected-upload",
+        .handler = chttp_server_stream_handler,
+        .user = &upload_probe,
+        .body_open = chttp_server_stream_open,
+        .body_close = chttp_server_stream_close};
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    uint16_t port = 0u;
+
+    check_equal(chttp_jwt_hs256_token_create(&claims, key, sizeof(key) - 1u, &token), SALTS_OK);
+    check_equal(chttp_jwt_bearer_header(token, authorization, sizeof(authorization), &header),
+                SALTS_OK);
+    check_equal(chttp_jwt_bearer_validator_init(&validator, &validator_options), SALTS_OK);
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_route_with_jwt_bearer(&server, &protected_route, &validator), SALTS_OK);
+    check_equal(chttp_server_route_with_jwt_bearer(&server, &upload_route, &validator), SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_true(snprintf(authorized_request, sizeof(authorized_request),
+                        "GET /protected HTTP/1.1\r\nHost: 127.0.0.1\r\n%s: %s\r\n"
+                        "Connection: close\r\n\r\n",
+                        header.name, header.value) > 0);
+    check_equal(chttp_server_test_raw_exchange(port, authorized_request, response, sizeof(response),
+                                                &response_size),
+                SALTS_OK);
+    check_not_null(strstr(response, "HTTP/1.1 200 OK"));
+    check_equal(probe.calls, (size_t)1u);
+    check_equal(probe.subject, "alice");
+
+    response[0] = '\0';
+    response_size = 0u;
+    check_equal(chttp_server_test_raw_exchange(port, anonymous_request, response, sizeof(response),
+                                                &response_size),
+                SALTS_OK);
+    check_not_null(strstr(response, "HTTP/1.1 401 Unauthorized"));
+    check_not_null(strstr(response, "WWW-Authenticate: Bearer"));
+    check_equal(probe.calls, (size_t)1u);
+
+    response[0] = '\0';
+    response_size = 0u;
+    check_equal(chttp_server_test_raw_exchange(port, unauthorized_upload, response, sizeof(response),
+                                                &response_size),
+                SALTS_OK);
+    check_not_null(strstr(response, "HTTP/1.1 401 Unauthorized"));
+    check_not_null(strstr(response, "WWW-Authenticate: Bearer"));
+    check_equal(upload_probe.opens, (size_t)0u);
+    check_equal(upload_probe.writes, (size_t)0u);
+    check_equal(upload_probe.closes, (size_t)0u);
+    check_equal(upload_probe.handler_called, 0);
+
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+    check_equal(chttp_jwt_bearer_validator_destroy(&validator), SALTS_OK);
+    chttp_jwt_token_destroy(token);
+  }
+
   it("does not reserve configured payload maxima during initialization") {
     enum { LARGE_PAYLOAD_BYTES = 256u * 1024u * 1024u };
     chttp_server server = {0};

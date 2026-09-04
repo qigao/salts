@@ -1,5 +1,6 @@
 #include "chttp_h2_server.h"
 #include "chttp_server_runtime.h"
+#include "chttp_jwt_internal.h"
 #include "chttp_tls.h"
 
 #include <salts/clock.h>
@@ -431,6 +432,7 @@ int chttp_server_request_state_init(chttp_server_request_state *state, chttp_ser
 void chttp_server_request_state_reset(chttp_server_request_state *state) {
   if (state == NULL) return;
   chttp_server_request_body_close(state, SALTS_ECANCELED);
+  chttp_jwt_request_state_reset(state);
   chttp_server_response_builder_reset(&state->response_builder);
   state->param_storage_used = 0u;
   state->param_count = 0u;
@@ -444,6 +446,7 @@ void chttp_server_request_state_reset(chttp_server_request_state *state) {
 void chttp_server_request_state_destroy(chttp_server_request_state *state) {
   if (state == NULL) return;
   chttp_server_request_body_close(state, SALTS_ECANCELED);
+  chttp_jwt_request_state_reset(state);
   chttp_server_response_builder_destroy(&state->response_builder);
   free(state->param_storage);
   free(state->params);
@@ -1186,6 +1189,11 @@ static int chttp_server_on_continue(void *user) {
   return SALTS_OK;
 }
 
+static int chttp_server_discard_body(void *user, const void *data, size_t size) {
+  (void)user;
+  return data != NULL || size == 0u ? SALTS_OK : SALTS_EINVAL;
+}
+
 int chttp_server_request_body_open(chttp_server_request_state *state,
                                    const chttp_server_request_view *request,
                                    chttp_body_sink *out_sink) {
@@ -1207,6 +1215,17 @@ int chttp_server_request_body_open(chttp_server_request_state *state,
   (void)allowed_methods;
   if (route_status != SALTS_OK) return route_status;
   if (route == NULL || route->body_open == NULL) return SALTS_OK;
+  status = route->jwt_bearer_validator == NULL
+               ? SALTS_OK
+               : chttp_jwt_bearer_request_validate(state, request, route->jwt_bearer_validator);
+  if (status != SALTS_OK) {
+    state->jwt_body_rejected = true;
+    *out_sink = (chttp_body_sink){.write = chttp_server_discard_body};
+    state->body_sink = *out_sink;
+    state->body_sink_open = true;
+    state->body_was_streamed = true;
+    return SALTS_OK;
+  }
   routed_request = *request;
   routed_request.params = state->params;
   routed_request.param_count = state->param_count;
@@ -1292,9 +1311,13 @@ int chttp_server_dispatch_request(chttp_server_request_state *state,
   routed_request.params = state->params;
   routed_request.param_count = state->param_count;
   routed_request.session = server->config.session_capacity == 0u ? NULL : &state->session;
-  chttp_session_request_begin(state, &routed_request);
+  routed_request.jwt_claims = NULL;
   chttp_server_response_builder_reset(&state->response_builder);
+  if (state->jwt_body_rejected)
+    return chttp_jwt_bearer_unauthorized_response(&state->response);
+  chttp_session_request_begin(state, &routed_request);
   chain = (chttp_server_chain){.server = server,
+                               .request_state = state,
                                .request = &routed_request,
                                .response = &state->response,
                                .route = route,

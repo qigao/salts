@@ -22,7 +22,8 @@ set(
   "${LIBECC_ROOT}/src/utils/utils.c"
   "${LIBECC_ROOT}/src/utils/utils_rand.c")
 
-add_library(${TARGET_NAME} SHARED src/crypto_ed448.c ${LIBECC_ED448_SOURCES})
+add_library(${TARGET_NAME} SHARED src/crypto_ed448.c src/crypto_sha256.c
+            ${LIBECC_ED448_SOURCES} "${LIBECC_ROOT}/src/hash/sha256.c")
 cmake_config_target(
   ${TARGET_NAME}
   ALIAS Salts::Crypto
@@ -41,9 +42,11 @@ target_include_directories(
 # explicit word size is required by MSVC and matches supported 64-bit targets.
 set_source_files_properties(
   src/crypto_ed448.c
+  src/crypto_sha256.c
   ${LIBECC_ED448_SOURCES}
+  "${LIBECC_ROOT}/src/hash/sha256.c"
   PROPERTIES COMPILE_DEFINITIONS
-             "WITH_STDLIB;WITH_LIBECC_CONFIG_OVERRIDE;WITH_CURVE_WEI448;WITH_HASH_SHAKE256;WITH_SIG_EDDSA448;WORDSIZE=64")
+             "WITH_STDLIB;WITH_LIBECC_CONFIG_OVERRIDE;WITH_CURVE_WEI448;WITH_HASH_SHA256;WITH_HASH_SHAKE256;WITH_SIG_EDDSA448;WORDSIZE=64")
 
 target_link_libraries(${TARGET_NAME} PRIVATE Salts::Platform monocypher)
 

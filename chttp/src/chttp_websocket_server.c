@@ -167,10 +167,12 @@ int chttp_server_websocket_route_open(chttp_server_websocket_peer *peer,
   routed_request.params = state->params;
   routed_request.param_count = state->param_count;
   routed_request.session = peer->server->config.session_capacity == 0u ? NULL : &state->session;
+  routed_request.jwt_claims = NULL;
   chttp_session_request_begin(state, &routed_request);
   chttp_server_response_builder_reset(&state->response_builder);
   open_context = (chttp_websocket_open_context){.peer = peer, .route = route};
   chain = (chttp_server_chain){.server = peer->server,
+                               .request_state = state,
                                .request = &routed_request,
                                .response = &state->response,
                                .route = route,

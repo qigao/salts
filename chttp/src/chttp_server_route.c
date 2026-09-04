@@ -110,6 +110,26 @@ int chttp_server_route_with(chttp_server *server, const chttp_server_route_optio
   return chttp_server_route_register((chttp_server_impl *)server->impl, options);
 }
 
+int chttp_server_route_with_jwt_bearer(chttp_server *server,
+                                       const chttp_server_route_options *options,
+                                       chttp_jwt_bearer_validator *validator) {
+  chttp_server_impl *impl;
+  chttp_server_route_record *route;
+  int status;
+  if (server == NULL || server->impl == NULL || options == NULL || validator == NULL ||
+      validator->impl == NULL)
+    return SALTS_EINVAL;
+  impl = (chttp_server_impl *)server->impl;
+  if (options->middleware_count >= impl->config.max_route_middleware_count) return SALTS_ENOBUFS;
+  status = chttp_server_route_register(impl, options);
+  if (status != SALTS_OK) return status;
+  route = &impl->routes[impl->route_count - 1u];
+  route->middleware[route->middleware_count++] =
+      (chttp_server_middleware){chttp_jwt_bearer_middleware, validator};
+  route->jwt_bearer_validator = validator;
+  return SALTS_OK;
+}
+
 static int chttp_server_websocket_upgrade_required(void *user,
                                                    const chttp_server_request_view *request,
                                                    chttp_server_response *response) {
