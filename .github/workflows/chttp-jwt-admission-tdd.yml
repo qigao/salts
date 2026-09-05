@@ -5,19 +5,12 @@ on:
     paths:
       - "chttp/**"
       - ".github/workflows/chttp-jwt-admission-tdd.yml"
-  push:
-    branches:
-      - design/chttp-auth-phase-jwt-hardening
-    paths:
-      - "chttp/**"
-      - ".github/workflows/chttp-jwt-admission-tdd.yml"
 
 permissions:
   contents: read
 
 jobs:
-  verify:
-    if: github.event_name == 'pull_request'
+  linux:
     name: Linux CHTTP JWT slice
     runs-on: ubuntu-latest
     steps:
@@ -49,87 +42,14 @@ jobs:
       - name: Configure release preset
         run: cmake --preset linux-release-user
 
-      - name: Build JWT test
-        run: cmake --build --preset linux-release-user --target chttp_jwt_test
-
-      - name: Run JWT test
-        run: ctest --preset linux-release-user -R "^chttp_jwt_test$" --output-on-failure
-
-  task1-green:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/design/chttp-auth-phase-jwt-hardening'
-    name: Apply Task 1 expiry-policy GREEN
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Apply exact Task 1 patch
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def replace_once(path, old, new):
-              p = Path(path)
-              text = p.read_text()
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"{path}: expected one replacement, found {count}")
-              p.write_text(text.replace(old, new, 1))
-
-          replace_once(
-              "chttp/include/chttp/chttp.h",
-              "  const char *expected_issuer;\n  const char *expected_audience;\n} chttp_jwt_bearer_validator_options;",
-              "  const char *expected_issuer;\n  const char *expected_audience;\n  int allow_missing_exp;\n} chttp_jwt_bearer_validator_options;",
-          )
-          replace_once(
-              "chttp/src/chttp_jwt.c",
-              "  impl->clock_skew_seconds = options->clock_skew_seconds;\n  impl->expected_issuer",
-              "  impl->clock_skew_seconds = options->clock_skew_seconds;\n  impl->allow_missing_exp = options->allow_missing_exp != 0;\n  impl->expected_issuer",
-          )
-          PY
-          git diff --check
-          git diff --stat
-          git diff -- chttp/include/chttp/chttp.h chttp/src/chttp_jwt.c
-
-      - name: Setup re2c and vcpkg
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y nasm re2c
-          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
-            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
-          else
-            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
-            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
-          fi
-
-      - name: Restore vcpkg binary cache
-        uses: actions/cache/restore@v4
+      - name: Save vcpkg binary cache
+        uses: actions/cache/save@v4
         with:
           path: ~/.cache/vcpkg/archives
           key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-ports/**') }}
-          restore-keys: |
-            vcpkg-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Configure release preset
-        run: cmake --preset linux-release-user
 
       - name: Build JWT test
         run: cmake --build --preset linux-release-user --target chttp_jwt_test
 
       - name: Run JWT test
         run: ctest --preset linux-release-user -R "^chttp_jwt_test$" --output-on-failure
-
-      - name: Commit verified Task 1 GREEN
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chttp/include/chttp/chttp.h chttp/src/chttp_jwt.c
-          git commit -m "fix(chttp): enforce bearer expiration policy"
-          git push origin HEAD:design/chttp-auth-phase-jwt-hardening
