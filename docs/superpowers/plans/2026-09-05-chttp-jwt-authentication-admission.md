@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-05-chttp-jwt-authentication-admission-design.md`
 
+**Implementation diff base:** `78335820a601f7b024b26e0870a3485921016475` (`docs: define CHTTP JWT authentication admission`). Final scope audits compare production/test changes against this fixed commit instead of a relative `HEAD~N` range, so extra RED/fix commits cannot invalidate the checkpoint.
+
 ## Global Constraints
 
 - Authentication runs exactly once after validated headers and route selection, before `100 Continue`, application body admission, ordinary middleware, HTTP handlers, or WebSocket opening callbacks.
@@ -1118,13 +1120,16 @@ git commit -m "test(chttp): prove JWT admission security boundary"
 - Consumes: all prior task commits.
 - Produces: one exact-head evidence checkpoint suitable for review/PR creation.
 
-- [ ] **Step 1: Audit the diff against the non-goals**
+- [ ] **Step 1: Audit the diff against the fixed implementation base**
 
-Run:
+Do not use `HEAD~N`; implementation may legitimately contain extra RED/fix commits. Run:
 
 ```bash
-git diff --stat HEAD~7..HEAD
-git diff HEAD~7..HEAD -- chttp/include/chttp/chttp.h chttp/src chttp/tests chttp/README.md
+git diff --stat 78335820a601f7b024b26e0870a3485921016475..HEAD -- \
+  chttp/include/chttp/chttp.h chttp/src chttp/tests chttp/README.md
+
+git diff 78335820a601f7b024b26e0870a3485921016475..HEAD -- \
+  chttp/include/chttp/chttp.h chttp/src chttp/tests chttp/README.md
 ```
 
 Confirm the diff contains no public `kid`, JWK/JWKS, RS/PS/ES/EdDSA, scope/role, OAuth `at+jwt`, revocation, refresh-token, JWE, or generic Authenticator API.
