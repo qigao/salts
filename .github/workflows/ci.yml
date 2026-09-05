@@ -62,6 +62,8 @@ jobs:
   windows:
     name: Windows release checkpoint
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
         with:
