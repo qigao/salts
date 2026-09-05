@@ -33,14 +33,14 @@ jobs:
       - name: Install ripgrep
         run: sudo apt-get update && sudo apt-get install --yes ripgrep
 
-      - name: Audit CMeta, Container, and CFlow notation
+      - name: Audit CMeta, CSTL, and CFlow notation
         shell: bash
         run: |
           set -euo pipefail
           pattern='\b(TYPE|M|Pair|Tuple|Option|Result|Range|Source|Collector|Vec|Deque|List|Stack|Queue|Heap|Set|HashSet|HashMap|Map|MultiMap|BTree|BPlusTree)\s*<|CMETA_[A-Z0-9_]+_<[A-Za-z][A-Za-z0-9_]*>'
 
           set +e
-          matches="$(rg -n --glob '!vendor/**' --glob '!build/**' "$pattern" cmeta container cflow docs tests 2>&1)"
+          matches="$(rg -n --glob '!vendor/**' --glob '!build/**' "$pattern" cmeta cstl cflow docs tests 2>&1)"
           status=$?
           set -e
 
