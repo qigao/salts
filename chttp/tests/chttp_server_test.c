@@ -42,6 +42,7 @@ typedef struct chttp_server_test_probe {
 
 typedef struct chttp_server_test_jwt_probe {
   size_t calls;
+  size_t middleware_calls;
   char subject[32];
 } chttp_server_test_jwt_probe;
 
@@ -531,9 +532,20 @@ static int chttp_server_test_jwt_handler(void *user, const chttp_server_request_
   return chttp_server_reply(response, 200u, "text/plain", "protected", 9u);
 }
 
+static int chttp_server_test_jwt_observer(void *user, const chttp_server_request_view *request,
+                                          chttp_server_response *response, chttp_server_next *next) {
+  chttp_server_test_jwt_probe *probe = (chttp_server_test_jwt_probe *)user;
+  (void)response;
+  if (probe == NULL || request == NULL || request->jwt_claims == NULL ||
+      request->jwt_claims->subject == NULL || strcmp(request->jwt_claims->subject, "alice") != 0)
+    return SALTS_EPERM;
+  ++probe->middleware_calls;
+  return chttp_server_next_call(next);
+}
+
 spec("CHTTP background HTTP/1.1 server") {
   it("validates an HS256 Bearer token before invoking the route") {
-    static const unsigned char key[] = "server-test-key";
+    static const unsigned char key[] = "0123456789abcdef0123456789abcdef";
     const chttp_jwt_claims claims = {.issuer = "issuer.example",
                                      .subject = "alice",
                                      .audience = "api.example",
@@ -563,9 +575,13 @@ spec("CHTTP background HTTP/1.1 server") {
                                             "Host: 127.0.0.1\r\n"
                                             "Connection: close\r\n\r\n";
     chttp_server_stream_probe upload_probe = {0};
+    const chttp_server_middleware jwt_route_middleware = {
+        .handler = chttp_server_test_jwt_observer, .user = &probe};
     const chttp_server_route_options protected_route = {
         .method = CHTTP_METHOD_GET,
         .path = "/protected",
+        .middleware = &jwt_route_middleware,
+        .middleware_count = 1u,
         .handler = chttp_server_test_jwt_handler,
         .user = &probe};
     const chttp_server_route_options upload_route = {
@@ -579,6 +595,7 @@ spec("CHTTP background HTTP/1.1 server") {
     size_t response_size = 0u;
     uint16_t port = 0u;
 
+    config.max_route_middleware_count = 1u;
     check_equal(chttp_jwt_hs256_token_create(&claims, key, sizeof(key) - 1u, &token), SALTS_OK);
     check_equal(chttp_jwt_bearer_header(token, authorization, sizeof(authorization), &header),
                 SALTS_OK);
@@ -597,6 +614,7 @@ spec("CHTTP background HTTP/1.1 server") {
                 SALTS_OK);
     check_not_null(strstr(response, "HTTP/1.1 200 OK"));
     check_equal(probe.calls, (size_t)1u);
+    check_equal(probe.middleware_calls, (size_t)1u);
     check_equal(probe.subject, "alice");
 
     response[0] = '\0';
@@ -624,6 +642,69 @@ spec("CHTTP background HTTP/1.1 server") {
     check_equal(chttp_server_destroy(&server), SALTS_OK);
     check_equal(chttp_jwt_bearer_validator_destroy(&validator), SALTS_OK);
     chttp_jwt_token_destroy(token);
+  }
+
+  it("authenticates server-wide JWT before streaming admission and 100 continue") {
+    static const unsigned char key[] = "0123456789abcdef0123456789abcdef";
+    static const char anonymous_upload[] = "POST /protected-upload HTTP/1.1\r\n"
+                                           "Host: 127.0.0.1\r\n"
+                                           "Content-Length: 4\r\n"
+                                           "Connection: close\r\n\r\n"
+                                           "data";
+    static const char anonymous_expect[] = "POST /protected-upload HTTP/1.1\r\n"
+                                           "Host: 127.0.0.1\r\n"
+                                           "Expect: 100-continue\r\n"
+                                           "Content-Length: 4\r\n"
+                                           "Connection: close\r\n\r\n"
+                                           "data";
+    const chttp_jwt_bearer_validator_options validator_options = {
+        .size = sizeof(validator_options), .key = key, .key_size = sizeof(key) - 1u};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    chttp_server_stream_probe upload_probe = {0};
+    chttp_server_test_probe global_probe = {0};
+    chttp_jwt_bearer_validator validator = {0};
+    const chttp_server_route_options upload_route = {
+        .method = CHTTP_METHOD_POST,
+        .path = "/protected-upload",
+        .handler = chttp_server_stream_handler,
+        .user = &upload_probe,
+        .body_open = chttp_server_stream_open,
+        .body_close = chttp_server_stream_close};
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    uint16_t port = 0u;
+
+    check_equal(chttp_jwt_bearer_validator_init(&validator, &validator_options), SALTS_OK);
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_route_with(&server, &upload_route), SALTS_OK);
+    check_equal(chttp_server_use(&server, chttp_server_test_global, &global_probe), SALTS_OK);
+    check_equal(chttp_server_use_jwt_bearer(&server, &validator), SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+
+    check_equal(chttp_server_test_raw_exchange(port, anonymous_upload, response, sizeof(response), &response_size), SALTS_OK);
+    check_not_null(strstr(response, "HTTP/1.1 401 Unauthorized"));
+    check_not_null(strstr(response, "WWW-Authenticate: Bearer"));
+    check_equal(upload_probe.opens, (size_t)0u);
+    check_equal(upload_probe.writes, (size_t)0u);
+    check_equal(upload_probe.handler_called, 0);
+    check_equal(global_probe.order_size, (size_t)0u);
+
+    response[0] = '\0';
+    response_size = 0u;
+    check_equal(chttp_server_test_raw_exchange(port, anonymous_expect, response, sizeof(response), &response_size), SALTS_OK);
+    check_null(strstr(response, "100 Continue"));
+    check_not_null(strstr(response, "HTTP/1.1 401 Unauthorized"));
+    check_not_null(strstr(response, "WWW-Authenticate: Bearer"));
+    check_equal(upload_probe.opens, (size_t)0u);
+    check_equal(upload_probe.writes, (size_t)0u);
+    check_equal(upload_probe.handler_called, 0);
+    check_equal(global_probe.order_size, (size_t)0u);
+
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+    check_equal(chttp_jwt_bearer_validator_destroy(&validator), SALTS_OK);
   }
 
   it("does not reserve configured payload maxima during initialization") {
