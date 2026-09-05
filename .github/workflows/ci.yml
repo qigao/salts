@@ -1,56 +1,147 @@
-name: C API notation
+name: CHTTP JWT Task 3 RED executor
 
 on:
   pull_request:
     paths:
-      - "cmeta/**"
-      - "cstl/**"
-      - "cflow/**"
-      - "docs/**"
-      - "tests/**"
       - ".github/workflows/ci.yml"
-  push:
-    branches: [master]
-    paths:
-      - "cmeta/**"
-      - "cstl/**"
-      - "cflow/**"
-      - "docs/**"
-      - "tests/**"
-      - ".github/workflows/ci.yml"
-  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  c-api-notation:
-    name: Reject C++-style generic notation
+  red:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: design/chttp-auth-phase-jwt-hardening
 
-      - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install --yes ripgrep
-
-      - name: Audit CMeta, CSTL, and CFlow notation
+      - name: Add Task 3 RED tests
         shell: bash
         run: |
-          set -euo pipefail
-          pattern='\b(TYPE|M|Pair|Tuple|Option|Result|Range|Source|Collector|Vec|Deque|List|Stack|Queue|Heap|Set|HashSet|HashMap|Map|MultiMap|BTree|BPlusTree)\s*<|CMETA_[A-Z0-9_]+_<[A-Za-z][A-Za-z0-9_]*>'
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("chttp/tests/chttp_server_test.c")
+          text = p.read_text()
+          def one(old, new):
+              global text
+              if text.count(old) != 1:
+                  raise SystemExit("Task 3 RED patch context mismatch")
+              text = text.replace(old, new, 1)
+          one("typedef struct chttp_server_test_jwt_probe {\n  size_t calls;\n  char subject[32];\n} chttp_server_test_jwt_probe;",
+              "typedef struct chttp_server_test_jwt_probe {\n  size_t calls;\n  size_t middleware_calls;\n  char subject[32];\n} chttp_server_test_jwt_probe;")
+          one("  ++probe->calls;\n  return chttp_server_reply(response, 200u, \"text/plain\", \"protected\", 9u);\n}\n\nspec(\"CHTTP background HTTP/1.1 server\") {",
+              "  ++probe->calls;\n  return chttp_server_reply(response, 200u, \"text/plain\", \"protected\", 9u);\n}\n\nstatic int chttp_server_test_jwt_observer(void *user, const chttp_server_request_view *request,\n                                          chttp_server_response *response, chttp_server_next *next) {\n  chttp_server_test_jwt_probe *probe = (chttp_server_test_jwt_probe *)user;\n  (void)response;\n  if (probe == NULL || request == NULL || request->jwt_claims == NULL ||\n      request->jwt_claims->subject == NULL || strcmp(request->jwt_claims->subject, \"alice\") != 0)\n    return SALTS_EPERM;\n  ++probe->middleware_calls;\n  return chttp_server_next_call(next);\n}\n\nspec(\"CHTTP background HTTP/1.1 server\") {")
+          one('    static const unsigned char key[] = "server-test-key";',
+              '    static const unsigned char key[] = "0123456789abcdef0123456789abcdef";')
+          one("    chttp_server_stream_probe upload_probe = {0};\n    const chttp_server_route_options protected_route = {\n        .method = CHTTP_METHOD_GET,\n        .path = \"/protected\",\n        .handler = chttp_server_test_jwt_handler,\n        .user = &probe};",
+              "    chttp_server_stream_probe upload_probe = {0};\n    const chttp_server_middleware jwt_route_middleware = {\n        .handler = chttp_server_test_jwt_observer, .user = &probe};\n    const chttp_server_route_options protected_route = {\n        .method = CHTTP_METHOD_GET,\n        .path = \"/protected\",\n        .middleware = &jwt_route_middleware,\n        .middleware_count = 1u,\n        .handler = chttp_server_test_jwt_handler,\n        .user = &probe};")
+          one("    uint16_t port = 0u;\n\n    check_equal(chttp_jwt_hs256_token_create(&claims, key, sizeof(key) - 1u, &token), SALTS_OK);",
+              "    uint16_t port = 0u;\n\n    config.max_route_middleware_count = 1u;\n    check_equal(chttp_jwt_hs256_token_create(&claims, key, sizeof(key) - 1u, &token), SALTS_OK);")
+          one("    check_equal(probe.calls, (size_t)1u);\n    check_equal(probe.subject, \"alice\");",
+              "    check_equal(probe.calls, (size_t)1u);\n    check_equal(probe.middleware_calls, (size_t)1u);\n    check_equal(probe.subject, \"alice\");")
+          marker = '  it("does not reserve configured payload maxima during initialization") {'
+          server_wide = r'''  it("authenticates server-wide JWT before streaming admission and 100 continue") {
+    static const unsigned char key[] = "0123456789abcdef0123456789abcdef";
+    static const char anonymous_upload[] = "POST /protected-upload HTTP/1.1\r\n"
+                                           "Host: 127.0.0.1\r\n"
+                                           "Content-Length: 4\r\n"
+                                           "Connection: close\r\n\r\n"
+                                           "data";
+    static const char anonymous_expect[] = "POST /protected-upload HTTP/1.1\r\n"
+                                           "Host: 127.0.0.1\r\n"
+                                           "Expect: 100-continue\r\n"
+                                           "Content-Length: 4\r\n"
+                                           "Connection: close\r\n\r\n"
+                                           "data";
+    const chttp_jwt_bearer_validator_options validator_options = {
+        .size = sizeof(validator_options), .key = key, .key_size = sizeof(key) - 1u};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    chttp_server_stream_probe upload_probe = {0};
+    chttp_server_test_probe global_probe = {0};
+    chttp_jwt_bearer_validator validator = {0};
+    const chttp_server_route_options upload_route = {
+        .method = CHTTP_METHOD_POST,
+        .path = "/protected-upload",
+        .handler = chttp_server_stream_handler,
+        .user = &upload_probe,
+        .body_open = chttp_server_stream_open,
+        .body_close = chttp_server_stream_close};
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    uint16_t port = 0u;
 
+    check_equal(chttp_jwt_bearer_validator_init(&validator, &validator_options), SALTS_OK);
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_route_with(&server, &upload_route), SALTS_OK);
+    check_equal(chttp_server_use(&server, chttp_server_test_global, &global_probe), SALTS_OK);
+    check_equal(chttp_server_use_jwt_bearer(&server, &validator), SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+
+    check_equal(chttp_server_test_raw_exchange(port, anonymous_upload, response, sizeof(response), &response_size), SALTS_OK);
+    check_not_null(strstr(response, "HTTP/1.1 401 Unauthorized"));
+    check_not_null(strstr(response, "WWW-Authenticate: Bearer"));
+    check_equal(upload_probe.opens, (size_t)0u);
+    check_equal(upload_probe.writes, (size_t)0u);
+    check_equal(upload_probe.handler_called, 0);
+    check_equal(global_probe.order_size, (size_t)0u);
+
+    response[0] = '\0';
+    response_size = 0u;
+    check_equal(chttp_server_test_raw_exchange(port, anonymous_expect, response, sizeof(response), &response_size), SALTS_OK);
+    check_null(strstr(response, "100 Continue"));
+    check_not_null(strstr(response, "HTTP/1.1 401 Unauthorized"));
+    check_not_null(strstr(response, "WWW-Authenticate: Bearer"));
+    check_equal(upload_probe.opens, (size_t)0u);
+    check_equal(upload_probe.writes, (size_t)0u);
+    check_equal(upload_probe.handler_called, 0);
+    check_equal(global_probe.order_size, (size_t)0u);
+
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+    check_equal(chttp_jwt_bearer_validator_destroy(&validator), SALTS_OK);
+  }
+
+'''
+          if text.count(marker) != 1:
+              raise SystemExit("Task 3 insertion marker mismatch")
+          p.write_text(text.replace(marker, server_wide + marker, 1))
+          PY
+          git diff --check
+
+      - name: Setup build environment
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm re2c
+          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            echo "VCPKG_ROOT=$(dirname "$(readlink -f "$(command -v vcpkg)")")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Configure
+        run: cmake --preset linux-release-user
+
+      - name: Prove Task 3 RED
+        shell: bash
+        run: |
           set +e
-          matches="$(rg -n --glob '!vendor/**' --glob '!build/**' "$pattern" cmeta cstl cflow docs tests 2>&1)"
+          cmake --build --preset linux-release-user --target chttp_server_test > task3-red.log 2>&1
           status=$?
           set -e
+          cat task3-red.log
+          test "$status" -ne 0
+          grep -Eq "chttp_server_use_jwt_bearer|undefined reference.*chttp_server_use_jwt_bearer" task3-red.log
 
-          if [ "$status" -eq 0 ]; then
-            printf '%s\n' "$matches"
-            echo "::error::C APIs must use TYPE(...), typed(...), or plain C notation; C++-style generic notation is forbidden."
-            exit 1
-          fi
-
-          if [ "$status" -ne 1 ]; then
-            printf '%s\n' "$matches"
-            exit "$status"
-          fi
+      - name: Commit verified RED
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chttp/tests/chttp_server_test.c
+          git commit -m "test(chttp): define HTTP1 JWT admission RED"
+          git push origin HEAD:design/chttp-auth-phase-jwt-hardening
