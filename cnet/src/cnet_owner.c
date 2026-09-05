@@ -1131,7 +1131,7 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
     return cnet_owner_fail_session(
         impl, session,
         completion->kind == NATIVE_IO_COMPLETION_EOF
-            ? (session->tls.handshake_complete ? SALTS_EPROTO : SALTS_ECONNABORTED)
+            ? SALTS_ECONNABORTED
             : (completion->status < SALTS_OK ? completion->status : SALTS_EIO),
         request_stage);
   }
