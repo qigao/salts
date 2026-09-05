@@ -5,12 +5,18 @@ on:
     paths:
       - "chttp/**"
       - ".github/workflows/chttp-jwt-admission-tdd.yml"
+  push:
+    branches:
+      - design/chttp-auth-phase-jwt-hardening
+    paths:
+      - ".github/workflows/chttp-jwt-admission-tdd.yml"
 
 permissions:
   contents: read
 
 jobs:
-  linux:
+  verify:
+    if: github.event_name == 'pull_request'
     name: Linux CHTTP JWT/parser slice
     runs-on: ubuntu-latest
     steps:
@@ -42,3 +48,135 @@ jobs:
         run: cmake --build --preset linux-release-user --target chttp_jwt_test chttp_server_parser_test
       - name: Run JWT/parser tests
         run: ctest --preset linux-release-user -R "^(chttp_jwt_test|chttp_server_parser_test)$" --output-on-failure
+
+  task2-green:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/design/chttp-auth-phase-jwt-hardening'
+    name: Apply Task 2 parser admission GREEN
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Apply exact parser admission patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def patch(path, replacements):
+              p = Path(path)
+              text = p.read_text()
+              for old, new in replacements:
+                  count = text.count(old)
+                  if count != 1:
+                      raise SystemExit(f"{path}: expected one replacement, found {count}: {old[:100]!r}")
+                  text = text.replace(old, new, 1)
+              p.write_text(text)
+
+          header_replacements = [
+              (
+                  "typedef int (*chttp_server_parser_request_fn)(void *user, const chttp_server_request_view *request);\ntypedef int (*chttp_server_parser_continue_fn)(void *user);",
+                  "typedef int (*chttp_server_parser_request_fn)(void *user, const chttp_server_request_view *request);\n\ntypedef enum chttp_server_parser_headers_action {\n  CHTTP_SERVER_HEADERS_CONTINUE = 0,\n  CHTTP_SERVER_HEADERS_STOP\n} chttp_server_parser_headers_action;\n\ntypedef int (*chttp_server_parser_headers_fn)(\n    void *user, const chttp_server_request_view *request,\n    chttp_server_parser_headers_action *out_action);\ntypedef int (*chttp_server_parser_continue_fn)(void *user);",
+              ),
+              (
+                  "  chttp_server_parser_request_fn on_request;\n  chttp_server_parser_continue_fn on_continue;",
+                  "  chttp_server_parser_request_fn on_request;\n  chttp_server_parser_headers_fn on_headers;\n  chttp_server_parser_continue_fn on_continue;",
+              ),
+          ]
+          patch("chttp/src/chttp_server_internal.h", header_replacements)
+
+          parser_replacements = [
+              (
+                  "  chttp_server_parser_request_fn on_request;\n  chttp_server_parser_continue_fn on_continue;",
+                  "  chttp_server_parser_request_fn on_request;\n  chttp_server_parser_headers_fn on_headers;\n  chttp_server_parser_continue_fn on_continue;",
+              ),
+              (
+                  "  bool paused;\n  bool upgrade_stopped;\n  bool wire_previous_was_cr;",
+                  "  bool paused;\n  bool upgrade_stopped;\n  bool headers_stopped;\n  bool wire_previous_was_cr;",
+              ),
+              (
+                  "static int chttp_server_parser_validate_headers(chttp_server_parser_impl *parser) {",
+                  "static int chttp_server_parser_validate_headers(chttp_server_parser_impl *parser,\n                                                bool *out_wants_continue) {",
+              ),
+              (
+                  "  size_t host_count = 0u;\n  size_t index;\n  for (index = 0u; index < parser->request.header_count; ++index) {",
+                  "  size_t host_count = 0u;\n  size_t index;\n  *out_wants_continue = false;\n  for (index = 0u; index < parser->request.header_count; ++index) {",
+              ),
+              (
+                  "    if (parser->on_continue == NULL) return chttp_server_parser_fail(parser, 417u);\n    {\n      const int status = parser->on_continue(parser->user);\n      if (status != SALTS_OK) return chttp_server_parser_callback_fail(parser, status);\n    }\n  }\n  return 0;\n}",
+                  "    *out_wants_continue = true;\n  }\n  return 0;\n}",
+              ),
+              (
+                  "  size_t path_size;\n  const char *query;\n  int status;",
+                  "  size_t path_size;\n  const char *query;\n  bool wants_continue = false;\n  int status;",
+              ),
+              (
+                  "  status = chttp_server_parser_validate_headers(parser);\n  if (status == 0 && llhttp_get_upgrade(llparser) != 0u) {",
+                  "  status = chttp_server_parser_validate_headers(parser, &wants_continue);\n  if (status == 0 && parser->on_headers != NULL) {\n    chttp_server_parser_headers_action action = CHTTP_SERVER_HEADERS_CONTINUE;\n    status = parser->on_headers(parser->user, &parser->request, &action);\n    if (status != SALTS_OK) return chttp_server_parser_callback_fail(parser, status);\n    if (action == CHTTP_SERVER_HEADERS_STOP) {\n      parser->headers_stopped = true;\n      return 2;\n    }\n    if (action != CHTTP_SERVER_HEADERS_CONTINUE)\n      return chttp_server_parser_callback_fail(parser, SALTS_EPROTO);\n  }\n  if (status == 0 && wants_continue) {\n    if (parser->on_continue == NULL) return chttp_server_parser_fail(parser, 417u);\n    status = parser->on_continue(parser->user);\n    if (status != SALTS_OK) return chttp_server_parser_callback_fail(parser, status);\n  }\n  if (status == 0 && llhttp_get_upgrade(llparser) != 0u) {",
+              ),
+              (
+                  "  impl->on_request = config->on_request;\n  impl->on_continue = config->on_continue;",
+                  "  impl->on_request = config->on_request;\n  impl->on_headers = config->on_headers;\n  impl->on_continue = config->on_continue;",
+              ),
+              (
+                  "  if (status == HPE_PAUSED_UPGRADE && parser->upgrade_stopped) return SALTS_OK;",
+                  "  if (status == HPE_PAUSED_UPGRADE && (parser->upgrade_stopped || parser->headers_stopped))\n    return SALTS_OK;",
+              ),
+              (
+                  "  if (impl->paused) return SALTS_EBUSY;\n  if (impl->upgrade_stopped) return SALTS_ESHUTDOWN;",
+                  "  if (impl->paused) return SALTS_EBUSY;\n  if (impl->upgrade_stopped || impl->headers_stopped) return SALTS_ESHUTDOWN;",
+              ),
+              (
+                  "    if (impl->upgrade_stopped || impl->paused) break;",
+                  "    if (impl->upgrade_stopped || impl->headers_stopped || impl->paused) break;",
+              ),
+              (
+                  "  if (impl->terminal || impl->upgrade_stopped) return SALTS_ESHUTDOWN;",
+                  "  if (impl->terminal || impl->upgrade_stopped || impl->headers_stopped)\n    return SALTS_ESHUTDOWN;",
+              ),
+              (
+                  "  impl->paused = false;\n  impl->upgrade_stopped = false;\n  chttp_server_parser_reset_message(impl);",
+                  "  impl->paused = false;\n  impl->upgrade_stopped = false;\n  impl->headers_stopped = false;\n  chttp_server_parser_reset_message(impl);",
+              ),
+          ]
+          patch("chttp/src/chttp_server_parser.c", parser_replacements)
+          PY
+
+          git diff --check
+          test "$(git diff --name-only | sort)" = $'chttp/src/chttp_server_internal.h\nchttp/src/chttp_server_parser.c'
+          git diff -- chttp/src/chttp_server_internal.h chttp/src/chttp_server_parser.c
+      - name: Setup re2c and vcpkg
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm re2c
+          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
+            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
+          fi
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-ports/**') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-
+      - name: Configure release preset
+        run: cmake --preset linux-release-user
+      - name: Build JWT/parser tests
+        run: cmake --build --preset linux-release-user --target chttp_jwt_test chttp_server_parser_test
+      - name: Run JWT/parser tests
+        run: ctest --preset linux-release-user -R "^(chttp_jwt_test|chttp_server_parser_test)$" --output-on-failure
+      - name: Commit verified Task 2 GREEN
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chttp/src/chttp_server_internal.h chttp/src/chttp_server_parser.c
+          git commit -m "feat(chttp): add request header admission seam"
+          git push origin HEAD:design/chttp-auth-phase-jwt-hardening
