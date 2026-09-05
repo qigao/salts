@@ -1,8 +1,8 @@
+#include <chttp/chttp.h>
+
 #include "chttp_jwt_internal.h"
 #include "chttp_server_runtime.h"
 #include "tinytest.h"
-
-#include <chttp/chttp.h>
 
 #include <string.h>
 
