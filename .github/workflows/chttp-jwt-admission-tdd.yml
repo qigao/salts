@@ -1,0 +1,39 @@
+name: CHTTP JWT admission TDD
+
+on:
+  pull_request:
+    paths:
+      - "chttp/**"
+      - ".github/workflows/chttp-jwt-admission-tdd.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux CHTTP JWT slice
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup re2c and vcpkg
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm re2c
+          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
+            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Configure release preset
+        run: cmake --preset linux-release-user
+
+      - name: Build JWT test
+        run: cmake --build --preset linux-release-user --target chttp_jwt_test
+
+      - name: Run JWT test
+        run: ctest --preset linux-release-user -R "^chttp_jwt_test$" --output-on-failure
