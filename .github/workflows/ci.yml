@@ -30,7 +30,8 @@ jobs:
           };'''.replace("          ", "")
           new_enum = '''enum {
             CHTTP_JWT_HS256_MIN_KEY_BYTES = 32u,
-            CHTTP_JWT_BEARER_SCHEME_SIZE = sizeof("Bearer") - 1u
+            CHTTP_JWT_BEARER_SCHEME_SIZE = sizeof("Bearer") - 1u,
+            CHTTP_JWT_BEARER_PREFIX_SIZE = sizeof("Bearer ") - 1u
           };'''.replace("          ", "")
           if text.count(old_enum) != 1:
               raise SystemExit("unexpected Bearer enum shape")
