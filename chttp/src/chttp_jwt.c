@@ -10,7 +10,10 @@
 #include <string.h>
 #include <time.h>
 
-enum { CHTTP_JWT_BEARER_PREFIX_SIZE = sizeof("Bearer ") - 1u };
+enum {
+  CHTTP_JWT_HS256_MIN_KEY_BYTES = 32u,
+  CHTTP_JWT_BEARER_PREFIX_SIZE = sizeof("Bearer ") - 1u
+};
 
 typedef struct chttp_jwt_bearer_validator_impl {
   unsigned char *key;
@@ -110,7 +113,9 @@ int chttp_jwt_hs256_token_create(const chttp_jwt_claims *claims, const void *key
   int64_t issued_at;
   int64_t not_before;
   int64_t expires_at;
-  if (claims == NULL || key == NULL || key_size == 0u || out_token == NULL) return SALTS_EINVAL;
+  if (claims == NULL || key == NULL || key_size < CHTTP_JWT_HS256_MIN_KEY_BYTES ||
+      out_token == NULL)
+    return SALTS_EINVAL;
   *out_token = NULL;
   audience[0] = (char *)claims->audience;
   issued_at = claims->issued_at;
@@ -150,7 +155,8 @@ int chttp_jwt_bearer_validator_init(chttp_jwt_bearer_validator *validator,
                                     const chttp_jwt_bearer_validator_options *options) {
   chttp_jwt_bearer_validator_impl *impl;
   if (validator == NULL || options == NULL || options->size != sizeof(*options) ||
-      options->key == NULL || options->key_size == 0u || options->clock_skew_seconds < 0)
+      options->key == NULL || options->key_size < CHTTP_JWT_HS256_MIN_KEY_BYTES ||
+      options->clock_skew_seconds < 0)
     return SALTS_EINVAL;
   if (validator->impl != NULL) return SALTS_EALREADY;
   if ((options->expected_issuer != NULL && options->expected_issuer[0] == '\0') ||
