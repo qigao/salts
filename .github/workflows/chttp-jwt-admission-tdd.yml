@@ -5,18 +5,12 @@ on:
     paths:
       - "chttp/**"
       - ".github/workflows/chttp-jwt-admission-tdd.yml"
-  push:
-    branches:
-      - design/chttp-auth-phase-jwt-hardening
-    paths:
-      - ".github/workflows/chttp-jwt-admission-tdd.yml"
 
 permissions:
   contents: read
 
 jobs:
-  verify:
-    if: github.event_name == 'pull_request'
+  linux:
     name: Linux CHTTP JWT/parser slice
     runs-on: ubuntu-latest
     steps:
@@ -48,46 +42,3 @@ jobs:
         run: cmake --build --preset linux-release-user --target chttp_jwt_test chttp_server_parser_test
       - name: Run JWT/parser tests
         run: ctest --preset linux-release-user -R "^(chttp_jwt_test|chttp_server_parser_test)$" --output-on-failure
-
-  task2-red:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/design/chttp-auth-phase-jwt-hardening'
-    name: Commit Task 2 parser-admission RED
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-      - name: Add exact parser-admission RED
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("chttp/tests/chttp_server_parser_test.c")
-          text = path.read_text()
-          def replace_once(old, new):
-              global text
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"expected one replacement, found {count}: {old[:80]!r}")
-              text = text.replace(old, new, 1)
-          replace_once("  int requests;\n  int continues;\n  chttp_method method;", "  int requests;\n  int continues;\n  int headers;\n  int body_opens;\n  int stop_at_headers;\n  chttp_method method;")
-          old_continue = "static int chttp_server_parser_test_continue(void *user) {\n  chttp_server_parser_probe *probe = (chttp_server_parser_probe *)user;\n  ++probe->continues;\n  return SALTS_OK;\n}\n"
-          new_continue = old_continue + "\nstatic int chttp_server_parser_test_headers(void *user,\n                                            const chttp_server_request_view *request,\n                                            chttp_server_parser_headers_action *out_action) {\n  chttp_server_parser_probe *probe = (chttp_server_parser_probe *)user;\n  (void)request;\n  ++probe->headers;\n  *out_action = probe->stop_at_headers ? CHTTP_SERVER_HEADERS_STOP\n                                       : CHTTP_SERVER_HEADERS_CONTINUE;\n  return SALTS_OK;\n}\n\nstatic int chttp_server_parser_test_body_open(void *user,\n                                              const chttp_server_request_view *request,\n                                              chttp_body_sink *out_sink) {\n  chttp_server_parser_probe *probe = (chttp_server_parser_probe *)user;\n  (void)request;\n  ++probe->body_opens;\n  *out_sink = (chttp_body_sink){0};\n  return SALTS_OK;\n}\n"
-          replace_once(old_continue, new_continue)
-          marker = '  it("emits 100-continue before accepting a bounded request body") {'
-          test = "  it(\"stops at header admission before 100 continue and body bytes\") {\n    static const char headers[] = \"POST /protected HTTP/1.1\\\\r\\\\n\"\n                                  \"Host: example.test\\\\r\\\\n\"\n                                  \"Expect: 100-continue\\\\r\\\\n\"\n                                  \"Content-Length: 4\\\\r\\\\n\\\\r\\\\n\";\n    static const char body[] = \"data\";\n    char wire[sizeof(headers) - 1u + sizeof(body) - 1u];\n    chttp_server_parser_probe probe = {.stop_at_headers = 1};\n    chttp_server_parser_config config = chttp_server_parser_test_config(&probe);\n    chttp_server_parser parser = {0};\n    size_t consumed = 0u;\n    unsigned int http_status = 0u;\n\n    memcpy(wire, headers, sizeof(headers) - 1u);\n    memcpy(wire + sizeof(headers) - 1u, body, sizeof(body) - 1u);\n    config.on_headers = chttp_server_parser_test_headers;\n    config.on_body_open = chttp_server_parser_test_body_open;\n    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);\n    check_equal(chttp_server_parser_execute_consumed(&parser, wire, sizeof(wire), &consumed,\n                                                     &http_status),\n                SALTS_OK);\n    check_equal(consumed, sizeof(headers) - 1u);\n    check_equal(probe.headers, 1);\n    check_equal(probe.continues, 0);\n    check_equal(probe.body_opens, 0);\n    check_equal(probe.requests, 0);\n    chttp_server_parser_destroy(&parser);\n  }\n\n"
-          replace_once(marker, test + marker)
-          path.write_text(text)
-          PY
-          git diff --check
-          git diff -- chttp/tests/chttp_server_parser_test.c
-      - name: Commit RED
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chttp/tests/chttp_server_parser_test.c
-          git commit -m "test(chttp): add header admission RED"
-          git push origin HEAD:design/chttp-auth-phase-jwt-hardening
