@@ -10,14 +10,14 @@ permissions:
 
 jobs:
   execute:
-    name: Parser admission RED to GREEN
+    name: Parser admission GREEN
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Correct RED wire fixture only
+      - name: Correct proven RED fixture
         shell: bash
         run: |
           python3 - <<'PY'
@@ -32,53 +32,6 @@ jobs:
           p.write_text(text.replace(old, new))
           PY
           git diff --check
-          git diff -- chttp/tests/chttp_server_parser_test.c
-
-      - name: Setup re2c and vcpkg
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y nasm re2c
-          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
-            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
-          else
-            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
-            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
-          fi
-
-      - name: Restore vcpkg binary cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/vcpkg/archives
-          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-ports/**') }}
-          restore-keys: |
-            vcpkg-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Configure release preset
-        run: cmake --preset linux-release-user
-
-      - name: Prove corrected Task 2 RED
-        shell: bash
-        run: |
-          set +e
-          cmake --build --preset linux-release-user --target chttp_server_parser_test > task2-red.log 2>&1
-          status=$?
-          set -e
-          cat task2-red.log
-          if [ "$status" -eq 0 ]; then
-            echo "::error::Task 2 RED unexpectedly built before production API exists"
-            exit 1
-          fi
-          grep -Eq "unknown type name.*chttp_server_parser_headers_action|has no member named.*on_headers" task2-red.log
-
-      - name: Commit corrected RED fixture locally
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chttp/tests/chttp_server_parser_test.c
-          git commit -m "test(chttp): correct parser admission wire fixture"
 
       - name: Apply minimal Task 2 production GREEN
         shell: bash
@@ -134,7 +87,7 @@ jobs:
               ),
               (
                   "  status = chttp_server_parser_validate_headers(parser);\n  if (status == 0 && llhttp_get_upgrade(llparser) != 0u) {",
-                  "  status = chttp_server_parser_validate_headers(parser, &wants_continue);\n  if (status == 0 && parser->on_headers != NULL) {\n    chttp_server_parser_headers_action action = CHTTP_SERVER_HEADERS_CONTINUE;\n    status = parser->on_headers(parser->user, &parser->request, &action);\n    if (status != SALTS_OK) return chttp_server_parser_callback_fail(parser, status);\n    if (action == CHTTP_SERVER_HEADERS_STOP) {\n      parser->headers_stopped = true;\n      return 2;\n    }\n    if (action != CHTTP_SERVER_HEADERS_CONTINUE)\n      return chttp_server_parser_callback_fail(parser, SALTS_EPROTO);\n  }\n  if (status == 0 && wants_continue) {\n    if (parser->on_continue == NULL) return chttp_server_parser_fail(parser, 417u);\n    status = parser->on_continue(parser->user);\n    if (status != SALTS_OK) return chttp_server_parser_callback_fail(parser, status);\n  }\n  if (status == 0 && llhttp_get_upgrade(llparser) != 0u) {",
+                  "  status = chttp_server_parser_validate_headers(parser, &wants_continue);\n  if (status == 0 && parser->on_headers != NULL) {\n    chttp_server_parser_headers_action action = CHTTP_SERVER_HEADERS_CONTINUE;\n    status = parser->on_headers(parser->user, &parser->request, &action);\n    if (status != SALTS_OK) return chttp_server_parser_callback_fail(parser, status);\n    if (action == CHTTP_SERVER_HEADERS_STOP) {\n      parser->headers_stopped = true;\n      return HPE_PAUSED;\n    }\n    if (action != CHTTP_SERVER_HEADERS_CONTINUE)\n      return chttp_server_parser_callback_fail(parser, SALTS_EPROTO);\n  }\n  if (status == 0 && wants_continue) {\n    if (parser->on_continue == NULL) return chttp_server_parser_fail(parser, 417u);\n    status = parser->on_continue(parser->user);\n    if (status != SALTS_OK) return chttp_server_parser_callback_fail(parser, status);\n  }\n  if (status == 0 && llhttp_get_upgrade(llparser) != 0u) {",
               ),
               (
                   "  impl->on_request = config->on_request;\n  impl->on_continue = config->on_continue;",
@@ -142,7 +95,7 @@ jobs:
               ),
               (
                   "  if (status == HPE_PAUSED_UPGRADE && parser->upgrade_stopped) return SALTS_OK;",
-                  "  if (status == HPE_PAUSED_UPGRADE && (parser->upgrade_stopped || parser->headers_stopped))\n    return SALTS_OK;",
+                  "  if (status == HPE_PAUSED_UPGRADE && parser->upgrade_stopped) return SALTS_OK;\n  if (status == HPE_PAUSED && parser->headers_stopped) return SALTS_OK;",
               ),
               (
                   "  if (impl->paused) return SALTS_EBUSY;\n  if (impl->upgrade_stopped) return SALTS_ESHUTDOWN;",
@@ -163,7 +116,31 @@ jobs:
           ])
           PY
           git diff --check
-          test "$(git diff --name-only | sort)" = $'chttp/src/chttp_server_internal.h\nchttp/src/chttp_server_parser.c'
+          test "$(git diff --name-only | sort)" = $'chttp/src/chttp_server_internal.h\nchttp/src/chttp_server_parser.c\nchttp/tests/chttp_server_parser_test.c'
+
+      - name: Setup re2c and vcpkg
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm re2c
+          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
+            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
+          fi
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-ports/**') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Configure release preset
+        run: cmake --preset linux-release-user
 
       - name: Build Task 1 and Task 2 GREEN
         run: cmake --build --preset linux-release-user --target chttp_jwt_test chttp_server_parser_test
@@ -174,6 +151,8 @@ jobs:
       - name: Commit and push verified GREEN
         shell: bash
         run: |
-          git add chttp/src/chttp_server_internal.h chttp/src/chttp_server_parser.c
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chttp/src/chttp_server_internal.h chttp/src/chttp_server_parser.c chttp/tests/chttp_server_parser_test.c
           git commit -m "feat(chttp): add request header admission seam"
           git push origin HEAD:design/chttp-auth-phase-jwt-hardening
