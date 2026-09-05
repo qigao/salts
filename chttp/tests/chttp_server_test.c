@@ -757,30 +757,30 @@ spec("CHTTP background HTTP/1.1 server") {
     tampered_token[token_size - 1u] = tampered_token[token_size - 1u] == 'A' ? 'B' : 'A';
 
     check_true(snprintf(lowercase_header, sizeof(lowercase_header),
-                        "Authorization: bearer %s\\r\\n", valid_token) > 0);
+                        "Authorization: bearer %s\r\n", valid_token) > 0);
     check_true(snprintf(multisp_header, sizeof(multisp_header),
-                        "Authorization: BEARER   %s\\r\\n", valid_token) > 0);
+                        "Authorization: BEARER   %s\r\n", valid_token) > 0);
     check_true(snprintf(tab_header, sizeof(tab_header),
-                        "Authorization: Bearer\\t%s\\r\\n", valid_token) > 0);
+                        "Authorization: Bearer\t%s\r\n", valid_token) > 0);
     check_true(snprintf(malformed_header, sizeof(malformed_header),
-                        "Authorization: Bearer abc.def\\r\\n") > 0);
+                        "Authorization: Bearer abc.def\r\n") > 0);
     check_true(snprintf(wrong_key_header, sizeof(wrong_key_header),
-                        "Authorization: Bearer %s\\r\\n", wrong_key_token) > 0);
+                        "Authorization: Bearer %s\r\n", wrong_key_token) > 0);
     check_true(snprintf(tampered_header, sizeof(tampered_header),
-                        "Authorization: Bearer %s\\r\\n", tampered_token) > 0);
+                        "Authorization: Bearer %s\r\n", tampered_token) > 0);
     check_true(snprintf(wrong_issuer_header, sizeof(wrong_issuer_header),
-                        "Authorization: Bearer %s\\r\\n", wrong_issuer_token) > 0);
+                        "Authorization: Bearer %s\r\n", wrong_issuer_token) > 0);
     check_true(snprintf(wrong_audience_header, sizeof(wrong_audience_header),
-                        "Authorization: Bearer %s\\r\\n", wrong_audience_token) > 0);
+                        "Authorization: Bearer %s\r\n", wrong_audience_token) > 0);
     check_true(snprintf(duplicate_header, sizeof(duplicate_header),
-                        "Authorization: Bearer %s\\r\\nAuthorization: Bearer %s\\r\\n",
+                        "Authorization: Bearer %s\r\nAuthorization: Bearer %s\r\n",
                         valid_token, valid_token) > 0);
     check_true(snprintf(hs384_header, sizeof(hs384_header),
-                        "Authorization: Bearer %s\\r\\n", hs384_token) > 0);
+                        "Authorization: Bearer %s\r\n", hs384_token) > 0);
     check_true(snprintf(expired_header, sizeof(expired_header),
-                        "Authorization: Bearer %s\\r\\n", expired_token) > 0);
+                        "Authorization: Bearer %s\r\n", expired_token) > 0);
     check_true(snprintf(future_nbf_header, sizeof(future_nbf_header),
-                        "Authorization: Bearer %s\\r\\n", future_nbf_token) > 0);
+                        "Authorization: Bearer %s\r\n", future_nbf_token) > 0);
 
     invalid_headers[invalid_count++] = NULL;
     invalid_headers[invalid_count++] = malformed_header;
