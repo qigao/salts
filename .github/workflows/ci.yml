@@ -1,4 +1,4 @@
-name: CHTTP JWT Task 5 GREEN executor
+name: CHTTP JWT Task 6 RED executor
 
 on:
   pull_request:
@@ -9,19 +9,19 @@ permissions:
   contents: write
 
 jobs:
-  green:
+  red:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: design/chttp-auth-phase-jwt-hardening
 
-      - name: Apply approved Task 5 production patch
+      - name: Apply Task 6 RED test
         shell: bash
         run: |
-          python3 .github/scripts/chttp-jwt-task5-green.py
+          python3 .github/scripts/chttp-jwt-task6-red.py
           git diff --check
-          test "$(git diff --name-only | sort)" = $'chttp/src/chttp_h2_server.c\nchttp/tests/chttp_h2_server_test.c'
+          test "$(git diff --name-only)" = "chttp/tests/chttp_h2_server_test.c"
 
       - name: Setup build environment
         shell: bash
@@ -47,28 +47,27 @@ jobs:
       - name: Configure release preset
         run: cmake --preset linux-release-user
 
-      - name: Build Task 5 GREEN
-        run: >-
-          cmake --build --preset linux-release-user --target
-          chttp_h2_server_test chttp_server_test chttp_jwt_test chttp_websocket_test
+      - name: Build Task 6 RED
+        run: cmake --build --preset linux-release-user --target chttp_h2_server_test
 
-      - name: Run Task 5 GREEN
-        run: >-
-          ctest --preset linux-release-user
-          -R "^(chttp_h2_server_test|chttp_server_test|chttp_jwt_test|chttp_websocket_test)$"
-          --output-on-failure
-
-      - name: Audit regular HTTP2 admission
+      - name: Prove Task 6 runtime RED
         shell: bash
         run: |
-          git grep -n "chttp_server_request_admit" -- chttp/src/chttp_h2_server.c
-          git grep -n "admission_rejected" -- chttp/src/chttp_h2_server.c
+          set +e
+          output="$(build/linux-gcc-release/bin/chttp_h2_server_test --filter "authenticates RFC 8441 websocket before opening" 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -eq 0 ]; then
+            echo "::error::Task 6 RED unexpectedly passed before RFC8441 admission implementation"
+            exit 1
+          fi
 
-      - name: Commit and push verified Task 5 GREEN
+      - name: Commit verified Task 6 RED
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chttp/src/chttp_h2_server.c chttp/tests/chttp_h2_server_test.c
-          git commit -m "feat(chttp): authenticate HTTP2 streams before body delivery"
+          git add chttp/tests/chttp_h2_server_test.c
+          git commit -m "test(chttp): add RFC8441 JWT admission RED"
           git push origin HEAD:design/chttp-auth-phase-jwt-hardening
