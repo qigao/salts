@@ -10,12 +10,17 @@
 #include <string.h>
 #include <time.h>
 
-enum { CHTTP_JWT_BEARER_PREFIX_SIZE = sizeof("Bearer ") - 1u };
+enum {
+  CHTTP_JWT_HS256_MIN_KEY_BYTES = 32u,
+  CHTTP_JWT_BEARER_SCHEME_SIZE = sizeof("Bearer") - 1u,
+  CHTTP_JWT_BEARER_PREFIX_SIZE = sizeof("Bearer ") - 1u
+};
 
 typedef struct chttp_jwt_bearer_validator_impl {
   unsigned char *key;
   size_t key_size;
   int64_t clock_skew_seconds;
+  int allow_missing_exp;
   char *expected_issuer;
   char *expected_audience;
 } chttp_jwt_bearer_validator_impl;
@@ -52,6 +57,7 @@ static int chttp_jwt_ascii_equal_ci(const char *left, const char *right) {
 
 static const char *chttp_jwt_bearer_token(const chttp_server_request_view *request) {
   const char *authorization = NULL;
+  size_t authorization_size;
   size_t index;
   if (request == NULL || request->headers == NULL) return NULL;
   for (index = 0u; index < request->header_count; ++index) {
@@ -61,19 +67,24 @@ static const char *chttp_jwt_bearer_token(const chttp_server_request_view *reque
       authorization = header->value;
     }
   }
-  if (authorization == NULL || strlen(authorization) <= CHTTP_JWT_BEARER_PREFIX_SIZE ||
-      authorization[CHTTP_JWT_BEARER_PREFIX_SIZE - 1u] != ' ')
+  if (authorization == NULL) return NULL;
+  authorization_size = strlen(authorization);
+  if (authorization_size <= CHTTP_JWT_BEARER_SCHEME_SIZE ||
+      authorization[CHTTP_JWT_BEARER_SCHEME_SIZE] != ' ')
     return NULL;
-  for (index = 0u; index + 1u < CHTTP_JWT_BEARER_PREFIX_SIZE; ++index) {
+  for (index = 0u; index < CHTTP_JWT_BEARER_SCHEME_SIZE; ++index) {
     const unsigned char value = (unsigned char)authorization[index];
     const unsigned char expected = (unsigned char)"Bearer"[index];
-    const unsigned char lower = value >= 'A' && value <= 'Z' ? (unsigned char)(value + ('a' - 'A'))
-                                                               : value;
-    const unsigned char expected_lower =
-        expected >= 'A' && expected <= 'Z' ? (unsigned char)(expected + ('a' - 'A')) : expected;
+    const unsigned char lower =
+        value >= 'A' && value <= 'Z' ? (unsigned char)(value + ('a' - 'A')) : value;
+    const unsigned char expected_lower = expected >= 'A' && expected <= 'Z'
+                                             ? (unsigned char)(expected + ('a' - 'A'))
+                                             : expected;
     if (lower != expected_lower) return NULL;
   }
-  return authorization + CHTTP_JWT_BEARER_PREFIX_SIZE;
+  index = CHTTP_JWT_BEARER_SCHEME_SIZE;
+  while (index < authorization_size && authorization[index] == ' ') ++index;
+  return index == authorization_size ? NULL : authorization + index;
 }
 
 static int chttp_jwt_claims_match(const chttp_jwt_bearer_validator_impl *validator,
@@ -89,6 +100,12 @@ static int chttp_jwt_claims_match(const chttp_jwt_bearer_validator_impl *validat
   return 0;
 }
 
+static int chttp_jwt_expired_strict(int64_t now_seconds, int64_t expires_at,
+                                    int64_t clock_skew_seconds) {
+  if (clock_skew_seconds > 0 && expires_at > INT64_MAX - clock_skew_seconds) return 0;
+  return now_seconds >= expires_at + clock_skew_seconds;
+}
+
 int chttp_jwt_bearer_unauthorized_response(chttp_server_response *response) {
   int status = chttp_server_response_set_header(response, "WWW-Authenticate", "Bearer");
   if (status != SALTS_OK) return status;
@@ -100,7 +117,6 @@ void chttp_jwt_request_state_reset(chttp_server_request_state *state) {
   cjwt_destroy((cjwt_t *)state->jwt_owner);
   state->jwt_owner = NULL;
   state->jwt_claims = (chttp_jwt_claims_view){0};
-  state->jwt_body_rejected = false;
 }
 
 int chttp_jwt_hs256_token_create(const chttp_jwt_claims *claims, const void *key, size_t key_size,
@@ -110,7 +126,9 @@ int chttp_jwt_hs256_token_create(const chttp_jwt_claims *claims, const void *key
   int64_t issued_at;
   int64_t not_before;
   int64_t expires_at;
-  if (claims == NULL || key == NULL || key_size == 0u || out_token == NULL) return SALTS_EINVAL;
+  if (claims == NULL || key == NULL || key_size < CHTTP_JWT_HS256_MIN_KEY_BYTES ||
+      out_token == NULL)
+    return SALTS_EINVAL;
   *out_token = NULL;
   audience[0] = (char *)claims->audience;
   issued_at = claims->issued_at;
@@ -150,7 +168,8 @@ int chttp_jwt_bearer_validator_init(chttp_jwt_bearer_validator *validator,
                                     const chttp_jwt_bearer_validator_options *options) {
   chttp_jwt_bearer_validator_impl *impl;
   if (validator == NULL || options == NULL || options->size != sizeof(*options) ||
-      options->key == NULL || options->key_size == 0u || options->clock_skew_seconds < 0)
+      options->key == NULL || options->key_size < CHTTP_JWT_HS256_MIN_KEY_BYTES ||
+      options->clock_skew_seconds < 0)
     return SALTS_EINVAL;
   if (validator->impl != NULL) return SALTS_EALREADY;
   if ((options->expected_issuer != NULL && options->expected_issuer[0] == '\0') ||
@@ -161,6 +180,7 @@ int chttp_jwt_bearer_validator_init(chttp_jwt_bearer_validator *validator,
   impl->key = (unsigned char *)malloc(options->key_size);
   impl->key_size = options->key_size;
   impl->clock_skew_seconds = options->clock_skew_seconds;
+  impl->allow_missing_exp = options->allow_missing_exp != 0;
   impl->expected_issuer = chttp_jwt_string_copy(options->expected_issuer);
   impl->expected_audience = chttp_jwt_string_copy(options->expected_audience);
   if (impl->key == NULL || (options->expected_issuer != NULL && impl->expected_issuer == NULL) ||
@@ -192,21 +212,27 @@ int chttp_jwt_bearer_validator_destroy(chttp_jwt_bearer_validator *validator) {
   return SALTS_OK;
 }
 
-int chttp_jwt_bearer_request_validate(chttp_server_request_state *state,
-                                      const chttp_server_request_view *request,
-                                      chttp_jwt_bearer_validator *handle) {
+int chttp_jwt_bearer_request_validate_at(chttp_server_request_state *state,
+                                         const chttp_server_request_view *request,
+                                         chttp_jwt_bearer_validator *handle,
+                                         int64_t now_seconds) {
   chttp_jwt_bearer_validator_impl *validator;
   const char *token;
   cjwt_t *jwt = NULL;
-  const time_t now = time(NULL);
   if (handle == NULL || request == NULL || state == NULL) return SALTS_EINVAL;
   validator = (chttp_jwt_bearer_validator_impl *)handle->impl;
   if (validator == NULL) return SALTS_EINVAL;
   token = chttp_jwt_bearer_token(request);
-  if (token == NULL || now == (time_t)-1) return SALTS_EPERM;
+  if (token == NULL) return SALTS_EPERM;
   if (cjwt_decode(token, strlen(token), OPT_ALLOW_ONLY_HS_ALG, validator->key, validator->key_size,
-                  (int64_t)now, validator->clock_skew_seconds, &jwt) != CJWTE_OK ||
+                  now_seconds, validator->clock_skew_seconds, &jwt) != CJWTE_OK ||
       jwt == NULL || jwt->header.alg != alg_hs256 || !chttp_jwt_claims_match(validator, jwt)) {
+    cjwt_destroy(jwt);
+    return SALTS_EPERM;
+  }
+  if ((!validator->allow_missing_exp && jwt->exp == NULL) ||
+      (jwt->exp != NULL && chttp_jwt_expired_strict(now_seconds, *jwt->exp,
+                                                    validator->clock_skew_seconds))) {
     cjwt_destroy(jwt);
     return SALTS_EPERM;
   }
@@ -223,19 +249,10 @@ int chttp_jwt_bearer_request_validate(chttp_server_request_state *state,
   return SALTS_OK;
 }
 
-int chttp_jwt_bearer_middleware(void *user, const chttp_server_request_view *request,
-                                 chttp_server_response *response, chttp_server_next *next) {
-  chttp_jwt_bearer_validator *handle = (chttp_jwt_bearer_validator *)user;
-  chttp_server_next_impl *next_impl;
-  chttp_server_request_state *state;
-  int status;
-  if (handle == NULL || request == NULL || response == NULL || next == NULL || next->impl == NULL)
-    return SALTS_EINVAL;
-  next_impl = (chttp_server_next_impl *)next->impl;
-  if (next_impl->chain == NULL || next_impl->chain->request_state == NULL) return SALTS_EINVAL;
-  state = next_impl->chain->request_state;
-  status = chttp_jwt_bearer_request_validate(state, request, handle);
-  if (status != SALTS_OK) return chttp_jwt_bearer_unauthorized_response(response);
-  ((chttp_server_request_view *)request)->jwt_claims = &state->jwt_claims;
-  return chttp_server_next_call(next);
+int chttp_jwt_bearer_request_validate(chttp_server_request_state *state,
+                                      const chttp_server_request_view *request,
+                                      chttp_jwt_bearer_validator *handle) {
+  const time_t now = time(NULL);
+  if (now == (time_t)-1) return SALTS_EPERM;
+  return chttp_jwt_bearer_request_validate_at(state, request, handle, (int64_t)now);
 }

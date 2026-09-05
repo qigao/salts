@@ -1,5 +1,6 @@
 #include "chttp_h2_server.h"
 
+#include "chttp_jwt_internal.h"
 #include "chttp_server_runtime.h"
 
 #include <limits.h>
@@ -799,21 +800,22 @@ static int chttp_h2_server_websocket_accept(chttp_h2_server_stream *stream) {
 static int chttp_h2_server_websocket_dispatch(chttp_h2_server_stream *stream) {
   chttp_server_request_view request;
   chttp_server_route_record *route;
-  unsigned int allowed_methods = 0u;
-  int route_status = SALTS_OK;
   int status;
   if (!stream->extended_connect || !stream->protocol_seen || !stream->websocket_version_seen ||
       stream->content_length_seen || stream->body_size != 0u)
     return SALTS_EPROTO;
   request = chttp_h2_server_request_view(stream);
-  route = chttp_server_route_find(&stream->request_state, CHTTP_METHOD_GET, request.path,
-                                  &allowed_methods, &route_status);
-  (void)allowed_methods;
-  if (route_status != SALTS_OK) return route_status;
-  if (route == NULL || !route->websocket) {
-    chttp_server_stats_request(stream->owner->connection->server);
-    return chttp_h2_server_websocket_status(stream, 404u);
+  status = chttp_server_request_admit(&stream->request_state, &request, CHTTP_METHOD_GET);
+  if (status == SALTS_EPERM) {
+    chttp_server_response_builder_reset(&stream->request_state.response_builder);
+    status = chttp_jwt_bearer_unauthorized_response(&stream->request_state.response);
+    if (status == SALTS_OK) status = chttp_h2_server_submit_response(stream);
+    return status;
   }
+  if (status != SALTS_OK) return status;
+  route = stream->request_state.admitted_route;
+  if (route == NULL || !route->websocket)
+    return chttp_h2_server_websocket_status(stream, 404u);
   status =
       chttp_server_websocket_peer_init(&stream->websocket_peer, stream->owner->connection->server,
                                        route, stream->owner->connection->handle, stream->stream_id,
@@ -893,6 +895,20 @@ static int chttp_h2_server_end_headers(void *user, int32_t stream_id, int end_st
   }
   if (!stream->trailers) {
     request = chttp_h2_server_request_view(stream);
+    status = chttp_server_request_admit(&stream->request_state, &request, request.method);
+    if (status == SALTS_EPERM) {
+      chttp_server_response_builder_reset(&stream->request_state.response_builder);
+      status = chttp_jwt_bearer_unauthorized_response(&stream->request_state.response);
+      if (status == SALTS_OK) status = chttp_h2_server_submit_response(stream);
+      return status == SALTS_OK ? 0 : -1;
+    }
+    if (status != SALTS_OK) {
+      chttp_server_request_body_close(&stream->request_state, status);
+      return chttp_h2_proto_submit_rst_stream(h2->protocol, stream_id,
+                                              CHTTP_H2_ERR_INTERNAL_ERROR) == 0
+                 ? 0
+                 : -1;
+    }
     status = chttp_server_request_body_open(&stream->request_state, &request, &sink);
     if (status != SALTS_OK) {
       chttp_server_request_body_close(&stream->request_state, status);
@@ -929,6 +945,13 @@ static int chttp_h2_server_data(void *user, int32_t stream_id, const uint8_t *da
     }
     if (chttp_h2_proto_remote_end_stream(h2->protocol, stream_id))
       chttp_server_websocket_peer_transport_closed(&stream->websocket_peer);
+    return 0;
+  }
+  if (stream->response_submitted && stream->request_state.admission_rejected) {
+    if (size != 0u &&
+        (chttp_h2_proto_consume_stream(h2->protocol, stream_id, size) != 0 ||
+         chttp_h2_proto_consume_connection(h2->protocol, size) != 0))
+      return -1;
     return 0;
   }
   if (stream->response_submitted) return -1;

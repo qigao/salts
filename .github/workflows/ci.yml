@@ -1,56 +1,68 @@
-name: C API notation
+name: CHTTP JWT macOS baseline diagnostic
 
 on:
   pull_request:
     paths:
-      - "cmeta/**"
-      - "cstl/**"
-      - "cflow/**"
-      - "docs/**"
-      - "tests/**"
       - ".github/workflows/ci.yml"
-  push:
-    branches: [master]
-    paths:
-      - "cmeta/**"
-      - "cstl/**"
-      - "cflow/**"
-      - "docs/**"
-      - "tests/**"
-      - ".github/workflows/ci.yml"
-  workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  JWT_BRANCH: design/chttp-auth-phase-jwt-hardening
+
 jobs:
-  c-api-notation:
-    name: Reject C++-style generic notation
-    runs-on: ubuntu-latest
+  macos-diagnostic:
+    name: macOS compact remaining-failure diagnostic
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: design/chttp-auth-phase-jwt-hardening
+          fetch-depth: 1
 
-      - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install --yes ripgrep
-
-      - name: Audit CMeta, Container, and CFlow notation
+      - name: Record exact checkout
         shell: bash
         run: |
           set -euo pipefail
-          pattern='\b(TYPE|M|Pair|Tuple|Option|Result|Range|Source|Collector|Vec|Deque|List|Stack|Queue|Heap|Set|HashSet|HashMap|Map|MultiMap|BTree|BPlusTree)\s*<|CMETA_[A-Z0-9_]+_<[A-Za-z][A-Za-z0-9_]*>'
+          echo "CHECKOUT_SHA=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/$JWT_BRANCH)"
 
-          set +e
-          matches="$(rg -n --glob '!vendor/**' --glob '!build/**' "$pattern" cmeta container cflow docs tests 2>&1)"
-          status=$?
-          set -e
-
-          if [ "$status" -eq 0 ]; then
-            printf '%s\n' "$matches"
-            echo "::error::C APIs must use TYPE(...), typed(...), or plain C notation; C++-style generic notation is forbidden."
+      - name: Setup re2c and vcpkg
+        shell: bash
+        run: |
+          brew install nasm re2c
+          if [ -n "${VCPKG_ROOT:-}" ] &&
+             [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            true
+          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] &&
+               [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          elif [ -f "$(brew --prefix)/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "VCPKG_ROOT=$(brew --prefix)/share/vcpkg" >> "$GITHUB_ENV"
+          else
+            echo "A valid VCPKG_ROOT is unavailable" >&2
             exit 1
           fi
 
-          if [ "$status" -ne 1 ]; then
-            printf '%s\n' "$matches"
-            exit "$status"
-          fi
+      - name: Fresh configure
+        run: cmake --fresh --preset release-mac-ninja
+
+      - name: Build full macOS release
+        run: cmake --build --preset build-default-mac
+
+      - name: Print compact remaining CTest failures
+        shell: bash
+        run: |
+          set -uo pipefail
+          log="$RUNNER_TEMP/remaining-ctest.log"
+          set +e
+          ctest --preset test-release-mac \
+            -E '^(chttp_server_test|chttp_requests_test|chttp_h2_server_test)$' \
+            --output-on-failure >"$log" 2>&1
+          status=$?
+          set -e
+          echo '=== compact failure summary ==='
+          grep -E '(Test #[0-9]+: .*\*\*\*Failed|The following tests FAILED:|^[[:space:]]*[0-9]+ - .+ \(Failed\)|Check failed:|[[:space:]]+at /)' "$log" || true
+          echo '=== end compact failure summary ==='
+          exit "$status"

@@ -120,12 +120,9 @@ int chttp_server_route_with_jwt_bearer(chttp_server *server,
       validator->impl == NULL)
     return SALTS_EINVAL;
   impl = (chttp_server_impl *)server->impl;
-  if (options->middleware_count >= impl->config.max_route_middleware_count) return SALTS_ENOBUFS;
   status = chttp_server_route_register(impl, options);
   if (status != SALTS_OK) return status;
   route = &impl->routes[impl->route_count - 1u];
-  route->middleware[route->middleware_count++] =
-      (chttp_server_middleware){chttp_jwt_bearer_middleware, validator};
   route->jwt_bearer_validator = validator;
   return SALTS_OK;
 }
@@ -200,6 +197,23 @@ int chttp_server_websocket_with(chttp_server *server,
   return chttp_server_websocket_route_register((chttp_server_impl *)server->impl, options);
 }
 
+int chttp_server_websocket_with_jwt_bearer(
+    chttp_server *server, const chttp_server_websocket_options *options,
+    chttp_jwt_bearer_validator *validator) {
+  chttp_server_impl *impl;
+  chttp_server_route_record *route;
+  int status;
+  if (server == NULL || server->impl == NULL || options == NULL || validator == NULL ||
+      validator->impl == NULL)
+    return SALTS_EINVAL;
+  impl = (chttp_server_impl *)server->impl;
+  status = chttp_server_websocket_route_register(impl, options);
+  if (status != SALTS_OK) return status;
+  route = &impl->routes[impl->route_count - 1u];
+  route->jwt_bearer_validator = validator;
+  return SALTS_OK;
+}
+
 int chttp_server_websocket(chttp_server *server, const char *path, chttp_websocket_open_fn on_open,
                            chttp_websocket_event_fn on_event, void *user) {
   const chttp_server_websocket_options options = {.size = sizeof(options),
@@ -233,6 +247,18 @@ int chttp_server_use(chttp_server *server, chttp_server_middleware_fn middleware
   if (impl->start_called) return SALTS_EBUSY;
   if (impl->middleware_count >= impl->config.middleware_capacity) return SALTS_ENOBUFS;
   impl->middleware[impl->middleware_count++] = (chttp_server_middleware){middleware, user};
+  return SALTS_OK;
+}
+
+int chttp_server_use_jwt_bearer(chttp_server *server,
+                                chttp_jwt_bearer_validator *validator) {
+  chttp_server_impl *impl;
+  if (server == NULL || server->impl == NULL || validator == NULL || validator->impl == NULL)
+    return SALTS_EINVAL;
+  impl = (chttp_server_impl *)server->impl;
+  if (impl->start_called) return SALTS_EBUSY;
+  if (impl->jwt_bearer_validator != NULL) return SALTS_EALREADY;
+  impl->jwt_bearer_validator = validator;
   return SALTS_OK;
 }
 

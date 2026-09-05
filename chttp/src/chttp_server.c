@@ -25,6 +25,8 @@ static const unsigned char CHTTP_SERVER_H2_PREFACE[] = "PRI * HTTP/2.0\r\n\r\nSM
 SALTS_THREAD_LOCAL chttp_server_impl *chttp_active_callback_server;
 
 static int chttp_server_on_request(void *user, const chttp_server_request_view *request);
+static int chttp_server_on_headers(void *user, const chttp_server_request_view *request,
+                                   chttp_server_parser_headers_action *out_action);
 static int chttp_server_on_continue(void *user);
 static int chttp_server_on_body_open(void *user, const chttp_server_request_view *request,
                                      chttp_body_sink *out_sink);
@@ -429,10 +431,56 @@ int chttp_server_request_state_init(chttp_server_request_state *state, chttp_ser
   return SALTS_OK;
 }
 
+static void chttp_server_request_admission_clear(chttp_server_request_state *state) {
+  if (state == NULL) return;
+  chttp_jwt_request_state_reset(state);
+  state->admitted_route = NULL;
+  state->admitted_allowed_methods = 0u;
+  state->admitted_fallback_status = 0u;
+  state->admission_complete = false;
+  state->admission_rejected = false;
+  state->param_storage_used = 0u;
+  state->param_count = 0u;
+}
+
+int chttp_server_request_admit(chttp_server_request_state *state,
+                               const chttp_server_request_view *request,
+                               chttp_method route_method) {
+  chttp_server_route_record *route;
+  chttp_jwt_bearer_validator *validator;
+  unsigned int allowed_methods = 0u;
+  int route_status = SALTS_OK;
+  int status;
+
+  if (state == NULL || state->server == NULL || request == NULL || state->admission_complete)
+    return SALTS_EINVAL;
+
+  chttp_server_stats_request(state->server);
+  route = chttp_server_route_find(state, route_method, request->path, &allowed_methods,
+                                  &route_status);
+  state->admitted_route = route;
+  state->admitted_allowed_methods = allowed_methods;
+  state->admitted_fallback_status = allowed_methods != 0u ? 405u : 404u;
+  if (route_status == SALTS_ENOBUFS)
+    state->admitted_fallback_status = 414u;
+  else if (route_status != SALTS_OK)
+    return route_status;
+
+  state->admission_complete = true;
+  validator = route != NULL && route->jwt_bearer_validator != NULL
+                  ? route->jwt_bearer_validator
+                  : state->server->jwt_bearer_validator;
+  if (validator == NULL) return SALTS_OK;
+
+  status = chttp_jwt_bearer_request_validate(state, request, validator);
+  if (status != SALTS_OK) state->admission_rejected = true;
+  return status;
+}
+
 void chttp_server_request_state_reset(chttp_server_request_state *state) {
   if (state == NULL) return;
   chttp_server_request_body_close(state, SALTS_ECANCELED);
-  chttp_jwt_request_state_reset(state);
+  chttp_server_request_admission_clear(state);
   chttp_server_response_builder_reset(&state->response_builder);
   state->param_storage_used = 0u;
   state->param_count = 0u;
@@ -501,6 +549,7 @@ static int chttp_server_connection_init(chttp_server_impl *server,
       .max_header_bytes = server->config.max_header_bytes,
       .max_body_bytes = server->config.max_request_body_bytes,
       .on_request = chttp_server_on_request,
+      .on_headers = chttp_server_on_headers,
       .on_continue = chttp_server_on_continue,
       .on_body_open = chttp_server_on_body_open,
       .on_body_close = chttp_server_on_body_close,
@@ -913,6 +962,7 @@ static int chttp_server_h1_input(chttp_server_connection *connection, const void
   if (status != SALTS_OK) return status;
   if (consumed < size) {
     const size_t remaining = size - consumed;
+    if (connection->close_after_write) return SALTS_OK;
     const int deferred_state =
         atomic_load_explicit(&connection->deferred_state, memory_order_acquire);
     if (connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_HANDSHAKE &&
@@ -1172,6 +1222,46 @@ static void chttp_server_on_send(void *user, cnet_connection handle, size_t size
   else if (!connection->response_streaming) (void)chttp_server_send_pending(connection);
 }
 
+static int chttp_server_on_headers(void *user, const chttp_server_request_view *request,
+                                   chttp_server_parser_headers_action *out_action) {
+  chttp_server_connection *connection = (chttp_server_connection *)user;
+  chttp_server_request_state *state;
+  chttp_server_request_view routed_request;
+  chttp_server_response_builder *builder;
+  int status;
+
+  if (connection == NULL || request == NULL || out_action == NULL) return SALTS_EINVAL;
+  *out_action = CHTTP_SERVER_HEADERS_CONTINUE;
+  state = &connection->request_state;
+  chttp_server_request_admission_clear(state);
+  chttp_server_response_builder_reset(&state->response_builder);
+
+  routed_request = *request;
+  chttp_server_request_enrich(connection, &routed_request);
+  status = chttp_server_request_admit(state, &routed_request, routed_request.method);
+  if (status == SALTS_OK) return SALTS_OK;
+  if (status != SALTS_EPERM) return status;
+
+  routed_request.protocol_keep_alive = 0;
+  builder = &state->response_builder;
+  builder->request = &routed_request;
+  status = chttp_jwt_bearer_unauthorized_response(&state->response);
+  if (status == SALTS_OK)
+    status = chttp_server_connection_reserve_outbound(
+        connection, connection->outbound_size + connection->server->max_response_wire_bytes);
+  if (status == SALTS_OK)
+    status = chttp_server_response_serialize(builder, &routed_request, connection->outbound,
+                                             connection->outbound_capacity,
+                                             &connection->outbound_size);
+  builder->request = NULL;
+  if (status != SALTS_OK) return status;
+
+  chttp_server_stats_response(connection->server);
+  connection->close_after_write = true;
+  *out_action = CHTTP_SERVER_HEADERS_STOP;
+  return SALTS_OK;
+}
+
 static int chttp_server_on_continue(void *user) {
   chttp_server_connection *connection = (chttp_server_connection *)user;
   int status;
@@ -1189,47 +1279,31 @@ static int chttp_server_on_continue(void *user) {
   return SALTS_OK;
 }
 
-static int chttp_server_discard_body(void *user, const void *data, size_t size) {
-  (void)user;
-  return data != NULL || size == 0u ? SALTS_OK : SALTS_EINVAL;
-}
-
 int chttp_server_request_body_open(chttp_server_request_state *state,
                                    const chttp_server_request_view *request,
                                    chttp_body_sink *out_sink) {
   chttp_server_request_view routed_request;
   chttp_server_route_record *route;
   chttp_server_impl *previous_callback_server;
-  unsigned int allowed_methods = 0u;
-  int route_status = SALTS_OK;
   int status;
+
   if (state == NULL || state->server == NULL || request == NULL || out_sink == NULL)
     return SALTS_EINVAL;
   *out_sink = (chttp_body_sink){0};
   if (state->body_sink_open) return SALTS_EBUSY;
+  if (!state->admission_complete || state->admission_rejected) return SALTS_EPERM;
+
   state->body_route = NULL;
   state->body_sink = (chttp_body_sink){0};
   state->body_was_streamed = false;
-  route = chttp_server_route_find(state, request->method, request->path, &allowed_methods,
-                                  &route_status);
-  (void)allowed_methods;
-  if (route_status != SALTS_OK) return route_status;
+  route = state->admitted_route;
   if (route == NULL || route->body_open == NULL) return SALTS_OK;
-  status = route->jwt_bearer_validator == NULL
-               ? SALTS_OK
-               : chttp_jwt_bearer_request_validate(state, request, route->jwt_bearer_validator);
-  if (status != SALTS_OK) {
-    state->jwt_body_rejected = true;
-    *out_sink = (chttp_body_sink){.write = chttp_server_discard_body};
-    state->body_sink = *out_sink;
-    state->body_sink_open = true;
-    state->body_was_streamed = true;
-    return SALTS_OK;
-  }
+
   routed_request = *request;
   routed_request.params = state->params;
   routed_request.param_count = state->param_count;
   routed_request.session = NULL;
+  routed_request.jwt_claims = state->jwt_owner != NULL ? &state->jwt_claims : NULL;
   previous_callback_server = chttp_active_callback_server;
   chttp_active_callback_server = state->server;
   status = route->body_open(route->user, &routed_request, out_sink);
@@ -1239,6 +1313,7 @@ int chttp_server_request_body_open(chttp_server_request_state *state,
     return status;
   }
   if (out_sink->write == NULL) return SALTS_EINVAL;
+
   state->body_route = route;
   state->body_sink = *out_sink;
   state->body_sink_open = true;
@@ -1294,35 +1369,28 @@ int chttp_server_dispatch_request(chttp_server_request_state *state,
   chttp_server_request_view routed_request;
   chttp_server_route_record *route;
   chttp_server_chain chain;
-  unsigned int allowed_methods = 0u;
-  unsigned int fallback_status;
   chttp_server_impl *previous_callback_server;
-  int route_status = SALTS_OK;
   int status;
+
   if (state == NULL || state->server == NULL || request == NULL) return SALTS_EINVAL;
+  if (!state->admission_complete || state->admission_rejected) return SALTS_EPERM;
+
   server = state->server;
-  chttp_server_stats_request(server);
-  route = chttp_server_route_find(state, request->method, request->path, &allowed_methods,
-                                  &route_status);
-  fallback_status = allowed_methods != 0u ? 405u : 404u;
-  if (route_status == SALTS_ENOBUFS) fallback_status = 414u;
-  else if (route_status != SALTS_OK) return route_status;
+  route = state->admitted_route;
   routed_request = *request;
   routed_request.params = state->params;
   routed_request.param_count = state->param_count;
   routed_request.session = server->config.session_capacity == 0u ? NULL : &state->session;
-  routed_request.jwt_claims = NULL;
+  routed_request.jwt_claims = state->jwt_owner != NULL ? &state->jwt_claims : NULL;
   chttp_server_response_builder_reset(&state->response_builder);
-  if (state->jwt_body_rejected)
-    return chttp_jwt_bearer_unauthorized_response(&state->response);
   chttp_session_request_begin(state, &routed_request);
   chain = (chttp_server_chain){.server = server,
                                .request_state = state,
                                .request = &routed_request,
                                .response = &state->response,
                                .route = route,
-                               .fallback_status = fallback_status,
-                               .allowed_methods = allowed_methods};
+                               .fallback_status = state->admitted_fallback_status,
+                               .allowed_methods = state->admitted_allowed_methods};
   previous_callback_server = chttp_active_callback_server;
   chttp_active_callback_server = server;
   status = chttp_server_chain_run(&chain);
