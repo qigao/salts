@@ -41,6 +41,19 @@ patch(
 }
 """,
 )
+patch(
+    path,
+    """    check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_pump(&peer, socket_value, 2u), SALTS_OK);
+
+    chttp_h2_server_test_peer_destroy(&peer);
+""",
+    """    check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_pump(&peer, socket_value, 1u), SALTS_OK);
+
+    chttp_h2_server_test_peer_destroy(&peer);
+""",
+)
 
 path = "chttp/src/chttp_h2_server.c"
 patch(
