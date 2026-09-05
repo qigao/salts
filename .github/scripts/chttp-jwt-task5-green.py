@@ -76,3 +76,39 @@ patch(
   if (stream->body_size > capacity || size > capacity - stream->body_size) {
 """,
 )
+
+# Request accounting moved to header admission in Task 3. A syntactically
+# admitted request remains a request even when its body later fails/reset.
+test_path = "chttp/tests/chttp_h2_server_test.c"
+patch(
+    test_path,
+    """    check_equal(stats.accepted_connections, (uint64_t)1u);
+    check_equal(stats.requests, (uint64_t)1u);
+
+    check_equal(chttp_async_client_stop(&client, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+""",
+    """    check_equal(stats.accepted_connections, (uint64_t)1u);
+    check_equal(stats.requests, (uint64_t)2u);
+
+    check_equal(chttp_async_client_stop(&client, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+""",
+)
+patch(
+    test_path,
+    """    check_equal(sibling.response_status, 200u);
+    check_equal(sibling.body, "reused");
+
+    check_equal(chttp_server_get_stats(&server, &stats), SALTS_OK);
+    check_equal(stats.accepted_connections, 1u);
+    check_equal(stats.requests, 2u);
+    check_equal(stats.responses, 2u);
+""",
+    """    check_equal(sibling.response_status, 200u);
+    check_equal(sibling.body, "reused");
+
+    check_equal(chttp_server_get_stats(&server, &stats), SALTS_OK);
+    check_equal(stats.accepted_connections, 1u);
+    check_equal(stats.requests, 4u);
+    check_equal(stats.responses, 2u);
+""",
+)
