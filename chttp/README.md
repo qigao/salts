@@ -13,7 +13,7 @@ CHTTP 随 Salts 正常构建，source-tree target 是 `salts_chttp`；安装后�
 `Salts::CHTTP` 与 `<chttp/chttp.h>` 使用。llhttp 是基础依赖，不再由单独的 manifest
 feature 控制。
 
-CHTTP 当前 library version 是 2.0.0，ABI major/SOVERSION 是 2。Unix 安装包提供
+CHTTP 当前 library version 是 2.2.0，ABI major/SOVERSION 是 2。Unix 安装包提供
 `libsalts_chttp.so.2` SONAME，Windows 产物为 `salts_chttp-2.dll` 与
 `salts_chttp-2.lib`；CMake 消费者仍只链接稳定的 `Salts::CHTTP` target。版本化产物名阻止
 ABI 1 程序意外装载含新公开结构布局的 ABI 2 动态库，但源码使用者仍必须用匹配头文件重新编译。
@@ -121,19 +121,47 @@ callback、线程 handoff 或 coroutine suspension 保存裸指针。
 
 ### JWT Bearer（HS256）
 
-CHTTP 公开的是小型 JWT 边界，不公开 CJWT 类型或头文件。客户端用
-`chttp_jwt_hs256_token_create()` 以共享密钥生成拥有型 token，随后用
-`chttp_jwt_bearer_header()` 填充调用方持有的 header buffer，并把所得 `chttp_header` 放入
-`chttp_options.headers`；请求提交完成后用 `chttp_jwt_token_destroy()` 释放 token。
+CHTTP 公开的是一个有界的 HS256 JWT Bearer admission 边界，不公开 CJWT 类型或头文件。客户端用
+`chttp_jwt_hs256_token_create()` 生成拥有型 token，再用 `chttp_jwt_bearer_header()` 写入调用方持有的
+Authorization header buffer；请求提交完成后用 `chttp_jwt_token_destroy()` 释放 token。
 
-服务端先以 `chttp_jwt_bearer_validator_init()` 复制 key、可选 issuer 与 audience，然后在 start
-之前将 `chttp_jwt_bearer_middleware` 与 validator 注册到 `chttp_server_use()` 或 route middleware。
-它只接受一个 `Authorization: Bearer <HS256 JWT>` header；缺失、重复、格式错误、签名/时间窗口/issuer/
-audience 不匹配均终止 dispatch，并回复 `401 Unauthorized` 与 `WWW-Authenticate: Bearer`。通过验证后，
-后续 middleware、HTTP handler 和 WebSocket opening callback 可从 `request->jwt_claims` 读取 claims；该
-view 与 request 同为 callback-scoped，不能保存。停掉并销毁所有注册它的 server 后，再调用
-`chttp_jwt_bearer_validator_destroy()`。完整的可运行客户端与 server 测试分别见
-`chttp/tests/chttp_jwt_test.c` 与 `chttp/tests/chttp_server_test.c`。
+服务端先初始化一个 validator，再在 `chttp_server_start()` 之前把它绑定为 server-wide policy、单个
+HTTP route policy，或单个 WebSocket route policy。JWT 不再作为 ordinary middleware 注册：
+
+```c
+static const unsigned char key[] = "0123456789abcdef0123456789abcdef";
+chttp_jwt_bearer_validator validator = {0};
+chttp_jwt_bearer_validator_options jwt = {
+    .size = sizeof(jwt),
+    .key = key,
+    .key_size = sizeof(key) - 1u,
+    .expected_issuer = "issuer.example",
+    .expected_audience = "api.example"};
+
+chttp_jwt_bearer_validator_init(&validator, &jwt);
+chttp_server_use_jwt_bearer(&server, &validator);               /* all routes */
+/* or chttp_server_route_with_jwt_bearer(..., &validator); */  /* selected HTTP route */
+/* or chttp_server_websocket_with_jwt_bearer(..., &validator); */
+```
+
+route-specific validator 覆盖 server-wide default；配置了 server-wide policy 后没有隐式 per-route opt-out。
+认证时序固定为：validated headers → route selection → JWT verification → `100 Continue` →
+`body_open`/HTTP/2 DATA → ordinary middleware → handler/WebSocket opening callback。因此未认证的 streaming
+request 不会先进入应用 body sink；ordinary middleware 可以读取已验证的 `request->jwt_claims`，但不负责
+执行 JWT admission。
+
+当前安全 contract：HS256 secret 至少 32 bytes；`exp` 默认必须存在，只有显式设置
+`allow_missing_exp != 0` 才允许缺失；Bearer scheme 大小写不敏感，并要求 scheme 后至少一个 literal SP，
+多个 SP 合法，HTAB 不是 separator。缺失/重复 Authorization、malformed token、错误 key/签名、非 HS256、
+issuer/audience 不匹配、expired 或 future-`nbf` token 都统一返回 `401 Unauthorized` 与
+`WWW-Authenticate: Bearer`，不把内部验证原因暴露给客户端。
+
+验证成功后的 claims view 与 request 一样只在当前 callback 有效，不能跨 callback、线程或异步 handoff 保存
+裸指针。validator 持有 key/expected claims 的副本；所有使用该 validator 的 server 必须先 stop/destroy，
+之后才能调用 `chttp_jwt_bearer_validator_destroy()`。HTTP/1.1、HTTP/2、HTTP/1.1 WebSocket Upgrade 与
+RFC 8441 Extended CONNECT 共用同一个 pre-body admission contract。完整验证见
+`chttp/tests/chttp_jwt_test.c`、`chttp/tests/chttp_server_test.c`、`chttp/tests/chttp_h2_server_test.c` 与
+`chttp/tests/chttp_websocket_test.c`。
 
 需要阻塞数据库或外部服务时，HTTP/1.1 handler 先复制业务所需的 request 字段，再调用
 `chttp_server_response_defer()` 封住当前 builder，并把拥有型 job 投递到应用已有的有界 worker

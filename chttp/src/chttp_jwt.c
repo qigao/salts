@@ -75,13 +75,11 @@ static const char *chttp_jwt_bearer_token(const chttp_server_request_view *reque
   for (index = 0u; index < CHTTP_JWT_BEARER_SCHEME_SIZE; ++index) {
     const unsigned char value = (unsigned char)authorization[index];
     const unsigned char expected = (unsigned char)"Bearer"[index];
-    const unsigned char lower = value >= 'A' && value <= 'Z'
-      ? (unsigned char)(value + ('a' - 'A'))
-      : value;
-    const unsigned char expected_lower =
-        expected >= 'A' && expected <= 'Z'
-  ? (unsigned char)(expected + ('a' - 'A'))
-  : expected;
+    const unsigned char lower =
+        value >= 'A' && value <= 'Z' ? (unsigned char)(value + ('a' - 'A')) : value;
+    const unsigned char expected_lower = expected >= 'A' && expected <= 'Z'
+                                             ? (unsigned char)(expected + ('a' - 'A'))
+                                             : expected;
     if (lower != expected_lower) return NULL;
   }
   index = CHTTP_JWT_BEARER_SCHEME_SIZE;
