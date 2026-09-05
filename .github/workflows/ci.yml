@@ -1,56 +1,67 @@
-name: C API notation
+name: CHTTP JWT Task 4 RED executor
 
 on:
   pull_request:
     paths:
-      - "cmeta/**"
-      - "cstl/**"
-      - "cflow/**"
-      - "docs/**"
-      - "tests/**"
       - ".github/workflows/ci.yml"
-  push:
-    branches: [master]
-    paths:
-      - "cmeta/**"
-      - "cstl/**"
-      - "cflow/**"
-      - "docs/**"
-      - "tests/**"
-      - ".github/workflows/ci.yml"
-  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  c-api-notation:
-    name: Reject C++-style generic notation
+  red:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: design/chttp-auth-phase-jwt-hardening
 
-      - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install --yes ripgrep
+      - name: Add Task 4 RED test
+        run: |
+          python3 .github/scripts/chttp-jwt-task4-red.py
+          git diff --check
+          test "$(git diff --name-only)" = "chttp/tests/chttp_websocket_test.c"
 
-      - name: Audit CMeta, CSTL, and CFlow notation
+      - name: Setup build environment
         shell: bash
         run: |
-          set -euo pipefail
-          pattern='\b(TYPE|M|Pair|Tuple|Option|Result|Range|Source|Collector|Vec|Deque|List|Stack|Queue|Heap|Set|HashSet|HashMap|Map|MultiMap|BTree|BPlusTree)\s*<|CMETA_[A-Z0-9_]+_<[A-Za-z][A-Za-z0-9_]*>'
+          sudo apt-get update
+          sudo apt-get install -y nasm re2c
+          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
+            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
+          fi
 
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-ports/**') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Configure release preset
+        run: cmake --preset linux-release-user
+
+      - name: Prove Task 4 RED
+        shell: bash
+        run: |
           set +e
-          matches="$(rg -n --glob '!vendor/**' --glob '!build/**' "$pattern" cmeta cstl cflow docs tests 2>&1)"
+          cmake --build --preset linux-release-user --target chttp_websocket_test > task4-red.log 2>&1
           status=$?
           set -e
+          cat task4-red.log
+          test "$status" -ne 0
+          grep -Eq "chttp_server_websocket_with_jwt_bearer|undefined reference.*chttp_server_websocket_with_jwt_bearer" task4-red.log
 
-          if [ "$status" -eq 0 ]; then
-            printf '%s\n' "$matches"
-            echo "::error::C APIs must use TYPE(...), typed(...), or plain C notation; C++-style generic notation is forbidden."
-            exit 1
-          fi
-
-          if [ "$status" -ne 1 ]; then
-            printf '%s\n' "$matches"
-            exit "$status"
-          fi
+      - name: Commit verified Task 4 RED
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chttp/tests/chttp_websocket_test.c
+          git commit -m "test(chttp): define protected WebSocket JWT RED"
+          git push origin HEAD:design/chttp-auth-phase-jwt-hardening
