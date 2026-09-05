@@ -1,4 +1,4 @@
-name: CHTTP JWT Task 6 GREEN executor
+name: CHTTP JWT Task 7 RED executor
 
 on:
   pull_request:
@@ -9,19 +9,19 @@ permissions:
   contents: write
 
 jobs:
-  green:
+  red:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: design/chttp-auth-phase-jwt-hardening
 
-      - name: Apply approved Task 6 patch and fixture correction
+      - name: Apply Task 7 RED matrix
         shell: bash
         run: |
-          python3 .github/scripts/chttp-jwt-task6-green.py
+          python3 .github/scripts/chttp-jwt-task7-red.py
           git diff --check
-          test "$(git diff --name-only | sort)" = $'chttp/src/chttp_h2_server.c\nchttp/tests/chttp_h2_server_test.c'
+          test "$(git diff --name-only)" = "chttp/tests/chttp_server_test.c"
 
       - name: Setup build environment
         shell: bash
@@ -47,33 +47,27 @@ jobs:
       - name: Configure release preset
         run: cmake --preset linux-release-user
 
-      - name: Build Task 6 GREEN
-        run: >-
-          cmake --build --preset linux-release-user --target
-          chttp_h2_server_test chttp_websocket_test chttp_server_test chttp_jwt_test
+      - name: Build Task 7 RED
+        run: cmake --build --preset linux-release-user --target chttp_server_test
 
-      - name: Run Task 6 GREEN
-        run: >-
-          ctest --preset linux-release-user
-          -R "^(chttp_h2_server_test|chttp_websocket_test|chttp_server_test|chttp_jwt_test)$"
-          --output-on-failure
-
-      - name: Audit RFC8441 admission reuse
+      - name: Prove Task 7 runtime RED
         shell: bash
         run: |
-          if git grep -n "chttp_server_route_find" -- chttp/src/chttp_h2_server.c; then
-            echo "::error::HTTP2 still performs a second route lookup"
+          set +e
+          output="$(build/linux-gcc-release/bin/chttp_server_test --filter "uses one uniform JWT rejection boundary and RFC6750 Bearer spacing" 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -eq 0 ]; then
+            echo "::error::Task 7 RED unexpectedly passed before Bearer spacing implementation"
             exit 1
           fi
-          count="$(git grep -n "chttp_server_request_admit" -- chttp/src/chttp_h2_server.c | wc -l)"
-          test "$count" -eq 2
-          git grep -n "CHTTP_METHOD_GET" -- chttp/src/chttp_h2_server.c
 
-      - name: Commit and push verified Task 6 GREEN
+      - name: Commit verified Task 7 RED
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chttp/src/chttp_h2_server.c chttp/tests/chttp_h2_server_test.c
-          git commit -m "feat(chttp): authenticate RFC8441 websocket streams"
+          git add chttp/tests/chttp_server_test.c
+          git commit -m "test(chttp): add JWT rejection matrix RED"
           git push origin HEAD:design/chttp-auth-phase-jwt-hardening
