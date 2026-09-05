@@ -151,7 +151,6 @@ typedef struct chttp_jwt_bearer_validator_options {
   int64_t clock_skew_seconds;
   const char *expected_issuer;
   const char *expected_audience;
-  int allow_missing_exp;
 } chttp_jwt_bearer_validator_options;
 
 /** Owns the key and expected claim values used by Bearer middleware. */
@@ -369,7 +368,7 @@ typedef struct chttp_websocket_client_config {
   size_t h2_input_buffer_bytes;
   /** HTTP/2 HPACK dynamic table hard bound; zero selects 4096 bytes. */
   size_t h2_hpack_dynamic_table_bytes;
-  /** Maximum SETTINGS entries accepted per frame; zero selects 16. */
+  /** HTTP/2 SETTINGS entries accepted per frame; zero selects 16. */
   size_t h2_max_settings_count;
   /** Optional CNet socket policy; zeroed size preserves platform defaults. */
   cnet_stream_socket_options socket_options;
@@ -609,18 +608,91 @@ typedef struct chttp_client_config {
   size_t h2_max_settings_count;
 } chttp_client_config;
 
+/**
+ * Builds a reusable verified TLS profile. Configuration is consumed before
+ * return. ALPN must be absent or contain exactly one of `http/1.1` or `h2`.
+ * A profile is protocol-specific and cannot be shared across H1 and H2 requests. The same public
+ * wrapper must not be initialized/destroyed concurrently with submit.
+ *
+ * @param profile Zero-initialized reusable output profile.
+ * @param config Explicit CNet TLS client policy.
+ * @return CNet TLS setup errors, or `SALTS_ENOTSUP` for an unsupported ALPN list.
+ */
 int chttp_tls_profile_init(chttp_tls_profile *profile, const cnet_tls_client_config *config);
+
+/**
+ * Releases the public reference; admitted requests and idle slots remain
+ * valid. Repeated destroy succeeds; a NULL wrapper returns `SALTS_EINVAL`.
+ */
 int chttp_tls_profile_destroy(chttp_tls_profile *profile);
+
+/**
+ * Initializes one advanced caller-driven CHTTP/CNet owner. No partial client
+ * is published.
+ * @param client Zero-initialized output owner.
+ * @param config Borrowed configuration copied during initialization.
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_ENOMEM`, or a CNet/backend init error.
+ */
 int chttp_async_client_init(chttp_async_client *client, const chttp_client_config *config);
+
+/**
+ * Serializes and copies a request, then reuses an H1 connection or H2 session
+ * keyed by exact `connection_uri + authority + TLS profile + protocol`, or
+ * asynchronously connects through CNet.
+ * Success guarantees exactly one later completion callback. No callback is
+ * delivered for immediate admission failure. Submission from a completion
+ * callback returns `SALTS_EBUSY`; defer it until the callback unwinds.
+ * A full pool may begin closing one non-matching idle connection and returns
+ * `SALTS_ENOBUFS`; poll before retrying admission.
+ * @return `SALTS_OK`, an input/size/transport error, `SALTS_ENOBUFS`,
+ * `SALTS_EBUSY`, `SALTS_ESHUTDOWN`, or a CNet admission error.
+ */
 int chttp_async_client_submit(chttp_async_client *client, const chttp_request_options *options,
                               chttp_request *out_request);
+
+/**
+ * Requests cancellation; completion is reported later with `SALTS_ECANCELED`.
+ * H1 closes its exclusive connection; H2 sends RST_STREAM(CANCEL) without
+ * closing sibling streams. A completed request is stale and returns
+ * `SALTS_ENOENT` after recycling.
+ * @return `SALTS_OK`, `SALTS_ENOENT`, `SALTS_EALREADY`, or a CNet close error.
+ */
 int chttp_async_request_cancel(chttp_async_client *client, chttp_request request);
+
+/**
+ * Advanced integration API. Advances CNet and HTTP parsing on the calling
+ * thread. Ordinary callers should use chttp_get/post/put and never call this
+ * function. `out_completions` counts user completion callbacks, not transport
+ * callbacks.
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EBUSY`, `SALTS_ESHUTDOWN`,
+ * or the first CNet/progress error.
+ */
 int chttp_async_client_poll(chttp_async_client *client, uint32_t timeout_ms,
                             size_t *out_completions);
+
+/**
+ * Stops admission and drains all accepted requests plus busy and idle CNet connections.
+ * Retry after `SALTS_ETIMEDOUT`; calling from poll/callback returns `SALTS_EBUSY`.
+ */
 int chttp_async_client_stop(chttp_async_client *client, uint32_t timeout_ms);
+
+/**
+ * Requires a completed stop; a null implementation is already destroyed.
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EBUSY`, or a CNet destroy error.
+ */
 int chttp_async_client_destroy(chttp_async_client *client);
+
+/** Returns the first case-insensitive matching response header, or NULL. */
 const char *chttp_response_view_header(const chttp_response_view *response, const char *name);
+
+/**
+ * Initializes an ordinary sequential requests-style client. Calls drive CNet
+ * internally, including bounded idle-origin eviction; callers do not provide
+ * a poller, executor, or worker thread.
+ */
 int chttp_client_init(chttp_client *client, const chttp_client_config *config);
+
+/** Blocking requests-style methods returning an owning response. */
 int chttp_get(chttp_client *client, const chttp_options *options, chttp_response *out_response,
               chttp_error *out_error);
 int chttp_head(chttp_client *client, const chttp_options *options, chttp_response *out_response,
@@ -633,24 +705,64 @@ int chttp_delete(chttp_client *client, const chttp_options *options, chttp_respo
                  chttp_error *out_error);
 int chttp_patch(chttp_client *client, const chttp_options *options, chttp_response *out_response,
                 chttp_error *out_error);
+
+/**
+ * Blocking requests-style file uploads using an exact Content-Length obtained
+ * from `path`. File reads are submitted through the client's private shared
+ * asynchronous file runtime while this call drives network and file progress.
+ * File and progress callback state is confined to the call. `progress` may be
+ * NULL; when present it observes monotonically increasing byte counts.
+ */
 int chttp_post_file(chttp_client *client, const chttp_options *options, const char *path,
                     chttp_progress_fn progress, void *progress_user, chttp_response *out_response,
                     chttp_error *out_error);
 int chttp_put_file(chttp_client *client, const chttp_options *options, const char *path,
                    chttp_progress_fn progress, void *progress_user, chttp_response *out_response,
                    chttp_error *out_error);
+
+/**
+ * Streams a GET response through native asynchronous writes into a
+ * same-directory temporary file. A 2xx response is fsynced, closed, then
+ * atomically renamed over `output_path`; HTTP errors keep the owning response
+ * but leave the destination unchanged.
+ */
 int chttp_download_file(chttp_client *client, const chttp_options *options, const char *output_path,
                         chttp_progress_fn progress, void *progress_user,
                         chttp_response *out_response, chttp_error *out_error);
+
+/** Returns the first case-insensitive matching owning response header. */
 const char *chttp_response_header(const chttp_response *response, const char *name);
+
+/** Releases every allocation owned by a blocking response; zero is accepted. */
 void chttp_response_destroy(chttp_response *response);
+
+/**
+ * Stops and drains the internal client. `SALTS_ETIMEDOUT` is retryable and
+ * preserves the client; successful destroy clears `client->impl`.
+ */
 int chttp_client_destroy(chttp_client *client, uint32_t timeout_ms);
+
+/**
+ * Initializes a stopped server and copies configuration and bounded storage.
+ * @return `SALTS_OK`, an invalid/range/aggregate-size error, or `SALTS_ENOMEM`.
+ */
 int chttp_server_init(chttp_server *server, const chttp_server_config *config);
+
+/** Replaces socket policy before listener/network start; later calls return `SALTS_EBUSY`. */
 int chttp_server_set_socket_options(chttp_server *server,
                                     const chttp_server_socket_options *options);
+
+/**
+ * Adds one method/path-pattern route before start. Complete `:name` segments
+ * bind raw, non-percent-decoded params. The user pointer is borrowed through
+ * stop. Returns `SALTS_ENOBUFS` at route/param capacity, `SALTS_EALREADY` for a
+ * duplicate method/pattern, or `SALTS_EBUSY` after start.
+ */
 int chttp_server_route(chttp_server *server, chttp_method method, const char *path,
                        chttp_server_handler_fn handler, void *user);
 int chttp_server_route_with(chttp_server *server, const chttp_server_route_options *options);
+
+/** Registers one route protected by the supplied HS256 Bearer validator. */
 int chttp_server_route_with_jwt_bearer(chttp_server *server,
                                        const chttp_server_route_options *options,
                                        chttp_jwt_bearer_validator *validator);
@@ -668,10 +780,16 @@ int chttp_server_patch(chttp_server *server, const char *path, chttp_server_hand
                        void *user);
 int chttp_server_options(chttp_server *server, const char *path, chttp_server_handler_fn handler,
                          void *user);
+
+/** Registers one explicit H1 Upgrade/H2 Extended CONNECT WebSocket route before server start. */
 int chttp_server_websocket_with(chttp_server *server,
                                 const chttp_server_websocket_options *options);
+
+/** Convenience WebSocket route using bounded defaults and no route middleware. */
 int chttp_server_websocket(chttp_server *server, const char *path, chttp_websocket_open_fn on_open,
                            chttp_websocket_event_fn on_event, void *user);
+
+/** Server WebSocket operations are valid only from that peer's callbacks. */
 int chttp_websocket_state_get(const chttp_websocket *websocket, chttp_websocket_state *out_state);
 int chttp_websocket_send_text(chttp_websocket *websocket, const void *data, size_t size);
 int chttp_websocket_send_binary(chttp_websocket *websocket, const void *data, size_t size);
@@ -679,8 +797,17 @@ int chttp_websocket_send_ping(chttp_websocket *websocket, const void *data, size
 int chttp_websocket_send_pong(chttp_websocket *websocket, const void *data, size_t size);
 int chttp_websocket_close(chttp_websocket *websocket, uint16_t code, const void *reason,
                           size_t reason_size);
+
+/** Capture a stable server session value while inside on_open/on_event. */
 int chttp_server_websocket_session_capture(const chttp_websocket *websocket,
                                             chttp_server_websocket_session *out_session);
+
+/**
+ * Thread-safe copied command admission for a captured server WebSocket.
+ * SALTS_OK means the bounded server queue owns a copy; SALTS_ENOBUFS applies
+ * backpressure and SALTS_ENOENT means the captured connection is no longer
+ * current.
+ */
 int chttp_server_websocket_send_text(const chttp_server_websocket_session *session,
                                      const void *data, size_t size);
 int chttp_server_websocket_send_binary(const chttp_server_websocket_session *session,
@@ -691,11 +818,20 @@ int chttp_server_websocket_send_pong(const chttp_server_websocket_session *sessi
                                      const void *data, size_t size);
 int chttp_server_websocket_close(const chttp_server_websocket_session *session, uint16_t code,
                                  const void *reason, size_t reason_size);
+
+/**
+ * Initializes a disconnected, single-owner requests-style client. Every
+ * capacity is a hard bound; zero WebSocket limits select bounded defaults.
+ */
 int chttp_websocket_client_init(chttp_websocket_client *client,
                                 const chttp_websocket_client_config *config);
+
+/** Connects through HTTP/1.1 Upgrade or RFC 8441 Extended CONNECT. No protocol fallback occurs. */
 int chttp_websocket_client_connect(chttp_websocket_client *client,
                                    const chttp_websocket_connect_options *options,
                                    unsigned int *out_http_status);
+
+/** Blocking sends; callers never drive a poller. The client is not concurrently callable. */
 int chttp_websocket_client_send_text(chttp_websocket_client *client, const void *data, size_t size,
                                      uint32_t timeout_ms);
 int chttp_websocket_client_send_binary(chttp_websocket_client *client, const void *data,
@@ -704,16 +840,34 @@ int chttp_websocket_client_send_ping(chttp_websocket_client *client, const void 
                                      uint32_t timeout_ms);
 int chttp_websocket_client_send_pong(chttp_websocket_client *client, const void *data, size_t size,
                                      uint32_t timeout_ms);
+
+/** Returns one borrowed event view, valid until the next client operation. */
 int chttp_websocket_client_receive(chttp_websocket_client *client, uint32_t timeout_ms,
                                    chttp_websocket_event *out_event);
+
+/** Performs the close handshake within the deadline, then closes the transport. */
 int chttp_websocket_client_close(chttp_websocket_client *client, uint16_t code, const void *reason,
                                  size_t reason_size, uint32_t timeout_ms);
+
+/** Drains and releases CNet; active connections are closed within timeout_ms. */
 int chttp_websocket_client_destroy(chttp_websocket_client *client, uint32_t timeout_ms);
+
+/**
+ * Initializes a disconnected HTTP/2 WebSocket pool. All capacities are hard bounds and storage is
+ * reserved before success. The pool is single-owner and not concurrently callable.
+ */
 int chttp_websocket_pool_init(chttp_websocket_pool *pool,
                               const chttp_websocket_pool_config *config);
+
+/**
+ * Opens one RFC 8441 stream without exposing a poller. The first call fixes the connection origin
+ * and TLS profile; later calls may change only the URI target. Local/peer stream exhaustion returns
+ * `SALTS_ENOBUFS`.
+ */
 int chttp_websocket_pool_open(chttp_websocket_pool *pool,
                               const chttp_websocket_connect_options *options,
                               chttp_websocket_session *out_session, unsigned int *out_http_status);
+
 int chttp_websocket_pool_send_text(chttp_websocket_pool *pool, chttp_websocket_session session,
                                    const void *data, size_t size, uint32_t timeout_ms);
 int chttp_websocket_pool_send_binary(chttp_websocket_pool *pool, chttp_websocket_session session,
@@ -722,40 +876,116 @@ int chttp_websocket_pool_send_ping(chttp_websocket_pool *pool, chttp_websocket_s
                                    const void *data, size_t size, uint32_t timeout_ms);
 int chttp_websocket_pool_send_pong(chttp_websocket_pool *pool, chttp_websocket_session session,
                                    const void *data, size_t size, uint32_t timeout_ms);
+
+/** Returns one borrowed event view, valid until the next operation on this pool. */
 int chttp_websocket_pool_receive(chttp_websocket_pool *pool, chttp_websocket_session session,
                                  uint32_t timeout_ms, chttp_websocket_event *out_event);
+
+/** Closes and releases only this HTTP/2 stream; sibling sessions remain usable. */
 int chttp_websocket_pool_close(chttp_websocket_pool *pool, chttp_websocket_session session,
                                uint16_t code, const void *reason, size_t reason_size,
                                uint32_t timeout_ms);
+
+/** Closes active streams, then drains and releases the one shared CNet connection. */
 int chttp_websocket_pool_destroy(chttp_websocket_pool *pool, uint32_t timeout_ms);
+
+/**
+ * Appends one global middleware before start. Bindings are copied in
+ * registration order. Returns `SALTS_ENOBUFS` at middleware capacity.
+ */
 int chttp_server_use(chttp_server *server, chttp_server_middleware_fn middleware, void *user);
+
+/** Runs the next middleware or terminal dispatch; a second call returns `SALTS_EALREADY`. */
 int chttp_server_next_call(chttp_server_next *next);
+
+/**
+ * Starts the listener and background CNet owner thread. Port zero selects an
+ * ephemeral port. Bind/backend/thread failures are returned before success.
+ */
 int chttp_server_start(chttp_server *server);
+
+/** Returns the bound port after a successful start. */
 int chttp_server_port(const chttp_server *server, uint16_t *out_port);
+
+/** Stops admission and joins the owner thread. Timeout zero waits without a deadline. */
 int chttp_server_stop(chttp_server *server, uint32_t timeout_ms);
+
+/** Releases a stopped server; a zero server is already destroyed. */
 int chttp_server_destroy(chttp_server *server);
+
+/** Returns the first case-insensitive request header, or NULL. */
 const char *chttp_server_request_header(const chttp_server_request_view *request, const char *name);
+
+/** Returns one `:name` route parameter, or NULL. */
 const char *chttp_server_request_param(const chttp_server_request_view *request, const char *name);
+
+/**
+ * Adds or replaces one copied response header within configured count/byte
+ * bounds. Framing headers are framework-owned and return `SALTS_EPERM`.
+ */
 int chttp_server_response_set_header(chttp_server_response *response, const char *name,
                                      const char *value);
+
+/**
+ * Selects one case-sensitive WebSocket subprotocol token offered by the
+ * current upgrade request. The selected token is copied into the handshake.
+ */
 int chttp_server_response_select_websocket_subprotocol(
     chttp_server_response *response, const chttp_server_request_view *request,
     const char *subprotocol);
+
+/**
+ * Seals the current HTTP/1.1 response and returns a cross-thread completion
+ * handle. Request views remain callback-borrowed and must be copied by the
+ * application before the handler returns. Existing response headers are
+ * retained; response mutation after this call returns `SALTS_EALREADY`.
+ *
+ * Each connection admits at most one deferred response, so total outstanding
+ * work is bounded by `network.connection_capacity`. HTTP/2 currently returns
+ * `SALTS_ENOTSUP`.
+ */
 int chttp_server_response_defer(chttp_server_response *response,
                                chttp_server_deferred *out_deferred);
+
+/**
+ * Thread-safe terminal completion for a deferred response. Headers and body
+ * are copied into configured CHTTP bounds before success; failure leaves the
+ * handle retryable. A successful call clears the handle and wakes the server
+ * owner. Server stop waits for every admitted handle to complete.
+ */
 int chttp_server_deferred_reply(chttp_server_deferred *deferred,
                                 const chttp_server_deferred_response *response);
+
+/**
+ * Completes the response with a copied content type and body. A second reply
+ * returns `SALTS_EALREADY`; an oversized body returns `SALTS_EMSGSIZE`.
+ */
 int chttp_server_reply(chttp_server_response *response, unsigned int status_code,
                        const char *content_type, const void *body, size_t body_size);
+
+/**
+ * Streams a response after the handler returns. The source descriptor is copied, but its user
+ * state must remain valid until EOF or connection/stream cancellation.
+ */
 int chttp_server_response_source(chttp_server_response *response, unsigned int status_code,
                                  const char *content_type, const chttp_body_source *source);
+
+/** Streams a regular file through the server's shared asynchronous file runtime. */
 int chttp_server_response_file(chttp_server_response *response, unsigned int status_code,
                                const char *content_type, const char *path);
+
+/**
+ * Session values are NUL-terminated strings borrowed through the handler and
+ * copied into the bounded store by set. A first set lazily allocates a Session;
+ * a full live-session or entry capacity returns `SALTS_ENOBUFS`.
+ */
 const char *chttp_session_get(const chttp_session *session, const char *key);
 int chttp_session_set(chttp_session *session, const char *key, const char *value);
 int chttp_session_remove(chttp_session *session, const char *key);
 int chttp_session_clear(chttp_session *session);
 int chttp_session_invalidate(chttp_session *session);
+
+/** Obtains a thread-safe stats snapshot without advancing server state. */
 int chttp_server_get_stats(const chttp_server *server, chttp_server_stats *out_stats);
 
 #ifdef __cplusplus
