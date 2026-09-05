@@ -1,4 +1,4 @@
-name: CHTTP JWT Task 7 GREEN executor
+name: CHTTP JWT Task 7 release checkpoints
 
 on:
   pull_request:
@@ -9,79 +9,21 @@ permissions:
   contents: write
 
 jobs:
-  green:
+  linux:
+    name: Linux release checkpoint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: design/chttp-auth-phase-jwt-hardening
 
-      - name: Apply minimal Bearer 1*SP production patch
-        shell: bash
+      - name: Apply Task 7 docs/style patch
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("chttp/src/chttp_jwt.c")
-          text = path.read_text()
-          old_enum = '''enum {
-            CHTTP_JWT_HS256_MIN_KEY_BYTES = 32u,
-            CHTTP_JWT_BEARER_PREFIX_SIZE = sizeof("Bearer ") - 1u
-          };'''.replace("          ", "")
-          new_enum = '''enum {
-            CHTTP_JWT_HS256_MIN_KEY_BYTES = 32u,
-            CHTTP_JWT_BEARER_SCHEME_SIZE = sizeof("Bearer") - 1u,
-            CHTTP_JWT_BEARER_PREFIX_SIZE = sizeof("Bearer ") - 1u
-          };'''.replace("          ", "")
-          if text.count(old_enum) != 1:
-              raise SystemExit("unexpected Bearer enum shape")
-          text = text.replace(old_enum, new_enum, 1)
-
-          start_marker = "static const char *chttp_jwt_bearer_token(const chttp_server_request_view *request) {"
-          end_marker = "\n\nstatic int chttp_jwt_claims_match"
-          start = text.index(start_marker)
-          end = text.index(end_marker, start)
-          replacement = '''static const char *chttp_jwt_bearer_token(const chttp_server_request_view *request) {
-            const char *authorization = NULL;
-            size_t authorization_size;
-            size_t index;
-            if (request == NULL || request->headers == NULL) return NULL;
-            for (index = 0u; index < request->header_count; ++index) {
-              const chttp_header *header = &request->headers[index];
-              if (chttp_jwt_ascii_equal_ci(header->name, "Authorization")) {
-                if (authorization != NULL || header->value == NULL) return NULL;
-                authorization = header->value;
-              }
-            }
-            if (authorization == NULL) return NULL;
-            authorization_size = strlen(authorization);
-            if (authorization_size <= CHTTP_JWT_BEARER_SCHEME_SIZE ||
-                authorization[CHTTP_JWT_BEARER_SCHEME_SIZE] != ' ')
-              return NULL;
-            for (index = 0u; index < CHTTP_JWT_BEARER_SCHEME_SIZE; ++index) {
-              const unsigned char value = (unsigned char)authorization[index];
-              const unsigned char expected = (unsigned char)"Bearer"[index];
-              const unsigned char lower = value >= 'A' && value <= 'Z'
-                                              ? (unsigned char)(value + ('a' - 'A'))
-                                              : value;
-              const unsigned char expected_lower =
-                  expected >= 'A' && expected <= 'Z'
-                      ? (unsigned char)(expected + ('a' - 'A'))
-                      : expected;
-              if (lower != expected_lower) return NULL;
-            }
-            index = CHTTP_JWT_BEARER_SCHEME_SIZE;
-            while (index < authorization_size && authorization[index] == ' ') ++index;
-            return index == authorization_size ? NULL : authorization + index;
-          }'''.replace("          ", "")
-          text = text[:start] + replacement + text[end:]
-          path.write_text(text)
-          PY
+          python3 .github/scripts/chttp-jwt-task7-docs.py
           git diff --check
-          test "$(git diff --name-only)" = "chttp/src/chttp_jwt.c"
-          git diff -- chttp/src/chttp_jwt.c
+          test "$(git diff --name-only | sort)" = $'chttp/README.md\nchttp/src/chttp_jwt.c'
 
-      - name: Setup build environment
+      - name: Setup re2c and vcpkg
         shell: bash
         run: |
           sudo apt-get update
@@ -102,31 +44,130 @@ jobs:
           restore-keys: |
             vcpkg-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Configure release preset
-        run: cmake --preset linux-release-user
+      - name: Fresh configure
+        run: cmake --fresh --preset linux-release-user
 
-      - name: Build Task 7 GREEN slice
-        run: >-
-          cmake --build --preset linux-release-user --target
-          chttp_jwt_test chttp_server_parser_test chttp_server_test
-          chttp_h2_server_test chttp_websocket_test
+      - name: Build full Linux release
+        run: cmake --build --preset linux-release-user
 
-      - name: Run Task 7 GREEN slice
+      - name: Run narrow CHTTP/JWT checkpoint
         run: >-
           ctest --preset linux-release-user
-          -R "^(chttp_jwt_test|chttp_server_parser_test|chttp_server_test|chttp_h2_server_test|chttp_websocket_test)$"
+          -R "^(chttp_jwt_test|chttp_server_parser_test|chttp_server_test|chttp_websocket_test|chttp_h2_server_test|chttp_requests_test|chttp_tls_test|chttp_cjwt_.*)$"
           --output-on-failure
 
-      - name: Prove Bearer rejection matrix GREEN
-        run: >-
-          build/linux-gcc-release/bin/chttp_server_test
-          --filter "uses one uniform JWT rejection boundary and RFC6750 Bearer spacing"
+      - name: Run full Linux CTest
+        run: ctest --preset linux-release-user --output-on-failure
 
-      - name: Commit verified Task 7 GREEN
+  windows:
+    name: Windows release checkpoint
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: design/chttp-auth-phase-jwt-hardening
+
+      - name: Apply Task 7 docs/style patch
+        shell: pwsh
+        run: |
+          python .github/scripts/chttp-jwt-task7-docs.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $changed = (git diff --name-only | Sort-Object) -join "`n"
+          if ($changed -ne "chttp/README.md`nchttp/src/chttp_jwt.c") {
+            throw "unexpected Task 7 diff: $changed"
+          }
+
+      - name: Setup re2c
+        shell: powershell
+        run: choco install re2c -y --no-progress
+
+      - name: Setup Windows build environment
+        id: windows-env
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLATION_ROOT)) {
+            throw "VCPKG_INSTALLATION_ROOT is unavailable"
+          }
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          $vcpkgToolchain = Join-Path $vcpkgRoot "scripts\buildsystems\vcpkg.cmake"
+          if (-not (Test-Path -LiteralPath $vcpkgToolchain -PathType Leaf)) {
+            throw "vcpkg toolchain is unavailable: $vcpkgToolchain"
+          }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+            throw "vswhere is unavailable: $vswhere"
+          }
+          $vsInstall = & $vswhere -latest -products '*' `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) {
+            throw "Visual Studio with the x64 C++ toolchain was not found"
+          }
+          $binaryCache = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg-binary-cache"
+          New-Item -ItemType Directory -Force -Path $binaryCache | Out-Null
+          "PROJECT_ROOT=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
+          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_SOURCES=clear;files,$binaryCache,readwrite" >> $env:GITHUB_ENV
+          "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-x64-windows-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-x64-windows-
+            vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Fresh configure
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          cmake --fresh --preset win-release-user
+
+      - name: Build full Windows release
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          cmake --build --preset win-release-user
+
+      - name: Run narrow CHTTP/JWT checkpoint
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          ctest --preset win-release-user -R "^(chttp_jwt_test|chttp_server_parser_test|chttp_server_test|chttp_websocket_test|chttp_h2_server_test|chttp_requests_test|chttp_tls_test|chttp_cjwt_.*)$" --output-on-failure
+
+      - name: Run full Windows CTest
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          ctest --preset win-release-user --output-on-failure
+
+  commit:
+    name: Commit verified Task 7 docs
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: design/chttp-auth-phase-jwt-hardening
+      - name: Apply and commit verified docs/style patch
         shell: bash
         run: |
+          python3 .github/scripts/chttp-jwt-task7-docs.py
+          git diff --check
+          test "$(git diff --name-only | sort)" = $'chttp/README.md\nchttp/src/chttp_jwt.c'
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chttp/src/chttp_jwt.c
-          git commit -m "fix(chttp): accept RFC6750 Bearer space runs"
+          git add chttp/README.md chttp/src/chttp_jwt.c
+          git commit -m "docs(chttp): document JWT admission security boundary"
           git push origin HEAD:design/chttp-auth-phase-jwt-hardening
