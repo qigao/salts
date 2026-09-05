@@ -1,4 +1,4 @@
-name: CHTTP JWT Task 7 RED executor
+name: CHTTP JWT Task 7 corrected RED verifier
 
 on:
   pull_request:
@@ -16,12 +16,28 @@ jobs:
         with:
           ref: design/chttp-auth-phase-jwt-hardening
 
-      - name: Apply Task 7 RED matrix
+      - name: Correct Task 7 wire fixtures
         shell: bash
         run: |
-          python3 .github/scripts/chttp-jwt-task7-red.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("chttp/tests/chttp_server_test.c")
+          text = path.read_text()
+          start_marker = '  it("uses one uniform JWT rejection boundary and RFC6750 Bearer spacing") {'
+          end_marker = '  it("authenticates server-wide JWT before streaming admission and 100 continue") {'
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          block = text[start:end]
+          corrected = block.replace(r'\\r\\n', r'\r\n').replace(r'\\t', r'\t')
+          if corrected == block:
+              raise SystemExit("Task 7 wire fixtures were not in the expected escaped-RED form")
+          text = text[:start] + corrected + text[end:]
+          path.write_text(text)
+          PY
           git diff --check
           test "$(git diff --name-only)" = "chttp/tests/chttp_server_test.c"
+          git diff -- chttp/tests/chttp_server_test.c
 
       - name: Setup build environment
         shell: bash
@@ -47,10 +63,10 @@ jobs:
       - name: Configure release preset
         run: cmake --preset linux-release-user
 
-      - name: Build Task 7 RED
+      - name: Build corrected Task 7 RED
         run: cmake --build --preset linux-release-user --target chttp_server_test
 
-      - name: Prove Task 7 runtime RED
+      - name: Prove corrected Task 7 runtime RED
         shell: bash
         run: |
           set +e
@@ -59,15 +75,17 @@ jobs:
           set -e
           printf '%s\n' "$output"
           if [ "$status" -eq 0 ]; then
-            echo "::error::Task 7 RED unexpectedly passed before Bearer spacing implementation"
+            echo "::error::Task 7 RED unexpectedly passed before Bearer 1*SP support"
             exit 1
           fi
+          printf '%s\n' "$output" | grep -F "uses one uniform JWT rejection boundary and RFC6750 Bearer spacing"
+          printf '%s\n' "$output" | grep -F "[ FAIL  ]"
 
-      - name: Commit verified Task 7 RED
+      - name: Commit corrected verified Task 7 RED
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add chttp/tests/chttp_server_test.c
-          git commit -m "test(chttp): add JWT rejection matrix RED"
+          git commit -m "test(chttp): correct JWT rejection matrix wire fixtures"
           git push origin HEAD:design/chttp-auth-phase-jwt-hardening
