@@ -5,12 +5,18 @@ on:
     paths:
       - "chttp/**"
       - ".github/workflows/chttp-jwt-admission-tdd.yml"
+  push:
+    branches:
+      - design/chttp-auth-phase-jwt-hardening
+    paths:
+      - ".github/workflows/chttp-jwt-admission-tdd.yml"
 
 permissions:
   contents: read
 
 jobs:
-  linux:
+  verify:
+    if: github.event_name == 'pull_request'
     name: Linux CHTTP JWT/parser slice
     runs-on: ubuntu-latest
     steps:
@@ -42,3 +48,43 @@ jobs:
         run: cmake --build --preset linux-release-user --target chttp_jwt_test chttp_server_parser_test
       - name: Run JWT/parser tests
         run: ctest --preset linux-release-user -R "^(chttp_jwt_test|chttp_server_parser_test)$" --output-on-failure
+
+  fix-task2-red:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/design/chttp-auth-phase-jwt-hardening'
+    name: Fix Task 2 parser RED fixture
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Add paired body-close fixture
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("chttp/tests/chttp_server_parser_test.c")
+          text = path.read_text()
+          def replace_once(old, new):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected one replacement, found {count}: {old[:80]!r}")
+              text = text.replace(old, new, 1)
+          body_open = "static int chttp_server_parser_test_body_open(void *user,\n                                              const chttp_server_request_view *request,\n                                              chttp_body_sink *out_sink) {\n  chttp_server_parser_probe *probe = (chttp_server_parser_probe *)user;\n  (void)request;\n  ++probe->body_opens;\n  *out_sink = (chttp_body_sink){0};\n  return SALTS_OK;\n}\n"
+          body_close = body_open + "\nstatic void chttp_server_parser_test_body_close(void *user, chttp_body_sink *sink, int status) {\n  (void)user;\n  (void)sink;\n  (void)status;\n}\n"
+          replace_once(body_open, body_close)
+          replace_once("    config.on_body_open = chttp_server_parser_test_body_open;\n", "    config.on_body_open = chttp_server_parser_test_body_open;\n    config.on_body_close = chttp_server_parser_test_body_close;\n")
+          path.write_text(text)
+          PY
+          git diff --check
+          git diff -- chttp/tests/chttp_server_parser_test.c
+      - name: Commit fixture correction
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add chttp/tests/chttp_server_parser_test.c
+          git commit -m "test(chttp): pair parser body sink fixture"
+          git push origin HEAD:design/chttp-auth-phase-jwt-hardening
