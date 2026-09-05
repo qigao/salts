@@ -12,6 +12,7 @@
 
 enum {
   CHTTP_JWT_HS256_MIN_KEY_BYTES = 32u,
+  CHTTP_JWT_BEARER_SCHEME_SIZE = sizeof("Bearer") - 1u,
   CHTTP_JWT_BEARER_PREFIX_SIZE = sizeof("Bearer ") - 1u
 };
 
@@ -56,6 +57,7 @@ static int chttp_jwt_ascii_equal_ci(const char *left, const char *right) {
 
 static const char *chttp_jwt_bearer_token(const chttp_server_request_view *request) {
   const char *authorization = NULL;
+  size_t authorization_size;
   size_t index;
   if (request == NULL || request->headers == NULL) return NULL;
   for (index = 0u; index < request->header_count; ++index) {
@@ -65,19 +67,26 @@ static const char *chttp_jwt_bearer_token(const chttp_server_request_view *reque
       authorization = header->value;
     }
   }
-  if (authorization == NULL || strlen(authorization) <= CHTTP_JWT_BEARER_PREFIX_SIZE ||
-      authorization[CHTTP_JWT_BEARER_PREFIX_SIZE - 1u] != ' ')
+  if (authorization == NULL) return NULL;
+  authorization_size = strlen(authorization);
+  if (authorization_size <= CHTTP_JWT_BEARER_SCHEME_SIZE ||
+      authorization[CHTTP_JWT_BEARER_SCHEME_SIZE] != ' ')
     return NULL;
-  for (index = 0u; index + 1u < CHTTP_JWT_BEARER_PREFIX_SIZE; ++index) {
+  for (index = 0u; index < CHTTP_JWT_BEARER_SCHEME_SIZE; ++index) {
     const unsigned char value = (unsigned char)authorization[index];
     const unsigned char expected = (unsigned char)"Bearer"[index];
-    const unsigned char lower = value >= 'A' && value <= 'Z' ? (unsigned char)(value + ('a' - 'A'))
-                                                               : value;
+    const unsigned char lower = value >= 'A' && value <= 'Z'
+      ? (unsigned char)(value + ('a' - 'A'))
+      : value;
     const unsigned char expected_lower =
-        expected >= 'A' && expected <= 'Z' ? (unsigned char)(expected + ('a' - 'A')) : expected;
+        expected >= 'A' && expected <= 'Z'
+  ? (unsigned char)(expected + ('a' - 'A'))
+  : expected;
     if (lower != expected_lower) return NULL;
   }
-  return authorization + CHTTP_JWT_BEARER_PREFIX_SIZE;
+  index = CHTTP_JWT_BEARER_SCHEME_SIZE;
+  while (index < authorization_size && authorization[index] == ' ') ++index;
+  return index == authorization_size ? NULL : authorization + index;
 }
 
 static int chttp_jwt_claims_match(const chttp_jwt_bearer_validator_impl *validator,
