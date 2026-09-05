@@ -55,6 +55,7 @@ spec("chttp jwt") {
     }
   }
 
+  /* Deterministic RED: wall-clock behavior is tested through the private validate-at seam. */
   group("HS256 validation time policy") {
     it("requires exp by default and rejects the exact expiration boundary") {
       chttp_server_request_state state = {0};
