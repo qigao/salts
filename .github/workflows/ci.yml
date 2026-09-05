@@ -60,7 +60,10 @@ jobs:
       - name: Audit H1 WebSocket admission reuse
         shell: bash
         run: |
-          test "$(git grep -c 'chttp_server_route_find' -- chttp/src/chttp_websocket_server.c || true)" = "0"
+          if git grep -n "chttp_server_route_find" -- chttp/src/chttp_websocket_server.c; then
+            echo "::error::H1 WebSocket path still performs a second route lookup"
+            exit 1
+          fi
           git grep -n "admitted_route\|jwt_claims" -- chttp/src/chttp_websocket_server.c
 
       - name: Commit and push verified Task 4 GREEN
