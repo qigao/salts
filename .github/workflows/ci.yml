@@ -1,4 +1,4 @@
-name: CHTTP JWT Task 7 release checkpoints
+name: CHTTP JWT final verification
 
 on:
   pull_request:
@@ -6,22 +6,59 @@ on:
       - ".github/workflows/ci.yml"
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  JWT_DESIGN_BASE: 78335820a601f7b024b26e0870a3485921016475
+  JWT_BRANCH: design/chttp-auth-phase-jwt-hardening
 
 jobs:
   linux:
-    name: Linux release checkpoint
+    name: Linux exact-head verification
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: design/chttp-auth-phase-jwt-hardening
+          fetch-depth: 1
 
-      - name: Apply Task 7 docs/style patch
+      - name: Record exact checkout
+        shell: bash
         run: |
-          python3 .github/scripts/chttp-jwt-task7-docs.py
-          git diff --check
-          test "$(git diff --name-only | sort)" = $'chttp/README.md\nchttp/src/chttp_jwt.c'
+          echo "CHECKOUT_SHA=$(git rev-parse HEAD)"
+          git fetch --no-tags --depth=1 origin "$JWT_DESIGN_BASE"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/$JWT_BRANCH)"
+
+      - name: Audit fixed-base implementation scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check "$JWT_DESIGN_BASE"..HEAD -- \
+            chttp/include/chttp/chttp.h chttp/src chttp/tests chttp/README.md
+          git diff --stat "$JWT_DESIGN_BASE"..HEAD -- \
+            chttp/include/chttp/chttp.h chttp/src chttp/tests chttp/README.md
+          git diff --name-only "$JWT_DESIGN_BASE"..HEAD -- \
+            chttp/include/chttp/chttp.h chttp/src chttp/tests chttp/README.md
+          if git diff -U0 "$JWT_DESIGN_BASE"..HEAD -- \
+              chttp/include/chttp/chttp.h chttp/src chttp/tests chttp/README.md | \
+              grep -E '^\+.*(\bkid\b|\bJWK\b|JWKS|RS256|PS256|ES256|EdDSA|at\+jwt|revocation|refresh[-_ ]?token|\bJWE\b|Authenticator)'; then
+            echo "::error::out-of-scope JWT capability found in implementation diff"
+            exit 1
+          fi
+          test -z "$(git diff --name-only "$JWT_DESIGN_BASE"..HEAD -- vendor/cjwt)"
+
+      - name: Audit JWT admission call sites
+        shell: bash
+        run: |
+          set -euo pipefail
+          git grep -n "chttp_jwt_bearer_request_validate" -- chttp/src
+          git grep -n "chttp_server_request_admit" -- chttp/src
+          git grep -n "chttp_server_route_find" -- \
+            chttp/src/chttp_server.c chttp/src/chttp_h2_server.c chttp/src/chttp_websocket_server.c
+          if git grep -n "chttp_jwt_bearer_middleware" -- chttp/include chttp/src chttp/README.md; then
+            echo "::error::legacy public JWT middleware contract still exists"
+            exit 1
+          fi
 
       - name: Setup re2c and vcpkg
         shell: bash
@@ -50,7 +87,7 @@ jobs:
       - name: Build full Linux release
         run: cmake --build --preset linux-release-user
 
-      - name: Run narrow CHTTP/JWT checkpoint
+      - name: Run narrow CHTTP/JWT tests
         run: >-
           ctest --preset linux-release-user
           -R "^(chttp_jwt_test|chttp_server_parser_test|chttp_server_test|chttp_websocket_test|chttp_h2_server_test|chttp_requests_test|chttp_tls_test|chttp_cjwt_.*)$"
@@ -59,27 +96,87 @@ jobs:
       - name: Run full Linux CTest
         run: ctest --preset linux-release-user --output-on-failure
 
-  windows:
-    name: Windows release checkpoint
-    runs-on: windows-latest
-    env:
-      PYTHONUTF8: "1"
+      - name: Require final scaffolding cleanup
+        shell: bash
+        run: |
+          if compgen -G '.github/scripts/chttp-jwt-task*.py' > /dev/null; then
+            echo "::error::temporary JWT TDD scripts are still present"
+            exit 1
+          fi
+          grep -Fx 'name: C API notation' .github/workflows/ci.yml
+
+  macos:
+    name: macOS 15 exact-head verification
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
           ref: design/chttp-auth-phase-jwt-hardening
+          fetch-depth: 1
 
-      - name: Apply Task 7 docs/style patch
+      - name: Record exact checkout
+        shell: bash
+        run: |
+          echo "CHECKOUT_SHA=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/$JWT_BRANCH)"
+
+      - name: Setup re2c and vcpkg
+        shell: bash
+        run: |
+          brew install nasm re2c
+          if [ -n "${VCPKG_ROOT:-}" ] &&
+             [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            true
+          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] &&
+               [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          elif [ -f "$(brew --prefix)/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "VCPKG_ROOT=$(brew --prefix)/share/vcpkg" >> "$GITHUB_ENV"
+          else
+            echo "A valid VCPKG_ROOT is unavailable" >&2
+            exit 1
+          fi
+
+      - name: Fresh configure
+        run: cmake --fresh --preset release-mac-ninja
+
+      - name: Build full macOS release
+        run: cmake --build --preset build-default-mac
+
+      - name: Run narrow CHTTP/JWT tests
+        run: >-
+          ctest --preset test-release-mac
+          -R "^(chttp_jwt_test|chttp_server_parser_test|chttp_server_test|chttp_websocket_test|chttp_h2_server_test|chttp_requests_test|chttp_tls_test|chttp_cjwt_.*)$"
+          --output-on-failure
+
+      - name: Run full macOS CTest
+        run: ctest --preset test-release-mac --output-on-failure
+
+      - name: Require final scaffolding cleanup
+        shell: bash
+        run: |
+          if compgen -G '.github/scripts/chttp-jwt-task*.py' > /dev/null; then
+            echo "::error::temporary JWT TDD scripts are still present"
+            exit 1
+          fi
+          grep -Fx 'name: C API notation' .github/workflows/ci.yml
+
+  windows:
+    name: Windows exact-head verification
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: design/chttp-auth-phase-jwt-hardening
+          fetch-depth: 1
+
+      - name: Record exact checkout
         shell: pwsh
         run: |
-          python .github/scripts/chttp-jwt-task7-docs.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          git diff --check
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $changed = (git diff --name-only | Sort-Object) -join "`n"
-          if ($changed -ne "chttp/README.md`nchttp/src/chttp_jwt.c") {
-            throw "unexpected Task 7 diff: $changed"
-          }
+          $sha = git rev-parse HEAD
+          Write-Host "CHECKOUT_SHA=$sha"
+          $remote = git rev-parse "origin/$env:JWT_BRANCH"
+          if ($sha -ne $remote) { throw "checkout is not current branch head" }
 
       - name: Setup re2c
         shell: powershell
@@ -140,7 +237,7 @@ jobs:
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user
 
-      - name: Run narrow CHTTP/JWT checkpoint
+      - name: Run narrow CHTTP/JWT tests
         shell: cmd
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
@@ -154,22 +251,11 @@ jobs:
           if errorlevel 1 exit /b 1
           ctest --preset win-release-user --output-on-failure
 
-  commit:
-    name: Commit verified Task 7 docs
-    needs: [linux, windows]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: design/chttp-auth-phase-jwt-hardening
-      - name: Apply and commit verified docs/style patch
-        shell: bash
+      - name: Require final scaffolding cleanup
+        shell: pwsh
         run: |
-          python3 .github/scripts/chttp-jwt-task7-docs.py
-          git diff --check
-          test "$(git diff --name-only | sort)" = $'chttp/README.md\nchttp/src/chttp_jwt.c'
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chttp/README.md chttp/src/chttp_jwt.c
-          git commit -m "docs(chttp): document JWT admission security boundary"
-          git push origin HEAD:design/chttp-auth-phase-jwt-hardening
+          $temp = Get-ChildItem .github/scripts/chttp-jwt-task*.py -ErrorAction SilentlyContinue
+          if ($temp) { throw "temporary JWT TDD scripts are still present" }
+          if (-not (Select-String -Path .github/workflows/ci.yml -Pattern '^name: C API notation$' -Quiet)) {
+            throw "temporary JWT verification workflow is still present"
+          }
