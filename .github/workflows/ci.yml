@@ -1,4 +1,4 @@
-name: CHTTP JWT Task 4 RED executor
+name: CHTTP JWT Task 4 GREEN executor
 
 on:
   pull_request:
@@ -9,18 +9,18 @@ permissions:
   contents: write
 
 jobs:
-  red:
+  green:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: design/chttp-auth-phase-jwt-hardening
 
-      - name: Add Task 4 RED test
+      - name: Apply approved Task 4 production patch
         run: |
-          python3 .github/scripts/chttp-jwt-task4-red.py
+          python3 .github/scripts/chttp-jwt-task4-green.py
           git diff --check
-          test "$(git diff --name-only)" = "chttp/tests/chttp_websocket_test.c"
+          test "$(git diff --name-only | sort)" = $'chttp/include/chttp/chttp.h\nchttp/src/chttp_server_route.c\nchttp/src/chttp_websocket_server.c'
 
       - name: Setup build environment
         shell: bash
@@ -46,22 +46,28 @@ jobs:
       - name: Configure release preset
         run: cmake --preset linux-release-user
 
-      - name: Prove Task 4 RED
+      - name: Build Task 4 GREEN
+        run: >-
+          cmake --build --preset linux-release-user --target
+          chttp_jwt_test chttp_server_parser_test chttp_server_test chttp_websocket_test
+
+      - name: Run Task 4 GREEN
+        run: >-
+          ctest --preset linux-release-user
+          -R "^(chttp_jwt_test|chttp_server_parser_test|chttp_server_test|chttp_websocket_test)$"
+          --output-on-failure
+
+      - name: Audit H1 WebSocket admission reuse
         shell: bash
         run: |
-          set +e
-          cmake --build --preset linux-release-user --target chttp_websocket_test > task4-red.log 2>&1
-          status=$?
-          set -e
-          cat task4-red.log
-          test "$status" -ne 0
-          grep -Eq "chttp_server_websocket_with_jwt_bearer|undefined reference.*chttp_server_websocket_with_jwt_bearer" task4-red.log
+          test "$(git grep -c 'chttp_server_route_find' -- chttp/src/chttp_websocket_server.c || true)" = "0"
+          git grep -n "admitted_route\|jwt_claims" -- chttp/src/chttp_websocket_server.c
 
-      - name: Commit verified Task 4 RED
+      - name: Commit and push verified Task 4 GREEN
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chttp/tests/chttp_websocket_test.c
-          git commit -m "test(chttp): define protected WebSocket JWT RED"
+          git add chttp/include/chttp/chttp.h chttp/src/chttp_server_route.c chttp/src/chttp_websocket_server.c
+          git commit -m "feat(chttp): protect websocket admission with JWT"
           git push origin HEAD:design/chttp-auth-phase-jwt-hardening
