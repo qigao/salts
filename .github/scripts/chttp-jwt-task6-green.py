@@ -10,8 +10,39 @@ def patch(path, old, new):
     p.write_text(text.replace(old, new, 1))
 
 
-path = "chttp/src/chttp_h2_server.c"
+path = "chttp/tests/chttp_h2_server_test.c"
+patch(
+    path,
+    """static int chttp_h2_websocket_jwt_open(void *user, chttp_websocket *websocket,
+                                       const chttp_server_request_view *request,
+                                       chttp_server_response *response) {
+  if (request == NULL || request->jwt_claims == NULL || request->jwt_claims->subject == NULL ||
+      strcmp(request->jwt_claims->subject, "alice") != 0)
+    return SALTS_EPROTO;
+  return chttp_h2_websocket_open(user, websocket, request, response);
+}
+""",
+    """static int chttp_h2_websocket_jwt_open(void *user, chttp_websocket *websocket,
+                                       const chttp_server_request_view *request,
+                                       chttp_server_response *response) {
+  chttp_h2_websocket_probe *probe = (chttp_h2_websocket_probe *)user;
+  const char *id;
+  (void)websocket;
+  (void)response;
+  if (probe == NULL || request == NULL || request->jwt_claims == NULL ||
+      request->jwt_claims->subject == NULL || strcmp(request->jwt_claims->subject, "alice") != 0)
+    return SALTS_EPROTO;
+  id = chttp_server_request_param(request, "id");
+  if (request->http_major != 2u || strcmp(request->path, "/jwt-ws/42") != 0 || id == NULL ||
+      strcmp(id, "42") != 0)
+    return SALTS_EPROTO;
+  atomic_fetch_add_explicit(&probe->opens, 1, memory_order_release);
+  return SALTS_OK;
+}
+""",
+)
 
+path = "chttp/src/chttp_h2_server.c"
 patch(
     path,
     """static int chttp_h2_server_websocket_dispatch(chttp_h2_server_stream *stream) {
