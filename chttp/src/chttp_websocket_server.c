@@ -162,12 +162,12 @@ int chttp_server_websocket_route_open(chttp_server_websocket_peer *peer,
   if (peer == NULL || state == NULL || route == NULL || request == NULL || peer->server == NULL ||
       peer->phase == CHTTP_SERVER_WEBSOCKET_NONE)
     return SALTS_EINVAL;
-  chttp_server_stats_request(peer->server);
+  if (!state->admission_complete) chttp_server_stats_request(peer->server);
   routed_request = *request;
   routed_request.params = state->params;
   routed_request.param_count = state->param_count;
   routed_request.session = peer->server->config.session_capacity == 0u ? NULL : &state->session;
-  routed_request.jwt_claims = NULL;
+  routed_request.jwt_claims = state->jwt_owner != NULL ? &state->jwt_claims : NULL;
   chttp_session_request_begin(state, &routed_request);
   chttp_server_response_builder_reset(&state->response_builder);
   open_context = (chttp_websocket_open_context){.peer = peer, .route = route};
@@ -243,8 +243,6 @@ int chttp_server_websocket_upgrade(void *user, const chttp_server_request_view *
   chttp_server_request_view enriched_request;
   chttp_server_request_state *state;
   chttp_server_route_record *route;
-  unsigned int allowed_methods = 0u;
-  int route_status = SALTS_OK;
   char accept[CHTTP_WEBSOCKET_ACCEPT_CAPACITY];
   int status;
   if (connection == NULL || request == NULL || out_action == NULL || out_http_status == NULL)
@@ -255,10 +253,8 @@ int chttp_server_websocket_upgrade(void *user, const chttp_server_request_view *
   chttp_server_request_enrich(connection, &enriched_request);
   request = &enriched_request;
   state = &connection->request_state;
-  route = chttp_server_route_find(state, CHTTP_METHOD_GET, request->path, &allowed_methods,
-                                  &route_status);
-  (void)allowed_methods;
-  if (route_status != SALTS_OK) return route_status;
+  if (!state->admission_complete || state->admission_rejected) return SALTS_EPERM;
+  route = state->admitted_route;
   if (route == NULL || !route->websocket) return SALTS_OK;
   status =
       chttp_websocket_server_handshake_validate(request, accept, sizeof(accept), out_http_status);

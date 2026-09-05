@@ -197,6 +197,23 @@ int chttp_server_websocket_with(chttp_server *server,
   return chttp_server_websocket_route_register((chttp_server_impl *)server->impl, options);
 }
 
+int chttp_server_websocket_with_jwt_bearer(
+    chttp_server *server, const chttp_server_websocket_options *options,
+    chttp_jwt_bearer_validator *validator) {
+  chttp_server_impl *impl;
+  chttp_server_route_record *route;
+  int status;
+  if (server == NULL || server->impl == NULL || options == NULL || validator == NULL ||
+      validator->impl == NULL)
+    return SALTS_EINVAL;
+  impl = (chttp_server_impl *)server->impl;
+  status = chttp_server_websocket_route_register(impl, options);
+  if (status != SALTS_OK) return status;
+  route = &impl->routes[impl->route_count - 1u];
+  route->jwt_bearer_validator = validator;
+  return SALTS_OK;
+}
+
 int chttp_server_websocket(chttp_server *server, const char *path, chttp_websocket_open_fn on_open,
                            chttp_websocket_event_fn on_event, void *user) {
   const chttp_server_websocket_options options = {.size = sizeof(options),

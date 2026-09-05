@@ -786,6 +786,11 @@ int chttp_server_options(chttp_server *server, const char *path, chttp_server_ha
 int chttp_server_websocket_with(chttp_server *server,
                                 const chttp_server_websocket_options *options);
 
+/** Registers one WebSocket route protected by the supplied JWT Bearer validator. */
+int chttp_server_websocket_with_jwt_bearer(
+    chttp_server *server, const chttp_server_websocket_options *options,
+    chttp_jwt_bearer_validator *validator);
+
 /** Convenience WebSocket route using bounded defaults and no route middleware. */
 int chttp_server_websocket(chttp_server *server, const char *path, chttp_websocket_open_fn on_open,
                            chttp_websocket_event_fn on_event, void *user);
