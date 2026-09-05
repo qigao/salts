@@ -154,7 +154,7 @@ typedef struct chttp_jwt_bearer_validator_options {
   int allow_missing_exp;
 } chttp_jwt_bearer_validator_options;
 
-/** Owns the key and expected claim values used by Bearer middleware. */
+/** Owns the key and expected claim values used by Bearer admission. */
 typedef struct chttp_jwt_bearer_validator {
   void *impl;
 } chttp_jwt_bearer_validator;
@@ -229,7 +229,7 @@ typedef struct chttp_server_request_view {
   /** Verified TLS peer leaf SHA-256, or NULL for plaintext/no presented client certificate. */
   const char *peer_certificate_sha256;
   chttp_session *session;
-  /** NULL unless JWT Bearer middleware authenticated this callback. */
+  /** NULL unless JWT Bearer admission authenticated this callback. */
   const chttp_jwt_claims_view *jwt_claims;
 } chttp_server_request_view;
 
@@ -272,10 +272,6 @@ int chttp_jwt_bearer_validator_init(
 
 /** Releases copied validation material. The validator must no longer be registered on a server. */
 int chttp_jwt_bearer_validator_destroy(chttp_jwt_bearer_validator *validator);
-
-/** Validates one HS256 Authorization: Bearer header and exposes claims to subsequent handlers. */
-int chttp_jwt_bearer_middleware(void *user, const chttp_server_request_view *request,
-                                 chttp_server_response *response, chttp_server_next *next);
 
 typedef struct chttp_server_middleware {
   chttp_server_middleware_fn handler;
@@ -767,6 +763,10 @@ int chttp_server_route_with(chttp_server *server, const chttp_server_route_optio
 int chttp_server_route_with_jwt_bearer(chttp_server *server,
                                        const chttp_server_route_options *options,
                                        chttp_jwt_bearer_validator *validator);
+
+/** Installs one server-wide JWT Bearer admission policy before server start. */
+int chttp_server_use_jwt_bearer(chttp_server *server,
+                                chttp_jwt_bearer_validator *validator);
 int chttp_server_get(chttp_server *server, const char *path, chttp_server_handler_fn handler,
                      void *user);
 int chttp_server_head(chttp_server *server, const char *path, chttp_server_handler_fn handler,

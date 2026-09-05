@@ -110,7 +110,6 @@ void chttp_jwt_request_state_reset(chttp_server_request_state *state) {
   cjwt_destroy((cjwt_t *)state->jwt_owner);
   state->jwt_owner = NULL;
   state->jwt_claims = (chttp_jwt_claims_view){0};
-  state->jwt_body_rejected = false;
 }
 
 int chttp_jwt_hs256_token_create(const chttp_jwt_claims *claims, const void *key, size_t key_size,
@@ -249,21 +248,4 @@ int chttp_jwt_bearer_request_validate(chttp_server_request_state *state,
   const time_t now = time(NULL);
   if (now == (time_t)-1) return SALTS_EPERM;
   return chttp_jwt_bearer_request_validate_at(state, request, handle, (int64_t)now);
-}
-
-int chttp_jwt_bearer_middleware(void *user, const chttp_server_request_view *request,
-                                 chttp_server_response *response, chttp_server_next *next) {
-  chttp_jwt_bearer_validator *handle = (chttp_jwt_bearer_validator *)user;
-  chttp_server_next_impl *next_impl;
-  chttp_server_request_state *state;
-  int status;
-  if (handle == NULL || request == NULL || response == NULL || next == NULL || next->impl == NULL)
-    return SALTS_EINVAL;
-  next_impl = (chttp_server_next_impl *)next->impl;
-  if (next_impl->chain == NULL || next_impl->chain->request_state == NULL) return SALTS_EINVAL;
-  state = next_impl->chain->request_state;
-  status = chttp_jwt_bearer_request_validate(state, request, handle);
-  if (status != SALTS_OK) return chttp_jwt_bearer_unauthorized_response(response);
-  ((chttp_server_request_view *)request)->jwt_claims = &state->jwt_claims;
-  return chttp_server_next_call(next);
 }
