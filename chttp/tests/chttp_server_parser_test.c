@@ -66,6 +66,12 @@ static int chttp_server_parser_test_body_open(void *user,
   return SALTS_OK;
 }
 
+static void chttp_server_parser_test_body_close(void *user, chttp_body_sink *sink, int status) {
+  (void)user;
+  (void)sink;
+  (void)status;
+}
+
 static int chttp_server_parser_test_upgrade(void *user, const chttp_server_request_view *request,
                                             chttp_server_parser_upgrade_action *out_action,
                                             unsigned int *out_http_status) {
@@ -199,6 +205,7 @@ spec("CHTTP server request parser") {
     memcpy(wire + sizeof(headers) - 1u, body, sizeof(body) - 1u);
     config.on_headers = chttp_server_parser_test_headers;
     config.on_body_open = chttp_server_parser_test_body_open;
+    config.on_body_close = chttp_server_parser_test_body_close;
     check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
     check_equal(chttp_server_parser_execute_consumed(&parser, wire, sizeof(wire), &consumed,
                                                      &http_status),
