@@ -151,6 +151,7 @@ typedef struct chttp_jwt_bearer_validator_options {
   int64_t clock_skew_seconds;
   const char *expected_issuer;
   const char *expected_audience;
+  int allow_missing_exp;
 } chttp_jwt_bearer_validator_options;
 
 /** Owns the key and expected claim values used by Bearer middleware. */

@@ -174,6 +174,7 @@ int chttp_jwt_bearer_validator_init(chttp_jwt_bearer_validator *validator,
   impl->key = (unsigned char *)malloc(options->key_size);
   impl->key_size = options->key_size;
   impl->clock_skew_seconds = options->clock_skew_seconds;
+  impl->allow_missing_exp = options->allow_missing_exp != 0;
   impl->expected_issuer = chttp_jwt_string_copy(options->expected_issuer);
   impl->expected_audience = chttp_jwt_string_copy(options->expected_audience);
   if (impl->key == NULL || (options->expected_issuer != NULL && impl->expected_issuer == NULL) ||
