@@ -21,7 +21,7 @@ jobs:
         run: |
           python3 .github/scripts/chttp-jwt-task5-green.py
           git diff --check
-          test "$(git diff --name-only)" = "chttp/src/chttp_h2_server.c"
+          test "$(git diff --name-only | sort)" = $'chttp/src/chttp_h2_server.c\nchttp/tests/chttp_h2_server_test.c'
 
       - name: Setup build environment
         shell: bash
@@ -69,6 +69,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chttp/src/chttp_h2_server.c
+          git add chttp/src/chttp_h2_server.c chttp/tests/chttp_h2_server_test.c
           git commit -m "feat(chttp): authenticate HTTP2 streams before body delivery"
           git push origin HEAD:design/chttp-auth-phase-jwt-hardening
