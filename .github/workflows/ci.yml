@@ -1,4 +1,4 @@
-name: CHTTP JWT Task 3 GREEN executor
+name: CHTTP JWT Task 3 checkpoint
 
 on:
   pull_request:
@@ -9,18 +9,18 @@ permissions:
   contents: write
 
 jobs:
-  green:
+  checkpoint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: design/chttp-auth-phase-jwt-hardening
 
-      - name: Apply approved Task 3 production patch
+      - name: Add Task 3 checkpoint tests
         run: |
-          python3 .github/scripts/chttp-jwt-task3-green.py
+          python3 .github/scripts/chttp-jwt-task3-checkpoint.py
           git diff --check
-          test "$(git diff --name-only | sort)" = $'chttp/include/chttp/chttp.h\nchttp/src/chttp_jwt.c\nchttp/src/chttp_server.c\nchttp/src/chttp_server_route.c\nchttp/src/chttp_server_runtime.h'
+          test "$(git diff --name-only)" = "chttp/tests/chttp_server_test.c"
 
       - name: Setup build environment
         shell: bash
@@ -46,30 +46,22 @@ jobs:
       - name: Configure release preset
         run: cmake --preset linux-release-user
 
-      - name: Build Task 3 GREEN
+      - name: Build Task 3 checkpoint
         run: >-
           cmake --build --preset linux-release-user --target
           chttp_jwt_test chttp_server_parser_test chttp_server_test
 
-      - name: Run Task 3 GREEN
+      - name: Run Task 3 checkpoint
         run: >-
           ctest --preset linux-release-user
           -R "^(chttp_jwt_test|chttp_server_parser_test|chttp_server_test)$"
           --output-on-failure
 
-      - name: Prove ordinary JWT middleware contract is gone from code
-        shell: bash
-        run: |
-          if git grep -n "chttp_jwt_bearer_middleware" -- chttp/include chttp/src; then
-            echo "::error::ordinary JWT middleware contract still exists"
-            exit 1
-          fi
-
-      - name: Commit and push verified Task 3 GREEN
+      - name: Commit verified Task 3 checkpoint tests
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chttp/include/chttp/chttp.h chttp/src/chttp_jwt.c chttp/src/chttp_server.c chttp/src/chttp_server_route.c chttp/src/chttp_server_runtime.h
-          git commit -m "feat(chttp): authenticate JWT before request body admission"
+          git add chttp/tests/chttp_server_test.c
+          git commit -m "test(chttp): prove HTTP1 JWT admission state isolation"
           git push origin HEAD:design/chttp-auth-phase-jwt-hardening
