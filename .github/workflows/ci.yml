@@ -27,44 +27,20 @@ jobs:
           old_enum = '''enum {
             CHTTP_JWT_HS256_MIN_KEY_BYTES = 32u,
             CHTTP_JWT_BEARER_PREFIX_SIZE = sizeof("Bearer ") - 1u
-          };'''
+          };'''.replace("          ", "")
           new_enum = '''enum {
             CHTTP_JWT_HS256_MIN_KEY_BYTES = 32u,
             CHTTP_JWT_BEARER_SCHEME_SIZE = sizeof("Bearer") - 1u
-          };'''
-          # Match repository formatting without relying on indentation in this script.
-          old_enum = old_enum.replace("          ", "")
-          new_enum = new_enum.replace("          ", "")
+          };'''.replace("          ", "")
           if text.count(old_enum) != 1:
               raise SystemExit("unexpected Bearer enum shape")
           text = text.replace(old_enum, new_enum, 1)
 
-          old = '''static const char *chttp_jwt_bearer_token(const chttp_server_request_view *request) {
-            const char *authorization = NULL;
-            size_t index;
-            if (request == NULL || request->headers == NULL) return NULL;
-            for (index = 0u; index < request->header_count; ++index) {
-              const chttp_header *header = &request->headers[index];
-              if (chttp_jwt_ascii_equal_ci(header->name, "Authorization")) {
-                if (authorization != NULL || header->value == NULL) return NULL;
-                authorization = header->value;
-              }
-            }
-            if (authorization == NULL || strlen(authorization) <= CHTTP_JWT_BEARER_PREFIX_SIZE ||
-                authorization[CHTTP_JWT_BEARER_PREFIX_SIZE - 1u] != ' ')
-              return NULL;
-            for (index = 0u; index + 1u < CHTTP_JWT_BEARER_PREFIX_SIZE; ++index) {
-              const unsigned char value = (unsigned char)authorization[index];
-              const unsigned char expected = (unsigned char)"Bearer"[index];
-              const unsigned char lower = value >= 'A' && value <= 'Z' ? (unsigned char)(value + ('a' - 'A'))
-                                                                         : value;
-              const unsigned char expected_lower =
-                  expected >= 'A' && expected <= 'Z' ? (unsigned char)(expected + ('a' - 'A')) : expected;
-              if (lower != expected_lower) return NULL;
-            }
-            return authorization + CHTTP_JWT_BEARER_PREFIX_SIZE;
-          }'''.replace("          ", "")
-          new = '''static const char *chttp_jwt_bearer_token(const chttp_server_request_view *request) {
+          start_marker = "static const char *chttp_jwt_bearer_token(const chttp_server_request_view *request) {"
+          end_marker = "\n\nstatic int chttp_jwt_claims_match"
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          replacement = '''static const char *chttp_jwt_bearer_token(const chttp_server_request_view *request) {
             const char *authorization = NULL;
             size_t authorization_size;
             size_t index;
@@ -84,20 +60,21 @@ jobs:
             for (index = 0u; index < CHTTP_JWT_BEARER_SCHEME_SIZE; ++index) {
               const unsigned char value = (unsigned char)authorization[index];
               const unsigned char expected = (unsigned char)"Bearer"[index];
-              const unsigned char lower = value >= 'A' && value <= 'Z' ? (unsigned char)(value + ('a' - 'A'))
-                                                                         : value;
+              const unsigned char lower = value >= 'A' && value <= 'Z'
+                                              ? (unsigned char)(value + ('a' - 'A'))
+                                              : value;
               const unsigned char expected_lower =
-                  expected >= 'A' && expected <= 'Z' ? (unsigned char)(expected + ('a' - 'A')) : expected;
+                  expected >= 'A' && expected <= 'Z'
+                      ? (unsigned char)(expected + ('a' - 'A'))
+                      : expected;
               if (lower != expected_lower) return NULL;
             }
             index = CHTTP_JWT_BEARER_SCHEME_SIZE;
             while (index < authorization_size && authorization[index] == ' ') ++index;
-            if (index == authorization_size || authorization[index] == '\t') return NULL;
-            return authorization + index;
+            return index == authorization_size ? NULL : authorization + index;
           }'''.replace("          ", "")
-          if text.count(old) != 1:
-              raise SystemExit("unexpected Bearer parser shape")
-          path.write_text(text.replace(old, new, 1))
+          text = text[:start] + replacement + text[end:]
+          path.write_text(text)
           PY
           git diff --check
           test "$(git diff --name-only)" = "chttp/src/chttp_jwt.c"
