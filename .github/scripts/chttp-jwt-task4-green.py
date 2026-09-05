@@ -84,9 +84,9 @@ replace_once(
   routed_request = *request;
 """,
     """  if (peer == NULL || state == NULL || route == NULL || request == NULL || peer->server == NULL ||
-      peer->phase == CHTTP_SERVER_WEBSOCKET_NONE || !state->admission_complete ||
-      state->admission_rejected || state->admitted_route != route)
+      peer->phase == CHTTP_SERVER_WEBSOCKET_NONE)
     return SALTS_EINVAL;
+  if (!state->admission_complete) chttp_server_stats_request(peer->server);
   routed_request = *request;
 """,
 )
