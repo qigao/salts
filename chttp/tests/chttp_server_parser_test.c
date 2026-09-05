@@ -189,10 +189,10 @@ spec("CHTTP server request parser") {
   }
 
   it("stops at header admission before 100 continue and body bytes") {
-    static const char headers[] = "POST /protected HTTP/1.1\\r\\n"
-                                  "Host: example.test\\r\\n"
-                                  "Expect: 100-continue\\r\\n"
-                                  "Content-Length: 4\\r\\n\\r\\n";
+    static const char headers[] = "POST /protected HTTP/1.1\r\n"
+                                  "Host: example.test\r\n"
+                                  "Expect: 100-continue\r\n"
+                                  "Content-Length: 4\r\n\r\n";
     static const char body[] = "data";
     char wire[sizeof(headers) - 1u + sizeof(body) - 1u];
     chttp_server_parser_probe probe = {.stop_at_headers = 1};
