@@ -147,7 +147,7 @@ int chttp_jwt_bearer_request_validate(chttp_server_request_state *state,
           PY
 
           git diff --check
-          git diff -- chhttp/include/chttp/chttp.h chhttp/src/chttp_jwt.c chhttp/src/chttp_jwt_internal.h
+          git diff -- chttp/include/chttp/chttp.h chttp/src/chttp_jwt.c chttp/src/chttp_jwt_internal.h
 
       - name: Setup re2c and vcpkg
         shell: bash
