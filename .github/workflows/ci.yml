@@ -1,4 +1,4 @@
-name: CHTTP JWT Task 7 corrected RED verifier
+name: CHTTP JWT Task 7 GREEN executor
 
 on:
   pull_request:
@@ -9,35 +9,99 @@ permissions:
   contents: write
 
 jobs:
-  red:
+  green:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: design/chttp-auth-phase-jwt-hardening
 
-      - name: Correct Task 7 wire fixtures
+      - name: Apply minimal Bearer 1*SP production patch
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("chttp/tests/chttp_server_test.c")
+          path = Path("chttp/src/chttp_jwt.c")
           text = path.read_text()
-          start_marker = '  it("uses one uniform JWT rejection boundary and RFC6750 Bearer spacing") {'
-          end_marker = '  it("authenticates server-wide JWT before streaming admission and 100 continue") {'
-          start = text.index(start_marker)
-          end = text.index(end_marker, start)
-          block = text[start:end]
-          corrected = block.replace(r'\\r\\n', r'\r\n').replace(r'\\t', r'\t')
-          if corrected == block:
-              raise SystemExit("Task 7 wire fixtures were not in the expected escaped-RED form")
-          text = text[:start] + corrected + text[end:]
-          path.write_text(text)
+          old_enum = '''enum {
+            CHTTP_JWT_HS256_MIN_KEY_BYTES = 32u,
+            CHTTP_JWT_BEARER_PREFIX_SIZE = sizeof("Bearer ") - 1u
+          };'''
+          new_enum = '''enum {
+            CHTTP_JWT_HS256_MIN_KEY_BYTES = 32u,
+            CHTTP_JWT_BEARER_SCHEME_SIZE = sizeof("Bearer") - 1u
+          };'''
+          # Match repository formatting without relying on indentation in this script.
+          old_enum = old_enum.replace("          ", "")
+          new_enum = new_enum.replace("          ", "")
+          if text.count(old_enum) != 1:
+              raise SystemExit("unexpected Bearer enum shape")
+          text = text.replace(old_enum, new_enum, 1)
+
+          old = '''static const char *chttp_jwt_bearer_token(const chttp_server_request_view *request) {
+            const char *authorization = NULL;
+            size_t index;
+            if (request == NULL || request->headers == NULL) return NULL;
+            for (index = 0u; index < request->header_count; ++index) {
+              const chttp_header *header = &request->headers[index];
+              if (chttp_jwt_ascii_equal_ci(header->name, "Authorization")) {
+                if (authorization != NULL || header->value == NULL) return NULL;
+                authorization = header->value;
+              }
+            }
+            if (authorization == NULL || strlen(authorization) <= CHTTP_JWT_BEARER_PREFIX_SIZE ||
+                authorization[CHTTP_JWT_BEARER_PREFIX_SIZE - 1u] != ' ')
+              return NULL;
+            for (index = 0u; index + 1u < CHTTP_JWT_BEARER_PREFIX_SIZE; ++index) {
+              const unsigned char value = (unsigned char)authorization[index];
+              const unsigned char expected = (unsigned char)"Bearer"[index];
+              const unsigned char lower = value >= 'A' && value <= 'Z' ? (unsigned char)(value + ('a' - 'A'))
+                                                                         : value;
+              const unsigned char expected_lower =
+                  expected >= 'A' && expected <= 'Z' ? (unsigned char)(expected + ('a' - 'A')) : expected;
+              if (lower != expected_lower) return NULL;
+            }
+            return authorization + CHTTP_JWT_BEARER_PREFIX_SIZE;
+          }'''.replace("          ", "")
+          new = '''static const char *chttp_jwt_bearer_token(const chttp_server_request_view *request) {
+            const char *authorization = NULL;
+            size_t authorization_size;
+            size_t index;
+            if (request == NULL || request->headers == NULL) return NULL;
+            for (index = 0u; index < request->header_count; ++index) {
+              const chttp_header *header = &request->headers[index];
+              if (chttp_jwt_ascii_equal_ci(header->name, "Authorization")) {
+                if (authorization != NULL || header->value == NULL) return NULL;
+                authorization = header->value;
+              }
+            }
+            if (authorization == NULL) return NULL;
+            authorization_size = strlen(authorization);
+            if (authorization_size <= CHTTP_JWT_BEARER_SCHEME_SIZE ||
+                authorization[CHTTP_JWT_BEARER_SCHEME_SIZE] != ' ')
+              return NULL;
+            for (index = 0u; index < CHTTP_JWT_BEARER_SCHEME_SIZE; ++index) {
+              const unsigned char value = (unsigned char)authorization[index];
+              const unsigned char expected = (unsigned char)"Bearer"[index];
+              const unsigned char lower = value >= 'A' && value <= 'Z' ? (unsigned char)(value + ('a' - 'A'))
+                                                                         : value;
+              const unsigned char expected_lower =
+                  expected >= 'A' && expected <= 'Z' ? (unsigned char)(expected + ('a' - 'A')) : expected;
+              if (lower != expected_lower) return NULL;
+            }
+            index = CHTTP_JWT_BEARER_SCHEME_SIZE;
+            while (index < authorization_size && authorization[index] == ' ') ++index;
+            if (index == authorization_size || authorization[index] == '\t') return NULL;
+            return authorization + index;
+          }'''.replace("          ", "")
+          if text.count(old) != 1:
+              raise SystemExit("unexpected Bearer parser shape")
+          path.write_text(text.replace(old, new, 1))
           PY
           git diff --check
-          test "$(git diff --name-only)" = "chttp/tests/chttp_server_test.c"
-          git diff -- chttp/tests/chttp_server_test.c
+          test "$(git diff --name-only)" = "chttp/src/chttp_jwt.c"
+          git diff -- chttp/src/chttp_jwt.c
 
       - name: Setup build environment
         shell: bash
@@ -63,29 +127,28 @@ jobs:
       - name: Configure release preset
         run: cmake --preset linux-release-user
 
-      - name: Build corrected Task 7 RED
-        run: cmake --build --preset linux-release-user --target chttp_server_test
+      - name: Build Task 7 GREEN slice
+        run: >-
+          cmake --build --preset linux-release-user --target
+          chttp_jwt_test chttp_server_parser_test chttp_server_test
+          chttp_h2_server_test chttp_websocket_test
 
-      - name: Prove corrected Task 7 runtime RED
-        shell: bash
-        run: |
-          set +e
-          output="$(build/linux-gcc-release/bin/chttp_server_test --filter "uses one uniform JWT rejection boundary and RFC6750 Bearer spacing" 2>&1)"
-          status=$?
-          set -e
-          printf '%s\n' "$output"
-          if [ "$status" -eq 0 ]; then
-            echo "::error::Task 7 RED unexpectedly passed before Bearer 1*SP support"
-            exit 1
-          fi
-          printf '%s\n' "$output" | grep -F "uses one uniform JWT rejection boundary and RFC6750 Bearer spacing"
-          printf '%s\n' "$output" | grep -F "[ FAIL  ]"
+      - name: Run Task 7 GREEN slice
+        run: >-
+          ctest --preset linux-release-user
+          -R "^(chttp_jwt_test|chttp_server_parser_test|chttp_server_test|chttp_h2_server_test|chttp_websocket_test)$"
+          --output-on-failure
 
-      - name: Commit corrected verified Task 7 RED
+      - name: Prove Bearer rejection matrix GREEN
+        run: >-
+          build/linux-gcc-release/bin/chttp_server_test
+          --filter "uses one uniform JWT rejection boundary and RFC6750 Bearer spacing"
+
+      - name: Commit verified Task 7 GREEN
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chttp/tests/chttp_server_test.c
-          git commit -m "test(chttp): correct JWT rejection matrix wire fixtures"
+          git add chttp/src/chttp_jwt.c
+          git commit -m "fix(chttp): accept RFC6750 Bearer space runs"
           git push origin HEAD:design/chttp-auth-phase-jwt-hardening
