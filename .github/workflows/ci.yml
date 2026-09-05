@@ -1,67 +1,56 @@
-name: CHTTP JWT Task 3 checkpoint
+name: C API notation
 
 on:
   pull_request:
     paths:
+      - "cmeta/**"
+      - "cstl/**"
+      - "cflow/**"
+      - "docs/**"
+      - "tests/**"
       - ".github/workflows/ci.yml"
+  push:
+    branches: [master]
+    paths:
+      - "cmeta/**"
+      - "cstl/**"
+      - "cflow/**"
+      - "docs/**"
+      - "tests/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  checkpoint:
+  c-api-notation:
+    name: Reject C++-style generic notation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: design/chttp-auth-phase-jwt-hardening
 
-      - name: Add Task 3 checkpoint tests
-        run: |
-          python3 .github/scripts/chttp-jwt-task3-checkpoint.py
-          git diff --check
-          test "$(git diff --name-only)" = "chttp/tests/chttp_server_test.c"
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install --yes ripgrep
 
-      - name: Setup build environment
+      - name: Audit CMeta, CSTL, and CFlow notation
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y nasm re2c
-          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
-            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
-          else
-            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
-            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
+          set -euo pipefail
+          pattern='\b(TYPE|M|Pair|Tuple|Option|Result|Range|Source|Collector|Vec|Deque|List|Stack|Queue|Heap|Set|HashSet|HashMap|Map|MultiMap|BTree|BPlusTree)\s*<|CMETA_[A-Z0-9_]+_<[A-Za-z][A-Za-z0-9_]*>'
+
+          set +e
+          matches="$(rg -n --glob '!vendor/**' --glob '!build/**' "$pattern" cmeta cstl cflow docs tests 2>&1)"
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            printf '%s\n' "$matches"
+            echo "::error::C APIs must use TYPE(...), typed(...), or plain C notation; C++-style generic notation is forbidden."
+            exit 1
           fi
 
-      - name: Restore vcpkg binary cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/vcpkg/archives
-          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-ports/**') }}
-          restore-keys: |
-            vcpkg-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Configure release preset
-        run: cmake --preset linux-release-user
-
-      - name: Build Task 3 checkpoint
-        run: >-
-          cmake --build --preset linux-release-user --target
-          chttp_jwt_test chttp_server_parser_test chttp_server_test
-
-      - name: Run Task 3 checkpoint
-        run: >-
-          ctest --preset linux-release-user
-          -R "^(chttp_jwt_test|chttp_server_parser_test|chttp_server_test)$"
-          --output-on-failure
-
-      - name: Commit verified Task 3 checkpoint tests
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add chttp/tests/chttp_server_test.c
-          git commit -m "test(chttp): prove HTTP1 JWT admission state isolation"
-          git push origin HEAD:design/chttp-auth-phase-jwt-hardening
+          if [ "$status" -ne 1 ]; then
+            printf '%s\n' "$matches"
+            exit "$status"
+          fi
