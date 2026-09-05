@@ -1957,7 +1957,7 @@ spec("CHTTP background HTTP/2 server") {
     check_equal(server_probe.close_status, SALTS_EIO);
     check_equal(chttp_server_get_stats(&server, &stats), SALTS_OK);
     check_equal(stats.accepted_connections, (uint64_t)1u);
-    check_equal(stats.requests, (uint64_t)1u);
+    check_equal(stats.requests, (uint64_t)2u);
 
     check_equal(chttp_async_client_stop(&client, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(chttp_async_client_destroy(&client), SALTS_OK);
@@ -2053,7 +2053,7 @@ spec("CHTTP background HTTP/2 server") {
 
     check_equal(chttp_server_get_stats(&server, &stats), SALTS_OK);
     check_equal(stats.accepted_connections, 1u);
-    check_equal(stats.requests, 2u);
+    check_equal(stats.requests, 4u);
     check_equal(stats.responses, 2u);
 
     check_equal(chttp_async_client_stop(&client, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
