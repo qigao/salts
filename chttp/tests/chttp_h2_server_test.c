@@ -132,10 +132,19 @@ static int chttp_h2_websocket_open(void *user, chttp_websocket *websocket,
 static int chttp_h2_websocket_jwt_open(void *user, chttp_websocket *websocket,
                                        const chttp_server_request_view *request,
                                        chttp_server_response *response) {
-  if (request == NULL || request->jwt_claims == NULL || request->jwt_claims->subject == NULL ||
-      strcmp(request->jwt_claims->subject, "alice") != 0)
+  chttp_h2_websocket_probe *probe = (chttp_h2_websocket_probe *)user;
+  const char *id;
+  (void)websocket;
+  (void)response;
+  if (probe == NULL || request == NULL || request->jwt_claims == NULL ||
+      request->jwt_claims->subject == NULL || strcmp(request->jwt_claims->subject, "alice") != 0)
     return SALTS_EPROTO;
-  return chttp_h2_websocket_open(user, websocket, request, response);
+  id = chttp_server_request_param(request, "id");
+  if (request->http_major != 2u || strcmp(request->path, "/jwt-ws/42") != 0 || id == NULL ||
+      strcmp(id, "42") != 0)
+    return SALTS_EPROTO;
+  atomic_fetch_add_explicit(&probe->opens, 1, memory_order_release);
+  return SALTS_OK;
 }
 
 static void chttp_h2_websocket_event(void *user, chttp_websocket *websocket,
@@ -1053,7 +1062,7 @@ spec("CHTTP background HTTP/2 server") {
                                            sizeof(masked_close), 1),
                 0);
     check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
-    check_equal(chttp_h2_server_test_peer_pump(&peer, socket_value, 2u), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_pump(&peer, socket_value, 1u), SALTS_OK);
 
     chttp_h2_server_test_peer_destroy(&peer);
     chttp_h2_server_test_socket_close(socket_value);
