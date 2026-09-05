@@ -1,4 +1,4 @@
-name: CHTTP JWT final verification
+name: CHTTP JWT macOS baseline diagnostic
 
 on:
   pull_request:
@@ -9,104 +9,11 @@ permissions:
   contents: read
 
 env:
-  JWT_DESIGN_BASE: 78335820a601f7b024b26e0870a3485921016475
   JWT_BRANCH: design/chttp-auth-phase-jwt-hardening
 
 jobs:
-  linux:
-    name: Linux exact-head verification
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: design/chttp-auth-phase-jwt-hardening
-          fetch-depth: 1
-
-      - name: Record exact checkout
-        shell: bash
-        run: |
-          echo "CHECKOUT_SHA=$(git rev-parse HEAD)"
-          git fetch --no-tags --depth=1 origin "$JWT_DESIGN_BASE"
-          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/$JWT_BRANCH)"
-
-      - name: Audit fixed-base implementation scope
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --check "$JWT_DESIGN_BASE"..HEAD -- \
-            chttp/include/chttp/chttp.h chttp/src chttp/tests chttp/README.md
-          git diff --stat "$JWT_DESIGN_BASE"..HEAD -- \
-            chttp/include/chttp/chttp.h chttp/src chttp/tests chttp/README.md
-          git diff --name-only "$JWT_DESIGN_BASE"..HEAD -- \
-            chttp/include/chttp/chttp.h chttp/src chttp/tests chttp/README.md
-          if git diff -U0 "$JWT_DESIGN_BASE"..HEAD -- \
-              chttp/include/chttp/chttp.h chttp/src chttp/tests chttp/README.md | \
-              grep -E '^\+.*(\bkid\b|\bJWK\b|JWKS|RS256|PS256|ES256|EdDSA|at\+jwt|revocation|refresh[-_ ]?token|\bJWE\b|Authenticator)'; then
-            echo "::error::out-of-scope JWT capability found in implementation diff"
-            exit 1
-          fi
-          test -z "$(git diff --name-only "$JWT_DESIGN_BASE"..HEAD -- vendor/cjwt)"
-
-      - name: Audit JWT admission call sites
-        shell: bash
-        run: |
-          set -euo pipefail
-          git grep -n "chttp_jwt_bearer_request_validate" -- chttp/src
-          git grep -n "chttp_server_request_admit" -- chttp/src
-          git grep -n "chttp_server_route_find" -- \
-            chttp/src/chttp_server.c chttp/src/chttp_h2_server.c chttp/src/chttp_websocket_server.c
-          if git grep -n "chttp_jwt_bearer_middleware" -- chttp/include chttp/src chttp/README.md; then
-            echo "::error::legacy public JWT middleware contract still exists"
-            exit 1
-          fi
-
-      - name: Setup re2c and vcpkg
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y nasm re2c
-          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
-            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
-          else
-            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
-            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
-          fi
-
-      - name: Restore vcpkg binary cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/vcpkg/archives
-          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-ports/**') }}
-          restore-keys: |
-            vcpkg-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Fresh configure
-        run: cmake --fresh --preset linux-release-user
-
-      - name: Build full Linux release
-        run: cmake --build --preset linux-release-user
-
-      - name: Run narrow CHTTP/JWT tests
-        run: >-
-          ctest --preset linux-release-user
-          -R "^(chttp_jwt_test|chttp_server_parser_test|chttp_server_test|chttp_websocket_test|chttp_h2_server_test|chttp_requests_test|chttp_tls_test|chttp_cjwt_.*)$"
-          --output-on-failure
-
-      - name: Run full Linux CTest
-        run: ctest --preset linux-release-user --output-on-failure
-
-      - name: Require final scaffolding cleanup
-        shell: bash
-        run: |
-          if compgen -G '.github/scripts/chttp-jwt-task*.py' > /dev/null; then
-            echo "::error::temporary JWT TDD scripts are still present"
-            exit 1
-          fi
-          grep -Fx 'name: C API notation' .github/workflows/ci.yml
-
-  macos:
-    name: macOS 15 exact-head verification
+  macos-diagnostic:
+    name: macOS compact remaining-failure diagnostic
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -117,32 +24,9 @@ jobs:
       - name: Record exact checkout
         shell: bash
         run: |
-          echo "CHECKOUT_SHA=$(git rev-parse HEAD)"
-          git fetch --no-tags --depth=1 origin "$JWT_DESIGN_BASE"
-          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/$JWT_BRANCH)"
-
-      - name: Prove macOS async-file baseline is outside JWT scope
-        shell: bash
-        run: |
           set -euo pipefail
-          test -z "$(git diff --name-only "$JWT_DESIGN_BASE"..HEAD -- \
-            cflow/src/io_native.c cflow/src/io_file.c \
-            chttp/src/chttp_client.c chttp/src/chttp_file_transfer.c chttp/src/chttp_file_sink.c)"
-          git show "$JWT_DESIGN_BASE:chttp/src/chttp_server.c" | \
-            sed -n '/static cflow_io_native_backend_kind chttp_server_file_backend/,/^}/p' \
-            > "$RUNNER_TEMP/base-server-file-backend.txt"
-          sed -n '/static cflow_io_native_backend_kind chttp_server_file_backend/,/^}/p' \
-            chttp/src/chttp_server.c > "$RUNNER_TEMP/head-server-file-backend.txt"
-          diff -u "$RUNNER_TEMP/base-server-file-backend.txt" \
-            "$RUNNER_TEMP/head-server-file-backend.txt"
-          grep -F 'return CFLOW_IO_NATIVE_POLL;' "$RUNNER_TEMP/head-server-file-backend.txt"
-          grep -A28 -F 'bool cflow_io_native_backend_file_operation_supported(' \
-            cflow/src/io_native.c | grep -F 'case CFLOW_IO_NATIVE_IO_URING:'
-          if grep -A28 -F 'bool cflow_io_native_backend_file_operation_supported(' \
-              cflow/src/io_native.c | grep -E 'case CFLOW_IO_NATIVE_(KQUEUE|POLL):'; then
-            echo "::error::macOS file capability baseline unexpectedly changed"
-            exit 1
-          fi
+          echo "CHECKOUT_SHA=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/$JWT_BRANCH)"
 
       - name: Setup re2c and vcpkg
         shell: bash
@@ -167,162 +51,18 @@ jobs:
       - name: Build full macOS release
         run: cmake --build --preset build-default-mac
 
-      - name: Run macOS JWT and unaffected CHTTP tests
+      - name: Print compact remaining CTest failures
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          log="$RUNNER_TEMP/remaining-ctest.log"
+          set +e
           ctest --preset test-release-mac \
-            -R '^(chttp_jwt_test|chttp_server_parser_test|chttp_websocket_test|chttp_tls_test|chttp_cjwt_.*)$' \
-            --output-on-failure
-          build/mac-clang-release/bin/chttp_server_test --filter 'validates an HS256'
-          build/mac-clang-release/bin/chttp_server_test --filter 'JWT'
-          build/mac-clang-release/bin/chttp_h2_server_test \
-            --filter 'authenticates RFC 8441 websocket before opening'
-          build/mac-clang-release/bin/chttp_h2_server_test \
-            --filter 'authenticates regular HTTP2 before streaming body admission'
-
-      - name: Verify exact pre-existing macOS file failure set
-        shell: bash
-        run: |
-          set -euo pipefail
-          verify_known_failure_set() {
-            local binary="$1"
-            local expected_count="$2"
-            shift 2
-            local log="$RUNNER_TEMP/$(basename "$binary").log"
-            local status
-            set +e
-            "$binary" > "$log" 2>&1
-            status=$?
-            set -e
-            cat "$log"
-            test "$status" -ne 0
-            test "$(grep -c '\[ FAIL  \]' "$log")" -eq "$expected_count"
-            for expected in "$@"; do
-              grep -F "$expected" "$log"
-            done
-          }
-          verify_known_failure_set \
-            build/mac-clang-release/bin/chttp_server_test 2 \
-            'streams a file response over HTTP/1.1 without loading it into the response body' \
-            'keeps a connection reusable while asynchronous file EOF is pending'
-          verify_known_failure_set \
-            build/mac-clang-release/bin/chttp_requests_test 1 \
-            'uploads and atomically downloads files through requests-style helpers'
-          verify_known_failure_set \
-            build/mac-clang-release/bin/chttp_h2_server_test 1 \
-            'uploads and downloads files over one HTTP/2 connection'
-
-      - name: Run baseline-aware full macOS CTest
-        run: >-
-          ctest --preset test-release-mac
-          -E "^(chttp_server_test|chttp_requests_test|chttp_h2_server_test)$"
-          --output-on-failure
-
-      - name: Require final scaffolding cleanup
-        shell: bash
-        run: |
-          if compgen -G '.github/scripts/chttp-jwt-task*.py' > /dev/null; then
-            echo "::error::temporary JWT TDD scripts are still present"
-            exit 1
-          fi
-          grep -Fx 'name: C API notation' .github/workflows/ci.yml
-
-  windows:
-    name: Windows exact-head verification
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: design/chttp-auth-phase-jwt-hardening
-          fetch-depth: 1
-
-      - name: Record exact checkout
-        shell: pwsh
-        run: |
-          $sha = git rev-parse HEAD
-          Write-Host "CHECKOUT_SHA=$sha"
-          $remote = git rev-parse "origin/$env:JWT_BRANCH"
-          if ($sha -ne $remote) { throw "checkout is not current branch head" }
-
-      - name: Setup re2c
-        shell: powershell
-        run: choco install re2c -y --no-progress
-
-      - name: Setup Windows build environment
-        id: windows-env
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLATION_ROOT)) {
-            throw "VCPKG_INSTALLATION_ROOT is unavailable"
-          }
-          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
-          $vcpkgToolchain = Join-Path $vcpkgRoot "scripts\buildsystems\vcpkg.cmake"
-          if (-not (Test-Path -LiteralPath $vcpkgToolchain -PathType Leaf)) {
-            throw "vcpkg toolchain is unavailable: $vcpkgToolchain"
-          }
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-          if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
-            throw "vswhere is unavailable: $vswhere"
-          }
-          $vsInstall = & $vswhere -latest -products '*' `
-            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-            -property installationPath
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsInstall)) {
-            throw "Visual Studio with the x64 C++ toolchain was not found"
-          }
-          $binaryCache = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg-binary-cache"
-          New-Item -ItemType Directory -Force -Path $binaryCache | Out-Null
-          "PROJECT_ROOT=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
-          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
-          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
-          "VCPKG_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
-          "VCPKG_BINARY_SOURCES=clear;files,$binaryCache,readwrite" >> $env:GITHUB_ENV
-          "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
-
-      - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
-        with:
-          path: build/vcpkg-binary-cache
-          key: vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-x64-windows-${{ hashFiles('vcpkg.json') }}
-          restore-keys: |
-            vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-x64-windows-
-            vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Fresh configure
-        shell: cmd
-        run: |
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          cmake --fresh --preset win-release-user
-
-      - name: Build full Windows release
-        shell: cmd
-        run: |
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          cmake --build --preset win-release-user
-
-      - name: Run narrow CHTTP/JWT tests
-        shell: cmd
-        run: |
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          ctest --preset win-release-user -R "^(chttp_jwt_test|chttp_server_parser_test|chttp_server_test|chttp_websocket_test|chttp_h2_server_test|chttp_requests_test|chttp_tls_test|chttp_cjwt_.*)$" --output-on-failure
-
-      - name: Run full Windows CTest
-        shell: cmd
-        run: |
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          ctest --preset win-release-user --output-on-failure
-
-      - name: Require final scaffolding cleanup
-        shell: pwsh
-        run: |
-          $temp = Get-ChildItem .github/scripts/chttp-jwt-task*.py -ErrorAction SilentlyContinue
-          if ($temp) { throw "temporary JWT TDD scripts are still present" }
-          if (-not (Select-String -Path .github/workflows/ci.yml -Pattern '^name: C API notation$' -Quiet)) {
-            throw "temporary JWT verification workflow is still present"
-          }
+            -E '^(chttp_server_test|chttp_requests_test|chttp_h2_server_test)$' \
+            --output-on-failure >"$log" 2>&1
+          status=$?
+          set -e
+          echo '=== compact failure summary ==='
+          grep -E '(Test #[0-9]+: .*\*\*\*Failed|The following tests FAILED:|^[[:space:]]*[0-9]+ - .+ \(Failed\)|Check failed:|[[:space:]]+at /)' "$log" || true
+          echo '=== end compact failure summary ==='
+          exit "$status"
