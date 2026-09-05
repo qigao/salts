@@ -129,6 +129,36 @@ spec("chttp jwt") {
     }
   }
 
+  group("Bearer grammar") {
+    it("rejects duplicate Authorization headers") {
+      const chttp_jwt_claims claims = {.subject = "alice", .expires_at = INT64_C(300)};
+      chttp_server_request_state state = {0};
+      chttp_jwt_bearer_validator validator = {0};
+      const chttp_jwt_bearer_validator_options options = {
+          .size = sizeof(options), .key = valid_key, .key_size = sizeof(valid_key) - 1u};
+      char *token = NULL;
+      char authorization[512];
+      chttp_header headers[2] = {{0}, {0}};
+      chttp_server_request_view request = {0};
+
+      check_equal(chttp_jwt_bearer_validator_init(&validator, &options), SALTS_OK);
+      check_equal(chttp_jwt_hs256_token_create(&claims, valid_key, sizeof(valid_key) - 1u, &token),
+                  SALTS_OK);
+      check_equal(chttp_jwt_bearer_header(token, authorization, sizeof(authorization), &headers[0]),
+                  SALTS_OK);
+      headers[1] = headers[0];
+      request.headers = headers;
+      request.header_count = 2u;
+
+      check_equal(chttp_jwt_bearer_request_validate_at(&state, &request, &validator, INT64_C(200)),
+                  SALTS_EPERM);
+
+      chttp_jwt_request_state_reset(&state);
+      chttp_jwt_token_destroy(token);
+      check_equal(chttp_jwt_bearer_validator_destroy(&validator), SALTS_OK);
+    }
+  }
+
   group("HS256 client token") {
     it("creates a token and formats an Authorization Bearer header") {
       const chttp_jwt_claims claims = {
