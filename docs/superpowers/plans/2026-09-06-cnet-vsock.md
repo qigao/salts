@@ -136,7 +136,7 @@ Reject TLS fields for VSOCK, copy the VSOCK sockaddr into the owner payload, byp
 
 Build and run `cnet_transport_test`, `cnet_owner_test`, `cnet_api_test`, and `cnet_header_cpp_test`, then rerun URI and NativeIO tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Commit as `feat(cnet): add vsock client transport`.
 
@@ -174,7 +174,7 @@ Windows verification passed all 19 CNet tests. The Linux-only loopback test is r
 CTest skip code 77 for kernels or sandboxes without AF_VSOCK; this Windows host has no WSL/Linux
 runtime, so executing that case remains part of Linux CI verification.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit as `feat(cnet): add vsock listener support`.
 
@@ -187,18 +187,18 @@ Commit as `feat(cnet): add vsock listener support`.
 **Interfaces:**
 - Documents: URI grammar, 32-bit addressing, supported platforms/backends, ownership, unsupported socket policy, plaintext security, and live-migration disconnect behavior.
 
-- [ ] **Step 1: Update contracts and examples**
+- [x] **Step 1: Update contracts and examples**
 
 Document `vsock://2:5000`, listener ANY constants, no DNS, no implicit TLS/reconnect, and fail-fast unsupported-platform behavior. Describe NativeIO STREAM names and TCP aliases.
 
-- [ ] **Step 2: Run formatting and focused verification**
+- [x] **Step 2: Run formatting and focused verification**
 
 Run the repository formatter for changed C/C++ files if configured, then fresh-build the affected targets and run all NativeIO and CNet CTest cases with `--output-on-failure`.
 
-- [ ] **Step 3: Inspect diff and requirement coverage**
+- [x] **Step 3: Inspect diff and requirement coverage**
 
 Check `git diff --check`, review every changed public declaration and ownership/error path, and map each issue acceptance criterion to a passing test or documented platform limitation.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Commit as `docs(cnet): document vsock transport`.
