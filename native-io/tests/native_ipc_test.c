@@ -163,6 +163,53 @@ spec("NativeIPC pipe control plane") {
     check_equal(salts_ipc_pipe_server_destroy(&server), SALTS_OK);
   }
 
+  it("reuses a freed accept slot while transferred instances remain open") {
+    char name[160];
+    salts_ipc_pipe_server server = {0};
+    salts_ipc_pipe_server_config config = {0};
+    salts_ipc_pipe_endpoint first_client;
+    salts_ipc_pipe_endpoint second_client;
+    salts_ipc_request_id first_request = 0u;
+    salts_ipc_request_id second_request = 0u;
+    ipc_completion_probe probe = {0};
+    int second_status;
+
+    snprintf(name, sizeof(name), "\\\\.\\pipe\\native-ipc-instance-%lu-%llu",
+             (unsigned long)GetCurrentProcessId(), (unsigned long long)salts_hrtime());
+    salts_ipc_pipe_endpoint_init(&first_client);
+    salts_ipc_pipe_endpoint_init(&second_client);
+    config.name = name;
+    config.direction = SALTS_IPC_PIPE_DUPLEX;
+    config.request_capacity = 1u;
+    config.input_buffer_size = 4096u;
+    config.output_buffer_size = 4096u;
+    config.completion = ipc_accept_completion;
+    config.completion_user = &probe;
+
+    check_equal(salts_ipc_pipe_server_init(&server, &config), SALTS_OK);
+    check_equal(salts_ipc_pipe_server_try_accept(&server, &first_request), SALTS_OK);
+    check_equal(salts_ipc_named_pipe_connect(name, SALTS_IPC_PIPE_DUPLEX, &first_client), SALTS_OK);
+    check_equal(ipc_wait(&server, &probe, 1u), SALTS_OK);
+    check_true(salts_ipc_pipe_endpoint_valid(&probe.endpoints[0]));
+
+    second_status = salts_ipc_pipe_server_try_accept(&server, &second_request);
+    check_equal(second_status, SALTS_OK);
+    if (second_status == SALTS_OK) {
+      check_equal(salts_ipc_named_pipe_connect(name, SALTS_IPC_PIPE_DUPLEX, &second_client),
+                  SALTS_OK);
+      check_equal(ipc_wait(&server, &probe, 2u), SALTS_OK);
+      check_equal(probe.completions[1].request_id, second_request);
+      check_equal(probe.completions[1].kind, SALTS_IPC_COMPLETION_OK);
+      check_equal(salts_ipc_pipe_endpoint_close(&second_client), SALTS_OK);
+      check_equal(salts_ipc_pipe_endpoint_close(&probe.endpoints[1]), SALTS_OK);
+    }
+    check_equal(salts_ipc_pipe_endpoint_close(&first_client), SALTS_OK);
+    check_equal(salts_ipc_pipe_endpoint_close(&probe.endpoints[0]), SALTS_OK);
+    check_equal(salts_ipc_pipe_server_close(&server), SALTS_OK);
+    check_true(salts_ipc_pipe_server_is_quiescent(&server));
+    check_equal(salts_ipc_pipe_server_destroy(&server), SALTS_OK);
+  }
+
   it("bounds pending accepts and reclaims cancelled slots") {
     char name[160];
     salts_ipc_pipe_server server = {0};

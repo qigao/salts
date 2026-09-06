@@ -102,6 +102,8 @@ SALTS_NATIVE_IO_C_API int salts_ipc_pipe_endpoint_close(salts_ipc_pipe_endpoint 
  * server must be zero-initialized and remains the sole lifecycle fact source.
  * name must be nonempty and shorter than 256 bytes; direction must be READ,
  * WRITE, or DUPLEX; request_capacity and both buffer sizes must be positive.
+ * request_capacity bounds server-owned accepts; an endpoint transferred by a
+ * successful callback no longer consumes a request slot.
  * Returns SALTS_ENOTSUP outside Windows, SALTS_ENOMEM on allocation failure,
  * or SALTS_EINVAL for malformed state/configuration.
  */

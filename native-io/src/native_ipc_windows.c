@@ -165,7 +165,7 @@ int salts_ipc_platform_server_try_accept(salts_ipc_pipe_server *server,
   handle =
       CreateNamedPipeA(impl->name, salts_ipc_server_access(impl->direction) | FILE_FLAG_OVERLAPPED,
                        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                       (DWORD)impl->capacity, (DWORD)impl->output_buffer_size,
+                       PIPE_UNLIMITED_INSTANCES, (DWORD)impl->output_buffer_size,
                        (DWORD)impl->input_buffer_size, 0u, NULL);
   if (handle == INVALID_HANDLE_VALUE) {
     error = GetLastError();
