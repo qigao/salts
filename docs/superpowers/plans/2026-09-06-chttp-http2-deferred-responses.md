@@ -43,10 +43,10 @@
 ## File Structure
 
 - `chttp/include/chttp/chttp.h` — public documentation only; no layout/signature changes.
-- `chttp/src/chttp_server_runtime.h` — private deferred-control state, defer target, H1 connection embedding.
+- `chttp/src/chttp_server_runtime.h` — private deferred-control state, defer target, H1 connection embedding, private deterministic test probes.
 - `chttp/src/chttp_server_response.c` — protocol-neutral `defer()` and worker-side `deferred_reply()` state/copy logic.
 - `chttp/src/chttp_server.c` — H1 acquire/progress, common owner wake, stop/reuse accounting.
-- `chttp/src/chttp_h2_server.h` — private H2 deferred progress/activity boundary.
+- `chttp/src/chttp_h2_server.h` — private H2 deferred progress/activity and test-only terminal seam.
 - `chttp/src/chttp_h2_server.c` — H2 control pool, stream generation/link, READY/SUBMITTED, cancellation/quarantine/release.
 - `chttp/tests/chttp_response_test.c` — private control characterization.
 - `chttp/tests/chttp_server_test.c` — H1 compatibility/transport-loss coverage.
@@ -151,11 +151,28 @@ cmake --build --preset build-default-linux --target chttp_response_test
 
 Expected: compile failure because the private control/state helper does not exist.
 
-- [ ] **Step 3: Add the common state and H1 defer target**
+- [ ] **Step 3: Add common state, initialize H1 copied storage, and attach the H1 defer target**
 
 In `chttp_server_runtime.h`, add the private enums/control/target and turn `chttp_server_response_builder` into a named struct. Remove `builder->connection`. Embed the common control in `chttp_server_connection`; after all uses migrate, remove the old standalone `deferred_state` and `deferred_generation` fields.
 
-In `chttp_server.c`, add H1 acquire:
+During H1 connection initialization, initialize the one H1 copied reply builder immediately, preserving existing H1 allocation semantics:
+
+```c
+chttp_server_deferred_control *control = &connection->deferred_control;
+control->server = server;
+control->transport_kind = CHTTP_SERVER_DEFERRED_TRANSPORT_H1;
+atomic_init(&control->state, CHTTP_SERVER_DEFERRED_IDLE);
+atomic_init(&control->cancel_requested, 0);
+status = chttp_server_response_builder_init(&control->reply_builder, &server->config);
+if (status != SALTS_OK) return status;
+control->reply_builder.server = server;
+control->reply_response.impl = &control->reply_builder;
+control->reply_builder_initialized = true;
+```
+
+Destroy that builder from H1 connection destroy.
+
+Add H1 acquire:
 
 ```c
 static int chttp_server_h1_deferred_acquire(
@@ -197,20 +214,13 @@ connection->request_state.response_builder.defer_target =
 
 - [ ] **Step 4: Move public defer/reply to control identity**
 
-`chttp_server_response_defer()`:
-
-1. validates response/builder/server/callback/session rules;
-2. calls `builder->defer_target.acquire()`;
-3. preserves existing H1 request snapshot logic for H1 transport;
-4. seals `builder->deferred = true` only after successful acquisition;
-5. publishes `{control, control->generation, 0}`;
-6. release-stores PENDING.
+`chttp_server_response_defer()` validates response/builder/server/callback/session rules, calls `builder->defer_target.acquire()`, preserves the H1 request snapshot, seals `builder->deferred = true`, publishes `{control, control->generation, 0}`, then release-stores PENDING.
 
 `chttp_server_deferred_reply()` casts `impl` only to `chttp_server_deferred_control *`, validates generation, CASes PENDING -> WRITING, copies into `control->reply_builder`, then publishes READY and clears the public handle. Copy/validation/capacity failures restore PENDING and leave the handle unchanged.
 
 - [ ] **Step 5: Migrate H1 owner progress/reuse/stop predicates**
 
-Use `connection->deferred_control.state` and `control.reply_builder`. H1 still serializes the complete reply into `connection->outbound`; after successful serialization reset the copied builder and publish IDLE. A connection slot is reusable only when its control is IDLE.
+Use `connection->deferred_control.state` and `control.reply_builder`. H1 still serializes the complete reply into `connection->outbound`; after successful serialization reset copied reply state and publish IDLE. A connection slot is reusable only when its control is IDLE.
 
 - [ ] **Step 6: Run H1/private regression**
 
@@ -269,6 +279,15 @@ chttp_server_deferred_control *deferred_controls;
 size_t deferred_control_capacity; /* exactly stream_capacity */
 ```
 
+The focused test file defines deterministic deadlines once:
+
+```c
+enum {
+  CHTTP_H2_DEFERRED_TEST_TIMEOUT_MS = 5000,
+  CHTTP_H2_DEFERRED_TEST_STOP_TIMEOUT_MS = 20
+};
+```
+
 - [ ] **Step 1: Register the focused test target and write basic RED**
 
 Add:
@@ -310,7 +329,7 @@ static int chttp_h2_deferred_handler(
 }
 ```
 
-Use `chttp_async_client` with `protocol = CHTTP_HTTP_2`. Reply from a different thread with:
+Use `chttp_async_client` with `protocol = CHTTP_HTTP_2`. Reply from another thread with:
 
 ```c
 const chttp_server_deferred_response reply = {
@@ -343,7 +362,7 @@ h2->deferred_controls = calloc(h2->deferred_control_capacity,
                                sizeof(*h2->deferred_controls));
 ```
 
-Controls are server/H2-object lifetime records. Do not allocate reply-builder header/body storage eagerly; mark each `reply_builder_initialized = false`.
+For each control set `server`, transport kind H2, atomically initialize state IDLE/cancel_requested 0, and keep `reply_builder_initialized = false`. H2 reply builder header/body storage is lazy.
 
 During stream acquire:
 
@@ -356,14 +375,12 @@ Do not clear `generation` in stream reset/physical prepare.
 
 - [ ] **Step 4: Attach H2 defer target and claim only IDLE controls**
 
-For an acquired ordinary H2 stream:
-
 ```c
 stream->request_state.response_builder.defer_target =
     (chttp_server_defer_target){chttp_h2_server_deferred_acquire, stream};
 ```
 
-`chttp_h2_server_deferred_acquire()` scans only the fixed control array. It captures stream pointer/index, stream generation, base builder, server, H2 transport kind, and a new nonzero control generation. No free control -> `SALTS_ENOBUFS`, no published handle.
+`chttp_h2_server_deferred_acquire()` scans only the fixed array. It captures stream pointer/index, stream generation, base builder, server, transport kind, and a new nonzero control generation. No free control -> `SALTS_ENOBUFS`, no published handle.
 
 - [ ] **Step 5: Stop H2 dispatch after successful defer**
 
@@ -375,7 +392,7 @@ static int chttp_h2_server_submit_response_from(
     chttp_server_response_builder *builder);
 ```
 
-Then ordinary dispatch ends as:
+Then:
 
 ```c
 status = chttp_server_dispatch_request(&stream->request_state, &request);
@@ -387,13 +404,13 @@ return chttp_h2_server_submit_response_from(
 
 - [ ] **Step 6: Add owner READY -> SUBMITTED progress**
 
-`chttp_h2_server_connection_deferred_progress()` scans fixed controls. READY + exact matching stream generation calls `submit_response_from(stream, &control->reply_builder)`. Successful protocol submit publishes SUBMITTED and keeps the builder intact. A vanished/mismatched stream drops the READY copy and returns IDLE. Transient output pressure leaves READY for owner retry.
+READY + exact matching stream generation calls `submit_response_from(stream, &control->reply_builder)`. Successful protocol submit publishes SUBMITTED and keeps the builder intact. A vanished/mismatched stream drops READY and returns IDLE. Transient output pressure leaves READY for owner retry.
 
 Call H2 deferred progress in the server owner loop before/after CNet poll alongside H1 deferred progress.
 
 - [ ] **Step 7: Release SUBMITTED only from exact stream terminal close**
 
-On stream close, verify stream/control generations. For SUBMITTED:
+On terminal close, verify stream/control generations. For SUBMITTED:
 
 ```c
 chttp_server_response_builder_reset(&control->reply_builder);
@@ -461,21 +478,15 @@ const chttp_header headers[] = {
     {"X-Deferred", "yes"}};
 ```
 
-Require `X-Base: before`, `X-Replace: new`, `X-Deferred: yes`, each with correct final value.
+Require `X-Base: before`, `X-Replace: new`, and `X-Deferred: yes` with correct final values.
 
 - [ ] **Step 2: Add retryable copy RED**
 
-First reply attempt uses `body_size = max_buffered_response_body_bytes + 1` and must return `SALTS_EMSGSIZE` with handle unchanged. Second attempt on the same handle uses a valid small body and must succeed.
+First reply attempt uses `body_size = max_buffered_response_body_bytes + 1` and returns `SALTS_EMSGSIZE` with handle unchanged. Second attempt on the same handle uses a valid small body and succeeds.
 
 - [ ] **Step 3: Add amendment-1 lease-first rejection RED**
 
-Handler sequence:
-
-1. copies one request fact to owned probe storage;
-2. successfully calls `chttp_server_response_defer()`;
-3. simulates application/graph admission rejection;
-4. immediately calls `chttp_server_deferred_reply()` in the handler with 503;
-5. returns `SALTS_OK`.
+Handler copies one request fact, successfully reserves deferred lease, simulates application/graph admission rejection, immediately calls `chttp_server_deferred_reply()` in the handler with 503, and returns `SALTS_OK`.
 
 Require:
 
@@ -487,7 +498,7 @@ check_equal(response_status, 503u);
 check_equal(completion_calls, (size_t)1u);
 ```
 
-A sibling H2 request on the same connection must still return 200.
+A sibling H2 request on the same connection returns 200.
 
 - [ ] **Step 4: Add pool-exhaustion RED without breaking synchronous H2**
 
@@ -499,7 +510,7 @@ if (status == SALTS_ENOBUFS)
   return chttp_server_reply(response, 503u, "text/plain", "busy", 4u);
 ```
 
-The 503 must complete. Complete/drain one pending deferred response to terminal close; a later request must obtain defer capacity again.
+The 503 completes. Complete/drain one pending deferred response to terminal close; a later request obtains defer capacity again.
 
 - [ ] **Step 5: Run RED**
 
@@ -510,7 +521,7 @@ ctest --preset test-release-linux -R '^chttp_h2_deferred_test$' --output-on-fail
 
 - [ ] **Step 6: Make reply-builder initialization lazy and rollback exact**
 
-On first WRITING use:
+On first H2 WRITING use:
 
 ```c
 if (!control->reply_builder_initialized) {
@@ -527,11 +538,11 @@ if (!control->reply_builder_initialized) {
 }
 ```
 
-Copy base headers first; caller deferred headers then replace/add by normal case-insensitive response-header semantics. Any copy/validation/allocation failure resets only copied reply state, returns WRITING -> PENDING, and leaves caller handle unchanged.
+Copy base headers first; caller deferred headers then replace/add by existing case-insensitive response-header semantics. Any copy/validation/allocation failure resets copied reply state, returns WRITING -> PENDING, and leaves caller handle unchanged.
 
 - [ ] **Step 7: Preserve defer failure atomicity**
 
-H2 control exhaustion or any pre-publication error leaves:
+H2 control exhaustion or pre-publication error leaves:
 
 ```c
 builder->deferred == false
@@ -573,7 +584,7 @@ Defer H2 request A. Before worker reply:
 check_equal(chttp_async_request_cancel(&client, request_a), SALTS_OK);
 ```
 
-Poll to client terminal cancellation. Submit synchronous sibling B and require 200 on the same accepted H2 connection. Then consume A's old server lease with a valid dummy response:
+Poll to client terminal cancellation. Submit synchronous sibling B and require 200 on the same accepted H2 connection. Consume A's old server lease:
 
 ```c
 check_equal(chttp_server_deferred_reply(&deferred_a, &dummy), SALTS_ECANCELED);
@@ -583,7 +594,7 @@ check_equal(deferred_a.generation, 0u);
 
 - [ ] **Step 2: Add canceled-control capacity/recovery RED**
 
-With capacity 2, create/cancel deferred A and B while retaining both application handles. Synchronous C must still succeed. Another defer attempt must return `SALTS_ENOBUFS`. Terminalize A -> `SALTS_ECANCELED`; later D must obtain a deferred control.
+With capacity 2, create/cancel deferred A and B while retaining both application handles. Synchronous C still succeeds. Another defer attempt returns `SALTS_ENOBUFS`. Terminalize A -> `SALTS_ECANCELED`; later D obtains a deferred control.
 
 - [ ] **Step 3: Add stale copied-handle RED**
 
@@ -597,15 +608,15 @@ After real A terminalization and control reuse at a later generation:
 check_equal(chttp_server_deferred_reply(&stale, &dummy), SALTS_ENOENT);
 ```
 
-The current generation remains unaffected.
+Current generation remains unaffected.
 
 - [ ] **Step 4: Add physical H2 close RED**
 
-Hold two PENDING deferred streams on one physical connection, destroy/close the client, then require both later server-side reply attempts return `SALTS_ECANCELED`. Only after both handles are consumed may that server connection record accept a new physical H2 peer.
+Hold two PENDING deferred streams on one physical connection, close/destroy the client, then require both later server-side reply attempts return `SALTS_ECANCELED`. Only after both handles are consumed may the server connection record accept a new physical H2 peer.
 
 - [ ] **Step 5: Add H1 transport-loss terminal regression**
 
-Defer H1, disconnect the client before worker reply, then require exact lease terminalization with `SALTS_ECANCELED`. Existing live-H1 success/retry behavior remains unchanged.
+Defer H1, disconnect client before worker reply, then require exact lease terminalization with `SALTS_ECANCELED`. Existing live-H1 success/retry remains unchanged.
 
 - [ ] **Step 6: Run RED**
 
@@ -615,8 +626,6 @@ ctest --preset test-release-linux -R '^(chttp_h2_deferred_test|chttp_server_test
 ```
 
 - [ ] **Step 7: Implement PENDING -> CANCELED detach**
-
-On exact H2 stream terminal while PENDING:
 
 ```c
 int expected = CHTTP_SERVER_DEFERRED_PENDING;
@@ -630,20 +639,18 @@ if (atomic_compare_exchange_strong_explicit(
 }
 ```
 
-Now reset/reuse the application stream slot. The stable control stays CANCELED until the application consumes its handle.
-
-On H1 disconnect publish equivalent terminal transport cancellation without freeing the stable control.
+Now reset/reuse application stream slot. Stable control stays CANCELED until application consumes the handle. H1 disconnect publishes equivalent transport cancellation without freeing control memory.
 
 - [ ] **Step 8: Implement public reply result mapping**
 
 After generation validation:
 
-- exact CANCELED -> clear handle, return `SALTS_ECANCELED`;
+- exact CANCELED -> clear handle, `SALTS_ECANCELED`;
 - IDLE or generation mismatch -> `SALTS_ENOENT`;
-- WRITING/READY/SUBMITTED copied duplicate -> `SALTS_EALREADY`;
-- only PENDING may acquire WRITING.
+- WRITING/READY/SUBMITTED duplicate -> `SALTS_EALREADY`;
+- only PENDING acquires WRITING.
 
-Cancellation observed during a retryable copy failure is authoritative and returns `SALTS_ECANCELED`.
+Cancellation observed during retryable copy failure wins and returns `SALTS_ECANCELED`.
 
 - [ ] **Step 9: Run regression and commit**
 
@@ -674,7 +681,7 @@ git commit -m "feat(chttp): isolate canceled HTTP2 deferred streams"
 - Modify: `chttp/src/chttp_h2_server.c`
 - Modify: `chttp/tests/chttp_h2_deferred_test.c`
 
-**Private test seam:**
+**Private non-installed test seam:**
 
 ```c
 typedef void (*chttp_server_deferred_write_probe_fn)(void *user);
@@ -684,7 +691,7 @@ void chttp_server_deferred_test_set_write_probe(
     void *user);
 ```
 
-The non-installed probe executes immediately after successful PENDING -> WRITING and before reply-builder reset/copy. NULL means no production behavior change.
+The probe executes immediately after successful PENDING -> WRITING and before reply-builder reset/copy. NULL means no behavior change.
 
 - [ ] **Step 1: Add deterministic gate**
 
@@ -704,18 +711,7 @@ static void chttp_h2_deferred_write_probe(void *user) {
 
 - [ ] **Step 2: Add WRITING/RST RED**
 
-Use `h2_stream_capacity = 2`:
-
-1. stream A defers;
-2. worker enters `deferred_reply()` and blocks after owning WRITING;
-3. wait for `entered == 1`;
-4. cancel A with RST;
-5. prove A's application slot is quarantined, not reset under worker ownership;
-6. prove the other free slot can serve synchronous sibling B;
-7. release worker;
-8. worker returns `SALTS_ECANCELED` and clears A handle;
-9. owner releases/reset quarantined A slot;
-10. a later request uses capacity safely.
+With `h2_stream_capacity = 2`: stream A defers; worker enters WRITING and blocks; wait `entered == 1`; cancel A; prove A application slot is quarantined, not reset; prove the other slot serves synchronous sibling B; release worker; worker returns `SALTS_ECANCELED` and clears A; owner releases quarantined A; later request safely reuses capacity.
 
 - [ ] **Step 3: Run RED**
 
@@ -726,7 +722,7 @@ ctest --preset test-release-linux -R '^chttp_h2_deferred_test$' --output-on-fail
 
 - [ ] **Step 4: Implement WRITING cancellation handoff**
 
-Stream close while WRITING:
+Stream terminal while WRITING:
 
 ```c
 atomic_store_explicit(&control->cancel_requested, 1, memory_order_release);
@@ -735,7 +731,7 @@ stream->deferred_quarantined = true;
 
 Detach protocol user-data/decrement active protocol-stream accounting exactly once, but do not reset request/base-builder storage.
 
-After worker copy/validation, check `cancel_requested` before restoring PENDING or publishing READY. If set:
+After bounded worker copy, check `cancel_requested` before restoring PENDING or publishing READY. If set:
 
 ```c
 chttp_server_response_builder_reset(&control->reply_builder);
@@ -747,7 +743,7 @@ atomic_store_explicit(&control->state, CHTTP_SERVER_DEFERRED_CANCELED,
 return SALTS_ECANCELED;
 ```
 
-Owner observes CANCELED + quarantined stream after writer exit, resets the stream, then returns this control to IDLE because that worker consumed the public lease.
+Owner sees CANCELED + quarantined stream after writer exit, resets stream, then returns control IDLE because worker consumed public lease.
 
 - [ ] **Step 5: Run H2 regression and commit**
 
@@ -769,16 +765,29 @@ git commit -m "test(chttp): prove HTTP2 deferred cancel race"
 
 ---
 
-### Task 6: Lock SUBMITTED Borrowed-Body Lifetime and Stop/GOAWAY Drain
+### Task 6: Lock READY/SUBMITTED Borrowed-Body Lifetime and Stop/GOAWAY Drain
 
 **Files:**
+- Modify: `chttp/src/chttp_h2_server.h`
 - Modify: `chttp/tests/chttp_h2_deferred_test.c`
 - Modify: `chttp/src/chttp_h2_server.c`
 - Modify: `chttp/src/chttp_server.c`
 
+**Private deterministic terminal seam:**
+
+Expose only from non-installed `chttp_h2_server.h` for white-box state testing:
+
+```c
+int chttp_h2_server_deferred_test_terminal(
+    chttp_server_deferred_control *control,
+    uint32_t stream_generation);
+```
+
+It invokes the same internal READY/SUBMITTED terminal-release helper used by real stream close; it does not call protocol functions or exist in the public header. The test uses it only to make READY-before-owner-submit terminalization deterministic.
+
 - [ ] **Step 1: Add amendment-2 borrowed-body RED**
 
-Use a deterministic 96 KiB body and small send chunk:
+Use deterministic 96 KiB body and small send chunk:
 
 ```c
 enum { BODY_BYTES = 96 * 1024 };
@@ -787,7 +796,7 @@ config.max_response_body_bytes = BODY_BYTES;
 config.max_buffered_response_body_bytes = BODY_BYTES;
 ```
 
-Before successful worker reply, save the private stable pointer:
+Before successful worker reply save stable pointer:
 
 ```c
 chttp_server_deferred_control *control =
@@ -795,25 +804,35 @@ chttp_server_deferred_control *control =
 check_equal(chttp_server_deferred_reply(&deferred, &reply), SALTS_OK);
 ```
 
-Do not advance client flow-control enough to finish the stream. Wait through server progress until:
+Do not advance client flow-control enough to finish stream. Wait through server progress until:
 
 ```c
 chttp_server_deferred_control_state(control) == CHTTP_SERVER_DEFERRED_SUBMITTED
 ```
 
-Require it is not IDLE while outbound body remains. Then resume client progress, verify every byte, wait exact stream terminal close, require IDLE, and successfully defer a later request using the released capacity.
+Require not IDLE while outbound body remains. Resume client progress, verify every byte, wait exact stream terminal close, require IDLE, then successfully defer later request using released capacity.
 
-- [ ] **Step 2: Add READY-before-submit close RED**
+- [ ] **Step 2: Add deterministic READY-before-submit terminal RED**
 
-Publish READY, close/reset the stream before owner submission, require owner drops copied response and returns IDLE. No application result is emitted because worker ownership already transferred at READY.
+Use a dedicated control/stream from the focused test. After a valid copied reply reaches READY but before H2 owner submission, invoke the private terminal seam with the exact captured stream generation. Require copied builder is dropped/reset and control returns IDLE. Repeat with a wrong generation and require no release/mutation.
 
-- [ ] **Step 3: Add stop-timeout RED**
+This proves READY terminal behavior independently from OS scheduling; the real stream-close path must call the same internal helper.
 
-Hold one PENDING lease. `chttp_server_stop(server, short_timeout)` returns `SALTS_ETIMEDOUT`; server/control/handle remain valid. Complete the handle, drain response, retry stop, require `SALTS_OK`.
+- [ ] **Step 3: Add stop-timeout RED with exact deadline**
+
+Hold one PENDING lease and call:
+
+```c
+check_equal(chttp_server_stop(&server,
+                              CHTTP_H2_DEFERRED_TEST_STOP_TIMEOUT_MS),
+            SALTS_ETIMEDOUT);
+```
+
+The server/control/handle remain valid. Complete handle, drain response, retry with `CHTTP_H2_DEFERRED_TEST_TIMEOUT_MS`, require `SALTS_OK`.
 
 - [ ] **Step 4: Add server GOAWAY drain RED**
 
-After handler defer, start longer stop in another thread. Complete the accepted lease while stop is draining. Client receives full response; stream closes; control returns IDLE; stop returns `SALTS_OK`.
+After handler defer, start stop on another thread using `CHTTP_H2_DEFERRED_TEST_TIMEOUT_MS`. Complete accepted lease while stop drains. Client receives full response; stream closes; control IDLE; stop `SALTS_OK`.
 
 - [ ] **Step 5: Run RED**
 
@@ -824,13 +843,13 @@ ctest --preset test-release-linux -R '^chttp_h2_deferred_test$' --output-on-fail
 
 - [ ] **Step 6: Enforce READY -> SUBMITTED -> terminal-close release**
 
-`chttp_h2_server_submit_response_from()` never resets deferred reply storage on successful submit. Publish SUBMITTED only after submit succeeds. `chttp_h2_server_stream_close()` is the normal release point after the protocol has detached the exact stream and no longer borrows body bytes.
+`chttp_h2_server_submit_response_from()` never resets deferred reply storage on successful submit. Publish SUBMITTED only after submit succeeds. Real stream close and the private test seam both use one internal release helper that validates stream/control generation before resetting storage.
 
-Connection termination first terminalizes protocol streams; only then can H2 deferred-control storage be destroyed/reused.
+Connection termination terminalizes protocol streams before deferred-control storage can be destroyed/reused.
 
 - [ ] **Step 7: Include every non-IDLE control in stop/reuse accounting**
 
-`chttp_h2_server_connection_deferred_active()` returns true for PENDING, WRITING, READY, SUBMITTED, and CANCELED.
+`chttp_h2_server_connection_deferred_active()` returns true for PENDING, WRITING, READY, SUBMITTED, CANCELED.
 
 - [ ] **Step 8: Run regression and commit**
 
@@ -841,13 +860,14 @@ ctest --preset test-release-linux -R \
   '^(chttp_h2_deferred_test|chttp_h2_server_test|chttp_server_test)$' \
   --output-on-failure
 
-git add chttp/tests/chttp_h2_deferred_test.c \
+git add chttp/src/chttp_h2_server.h \
+        chttp/tests/chttp_h2_deferred_test.c \
         chttp/src/chttp_h2_server.c \
         chttp/src/chttp_server.c
 git commit -m "fix(chttp): retain deferred HTTP2 bodies through send"
 ```
 
-**Reviewer gate:** `chttp_h2_proto_submit_response_ex()` borrows body storage; reset/reuse before terminal stream close is a blocker.
+**Reviewer gate:** `chttp_h2_proto_submit_response_ex()` borrows body storage; reset/reuse before exact terminal stream close is a blocker.
 
 ---
 
@@ -863,19 +883,31 @@ git commit -m "fix(chttp): retain deferred HTTP2 bodies through send"
 
 - [ ] **Step 1: Add TLS ALPN `h2` happy path**
 
-Include `chttp_tls_test_material.h`. Build server TLS config using `CHTTP_TLS_TEST_CERTIFICATE` and `CHTTP_TLS_TEST_KEY`, enable H2, and negotiate exactly `h2`. Build client trust/TLS profile from `CHTTP_TLS_TEST_CERTIFICATE` with H2 ALPN. Run deferred GET over `tls://127.0.0.1:<port>` and require exact 200/body. H1 fallback is not accepted.
+Include `chttp_tls_test_material.h`. Build server TLS config from `CHTTP_TLS_TEST_CERTIFICATE` and `CHTTP_TLS_TEST_KEY`, enable H2, negotiate exactly `h2`. Build client trust/profile from `CHTTP_TLS_TEST_CERTIFICATE` and H2 ALPN.
+
+Construct URI from the runtime port, not a hard-coded placeholder:
+
+```c
+char connection_uri[128];
+uint16_t port = 0u;
+check_equal(chttp_server_port(&server, &port), SALTS_OK);
+check_true(snprintf(connection_uri, sizeof(connection_uri),
+                    "tls://127.0.0.1:%u", (unsigned int)port) > 0);
+```
+
+Run deferred GET with `protocol = CHTTP_HTTP_2`; require exact 200/body and no H1 fallback.
 
 - [ ] **Step 2: Add TLS sibling cancellation parity**
 
-Over the same ALPN-h2 connection: defer A, cancel A, prove synchronous sibling B returns 200, then terminalize A's server lease with `SALTS_ECANCELED`.
+Over same ALPN-h2 connection: defer A, cancel A, synchronous sibling B returns 200, then terminalize A server lease with `SALTS_ECANCELED`.
 
 - [ ] **Step 3: Add TLS stop/drain parity**
 
-Defer one accepted request, initiate stop/GOAWAY, publish reply, verify response and successful stop.
+Defer one accepted request, initiate stop/GOAWAY with `CHTTP_H2_DEFERRED_TEST_TIMEOUT_MS`, publish reply, verify response and successful stop.
 
 - [ ] **Step 4: Add JWT protected defer**
 
-Use a 32-byte HS256 key and `chttp_server_route_with_jwt_bearer()`. Handler validates callback-time claims and copies only the subject:
+Use a 32-byte HS256 key and `chttp_server_route_with_jwt_bearer()`. Handler copies callback-time subject:
 
 ```c
 if (request->jwt_claims == NULL || request->jwt_claims->subject == NULL)
@@ -884,7 +916,7 @@ snprintf(probe->subject, sizeof(probe->subject), "%s",
          request->jwt_claims->subject);
 ```
 
-Async worker uses only `probe->subject`, never `request->jwt_claims`. Valid token -> deferred 200; missing token -> admission 401 with no handler/defer call.
+Worker uses only copied `probe->subject`, never `request->jwt_claims`. Valid token -> deferred 200; missing token -> admission 401 with no handler/defer call.
 
 - [ ] **Step 5: Keep Session defer unsupported**
 
@@ -898,11 +930,9 @@ No handle published; handler can send ordinary synchronous response.
 
 - [ ] **Step 6: Keep WebSocket opening defer unsupported**
 
-In H1 Upgrade and RFC8441 `on_open`, attempt defer and require `SALTS_ENOTSUP`. Existing normal WebSocket open tests remain green.
+In H1 Upgrade and RFC8441 `on_open`, attempt defer and require `SALTS_ENOTSUP`. Existing normal WebSocket opens remain green.
 
 - [ ] **Step 7: Update public comments without ABI change**
-
-Use this handle comment:
 
 ```c
 /**
@@ -914,9 +944,7 @@ Use this handle comment:
  */
 ```
 
-Update `chttp_server_response_defer()` docs with H1 one-per-connection capacity, H2 `h2_stream_capacity` control bound, stream-scoped RST cancellation, failure-atomic `SALTS_ENOBUFS`, and successful worker transfer with private H2 storage retained until stream terminal close.
-
-Do not change signatures or public structs.
+Update `chttp_server_response_defer()` docs with H1 one-per-connection capacity, H2 `h2_stream_capacity` control bound, stream-scoped RST cancellation, failure-atomic `SALTS_ENOBUFS`, and successful worker transfer with private H2 storage retained until stream terminal close. No signature/public-struct change.
 
 - [ ] **Step 8: Update README with exact async ownership order**
 
@@ -930,7 +958,7 @@ handler copies owned request facts
   -> every terminal app outcome calls deferred_reply exactly once
 ```
 
-Explain PENDING/WRITING/READY/SUBMITTED/CANCELED only as implementation/lifecycle behavior, not public enums.
+Explain PENDING/WRITING/READY/SUBMITTED/CANCELED as lifecycle behavior only, not public API.
 
 - [ ] **Step 9: Run focused parity/public-header tests**
 
@@ -957,7 +985,7 @@ git add chttp/tests/chttp_h2_deferred_test.c \
 git commit -m "docs(chttp): document HTTP2 deferred response contract"
 ```
 
-**Reviewer gate:** public ABI unchanged; JWT identity does not escape callback lifetime; Session/WS/streaming/file scope remains excluded.
+**Reviewer gate:** public ABI unchanged; JWT identity does not escape callback lifetime; Session/WS/streaming/file scope excluded.
 
 ---
 
@@ -1002,9 +1030,9 @@ docs/superpowers/plans/2026-09-06-chttp-http2-deferred-responses.md
 
 A needed additional production path requires architecture review before adding it.
 
-- [ ] **Step 2: Create a temporary three-host verifier with exact checkout input**
+- [ ] **Step 2: Create temporary three-host verifier with exact checkout input**
 
-Workflow header:
+Header:
 
 ```yaml
 name: CHTTP H2 deferred exact-head verifier
@@ -1021,7 +1049,7 @@ permissions:
   contents: read
 ```
 
-Every job uses:
+Every job checks out:
 
 ```yaml
 - uses: actions/checkout@v4
@@ -1029,15 +1057,9 @@ Every job uses:
     ref: ${{ inputs.ref }}
 ```
 
-and immediately records:
+and runs `git rev-parse HEAD`; recorded SHA must equal `$VERIFIED_IMPLEMENTATION_SHA` used for dispatch.
 
-```bash
-git rev-parse HEAD
-```
-
-The recorded SHA must equal `$VERIFIED_IMPLEMENTATION_SHA` supplied when dispatching the workflow.
-
-**Linux setup and commands:**
+**Linux:**
 
 ```yaml
 linux:
@@ -1062,7 +1084,7 @@ linux:
       run: cmake --preset release-linux-ninja
     - name: Build
       run: cmake --build --preset build-default-linux
-    - name: Focused #214 tests
+    - name: Focused tests
       run: >-
         ctest --preset test-release-linux -R
         '^(chttp_h2_deferred_test|chttp_h2_server_test|chttp_server_test|chttp_websocket_test|chttp_jwt_test|chttp_header_cpp_test)$'
@@ -1071,7 +1093,7 @@ linux:
       run: ctest --preset test-release-linux --output-on-failure
 ```
 
-**macOS setup and commands:**
+**macOS:**
 
 ```yaml
 macos:
@@ -1100,7 +1122,7 @@ macos:
       run: cmake --preset release-mac-ninja
     - name: Build
       run: cmake --build --preset build-default-mac
-    - name: Focused #214 tests
+    - name: Focused tests
       run: >-
         ctest --preset test-release-mac -R
         '^(chttp_h2_deferred_test|chttp_h2_server_test|chttp_server_test|chttp_websocket_test|chttp_jwt_test|chttp_header_cpp_test)$'
@@ -1109,7 +1131,7 @@ macos:
       run: ctest --preset test-release-mac --output-on-failure
 ```
 
-**Windows setup and commands:**
+**Windows:**
 
 ```yaml
 windows:
@@ -1155,7 +1177,7 @@ windows:
         call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
         if errorlevel 1 exit /b 1
         cmake --build --preset build-release-windows
-    - name: Focused #214 tests
+    - name: Focused tests
       shell: cmd
       run: |
         call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
@@ -1169,7 +1191,7 @@ windows:
         ctest --preset test-release-windows --output-on-failure
 ```
 
-Dispatch the workflow with exact input equal to `$VERIFIED_IMPLEMENTATION_SHA`.
+Dispatch with exact `ref` equal to `$VERIFIED_IMPLEMENTATION_SHA`.
 
 - [ ] **Step 3: Require focused matrix green on all three hosts**
 
@@ -1183,7 +1205,7 @@ lease-first immediate 503 terminalization
 control pool exhaustion/recovery
 PENDING RST + stale generation + sibling isolation
 WRITING deterministic RST race
-READY drop-before-submit
+READY deterministic drop-before-submit
 SUBMITTED large borrowed body through terminal close
 stop timeout/retry
 GOAWAY drain
@@ -1197,28 +1219,30 @@ Any focused failure blocks #214; never baseline it away.
 
 - [ ] **Step 4: Classify unrelated full-suite failures only with fixed-base provenance**
 
-If a full suite fails outside the focused matrix:
+If full suite fails outside focused matrix:
 
-1. record exact test/case and error;
-2. checkout `0b1cdb3a2e23080dd53c18428c3dfec3592d3559` in the same host job/environment;
-3. fresh configure/build that base;
-4. run the exact failing test/case;
-5. call it pre-existing only if the same failure reproduces;
+1. record exact test/case/error;
+2. checkout `0b1cdb3a2e23080dd53c18428c3dfec3592d3559` in same host environment;
+3. fresh configure/build base;
+4. run exact failing test/case;
+5. classify pre-existing only if same failure reproduces;
 6. run remaining baseline-aware full suite excluding only proven identical baseline cases;
 7. keep all focused #214 tests mandatory.
 
-A failure that does not reproduce on the fixed base returns to the task that introduced it.
+Failure not reproduced on fixed base returns to introducing task.
 
-- [ ] **Step 5: Run static/API audits at the verified SHA**
+- [ ] **Step 5: Run static/API audits at verified SHA**
 
 ```bash
 rg -n 'chttp_server_deferred|CHTTP_SERVER_DEFERRED_' chttp/include chttp/src chttp/tests
 rg -n 'HTTP/2 currently returns|HTTP/1\.1 handler can|HTTP/1\.1 response' \
   chttp/README.md chttp/include/chttp/chttp.h
-rg -n 'TODO|TBD|FIXME' \
+rg -n 'T''ODO|T''BD|F''IXME' \
   docs/superpowers/specs/2026-09-06-chttp-http2-deferred-responses-design*.md \
   docs/superpowers/plans/2026-09-06-chttp-http2-deferred-responses.md
 ```
+
+The last command must return no matches. The split shell literals prevent the audit command from matching itself in this plan.
 
 Required review facts:
 
@@ -1228,11 +1252,9 @@ Required review facts:
 - no worker H2 protocol call;
 - no reset of WRITING base-builder storage;
 - no H1/synchronous fallback;
-- docs no longer say H2 defer is unsupported.
+- docs no longer say H2 defer unsupported.
 
 - [ ] **Step 6: Remove verifier and prove clean final content**
-
-After all evidence is captured:
 
 ```bash
 git rm .github/workflows/chttp-h2-deferred-verifier.yml
@@ -1240,19 +1262,19 @@ git commit -m "chore(ci): remove HTTP2 deferred verifier"
 git diff --name-only 0b1cdb3a2e23080dd53c18428c3dfec3592d3559...HEAD
 ```
 
-The final branch diff must not contain `.github/workflows/chttp-h2-deferred-verifier.yml`.
+Final branch diff contains no temporary verifier file.
 
-Capture the verified production/test/doc tree before verifier cleanup:
+Record verified tree before cleanup:
 
 ```bash
 git show "$VERIFIED_IMPLEMENTATION_SHA^{tree}"
 ```
 
-After cleanup, compare every non-`.github/workflows/chttp-h2-deferred-verifier.yml` path against `$VERIFIED_IMPLEMENTATION_SHA`; no production/test/doc content may change during verifier cleanup.
+After cleanup, compare every non-verifier path against `$VERIFIED_IMPLEMENTATION_SHA`; production/test/doc content cannot change during verifier cleanup.
 
 - [ ] **Step 7: Run normal clean-head PR check and review state**
 
-Open/update the PR only after verifier cleanup. Require normal `C API notation` on the clean head, then recheck changed files, head/base SHAs, mergeability, reviews, and inline threads.
+Open/update PR only after verifier cleanup. Require normal `C API notation` on clean head, then recheck changed files, head/base SHAs, mergeability, reviews, inline threads.
 
 - [ ] **Step 8: Prepare review packet and stop**
 
@@ -1274,7 +1296,7 @@ no Session/WS/streaming/file scope expansion
 TurboFlow lease-before-graph ownership contract
 ```
 
-Stop at code-review/integration gate. Merge and issue #214 closure require a separate explicit user decision.
+Stop at code-review/integration gate. Merge and issue #214 closure require separate explicit user decision.
 
 **Reviewer gate:** no merge-ready claim without exact-head focused evidence on all three platforms and removal of temporary verifier scaffolding.
 
@@ -1288,7 +1310,7 @@ Stop at code-review/integration gate. Merge and issue #214 closure require a sep
 - Lease-before-graph/application admission amendment: Task 3.
 - PENDING cancellation + stale generation + physical close + sibling isolation: Task 4.
 - Deterministic WRITING/RST quarantine: Task 5.
-- READY/SUBMITTED borrowed-body lifetime amendment: Task 6.
+- Deterministic READY terminal drop + SUBMITTED borrowed-body lifetime amendment: Task 6.
 - GOAWAY/stop timeout/retry: Task 6.
 - h2c + TLS ALPN h2: Tasks 2-7.
 - JWT callback-lifetime boundary: Task 7.
