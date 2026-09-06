@@ -32,6 +32,9 @@ typedef struct chttp_h2_server_stream {
   size_t websocket_output_capacity;
   size_t websocket_output_size;
   int32_t stream_id;
+  uint32_t generation;
+  chttp_server_deferred_control *deferred_control;
+  uint32_t deferred_generation;
   chttp_method method;
   bool active;
   bool header_block_open;
@@ -57,10 +60,18 @@ struct chttp_h2_server_connection {
   chttp_h2_server_stream *streams;
   size_t stream_capacity;
   size_t active_streams;
+  chttp_server_deferred_control *deferred_controls;
+  size_t deferred_control_capacity;
   bool draining;
   bool drain_ping_sent;
   bool drain_ping_acked;
 };
+
+static int chttp_h2_server_deferred_acquire(
+    void *user, chttp_server_response_builder *base_builder,
+    chttp_server_deferred_control **out_control);
+static int chttp_h2_server_submit_response_from(
+    chttp_h2_server_stream *stream, chttp_server_response_builder *builder);
 
 static bool chttp_h2_server_add(size_t left, size_t right, size_t *out) {
   if (out == NULL || left > SIZE_MAX - right) return false;
@@ -270,6 +281,8 @@ static void chttp_h2_server_stream_reset(chttp_h2_server_stream *stream) {
   stream->body_size = 0u;
   stream->websocket_output_size = 0u;
   stream->stream_id = 0;
+  stream->deferred_control = NULL;
+  stream->deferred_generation = 0u;
   stream->method = (chttp_method)0;
   stream->active = false;
   stream->header_block_open = false;
@@ -363,6 +376,77 @@ chttp_server_websocket_peer *chttp_h2_server_websocket_peer_find(
   return &stream->websocket_peer;
 }
 
+static bool chttp_h2_server_deferred_exact(
+    const chttp_server_deferred_control *control, const chttp_h2_server_stream *stream) {
+  return control != NULL && stream != NULL && stream->active &&
+         control->transport_kind == CHTTP_SERVER_DEFERRED_TRANSPORT_H2 &&
+         control->transport == stream && control->transport_generation == stream->generation &&
+         stream->deferred_control == control &&
+         stream->deferred_generation == control->generation;
+}
+
+static void chttp_h2_server_deferred_idle(chttp_server_deferred_control *control) {
+  if (control == NULL) return;
+  if (control->reply_builder_initialized)
+    chttp_server_response_builder_reset(&control->reply_builder);
+  control->base_builder = NULL;
+  control->transport = NULL;
+  control->transport_generation = 0u;
+  atomic_store_explicit(&control->cancel_requested, 0, memory_order_release);
+  atomic_store_explicit(&control->state, CHTTP_SERVER_DEFERRED_IDLE, memory_order_release);
+}
+
+static int chttp_h2_server_deferred_acquire(
+    void *user, chttp_server_response_builder *base_builder,
+    chttp_server_deferred_control **out_control) {
+  chttp_h2_server_stream *stream = (chttp_h2_server_stream *)user;
+  chttp_h2_server_connection *h2;
+  size_t index;
+  if (stream == NULL || base_builder == NULL || out_control == NULL || !stream->active ||
+      stream->owner == NULL)
+    return SALTS_EINVAL;
+  *out_control = NULL;
+  if (stream->deferred_control != NULL) return SALTS_EALREADY;
+  h2 = stream->owner;
+  for (index = 0u; index < h2->deferred_control_capacity; ++index) {
+    chttp_server_deferred_control *control = &h2->deferred_controls[index];
+    int expected = CHTTP_SERVER_DEFERRED_IDLE;
+    int status;
+    if (!atomic_compare_exchange_strong_explicit(
+            &control->state, &expected, CHTTP_SERVER_DEFERRED_WRITING, memory_order_acq_rel,
+            memory_order_acquire))
+      continue;
+    ++control->generation;
+    if (control->generation == 0u) ++control->generation;
+    control->server = h2->connection->server;
+    control->transport_kind = CHTTP_SERVER_DEFERRED_TRANSPORT_H2;
+    control->transport = stream;
+    control->transport_generation = stream->generation;
+    control->base_builder = base_builder;
+    atomic_store_explicit(&control->cancel_requested, 0, memory_order_release);
+    if (!control->reply_builder_initialized) {
+      status = chttp_server_response_builder_init(&control->reply_builder,
+                                                  &h2->connection->server->config);
+      if (status != SALTS_OK) {
+        control->base_builder = NULL;
+        control->transport = NULL;
+        control->transport_generation = 0u;
+        atomic_store_explicit(&control->state, CHTTP_SERVER_DEFERRED_IDLE,
+                              memory_order_release);
+        return status;
+      }
+      control->reply_builder.server = h2->connection->server;
+      control->reply_response.impl = &control->reply_builder;
+      control->reply_builder_initialized = true;
+    }
+    stream->deferred_control = control;
+    stream->deferred_generation = control->generation;
+    *out_control = control;
+    return SALTS_OK;
+  }
+  return SALTS_ENOBUFS;
+}
+
 static chttp_h2_server_stream *chttp_h2_server_stream_acquire(chttp_h2_server_connection *h2,
                                                               int32_t stream_id) {
   size_t index;
@@ -373,6 +457,10 @@ static chttp_h2_server_stream *chttp_h2_server_stream_acquire(chttp_h2_server_co
     stream->owner = h2;
     stream->active = true;
     stream->stream_id = stream_id;
+    ++stream->generation;
+    if (stream->generation == 0u) ++stream->generation;
+    stream->request_state.response_builder.defer_target =
+        (chttp_server_defer_target){chttp_h2_server_deferred_acquire, stream};
     ++h2->active_streams;
     return stream;
   }
@@ -639,9 +727,11 @@ chttp_h2_server_response_source_read(void *user, uint8_t *buffer, size_t capacit
   return (chttp_h2_proto_source_result){CHTTP_H2_PROTO_SOURCE_DATA, size};
 }
 
-static int chttp_h2_server_submit_response(chttp_h2_server_stream *stream) {
-  chttp_server_response_builder *builder = &stream->request_state.response_builder;
-  chttp_server_impl *server = stream->owner->connection->server;
+static int chttp_h2_server_submit_response_from(
+    chttp_h2_server_stream *stream, chttp_server_response_builder *builder) {
+  chttp_server_impl *server;
+  if (stream == NULL || builder == NULL || stream->owner == NULL) return SALTS_EINVAL;
+  server = stream->owner->connection->server;
   const bool source_response = builder->source_enabled;
   const bool stream_source = source_response && stream->method != CHTTP_METHOD_HEAD;
   const size_t body_size =
@@ -691,11 +781,51 @@ static int chttp_h2_server_submit_response(chttp_h2_server_stream *stream) {
   if (submit_status != 0) {
     stream->response_submitted = false;
     chttp_server_response_builder_close_source(builder, SALTS_ENOBUFS);
-    chttp_session_request_abort(&stream->request_state);
     return SALTS_ENOBUFS;
   }
   chttp_server_stats_response(server);
   return SALTS_OK;
+}
+
+int chttp_h2_server_connection_deferred_progress(chttp_h2_server_connection *h2) {
+  size_t index;
+  if (h2 == NULL || h2->connection == NULL) return SALTS_EINVAL;
+  for (index = 0u; index < h2->deferred_control_capacity; ++index) {
+    chttp_server_deferred_control *control = &h2->deferred_controls[index];
+    chttp_h2_server_stream *stream;
+    int status;
+    if (chttp_server_deferred_control_state(control) != CHTTP_SERVER_DEFERRED_READY) continue;
+    stream = (chttp_h2_server_stream *)control->transport;
+    if (!chttp_h2_server_deferred_exact(control, stream)) {
+      chttp_h2_server_deferred_idle(control);
+      continue;
+    }
+    status = chttp_session_request_finish(&stream->request_state);
+    if (status != SALTS_OK) return status;
+    status = chttp_h2_server_submit_response_from(stream, &control->reply_builder);
+    if (status == SALTS_ENOBUFS) continue;
+    if (status != SALTS_OK) return status;
+    if (!chttp_h2_server_deferred_exact(control, stream)) {
+      chttp_h2_server_deferred_idle(control);
+      continue;
+    }
+    atomic_store_explicit(&control->state, CHTTP_SERVER_DEFERRED_SUBMITTED,
+                          memory_order_release);
+    status = chttp_server_send_pending(h2->connection);
+    if (status != SALTS_OK && status != SALTS_EBUSY && status != SALTS_ENOBUFS)
+      return status;
+  }
+  return SALTS_OK;
+}
+
+bool chttp_h2_server_connection_deferred_active(const chttp_h2_server_connection *h2) {
+  size_t index;
+  if (h2 == NULL) return false;
+  for (index = 0u; index < h2->deferred_control_capacity; ++index)
+    if (chttp_server_deferred_control_state(&h2->deferred_controls[index]) !=
+        CHTTP_SERVER_DEFERRED_IDLE)
+      return true;
+  return false;
 }
 
 static chttp_server_request_view
@@ -809,7 +939,7 @@ static int chttp_h2_server_websocket_dispatch(chttp_h2_server_stream *stream) {
   if (status == SALTS_EPERM) {
     chttp_server_response_builder_reset(&stream->request_state.response_builder);
     status = chttp_jwt_bearer_unauthorized_response(&stream->request_state.response);
-    if (status == SALTS_OK) status = chttp_h2_server_submit_response(stream);
+    if (status == SALTS_OK) status = chttp_h2_server_submit_response_from(stream, &stream->request_state.response_builder);
     return status;
   }
   if (status != SALTS_OK) return status;
@@ -835,13 +965,14 @@ static int chttp_h2_server_websocket_dispatch(chttp_h2_server_stream *stream) {
       return chttp_h2_server_websocket_status(stream, 500u);
     }
     chttp_server_websocket_peer_reset(&stream->websocket_peer);
-    return chttp_h2_server_submit_response(stream);
+    return chttp_h2_server_submit_response_from(stream, &stream->request_state.response_builder);
   }
   return chttp_h2_server_websocket_accept(stream);
 }
 
 static int chttp_h2_server_dispatch(chttp_h2_server_stream *stream) {
   chttp_server_request_view request;
+  chttp_server_response_builder *builder;
   int status;
   if (stream->response_submitted || !stream->method_seen || !stream->scheme_seen ||
       !stream->path_seen || !stream->authority_seen || stream->extended_connect ||
@@ -853,9 +984,13 @@ static int chttp_h2_server_dispatch(chttp_h2_server_stream *stream) {
   }
   chttp_server_request_body_close(&stream->request_state, SALTS_OK);
   request = chttp_h2_server_request_view(stream);
+  builder = &stream->request_state.response_builder;
+  builder->request = &request;
   status = chttp_server_dispatch_request(&stream->request_state, &request);
+  builder->request = NULL;
   if (status != SALTS_OK) return status;
-  return chttp_h2_server_submit_response(stream);
+  if (builder->deferred) return SALTS_OK;
+  return chttp_h2_server_submit_response_from(stream, builder);
 }
 
 static int chttp_h2_server_dispatch_or_reset(chttp_h2_server_stream *stream) {
@@ -899,7 +1034,7 @@ static int chttp_h2_server_end_headers(void *user, int32_t stream_id, int end_st
     if (status == SALTS_EPERM) {
       chttp_server_response_builder_reset(&stream->request_state.response_builder);
       status = chttp_jwt_bearer_unauthorized_response(&stream->request_state.response);
-      if (status == SALTS_OK) status = chttp_h2_server_submit_response(stream);
+      if (status == SALTS_OK) status = chttp_h2_server_submit_response_from(stream, &stream->request_state.response_builder);
       return status == SALTS_OK ? 0 : -1;
     }
     if (status != SALTS_OK) {
@@ -1001,8 +1136,13 @@ static int chttp_h2_server_data(void *user, int32_t stream_id, const uint8_t *da
 static int chttp_h2_server_stream_close(void *user, int32_t stream_id, uint32_t error_code) {
   chttp_h2_server_connection *h2 = (chttp_h2_server_connection *)user;
   chttp_h2_server_stream *stream = chttp_h2_server_stream_find(h2, stream_id);
+  chttp_server_deferred_control *control;
   (void)error_code;
   if (stream == NULL) return 0;
+  control = stream->deferred_control;
+  if (chttp_h2_server_deferred_exact(control, stream) &&
+      chttp_server_deferred_control_state(control) == CHTTP_SERVER_DEFERRED_SUBMITTED)
+    chttp_h2_server_deferred_idle(control);
   (void)chttp_h2_proto_set_stream_user_data(h2->protocol, stream_id, NULL);
   if (h2->active_streams != 0u) --h2->active_streams;
   chttp_h2_server_stream_reset(stream);
@@ -1036,9 +1176,21 @@ int chttp_h2_server_connection_init(chttp_h2_server_connection **out_h2,
     return status;
   }
   h2->streams = (chttp_h2_server_stream *)calloc(h2->stream_capacity, sizeof(*h2->streams));
-  if (h2->streams == NULL) {
+  h2->deferred_control_capacity = h2->stream_capacity;
+  h2->deferred_controls = (chttp_server_deferred_control *)calloc(
+      h2->deferred_control_capacity, sizeof(*h2->deferred_controls));
+  if (h2->streams == NULL || h2->deferred_controls == NULL) {
+    free(h2->deferred_controls);
+    free(h2->streams);
     free(h2);
     return SALTS_ENOMEM;
+  }
+  for (index = 0u; index < h2->deferred_control_capacity; ++index) {
+    chttp_server_deferred_control *control = &h2->deferred_controls[index];
+    control->server = connection->server;
+    control->transport_kind = CHTTP_SERVER_DEFERRED_TRANSPORT_H2;
+    atomic_init(&control->state, CHTTP_SERVER_DEFERRED_IDLE);
+    atomic_init(&control->cancel_requested, 0);
   }
   for (index = 0u; index < h2->stream_capacity; ++index) {
     status = chttp_h2_server_stream_init(&h2->streams[index], h2);
@@ -1055,6 +1207,7 @@ int chttp_h2_server_connection_prepare(chttp_h2_server_connection *h2) {
   chttp_h2_proto_callbacks callbacks = {0};
   size_t index;
   if (h2 == NULL || h2->connection == NULL) return SALTS_EINVAL;
+  if (chttp_h2_server_connection_deferred_active(h2)) return SALTS_EBUSY;
   chttp_h2_proto_destroy(h2->protocol);
   h2->protocol = NULL;
   h2->active_streams = 0u;
@@ -1102,6 +1255,11 @@ void chttp_h2_server_connection_destroy(chttp_h2_server_connection *h2) {
   if (h2->streams != NULL)
     for (index = 0u; index < h2->stream_capacity; ++index)
       chttp_h2_server_stream_destroy(&h2->streams[index]);
+  if (h2->deferred_controls != NULL)
+    for (index = 0u; index < h2->deferred_control_capacity; ++index)
+      if (h2->deferred_controls[index].reply_builder_initialized)
+        chttp_server_response_builder_destroy(&h2->deferred_controls[index].reply_builder);
+  free(h2->deferred_controls);
   free(h2->streams);
   free(h2);
 }
@@ -1203,13 +1361,15 @@ bool chttp_h2_server_connection_draining(const chttp_h2_server_connection *h2) {
 
 bool chttp_h2_server_connection_stop_ready(const chttp_h2_server_connection *h2) {
   return h2 != NULL && h2->protocol != NULL && h2->draining && h2->drain_ping_acked &&
-         h2->active_streams == 0u && !chttp_h2_proto_want_write(h2->protocol) &&
+         h2->active_streams == 0u && !chttp_h2_server_connection_deferred_active(h2) &&
+         !chttp_h2_proto_want_write(h2->protocol) &&
          h2->connection->outbound_size == 0u && !h2->connection->writing;
 }
 
 bool chttp_h2_server_connection_stop_waiting(const chttp_h2_server_connection *h2) {
   return h2 != NULL && h2->protocol != NULL && h2->draining && h2->drain_ping_sent &&
          !h2->drain_ping_acked && h2->active_streams == 0u &&
+         !chttp_h2_server_connection_deferred_active(h2) &&
          !chttp_h2_proto_want_write(h2->protocol) && h2->connection->outbound_size == 0u &&
          !h2->connection->writing;
 }
