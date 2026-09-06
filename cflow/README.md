@@ -1224,18 +1224,21 @@ and reopen gates are recorded in the
 | IOCP | Windows | completion | TCP/UDP plus accept/connect | overlapped named byte-pipe read/write | overlapped `READ_AT`/`WRITE_AT`; flush unsupported | Windows |
 | io_uring | Linux | completion | TCP/UDP plus accept/connect | native byte read/write | `READ_AT`/`WRITE_AT`/`FLUSH` | explicit only |
 
-Pipe operations use the separate `cflow_io_native_pipe_operation` and
-`cflow_io_native_backend_pipe_actor_ops()` contract; socket aggregate layout and
-entry points remain unchanged. A successful read or write may transfer fewer
-than `length` bytes. A zero-byte read after peer close maps to
+New Pipe callers use `native_io_operation` with
+`cflow_io_native_adapter_actor_ops()`; attach each connected endpoint through
+`cflow_io_native_adapter_attach_pipe()`. The autonomous
+`cflow_io_native_pipe_operation` and
+`cflow_io_native_backend_pipe_actor_ops()` surface is deprecated but remains
+behaviorally unchanged until issue #147 authorizes public removal. A successful
+read or write may transfer fewer than `length` bytes. A zero-byte read after peer close maps to
 `CFLOW_IO_COMPLETION_EOF`; a broken write maps its native error to
 `CFLOW_IO_COMPLETION_FAILED` without exposing `SIGPIPE` to the process.
 
-The caller must set `CFLOW_IO_NATIVE_PIPE_ASYNC_CAPABLE`. epoll, kqueue, and
-poll additionally require an `O_NONBLOCK` descriptor and reject a blocking
-descriptor with `SALTS_EINVAL`. IOCP accepts already-connected, byte-mode named
-pipe handles opened with `FILE_FLAG_OVERLAPPED`; handles returned directly by
-`CreatePipe` are synchronous and are not supported. The flag is a caller
+The caller must set `NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE` when attaching the
+endpoint. epoll and kqueue additionally require an `O_NONBLOCK` descriptor and
+reject a blocking descriptor with `SALTS_EINVAL`. IOCP accepts already-connected,
+byte-mode named pipe handles opened with `FILE_FLAG_OVERLAPPED`; handles returned
+directly by `CreatePipe` are synchronous and are not supported. The flag is a caller
 attestation because Windows cannot query `FILE_FLAG_OVERLAPPED` from an
 arbitrary handle. Byte mode is also an explicit precondition for a write-only
 Windows server handle because `GetNamedPipeInfo` requires read access that a
@@ -1245,13 +1248,14 @@ does not require `O_NONBLOCK`.
 
 The caller owns every endpoint and buffer through terminal callback return.
 After all requests for an endpoint are terminal and acknowledged, close the
-endpoint first, then call `cflow_io_native_backend_forget_pipe()` for retained
-readiness/IOCP identity. io_uring retains no endpoint identity but preserves its
-existing quiescent forget contract. No backend closes a caller endpoint or
+endpoint first, then call `cflow_io_native_adapter_release_pipe()` for its
+generation-checked NativeIO endpoint. No backend closes a caller endpoint or
 silently moves the operation to a fallback backend or blocking worker.
 
 `<cflow/io_pipe.h>` supplies the control plane that deliberately stays outside
-those data operations. `cflow_io_pipe_capability_supported()` distinguishes
+those data operations and now delegates platform rendezvous to NativeIPC while
+preserving its public CFlow layouts, callbacks, and errors.
+`cflow_io_pipe_capability_supported()` distinguishes
 Windows server accept, Windows client connect, and POSIX FIFO open. A Windows
 server owns at most `request_capacity` overlapped named-pipe instances; one
 successful callback receives the endpoint by value and becomes its sole close
