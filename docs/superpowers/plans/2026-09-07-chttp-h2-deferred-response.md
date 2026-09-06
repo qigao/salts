@@ -48,4 +48,4 @@ CNet owner thread submits H2 frames and owns stream retirement.
 - [x] Format modified C/C++ sources and run `git diff --check`.
 - [x] Run focused Debug+ASan tests, adjacent H1/H2/TLS tests, and full Release CTest.
 - [x] Run the Debug install preset and installed-package verification.
-- [ ] Sync CodeGraph, inspect impact/diff, commit, push, open the issue-linked PR, and request review.
+- [x] Sync CodeGraph, inspect impact/diff, commit, push, open the issue-linked PR, and request review.
