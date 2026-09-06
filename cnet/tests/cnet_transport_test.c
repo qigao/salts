@@ -14,11 +14,11 @@
 typedef SOCKET cnet_test_socket;
   #define CNET_TEST_INVALID_SOCKET INVALID_SOCKET
 #else
+  #include <netinet/in.h>
+  #include <sys/socket.h>
   #if defined(__linux__)
     #include <linux/vm_sockets.h>
   #endif
-  #include <netinet/in.h>
-  #include <sys/socket.h>
   #include <unistd.h>
 typedef int cnet_test_socket;
   #define CNET_TEST_INVALID_SOCKET (-1)

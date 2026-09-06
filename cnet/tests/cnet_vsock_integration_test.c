@@ -3,10 +3,11 @@
 #include <salts/error_codes.h>
 
 #include <errno.h>
-#include <linux/vm_sockets.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+
+#include <linux/vm_sockets.h>
 #include <unistd.h>
 
 enum { CNET_VSOCK_TEST_ATTEMPTS = 200, CNET_VSOCK_TEST_POLL_MS = 10 };

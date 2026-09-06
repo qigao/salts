@@ -20,10 +20,10 @@ typedef SOCKET cnet_native_socket;
   #include <fcntl.h>
   #include <netinet/in.h>
   #include <netinet/tcp.h>
+  #include <sys/socket.h>
   #if defined(__linux__)
     #include <linux/vm_sockets.h>
   #endif
-  #include <sys/socket.h>
   #include <unistd.h>
 typedef int cnet_native_socket;
   #define CNET_INVALID_SOCKET (-1)
