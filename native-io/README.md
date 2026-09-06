@@ -21,6 +21,35 @@ Coroutine pool       Platform errors/ABI
 
 当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 SOCK_STREAM connect/recv/send 和 UDP recv_from/send_to。`NATIVE_IO_OPERATION_STREAM_CONNECT`、`STREAM_RECV`、`STREAM_SEND` 是规范名称，原有 `TCP_*` 保持相同枚举值与 ABI 的兼容别名。上层可据此驱动 TCP，也可在 Linux epoll/io_uring 上驱动已 attach 的 AF_VSOCK stream。Windows IOCP 支持 overlapped byte-mode named pipe，Linux epoll 与 macOS/BSD kqueue 支持非阻塞 connected byte pipe；Linux io_uring 支持 blocking 或 nonblocking pipe/FIFO descriptor。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `SALTS_ENOTSUP`。CFlow Actor 与 Reactive 可直接依赖 NativeIO；NativeIO 本身不依赖或拥有 CFlow/CNet 状态。
 
+## NativeIPC 控制面
+
+`<salts/native_ipc.h>` 只负责创建或接入 byte-pipe endpoint，不提交 payload I/O。Windows 提供固定容量、单 owner 驱动的 overlapped named-pipe accept server，以及不等待、不调用 `WaitNamedPipe` 的单次 client connect；POSIX 提供现有 FIFO 的 nonblocking open，不创建、不删除也不修改路径权限。`salts_ipc_pipe_capability_supported()` 是平台能力的唯一查询入口，未支持的控制面返回 `SALTS_ENOTSUP`，不会切换到线程或其他传输。
+
+每个 `salts_ipc_pipe_endpoint` 是 move-only 所有权包装。C 赋值不会复制底层 handle/fd 的所有权；需要转交时逐字段移动并立即 `salts_ipc_pipe_endpoint_init()` 原对象。成功 rendezvous 返回的 `native_io_flags` 可原样传给 `native_io_backend_attach_pipe()`。Windows server 的关闭顺序为：停止 accept admission、`close` 请求取消、持续 `observe` 到 quiescent、处理或关闭 callback 收到的 endpoint，最后 `destroy`。
+
+```c
+#include <salts/native_io.h>
+#include <salts/native_ipc.h>
+
+salts_ipc_pipe_endpoint endpoint;
+salts_ipc_pipe_endpoint_init(&endpoint);
+
+#if defined(_WIN32)
+int status = salts_ipc_named_pipe_connect(
+    "\\\\.\\pipe\\salts-example", SALTS_IPC_PIPE_DUPLEX, &endpoint);
+#else
+int status = salts_ipc_fifo_open(
+    "/tmp/salts-example.fifo", SALTS_IPC_PIPE_READ, &endpoint);
+#endif
+
+if (status == SALTS_OK) {
+  /* attach_pipe 借用 native identity；release 后仍由 endpoint 负责 close。 */
+  salts_ipc_pipe_endpoint_close(&endpoint);
+}
+```
+
+完整的 Windows accept/cancel/drain 与 POSIX FIFO reader/writer 示例见 `tests/native_ipc_test.c`。
+
 ## 数据与状态协议
 
 - 数据单元：一个 `native_io_operation` 对应恰好一个 terminal `native_io_completion`。
