@@ -13,6 +13,14 @@ typedef struct chttp_h2_jwt_isolation_probe {
   atomic_int public_calls;
 } chttp_h2_jwt_isolation_probe;
 
+typedef struct chttp_h2_jwt_isolation_completion {
+  size_t calls;
+  int status;
+  unsigned int response_status;
+  char body[16];
+  size_t body_size;
+} chttp_h2_jwt_isolation_completion;
+
 static native_io_backend_kind chttp_h2_jwt_isolation_backend(void) {
 #if defined(_WIN32)
   return NATIVE_IO_BACKEND_IOCP;
@@ -110,8 +118,36 @@ static int chttp_h2_jwt_isolation_public_handler(
   return chttp_server_reply(response, 200u, "text/plain", "public", 6u);
 }
 
+static void chttp_h2_jwt_isolation_complete(void *user, chttp_request request,
+                                            const chttp_response_view *response,
+                                            const chttp_error *error) {
+  chttp_h2_jwt_isolation_completion *completion =
+      (chttp_h2_jwt_isolation_completion *)user;
+  size_t body_size;
+  (void)request;
+  if (completion == NULL) return;
+  ++completion->calls;
+  if (error != NULL) {
+    completion->status = error->status;
+    return;
+  }
+  if (response == NULL) {
+    completion->status = SALTS_EPROTO;
+    return;
+  }
+  completion->status = SALTS_OK;
+  completion->response_status = response->status_code;
+  body_size = response->body_size < sizeof(completion->body) - 1u
+                  ? response->body_size
+                  : sizeof(completion->body) - 1u;
+  if (body_size != 0u && response->body != NULL)
+    memcpy(completion->body, response->body, body_size);
+  completion->body[body_size] = '\0';
+  completion->body_size = body_size;
+}
+
 spec("CHTTP HTTP/2 JWT identity isolation") {
-  it("clears JWT claims for sibling and later public streams on one connection") {
+  it("isolates JWT claims across sibling and later public streams on one connection") {
     static const unsigned char key[] = "0123456789abcdef0123456789abcdef";
     const chttp_jwt_claims claims = {
         .subject = "alice", .expires_at = INT64_C(3000000000)};
@@ -120,7 +156,7 @@ spec("CHTTP HTTP/2 JWT identity isolation") {
     chttp_h2_jwt_isolation_probe probe;
     chttp_jwt_bearer_validator validator = {0};
     chttp_server server = {0};
-    chttp_client client = {0};
+    chttp_async_client client = {0};
     chttp_server_config server_config = chttp_h2_jwt_isolation_server_config();
     chttp_client_config client_config = chttp_h2_jwt_isolation_client_config();
     const chttp_server_route_options protected_route = {
@@ -128,9 +164,13 @@ spec("CHTTP HTTP/2 JWT identity isolation") {
         .path = "/protected",
         .handler = chttp_h2_jwt_isolation_protected_handler,
         .user = &probe};
-    chttp_response response = {0};
-    chttp_error error = {0};
-    chttp_options options;
+    chttp_h2_jwt_isolation_completion protected = {0};
+    chttp_h2_jwt_isolation_completion sibling = {0};
+    chttp_h2_jwt_isolation_completion later = {0};
+    chttp_request protected_request = {0};
+    chttp_request sibling_request = {0};
+    chttp_request later_request = {0};
+    chttp_request_options options;
     chttp_header authorization = {0};
     chttp_server_stats stats = {0};
     char authorization_storage[512];
@@ -138,6 +178,8 @@ spec("CHTTP HTTP/2 JWT identity isolation") {
     char uri[64];
     char authority[64];
     uint16_t port = 0u;
+    size_t completions = 0u;
+    size_t polls = 0u;
 
     atomic_init(&probe.protected_calls, 0);
     atomic_init(&probe.public_calls, 0);
@@ -154,36 +196,44 @@ spec("CHTTP HTTP/2 JWT identity isolation") {
     check_equal(chttp_server_port(&server, &port), SALTS_OK);
     check_true(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port) > 0);
     check_true(snprintf(authority, sizeof(authority), "127.0.0.1:%u", (unsigned int)port) > 0);
-    check_equal(chttp_client_init(&client, &client_config), SALTS_OK);
+    check_equal(chttp_async_client_init(&client, &client_config), SALTS_OK);
 
-    options = (chttp_options){.connection_uri = uri,
-                              .authority = authority,
-                              .target = "/protected",
-                              .headers = &authorization,
-                              .header_count = 1u,
-                              .timeout_ms = CHTTP_H2_JWT_ISOLATION_TIMEOUT_MS,
-                              .protocol = CHTTP_HTTP_2};
-    check_equal(chttp_get(&client, &options, &response, &error), SALTS_OK);
-    check_equal(response.status_code, 200u);
-    check_equal(response.body, "protected", 9u);
-    chttp_response_destroy(&response);
-
-    response = (chttp_response){0};
-    error = (chttp_error){0};
+    options = (chttp_request_options){.connection_uri = uri,
+                                      .authority = authority,
+                                      .target = "/protected",
+                                      .method = CHTTP_METHOD_GET,
+                                      .headers = &authorization,
+                                      .header_count = 1u,
+                                      .on_complete = chttp_h2_jwt_isolation_complete,
+                                      .user = &protected,
+                                      .protocol = CHTTP_HTTP_2};
+    check_equal(chttp_async_client_submit(&client, &options, &protected_request), SALTS_OK);
     options.target = "/public";
     options.headers = NULL;
     options.header_count = 0u;
-    check_equal(chttp_get(&client, &options, &response, &error), SALTS_OK);
-    check_equal(response.status_code, 200u);
-    check_equal(response.body, "public", 6u);
-    chttp_response_destroy(&response);
+    options.user = &sibling;
+    check_equal(chttp_async_client_submit(&client, &options, &sibling_request), SALTS_OK);
 
-    response = (chttp_response){0};
-    error = (chttp_error){0};
-    check_equal(chttp_get(&client, &options, &response, &error), SALTS_OK);
-    check_equal(response.status_code, 200u);
-    check_equal(response.body, "public", 6u);
-    chttp_response_destroy(&response);
+    while ((protected.calls == 0u || sibling.calls == 0u) && polls++ < 40u)
+      check_equal(chttp_async_client_poll(&client, 250u, &completions), SALTS_OK);
+    check_equal(protected.calls, (size_t)1u);
+    check_equal(protected.status, SALTS_OK);
+    check_equal(protected.response_status, 200u);
+    check_equal(protected.body, "protected");
+    check_equal(sibling.calls, (size_t)1u);
+    check_equal(sibling.status, SALTS_OK);
+    check_equal(sibling.response_status, 200u);
+    check_equal(sibling.body, "public");
+
+    options.user = &later;
+    check_equal(chttp_async_client_submit(&client, &options, &later_request), SALTS_OK);
+    polls = 0u;
+    while (later.calls == 0u && polls++ < 40u)
+      check_equal(chttp_async_client_poll(&client, 250u, &completions), SALTS_OK);
+    check_equal(later.calls, (size_t)1u);
+    check_equal(later.status, SALTS_OK);
+    check_equal(later.response_status, 200u);
+    check_equal(later.body, "public");
 
     check_equal(atomic_load_explicit(&probe.protected_calls, memory_order_relaxed), 1);
     check_equal(atomic_load_explicit(&probe.public_calls, memory_order_relaxed), 2);
@@ -192,7 +242,8 @@ spec("CHTTP HTTP/2 JWT identity isolation") {
     check_equal(stats.requests, (uint64_t)3u);
     check_equal(stats.responses, (uint64_t)3u);
 
-    check_equal(chttp_client_destroy(&client, CHTTP_H2_JWT_ISOLATION_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_async_client_stop(&client, CHTTP_H2_JWT_ISOLATION_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_async_client_destroy(&client), SALTS_OK);
     check_equal(chttp_server_stop(&server, CHTTP_H2_JWT_ISOLATION_TIMEOUT_MS), SALTS_OK);
     check_equal(chttp_server_destroy(&server), SALTS_OK);
     check_equal(chttp_jwt_bearer_validator_destroy(&validator), SALTS_OK);
