@@ -25,6 +25,24 @@ typedef enum chttp_server_wire_protocol {
   CHTTP_SERVER_WIRE_HTTP_2
 } chttp_server_wire_protocol;
 
+typedef struct chttp_server_response_builder chttp_server_response_builder;
+typedef struct chttp_server_deferred_control chttp_server_deferred_control;
+
+typedef enum chttp_server_deferred_transport {
+  CHTTP_SERVER_DEFERRED_TRANSPORT_NONE = 0,
+  CHTTP_SERVER_DEFERRED_TRANSPORT_H1,
+  CHTTP_SERVER_DEFERRED_TRANSPORT_H2
+} chttp_server_deferred_transport;
+
+typedef int (*chttp_server_deferred_acquire_fn)(
+    void *user, chttp_server_response_builder *base_builder,
+    chttp_server_deferred_control **out_control);
+
+typedef struct chttp_server_defer_target {
+  chttp_server_deferred_acquire_fn acquire;
+  void *user;
+} chttp_server_defer_target;
+
 typedef struct chttp_server_route_record {
   chttp_method method;
   char *path;
@@ -48,9 +66,9 @@ typedef struct chttp_server_route_record {
 
 #include "chttp_websocket_server_internal.h"
 
-typedef struct chttp_server_response_builder {
+struct chttp_server_response_builder {
   chttp_server_impl *server;
-  chttp_server_connection *connection;
+  chttp_server_defer_target defer_target;
   const chttp_server_request_view *request;
   chttp_header *headers;
   char *header_storage;
@@ -73,7 +91,7 @@ typedef struct chttp_server_response_builder {
   bool replied;
   bool source_enabled;
   bool deferred;
-} chttp_server_response_builder;
+};
 
 typedef struct chttp_session_entry {
   char *key;
@@ -149,8 +167,24 @@ typedef enum chttp_server_deferred_state {
   CHTTP_SERVER_DEFERRED_IDLE = 0,
   CHTTP_SERVER_DEFERRED_PENDING,
   CHTTP_SERVER_DEFERRED_WRITING,
-  CHTTP_SERVER_DEFERRED_READY
+  CHTTP_SERVER_DEFERRED_READY,
+  CHTTP_SERVER_DEFERRED_SUBMITTED,
+  CHTTP_SERVER_DEFERRED_CANCELED
 } chttp_server_deferred_state;
+
+struct chttp_server_deferred_control {
+  chttp_server_impl *server;
+  chttp_server_response_builder *base_builder;
+  chttp_server_response_builder reply_builder;
+  chttp_server_response reply_response;
+  void *transport;
+  atomic_int state;
+  atomic_int cancel_requested;
+  uint32_t generation;
+  uint32_t transport_generation;
+  chttp_server_deferred_transport transport_kind;
+  bool reply_builder_initialized;
+};
 
 typedef enum chttp_server_websocket_command_kind {
   CHTTP_SERVER_WEBSOCKET_COMMAND_TEXT = 1,
@@ -173,8 +207,7 @@ struct chttp_server_connection {
   cnet_connection handle;
   chttp_server_parser parser;
   chttp_server_request_state request_state;
-  chttp_server_response_builder deferred_builder;
-  chttp_server_response deferred_response;
+  chttp_server_deferred_control deferred_control;
   chttp_server_request_view deferred_request;
   chttp_h2_server_connection *h2;
   chttp_server_websocket_peer websocket_peer;
@@ -190,8 +223,6 @@ struct chttp_server_connection {
   chttp_server_wire_protocol wire_protocol;
   cnet_stream_peer peer;
   char peer_certificate_sha256[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY];
-  atomic_int deferred_state;
-  uint32_t deferred_generation;
   bool active;
   bool connected;
   bool writing;
@@ -249,6 +280,9 @@ struct chttp_server_impl {
   bool worker_done;
   bool file_runtime_initialized;
 };
+
+chttp_server_deferred_state chttp_server_deferred_control_state(
+    const chttp_server_deferred_control *control);
 
 int chttp_server_response_builder_init(chttp_server_response_builder *builder,
                                        const chttp_server_config *config);

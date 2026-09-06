@@ -507,7 +507,8 @@ static void chttp_server_connection_destroy(chttp_server_connection *connection)
   chttp_h2_server_connection_destroy(connection->h2);
   chttp_server_parser_destroy(&connection->parser);
   chttp_server_request_state_destroy(&connection->request_state);
-  chttp_server_response_builder_destroy(&connection->deferred_builder);
+  if (connection->deferred_control.reply_builder_initialized)
+    chttp_server_response_builder_destroy(&connection->deferred_control.reply_builder);
   chttp_server_buffer_release(connection->server, connection->websocket_upgrade_input,
                               connection->websocket_upgrade_input_capacity);
   chttp_server_connection_release_outbound(connection);
@@ -541,6 +542,32 @@ static void chttp_server_impl_free(chttp_server_impl *impl) {
   free(impl);
 }
 
+static int chttp_server_h1_deferred_acquire(
+    void *user, chttp_server_response_builder *base_builder,
+    chttp_server_deferred_control **out_control) {
+  chttp_server_connection *connection = (chttp_server_connection *)user;
+  chttp_server_deferred_control *control;
+  int expected = CHTTP_SERVER_DEFERRED_IDLE;
+  if (connection == NULL || base_builder == NULL || out_control == NULL) return SALTS_EINVAL;
+  *out_control = NULL;
+  if (connection->wire_protocol != CHTTP_SERVER_WIRE_HTTP_1_1) return SALTS_ENOTSUP;
+  control = &connection->deferred_control;
+  if (!atomic_compare_exchange_strong_explicit(
+          &control->state, &expected, CHTTP_SERVER_DEFERRED_WRITING, memory_order_acq_rel,
+          memory_order_acquire))
+    return SALTS_EALREADY;
+  ++control->generation;
+  if (control->generation == 0u) ++control->generation;
+  control->server = connection->server;
+  control->transport_kind = CHTTP_SERVER_DEFERRED_TRANSPORT_H1;
+  control->transport = connection;
+  control->transport_generation = 0u;
+  control->base_builder = base_builder;
+  atomic_store_explicit(&control->cancel_requested, 0, memory_order_release);
+  *out_control = control;
+  return SALTS_OK;
+}
+
 static int chttp_server_connection_init(chttp_server_impl *server,
                                         chttp_server_connection *connection) {
   const chttp_server_parser_config parser_config = {
@@ -558,16 +585,22 @@ static int chttp_server_connection_init(chttp_server_impl *server,
       .buffer_release = chttp_server_buffer_release,
       .buffer_context = server,
       .user = connection};
+  chttp_server_deferred_control *control = &connection->deferred_control;
   int status;
   connection->server = server;
   status = chttp_server_request_state_init(&connection->request_state, server);
   if (status != SALTS_OK) return status;
-  connection->request_state.response_builder.connection = connection;
-  connection->deferred_builder.server = server;
-  status = chttp_server_response_builder_init(&connection->deferred_builder, &server->config);
+  connection->request_state.response_builder.defer_target =
+      (chttp_server_defer_target){chttp_server_h1_deferred_acquire, connection};
+  control->server = server;
+  control->transport_kind = CHTTP_SERVER_DEFERRED_TRANSPORT_H1;
+  atomic_init(&control->state, CHTTP_SERVER_DEFERRED_IDLE);
+  atomic_init(&control->cancel_requested, 0);
+  status = chttp_server_response_builder_init(&control->reply_builder, &server->config);
   if (status != SALTS_OK) return status;
-  connection->deferred_response.impl = &connection->deferred_builder;
-  atomic_init(&connection->deferred_state, CHTTP_SERVER_DEFERRED_IDLE);
+  control->reply_builder.server = server;
+  control->reply_response.impl = &control->reply_builder;
+  control->reply_builder_initialized = true;
   status = chttp_server_parser_init(&connection->parser, &parser_config);
   if (status == SALTS_OK && server->config.enable_http2)
     status = chttp_h2_server_connection_init(&connection->h2, connection);
@@ -880,7 +913,7 @@ static void chttp_server_on_state(void *user, cnet_connection handle, cnet_conne
     }
   } else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
     const int deferred_state =
-        atomic_load_explicit(&connection->deferred_state, memory_order_acquire);
+        atomic_load_explicit(&connection->deferred_control.state, memory_order_acquire);
     chttp_server_websocket_transport_closed(connection);
     connection->active = false;
     connection->connected = false;
@@ -907,7 +940,7 @@ static void chttp_server_on_state(void *user, cnet_connection handle, cnet_conne
     connection->websocket_upgrade_input_capacity = 0u;
     if (deferred_state == CHTTP_SERVER_DEFERRED_IDLE) {
       chttp_server_request_state_reset(&connection->request_state);
-      chttp_server_response_builder_reset(&connection->deferred_builder);
+      chttp_server_response_builder_reset(&connection->deferred_control.reply_builder);
       (void)chttp_server_parser_reset(&connection->parser);
     } else {
       connection->deferred_disconnected = true;
@@ -918,7 +951,7 @@ static void chttp_server_on_state(void *user, cnet_connection handle, cnet_conne
 
 int chttp_server_send_pending(chttp_server_connection *connection) {
   int status;
-  if (atomic_load_explicit(&connection->deferred_state, memory_order_acquire) !=
+  if (atomic_load_explicit(&connection->deferred_control.state, memory_order_acquire) !=
       CHTTP_SERVER_DEFERRED_IDLE)
     return SALTS_OK;
   if (connection->wire_protocol == CHTTP_SERVER_WIRE_HTTP_2 && connection->outbound_size == 0u) {
@@ -964,7 +997,7 @@ static int chttp_server_h1_input(chttp_server_connection *connection, const void
     const size_t remaining = size - consumed;
     if (connection->close_after_write) return SALTS_OK;
     const int deferred_state =
-        atomic_load_explicit(&connection->deferred_state, memory_order_acquire);
+        atomic_load_explicit(&connection->deferred_control.state, memory_order_acquire);
     if (connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_HANDSHAKE &&
         deferred_state == CHTTP_SERVER_DEFERRED_IDLE)
       return SALTS_EPROTO;
@@ -1461,7 +1494,7 @@ static chttp_server_connection *chttp_server_free_connection(chttp_server_impl *
   size_t index;
   for (index = 0u; index < server->config.network.connection_capacity; ++index)
     if (!server->connections[index].active &&
-        atomic_load_explicit(&server->connections[index].deferred_state, memory_order_acquire) ==
+        atomic_load_explicit(&server->connections[index].deferred_control.state, memory_order_acquire) ==
             CHTTP_SERVER_DEFERRED_IDLE)
       return &server->connections[index];
   return NULL;
@@ -1529,19 +1562,21 @@ static int chttp_server_deferred_progress(chttp_server_impl *server) {
   size_t index;
   for (index = 0u; index < server->config.network.connection_capacity; ++index) {
     chttp_server_connection *connection = &server->connections[index];
-    chttp_server_response_builder *builder = &connection->deferred_builder;
+    chttp_server_deferred_control *control = &connection->deferred_control;
+    chttp_server_response_builder *builder = &control->reply_builder;
     int status;
-    if (atomic_load_explicit(&connection->deferred_state, memory_order_acquire) !=
+    if (atomic_load_explicit(&connection->deferred_control.state, memory_order_acquire) !=
         CHTTP_SERVER_DEFERRED_READY)
       continue;
     if (connection->deferred_disconnected || !connection->active || !connection->connected) {
       chttp_session_request_abort(&connection->request_state);
       chttp_server_request_state_reset(&connection->request_state);
       chttp_server_response_builder_reset(builder);
+      control->base_builder = NULL;
+      control->transport = NULL;
       (void)chttp_server_parser_reset(&connection->parser);
       connection->deferred_disconnected = false;
-      atomic_store_explicit(&connection->deferred_state, CHTTP_SERVER_DEFERRED_IDLE,
-                            memory_order_release);
+      atomic_store_explicit(&control->state, CHTTP_SERVER_DEFERRED_IDLE, memory_order_release);
       continue;
     }
     status = chttp_session_request_finish(&connection->request_state);
@@ -1558,16 +1593,19 @@ static int chttp_server_deferred_progress(chttp_server_impl *server) {
       chttp_server_stats_handler_error(server);
       chttp_server_request_state_reset(&connection->request_state);
       chttp_server_response_builder_reset(builder);
-      atomic_store_explicit(&connection->deferred_state, CHTTP_SERVER_DEFERRED_IDLE,
-                            memory_order_release);
+      control->base_builder = NULL;
+      control->transport = NULL;
+      atomic_store_explicit(&control->state, CHTTP_SERVER_DEFERRED_IDLE, memory_order_release);
       chttp_server_connection_close(connection);
       continue;
     }
     if (!connection->deferred_request.protocol_keep_alive) connection->close_after_write = true;
     connection->deferred_response_writing = true;
     chttp_server_stats_response(server);
-    atomic_store_explicit(&connection->deferred_state, CHTTP_SERVER_DEFERRED_IDLE,
-                          memory_order_release);
+    chttp_server_response_builder_reset(builder);
+    control->base_builder = NULL;
+    control->transport = NULL;
+    atomic_store_explicit(&control->state, CHTTP_SERVER_DEFERRED_IDLE, memory_order_release);
     status = chttp_server_send_pending(connection);
     if (status != SALTS_OK && !chttp_server_action_pressure(status)) return status;
   }
@@ -1602,7 +1640,7 @@ static bool chttp_server_connections_active(const chttp_server_impl *server) {
   size_t index;
   for (index = 0u; index < server->config.network.connection_capacity; ++index)
     if (server->connections[index].active ||
-        atomic_load_explicit(&server->connections[index].deferred_state, memory_order_acquire) !=
+        atomic_load_explicit(&server->connections[index].deferred_control.state, memory_order_acquire) !=
             CHTTP_SERVER_DEFERRED_IDLE)
       return true;
   return false;
