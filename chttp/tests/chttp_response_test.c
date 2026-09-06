@@ -1,4 +1,5 @@
 #include "chttp_internal.h"
+#include "chttp_server_runtime.h"
 #include "tinytest.h"
 
 #include <string.h>
@@ -30,6 +31,13 @@ static chttp_limits chttp_response_test_limits(void) {
                                .max_informational_responses = 2u,
                                .max_request_bytes = 512u};
   return limits;
+}
+
+spec("CHTTP server deferred control") {
+  it("initializes a transport-neutral deferred control in IDLE") {
+    chttp_server_deferred_control control = {0};
+    check_equal(chttp_server_deferred_control_state(&control), CHTTP_SERVER_DEFERRED_IDLE);
+  }
 }
 
 spec("CHTTP strict incremental response parser") {
