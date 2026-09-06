@@ -689,12 +689,17 @@ static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *sessio
   return SALTS_OK;
 }
 
-static int cnet_owner_start_tls(cnet_owner_impl *impl, cnet_owner_session *session) {
+static int cnet_owner_start_tls(cnet_owner_impl *impl, cnet_owner_session *session,
+                                bool publish_handshaking) {
   int status;
   if (session->peer.scheme != CNET_URI_TLS) return SALTS_EINVAL;
 
   status = cnet_session_table_transition(impl->sessions, session->handle,
                                          CNET_SESSION_PROTOCOL_HANDSHAKING);
+  if (status == SALTS_OK && publish_handshaking) {
+    status = cnet_owner_queue_state_event(impl, session->handle, CNET_EVENT_STATE_TLS_HANDSHAKING,
+                                          SALTS_OK, CNET_SESSION_STAGE_NONE);
+  }
   if (status == SALTS_OK) status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
   if (status == SALTS_OK)
     status = cnet_tls_state_init(&session->tls, session->peer.tls_context, session->peer.tls_server,
@@ -872,7 +877,7 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
     session->peer.adopted_socket = UINTPTR_MAX;
     session->peer.adopted = false;
     if (status == SALTS_OK) {
-      if (session->peer.scheme == CNET_URI_TLS) status = cnet_owner_start_tls(impl, session);
+      if (session->peer.scheme == CNET_URI_TLS) status = cnet_owner_start_tls(impl, session, false);
       else {
         status = cnet_session_table_transition(impl->sessions, session->handle, CNET_SESSION_OPEN);
         if (status == SALTS_OK)
@@ -1015,6 +1020,55 @@ static int cnet_owner_receive(cnet_owner_impl *impl, cnet_command_view *command)
   return cnet_owner_arm_receive(impl, session);
 }
 
+static int cnet_owner_start_tls_command(cnet_owner_impl *impl, cnet_command_view *command) {
+  const cnet_owner_start_tls_payload *payload;
+  cnet_owner_session *session;
+  bool name_present;
+  bool valid;
+  int status;
+
+  if (command->size != sizeof(cnet_owner_start_tls_payload) || command->data == NULL)
+    return cnet_command_queue_release(impl->commands, command);
+  payload = (const cnet_owner_start_tls_payload *)command->data;
+  session = cnet_owner_find_session(impl, command->connection);
+  if (session == NULL) {
+    cnet_tls_context_release(payload->tls_context);
+    return cnet_command_queue_release(impl->commands, command);
+  }
+  name_present = payload->tls_server_name[0] != '\0';
+  valid =
+      payload->tls_context != NULL &&
+      payload->tls_io_buffer_bytes >= CNET_TLS_MIN_IO_BUFFER_BYTES &&
+      payload->tls_io_buffer_bytes <= INT_MAX && payload->tls_handshake_timeout_ms != 0u &&
+      (payload->tls_server ? !name_present
+                           : name_present && memchr(payload->tls_server_name, '\0',
+                                                    sizeof(payload->tls_server_name)) != NULL) &&
+      session->peer.scheme == CNET_URI_TCP && session->active_requests == 0u &&
+      session->receive_demand == 0u && !session->read_active && !session->write_active &&
+      !session->resolve_active && !session->close_requested &&
+      session->tls_send_command._sequence == 0u;
+  if (!valid) {
+    cnet_tls_context_release(payload->tls_context);
+    status = cnet_command_queue_release(impl->commands, command);
+    if (status != SALTS_OK) return status;
+    return cnet_owner_fail_session(impl, session, SALTS_EPROTO, CNET_SESSION_STAGE_HANDSHAKE);
+  }
+
+  session->peer.scheme = CNET_URI_TLS;
+  session->peer.tls_context = payload->tls_context;
+  memcpy(session->peer.tls_server_name, payload->tls_server_name,
+         sizeof(session->peer.tls_server_name));
+  session->peer.tls_handshake_timeout_ms = payload->tls_handshake_timeout_ms;
+  session->peer.tls_io_buffer_bytes = payload->tls_io_buffer_bytes;
+  session->peer.tls_server = payload->tls_server;
+  status = cnet_command_queue_release(impl->commands, command);
+  if (status != SALTS_OK) return status;
+  status = cnet_owner_start_tls(impl, session, true);
+  return status == SALTS_OK
+             ? SALTS_OK
+             : cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_HANDSHAKE);
+}
+
 static int cnet_owner_close_session(cnet_owner_impl *impl, cnet_command_view *command) {
   cnet_owner_session *session = cnet_owner_find_session(impl, command->connection);
   int status = cnet_command_queue_release(impl->commands, command);
@@ -1063,6 +1117,8 @@ static int cnet_owner_process_commands(cnet_owner_impl *impl, size_t *out_proces
     else if (command.kind == CNET_COMMAND_SEND_CLOSE)
       status = cnet_owner_send(impl, &command, true);
     else if (command.kind == CNET_COMMAND_RECEIVE) status = cnet_owner_receive(impl, &command);
+    else if (command.kind == CNET_COMMAND_START_TLS)
+      status = cnet_owner_start_tls_command(impl, &command);
     else if (command.kind == CNET_COMMAND_CLOSE) status = cnet_owner_close_session(impl, &command);
     else status = cnet_command_queue_release(impl->commands, &command);
     if (status != SALTS_OK) return status;
@@ -1094,7 +1150,7 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
     if (session->close_requested) return cnet_owner_finalize_session(impl, session);
     if (completion->kind == NATIVE_IO_COMPLETION_OK) {
       if (session->peer.scheme == CNET_URI_TLS) {
-        status = cnet_owner_start_tls(impl, session);
+        status = cnet_owner_start_tls(impl, session, false);
         if (status == SALTS_OK) return SALTS_OK;
         return cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_HANDSHAKE);
       }
