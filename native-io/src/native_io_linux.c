@@ -10,7 +10,7 @@ bool native_io_platform_backend_supported(native_io_backend_kind kind) {
 }
 
 bool native_io_platform_pipe_supported(native_io_backend_kind kind) {
-  return kind == NATIVE_IO_BACKEND_EPOLL;
+  return kind == NATIVE_IO_BACKEND_EPOLL || kind == NATIVE_IO_BACKEND_IO_URING;
 }
 
 int native_io_platform_backend_init(native_io_backend *backend,
