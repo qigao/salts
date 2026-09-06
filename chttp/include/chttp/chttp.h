@@ -32,7 +32,7 @@ typedef struct chttp_server {
 } chttp_server;
 
 /**
- * One generation-checked deferred HTTP/1.1 response. The handle is completed
+ * One generation-checked deferred HTTP/1.1 or HTTP/2 response. The handle is completed
  * exactly once by `chttp_server_deferred_reply()` or
  * `chttp_server_deferred_cancel()` and must not outlive the server's successful
  * stop.
@@ -939,14 +939,15 @@ int chttp_server_response_select_websocket_subprotocol(chttp_server_response *re
                                                        const char *subprotocol);
 
 /**
- * Seals the current HTTP/1.1 response and returns a cross-thread completion
+ * Seals the current regular HTTP/1.1 or HTTP/2 response and returns a cross-thread completion
  * handle. Request views remain callback-borrowed and must be copied by the
  * application before the handler returns. Existing response headers are
  * retained; response mutation after this call returns `SALTS_EALREADY`.
  *
- * Each connection admits at most one deferred response, so total outstanding
- * work is bounded by `network.connection_capacity`. HTTP/2 currently returns
- * `SALTS_ENOTSUP`.
+ * H1 admits at most one deferred response per connection; H2 admits at most one
+ * per configured stream slot. Total outstanding work is therefore bounded by
+ * the configured connection and H2 stream capacities. Session-backed requests,
+ * WebSocket handshakes, and deferred streaming bodies return `SALTS_ENOTSUP`.
  */
 int chttp_server_response_defer(chttp_server_response *response,
                                 chttp_server_deferred *out_deferred);
@@ -962,17 +963,19 @@ int chttp_server_deferred_reply(chttp_server_deferred *deferred,
                                 const chttp_server_deferred_response *response);
 
 /**
- * Cancels one pending deferred HTTP/1.1 response without sending a replacement.
- * Success consumes the handle, aborts request/session state on the server owner,
- * and closes the connection because HTTP/1.1 pipelined input cannot advance past
- * a response that will never be written.
+ * Cancels one pending deferred response without sending a replacement. Success
+ * consumes the handle and aborts request state on the server owner. H1 closes
+ * its exclusive connection because pipelined input cannot advance past the
+ * missing response; H2 sends RST_STREAM(CANCEL) without failing sibling streams.
  *
  * This operation is thread-safe and generation checked. Exactly one concurrent
  * reply or cancel may claim the handle. A stale generation or owner-drained
  * handle returns `SALTS_ENOENT`. A matching generation held in `WRITING` by
  * another terminal operation returns `SALTS_EALREADY`; a failed reply restores
  * `PENDING`, while a successful terminal operation keeps returning
- * `SALTS_EALREADY` until the owner drains it.
+ * `SALTS_EALREADY` until the owner drains it. H2 RST_STREAM or peer close makes
+ * a pending handle stale; a terminal call that already claimed `WRITING`
+ * completes its bounded copy, which the owner then discards.
  */
 int chttp_server_deferred_cancel(chttp_server_deferred *deferred);
 

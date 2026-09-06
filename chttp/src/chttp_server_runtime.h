@@ -16,6 +16,7 @@ typedef struct chttp_server_impl chttp_server_impl;
 typedef struct chttp_server_connection chttp_server_connection;
 typedef struct chttp_server_request_state chttp_server_request_state;
 typedef struct chttp_h2_server_connection chttp_h2_server_connection;
+typedef struct chttp_server_deferred_target chttp_server_deferred_target;
 
 extern SALTS_THREAD_LOCAL chttp_server_impl *chttp_active_callback_server;
 
@@ -51,6 +52,7 @@ typedef struct chttp_server_route_record {
 typedef struct chttp_server_response_builder {
   chttp_server_impl *server;
   chttp_server_connection *connection;
+  chttp_server_deferred_target *deferred_target;
   const chttp_server_request_view *request;
   chttp_header *headers;
   char *header_storage;
@@ -170,8 +172,7 @@ static inline chttp_server_deferred_state chttp_server_deferred_token_state(uint
 }
 
 static inline int chttp_server_deferred_claim(atomic_uint_fast64_t *token, uint32_t generation) {
-  uint_fast64_t expected =
-      chttp_server_deferred_token(generation, CHTTP_SERVER_DEFERRED_PENDING);
+  uint_fast64_t expected = chttp_server_deferred_token(generation, CHTTP_SERVER_DEFERRED_PENDING);
   if (atomic_compare_exchange_strong_explicit(
           token, &expected, chttp_server_deferred_token(generation, CHTTP_SERVER_DEFERRED_WRITING),
           memory_order_acq_rel, memory_order_acquire))
@@ -181,6 +182,22 @@ static inline int chttp_server_deferred_claim(atomic_uint_fast64_t *token, uint3
              ? SALTS_ENOENT
              : SALTS_EALREADY;
 }
+
+typedef enum chttp_server_deferred_kind {
+  CHTTP_SERVER_DEFERRED_HTTP_1_1 = 1,
+  CHTTP_SERVER_DEFERRED_HTTP_2
+} chttp_server_deferred_kind;
+
+struct chttp_server_deferred_target {
+  chttp_server_impl *server;
+  chttp_server_connection *connection;
+  chttp_server_request_state *request_state;
+  chttp_server_response_builder *response_builder;
+  chttp_server_response *response;
+  atomic_uint_fast64_t *token;
+  chttp_server_request_view request;
+  chttp_server_deferred_kind kind;
+};
 
 typedef enum chttp_server_websocket_command_kind {
   CHTTP_SERVER_WEBSOCKET_COMMAND_TEXT = 1,
@@ -205,7 +222,7 @@ struct chttp_server_connection {
   chttp_server_request_state request_state;
   chttp_server_response_builder deferred_builder;
   chttp_server_response deferred_response;
-  chttp_server_request_view deferred_request;
+  chttp_server_deferred_target deferred_target;
   chttp_h2_server_connection *h2;
   chttp_server_websocket_peer websocket_peer;
   unsigned char *websocket_upgrade_input;

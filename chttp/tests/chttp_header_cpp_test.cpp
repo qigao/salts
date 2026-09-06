@@ -14,6 +14,10 @@ static_assert(std::is_standard_layout<chttp_server_request_view>::value,
               "server request view must be C ABI data");
 static_assert(std::is_standard_layout<chttp_server_response>::value,
               "server response builder must be C ABI data");
+static_assert(std::is_standard_layout<chttp_server_deferred>::value,
+              "deferred server handle must be C ABI data");
+static_assert(std::is_standard_layout<chttp_server_deferred_response>::value,
+              "deferred response input must be C ABI data");
 static_assert(std::is_standard_layout<chttp_server_next>::value,
               "middleware continuation must be C ABI data");
 static_assert(std::is_standard_layout<chttp_session>::value, "session handle must be C ABI data");
@@ -55,6 +59,8 @@ int main() {
   chttp_websocket_session websocket_session{};
   auto *response_source = &chttp_server_response_source;
   auto *response_file = &chttp_server_response_file;
+  auto *response_defer = &chttp_server_response_defer;
+  auto *deferred_reply = &chttp_server_deferred_reply;
   auto *deferred_cancel = &chttp_server_deferred_cancel;
   auto *post_file = &chttp_post_file;
   auto *put_file = &chttp_put_file;
@@ -63,6 +69,8 @@ int main() {
   (void)server_stats;
   (void)response_source;
   (void)response_file;
+  (void)response_defer;
+  (void)deferred_reply;
   (void)deferred_cancel;
   (void)post_file;
   (void)put_file;

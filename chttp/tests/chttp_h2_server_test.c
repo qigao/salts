@@ -1,5 +1,6 @@
 #include "chttp_h2_frame.h"
 #include "chttp_h2_proto.h"
+#include "chttp_server_runtime.h"
 #include "chttp_tls_test_material.h"
 #include "tinytest.h"
 
@@ -67,6 +68,12 @@ typedef struct chttp_h2_server_test_payload {
   size_t size;
   atomic_int *handler_called;
 } chttp_h2_server_test_payload;
+
+typedef struct chttp_h2_server_test_deferred {
+  chttp_server_deferred handle;
+  atomic_int admitted;
+  int defer_status;
+} chttp_h2_server_test_deferred;
 
 typedef struct chttp_h2_server_test_stop {
   chttp_server *server;
@@ -214,8 +221,7 @@ static int chttp_h2_server_stream_open(void *user, const chttp_server_request_vi
   return SALTS_OK;
 }
 
-static int chttp_h2_server_jwt_stream_open(void *user,
-                                           const chttp_server_request_view *request,
+static int chttp_h2_server_jwt_stream_open(void *user, const chttp_server_request_view *request,
                                            chttp_body_sink *out_sink) {
   chttp_h2_server_stream_probe *probe = (chttp_h2_server_stream_probe *)user;
   if (probe == NULL || request == NULL || out_sink == NULL || request->http_major != 2u ||
@@ -278,8 +284,7 @@ static int chttp_h2_server_stream_handler(void *user, const chttp_server_request
   return chttp_server_response_source(response, 200u, "application/octet-stream", &source);
 }
 
-static int chttp_h2_server_jwt_stream_handler(void *user,
-                                              const chttp_server_request_view *request,
+static int chttp_h2_server_jwt_stream_handler(void *user, const chttp_server_request_view *request,
                                               chttp_server_response *response) {
   chttp_h2_server_stream_probe *probe = (chttp_h2_server_stream_probe *)user;
   if (probe == NULL || request == NULL) return SALTS_EPROTO;
@@ -465,6 +470,24 @@ static int chttp_h2_server_test_payload_handler(void *user,
   if (status == SALTS_OK && payload->handler_called != NULL)
     atomic_store_explicit(payload->handler_called, 1, memory_order_release);
   return status;
+}
+
+static int chttp_h2_server_test_deferred_handler(void *user,
+                                                 const chttp_server_request_view *request,
+                                                 chttp_server_response *response) {
+  chttp_h2_server_test_deferred *deferred = (chttp_h2_server_test_deferred *)user;
+  if (deferred == NULL || request == NULL || request->http_major != 2u) return SALTS_EPROTO;
+  deferred->defer_status = chttp_server_response_defer(response, &deferred->handle);
+  atomic_fetch_add_explicit(&deferred->admitted, 1, memory_order_release);
+  return deferred->defer_status;
+}
+
+static int chttp_h2_server_test_wait_atomic(atomic_int *value, int expected) {
+  const uint64_t deadline = salts_monotonic_ms() + CHTTP_H2_SERVER_TEST_TIMEOUT_MS;
+  while (atomic_load_explicit(value, memory_order_acquire) < expected &&
+         salts_monotonic_ms() < deadline)
+    salts_thread_yield();
+  return atomic_load_explicit(value, memory_order_acquire) >= expected ? SALTS_OK : SALTS_ETIMEDOUT;
 }
 
 static int chttp_h2_server_test_file_handler(void *user, const chttp_server_request_view *request,
@@ -911,6 +934,575 @@ static void chttp_h2_server_test_stop_thread(void *user) {
 }
 
 spec("CHTTP background HTTP/2 server") {
+  it("completes an h2c response through a cross-thread deferred handle") {
+    chttp_server server = {0};
+    chttp_async_client client = {0};
+    chttp_server_config server_config = chttp_h2_server_test_config();
+    chttp_client_config client_config = chttp_h2_server_test_client_config();
+    chttp_h2_server_test_deferred deferred = {0};
+    chttp_h2_server_test_completion completion = {0};
+    chttp_server_deferred duplicate = CHTTP_SERVER_DEFERRED_INIT;
+    chttp_server_deferred_response response = {0};
+    chttp_request request = {0};
+    chttp_request_options options;
+    char uri[64];
+    char authority[64];
+    uint16_t port = 0u;
+    size_t completions = 0u;
+    size_t polls = 0u;
+
+    atomic_init(&deferred.admitted, 0);
+    server_config.session_capacity = 0u;
+    server_config.session_entry_capacity = 0u;
+    server_config.max_session_key_bytes = 0u;
+    server_config.max_session_value_bytes = 0u;
+    server_config.session_idle_timeout_ms = 0u;
+    server_config.session_cookie_name = NULL;
+    check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
+    check_equal(
+        chttp_server_get(&server, "/deferred", chttp_h2_server_test_deferred_handler, &deferred),
+        SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_h2_server_test_endpoint(port, uri, sizeof(uri), authority, sizeof(authority)),
+                SALTS_OK);
+    check_equal(chttp_async_client_init(&client, &client_config), SALTS_OK);
+    options = (chttp_request_options){.connection_uri = uri,
+                                      .authority = authority,
+                                      .target = "/deferred",
+                                      .method = CHTTP_METHOD_GET,
+                                      .on_complete = chttp_h2_server_test_complete,
+                                      .user = &completion,
+                                      .protocol = CHTTP_HTTP_2};
+    check_equal(chttp_async_client_submit(&client, &options, &request), SALTS_OK);
+    while (!atomic_load_explicit(&deferred.admitted, memory_order_acquire) && polls++ < 40u)
+      check_equal(chttp_async_client_poll(&client, 25u, &completions), SALTS_OK);
+
+    check_equal(atomic_load_explicit(&deferred.admitted, memory_order_acquire), 1);
+    check_equal(deferred.defer_status, SALTS_OK);
+    response.size = sizeof(response);
+    response.status_code = 202u;
+    response.content_type = "text/plain";
+    response.body = "later";
+    response.body_size = 5u;
+    duplicate = deferred.handle;
+    check_equal(chttp_server_deferred_reply(&deferred.handle, &response), SALTS_OK);
+    {
+      const int duplicate_status = chttp_server_deferred_reply(&duplicate, &response);
+      check_true(duplicate_status == SALTS_EALREADY || duplicate_status == SALTS_ENOENT);
+    }
+    while (completion.calls == 0u && polls++ < 80u)
+      check_equal(chttp_async_client_poll(&client, 25u, &completions), SALTS_OK);
+
+    check_equal(completion.calls, 1u);
+    check_equal(completion.status, SALTS_OK);
+    check_equal(completion.response_status, 202u);
+    check_equal(completion.body, "later");
+    check_equal(chttp_async_client_stop(&client, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_async_client_destroy(&client), SALTS_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("submits a deferred stream while a sibling remains flow-control blocked") {
+    static const char blocked_body[] = "blocked";
+    static const chttp_h2_server_test_payload payload = {blocked_body, sizeof(blocked_body) - 1u};
+    static const chttp_h2_hpack_header blocked_headers[] = {
+        {":method", sizeof(":method") - 1u, "GET", sizeof("GET") - 1u},
+        {":scheme", sizeof(":scheme") - 1u, "http", sizeof("http") - 1u},
+        {":path", sizeof(":path") - 1u, "/blocked", sizeof("/blocked") - 1u},
+        {":authority", sizeof(":authority") - 1u, "localhost", sizeof("localhost") - 1u}};
+    static const chttp_h2_hpack_header deferred_headers[] = {
+        {":method", sizeof(":method") - 1u, "GET", sizeof("GET") - 1u},
+        {":scheme", sizeof(":scheme") - 1u, "http", sizeof("http") - 1u},
+        {":path", sizeof(":path") - 1u, "/deferred", sizeof("/deferred") - 1u},
+        {":authority", sizeof(":authority") - 1u, "localhost", sizeof("localhost") - 1u}};
+    static const chttp_h2_hpack_header barrier_headers[] = {
+        {":method", sizeof(":method") - 1u, "HEAD", sizeof("HEAD") - 1u},
+        {":scheme", sizeof(":scheme") - 1u, "http", sizeof("http") - 1u},
+        {":path", sizeof(":path") - 1u, "/barrier", sizeof("/barrier") - 1u},
+        {":authority", sizeof(":authority") - 1u, "localhost", sizeof("localhost") - 1u}};
+    static const chttp_server_deferred_response response = {
+        .size = sizeof(chttp_server_deferred_response), .status_code = 204u};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_h2_server_test_config();
+    chttp_h2_server_test_deferred deferred = {0};
+    chttp_h2_server_test_peer peer = {0};
+    chttp_h2_server_test_socket socket_value = CHTTP_H2_SERVER_TEST_INVALID_SOCKET;
+    uint16_t port = 0u;
+
+    atomic_init(&deferred.admitted, 0);
+    config.session_capacity = 0u;
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_get(&server, "/blocked", chttp_h2_server_test_payload_handler,
+                                 (void *)&payload),
+                SALTS_OK);
+    check_equal(
+        chttp_server_get(&server, "/deferred", chttp_h2_server_test_deferred_handler, &deferred),
+        SALTS_OK);
+    check_equal(chttp_server_head(&server, "/barrier", chttp_h2_server_test_head_handler, NULL),
+                SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_h2_server_test_socket_connect(port, &socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_init(&peer), SALTS_OK);
+    check_equal(chttp_h2_proto_set_local_settings(peer.protocol, 4096u, 0u, 8u, 0u, 16384u, 4096u),
+                0);
+    check_equal(chttp_h2_server_test_peer_submit(
+                    &peer, blocked_headers, sizeof(blocked_headers) / sizeof(blocked_headers[0])),
+                SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_receive(&peer, socket_value, 1u), SALTS_OK);
+    check_equal(peer.results[0].status, 200u);
+    check(!peer.results[0].closed);
+
+    check_equal(
+        chttp_h2_server_test_peer_submit(&peer, deferred_headers,
+                                         sizeof(deferred_headers) / sizeof(deferred_headers[0])),
+        SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_wait_atomic(&deferred.admitted, 1), SALTS_OK);
+    check_equal(deferred.defer_status, SALTS_OK);
+    check_equal(chttp_server_deferred_reply(&deferred.handle, &response), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_submit(
+                    &peer, barrier_headers, sizeof(barrier_headers) / sizeof(barrier_headers[0])),
+                SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_pump(&peer, socket_value, 2u), SALTS_OK);
+    check(peer.results[1].closed);
+    check_equal(peer.results[1].error_code, CHTTP_H2_ERR_NO_ERROR);
+    check_equal(peer.results[1].status, 204u);
+    check(peer.results[2].closed);
+    check_equal(peer.results[2].status, 200u);
+
+    check_equal(chttp_h2_proto_submit_rst_stream(peer.protocol, peer.results[0].stream_id,
+                                                 CHTTP_H2_ERR_CANCEL),
+                0);
+    if (!peer.results[1].closed)
+      check_equal(chttp_h2_proto_submit_rst_stream(peer.protocol, peer.results[1].stream_id,
+                                                   CHTTP_H2_ERR_CANCEL),
+                  0);
+    check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    chttp_h2_server_test_peer_destroy(&peer);
+    chttp_h2_server_test_socket_close(socket_value);
+    check_equal(chttp_server_stop(&server, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("completes a deferred response on TLS negotiated ALPN h2") {
+    static const char *alpn[] = {"h2"};
+    char *cert_path = tt_make_temp_file("chttp-h2-deferred-cert", ".pem");
+    char *key_path = tt_make_temp_file("chttp-h2-deferred-key", ".pem");
+    chttp_server server = {0};
+    chttp_async_client client = {0};
+    chttp_tls_profile profile = {0};
+    chttp_server_config server_config = chttp_h2_server_test_config();
+    chttp_client_config client_config = chttp_h2_server_test_client_config();
+    chttp_h2_server_test_deferred deferred = {0};
+    chttp_h2_server_test_completion completion = {0};
+    cnet_tls_server_config server_tls;
+    cnet_tls_client_config client_tls;
+    chttp_server_deferred_response response = {.size = sizeof(response),
+                                               .status_code = 202u,
+                                               .content_type = "text/plain",
+                                               .body = "tls-later",
+                                               .body_size = sizeof("tls-later") - 1u};
+    chttp_request request = {0};
+    chttp_request_options options;
+    char uri[64];
+    uint16_t port = 0u;
+    size_t completions = 0u;
+    size_t polls = 0u;
+
+    check_not_null(cert_path);
+    check_not_null(key_path);
+    check_equal(tt_write_file(cert_path, CHTTP_TLS_TEST_CERTIFICATE,
+                              sizeof(CHTTP_TLS_TEST_CERTIFICATE) - 1u),
+                0);
+    check_equal(tt_write_file(key_path, CHTTP_TLS_TEST_KEY, sizeof(CHTTP_TLS_TEST_KEY) - 1u), 0);
+    atomic_init(&deferred.admitted, 0);
+    server_config.session_capacity = 0u;
+    server_config.network.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    server_config.network.tls_handshake_timeout_ms = CHTTP_H2_SERVER_TEST_TIMEOUT_MS;
+    client_config.network.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    client_config.network.tls_handshake_timeout_ms = CHTTP_H2_SERVER_TEST_TIMEOUT_MS;
+    server_tls = (cnet_tls_server_config){.size = sizeof(server_tls),
+                                          .cert_file = cert_path,
+                                          .key_file = key_path,
+                                          .client_auth = CNET_TLS_CLIENT_AUTH_NONE,
+                                          .alpn_protocols = alpn,
+                                          .alpn_protocol_count = 1u};
+    client_tls = (cnet_tls_client_config){.size = sizeof(client_tls),
+                                          .ca_file = cert_path,
+                                          .server_name = "localhost",
+                                          .alpn_protocols = alpn,
+                                          .alpn_protocol_count = 1u};
+    server_config.tls = &server_tls;
+
+    check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
+    check_equal(
+        chttp_server_get(&server, "/deferred", chttp_h2_server_test_deferred_handler, &deferred),
+        SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tls://127.0.0.1:%u", (unsigned int)port), 0);
+    check_equal(chttp_tls_profile_init(&profile, &client_tls), SALTS_OK);
+    check_equal(chttp_async_client_init(&client, &client_config), SALTS_OK);
+    options = (chttp_request_options){.connection_uri = uri,
+                                      .authority = "localhost",
+                                      .target = "/deferred",
+                                      .method = CHTTP_METHOD_GET,
+                                      .on_complete = chttp_h2_server_test_complete,
+                                      .user = &completion,
+                                      .tls = &profile,
+                                      .protocol = CHTTP_HTTP_2};
+    check_equal(chttp_async_client_submit(&client, &options, &request), SALTS_OK);
+    while (!atomic_load_explicit(&deferred.admitted, memory_order_acquire) && polls++ < 80u)
+      check_equal(chttp_async_client_poll(&client, 25u, &completions), SALTS_OK);
+    check_equal(deferred.defer_status, SALTS_OK);
+    check_equal(chttp_server_deferred_reply(&deferred.handle, &response), SALTS_OK);
+    while (completion.calls == 0u && polls++ < 120u)
+      check_equal(chttp_async_client_poll(&client, 25u, &completions), SALTS_OK);
+
+    check_equal(completion.calls, 1u);
+    check_equal(completion.status, SALTS_OK);
+    check_equal(completion.response_status, 202u);
+    check_equal(completion.body, "tls-later");
+    check_equal(chttp_async_client_stop(&client, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_async_client_destroy(&client), SALTS_OK);
+    check_equal(chttp_tls_profile_destroy(&profile), SALTS_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+    check_equal(tt_remove_file(cert_path), 0);
+    check_equal(tt_remove_file(key_path), 0);
+    free(cert_path);
+    free(key_path);
+  }
+
+  it("bounds deferred response copies and rejects a stale H2 generation") {
+    static const chttp_h2_hpack_header headers[] = {
+        {":method", sizeof(":method") - 1u, "GET", sizeof("GET") - 1u},
+        {":scheme", sizeof(":scheme") - 1u, "http", sizeof("http") - 1u},
+        {":path", sizeof(":path") - 1u, "/deferred", sizeof("/deferred") - 1u},
+        {":authority", sizeof(":authority") - 1u, "localhost", sizeof("localhost") - 1u}};
+    unsigned char oversized[4097] = {0};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_h2_server_test_config();
+    chttp_h2_server_test_deferred deferred = {0};
+    chttp_server_deferred stale = CHTTP_SERVER_DEFERRED_INIT;
+    chttp_server_deferred_response response = {.size = sizeof(response),
+                                               .status_code = 200u,
+                                               .content_type = "application/octet-stream",
+                                               .body = oversized,
+                                               .body_size = sizeof(oversized)};
+    chttp_h2_server_test_peer peer = {0};
+    chttp_h2_server_test_socket socket_value = CHTTP_H2_SERVER_TEST_INVALID_SOCKET;
+    uint16_t port = 0u;
+    int duplicate_status;
+
+    atomic_init(&deferred.admitted, 0);
+    config.session_capacity = 0u;
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(
+        chttp_server_get(&server, "/deferred", chttp_h2_server_test_deferred_handler, &deferred),
+        SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_h2_server_test_socket_connect(port, &socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_init(&peer), SALTS_OK);
+    check_equal(
+        chttp_h2_server_test_peer_submit(&peer, headers, sizeof(headers) / sizeof(headers[0])),
+        SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_wait_atomic(&deferred.admitted, 1), SALTS_OK);
+
+    stale = deferred.handle;
+    check_equal(chttp_server_deferred_reply(&deferred.handle, &response), SALTS_EMSGSIZE);
+    check_not_null(deferred.handle.impl);
+    check_equal(chttp_server_deferred_cancel(&deferred.handle), SALTS_OK);
+    duplicate_status = chttp_server_deferred_cancel(&stale);
+    check_true(duplicate_status == SALTS_EALREADY || duplicate_status == SALTS_ENOENT);
+    check_equal(chttp_h2_server_test_peer_pump(&peer, socket_value, 1u), SALTS_OK);
+
+    check_equal(
+        chttp_h2_server_test_peer_submit(&peer, headers, sizeof(headers) / sizeof(headers[0])),
+        SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_wait_atomic(&deferred.admitted, 2), SALTS_OK);
+    check_true(deferred.handle.generation != stale.generation);
+    check_equal(chttp_server_deferred_cancel(&stale), SALTS_ENOENT);
+    check_equal(chttp_server_deferred_cancel(&deferred.handle), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_pump(&peer, socket_value, 2u), SALTS_OK);
+
+    chttp_h2_server_test_peer_destroy(&peer);
+    chttp_h2_server_test_socket_close(socket_value);
+    check_equal(chttp_server_stop(&server, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("retires a reset deferred stream without failing its H2 sibling") {
+    static const chttp_h2_hpack_header deferred_headers[] = {
+        {":method", sizeof(":method") - 1u, "GET", sizeof("GET") - 1u},
+        {":scheme", sizeof(":scheme") - 1u, "http", sizeof("http") - 1u},
+        {":path", sizeof(":path") - 1u, "/deferred", sizeof("/deferred") - 1u},
+        {":authority", sizeof(":authority") - 1u, "localhost", sizeof("localhost") - 1u}};
+    static const chttp_h2_hpack_header sibling_headers[] = {
+        {":method", sizeof(":method") - 1u, "GET", sizeof("GET") - 1u},
+        {":scheme", sizeof(":scheme") - 1u, "http", sizeof("http") - 1u},
+        {":path", sizeof(":path") - 1u, "/values/sibling", sizeof("/values/sibling") - 1u},
+        {":authority", sizeof(":authority") - 1u, "localhost", sizeof("localhost") - 1u}};
+    static const chttp_server_deferred_response response = {
+        .size = sizeof(chttp_server_deferred_response),
+        .status_code = 200u,
+        .content_type = "text/plain",
+        .body = "too-late",
+        .body_size = sizeof("too-late") - 1u};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_h2_server_test_config();
+    chttp_h2_server_test_deferred deferred = {0};
+    chttp_server_deferred stale = CHTTP_SERVER_DEFERRED_INIT;
+    chttp_h2_server_test_peer peer = {0};
+    chttp_h2_server_test_socket socket_value = CHTTP_H2_SERVER_TEST_INVALID_SOCKET;
+    uint16_t port = 0u;
+
+    atomic_init(&deferred.admitted, 0);
+    config.session_capacity = 0u;
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(
+        chttp_server_get(&server, "/deferred", chttp_h2_server_test_deferred_handler, &deferred),
+        SALTS_OK);
+    check_equal(
+        chttp_server_get(&server, "/values/:value", chttp_h2_server_test_value_handler, NULL),
+        SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_h2_server_test_socket_connect(port, &socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_init(&peer), SALTS_OK);
+    check_equal(
+        chttp_h2_server_test_peer_submit(&peer, deferred_headers,
+                                         sizeof(deferred_headers) / sizeof(deferred_headers[0])),
+        SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_submit(
+                    &peer, sibling_headers, sizeof(sibling_headers) / sizeof(sibling_headers[0])),
+                SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_wait_atomic(&deferred.admitted, 1), SALTS_OK);
+    stale = deferred.handle;
+    check_equal(chttp_h2_proto_submit_rst_stream(peer.protocol, peer.results[0].stream_id,
+                                                 CHTTP_H2_ERR_CANCEL),
+                0);
+    check_equal(chttp_h2_server_test_peer_pump(&peer, socket_value, 2u), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_submit(
+                    &peer, sibling_headers, sizeof(sibling_headers) / sizeof(sibling_headers[0])),
+                SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_pump(&peer, socket_value, 3u), SALTS_OK);
+
+    check_equal(chttp_server_deferred_reply(&stale, &response), SALTS_ENOENT);
+    check_equal(peer.results[0].error_code, CHTTP_H2_ERR_CANCEL);
+    check_equal(peer.results[1].error_code, CHTTP_H2_ERR_NO_ERROR);
+    check_equal(peer.results[1].status, 200u);
+    check_equal(peer.results[1].body, "sibling");
+    check_equal(peer.results[2].error_code, CHTTP_H2_ERR_NO_ERROR);
+    check_equal(peer.results[2].status, 200u);
+
+    chttp_h2_server_test_peer_destroy(&peer);
+    chttp_h2_server_test_socket_close(socket_value);
+    check_equal(chttp_server_stop(&server, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("quarantines a reset H2 stream while a terminal writer owns its generation") {
+    static const chttp_h2_hpack_header deferred_headers[] = {
+        {":method", sizeof(":method") - 1u, "GET", sizeof("GET") - 1u},
+        {":scheme", sizeof(":scheme") - 1u, "http", sizeof("http") - 1u},
+        {":path", sizeof(":path") - 1u, "/deferred", sizeof("/deferred") - 1u},
+        {":authority", sizeof(":authority") - 1u, "localhost", sizeof("localhost") - 1u}};
+    static const chttp_h2_hpack_header sibling_headers[] = {
+        {":method", sizeof(":method") - 1u, "GET", sizeof("GET") - 1u},
+        {":scheme", sizeof(":scheme") - 1u, "http", sizeof("http") - 1u},
+        {":path", sizeof(":path") - 1u, "/values/barrier", sizeof("/values/barrier") - 1u},
+        {":authority", sizeof(":authority") - 1u, "localhost", sizeof("localhost") - 1u}};
+    static const chttp_server_deferred_response response = {
+        .size = sizeof(chttp_server_deferred_response),
+        .status_code = 200u,
+        .content_type = "text/plain",
+        .body = "discarded",
+        .body_size = sizeof("discarded") - 1u};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_h2_server_test_config();
+    chttp_h2_server_test_deferred deferred = {0};
+    chttp_server_deferred stale = CHTTP_SERVER_DEFERRED_INIT;
+    chttp_server_deferred_target *target;
+    chttp_h2_server_test_peer peer = {0};
+    chttp_h2_server_test_socket socket_value = CHTTP_H2_SERVER_TEST_INVALID_SOCKET;
+    uint64_t deadline;
+    uint16_t port = 0u;
+
+    atomic_init(&deferred.admitted, 0);
+    config.session_capacity = 0u;
+    config.h2_stream_capacity = 2u;
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(
+        chttp_server_get(&server, "/deferred", chttp_h2_server_test_deferred_handler, &deferred),
+        SALTS_OK);
+    check_equal(
+        chttp_server_get(&server, "/values/:value", chttp_h2_server_test_value_handler, NULL),
+        SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_h2_server_test_socket_connect(port, &socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_init(&peer), SALTS_OK);
+    check_equal(
+        chttp_h2_server_test_peer_submit(&peer, deferred_headers,
+                                         sizeof(deferred_headers) / sizeof(deferred_headers[0])),
+        SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_submit(
+                    &peer, sibling_headers, sizeof(sibling_headers) / sizeof(sibling_headers[0])),
+                SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_wait_atomic(&deferred.admitted, 1), SALTS_OK);
+    stale = deferred.handle;
+    target = (chttp_server_deferred_target *)stale.impl;
+    check_not_null(target);
+    check_equal(chttp_server_deferred_claim(target->token, stale.generation), SALTS_OK);
+    check_equal(chttp_h2_proto_submit_rst_stream(peer.protocol, peer.results[0].stream_id,
+                                                 CHTTP_H2_ERR_CANCEL),
+                0);
+    check_equal(chttp_h2_server_test_peer_pump(&peer, socket_value, 2u), SALTS_OK);
+    check_equal(chttp_server_deferred_token_state(
+                    atomic_load_explicit(target->token, memory_order_acquire)),
+                CHTTP_SERVER_DEFERRED_WRITING);
+
+    atomic_store_explicit(
+        target->token,
+        chttp_server_deferred_token(stale.generation, CHTTP_SERVER_DEFERRED_CANCELED),
+        memory_order_release);
+    check_equal(cnet_client_wake(&target->server->network), SALTS_OK);
+    deadline = salts_monotonic_ms() + CHTTP_H2_SERVER_TEST_TIMEOUT_MS;
+    while (chttp_server_deferred_token_state(atomic_load_explicit(
+               target->token, memory_order_acquire)) != CHTTP_SERVER_DEFERRED_IDLE &&
+           salts_monotonic_ms() < deadline)
+      salts_thread_yield();
+    check_equal(chttp_server_deferred_token_state(
+                    atomic_load_explicit(target->token, memory_order_acquire)),
+                CHTTP_SERVER_DEFERRED_IDLE);
+    check_equal(chttp_server_deferred_reply(&stale, &response), SALTS_ENOENT);
+
+    chttp_h2_server_test_peer_destroy(&peer);
+    chttp_h2_server_test_socket_close(socket_value);
+    check_equal(chttp_server_stop(&server, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("makes a deferred H2 handle stale after peer connection close") {
+    static const chttp_h2_hpack_header headers[] = {
+        {":method", sizeof(":method") - 1u, "GET", sizeof("GET") - 1u},
+        {":scheme", sizeof(":scheme") - 1u, "http", sizeof("http") - 1u},
+        {":path", sizeof(":path") - 1u, "/deferred", sizeof("/deferred") - 1u},
+        {":authority", sizeof(":authority") - 1u, "localhost", sizeof("localhost") - 1u}};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_h2_server_test_config();
+    chttp_h2_server_test_deferred deferred = {0};
+    chttp_server_deferred stale = CHTTP_SERVER_DEFERRED_INIT;
+    chttp_server_stats stats = {0};
+    chttp_h2_server_test_peer peer = {0};
+    chttp_h2_server_test_socket socket_value = CHTTP_H2_SERVER_TEST_INVALID_SOCKET;
+    uint64_t deadline;
+    uint16_t port = 0u;
+
+    atomic_init(&deferred.admitted, 0);
+    config.session_capacity = 0u;
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(
+        chttp_server_get(&server, "/deferred", chttp_h2_server_test_deferred_handler, &deferred),
+        SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_h2_server_test_socket_connect(port, &socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_init(&peer), SALTS_OK);
+    check_equal(
+        chttp_h2_server_test_peer_submit(&peer, headers, sizeof(headers) / sizeof(headers[0])),
+        SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_wait_atomic(&deferred.admitted, 1), SALTS_OK);
+    stale = deferred.handle;
+
+    chttp_h2_server_test_socket_close(socket_value);
+    socket_value = CHTTP_H2_SERVER_TEST_INVALID_SOCKET;
+    deadline = salts_monotonic_ms() + CHTTP_H2_SERVER_TEST_TIMEOUT_MS;
+    do {
+      check_equal(chttp_server_get_stats(&server, &stats), SALTS_OK);
+      if (stats.active_connections == 0u) break;
+      salts_thread_yield();
+    } while (salts_monotonic_ms() < deadline);
+    check_equal(stats.active_connections, 0u);
+    check_equal(chttp_server_deferred_cancel(&stale), SALTS_ENOENT);
+
+    chttp_h2_server_test_peer_destroy(&peer);
+    check_equal(chttp_server_stop(&server, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("drains an admitted deferred stream after GOAWAY before stopping") {
+    static const chttp_h2_hpack_header headers[] = {
+        {":method", sizeof(":method") - 1u, "GET", sizeof("GET") - 1u},
+        {":scheme", sizeof(":scheme") - 1u, "http", sizeof("http") - 1u},
+        {":path", sizeof(":path") - 1u, "/deferred", sizeof("/deferred") - 1u},
+        {":authority", sizeof(":authority") - 1u, "localhost", sizeof("localhost") - 1u}};
+    static const chttp_server_deferred_response response = {
+        .size = sizeof(chttp_server_deferred_response),
+        .status_code = 202u,
+        .content_type = "text/plain",
+        .body = "after-goaway",
+        .body_size = sizeof("after-goaway") - 1u};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_h2_server_test_config();
+    chttp_h2_server_test_deferred deferred = {0};
+    chttp_h2_server_test_peer peer = {0};
+    chttp_h2_server_test_socket socket_value = CHTTP_H2_SERVER_TEST_INVALID_SOCKET;
+    uint16_t port = 0u;
+    size_t attempts = 0u;
+    int receive_status;
+
+    atomic_init(&deferred.admitted, 0);
+    config.session_capacity = 0u;
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(
+        chttp_server_get(&server, "/deferred", chttp_h2_server_test_deferred_handler, &deferred),
+        SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_h2_server_test_socket_connect(port, &socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_init(&peer), SALTS_OK);
+    check_equal(
+        chttp_h2_server_test_peer_submit(&peer, headers, sizeof(headers) / sizeof(headers[0])),
+        SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    check_equal(chttp_h2_server_test_wait_atomic(&deferred.admitted, 1), SALTS_OK);
+
+    check_equal(chttp_server_stop(&server, 10u), SALTS_ETIMEDOUT);
+    while (peer.goaway_count == 0u && attempts++ < 8u) {
+      check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+      check_equal(chttp_h2_server_test_peer_receive_once(&peer, socket_value), SALTS_OK);
+    }
+    check_equal(peer.goaway_count, 1u);
+    check_equal(peer.goaway_error, CHTTP_H2_ERR_NO_ERROR);
+
+    check_equal(chttp_server_deferred_reply(&deferred.handle, &response), SALTS_OK);
+    check_equal(chttp_h2_server_test_peer_pump(&peer, socket_value, 1u), SALTS_OK);
+    check_equal(peer.results[0].error_code, CHTTP_H2_ERR_NO_ERROR);
+    check_equal(peer.results[0].status, 202u);
+    check_equal(peer.results[0].body, "after-goaway");
+    check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    receive_status = chttp_h2_server_test_peer_receive_once(&peer, socket_value);
+    if (receive_status == SALTS_OK)
+      check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_H2_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+
+    chttp_h2_server_test_peer_destroy(&peer);
+    chttp_h2_server_test_socket_close(socket_value);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
   it("advertises and accepts RFC 8441 WebSocket extended CONNECT") {
     static const chttp_h2_hpack_header headers[] = {
         {":method", sizeof(":method") - 1u, "CONNECT", sizeof("CONNECT") - 1u},
@@ -998,12 +1590,11 @@ spec("CHTTP background HTTP/2 server") {
     chttp_jwt_bearer_validator validator = {0};
     chttp_server server = {0};
     chttp_server_config config = chttp_h2_server_test_config();
-    chttp_server_websocket_options websocket_options = {
-        .size = sizeof(websocket_options),
-        .path = "/jwt-ws/:id",
-        .on_open = chttp_h2_websocket_jwt_open,
-        .on_event = chttp_h2_websocket_event,
-        .user = &probe};
+    chttp_server_websocket_options websocket_options = {.size = sizeof(websocket_options),
+                                                        .path = "/jwt-ws/:id",
+                                                        .on_open = chttp_h2_websocket_jwt_open,
+                                                        .on_event = chttp_h2_websocket_event,
+                                                        .user = &probe};
     chttp_h2_server_test_peer peer = {0};
     chttp_h2_server_test_socket socket_value = CHTTP_H2_SERVER_TEST_INVALID_SOCKET;
     chttp_header authorization = {0};
@@ -1021,8 +1612,8 @@ spec("CHTTP background HTTP/2 server") {
                 SALTS_OK);
     memcpy(authorized, base_headers, sizeof(base_headers));
     authorized[sizeof(base_headers) / sizeof(base_headers[0])] =
-        (chttp_h2_hpack_header){"authorization", sizeof("authorization") - 1u,
-                                authorization.value, strlen(authorization.value)};
+        (chttp_h2_hpack_header){"authorization", sizeof("authorization") - 1u, authorization.value,
+                                strlen(authorization.value)};
 
     check_equal(chttp_jwt_bearer_validator_init(&validator, &validator_options), SALTS_OK);
     check_equal(chttp_server_init(&server, &config), SALTS_OK);
@@ -1037,19 +1628,19 @@ spec("CHTTP background HTTP/2 server") {
     check(chttp_h2_proto_peer_settings_received(peer.protocol));
     check_equal(chttp_h2_proto_peer_enable_connect_protocol(peer.protocol), 1u);
 
-    check_equal(chttp_h2_server_test_peer_submit_tunnel(
-                    &peer, base_headers, sizeof(base_headers) / sizeof(base_headers[0]),
-                    &anonymous_stream),
-                SALTS_OK);
+    check_equal(
+        chttp_h2_server_test_peer_submit_tunnel(
+            &peer, base_headers, sizeof(base_headers) / sizeof(base_headers[0]), &anonymous_stream),
+        SALTS_OK);
     check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
     check_equal(chttp_h2_server_test_peer_receive(&peer, socket_value, 1u), SALTS_OK);
     check_equal(peer.results[0].stream_id, anonymous_stream);
     check_equal(peer.results[0].status, 401u);
     check_equal(atomic_load_explicit(&probe.opens, memory_order_acquire), 0);
 
-    check_equal(chttp_h2_server_test_peer_submit_tunnel(
-                    &peer, authorized, sizeof(authorized) / sizeof(authorized[0]),
-                    &authorized_stream),
+    check_equal(chttp_h2_server_test_peer_submit_tunnel(&peer, authorized,
+                                                        sizeof(authorized) / sizeof(authorized[0]),
+                                                        &authorized_stream),
                 SALTS_OK);
     check_equal(chttp_h2_server_test_peer_send(&peer, socket_value), SALTS_OK);
     check_equal(chttp_h2_server_test_peer_receive(&peer, socket_value, 2u), SALTS_OK);
