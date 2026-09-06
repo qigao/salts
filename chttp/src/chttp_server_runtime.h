@@ -109,7 +109,11 @@ struct chttp_server_request_state {
   chttp_session_context session_context;
   void *jwt_owner;
   chttp_jwt_claims_view jwt_claims;
-  bool jwt_body_rejected;
+  chttp_server_route_record *admitted_route;
+  unsigned int admitted_allowed_methods;
+  unsigned int admitted_fallback_status;
+  bool admission_complete;
+  bool admission_rejected;
   chttp_server_route_record *body_route;
   chttp_body_sink body_sink;
   bool body_sink_open;
@@ -209,6 +213,7 @@ struct chttp_server_impl {
   char *route_paths;
   chttp_server_middleware *route_middleware;
   chttp_server_middleware *middleware;
+  chttp_jwt_bearer_validator *jwt_bearer_validator;
   size_t route_count;
   size_t middleware_count;
   size_t max_response_wire_bytes;
@@ -262,6 +267,9 @@ int chttp_server_error_serialize(unsigned int status_code, unsigned char *output
 int chttp_server_request_state_init(chttp_server_request_state *state, chttp_server_impl *server);
 void chttp_server_request_state_reset(chttp_server_request_state *state);
 void chttp_server_request_state_destroy(chttp_server_request_state *state);
+int chttp_server_request_admit(chttp_server_request_state *state,
+                               const chttp_server_request_view *request,
+                               chttp_method route_method);
 int chttp_server_dispatch_request(chttp_server_request_state *state,
                                   const chttp_server_request_view *request);
 int chttp_server_request_body_open(chttp_server_request_state *state,
