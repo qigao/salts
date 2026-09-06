@@ -141,3 +141,5 @@ install(
   FILE SaltsTargets.cmake
   NAMESPACE Salts::
   DESTINATION "lib/cmake/Salts")
+
+# Temporary #214 exact-head CI trigger; remove at the final cleanup/review gate.
