@@ -115,6 +115,7 @@ static int cnet_listener_native_status(int error) {
   if (error == ENETDOWN) return SALTS_ENETDOWN;
   if (error == ENETUNREACH) return SALTS_ENETUNREACH;
   if (error == ENFILE) return SALTS_ENFILE;
+  if (error == ENODEV) return SALTS_ENODEV;
   if (error == ENOBUFS) return SALTS_ENOBUFS;
   if (error == ENOMEM) return SALTS_ENOMEM;
   if (error == ENOPROTOOPT) return SALTS_ENOPROTOOPT;
@@ -508,9 +509,9 @@ int cnet_listener_accept_vsock_peer(cnet_listener *listener, cnet_client *client
   cnet_listener_socket accepted;
   int status;
 #endif
+  if (out_peer != NULL) *out_peer = (cnet_vsock_peer){0};
   if (out_connection == NULL) return SALTS_EINVAL;
   *out_connection = (cnet_connection){0};
-  if (out_peer != NULL) *out_peer = (cnet_vsock_peer){0};
   if (impl == NULL || client == NULL || observer == NULL || observer->on_state == NULL ||
       out_peer == NULL)
     return SALTS_EINVAL;

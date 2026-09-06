@@ -41,7 +41,8 @@ static void cnet_vsock_test_receive(void *user, cnet_connection connection,
 
 static int cnet_vsock_test_runtime_unavailable(int status) {
   return status == SALTS_EAFNOSUPPORT || status == SALTS_EPROTONOSUPPORT ||
-         status == SALTS_ENOTSUP || status == SALTS_EADDRNOTAVAIL || status == SALTS_EPERM;
+         status == SALTS_ENOTSUP || status == SALTS_EADDRNOTAVAIL || status == SALTS_ENODEV ||
+         status == SALTS_EPERM;
 }
 
 static int cnet_vsock_test_poll_until(cnet_client *client, const int *condition) {

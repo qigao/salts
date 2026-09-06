@@ -63,8 +63,11 @@ spec("CNet strict transport URI") {
     check_equal(cnet_uri_parse("vsock://:5000", &uri), SALTS_EINVAL);
     check_equal(cnet_uri_parse("vsock://2:", &uri), SALTS_EINVAL);
     check_equal(cnet_uri_parse("vsock://2:5000:1", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://user@2:5000", &uri), SALTS_EINVAL);
     check_equal(cnet_uri_parse("vsock://-1:5000", &uri), SALTS_EINVAL);
     check_equal(cnet_uri_parse("vsock://2:+5000", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock:// 2:5000", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://2:5000 ", &uri), SALTS_EINVAL);
     check_equal(cnet_uri_parse("vsock://2:5000/path", &uri), SALTS_EINVAL);
     check_equal(cnet_uri_parse("vsock://2:5000?query", &uri), SALTS_EINVAL);
     check_equal(cnet_uri_parse("vsock://2:5000#fragment", &uri), SALTS_EINVAL);

@@ -404,6 +404,11 @@ spec("CNet public client API") {
 
     check_equal(cnet_listener_init(&listener, &tcp_config), SALTS_OK);
     check_equal(cnet_client_init(&client, &client_config), SALTS_OK);
+    check_equal(cnet_listener_accept_vsock_peer(&listener, &client, &observer, NULL, &peer),
+                SALTS_EINVAL);
+    check_equal(peer.cid, 0u);
+    check_equal(peer.port, 0u);
+    peer = (cnet_vsock_peer){17u, 19u};
     check_equal(cnet_listener_vsock_local(&listener, &local), SALTS_ENOTSUP);
     check_equal(local.cid, 0u);
     check_equal(local.port, 0u);
