@@ -1,0 +1,35 @@
+name: CHTTP task1 fast RED
+
+on:
+  push:
+    branches:
+      - agent/chttp-h2-deferred-task1
+
+permissions:
+  contents: read
+
+jobs:
+  private-compile-red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compile private deferred-control probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t include_dirs < <(find . -type d -name include -print)
+          args=(-std=c11 -Wall -Wextra -Wpedantic -fsyntax-only -I chttp/src)
+          for dir in "${include_dirs[@]}"; do
+            args+=( -I "$dir" )
+          done
+          gcc "${args[@]}" -x c - <<'EOF'
+          #include "chttp_server_runtime.h"
+
+          int main(void) {
+            chttp_server_deferred_control control = {0};
+            return chttp_server_deferred_control_state(&control) == CHTTP_SERVER_DEFERRED_IDLE
+                       ? 0
+                       : 1;
+          }
+          EOF
