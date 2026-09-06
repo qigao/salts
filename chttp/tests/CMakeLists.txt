@@ -10,7 +10,7 @@ set_target_properties(chttp_request_test PROPERTIES
 
 cmake_add_test(chttp_response_test
   SOURCES chttp_response_test.c
-  LIBS salts_chttp llhttp::llhttp_static Salts::TinyTest
+  LIBS salts_chttp llhttp::llhttp_static Salts::CFlow Salts::TinyTest
   INCLUDES ../src
   FOLDER "chttp/tests")
 set_target_properties(chttp_response_test PROPERTIES
