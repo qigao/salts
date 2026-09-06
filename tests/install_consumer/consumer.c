@@ -203,6 +203,7 @@ int main(void) {
                             const chttp_body_source *) = chttp_server_response_source;
   int (*response_file_fn)(chttp_server_response *, unsigned int, const char *, const char *) =
       chttp_server_response_file;
+  int (*deferred_cancel_fn)(chttp_server_deferred *) = chttp_server_deferred_cancel;
   config.h2_input_buffer_bytes = 64u * 1024u;
   server_config.enable_http2 = 1;
   server_config.h2_stream_capacity = 32u;
@@ -211,6 +212,7 @@ int main(void) {
   websocket_config.h2_max_settings_count = 16u;
   (void)response_source_fn;
   (void)response_file_fn;
+  (void)deferred_cancel_fn;
   chttp_response_destroy(&response);
   return chttp_server_response_source(NULL, 0u, NULL, NULL) == SALTS_EINVAL &&
                  chttp_server_response_file(NULL, 0u, NULL, NULL) == SALTS_EINVAL &&

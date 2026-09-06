@@ -55,6 +55,7 @@ int main() {
   chttp_websocket_session websocket_session{};
   auto *response_source = &chttp_server_response_source;
   auto *response_file = &chttp_server_response_file;
+  auto *deferred_cancel = &chttp_server_deferred_cancel;
   auto *post_file = &chttp_post_file;
   auto *put_file = &chttp_put_file;
   auto *download_file = &chttp_download_file;
@@ -62,6 +63,7 @@ int main() {
   (void)server_stats;
   (void)response_source;
   (void)response_file;
+  (void)deferred_cancel;
   (void)post_file;
   (void)put_file;
   (void)download_file;

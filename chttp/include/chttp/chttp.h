@@ -33,8 +33,9 @@ typedef struct chttp_server {
 
 /**
  * One generation-checked deferred HTTP/1.1 response. The handle is completed
- * exactly once by `chttp_server_deferred_reply()` and must not outlive the
- * server's successful stop.
+ * exactly once by `chttp_server_deferred_reply()` or
+ * `chttp_server_deferred_cancel()` and must not outlive the server's successful
+ * stop.
  */
 typedef struct chttp_server_deferred {
   void *impl;
@@ -161,14 +162,14 @@ typedef struct chttp_jwt_bearer_validator {
 
 /** Creates an owned compact HS256 JWT. The caller releases it with chttp_jwt_token_destroy(). */
 int chttp_jwt_hs256_token_create(const chttp_jwt_claims *claims, const void *key, size_t key_size,
-                                  char **out_token);
+                                 char **out_token);
 
 /** Releases a token returned by chttp_jwt_hs256_token_create(); NULL is accepted. */
 void chttp_jwt_token_destroy(char *token);
 
 /** Formats a borrowed Authorization header in caller-owned storage. */
 int chttp_jwt_bearer_header(const char *token, char *buffer, size_t buffer_size,
-                             chttp_header *out_header);
+                            chttp_header *out_header);
 
 /**
  * Pulls at most `capacity` bytes into callback-scoped storage. Return
@@ -266,9 +267,8 @@ typedef int (*chttp_server_middleware_fn)(void *user, const chttp_server_request
                                           chttp_server_response *response, chttp_server_next *next);
 
 /** Copies Bearer validation configuration. Stop all users before destroying the validator. */
-int chttp_jwt_bearer_validator_init(
-    chttp_jwt_bearer_validator *validator,
-    const chttp_jwt_bearer_validator_options *options);
+int chttp_jwt_bearer_validator_init(chttp_jwt_bearer_validator *validator,
+                                    const chttp_jwt_bearer_validator_options *options);
 
 /** Releases copied validation material. The validator must no longer be registered on a server. */
 int chttp_jwt_bearer_validator_destroy(chttp_jwt_bearer_validator *validator);
@@ -462,9 +462,8 @@ typedef struct chttp_server_socket_options {
   cnet_listener_options listener;
 } chttp_server_socket_options;
 
-#define CHTTP_SERVER_SOCKET_OPTIONS_INIT                                                          \
-  {sizeof(chttp_server_socket_options), CNET_STREAM_SOCKET_OPTIONS_INIT,                           \
-   CNET_LISTENER_OPTIONS_INIT}
+#define CHTTP_SERVER_SOCKET_OPTIONS_INIT                                                           \
+  {sizeof(chttp_server_socket_options), CNET_STREAM_SOCKET_OPTIONS_INIT, CNET_LISTENER_OPTIONS_INIT}
 
 /** Thread-safe snapshot of server lifecycle and bounded admission counters. */
 typedef struct chttp_server_stats {
@@ -765,8 +764,7 @@ int chttp_server_route_with_jwt_bearer(chttp_server *server,
                                        chttp_jwt_bearer_validator *validator);
 
 /** Installs one server-wide JWT Bearer admission policy before server start. */
-int chttp_server_use_jwt_bearer(chttp_server *server,
-                                chttp_jwt_bearer_validator *validator);
+int chttp_server_use_jwt_bearer(chttp_server *server, chttp_jwt_bearer_validator *validator);
 int chttp_server_get(chttp_server *server, const char *path, chttp_server_handler_fn handler,
                      void *user);
 int chttp_server_head(chttp_server *server, const char *path, chttp_server_handler_fn handler,
@@ -787,9 +785,9 @@ int chttp_server_websocket_with(chttp_server *server,
                                 const chttp_server_websocket_options *options);
 
 /** Registers one WebSocket route protected by the supplied JWT Bearer validator. */
-int chttp_server_websocket_with_jwt_bearer(
-    chttp_server *server, const chttp_server_websocket_options *options,
-    chttp_jwt_bearer_validator *validator);
+int chttp_server_websocket_with_jwt_bearer(chttp_server *server,
+                                           const chttp_server_websocket_options *options,
+                                           chttp_jwt_bearer_validator *validator);
 
 /** Convenience WebSocket route using bounded defaults and no route middleware. */
 int chttp_server_websocket(chttp_server *server, const char *path, chttp_websocket_open_fn on_open,
@@ -806,7 +804,7 @@ int chttp_websocket_close(chttp_websocket *websocket, uint16_t code, const void 
 
 /** Capture a stable server session value while inside on_open/on_event. */
 int chttp_server_websocket_session_capture(const chttp_websocket *websocket,
-                                            chttp_server_websocket_session *out_session);
+                                           chttp_server_websocket_session *out_session);
 
 /**
  * Thread-safe copied command admission for a captured server WebSocket.
@@ -936,9 +934,9 @@ int chttp_server_response_set_header(chttp_server_response *response, const char
  * Selects one case-sensitive WebSocket subprotocol token offered by the
  * current upgrade request. The selected token is copied into the handshake.
  */
-int chttp_server_response_select_websocket_subprotocol(
-    chttp_server_response *response, const chttp_server_request_view *request,
-    const char *subprotocol);
+int chttp_server_response_select_websocket_subprotocol(chttp_server_response *response,
+                                                       const chttp_server_request_view *request,
+                                                       const char *subprotocol);
 
 /**
  * Seals the current HTTP/1.1 response and returns a cross-thread completion
@@ -951,16 +949,32 @@ int chttp_server_response_select_websocket_subprotocol(
  * `SALTS_ENOTSUP`.
  */
 int chttp_server_response_defer(chttp_server_response *response,
-                               chttp_server_deferred *out_deferred);
+                                chttp_server_deferred *out_deferred);
 
 /**
  * Thread-safe terminal completion for a deferred response. Headers and body
  * are copied into configured CHTTP bounds before success; failure leaves the
- * handle retryable. A successful call clears the handle and wakes the server
- * owner. Server stop waits for every admitted handle to complete.
+ * handle pending for an explicit retry or cancel. A successful call clears the
+ * handle and wakes the server owner. Server stop waits for every admitted
+ * handle to complete.
  */
 int chttp_server_deferred_reply(chttp_server_deferred *deferred,
                                 const chttp_server_deferred_response *response);
+
+/**
+ * Cancels one pending deferred HTTP/1.1 response without sending a replacement.
+ * Success consumes the handle, aborts request/session state on the server owner,
+ * and closes the connection because HTTP/1.1 pipelined input cannot advance past
+ * a response that will never be written.
+ *
+ * This operation is thread-safe and generation checked. Exactly one concurrent
+ * reply or cancel may claim the handle. A stale generation or owner-drained
+ * handle returns `SALTS_ENOENT`. A matching generation held in `WRITING` by
+ * another terminal operation returns `SALTS_EALREADY`; a failed reply restores
+ * `PENDING`, while a successful terminal operation keeps returning
+ * `SALTS_EALREADY` until the owner drains it.
+ */
+int chttp_server_deferred_cancel(chttp_server_deferred *deferred);
 
 /**
  * Completes the response with a copied content type and body. A second reply

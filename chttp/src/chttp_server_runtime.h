@@ -7,9 +7,9 @@
 #include <cnet/websocket.h>
 #include <salts/thread.h>
 
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdatomic.h>
 #include <stdint.h>
 
 typedef struct chttp_server_impl chttp_server_impl;
@@ -149,8 +149,38 @@ typedef enum chttp_server_deferred_state {
   CHTTP_SERVER_DEFERRED_IDLE = 0,
   CHTTP_SERVER_DEFERRED_PENDING,
   CHTTP_SERVER_DEFERRED_WRITING,
-  CHTTP_SERVER_DEFERRED_READY
+  CHTTP_SERVER_DEFERRED_READY,
+  CHTTP_SERVER_DEFERRED_CANCELED
 } chttp_server_deferred_state;
+
+#define CHTTP_SERVER_DEFERRED_TOKEN_STATE_BITS 32u
+
+static inline uint_fast64_t chttp_server_deferred_token(uint32_t generation,
+                                                        chttp_server_deferred_state state) {
+  return ((uint_fast64_t)generation << CHTTP_SERVER_DEFERRED_TOKEN_STATE_BITS) |
+         (uint_fast64_t)(uint32_t)state;
+}
+
+static inline uint32_t chttp_server_deferred_token_generation(uint_fast64_t token) {
+  return (uint32_t)(token >> CHTTP_SERVER_DEFERRED_TOKEN_STATE_BITS);
+}
+
+static inline chttp_server_deferred_state chttp_server_deferred_token_state(uint_fast64_t token) {
+  return (chttp_server_deferred_state)(uint32_t)token;
+}
+
+static inline int chttp_server_deferred_claim(atomic_uint_fast64_t *token, uint32_t generation) {
+  uint_fast64_t expected =
+      chttp_server_deferred_token(generation, CHTTP_SERVER_DEFERRED_PENDING);
+  if (atomic_compare_exchange_strong_explicit(
+          token, &expected, chttp_server_deferred_token(generation, CHTTP_SERVER_DEFERRED_WRITING),
+          memory_order_acq_rel, memory_order_acquire))
+    return SALTS_OK;
+  return chttp_server_deferred_token_generation(expected) != generation ||
+                 chttp_server_deferred_token_state(expected) == CHTTP_SERVER_DEFERRED_IDLE
+             ? SALTS_ENOENT
+             : SALTS_EALREADY;
+}
 
 typedef enum chttp_server_websocket_command_kind {
   CHTTP_SERVER_WEBSOCKET_COMMAND_TEXT = 1,
@@ -190,8 +220,7 @@ struct chttp_server_connection {
   chttp_server_wire_protocol wire_protocol;
   cnet_stream_peer peer;
   char peer_certificate_sha256[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY];
-  atomic_int deferred_state;
-  uint32_t deferred_generation;
+  atomic_uint_fast64_t deferred_token;
   bool active;
   bool connected;
   bool writing;
@@ -268,8 +297,7 @@ int chttp_server_request_state_init(chttp_server_request_state *state, chttp_ser
 void chttp_server_request_state_reset(chttp_server_request_state *state);
 void chttp_server_request_state_destroy(chttp_server_request_state *state);
 int chttp_server_request_admit(chttp_server_request_state *state,
-                               const chttp_server_request_view *request,
-                               chttp_method route_method);
+                               const chttp_server_request_view *request, chttp_method route_method);
 int chttp_server_dispatch_request(chttp_server_request_state *state,
                                   const chttp_server_request_view *request);
 int chttp_server_request_body_open(chttp_server_request_state *state,
@@ -321,8 +349,7 @@ int chttp_server_send_pending(chttp_server_connection *connection);
 int chttp_server_buffer_grow(void *context, unsigned char **buffer, size_t *capacity,
                              size_t required, size_t limit, size_t preserve_size);
 void chttp_server_buffer_release(void *context, unsigned char *buffer, size_t capacity);
-int chttp_server_connection_reserve_outbound(chttp_server_connection *connection,
-                                              size_t required);
+int chttp_server_connection_reserve_outbound(chttp_server_connection *connection, size_t required);
 void chttp_server_connection_release_outbound(chttp_server_connection *connection);
 void chttp_server_connection_close(chttp_server_connection *connection);
 void chttp_server_request_enrich(const chttp_server_connection *connection,

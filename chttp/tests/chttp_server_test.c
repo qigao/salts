@@ -68,6 +68,19 @@ typedef struct chttp_server_test_deferred_probe {
   atomic_int acquired;
 } chttp_server_test_deferred_probe;
 
+typedef struct chttp_server_test_deferred_terminal {
+  chttp_server_deferred handle;
+  atomic_int *start;
+  int cancel;
+  int status;
+} chttp_server_test_deferred_terminal;
+
+typedef struct chttp_server_test_stop {
+  chttp_server *server;
+  uint32_t timeout_ms;
+  atomic_int status;
+} chttp_server_test_stop;
+
 typedef struct chttp_server_stream_probe {
   unsigned char data[64];
   size_t size;
@@ -279,6 +292,18 @@ static int chttp_server_test_wait_active(chttp_server *server, uint64_t expected
   }
 }
 
+static int chttp_server_test_wait_stopping(chttp_server *server, uint32_t timeout_ms) {
+  const uint64_t deadline = salts_monotonic_ms() + timeout_ms;
+  for (;;) {
+    chttp_server_stats stats = {0};
+    const int status = chttp_server_get_stats(server, &stats);
+    if (status != SALTS_OK) return status;
+    if (stats.stopping != 0) return SALTS_OK;
+    if (salts_monotonic_ms() >= deadline) return SALTS_ETIMEDOUT;
+    salts_thread_yield();
+  }
+}
+
 static native_io_backend_kind chttp_server_test_backend(void) {
 #if defined(_WIN32)
   return NATIVE_IO_BACKEND_IOCP;
@@ -462,6 +487,26 @@ static void chttp_server_test_raw_client_entry(void *user) {
                                                   sizeof(client->response), &client->response_size);
 }
 
+static void chttp_server_test_deferred_terminal_entry(void *user) {
+  static const chttp_server_deferred_response response = {
+      .size = sizeof(chttp_server_deferred_response),
+      .status_code = 200u,
+      .content_type = "text/plain",
+      .body = "race",
+      .body_size = 4u};
+  chttp_server_test_deferred_terminal *terminal = (chttp_server_test_deferred_terminal *)user;
+  while (atomic_load_explicit(terminal->start, memory_order_acquire) == 0)
+    salts_thread_yield();
+  terminal->status = terminal->cancel ? chttp_server_deferred_cancel(&terminal->handle)
+                                      : chttp_server_deferred_reply(&terminal->handle, &response);
+}
+
+static void chttp_server_test_stop_entry(void *user) {
+  chttp_server_test_stop *stop = (chttp_server_test_stop *)user;
+  atomic_store_explicit(&stop->status, chttp_server_stop(stop->server, stop->timeout_ms),
+                        memory_order_release);
+}
+
 static int chttp_server_test_next_once(void *user, const chttp_server_request_view *request,
                                        chttp_server_response *response, chttp_server_next *next) {
   int status;
@@ -533,7 +578,8 @@ static int chttp_server_test_jwt_handler(void *user, const chttp_server_request_
 }
 
 static int chttp_server_test_jwt_observer(void *user, const chttp_server_request_view *request,
-                                          chttp_server_response *response, chttp_server_next *next) {
+                                          chttp_server_response *response,
+                                          chttp_server_next *next) {
   chttp_server_test_jwt_probe *probe = (chttp_server_test_jwt_probe *)user;
   (void)response;
   if (probe == NULL || request == NULL || request->jwt_claims == NULL ||
@@ -600,22 +646,20 @@ spec("CHTTP background HTTP/1.1 server") {
                                             "Host: 127.0.0.1\r\n"
                                             "Connection: close\r\n\r\n";
     chttp_server_stream_probe upload_probe = {0};
-    const chttp_server_middleware jwt_route_middleware = {
-        .handler = chttp_server_test_jwt_observer, .user = &probe};
-    const chttp_server_route_options protected_route = {
-        .method = CHTTP_METHOD_GET,
-        .path = "/protected",
-        .middleware = &jwt_route_middleware,
-        .middleware_count = 1u,
-        .handler = chttp_server_test_jwt_handler,
-        .user = &probe};
-    const chttp_server_route_options upload_route = {
-        .method = CHTTP_METHOD_POST,
-        .path = "/protected-upload",
-        .handler = chttp_server_stream_handler,
-        .user = &upload_probe,
-        .body_open = chttp_server_stream_open,
-        .body_close = chttp_server_stream_close};
+    const chttp_server_middleware jwt_route_middleware = {.handler = chttp_server_test_jwt_observer,
+                                                          .user = &probe};
+    const chttp_server_route_options protected_route = {.method = CHTTP_METHOD_GET,
+                                                        .path = "/protected",
+                                                        .middleware = &jwt_route_middleware,
+                                                        .middleware_count = 1u,
+                                                        .handler = chttp_server_test_jwt_handler,
+                                                        .user = &probe};
+    const chttp_server_route_options upload_route = {.method = CHTTP_METHOD_POST,
+                                                     .path = "/protected-upload",
+                                                     .handler = chttp_server_stream_handler,
+                                                     .user = &upload_probe,
+                                                     .body_open = chttp_server_stream_open,
+                                                     .body_close = chttp_server_stream_close};
     char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
     size_t response_size = 0u;
     uint16_t port = 0u;
@@ -626,7 +670,8 @@ spec("CHTTP background HTTP/1.1 server") {
                 SALTS_OK);
     check_equal(chttp_jwt_bearer_validator_init(&validator, &validator_options), SALTS_OK);
     check_equal(chttp_server_init(&server, &config), SALTS_OK);
-    check_equal(chttp_server_route_with_jwt_bearer(&server, &protected_route, &validator), SALTS_OK);
+    check_equal(chttp_server_route_with_jwt_bearer(&server, &protected_route, &validator),
+                SALTS_OK);
     check_equal(chttp_server_route_with_jwt_bearer(&server, &upload_route, &validator), SALTS_OK);
     check_equal(chttp_server_start(&server), SALTS_OK);
     check_equal(chttp_server_port(&server, &port), SALTS_OK);
@@ -635,7 +680,7 @@ spec("CHTTP background HTTP/1.1 server") {
                         "Connection: close\r\n\r\n",
                         header.name, header.value) > 0);
     check_equal(chttp_server_test_raw_exchange(port, authorized_request, response, sizeof(response),
-                                                &response_size),
+                                               &response_size),
                 SALTS_OK);
     check_not_null(strstr(response, "HTTP/1.1 200 OK"));
     check_equal(probe.calls, (size_t)1u);
@@ -645,7 +690,7 @@ spec("CHTTP background HTTP/1.1 server") {
     response[0] = '\0';
     response_size = 0u;
     check_equal(chttp_server_test_raw_exchange(port, anonymous_request, response, sizeof(response),
-                                                &response_size),
+                                               &response_size),
                 SALTS_OK);
     check_not_null(strstr(response, "HTTP/1.1 401 Unauthorized"));
     check_not_null(strstr(response, "WWW-Authenticate: Bearer"));
@@ -653,8 +698,8 @@ spec("CHTTP background HTTP/1.1 server") {
 
     response[0] = '\0';
     response_size = 0u;
-    check_equal(chttp_server_test_raw_exchange(port, unauthorized_upload, response, sizeof(response),
-                                                &response_size),
+    check_equal(chttp_server_test_raw_exchange(port, unauthorized_upload, response,
+                                               sizeof(response), &response_size),
                 SALTS_OK);
     check_not_null(strstr(response, "HTTP/1.1 401 Unauthorized"));
     check_not_null(strstr(response, "WWW-Authenticate: Bearer"));
@@ -674,7 +719,8 @@ spec("CHTTP background HTTP/1.1 server") {
     static const unsigned char wrong_key[] = "fedcba9876543210fedcba9876543210";
     static const char hs384_token[] =
         "eyJhbGciOiJIUzM4NCIsInR5cCI6IkpXVCJ9."
-        "eyJpc3MiOiJpc3N1ZXIuZXhhbXBsZSIsInN1YiI6ImFsaWNlIiwiYXVkIjoiYXBpLmV4YW1wbGUiLCJpYXQiOjE3MDAwMDAwMDAsIm5iZiI6MTcwMDAwMDAwMCwiZXhwIjozMDAwMDAwMDAwfQ."
+        "eyJpc3MiOiJpc3N1ZXIuZXhhbXBsZSIsInN1YiI6ImFsaWNlIiwiYXVkIjoiYXBpLmV4YW1wbGUiLCJpYXQiOjE3MD"
+        "AwMDAwMDAsIm5iZiI6MTcwMDAwMDAwMCwiZXhwIjozMDAwMDAwMDAwfQ."
         "8J-7L1cH7qM0uSf_ZX6TTWfhaC8DVxAnWrPQRUN8_h_0Wy6HyW_R42W1kPfZ_5hO";
     const chttp_jwt_claims valid_claims = {.issuer = "issuer.example",
                                            .subject = "alice",
@@ -756,29 +802,29 @@ spec("CHTTP background HTTP/1.1 server") {
     memcpy(tampered_token, valid_token, token_size + 1u);
     tampered_token[token_size - 1u] = tampered_token[token_size - 1u] == 'A' ? 'B' : 'A';
 
-    check_true(snprintf(lowercase_header, sizeof(lowercase_header),
-                        "Authorization: bearer %s\r\n", valid_token) > 0);
-    check_true(snprintf(multisp_header, sizeof(multisp_header),
-                        "Authorization: BEARER   %s\r\n", valid_token) > 0);
-    check_true(snprintf(tab_header, sizeof(tab_header),
-                        "Authorization: Bearer\t%s\r\n", valid_token) > 0);
+    check_true(snprintf(lowercase_header, sizeof(lowercase_header), "Authorization: bearer %s\r\n",
+                        valid_token) > 0);
+    check_true(snprintf(multisp_header, sizeof(multisp_header), "Authorization: BEARER   %s\r\n",
+                        valid_token) > 0);
+    check_true(
+        snprintf(tab_header, sizeof(tab_header), "Authorization: Bearer\t%s\r\n", valid_token) > 0);
     check_true(snprintf(malformed_header, sizeof(malformed_header),
                         "Authorization: Bearer abc.def\r\n") > 0);
-    check_true(snprintf(wrong_key_header, sizeof(wrong_key_header),
-                        "Authorization: Bearer %s\r\n", wrong_key_token) > 0);
-    check_true(snprintf(tampered_header, sizeof(tampered_header),
-                        "Authorization: Bearer %s\r\n", tampered_token) > 0);
+    check_true(snprintf(wrong_key_header, sizeof(wrong_key_header), "Authorization: Bearer %s\r\n",
+                        wrong_key_token) > 0);
+    check_true(snprintf(tampered_header, sizeof(tampered_header), "Authorization: Bearer %s\r\n",
+                        tampered_token) > 0);
     check_true(snprintf(wrong_issuer_header, sizeof(wrong_issuer_header),
                         "Authorization: Bearer %s\r\n", wrong_issuer_token) > 0);
     check_true(snprintf(wrong_audience_header, sizeof(wrong_audience_header),
                         "Authorization: Bearer %s\r\n", wrong_audience_token) > 0);
     check_true(snprintf(duplicate_header, sizeof(duplicate_header),
-                        "Authorization: Bearer %s\r\nAuthorization: Bearer %s\r\n",
-                        valid_token, valid_token) > 0);
-    check_true(snprintf(hs384_header, sizeof(hs384_header),
-                        "Authorization: Bearer %s\r\n", hs384_token) > 0);
-    check_true(snprintf(expired_header, sizeof(expired_header),
-                        "Authorization: Bearer %s\r\n", expired_token) > 0);
+                        "Authorization: Bearer %s\r\nAuthorization: Bearer %s\r\n", valid_token,
+                        valid_token) > 0);
+    check_true(snprintf(hs384_header, sizeof(hs384_header), "Authorization: Bearer %s\r\n",
+                        hs384_token) > 0);
+    check_true(snprintf(expired_header, sizeof(expired_header), "Authorization: Bearer %s\r\n",
+                        expired_token) > 0);
     check_true(snprintf(future_nbf_header, sizeof(future_nbf_header),
                         "Authorization: Bearer %s\r\n", future_nbf_token) > 0);
 
@@ -829,8 +875,8 @@ spec("CHTTP background HTTP/1.1 server") {
 
     memset(response, 0, sizeof(response));
     response_size = 0u;
-    check_equal(chttp_server_test_jwt_matrix_exchange(port, tab_header, response,
-                                                      sizeof(response), &response_size),
+    check_equal(chttp_server_test_jwt_matrix_exchange(port, tab_header, response, sizeof(response),
+                                                      &response_size),
                 SALTS_OK);
     check_not_null(strstr(response, "HTTP/1.1 401 Unauthorized"));
     check_not_null(strstr(response, "WWW-Authenticate: Bearer"));
@@ -867,13 +913,12 @@ spec("CHTTP background HTTP/1.1 server") {
     chttp_server_stream_probe upload_probe = {0};
     chttp_server_test_probe global_probe = {0};
     chttp_jwt_bearer_validator validator = {0};
-    const chttp_server_route_options upload_route = {
-        .method = CHTTP_METHOD_POST,
-        .path = "/protected-upload",
-        .handler = chttp_server_stream_handler,
-        .user = &upload_probe,
-        .body_open = chttp_server_stream_open,
-        .body_close = chttp_server_stream_close};
+    const chttp_server_route_options upload_route = {.method = CHTTP_METHOD_POST,
+                                                     .path = "/protected-upload",
+                                                     .handler = chttp_server_stream_handler,
+                                                     .user = &upload_probe,
+                                                     .body_open = chttp_server_stream_open,
+                                                     .body_close = chttp_server_stream_close};
     char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
     size_t response_size = 0u;
     uint16_t port = 0u;
@@ -886,7 +931,9 @@ spec("CHTTP background HTTP/1.1 server") {
     check_equal(chttp_server_start(&server), SALTS_OK);
     check_equal(chttp_server_port(&server, &port), SALTS_OK);
 
-    check_equal(chttp_server_test_raw_exchange(port, anonymous_upload, response, sizeof(response), &response_size), SALTS_OK);
+    check_equal(chttp_server_test_raw_exchange(port, anonymous_upload, response, sizeof(response),
+                                               &response_size),
+                SALTS_OK);
     check_not_null(strstr(response, "HTTP/1.1 401 Unauthorized"));
     check_not_null(strstr(response, "WWW-Authenticate: Bearer"));
     check_equal(upload_probe.opens, (size_t)0u);
@@ -896,7 +943,9 @@ spec("CHTTP background HTTP/1.1 server") {
 
     response[0] = '\0';
     response_size = 0u;
-    check_equal(chttp_server_test_raw_exchange(port, anonymous_expect, response, sizeof(response), &response_size), SALTS_OK);
+    check_equal(chttp_server_test_raw_exchange(port, anonymous_expect, response, sizeof(response),
+                                               &response_size),
+                SALTS_OK);
     check_null(strstr(response, "100 Continue"));
     check_not_null(strstr(response, "HTTP/1.1 401 Unauthorized"));
     check_not_null(strstr(response, "WWW-Authenticate: Bearer"));
@@ -941,7 +990,7 @@ spec("CHTTP background HTTP/1.1 server") {
     check_equal(chttp_server_port(&server, &port), SALTS_OK);
 
     check_equal(chttp_server_test_raw_exchange(port, anonymous_unknown, response, sizeof(response),
-                                                &response_size),
+                                               &response_size),
                 SALTS_OK);
     check_not_null(strstr(response, "HTTP/1.1 401 Unauthorized"));
     check_not_null(strstr(response, "WWW-Authenticate: Bearer"));
@@ -954,7 +1003,7 @@ spec("CHTTP background HTTP/1.1 server") {
     response[0] = '\0';
     response_size = 0u;
     check_equal(chttp_server_test_raw_exchange(port, authorized_unknown, response, sizeof(response),
-                                                &response_size),
+                                               &response_size),
                 SALTS_OK);
     check_not_null(strstr(response, "HTTP/1.1 404 Not Found"));
     check_not_null(strstr(response, "X-Global: yes"));
@@ -982,11 +1031,10 @@ spec("CHTTP background HTTP/1.1 server") {
     chttp_server_config config = chttp_server_test_config();
     chttp_server_test_jwt_probe protected_probe = {0};
     chttp_jwt_bearer_validator validator = {0};
-    const chttp_server_route_options protected_route = {
-        .method = CHTTP_METHOD_GET,
-        .path = "/protected",
-        .handler = chttp_server_test_jwt_handler,
-        .user = &protected_probe};
+    const chttp_server_route_options protected_route = {.method = CHTTP_METHOD_GET,
+                                                        .path = "/protected",
+                                                        .handler = chttp_server_test_jwt_handler,
+                                                        .user = &protected_probe};
     size_t public_calls = 0u;
     char *token = NULL;
     char authorization[512];
@@ -1001,10 +1049,11 @@ spec("CHTTP background HTTP/1.1 server") {
                 SALTS_OK);
     check_equal(chttp_jwt_bearer_validator_init(&validator, &validator_options), SALTS_OK);
     check_equal(chttp_server_init(&server, &config), SALTS_OK);
-    check_equal(chttp_server_route_with_jwt_bearer(&server, &protected_route, &validator), SALTS_OK);
-    check_equal(chttp_server_get(&server, "/public", chttp_server_test_public_without_jwt,
-                                 &public_calls),
+    check_equal(chttp_server_route_with_jwt_bearer(&server, &protected_route, &validator),
                 SALTS_OK);
+    check_equal(
+        chttp_server_get(&server, "/public", chttp_server_test_public_without_jwt, &public_calls),
+        SALTS_OK);
     check_equal(chttp_server_start(&server), SALTS_OK);
     check_equal(chttp_server_port(&server, &port), SALTS_OK);
 
@@ -1013,9 +1062,9 @@ spec("CHTTP background HTTP/1.1 server") {
                         "GET /public HTTP/1.1\r\nHost: 127.0.0.1\r\n"
                         "Connection: close\r\n\r\n",
                         header.name, header.value) > 0);
-    check_equal(chttp_server_test_raw_exchange(port, requests, response, sizeof(response),
-                                                &response_size),
-                SALTS_OK);
+    check_equal(
+        chttp_server_test_raw_exchange(port, requests, response, sizeof(response), &response_size),
+        SALTS_OK);
     check_equal(chttp_server_test_count(response, "HTTP/1.1 200 OK"), (size_t)2u);
     check_equal(protected_probe.calls, (size_t)1u);
     check_equal(protected_probe.subject, "alice");
@@ -1161,6 +1210,289 @@ spec("CHTTP background HTTP/1.1 server") {
 
     chttp_server_test_close_socket(pipelined);
     check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("cancels a deferred response and releases its connection before stop") {
+    static const char request[] =
+        "GET /deferred HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    static const chttp_server_deferred_response deferred_response = {
+        .size = sizeof(chttp_server_deferred_response),
+        .status_code = 200u,
+        .content_type = "text/plain",
+        .body = "new-generation",
+        .body_size = sizeof("new-generation") - 1u};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    chttp_server_test_deferred_probe probe;
+    chttp_server_deferred stale;
+    chttp_server_deferred invalid = CHTTP_SERVER_DEFERRED_INIT;
+    chttp_server_test_socket client = CHTTP_SERVER_TEST_INVALID_SOCKET;
+    chttp_server_test_socket reused_client = CHTTP_SERVER_TEST_INVALID_SOCKET;
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    uint64_t deadline;
+    uint16_t port = 0u;
+
+    memset(&probe, 0, sizeof(probe));
+    atomic_init(&probe.acquired, 0);
+    config.session_capacity = 0u;
+    config.network.connection_capacity = 1u;
+    check_equal(chttp_server_deferred_cancel(NULL), SALTS_EINVAL);
+    check_equal(chttp_server_deferred_cancel(&invalid), SALTS_EINVAL);
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_get(&server, "/deferred", chttp_server_test_deferred, &probe),
+                SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_server_test_raw_connect(port, &client), SALTS_OK);
+    check_equal(chttp_server_test_raw_send(client, request, sizeof(request) - 1u), SALTS_OK);
+    deadline = salts_monotonic_ms() + CHTTP_SERVER_TEST_TIMEOUT_MS;
+    while (atomic_load_explicit(&probe.acquired, memory_order_acquire) == 0 &&
+           salts_monotonic_ms() < deadline)
+      salts_thread_yield();
+    check_equal(atomic_load_explicit(&probe.acquired, memory_order_acquire), 1);
+
+    stale = probe.handle;
+    check_equal(chttp_server_deferred_cancel(&probe.handle), SALTS_OK);
+    check_null(probe.handle.impl);
+    check_equal(probe.handle.generation, (uint32_t)0u);
+    check_equal(chttp_server_test_raw_receive(client, response, sizeof(response), &response_size,
+                                              true, NULL),
+                SALTS_OK);
+    check_equal(response_size, (size_t)0u);
+    check_equal(chttp_server_test_wait_active(&server, 0u, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    chttp_server_test_close_socket(client);
+
+    atomic_store_explicit(&probe.acquired, 0, memory_order_release);
+    check_equal(chttp_server_test_raw_connect(port, &reused_client), SALTS_OK);
+    check_equal(chttp_server_test_raw_send(reused_client, request, sizeof(request) - 1u), SALTS_OK);
+    deadline = salts_monotonic_ms() + CHTTP_SERVER_TEST_TIMEOUT_MS;
+    while (atomic_load_explicit(&probe.acquired, memory_order_acquire) == 0 &&
+           salts_monotonic_ms() < deadline)
+      salts_thread_yield();
+    check_equal(atomic_load_explicit(&probe.acquired, memory_order_acquire), 1);
+    check_true(probe.handle.generation != stale.generation);
+    check_equal(chttp_server_deferred_cancel(&stale), SALTS_ENOENT);
+    check_equal(chttp_server_deferred_reply(&probe.handle, &deferred_response), SALTS_OK);
+    response_size = 0u;
+    check_equal(chttp_server_test_raw_receive(reused_client, response, sizeof(response),
+                                              &response_size, true, NULL),
+                SALTS_OK);
+    check_not_null(strstr(response, "\r\n\r\nnew-generation"));
+    chttp_server_test_close_socket(reused_client);
+    check_equal(chttp_server_test_wait_active(&server, 0u, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("allows exactly one concurrent deferred reply or cancel") {
+    static const char request[] =
+        "GET /deferred HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    chttp_server_test_deferred_probe probe;
+    chttp_server_test_deferred_terminal reply;
+    chttp_server_test_deferred_terminal cancel;
+    chttp_server_test_socket client = CHTTP_SERVER_TEST_INVALID_SOCKET;
+    salts_thread_t reply_thread = NULL;
+    salts_thread_t cancel_thread = NULL;
+    atomic_int start;
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    uint64_t deadline;
+    uint16_t port = 0u;
+    int receive_status;
+
+    memset(&probe, 0, sizeof(probe));
+    atomic_init(&probe.acquired, 0);
+    atomic_init(&start, 0);
+    config.session_capacity = 0u;
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_get(&server, "/deferred", chttp_server_test_deferred, &probe),
+                SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_server_test_raw_connect(port, &client), SALTS_OK);
+    check_equal(chttp_server_test_raw_send(client, request, sizeof(request) - 1u), SALTS_OK);
+    deadline = salts_monotonic_ms() + CHTTP_SERVER_TEST_TIMEOUT_MS;
+    while (atomic_load_explicit(&probe.acquired, memory_order_acquire) == 0 &&
+           salts_monotonic_ms() < deadline)
+      salts_thread_yield();
+    check_equal(atomic_load_explicit(&probe.acquired, memory_order_acquire), 1);
+
+    reply = (chttp_server_test_deferred_terminal){
+        .handle = probe.handle, .start = &start, .cancel = 0, .status = SALTS_EIO};
+    cancel = (chttp_server_test_deferred_terminal){
+        .handle = probe.handle, .start = &start, .cancel = 1, .status = SALTS_EIO};
+    check_equal(
+        salts_thread_create(&reply_thread, chttp_server_test_deferred_terminal_entry, &reply),
+        SALTS_OK);
+    check_equal(
+        salts_thread_create(&cancel_thread, chttp_server_test_deferred_terminal_entry, &cancel),
+        SALTS_OK);
+    atomic_store_explicit(&start, 1, memory_order_release);
+    check_equal(salts_thread_join(&reply_thread), SALTS_OK);
+    check_equal(salts_thread_join(&cancel_thread), SALTS_OK);
+    check_true((reply.status == SALTS_OK) != (cancel.status == SALTS_OK));
+    check_true(reply.status == SALTS_OK || reply.status == SALTS_EALREADY ||
+               reply.status == SALTS_ENOENT);
+    check_true(cancel.status == SALTS_OK || cancel.status == SALTS_EALREADY ||
+               cancel.status == SALTS_ENOENT);
+    receive_status = chttp_server_test_raw_receive(client, response, sizeof(response),
+                                                   &response_size, true, NULL);
+    check_true(receive_status == SALTS_OK || receive_status == SALTS_EIO);
+    if (reply.status == SALTS_OK) {
+      check_not_null(strstr(response, "HTTP/1.1 200 OK"));
+      check_not_null(strstr(response, "\r\n\r\nrace"));
+    } else {
+      check_equal(response_size, (size_t)0u);
+    }
+    check_equal(chttp_server_test_wait_active(&server, 0u, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+
+    chttp_server_test_close_socket(client);
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("cancels after a deferred reply allocation failure and stops within the bound") {
+    static const char request[] =
+        "GET /deferred HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    static const unsigned char body[CHTTP_SERVER_TEST_LARGE_BODY_BYTES] = {1u};
+    const chttp_server_deferred_response deferred_response = {
+        .size = sizeof(chttp_server_deferred_response),
+        .status_code = 200u,
+        .content_type = "application/octet-stream",
+        .body = body,
+        .body_size = sizeof(body)};
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    chttp_server_test_deferred_probe probe;
+    chttp_server_test_socket client = CHTTP_SERVER_TEST_INVALID_SOCKET;
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    uint64_t deadline;
+    uint16_t port = 0u;
+
+    memset(&probe, 0, sizeof(probe));
+    atomic_init(&probe.acquired, 0);
+    config.session_capacity = 0u;
+    config.buffer_capacity_bytes = CHTTP_SERVER_TEST_LARGE_BODY_BYTES - 1u;
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_get(&server, "/deferred", chttp_server_test_deferred, &probe),
+                SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_server_test_raw_connect(port, &client), SALTS_OK);
+    check_equal(chttp_server_test_raw_send(client, request, sizeof(request) - 1u), SALTS_OK);
+    deadline = salts_monotonic_ms() + CHTTP_SERVER_TEST_TIMEOUT_MS;
+    while (atomic_load_explicit(&probe.acquired, memory_order_acquire) == 0 &&
+           salts_monotonic_ms() < deadline)
+      salts_thread_yield();
+    check_equal(atomic_load_explicit(&probe.acquired, memory_order_acquire), 1);
+
+    check_equal(chttp_server_deferred_reply(&probe.handle, &deferred_response), SALTS_ENOBUFS);
+    check_not_null(probe.handle.impl);
+    check_equal(chttp_server_deferred_cancel(&probe.handle), SALTS_OK);
+    check_equal(chttp_server_test_raw_receive(client, response, sizeof(response), &response_size,
+                                              true, NULL),
+                SALTS_OK);
+    check_equal(response_size, (size_t)0u);
+    check_equal(chttp_server_test_wait_active(&server, 0u, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+
+    chttp_server_test_close_socket(client);
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("cancels after the peer socket closes and releases the retained slot") {
+    static const char request[] =
+        "GET /deferred HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    chttp_server_test_deferred_probe probe;
+    chttp_server_deferred stale;
+    chttp_server_test_socket client = CHTTP_SERVER_TEST_INVALID_SOCKET;
+    uint64_t deadline;
+    uint16_t port = 0u;
+
+    memset(&probe, 0, sizeof(probe));
+    atomic_init(&probe.acquired, 0);
+    config.session_capacity = 0u;
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_get(&server, "/deferred", chttp_server_test_deferred, &probe),
+                SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_server_test_raw_connect(port, &client), SALTS_OK);
+    check_equal(chttp_server_test_raw_send(client, request, sizeof(request) - 1u), SALTS_OK);
+    deadline = salts_monotonic_ms() + CHTTP_SERVER_TEST_TIMEOUT_MS;
+    while (atomic_load_explicit(&probe.acquired, memory_order_acquire) == 0 &&
+           salts_monotonic_ms() < deadline)
+      salts_thread_yield();
+    check_equal(atomic_load_explicit(&probe.acquired, memory_order_acquire), 1);
+
+    stale = probe.handle;
+    chttp_server_test_close_socket(client);
+    client = CHTTP_SERVER_TEST_INVALID_SOCKET;
+    check_equal(chttp_server_deferred_cancel(&probe.handle), SALTS_OK);
+    check_equal(chttp_server_test_wait_active(&server, 0u, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    deadline = salts_monotonic_ms() + CHTTP_SERVER_TEST_TIMEOUT_MS;
+    do {
+      if (chttp_server_deferred_cancel(&stale) == SALTS_ENOENT) break;
+      salts_thread_yield();
+    } while (salts_monotonic_ms() < deadline);
+    check_equal(chttp_server_deferred_cancel(&stale), SALTS_ENOENT);
+    check_equal(chttp_server_stop(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("wakes a concurrent server stop when a deferred request is canceled") {
+    static const char request[] =
+        "GET /deferred HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    chttp_server server = {0};
+    chttp_server_config config = chttp_server_test_config();
+    chttp_server_test_deferred_probe probe;
+    chttp_server_test_stop stop;
+    chttp_server_test_socket client = CHTTP_SERVER_TEST_INVALID_SOCKET;
+    salts_thread_t stop_thread = NULL;
+    char response[CHTTP_SERVER_TEST_RAW_BYTES] = {0};
+    size_t response_size = 0u;
+    uint64_t deadline;
+    uint16_t port = 0u;
+    int receive_status;
+
+    memset(&probe, 0, sizeof(probe));
+    atomic_init(&probe.acquired, 0);
+    stop.server = &server;
+    stop.timeout_ms = CHTTP_SERVER_TEST_TIMEOUT_MS;
+    atomic_init(&stop.status, SALTS_EBUSY);
+    config.session_capacity = 0u;
+    check_equal(chttp_server_init(&server, &config), SALTS_OK);
+    check_equal(chttp_server_get(&server, "/deferred", chttp_server_test_deferred, &probe),
+                SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_equal(chttp_server_test_raw_connect(port, &client), SALTS_OK);
+    check_equal(chttp_server_test_raw_send(client, request, sizeof(request) - 1u), SALTS_OK);
+    deadline = salts_monotonic_ms() + CHTTP_SERVER_TEST_TIMEOUT_MS;
+    while (atomic_load_explicit(&probe.acquired, memory_order_acquire) == 0 &&
+           salts_monotonic_ms() < deadline)
+      salts_thread_yield();
+    check_equal(atomic_load_explicit(&probe.acquired, memory_order_acquire), 1);
+
+    check_equal(salts_thread_create(&stop_thread, chttp_server_test_stop_entry, &stop), SALTS_OK);
+    check_equal(chttp_server_test_wait_stopping(&server, CHTTP_SERVER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(atomic_load_explicit(&stop.status, memory_order_acquire), SALTS_EBUSY);
+    check_equal(chttp_server_deferred_cancel(&probe.handle), SALTS_OK);
+    check_equal(salts_thread_join(&stop_thread), SALTS_OK);
+    check_equal(atomic_load_explicit(&stop.status, memory_order_acquire), SALTS_OK);
+    receive_status = chttp_server_test_raw_receive(client, response, sizeof(response),
+                                                   &response_size, true, NULL);
+    check_true(receive_status == SALTS_OK || receive_status == SALTS_EIO);
+    check_equal(response_size, (size_t)0u);
+
+    chttp_server_test_close_socket(client);
     check_equal(chttp_server_destroy(&server), SALTS_OK);
   }
 

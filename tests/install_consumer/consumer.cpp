@@ -75,6 +75,7 @@ int main() {
   chttp_websocket_pool_config http_websocket_pool_config{};
   auto *http_response_source = &chttp_server_response_source;
   auto *http_response_file = &chttp_server_response_file;
+  auto *http_deferred_cancel = &chttp_server_deferred_cancel;
   cnet_tls_client tls_client{};
   cnet_tls_server tls_server{};
   cnet_tls_client_config tls_client_config{};
@@ -89,6 +90,7 @@ int main() {
   http_websocket_config.h2_max_settings_count = 16u;
   (void)http_response_source;
   (void)http_response_file;
+  (void)http_deferred_cancel;
 
   if (chttp_server_response_source(nullptr, 0u, nullptr, nullptr) != SALTS_EINVAL ||
       chttp_server_response_file(nullptr, 0u, nullptr, nullptr) != SALTS_EINVAL ||
