@@ -25,6 +25,7 @@ typedef struct coalescing_scheduler_state {
     atomic_bool timed_out;
     atomic_int posts;
     uint64_t timeout_ms;
+    cflow_admission_status rejection_status;
 } coalescing_scheduler_state;
 
 typedef struct coalescing_request_context {
@@ -245,7 +246,10 @@ static cflow_schedule_result coalescing_try_post_after(
     }
     if (!atomic_load(&state->release))
         atomic_store(&state->timed_out, true);
-    return (cflow_schedule_result){CFLOW_ADMISSION_FULL, 0u};
+    return (cflow_schedule_result){
+        state->rejection_status == CFLOW_ADMISSION_ACCEPTED
+            ? CFLOW_ADMISSION_FULL : state->rejection_status,
+        0u};
 }
 
 static void coalescing_barrier_task(void *user) { (void)user; }
@@ -1214,7 +1218,8 @@ suite("CFlow runtime") {
         check_true(cflow_scheduler_test_init(&scheduler));
         check_true(cflow_subscribe(
             &run, &normalized, &source, &scheduler, NULL));
-        check_true(cflow_subscription_request(&run, 4u));
+        check_equal(cflow_subscription_request_result(&run, 4u).status,
+                    CFLOW_STATUS_OK);
 
         (void)cflow_scheduler_run_until_idle(&scheduler, 0u);
 
@@ -1225,9 +1230,103 @@ suite("CFlow runtime") {
         check_equal(probe.seen[3], (size_t)1u);
         check_true(cflow_subscription_is_done(&run));
         check_null(cflow_subscription_error(&run));
+        check_equal(cflow_subscription_request_result(&run, 1u).status,
+                    CFLOW_STATUS_CLOSED);
 
         cflow_subscription_close(&run);
         cflow_scheduler_destroy(&scheduler);
+        cflow_graph_destroy(&normalized);
+        cflow_graph_destroy(&surface);
+    }
+
+    it("reports exact Subscription demand admission and retains rejected demand") {
+        static const cflow_admission_status scheduler_statuses[] = {
+            CFLOW_ADMISSION_FULL,
+            CFLOW_ADMISSION_CLOSED,
+            CFLOW_ADMISSION_ALLOCATION_FAILED,
+            CFLOW_ADMISSION_INVALID_ARGUMENT
+        };
+        static const cflow_status expected_statuses[] = {
+            CFLOW_STATUS_CAPACITY_EXCEEDED,
+            CFLOW_STATUS_CLOSED,
+            CFLOW_STATUS_ALLOCATION_FAILED,
+            CFLOW_STATUS_INVALID_ARGUMENT
+        };
+
+        check_equal(cflow_subscription_request_result(NULL, 1u).status,
+                    CFLOW_STATUS_INVALID_ARGUMENT);
+        for (size_t i = 0u;
+             i < sizeof(scheduler_statuses) / sizeof(scheduler_statuses[0]);
+             ++i) {
+            const int input = 17;
+            coalescing_scheduler_state scheduler_state = {0};
+            cflow_graph surface = {0};
+            cflow_graph normalized = {0};
+            cflow_scheduler scheduler;
+            cflow_publisher source = {0};
+            cflow_subscription run = {0};
+            cflow_status_result result;
+
+            scheduler_state.rejection_status = scheduler_statuses[i];
+            atomic_init(&scheduler_state.release, true);
+            scheduler = coalescing_scheduler_as_cflow_scheduler(
+                &scheduler_state);
+            normalized.root = CMETA_INVALID_ID;
+            cflow_graph_init(&surface, &cmeta_type_int);
+            check_true(cflow_graph_normalize(&normalized, &surface));
+            check_true(cflow_publisher_from_array(
+                &source, &cmeta_type_int, &input, 1u));
+            check_true(cflow_subscribe(
+                &run, &normalized, &source, &scheduler, NULL));
+            check_equal(cflow_subscription_request_result(&run, 0u).status,
+                        CFLOW_STATUS_INVALID_ARGUMENT);
+
+            result = cflow_subscription_request_result(&run, 1u);
+
+            check_equal(result.status, expected_statuses[i]);
+            check_equal(cflow_subscription_outstanding_demand(&run),
+                        (size_t)1u);
+            check_false(cflow_subscription_request(&run, 1u));
+            check_equal(cflow_subscription_outstanding_demand(&run),
+                        (size_t)2u);
+
+            cflow_subscription_close(&run);
+            cflow_graph_destroy(&normalized);
+            cflow_graph_destroy(&surface);
+        }
+    }
+
+    it("reports accepted demand when a foreign Scheduler runs the pump inline") {
+        const int input = 23;
+        pending_foreign_scheduler_state scheduler_state = {0};
+        cflow_graph surface = {0};
+        cflow_graph normalized = {0};
+        cflow_scheduler scheduler;
+        cflow_publisher source = {0};
+        cflow_subscription run = {0};
+
+        salts_mutex_init(&scheduler_state.mutex);
+        salts_cond_init(&scheduler_state.changed);
+        scheduler_state.run_inline = true;
+        scheduler = pending_foreign_scheduler_as_cflow_scheduler(
+            &scheduler_state);
+        normalized.root = CMETA_INVALID_ID;
+        cflow_graph_init(&surface, &cmeta_type_int);
+        check_true(cflow_graph_normalize(&normalized, &surface));
+        check_true(cflow_publisher_from_array(
+            &source, &cmeta_type_int, &input, 1u));
+        check_true(cflow_subscribe(
+            &run, &normalized, &source, &scheduler, NULL));
+
+        check_equal(cflow_subscription_request_result(&run, 1u).status,
+                    CFLOW_STATUS_OK);
+        check_true(cflow_subscription_is_done(&run));
+        check_equal(scheduler_state.post_calls, (size_t)1u);
+
+        cflow_subscription_close(&run);
+        cflow_scheduler_destroy(&scheduler);
+        salts_cond_destroy(&scheduler_state.changed);
+        salts_mutex_destroy(&scheduler_state.mutex);
         cflow_graph_destroy(&normalized);
         cflow_graph_destroy(&surface);
     }
@@ -1326,6 +1425,8 @@ suite("CFlow runtime") {
         check_true(cflow_subscription_request(&run, 1u));
 
         check_true(cflow_scheduler_shutdown(&scheduler));
+        check_equal(cflow_subscription_request_result(&run, 1u).status,
+                    CFLOW_STATUS_CANCELLED);
         cflow_subscription_close(&run);
 
         check_null(run.impl);
@@ -1631,6 +1732,10 @@ suite("CFlow runtime") {
         error = cflow_subscription_error(&run);
         check_not_null(error);
         if (error != NULL) check_contains(error, "scheduler is full");
+        check_equal(cflow_subscription_status(&run),
+                    CFLOW_STATUS_CAPACITY_EXCEEDED);
+        check_equal(cflow_subscription_request_result(&run, 1u).status,
+                    CFLOW_STATUS_CAPACITY_EXCEEDED);
 
         cflow_subscription_close(&run);
         check_true(atomic_load(&source_state.destroyed));
