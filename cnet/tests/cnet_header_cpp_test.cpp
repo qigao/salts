@@ -34,6 +34,14 @@ static_assert(CNET_CONNECTION_CONNECTED != CNET_CONNECTION_FAILED,
               "connection states must remain distinct");
 static_assert(CNET_MESSAGE_BYTES != CNET_MESSAGE_DATAGRAM,
               "stream and datagram receive values must remain distinct");
+static_assert(CNET_VSOCK_CID_LOCAL == std::uint32_t{1}, "local VSOCK CID must be portable");
+static_assert(CNET_VSOCK_CID_HOST == std::uint32_t{2}, "host VSOCK CID must be portable");
+static_assert(CNET_VSOCK_CID_ANY == UINT32_MAX, "VSOCK any CID must retain full width");
+static_assert(CNET_VSOCK_PORT_ANY == UINT32_MAX, "VSOCK any port must retain full width");
+static_assert(std::is_same_v<decltype(&cnet_client_adopt_vsock),
+                             int (*)(cnet_client *, uintptr_t, const cnet_observer *,
+                                     cnet_connection *)>,
+              "VSOCK adoption must expose the C client ownership contract");
 static_assert(offsetof(cnet_observer, on_send) > offsetof(cnet_observer, user),
               "send completion must remain appended after legacy observer fields");
 using cnet_client_wake_function = int (*)(cnet_client *);

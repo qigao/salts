@@ -44,6 +44,7 @@ struct cnet_client_impl {
   size_t active_count;
   size_t max_send_bytes;
   size_t tls_io_buffer_bytes;
+  native_io_backend_kind backend_kind;
   cnet_stream_socket_options socket_options;
   uint32_t connect_timeout_ms;
   uint32_t read_timeout_ms;
@@ -263,6 +264,7 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   impl->connection_capacity = config->connection_capacity;
   impl->max_send_bytes = config->max_send_bytes;
   impl->tls_io_buffer_bytes = config->tls_io_buffer_bytes;
+  impl->backend_kind = config->backend;
   impl->connect_timeout_ms = config->connect_timeout_ms;
   impl->read_timeout_ms = config->read_timeout_ms;
   impl->write_timeout_ms = config->write_timeout_ms;
@@ -441,6 +443,8 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
   if ((options->tls != NULL || options->tls_client != NULL) && uri.scheme != CNET_URI_TLS)
     return SALTS_EINVAL;
   if (uri.scheme == CNET_URI_TLS && impl->tls_io_buffer_bytes == 0u) return SALTS_ENOTSUP;
+  if (uri.scheme == CNET_URI_VSOCK && !cnet_transport_vsock_supported(impl->backend_kind))
+    return SALTS_ENOTSUP;
   payload.scheme = uri.scheme;
   payload.connect_timeout_ms = impl->connect_timeout_ms;
   payload.read_timeout_ms = impl->read_timeout_ms;
@@ -463,8 +467,14 @@ int cnet_connect(cnet_client *client, const cnet_connect_options *options,
     payload.tls_io_buffer_bytes = impl->tls_io_buffer_bytes;
     payload.tls_handshake_timeout_ms = impl->tls_handshake_timeout_ms;
   }
-  if (uri.scheme == CNET_URI_PIPE) memcpy(payload.pipe_name, uri.path, strlen(uri.path) + 1u);
-  else {
+  if (uri.scheme == CNET_URI_PIPE) {
+    memcpy(payload.pipe_name, uri.path, strlen(uri.path) + 1u);
+  } else if (uri.scheme == CNET_URI_VSOCK) {
+    status = cnet_transport_parse_vsock_address(uri.vsock_cid, uri.vsock_port, false,
+                                                payload.address, sizeof(payload.address),
+                                                &payload.address_length);
+    if (status != SALTS_OK) return status;
+  } else {
     status = cnet_transport_parse_numeric_address(uri.host, uri.port, payload.address,
                                                   sizeof(payload.address), &payload.address_length);
     if (status == SALTS_ENOENT) {
@@ -505,6 +515,38 @@ int cnet_client_adopt_tcp(cnet_client *client, uintptr_t native_socket,
   payload.write_timeout_ms = impl->write_timeout_ms;
   payload.adopted = true;
   status = cnet_client_admit(impl, &payload, CNET_URI_TCP, observer, out_connection, &transferred);
+  if (!transferred) cnet_transport_close_socket(native_socket);
+  return status;
+}
+
+int cnet_client_adopt_vsock(cnet_client *client, uintptr_t native_socket,
+                            const cnet_observer *observer, cnet_connection *out_connection) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_owner_connect_payload payload = {0};
+  bool transferred = false;
+  int status;
+
+  if (out_connection == NULL) {
+    cnet_transport_close_socket(native_socket);
+    return SALTS_EINVAL;
+  }
+  *out_connection = (cnet_connection){0};
+  if (impl == NULL || observer == NULL || observer->on_state == NULL ||
+      native_socket == UINTPTR_MAX) {
+    cnet_transport_close_socket(native_socket);
+    return SALTS_EINVAL;
+  }
+  if (!cnet_transport_vsock_supported(impl->backend_kind)) {
+    cnet_transport_close_socket(native_socket);
+    return SALTS_ENOTSUP;
+  }
+  payload.scheme = CNET_URI_VSOCK;
+  payload.adopted_socket = native_socket;
+  payload.read_timeout_ms = impl->read_timeout_ms;
+  payload.write_timeout_ms = impl->write_timeout_ms;
+  payload.adopted = true;
+  status =
+      cnet_client_admit(impl, &payload, CNET_URI_VSOCK, observer, out_connection, &transferred);
   if (!transferred) cnet_transport_close_socket(native_socket);
   return status;
 }

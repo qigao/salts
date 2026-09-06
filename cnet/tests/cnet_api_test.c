@@ -777,6 +777,44 @@ spec("CNet public client API") {
     check_null(client.impl);
   }
 
+  it("rejects unsupported VSOCK without publishing a connection") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_connection connection = {17u, 19u};
+    cnet_connect_options options = {.uri = "vsock://2:5000",
+                                    .observer = {.on_state = cnet_api_test_ignore_state}};
+
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+#if defined(__linux__)
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+    check_true(connection.slot != 0u);
+    check_equal(cnet_close(&client, connection), SALTS_OK);
+#else
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_ENOTSUP);
+    check_equal(connection.slot, 0u);
+    check_equal(connection.generation, 0u);
+#endif
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+  }
+
+  it("rejects TLS policy for a plaintext VSOCK URI") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_connection connection = {17u, 19u};
+    const cnet_tls_client_config tls = {.size = sizeof(tls)};
+    cnet_connect_options options = {.uri = "vsock://2:5000",
+                                    .observer = {.on_state = cnet_api_test_ignore_state},
+                                    .tls = &tls};
+
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_EINVAL);
+    check_equal(connection.slot, 0u);
+    check_equal(connection.generation, 0u);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+  }
+
   it("copies options and supports reentrant TCP operations on the I/O owner") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();

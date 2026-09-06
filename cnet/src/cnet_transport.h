@@ -50,6 +50,41 @@ int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_back
                                        uintptr_t user_data,
                                        native_io_operation *out_operation);
 
+/** Returns whether this build can drive Linux AF_VSOCK on the selected backend. */
+bool cnet_transport_vsock_supported(native_io_backend_kind backend_kind);
+
+/** Converts host-order CID/port values into copied native VSOCK address storage. */
+int cnet_transport_parse_vsock_address(uint32_t cid, uint32_t port, bool allow_any,
+                                       void *out_address, size_t address_capacity,
+                                       size_t *out_address_length);
+
+/** Creates and attaches a VSOCK stream, then describes its connect operation. */
+int cnet_transport_vsock_prepare_connect(cnet_transport *transport, native_io_backend *backend,
+                                         native_io_backend_kind backend_kind, const void *address,
+                                         size_t address_length,
+                                         const cnet_stream_socket_options *socket_options,
+                                         uintptr_t user_data,
+                                         native_io_operation *out_operation);
+
+/** Takes ownership of one connected AF_VSOCK SOCK_STREAM socket. */
+int cnet_transport_adopt_vsock(cnet_transport *transport, native_io_backend *backend,
+                               uintptr_t native_socket,
+                               const cnet_stream_socket_options *socket_options);
+
+/** Internal socket-family-neutral stream connect implementation. */
+int cnet_transport_stream_prepare_connect(cnet_transport *transport, native_io_backend *backend,
+                                          native_io_backend_kind backend_kind, int family,
+                                          int protocol, bool keepalive_supported,
+                                          const void *address, size_t address_length,
+                                          const cnet_stream_socket_options *socket_options,
+                                          uintptr_t user_data,
+                                          native_io_operation *out_operation);
+
+/** Internal connected stream adoption implementation. */
+int cnet_transport_adopt_stream(cnet_transport *transport, native_io_backend *backend,
+                                uintptr_t native_socket, bool keepalive_supported,
+                                const cnet_stream_socket_options *socket_options);
+
 /**
  * Creates a CNet-owned stream socket, attaches it to NativeIO, and submits one
  * asynchronous connect. `address` stays borrowed until the request completion.

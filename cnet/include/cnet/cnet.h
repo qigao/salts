@@ -118,6 +118,12 @@ typedef struct cnet_stream_peer {
   uint8_t address[16];
 } cnet_stream_peer;
 
+/** Portable Linux VSOCK address constants; ANY values are valid only for listeners. */
+#define CNET_VSOCK_CID_ANY UINT32_MAX
+#define CNET_VSOCK_PORT_ANY UINT32_MAX
+#define CNET_VSOCK_CID_LOCAL UINT32_C(1)
+#define CNET_VSOCK_CID_HOST UINT32_C(2)
+
 typedef void (*cnet_datagram_receive_fn)(void *user, cnet_datagram *datagram,
                                          const cnet_datagram_peer *peer,
                                          const cnet_receive_view *view);
@@ -547,6 +553,15 @@ int cnet_client_set_stream_socket_options(cnet_client *client,
  */
 int cnet_connect(cnet_client *client, const cnet_connect_options *options,
                  cnet_connection *out_connection);
+
+/**
+ * Transfers one connected Linux AF_VSOCK SOCK_STREAM socket to `client`.
+ * The socket is consumed on every call except when it equals `UINTPTR_MAX`.
+ * Unsupported platforms/backends close the socket and return `SALTS_ENOTSUP`
+ * without publishing a connection or callback.
+ */
+int cnet_client_adopt_vsock(cnet_client *client, uintptr_t native_socket,
+                            const cnet_observer *observer, cnet_connection *out_connection);
 
 /**
  * Copies `size` bytes into bounded command storage before returning success.

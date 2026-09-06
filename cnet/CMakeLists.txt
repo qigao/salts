@@ -27,6 +27,7 @@ add_library(${TARGET_NAME} SHARED
   src/cnet_tls.c
   src/cnet_transport.c
   src/cnet_transport_pipe.c
+  src/cnet_transport_vsock.c
   src/cnet_uri.c
   src/cnet_websocket.c
   $<TARGET_OBJECTS:salts_wsparser>)

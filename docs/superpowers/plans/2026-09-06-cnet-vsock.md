@@ -116,23 +116,23 @@ Commit as `refactor(native-io): generalize TCP operations to streams`.
 - Produces: CNet VSOCK constants, `cnet_transport_vsock_supported`, `cnet_transport_vsock_address`, `cnet_transport_vsock_prepare_connect`, `cnet_transport_adopt_vsock`, and `cnet_client_adopt_vsock`.
 - Consumes: Task 1 URI fields and Task 2 NativeIO stream operations.
 
-- [ ] **Step 1: Write failing public and platform tests**
+- [x] **Step 1: Write failing public and platform tests**
 
 Add header compilation/use checks for the constants and adoption declaration. Add transport tests that expect Windows to return SALTS_ENOTSUP while clearing address/operation output. Add API tests that expect `cnet_connect` with a valid VSOCK URI to fail immediately with SALTS_ENOTSUP on Windows and leave the connection zero without callbacks.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Build the four CNet tests; expect missing public/internal interfaces.
 
-- [ ] **Step 3: Implement the platform adapter**
+- [x] **Step 3: Implement the platform adapter**
 
 On Linux include `<linux/vm_sockets.h>`, construct a fully zeroed `sockaddr_vm`, assert it fits `CNET_OWNER_ADDRESS_CAPACITY`, create a nonblocking AF_VSOCK/SOCK_STREAM/protocol-0 socket, attach it to NativeIO, and describe a STREAM_CONNECT operation. On other platforms clear outputs and return SALTS_ENOTSUP.
 
-- [ ] **Step 4: Implement admission and exhaustive owner routing**
+- [x] **Step 4: Implement admission and exhaustive owner routing**
 
 Reject TLS fields for VSOCK, copy the VSOCK sockaddr into the owner payload, bypass resolver submission, add explicit operation-kind helpers for read/write, and route connect/adopt through VSOCK-specific transport functions. Unknown schemes return SALTS_EINVAL rather than falling through to Pipe.
 
-- [ ] **Step 5: Run GREEN and adjacent regression tests**
+- [x] **Step 5: Run GREEN and adjacent regression tests**
 
 Build and run `cnet_transport_test`, `cnet_owner_test`, `cnet_api_test`, and `cnet_header_cpp_test`, then rerun URI and NativeIO tests.
 
