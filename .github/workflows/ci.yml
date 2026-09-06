@@ -1,4 +1,4 @@
-name: CHTTP JWT macOS baseline diagnostic
+name: CHTTP JWT macOS fixed-base provenance
 
 on:
   pull_request:
@@ -9,24 +9,24 @@ permissions:
   contents: read
 
 env:
-  JWT_BRANCH: design/chttp-auth-phase-jwt-hardening
+  JWT_FIXED_BASE: f9c68fb34fbc6bb9b2e7db3fcd35b7669550aee2
 
 jobs:
-  macos-diagnostic:
-    name: macOS compact remaining-failure diagnostic
+  macos-fixed-base:
+    name: macOS fixed-base remaining-failure provenance
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: design/chttp-auth-phase-jwt-hardening
+          ref: f9c68fb34fbc6bb9b2e7db3fcd35b7669550aee2
           fetch-depth: 1
 
-      - name: Record exact checkout
+      - name: Record exact fixed-base checkout
         shell: bash
         run: |
           set -euo pipefail
           echo "CHECKOUT_SHA=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/$JWT_BRANCH)"
+          test "$(git rev-parse HEAD)" = "$JWT_FIXED_BASE"
 
       - name: Setup re2c and vcpkg
         shell: bash
@@ -45,24 +45,39 @@ jobs:
             exit 1
           fi
 
-      - name: Fresh configure
+      - name: Fresh configure fixed base
         run: cmake --fresh --preset release-mac-ninja
 
-      - name: Build full macOS release
-        run: cmake --build --preset build-default-mac
+      - name: Build only remaining baseline candidates
+        run: cmake --build --preset build-default-mac --target cnet_transport_test s3_file_test
 
-      - name: Print compact remaining CTest failures
+      - name: Prove exact fixed-base failure cases
         shell: bash
         run: |
-          set -uo pipefail
-          log="$RUNNER_TEMP/remaining-ctest.log"
-          set +e
-          ctest --preset test-release-mac \
-            -E '^(chttp_server_test|chttp_requests_test|chttp_h2_server_test)$' \
-            --output-on-failure >"$log" 2>&1
-          status=$?
-          set -e
-          echo '=== compact failure summary ==='
-          grep -E '(Test #[0-9]+: .*\*\*\*Failed|The following tests FAILED:|^[[:space:]]*[0-9]+ - .+ \(Failed\)|Check failed:|[[:space:]]+at /)' "$log" || true
-          echo '=== end compact failure summary ==='
-          exit "$status"
+          set -euo pipefail
+          prove_known_failure_set() {
+            local binary="$1"
+            local expected_count="$2"
+            shift 2
+            local log="$RUNNER_TEMP/$(basename "$binary").log"
+            local status
+            set +e
+            "$binary" > "$log" 2>&1
+            status=$?
+            set -e
+            cat "$log"
+            test "$status" -ne 0
+            test "$(grep -c '\[ FAIL  \]' "$log")" -eq "$expected_count"
+            for expected in "$@"; do
+              grep -F "$expected" "$log"
+            done
+          }
+
+          prove_known_failure_set \
+            build/mac-clang-release/bin/cnet_transport_test 1 \
+            'applies bounded stream socket options before transport admission'
+
+          prove_known_failure_set \
+            build/mac-clang-release/bin/s3_file_test 2 \
+            'streams signed files over HTTP/1.1' \
+            'streams signed files over HTTP/2'
