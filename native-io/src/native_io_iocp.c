@@ -332,11 +332,11 @@ static int iocp_submit(salts_io_impl *base, const native_io_operation *operation
   if (endpoint == NULL) return SALTS_ENOENT;
   if (native_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
     return SALTS_EINVAL;
-  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+  if (operation->kind == NATIVE_IO_OPERATION_STREAM_CONNECT) {
     if (endpoint->connected || endpoint->connect_active) return SALTS_EALREADY;
     if (endpoint->active_requests != 0u) return SALTS_EBUSY;
-  } else if (operation->kind == NATIVE_IO_OPERATION_TCP_RECV ||
-             operation->kind == NATIVE_IO_OPERATION_TCP_SEND) {
+  } else if (operation->kind == NATIVE_IO_OPERATION_STREAM_RECV ||
+             operation->kind == NATIVE_IO_OPERATION_STREAM_SEND) {
     if (endpoint->connect_active) return SALTS_EBUSY;
     if (!endpoint->connected) return SALTS_EINVAL;
   }
@@ -366,7 +366,7 @@ static int iocp_submit(salts_io_impl *base, const native_io_operation *operation
   ++endpoint->active_requests;
   ++impl->active_requests;
 
-  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+  if (operation->kind == NATIVE_IO_OPERATION_STREAM_CONNECT) {
     const int bind_status =
         iocp_bind_connect_socket((SOCKET)request->native_handle,
                                  (const SOCKADDR *)request->address, request->address_length);
@@ -427,10 +427,10 @@ static int iocp_submit(salts_io_impl *base, const native_io_operation *operation
     return iocp_native_error(native_error);
   }
 
-  if (operation->kind == NATIVE_IO_OPERATION_TCP_RECV) {
+  if (operation->kind == NATIVE_IO_OPERATION_STREAM_RECV) {
     native_status = WSARecv((SOCKET)request->native_handle, &request->buffer, 1u, &immediate_bytes,
                             &request->flags, &request->overlapped, NULL);
-  } else if (operation->kind == NATIVE_IO_OPERATION_TCP_SEND) {
+  } else if (operation->kind == NATIVE_IO_OPERATION_STREAM_SEND) {
     native_status = WSASend((SOCKET)request->native_handle, &request->buffer, 1u, &immediate_bytes,
                             0u, &request->overlapped, NULL);
   } else if (operation->kind == NATIVE_IO_OPERATION_UDP_RECV_FROM &&
@@ -496,11 +496,11 @@ static void iocp_make_completion(salts_iocp_impl *impl, salts_iocp_request_recor
                                  uint32_t request_index, DWORD bytes, DWORD native_error,
                                  native_io_completion *event) {
   if (native_error == ERROR_SUCCESS &&
-      request->operation_kind == NATIVE_IO_OPERATION_TCP_CONNECT &&
+      request->operation_kind == NATIVE_IO_OPERATION_STREAM_CONNECT &&
       setsockopt((SOCKET)request->native_handle, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL,
                  0) == SOCKET_ERROR)
     native_error = (DWORD)WSAGetLastError();
-  if (request->operation_kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+  if (request->operation_kind == NATIVE_IO_OPERATION_STREAM_CONNECT) {
     salts_iocp_endpoint_record *endpoint = iocp_endpoint(impl, request->endpoint);
     if (endpoint != NULL) {
       endpoint->connect_active = false;
@@ -526,7 +526,7 @@ static void iocp_make_completion(salts_iocp_impl *impl, salts_iocp_request_recor
     event->bytes = 0u;
     event->status = iocp_native_error(native_error);
     iocp_counter_increment(&impl->failed);
-  } else if ((request->operation_kind == NATIVE_IO_OPERATION_TCP_RECV ||
+  } else if ((request->operation_kind == NATIVE_IO_OPERATION_STREAM_RECV ||
               request->operation_kind == NATIVE_IO_OPERATION_PIPE_READ) &&
              bytes == 0u) {
     event->kind = NATIVE_IO_COMPLETION_EOF;

@@ -47,13 +47,16 @@ typedef struct native_io_coroutine_task {
 typedef void (*native_io_coroutine_entry_fn)(native_io_coroutine *coroutine, void *user_data);
 
 typedef enum native_io_operation_kind {
-  NATIVE_IO_OPERATION_TCP_RECV = 1,
-  NATIVE_IO_OPERATION_TCP_SEND = 2,
+  NATIVE_IO_OPERATION_STREAM_RECV = 1,
+  NATIVE_IO_OPERATION_TCP_RECV = NATIVE_IO_OPERATION_STREAM_RECV,
+  NATIVE_IO_OPERATION_STREAM_SEND = 2,
+  NATIVE_IO_OPERATION_TCP_SEND = NATIVE_IO_OPERATION_STREAM_SEND,
   NATIVE_IO_OPERATION_UDP_RECV_FROM = 3,
   NATIVE_IO_OPERATION_UDP_SEND_TO = 4,
   NATIVE_IO_OPERATION_PIPE_READ = 5,
   NATIVE_IO_OPERATION_PIPE_WRITE = 6,
-  NATIVE_IO_OPERATION_TCP_CONNECT = 7
+  NATIVE_IO_OPERATION_STREAM_CONNECT = 7,
+  NATIVE_IO_OPERATION_TCP_CONNECT = NATIVE_IO_OPERATION_STREAM_CONNECT
 } native_io_operation_kind;
 
 typedef enum native_io_pipe_endpoint_flags {
@@ -69,13 +72,13 @@ typedef enum native_io_pipe_endpoint_flags {
  * Send storage is immutable during the borrow; receive storage is exclusively
  * mutable by NativeIO. user_data is copied verbatim into the completion.
  *
- * TCP_CONNECT and UDP_SEND_TO read address[0..address_length) as a native sockaddr.
- * TCP_CONNECT requires buffer == NULL and length == 0; its address storage is
+ * STREAM_CONNECT and UDP_SEND_TO read address[0..address_length) as a native sockaddr.
+ * STREAM_CONNECT requires buffer == NULL and length == 0; its address storage is
  * borrowed until observe returns the matching terminal completion.
  * UDP_RECV_FROM writes at most address_capacity bytes and publishes the actual
  * length in its completion. For an OS-connected datagram socket, UDP_RECV_FROM
  * and UDP_SEND_TO accept all address fields as zero and use connected recv/send
- * semantics. TCP send/receive and pipe operations require all address fields
+ * semantics. Stream send/receive and pipe operations require all address fields
  * to be zero. Address storage has the same borrow as payload storage.
  */
 typedef struct native_io_operation {
@@ -179,12 +182,13 @@ SALTS_NATIVE_IO_C_API int native_io_backend_init(native_io_backend *backend,
 
 /**
  * Associates one native socket with the backend and returns a generation
- * checked endpoint. SOCK_STREAM endpoints admit only TCP operations;
+ * checked endpoint. SOCK_STREAM endpoints admit only STREAM operations; the
+ * legacy TCP operation names are source-compatible aliases.
  * SOCK_DGRAM endpoints admit only UDP operations. IPv4 and IPv6 use the same
  * endpoint type because the address family is independent of transport
  * admission. The backend borrows the socket and never closes it. IOCP requires
  * an overlapped socket; readiness drivers use per-call nonblocking operations
- * and do not change the socket's blocking mode. A socket used with TCP_CONNECT
+ * and do not change the socket's blocking mode. A socket used with STREAM_CONNECT
  * must already be nonblocking when attached to a readiness backend.
  *
  * The caller must retain the returned endpoint, stop submitting before close,

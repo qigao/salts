@@ -155,8 +155,8 @@ static salts_io_uring_request_record *uring_record_for_token(salts_io_uring_impl
 }
 
 static bool uring_is_write(native_io_operation_kind kind) {
-  return kind == NATIVE_IO_OPERATION_TCP_SEND || kind == NATIVE_IO_OPERATION_UDP_SEND_TO ||
-         kind == NATIVE_IO_OPERATION_TCP_CONNECT;
+  return kind == NATIVE_IO_OPERATION_STREAM_SEND || kind == NATIVE_IO_OPERATION_UDP_SEND_TO ||
+         kind == NATIVE_IO_OPERATION_STREAM_CONNECT;
 }
 
 static salts_io_uring_lane *uring_lane(salts_io_uring_endpoint *endpoint, bool write_lane) {
@@ -218,16 +218,16 @@ static void uring_prepare_operation(salts_io_uring_request_record *record, struc
   memset(sqe, 0, sizeof(*sqe));
   sqe->fd = fd;
   sqe->user_data = record->native_token;
-  if (record->operation.kind == NATIVE_IO_OPERATION_TCP_RECV) {
+  if (record->operation.kind == NATIVE_IO_OPERATION_STREAM_RECV) {
     sqe->opcode = IORING_OP_RECV;
     sqe->addr = (uint64_t)(uintptr_t)record->operation.buffer;
     sqe->len = (uint32_t)record->operation.length;
-  } else if (record->operation.kind == NATIVE_IO_OPERATION_TCP_SEND) {
+  } else if (record->operation.kind == NATIVE_IO_OPERATION_STREAM_SEND) {
     sqe->opcode = IORING_OP_SEND;
     sqe->addr = (uint64_t)(uintptr_t)record->operation.buffer;
     sqe->len = (uint32_t)record->operation.length;
     sqe->msg_flags = MSG_NOSIGNAL;
-  } else if (record->operation.kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+  } else if (record->operation.kind == NATIVE_IO_OPERATION_STREAM_CONNECT) {
     sqe->opcode = IORING_OP_CONNECT;
     sqe->addr = (uint64_t)(uintptr_t)record->operation.address;
     sqe->off = (uint64_t)record->operation.address_length;
@@ -279,7 +279,7 @@ static void uring_release_request(salts_io_uring_impl *impl, salts_io_uring_requ
 static void uring_make_completion(salts_io_uring_impl *impl, salts_io_uring_request_record *request,
                                   int result, native_io_completion *completion) {
   const bool cancelled = request->cancel_requested && result == -ECANCELED;
-  if (request->operation.kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+  if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_CONNECT) {
     salts_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
     if (endpoint != NULL) {
       endpoint->connect_active = false;
@@ -304,7 +304,7 @@ static void uring_make_completion(salts_io_uring_impl *impl, salts_io_uring_requ
     completion->status = result;
     completion->native_status = (uint32_t)(-result);
     uring_counter_increment(&impl->failed);
-  } else if (request->operation.kind == NATIVE_IO_OPERATION_TCP_RECV && result == 0) {
+  } else if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_RECV && result == 0) {
     completion->kind = NATIVE_IO_COMPLETION_EOF;
     completion->status = SALTS_EOF;
   } else {
@@ -419,11 +419,11 @@ static int uring_submit(salts_io_impl *base, const native_io_operation *operatio
   if (endpoint == NULL) return SALTS_ENOENT;
   if (native_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
     return SALTS_EINVAL;
-  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+  if (operation->kind == NATIVE_IO_OPERATION_STREAM_CONNECT) {
     if (endpoint->connected || endpoint->connect_active) return SALTS_EALREADY;
     if (endpoint->active_requests != 0u) return SALTS_EBUSY;
-  } else if (operation->kind == NATIVE_IO_OPERATION_TCP_RECV ||
-             operation->kind == NATIVE_IO_OPERATION_TCP_SEND) {
+  } else if (operation->kind == NATIVE_IO_OPERATION_STREAM_RECV ||
+             operation->kind == NATIVE_IO_OPERATION_STREAM_SEND) {
     if (endpoint->connect_active) return SALTS_EBUSY;
     if (!endpoint->connected) return SALTS_EINVAL;
   }
@@ -447,7 +447,7 @@ static int uring_submit(salts_io_impl *base, const native_io_operation *operatio
   request->cancel_requested = false;
   ++endpoint->active_requests;
   ++impl->active_requests;
-  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) endpoint->connect_active = true;
+  if (operation->kind == NATIVE_IO_OPERATION_STREAM_CONNECT) endpoint->connect_active = true;
   lane = uring_lane(endpoint, request->write_lane);
   uring_lane_push(impl, endpoint, index);
   if (lane->head == index) {

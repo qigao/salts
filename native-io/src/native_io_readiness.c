@@ -154,8 +154,8 @@ static void readiness_sigpipe_end(salts_io_sigpipe_guard *guard) {
 }
 
 static bool readiness_is_write(native_io_operation_kind kind) {
-  return kind == NATIVE_IO_OPERATION_TCP_SEND || kind == NATIVE_IO_OPERATION_UDP_SEND_TO ||
-         kind == NATIVE_IO_OPERATION_PIPE_WRITE || kind == NATIVE_IO_OPERATION_TCP_CONNECT;
+  return kind == NATIVE_IO_OPERATION_STREAM_SEND || kind == NATIVE_IO_OPERATION_UDP_SEND_TO ||
+         kind == NATIVE_IO_OPERATION_PIPE_WRITE || kind == NATIVE_IO_OPERATION_STREAM_CONNECT;
 }
 
 static salts_io_readiness_lane *readiness_lane(salts_io_readiness_endpoint *endpoint,
@@ -223,7 +223,7 @@ static void readiness_publish_terminal(salts_io_readiness_impl *impl,
                                        native_io_completion_kind kind, size_t bytes, int status,
                                        uint32_t native_status, size_t address_length) {
   const size_t tail = (impl->terminal_head + impl->terminal_count) % impl->request_capacity;
-  if (request->operation.kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+  if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_CONNECT) {
     salts_io_readiness_endpoint *endpoint = readiness_endpoint(impl, request->endpoint);
     if (endpoint != NULL) {
       endpoint->connect_active = false;
@@ -255,7 +255,7 @@ static int readiness_try_socket(salts_io_readiness_endpoint *endpoint,
   int flags = MSG_DONTWAIT;
   int guard_status = SALTS_OK;
   socklen_t address_length = (socklen_t)request->operation.address_capacity;
-  if (request->operation.kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+  if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_CONNECT) {
     int connect_error = 0;
     socklen_t connect_error_length = (socklen_t)sizeof(connect_error);
     if (!request->connect_started) {
@@ -296,9 +296,9 @@ static int readiness_try_socket(salts_io_readiness_endpoint *endpoint,
   (void)guard_status;
 #endif
   do {
-    if (request->operation.kind == NATIVE_IO_OPERATION_TCP_RECV)
+    if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_RECV)
       result = recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
-    else if (request->operation.kind == NATIVE_IO_OPERATION_TCP_SEND)
+    else if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_SEND)
       result = send(endpoint->fd, request->operation.buffer, request->operation.length, flags);
     else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM &&
              request->operation.address != NULL)
@@ -372,7 +372,7 @@ static void readiness_finish_attempt(salts_io_readiness_impl *impl,
   if (status < 0) {
     readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_FAILED, 0u, status,
                                (uint32_t)(-status), 0u);
-  } else if ((request->operation.kind == NATIVE_IO_OPERATION_TCP_RECV ||
+  } else if ((request->operation.kind == NATIVE_IO_OPERATION_STREAM_RECV ||
               request->operation.kind == NATIVE_IO_OPERATION_PIPE_READ) &&
              bytes == 0u) {
     readiness_publish_terminal(impl, request, index, NATIVE_IO_COMPLETION_EOF, 0u, SALTS_EOF, 0u,
@@ -503,15 +503,15 @@ static int readiness_submit(salts_io_impl *base, const native_io_operation *oper
   if (endpoint == NULL) return SALTS_ENOENT;
   if (native_io_operation_resource_kind(operation->kind) != endpoint->resource_kind)
     return SALTS_EINVAL;
-  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+  if (operation->kind == NATIVE_IO_OPERATION_STREAM_CONNECT) {
     if (endpoint->connected || endpoint->connect_active) return SALTS_EALREADY;
     if (endpoint->active_requests != 0u) return SALTS_EBUSY;
-  } else if (operation->kind == NATIVE_IO_OPERATION_TCP_RECV ||
-             operation->kind == NATIVE_IO_OPERATION_TCP_SEND) {
+  } else if (operation->kind == NATIVE_IO_OPERATION_STREAM_RECV ||
+             operation->kind == NATIVE_IO_OPERATION_STREAM_SEND) {
     if (endpoint->connect_active) return SALTS_EBUSY;
     if (!endpoint->connected) return SALTS_EINVAL;
   }
-  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) {
+  if (operation->kind == NATIVE_IO_OPERATION_STREAM_CONNECT) {
     const int descriptor_flags = fcntl(endpoint->fd, F_GETFL, 0);
     if (descriptor_flags < 0) return -errno;
     if ((descriptor_flags & O_NONBLOCK) == 0) return SALTS_EINVAL;
@@ -533,7 +533,7 @@ static int readiness_submit(salts_io_impl *base, const native_io_operation *oper
   request->connect_started = false;
   ++endpoint->active_requests;
   ++impl->active_requests;
-  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT) endpoint->connect_active = true;
+  if (operation->kind == NATIVE_IO_OPERATION_STREAM_CONNECT) endpoint->connect_active = true;
   status = readiness_try_operation(endpoint, request, &bytes, &address_length);
   if (readiness_would_block(status)) {
     readiness_lane_push(impl, endpoint, index);
@@ -545,7 +545,7 @@ static int readiness_submit(salts_io_impl *base, const native_io_operation *oper
       readiness_counter_increment(&impl->native_submit_errors);
       return status;
     }
-  } else if (status < 0 && operation->kind != NATIVE_IO_OPERATION_TCP_CONNECT) {
+  } else if (status < 0 && operation->kind != NATIVE_IO_OPERATION_STREAM_CONNECT) {
     readiness_release_request(impl, request, index);
     readiness_counter_increment(&impl->native_submit_errors);
     return status;

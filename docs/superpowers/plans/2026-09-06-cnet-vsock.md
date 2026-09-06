@@ -77,23 +77,23 @@ Commit the URI test and implementation as `feat(cnet): parse strict vsock URIs`.
 - Produces: `NATIVE_IO_OPERATION_STREAM_RECV`, `STREAM_SEND`, and `STREAM_CONNECT` with numeric values 1, 2, and 7.
 - Preserves: `NATIVE_IO_OPERATION_TCP_*` as aliases with identical values and ABI.
 
-- [ ] **Step 1: Write failing header and stream-socket tests**
+- [x] **Step 1: Write failing header and stream-socket tests**
 
 Assert alias equality in the C++ header test. On POSIX, exercise STREAM_RECV/STREAM_SEND with a real connected SOCK_STREAM fixture so tests catch an incorrect resource mapping.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Build `native_io_test` and `native_io_header_cpp_test`; expect missing STREAM enumerators.
 
-- [ ] **Step 3: Add compatible aliases and neutral contracts**
+- [x] **Step 3: Add compatible aliases and neutral contracts**
 
 Declare STREAM values first, alias the TCP names, update operation validation/resource mapping/backend comparisons to the neutral names, and document attach_socket as accepting stream operations for any supported SOCK_STREAM family.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Build and run both NativeIO tests; expect existing TCP behavior and new stream names to pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit as `refactor(native-io): generalize TCP operations to streams`.
 
