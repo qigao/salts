@@ -125,6 +125,7 @@ static void native_io_test_pipe_round_trip(native_io_backend_kind kind, bool non
   const native_io_backend_config config = {kind, 2u, 2u, 2u};
   int descriptors[2] = {-1, -1};
   native_io_endpoint endpoints[2] = {0};
+  native_io_endpoint duplicate = {1u, 1u};
   native_io_request requests[2] = {0};
   native_io_completion events[2] = {0};
   unsigned char received[sizeof(payload)] = {0};
@@ -136,6 +137,10 @@ static void native_io_test_pipe_round_trip(native_io_backend_kind kind, bool non
   check_equal(native_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0], flags,
                                            &endpoints[0]),
               SALTS_OK);
+  check_equal(native_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0], flags,
+                                           &duplicate),
+              SALTS_EALREADY);
+  check_false(native_io_endpoint_valid(duplicate));
   check_equal(native_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[1], flags,
                                            &endpoints[1]),
               SALTS_OK);
@@ -316,6 +321,48 @@ static void native_io_test_readiness_pipe_capacity_and_broken_peer(
   check_equal(native_io_backend_close(&backend), SALTS_OK);
   check_equal(native_io_backend_destroy(&backend), SALTS_OK);
 }
+
+#if defined(__linux__)
+static void native_io_test_io_uring_pipe_broken_peer(void) {
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+  int descriptors[2] = {-1, -1};
+  native_io_endpoint endpoint = {0};
+  native_io_request request = {0};
+  native_io_completion event = {0};
+  unsigned char byte = 0x71u;
+  size_t count = 0u;
+  native_io_operation operation;
+  sigset_t pending;
+
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+  check_equal(native_io_test_make_pipe(descriptors, false), SALTS_OK);
+  check_equal(native_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[1],
+                                           NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
+              SALTS_OK);
+  (void)close(descriptors[0]);
+  descriptors[0] = -1;
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_PIPE_WRITE,
+                                   .endpoint = endpoint,
+                                   .buffer = &byte,
+                                   .length = sizeof(byte)};
+  check_equal(native_io_backend_submit(&backend, &operation, &request), SALTS_OK);
+  check_equal(native_io_backend_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS,
+                                       &count),
+              SALTS_OK);
+  check_equal(count, 1u);
+  check_equal(event.kind, NATIVE_IO_COMPLETION_FAILED);
+  check_equal(event.status, -EPIPE);
+  check_equal(event.native_status, (uint32_t)EPIPE);
+  check_equal(sigpending(&pending), 0);
+  check_equal(sigismember(&pending, SIGPIPE), 0);
+
+  (void)close(descriptors[1]);
+  check_equal(native_io_backend_release_pipe(&backend, endpoint), SALTS_OK);
+  check_equal(native_io_backend_close(&backend), SALTS_OK);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+}
+#endif
 #endif
 
 static int native_io_test_bind_loopback(native_io_test_socket socket_value,
@@ -1707,6 +1754,10 @@ spec("NativeIO direct backend") {
 
   it("preserves io_uring pipe FIFO while cancelling a queued read") {
     native_io_test_pipe_fifo_and_cancel(NATIVE_IO_BACKEND_IO_URING);
+  }
+
+  it("publishes io_uring broken-pipe failure without leaking SIGPIPE") {
+    native_io_test_io_uring_pipe_broken_peer();
   }
 #endif
 #endif
