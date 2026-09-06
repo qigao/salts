@@ -65,6 +65,26 @@ spec("CNet bounded command queue") {
   }
 
   group("publication") {
+    it("copies one fixed TLS upgrade payload into queue-owned storage") {
+      static const uint8_t expected[] = {1u, 2u, 3u, 4u};
+      uint8_t source[] = {1u, 2u, 3u, 4u};
+      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
+                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
+      cnet_command command = {.kind = CNET_COMMAND_START_TLS,
+                              .connection = {.slot = 1u, .generation = 1u},
+                              .data = source,
+                              .size = sizeof(source)};
+      cnet_command_view view = {0};
+
+      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
+      memset(source, 0, sizeof(source));
+      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+      check_equal(view.kind, CNET_COMMAND_START_TLS);
+      check_equal(view.data, expected, sizeof(expected));
+      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+    }
+
     it("cycles every slot in a large bounded FIFO") {
       const cnet_command_queue_config config = {.capacity = TEST_COMMAND_SCALE,
                                                 .max_payload_bytes = TEST_PAYLOAD_CAPACITY};

@@ -254,6 +254,24 @@ admission. Accepted sessions retain their context, but accept and destroy on
 the same wrapper must not overlap. Optional client authentication requires an
 explicit CA source and validates the client certificate during the handshake.
 
+Protocols such as SMTP, IMAP, and POP3 can upgrade an already connected
+plaintext TCP stream without reconnecting. After the application has completed
+its plaintext negotiation and observed the final send/receive completion, call
+`cnet_start_tls()` on the client side and `cnet_start_tls_server()` on the server
+side. The connection handle remains unchanged. CNet publishes
+`CNET_CONNECTION_TLS_HANDSHAKING`, rejects new send/receive work during the
+transition, then publishes CONNECTED again only after certificate and hostname
+verification succeeds. A handshake error is terminal and never restores the
+plaintext stream.
+
+TLS upgrade admission is intentionally strict: the stream must be a quiescent,
+connected `tcp://` session with no pending send, receive, close, or earlier
+upgrade. `cnet_start_tls_options` is consumed synchronously. A one-shot config
+is converted to an immutable context before admission; a reusable client/server
+context is retained by the bounded command and may be destroyed by the caller
+after success. Queue exhaustion is reported immediately, and the existing
+client TLS buffer and handshake-timeout bounds apply unchanged.
+
 Each TLS session owns two fixed-capacity BIO directions and two fixed-capacity
 I/O scratch buffers. Handshake, encrypted reads/writes, ALPN, cancellation,
 and `close_notify` stay on the CNet progress owner; TLS creates no worker

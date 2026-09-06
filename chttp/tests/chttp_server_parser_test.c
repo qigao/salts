@@ -7,6 +7,9 @@
 typedef struct chttp_server_parser_probe {
   int requests;
   int continues;
+  int headers;
+  int body_opens;
+  int stop_at_headers;
   chttp_method method;
   unsigned int http_major;
   unsigned int http_minor;
@@ -40,6 +43,33 @@ static int chttp_server_parser_test_continue(void *user) {
   chttp_server_parser_probe *probe = (chttp_server_parser_probe *)user;
   ++probe->continues;
   return SALTS_OK;
+}
+
+static int chttp_server_parser_test_headers(void *user,
+                                            const chttp_server_request_view *request,
+                                            chttp_server_parser_headers_action *out_action) {
+  chttp_server_parser_probe *probe = (chttp_server_parser_probe *)user;
+  (void)request;
+  ++probe->headers;
+  *out_action = probe->stop_at_headers ? CHTTP_SERVER_HEADERS_STOP
+                                       : CHTTP_SERVER_HEADERS_CONTINUE;
+  return SALTS_OK;
+}
+
+static int chttp_server_parser_test_body_open(void *user,
+                                              const chttp_server_request_view *request,
+                                              chttp_body_sink *out_sink) {
+  chttp_server_parser_probe *probe = (chttp_server_parser_probe *)user;
+  (void)request;
+  ++probe->body_opens;
+  *out_sink = (chttp_body_sink){0};
+  return SALTS_OK;
+}
+
+static void chttp_server_parser_test_body_close(void *user, chttp_body_sink *sink, int status) {
+  (void)user;
+  (void)sink;
+  (void)status;
 }
 
 static int chttp_server_parser_test_upgrade(void *user, const chttp_server_request_view *request,
@@ -155,6 +185,36 @@ spec("CHTTP server request parser") {
     check_equal(probe.host, "example.test");
     check_equal(probe.body_size, (size_t)0u);
     check_equal(probe.keep_alive, 1);
+    chttp_server_parser_destroy(&parser);
+  }
+
+  it("stops at header admission before 100 continue and body bytes") {
+    static const char headers[] = "POST /protected HTTP/1.1\r\n"
+                                  "Host: example.test\r\n"
+                                  "Expect: 100-continue\r\n"
+                                  "Content-Length: 4\r\n\r\n";
+    static const char body[] = "data";
+    char wire[sizeof(headers) - 1u + sizeof(body) - 1u];
+    chttp_server_parser_probe probe = {.stop_at_headers = 1};
+    chttp_server_parser_config config = chttp_server_parser_test_config(&probe);
+    chttp_server_parser parser = {0};
+    size_t consumed = 0u;
+    unsigned int http_status = 0u;
+
+    memcpy(wire, headers, sizeof(headers) - 1u);
+    memcpy(wire + sizeof(headers) - 1u, body, sizeof(body) - 1u);
+    config.on_headers = chttp_server_parser_test_headers;
+    config.on_body_open = chttp_server_parser_test_body_open;
+    config.on_body_close = chttp_server_parser_test_body_close;
+    check_equal(chttp_server_parser_init(&parser, &config), SALTS_OK);
+    check_equal(chttp_server_parser_execute_consumed(&parser, wire, sizeof(wire), &consumed,
+                                                     &http_status),
+                SALTS_OK);
+    check_equal(consumed, sizeof(headers) - 1u);
+    check_equal(probe.headers, 1);
+    check_equal(probe.continues, 0);
+    check_equal(probe.body_opens, 0);
+    check_equal(probe.requests, 0);
     chttp_server_parser_destroy(&parser);
   }
 

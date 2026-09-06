@@ -12,6 +12,15 @@ typedef struct chttp_server_parser {
 enum { CHTTP_SERVER_REQUEST_DEFERRED = 1 };
 
 typedef int (*chttp_server_parser_request_fn)(void *user, const chttp_server_request_view *request);
+
+typedef enum chttp_server_parser_headers_action {
+  CHTTP_SERVER_HEADERS_CONTINUE = 0,
+  CHTTP_SERVER_HEADERS_STOP
+} chttp_server_parser_headers_action;
+
+typedef int (*chttp_server_parser_headers_fn)(
+    void *user, const chttp_server_request_view *request,
+    chttp_server_parser_headers_action *out_action);
 typedef int (*chttp_server_parser_continue_fn)(void *user);
 typedef int (*chttp_server_parser_body_open_fn)(void *user,
                                                 const chttp_server_request_view *request,
@@ -38,6 +47,7 @@ typedef struct chttp_server_parser_config {
   size_t max_header_bytes;
   size_t max_body_bytes;
   chttp_server_parser_request_fn on_request;
+  chttp_server_parser_headers_fn on_headers;
   chttp_server_parser_continue_fn on_continue;
   chttp_server_parser_body_open_fn on_body_open;
   chttp_server_parser_body_close_fn on_body_close;

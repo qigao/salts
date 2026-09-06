@@ -32,6 +32,8 @@ static_assert(std::is_standard_layout<cnet_vsock_peer>::value,
               "VSOCK peer must remain portable C ABI data");
 static_assert(std::is_standard_layout<cnet_vsock_listener_config>::value,
               "VSOCK listener configuration must remain versioned C ABI data");
+static_assert(std::is_standard_layout<cnet_start_tls_options>::value,
+              "TLS upgrade policy must remain C ABI data");
 static_assert(std::is_standard_layout<cnet_websocket>::value,
               "WebSocket must be a C value wrapper");
 static_assert(CNET_CONNECTION_CONNECTED != CNET_CONNECTION_FAILED,
@@ -61,6 +63,10 @@ static_assert(offsetof(cnet_observer, on_send) > offsetof(cnet_observer, user),
 using cnet_client_wake_function = int (*)(cnet_client *);
 static_assert(std::is_same<decltype(&cnet_client_wake), cnet_client_wake_function>::value,
               "client wake must keep its C linkage signature");
+using cnet_start_tls_function = int (*)(cnet_client *, cnet_connection,
+                                        const cnet_start_tls_options *);
+static_assert(std::is_same<decltype(&cnet_start_tls), cnet_start_tls_function>::value,
+              "TLS upgrade must keep its C linkage signature");
 using cnet_packet_poll_function = int (*)(cnet_packet_endpoint *, std::uint32_t, std::size_t *);
 static_assert(std::is_same<decltype(&cnet_packet_poll), cnet_packet_poll_function>::value,
               "packet poll must keep its C linkage signature");
@@ -91,6 +97,7 @@ int main() {
   cnet_tls_client_config tls_client_config{};
   cnet_tls_server_config tls_server_config{};
   cnet_connect_options options{};
+  cnet_start_tls_options start_tls_options = CNET_START_TLS_OPTIONS_INIT;
   cnet_receive_view view{};
   cnet_const_buffer buffer{};
   cnet_error error{};
@@ -120,6 +127,7 @@ int main() {
   (void)tls_client_config;
   (void)tls_server_config;
   (void)options;
+  (void)start_tls_options;
   (void)view;
   (void)buffer;
   (void)error;

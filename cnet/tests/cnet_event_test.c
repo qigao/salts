@@ -112,6 +112,8 @@ spec("CNet bounded callback events") {
     check_equal(cnet_event_queue_publish(&events, &event), SALTS_OK);
     event.state = CNET_EVENT_STATE_CLOSING;
     check_equal(cnet_event_queue_publish(&events, &event), SALTS_OK);
+    event.state = CNET_EVENT_STATE_TLS_HANDSHAKING;
+    check_equal(cnet_event_queue_publish(&events, &event), SALTS_OK);
     event.state = CNET_EVENT_STATE_CLOSED;
     check_equal(cnet_event_queue_publish(&events, &event), SALTS_OK);
 
@@ -127,6 +129,9 @@ spec("CNet bounded callback events") {
     check_equal(cnet_event_queue_release(&events, &view), SALTS_OK);
     check_equal(cnet_event_queue_take(&events, &view), SALTS_OK);
     check_equal(view.state, CNET_EVENT_STATE_CLOSING);
+    check_equal(cnet_event_queue_release(&events, &view), SALTS_OK);
+    check_equal(cnet_event_queue_take(&events, &view), SALTS_OK);
+    check_equal(view.state, CNET_EVENT_STATE_TLS_HANDSHAKING);
     check_equal(cnet_event_queue_release(&events, &view), SALTS_OK);
     check_equal(cnet_event_queue_take(&events, &view), SALTS_OK);
     check_equal(view.state, CNET_EVENT_STATE_CLOSED);

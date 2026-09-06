@@ -286,7 +286,7 @@ static int cnet_shards_publish(cnet_shards_impl *impl, cnet_shard_connection con
     status = cnet_session_table_state(&record->sessions, connection.session, &state);
   if (status == SALTS_OK &&
       (kind == CNET_COMMAND_SEND || kind == CNET_COMMAND_SEND_CLOSE ||
-       kind == CNET_COMMAND_RECEIVE) &&
+       kind == CNET_COMMAND_RECEIVE || kind == CNET_COMMAND_START_TLS) &&
       state != CNET_SESSION_OPEN)
     status = SALTS_EBUSY;
   if (status == SALTS_OK && kind == CNET_COMMAND_CLOSE && state == CNET_SESSION_DRAINING)
@@ -338,6 +338,17 @@ int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, s
   const cnet_command command = {
       .kind = CNET_COMMAND_RECEIVE, .connection = connection.session, .argument = demand};
   if (impl == NULL || demand == 0u) return SALTS_EINVAL;
+  return cnet_shards_publish(impl, connection, &command);
+}
+
+int cnet_shards_start_tls(cnet_shards *shards, cnet_shard_connection connection,
+                          const cnet_owner_start_tls_payload *payload) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  const cnet_command command = {.kind = CNET_COMMAND_START_TLS,
+                                .connection = connection.session,
+                                .data = payload,
+                                .size = sizeof(*payload)};
+  if (impl == NULL || payload == NULL || payload->tls_context == NULL) return SALTS_EINVAL;
   return cnet_shards_publish(impl, connection, &command);
 }
 

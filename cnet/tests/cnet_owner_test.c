@@ -398,6 +398,94 @@ cleanup:
   check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
 }
 
+static void cnet_owner_test_start_tls_init_failure(native_io_backend_kind backend_kind) {
+  cnet_session_table sessions = {0};
+  cnet_command_queue commands = {0};
+  cnet_event_queue events = {0};
+  cnet_owner owner = {0};
+  const cnet_command_queue_config command_config = {8u, sizeof(cnet_owner_connect_payload)};
+  const cnet_event_queue_config event_config = {8u, 2u, 64u};
+  const cnet_owner_config owner_config = {.backend_kind = backend_kind,
+                                          .connection_capacity = 1u,
+                                          .request_capacity = 4u,
+                                          .completion_batch_capacity = 4u,
+                                          .receive_buffer_bytes = 64u,
+                                          .receive_buffer_count = 1u,
+                                          .sessions = &sessions,
+                                          .commands = &commands,
+                                          .events = &events};
+  cnet_owner_test_socket listener = CNET_OWNER_TEST_INVALID_SOCKET;
+  cnet_owner_test_socket accepted = CNET_OWNER_TEST_INVALID_SOCKET;
+  struct sockaddr_in address;
+  cnet_session_handle session = {0};
+  cnet_owner_connect_payload connect_payload = {0};
+  cnet_owner_start_tls_payload start_tls_payload = {0};
+  cnet_tls_context *tls_context = NULL;
+  cnet_command command = {0};
+  cnet_event_view event = {0};
+  cnet_session_terminal terminal = {0};
+
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+  check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
+  check_equal(cnet_owner_test_listener(&listener, &address), SALTS_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
+
+  connect_payload.scheme = CNET_URI_TCP;
+  connect_payload.address_length = sizeof(address);
+  memcpy(connect_payload.address, &address, sizeof(address));
+  command =
+      (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
+              SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.state, CNET_EVENT_STATE_CONNECTED);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  accepted = accept(listener, NULL, NULL);
+  check_true(accepted != CNET_OWNER_TEST_INVALID_SOCKET);
+
+  check_equal(cnet_tls_client_context_create(NULL, &tls_context), SALTS_OK);
+  start_tls_payload.tls_context = tls_context;
+  start_tls_payload.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+  start_tls_payload.tls_handshake_timeout_ms = CNET_OWNER_TEST_TIMEOUT_MS;
+  start_tls_payload.tls_server = true;
+  command = (cnet_command){CNET_COMMAND_START_TLS, session, &start_tls_payload,
+                           sizeof(start_tls_payload), 0u};
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  tls_context = NULL;
+  check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
+              SALTS_OK);
+
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.state, CNET_EVENT_STATE_TLS_HANDSHAKING);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.state, CNET_EVENT_STATE_FAILED);
+  check_equal(event.status, SALTS_EINVAL);
+  check_equal(event.stage, CNET_SESSION_STAGE_HANDSHAKE);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+
+  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
+  check_equal(terminal.kind, CNET_SESSION_TERMINAL_FAILED);
+  check_equal(terminal.status, SALTS_EINVAL);
+  check_equal(terminal.stage, CNET_SESSION_STAGE_HANDSHAKE);
+  check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+  check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
+
+  cnet_owner_test_close_socket(accepted);
+  cnet_owner_test_close_socket(listener);
+  cnet_tls_context_release(tls_context);
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_owner_close(&owner), SALTS_OK);
+  check_equal(cnet_owner_destroy(&owner), SALTS_OK);
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
+}
+
 static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   static const unsigned char outbound[] = {2u, 4u, 6u, 8u};
   static const unsigned char inbound[] = {1u, 9u, 3u, 7u};
@@ -792,6 +880,16 @@ spec("CNet owner shard") {
     check_equal(cnet_module_init(), SALTS_OK);
     for (index = 0u; index < count; ++index)
       cnet_owner_test_tcp(backends[index], true, CNET_OWNER_TEST_NO_TIMEOUT);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
+  }
+
+  it("publishes handshaking before a local TLS initialization failure") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    size_t index;
+    check_equal(cnet_module_init(), SALTS_OK);
+    for (index = 0u; index < count; ++index)
+      cnet_owner_test_start_tls_init_failure(backends[index]);
     check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 

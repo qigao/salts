@@ -37,6 +37,15 @@ typedef struct cnet_owner_connect_payload {
   bool tls_server;
 } cnet_owner_connect_payload;
 
+/** Fixed command payload whose retained context ownership transfers to the owner. */
+typedef struct cnet_owner_start_tls_payload {
+  cnet_tls_context *tls_context;
+  char tls_server_name[CNET_TLS_SERVER_NAME_CAPACITY];
+  uint32_t tls_handshake_timeout_ms;
+  size_t tls_io_buffer_bytes;
+  bool tls_server;
+} cnet_owner_start_tls_payload;
+
 typedef uint64_t (*cnet_owner_now_ms_fn)(void *context);
 typedef int (*cnet_owner_event_publish_fn)(void *context, const cnet_event *event);
 

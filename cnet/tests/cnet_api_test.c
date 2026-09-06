@@ -65,6 +65,9 @@ typedef struct cnet_api_test_listener_probe {
   atomic_int sent;
   atomic_int terminal;
   atomic_int failed;
+  int handshaking;
+  int failure_status;
+  const char *failure_stage;
   unsigned char received_value;
   size_t expected_send_size;
 } cnet_api_test_listener_probe;
@@ -272,9 +275,15 @@ static void cnet_api_test_listener_state(void *user, cnet_connection connection,
   (void)connection;
   if (state == CNET_CONNECTION_CONNECTED)
     atomic_store_explicit(&probe->connected, 1, memory_order_release);
+  else if (state == CNET_CONNECTION_TLS_HANDSHAKING) ++probe->handshaking;
   else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
-    if (state == CNET_CONNECTION_FAILED || error != NULL)
+    if (state == CNET_CONNECTION_FAILED || error != NULL) {
+      if (error != NULL) {
+        probe->failure_status = error->status;
+        probe->failure_stage = error->stage;
+      }
       atomic_store_explicit(&probe->failed, 1, memory_order_release);
+    }
     atomic_store_explicit(&probe->terminal, 1, memory_order_release);
   }
 }
@@ -492,8 +501,12 @@ spec("CNet public client API") {
     cnet_connection connection = {17u, 19u};
     cnet_connect_options options = {.uri = "tls://localhost:443",
                                     .observer = {.on_state = cnet_api_test_ignore_state}};
+    cnet_start_tls_options upgrade = CNET_START_TLS_OPTIONS_INIT;
+
+    upgrade.server_name = "localhost";
 
     check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_start_tls(&client, connection, &upgrade), SALTS_ENOTSUP);
     check_equal(cnet_connect(&client, &options, &connection), SALTS_ENOTSUP);
     check_equal(connection.slot, 0u);
     check_equal(connection.generation, 0u);
@@ -518,6 +531,76 @@ spec("CNet public client API") {
     check_equal(cnet_client_init(&client, &config), SALTS_OK);
     check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(cnet_client_destroy(&client), SALTS_OK);
+  }
+
+  it("admits TLS upgrade only for a quiescent connected TCP stream") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_api_test_listener_probe probe = {0};
+    cnet_api_test_socket listener = CNET_API_TEST_INVALID_SOCKET;
+    cnet_api_test_socket peer = CNET_API_TEST_INVALID_SOCKET;
+    cnet_connection connection = {0};
+    cnet_connect_options connect_options;
+    cnet_start_tls_options tls_options = CNET_START_TLS_OPTIONS_INIT;
+    cnet_tls_client_config tls_config = {.size = sizeof(tls_config), .server_name = "localhost"};
+    char uri[64];
+    uint16_t port = 0u;
+    const unsigned char value = 29u;
+
+    atomic_init(&probe.connected, 0);
+    atomic_init(&probe.received, 0);
+    atomic_init(&probe.sent, 0);
+    atomic_init(&probe.terminal, 0);
+    atomic_init(&probe.failed, 0);
+    config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    config.tls_handshake_timeout_ms = 20u;
+    tls_options.tls = &tls_config;
+
+    check_equal(cnet_start_tls(NULL, connection, &tls_options), SALTS_EINVAL);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_api_test_listener(&listener, &port), SALTS_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
+    connect_options =
+        (cnet_connect_options){.uri = uri,
+                               .observer = {.on_state = cnet_api_test_listener_state,
+                                            .on_receive = cnet_api_test_listener_receive,
+                                            .on_send = cnet_api_test_listener_send,
+                                            .user = &probe}};
+    check_equal(cnet_connect(&client, &connect_options, &connection), SALTS_OK);
+    check_equal(cnet_start_tls(&client, connection, &tls_options), SALTS_EBUSY);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+    peer = accept(listener, NULL, NULL);
+    check_true(peer != CNET_API_TEST_INVALID_SOCKET);
+
+    tls_options.size = 0u;
+    check_equal(cnet_start_tls(&client, connection, &tls_options), SALTS_EINVAL);
+    tls_options = (cnet_start_tls_options)CNET_START_TLS_OPTIONS_INIT;
+    tls_options.tls = &tls_config;
+
+    check_equal(cnet_receive(&client, connection, 1u), SALTS_OK);
+    check_equal(cnet_start_tls(&client, connection, &tls_options), SALTS_EBUSY);
+    check_equal(send(peer, (const char *)&value, (int)sizeof(value), 0), (int)sizeof(value));
+    check_equal(cnet_api_test_poll_until(&client, &probe.received, 1), SALTS_OK);
+
+    check_equal(cnet_send(&client, connection, &value, sizeof(value)), SALTS_OK);
+    check_equal(cnet_start_tls(&client, connection, &tls_options), SALTS_EBUSY);
+    check_equal(cnet_api_test_poll_until(&client, &probe.sent, 1), SALTS_OK);
+
+    check_equal(cnet_start_tls(&client, connection, &tls_options), SALTS_OK);
+    check_equal(cnet_start_tls(&client, connection, &tls_options), SALTS_EBUSY);
+    check_equal(cnet_send(&client, connection, &value, sizeof(value)), SALTS_EBUSY);
+    check_equal(cnet_receive(&client, connection, 1u), SALTS_EBUSY);
+    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
+    check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 1);
+    check_equal(probe.handshaking, 1);
+    check_equal(probe.failure_status, SALTS_ETIMEDOUT);
+    check_not_null(probe.failure_stage);
+    check_equal(strcmp(probe.failure_stage, "handshake"), 0);
+
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    cnet_api_test_close_socket(peer);
+    cnet_api_test_close_socket(listener);
   }
 
   it("returns a portable address-in-use error for listener bind conflicts") {
@@ -669,6 +752,7 @@ spec("CNet public client API") {
     cnet_api_test_socket peer = CNET_API_TEST_INVALID_SOCKET;
     cnet_connection connection = {0};
     cnet_connect_options options;
+    cnet_start_tls_options tls_options = CNET_START_TLS_OPTIONS_INIT;
     char uri[64];
     uint16_t port = 0u;
     const unsigned char value = 37u;
@@ -679,6 +763,9 @@ spec("CNet public client API") {
     atomic_init(&probe.terminal, 0);
     atomic_init(&probe.failed, 0);
     probe.received_value = 0u;
+    config.tls_io_buffer_bytes = CNET_TLS_MIN_IO_BUFFER_BYTES;
+    config.tls_handshake_timeout_ms = 1000u;
+    tls_options.server_name = "localhost";
     check_equal(cnet_client_init(&client, &config), SALTS_OK);
     check_equal(cnet_api_test_listener(&listener, &port), SALTS_OK);
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
@@ -696,6 +783,7 @@ spec("CNet public client API") {
     check_equal(cnet_close(&client, connection), SALTS_EALREADY);
     check_equal(cnet_send(&client, connection, &value, sizeof(value)), SALTS_EBUSY);
     check_equal(cnet_receive(&client, connection, 1u), SALTS_EBUSY);
+    check_equal(cnet_start_tls(&client, connection, &tls_options), SALTS_EBUSY);
     check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
     check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
 
