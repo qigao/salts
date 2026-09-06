@@ -116,7 +116,7 @@ static void cnet_test_stream_socket_options(void) {
               SALTS_OK);
   check_equal(getsockopt(socket_value, SOL_SOCKET, SO_KEEPALIVE, (char *)&keepalive, &option_size),
               0);
-  check_equal(keepalive, 1);
+  check_true(keepalive != 0);
   option_size = (int)sizeof(linger_value);
   check_equal(getsockopt(socket_value, SOL_SOCKET, SO_LINGER, (char *)&linger_value, &option_size),
               0);
