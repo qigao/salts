@@ -162,6 +162,16 @@ set_target_properties(chttp_h2_server_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+cmake_add_test(chttp_h2_deferred_test
+  SOURCES chttp_h2_deferred_test.c
+  LIBS salts_chttp Salts::TinyTest
+  INCLUDES ../src
+  FOLDER "chttp/tests")
+set_target_properties(chttp_h2_deferred_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 cmake_add_test(chttp_h2_jwt_isolation_test
   SOURCES chttp_h2_jwt_isolation_test.c
   LIBS salts_chttp Salts::TinyTest
