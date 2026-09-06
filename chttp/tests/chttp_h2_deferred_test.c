@@ -172,7 +172,7 @@ spec("CHTTP HTTP2 deferred responses") {
     chttp_client_config client_config = chttp_h2_deferred_client_config();
     chttp_request request = {0};
     chttp_request_options options;
-    salts_thread worker = {0};
+    salts_thread_t worker = NULL;
     uint16_t port = 0u;
     char uri[64];
     char authority[64];
