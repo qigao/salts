@@ -69,7 +69,7 @@ static bool cnet_session_transition_allowed(cnet_session_state current, cnet_ses
   case CNET_SESSION_PROTOCOL_HANDSHAKING:
     return next == CNET_SESSION_OPEN || next == CNET_SESSION_DRAINING;
   case CNET_SESSION_OPEN:
-    return next == CNET_SESSION_DRAINING;
+    return next == CNET_SESSION_PROTOCOL_HANDSHAKING || next == CNET_SESSION_DRAINING;
   default:
     return false;
   }

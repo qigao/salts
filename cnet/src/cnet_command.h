@@ -35,6 +35,7 @@ typedef enum cnet_command_kind {
   CNET_COMMAND_SEND,
   CNET_COMMAND_SEND_CLOSE,
   CNET_COMMAND_RECEIVE,
+  CNET_COMMAND_START_TLS,
   CNET_COMMAND_CLOSE,
   CNET_COMMAND_STOP
 } cnet_command_kind;

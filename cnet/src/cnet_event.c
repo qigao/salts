@@ -68,7 +68,7 @@ static bool cnet_event_valid(const cnet_event *event) {
            event->stage == CNET_SESSION_STAGE_NONE && event->data == NULL && event->size == 0u &&
            event->argument != 0u;
   if (event->kind != CNET_EVENT_STATE) return false;
-  if (event->state < CNET_EVENT_STATE_CONNECTED || event->state > CNET_EVENT_STATE_FAILED)
+  if (event->state < CNET_EVENT_STATE_CONNECTED || event->state > CNET_EVENT_STATE_TLS_HANDSHAKING)
     return false;
   if (event->state == CNET_EVENT_STATE_CONNECTED) {
     if (event->size > CNET_TLS_ALPN_NAME_MAX_BYTES ||

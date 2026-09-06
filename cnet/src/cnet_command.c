@@ -91,6 +91,9 @@ static bool cnet_command_valid(const cnet_command *command) {
   if (command->kind == CNET_COMMAND_CONNECT)
     return command->data != NULL && command->size != 0u && command->argument == 0u &&
            command->segments == NULL && command->segment_count == 0u;
+  if (command->kind == CNET_COMMAND_START_TLS)
+    return command->data != NULL && command->size != 0u && command->argument == 0u &&
+           command->segments == NULL && command->segment_count == 0u;
   if (command->kind == CNET_COMMAND_SEND || command->kind == CNET_COMMAND_SEND_CLOSE) {
     if (command->size == 0u || command->argument != 0u) return false;
     if (command->segments == NULL || command->segment_count == 0u)

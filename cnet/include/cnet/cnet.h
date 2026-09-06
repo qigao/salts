@@ -72,7 +72,9 @@ typedef enum cnet_connection_state {
   CNET_CONNECTION_CONNECTED,
   CNET_CONNECTION_CLOSING,
   CNET_CONNECTION_CLOSED,
-  CNET_CONNECTION_FAILED
+  CNET_CONNECTION_FAILED,
+  /** An existing plaintext TCP stream is performing an in-place TLS handshake. */
+  CNET_CONNECTION_TLS_HANDSHAKING
 } cnet_connection_state;
 
 typedef enum cnet_message_kind { CNET_MESSAGE_BYTES = 1, CNET_MESSAGE_DATAGRAM } cnet_message_kind;
@@ -278,6 +280,19 @@ typedef struct cnet_connect_options {
   /** Optional reusable TLS policy; mutually exclusive with `tls`. */
   const cnet_tls_client *tls_client;
 } cnet_connect_options;
+
+/** Client policy consumed synchronously when upgrading one connected plaintext TCP stream. */
+typedef struct cnet_start_tls_options {
+  size_t size;
+  /** Required verified identity unless supplied by `tls` or `tls_client`. */
+  const char *server_name;
+  /** Optional one-shot policy; mutually exclusive with `tls_client`. */
+  const cnet_tls_client_config *tls;
+  /** Optional reusable policy; mutually exclusive with `tls`. */
+  const cnet_tls_client *tls_client;
+} cnet_start_tls_options;
+
+#define CNET_START_TLS_OPTIONS_INIT {sizeof(cnet_start_tls_options), NULL, NULL, NULL}
 
 /**
  * Optional OS policy for future TCP-backed connections owned by one client.
@@ -547,6 +562,40 @@ int cnet_client_set_stream_socket_options(cnet_client *client,
  */
 int cnet_connect(cnet_client *client, const cnet_connect_options *options,
                  cnet_connection *out_connection);
+
+/**
+ * Upgrades one quiescent connected plaintext TCP stream in place. The handle
+ * remains stable. Success admits a bounded command; callbacks then report
+ * `CNET_CONNECTION_TLS_HANDSHAKING` followed by CONNECTED or FAILED. A close
+ * admitted during the handshake instead reports CLOSING followed by CLOSED.
+ *
+ * No send, receive, close, or other upgrade may be pending. TLS failure is
+ * terminal and never falls back to plaintext.
+ *
+ * @param client Initialized single-owner client.
+ * @param connection Live plaintext TCP handle, preserved across the upgrade.
+ * @param options Borrowed policy consumed before this call returns.
+ * @return `SALTS_OK` for asynchronous admission; `SALTS_EINVAL` for malformed
+ * policy; `SALTS_ENOTSUP` when TLS storage is disabled or the stream is not
+ * plaintext TCP; `SALTS_EBUSY` unless the stream is connected and quiescent;
+ * `SALTS_ENOENT` for a stale handle; or a bounded queue error.
+ */
+int cnet_start_tls(cnet_client *client, cnet_connection connection,
+                   const cnet_start_tls_options *options);
+
+/**
+ * Server-side counterpart to `cnet_start_tls()` using one reusable context.
+ * The server wrapper is borrowed during admission; the accepted command keeps
+ * its own reference.
+ *
+ * @param client Initialized single-owner client.
+ * @param connection Live plaintext TCP handle, preserved across the upgrade.
+ * @param server Initialized immutable server TLS context.
+ * @return The same connection-state, capacity, and shutdown results as
+ * `cnet_start_tls()`, plus `SALTS_EINVAL` for an invalid server context.
+ */
+int cnet_start_tls_server(cnet_client *client, cnet_connection connection,
+                          const cnet_tls_server *server);
 
 /**
  * Copies `size` bytes into bounded command storage before returning success.

@@ -179,6 +179,8 @@ typedef struct cnet_tls_network_probe {
   size_t alpn_size;
   int alpn_status;
   int connected;
+  int connected_count;
+  int handshaking;
   int sent;
   int terminal;
   int failed;
@@ -192,8 +194,11 @@ static void cnet_tls_network_state(void *user, cnet_connection connection,
   probe->connection = connection;
   if (state == CNET_CONNECTION_CONNECTED) {
     probe->connected = 1;
+    ++probe->connected_count;
     probe->alpn_status = cnet_tls_negotiated_alpn(probe->client, connection, probe->alpn,
                                                   sizeof(probe->alpn), &probe->alpn_size);
+  } else if (state == CNET_CONNECTION_TLS_HANDSHAKING) {
+    ++probe->handshaking;
   } else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
     probe->terminal = 1;
     if (state == CNET_CONNECTION_FAILED || error != NULL) {
@@ -400,6 +405,7 @@ spec("CNet bounded TLS engine") {
     cnet_tls_network_probe client_probe = {.client = &client};
     cnet_tls_network_probe server_probe = {.client = &server};
     cnet_connect_options connect_options;
+    cnet_start_tls_options upgrade = CNET_START_TLS_OPTIONS_INIT;
     cnet_connection client_connection = {0};
     char peer_certificate_sha256[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY] = {0};
     uint8_t client_channel_binding[CNET_TLS_CHANNEL_BINDING_BYTES] = {0};
@@ -457,6 +463,10 @@ spec("CNet bounded TLS engine") {
     check_true(accepted);
     check_true(client_probe.connected);
     check_true(server_probe.connected);
+    upgrade.server_name = "localhost";
+    check_equal(cnet_start_tls(&client, client_connection, &upgrade), SALTS_ENOTSUP);
+    check_equal(cnet_start_tls_server(&server, server_probe.connection, &tls_server),
+                SALTS_ENOTSUP);
     check_equal(client_probe.alpn_status, SALTS_OK);
     check_equal(server_probe.alpn_status, SALTS_OK);
     check_equal(client_probe.alpn_size, (size_t)2u);
@@ -531,6 +541,172 @@ spec("CNet bounded TLS engine") {
     check_equal(cnet_client_destroy(&client), SALTS_OK);
     check_equal(cnet_client_destroy(&server), SALTS_OK);
     check_equal(cnet_tls_server_destroy(&tls_server), SALTS_OK);
+    check_equal(tt_remove_file(cert_path), 0);
+    check_equal(tt_remove_file(key_path), 0);
+    free(cert_path);
+    free(key_path);
+  }
+
+  it("upgrades one negotiated plaintext connection in place and carries TLS bytes") {
+    static const char plaintext_request[] = "STARTTLS";
+    static const char plaintext_response[] = "READY";
+    static const char secure_request[] = "secret";
+    cnet_client client = {0};
+    cnet_client server = {0};
+    cnet_listener listener = {0};
+    cnet_tls_server tls_server = {0};
+    cnet_client_config client_config = cnet_tls_network_config();
+    cnet_client_config server_config = cnet_tls_network_config();
+    cnet_listener_config listener_config = {
+        .backend = client_config.backend, .host = "127.0.0.1", .port = 0u, .backlog = 2u};
+    cnet_tls_network_probe client_probe = {.client = &client};
+    cnet_tls_network_probe server_probe = {.client = &server};
+    cnet_observer client_observer = {.on_state = cnet_tls_network_state,
+                                     .on_receive = cnet_tls_network_receive,
+                                     .user = &client_probe,
+                                     .on_send = cnet_tls_network_send};
+    cnet_observer server_observer = {.on_state = cnet_tls_network_state,
+                                     .on_receive = cnet_tls_network_receive,
+                                     .user = &server_probe,
+                                     .on_send = cnet_tls_network_send};
+    cnet_tls_server_config tls_server_config;
+    cnet_tls_client_config tls_client_config;
+    cnet_start_tls_options tls_options = CNET_START_TLS_OPTIONS_INIT;
+    cnet_connect_options connect_options;
+    cnet_connection client_connection = {0};
+    cnet_connection server_connection = {0};
+    char *cert_path = tt_make_temp_file("cnet-cert", ".pem");
+    char *key_path = tt_make_temp_file("cnet-key", ".pem");
+    char uri[64];
+    uint16_t port = 0u;
+    uint64_t deadline;
+    bool accepted = false;
+
+    check_not_null(cert_path);
+    check_not_null(key_path);
+    check_equal(
+        tt_write_file(cert_path, CNET_TLS_TEST_CERTIFICATE, sizeof(CNET_TLS_TEST_CERTIFICATE) - 1u),
+        0);
+    check_equal(tt_write_file(key_path, CNET_TLS_TEST_KEY, sizeof(CNET_TLS_TEST_KEY) - 1u), 0);
+    tls_server_config = (cnet_tls_server_config){.size = sizeof(tls_server_config),
+                                                 .cert_file = cert_path,
+                                                 .key_file = key_path,
+                                                 .client_auth = CNET_TLS_CLIENT_AUTH_NONE};
+    tls_client_config = (cnet_tls_client_config){
+        .size = sizeof(tls_client_config), .ca_file = cert_path, .server_name = "localhost"};
+    tls_options.tls = &tls_client_config;
+
+    check_equal(cnet_tls_server_init(&tls_server, &tls_server_config), SALTS_OK);
+    check_equal(cnet_client_init(&client, &client_config), SALTS_OK);
+    check_equal(cnet_client_init(&server, &server_config), SALTS_OK);
+    check_equal(cnet_listener_init(&listener, &listener_config), SALTS_OK);
+    check_equal(cnet_listener_port(&listener, &port), SALTS_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
+    connect_options = (cnet_connect_options){.uri = uri, .observer = client_observer};
+    check_equal(cnet_connect(&client, &connect_options, &client_connection), SALTS_OK);
+
+    deadline = salts_monotonic_ms() + 5000u;
+    while ((!client_probe.connected || !server_probe.connected) &&
+           salts_monotonic_ms() < deadline) {
+      size_t events = 0u;
+      int ready = 0;
+      check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
+      if (!accepted) {
+        check_equal(cnet_listener_wait(&listener, 0u, &ready), SALTS_OK);
+        if (ready != 0) {
+          check_equal(
+              cnet_listener_accept(&listener, &server, &server_observer, &server_connection),
+              SALTS_OK);
+          server_probe.connection = server_connection;
+          accepted = true;
+        }
+      }
+      check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
+    }
+    check_true(accepted);
+    check_equal(client_probe.connected_count, 1);
+    check_equal(server_probe.connected_count, 1);
+
+    check_equal(cnet_receive(&server, server_connection, 1u), SALTS_OK);
+    check_equal(
+        cnet_send(&client, client_connection, plaintext_request, sizeof(plaintext_request) - 1u),
+        SALTS_OK);
+    deadline = salts_monotonic_ms() + 5000u;
+    while ((server_probe.received_size == 0u || client_probe.sent == 0) &&
+           salts_monotonic_ms() < deadline) {
+      size_t events = 0u;
+      check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
+      check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
+    }
+    check_equal(server_probe.received_size, sizeof(plaintext_request) - 1u);
+    check_equal(memcmp(server_probe.received, plaintext_request, sizeof(plaintext_request) - 1u),
+                0);
+
+    client_probe.received_size = 0u;
+    check_equal(cnet_receive(&client, client_connection, 1u), SALTS_OK);
+    check_equal(
+        cnet_send(&server, server_connection, plaintext_response, sizeof(plaintext_response) - 1u),
+        SALTS_OK);
+    deadline = salts_monotonic_ms() + 5000u;
+    while ((client_probe.received_size == 0u || server_probe.sent == 0) &&
+           salts_monotonic_ms() < deadline) {
+      size_t events = 0u;
+      check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
+      check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
+    }
+    check_equal(client_probe.received_size, sizeof(plaintext_response) - 1u);
+    check_equal(memcmp(client_probe.received, plaintext_response, sizeof(plaintext_response) - 1u),
+                0);
+
+    client_probe.received_size = 0u;
+    server_probe.received_size = 0u;
+    check_equal(cnet_start_tls_server(&server, server_connection, &tls_server), SALTS_OK);
+    check_equal(cnet_start_tls(&client, client_connection, &tls_options), SALTS_OK);
+    check_equal(cnet_tls_server_destroy(&tls_server), SALTS_OK);
+
+    deadline = salts_monotonic_ms() + 5000u;
+    while ((client_probe.connected_count != 2 || server_probe.connected_count != 2) &&
+           !client_probe.terminal && !server_probe.terminal && salts_monotonic_ms() < deadline) {
+      size_t events = 0u;
+      check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
+      check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
+    }
+    check_equal(client_probe.handshaking, 1);
+    check_equal(server_probe.handshaking, 1);
+    check_equal(client_probe.connected_count, 2);
+    check_equal(server_probe.connected_count, 2);
+    check_false(client_probe.failed);
+    check_false(server_probe.failed);
+
+    check_equal(cnet_receive(&server, server_connection, 1u), SALTS_OK);
+    check_equal(cnet_send(&client, client_connection, secure_request, sizeof(secure_request) - 1u),
+                SALTS_OK);
+    deadline = salts_monotonic_ms() + 5000u;
+    while (server_probe.received_size == 0u && salts_monotonic_ms() < deadline) {
+      size_t events = 0u;
+      check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
+      check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
+    }
+    check_equal(server_probe.received_size, sizeof(secure_request) - 1u);
+    check_equal(memcmp(server_probe.received, secure_request, sizeof(secure_request) - 1u), 0);
+
+    check_equal(cnet_receive(&server, server_connection, 1u), SALTS_OK);
+    check_equal(cnet_close(&client, client_connection), SALTS_OK);
+    deadline = salts_monotonic_ms() + 5000u;
+    while ((!client_probe.terminal || !server_probe.terminal) && salts_monotonic_ms() < deadline) {
+      size_t events = 0u;
+      check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
+      check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
+    }
+    check_true(client_probe.terminal);
+    check_true(server_probe.terminal);
+
+    check_equal(cnet_listener_close(&listener), SALTS_OK);
+    check_equal(cnet_listener_destroy(&listener), SALTS_OK);
+    check_equal(cnet_client_stop(&client, 5000u), SALTS_OK);
+    check_equal(cnet_client_stop(&server, 5000u), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    check_equal(cnet_client_destroy(&server), SALTS_OK);
     check_equal(tt_remove_file(cert_path), 0);
     check_equal(tt_remove_file(key_path), 0);
     free(cert_path);

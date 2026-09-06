@@ -192,6 +192,23 @@ spec("CNet session state core") {
       check_equal(cnet_session_table_recycle(&table, handle), SALTS_OK);
     }
 
+    it("accepts an in-place protocol handshake from an open stream") {
+      cnet_session_handle handle;
+      cnet_session_state state = CNET_SESSION_FREE;
+
+      check_equal(cnet_session_table_init(&table, 1u), SALTS_OK);
+      handle = reserve_session();
+      check_equal(cnet_session_table_transition(&table, handle, CNET_SESSION_TRANSPORT_CONNECTING),
+                  SALTS_OK);
+      check_equal(cnet_session_table_transition(&table, handle, CNET_SESSION_OPEN), SALTS_OK);
+      check_equal(cnet_session_table_transition(&table, handle, CNET_SESSION_PROTOCOL_HANDSHAKING),
+                  SALTS_OK);
+      check_equal(cnet_session_table_state(&table, handle, &state), SALTS_OK);
+      check_equal(state, CNET_SESSION_PROTOCOL_HANDSHAKING);
+      check_equal(cnet_session_table_transition(&table, handle, CNET_SESSION_OPEN), SALTS_OK);
+      close_and_recycle(handle);
+    }
+
     it("rejects an invalid transition without changing state") {
       cnet_session_handle handle;
       cnet_session_state state = CNET_SESSION_FREE;
