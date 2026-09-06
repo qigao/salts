@@ -119,7 +119,7 @@ failed:
   return -flags;
 }
 
-static void native_io_test_readiness_pipe_round_trip(native_io_backend_kind kind) {
+static void native_io_test_pipe_round_trip(native_io_backend_kind kind, bool nonblocking) {
   static const unsigned char payload[] = {0x41u, 0x42u, 0x43u, 0x44u};
   native_io_backend backend = {0};
   const native_io_backend_config config = {kind, 2u, 2u, 2u};
@@ -132,7 +132,7 @@ static void native_io_test_readiness_pipe_round_trip(native_io_backend_kind kind
   native_io_operation operations[2];
 
   check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
-  check_equal(native_io_test_make_pipe(descriptors, true), SALTS_OK);
+  check_equal(native_io_test_make_pipe(descriptors, nonblocking), SALTS_OK);
   check_equal(native_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0], flags,
                                            &endpoints[0]),
               SALTS_OK);
@@ -165,7 +165,7 @@ static void native_io_test_readiness_pipe_round_trip(native_io_backend_kind kind
   check_equal(native_io_backend_destroy(&backend), SALTS_OK);
 }
 
-static void native_io_test_readiness_pipe_eof_and_reuse(native_io_backend_kind kind) {
+static void native_io_test_pipe_eof_and_reuse(native_io_backend_kind kind) {
   native_io_backend backend = {0};
   const native_io_backend_config config = {kind, 1u, 1u, 1u};
   int first[2] = {-1, -1};
@@ -217,7 +217,7 @@ static void native_io_test_readiness_pipe_eof_and_reuse(native_io_backend_kind k
   check_equal(native_io_backend_destroy(&backend), SALTS_OK);
 }
 
-static void native_io_test_readiness_pipe_fifo_and_cancel(native_io_backend_kind kind) {
+static void native_io_test_pipe_fifo_and_cancel(native_io_backend_kind kind) {
   native_io_backend backend = {0};
   const native_io_backend_config config = {kind, 2u, 4u, 4u};
   int descriptors[2] = {-1, -1};
@@ -1376,7 +1376,7 @@ spec("NativeIO direct backend") {
 #elif defined(__linux__)
     check_false(native_io_backend_kind_supports_pipe(NATIVE_IO_BACKEND_IOCP));
     check_true(native_io_backend_kind_supports_pipe(NATIVE_IO_BACKEND_EPOLL));
-    check_false(native_io_backend_kind_supports_pipe(NATIVE_IO_BACKEND_IO_URING));
+    check_true(native_io_backend_kind_supports_pipe(NATIVE_IO_BACKEND_IO_URING));
     check_false(native_io_backend_kind_supports_pipe(NATIVE_IO_BACKEND_KQUEUE));
     check_false(native_io_backend_kind_supported(NATIVE_IO_BACKEND_IOCP));
     check_true(native_io_backend_kind_supported(NATIVE_IO_BACKEND_EPOLL));
@@ -1672,21 +1672,21 @@ spec("NativeIO direct backend") {
     native_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
     const size_t count = native_io_test_readiness_backends(backends);
     for (size_t index = 0u; index < count; ++index)
-      native_io_test_readiness_pipe_round_trip(backends[index]);
+      native_io_test_pipe_round_trip(backends[index], true);
   }
 
   it("publishes pipe EOF and rejects stale endpoints after descriptor reuse") {
     native_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
     const size_t count = native_io_test_readiness_backends(backends);
     for (size_t index = 0u; index < count; ++index)
-      native_io_test_readiness_pipe_eof_and_reuse(backends[index]);
+      native_io_test_pipe_eof_and_reuse(backends[index]);
   }
 
   it("preserves pipe read FIFO order while cancelling a queued entry") {
     native_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
     const size_t count = native_io_test_readiness_backends(backends);
     for (size_t index = 0u; index < count; ++index)
-      native_io_test_readiness_pipe_fifo_and_cancel(backends[index]);
+      native_io_test_pipe_fifo_and_cancel(backends[index]);
   }
 
   it("enforces pipe capacity and contains broken-peer SIGPIPE") {
@@ -1695,6 +1695,20 @@ spec("NativeIO direct backend") {
     for (size_t index = 0u; index < count; ++index)
       native_io_test_readiness_pipe_capacity_and_broken_peer(backends[index]);
   }
+
+#if defined(__linux__)
+  it("round trips a blocking byte pipe through io_uring completion") {
+    native_io_test_pipe_round_trip(NATIVE_IO_BACKEND_IO_URING, false);
+  }
+
+  it("publishes io_uring pipe EOF and rejects a reused stale endpoint") {
+    native_io_test_pipe_eof_and_reuse(NATIVE_IO_BACKEND_IO_URING);
+  }
+
+  it("preserves io_uring pipe FIFO while cancelling a queued read") {
+    native_io_test_pipe_fifo_and_cancel(NATIVE_IO_BACKEND_IO_URING);
+  }
+#endif
 #endif
 
   it("round trips TCP through every platform backend") {
