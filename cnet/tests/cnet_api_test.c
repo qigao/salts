@@ -365,6 +365,64 @@ spec("CNet public client API") {
     check_equal(cnet_listener_destroy(&listener), SALTS_OK);
   }
 
+  it("validates additive VSOCK listener configuration and rejects TCP listener misuse") {
+    cnet_listener listener = {0};
+    cnet_client client = {0};
+    cnet_client_config client_config = cnet_api_test_config();
+    cnet_listener_config tcp_config = {
+        .backend = client_config.backend, .host = "127.0.0.1", .port = 0u, .backlog = 2u};
+    cnet_vsock_listener_config vsock_config = CNET_VSOCK_LISTENER_CONFIG_INIT;
+    cnet_vsock_peer local = {17u, 19u};
+    cnet_vsock_peer peer = {17u, 19u};
+    cnet_connection connection = {17u, 19u};
+    cnet_observer observer = {.on_state = cnet_api_test_ignore_state};
+
+    vsock_config.backend = client_config.backend;
+    vsock_config.cid = CNET_VSOCK_CID_ANY;
+    vsock_config.port = CNET_VSOCK_PORT_ANY;
+    vsock_config.backlog = 2u;
+    check_equal(cnet_listener_init_vsock(NULL, &vsock_config), SALTS_EINVAL);
+    check_equal(cnet_listener_init_vsock(&listener, NULL), SALTS_EINVAL);
+    vsock_config.size = 0u;
+    check_equal(cnet_listener_init_vsock(&listener, &vsock_config), SALTS_EINVAL);
+    check_null(listener.impl);
+    vsock_config = (cnet_vsock_listener_config)CNET_VSOCK_LISTENER_CONFIG_INIT;
+    vsock_config.backend = client_config.backend;
+    vsock_config.backlog = 0u;
+    check_equal(cnet_listener_init_vsock(&listener, &vsock_config), SALTS_EINVAL);
+    vsock_config.backlog = (size_t)INT_MAX + 1u;
+    check_equal(cnet_listener_init_vsock(&listener, &vsock_config), SALTS_EINVAL);
+    vsock_config.backlog = 2u;
+    vsock_config.backend = (native_io_backend_kind)0;
+    check_equal(cnet_listener_init_vsock(&listener, &vsock_config), SALTS_EINVAL);
+
+#if !defined(__linux__)
+    vsock_config.backend = client_config.backend;
+    check_equal(cnet_listener_init_vsock(&listener, &vsock_config), SALTS_ENOTSUP);
+    check_null(listener.impl);
+#endif
+
+    check_equal(cnet_listener_init(&listener, &tcp_config), SALTS_OK);
+    check_equal(cnet_client_init(&client, &client_config), SALTS_OK);
+    check_equal(cnet_listener_vsock_local(&listener, &local), SALTS_ENOTSUP);
+    check_equal(local.cid, 0u);
+    check_equal(local.port, 0u);
+    check_equal(cnet_listener_accept_vsock_peer(&listener, &client, &observer, &connection, &peer),
+                SALTS_ENOTSUP);
+    check_equal(connection.slot, 0u);
+    check_equal(connection.generation, 0u);
+    check_equal(peer.cid, 0u);
+    check_equal(peer.port, 0u);
+    check_equal(cnet_listener_accept_vsock(&listener, &client, &observer, &connection),
+                SALTS_ENOTSUP);
+    check_equal(connection.slot, 0u);
+    check_equal(connection.generation, 0u);
+    check_equal(cnet_listener_close(&listener), SALTS_OK);
+    check_equal(cnet_listener_destroy(&listener), SALTS_OK);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+  }
+
   it("validates reusable TLS client profile lifecycle") {
     cnet_tls_client client = {0};
     cnet_tls_client_config config = {.size = sizeof(config)};
@@ -790,9 +848,25 @@ spec("CNet public client API") {
     check_true(connection.slot != 0u);
     check_equal(cnet_close(&client, connection), SALTS_OK);
 #else
+    cnet_api_test_socket adopted = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     check_equal(cnet_connect(&client, &options, &connection), SALTS_ENOTSUP);
     check_equal(connection.slot, 0u);
     check_equal(connection.generation, 0u);
+    check_true(adopted != CNET_API_TEST_INVALID_SOCKET);
+    connection = (cnet_connection){17u, 19u};
+    check_equal(cnet_client_adopt_vsock(&client, (uintptr_t)adopted, &options.observer,
+                                       &connection),
+                SALTS_ENOTSUP);
+    check_equal(connection.slot, 0u);
+    check_equal(connection.generation, 0u);
+  #if defined(_WIN32)
+    check_equal(closesocket(adopted), SOCKET_ERROR);
+    check_equal(WSAGetLastError(), WSAENOTSOCK);
+  #else
+    errno = 0;
+    check_equal(close(adopted), -1);
+    check_equal(errno, EBADF);
+  #endif
 #endif
     check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(cnet_client_destroy(&client), SALTS_OK);

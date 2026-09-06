@@ -28,6 +28,10 @@ static_assert(std::is_standard_layout<cnet_stream_socket_options>::value,
               "stream socket policy must remain C ABI data");
 static_assert(std::is_standard_layout<cnet_listener_options>::value,
               "listener socket policy must remain C ABI data");
+static_assert(std::is_standard_layout<cnet_vsock_peer>::value,
+              "VSOCK peer must remain portable C ABI data");
+static_assert(std::is_standard_layout<cnet_vsock_listener_config>::value,
+              "VSOCK listener configuration must remain versioned C ABI data");
 static_assert(std::is_standard_layout<cnet_websocket>::value,
               "WebSocket must be a C value wrapper");
 static_assert(CNET_CONNECTION_CONNECTED != CNET_CONNECTION_FAILED,
@@ -38,10 +42,20 @@ static_assert(CNET_VSOCK_CID_LOCAL == std::uint32_t{1}, "local VSOCK CID must be
 static_assert(CNET_VSOCK_CID_HOST == std::uint32_t{2}, "host VSOCK CID must be portable");
 static_assert(CNET_VSOCK_CID_ANY == UINT32_MAX, "VSOCK any CID must retain full width");
 static_assert(CNET_VSOCK_PORT_ANY == UINT32_MAX, "VSOCK any port must retain full width");
-static_assert(std::is_same_v<decltype(&cnet_client_adopt_vsock),
-                             int (*)(cnet_client *, uintptr_t, const cnet_observer *,
-                                     cnet_connection *)>,
+static_assert(std::is_same<decltype(&cnet_client_adopt_vsock),
+                           int (*)(cnet_client *, uintptr_t, const cnet_observer *,
+                                   cnet_connection *)>::value,
               "VSOCK adoption must expose the C client ownership contract");
+static_assert(std::is_same<decltype(&cnet_listener_init_vsock),
+                           int (*)(cnet_listener *, const cnet_vsock_listener_config *)>::value,
+              "VSOCK listener initialization must keep C linkage");
+static_assert(std::is_same<decltype(&cnet_listener_vsock_local),
+                           int (*)(const cnet_listener *, cnet_vsock_peer *)>::value,
+              "VSOCK local query must return full-width copied address data");
+static_assert(std::is_same<decltype(&cnet_listener_accept_vsock_peer),
+                           int (*)(cnet_listener *, cnet_client *, const cnet_observer *,
+                                   cnet_connection *, cnet_vsock_peer *)>::value,
+              "VSOCK accept must expose peer metadata without widening TCP types");
 static_assert(offsetof(cnet_observer, on_send) > offsetof(cnet_observer, user),
               "send completion must remain appended after legacy observer fields");
 using cnet_client_wake_function = int (*)(cnet_client *);
@@ -68,6 +82,8 @@ int main() {
   cnet_listener_config listener_config{};
   cnet_stream_socket_options stream_socket_options = CNET_STREAM_SOCKET_OPTIONS_INIT;
   cnet_listener_options listener_options = CNET_LISTENER_OPTIONS_INIT;
+  cnet_vsock_listener_config vsock_listener_config = CNET_VSOCK_LISTENER_CONFIG_INIT;
+  cnet_vsock_peer vsock_peer{};
   cnet_datagram_config datagram_config = CNET_DATAGRAM_CONFIG_INIT;
   cnet_kcp_config kcp_config = CNET_KCP_CONFIG_INIT;
   cnet_secure_kcp_config secure_kcp_config = CNET_SECURE_KCP_CONFIG_INIT;
@@ -95,6 +111,8 @@ int main() {
   (void)listener_config;
   (void)stream_socket_options;
   (void)listener_options;
+  (void)vsock_listener_config;
+  (void)vsock_peer;
   (void)datagram_config;
   (void)kcp_config;
   (void)secure_kcp_config;

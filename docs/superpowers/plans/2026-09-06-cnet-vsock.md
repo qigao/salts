@@ -154,21 +154,25 @@ Commit as `feat(cnet): add vsock client transport`.
 - Produces: `cnet_vsock_peer`, versioned `cnet_vsock_listener_config`, `cnet_listener_init_vsock`, `cnet_listener_vsock_local`, `cnet_listener_accept_vsock`, and `cnet_listener_accept_vsock_peer`.
 - Preserves: existing TCP listener init/port/accept/TLS semantics and layout.
 
-- [ ] **Step 1: Write failing API and validation tests**
+- [x] **Step 1: Write failing API and validation tests**
 
 On Windows assert VSOCK listener init returns SALTS_ENOTSUP without publishing an impl. Assert invalid size, zero backlog, excessive backlog, unsupported backend, wrong listener kind, and null outputs return the documented portable errors. Add C++ aggregate initialization coverage.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Build `cnet_api_test` and `cnet_header_cpp_test`; expect missing listener types/functions.
 
-- [ ] **Step 3: Implement listener kind and Linux lifecycle**
+- [x] **Step 3: Implement listener kind and Linux lifecycle**
 
 Add an internal TCP/VSOCK kind, use socket(AF_VSOCK, SOCK_STREAM, 0), nonblocking bind/listen, and getsockname/accept conversion for full uint32 CID/port. VSOCK accept transfers ownership through the VSOCK adoption path exactly once. Existing wait/close/destroy stay common; TCP peer and TLS entry points reject a VSOCK listener with SALTS_ENOTSUP.
 
-- [ ] **Step 4: Run GREEN and listener regressions**
+- [x] **Step 4: Run GREEN and listener regressions**
 
 Build and run API/header tests, then all CNet tests. On Linux additionally run the same suite for epoll and io_uring-capable configurations; isolate runtime-dependent AF_VSOCK loopback coverage from unconditional validation tests.
+
+Windows verification passed all 19 CNet tests. The Linux-only loopback test is registered with
+CTest skip code 77 for kernels or sandboxes without AF_VSOCK; this Windows host has no WSL/Linux
+runtime, so executing that case remains part of Linux CI verification.
 
 - [ ] **Step 5: Commit**
 

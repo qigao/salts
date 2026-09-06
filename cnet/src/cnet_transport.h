@@ -74,7 +74,7 @@ int cnet_transport_adopt_vsock(cnet_transport *transport, native_io_backend *bac
 /** Internal socket-family-neutral stream connect implementation. */
 int cnet_transport_stream_prepare_connect(cnet_transport *transport, native_io_backend *backend,
                                           native_io_backend_kind backend_kind, int family,
-                                          int protocol, bool keepalive_supported,
+                                          int protocol, bool socket_options_supported,
                                           const void *address, size_t address_length,
                                           const cnet_stream_socket_options *socket_options,
                                           uintptr_t user_data,
@@ -82,7 +82,7 @@ int cnet_transport_stream_prepare_connect(cnet_transport *transport, native_io_b
 
 /** Internal connected stream adoption implementation. */
 int cnet_transport_adopt_stream(cnet_transport *transport, native_io_backend *backend,
-                                uintptr_t native_socket, bool keepalive_supported,
+                                uintptr_t native_socket, bool socket_options_supported,
                                 const cnet_stream_socket_options *socket_options);
 
 /**

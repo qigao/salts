@@ -124,6 +124,12 @@ typedef struct cnet_stream_peer {
 #define CNET_VSOCK_CID_LOCAL UINT32_C(1)
 #define CNET_VSOCK_CID_HOST UINT32_C(2)
 
+/** Portable copied AF_VSOCK endpoint. Both fields are in host byte order. */
+typedef struct cnet_vsock_peer {
+  uint32_t cid;
+  uint32_t port;
+} cnet_vsock_peer;
+
 typedef void (*cnet_datagram_receive_fn)(void *user, cnet_datagram *datagram,
                                          const cnet_datagram_peer *peer,
                                          const cnet_receive_view *view);
@@ -362,6 +368,22 @@ typedef struct cnet_listener_config {
   uint16_t port;
   size_t backlog;
 } cnet_listener_config;
+
+/**
+ * Versioned Linux AF_VSOCK listener configuration copied during initialization.
+ * ANY CID/port values request the platform-selected local endpoint.
+ */
+typedef struct cnet_vsock_listener_config {
+  size_t size;
+  native_io_backend_kind backend;
+  uint32_t cid;
+  uint32_t port;
+  size_t backlog;
+} cnet_vsock_listener_config;
+
+#define CNET_VSOCK_LISTENER_CONFIG_INIT                                                           \
+  {sizeof(cnet_vsock_listener_config), (native_io_backend_kind)0, CNET_VSOCK_CID_ANY,              \
+   CNET_VSOCK_PORT_ANY, 0u}
 
 enum { CNET_DATAGRAM_MAX_PAYLOAD_BYTES = 65507u };
 
@@ -737,8 +759,21 @@ int cnet_listener_options_validate(const cnet_listener_options *options);
 int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options);
 
+/**
+ * Creates a nonblocking Linux AF_VSOCK listener. Unsupported platforms or
+ * NativeIO backends return `SALTS_ENOTSUP` without publishing an owner.
+ */
+int cnet_listener_init_vsock(cnet_listener *listener,
+                             const cnet_vsock_listener_config *config);
+
 /** Returns the bound host-order port, including an OS-selected ephemeral port. */
 int cnet_listener_port(const cnet_listener *listener, uint16_t *out_port);
+
+/**
+ * Queries the current bound VSOCK CID/port. The value is not cached because a
+ * live migration can change the local CID.
+ */
+int cnet_listener_vsock_local(const cnet_listener *listener, cnet_vsock_peer *out_local);
 
 /**
  * Waits for accept readiness. Timeout is successful with `out_ready == 0`.
@@ -762,6 +797,17 @@ int cnet_listener_accept(cnet_listener *listener, cnet_client *client,
 int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
                               const cnet_observer *observer, cnet_connection *out_connection,
                               cnet_stream_peer *out_peer);
+
+/** Accepts one pending VSOCK stream and transfers it into `client`. */
+int cnet_listener_accept_vsock(cnet_listener *listener, cnet_client *client,
+                               const cnet_observer *observer,
+                               cnet_connection *out_connection);
+
+/** Accepts one VSOCK stream and copies its full-width remote CID/port. */
+int cnet_listener_accept_vsock_peer(cnet_listener *listener, cnet_client *client,
+                                    const cnet_observer *observer,
+                                    cnet_connection *out_connection,
+                                    cnet_vsock_peer *out_peer);
 
 /**
  * Accepts one TCP peer and begins a server-side TLS handshake before

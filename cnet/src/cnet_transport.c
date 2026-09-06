@@ -290,9 +290,15 @@ static int cnet_transport_make_socket(native_io_backend_kind backend_kind, int f
 #endif
 }
 
+static bool cnet_transport_stream_socket_options_requested(
+    const cnet_stream_socket_options *options) {
+  return options->receive_buffer_bytes != 0u || options->send_buffer_bytes != 0u ||
+         options->keepalive || options->linger;
+}
+
 int cnet_transport_stream_prepare_connect(cnet_transport *transport, native_io_backend *backend,
                                           native_io_backend_kind backend_kind, int family,
-                                          int protocol, bool keepalive_supported,
+                                          int protocol, bool socket_options_supported,
                                           const void *address, size_t address_length,
                                           const cnet_stream_socket_options *socket_options,
                                           uintptr_t user_data,
@@ -311,7 +317,9 @@ int cnet_transport_stream_prepare_connect(cnet_transport *transport, native_io_b
   if (!native_io_backend_kind_supported(backend_kind)) return SALTS_ENOTSUP;
   status = cnet_stream_socket_options_validate(socket_options);
   if (status != SALTS_OK) return status;
-  if (!keepalive_supported && socket_options->keepalive) return SALTS_ENOTSUP;
+  if (!socket_options_supported &&
+      cnet_transport_stream_socket_options_requested(socket_options))
+    return SALTS_ENOTSUP;
   status = cnet_transport_make_socket(backend_kind, family, SOCK_STREAM, protocol, &socket_value);
   if (status != SALTS_OK) return status;
   status = cnet_transport_apply_stream_socket_options((uintptr_t)socket_value, socket_options);
@@ -387,7 +395,7 @@ int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *bac
 }
 
 int cnet_transport_adopt_stream(cnet_transport *transport, native_io_backend *backend,
-                                uintptr_t native_socket, bool keepalive_supported,
+                                uintptr_t native_socket, bool socket_options_supported,
                                 const cnet_stream_socket_options *socket_options) {
   int status;
   if (transport == NULL) return SALTS_EINVAL;
@@ -398,7 +406,8 @@ int cnet_transport_adopt_stream(cnet_transport *transport, native_io_backend *ba
     cnet_transport_close_socket(native_socket);
     return status;
   }
-  if (!keepalive_supported && socket_options->keepalive) {
+  if (!socket_options_supported &&
+      cnet_transport_stream_socket_options_requested(socket_options)) {
     cnet_transport_close_socket(native_socket);
     return SALTS_ENOTSUP;
   }

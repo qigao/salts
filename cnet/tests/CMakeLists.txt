@@ -131,6 +131,18 @@ set_target_properties(cnet_api_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  cmake_add_test(cnet_vsock_integration_test
+    SOURCES cnet_vsock_integration_test.c
+    LIBS salts_cnet
+    FOLDER "cnet/tests")
+  set_target_properties(cnet_vsock_integration_test PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)
+  set_tests_properties(cnet_vsock_integration_test PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
 cmake_add_test(cnet_datagram_test
   SOURCES cnet_datagram_test.c
   LIBS salts_cnet Salts::TinyTest
