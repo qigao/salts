@@ -16,7 +16,7 @@ typedef struct cnet_client {
   void *impl;
 } cnet_client;
 
-/** Single-owner nonblocking TCP listener used by CNet-based servers. */
+/** Single-owner nonblocking TCP or Linux VSOCK listener used by CNet-based servers. */
 typedef struct cnet_listener {
   void *impl;
 } cnet_listener;
@@ -119,6 +119,18 @@ typedef struct cnet_stream_peer {
   uint32_t scope_id;
   uint8_t address[16];
 } cnet_stream_peer;
+
+/** Portable Linux VSOCK address constants; ANY values are valid only for listeners. */
+#define CNET_VSOCK_CID_ANY UINT32_MAX
+#define CNET_VSOCK_PORT_ANY UINT32_MAX
+#define CNET_VSOCK_CID_LOCAL UINT32_C(1)
+#define CNET_VSOCK_CID_HOST UINT32_C(2)
+
+/** Portable copied AF_VSOCK endpoint. Both fields are in host byte order. */
+typedef struct cnet_vsock_peer {
+  uint32_t cid;
+  uint32_t port;
+} cnet_vsock_peer;
 
 typedef void (*cnet_datagram_receive_fn)(void *user, cnet_datagram *datagram,
                                          const cnet_datagram_peer *peer,
@@ -372,6 +384,22 @@ typedef struct cnet_listener_config {
   size_t backlog;
 } cnet_listener_config;
 
+/**
+ * Versioned Linux AF_VSOCK listener configuration copied during initialization.
+ * ANY CID/port values request the platform-selected local endpoint.
+ */
+typedef struct cnet_vsock_listener_config {
+  size_t size;
+  native_io_backend_kind backend;
+  uint32_t cid;
+  uint32_t port;
+  size_t backlog;
+} cnet_vsock_listener_config;
+
+#define CNET_VSOCK_LISTENER_CONFIG_INIT                                                           \
+  {sizeof(cnet_vsock_listener_config), (native_io_backend_kind)0, CNET_VSOCK_CID_ANY,              \
+   CNET_VSOCK_PORT_ANY, 0u}
+
 enum { CNET_DATAGRAM_MAX_PAYLOAD_BYTES = 65507u };
 
 /**
@@ -562,6 +590,20 @@ int cnet_client_set_stream_socket_options(cnet_client *client,
  */
 int cnet_connect(cnet_client *client, const cnet_connect_options *options,
                  cnet_connection *out_connection);
+
+/**
+ * Transfers one connected Linux AF_VSOCK SOCK_STREAM socket to `client`.
+ * The socket is consumed on every call except when it equals `UINTPTR_MAX`.
+ * Unsupported platforms/backends close the socket and return `SALTS_ENOTSUP`
+ * without publishing a connection or callback.
+ * @param client Initialized client that will own the admitted connection.
+ * @param native_socket Connected native socket, transferred on entry unless it is `UINTPTR_MAX`.
+ * @param observer Required observer copied into the connection record.
+ * @param out_connection Cleared before validation and populated only after successful admission.
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_ENOTSUP`, or a bounded admission error.
+ */
+int cnet_client_adopt_vsock(cnet_client *client, uintptr_t native_socket,
+                            const cnet_observer *observer, cnet_connection *out_connection);
 
 /**
  * Upgrades one quiescent connected plaintext TCP stream in place. The handle
@@ -771,8 +813,29 @@ int cnet_listener_options_validate(const cnet_listener_options *options);
 int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *config,
                           const cnet_listener_options *options);
 
+/**
+ * Creates a nonblocking Linux AF_VSOCK listener. Unsupported platforms or
+ * NativeIO backends return `SALTS_ENOTSUP` without publishing an owner.
+ * The configuration is copied synchronously; ANY CID/port values are valid
+ * only for listener bind.
+ * @param listener Zero-initialized listener that receives ownership on success.
+ * @param config Versioned configuration with an explicit supported backend and nonzero backlog.
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_EALREADY`, `SALTS_ENOTSUP`, or a native socket error.
+ */
+int cnet_listener_init_vsock(cnet_listener *listener,
+                             const cnet_vsock_listener_config *config);
+
 /** Returns the bound host-order port, including an OS-selected ephemeral port. */
 int cnet_listener_port(const cnet_listener *listener, uint16_t *out_port);
+
+/**
+ * Queries the current bound VSOCK CID/port. The value is not cached because a
+ * live migration can change the local CID.
+ * @param listener Open VSOCK listener.
+ * @param out_local Cleared before validation and populated on success.
+ * @return `SALTS_OK`, `SALTS_EINVAL`, `SALTS_ESHUTDOWN`, `SALTS_ENOTSUP`, or a native socket error.
+ */
+int cnet_listener_vsock_local(const cnet_listener *listener, cnet_vsock_peer *out_local);
 
 /**
  * Waits for accept readiness. Timeout is successful with `out_ready == 0`.
@@ -796,6 +859,33 @@ int cnet_listener_accept(cnet_listener *listener, cnet_client *client,
 int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
                               const cnet_observer *observer, cnet_connection *out_connection,
                               cnet_stream_peer *out_peer);
+
+/**
+ * Accepts one pending VSOCK stream and transfers it into `client`.
+ * @param listener Open VSOCK listener.
+ * @param client Initialized client that receives the accepted stream.
+ * @param observer Required observer copied into the connection record.
+ * @param out_connection Cleared before validation and populated only after successful admission.
+ * @return The VSOCK peer-accept statuses; no pending peer returns `SALTS_ETIMEDOUT`.
+ */
+int cnet_listener_accept_vsock(cnet_listener *listener, cnet_client *client,
+                               const cnet_observer *observer,
+                               cnet_connection *out_connection);
+
+/**
+ * Accepts one VSOCK stream and copies its full-width remote CID/port.
+ * `out_peer` is cleared on failure and remains independent of the connection lifetime.
+ * @param listener Open VSOCK listener.
+ * @param client Initialized client that receives the accepted stream.
+ * @param observer Required observer copied into the connection record.
+ * @param out_connection Cleared before validation and populated only after successful admission.
+ * @param out_peer Cleared before validation and populated with host-order CID/port on success.
+ * @return `SALTS_OK`, validation/lifecycle errors, `SALTS_ETIMEDOUT`, or a native socket error.
+ */
+int cnet_listener_accept_vsock_peer(cnet_listener *listener, cnet_client *client,
+                                    const cnet_observer *observer,
+                                    cnet_connection *out_connection,
+                                    cnet_vsock_peer *out_peer);
 
 /**
  * Accepts one TCP peer and begins a server-side TLS handshake before

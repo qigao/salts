@@ -705,6 +705,73 @@ static void cnet_owner_test_pipe_open_failure(native_io_backend_kind backend_kin
   check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
 }
 
+static void cnet_owner_test_vsock_rejected_policy(native_io_backend_kind backend_kind) {
+  cnet_session_table sessions = {0};
+  cnet_command_queue commands = {0};
+  cnet_event_queue events = {0};
+  cnet_owner owner = {0};
+  const cnet_command_queue_config command_config = {4u, sizeof(cnet_owner_connect_payload)};
+  const cnet_event_queue_config event_config = {4u, 1u, 64u};
+  const cnet_owner_config owner_config = {.backend_kind = backend_kind,
+                                          .connection_capacity = 1u,
+                                          .request_capacity = 2u,
+                                          .completion_batch_capacity = 2u,
+                                          .receive_buffer_bytes = 64u,
+                                          .receive_buffer_count = 1u,
+                                          .sessions = &sessions,
+                                          .commands = &commands,
+                                          .events = &events};
+  cnet_session_handle session = {0};
+  cnet_owner_connect_payload connect_payload = {0};
+  cnet_command command = {0};
+  cnet_event_view event = {0};
+  cnet_session_terminal terminal = {0};
+
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+  check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
+
+  connect_payload.scheme = CNET_URI_VSOCK;
+#if defined(__linux__)
+  check_equal(cnet_transport_parse_vsock_address(
+                  CNET_VSOCK_CID_HOST, UINT32_C(5000), false, connect_payload.address,
+                  sizeof(connect_payload.address), &connect_payload.address_length),
+              SALTS_OK);
+#else
+  connect_payload.address[0] = 1u;
+  connect_payload.address_length = 1u;
+#endif
+  connect_payload.socket_options =
+      (cnet_stream_socket_options)CNET_STREAM_SOCKET_OPTIONS_INIT;
+  connect_payload.socket_options.keepalive = 1;
+  command =
+      (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
+              SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.state, CNET_EVENT_STATE_FAILED);
+  check_equal(event.status, SALTS_ENOTSUP);
+  check_equal(event.stage, CNET_SESSION_STAGE_CONNECT);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
+  check_equal(terminal.kind, CNET_SESSION_TERMINAL_FAILED);
+  check_equal(terminal.status, SALTS_ENOTSUP);
+  check_equal(terminal.stage, CNET_SESSION_STAGE_CONNECT);
+  check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+  check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
+
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_owner_close(&owner), SALTS_OK);
+  check_equal(cnet_owner_destroy(&owner), SALTS_OK);
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
+}
+
 static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
   static const unsigned char outbound[] = {5u, 6u, 7u, 8u};
   static const unsigned char inbound[] = {8u, 3u, 2u, 1u};
@@ -905,6 +972,16 @@ spec("CNet owner shard") {
     for (index = 0u; index < count; ++index)
       if (native_io_backend_kind_supports_pipe(backends[index]))
         cnet_owner_test_pipe_open_failure(backends[index]);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
+  }
+
+  it("routes VSOCK explicitly and rejects unsupported socket policy at the connect stage") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    size_t index;
+    check_equal(cnet_module_init(), SALTS_OK);
+    for (index = 0u; index < count; ++index)
+      cnet_owner_test_vsock_rejected_policy(backends[index]);
     check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 }

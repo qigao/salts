@@ -25,6 +25,9 @@ typedef SOCKET cnet_listener_socket;
   #include <netinet/in.h>
   #include <poll.h>
   #include <sys/socket.h>
+  #if defined(__linux__)
+    #include <linux/vm_sockets.h>
+  #endif
   #include <unistd.h>
 typedef int cnet_listener_socket;
   #define CNET_LISTENER_INVALID_SOCKET (-1)
@@ -32,9 +35,21 @@ typedef int cnet_listener_socket;
 
 enum { CNET_LISTENER_ADDRESS_CAPACITY = 128 };
 
+typedef enum cnet_listener_kind {
+  CNET_LISTENER_KIND_NONE = 0,
+  CNET_LISTENER_KIND_TCP,
+  CNET_LISTENER_KIND_VSOCK
+} cnet_listener_kind;
+
+#if defined(__linux__)
+_Static_assert(sizeof(struct sockaddr_vm) <= CNET_LISTENER_ADDRESS_CAPACITY,
+               "CNet listener address storage must hold sockaddr_vm");
+#endif
+
 typedef struct cnet_listener_impl {
   cnet_listener_socket socket_value;
   native_io_backend_kind backend;
+  cnet_listener_kind kind;
   uint16_t port;
   bool closed;
 } cnet_listener_impl;
@@ -100,6 +115,7 @@ static int cnet_listener_native_status(int error) {
   if (error == ENETDOWN) return SALTS_ENETDOWN;
   if (error == ENETUNREACH) return SALTS_ENETUNREACH;
   if (error == ENFILE) return SALTS_ENFILE;
+  if (error == ENODEV) return SALTS_ENODEV;
   if (error == ENOBUFS) return SALTS_ENOBUFS;
   if (error == ENOMEM) return SALTS_ENOMEM;
   if (error == ENOPROTOOPT) return SALTS_ENOPROTOOPT;
@@ -234,6 +250,7 @@ int cnet_listener_init_ex(cnet_listener *listener, const cnet_listener_config *c
   }
   impl->socket_value = CNET_LISTENER_INVALID_SOCKET;
   impl->backend = config->backend;
+  impl->kind = CNET_LISTENER_KIND_TCP;
 #if defined(_WIN32)
   if (config->backend != NATIVE_IO_BACKEND_IOCP) status = SALTS_ENOTSUP;
   else {
@@ -285,14 +302,92 @@ int cnet_listener_init(cnet_listener *listener, const cnet_listener_config *conf
   return cnet_listener_init_ex(listener, config, &options);
 }
 
+int cnet_listener_init_vsock(cnet_listener *listener,
+                             const cnet_vsock_listener_config *config) {
+  cnet_listener_impl *impl;
+  unsigned char address[CNET_LISTENER_ADDRESS_CAPACITY];
+  size_t address_length = 0u;
+  int status;
+
+  if (listener == NULL || config == NULL) return SALTS_EINVAL;
+  if (listener->impl != NULL) return SALTS_EALREADY;
+  if (config->size != sizeof(*config) || config->backlog == 0u || config->backlog > INT_MAX ||
+      !native_io_backend_kind_supported(config->backend))
+    return SALTS_EINVAL;
+  if (!cnet_transport_vsock_supported(config->backend)) return SALTS_ENOTSUP;
+#if defined(__linux__)
+  status = cnet_transport_parse_vsock_address(config->cid, config->port, true, address,
+                                              sizeof(address), &address_length);
+  if (status != SALTS_OK) return status;
+  status = cnet_module_init();
+  if (status != SALTS_OK) return status;
+  impl = (cnet_listener_impl *)calloc(1u, sizeof(*impl));
+  if (impl == NULL) {
+    (void)cnet_module_shutdown();
+    return SALTS_ENOMEM;
+  }
+  impl->socket_value = CNET_LISTENER_INVALID_SOCKET;
+  impl->backend = config->backend;
+  impl->kind = CNET_LISTENER_KIND_VSOCK;
+  impl->socket_value = socket(AF_VSOCK, SOCK_STREAM, 0);
+  status = impl->socket_value != CNET_LISTENER_INVALID_SOCKET ? SALTS_OK
+                                                              : cnet_listener_native_error();
+  if (status == SALTS_OK) status = cnet_listener_set_nonblocking(impl->socket_value);
+  if (status == SALTS_OK &&
+      bind(impl->socket_value, (const struct sockaddr *)address, (socklen_t)address_length) != 0)
+    status = cnet_listener_native_error();
+  if (status == SALTS_OK && listen(impl->socket_value, (int)config->backlog) != 0)
+    status = cnet_listener_native_error();
+  if (status != SALTS_OK) {
+    cnet_listener_close_native(impl);
+    free(impl);
+    (void)cnet_module_shutdown();
+    return status;
+  }
+  listener->impl = impl;
+  return SALTS_OK;
+#else
+  (void)impl;
+  (void)address;
+  (void)address_length;
+  (void)status;
+  return SALTS_ENOTSUP;
+#endif
+}
+
 int cnet_listener_port(const cnet_listener *listener, uint16_t *out_port) {
   const cnet_listener_impl *impl = cnet_listener_const_get(listener);
   if (out_port == NULL) return SALTS_EINVAL;
   *out_port = 0u;
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
   *out_port = impl->port;
   return SALTS_OK;
+}
+
+int cnet_listener_vsock_local(const cnet_listener *listener, cnet_vsock_peer *out_local) {
+  const cnet_listener_impl *impl = cnet_listener_const_get(listener);
+  if (out_local == NULL) return SALTS_EINVAL;
+  *out_local = (cnet_vsock_peer){0};
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_VSOCK) return SALTS_ENOTSUP;
+#if defined(__linux__)
+  {
+    struct sockaddr_vm address;
+    socklen_t address_length = (socklen_t)sizeof(address);
+    memset(&address, 0, sizeof(address));
+    if (getsockname(impl->socket_value, (struct sockaddr *)&address, &address_length) != 0)
+      return cnet_listener_native_error();
+    if (address_length < sizeof(address) || address.svm_family != AF_VSOCK) return SALTS_EPROTO;
+    out_local->cid = address.svm_cid;
+    out_local->port = address.svm_port;
+    return SALTS_OK;
+  }
+#else
+  return SALTS_ENOTSUP;
+#endif
 }
 
 int cnet_listener_wait(cnet_listener *listener, uint32_t timeout_ms, int *out_ready) {
@@ -366,6 +461,7 @@ int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
       out_peer == NULL)
     return SALTS_EINVAL;
   if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
   memset(&native_peer, 0, sizeof(native_peer));
   do {
     accepted = accept(impl->socket_value, (struct sockaddr *)&native_peer, &native_peer_size);
@@ -393,6 +489,59 @@ int cnet_listener_accept_peer(cnet_listener *listener, cnet_client *client,
   status = cnet_client_adopt_tcp(client, (uintptr_t)accepted, observer, out_connection);
   if (status != SALTS_OK) *out_peer = (cnet_stream_peer){0};
   return status;
+}
+
+int cnet_listener_accept_vsock(cnet_listener *listener, cnet_client *client,
+                               const cnet_observer *observer,
+                               cnet_connection *out_connection) {
+  cnet_vsock_peer peer;
+  return cnet_listener_accept_vsock_peer(listener, client, observer, out_connection, &peer);
+}
+
+int cnet_listener_accept_vsock_peer(cnet_listener *listener, cnet_client *client,
+                                    const cnet_observer *observer,
+                                    cnet_connection *out_connection,
+                                    cnet_vsock_peer *out_peer) {
+  cnet_listener_impl *impl = cnet_listener_get(listener);
+#if defined(__linux__)
+  struct sockaddr_vm native_peer;
+  socklen_t native_peer_size = (socklen_t)sizeof(native_peer);
+  cnet_listener_socket accepted;
+  int status;
+#endif
+  if (out_peer != NULL) *out_peer = (cnet_vsock_peer){0};
+  if (out_connection == NULL) return SALTS_EINVAL;
+  *out_connection = (cnet_connection){0};
+  if (impl == NULL || client == NULL || observer == NULL || observer->on_state == NULL ||
+      out_peer == NULL)
+    return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_VSOCK) return SALTS_ENOTSUP;
+#if defined(__linux__)
+  memset(&native_peer, 0, sizeof(native_peer));
+  do {
+    accepted = accept(impl->socket_value, (struct sockaddr *)&native_peer, &native_peer_size);
+  } while (accepted == CNET_LISTENER_INVALID_SOCKET && errno == EINTR);
+  if (accepted == CNET_LISTENER_INVALID_SOCKET)
+    return cnet_listener_would_block() ? SALTS_ETIMEDOUT : cnet_listener_native_error();
+  if (native_peer_size < sizeof(native_peer) || native_peer.svm_family != AF_VSOCK) {
+    cnet_transport_close_socket((uintptr_t)accepted);
+    return SALTS_EAFNOSUPPORT;
+  }
+  out_peer->cid = native_peer.svm_cid;
+  out_peer->port = native_peer.svm_port;
+  status = cnet_listener_set_nonblocking(accepted);
+  if (status != SALTS_OK) {
+    cnet_transport_close_socket((uintptr_t)accepted);
+    *out_peer = (cnet_vsock_peer){0};
+    return status;
+  }
+  status = cnet_client_adopt_vsock(client, (uintptr_t)accepted, observer, out_connection);
+  if (status != SALTS_OK) *out_peer = (cnet_vsock_peer){0};
+  return status;
+#else
+  return SALTS_ENOTSUP;
+#endif
 }
 
 int cnet_listener_accept_tls(cnet_listener *listener, cnet_client *client,
@@ -423,6 +572,7 @@ int cnet_listener_accept_tls_peer(cnet_listener *listener, cnet_client *client,
       observer->on_state == NULL || out_peer == NULL)
     return SALTS_EINVAL;
   if (impl->closed) return SALTS_ESHUTDOWN;
+  if (impl->kind != CNET_LISTENER_KIND_TCP) return SALTS_ENOTSUP;
   memset(&native_peer, 0, sizeof(native_peer));
   do {
     accepted = accept(impl->socket_value, (struct sockaddr *)&native_peer, &native_peer_size);

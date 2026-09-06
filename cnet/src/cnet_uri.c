@@ -64,8 +64,49 @@ static int cnet_uri_parse_pipe(const char *name, size_t name_length, cnet_uri *o
   return SALTS_OK;
 }
 
+static int cnet_uri_parse_uint32(const char *text, size_t length, uint32_t *out_value) {
+  uint32_t value = 0u;
+  size_t index;
+  if (text == NULL || length == 0u || out_value == NULL) return SALTS_EINVAL;
+  for (index = 0u; index < length; ++index) {
+    const unsigned char digit = (unsigned char)text[index];
+    if (digit < (unsigned char)'0' || digit > (unsigned char)'9') return SALTS_EINVAL;
+    if (value > (UINT32_MAX - (uint32_t)(digit - (unsigned char)'0')) / UINT32_C(10))
+      return SALTS_ERANGE;
+    value = value * UINT32_C(10) + (uint32_t)(digit - (unsigned char)'0');
+  }
+  *out_value = value;
+  return SALTS_OK;
+}
+
+static int cnet_uri_parse_vsock(const char *endpoint, size_t endpoint_length,
+                                cnet_uri *out_uri) {
+  const char *separator;
+  uint32_t cid = 0u;
+  uint32_t port = 0u;
+  size_t cid_length;
+  int status;
+  if (endpoint == NULL || endpoint_length == 0u || out_uri == NULL) return SALTS_EINVAL;
+  separator = (const char *)memchr(endpoint, ':', endpoint_length);
+  if (separator == NULL) return SALTS_EINVAL;
+  cid_length = (size_t)(separator - endpoint);
+  if (cid_length == 0u || cid_length + 1u >= endpoint_length ||
+      memchr(separator + 1, ':', endpoint_length - cid_length - 1u) != NULL)
+    return SALTS_EINVAL;
+  status = cnet_uri_parse_uint32(endpoint, cid_length, &cid);
+  if (status != SALTS_OK) return status;
+  status = cnet_uri_parse_uint32(separator + 1, endpoint_length - cid_length - 1u, &port);
+  if (status != SALTS_OK) return status;
+  if (cid == UINT32_MAX || port == UINT32_MAX) return SALTS_EINVAL;
+  out_uri->scheme = CNET_URI_VSOCK;
+  out_uri->vsock_cid = cid;
+  out_uri->vsock_port = port;
+  return SALTS_OK;
+}
+
 int cnet_uri_parse(const char *text, cnet_uri *out_uri) {
   static const char pipe_prefix[] = "pipe://";
+  static const char vsock_prefix[] = "vsock://";
   cnet_uri parsed = {0};
   uri_t generic;
   cnet_uri_scheme scheme;
@@ -80,6 +121,13 @@ int cnet_uri_parse(const char *text, cnet_uri *out_uri) {
       memcmp(text, pipe_prefix, sizeof(pipe_prefix) - 1u) == 0) {
     status = cnet_uri_parse_pipe(text + sizeof(pipe_prefix) - 1u,
                                  length - (sizeof(pipe_prefix) - 1u), &parsed);
+    if (status == SALTS_OK) *out_uri = parsed;
+    return status;
+  }
+  if (length >= sizeof(vsock_prefix) - 1u &&
+      memcmp(text, vsock_prefix, sizeof(vsock_prefix) - 1u) == 0) {
+    status = cnet_uri_parse_vsock(text + sizeof(vsock_prefix) - 1u,
+                                  length - (sizeof(vsock_prefix) - 1u), &parsed);
     if (status == SALTS_OK) *out_uri = parsed;
     return status;
   }

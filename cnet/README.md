@@ -14,8 +14,8 @@ WebSocket session API is declared by `<cnet/websocket.h>`.
 
 Include `<cnet/cnet.h>`, initialize one bounded `cnet_client_config`, then use:
 
-- `cnet_connect` with `tcp://host:port`, `tls://host:port`, `udp://host:port`, or
-  `pipe://name`;
+- `cnet_connect` with `tcp://host:port`, `tls://host:port`, `udp://host:port`,
+  `pipe://name`, or Linux `vsock://CID:PORT`;
 - `cnet_send` to transfer one bounded payload copy into CNet;
 - `cnet_sendv` to concatenate non-empty borrowed ranges directly into that
   same final bounded command slot without caller-side staging;
@@ -38,7 +38,7 @@ bounds their aggregate copied payload. Event payloads and per-connection receive
 buffers are allocated only while in use; configuring a large per-message bound
 therefore no longer reserves its product with every event or connection slot.
 
-TCP and Pipe deliver byte chunks. Connected UDP delivers one datagram per
+TCP, VSOCK, and Pipe deliver byte chunks. Connected UDP delivers one datagram per
 receive callback. A receive view is borrowed only until its callback returns.
 TLS delivers verified encrypted byte streams through the same send/receive
 contract. The same header also exposes bound UDP, the KCP session engine, and
@@ -46,8 +46,9 @@ their unified packet endpoint; WebSocket remains in `<cnet/websocket.h>`. CNet p
 TCP, TLS, and UDP URIs through Salts UriParser and then applies
 transport-specific constraints: network URIs require an explicit port and reject
 userinfo, path, query, and fragment components instead of accepting truncated or
-ambiguous input. Pipe is a scheme-specific IPC endpoint rather than a network
-authority, so its bounded name after `pipe://` is preserved byte-for-byte.
+ambiguous input. VSOCK uses a separate strict decimal `uint32` CID/port parser
+and never enters DNS. Pipe is a scheme-specific IPC endpoint rather than a
+network authority, so its bounded name after `pipe://` is preserved byte-for-byte.
 
 ## Socket tuning
 
@@ -65,6 +66,42 @@ an abortive close. CNet copies every policy into its owner command, so no caller
 pointer is retained. Unsupported platform options return `SALTS_ENOTSUP` before
 the socket is published, and invalid sizes or combinations fail without a
 silent fallback.
+
+## Linux VSOCK
+
+CNet supports plaintext Linux `AF_VSOCK` `SOCK_STREAM` over the epoll and
+io_uring NativeIO backends. An outbound URI has exactly the form
+`vsock://CID:PORT`; both values are unsigned decimal 32-bit integers in host
+byte order. Signs, whitespace, userinfo, paths, queries, fragments, overflow,
+`CNET_VSOCK_CID_ANY`, and `CNET_VSOCK_PORT_ANY` are rejected for outbound
+connections. Non-Linux platforms return `SALTS_ENOTSUP` before reserving a
+connection or publishing a callback, with no TCP or Pipe fallback.
+
+Servers use a versioned `cnet_vsock_listener_config` with
+`cnet_listener_init_vsock()`. The ANY constants are valid for listener bind;
+`cnet_listener_vsock_local()` queries the current full-width CID and port with
+`getsockname()` on every call. `cnet_listener_accept_vsock_peer()` returns a
+copied `cnet_vsock_peer`; the shorter `cnet_listener_accept_vsock()` omits that
+metadata. The common wait/close/destroy lifecycle is unchanged. TCP/TLS accept
+functions reject a VSOCK listener, and VSOCK accept functions reject a TCP
+listener.
+
+`cnet_client_adopt_vsock()` consumes a connected native VSOCK stream. Accepted
+and directly adopted sockets transfer exactly once: failed admission closes the
+native socket and leaves the public connection zero. CNet applies the same
+bounded byte send/receive demand, one-write-at-a-time, timeout, cancellation,
+callback ordering, and stop/drain rules as TCP. The current stream tuning API
+expresses TCP policy, so any requested receive/send buffer, keepalive, or linger
+setting is rejected for VSOCK with `SALTS_ENOTSUP` instead of being ignored.
+
+Phase 1 does not provide TLS-over-VSOCK. Passing TLS policy with a `vsock://`
+URI is invalid because a CID is not a certificate identity. VSOCK is only a
+transport and does not itself authenticate or encrypt application data. Live
+migration disconnects an active stream and may change the local CID; CNet
+reports the normal terminal stream failure and does not reconnect implicitly.
+The Linux-only `cnet_vsock_integration_test` exercises ANY-CID bind, local-CID
+connect, accept, ownership, and bidirectional bytes, and is explicitly skipped
+when the kernel or sandbox does not expose AF_VSOCK.
 
 ## Unified UDP/KCP packet endpoint
 
@@ -267,7 +304,7 @@ delivers a public callback or reaches its timeout. A zero timeout performs one
 nonblocking progress pass. This keeps completion batching internal instead of
 forcing the application to call poll once per backend completion.
 
-TCP connect, send, and receive currently execute as NativeIO coroutines. The
+TCP and VSOCK connect, send, and receive execute as NativeIO stream coroutines. The
 poll owner starts `native_io_coroutine_await()`, and the same caller's NativeIO
 observation resumes the frame with its generation-checked terminal completion.
 Callback-issued send/receive/close commands enter the same bounded local queue;
@@ -292,7 +329,8 @@ poll owner checks its bounded DNS socket set without blocking and advances
 c-ares timers; no resolver thread or synchronous DNS fallback is created.
 While at least one hostname query is active, a NativeIO wait is capped to a
 1 ms fairness quantum so DNS and transport completions both make bounded
-progress. Numeric TCP/UDP addresses and Pipe endpoints do not enter this path.
+progress. Numeric TCP/UDP addresses, VSOCK endpoints, and Pipe endpoints do not
+enter this path.
 
 ## Shutdown and errors
 
@@ -314,7 +352,8 @@ platform status is normalized to `SALTS_EIO` and retained in
 
 The executable contracts are in `tests/cnet_api_test.c` and
 `tests/cnet_tls_test.c`; they cover caller-owned callback execution, TCP,
-connected UDP, platform Pipe, callback reentrancy, stale handles, live drain,
+Linux VSOCK validation/integration, connected UDP, platform Pipe, callback
+reentrancy, stale handles, live drain,
 receive demand across request-slot reuse, verified TLS, ALPN, mTLS, partial
 records, handshake timeout/cancel, accepted sockets, and clean close.
 

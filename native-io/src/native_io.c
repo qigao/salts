@@ -209,7 +209,7 @@ bool native_io_coroutine_task_valid(native_io_coroutine_task task) {
 
 bool native_io_operation_valid(const native_io_operation *operation) {
   if (operation == NULL || !native_io_endpoint_valid(operation->endpoint)) return false;
-  if (operation->kind == NATIVE_IO_OPERATION_TCP_CONNECT)
+  if (operation->kind == NATIVE_IO_OPERATION_STREAM_CONNECT)
     return operation->buffer == NULL && operation->length == 0u && operation->address != NULL &&
            operation->address_length != 0u &&
            operation->address_length <= operation->address_capacity &&
@@ -217,8 +217,8 @@ bool native_io_operation_valid(const native_io_operation *operation) {
   if (operation->buffer == NULL || operation->length == 0u ||
       operation->length > (size_t)UINT32_MAX)
     return false;
-  if (operation->kind == NATIVE_IO_OPERATION_TCP_RECV ||
-      operation->kind == NATIVE_IO_OPERATION_TCP_SEND ||
+  if (operation->kind == NATIVE_IO_OPERATION_STREAM_RECV ||
+      operation->kind == NATIVE_IO_OPERATION_STREAM_SEND ||
       operation->kind == NATIVE_IO_OPERATION_PIPE_READ ||
       operation->kind == NATIVE_IO_OPERATION_PIPE_WRITE)
     return operation->address == NULL && operation->address_capacity == 0u &&

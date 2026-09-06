@@ -417,6 +417,48 @@ static int cnet_owner_take_coroutine_status(cnet_owner_impl *impl) {
   return status;
 }
 
+static int cnet_owner_receive_operation_kind(cnet_uri_scheme scheme,
+                                             native_io_operation_kind *out_kind) {
+  if (out_kind == NULL) return SALTS_EINVAL;
+  switch (scheme) {
+  case CNET_URI_TCP:
+  case CNET_URI_VSOCK:
+    *out_kind = NATIVE_IO_OPERATION_STREAM_RECV;
+    return SALTS_OK;
+  case CNET_URI_UDP:
+    *out_kind = NATIVE_IO_OPERATION_UDP_RECV_FROM;
+    return SALTS_OK;
+  case CNET_URI_PIPE:
+    *out_kind = NATIVE_IO_OPERATION_PIPE_READ;
+    return SALTS_OK;
+  case CNET_URI_NONE:
+  case CNET_URI_TLS:
+    return SALTS_EINVAL;
+  }
+  return SALTS_EINVAL;
+}
+
+static int cnet_owner_send_operation_kind(cnet_uri_scheme scheme,
+                                          native_io_operation_kind *out_kind) {
+  if (out_kind == NULL) return SALTS_EINVAL;
+  switch (scheme) {
+  case CNET_URI_TCP:
+  case CNET_URI_VSOCK:
+    *out_kind = NATIVE_IO_OPERATION_STREAM_SEND;
+    return SALTS_OK;
+  case CNET_URI_UDP:
+    *out_kind = NATIVE_IO_OPERATION_UDP_SEND_TO;
+    return SALTS_OK;
+  case CNET_URI_PIPE:
+    *out_kind = NATIVE_IO_OPERATION_PIPE_WRITE;
+    return SALTS_OK;
+  case CNET_URI_NONE:
+  case CNET_URI_TLS:
+    return SALTS_EINVAL;
+  }
+  return SALTS_EINVAL;
+}
+
 static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *session) {
   native_io_operation operation;
   native_io_operation_kind operation_kind;
@@ -425,9 +467,8 @@ static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *ses
   if (session->receive_demand == 0u || session->read_active || session->close_requested)
     return SALTS_OK;
   if (session->peer.scheme == CNET_URI_TLS) return cnet_owner_tls_pump(impl, session);
-  operation_kind = session->peer.scheme == CNET_URI_TCP   ? NATIVE_IO_OPERATION_TCP_RECV
-                   : session->peer.scheme == CNET_URI_UDP ? NATIVE_IO_OPERATION_UDP_RECV_FROM
-                                                          : NATIVE_IO_OPERATION_PIPE_READ;
+  status = cnet_owner_receive_operation_kind(session->peer.scheme, &operation_kind);
+  if (status != SALTS_OK) return status;
   operation = (native_io_operation){.kind = operation_kind,
                                     .endpoint = cnet_transport_read_endpoint(&session->transport),
                                     .buffer = session->receive_buffer,
@@ -551,7 +592,7 @@ static int cnet_owner_tls_start_write(cnet_owner_impl *impl, cnet_owner_session 
                                 session->tls.io_buffer_bytes, &size);
   if (status == SALTS_ENOENT) return SALTS_OK;
   if (status != SALTS_OK) return status;
-  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_TCP_SEND,
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_STREAM_SEND,
                                     .endpoint = cnet_transport_write_endpoint(&session->transport),
                                     .buffer = session->tls.write_buffer,
                                     .length = size};
@@ -568,7 +609,7 @@ static int cnet_owner_tls_start_read(cnet_owner_impl *impl, cnet_owner_session *
   capacity = cnet_tls_cipher_input_capacity(&session->tls);
   if (capacity == 0u) return SALTS_EPROTO;
   if (capacity > session->tls.io_buffer_bytes) capacity = session->tls.io_buffer_bytes;
-  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_TCP_RECV,
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_STREAM_RECV,
                                     .endpoint = cnet_transport_read_endpoint(&session->transport),
                                     .buffer = session->tls.read_buffer,
                                     .length = capacity};
@@ -717,16 +758,41 @@ static int cnet_owner_start_tls(cnet_owner_impl *impl, cnet_owner_session *sessi
 
 static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session *session,
                                       cnet_command_view *command) {
-  native_io_operation operation;
+  native_io_operation operation = {0};
+  bool connected_immediately = false;
   int status;
 
-  if (session->peer.scheme != CNET_URI_TCP && session->peer.scheme != CNET_URI_TLS) {
-    status =
-        session->peer.scheme == CNET_URI_UDP
-            ? cnet_transport_udp_connect(&session->transport, &impl->backend, impl->backend_kind,
-                                         session->peer.address, session->peer.address_length)
-            : cnet_transport_pipe_connect(&session->transport, &impl->backend, impl->backend_kind,
-                                          session->peer.pipe_name);
+  switch (session->peer.scheme) {
+  case CNET_URI_UDP:
+    status = cnet_transport_udp_connect(&session->transport, &impl->backend, impl->backend_kind,
+                                        session->peer.address, session->peer.address_length);
+    connected_immediately = true;
+    break;
+  case CNET_URI_PIPE:
+    status = cnet_transport_pipe_connect(&session->transport, &impl->backend, impl->backend_kind,
+                                         session->peer.pipe_name);
+    connected_immediately = true;
+    break;
+  case CNET_URI_TCP:
+  case CNET_URI_TLS:
+    status = cnet_transport_tcp_prepare_connect(
+        &session->transport, &impl->backend, impl->backend_kind, session->peer.address,
+        session->peer.address_length, &session->peer.socket_options, 0u, &operation);
+    break;
+  case CNET_URI_VSOCK:
+    status = cnet_transport_vsock_prepare_connect(
+        &session->transport, &impl->backend, impl->backend_kind, session->peer.address,
+        session->peer.address_length, &session->peer.socket_options, 0u, &operation);
+    break;
+  case CNET_URI_NONE:
+    status = SALTS_EINVAL;
+    break;
+  default:
+    status = SALTS_EINVAL;
+    break;
+  }
+
+  if (connected_immediately) {
     if (status == SALTS_OK)
       status = cnet_session_table_transition(impl->sessions, session->handle, CNET_SESSION_OPEN);
     if (status == SALTS_OK) status = cnet_owner_cancel_deadline(impl, &session->connect_deadline);
@@ -742,10 +808,6 @@ static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session 
     return cnet_owner_queue_connected_event(impl, session);
   }
 
-  status = cnet_transport_tcp_prepare_connect(&session->transport, &impl->backend,
-                                              impl->backend_kind, session->peer.address,
-                                              session->peer.address_length,
-                                              &session->peer.socket_options, 0u, &operation);
   if (status != SALTS_OK)
     return command != NULL
                ? cnet_owner_fail_accepted_command(impl, session, command, status,
@@ -753,6 +815,33 @@ static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session 
                : cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_CONNECT);
   return cnet_owner_start_request(impl, session, command, CNET_OWNER_REQUEST_CONNECT, &operation,
                                   false);
+}
+
+static bool cnet_owner_connect_endpoint_valid(const cnet_owner_connect_payload *payload,
+                                              bool has_adopted, bool has_address,
+                                              bool host_present, bool has_host,
+                                              bool pipe_present, bool has_pipe) {
+  if (payload->adopted)
+    return (payload->scheme == CNET_URI_TCP || payload->scheme == CNET_URI_TLS ||
+            payload->scheme == CNET_URI_VSOCK) &&
+           has_adopted && payload->address_length == 0u && !host_present && payload->port == 0u &&
+           !pipe_present && payload->connect_timeout_ms == 0u;
+
+  switch (payload->scheme) {
+  case CNET_URI_PIPE:
+    return payload->address_length == 0u && !host_present && payload->port == 0u && has_pipe;
+  case CNET_URI_VSOCK:
+    return has_address && !host_present && payload->port == 0u && !pipe_present;
+  case CNET_URI_TCP:
+  case CNET_URI_TLS:
+  case CNET_URI_UDP:
+    return !pipe_present && (payload->address_length != 0u
+                                 ? has_address && !host_present && payload->port == 0u
+                                 : has_host);
+  case CNET_URI_NONE:
+    return false;
+  }
+  return false;
 }
 
 static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command) {
@@ -800,17 +889,11 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
                         payload->tls_handshake_timeout_ms == 0u && !payload->tls_server &&
                         !tls_name_present;
   if ((payload->scheme != CNET_URI_TCP && payload->scheme != CNET_URI_UDP &&
-       payload->scheme != CNET_URI_TLS && payload->scheme != CNET_URI_PIPE) ||
-      !tls_valid ||
-      (payload->adopted
-           ? (payload->scheme != CNET_URI_TCP && payload->scheme != CNET_URI_TLS) || !has_adopted ||
-                 payload->address_length != 0u || host_present || payload->port != 0u ||
-                 pipe_present || payload->connect_timeout_ms != 0u
-       : payload->scheme == CNET_URI_PIPE
-           ? payload->address_length != 0u || host_present || payload->port != 0u || !has_pipe
-           : pipe_present || (payload->address_length != 0u
-                                  ? !has_address || host_present || payload->port != 0u
-                                  : !has_host))) {
+       payload->scheme != CNET_URI_TLS && payload->scheme != CNET_URI_PIPE &&
+       payload->scheme != CNET_URI_VSOCK) ||
+      !tls_valid || !cnet_owner_connect_endpoint_valid(payload, has_adopted, has_address,
+                                                       host_present, has_host, pipe_present,
+                                                       has_pipe)) {
     if (payload->adopted) cnet_transport_close_socket(payload->adopted_socket);
     cnet_tls_context_release(payload->tls_context);
     status = cnet_command_queue_release(impl->commands, command);
@@ -871,9 +954,13 @@ static int cnet_owner_connect(cnet_owner_impl *impl, cnet_command_view *command)
                                             CNET_SESSION_STAGE_CONNECT);
 
   if (has_adopted) {
-    status = cnet_transport_adopt_tcp(&session->transport, &impl->backend,
-                                      session->peer.adopted_socket,
-                                      &session->peer.socket_options);
+    status = session->peer.scheme == CNET_URI_VSOCK
+                 ? cnet_transport_adopt_vsock(&session->transport, &impl->backend,
+                                              session->peer.adopted_socket,
+                                              &session->peer.socket_options)
+                 : cnet_transport_adopt_tcp(&session->transport, &impl->backend,
+                                            session->peer.adopted_socket,
+                                            &session->peer.socket_options);
     session->peer.adopted_socket = UINTPTR_MAX;
     session->peer.adopted = false;
     if (status == SALTS_OK) {
@@ -991,9 +1078,10 @@ static int cnet_owner_send(cnet_owner_impl *impl, cnet_command_view *command,
                ? SALTS_OK
                : cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_WRITE);
   }
-  operation_kind = session->peer.scheme == CNET_URI_TCP   ? NATIVE_IO_OPERATION_TCP_SEND
-                   : session->peer.scheme == CNET_URI_UDP ? NATIVE_IO_OPERATION_UDP_SEND_TO
-                                                          : NATIVE_IO_OPERATION_PIPE_WRITE;
+  status = cnet_owner_send_operation_kind(session->peer.scheme, &operation_kind);
+  if (status != SALTS_OK)
+    return cnet_owner_fail_accepted_command(impl, session, command, status,
+                                            CNET_SESSION_STAGE_WRITE);
   operation = (native_io_operation){.kind = operation_kind,
                                     .endpoint = cnet_transport_write_endpoint(&session->transport),
                                     .buffer = (void *)command->data,

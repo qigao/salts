@@ -39,6 +39,45 @@ spec("CNet strict transport URI") {
     check_equal(strcmp(uri.path, "name:segment"), 0);
   }
 
+  it("parses full-width numeric VSOCK endpoints") {
+    cnet_uri uri = {0};
+
+    check_equal(cnet_uri_parse("vsock://2:5000", &uri), SALTS_OK);
+    check_equal(uri.scheme, CNET_URI_VSOCK);
+    check_equal(uri.vsock_cid, UINT32_C(2));
+    check_equal(uri.vsock_port, UINT32_C(5000));
+    check_equal(uri.host[0], '\0');
+    check_equal(uri.path[0], '\0');
+    check_equal(uri.port, 0u);
+
+    check_equal(cnet_uri_parse("vsock://4294967294:4294967294", &uri), SALTS_OK);
+    check_equal(uri.vsock_cid, UINT32_C(4294967294));
+    check_equal(uri.vsock_port, UINT32_C(4294967294));
+  }
+
+  it("rejects ambiguous reserved and overflowing VSOCK endpoints") {
+    cnet_uri uri = {0};
+
+    check_equal(cnet_uri_parse("vsock://", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://2", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://:5000", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://2:", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://2:5000:1", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://user@2:5000", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://-1:5000", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://2:+5000", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock:// 2:5000", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://2:5000 ", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://2:5000/path", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://2:5000?query", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://2:5000#fragment", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://4294967295:5000", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://2:4294967295", &uri), SALTS_EINVAL);
+    check_equal(cnet_uri_parse("vsock://4294967296:5000", &uri), SALTS_ERANGE);
+    check_equal(cnet_uri_parse("vsock://2:4294967296", &uri), SALTS_ERANGE);
+    check_equal(uri.scheme, CNET_URI_NONE);
+  }
+
   it("rejects ambiguous unsupported and overflowing forms") {
     enum { TEST_OVERSIZED_NETWORK_HOST_BYTES = 300 };
     cnet_uri uri = {0};

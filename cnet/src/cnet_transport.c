@@ -20,6 +20,9 @@ typedef SOCKET cnet_native_socket;
   #include <fcntl.h>
   #include <netinet/in.h>
   #include <netinet/tcp.h>
+  #if defined(__linux__)
+    #include <linux/vm_sockets.h>
+  #endif
   #include <sys/socket.h>
   #include <unistd.h>
 typedef int cnet_native_socket;
@@ -253,6 +256,10 @@ static int cnet_transport_address_family(const void *address, size_t address_len
     if (address_length < sizeof(struct sockaddr_in)) return SALTS_EINVAL;
   } else if (native_address->sa_family == AF_INET6) {
     if (address_length < sizeof(struct sockaddr_in6)) return SALTS_EINVAL;
+#if defined(__linux__)
+  } else if (native_address->sa_family == AF_VSOCK) {
+    if (address_length < sizeof(struct sockaddr_vm)) return SALTS_EINVAL;
+#endif
   } else {
     return SALTS_EINVAL;
   }
@@ -283,25 +290,37 @@ static int cnet_transport_make_socket(native_io_backend_kind backend_kind, int f
 #endif
 }
 
-int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_backend *backend,
-                                       native_io_backend_kind backend_kind, const void *address,
-                                       size_t address_length,
-                                       const cnet_stream_socket_options *socket_options,
-                                       uintptr_t user_data,
-                                       native_io_operation *out_operation) {
+static bool cnet_transport_stream_socket_options_requested(
+    const cnet_stream_socket_options *options) {
+  return options->receive_buffer_bytes != 0u || options->send_buffer_bytes != 0u ||
+         options->keepalive || options->linger;
+}
+
+int cnet_transport_stream_prepare_connect(cnet_transport *transport, native_io_backend *backend,
+                                          native_io_backend_kind backend_kind, int family,
+                                          int protocol, bool socket_options_supported,
+                                          const void *address, size_t address_length,
+                                          const cnet_stream_socket_options *socket_options,
+                                          uintptr_t user_data,
+                                          native_io_operation *out_operation) {
   cnet_native_socket socket_value = CNET_INVALID_SOCKET;
-  int family = 0;
+  int address_family = 0;
   int status;
 
   if (transport == NULL || out_operation == NULL) return SALTS_EINVAL;
   cnet_transport_reset(transport);
   *out_operation = (native_io_operation){0};
   if (backend == NULL) return SALTS_EINVAL;
-  status = cnet_transport_address_family(address, address_length, &family);
+  status = cnet_transport_address_family(address, address_length, &address_family);
   if (status != SALTS_OK) return status;
+  if (address_family != family) return SALTS_EINVAL;
   if (!native_io_backend_kind_supported(backend_kind)) return SALTS_ENOTSUP;
-  status =
-      cnet_transport_make_socket(backend_kind, family, SOCK_STREAM, IPPROTO_TCP, &socket_value);
+  status = cnet_stream_socket_options_validate(socket_options);
+  if (status != SALTS_OK) return status;
+  if (!socket_options_supported &&
+      cnet_transport_stream_socket_options_requested(socket_options))
+    return SALTS_ENOTSUP;
+  status = cnet_transport_make_socket(backend_kind, family, SOCK_STREAM, protocol, &socket_value);
   if (status != SALTS_OK) return status;
   status = cnet_transport_apply_stream_socket_options((uintptr_t)socket_value, socket_options);
   if (status != SALTS_OK) {
@@ -323,13 +342,32 @@ int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_back
     return status;
   }
   transport->attached = true;
-  *out_operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_TCP_CONNECT,
+  *out_operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_STREAM_CONNECT,
                                          .endpoint = transport->endpoint,
                                          .user_data = user_data,
                                          .address = (void *)address,
                                          .address_capacity = address_length,
                                          .address_length = address_length};
   return SALTS_OK;
+}
+
+int cnet_transport_tcp_prepare_connect(cnet_transport *transport, native_io_backend *backend,
+                                       native_io_backend_kind backend_kind, const void *address,
+                                       size_t address_length,
+                                       const cnet_stream_socket_options *socket_options,
+                                       uintptr_t user_data,
+                                       native_io_operation *out_operation) {
+  int family = 0;
+  int status;
+  if (transport == NULL || out_operation == NULL) return SALTS_EINVAL;
+  cnet_transport_reset(transport);
+  *out_operation = (native_io_operation){0};
+  status = cnet_transport_address_family(address, address_length, &family);
+  if (status != SALTS_OK) return status;
+  if (family != AF_INET && family != AF_INET6) return SALTS_EINVAL;
+  return cnet_transport_stream_prepare_connect(
+      transport, backend, backend_kind, family, IPPROTO_TCP, true, address, address_length,
+      socket_options, user_data, out_operation);
 }
 
 int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *backend,
@@ -356,13 +394,23 @@ int cnet_transport_tcp_connect(cnet_transport *transport, native_io_backend *bac
   return status;
 }
 
-int cnet_transport_adopt_tcp(cnet_transport *transport, native_io_backend *backend,
-                             uintptr_t native_socket,
-                             const cnet_stream_socket_options *socket_options) {
+int cnet_transport_adopt_stream(cnet_transport *transport, native_io_backend *backend,
+                                uintptr_t native_socket, bool socket_options_supported,
+                                const cnet_stream_socket_options *socket_options) {
   int status;
   if (transport == NULL) return SALTS_EINVAL;
   cnet_transport_reset(transport);
   if (backend == NULL || native_socket == UINTPTR_MAX) return SALTS_EINVAL;
+  status = cnet_stream_socket_options_validate(socket_options);
+  if (status != SALTS_OK) {
+    cnet_transport_close_socket(native_socket);
+    return status;
+  }
+  if (!socket_options_supported &&
+      cnet_transport_stream_socket_options_requested(socket_options)) {
+    cnet_transport_close_socket(native_socket);
+    return SALTS_ENOTSUP;
+  }
   status = cnet_transport_apply_stream_socket_options(native_socket, socket_options);
   if (status != SALTS_OK) {
     cnet_transport_close_socket(native_socket);
@@ -380,6 +428,12 @@ int cnet_transport_adopt_tcp(cnet_transport *transport, native_io_backend *backe
   }
   transport->attached = true;
   return SALTS_OK;
+}
+
+int cnet_transport_adopt_tcp(cnet_transport *transport, native_io_backend *backend,
+                             uintptr_t native_socket,
+                             const cnet_stream_socket_options *socket_options) {
+  return cnet_transport_adopt_stream(transport, backend, native_socket, true, socket_options);
 }
 
 int cnet_transport_udp_connect(cnet_transport *transport, native_io_backend *backend,

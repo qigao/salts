@@ -14,6 +14,9 @@
 typedef SOCKET cnet_test_socket;
   #define CNET_TEST_INVALID_SOCKET INVALID_SOCKET
 #else
+  #if defined(__linux__)
+    #include <linux/vm_sockets.h>
+  #endif
   #include <netinet/in.h>
   #include <sys/socket.h>
   #include <unistd.h>
@@ -333,6 +336,79 @@ spec("CNet NativeIO transport ownership") {
                 SALTS_ENOENT);
     check_equal(address_length, 0u);
   }
+
+  it("reports VSOCK backend support without selecting another transport") {
+#if defined(__linux__)
+    check_true(cnet_transport_vsock_supported(NATIVE_IO_BACKEND_EPOLL));
+    check_true(cnet_transport_vsock_supported(NATIVE_IO_BACKEND_IO_URING));
+    check_false(cnet_transport_vsock_supported(NATIVE_IO_BACKEND_IOCP));
+    check_false(cnet_transport_vsock_supported(NATIVE_IO_BACKEND_KQUEUE));
+#else
+    check_false(cnet_transport_vsock_supported(NATIVE_IO_BACKEND_IOCP));
+    check_false(cnet_transport_vsock_supported(NATIVE_IO_BACKEND_EPOLL));
+    check_false(cnet_transport_vsock_supported(NATIVE_IO_BACKEND_IO_URING));
+    check_false(cnet_transport_vsock_supported(NATIVE_IO_BACKEND_KQUEUE));
+#endif
+  }
+
+#if defined(__linux__)
+  it("constructs a full-width copied VSOCK address") {
+    struct sockaddr_vm address;
+    size_t address_length = SIZE_MAX;
+
+    memset(&address, 0xa5, sizeof(address));
+    check_equal(cnet_transport_parse_vsock_address(UINT32_C(2), UINT32_MAX - UINT32_C(1), false,
+                                                   &address, sizeof(address), &address_length),
+                SALTS_OK);
+    check_equal(address_length, sizeof(address));
+    check_equal(address.svm_family, AF_VSOCK);
+    check_equal(address.svm_cid, UINT32_C(2));
+    check_equal(address.svm_port, UINT32_MAX - UINT32_C(1));
+
+    check_equal(cnet_transport_parse_vsock_address(CNET_VSOCK_CID_ANY, UINT32_C(5000), false,
+                                                   &address, sizeof(address), &address_length),
+                SALTS_EINVAL);
+    check_equal(address_length, 0u);
+    check_equal(cnet_transport_parse_vsock_address(UINT32_C(2), CNET_VSOCK_PORT_ANY, false,
+                                                   &address, sizeof(address), &address_length),
+                SALTS_EINVAL);
+    check_equal(address_length, 0u);
+    check_equal(cnet_transport_parse_vsock_address(CNET_VSOCK_CID_ANY, CNET_VSOCK_PORT_ANY, true,
+                                                   &address, sizeof(address), &address_length),
+                SALTS_OK);
+    check_equal(address.svm_cid, CNET_VSOCK_CID_ANY);
+    check_equal(address.svm_port, CNET_VSOCK_PORT_ANY);
+  }
+#endif
+
+#if !defined(__linux__)
+  it("clears VSOCK outputs when the platform is unsupported") {
+    native_io_backend backend = {0};
+    cnet_transport transport = {.native_handle = 1u,
+                                .endpoint = {1u, 1u},
+                                .resource_kind = CNET_TRANSPORT_RESOURCE_SOCKET,
+                                .native_open = true,
+                                .attached = true};
+    native_io_operation operation = {.kind = NATIVE_IO_OPERATION_STREAM_CONNECT,
+                                     .endpoint = {1u, 1u}};
+    cnet_stream_socket_options options = CNET_STREAM_SOCKET_OPTIONS_INIT;
+    unsigned char address[128];
+    size_t address_length = SIZE_MAX;
+
+    memset(address, 0xa5, sizeof(address));
+    check_equal(cnet_transport_parse_vsock_address(UINT32_C(2), UINT32_C(5000), false, address,
+                                                   sizeof(address), &address_length),
+                SALTS_ENOTSUP);
+    check_equal(address_length, 0u);
+    check_equal(cnet_transport_vsock_prepare_connect(
+                    &transport, &backend, NATIVE_IO_BACKEND_IOCP, address, sizeof(address),
+                    &options, 0u, &operation),
+                SALTS_ENOTSUP);
+    check_equal(transport.native_handle, UINTPTR_MAX);
+    check_false(cnet_transport_active(&transport));
+    check_equal(operation.kind, 0);
+  }
+#endif
 
   it("creates owns connects and releases one TCP socket") {
     native_io_backend_kind backends[CNET_TEST_MAX_BACKENDS];

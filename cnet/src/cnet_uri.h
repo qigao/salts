@@ -12,7 +12,8 @@ typedef enum cnet_uri_scheme {
   CNET_URI_TCP,
   CNET_URI_TLS,
   CNET_URI_UDP,
-  CNET_URI_PIPE
+  CNET_URI_PIPE,
+  CNET_URI_VSOCK
 } cnet_uri_scheme;
 
 typedef struct cnet_uri {
@@ -20,6 +21,8 @@ typedef struct cnet_uri {
   char host[CNET_URI_HOST_CAPACITY];
   char path[CNET_URI_PATH_CAPACITY];
   uint16_t port;
+  uint32_t vsock_cid;
+  uint32_t vsock_port;
 } cnet_uri;
 
 int cnet_uri_parse(const char *text, cnet_uri *out_uri);

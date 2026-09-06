@@ -1475,20 +1475,23 @@ spec("NativeIO direct backend") {
     check_true(native_io_operation_valid(&operation));
   }
 
-  it("preserves socket operation values and validates byte-pipe shapes") {
+  it("preserves TCP aliases for transport-neutral stream operations") {
     unsigned char payload = 0u;
     native_io_operation operation = {.kind = NATIVE_IO_OPERATION_PIPE_READ,
                                     .endpoint = {1u, 1u},
                                     .buffer = &payload,
                                     .length = sizeof(payload)};
 
-    check_equal(NATIVE_IO_OPERATION_TCP_RECV, 1);
-    check_equal(NATIVE_IO_OPERATION_TCP_SEND, 2);
+    check_equal(NATIVE_IO_OPERATION_STREAM_RECV, 1);
+    check_equal(NATIVE_IO_OPERATION_STREAM_SEND, 2);
+    check_equal(NATIVE_IO_OPERATION_STREAM_CONNECT, 7);
+    check_equal(NATIVE_IO_OPERATION_TCP_RECV, NATIVE_IO_OPERATION_STREAM_RECV);
+    check_equal(NATIVE_IO_OPERATION_TCP_SEND, NATIVE_IO_OPERATION_STREAM_SEND);
+    check_equal(NATIVE_IO_OPERATION_TCP_CONNECT, NATIVE_IO_OPERATION_STREAM_CONNECT);
     check_equal(NATIVE_IO_OPERATION_UDP_RECV_FROM, 3);
     check_equal(NATIVE_IO_OPERATION_UDP_SEND_TO, 4);
     check_equal(NATIVE_IO_OPERATION_PIPE_READ, 5);
     check_equal(NATIVE_IO_OPERATION_PIPE_WRITE, 6);
-    check_equal(NATIVE_IO_OPERATION_TCP_CONNECT, 7);
     check_true(native_io_operation_valid(&operation));
 
     operation.address = &payload;

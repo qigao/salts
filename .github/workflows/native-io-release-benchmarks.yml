@@ -205,7 +205,8 @@ jobs:
               cnet_resolver_test cnet_shards_test cnet_dispatcher_test \
               cnet_api_test cnet_header_cpp_test cnet_tls_test \
               cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test \
-              cnet_packet_endpoint_test cnet_benchmark_stats_test \
+              cnet_packet_endpoint_test cnet_vsock_integration_test \
+              cnet_benchmark_stats_test \
               concurrency_deadline_queue_test
 
       - name: Configure Windows Release
