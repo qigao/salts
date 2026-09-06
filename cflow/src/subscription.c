@@ -794,7 +794,7 @@ static void finish_if_possible(run_impl *r) {
     if (notify && cflow_subscriber_valid(&r->sink)) cflow_subscriber_done(&r->sink);
 }
 
-static bool schedule_pump(run_impl *r, bool fail_on_rejection);
+static cflow_status schedule_pump(run_impl *r, bool fail_on_rejection);
 
 static void wake_cb(void *user) {
     cflow_subscription *run = (cflow_subscription *)user;
@@ -1064,7 +1064,30 @@ static const char *scheduler_rejection_error(cflow_admission_status status) {
     }
 }
 
-static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
+static cflow_status scheduler_rejection_status(
+    cflow_admission_status status) {
+    switch (status) {
+        case CFLOW_ADMISSION_FULL:
+            return CFLOW_STATUS_CAPACITY_EXCEEDED;
+        case CFLOW_ADMISSION_CLOSED:
+            return CFLOW_STATUS_CLOSED;
+        case CFLOW_ADMISSION_ALLOCATION_FAILED:
+            return CFLOW_STATUS_ALLOCATION_FAILED;
+        case CFLOW_ADMISSION_INVALID_ARGUMENT:
+            return CFLOW_STATUS_INVALID_ARGUMENT;
+        case CFLOW_ADMISSION_ACCEPTED:
+        default:
+            return CFLOW_STATUS_EXECUTION_ERROR;
+    }
+}
+
+static cflow_status terminal_request_status_locked(const run_impl *r) {
+    if (r->closed || (!r->cancelled && r->status == CFLOW_STATUS_OK))
+        return CFLOW_STATUS_CLOSED;
+    return r->cancelled ? CFLOW_STATUS_CANCELLED : r->status;
+}
+
+static cflow_status schedule_pump(run_impl *r, bool fail_on_rejection) {
     cflow_schedule_result result;
     const cflow_executor_task task = {
         .run = pump_task,
@@ -1079,22 +1102,27 @@ static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
     uint64_t generation;
     const char *error = NULL;
     run_impl *previous_active_run;
-    if (!r || !r->scheduler) return false;
+    if (!r || !r->scheduler) return CFLOW_STATUS_INVALID_ARGUMENT;
     salts_mutex_lock(&r->lock);
-    if (r->closed || r->terminated || r->pump_running || r->waiting) {
+    if (r->closed || r->terminated) {
+        const cflow_status status = terminal_request_status_locked(r);
         salts_mutex_unlock(&r->lock);
-        return true;
+        return status;
+    }
+    if (r->pump_running || r->waiting) {
+        salts_mutex_unlock(&r->lock);
+        return CFLOW_STATUS_OK;
     }
     if (r->task_scheduled) {
         r->rejection_must_fail =
             r->rejection_must_fail || fail_on_rejection;
         salts_mutex_unlock(&r->lock);
-        return true;
+        return CFLOW_STATUS_OK;
     }
     if (r->task_refs > SIZE_MAX - 2u || r->task_posting == SIZE_MAX ||
         r->next_task_generation == UINT64_MAX) {
         salts_mutex_unlock(&r->lock);
-        return false;
+        return CFLOW_STATUS_EXECUTION_ERROR;
     }
     r->task_scheduled = true;
     r->scheduled_task_id = 0u;
@@ -1129,6 +1157,7 @@ static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
             !r->close_requested && !r->terminated) {
             error = scheduler_rejection_error(result.status);
             r->error = error;
+            r->status = scheduler_rejection_status(result.status);
             r->terminated = true;
             notify = true;
         }
@@ -1147,11 +1176,11 @@ static bool schedule_pump(run_impl *r, bool fail_on_rejection) {
         destroy = run_release_task_ref(r);
         if (!destroy) destroy = run_release_task_ref(r);
         if (destroy) run_destroy_claimed(r);
-        return false;
+        return scheduler_rejection_status(result.status);
     }
     destroy = run_release_task_ref(r);
     if (destroy) run_destroy_claimed(r);
-    return true;
+    return CFLOW_STATUS_OK;
 }
 
 
@@ -1388,13 +1417,20 @@ cflow_status_result cflow_subscribe_with_options(
 }
 
 
-bool cflow_subscription_request(cflow_subscription *run, size_t n) {
+cflow_status_result cflow_subscription_request_result(
+    cflow_subscription *run, size_t n) {
     run_impl *r = impl_of(run);
     size_t current;
     size_t next;
-    if (!r || n == 0) return false;
+    cflow_status status;
+    if (!r || n == 0)
+        return (cflow_status_result){CFLOW_STATUS_INVALID_ARGUMENT};
     salts_mutex_lock(&r->lock);
-    if (r->closed || r->terminated) { salts_mutex_unlock(&r->lock); return false; }
+    if (r->closed || r->terminated) {
+        status = terminal_request_status_locked(r);
+        salts_mutex_unlock(&r->lock);
+        return (cflow_status_result){status};
+    }
     current = atomic_load_explicit(&r->demand, memory_order_relaxed);
     do {
         next = SIZE_MAX - current < n ? SIZE_MAX : current + n;
@@ -1402,7 +1438,12 @@ bool cflow_subscription_request(cflow_subscription *run, size_t n) {
         &r->demand, &current, next,
         memory_order_release, memory_order_relaxed));
     salts_mutex_unlock(&r->lock);
-    return schedule_pump(r, false);
+    return (cflow_status_result){schedule_pump(r, false)};
+}
+
+bool cflow_subscription_request(cflow_subscription *run, size_t n) {
+    return cflow_status_result_is_ok(
+        cflow_subscription_request_result(run, n));
 }
 
 void cflow_subscription_cancel(cflow_subscription *run) {

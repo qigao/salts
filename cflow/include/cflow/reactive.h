@@ -158,7 +158,15 @@ cflow_status_result cflow_subscribe_subgraph_with_options(
     const cflow_subscriber *subscriber,
     const cflow_eval_options *options);
 
-/* Demand is always downstream-value demand, never Publisher-item demand. */
+/* Demand is always downstream-value demand, never Publisher-item demand.
+ * An immediate pump-admission failure retains the saturated demand so a later
+ * wake/request can retry it. CLOSED denotes either a successfully terminated
+ * Subscription or a Scheduler that rejected new pump work after demand was
+ * retained. */
+cflow_status_result cflow_subscription_request_result(
+    cflow_subscription *subscription, size_t n);
+/* Compatibility facade returning true only when demand was accepted without
+ * an immediate admission or terminal error. */
 bool cflow_subscription_request(cflow_subscription *subscription, size_t n);
 void cflow_subscription_cancel(cflow_subscription *subscription);
 /* External calls close synchronously. A call from this Subscription's
