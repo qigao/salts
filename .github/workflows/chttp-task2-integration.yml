@@ -1,0 +1,47 @@
+name: CHTTP task2 integration verify
+
+on:
+  push:
+    branches:
+      - agent/chttp-h2-deferred-task2-integration
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Restore vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/salts-vcpkg-binary-cache
+          key: salts-vcpkg-linux-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+      - name: Setup dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes nasm ninja-build re2c
+          mkdir -p "$RUNNER_TEMP/salts-vcpkg-binary-cache"
+          echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          echo "VCPKG_DEFAULT_BINARY_CACHE=$RUNNER_TEMP/salts-vcpkg-binary-cache" >> "$GITHUB_ENV"
+          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
+            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
+          fi
+      - name: Configure
+        run: cmake --preset release-linux-ninja
+      - name: Build integration regression
+        run: >-
+          cmake --build --preset build-default-linux --target
+          chttp_h2_deferred_test chttp_h2_server_test chttp_server_test
+      - name: Run integration regression
+        run: >-
+          ctest --preset test-release-linux -R
+          '^(chttp_h2_deferred_test|chttp_h2_server_test|chttp_server_test)$'
+          --output-on-failure
