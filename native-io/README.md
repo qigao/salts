@@ -19,7 +19,7 @@ Coroutine pool       Platform errors/ABI
  vendor/minicoro
 ```
 
-当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 SOCK_STREAM connect/recv/send 和 UDP recv_from/send_to。`NATIVE_IO_OPERATION_STREAM_CONNECT`、`STREAM_RECV`、`STREAM_SEND` 是规范名称，原有 `TCP_*` 保持相同枚举值与 ABI 的兼容别名。上层可据此驱动 TCP，也可在 Linux epoll/io_uring 上驱动已 attach 的 AF_VSOCK stream。Windows IOCP 支持 overlapped byte-mode named pipe，Linux epoll 与 macOS/BSD kqueue 支持非阻塞 connected byte pipe；io_uring pipe 仍显式返回 `SALTS_ENOTSUP`。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `SALTS_ENOTSUP`。CFlow Actor 与 Reactive 可直接依赖 NativeIO；NativeIO 本身不依赖或拥有 CFlow/CNet 状态。
+当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 SOCK_STREAM connect/recv/send 和 UDP recv_from/send_to。`NATIVE_IO_OPERATION_STREAM_CONNECT`、`STREAM_RECV`、`STREAM_SEND` 是规范名称，原有 `TCP_*` 保持相同枚举值与 ABI 的兼容别名。上层可据此驱动 TCP，也可在 Linux epoll/io_uring 上驱动已 attach 的 AF_VSOCK stream。Windows IOCP 支持 overlapped byte-mode named pipe，Linux epoll 与 macOS/BSD kqueue 支持非阻塞 connected byte pipe；Linux io_uring 支持 blocking 或 nonblocking pipe/FIFO descriptor。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `SALTS_ENOTSUP`。CFlow Actor 与 Reactive 可直接依赖 NativeIO；NativeIO 本身不依赖或拥有 CFlow/CNet 状态。
 
 ## 数据与状态协议
 
@@ -75,7 +75,7 @@ direct backend 初始化时预分配 endpoint/request/native event storage，之
 
 - IOCP：stream connect 使用 `ConnectEx`，socket 数据 submit 直接调用 `WSARecv`/`WSASend`，named-pipe submit 直接调用 overlapped `ReadFile`/`WriteFile`，observe 统一读取 completion port。
 - epoll/kqueue：connect 使用 nonblocking `connect` 与 `SO_ERROR`；其余 submit 先以单次非阻塞 syscall 尝试，仅在 would-block 时进入每 endpoint 的 FIFO lane，并由 owner 在 observe 中直接等待 readiness 和继续 syscall。
-- io_uring：connect 使用 `IORING_OP_CONNECT`。每个 endpoint 的 read/write lane 各保持至多一个内核 in-flight SQE，其余已接受描述符保留在固定 request 槽位中；observe drain CQ 后推进 lane。ring 由模块映射，但没有 worker、mutex、callback、payload copy 或跨线程 mailbox。
+- io_uring：connect 使用 `IORING_OP_CONNECT`，pipe/FIFO read/write 使用 `IORING_OP_READ`/`IORING_OP_WRITE`。每个 endpoint 的 read/write lane 各保持至多一个内核 in-flight SQE，其余已接受描述符保留在固定 request 槽位中；observe drain CQ 后推进 lane。ring 由模块映射，但没有 worker、mutex、callback、payload copy 或跨线程 mailbox。
 
 readiness 的 kernel interest 是请求 lane 推导出的镜像，不是第二份业务状态。endpoint/request/terminal storage 和 native event batch 均有固定上限。
 
