@@ -822,12 +822,18 @@ spec("CNet public client API") {
     check_equal(events, (size_t)0u);
     check_equal(cnet_client_profile_take(&client, &profile), SALTS_OK);
     check_equal(profile.owner_drive_calls, (uint64_t)1u);
+    check_equal(profile.receive_rearm_stage_calls, (uint64_t)1u);
+    check_equal(profile.receive_rearm_request_lifecycle_calls, (uint64_t)0u);
     check_equal(profile.command_stage_calls, (uint64_t)1u);
+    check_equal(profile.command_request_lifecycle_calls, (uint64_t)0u);
     check_equal(profile.request_lifecycle_calls, (uint64_t)0u);
     check_equal(profile.request_start_calls, (uint64_t)0u);
     check_equal(profile.observe_calls, (uint64_t)1u);
     check_equal(profile.request_completion_calls, (uint64_t)0u);
     check_equal(profile.event_publish_calls, (uint64_t)0u);
+    check_true(profile.owner_drive_ns >= profile.receive_rearm_stage_ns);
+    check_equal(profile.receive_rearm_request_lifecycle_ns, (uint64_t)0u);
+    check_equal(profile.command_request_lifecycle_ns, (uint64_t)0u);
     check_true(profile.owner_drive_ns >= profile.command_stage_ns);
     check_true(profile.owner_drive_ns >= profile.request_lifecycle_ns);
     check_true(profile.owner_drive_ns >= profile.request_start_ns);

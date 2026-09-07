@@ -71,14 +71,20 @@ typedef struct cnet_owner_config {
 /** Inclusive owner-stage timings collected only during an explicit diagnostic sample. */
 typedef struct cnet_owner_profile {
   uint64_t owner_drive_ns;
+  uint64_t receive_rearm_stage_ns;
+  uint64_t receive_rearm_request_lifecycle_ns;
   uint64_t command_stage_ns;
+  uint64_t command_request_lifecycle_ns;
   uint64_t request_lifecycle_ns;
   uint64_t request_start_ns;
   uint64_t observe_ns;
   uint64_t request_completion_ns;
   uint64_t event_publish_ns;
   uint64_t owner_drive_calls;
+  uint64_t receive_rearm_stage_calls;
+  uint64_t receive_rearm_request_lifecycle_calls;
   uint64_t command_stage_calls;
+  uint64_t command_request_lifecycle_calls;
   uint64_t request_lifecycle_calls;
   uint64_t request_start_calls;
   uint64_t observe_calls;

@@ -1665,14 +1665,41 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   status = cnet_owner_flush_state_events(impl, &event_blocked);
   if (status != SALTS_OK) return status;
   if (event_blocked || impl->published_event_count != published_before) return SALTS_OK;
+#if defined(CNET_INTERNAL_PROFILING)
+  {
+    const bool profile_active = impl->profile_active;
+    const uint64_t request_ns_before = impl->profile.request_lifecycle_ns;
+    const uint64_t request_calls_before = impl->profile.request_lifecycle_calls;
+    const uint64_t profile_started = cnet_owner_profile_start(impl);
+    status = cnet_owner_arm_pending_receives(impl);
+    cnet_owner_profile_finish(impl, profile_started, &impl->profile.receive_rearm_stage_ns,
+                              &impl->profile.receive_rearm_stage_calls);
+    if (profile_active) {
+      impl->profile.receive_rearm_request_lifecycle_ns +=
+          impl->profile.request_lifecycle_ns - request_ns_before;
+      impl->profile.receive_rearm_request_lifecycle_calls +=
+          impl->profile.request_lifecycle_calls - request_calls_before;
+    }
+  }
+#else
   status = cnet_owner_arm_pending_receives(impl);
+#endif
   if (status != SALTS_OK) return status;
 #if defined(CNET_INTERNAL_PROFILING)
   {
+    const bool profile_active = impl->profile_active;
+    const uint64_t request_ns_before = impl->profile.request_lifecycle_ns;
+    const uint64_t request_calls_before = impl->profile.request_lifecycle_calls;
     const uint64_t profile_started = cnet_owner_profile_start(impl);
     status = cnet_owner_process_commands(impl, &processed);
     cnet_owner_profile_finish(impl, profile_started, &impl->profile.command_stage_ns,
                               &impl->profile.command_stage_calls);
+    if (profile_active) {
+      impl->profile.command_request_lifecycle_ns +=
+          impl->profile.request_lifecycle_ns - request_ns_before;
+      impl->profile.command_request_lifecycle_calls +=
+          impl->profile.request_lifecycle_calls - request_calls_before;
+    }
   }
 #else
   status = cnet_owner_process_commands(impl, &processed);
