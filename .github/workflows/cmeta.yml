@@ -110,11 +110,12 @@ jobs:
             cflow_native_pipe_example \
             cflow_native_file_example \
             cflow_io_native_test \
+            cflow_io_native_adapter_test \
             cflow_io_pipe_test \
             cflow_io_file_test \
             cflow_process_test
           ctest --preset linux-dev-user \
-            -R "^(cflow_native_(socket|pipe|file)_example|cflow_io_(native|pipe|file)_test|cflow_process_test)$" \
+            -R "^(cflow_native_(socket|pipe|file)_example|cflow_io_(native|native_adapter|pipe|file)_test|cflow_process_test)$" \
             --output-on-failure
 
   macos:

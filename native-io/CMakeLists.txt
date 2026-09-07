@@ -1,9 +1,13 @@
 set(TARGET_NAME salts_native_io)
 
-add_library(${TARGET_NAME} STATIC src/native_io.c)
+add_library(${TARGET_NAME} STATIC
+  src/native_io.c
+  src/native_ipc.c)
 
 if(WIN32)
-  target_sources(${TARGET_NAME} PRIVATE src/native_io_iocp.c)
+  target_sources(${TARGET_NAME} PRIVATE
+    src/native_io_iocp.c
+    src/native_ipc_windows.c)
   target_compile_definitions(${TARGET_NAME} PRIVATE
     WIN32_LEAN_AND_MEAN
     _WIN32_WINNT=0x0600)
@@ -13,19 +17,23 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     PRIVATE src/native_io_linux.c
             src/native_io_epoll.c
             src/native_io_io_uring.c
-            src/native_io_readiness.c)
+            src/native_io_readiness.c
+            src/native_ipc_posix.c)
 elseif((APPLE OR CMAKE_SYSTEM_NAME MATCHES "^(FreeBSD|OpenBSD|NetBSD|DragonFly)$")
        AND CMAKE_SIZEOF_VOID_P EQUAL 8)
   target_sources(
     ${TARGET_NAME}
     PRIVATE src/native_io_bsd.c
             src/native_io_kqueue.c
-            src/native_io_readiness.c)
+            src/native_io_readiness.c
+            src/native_ipc_posix.c)
   if(APPLE)
     target_compile_definitions(${TARGET_NAME} PRIVATE _DARWIN_C_SOURCE=1)
   endif()
 else()
-  target_sources(${TARGET_NAME} PRIVATE src/native_io_unsupported.c)
+  target_sources(${TARGET_NAME} PRIVATE
+    src/native_io_unsupported.c
+    src/native_ipc_posix.c)
 endif()
 
 cmake_config_target(

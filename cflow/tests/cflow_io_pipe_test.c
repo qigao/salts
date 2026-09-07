@@ -87,6 +87,25 @@ spec("CFlow pipe rendezvous") {
     check_false(cflow_io_pipe_capability_supported((cflow_io_pipe_capability)-1));
   }
 #if defined(_WIN32)
+  it("rejects an unterminated bounded pipe name without reading past it") {
+    char name[256];
+    cflow_io_pipe_server server = {0};
+    cflow_io_pipe_server_config config = {0};
+    pipe_completion_probe probe = {0};
+
+    memset(name, 'x', sizeof(name));
+    config.name = name;
+    config.direction = CFLOW_IO_PIPE_DUPLEX;
+    config.request_capacity = 1u;
+    config.input_buffer_size = 4096u;
+    config.output_buffer_size = 4096u;
+    config.completion = pipe_accept_completion;
+    config.completion_user = &probe;
+
+    check_equal(cflow_io_pipe_server_init(&server, &config), SALTS_EINVAL);
+    check_null(server.impl);
+  }
+
   it("transfers one overlapped endpoint after a named pipe client connects") {
     char name[160];
     cflow_io_pipe_server server = {0};
@@ -286,6 +305,8 @@ spec("CFlow pipe rendezvous") {
     cflow_io_pipe_server server = {0};
     cflow_io_pipe_server_config config = {0};
     pipe_completion_probe probe = {0};
+    cflow_io_pipe_submit_result submitted;
+    size_t progressed = 1u;
 
     config.name = "not-a-windows-pipe";
     config.direction = CFLOW_IO_PIPE_DUPLEX;
@@ -295,6 +316,13 @@ spec("CFlow pipe rendezvous") {
     config.completion = pipe_accept_completion;
     config.completion_user = &probe;
     check_equal(cflow_io_pipe_server_init(&server, &config), SALTS_ENOTSUP);
+    submitted = cflow_io_pipe_server_try_accept(&server);
+    check_equal(submitted.status, CFLOW_IO_PIPE_SUBMIT_UNSUPPORTED);
+    check_equal(submitted.request_id, (cflow_io_request_id)0u);
+    check_equal(submitted.error, SALTS_ENOTSUP);
+    check_equal(cflow_io_pipe_server_run_ready(&server, 1u, &progressed), SALTS_ENOTSUP);
+    check_equal(progressed, (size_t)0u);
+    check_equal(cflow_io_pipe_server_close(&server), SALTS_ENOTSUP);
   }
 #endif
 

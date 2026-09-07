@@ -216,7 +216,8 @@ SALTS_NATIVE_IO_C_API int native_io_backend_release_socket(native_io_backend *ba
  * NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE; no worker fallback is selected.
  * IOCP accepts byte-mode named-pipe handles opened with FILE_FLAG_OVERLAPPED
  * and rejects synchronous handles. epoll and kqueue accept nonblocking byte
- * pipe descriptors. The selected backend remains the only progress owner.
+ * pipe descriptors. Linux io_uring accepts blocking or nonblocking pipe/FIFO
+ * descriptors. The selected backend remains the only progress owner.
  * out_endpoint is cleared on failure.
  */
 SALTS_NATIVE_IO_C_API int native_io_backend_attach_pipe(native_io_backend *backend,

@@ -162,6 +162,7 @@ typedef bool (*cflow_statechart_contextual_executable_fn)(
     const char **out_error);
 
 #define CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4 4u
+#define CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5 5u
 
 typedef enum cflow_statechart_observed_event_kind {
     CFLOW_STATECHART_OBSERVED_EXTERNAL = 1,
@@ -245,18 +246,6 @@ typedef cflow_statechart_host_result (*cflow_statechart_host_transaction_fn)(
     void *user, cflow_statechart_host_context *context,
     const char **out_error);
 
-/**
- * Optional format-neutral V4 instance boundary copied during initialization.
- * Callbacks run on the SerialExecutor without the instance mutex held. They
- * must not retain any context member, wait on, or destroy the instance.
- */
-typedef struct cflow_statechart_instance_hooks {
-    uint32_t abi_version;
-    size_t struct_size;
-    /** Sole callback for trigger preparation and quiescence preparation. */
-    cflow_statechart_host_transaction_fn on_host_transaction;
-} cflow_statechart_instance_hooks;
-
 typedef struct cflow_statechart_guard_binding {
     cflow_statechart_guard_id id;
     cflow_statechart_guard_fn fn;
@@ -296,6 +285,47 @@ typedef enum cflow_statechart_instance_status {
     CFLOW_STATECHART_INSTANCE_WOULD_BLOCK,
     CFLOW_STATECHART_INSTANCE_HOOK_FAILED
 } cflow_statechart_instance_status;
+
+typedef enum cflow_statechart_external_settlement_kind {
+    CFLOW_STATECHART_EXTERNAL_SETTLED_COMPLETED = 1,
+    CFLOW_STATECHART_EXTERNAL_SETTLED_DROPPED = 2,
+    CFLOW_STATECHART_EXTERNAL_SETTLED_FAILED = 3,
+    CFLOW_STATECHART_EXTERNAL_SETTLED_CANCELLED = 4
+} cflow_statechart_external_settlement_kind;
+
+/** Call-scoped terminal result for one accepted nonzero-tagged Event. */
+typedef struct cflow_statechart_external_settlement {
+    uint64_t origin_token;
+    uint64_t configuration_version;
+    cflow_statechart_external_settlement_kind kind;
+    cflow_statechart_instance_status status;
+    /** NULL on success/cancellation, otherwise borrowed until destroy. */
+    const char *error;
+} cflow_statechart_external_settlement;
+
+typedef void (*cflow_statechart_external_settlement_fn)(
+    void *user, const cflow_statechart_external_settlement *settlement);
+
+/**
+ * Optional format-neutral instance boundary copied during initialization.
+ *
+ * V4 contains the prefix through `on_host_transaction`. V5 appends exact
+ * settlement observation. Settlement callbacks are serialized, run without
+ * the instance mutex held, and may execute on the SerialExecutor or on the
+ * thread that wins a control/terminal race. They must be nonblocking and must
+ * not wait on or destroy the instance. The record is call-scoped; its non-NULL
+ * error remains borrowed from the instance until destroy. One accepted
+ * nonzero-tagged external Event reports exactly one terminal outcome in FIFO
+ * order after its macrostep settles. Token zero does not report a settlement.
+ */
+typedef struct cflow_statechart_instance_hooks {
+    uint32_t abi_version;
+    size_t struct_size;
+    /** Trigger and quiescence preparation; optional for V5. */
+    cflow_statechart_host_transaction_fn on_host_transaction;
+    /** Exact tagged external-Event settlement; introduced by V5. */
+    cflow_statechart_external_settlement_fn on_external_settlement;
+} cflow_statechart_instance_hooks;
 
 typedef enum cflow_statechart_snapshot_status {
     CFLOW_STATECHART_SNAPSHOT_OK = 0,
@@ -373,6 +403,7 @@ typedef struct cflow_statechart_instance_config {
 typedef struct cflow_statechart_instance_stats {
     uint64_t configuration_version;
     uint64_t external_accepted;
+    /** Includes V5 `DROPPED` settlements for V4 accounting compatibility. */
     uint64_t external_completed;
     uint64_t external_failed;
     uint64_t external_cancelled;
@@ -438,9 +469,11 @@ cflow_mailbox_status cflow_statechart_instance_try_send(
     cflow_statechart_instance *instance, const cflow_event_view *event);
 
 /**
- * Copy one external Event together with an opaque nonzero source identity.
- * The token is FIFO-aligned with the Event and is visible only to the optional
- * external preprocess hook. Token zero has the same semantics as `try_send`.
+ * Copy one external Event together with an opaque source identity.
+ * The token is FIFO-aligned with the Event, visible to the optional host
+ * transaction hook, and reports one exact V5 settlement after accepted work
+ * terminates. Token zero suppresses settlement reporting and otherwise has
+ * the same semantics as `try_send`.
  */
 cflow_mailbox_status cflow_statechart_instance_try_send_tagged(
     cflow_statechart_instance *instance, const cflow_event_view *event,
