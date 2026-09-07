@@ -61,11 +61,14 @@ set_target_properties(${TARGET_NAME} PROPERTIES
 cnet_configure_target(${TARGET_NAME})
 
 if(BUILD_TESTS OR BUILD_BENCHMARKS)
-  # Profiling is compiled into a private static copy so diagnostics neither add
-  # exported symbols nor hot-path branches to the installed CNet library.
+  # Diagnostics use a private static copy so profiling and deterministic test
+  # faults add neither exported symbols nor hot-path branches to installed CNet.
   add_library(salts_cnet_profile STATIC ${CNET_SOURCE_FILES})
   cnet_configure_target(salts_cnet_profile)
   target_compile_definitions(salts_cnet_profile PUBLIC CNET_INTERNAL_PROFILING=1)
+  if(BUILD_TESTS)
+    target_compile_definitions(salts_cnet_profile PUBLIC CNET_INTERNAL_TESTING=1)
+  endif()
   set_target_properties(salts_cnet_profile PROPERTIES FOLDER "cnet/diagnostics")
 endif()
 

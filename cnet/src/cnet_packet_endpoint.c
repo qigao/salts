@@ -3,6 +3,9 @@
 #include "cnet_kcp_internal.h"
 #include "cnet_kcp_secure_internal.h"
 #include "cnet_secure_kcp_internal.h"
+#if defined(CNET_INTERNAL_TESTING)
+  #include "cnet_test_internal.h"
+#endif
 
 #include <cstl/hash_map.h>
 #include <monocypher.h>
@@ -83,6 +86,7 @@ struct cnet_packet_endpoint_impl {
   cnet_packet_terminal_config terminal;
   size_t callback_depth;
   int pending_status;
+  int stop_status;
   bool polling;
   bool stopping;
   bool stopped;
@@ -91,6 +95,15 @@ struct cnet_packet_endpoint_impl {
 static cnet_packet_endpoint_impl *cnet_packet_get(const cnet_packet_endpoint *endpoint) {
   return endpoint != NULL ? (cnet_packet_endpoint_impl *)endpoint->impl : NULL;
 }
+
+#if defined(CNET_INTERNAL_TESTING)
+int cnet_test_packet_endpoint_fail_next_datagram_drive(cnet_packet_endpoint *endpoint,
+                                                       int status) {
+  cnet_packet_endpoint_impl *impl = cnet_packet_get(endpoint);
+  if (impl == NULL) return SALTS_EINVAL;
+  return cnet_test_datagram_fail_next_drive(&impl->datagram, status);
+}
+#endif
 
 static uint32_t cnet_packet_decode_u32_le(const unsigned char *input) {
   return (uint32_t)input[0] | ((uint32_t)input[1] << 8u) | ((uint32_t)input[2] << 16u) |
@@ -1103,7 +1116,8 @@ int cnet_packet_endpoint_stop(cnet_packet_endpoint *endpoint, uint32_t timeout_m
     if (record->occupied) cnet_packet_record_begin_close(impl, record, SALTS_ECANCELED);
   }
   status = cnet_datagram_stop(&impl->datagram, timeout_ms);
-  if (status != SALTS_OK) return status;
+  if (status == SALTS_ETIMEDOUT) return status;
+  if (status != SALTS_OK && impl->stop_status == SALTS_OK) impl->stop_status = status;
   cnet_packet_dispatch_ready_sends(impl);
   cnet_packet_sweep_closed(impl);
   if (impl->free_record_count != impl->session_capacity || impl->ready_send_head != 0u ||
@@ -1111,7 +1125,7 @@ int cnet_packet_endpoint_stop(cnet_packet_endpoint *endpoint, uint32_t timeout_m
       impl->free_send_operation_count != impl->send_operation_capacity)
     return SALTS_EBUSY;
   impl->stopped = true;
-  return SALTS_OK;
+  return impl->stop_status;
 }
 
 int cnet_packet_endpoint_destroy(cnet_packet_endpoint *endpoint) {

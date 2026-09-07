@@ -4,6 +4,7 @@
 #include "cnet_transport.h"
 
 #include <salts/clock.h>
+#include <salts/thread.h>
 
 #include <limits.h>
 #include <stdbool.h>
@@ -26,6 +27,8 @@ typedef SOCKET cnet_datagram_socket;
 typedef int cnet_datagram_socket;
   #define CNET_DATAGRAM_INVALID_SOCKET (-1)
 #endif
+
+enum { CNET_DATAGRAM_STOP_ERROR_RETRY_MS = 1 };
 
 typedef struct cnet_datagram_send_slot {
   native_io_request request;
@@ -59,11 +62,16 @@ typedef struct cnet_datagram_impl {
   size_t receive_buffer_bytes;
   size_t receive_demand;
   uint16_t port;
+  int stop_status;
   bool receive_active;
   bool polling;
   bool callback_active;
   bool stopping;
   bool stopped;
+#if defined(CNET_INTERNAL_TESTING)
+  int test_drive_status;
+  int test_persistent_drive_status;
+#endif
 } cnet_datagram_impl;
 
 static cnet_datagram_impl *cnet_datagram_get(cnet_datagram *datagram) {
@@ -73,6 +81,25 @@ static cnet_datagram_impl *cnet_datagram_get(cnet_datagram *datagram) {
 static const cnet_datagram_impl *cnet_datagram_const_get(const cnet_datagram *datagram) {
   return datagram != NULL ? (const cnet_datagram_impl *)datagram->impl : NULL;
 }
+
+#if defined(CNET_INTERNAL_TESTING)
+int cnet_test_datagram_fail_next_drive(cnet_datagram *datagram, int status) {
+  cnet_datagram_impl *impl = cnet_datagram_get(datagram);
+  if (impl == NULL || status >= SALTS_OK || status == SALTS_ETIMEDOUT ||
+      impl->test_drive_status != SALTS_OK)
+    return SALTS_EINVAL;
+  impl->test_drive_status = status;
+  return SALTS_OK;
+}
+
+int cnet_test_datagram_set_persistent_drive_failure(cnet_datagram *datagram, int status) {
+  cnet_datagram_impl *impl = cnet_datagram_get(datagram);
+  if (impl == NULL || status > SALTS_OK || status == SALTS_ETIMEDOUT) return SALTS_EINVAL;
+  impl->test_persistent_drive_status = status;
+  return SALTS_OK;
+}
+
+#endif
 
 static int cnet_datagram_native_error(void) {
 #if defined(_WIN32)
@@ -245,21 +272,87 @@ static int cnet_datagram_complete(cnet_datagram_impl *impl,
   }
 }
 
+static int cnet_datagram_process_completions(cnet_datagram_impl *impl,
+                                             const native_io_completion *completions,
+                                             size_t completion_count,
+                                             size_t *out_callbacks) {
+  size_t callback_count = 0u;
+  int first_status = SALTS_OK;
+  for (size_t index = 0u; index < completion_count; ++index) {
+    const int status = cnet_datagram_complete(impl, &completions[index], &callback_count);
+    if (status != SALTS_OK && first_status == SALTS_OK) first_status = status;
+  }
+  *out_callbacks = callback_count;
+  return first_status;
+}
+
+#if defined(CNET_INTERNAL_TESTING)
+typedef struct cnet_test_batch_probe {
+  size_t callbacks;
+} cnet_test_batch_probe;
+
+static void cnet_test_batch_send(void *user, cnet_datagram *datagram,
+                                 const cnet_datagram_peer *peer, size_t size, int status,
+                                 uint64_t tag) {
+  cnet_test_batch_probe *probe = (cnet_test_batch_probe *)user;
+  (void)datagram;
+  (void)peer;
+  (void)size;
+  (void)status;
+  (void)tag;
+  ++probe->callbacks;
+}
+
+int cnet_test_datagram_process_mixed_batch(size_t *out_callbacks) {
+  cnet_datagram_impl impl = {0};
+  cnet_datagram_send_slot send_slot = {0};
+  uint32_t free_send = 0u;
+  cnet_test_batch_probe probe = {0};
+  native_io_completion completions[2] = {0};
+  size_t callbacks = 0u;
+  int status;
+  if (out_callbacks == NULL) return SALTS_EINVAL;
+  *out_callbacks = 0u;
+  send_slot.request = (native_io_request){7u, 11u};
+  send_slot.size = 1u;
+  send_slot.active = true;
+  impl.send_slots = &send_slot;
+  impl.free_sends = &free_send;
+  impl.send_capacity = 1u;
+  impl.active_send_count = 1u;
+  impl.observer.on_send = cnet_test_batch_send;
+  impl.observer.user = &probe;
+  completions[0].user_data = 2u;
+  completions[1].request = send_slot.request;
+  completions[1].kind = NATIVE_IO_COMPLETION_OK;
+  completions[1].bytes = send_slot.size;
+  completions[1].user_data = 1u;
+  status = cnet_datagram_process_completions(&impl, completions, 2u, &callbacks);
+  if (callbacks != probe.callbacks || impl.active_send_count != 0u) return SALTS_EPROTO;
+  *out_callbacks = callbacks;
+  return status;
+}
+#endif
+
 static int cnet_datagram_drive(cnet_datagram_impl *impl, uint32_t timeout_ms,
                                size_t *out_callbacks) {
   size_t completion_count = 0u;
-  size_t callback_count = 0u;
+#if defined(CNET_INTERNAL_TESTING)
+  if (impl->test_persistent_drive_status != SALTS_OK)
+    return impl->test_persistent_drive_status;
+  if (impl->test_drive_status != SALTS_OK) {
+    const int status = impl->test_drive_status;
+    impl->test_drive_status = SALTS_OK;
+    return status;
+  }
+#endif
   int status = native_io_backend_observe(&impl->backend, impl->completions,
                                          impl->completion_batch_capacity, timeout_ms,
                                          &completion_count);
   if (status == SALTS_ETIMEDOUT) status = SALTS_OK;
   if (status != SALTS_OK) return status;
-  for (size_t index = 0u; index < completion_count; ++index) {
-    status = cnet_datagram_complete(impl, &impl->completions[index], &callback_count);
-    if (status != SALTS_OK) return status;
-  }
-  *out_callbacks = callback_count;
-  return SALTS_OK;
+  return cnet_datagram_process_completions(impl, impl->completions, completion_count,
+                                           out_callbacks);
 }
 
 int cnet_datagram_init(cnet_datagram *datagram, const cnet_datagram_config *config) {
@@ -475,7 +568,6 @@ int cnet_datagram_wake(cnet_datagram *datagram) {
 int cnet_datagram_stop(cnet_datagram *datagram, uint32_t timeout_ms) {
   cnet_datagram_impl *impl = cnet_datagram_get(datagram);
   const uint64_t started_ms = salts_monotonic_ms();
-  int first_status = SALTS_OK;
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->callback_active || impl->polling) return SALTS_EBUSY;
   if (impl->stopped) return SALTS_OK;
@@ -483,13 +575,14 @@ int cnet_datagram_stop(cnet_datagram *datagram, uint32_t timeout_ms) {
   impl->receive_demand = 0u;
   if (impl->receive_active) {
     const int status = native_io_backend_cancel(&impl->backend, impl->receive_request);
-    if (status != SALTS_OK && status != SALTS_EALREADY) first_status = status;
+    if (impl->stop_status == SALTS_OK && status != SALTS_OK && status != SALTS_EALREADY)
+      impl->stop_status = status;
   }
   for (size_t index = 0u; index < impl->send_capacity; ++index) {
     if (impl->send_slots[index].active) {
       const int status = native_io_backend_cancel(&impl->backend, impl->send_slots[index].request);
-      if (first_status == SALTS_OK && status != SALTS_OK && status != SALTS_EALREADY)
-        first_status = status;
+      if (impl->stop_status == SALTS_OK && status != SALTS_OK && status != SALTS_EALREADY)
+        impl->stop_status = status;
     }
   }
   while (impl->receive_active || impl->active_send_count != 0u) {
@@ -500,20 +593,27 @@ int cnet_datagram_stop(cnet_datagram *datagram, uint32_t timeout_ms) {
     if (elapsed_ms >= timeout_ms) return SALTS_ETIMEDOUT;
     remaining_ms = (uint32_t)((uint64_t)timeout_ms - elapsed_ms);
     status = cnet_datagram_drive(impl, remaining_ms, &callbacks);
-    if (status != SALTS_OK && first_status == SALTS_OK) first_status = status;
-    if (status != SALTS_OK) return status;
+    if (status != SALTS_OK) {
+      const uint64_t retry_elapsed_ms = salts_monotonic_ms() - started_ms;
+      uint32_t retry_delay_ms = CNET_DATAGRAM_STOP_ERROR_RETRY_MS;
+      if (impl->stop_status == SALTS_OK) impl->stop_status = status;
+      if (retry_elapsed_ms >= timeout_ms) continue;
+      if ((uint64_t)retry_delay_ms > (uint64_t)timeout_ms - retry_elapsed_ms)
+        retry_delay_ms = (uint32_t)((uint64_t)timeout_ms - retry_elapsed_ms);
+      salts_sleep_ms(retry_delay_ms);
+    }
   }
   cnet_datagram_close_socket(impl);
   {
     const int status = native_io_backend_release_socket(&impl->backend, impl->endpoint);
-    if (first_status == SALTS_OK && status != SALTS_OK) first_status = status;
+    if (impl->stop_status == SALTS_OK && status != SALTS_OK) impl->stop_status = status;
   }
   {
     const int status = native_io_backend_close(&impl->backend);
-    if (first_status == SALTS_OK && status != SALTS_OK) first_status = status;
+    if (impl->stop_status == SALTS_OK && status != SALTS_OK) impl->stop_status = status;
   }
   impl->stopped = true;
-  return first_status;
+  return impl->stop_status;
 }
 
 int cnet_datagram_destroy(cnet_datagram *datagram) {
