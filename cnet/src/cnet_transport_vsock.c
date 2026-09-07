@@ -6,8 +6,9 @@
 
 #if defined(__linux__)
   #include <errno.h>
-  #include <linux/vm_sockets.h>
   #include <sys/socket.h>
+  /* Android's vm_sockets.h requires the complete sockaddr definition. */
+  #include <linux/vm_sockets.h>
 #endif
 
 static void cnet_transport_vsock_reset(cnet_transport *transport) {

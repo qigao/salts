@@ -19,7 +19,36 @@ Coroutine pool       Platform errors/ABI
  vendor/minicoro
 ```
 
-当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 SOCK_STREAM connect/recv/send 和 UDP recv_from/send_to。`NATIVE_IO_OPERATION_STREAM_CONNECT`、`STREAM_RECV`、`STREAM_SEND` 是规范名称，原有 `TCP_*` 保持相同枚举值与 ABI 的兼容别名。上层可据此驱动 TCP，也可在 Linux epoll/io_uring 上驱动已 attach 的 AF_VSOCK stream。Windows IOCP 支持 overlapped byte-mode named pipe，Linux epoll 与 macOS/BSD kqueue 支持非阻塞 connected byte pipe；io_uring pipe 仍显式返回 `SALTS_ENOTSUP`。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `SALTS_ENOTSUP`。CFlow Actor 与 Reactive 可直接依赖 NativeIO；NativeIO 本身不依赖或拥有 CFlow/CNet 状态。
+当前公开版本提供 Windows IOCP、Linux epoll/io_uring，以及 64 位 macOS/BSD kqueue driver；均支持 SOCK_STREAM connect/recv/send 和 UDP recv_from/send_to。`NATIVE_IO_OPERATION_STREAM_CONNECT`、`STREAM_RECV`、`STREAM_SEND` 是规范名称，原有 `TCP_*` 保持相同枚举值与 ABI 的兼容别名。上层可据此驱动 TCP，也可在 Linux epoll/io_uring 上驱动已 attach 的 AF_VSOCK stream。Windows IOCP 支持 overlapped byte-mode named pipe，Linux epoll 与 macOS/BSD kqueue 支持非阻塞 connected byte pipe；Linux io_uring 支持 blocking 或 nonblocking pipe/FIFO descriptor。工厂只初始化调用方明确选择的 backend，不做隐式 fallback。不满足平台/位宽要求时显式返回 `SALTS_ENOTSUP`。CFlow Actor 与 Reactive 可直接依赖 NativeIO；NativeIO 本身不依赖或拥有 CFlow/CNet 状态。
+
+## NativeIPC 控制面
+
+`<salts/native_ipc.h>` 只负责创建或接入 byte-pipe endpoint，不提交 payload I/O。Windows 提供固定容量、单 owner 驱动的 overlapped named-pipe accept server，以及不等待、不调用 `WaitNamedPipe` 的单次 client connect；POSIX 提供现有 FIFO 的 nonblocking open，不创建、不删除也不修改路径权限。`salts_ipc_pipe_capability_supported()` 是平台能力的唯一查询入口，未支持的控制面返回 `SALTS_ENOTSUP`，不会切换到线程或其他传输。
+
+每个 `salts_ipc_pipe_endpoint` 是 move-only 所有权包装。C 赋值不会复制底层 handle/fd 的所有权；需要转交时逐字段移动并立即 `salts_ipc_pipe_endpoint_init()` 原对象。成功 rendezvous 返回的 `native_io_flags` 可原样传给 `native_io_backend_attach_pipe()`。`request_capacity` 只限制仍由 server 拥有的 pending/ready accept；成功回调转移 endpoint 后立即归还 slot，存活连接不占 accept 容量。Windows server 的关闭顺序为：停止 accept admission、`close` 请求取消、持续 `observe` 到 quiescent、处理或关闭 callback 收到的 endpoint，最后 `destroy`。
+
+```c
+#include <salts/native_io.h>
+#include <salts/native_ipc.h>
+
+salts_ipc_pipe_endpoint endpoint;
+salts_ipc_pipe_endpoint_init(&endpoint);
+
+#if defined(_WIN32)
+int status = salts_ipc_named_pipe_connect(
+    "\\\\.\\pipe\\salts-example", SALTS_IPC_PIPE_DUPLEX, &endpoint);
+#else
+int status = salts_ipc_fifo_open(
+    "/tmp/salts-example.fifo", SALTS_IPC_PIPE_READ, &endpoint);
+#endif
+
+if (status == SALTS_OK) {
+  /* attach_pipe 借用 native identity；release 后仍由 endpoint 负责 close。 */
+  salts_ipc_pipe_endpoint_close(&endpoint);
+}
+```
+
+完整的 Windows accept/cancel/drain 与 POSIX FIFO reader/writer 示例见 `tests/native_ipc_test.c`。
 
 ## 数据与状态协议
 
@@ -75,7 +104,7 @@ direct backend 初始化时预分配 endpoint/request/native event storage，之
 
 - IOCP：stream connect 使用 `ConnectEx`，socket 数据 submit 直接调用 `WSARecv`/`WSASend`，named-pipe submit 直接调用 overlapped `ReadFile`/`WriteFile`，observe 统一读取 completion port。
 - epoll/kqueue：connect 使用 nonblocking `connect` 与 `SO_ERROR`；其余 submit 先以单次非阻塞 syscall 尝试，仅在 would-block 时进入每 endpoint 的 FIFO lane，并由 owner 在 observe 中直接等待 readiness 和继续 syscall。
-- io_uring：connect 使用 `IORING_OP_CONNECT`。每个 endpoint 的 read/write lane 各保持至多一个内核 in-flight SQE，其余已接受描述符保留在固定 request 槽位中；observe drain CQ 后推进 lane。ring 由模块映射，但没有 worker、mutex、callback、payload copy 或跨线程 mailbox。
+- io_uring：connect 使用 `IORING_OP_CONNECT`，pipe/FIFO read/write 使用 `IORING_OP_READ`/`IORING_OP_WRITE`。每个 endpoint 的 read/write lane 各保持至多一个内核 in-flight SQE，其余已接受描述符保留在固定 request 槽位中；observe drain CQ 后推进 lane。ring 由模块映射，但没有 worker、mutex、callback、payload copy 或跨线程 mailbox。
 
 readiness 的 kernel interest 是请求 lane 推导出的镜像，不是第二份业务状态。endpoint/request/terminal storage 和 native event batch 均有固定上限。
 
@@ -111,3 +140,10 @@ if (status != 0)
 网络性能比较位于 CNet 的 `cnet_io_benchmark`，由依赖 NativeIO 的上层 target 统一比较 libuv、NativeIO 与 CNet，避免 NativeIO 反向依赖 CNet。libuv 只链接 benchmark executable，不进入 NativeIO 的公开依赖或生产链接面。
 
 `native_io_pipe_benchmark` 在 Windows IOCP 上比较 raw overlapped named-pipe completion 与 NativeIO，在 Linux epoll 和 macOS/BSD kqueue 上比较 raw POSIX pipe 调用与 NativeIO。每个样本执行 256 次单向 transfer，覆盖 1/4/8/16/32/64 KiB；应用 payload 每次只计一次，不把读端和写端重复计算为两倍流量。fixture、buffer、handle/descriptor 与 backend 初始化位于计时区外，输出独立的 p50/p95 延迟、吞吐以及 raw submit、NativeIO submit/observe 阶段表。Linux io_uring 在对应 pipe backend 实现前不生成伪基线。
+
+CFlow 的 `cflow_native_io_adapter_benchmark` 使用相同 payload 档位，对比
+NativeIO direct、Actor/NativeIO 与固定 `window=2` 的 Source/NativeIO，并输出
+p50/p95/p99、ops/s、MiB/s、进程 CPU、分阶段耗时，以及错误、拒绝与 stale
+completion 语义门禁。该目标用于测量上层语义成本，不改变 NativeIO 的依赖方向；
+release benchmark CI 会把完整结果上传为
+`cflow-native-io-adapter-benchmark.md`。

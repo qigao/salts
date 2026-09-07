@@ -112,6 +112,10 @@ typedef struct cflow_io_native_vector_operation {
 } cflow_io_native_vector_operation;
 
 /**
+ * @deprecated Use native_io_operation with cflow_io_native_adapter. This
+ * autonomous legacy descriptor remains available until issue #147 authorizes
+ * public removal.
+ *
  * Caller-owned byte-pipe operation borrowed from successful Actor submit
  * until its terminal completion callback returns. The buffer is immutable for
  * write and backend-exclusive mutable storage for read. The backend never
@@ -215,7 +219,11 @@ cflow_io_backend_ops cflow_io_native_backend_actor_ops(void);
 /** Ops are used with vectored TCP operations and backend_user at the backend. */
 cflow_io_backend_ops cflow_io_native_backend_vector_actor_ops(void);
 
-/** Ops are used with pipe operations and backend_user pointing at the backend. */
+/**
+ * @deprecated Use cflow_io_native_adapter_actor_ops(). This autonomous legacy
+ * backend preserves its worker/completion behavior until issue #147 authorizes
+ * public removal.
+ */
 cflow_io_backend_ops cflow_io_native_backend_pipe_actor_ops(void);
 
 /** Ops are used with file operations and backend_user pointing at the backend. */

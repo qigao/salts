@@ -1,7 +1,8 @@
 # CFlow SCXML Invoke Idlocation Implementation Plan
 
 > Historical plan: V3 hook details below describe the implementation at that
-> time. The current Statechart boundary is V4-only `on_host_transaction`; V1-V3
+> time. The Statechart boundary now preserves the V4 `on_host_transaction`
+> prefix and appends V5 tagged-Event settlement; V1-V3
 > types and prefix compatibility have been removed.
 
 > **For Codex:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task.

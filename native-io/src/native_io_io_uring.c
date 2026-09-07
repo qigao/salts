@@ -11,14 +11,17 @@
 #include <limits.h>
 #include <linux/io_uring.h>
 #include <poll.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/eventfd.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
-#include <sys/eventfd.h>
 #include <sys/uio.h>
 #include <unistd.h>
 
@@ -110,6 +113,13 @@ typedef struct salts_io_uring_impl {
 
 enum { SALTS_IO_URING_CANCEL_TOKEN = 0u, SALTS_IO_URING_INDEX_NONE = UINT32_MAX };
 
+typedef struct salts_io_uring_sigpipe_guard {
+  sigset_t blocked;
+  sigset_t previous;
+  bool active;
+  bool had_pending;
+} salts_io_uring_sigpipe_guard;
+
 static void uring_counter_increment(uint64_t *counter) {
   if (*counter != UINT64_MAX) ++*counter;
 }
@@ -121,6 +131,33 @@ static uint32_t uring_next_generation(uint32_t generation) {
 
 static uint64_t uring_request_token(uint32_t index, uint32_t generation) {
   return ((uint64_t)generation << 32u) | (uint64_t)(index + 1u);
+}
+
+static int uring_sigpipe_guard_begin(salts_io_uring_sigpipe_guard *guard) {
+  sigset_t pending;
+  int status;
+  memset(guard, 0, sizeof(*guard));
+  sigemptyset(&guard->blocked);
+  sigaddset(&guard->blocked, SIGPIPE);
+  status = pthread_sigmask(SIG_BLOCK, &guard->blocked, &guard->previous);
+  if (status != 0) return -status;
+  guard->active = true;
+  if (sigpending(&pending) == 0) guard->had_pending = sigismember(&pending, SIGPIPE) == 1;
+  return SALTS_OK;
+}
+
+static void uring_sigpipe_guard_end(salts_io_uring_sigpipe_guard *guard) {
+  sigset_t pending;
+  if (guard == NULL || !guard->active) return;
+  if (!guard->had_pending && sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE) == 1) {
+    int signal_number;
+    int status;
+    do {
+      status = sigwait(&guard->blocked, &signal_number);
+    } while (status == EINTR);
+  }
+  (void)pthread_sigmask(SIG_SETMASK, &guard->previous, NULL);
+  guard->active = false;
 }
 
 static salts_io_uring_endpoint *uring_endpoint(salts_io_uring_impl *impl,
@@ -156,7 +193,7 @@ static salts_io_uring_request_record *uring_record_for_token(salts_io_uring_impl
 
 static bool uring_is_write(native_io_operation_kind kind) {
   return kind == NATIVE_IO_OPERATION_STREAM_SEND || kind == NATIVE_IO_OPERATION_UDP_SEND_TO ||
-         kind == NATIVE_IO_OPERATION_STREAM_CONNECT;
+         kind == NATIVE_IO_OPERATION_STREAM_CONNECT || kind == NATIVE_IO_OPERATION_PIPE_WRITE;
 }
 
 static salts_io_uring_lane *uring_lane(salts_io_uring_endpoint *endpoint, bool write_lane) {
@@ -218,7 +255,14 @@ static void uring_prepare_operation(salts_io_uring_request_record *record, struc
   memset(sqe, 0, sizeof(*sqe));
   sqe->fd = fd;
   sqe->user_data = record->native_token;
-  if (record->operation.kind == NATIVE_IO_OPERATION_STREAM_RECV) {
+  if (record->operation.kind == NATIVE_IO_OPERATION_PIPE_READ ||
+      record->operation.kind == NATIVE_IO_OPERATION_PIPE_WRITE) {
+    sqe->opcode =
+        record->operation.kind == NATIVE_IO_OPERATION_PIPE_READ ? IORING_OP_READ : IORING_OP_WRITE;
+    sqe->addr = (uint64_t)(uintptr_t)record->operation.buffer;
+    sqe->len = (uint32_t)record->operation.length;
+    sqe->off = UINT64_MAX;
+  } else if (record->operation.kind == NATIVE_IO_OPERATION_STREAM_RECV) {
     sqe->opcode = IORING_OP_RECV;
     sqe->addr = (uint64_t)(uintptr_t)record->operation.buffer;
     sqe->len = (uint32_t)record->operation.length;
@@ -251,10 +295,14 @@ static void uring_prepare_operation(salts_io_uring_request_record *record, struc
 
 static int uring_start_request(salts_io_uring_impl *impl, salts_io_uring_request_record *request,
                                int fd) {
+  salts_io_uring_sigpipe_guard sigpipe_guard = {0};
   struct io_uring_sqe sqe;
+  const bool guard_sigpipe = request->operation.kind == NATIVE_IO_OPERATION_PIPE_WRITE;
   int status;
   uring_prepare_operation(request, &sqe, fd);
-  status = uring_publish_sqe(impl, &sqe);
+  status = guard_sigpipe ? uring_sigpipe_guard_begin(&sigpipe_guard) : SALTS_OK;
+  if (status == SALTS_OK) status = uring_publish_sqe(impl, &sqe);
+  uring_sigpipe_guard_end(&sigpipe_guard);
   if (status == SALTS_OK) request->in_flight = true;
   return status;
 }
@@ -304,7 +352,9 @@ static void uring_make_completion(salts_io_uring_impl *impl, salts_io_uring_requ
     completion->status = result;
     completion->native_status = (uint32_t)(-result);
     uring_counter_increment(&impl->failed);
-  } else if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_RECV && result == 0) {
+  } else if ((request->operation.kind == NATIVE_IO_OPERATION_STREAM_RECV ||
+              request->operation.kind == NATIVE_IO_OPERATION_PIPE_READ) &&
+             result == 0) {
     completion->kind = NATIVE_IO_COMPLETION_EOF;
     completion->status = SALTS_EOF;
   } else {
@@ -339,18 +389,42 @@ static void uring_start_lane(salts_io_uring_impl *impl, salts_io_uring_endpoint 
   }
 }
 
+static int uring_attach_endpoint(salts_io_uring_impl *impl, int fd,
+                                 salts_io_resource_kind resource_kind, bool connected,
+                                 native_io_endpoint *out_endpoint) {
+  salts_io_uring_endpoint *endpoint;
+  uint32_t index;
+  size_t cursor;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  for (cursor = 0u; cursor < impl->endpoint_capacity; ++cursor)
+    if (impl->endpoints[cursor].active && impl->endpoints[cursor].fd == fd) return SALTS_EALREADY;
+  if (impl->free_endpoint_count == 0u) return SALTS_ENOBUFS;
+  index = impl->free_endpoints[--impl->free_endpoint_count];
+  endpoint = &impl->endpoints[index];
+  endpoint->fd = fd;
+  endpoint->generation = uring_next_generation(endpoint->generation);
+  endpoint->active_requests = 0u;
+  endpoint->read_lane = (salts_io_uring_lane){SALTS_IO_URING_INDEX_NONE, SALTS_IO_URING_INDEX_NONE};
+  endpoint->write_lane =
+      (salts_io_uring_lane){SALTS_IO_URING_INDEX_NONE, SALTS_IO_URING_INDEX_NONE};
+  endpoint->resource_kind = resource_kind;
+  endpoint->connected = connected;
+  endpoint->connect_active = false;
+  endpoint->active = true;
+  ++impl->endpoint_count;
+  *out_endpoint = (native_io_endpoint){index + 1u, endpoint->generation};
+  return SALTS_OK;
+}
+
 static int uring_attach_socket(salts_io_impl *base, uintptr_t native_socket,
                                native_io_endpoint *out_endpoint) {
   salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
-  salts_io_uring_endpoint *endpoint;
   salts_io_resource_kind resource_kind;
   struct sockaddr_storage peer_address;
   socklen_t peer_address_length = (socklen_t)sizeof(peer_address);
   bool connected = false;
   int socket_type = 0;
   socklen_t option_length = (socklen_t)sizeof(socket_type);
-  uint32_t index;
-  size_t cursor;
   if (!impl->admission_open) return SALTS_ESHUTDOWN;
   if (native_socket > (uintptr_t)INT_MAX) return SALTS_EINVAL;
   if (getsockopt((int)native_socket, SOL_SOCKET, SO_TYPE, &socket_type, &option_length) != 0)
@@ -367,33 +441,35 @@ static int uring_attach_socket(salts_io_impl *base, uintptr_t native_socket,
     else if (errno != ENOTCONN)
       return -errno;
   }
-  for (cursor = 0u; cursor < impl->endpoint_capacity; ++cursor)
-    if (impl->endpoints[cursor].active && impl->endpoints[cursor].fd == (int)native_socket)
-      return SALTS_EALREADY;
-  if (impl->free_endpoint_count == 0u) return SALTS_ENOBUFS;
-  index = impl->free_endpoints[--impl->free_endpoint_count];
-  endpoint = &impl->endpoints[index];
-  endpoint->fd = (int)native_socket;
-  endpoint->generation = uring_next_generation(endpoint->generation);
-  endpoint->active_requests = 0u;
-  endpoint->read_lane = (salts_io_uring_lane){SALTS_IO_URING_INDEX_NONE, SALTS_IO_URING_INDEX_NONE};
-  endpoint->write_lane =
-      (salts_io_uring_lane){SALTS_IO_URING_INDEX_NONE, SALTS_IO_URING_INDEX_NONE};
-  endpoint->resource_kind = resource_kind;
-  endpoint->connected = connected;
-  endpoint->connect_active = false;
-  endpoint->active = true;
-  ++impl->endpoint_count;
-  *out_endpoint = (native_io_endpoint){index + 1u, endpoint->generation};
-  return SALTS_OK;
+  return uring_attach_endpoint(impl, (int)native_socket, resource_kind, connected, out_endpoint);
 }
 
-static int uring_release_socket(salts_io_impl *base, native_io_endpoint endpoint_handle) {
+static int uring_attach_pipe(salts_io_impl *base, uintptr_t native_handle, uint32_t flags,
+                             native_io_endpoint *out_endpoint) {
   salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
+  struct stat descriptor_stat;
+  int status;
+  int fd;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  if (flags != NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE) return SALTS_EINVAL;
+  if (native_handle > (uintptr_t)INT_MAX) return SALTS_EINVAL;
+  fd = (int)native_handle;
+  do {
+    status = fstat(fd, &descriptor_stat);
+  } while (status < 0 && errno == EINTR);
+  if (status < 0) return -errno;
+  if (!S_ISFIFO(descriptor_stat.st_mode)) return SALTS_EINVAL;
+  return uring_attach_endpoint(impl, fd, SALTS_IO_RESOURCE_BYTE_PIPE, false, out_endpoint);
+}
+
+static int uring_release_endpoint(salts_io_uring_impl *impl, native_io_endpoint endpoint_handle,
+                                  bool socket_endpoint) {
   salts_io_uring_endpoint *endpoint = uring_endpoint(impl, endpoint_handle);
   uint32_t index;
   if (endpoint == NULL) return SALTS_ENOENT;
-  if (!native_io_resource_kind_is_socket(endpoint->resource_kind)) return SALTS_EINVAL;
+  if (socket_endpoint ? !native_io_resource_kind_is_socket(endpoint->resource_kind)
+                      : endpoint->resource_kind != SALTS_IO_RESOURCE_BYTE_PIPE)
+    return SALTS_EINVAL;
   if (endpoint->active_requests != 0u) return SALTS_EBUSY;
   index = endpoint_handle.slot - 1u;
   endpoint->active = false;
@@ -404,6 +480,14 @@ static int uring_release_socket(salts_io_impl *base, native_io_endpoint endpoint
   impl->free_endpoints[impl->free_endpoint_count++] = index;
   --impl->endpoint_count;
   return SALTS_OK;
+}
+
+static int uring_release_socket(salts_io_impl *base, native_io_endpoint endpoint_handle) {
+  return uring_release_endpoint((salts_io_uring_impl *)base, endpoint_handle, true);
+}
+
+static int uring_release_pipe(salts_io_impl *base, native_io_endpoint endpoint_handle) {
+  return uring_release_endpoint((salts_io_uring_impl *)base, endpoint_handle, false);
 }
 
 static int uring_submit(salts_io_impl *base, const native_io_operation *operation,
@@ -658,10 +742,10 @@ static bool uring_get_stats(const salts_io_impl *base, native_io_backend_stats *
   return true;
 }
 
-static const salts_io_impl_ops uring_ops = {uring_attach_socket, uring_release_socket, uring_submit,
-                                            uring_cancel,        uring_observe,        uring_wake,
-                                            uring_close,         uring_destroy,        uring_get_stats,
-                                            NULL,                NULL};
+static const salts_io_impl_ops uring_ops = {
+    uring_attach_socket, uring_release_socket, uring_submit,      uring_cancel,
+    uring_observe,       uring_wake,           uring_close,       uring_destroy,
+    uring_get_stats,     uring_attach_pipe,    uring_release_pipe};
 
 static bool uring_mapped_extent(size_t offset, size_t count, size_t element_size, size_t *out) {
   if (element_size == 0u || count > (SIZE_MAX - offset) / element_size) return false;

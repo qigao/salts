@@ -19,3 +19,21 @@ set_target_properties(native_io_header_cpp_test PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON
   CXX_EXTENSIONS OFF)
+
+cmake_add_test(native_ipc_test
+  SOURCES native_ipc_test.c
+  LIBS Salts::NativeIO Salts::TinyTest Salts::Platform
+  FOLDER "native-io/tests")
+set_target_properties(native_ipc_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(native_ipc_header_cpp_test
+  SOURCES native_ipc_header_cpp_test.cpp
+  LIBS Salts::NativeIO
+  FOLDER "native-io/tests")
+set_target_properties(native_ipc_header_cpp_test PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF)
