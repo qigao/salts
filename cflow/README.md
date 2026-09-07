@@ -901,20 +901,12 @@ demand, typed operators, or Graph composition are required. These layers add
 semantics and corresponding control-plane cost, so a data-transfer-only Pipe
 should not be wrapped in Actor or Reactive by default.
 
-`cflow_native_io_adapter_benchmark` measures that layering cost for TCP and
-byte pipes at 1/4/8/16/32/64 KiB. It reports NativeIO direct,
-Actor/NativeIO, and `Source(window=2)` latency (p50/p95/p99), full-payload
-exchanges per second (`ops/s`), MiB/s, process CPU time, stage timings, and semantic-gate counters for
-errors, admission rejections, and stale completions. Fixture construction,
-buffers, endpoints, and owner pools are outside the timed transfer loop. The
-Source case uses one fixed one-worker pool for Publisher/NativeIO ownership and
-a separate one-worker Worker Scheduler for Subscription/Subscriber work, so
-the benchmark does not rely on accidental same-thread execution. Source
-observation is encapsulated by its owner drive; therefore its `observe ns`
-column is zero and `Source owner drive ns` is the corresponding aggregate
-stage. Build with `BUILD_BENCHMARKS=ON`, then run the target directly; release
-benchmark CI also uploads its complete output as
-`cflow-native-io-adapter-benchmark.md`.
+Actor、Reactive 与 NativeIO/CNet/libuv 不共享 benchmark 契约。Actor 的 mailbox、
+acknowledgement 与 owner 调度，以及 Reactive 的 demand、Publisher/Subscriber
+调度与 terminal/release 语义，都是各自 workload 的被测对象；它们不能作为
+NativeIO transport driver 的可替换实现放入同一分母横向比较。Actor 与 Reactive
+性能测试必须分别定义发送端、接收端、线程拓扑、容量、背压和计时边界。
+`cflow_io_native_adapter_test` 只验证集成正确性，不生成跨语义层性能结论。
 
 Shutdown order is: stop Actor/Publisher admission, cancel or drain accepted
 requests, keep observing and driving until Actor/Publisher quiescence, close the
@@ -970,10 +962,11 @@ capacity * (adapter entry + aligned typed value + Actor request
 ```
 
 The adapter performs bounded linear scans, so a larger window is not
-automatically faster. Measure the intended workload with
-`cflow_native_io_adapter_benchmark` for the fixed NativeIO transport comparison,
-or `cflow_reactive_benchmark` for general Publisher demand behavior, and select
-the smallest capacity that saturates the backend. On shutdown, close the Subscription (which destroys its moved
+automatically faster. Use `cflow_reactive_benchmark` only for its documented
+Publisher demand workload, and measure Actor workloads separately with their
+own sender/receiver topology. Neither result is a NativeIO/CNet/libuv transport
+comparison. Select the smallest capacity that saturates the intended workload.
+On shutdown, close the Subscription (which destroys its moved
 Publisher), then continue owner driving until
 `cflow_io_publisher_owner_is_quiescent()` is true, then call
 `cflow_io_publisher_owner_close()` while every borrowed config and callback

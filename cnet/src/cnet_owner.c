@@ -103,6 +103,10 @@ struct cnet_owner_impl {
   size_t receive_rearm_count;
   cnet_owner_now_ms_fn now_ms;
   void *clock_context;
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_owner_profile profile;
+  bool profile_active;
+#endif
   bool closed;
   bool resolver_closed;
   int coroutine_status;
@@ -154,9 +158,31 @@ static cnet_owner_impl *cnet_owner_get(cnet_owner *owner) {
   return owner != NULL ? (cnet_owner_impl *)owner->impl : NULL;
 }
 
+#if defined(CNET_INTERNAL_PROFILING)
+static uint64_t cnet_owner_profile_start(const cnet_owner_impl *impl) {
+  return impl->profile_active ? salts_hrtime() : 0u;
+}
+
+static void cnet_owner_profile_finish(cnet_owner_impl *impl, uint64_t started_ns,
+                                      uint64_t *elapsed_ns, uint64_t *calls) {
+  uint64_t elapsed;
+  if (!impl->profile_active) return;
+  elapsed = salts_hrtime() - started_ns;
+  *elapsed_ns = elapsed > UINT64_MAX - *elapsed_ns ? UINT64_MAX : *elapsed_ns + elapsed;
+  if (*calls != UINT64_MAX) ++*calls;
+}
+#endif
+
 static int cnet_owner_publish_event(cnet_owner_impl *impl, const cnet_event *event) {
+#if defined(CNET_INTERNAL_PROFILING)
+  const uint64_t profile_started = cnet_owner_profile_start(impl);
+#endif
   const int status = impl->publish_event != NULL ? impl->publish_event(impl->event_context, event)
                                                  : cnet_event_queue_publish(impl->events, event);
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_owner_profile_finish(impl, profile_started, &impl->profile.event_publish_ns,
+                            &impl->profile.event_publish_calls);
+#endif
   if (status == SALTS_OK) ++impl->published_event_count;
   return status;
 }
@@ -1366,6 +1392,9 @@ static void cnet_owner_coroutine_entry(native_io_coroutine *coroutine, void *use
   cnet_owner_request *request = (cnet_owner_request *)user_data;
   cnet_owner_impl *impl = request != NULL ? request->owner : NULL;
   native_io_completion completion = {0};
+#if defined(CNET_INTERNAL_PROFILING)
+  uint64_t profile_started;
+#endif
   int status;
   if (impl == NULL || !request->active) return;
   do {
@@ -1388,6 +1417,12 @@ static void cnet_owner_coroutine_entry(native_io_coroutine *coroutine, void *use
     request->operation.buffer = (unsigned char *)request->operation.buffer + completion.bytes;
     request->operation.length -= completion.bytes;
   } while (true);
+#if defined(CNET_INTERNAL_PROFILING)
+  /* The await above suspends this stackful coroutine. Start after it returns so
+   * the diagnostic measures terminal request control, not time spent waiting
+   * for I/O. Intermediate partial-send completions are intentionally excluded. */
+  profile_started = cnet_owner_profile_start(impl);
+#endif
   if (status == SALTS_OK &&
       (request->role == CNET_OWNER_REQUEST_SEND || request->role == CNET_OWNER_REQUEST_TLS_WRITE) &&
       completion.kind == NATIVE_IO_COMPLETION_OK)
@@ -1395,6 +1430,10 @@ static void cnet_owner_coroutine_entry(native_io_coroutine *coroutine, void *use
   if (status == SALTS_OK) status = cnet_owner_complete(impl, request, &completion);
   else status = cnet_owner_fail_started_request(request, status);
   if (status != SALTS_OK && impl->coroutine_status == SALTS_OK) impl->coroutine_status = status;
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_completion_ns,
+                            &impl->profile.request_completion_calls);
+#endif
 }
 
 static int cnet_owner_process_deadlines(cnet_owner_impl *impl) {
@@ -1581,7 +1620,11 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
   return SALTS_OK;
 }
 
+#if defined(CNET_INTERNAL_PROFILING)
+static int cnet_owner_drive_once(cnet_owner *owner, uint32_t timeout_ms) {
+#else
 int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
+#endif
   cnet_owner_impl *impl = cnet_owner_get(owner);
   uint64_t started_ms;
   uint64_t published_before;
@@ -1596,7 +1639,16 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   if (event_blocked || impl->published_event_count != published_before) return SALTS_OK;
   status = cnet_owner_arm_pending_receives(impl);
   if (status != SALTS_OK) return status;
+#if defined(CNET_INTERNAL_PROFILING)
+  {
+    const uint64_t profile_started = cnet_owner_profile_start(impl);
+    status = cnet_owner_process_commands(impl, &processed);
+    cnet_owner_profile_finish(impl, profile_started, &impl->profile.command_stage_ns,
+                              &impl->profile.command_stage_calls);
+  }
+#else
   status = cnet_owner_process_commands(impl, &processed);
+#endif
   if (status != SALTS_OK) return status;
   if (impl->pending_event_count != 0u || impl->published_event_count != published_before)
     return SALTS_OK;
@@ -1620,9 +1672,20 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
     const uint32_t remaining_ms = elapsed_ms >= timeout_ms ? 0u : timeout_ms - (uint32_t)elapsed_ms;
     size_t completion_count = 0u;
 
+#if defined(CNET_INTERNAL_PROFILING)
+    {
+      const uint64_t profile_started = cnet_owner_profile_start(impl);
+      status = native_io_backend_observe(
+          &impl->backend, impl->completions, impl->completion_batch_capacity,
+          cnet_owner_observe_timeout(impl, remaining_ms, false), &completion_count);
+      cnet_owner_profile_finish(impl, profile_started, &impl->profile.observe_ns,
+                                &impl->profile.observe_calls);
+    }
+#else
     status = native_io_backend_observe(
         &impl->backend, impl->completions, impl->completion_batch_capacity,
         cnet_owner_observe_timeout(impl, remaining_ms, false), &completion_count);
+#endif
     if (status == SALTS_ETIMEDOUT) {
       if (cnet_resolver_has_pending(&impl->resolver)) {
         status = cnet_resolver_poll(&impl->resolver);
@@ -1645,6 +1708,18 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   }
 }
 
+#if defined(CNET_INTERNAL_PROFILING)
+int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  const uint64_t profile_started = impl != NULL ? cnet_owner_profile_start(impl) : 0u;
+  const int status = cnet_owner_drive_once(owner, timeout_ms);
+  if (impl != NULL)
+    cnet_owner_profile_finish(impl, profile_started, &impl->profile.owner_drive_ns,
+                              &impl->profile.owner_drive_calls);
+  return status;
+}
+#endif
+
 int cnet_owner_wake(cnet_owner *owner) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
   if (impl == NULL) return SALTS_EINVAL;
@@ -1655,6 +1730,28 @@ bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine
   const cnet_owner_impl *impl = owner != NULL ? (const cnet_owner_impl *)owner->impl : NULL;
   return impl != NULL && native_io_backend_get_coroutine_stats(&impl->backend, out_stats);
 }
+
+#if defined(CNET_INTERNAL_PROFILING)
+int cnet_owner_profile_begin(cnet_owner *owner) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  if (impl == NULL || impl->closed) return SALTS_EINVAL;
+  if (impl->profile_active) return SALTS_EALREADY;
+  memset(&impl->profile, 0, sizeof(impl->profile));
+  impl->profile_active = true;
+  return SALTS_OK;
+}
+
+int cnet_owner_profile_take(cnet_owner *owner, cnet_owner_profile *out_profile) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  if (out_profile == NULL) return SALTS_EINVAL;
+  memset(out_profile, 0, sizeof(*out_profile));
+  if (impl == NULL || impl->closed) return SALTS_EINVAL;
+  if (!impl->profile_active) return SALTS_EBUSY;
+  *out_profile = impl->profile;
+  impl->profile_active = false;
+  return SALTS_OK;
+}
+#endif
 
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session_handle,

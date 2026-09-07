@@ -45,6 +45,12 @@ bool cnet_shards_get_layout(const cnet_shards *shards, cnet_shards_layout *out_l
 /** Advances the single owner on the calling thread. */
 int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms);
 
+#if defined(CNET_INTERNAL_PROFILING)
+/** Internal diagnostic sampling; caller must exclude concurrent poll/stop operations. */
+int cnet_shards_profile_begin(cnet_shards *shards);
+int cnet_shards_profile_take(cnet_shards *shards, cnet_owner_profile *out_profile);
+#endif
+
 /** Thread-safe advisory wake for the single owner blocked in poll. */
 int cnet_shards_wake(cnet_shards *shards);
 

@@ -228,6 +228,10 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   cnet_event_view event = {0};
   cnet_session_terminal terminal = {0};
   native_io_coroutine_stats coroutine_stats = NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_owner_profile receive_profile = {0};
+  const bool profile_suspended_receive = timeout == CNET_OWNER_TEST_NO_TIMEOUT && !resolve_host;
+#endif
   unsigned char received[sizeof(payload)] = {0};
   size_t event_index;
 
@@ -312,6 +316,9 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
 
   command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
   check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+#if defined(CNET_INTERNAL_PROFILING)
+  if (profile_suspended_receive) check_equal(cnet_owner_profile_begin(&owner), SALTS_OK);
+#endif
   check_equal(cnet_owner_drive(&owner, 0u), SALTS_OK);
   coroutine_stats = (native_io_coroutine_stats)NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
   check_true(cnet_owner_get_coroutine_stats(&owner, &coroutine_stats));
@@ -320,12 +327,23 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
     clock.now_ms = 111u;
     clock.next_ms = 111u;
   } else {
+#if defined(CNET_INTERNAL_PROFILING)
+    if (profile_suspended_receive) salts_sleep_ms(10u);
+#endif
     check_equal(send(accepted, (const char *)payload, (int)sizeof(payload), 0),
                 (int)sizeof(payload));
     check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), SALTS_OK);
     check_equal(event.kind, CNET_EVENT_RECEIVE);
     check_equal(event.data, payload, sizeof(payload));
     check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+#if defined(CNET_INTERNAL_PROFILING)
+    if (profile_suspended_receive) {
+      check_equal(cnet_owner_profile_take(&owner, &receive_profile), SALTS_OK);
+      check_equal(receive_profile.request_completion_calls, UINT64_C(1));
+      check_equal(receive_profile.event_publish_calls, UINT64_C(1));
+      check_true(receive_profile.owner_drive_ns >= receive_profile.request_completion_ns);
+    }
+#endif
 
     if (timeout == CNET_OWNER_TEST_WRITE_TIMEOUT) {
       check_equal(clock.calls, 0u);

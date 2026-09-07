@@ -940,6 +940,33 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
   return status;
 }
 
+#if defined(CNET_INTERNAL_PROFILING)
+int cnet_client_profile_begin(cnet_client *client) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  int status;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (cnet_active_callback_client == impl) return SALTS_EBUSY;
+  salts_mutex_lock(&impl->lock);
+  if (!impl->admission_open || impl->stopped) status = SALTS_ESHUTDOWN;
+  else if (impl->poll_active || impl->stop_active) status = SALTS_EBUSY;
+  else status = cnet_shards_profile_begin(&impl->shards);
+  salts_mutex_unlock(&impl->lock);
+  return status;
+}
+
+int cnet_client_profile_take(cnet_client *client, cnet_client_poll_profile *out_profile) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  int status;
+  if (impl == NULL || out_profile == NULL) return SALTS_EINVAL;
+  if (cnet_active_callback_client == impl) return SALTS_EBUSY;
+  salts_mutex_lock(&impl->lock);
+  if (impl->poll_active || impl->stop_active) status = SALTS_EBUSY;
+  else status = cnet_shards_profile_take(&impl->shards, out_profile);
+  salts_mutex_unlock(&impl->lock);
+  return status;
+}
+#endif
+
 int cnet_client_wake(cnet_client *client) {
   cnet_client_impl *impl = cnet_client_get(client);
   bool admission_open;

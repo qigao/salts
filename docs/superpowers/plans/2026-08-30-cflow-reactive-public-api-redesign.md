@@ -89,24 +89,30 @@
 
 ### Task 4: Migrate extensions, examples, and benchmarks
 
+> **2026-09-07 update:** The benchmark clauses that combine NativeIO Direct,
+> Actor, and Reactive rows are superseded by
+> `2026-09-07-separate-cflow-and-io-benchmarks.md`. Do not recreate the removed
+> mixed benchmark. The extension and example migration clauses remain historical
+> evidence of the API migration.
+
 **Files:**
 - Rename: `cflow-fs/include/cflow/fs_watch_source.h` to `cflow-fs/include/cflow/fs_watch_publisher.h`
 - Rename: `cflow-fs/src/fs_watch_source.c` to `cflow-fs/src/fs_watch_publisher.c`
 - Rename: `cflow-fs/tests/cflow_fs_watch_source_test.c` to `cflow-fs/tests/cflow_fs_watch_publisher_test.c`
 - Modify: `cflow/examples/*.c`, `cflow/minicoro/include/cflow/minicoro.h`
-- Modify: `cflow/benchmarks/cflow_native_io_adapter_benchmark.c`
+- Delete: obsolete mixed `cflow_native_io_adapter_benchmark` target and source
 - Rename: obsolete Source-named CFlow benchmark targets and files to Reactive names
 - Modify: related CMake files and workflow target names
 
 **Interfaces:**
 - Consumes: public Reactive and I/O Publisher contracts.
-- Produces: examples and extensions with no dependency on removed headers or symbols; benchmark rows `NativeIO Direct`, `Actor`, and `Reactive`.
+- Produces: examples and extensions with no dependency on removed headers or symbols; no cross-layer benchmark rows.
 
-- [ ] **Step 1: Change the NativeIO benchmark fixture to create a Publisher and call `cflow_subscribe()`; build and verify RED before implementation migration.**
+- [x] **Step 1: Superseded; do not add Publisher/Actor rows to a NativeIO transport benchmark.**
 
 - [ ] **Step 2: Migrate extension and example targets, deleting obsolete Source-named installed headers and target names.**
 
-- [ ] **Step 3: Build and run CFlow-FS tests, CFlow examples, `native_io_pipe_benchmark`, and `cflow_native_io_adapter_benchmark`.**
+- [ ] **Step 3: Build and run CFlow-FS tests and CFlow examples independently of NativeIO transport benchmarks.**
 
 ### Task 5: Rewrite user documentation and verify installed surface
 

@@ -527,21 +527,24 @@ and keep #168 open.
 
 ## Task 8: Add layered benchmarks, packaging, and final evidence
 
+> **2026-09-07 update:** The CFlow-versus-direct-NativeIO comparison and CFlow
+> coupling in the NativeIO release benchmark workflow are superseded by
+> `2026-09-07-separate-cflow-and-io-benchmarks.md`. Do not execute those clauses.
+> Actor and Reactive workloads require separate topology-specific plans.
+
 **Files:**
 
 - Modify: `native-io/README.md`
 - Modify: `native-io/benchmarks/native_io_benchmark.c`
 - Modify: `native-io/benchmarks/native_io_benchmark_linux.c`
 - Modify: `native-io/benchmarks/native_io_benchmark_kqueue.c`
-- Create: `cflow/benchmarks/cflow_native_io_adapter_benchmark.c`
-- Modify: `cflow/benchmarks/CMakeLists.txt`
 - Modify: `.github/workflows/native-io-release-benchmarks.yml`
 - Modify: `docs/superpowers/specs/2026-08-30-native-io-pipe-ipc-design.md`
 
 **Interfaces:**
 
 - Consumes: completed direct and adapted implementations.
-- Produces: separated Pipe tables, layer ratios, installation evidence, and
+- Produces: separated NativeIO Pipe backend tables, installation evidence, and
   issue checklist evidence.
 
 - [x] **Step 1: Add correctness gates before timing**
@@ -553,20 +556,19 @@ cleanup before publishing a row. A failed semantic gate exits nonzero.
 - [ ] **Step 2: Add separated benchmark tables**
 
 NativeIO benchmark sources report direct Pipe performance by backend and
-payload. The CFlow benchmark reports Actor/NativeIO and Source/NativeIO and
-uses direct NativeIO from the same executable as denominator. Do not place a
-CFlow dependency inside the NativeIO library target.
+payload. The former CFlow Actor/Reactive comparison is superseded and must not
+use direct NativeIO as its denominator. Do not place a CFlow dependency inside
+the NativeIO library target or benchmark workflow.
 
 Required rows cover 1/4/8/16/32/64 KiB where the platform pipe supports the
 payload through partial one-shot operations. Required columns are p50/p95/p99,
-ops/s, MiB/s, CPU, errors, rejections, stale completions, submit, observe,
-Actor transition, Executor delivery, and acknowledgement time.
+ops/s, MiB/s, CPU, errors, stale completions, submit, and observe time.
 
 - [x] **Step 3: Gate benchmark CI by affected paths**
 
-Run direct NativeIO rows when `native-io/**` or the benchmark workflow changes.
-Run adapted rows when `native-io/**`, `cflow/**`, or the workflow changes. Do
-not trigger NativeIO release benchmarks for unrelated modules.
+Run direct NativeIO/CNet/libuv rows when their implementation or benchmark
+workflow changes. Do not trigger NativeIO release benchmarks for CFlow-only or
+otherwise unrelated modules.
 
 - [ ] **Step 4: Verify Windows Release and install/export**
 

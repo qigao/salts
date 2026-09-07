@@ -67,6 +67,22 @@ typedef struct cnet_owner_config {
   void *clock_context;
 } cnet_owner_config;
 
+#if defined(CNET_INTERNAL_PROFILING)
+/** Inclusive owner-stage timings collected only during an explicit diagnostic sample. */
+typedef struct cnet_owner_profile {
+  uint64_t owner_drive_ns;
+  uint64_t command_stage_ns;
+  uint64_t observe_ns;
+  uint64_t request_completion_ns;
+  uint64_t event_publish_ns;
+  uint64_t owner_drive_calls;
+  uint64_t command_stage_calls;
+  uint64_t observe_calls;
+  uint64_t request_completion_calls;
+  uint64_t event_publish_calls;
+} cnet_owner_profile;
+#endif
+
 int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config);
 
 /** Processes bounded commands and one NativeIO completion batch. */
@@ -77,6 +93,12 @@ int cnet_owner_wake(cnet_owner *owner);
 
 /** Reports the bounded NativeIO coroutine state owned by this shard. */
 bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats);
+
+#if defined(CNET_INTERNAL_PROFILING)
+/** Begins/takes a quiescent, single-owner diagnostic sample. */
+int cnet_owner_profile_begin(cnet_owner *owner);
+int cnet_owner_profile_take(cnet_owner *owner, cnet_owner_profile *out_profile);
+#endif
 int cnet_owner_tls_peer_certificate_sha256(
     cnet_owner *owner, cnet_session_handle session,
     char buffer[CNET_TLS_PEER_CERTIFICATE_SHA256_CAPACITY]);

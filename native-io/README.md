@@ -141,9 +141,9 @@ if (status != 0)
 
 `native_io_pipe_benchmark` 在 Windows IOCP 上比较 raw overlapped named-pipe completion 与 NativeIO，在 Linux epoll 和 macOS/BSD kqueue 上比较 raw POSIX pipe 调用与 NativeIO。每个样本执行 256 次单向 transfer，覆盖 1/4/8/16/32/64 KiB；应用 payload 每次只计一次，不把读端和写端重复计算为两倍流量。fixture、buffer、handle/descriptor 与 backend 初始化位于计时区外，输出独立的 p50/p95 延迟、吞吐以及 raw submit、NativeIO submit/observe 阶段表。Linux io_uring 在对应 pipe backend 实现前不生成伪基线。
 
-CFlow 的 `cflow_native_io_adapter_benchmark` 使用相同 payload 档位，对比
-NativeIO direct、Actor/NativeIO 与固定 `window=2` 的 Source/NativeIO，并输出
-p50/p95/p99、ops/s、MiB/s、进程 CPU、分阶段耗时，以及错误、拒绝与 stale
-completion 语义门禁。该目标用于测量上层语义成本，不改变 NativeIO 的依赖方向；
-release benchmark CI 会把完整结果上传为
-`cflow-native-io-adapter-benchmark.md`。
+`cnet_io_benchmark` 的 Linux release CI 分别创建 epoll 与 io_uring 作业，并通过
+`CNET_IO_BENCHMARK_BACKEND` 显式选择 NativeIO direct、NativeIO coroutine 与
+CNet 共用的 backend；非法或当前平台不支持的值会立即失败，不会回退到 epoll。
+Actor 与 Reactive 有各自的线程、mailbox/demand、背压和 terminal 语义，必须在
+CFlow 中按发送端与接收端分别设计 workload，不与 NativeIO/CNet/libuv 的 transport
+数据面结果横向比较。CFlow NativeIO adapter 的常规测试只验证集成正确性。

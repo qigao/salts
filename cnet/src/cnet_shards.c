@@ -191,6 +191,20 @@ int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms) {
   return first_status != SALTS_OK ? first_status : status;
 }
 
+#if defined(CNET_INTERNAL_PROFILING)
+int cnet_shards_profile_begin(cnet_shards *shards) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  if (impl == NULL || impl->stopping || impl->stopped) return SALTS_EINVAL;
+  return cnet_owner_profile_begin(&impl->records[0].owner);
+}
+
+int cnet_shards_profile_take(cnet_shards *shards, cnet_owner_profile *out_profile) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  if (impl == NULL || out_profile == NULL) return SALTS_EINVAL;
+  return cnet_owner_profile_take(&impl->records[0].owner, out_profile);
+}
+#endif
+
 int cnet_shards_wake(cnet_shards *shards) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   if (impl == NULL) return SALTS_EINVAL;

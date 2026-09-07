@@ -9,6 +9,8 @@
 #include <salts/thread.h>
 
 #include "cnet_benchmark_stats.h"
+#include "cnet_client_internal.h"
+#include "cnet_io_benchmark_config.h"
 #include "tinytest.h"
 
 #include <uv.h>
@@ -80,6 +82,7 @@ typedef struct io_bench_result {
   size_t cnet_send_admission_calls;
   size_t cnet_poll_calls;
   size_t cnet_callback_calls;
+  cnet_client_poll_profile cnet_profile;
 } io_bench_result;
 
 typedef struct io_bench_series {
@@ -94,6 +97,13 @@ typedef struct io_bench_series {
   cnet_benchmark_summary cnet_callback_control_ns;
   cnet_benchmark_summary cnet_payload_validation_ns;
   cnet_benchmark_summary cnet_polls_per_round_trip;
+  cnet_benchmark_summary cnet_owner_drive_ns;
+  cnet_benchmark_summary cnet_command_stage_ns;
+  cnet_benchmark_summary cnet_observe_ns;
+  cnet_benchmark_summary cnet_request_completion_ns;
+  cnet_benchmark_summary cnet_event_publish_ns;
+  cnet_benchmark_summary cnet_requests_completed_per_round_trip;
+  cnet_benchmark_summary cnet_events_per_round_trip;
 } io_bench_series;
 
 typedef struct io_bench_server {
@@ -403,26 +413,6 @@ static int io_bench_server_finish(io_bench_server *server) {
   return status;
 }
 
-static native_io_backend_kind io_bench_backend_kind(void) {
-#ifdef _WIN32
-  return NATIVE_IO_BACKEND_IOCP;
-#elif defined(__linux__)
-  return NATIVE_IO_BACKEND_EPOLL;
-#else
-  return NATIVE_IO_BACKEND_KQUEUE;
-#endif
-}
-
-static const char *io_bench_backend_name(void) {
-#ifdef _WIN32
-  return "IOCP";
-#elif defined(__linux__)
-  return "epoll";
-#else
-  return "kqueue";
-#endif
-}
-
 static int io_bench_connect_socket(io_bench_socket *out_socket, io_bench_protocol protocol,
                                    const struct sockaddr_in *address) {
   const int type = protocol == IO_BENCH_TCP ? SOCK_STREAM : SOCK_DGRAM;
@@ -442,9 +432,9 @@ static int io_bench_connect_socket(io_bench_socket *out_socket, io_bench_protoco
 }
 
 static int io_bench_native_init(io_bench_native *fixture, io_bench_protocol protocol,
-                                const struct sockaddr_in *address) {
-  const native_io_backend_config config = {io_bench_backend_kind(), 1u, 4u,
-                                           IO_BENCH_COMPLETION_CAPACITY};
+                                const struct sockaddr_in *address,
+                                native_io_backend_kind backend_kind) {
+  const native_io_backend_config config = {backend_kind, 1u, 4u, IO_BENCH_COMPLETION_CAPACITY};
   int status;
   memset(fixture, 0, sizeof(*fixture));
   fixture->protocol = protocol;
@@ -877,7 +867,7 @@ static void io_bench_cnet_receive(void *user, cnet_connection connection,
   }
 }
 
-static void io_bench_cnet_begin_measurement(io_bench_cnet *fixture) {
+static int io_bench_cnet_begin_measurement(io_bench_cnet *fixture) {
   fixture->receive_admission_ns = 0u;
   fixture->send_admission_ns = 0u;
   fixture->poll_ns = 0u;
@@ -887,12 +877,18 @@ static void io_bench_cnet_begin_measurement(io_bench_cnet *fixture) {
   fixture->send_admission_calls = 0u;
   fixture->poll_calls = 0u;
   fixture->callback_calls = 0u;
+  {
+    const int status = cnet_client_profile_begin(&fixture->client);
+    if (status != SALTS_OK) return status;
+  }
   fixture->measuring = true;
+  return SALTS_OK;
 }
 
 static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol,
-                              const struct sockaddr_in *address) {
-  const cnet_client_config config = {.backend = io_bench_backend_kind(),
+                              const struct sockaddr_in *address,
+                              native_io_backend_kind backend_kind) {
+  const cnet_client_config config = {.backend = backend_kind,
                                      .connection_capacity = 1u,
                                      .command_capacity = 8u,
                                      .request_capacity = 4u,
@@ -971,7 +967,8 @@ static int io_bench_cnet_destroy(io_bench_cnet *fixture) {
 }
 
 static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol protocol,
-                                 io_bench_driver driver, size_t payload_size) {
+                                 io_bench_driver driver, size_t payload_size,
+                                 native_io_backend_kind backend_kind) {
   int status;
   memset(fixture, 0, sizeof(*fixture));
   fixture->driver = driver;
@@ -985,8 +982,10 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
     if (driver == IO_BENCH_LIBUV)
       status = io_bench_libuv_init(&fixture->libuv, protocol, &fixture->server.address);
     else if (driver == IO_BENCH_NATIVE_IO || driver == IO_BENCH_NATIVE_IO_COROUTINE)
-      status = io_bench_native_init(&fixture->native, protocol, &fixture->server.address);
-    else status = io_bench_cnet_init(&fixture->cnet, protocol, &fixture->server.address);
+      status =
+          io_bench_native_init(&fixture->native, protocol, &fixture->server.address, backend_kind);
+    else
+      status = io_bench_cnet_init(&fixture->cnet, protocol, &fixture->server.address, backend_kind);
   }
   if (status == SALTS_OK && driver == IO_BENCH_CNET)
     status = io_bench_cnet_ready(&fixture->cnet, payload_size);
@@ -1031,7 +1030,8 @@ static const char *io_bench_driver_name(io_bench_driver driver) {
 }
 
 static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size_t payload_size,
-                        bool profile_cnet_stages, io_bench_result *result) {
+                        bool profile_cnet_stages, native_io_backend_kind backend_kind,
+                        io_bench_result *result) {
   io_bench_fixture fixture;
   unsigned char *sent = NULL;
   unsigned char *received = NULL;
@@ -1041,7 +1041,7 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   const char *phase = "init";
   int status;
   memset(result, 0, sizeof(*result));
-  status = io_bench_fixture_init(&fixture, protocol, driver, payload_size);
+  status = io_bench_fixture_init(&fixture, protocol, driver, payload_size, backend_kind);
   if (status != SALTS_OK) goto cleanup;
   phase = "allocate";
   sent = (unsigned char *)malloc(payload_size);
@@ -1057,8 +1057,10 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     status = io_bench_exchange(&fixture, sent, received, payload_size);
     if (status != SALTS_OK) goto cleanup;
   }
-  if (driver == IO_BENCH_CNET && profile_cnet_stages)
-    io_bench_cnet_begin_measurement(&fixture.cnet);
+  if (driver == IO_BENCH_CNET && profile_cnet_stages) {
+    status = io_bench_cnet_begin_measurement(&fixture.cnet);
+    if (status != SALTS_OK) goto cleanup;
+  }
   phase = "measure";
   wall_started = salts_hrtime();
   for (size_t exchange = 0u; exchange < IO_BENCH_EXCHANGES_PER_REPLICATE; ++exchange) {
@@ -1083,7 +1085,9 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     result->cnet_send_admission_calls = fixture.cnet.send_admission_calls;
     result->cnet_poll_calls = fixture.cnet.poll_calls;
     result->cnet_callback_calls = fixture.cnet.callback_calls;
+    status = cnet_client_profile_take(&fixture.cnet.client, &result->cnet_profile);
     fixture.cnet.measuring = false;
+    if (status != SALTS_OK) goto cleanup;
   }
   status = SALTS_OK;
 
@@ -1180,6 +1184,53 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
   if (status == SALTS_OK)
     status =
         cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_polls_per_round_trip);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] = io_bench_mean(result->cnet_profile.owner_drive_ns, result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_owner_drive_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] = io_bench_mean(result->cnet_profile.command_stage_ns, result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_command_stage_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] = io_bench_mean(result->cnet_profile.observe_ns, result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_observe_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] =
+        io_bench_mean(result->cnet_profile.request_completion_ns, result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
+                                      &series->cnet_request_completion_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] = io_bench_mean(result->cnet_profile.event_publish_ns, result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_event_publish_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] = (double)result->cnet_profile.request_completion_calls /
+                     (double)result->round_trips;
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
+                                      &series->cnet_requests_completed_per_round_trip);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] = (double)result->cnet_profile.event_publish_calls / (double)result->round_trips;
+  }
+  if (status == SALTS_OK)
+    status =
+        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_events_per_round_trip);
   return status;
 }
 
@@ -1274,7 +1325,7 @@ static int io_bench_print_rate(const char *protocol, const io_bench_series *libu
 static void io_bench_print_cnet_stages(const char *protocol, const io_bench_series *cnet,
                                        size_t count) {
   printf("\n%s CNet public API per-run stage medians and MAD\n", protocol);
-  printf("| payload | send admit median ns | MAD ns | poll median us | MAD us | "
+  printf("| payload | send admit median ns | MAD ns | poll wall median us | MAD us | "
          "callback control median ns | MAD ns | payload validation median ns | MAD ns | "
          "polls/RT |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
@@ -1287,11 +1338,35 @@ static void io_bench_print_cnet_stages(const char *protocol, const io_bench_seri
            series->cnet_callback_control_ns.mad, series->cnet_payload_validation_ns.median,
            series->cnet_payload_validation_ns.mad, series->cnet_polls_per_round_trip.median);
   }
+
+  printf("\n%s CNet internal inclusive time per round trip\n", protocol);
+  printf("Nested columns overlap and must not be added. Request completion is terminal logical "
+         "request control and excludes intermediate partial-send completions; event publish "
+         "includes the user callback.\n");
+  printf("| payload | owner drive us | MAD us | command stage ns | MAD ns | observe us | MAD us | "
+         "request completion ns | MAD ns | event publish ns | MAD ns | requests completed/RT | "
+         "events/RT |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
+         "---: |\n");
+  for (size_t index = 0u; index < count; ++index) {
+    const io_bench_series *series = &cnet[index];
+    printf("| %zu KiB | %.3f | %.3f | %.1f | %.1f | %.3f | %.3f | %.1f | %.1f | %.1f | "
+           "%.1f | %.2f | %.2f |\n",
+           series->payload_size / 1024u, series->cnet_owner_drive_ns.median / 1000.0,
+           series->cnet_owner_drive_ns.mad / 1000.0, series->cnet_command_stage_ns.median,
+           series->cnet_command_stage_ns.mad, series->cnet_observe_ns.median / 1000.0,
+           series->cnet_observe_ns.mad / 1000.0, series->cnet_request_completion_ns.median,
+           series->cnet_request_completion_ns.mad, series->cnet_event_publish_ns.median,
+           series->cnet_event_publish_ns.mad,
+           series->cnet_requests_completed_per_round_trip.median,
+           series->cnet_events_per_round_trip.median);
+  }
 }
 
 static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t row,
                             io_bench_series *libuv, io_bench_series *native,
-                            io_bench_series *coroutine, io_bench_series *cnet) {
+                            io_bench_series *coroutine, io_bench_series *cnet,
+                            native_io_backend_kind backend_kind) {
   io_bench_series *series[] = {libuv, native, coroutine, cnet};
   const io_bench_driver order[][4] = {
       {IO_BENCH_LIBUV, IO_BENCH_NATIVE_IO, IO_BENCH_NATIVE_IO_COROUTINE, IO_BENCH_CNET},
@@ -1301,14 +1376,14 @@ static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t r
   for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
     for (size_t index = 0u; index < 4u; ++index) {
       const io_bench_driver driver = order[(row + repeat) % 4u][index];
-      const int status =
-          io_bench_run(protocol, driver, payload, false, &series[driver]->runs[repeat]);
+      const int status = io_bench_run(protocol, driver, payload, false, backend_kind,
+                                      &series[driver]->runs[repeat]);
       if (status != SALTS_OK) return status;
     }
   }
   for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const int status =
-        io_bench_run(protocol, IO_BENCH_CNET, payload, true, &cnet->cnet_profile_runs[repeat]);
+    const int status = io_bench_run(protocol, IO_BENCH_CNET, payload, true, backend_kind,
+                                    &cnet->cnet_profile_runs[repeat]);
     if (status != SALTS_OK) return status;
   }
   for (size_t driver = 0u; driver < 4u; ++driver) {
@@ -1320,6 +1395,9 @@ static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t r
 
 spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchmark") {
   it("compares persistent TCP and UDP clients against one common echo peer") {
+    cnet_io_benchmark_backend backend = {0};
+    const char *requested_backend = getenv("CNET_IO_BENCHMARK_BACKEND");
+    const int backend_status = cnet_io_benchmark_select_backend(requested_backend, &backend);
     const size_t tcp_count = sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0]);
     const size_t udp_count = sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0]);
     io_bench_series libuv_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {
@@ -1339,9 +1417,15 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
     io_bench_series cnet_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {
         0};
 
+    if (backend_status != SALTS_OK)
+      fprintf(stderr, "CNET_IO_BENCHMARK_BACKEND selection failed: value='%s', status=%d\n",
+              requested_backend == NULL ? "<unset>" : requested_backend, backend_status);
+    check_equal(backend_status, SALTS_OK);
+    if (backend_status != SALTS_OK) return;
+
     printf("\nBaseline: NativeIO direct; reference: libuv %s; NativeIO backend: %s; CNet: public "
            "byte API.\n",
-           uv_version_string(), io_bench_backend_name());
+           uv_version_string(), backend.name);
     printf("Each repeat uses a fresh client and dedicated blocking echo peer; driver order rotates "
            "within every matched quartet.\n");
     printf("CNet publishes one bounded receive demand per repeat and consumes borrowed callback "
@@ -1359,12 +1443,12 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
     for (size_t index = 0u; index < tcp_count; ++index)
       check_equal(io_bench_run_row(IO_BENCH_TCP, IO_BENCH_TCP_PAYLOADS[index], index,
                                    &libuv_tcp[index], &native_tcp[index], &coroutine_tcp[index],
-                                   &cnet_tcp[index]),
+                                   &cnet_tcp[index], backend.kind),
                   SALTS_OK);
     for (size_t index = 0u; index < udp_count; ++index)
       check_equal(io_bench_run_row(IO_BENCH_UDP, IO_BENCH_UDP_PAYLOADS[index], index,
                                    &libuv_udp[index], &native_udp[index], &coroutine_udp[index],
-                                   &cnet_udp[index]),
+                                   &cnet_udp[index], backend.kind),
                   SALTS_OK);
 
     check_equal(io_bench_print_latency("TCP", "p50", libuv_tcp, native_tcp, coroutine_tcp, cnet_tcp,

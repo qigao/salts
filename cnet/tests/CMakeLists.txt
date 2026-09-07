@@ -81,6 +81,17 @@ set_target_properties(cnet_owner_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+cmake_add_test(cnet_owner_profile_test
+  SOURCES cnet_owner_test.c
+  LIBS salts_cnet_profile Salts::TinyTest
+  INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_owner_profile_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+  LINKER_LANGUAGE CXX)
+
 cmake_add_test(cnet_event_test
   SOURCES cnet_event_test.c
   LIBS salts_cnet Salts::TinyTest
@@ -130,6 +141,17 @@ set_target_properties(cnet_api_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+cmake_add_test(cnet_api_profile_test
+  SOURCES cnet_api_test.c
+  LIBS salts_cnet_profile Salts::TinyTest
+  INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_api_profile_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+  LINKER_LANGUAGE CXX)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   cmake_add_test(cnet_vsock_integration_test
@@ -189,6 +211,16 @@ cmake_add_test(cnet_benchmark_stats_test
   FOLDER "cnet/tests")
 target_include_directories(cnet_benchmark_stats_test PRIVATE ../benchmarks)
 set_target_properties(cnet_benchmark_stats_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(cnet_io_benchmark_config_test
+  SOURCES cnet_io_benchmark_config_test.c ../benchmarks/cnet_io_benchmark_config.c
+  LIBS Salts::NativeIO Salts::TinyTest
+  FOLDER "cnet/tests")
+target_include_directories(cnet_io_benchmark_config_test PRIVATE ../benchmarks)
+set_target_properties(cnet_io_benchmark_config_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
