@@ -165,8 +165,10 @@ RFC 8441 Extended CONNECT 共用同一个 pre-body admission contract。完整�
 
 需要阻塞数据库或外部服务时，HTTP/1.1 handler 先复制业务所需的 request 字段，再调用
 `chttp_server_response_defer()` 封住当前 builder，并把拥有型 job 投递到应用已有的有界 worker
-队列。worker 最终调用一次 `chttp_server_deferred_reply()`；该调用在返回前复制 headers/body，
-因此 job 随后即可释放响应内存。每条连接最多挂起一个响应，总量受
+队列。worker 必须成功调用一次 `chttp_server_deferred_reply()` 或
+`chttp_server_deferred_cancel()`；reply 在返回前复制 headers/body，成功后 job 即可释放响应内存。
+reply 失败会让 handle 保持 pending，调用方必须显式 retry 或 cancel；fail-fast 路径使用 cancel，
+不发送替代响应并关闭该 HTTP/1.1 连接。每条连接最多挂起一个响应，总量受
 `network.connection_capacity` 约束；同连接的后续流水请求会保留并在前一响应完整写出后恢复。
 队列 admission 失败时，handler 应直接同步返回 429/503，不得先 defer。deferred 当前要求
 `session_capacity == 0` 且只支持 HTTP/1.1；应用级 Session 应随 job 自行解析与持有。停服会等待
