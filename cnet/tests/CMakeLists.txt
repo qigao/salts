@@ -89,7 +89,8 @@ cmake_add_test(cnet_owner_profile_test
 set_target_properties(cnet_owner_profile_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF)
+  C_EXTENSIONS OFF
+  LINKER_LANGUAGE CXX)
 
 cmake_add_test(cnet_event_test
   SOURCES cnet_event_test.c
@@ -149,7 +150,8 @@ cmake_add_test(cnet_api_profile_test
 set_target_properties(cnet_api_profile_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF)
+  C_EXTENSIONS OFF
+  LINKER_LANGUAGE CXX)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   cmake_add_test(cnet_vsock_integration_test
