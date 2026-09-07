@@ -205,6 +205,17 @@ set_target_properties(cnet_packet_endpoint_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+cmake_add_test(cnet_stop_contract_test
+  SOURCES cnet_stop_contract_test.c
+  LIBS salts_cnet_profile Salts::TinyTest
+  INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_stop_contract_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+  LINKER_LANGUAGE CXX)
+
 cmake_add_test(cnet_benchmark_stats_test
   SOURCES cnet_benchmark_stats_test.c ../benchmarks/cnet_benchmark_stats.c
   LIBS Salts::Platform Salts::TinyTest
