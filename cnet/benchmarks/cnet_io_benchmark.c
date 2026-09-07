@@ -9,6 +9,7 @@
 #include <salts/thread.h>
 
 #include "cnet_benchmark_stats.h"
+#include "cnet_io_benchmark_config.h"
 #include "tinytest.h"
 
 #include <uv.h>
@@ -403,26 +404,6 @@ static int io_bench_server_finish(io_bench_server *server) {
   return status;
 }
 
-static native_io_backend_kind io_bench_backend_kind(void) {
-#ifdef _WIN32
-  return NATIVE_IO_BACKEND_IOCP;
-#elif defined(__linux__)
-  return NATIVE_IO_BACKEND_EPOLL;
-#else
-  return NATIVE_IO_BACKEND_KQUEUE;
-#endif
-}
-
-static const char *io_bench_backend_name(void) {
-#ifdef _WIN32
-  return "IOCP";
-#elif defined(__linux__)
-  return "epoll";
-#else
-  return "kqueue";
-#endif
-}
-
 static int io_bench_connect_socket(io_bench_socket *out_socket, io_bench_protocol protocol,
                                    const struct sockaddr_in *address) {
   const int type = protocol == IO_BENCH_TCP ? SOCK_STREAM : SOCK_DGRAM;
@@ -442,9 +423,9 @@ static int io_bench_connect_socket(io_bench_socket *out_socket, io_bench_protoco
 }
 
 static int io_bench_native_init(io_bench_native *fixture, io_bench_protocol protocol,
-                                const struct sockaddr_in *address) {
-  const native_io_backend_config config = {io_bench_backend_kind(), 1u, 4u,
-                                           IO_BENCH_COMPLETION_CAPACITY};
+                                const struct sockaddr_in *address,
+                                native_io_backend_kind backend_kind) {
+  const native_io_backend_config config = {backend_kind, 1u, 4u, IO_BENCH_COMPLETION_CAPACITY};
   int status;
   memset(fixture, 0, sizeof(*fixture));
   fixture->protocol = protocol;
@@ -891,8 +872,9 @@ static void io_bench_cnet_begin_measurement(io_bench_cnet *fixture) {
 }
 
 static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol,
-                              const struct sockaddr_in *address) {
-  const cnet_client_config config = {.backend = io_bench_backend_kind(),
+                              const struct sockaddr_in *address,
+                              native_io_backend_kind backend_kind) {
+  const cnet_client_config config = {.backend = backend_kind,
                                      .connection_capacity = 1u,
                                      .command_capacity = 8u,
                                      .request_capacity = 4u,
@@ -971,7 +953,8 @@ static int io_bench_cnet_destroy(io_bench_cnet *fixture) {
 }
 
 static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol protocol,
-                                 io_bench_driver driver, size_t payload_size) {
+                                 io_bench_driver driver, size_t payload_size,
+                                 native_io_backend_kind backend_kind) {
   int status;
   memset(fixture, 0, sizeof(*fixture));
   fixture->driver = driver;
@@ -985,8 +968,10 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
     if (driver == IO_BENCH_LIBUV)
       status = io_bench_libuv_init(&fixture->libuv, protocol, &fixture->server.address);
     else if (driver == IO_BENCH_NATIVE_IO || driver == IO_BENCH_NATIVE_IO_COROUTINE)
-      status = io_bench_native_init(&fixture->native, protocol, &fixture->server.address);
-    else status = io_bench_cnet_init(&fixture->cnet, protocol, &fixture->server.address);
+      status =
+          io_bench_native_init(&fixture->native, protocol, &fixture->server.address, backend_kind);
+    else
+      status = io_bench_cnet_init(&fixture->cnet, protocol, &fixture->server.address, backend_kind);
   }
   if (status == SALTS_OK && driver == IO_BENCH_CNET)
     status = io_bench_cnet_ready(&fixture->cnet, payload_size);
@@ -1031,7 +1016,8 @@ static const char *io_bench_driver_name(io_bench_driver driver) {
 }
 
 static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size_t payload_size,
-                        bool profile_cnet_stages, io_bench_result *result) {
+                        bool profile_cnet_stages, native_io_backend_kind backend_kind,
+                        io_bench_result *result) {
   io_bench_fixture fixture;
   unsigned char *sent = NULL;
   unsigned char *received = NULL;
@@ -1041,7 +1027,7 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   const char *phase = "init";
   int status;
   memset(result, 0, sizeof(*result));
-  status = io_bench_fixture_init(&fixture, protocol, driver, payload_size);
+  status = io_bench_fixture_init(&fixture, protocol, driver, payload_size, backend_kind);
   if (status != SALTS_OK) goto cleanup;
   phase = "allocate";
   sent = (unsigned char *)malloc(payload_size);
@@ -1291,7 +1277,8 @@ static void io_bench_print_cnet_stages(const char *protocol, const io_bench_seri
 
 static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t row,
                             io_bench_series *libuv, io_bench_series *native,
-                            io_bench_series *coroutine, io_bench_series *cnet) {
+                            io_bench_series *coroutine, io_bench_series *cnet,
+                            native_io_backend_kind backend_kind) {
   io_bench_series *series[] = {libuv, native, coroutine, cnet};
   const io_bench_driver order[][4] = {
       {IO_BENCH_LIBUV, IO_BENCH_NATIVE_IO, IO_BENCH_NATIVE_IO_COROUTINE, IO_BENCH_CNET},
@@ -1301,14 +1288,14 @@ static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t r
   for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
     for (size_t index = 0u; index < 4u; ++index) {
       const io_bench_driver driver = order[(row + repeat) % 4u][index];
-      const int status =
-          io_bench_run(protocol, driver, payload, false, &series[driver]->runs[repeat]);
+      const int status = io_bench_run(protocol, driver, payload, false, backend_kind,
+                                      &series[driver]->runs[repeat]);
       if (status != SALTS_OK) return status;
     }
   }
   for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const int status =
-        io_bench_run(protocol, IO_BENCH_CNET, payload, true, &cnet->cnet_profile_runs[repeat]);
+    const int status = io_bench_run(protocol, IO_BENCH_CNET, payload, true, backend_kind,
+                                    &cnet->cnet_profile_runs[repeat]);
     if (status != SALTS_OK) return status;
   }
   for (size_t driver = 0u; driver < 4u; ++driver) {
@@ -1320,6 +1307,9 @@ static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t r
 
 spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchmark") {
   it("compares persistent TCP and UDP clients against one common echo peer") {
+    cnet_io_benchmark_backend backend = {0};
+    const char *requested_backend = getenv("CNET_IO_BENCHMARK_BACKEND");
+    const int backend_status = cnet_io_benchmark_select_backend(requested_backend, &backend);
     const size_t tcp_count = sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0]);
     const size_t udp_count = sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0]);
     io_bench_series libuv_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {
@@ -1339,9 +1329,15 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
     io_bench_series cnet_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {
         0};
 
+    if (backend_status != SALTS_OK)
+      fprintf(stderr, "CNET_IO_BENCHMARK_BACKEND selection failed: value='%s', status=%d\n",
+              requested_backend == NULL ? "<unset>" : requested_backend, backend_status);
+    check_equal(backend_status, SALTS_OK);
+    if (backend_status != SALTS_OK) return;
+
     printf("\nBaseline: NativeIO direct; reference: libuv %s; NativeIO backend: %s; CNet: public "
            "byte API.\n",
-           uv_version_string(), io_bench_backend_name());
+           uv_version_string(), backend.name);
     printf("Each repeat uses a fresh client and dedicated blocking echo peer; driver order rotates "
            "within every matched quartet.\n");
     printf("CNet publishes one bounded receive demand per repeat and consumes borrowed callback "
@@ -1359,12 +1355,12 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
     for (size_t index = 0u; index < tcp_count; ++index)
       check_equal(io_bench_run_row(IO_BENCH_TCP, IO_BENCH_TCP_PAYLOADS[index], index,
                                    &libuv_tcp[index], &native_tcp[index], &coroutine_tcp[index],
-                                   &cnet_tcp[index]),
+                                   &cnet_tcp[index], backend.kind),
                   SALTS_OK);
     for (size_t index = 0u; index < udp_count; ++index)
       check_equal(io_bench_run_row(IO_BENCH_UDP, IO_BENCH_UDP_PAYLOADS[index], index,
                                    &libuv_udp[index], &native_udp[index], &coroutine_udp[index],
-                                   &cnet_udp[index]),
+                                   &cnet_udp[index], backend.kind),
                   SALTS_OK);
 
     check_equal(io_bench_print_latency("TCP", "p50", libuv_tcp, native_tcp, coroutine_tcp, cnet_tcp,

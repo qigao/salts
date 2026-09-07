@@ -406,6 +406,11 @@ destruction.
 
 ## Task 10: Add Comparable Performance and Capacity Reports
 
+> **Superseded on 2026-09-07:** Do not execute this task. NativeIO/CNet/libuv
+> transport data-plane benchmarks and Actor/Reactive topology-specific
+> benchmarks do not share a valid denominator. See
+> `2026-09-07-separate-cflow-and-io-benchmarks.md`.
+
 **Files:**
 
 - Create: `cnet/benchmarks/CMakeLists.txt`

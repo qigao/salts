@@ -193,6 +193,16 @@ set_target_properties(cnet_benchmark_stats_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+cmake_add_test(cnet_io_benchmark_config_test
+  SOURCES cnet_io_benchmark_config_test.c ../benchmarks/cnet_io_benchmark_config.c
+  LIBS Salts::NativeIO Salts::TinyTest
+  FOLDER "cnet/tests")
+target_include_directories(cnet_io_benchmark_config_test PRIVATE ../benchmarks)
+set_target_properties(cnet_io_benchmark_config_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 cmake_add_test(cnet_header_cpp_test
   SOURCES cnet_header_cpp_test.cpp
   LIBS salts_cnet
