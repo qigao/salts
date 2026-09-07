@@ -181,7 +181,7 @@ int main(void) {
     int status;
     int result = EXIT_FAILURE;
     bool success = false;
-    bool require_retained_identity;
+    bool adapter_drained = false;
 
     if (!native_io_backend_kind_supports_pipe(cflow_pipe_example_backend())) {
         fprintf(stderr, "native pipe example: selected backend has no typed pipe "
@@ -272,35 +272,49 @@ int main(void) {
     success = true;
 
 cleanup:
-    require_retained_identity = success;
     status = cflow_native_example_close_actor(&context);
     if (status != SALTS_OK) {
         fprintf(stderr, "native pipe example: Actor close failed: %d\n", status);
         success = false;
     }
-    status = cflow_io_native_adapter_close(&context.adapter);
-    if (status != SALTS_OK && status != SALTS_EALREADY) {
-        fprintf(stderr, "native pipe example: adapter close failed: %d\n", status);
-        success = false;
+    if (!context.actor_initialized) {
+        cflow_io_native_adapter_stats adapter_stats = {0};
+        adapter_drained = cflow_io_native_adapter_get_stats(&context.adapter, &adapter_stats) &&
+                          adapter_stats.active_bridges == 0u &&
+                          adapter_stats.native.active_requests == 0u;
     }
-    for (size_t index = 0u; index < 2u; ++index) {
-        if (pipes[index] != CFLOW_EXAMPLE_INVALID_PIPE) {
-            cflow_pipe_example_close(pipes[index]);
-            pipes[index] = CFLOW_EXAMPLE_INVALID_PIPE;
+    if (!adapter_drained) {
+        fprintf(stderr,
+                "native pipe example: pending NativeIO identity retained after failed drain\n");
+        success = false;
+    } else {
+        status = cflow_io_native_adapter_close(&context.adapter);
+        if (status != SALTS_OK && status != SALTS_EALREADY) {
+            fprintf(stderr, "native pipe example: adapter close failed: %d\n", status);
+            success = false;
+            adapter_drained = false;
         }
-        if (endpoint_attached[index]) {
-            status = cflow_io_native_adapter_release_pipe(&context.adapter, endpoints[index]);
-            if (status != SALTS_OK && (require_retained_identity || status != SALTS_ENOENT)) {
-                fprintf(stderr, "native pipe example: endpoint release failed: %d\n", status);
-                success = false;
+    }
+    if (adapter_drained) {
+        for (size_t index = 0u; index < 2u; ++index) {
+            if (pipes[index] != CFLOW_EXAMPLE_INVALID_PIPE) {
+                cflow_pipe_example_close(pipes[index]);
+                pipes[index] = CFLOW_EXAMPLE_INVALID_PIPE;
             }
-            endpoint_attached[index] = false;
+            if (endpoint_attached[index]) {
+                status = cflow_io_native_adapter_release_pipe(&context.adapter, endpoints[index]);
+                if (status != SALTS_OK) {
+                    fprintf(stderr, "native pipe example: endpoint release failed: %d\n", status);
+                    success = false;
+                }
+                endpoint_attached[index] = false;
+            }
         }
-    }
-    status = cflow_native_example_destroy_context(&context);
-    if (status != SALTS_OK) {
-        fprintf(stderr, "native pipe example: context destroy failed: %d\n", status);
-        success = false;
+        status = cflow_native_example_destroy_context(&context);
+        if (status != SALTS_OK) {
+            fprintf(stderr, "native pipe example: context destroy failed: %d\n", status);
+            success = false;
+        }
     }
     if (success) {
         printf("native pipe: completions=2 acknowledged=2 releases=2 "

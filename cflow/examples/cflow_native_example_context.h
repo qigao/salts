@@ -248,34 +248,34 @@ static int cflow_native_example_destroy_context(cflow_native_example_context *co
         status = cflow_native_example_close_actor(context);
         if (status != SALTS_OK)
             first_error = status;
+        if (context->actor_initialized)
+            return first_error != SALTS_OK ? first_error : SALTS_EBUSY;
     }
     if (context->backend_initialized) {
         status = cflow_io_native_backend_shutdown(&context->backend);
         if (status != SALTS_OK && status != SALTS_EALREADY && first_error == SALTS_OK)
             first_error = status;
-        if (status == SALTS_OK || status == SALTS_EALREADY) {
-            status = cflow_io_native_backend_destroy(&context->backend);
-            if (status == SALTS_OK)
-                context->backend_initialized = false;
-            else if (first_error == SALTS_OK)
-                first_error = status;
-        }
+        if (status != SALTS_OK && status != SALTS_EALREADY)
+            return first_error;
+        status = cflow_io_native_backend_destroy(&context->backend);
+        if (status != SALTS_OK)
+            return first_error != SALTS_OK ? first_error : status;
+        context->backend_initialized = false;
     }
     if (context->adapter_initialized) {
         status = cflow_io_native_adapter_close(&context->adapter);
         if (status != SALTS_OK && status != SALTS_EALREADY && first_error == SALTS_OK)
             first_error = status;
-        if (status == SALTS_OK || status == SALTS_EALREADY) {
-            status = cflow_io_native_adapter_destroy(&context->adapter);
-            if (status == SALTS_OK)
-                context->adapter_initialized = false;
-            else if (first_error == SALTS_OK)
-                first_error = status;
-        }
+        if (status != SALTS_OK && status != SALTS_EALREADY)
+            return first_error;
+        status = cflow_io_native_adapter_destroy(&context->adapter);
+        if (status != SALTS_OK)
+            return first_error != SALTS_OK ? first_error : status;
+        context->adapter_initialized = false;
     }
     if (context->executor_initialized) {
-        if (!cflow_executor_shutdown(&context->executor) && first_error == SALTS_OK)
-            first_error = SALTS_EBUSY;
+        if (!cflow_executor_shutdown(&context->executor))
+            return first_error != SALTS_OK ? first_error : SALTS_EBUSY;
         cflow_executor_destroy(&context->executor);
         context->executor_initialized = false;
     }
