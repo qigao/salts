@@ -41,6 +41,11 @@ typedef void (*cflow_process_completion_fn)(void *user, cflow_io_request_id requ
                                             const cflow_io_completion *completion);
 
 typedef struct cflow_process_config {
+  /**
+   * IOCP/EPOLL/IO_URING/KQUEUE select the exact owner-driven NativeIO
+   * backend. POLL explicitly selects the legacy compatibility backend; no
+   * backend is used as an implicit fallback.
+   */
   cflow_io_native_backend_kind backend_kind;
   size_t request_capacity;
   size_t command_capacity;
@@ -104,7 +109,10 @@ int cflow_process_poll(const cflow_process *process, salts_process_result_t *out
 /** Requests termination through the Core process owner. */
 int cflow_process_terminate(cflow_process *process);
 
-/** Drives at most max_steps Actor/Executor transitions on one driver thread. */
+/**
+ * Observes owner-driven NativeIO and drives at most max_steps Actor/Executor
+ * transitions on one fixed driver thread.
+ */
 int cflow_process_run_ready(cflow_process *process, size_t max_steps, size_t *progressed);
 
 /**
