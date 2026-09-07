@@ -72,11 +72,13 @@ typedef struct cnet_owner_config {
 typedef struct cnet_owner_profile {
   uint64_t owner_drive_ns;
   uint64_t command_stage_ns;
+  uint64_t request_start_ns;
   uint64_t observe_ns;
   uint64_t request_completion_ns;
   uint64_t event_publish_ns;
   uint64_t owner_drive_calls;
   uint64_t command_stage_calls;
+  uint64_t request_start_calls;
   uint64_t observe_calls;
   uint64_t request_completion_calls;
   uint64_t event_publish_calls;

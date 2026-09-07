@@ -583,8 +583,18 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
     session->read_active = true;
   if (role == CNET_OWNER_REQUEST_SEND || role == CNET_OWNER_REQUEST_TLS_WRITE)
     session->write_active = true;
+#if defined(CNET_INTERNAL_PROFILING)
+  {
+    const uint64_t profile_started = cnet_owner_profile_start(impl);
+    status = native_io_backend_spawn_coroutine(&impl->backend, cnet_owner_coroutine_entry, request,
+                                               &request->coroutine);
+    cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_start_ns,
+                              &impl->profile.request_start_calls);
+  }
+#else
   status = native_io_backend_spawn_coroutine(&impl->backend, cnet_owner_coroutine_entry, request,
                                              &request->coroutine);
+#endif
   if (status != SALTS_OK) {
     if (request->active) return cnet_owner_fail_started_request(request, status);
     return status;
