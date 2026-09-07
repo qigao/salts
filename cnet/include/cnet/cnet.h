@@ -223,6 +223,14 @@ typedef struct cnet_packet_observer {
 enum { CNET_PACKET_TERMINAL_API_VERSION = 1u };
 
 /**
+ * Version 1 guarantees that datagram and packet endpoint stop return a
+ * concrete error only after all admitted datagram sends and accepted tagged
+ * packet sends have published their terminal callbacks. `SALTS_ETIMEDOUT`
+ * remains retryable and does not discard the first concrete error.
+ */
+#define CNET_STOP_DRAIN_CONTRACT_VERSION 1u
+
+/**
  * Authoritative terminal for one successfully admitted tagged logical send.
  * Callback arguments are borrowed through callback return. UDP reports its
  * NativeIO datagram terminal; KCP reports completion only after every segment
