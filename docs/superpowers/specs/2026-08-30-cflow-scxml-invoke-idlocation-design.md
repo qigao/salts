@@ -1,7 +1,8 @@
 # CFlow SCXML `invoke/@idlocation` 稳定事务设计
 
 > 历史设计：本文记录当时的 V3 实现。当前 Statechart hook 已统一为
-> V4-only `on_host_transaction`，V1-V3 类型、prefix 兼容与运行时分支均已删除；
+> V4 `on_host_transaction` 前缀（V5 追加 tagged-Event settlement），V1-V3
+> 类型与运行时分支均已删除；
 > 当前契约以 `2026-09-01-cflow-statechart-host-transaction.md` 为准。
 
 ## 背景与目标

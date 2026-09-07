@@ -1,5 +1,9 @@
 # CFlow Statechart Host Transaction Design
 
+> Historical V4 decision. V5 appends the optional exact tagged-Event
+> settlement observer while preserving this V4 prefix for binary callers; see
+> [the V5 implementation plan](../plans/2026-09-07-cflow-tagged-settlement.md).
+
 ## Context
 
 The former Statechart hook table accumulated three callback generations with

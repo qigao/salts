@@ -106,6 +106,7 @@ typedef struct runtime_shared_executor_probe {
     atomic_bool blocker_entered;
     atomic_bool blocker_release;
     atomic_bool init_done;
+    atomic_bool destroy_started;
     atomic_bool destroy_done;
     atomic_int hook_status;
     atomic_int init_status;
@@ -160,6 +161,7 @@ static void runtime_init_on_shared_executor(void *user) {
 static void runtime_destroy_on_shared_executor(void *user) {
     runtime_shared_executor_probe *probe =
         (runtime_shared_executor_probe *)user;
+    atomic_store(&probe->destroy_started, true);
     const cflow_statechart_instance_status status =
         cflow_statechart_instance_destroy(probe->instance);
     atomic_store(&probe->destroy_status, (int)status);
@@ -1363,6 +1365,7 @@ suite("CFlow Statechart instance initial configuration") {
         atomic_init(&probe.blocker_entered, false);
         atomic_init(&probe.blocker_release, false);
         atomic_init(&probe.init_done, false);
+        atomic_init(&probe.destroy_started, false);
         atomic_init(&probe.destroy_done, false);
         atomic_init(&probe.hook_status, -1);
         atomic_init(&probe.init_status, -1);
@@ -1401,6 +1404,7 @@ suite("CFlow Statechart instance initial configuration") {
         atomic_init(&probe.blocker_entered, false);
         atomic_init(&probe.blocker_release, false);
         atomic_init(&probe.init_done, false);
+        atomic_init(&probe.destroy_started, false);
         atomic_init(&probe.destroy_done, false);
         atomic_init(&probe.hook_status, -1);
         atomic_init(&probe.init_status, -1);
@@ -5242,7 +5246,7 @@ struct rtc_fixture {
     size_t stable_hook_calls;
     size_t preprocess_hook_calls;
     uint64_t observed_origin_token;
-    uint64_t observed_origin_tokens[4];
+    uint64_t observed_origin_tokens[64];
     uint64_t observed_configuration_version;
     bool observed_a_active;
     bool observed_d_active;
@@ -5260,6 +5264,14 @@ struct rtc_fixture {
     size_t event_hook_calls;
     cflow_statechart_observed_event_kind observed_event_kinds[8];
     uint64_t observed_event_tokens[8];
+    cflow_statechart_external_settlement settlements[64];
+    size_t settlement_count;
+    bool settlement_stats_read_succeeded;
+    runtime_shared_executor_probe *settlement_blocker;
+    uint64_t blocked_settlement_token;
+    atomic_int settlement_callbacks_active;
+    atomic_bool settlement_callback_overlap;
+    bool cancel_on_first_settlement;
     size_t effect_capacity;
     size_t host_transaction_calls;
     size_t host_transaction_activate_call;
@@ -5282,6 +5294,7 @@ typedef struct rtc_producer_context {
     cflow_statechart_instance *instance;
     size_t count;
     atomic_int *failures;
+    atomic_uint_fast64_t *next_token;
 } rtc_producer_context;
 
 typedef struct rtc_stats_poller_context {
@@ -5422,7 +5435,7 @@ static cflow_statechart_host_result rtc_host_transaction(
         fixture->observed_event_tokens[index] = event->origin_token;
     }
     if (event->kind == CFLOW_STATECHART_OBSERVED_EXTERNAL) {
-        if (fixture->preprocess_hook_calls < 4u)
+        if (fixture->preprocess_hook_calls < 64u)
             fixture->observed_origin_tokens[
                 fixture->preprocess_hook_calls] = event->origin_token;
         ++fixture->preprocess_hook_calls;
@@ -5434,6 +5447,33 @@ static cflow_statechart_host_result rtc_host_transaction(
             return CFLOW_STATECHART_HOST_DROP;
     }
     return CFLOW_STATECHART_HOST_CONTINUE;
+}
+
+static void rtc_external_settlement(
+    void *user, const cflow_statechart_external_settlement *settlement) {
+    rtc_fixture *fixture = (rtc_fixture *)user;
+    cflow_statechart_instance_stats stats = {0};
+    if (fixture == NULL || settlement == NULL ||
+        fixture->settlement_count >= 64u)
+        return;
+    if (atomic_fetch_add(&fixture->settlement_callbacks_active, 1) != 0)
+        atomic_store(&fixture->settlement_callback_overlap, true);
+    if (fixture->settlement_blocker != NULL &&
+        (fixture->blocked_settlement_token == UINT64_C(0) ||
+         fixture->blocked_settlement_token == settlement->origin_token)) {
+        atomic_store(
+            &fixture->settlement_blocker->blocker_entered, true);
+        while (!atomic_load(
+                   &fixture->settlement_blocker->blocker_release))
+            salts_thread_yield();
+    }
+    fixture->settlement_stats_read_succeeded =
+        cflow_statechart_instance_get_stats(&fixture->instance, &stats);
+    fixture->settlements[fixture->settlement_count++] = *settlement;
+    if (fixture->cancel_on_first_settlement &&
+        fixture->settlement_count == 1u)
+        cflow_statechart_instance_cancel(&fixture->instance);
+    atomic_fetch_sub(&fixture->settlement_callbacks_active, 1);
 }
 
 static void rtc_cancel_instance(void *user) {
@@ -5584,8 +5624,10 @@ static void rtc_producer(void *user) {
         RTC_OTHER, &cmeta_type_int, &payload};
     size_t index;
     for (index = 0u; index < context->count; ++index) {
-        if (cflow_statechart_instance_try_send(
-                context->instance, &event) != CFLOW_MAILBOX_OK)
+        const uint64_t origin_token = (uint64_t)atomic_fetch_add(
+            context->next_token, UINT64_C(1));
+        if (cflow_statechart_instance_try_send_tagged(
+                context->instance, &event, origin_token) != CFLOW_MAILBOX_OK)
             atomic_fetch_add(context->failures, 1);
     }
 }
@@ -5613,6 +5655,8 @@ static void rtc_definition(rtc_fixture *fixture,
     size_t transition_count = root_completion_transition ? 7u : 6u;
     size_t action_count = root_completion_transition ? 5u : 4u;
     memset(fixture, 0, sizeof(*fixture));
+    atomic_init(&fixture->settlement_callbacks_active, 0);
+    atomic_init(&fixture->settlement_callback_overlap, false);
     fixture->states[0] = (cflow_statechart_state){
         RTC_ROOT, 0u, CFLOW_STATECHART_COMPOUND, 0u};
     fixture->states[1] = (cflow_statechart_state){
@@ -6438,6 +6482,192 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_destroy(&fixture);
     }
 
+    it("reports one tagged settlement after macrostep quiescence") {
+        rtc_fixture fixture;
+        const int payload = 1;
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
+        rtc_definition(&fixture, true, false);
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_external_settlement = rtc_external_settlement};
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &other, UINT64_C(77)),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(fixture.settlement_count, (size_t)1u);
+        check_true(fixture.settlement_stats_read_succeeded);
+        check_equal(fixture.settlements[0].origin_token, UINT64_C(77));
+        check_equal(fixture.settlements[0].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_COMPLETED);
+        check_equal(fixture.settlements[0].status,
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_equal(fixture.settlements[0].configuration_version,
+                    UINT64_C(1));
+        check_null(fixture.settlements[0].error);
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &other, UINT64_C(0)),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(fixture.settlement_count, (size_t)1u);
+        rtc_destroy(&fixture);
+    }
+
+    it("distinguishes dropped and failed tagged settlements") {
+        rtc_fixture dropped_fixture;
+        rtc_fixture failed_fixture;
+        const int payload = 1;
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
+
+        rtc_definition(&dropped_fixture, true, false);
+        dropped_fixture.drop_tagged_external = true;
+        dropped_fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_host_transaction = rtc_host_transaction,
+            .on_external_settlement = rtc_external_settlement};
+        check_equal(rtc_init(&dropped_fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &dropped_fixture.instance, &other, UINT64_C(81)),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&dropped_fixture.executor));
+        check_equal(dropped_fixture.settlement_count, (size_t)1u);
+        check_equal(dropped_fixture.settlements[0].origin_token,
+                    UINT64_C(81));
+        check_equal(dropped_fixture.settlements[0].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_DROPPED);
+        check_equal(dropped_fixture.settlements[0].status,
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_null(dropped_fixture.settlements[0].error);
+        rtc_destroy(&dropped_fixture);
+
+        rtc_definition(&failed_fixture, true, false);
+        failed_fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_host_transaction = rtc_host_transaction,
+            .on_external_settlement = rtc_external_settlement};
+        check_equal(rtc_init(&failed_fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        failed_fixture.fail_stable_hook = true;
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &failed_fixture.instance, &other, UINT64_C(82)),
+                    CFLOW_MAILBOX_OK);
+        check_true(cflow_executor_wait_idle(&failed_fixture.executor));
+        check_equal(failed_fixture.settlement_count, (size_t)1u);
+        check_equal(failed_fixture.settlements[0].origin_token,
+                    UINT64_C(82));
+        check_equal(failed_fixture.settlements[0].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_FAILED);
+        check_equal(failed_fixture.settlements[0].status,
+                    CFLOW_STATECHART_INSTANCE_HOOK_FAILED);
+        check_equal(failed_fixture.settlements[0].error,
+                    "deliberate host quiescence failure");
+        rtc_destroy(&failed_fixture);
+    }
+
+    it("preserves tagged settlement FIFO while the token ring wraps") {
+        rtc_fixture fixture;
+        microstep_executor_blocker blocker;
+        const int payload = 1;
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
+        size_t index;
+        rtc_definition(&fixture, true, false);
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_external_settlement = rtc_external_settlement};
+        check_equal(rtc_init_with_external(
+                        &fixture, 2u, 0u, 4u, 16u, 4u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        for (index = 0u; index < 5u; ++index) {
+            check_equal(cflow_statechart_instance_try_send_tagged(
+                            &fixture.instance, &other,
+                            UINT64_C(601) + (uint64_t)index),
+                        CFLOW_MAILBOX_OK);
+            check_true(cflow_executor_wait_idle(&fixture.executor));
+        }
+        check_equal(fixture.settlement_count, (size_t)5u);
+        for (index = 0u; index < fixture.settlement_count; ++index) {
+            check_equal(fixture.settlements[index].origin_token,
+                        UINT64_C(601) + (uint64_t)index);
+            check_equal(fixture.settlements[index].kind,
+                        CFLOW_STATECHART_EXTERNAL_SETTLED_COMPLETED);
+        }
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor,
+                        microstep_block_executor, &blocker),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_true(runtime_wait_flag(&blocker.entered));
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &other, UINT64_C(606)),
+                    CFLOW_MAILBOX_OK);
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &other, UINT64_C(607)),
+                    CFLOW_MAILBOX_OK);
+        cflow_statechart_instance_cancel(&fixture.instance);
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(fixture.settlement_count, (size_t)7u);
+        check_equal(fixture.settlements[5].origin_token, UINT64_C(606));
+        check_equal(fixture.settlements[6].origin_token, UINT64_C(607));
+        check_equal(fixture.settlements[5].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_CANCELLED);
+        check_equal(fixture.settlements[6].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_CANCELLED);
+        rtc_destroy(&fixture);
+    }
+
+    it("serializes reentrant cancellation from a settlement callback") {
+        rtc_fixture fixture;
+        microstep_executor_blocker blocker;
+        const int payload = 1;
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
+        rtc_definition(&fixture, true, false);
+        fixture.cancel_on_first_settlement = true;
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_host_transaction = rtc_host_transaction,
+            .on_external_settlement = rtc_external_settlement};
+        check_equal(rtc_init_with_external(
+                        &fixture, 2u, 0u, 4u, 16u, 4u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor,
+                        microstep_block_executor, &blocker),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_true(runtime_wait_flag(&blocker.entered));
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &other, UINT64_C(701)),
+                    CFLOW_MAILBOX_OK);
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &other, UINT64_C(702)),
+                    CFLOW_MAILBOX_OK);
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(fixture.settlement_count, (size_t)2u);
+        check_false(atomic_load(&fixture.settlement_callback_overlap));
+        check_equal(fixture.settlements[0].origin_token, UINT64_C(701));
+        check_equal(fixture.settlements[0].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_COMPLETED);
+        check_equal(fixture.settlements[1].origin_token, UINT64_C(702));
+        check_equal(fixture.settlements[1].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_CANCELLED);
+        rtc_destroy(&fixture);
+    }
+
     it("observes a transactional tagged internal Event with its source token") {
         rtc_fixture fixture;
         const int payload = 1;
@@ -6663,9 +6893,11 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_fixture version_fixture;
         rtc_fixture size_fixture;
         rtc_fixture missing_callback_fixture;
+        rtc_fixture v5_size_fixture;
+        rtc_fixture v5_missing_callbacks_fixture;
         rtc_definition(&version_fixture, true, false);
         version_fixture.hooks = (cflow_statechart_instance_hooks){
-            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4 + 1u,
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5 + 1u,
             .struct_size = sizeof(cflow_statechart_instance_hooks),
             .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&version_fixture, 4u, 4u, 16u, 4u),
@@ -6677,7 +6909,9 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_definition(&size_fixture, true, false);
         size_fixture.hooks = (cflow_statechart_instance_hooks){
             .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
-            .struct_size = sizeof(cflow_statechart_instance_hooks) - 1u,
+            .struct_size = offsetof(
+                cflow_statechart_instance_hooks,
+                on_external_settlement) - 1u,
             .on_host_transaction = rtc_host_transaction};
         check_equal(rtc_init(&size_fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
@@ -6694,6 +6928,44 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_null(missing_callback_fixture.instance.impl);
         cflow_executor_destroy(&missing_callback_fixture.executor);
         cflow_statechart_destroy(&missing_callback_fixture.statechart);
+
+        rtc_definition(&v5_size_fixture, true, false);
+        v5_size_fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks) - 1u,
+            .on_external_settlement = rtc_external_settlement};
+        check_equal(rtc_init(&v5_size_fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
+        check_null(v5_size_fixture.instance.impl);
+        cflow_executor_destroy(&v5_size_fixture.executor);
+        cflow_statechart_destroy(&v5_size_fixture.statechart);
+
+        rtc_definition(&v5_missing_callbacks_fixture, true, false);
+        v5_missing_callbacks_fixture.hooks =
+            (cflow_statechart_instance_hooks){
+                .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+                .struct_size = sizeof(cflow_statechart_instance_hooks)};
+        check_equal(rtc_init(
+                        &v5_missing_callbacks_fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_INVALID_ARGUMENT);
+        check_null(v5_missing_callbacks_fixture.instance.impl);
+        cflow_executor_destroy(&v5_missing_callbacks_fixture.executor);
+        cflow_statechart_destroy(&v5_missing_callbacks_fixture.statechart);
+    }
+
+    it("accepts the exact legacy V4 hook prefix") {
+        rtc_fixture fixture;
+        rtc_definition(&fixture, true, false);
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4,
+            .struct_size = offsetof(
+                cflow_statechart_instance_hooks,
+                on_external_settlement),
+            .on_host_transaction = rtc_host_transaction};
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_equal(fixture.stable_hook_calls, (size_t)1u);
+        rtc_destroy(&fixture);
     }
 
     it("rejects every pre-transaction runtime hook ABI") {
@@ -7526,6 +7798,10 @@ suite("CFlow Statechart public run-to-completion runtime") {
         cflow_statechart_instance_stats stats = {0};
         cflow_statechart_instance_test_hooks hooks;
         rtc_definition(&fixture, true, false);
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_external_settlement = rtc_external_settlement};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_OK);
         atomic_init(&post_blocker.entered, false);
@@ -7535,7 +7811,8 @@ suite("CFlow Statechart public run-to-completion runtime") {
             .user = &post_blocker};
         check_true(cflow_statechart_instance_set_test_hooks_internal(
             &fixture.instance, &hooks));
-        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &go, UINT64_C(301)),
                     CFLOW_MAILBOX_OK);
         while (!atomic_load(&post_blocker.entered)) salts_thread_yield();
         cflow_statechart_instance_close(&fixture.instance);
@@ -7554,6 +7831,12 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_equal(stats.external_failed, UINT64_C(0));
         check_equal(stats.external_cancelled, UINT64_C(1));
         check_equal(stats.external_in_flight, (size_t)0u);
+        check_equal(fixture.settlement_count, (size_t)1u);
+        check_equal(fixture.settlements[0].origin_token, UINT64_C(301));
+        check_equal(fixture.settlements[0].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_CANCELLED);
+        check_equal(fixture.settlements[0].status,
+                    CFLOW_STATECHART_INSTANCE_TASK_CANCELLED);
         rtc_destroy(&fixture);
     }
 
@@ -7576,13 +7859,18 @@ suite("CFlow Statechart public run-to-completion runtime") {
         fixture.definition.guards = fixture.guards;
         fixture.definition.guard_count = 1u;
         fixture.transitions[1].guard = RTC_QUEUE_GUARD;
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_external_settlement = rtc_external_settlement};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
                     CFLOW_STATECHART_INSTANCE_OK);
-        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &go, UINT64_C(401)),
                     CFLOW_MAILBOX_OK);
         while (!atomic_load(&blocker.entered)) salts_thread_yield();
-        check_equal(cflow_statechart_instance_try_send(
-                        &fixture.instance, &other),
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &other, UINT64_C(402)),
                     CFLOW_MAILBOX_OK);
         check_true(cflow_executor_as_control(&fixture.executor, &control));
         check_true(cflow_executor_control_shutdown(
@@ -7597,6 +7885,19 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_equal(stats.external_failed, UINT64_C(1));
         check_equal(stats.external_cancelled, UINT64_C(1));
         check_equal(stats.external_completed, UINT64_C(0));
+        check_equal(fixture.settlement_count, (size_t)2u);
+        check_equal(fixture.settlements[0].origin_token, UINT64_C(401));
+        check_equal(fixture.settlements[0].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_FAILED);
+        check_equal(fixture.settlements[0].status,
+                    CFLOW_STATECHART_INSTANCE_EXECUTOR_CLOSED);
+        check_not_null(fixture.settlements[0].error);
+        check_equal(fixture.settlements[1].origin_token, UINT64_C(402));
+        check_equal(fixture.settlements[1].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_CANCELLED);
+        check_equal(fixture.settlements[1].status,
+                    CFLOW_STATECHART_INSTANCE_TASK_CANCELLED);
+        check_null(fixture.settlements[1].error);
         rtc_destroy(&fixture);
     }
 
@@ -7723,6 +8024,207 @@ suite("CFlow Statechart public run-to-completion runtime") {
         rtc_destroy(&fixture);
     }
 
+    it("settles in-flight and queued tagged cancellation in FIFO order") {
+        rtc_fixture fixture;
+        microstep_executor_blocker blocker;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
+        rtc_definition(&fixture, true, false);
+        atomic_init(&blocker.entered, false);
+        atomic_init(&blocker.release, false);
+        fixture.guard_blocker = &blocker;
+        fixture.guards[0] = (cflow_statechart_guard){
+            RTC_QUEUE_GUARD, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        fixture.transitions[1].guard = RTC_QUEUE_GUARD;
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_external_settlement = rtc_external_settlement};
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &go, UINT64_C(201)),
+                    CFLOW_MAILBOX_OK);
+        while (!atomic_load(&blocker.entered)) salts_thread_yield();
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &other, UINT64_C(202)),
+                    CFLOW_MAILBOX_OK);
+        cflow_statechart_instance_cancel(&fixture.instance);
+        check_equal(fixture.settlement_count, (size_t)0u);
+        atomic_store(&blocker.release, true);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        check_equal(fixture.settlement_count, (size_t)2u);
+        check_equal(fixture.settlements[0].origin_token, UINT64_C(201));
+        check_equal(fixture.settlements[1].origin_token, UINT64_C(202));
+        check_equal(fixture.settlements[0].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_CANCELLED);
+        check_equal(fixture.settlements[1].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_CANCELLED);
+        check_equal(fixture.settlements[0].status,
+                    CFLOW_STATECHART_INSTANCE_TASK_CANCELLED);
+        check_equal(fixture.settlements[1].status,
+                    CFLOW_STATECHART_INSTANCE_TASK_CANCELLED);
+        check_null(fixture.settlements[0].error);
+        check_null(fixture.settlements[1].error);
+        rtc_destroy(&fixture);
+    }
+
+    it("keeps instance storage alive through a terminal settlement callback") {
+        rtc_fixture fixture;
+        microstep_executor_blocker microstep_blocker;
+        runtime_shared_executor_probe settlement_blocker;
+        salts_thread_t destroy_thread = NULL;
+        const int payload = 1;
+        const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
+        bool destroy_returned_during_callback;
+        size_t wait_attempt;
+        rtc_definition(&fixture, true, false);
+        memset(&settlement_blocker, 0, sizeof(settlement_blocker));
+        atomic_init(&microstep_blocker.entered, false);
+        atomic_init(&microstep_blocker.release, false);
+        atomic_init(&settlement_blocker.blocker_entered, false);
+        atomic_init(&settlement_blocker.blocker_release, false);
+        atomic_init(&settlement_blocker.destroy_started, false);
+        atomic_init(&settlement_blocker.destroy_done, false);
+        atomic_init(&settlement_blocker.destroy_status, -1);
+        settlement_blocker.instance = &fixture.instance;
+        fixture.guard_blocker = &microstep_blocker;
+        fixture.settlement_blocker = &settlement_blocker;
+        fixture.guards[0] = (cflow_statechart_guard){
+            RTC_QUEUE_GUARD, &cmeta_type_int, CMETA_EFFECT_MAY_FAIL,
+            CMETA_PROP_DETERMINISTIC | CMETA_PROP_NO_ALIAS};
+        fixture.definition.guards = fixture.guards;
+        fixture.definition.guard_count = 1u;
+        fixture.transitions[1].guard = RTC_QUEUE_GUARD;
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_external_settlement = rtc_external_settlement};
+        check_equal(rtc_init(&fixture, 4u, 4u, 16u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &go, UINT64_C(211)),
+                    CFLOW_MAILBOX_OK);
+        check_true(runtime_wait_flag(&microstep_blocker.entered));
+        cflow_statechart_instance_cancel(&fixture.instance);
+        atomic_store(&microstep_blocker.release, true);
+        check_true(runtime_wait_flag(&settlement_blocker.blocker_entered));
+        check_equal(salts_thread_create(
+                        &destroy_thread,
+                        runtime_destroy_on_shared_executor,
+                        &settlement_blocker),
+                    SALTS_OK);
+        check_true(runtime_wait_flag(&settlement_blocker.destroy_started));
+        for (wait_attempt = 0u; wait_attempt < 20u &&
+             !atomic_load(&settlement_blocker.destroy_done);
+             ++wait_attempt)
+            salts_sleep_ms(1u);
+        destroy_returned_during_callback =
+            atomic_load(&settlement_blocker.destroy_done);
+        check_false(destroy_returned_during_callback);
+        atomic_store(&settlement_blocker.blocker_release, true);
+        check_equal(salts_thread_join(&destroy_thread), SALTS_OK);
+        check_equal(atomic_load(&settlement_blocker.destroy_status),
+                    (int)CFLOW_STATECHART_INSTANCE_OK);
+        check_null(fixture.instance.impl);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        cflow_executor_destroy(&fixture.executor);
+        cflow_statechart_destroy(&fixture.statechart);
+    }
+
+    it("keeps reserved repost storage alive through settlement delivery") {
+        rtc_fixture fixture;
+        microstep_executor_blocker worker_blocker, repost_blocker;
+        runtime_shared_executor_probe settlement_blocker;
+        cflow_statechart_instance_test_hooks test_hooks;
+        cflow_executor_control control = {0};
+        salts_thread_t destroy_thread = NULL;
+        const int payload = 1;
+        const cflow_event_view other = {
+            RTC_OTHER, &cmeta_type_int, &payload};
+        bool destroy_returned_during_callback;
+        size_t wait_attempt;
+        rtc_definition(&fixture, true, false);
+        memset(&settlement_blocker, 0, sizeof(settlement_blocker));
+        atomic_init(&worker_blocker.entered, false);
+        atomic_init(&worker_blocker.release, false);
+        atomic_init(&repost_blocker.entered, false);
+        atomic_init(&repost_blocker.release, false);
+        atomic_init(&settlement_blocker.blocker_entered, false);
+        atomic_init(&settlement_blocker.blocker_release, false);
+        atomic_init(&settlement_blocker.destroy_started, false);
+        atomic_init(&settlement_blocker.destroy_done, false);
+        atomic_init(&settlement_blocker.destroy_status, -1);
+        settlement_blocker.instance = &fixture.instance;
+        fixture.settlement_blocker = &settlement_blocker;
+        fixture.blocked_settlement_token = UINT64_C(802);
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_external_settlement = rtc_external_settlement};
+        check_equal(rtc_init_with_external(
+                        &fixture, 2u, 0u, 4u, 16u, 4u, 4u),
+                    CFLOW_STATECHART_INSTANCE_OK);
+        test_hooks = (cflow_statechart_instance_test_hooks){
+            .before_driver_repost = microstep_block_executor,
+            .user = &repost_blocker};
+        check_true(cflow_statechart_instance_set_test_hooks_internal(
+            &fixture.instance, &test_hooks));
+        check_equal(cflow_executor_try_post(
+                        &fixture.executor,
+                        microstep_block_executor, &worker_blocker),
+                    CFLOW_ADMISSION_ACCEPTED);
+        check_true(runtime_wait_flag(&worker_blocker.entered));
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &other, UINT64_C(801)),
+                    CFLOW_MAILBOX_OK);
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &other, UINT64_C(802)),
+                    CFLOW_MAILBOX_OK);
+        atomic_store(&worker_blocker.release, true);
+        check_true(runtime_wait_flag(&repost_blocker.entered));
+        check_true(cflow_executor_as_control(&fixture.executor, &control));
+        check_true(cflow_executor_control_shutdown(
+            &control, CFLOW_EXECUTOR_SHUTDOWN_CANCEL_PENDING));
+        atomic_store(&repost_blocker.release, true);
+        check_true(runtime_wait_flag(&settlement_blocker.blocker_entered));
+        check_equal(salts_thread_create(
+                        &destroy_thread,
+                        runtime_destroy_on_shared_executor,
+                        &settlement_blocker),
+                    SALTS_OK);
+        check_true(runtime_wait_flag(&settlement_blocker.destroy_started));
+        for (wait_attempt = 0u; wait_attempt < 20u &&
+             !atomic_load(&settlement_blocker.destroy_done);
+             ++wait_attempt)
+            salts_sleep_ms(1u);
+        destroy_returned_during_callback =
+            atomic_load(&settlement_blocker.destroy_done);
+        check_false(destroy_returned_during_callback);
+        atomic_store(&settlement_blocker.blocker_release, true);
+        check_equal(salts_thread_join(&destroy_thread), SALTS_OK);
+        check_equal(atomic_load(&settlement_blocker.destroy_status),
+                    (int)CFLOW_STATECHART_INSTANCE_OK);
+        check_null(fixture.instance.impl);
+        check_equal(fixture.settlement_count, (size_t)2u);
+        check_equal(fixture.settlements[0].origin_token, UINT64_C(801));
+        check_equal(fixture.settlements[0].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_COMPLETED);
+        check_equal(fixture.settlements[1].origin_token, UINT64_C(802));
+        check_equal(fixture.settlements[1].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_FAILED);
+        check_equal(fixture.settlements[1].status,
+                    CFLOW_STATECHART_INSTANCE_EXECUTOR_CLOSED);
+        check_true(cflow_executor_wait_idle(&fixture.executor));
+        cflow_executor_destroy(&fixture.executor);
+        cflow_statechart_destroy(&fixture.statechart);
+    }
+
     it("keeps mailbox OK but settles failed when executor post is full") {
         rtc_fixture fixture;
         microstep_executor_blocker blocker;
@@ -7730,6 +8232,10 @@ suite("CFlow Statechart public run-to-completion runtime") {
         const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
         cflow_statechart_instance_stats stats = {0};
         rtc_definition(&fixture, true, false);
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_external_settlement = rtc_external_settlement};
         check_equal(rtc_init(&fixture, 4u, 4u, 16u, 1u),
                     CFLOW_STATECHART_INSTANCE_OK);
         atomic_init(&blocker.entered, false);
@@ -7741,7 +8247,8 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_equal(cflow_executor_try_post(
                         &fixture.executor, microstep_noop, NULL),
                     CFLOW_ADMISSION_ACCEPTED);
-        check_equal(cflow_statechart_instance_try_send(&fixture.instance, &go),
+        check_equal(cflow_statechart_instance_try_send_tagged(
+                        &fixture.instance, &go, UINT64_C(501)),
                     CFLOW_MAILBOX_OK);
         atomic_store(&blocker.release, true);
         check_true(cflow_executor_wait_idle(&fixture.executor));
@@ -7757,6 +8264,13 @@ suite("CFlow Statechart public run-to-completion runtime") {
                         stats.external_cancelled +
                         (uint64_t)stats.external_pending +
                         (uint64_t)stats.external_in_flight);
+        check_equal(fixture.settlement_count, (size_t)1u);
+        check_equal(fixture.settlements[0].origin_token, UINT64_C(501));
+        check_equal(fixture.settlements[0].kind,
+                    CFLOW_STATECHART_EXTERNAL_SETTLED_FAILED);
+        check_equal(fixture.settlements[0].status,
+                    CFLOW_STATECHART_INSTANCE_EXECUTOR_FULL);
+        check_not_null(fixture.settlements[0].error);
         rtc_destroy(&fixture);
     }
 
@@ -7774,12 +8288,19 @@ suite("CFlow Statechart public run-to-completion runtime") {
         atomic_int polls;
         atomic_int violations;
         atomic_bool stop;
+        atomic_uint_fast64_t next_token;
+        bool seen_tokens[TOTAL_OTHER_EVENTS + 1u] = {false};
         const int payload = 1;
         const cflow_event_view go = {RTC_GO, &cmeta_type_int, &payload};
         cflow_statechart_instance_stats stats = {0};
         rtc_stats_poller_context poller_context;
         size_t index;
         rtc_definition(&fixture, true, false);
+        fixture.hooks = (cflow_statechart_instance_hooks){
+            .abi_version = CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5,
+            .struct_size = sizeof(cflow_statechart_instance_hooks),
+            .on_host_transaction = rtc_host_transaction,
+            .on_external_settlement = rtc_external_settlement};
         check_equal(rtc_init_with_external(
                         &fixture, TOTAL_OTHER_EVENTS, 0u, 4u, 4u,
                         16u, 8u),
@@ -7791,8 +8312,10 @@ suite("CFlow Statechart public run-to-completion runtime") {
         atomic_init(&polls, 0);
         atomic_init(&violations, 0);
         atomic_init(&stop, false);
+        atomic_init(&next_token, UINT64_C(1));
         context = (rtc_producer_context){
-            &fixture.instance, EVENTS_PER_PRODUCER, &failures};
+            &fixture.instance, EVENTS_PER_PRODUCER, &failures,
+            &next_token};
         poller_context = (rtc_stats_poller_context){
             &fixture.instance, &stop, &polls, &violations};
         check_equal(salts_thread_create(
@@ -7818,6 +8341,24 @@ suite("CFlow Statechart public run-to-completion runtime") {
         check_equal(stats.external_cancelled, UINT64_C(0));
         check_equal(stats.external_pending, (size_t)0u);
         check_equal(stats.external_in_flight, (size_t)0u);
+        check_equal(fixture.settlement_count,
+                    (size_t)TOTAL_OTHER_EVENTS);
+        check_false(atomic_load(&fixture.settlement_callback_overlap));
+        check_equal(fixture.preprocess_hook_calls,
+                    (size_t)TOTAL_OTHER_EVENTS + 1u);
+        check_equal(fixture.observed_origin_tokens[0], UINT64_C(0));
+        for (index = 0u; index < fixture.settlement_count; ++index) {
+            const uint64_t token =
+                fixture.settlements[index].origin_token;
+            check_equal(token,
+                        fixture.observed_origin_tokens[index + 1u]);
+            check_true(token >= UINT64_C(1));
+            check_true(token <= (uint64_t)TOTAL_OTHER_EVENTS);
+            check_false(seen_tokens[token]);
+            seen_tokens[token] = true;
+            check_equal(fixture.settlements[index].kind,
+                        CFLOW_STATECHART_EXTERNAL_SETTLED_COMPLETED);
+        }
         rtc_destroy(&fixture);
     }
 }

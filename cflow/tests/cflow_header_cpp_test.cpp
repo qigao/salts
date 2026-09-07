@@ -52,6 +52,10 @@ static_assert(std::is_standard_layout<cflow_statechart_instance>::value,
               "statechart runtime must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_statechart_instance_config>::value,
               "statechart runtime config must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_statechart_instance_hooks>::value,
+              "Statechart hooks must remain a C-compatible ABI boundary");
+static_assert(std::is_standard_layout<cflow_statechart_external_settlement>::value,
+              "Statechart settlement must remain a C-compatible record");
 static_assert(std::is_standard_layout<cflow_actor>::value,
               "cflow_actor must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_actor_ref>::value,
@@ -177,6 +181,12 @@ using cflow_statechart_host_callback =
 static_assert(
     std::is_same<cflow_statechart_host_transaction_fn, cflow_statechart_host_callback>::value,
     "Statechart host callback must keep its C signature");
+using cflow_statechart_settlement_callback =
+    void (*)(void *, const cflow_statechart_external_settlement *);
+static_assert(
+    std::is_same<cflow_statechart_external_settlement_fn,
+                 cflow_statechart_settlement_callback>::value,
+    "Statechart settlement callback must keep its C signature");
 using cflow_statechart_host_phase_reader =
     cflow_statechart_host_phase (*)(const cflow_statechart_host_context *);
 static_assert(std::is_same<decltype(&cflow_statechart_host_context_phase),
