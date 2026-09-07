@@ -8,6 +8,7 @@ enum { CNET_PACKET_TEST_TIMEOUT_MS = 5000 };
 typedef struct cnet_packet_test_probe {
   unsigned char received[128];
   size_t received_size;
+  size_t reply_size;
   cnet_packet_session session;
   int admit_count;
   int connecting_count;
@@ -16,6 +17,23 @@ typedef struct cnet_packet_test_probe {
   int receive_count;
   int error_count;
   int last_error;
+  cnet_packet_session terminal_session;
+  size_t terminal_size;
+  int terminal_status;
+  uint64_t terminal_tag;
+  uint64_t terminal_tags[8];
+  uint32_t terminal_generations[8];
+  int terminal_statuses[8];
+  int terminal_count;
+  int terminal_count_at_close;
+  int receive_action_status;
+  int terminal_action_status;
+  int open_send_status;
+  int open_close_status;
+  bool send_reply_on_receive;
+  bool close_on_receive;
+  bool send_again_on_terminal;
+  bool send_and_close_on_open;
 } cnet_packet_test_probe;
 
 static native_io_backend_kind cnet_packet_test_backend(void) {
@@ -60,13 +78,25 @@ static void cnet_packet_test_state(void *user, cnet_packet_endpoint *endpoint,
   (void)conversation;
   probe->session = session;
   if (state == CNET_PACKET_SESSION_CONNECTING) ++probe->connecting_count;
-  if (state == CNET_PACKET_SESSION_OPEN) ++probe->open_count;
-  if (state == CNET_PACKET_SESSION_CLOSED) ++probe->close_count;
+  if (state == CNET_PACKET_SESSION_OPEN) {
+    ++probe->open_count;
+    if (probe->send_and_close_on_open) {
+      probe->send_and_close_on_open = false;
+      probe->open_send_status =
+          cnet_packet_send_tagged(endpoint, session, "open", 4u, UINT64_C(77));
+      probe->open_close_status = cnet_packet_session_close(endpoint, session);
+    }
+  }
+  if (state == CNET_PACKET_SESSION_CLOSED) {
+    probe->terminal_count_at_close = probe->terminal_count;
+    ++probe->close_count;
+  }
 }
 
 static void cnet_packet_test_receive(void *user, cnet_packet_endpoint *endpoint,
                                      cnet_packet_session session,
                                      const cnet_receive_view *view) {
+  static const unsigned char large_reply[700] = {0x5au};
   cnet_packet_test_probe *probe = (cnet_packet_test_probe *)user;
   (void)endpoint;
   if (view == NULL || view->size > sizeof(probe->received)) return;
@@ -74,6 +104,17 @@ static void cnet_packet_test_receive(void *user, cnet_packet_endpoint *endpoint,
   memcpy(probe->received, view->data, view->size);
   probe->received_size = view->size;
   ++probe->receive_count;
+  if (probe->send_reply_on_receive) {
+    const size_t reply_size = probe->reply_size == 0u ? 5u : probe->reply_size;
+    probe->send_reply_on_receive = false;
+    probe->receive_action_status =
+        reply_size == 5u ? cnet_packet_send(endpoint, session, "reply", reply_size)
+                         : cnet_packet_send(endpoint, session, large_reply, reply_size);
+  }
+  if (probe->close_on_receive) {
+    probe->close_on_receive = false;
+    probe->receive_action_status = cnet_packet_session_close(endpoint, session);
+  }
 }
 
 static void cnet_packet_test_error(void *user, cnet_packet_endpoint *endpoint,
@@ -83,6 +124,28 @@ static void cnet_packet_test_error(void *user, cnet_packet_endpoint *endpoint,
   probe->session = session;
   probe->last_error = status;
   ++probe->error_count;
+}
+
+static void cnet_packet_test_send_terminal(void *user, cnet_packet_endpoint *endpoint,
+                                           cnet_packet_session session, size_t size, int status,
+                                           uint64_t tag) {
+  cnet_packet_test_probe *probe = (cnet_packet_test_probe *)user;
+  (void)endpoint;
+  probe->terminal_session = session;
+  probe->terminal_size = size;
+  probe->terminal_status = status;
+  probe->terminal_tag = tag;
+  if (probe->terminal_count < 8) {
+    probe->terminal_tags[probe->terminal_count] = tag;
+    probe->terminal_generations[probe->terminal_count] = session.generation;
+    probe->terminal_statuses[probe->terminal_count] = status;
+  }
+  ++probe->terminal_count;
+  if (probe->send_again_on_terminal) {
+    probe->send_again_on_terminal = false;
+    probe->terminal_action_status =
+        cnet_packet_send_tagged(endpoint, session, "two", 3u, UINT64_C(2));
+  }
 }
 
 static cnet_packet_endpoint_config cnet_packet_test_config(cnet_packet_protocol protocol,
@@ -150,6 +213,478 @@ static void cnet_packet_test_round_trip(cnet_packet_protocol protocol, uint32_t 
   check_equal(cnet_packet_endpoint_destroy(&left), SALTS_OK);
 }
 
+static void cnet_packet_test_udp_tagged_terminal(void) {
+  static const unsigned char message[] = "tagged-udp";
+  static const uint64_t tag = UINT64_C(0x1020304050607080);
+  cnet_packet_endpoint left = {0};
+  cnet_packet_endpoint right = {0};
+  cnet_packet_test_probe left_probe = {0};
+  cnet_packet_test_probe right_probe = {0};
+  cnet_packet_endpoint_config left_config = cnet_packet_test_config(CNET_PACKET_UDP, &left_probe);
+  cnet_packet_endpoint_config right_config = cnet_packet_test_config(CNET_PACKET_UDP, &right_probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  cnet_packet_session left_session = {0};
+  cnet_datagram_peer right_peer;
+  uint16_t right_port = 0u;
+  size_t events = 0u;
+  size_t attempts;
+
+  terminal_config.send_capacity = 2u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &left_probe;
+  check_equal(cnet_packet_endpoint_init_ex(&left, &left_config, &terminal_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_init(&right, &right_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&right, &right_port), SALTS_OK);
+  right_peer = cnet_packet_test_peer(right_port);
+  check_equal(cnet_packet_session_open(&left, &right_peer, 0u, &left_session), SALTS_OK);
+
+  check_equal(cnet_packet_send_tagged(&left, left_session, message, sizeof(message), tag),
+              SALTS_OK);
+  check_equal(left_probe.terminal_count, 0);
+  for (attempts = 0u; attempts < 1000u && left_probe.terminal_count == 0; ++attempts) {
+    check_equal(cnet_packet_poll(&left, 1u, &events), SALTS_OK);
+    check_equal(cnet_packet_poll(&right, 1u, &events), SALTS_OK);
+  }
+  check_equal(left_probe.terminal_count, 1);
+  check_equal(left_probe.terminal_session.slot, left_session.slot);
+  check_equal(left_probe.terminal_session.generation, left_session.generation);
+  check_equal(left_probe.terminal_size, sizeof(message));
+  check_equal(left_probe.terminal_status, SALTS_OK);
+  check_equal(left_probe.terminal_tag, tag);
+
+  check_equal(cnet_packet_endpoint_stop(&right, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_stop(&left, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&right), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&left), SALTS_OK);
+}
+
+static void cnet_packet_test_kcp_tagged_terminals(void) {
+  unsigned char first_message[5000] = {0x31u};
+  static const unsigned char second_message[] = "second-kcp-message";
+  static const uint64_t first_tag = UINT64_C(0x1111222233334444);
+  static const uint64_t second_tag = UINT64_C(0x5555666677778888);
+  cnet_packet_endpoint left = {0};
+  cnet_packet_endpoint right = {0};
+  cnet_packet_test_probe left_probe = {0};
+  cnet_packet_test_probe right_probe = {0};
+  cnet_packet_endpoint_config left_config = cnet_packet_test_config(CNET_PACKET_KCP, &left_probe);
+  cnet_packet_endpoint_config right_config = cnet_packet_test_config(CNET_PACKET_KCP, &right_probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  cnet_packet_session left_session = {0};
+  cnet_datagram_peer right_peer;
+  uint16_t right_port = 0u;
+  size_t events = 0u;
+  size_t attempts;
+  int left_status;
+  bool saw_backpressure = false;
+
+  left_config.kcp.max_message_bytes = sizeof(first_message);
+  right_config.kcp.max_message_bytes = sizeof(first_message);
+  left_config.datagram.send_capacity = 1u;
+  left_config.datagram.request_capacity = 2u;
+  left_config.datagram.completion_batch_capacity = 2u;
+  terminal_config.send_capacity = 4u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &left_probe;
+  check_equal(cnet_packet_endpoint_init_ex(&left, &left_config, &terminal_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_init(&right, &right_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&right, &right_port), SALTS_OK);
+  right_peer = cnet_packet_test_peer(right_port);
+  check_equal(cnet_packet_session_open(&left, &right_peer, UINT32_C(0x01020304), &left_session),
+              SALTS_OK);
+
+  check_equal(
+      cnet_packet_send_tagged(&left, left_session, first_message, sizeof(first_message), first_tag),
+      SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&left, left_session, second_message, sizeof(second_message),
+                                      second_tag),
+              SALTS_OK);
+  for (attempts = 0u; attempts < 20u; ++attempts) {
+    left_status = cnet_packet_poll(&left, 1u, &events);
+    check_true(left_status == SALTS_OK || left_status == SALTS_ENOBUFS);
+    if (left_status == SALTS_ENOBUFS) saw_backpressure = true;
+  }
+  check_equal(left_probe.terminal_count, 0);
+
+  for (attempts = 0u; attempts < 2000u && left_probe.terminal_count != 2; ++attempts) {
+    check_equal(cnet_packet_poll(&right, 1u, &events), SALTS_OK);
+    left_status = cnet_packet_poll(&left, 1u, &events);
+    check_true(left_status == SALTS_OK || left_status == SALTS_ENOBUFS);
+    if (left_status == SALTS_ENOBUFS) saw_backpressure = true;
+  }
+  check_true(saw_backpressure);
+  check_equal(left_probe.terminal_count, 2);
+  check_equal(left_probe.terminal_tags[0], first_tag);
+  check_equal(left_probe.terminal_statuses[0], SALTS_OK);
+  check_equal(left_probe.terminal_tags[1], second_tag);
+  check_equal(left_probe.terminal_statuses[1], SALTS_OK);
+
+  check_equal(cnet_packet_endpoint_stop(&right, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_stop(&left, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&right), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&left), SALTS_OK);
+}
+
+static void cnet_packet_test_kcp_open_callback_drains_close(void) {
+  cnet_packet_endpoint endpoint = {0};
+  cnet_packet_test_probe probe = {0};
+  cnet_packet_endpoint_config config = cnet_packet_test_config(CNET_PACKET_KCP, &probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  cnet_packet_session session = {0};
+  cnet_packet_session_info info = {0};
+  cnet_datagram_peer peer = cnet_packet_test_peer(10001u);
+
+  config.session_capacity = 1u;
+  terminal_config.send_capacity = 1u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &probe;
+  probe.send_and_close_on_open = true;
+  check_equal(cnet_packet_endpoint_init_ex(&endpoint, &config, &terminal_config), SALTS_OK);
+  check_equal(cnet_packet_session_open(&endpoint, &peer, UINT32_C(0x10203040), &session),
+              SALTS_OK);
+  check_equal(probe.open_count, 1);
+  check_equal(probe.open_send_status, SALTS_OK);
+  check_equal(probe.open_close_status, SALTS_OK);
+  check_equal(probe.terminal_count, 1);
+  check_equal(probe.terminal_tag, UINT64_C(77));
+  check_equal(probe.terminal_status, SALTS_ECANCELED);
+  check_equal(probe.close_count, 1);
+  check_equal(probe.terminal_count_at_close, 1);
+  check_equal(cnet_packet_session_get_info(&endpoint, session, &info), SALTS_ENOENT);
+
+  check_equal(cnet_packet_endpoint_stop(&endpoint, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&endpoint), SALTS_OK);
+}
+
+static void cnet_packet_test_kcp_capacity_and_close(void) {
+  cnet_packet_endpoint endpoint = {0};
+  cnet_packet_test_probe probe = {0};
+  cnet_packet_endpoint_config config = cnet_packet_test_config(CNET_PACKET_KCP, &probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  cnet_packet_session session = {0};
+  cnet_packet_session reused_session = {0};
+  cnet_datagram_peer peer = cnet_packet_test_peer(10001u);
+  cnet_datagram_peer reused_peer = cnet_packet_test_peer(10002u);
+
+  config.session_capacity = 1u;
+  terminal_config.send_capacity = 1u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &probe;
+  check_equal(cnet_packet_endpoint_init_ex(&endpoint, &config, &terminal_config), SALTS_OK);
+  check_equal(cnet_packet_session_open(&endpoint, &peer, UINT32_C(0x11223344), &session), SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&endpoint, session, "first", 5u, UINT64_C(11)), SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&endpoint, session, "second", 6u, UINT64_C(22)),
+              SALTS_ENOBUFS);
+  check_equal(probe.terminal_count, 0);
+
+  check_equal(cnet_packet_session_close(&endpoint, session), SALTS_OK);
+  check_equal(probe.terminal_count, 1);
+  check_equal(probe.terminal_tag, UINT64_C(11));
+  check_equal(probe.terminal_status, SALTS_ECANCELED);
+  check_equal(probe.close_count, 1);
+  check_equal(probe.terminal_count_at_close, 1);
+  check_equal(cnet_packet_send_tagged(&endpoint, session, "stale", 5u, UINT64_C(33)), SALTS_ENOENT);
+  check_equal(probe.terminal_count, 1);
+  check_equal(cnet_packet_session_open(&endpoint, &reused_peer, UINT32_C(0x55667788),
+                                       &reused_session),
+              SALTS_OK);
+  check_equal(reused_session.slot, session.slot);
+  check_true(reused_session.generation != session.generation);
+  check_equal(cnet_packet_send_tagged(&endpoint, reused_session, "reused", 6u, UINT64_C(44)),
+              SALTS_OK);
+  check_equal(cnet_packet_endpoint_stop(&endpoint, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(probe.terminal_count, 2);
+  check_equal(probe.terminal_tags[1], UINT64_C(44));
+  check_equal(probe.terminal_statuses[1], SALTS_ECANCELED);
+  check_equal(probe.terminal_generations[0], session.generation);
+  check_equal(probe.terminal_generations[1], reused_session.generation);
+  check_equal(probe.close_count, 2);
+  check_equal(probe.terminal_count_at_close, 2);
+
+  check_equal(cnet_packet_endpoint_destroy(&endpoint), SALTS_OK);
+}
+
+static void cnet_packet_test_terminal_config_validation(void) {
+  cnet_packet_endpoint endpoint = {0};
+  cnet_packet_test_probe probe = {0};
+  cnet_packet_endpoint_config config = cnet_packet_test_config(CNET_PACKET_KCP, &probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
+
+  terminal_config.send_capacity = 1u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &probe;
+  terminal_config.version = CNET_PACKET_TERMINAL_API_VERSION + 1u;
+  check_equal(cnet_packet_endpoint_init_ex(&endpoint, &config, &terminal_config), SALTS_EINVAL);
+  check_null(endpoint.impl);
+
+  terminal_config.version = CNET_PACKET_TERMINAL_API_VERSION;
+  config.kcp.stream_mode = true;
+  check_equal(cnet_packet_endpoint_init_ex(&endpoint, &config, &terminal_config), SALTS_EINVAL);
+  check_null(endpoint.impl);
+  check_equal(cnet_packet_endpoint_init(&endpoint, &config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_stop(&endpoint, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&endpoint), SALTS_OK);
+}
+
+static void cnet_packet_test_udp_stop_drains_terminal(void) {
+  cnet_packet_endpoint endpoint = {0};
+  cnet_packet_endpoint receiver = {0};
+  cnet_packet_test_probe probe = {0};
+  cnet_packet_test_probe receiver_probe = {0};
+  cnet_packet_endpoint_config config = cnet_packet_test_config(CNET_PACKET_UDP, &probe);
+  cnet_packet_endpoint_config receiver_config =
+      cnet_packet_test_config(CNET_PACKET_UDP, &receiver_probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  cnet_packet_session session = {0};
+  cnet_datagram_peer peer;
+  uint16_t receiver_port = 0u;
+
+  terminal_config.send_capacity = 1u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &probe;
+  check_equal(cnet_packet_endpoint_init_ex(&endpoint, &config, &terminal_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_init(&receiver, &receiver_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&receiver, &receiver_port), SALTS_OK);
+  peer = cnet_packet_test_peer(receiver_port);
+  check_equal(cnet_packet_session_open(&endpoint, &peer, 0u, &session), SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&endpoint, session, "stop", 4u, UINT64_C(44)), SALTS_OK);
+  check_equal(probe.terminal_count, 0);
+
+  check_equal(cnet_packet_endpoint_stop(&endpoint, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(probe.terminal_count, 1);
+  check_equal(probe.terminal_tag, UINT64_C(44));
+  check_true(probe.terminal_status == SALTS_OK || probe.terminal_status == SALTS_ECANCELED);
+  check_equal(probe.close_count, 1);
+  check_equal(probe.terminal_count_at_close, 1);
+  check_equal(cnet_packet_endpoint_stop(&receiver, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&receiver), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&endpoint), SALTS_OK);
+}
+
+static void cnet_packet_test_tagged_send_requires_terminal_policy(void) {
+  cnet_packet_endpoint endpoint = {0};
+  cnet_packet_test_probe probe = {0};
+  cnet_packet_endpoint_config config = cnet_packet_test_config(CNET_PACKET_UDP, &probe);
+  cnet_packet_session session = {0};
+  cnet_datagram_peer peer = cnet_packet_test_peer(10001u);
+
+  check_equal(cnet_packet_endpoint_init(&endpoint, &config), SALTS_OK);
+  check_equal(cnet_packet_session_open(&endpoint, &peer, 0u, &session), SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&endpoint, session, "x", 1u, UINT64_C(55)), SALTS_ENOTSUP);
+  check_equal(probe.terminal_count, 0);
+  check_equal(cnet_packet_endpoint_stop(&endpoint, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&endpoint), SALTS_OK);
+}
+
+static void cnet_packet_test_udp_tagged_capacity_reuse(void) {
+  cnet_packet_endpoint left = {0};
+  cnet_packet_endpoint right = {0};
+  cnet_packet_test_probe left_probe = {0};
+  cnet_packet_test_probe right_probe = {0};
+  cnet_packet_endpoint_config left_config = cnet_packet_test_config(CNET_PACKET_UDP, &left_probe);
+  cnet_packet_endpoint_config right_config = cnet_packet_test_config(CNET_PACKET_UDP, &right_probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  cnet_packet_session session = {0};
+  cnet_datagram_peer peer;
+  uint16_t right_port = 0u;
+  size_t events = 0u;
+  size_t attempts;
+
+  terminal_config.send_capacity = 1u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &left_probe;
+  left_probe.send_again_on_terminal = true;
+  check_equal(cnet_packet_endpoint_init_ex(&left, &left_config, &terminal_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_init(&right, &right_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&right, &right_port), SALTS_OK);
+  peer = cnet_packet_test_peer(right_port);
+  check_equal(cnet_packet_session_open(&left, &peer, 0u, &session), SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&left, session, "one", 3u, UINT64_C(1)), SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&left, session, "full", 4u, UINT64_C(2)), SALTS_ENOBUFS);
+
+  for (attempts = 0u; attempts < 1000u && left_probe.terminal_count == 0; ++attempts) {
+    check_equal(cnet_packet_poll(&left, 1u, &events), SALTS_OK);
+    check_equal(cnet_packet_poll(&right, 1u, &events), SALTS_OK);
+  }
+  check_equal(left_probe.terminal_count, 1);
+  check_equal(left_probe.terminal_tag, UINT64_C(1));
+  check_equal(left_probe.terminal_action_status, SALTS_OK);
+  for (attempts = 0u; attempts < 1000u && left_probe.terminal_count != 2; ++attempts) {
+    check_equal(cnet_packet_poll(&left, 1u, &events), SALTS_OK);
+    check_equal(cnet_packet_poll(&right, 1u, &events), SALTS_OK);
+  }
+  check_equal(left_probe.terminal_count, 2);
+  check_equal(left_probe.terminal_tags[1], UINT64_C(2));
+
+  check_equal(cnet_packet_endpoint_stop(&right, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_stop(&left, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&right), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&left), SALTS_OK);
+}
+
+static void cnet_packet_test_full_capacity_preserves_validation_errors(void) {
+  unsigned char oversized[129] = {0};
+  cnet_packet_endpoint udp = {0};
+  cnet_packet_endpoint receiver = {0};
+  cnet_packet_test_probe udp_probe = {0};
+  cnet_packet_test_probe receiver_probe = {0};
+  cnet_packet_endpoint_config udp_config = cnet_packet_test_config(CNET_PACKET_UDP, &udp_probe);
+  cnet_packet_endpoint_config receiver_config =
+      cnet_packet_test_config(CNET_PACKET_UDP, &receiver_probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  cnet_packet_session udp_session = {0};
+  cnet_datagram_peer peer;
+  uint16_t receiver_port = 0u;
+
+  udp_config.datagram.max_datagram_bytes = sizeof(oversized) - 1u;
+  udp_config.datagram.receive_buffer_bytes = sizeof(oversized) - 1u;
+  terminal_config.send_capacity = 1u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &udp_probe;
+  check_equal(cnet_packet_endpoint_init_ex(&udp, &udp_config, &terminal_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_init(&receiver, &receiver_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&receiver, &receiver_port), SALTS_OK);
+  peer = cnet_packet_test_peer(receiver_port);
+  check_equal(cnet_packet_session_open(&udp, &peer, 0u, &udp_session), SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&udp, udp_session, "held", 4u, UINT64_C(1)), SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&udp, udp_session, oversized, sizeof(oversized), UINT64_C(2)),
+              SALTS_EMSGSIZE);
+  check_equal(cnet_packet_endpoint_stop(&udp, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_stop(&receiver, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&receiver), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&udp), SALTS_OK);
+}
+
+static void cnet_packet_test_kcp_session_failure_terminal(void) {
+  static const uint32_t conversation = UINT32_C(0x12345678);
+  unsigned char malformed_kcp[24] = {0};
+  cnet_packet_endpoint endpoint = {0};
+  cnet_packet_endpoint peer_endpoint = {0};
+  cnet_packet_test_probe probe = {0};
+  cnet_packet_test_probe peer_probe = {0};
+  cnet_packet_endpoint_config config = cnet_packet_test_config(CNET_PACKET_KCP, &probe);
+  cnet_packet_endpoint_config peer_config = cnet_packet_test_config(CNET_PACKET_UDP, &peer_probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  cnet_packet_session session = {0};
+  cnet_packet_session peer_session = {0};
+  cnet_packet_session_info info = {0};
+  cnet_datagram_peer endpoint_peer;
+  cnet_datagram_peer peer;
+  uint16_t endpoint_port = 0u;
+  uint16_t peer_port = 0u;
+  size_t events = 0u;
+  int status = SALTS_OK;
+
+  terminal_config.send_capacity = 2u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &probe;
+  check_equal(cnet_packet_endpoint_init_ex(&endpoint, &config, &terminal_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_init(&peer_endpoint, &peer_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&endpoint, &endpoint_port), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&peer_endpoint, &peer_port), SALTS_OK);
+  endpoint_peer = cnet_packet_test_peer(endpoint_port);
+  peer = cnet_packet_test_peer(peer_port);
+  check_equal(cnet_packet_session_open(&endpoint, &peer, conversation, &session), SALTS_OK);
+  check_equal(cnet_packet_session_open(&peer_endpoint, &endpoint_peer, 0u, &peer_session), SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&endpoint, session, "pending-a", 9u, UINT64_C(66)),
+              SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&endpoint, session, "pending-b", 9u, UINT64_C(67)),
+              SALTS_OK);
+
+  malformed_kcp[0] = (unsigned char)conversation;
+  malformed_kcp[1] = (unsigned char)(conversation >> 8u);
+  malformed_kcp[2] = (unsigned char)(conversation >> 16u);
+  malformed_kcp[3] = (unsigned char)(conversation >> 24u);
+  malformed_kcp[4] = 0xffu;
+  check_equal(cnet_packet_send(&peer_endpoint, peer_session, malformed_kcp, sizeof(malformed_kcp)),
+              SALTS_OK);
+  check_equal(cnet_packet_poll(&peer_endpoint, 1u, &events), SALTS_OK);
+  status = cnet_packet_poll(&endpoint, 1u, &events);
+  check_equal(status, SALTS_EPROTO);
+  check_equal(probe.error_count, 1);
+  check_equal(probe.last_error, SALTS_EPROTO);
+  check_equal(probe.terminal_count, 2);
+  check_equal(probe.terminal_tags[0], UINT64_C(66));
+  check_equal(probe.terminal_statuses[0], SALTS_EPROTO);
+  check_equal(probe.terminal_tags[1], UINT64_C(67));
+  check_equal(probe.terminal_statuses[1], SALTS_EPROTO);
+  check_equal(probe.close_count, 1);
+  check_equal(probe.terminal_count_at_close, 2);
+
+  check_equal(cnet_packet_endpoint_stop(&peer_endpoint, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_stop(&endpoint, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&peer_endpoint), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&endpoint), SALTS_OK);
+
+  probe = (cnet_packet_test_probe){0};
+  peer_probe = (cnet_packet_test_probe){0};
+  config = cnet_packet_test_config(CNET_PACKET_KCP, &probe);
+  peer_config = cnet_packet_test_config(CNET_PACKET_UDP, &peer_probe);
+  check_equal(cnet_packet_endpoint_init(&endpoint, &config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_init(&peer_endpoint, &peer_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&endpoint, &endpoint_port), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&peer_endpoint, &peer_port), SALTS_OK);
+  endpoint_peer = cnet_packet_test_peer(endpoint_port);
+  peer = cnet_packet_test_peer(peer_port);
+  check_equal(cnet_packet_session_open(&endpoint, &peer, conversation, &session), SALTS_OK);
+  check_equal(cnet_packet_session_open(&peer_endpoint, &endpoint_peer, 0u, &peer_session), SALTS_OK);
+  check_equal(cnet_packet_send(&peer_endpoint, peer_session, malformed_kcp, sizeof(malformed_kcp)),
+              SALTS_OK);
+  check_equal(cnet_packet_poll(&peer_endpoint, 1u, &events), SALTS_OK);
+  check_equal(cnet_packet_poll(&endpoint, 1u, &events), SALTS_EPROTO);
+  check_equal(probe.close_count, 0);
+  check_equal(cnet_packet_session_get_info(&endpoint, session, &info), SALTS_OK);
+
+  check_equal(cnet_packet_endpoint_stop(&peer_endpoint, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_stop(&endpoint, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&peer_endpoint), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&endpoint), SALTS_OK);
+}
+
+static void cnet_packet_test_kcp_ack_close_race(void) {
+  cnet_packet_endpoint left = {0};
+  cnet_packet_endpoint right = {0};
+  cnet_packet_test_probe left_probe = {0};
+  cnet_packet_test_probe right_probe = {0};
+  cnet_packet_endpoint_config left_config = cnet_packet_test_config(CNET_PACKET_KCP, &left_probe);
+  cnet_packet_endpoint_config right_config = cnet_packet_test_config(CNET_PACKET_KCP, &right_probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  cnet_packet_session session = {0};
+  cnet_datagram_peer peer;
+  uint16_t right_port = 0u;
+  size_t events = 0u;
+  size_t attempts;
+
+  terminal_config.send_capacity = 1u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &left_probe;
+  right_probe.send_reply_on_receive = true;
+  left_probe.close_on_receive = true;
+  check_equal(cnet_packet_endpoint_init_ex(&left, &left_config, &terminal_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_init(&right, &right_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&right, &right_port), SALTS_OK);
+  peer = cnet_packet_test_peer(right_port);
+  check_equal(cnet_packet_session_open(&left, &peer, UINT32_C(0x87654321), &session), SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&left, session, "request", 7u, UINT64_C(77)), SALTS_OK);
+
+  for (attempts = 0u; attempts < 2000u && left_probe.close_count == 0; ++attempts) {
+    check_equal(cnet_packet_poll(&left, 1u, &events), SALTS_OK);
+    check_equal(cnet_packet_poll(&right, 1u, &events), SALTS_OK);
+  }
+  check_equal(right_probe.receive_action_status, SALTS_OK);
+  check_equal(left_probe.receive_action_status, SALTS_OK);
+  check_equal(left_probe.terminal_count, 1);
+  check_equal(left_probe.terminal_tag, UINT64_C(77));
+  check_equal(left_probe.terminal_status, SALTS_OK);
+  check_equal(left_probe.close_count, 1);
+  check_equal(left_probe.terminal_count_at_close, 1);
+
+  check_equal(cnet_packet_endpoint_stop(&right, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_stop(&left, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&right), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&left), SALTS_OK);
+}
+
 static void cnet_packet_test_secure_config(cnet_packet_endpoint_config *config,
                                            unsigned char psk_byte) {
   memset(config->security.pre_shared_key, psk_byte,
@@ -166,12 +701,14 @@ static void cnet_packet_test_secure_config(cnet_packet_endpoint_config *config,
 
 static void cnet_packet_test_secure_round_trip(void) {
   static const unsigned char message[] = "authenticated-kcp";
+  static const uint64_t tag = UINT64_C(0xabcdef0123456789);
   cnet_packet_endpoint left = {0};
   cnet_packet_endpoint right = {0};
   cnet_packet_test_probe left_probe = {0};
   cnet_packet_test_probe right_probe = {0};
   cnet_packet_endpoint_config left_config = cnet_packet_test_config(CNET_PACKET_KCP, &left_probe);
   cnet_packet_endpoint_config right_config = cnet_packet_test_config(CNET_PACKET_KCP, &right_probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
   cnet_packet_session left_session = {0};
   cnet_datagram_peer right_peer;
   cnet_packet_session_info info = {0};
@@ -181,7 +718,10 @@ static void cnet_packet_test_secure_round_trip(void) {
 
   cnet_packet_test_secure_config(&left_config, 0x5au);
   cnet_packet_test_secure_config(&right_config, 0x5au);
-  check_equal(cnet_packet_endpoint_init(&left, &left_config), SALTS_OK);
+  terminal_config.send_capacity = 2u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &left_probe;
+  check_equal(cnet_packet_endpoint_init_ex(&left, &left_config, &terminal_config), SALTS_OK);
   check_equal(cnet_packet_endpoint_init(&right, &right_config), SALTS_OK);
   check_equal(cnet_packet_endpoint_port(&right, &right_port), SALTS_OK);
   right_peer = cnet_packet_test_peer(right_port);
@@ -199,7 +739,9 @@ static void cnet_packet_test_secure_round_trip(void) {
   check_equal(right_probe.open_count, 1);
   check_equal(cnet_packet_session_get_info(&left, left_session, &info), SALTS_OK);
   check_true(info.conversation != 0u);
-  check_equal(cnet_packet_send(&left, left_session, message, sizeof(message)), SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&left, left_session, message, sizeof(message), tag),
+              SALTS_OK);
+  check_equal(left_probe.terminal_count, 0);
 
   for (attempts = 0u; attempts < 1000u && right_probe.receive_count == 0; ++attempts) {
     check_equal(cnet_packet_poll(&left, 1u, &events), SALTS_OK);
@@ -208,6 +750,13 @@ static void cnet_packet_test_secure_round_trip(void) {
   check_equal(right_probe.receive_count, 1);
   check_equal(right_probe.received_size, sizeof(message));
   check_equal(right_probe.received, message, sizeof(message));
+  for (attempts = 0u; attempts < 1000u && left_probe.terminal_count == 0; ++attempts) {
+    check_equal(cnet_packet_poll(&right, 1u, &events), SALTS_OK);
+    check_equal(cnet_packet_poll(&left, 1u, &events), SALTS_OK);
+  }
+  check_equal(left_probe.terminal_count, 1);
+  check_equal(left_probe.terminal_tag, tag);
+  check_equal(left_probe.terminal_status, SALTS_OK);
   check_equal(left_probe.error_count, 0);
   check_equal(right_probe.error_count, 0);
 
@@ -217,7 +766,156 @@ static void cnet_packet_test_secure_round_trip(void) {
   check_equal(cnet_packet_endpoint_destroy(&left), SALTS_OK);
 }
 
+static void cnet_packet_test_secure_full_capacity_preserves_handshake_error(void) {
+  cnet_packet_endpoint left = {0};
+  cnet_packet_endpoint right = {0};
+  cnet_packet_endpoint waiting_right = {0};
+  cnet_packet_test_probe left_probe = {0};
+  cnet_packet_test_probe right_probe = {0};
+  cnet_packet_test_probe waiting_probe = {0};
+  cnet_packet_endpoint_config left_config = cnet_packet_test_config(CNET_PACKET_KCP, &left_probe);
+  cnet_packet_endpoint_config right_config = cnet_packet_test_config(CNET_PACKET_KCP, &right_probe);
+  cnet_packet_endpoint_config waiting_config =
+      cnet_packet_test_config(CNET_PACKET_KCP, &waiting_probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  cnet_packet_session established = {0};
+  cnet_packet_session handshaking = {0};
+  cnet_datagram_peer right_peer;
+  cnet_datagram_peer waiting_peer;
+  uint16_t right_port = 0u;
+  uint16_t waiting_port = 0u;
+  size_t events = 0u;
+  size_t attempts;
+
+  cnet_packet_test_secure_config(&left_config, 0x3cu);
+  cnet_packet_test_secure_config(&right_config, 0x3cu);
+  cnet_packet_test_secure_config(&waiting_config, 0x3cu);
+  terminal_config.send_capacity = 1u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &left_probe;
+  check_equal(cnet_packet_endpoint_init_ex(&left, &left_config, &terminal_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_init(&right, &right_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_init(&waiting_right, &waiting_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&right, &right_port), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&waiting_right, &waiting_port), SALTS_OK);
+  right_peer = cnet_packet_test_peer(right_port);
+  check_equal(cnet_packet_session_open(&left, &right_peer, 0u, &established), SALTS_OK);
+  for (attempts = 0u; attempts < 1000u && left_probe.open_count == 0; ++attempts) {
+    check_equal(cnet_packet_poll(&left, 1u, &events), SALTS_OK);
+    check_equal(cnet_packet_poll(&right, 1u, &events), SALTS_OK);
+  }
+  check_equal(left_probe.open_count, 1);
+  check_equal(cnet_packet_send_tagged(&left, established, "held", 4u, UINT64_C(1)), SALTS_OK);
+  waiting_peer = cnet_packet_test_peer(waiting_port);
+  check_equal(cnet_packet_session_open(&left, &waiting_peer, 0u, &handshaking), SALTS_OK);
+  check_equal(cnet_packet_send_tagged(&left, handshaking, "busy", 4u, UINT64_C(2)), SALTS_EBUSY);
+
+  check_equal(cnet_packet_endpoint_stop(&left, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_stop(&waiting_right, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_stop(&right, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&waiting_right), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&right), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&left), SALTS_OK);
+}
+
+static void cnet_packet_test_secure_authenticated_failure_settles_ack(void) {
+  cnet_packet_endpoint left = {0};
+  cnet_packet_endpoint right = {0};
+  cnet_packet_test_probe left_probe = {0};
+  cnet_packet_test_probe right_probe = {0};
+  cnet_packet_endpoint_config left_config = cnet_packet_test_config(CNET_PACKET_KCP, &left_probe);
+  cnet_packet_endpoint_config right_config = cnet_packet_test_config(CNET_PACKET_KCP, &right_probe);
+  cnet_packet_terminal_config terminal_config = CNET_PACKET_TERMINAL_CONFIG_INIT;
+  cnet_packet_session session = {0};
+  cnet_datagram_peer peer;
+  uint16_t right_port = 0u;
+  size_t events = 0u;
+  size_t attempts;
+  int left_status = SALTS_OK;
+
+  cnet_packet_test_secure_config(&left_config, 0x6du);
+  cnet_packet_test_secure_config(&right_config, 0x6du);
+  left_config.kcp.max_message_bytes = sizeof(left_probe.received);
+  right_config.kcp.max_message_bytes = 700u;
+  right_probe.send_reply_on_receive = true;
+  right_probe.reply_size = 700u;
+  terminal_config.send_capacity = 1u;
+  terminal_config.on_send = cnet_packet_test_send_terminal;
+  terminal_config.user = &left_probe;
+  check_equal(cnet_packet_endpoint_init_ex(&left, &left_config, &terminal_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_init(&right, &right_config), SALTS_OK);
+  check_equal(cnet_packet_endpoint_port(&right, &right_port), SALTS_OK);
+  peer = cnet_packet_test_peer(right_port);
+  check_equal(cnet_packet_session_open(&left, &peer, 0u, &session), SALTS_OK);
+  for (attempts = 0u; attempts < 1000u && left_probe.open_count == 0; ++attempts) {
+    check_equal(cnet_packet_poll(&left, 1u, &events), SALTS_OK);
+    check_equal(cnet_packet_poll(&right, 1u, &events), SALTS_OK);
+  }
+  check_equal(cnet_packet_send_tagged(&left, session, "request", 7u, UINT64_C(99)), SALTS_OK);
+  for (attempts = 0u; attempts < 2000u && left_probe.close_count == 0; ++attempts) {
+    if (left_status == SALTS_OK) left_status = cnet_packet_poll(&left, 1u, &events);
+    check_equal(cnet_packet_poll(&right, 1u, &events), SALTS_OK);
+  }
+  check_equal(right_probe.receive_action_status, SALTS_OK);
+  check_equal(left_status, SALTS_EMSGSIZE);
+  check_equal(left_probe.last_error, SALTS_EMSGSIZE);
+  check_equal(left_probe.terminal_count, 1);
+  check_equal(left_probe.terminal_tag, UINT64_C(99));
+  check_equal(left_probe.terminal_status, SALTS_OK);
+  check_equal(left_probe.close_count, 1);
+  check_equal(left_probe.terminal_count_at_close, 1);
+
+  check_equal(cnet_packet_endpoint_stop(&right, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_stop(&left, CNET_PACKET_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&right), SALTS_OK);
+  check_equal(cnet_packet_endpoint_destroy(&left), SALTS_OK);
+}
+
 spec("CNet unified UDP and KCP packet endpoint") {
+  it("publishes one tagged UDP terminal only after native completion") {
+    cnet_packet_test_udp_tagged_terminal();
+  }
+
+  it("waits for acknowledgements before publishing ordered KCP terminals") {
+    cnet_packet_test_kcp_tagged_terminals();
+  }
+
+  it("rejects excess tagged KCP sends and cancels the admitted send on close") {
+    cnet_packet_test_kcp_capacity_and_close();
+  }
+
+  it("drains a tagged KCP close initiated by the open callback") {
+    cnet_packet_test_kcp_open_callback_drains_close();
+  }
+
+  it("validates terminal API versions without changing legacy KCP stream init") {
+    cnet_packet_test_terminal_config_validation();
+  }
+
+  it("drains one tagged UDP terminal before stop completes") {
+    cnet_packet_test_udp_stop_drains_terminal();
+  }
+
+  it("fails tagged admission when the endpoint has no terminal policy") {
+    cnet_packet_test_tagged_send_requires_terminal_policy();
+  }
+
+  it("rejects full tagged UDP capacity and reuses it after terminal completion") {
+    cnet_packet_test_udp_tagged_capacity_reuse();
+  }
+
+  it("reports size errors before full tagged-operation capacity") {
+    cnet_packet_test_full_capacity_preserves_validation_errors();
+  }
+
+  it("settles pending KCP sends with the concrete remote session failure") {
+    cnet_packet_test_kcp_session_failure_terminal();
+  }
+
+  it("keeps an acknowledged KCP terminal successful when receive closes the session") {
+    cnet_packet_test_kcp_ack_close_race();
+  }
+
   it("uses one endpoint contract for UDP") { cnet_packet_test_round_trip(CNET_PACKET_UDP, 0u); }
 
   it("uses one endpoint contract for KCP") {
@@ -226,6 +924,14 @@ spec("CNet unified UDP and KCP packet endpoint") {
 
   it("uses the endpoint contract for authenticated KCP after handshake") {
     cnet_packet_test_secure_round_trip();
+  }
+
+  it("reports secure handshake readiness before full tagged-operation capacity") {
+    cnet_packet_test_secure_full_capacity_preserves_handshake_error();
+  }
+
+  it("settles authenticated acknowledgements before a fatal receive error") {
+    cnet_packet_test_secure_authenticated_failure_settles_ack();
   }
 
   it("does not admit an unauthenticated KCP client hello") {

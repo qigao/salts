@@ -220,6 +220,31 @@ typedef struct cnet_packet_observer {
   void *user;
 } cnet_packet_observer;
 
+enum { CNET_PACKET_TERMINAL_API_VERSION = 1u };
+
+/**
+ * Authoritative terminal for one successfully admitted tagged logical send.
+ * Callback arguments are borrowed through callback return. UDP reports its
+ * NativeIO datagram terminal; KCP reports completion only after every segment
+ * in the logical message is acknowledged by the peer.
+ */
+typedef void (*cnet_packet_send_terminal_fn)(void *user, cnet_packet_endpoint *endpoint,
+                                             cnet_packet_session session, size_t size, int status,
+                                             uint64_t tag);
+
+/** Optional additive terminal policy consumed synchronously by endpoint init. */
+typedef struct cnet_packet_terminal_config {
+  size_t size;
+  uint32_t version;
+  /** Hard bound for concurrently admitted tagged logical sends. */
+  size_t send_capacity;
+  cnet_packet_send_terminal_fn on_send;
+  void *user;
+} cnet_packet_terminal_config;
+
+#define CNET_PACKET_TERMINAL_CONFIG_INIT                                                           \
+  {sizeof(cnet_packet_terminal_config), CNET_PACKET_TERMINAL_API_VERSION, 0u, NULL, NULL}
+
 typedef void (*cnet_state_fn)(void *user, cnet_connection connection, cnet_connection_state state,
                               const cnet_error *error);
 typedef void (*cnet_receive_fn)(void *user, cnet_connection connection,
@@ -1004,6 +1029,16 @@ int cnet_secure_kcp_destroy(cnet_secure_kcp *session);
 int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
                               const cnet_packet_endpoint_config *config);
 
+/**
+ * Initializes an endpoint with authoritative tagged logical-send terminals.
+ * `terminal` is copied and its fixed capacity is reserved before publication.
+ * KCP stream mode is rejected because it does not retain logical-message
+ * boundaries. Passing NULL preserves `cnet_packet_endpoint_init()` behavior.
+ */
+int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
+                                 const cnet_packet_endpoint_config *config,
+                                 const cnet_packet_terminal_config *terminal);
+
 /** Returns the host-order UDP port shared by all endpoint sessions. */
 int cnet_packet_endpoint_port(const cnet_packet_endpoint *endpoint, uint16_t *out_port);
 
@@ -1028,6 +1063,15 @@ int cnet_packet_session_close(cnet_packet_endpoint *endpoint, cnet_packet_sessio
 /** Copies and admits one UDP datagram or one reliable ordered KCP message. */
 int cnet_packet_send(cnet_packet_endpoint *endpoint, cnet_packet_session session, const void *data,
                      size_t size);
+
+/**
+ * Copies and admits one logical message associated with the opaque caller tag.
+ * Success guarantees exactly one later terminal callback. Failure retains no
+ * operation and produces no terminal callback. A missing terminal policy
+ * returns `SALTS_ENOTSUP`; tagged-operation capacity returns `SALTS_ENOBUFS`.
+ */
+int cnet_packet_send_tagged(cnet_packet_endpoint *endpoint, cnet_packet_session session,
+                            const void *data, size_t size, uint64_t tag);
 
 /** Drives socket completions and all due KCP timers on the caller-owned lane. */
 int cnet_packet_poll(cnet_packet_endpoint *endpoint, uint32_t timeout_ms, size_t *out_events);
