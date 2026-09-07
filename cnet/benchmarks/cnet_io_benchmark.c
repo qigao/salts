@@ -9,6 +9,7 @@
 #include <salts/thread.h>
 
 #include "cnet_benchmark_stats.h"
+#include "cnet_client_internal.h"
 #include "cnet_io_benchmark_config.h"
 #include "tinytest.h"
 
@@ -81,6 +82,7 @@ typedef struct io_bench_result {
   size_t cnet_send_admission_calls;
   size_t cnet_poll_calls;
   size_t cnet_callback_calls;
+  cnet_client_poll_profile cnet_profile;
 } io_bench_result;
 
 typedef struct io_bench_series {
@@ -95,6 +97,13 @@ typedef struct io_bench_series {
   cnet_benchmark_summary cnet_callback_control_ns;
   cnet_benchmark_summary cnet_payload_validation_ns;
   cnet_benchmark_summary cnet_polls_per_round_trip;
+  cnet_benchmark_summary cnet_owner_drive_ns;
+  cnet_benchmark_summary cnet_command_stage_ns;
+  cnet_benchmark_summary cnet_observe_ns;
+  cnet_benchmark_summary cnet_request_completion_ns;
+  cnet_benchmark_summary cnet_event_publish_ns;
+  cnet_benchmark_summary cnet_requests_completed_per_round_trip;
+  cnet_benchmark_summary cnet_events_per_round_trip;
 } io_bench_series;
 
 typedef struct io_bench_server {
@@ -858,7 +867,7 @@ static void io_bench_cnet_receive(void *user, cnet_connection connection,
   }
 }
 
-static void io_bench_cnet_begin_measurement(io_bench_cnet *fixture) {
+static int io_bench_cnet_begin_measurement(io_bench_cnet *fixture) {
   fixture->receive_admission_ns = 0u;
   fixture->send_admission_ns = 0u;
   fixture->poll_ns = 0u;
@@ -868,7 +877,12 @@ static void io_bench_cnet_begin_measurement(io_bench_cnet *fixture) {
   fixture->send_admission_calls = 0u;
   fixture->poll_calls = 0u;
   fixture->callback_calls = 0u;
+  {
+    const int status = cnet_client_profile_begin(&fixture->client);
+    if (status != SALTS_OK) return status;
+  }
   fixture->measuring = true;
+  return SALTS_OK;
 }
 
 static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol,
@@ -1043,8 +1057,10 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     status = io_bench_exchange(&fixture, sent, received, payload_size);
     if (status != SALTS_OK) goto cleanup;
   }
-  if (driver == IO_BENCH_CNET && profile_cnet_stages)
-    io_bench_cnet_begin_measurement(&fixture.cnet);
+  if (driver == IO_BENCH_CNET && profile_cnet_stages) {
+    status = io_bench_cnet_begin_measurement(&fixture.cnet);
+    if (status != SALTS_OK) goto cleanup;
+  }
   phase = "measure";
   wall_started = salts_hrtime();
   for (size_t exchange = 0u; exchange < IO_BENCH_EXCHANGES_PER_REPLICATE; ++exchange) {
@@ -1069,7 +1085,9 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     result->cnet_send_admission_calls = fixture.cnet.send_admission_calls;
     result->cnet_poll_calls = fixture.cnet.poll_calls;
     result->cnet_callback_calls = fixture.cnet.callback_calls;
+    status = cnet_client_profile_take(&fixture.cnet.client, &result->cnet_profile);
     fixture.cnet.measuring = false;
+    if (status != SALTS_OK) goto cleanup;
   }
   status = SALTS_OK;
 
@@ -1166,6 +1184,53 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
   if (status == SALTS_OK)
     status =
         cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_polls_per_round_trip);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] = io_bench_mean(result->cnet_profile.owner_drive_ns, result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_owner_drive_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] = io_bench_mean(result->cnet_profile.command_stage_ns, result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_command_stage_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] = io_bench_mean(result->cnet_profile.observe_ns, result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_observe_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] =
+        io_bench_mean(result->cnet_profile.request_completion_ns, result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
+                                      &series->cnet_request_completion_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] = io_bench_mean(result->cnet_profile.event_publish_ns, result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_event_publish_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] = (double)result->cnet_profile.request_completion_calls /
+                     (double)result->round_trips;
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
+                                      &series->cnet_requests_completed_per_round_trip);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->cnet_profile_runs[repeat];
+    values[repeat] = (double)result->cnet_profile.event_publish_calls / (double)result->round_trips;
+  }
+  if (status == SALTS_OK)
+    status =
+        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_events_per_round_trip);
   return status;
 }
 
@@ -1260,7 +1325,7 @@ static int io_bench_print_rate(const char *protocol, const io_bench_series *libu
 static void io_bench_print_cnet_stages(const char *protocol, const io_bench_series *cnet,
                                        size_t count) {
   printf("\n%s CNet public API per-run stage medians and MAD\n", protocol);
-  printf("| payload | send admit median ns | MAD ns | poll median us | MAD us | "
+  printf("| payload | send admit median ns | MAD ns | poll wall median us | MAD us | "
          "callback control median ns | MAD ns | payload validation median ns | MAD ns | "
          "polls/RT |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
@@ -1272,6 +1337,29 @@ static void io_bench_print_cnet_stages(const char *protocol, const io_bench_seri
            series->cnet_poll_ns.mad / 1000.0, series->cnet_callback_control_ns.median,
            series->cnet_callback_control_ns.mad, series->cnet_payload_validation_ns.median,
            series->cnet_payload_validation_ns.mad, series->cnet_polls_per_round_trip.median);
+  }
+
+  printf("\n%s CNet internal inclusive time per round trip\n", protocol);
+  printf("Nested columns overlap and must not be added. Request completion is terminal logical "
+         "request control and excludes intermediate partial-send completions; event publish "
+         "includes the user callback.\n");
+  printf("| payload | owner drive us | MAD us | command stage ns | MAD ns | observe us | MAD us | "
+         "request completion ns | MAD ns | event publish ns | MAD ns | requests completed/RT | "
+         "events/RT |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
+         "---: |\n");
+  for (size_t index = 0u; index < count; ++index) {
+    const io_bench_series *series = &cnet[index];
+    printf("| %zu KiB | %.3f | %.3f | %.1f | %.1f | %.3f | %.3f | %.1f | %.1f | %.1f | "
+           "%.1f | %.2f | %.2f |\n",
+           series->payload_size / 1024u, series->cnet_owner_drive_ns.median / 1000.0,
+           series->cnet_owner_drive_ns.mad / 1000.0, series->cnet_command_stage_ns.median,
+           series->cnet_command_stage_ns.mad, series->cnet_observe_ns.median / 1000.0,
+           series->cnet_observe_ns.mad / 1000.0, series->cnet_request_completion_ns.median,
+           series->cnet_request_completion_ns.mad, series->cnet_event_publish_ns.median,
+           series->cnet_event_publish_ns.mad,
+           series->cnet_requests_completed_per_round_trip.median,
+           series->cnet_events_per_round_trip.median);
   }
 }
 

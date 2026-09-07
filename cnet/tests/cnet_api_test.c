@@ -1,4 +1,7 @@
 #include "cnet_test_named_pipe.h"
+#if defined(CNET_INTERNAL_PROFILING)
+#include "cnet_client_internal.h"
+#endif
 #include "cnet_transport.h"
 #include "tinytest.h"
 #include <cnet/cnet.h>
@@ -804,6 +807,32 @@ spec("CNet public client API") {
     check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(cnet_client_destroy(&client), SALTS_OK);
   }
+
+#if defined(CNET_INTERNAL_PROFILING)
+  it("collects internal poll stages only during an explicit diagnostic sample") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_client_poll_profile profile = {0};
+    size_t events = SIZE_MAX;
+
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_client_profile_take(&client, &profile), SALTS_EBUSY);
+    check_equal(cnet_client_profile_begin(&client), SALTS_OK);
+    check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
+    check_equal(events, (size_t)0u);
+    check_equal(cnet_client_profile_take(&client, &profile), SALTS_OK);
+    check_equal(profile.owner_drive_calls, (uint64_t)1u);
+    check_equal(profile.command_stage_calls, (uint64_t)1u);
+    check_equal(profile.observe_calls, (uint64_t)1u);
+    check_equal(profile.request_completion_calls, (uint64_t)0u);
+    check_equal(profile.event_publish_calls, (uint64_t)0u);
+    check_true(profile.owner_drive_ns >= profile.command_stage_ns);
+    check_true(profile.owner_drive_ns >= profile.observe_ns);
+    check_equal(cnet_client_profile_take(&client, &profile), SALTS_EBUSY);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+  }
+#endif
 
   it("wakes an idle poll from another thread without publishing a callback") {
     cnet_client client = {0};

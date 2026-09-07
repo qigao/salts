@@ -81,6 +81,16 @@ set_target_properties(cnet_owner_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+cmake_add_test(cnet_owner_profile_test
+  SOURCES cnet_owner_test.c
+  LIBS salts_cnet_profile Salts::TinyTest
+  INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_owner_profile_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 cmake_add_test(cnet_event_test
   SOURCES cnet_event_test.c
   LIBS salts_cnet Salts::TinyTest
@@ -127,6 +137,16 @@ cmake_add_test(cnet_api_test
   INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
   FOLDER "cnet/tests")
 set_target_properties(cnet_api_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+cmake_add_test(cnet_api_profile_test
+  SOURCES cnet_api_test.c
+  LIBS salts_cnet_profile Salts::TinyTest
+  INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_api_profile_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
