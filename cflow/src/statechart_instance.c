@@ -122,6 +122,13 @@ typedef struct cflow_statechart_instance_impl {
     bool macrostep_active;
     bool macrostep_has_external;
     bool external_in_flight;
+    uint64_t external_in_flight_origin_token;
+    bool external_in_flight_dropped;
+    cflow_statechart_external_settlement pending_external_settlement;
+    bool pending_external_settlement_ready;
+    bool external_settlement_delivery_active;
+    size_t cancelled_external_settlement_head;
+    size_t cancelled_external_settlement_count;
     bool driver_scheduled;
     bool driver_repost;
     bool driver_after_microstep;
@@ -216,11 +223,29 @@ static bool checked_accumulate(size_t value, size_t *total) {
 
 static bool instance_hooks_shape_valid(
     const cflow_statechart_instance_hooks *hooks) {
+    const size_t v4_size = offsetof(
+        cflow_statechart_instance_hooks, on_external_settlement);
     if (hooks == NULL) return true;
-    return hooks->abi_version ==
-               CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4 &&
-           hooks->struct_size == sizeof(*hooks) &&
-           hooks->on_host_transaction != NULL;
+    if (hooks->abi_version == CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4)
+        return hooks->struct_size >= v4_size &&
+            hooks->on_host_transaction != NULL;
+    if (hooks->abi_version == CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V5)
+        return hooks->struct_size >= sizeof(*hooks) &&
+            (hooks->on_host_transaction != NULL ||
+             hooks->on_external_settlement != NULL);
+    return false;
+}
+
+static void copy_instance_hooks(
+    cflow_statechart_instance_hooks *destination,
+    const cflow_statechart_instance_hooks *source) {
+    const size_t v4_size = offsetof(
+        cflow_statechart_instance_hooks, on_external_settlement);
+    memset(destination, 0, sizeof(*destination));
+    if (source == NULL) return;
+    memcpy(destination, source,
+           source->abi_version == CFLOW_STATECHART_INSTANCE_HOOKS_ABI_V4
+               ? v4_size : sizeof(*destination));
 }
 
 static bool bitset_bytes_for(size_t bit_count, size_t *out) {
@@ -1213,8 +1238,31 @@ uint64_t cflow_statechart_external_identity_sum_internal(
 
 static void settle_external_locked(cflow_statechart_instance_impl *impl,
                                    cflow_statechart_instance_status status) {
+    cflow_statechart_external_settlement_kind kind;
     if (!impl->external_in_flight) return;
+    if (status == CFLOW_STATECHART_INSTANCE_OK)
+        kind = impl->external_in_flight_dropped
+            ? CFLOW_STATECHART_EXTERNAL_SETTLED_DROPPED
+            : CFLOW_STATECHART_EXTERNAL_SETTLED_COMPLETED;
+    else if (status == CFLOW_STATECHART_INSTANCE_TASK_CANCELLED)
+        kind = CFLOW_STATECHART_EXTERNAL_SETTLED_CANCELLED;
+    else
+        kind = CFLOW_STATECHART_EXTERNAL_SETTLED_FAILED;
+    if (impl->external_in_flight_origin_token != UINT64_C(0) &&
+        impl->hooks.on_external_settlement != NULL) {
+        impl->pending_external_settlement =
+            (cflow_statechart_external_settlement){
+                .origin_token = impl->external_in_flight_origin_token,
+                .configuration_version = impl->configuration_version,
+                .kind = kind,
+                .status = status,
+                .error = kind == CFLOW_STATECHART_EXTERNAL_SETTLED_FAILED
+                    ? impl->error : NULL};
+        impl->pending_external_settlement_ready = true;
+    }
     impl->external_in_flight = false;
+    impl->external_in_flight_origin_token = UINT64_C(0);
+    impl->external_in_flight_dropped = false;
     if (status == CFLOW_STATECHART_INSTANCE_OK)
         counter_increment(&impl->external_completed);
     else if (status == CFLOW_STATECHART_INSTANCE_TASK_CANCELLED)
@@ -1227,6 +1275,13 @@ static void cancel_pending_external_locked(
     cflow_statechart_instance_impl *impl) {
     const uint64_t pending = impl->external_pending > (size_t)UINT64_MAX
         ? UINT64_MAX : (uint64_t)impl->external_pending;
+    if (impl->external_pending != 0u &&
+        impl->hooks.on_external_settlement != NULL) {
+        impl->cancelled_external_settlement_head =
+            impl->external_source_head;
+        impl->cancelled_external_settlement_count =
+            impl->external_pending;
+    }
     impl->external_pending = 0u;
     impl->external_source_head = impl->external_source_tail;
     if (UINT64_MAX - impl->external_cancelled < pending)
@@ -1237,6 +1292,56 @@ static void cancel_pending_external_locked(
 
 static void invoke_detached_waker(cflow_waker waker) {
     if (waker.wake != NULL) waker.wake(waker.user);
+}
+
+static void deliver_external_settlements(
+    cflow_statechart_instance_impl *impl) {
+    cflow_statechart_external_settlement_fn callback;
+    cflow_statechart_external_settlement settlement;
+    void *user;
+    if (impl == NULL) return;
+    salts_mutex_lock(&impl->lock);
+    if (impl->external_settlement_delivery_active ||
+        impl->hooks.on_external_settlement == NULL) {
+        salts_mutex_unlock(&impl->lock);
+        return;
+    }
+    impl->external_settlement_delivery_active = true;
+    for (;;) {
+        if (impl->pending_external_settlement_ready) {
+            settlement = impl->pending_external_settlement;
+            impl->pending_external_settlement_ready = false;
+        } else if (impl->external_in_flight) {
+            impl->external_settlement_delivery_active = false;
+            salts_mutex_unlock(&impl->lock);
+            return;
+        } else if (impl->cancelled_external_settlement_count != 0u) {
+            const size_t index =
+                impl->cancelled_external_settlement_head;
+            const uint64_t origin_token =
+                impl->external_origin_tokens[index];
+            impl->external_origin_tokens[index] = UINT64_C(0);
+            impl->cancelled_external_settlement_head =
+                (index + 1u) % impl->external_event_capacity;
+            --impl->cancelled_external_settlement_count;
+            if (origin_token == UINT64_C(0)) continue;
+            settlement = (cflow_statechart_external_settlement){
+                .origin_token = origin_token,
+                .configuration_version = impl->configuration_version,
+                .kind = CFLOW_STATECHART_EXTERNAL_SETTLED_CANCELLED,
+                .status = CFLOW_STATECHART_INSTANCE_TASK_CANCELLED,
+                .error = NULL};
+        } else {
+            impl->external_settlement_delivery_active = false;
+            salts_mutex_unlock(&impl->lock);
+            return;
+        }
+        callback = impl->hooks.on_external_settlement;
+        user = impl->hook_user;
+        salts_mutex_unlock(&impl->lock);
+        callback(user, &settlement);
+        salts_mutex_lock(&impl->lock);
+    }
 }
 
 static cflow_waker take_downstream_waiter_locked(
@@ -1271,6 +1376,7 @@ static void finish_terminal_side_effects(
         if (terminal && impl->timers_initialized)
             (void)cflow_timer_event_queue_close(&impl->timers);
     }
+    deliver_external_settlements(impl);
     invoke_detached_waker(waker);
     invoke_detached_waker(downstream_waker);
     invoke_detached_waker(terminal_waker);
@@ -1314,8 +1420,10 @@ static void claim_external_for_failure_locked(
             impl->driver_event_capacity) == CFLOW_MAILBOX_OK) {
         if (impl->external_pending != 0u) --impl->external_pending;
         if (impl->external_origin_tokens != NULL) {
-            impl->external_origin_tokens[
-                impl->external_source_head] = UINT64_C(0);
+            impl->external_in_flight_origin_token =
+                impl->external_origin_tokens[impl->external_source_head];
+            impl->external_origin_tokens[impl->external_source_head] =
+                UINT64_C(0);
             impl->external_source_head =
                 (impl->external_source_head + 1u) %
                 impl->external_event_capacity;
@@ -3267,10 +3375,14 @@ static void statechart_microstep_finalize(void *user) {
     continue_driver = impl->driver_repost && !impl->done &&
         impl->error == NULL;
     impl->driver_repost = false;
-    if (!continue_driver) release_instance_task_locked(impl);
     salts_mutex_unlock(&impl->lock);
+    deliver_external_settlements(impl);
     if (continue_driver) {
         (void)schedule_statechart_driver_reserved(impl);
+    } else {
+        salts_mutex_lock(&impl->lock);
+        release_instance_task_locked(impl);
+        salts_mutex_unlock(&impl->lock);
     }
 }
 
@@ -3376,6 +3488,9 @@ cflow_admission_status cflow_statechart_instance_try_microstep_internal(
                 impl, CFLOW_STATECHART_INSTANCE_TASK_CANCELLED);
             clear_semantic_queues_locked(impl);
         }
+        salts_mutex_unlock(&impl->lock);
+        deliver_external_settlements(impl);
+        salts_mutex_lock(&impl->lock);
         release_instance_task_locked(impl);
         salts_mutex_unlock(&impl->lock);
     }
@@ -3799,6 +3914,7 @@ external_admission:
     event = (cflow_event_view){
         event_id, event_type, impl->driver_event_payload};
     impl->external_in_flight = true;
+    impl->external_in_flight_origin_token = origin_token;
     impl->macrostep_active = true;
     impl->macrostep_has_external = true;
     impl->macrostep_microsteps = 0u;
@@ -3818,6 +3934,7 @@ external_admission:
     salts_mutex_unlock(&impl->lock);
     if (host_result == CFLOW_STATECHART_HOST_DROP) {
         salts_mutex_lock(&impl->lock);
+        impl->external_in_flight_dropped = true;
         impl->driver_repost = true;
         salts_mutex_unlock(&impl->lock);
         return;
@@ -3860,14 +3977,21 @@ static void statechart_driver_finalize(void *user) {
     cflow_statechart_instance_impl *impl =
         (cflow_statechart_instance_impl *)user;
     bool repost;
+    void (*before_repost)(void *) = NULL;
+    void *hook_user = NULL;
     salts_mutex_lock(&impl->lock);
     impl->driver_scheduled = false;
     repost = impl->driver_repost && !impl->done && impl->error == NULL &&
         !impl->microstep_pending;
     impl->driver_repost = false;
     if (!repost) release_instance_task_locked(impl);
+    if (repost) {
+        before_repost = impl->test_hooks.before_driver_repost;
+        hook_user = impl->test_hooks.user;
+    }
     salts_mutex_unlock(&impl->lock);
     if (repost) {
+        if (before_repost != NULL) before_repost(hook_user);
         (void)schedule_statechart_driver_reserved(impl);
     }
 }
@@ -3915,9 +4039,14 @@ static cflow_admission_status schedule_statechart_driver_impl(
                 impl, STATECHART_TERMINAL_ERROR, failure, message,
                 true, failure, &waker);
         }
-        release_instance_task_locked(impl);
+        if (!transfer_reservation) release_instance_task_locked(impl);
         salts_mutex_unlock(&impl->lock);
         finish_terminal_side_effects(impl, waker);
+        if (transfer_reservation) {
+            salts_mutex_lock(&impl->lock);
+            release_instance_task_locked(impl);
+            salts_mutex_unlock(&impl->lock);
+        }
     }
     return admission;
 }
@@ -4150,7 +4279,7 @@ static cflow_statechart_instance_status statechart_instance_init_with_hook(
     impl->statechart = config->statechart;
     impl->ir = ir;
     impl->executor = config->executor;
-    if (config->hooks != NULL) impl->hooks = *config->hooks;
+    copy_instance_hooks(&impl->hooks, config->hooks);
     impl->hook_user = config->hook_user;
     impl->internal_event_capacity = requirements.internal_event_capacity;
     impl->completion_capacity = requirements.completion_capacity;
@@ -4704,7 +4833,7 @@ void cflow_statechart_instance_request_exit(
         accepted = true;
     }
     salts_mutex_unlock(&impl->lock);
-    invoke_detached_waker(waker);
+    finish_terminal_side_effects(impl, waker);
     if (accepted) (void)schedule_statechart_driver(impl);
 }
 

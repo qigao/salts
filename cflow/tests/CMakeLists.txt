@@ -167,6 +167,11 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
     CFLOW_TEST_NATIVE_EPOLL=1)
 endif()
 
+cmake_add_test(cflow_io_native_adapter_test
+  SOURCES cflow_io_native_adapter_test.c
+  LIBS Salts::CFlow Salts::NativeIO Salts::Concurrency Salts::Platform Salts::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_io_file_test
   SOURCES cflow_io_file_test.c cflow_io_file_init_failure_test.c
   LIBS Salts::CFlow Salts::Platform Salts::TinyTest
@@ -258,6 +263,7 @@ set_target_properties(
   cflow_io_actor_test
   cflow_io_publisher_test
   cflow_io_native_test
+  cflow_io_native_adapter_test
   cflow_io_file_test
   cflow_io_pipe_test
   cflow_timer_event_test
