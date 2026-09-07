@@ -7,6 +7,7 @@
 #include <salts/thread_pool.h>
 
 #include <inttypes.h>
+#include <limits.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +26,7 @@ typedef HANDLE adapter_bench_pipe;
   #include <errno.h>
   #include <fcntl.h>
   #include <netinet/in.h>
+  #include <poll.h>
   #include <sys/resource.h>
   #include <sys/socket.h>
   #include <unistd.h>
@@ -83,6 +85,8 @@ typedef enum adapter_bench_transport {
 
 typedef enum adapter_bench_role { ADAPTER_BENCH_RECV = 0, ADAPTER_BENCH_SEND } adapter_bench_role;
 
+enum { ADAPTER_BENCH_DIRECTION_COUNT = 2 };
+
 typedef struct adapter_bench_stages {
   uint64_t admission_ns;
   uint64_t native_submit_ns;
@@ -130,8 +134,12 @@ typedef struct adapter_bench_delivery {
 typedef struct adapter_bench_fixture {
   adapter_bench_mode mode;
   adapter_bench_transport transport;
+  adapter_bench_role direction;
   adapter_bench_socket sockets[2];
   adapter_bench_pipe pipes[2];
+#if defined(_WIN32)
+  HANDLE peer_event;
+#endif
   native_io_endpoint endpoints[2];
   native_io_backend direct;
   native_io_request direct_requests[2];
@@ -149,6 +157,7 @@ typedef struct adapter_bench_fixture {
   cflow_io_publisher_owner reactive_owner;
   cflow_subscription subscription;
   salts_threadpool_t *publisher_pool;
+  salts_threadpool_t *peer_pool;
   salts_mutex_t reactive_gate;
   salts_cond_t reactive_changed;
   cflow_subscriber_callbacks subscriber_callbacks;
@@ -169,6 +178,7 @@ typedef struct adapter_bench_fixture {
   int reactive_wake_status;
   int reactive_drive_status;
   int reactive_cleanup_status;
+  int peer_status;
   size_t reactive_observed;
   size_t reactive_publisher_callbacks;
   size_t reactive_subscriber_callbacks;
@@ -196,6 +206,7 @@ typedef struct adapter_bench_fixture {
   bool reactive_mutex_initialized;
   bool reactive_cond_initialized;
   bool publisher_pool_initialized;
+  bool peer_pool_initialized;
   bool reactive_drive_pending;
   bool reactive_stop_requested;
   bool reactive_loop_started;
@@ -210,7 +221,11 @@ static const char *adapter_bench_transport_name(adapter_bench_transport transpor
 
 static const char *adapter_bench_mode_name(adapter_bench_mode mode) {
   if (mode == ADAPTER_BENCH_DIRECT) return "NativeIO direct";
-  return mode == ADAPTER_BENCH_ACTOR ? "Actor/NativeIO" : "Source(window=2)/NativeIO";
+  return mode == ADAPTER_BENCH_ACTOR ? "Actor/NativeIO" : "Source(window=1)/NativeIO";
+}
+
+static const char *adapter_bench_direction_name(adapter_bench_role direction) {
+  return direction == ADAPTER_BENCH_SEND ? "TX" : "RX";
 }
 
 static native_io_backend_kind adapter_bench_backend(void) {
@@ -306,6 +321,23 @@ static int adapter_bench_make_tcp_pair(adapter_bench_socket sockets[2]) {
   return status;
 }
 
+static int adapter_bench_set_socket_timeout(adapter_bench_socket socket_value) {
+#if defined(_WIN32)
+  const DWORD timeout_ms = ADAPTER_BENCH_TIMEOUT_MS;
+  const char *timeout_value = (const char *)&timeout_ms;
+  const adapter_bench_socklen timeout_size = (adapter_bench_socklen)sizeof(timeout_ms);
+#else
+  const struct timeval timeout = {ADAPTER_BENCH_TIMEOUT_MS / 1000,
+                                  (ADAPTER_BENCH_TIMEOUT_MS % 1000) * 1000};
+  const char *timeout_value = (const char *)&timeout;
+  const adapter_bench_socklen timeout_size = (adapter_bench_socklen)sizeof(timeout);
+#endif
+  if (setsockopt(socket_value, SOL_SOCKET, SO_RCVTIMEO, timeout_value, timeout_size) != 0 ||
+      setsockopt(socket_value, SOL_SOCKET, SO_SNDTIMEO, timeout_value, timeout_size) != 0)
+    return adapter_bench_last_socket_error();
+  return SALTS_OK;
+}
+
 static void adapter_bench_close_pipe(adapter_bench_pipe pipe_handle) {
   if (pipe_handle == ADAPTER_BENCH_INVALID_PIPE) return;
 #if defined(_WIN32)
@@ -390,6 +422,121 @@ failed:
 #endif
 }
 
+static bool adapter_bench_retryable_io_error(void) {
+#if defined(_WIN32)
+  return WSAGetLastError() == WSAEINTR;
+#else
+  return errno == EINTR;
+#endif
+}
+
+static bool adapter_bench_timed_out_io_error(void) {
+#if defined(_WIN32)
+  const int error = WSAGetLastError();
+  return error == WSAETIMEDOUT || error == WSAEWOULDBLOCK;
+#else
+  return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
+
+static int adapter_bench_peer_socket_transfer(adapter_bench_fixture *fixture) {
+  const bool send_payload = fixture->direction == ADAPTER_BENCH_RECV;
+  unsigned char *buffer = send_payload ? fixture->sent : fixture->received;
+  size_t offset = 0u;
+
+  while (offset < fixture->payload_size) {
+    const size_t remaining = fixture->payload_size - offset;
+    const int length = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+#if defined(_WIN32)
+    const int transferred =
+        send_payload ? send(fixture->sockets[1], (const char *)buffer + offset, length, 0)
+                     : recv(fixture->sockets[1], (char *)buffer + offset, length, 0);
+    if (transferred == SOCKET_ERROR) {
+#else
+    const ssize_t transferred =
+        send_payload
+  #if defined(MSG_NOSIGNAL)
+            ? send(fixture->sockets[1], buffer + offset, (size_t)length, MSG_NOSIGNAL)
+  #else
+            ? send(fixture->sockets[1], buffer + offset, (size_t)length, 0)
+  #endif
+            : recv(fixture->sockets[1], buffer + offset, (size_t)length, 0);
+    if (transferred < 0) {
+#endif
+      if (adapter_bench_timed_out_io_error()) return SALTS_ETIMEDOUT;
+      if (!adapter_bench_retryable_io_error()) return adapter_bench_last_socket_error();
+      continue;
+    }
+    if (transferred == 0) return SALTS_EOF;
+    offset += (size_t)transferred;
+  }
+  return SALTS_OK;
+}
+
+static int adapter_bench_peer_pipe_transfer(adapter_bench_fixture *fixture) {
+  const bool write_payload = fixture->direction == ADAPTER_BENCH_RECV;
+  unsigned char *buffer = write_payload ? fixture->sent : fixture->received;
+  const adapter_bench_pipe pipe_handle = fixture->pipes[write_payload ? 1u : 0u];
+  size_t offset = 0u;
+
+  while (offset < fixture->payload_size) {
+    const size_t remaining = fixture->payload_size - offset;
+#if defined(_WIN32)
+    const DWORD length = remaining > (size_t)MAXDWORD ? MAXDWORD : (DWORD)remaining;
+    OVERLAPPED operation = {0};
+    DWORD transferred = 0u;
+    DWORD error;
+    DWORD wait_status;
+
+    operation.hEvent = fixture->peer_event;
+    if (!ResetEvent(operation.hEvent)) return -(int)GetLastError();
+    if (!(write_payload
+              ? WriteFile(pipe_handle, buffer + offset, length, &transferred, &operation)
+              : ReadFile(pipe_handle, buffer + offset, length, &transferred, &operation))) {
+      error = GetLastError();
+      if (error != ERROR_IO_PENDING) return -(int)error;
+      wait_status = WaitForSingleObject(operation.hEvent, ADAPTER_BENCH_TIMEOUT_MS);
+      if (wait_status != WAIT_OBJECT_0) {
+        (void)CancelIoEx(pipe_handle, &operation);
+        (void)GetOverlappedResult(pipe_handle, &operation, &transferred, TRUE);
+        return wait_status == WAIT_TIMEOUT ? SALTS_ETIMEDOUT : SALTS_EIO;
+      }
+      if (!GetOverlappedResult(pipe_handle, &operation, &transferred, FALSE)) {
+        error = GetLastError();
+        return -(int)error;
+      }
+    }
+#else
+    struct pollfd ready = {pipe_handle, write_payload ? POLLOUT : POLLIN, 0};
+    int wait_status;
+    ssize_t transferred;
+
+    do {
+      wait_status = poll(&ready, 1u, ADAPTER_BENCH_TIMEOUT_MS);
+    } while (wait_status < 0 && errno == EINTR);
+    if (wait_status == 0) return SALTS_ETIMEDOUT;
+    if (wait_status < 0) return -errno;
+    if ((ready.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) return SALTS_EIO;
+    transferred = write_payload ? write(pipe_handle, buffer + offset, remaining)
+                                : read(pipe_handle, buffer + offset, remaining);
+    if (transferred < 0) {
+      if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) return -errno;
+      continue;
+    }
+#endif
+    if (transferred == 0u) return SALTS_EOF;
+    offset += (size_t)transferred;
+  }
+  return SALTS_OK;
+}
+
+static void adapter_bench_peer_task(void *user) {
+  adapter_bench_fixture *fixture = (adapter_bench_fixture *)user;
+  fixture->peer_status = fixture->transport == ADAPTER_BENCH_TCP
+                             ? adapter_bench_peer_socket_transfer(fixture)
+                             : adapter_bench_peer_pipe_transfer(fixture);
+}
+
 static void adapter_bench_counter_add(uint64_t *counter, uint64_t value) {
   *counter = UINT64_MAX - *counter < value ? UINT64_MAX : *counter + value;
 }
@@ -443,12 +590,13 @@ static int adapter_bench_stage_end(adapter_bench_fixture *fixture, adapter_bench
 static native_io_operation adapter_bench_operation(adapter_bench_fixture *fixture, size_t role,
                                                    size_t offset) {
   const bool send = role == ADAPTER_BENCH_SEND;
+  const size_t endpoint_index =
+      fixture->transport == ADAPTER_BENCH_TCP ? 0u : (size_t)fixture->direction;
   native_io_operation operation = {
       fixture->transport == ADAPTER_BENCH_TCP
           ? (send ? NATIVE_IO_OPERATION_TCP_SEND : NATIVE_IO_OPERATION_TCP_RECV)
           : (send ? NATIVE_IO_OPERATION_PIPE_WRITE : NATIVE_IO_OPERATION_PIPE_READ),
-      fixture->endpoints[fixture->transport == ADAPTER_BENCH_TCP ? (send ? 0u : 1u)
-                                                                 : (send ? 1u : 0u)],
+      fixture->endpoints[endpoint_index],
       (send ? fixture->sent : fixture->received) + offset,
       fixture->payload_size - offset,
       (uintptr_t)(role + 1u),
@@ -499,13 +647,18 @@ adapter_bench_reactive_prepare(void *user, cflow_io_operation *operation, const 
     ++fixture->reactive_role_collisions;
   adapter_bench_thread_role = ADAPTER_BENCH_THREAD_ROLE_SUBSCRIBER;
   ++fixture->reactive_prepare_callbacks;
-  for (size_t role = 0u; role < 2u; ++role) {
+  {
+    const size_t role = (size_t)fixture->direction;
     adapter_bench_actor_operation *prepared;
-    if (fixture->reactive_pending[role] || fixture->reactive_offsets[role] >= fixture->payload_size)
-      continue;
+    if (fixture->reactive_pending[role] ||
+        fixture->reactive_offsets[role] >= fixture->payload_size) {
+      salts_mutex_unlock(&fixture->reactive_gate);
+      adapter_bench_stage_release(fixture, stages);
+      return status;
+    }
     prepared = &fixture->reactive_operations[role];
     prepared->native = adapter_bench_operation(fixture, role, fixture->reactive_offsets[role]);
-    prepared->role = (adapter_bench_role)role;
+    prepared->role = fixture->direction;
     prepared->release_count = &fixture->release_count;
     prepared->release_gate = &fixture->reactive_gate;
     prepared->release_changed = &fixture->reactive_changed;
@@ -515,7 +668,6 @@ adapter_bench_reactive_prepare(void *user, cflow_io_operation *operation, const 
     ++fixture->operation_count;
     if (stages != NULL) ++stages->actor_operations;
     status = CFLOW_IO_PUBLISHER_PREPARE_OPERATION;
-    break;
   }
   salts_mutex_unlock(&fixture->reactive_gate);
   adapter_bench_stage_release(fixture, stages);
@@ -723,31 +875,28 @@ static int adapter_bench_backend_init(adapter_bench_fixture *fixture,
 }
 
 static int adapter_bench_backend_attach(adapter_bench_fixture *fixture) {
+  const size_t index = fixture->transport == ADAPTER_BENCH_TCP ? 0u : (size_t)fixture->direction;
+  const uintptr_t native_handle = fixture->transport == ADAPTER_BENCH_TCP
+                                      ? (uintptr_t)fixture->sockets[index]
+                                      : (uintptr_t)fixture->pipes[index];
   int status;
 
-  for (size_t index = 0u; index < 2u; ++index) {
-    const uintptr_t native_handle = fixture->transport == ADAPTER_BENCH_TCP
-                                        ? (uintptr_t)fixture->sockets[index]
-                                        : (uintptr_t)fixture->pipes[index];
-
-    if (fixture->transport == ADAPTER_BENCH_TCP) {
-      status = fixture->mode == ADAPTER_BENCH_DIRECT
-                   ? native_io_backend_attach_socket(&fixture->direct, native_handle,
-                                                     &fixture->endpoints[index])
-                   : cflow_io_native_adapter_attach_socket(&fixture->adapter, native_handle,
-                                                           &fixture->endpoints[index]);
-    } else {
-      status = fixture->mode == ADAPTER_BENCH_DIRECT
-                   ? native_io_backend_attach_pipe(&fixture->direct, native_handle,
-                                                   NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
+  if (fixture->transport == ADAPTER_BENCH_TCP) {
+    status = fixture->mode == ADAPTER_BENCH_DIRECT
+                 ? native_io_backend_attach_socket(&fixture->direct, native_handle,
                                                    &fixture->endpoints[index])
-                   : cflow_io_native_adapter_attach_pipe(&fixture->adapter, native_handle,
-                                                         NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
+                 : cflow_io_native_adapter_attach_socket(&fixture->adapter, native_handle,
                                                          &fixture->endpoints[index]);
-    }
-    if (status != SALTS_OK) return status;
+  } else {
+    status = fixture->mode == ADAPTER_BENCH_DIRECT
+                 ? native_io_backend_attach_pipe(&fixture->direct, native_handle,
+                                                 NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
+                                                 &fixture->endpoints[index])
+                 : cflow_io_native_adapter_attach_pipe(&fixture->adapter, native_handle,
+                                                       NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE,
+                                                       &fixture->endpoints[index]);
   }
-  return SALTS_OK;
+  return status;
 }
 
 typedef struct adapter_bench_reactive_setup {
@@ -768,8 +917,9 @@ static void adapter_bench_reactive_setup_task(void *user) {
 
 static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
                                       adapter_bench_transport transport, adapter_bench_mode mode,
-                                      size_t payload_size, adapter_bench_stages *stages) {
-  const native_io_backend_config backend_config = {adapter_bench_backend(), 2u, 2u, 2u};
+                                      adapter_bench_role direction, size_t payload_size,
+                                      adapter_bench_stages *stages) {
+  const native_io_backend_config backend_config = {adapter_bench_backend(), 1u, 1u, 1u};
   int status;
 
   if (fixture == NULL || payload_size == 0u) return SALTS_EINVAL;
@@ -778,6 +928,7 @@ static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
   atomic_init(&fixture->reactive_stage_writers, 0u);
   fixture->mode = mode;
   fixture->transport = transport;
+  fixture->direction = direction;
   fixture->sockets[0] = ADAPTER_BENCH_INVALID_SOCKET;
   fixture->sockets[1] = ADAPTER_BENCH_INVALID_SOCKET;
   fixture->pipes[0] = ADAPTER_BENCH_INVALID_PIPE;
@@ -822,6 +973,16 @@ static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
   if (status != SALTS_OK) return status;
   fixture->sockets_created = transport == ADAPTER_BENCH_TCP;
   fixture->pipes_created = transport == ADAPTER_BENCH_PIPE;
+#if defined(_WIN32)
+  if (transport == ADAPTER_BENCH_PIPE) {
+    fixture->peer_event = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (fixture->peer_event == NULL) return -(int)GetLastError();
+  }
+#endif
+  if (transport == ADAPTER_BENCH_TCP) {
+    status = adapter_bench_set_socket_timeout(fixture->sockets[1]);
+    if (status != SALTS_OK) return status;
+  }
 
   if (mode == ADAPTER_BENCH_REACTIVE) {
     adapter_bench_reactive_setup setup = {fixture, backend_config, true, SALTS_EBUSY};
@@ -875,7 +1036,7 @@ static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
     reactive_config.drive = adapter_bench_reactive_drive;
     reactive_config.drive_user = fixture;
     status = cflow_publisher_from_io_actor_windowed(&fixture->publisher, &fixture->reactive_owner,
-                                                    &reactive_config, 2u);
+                                                    &reactive_config, 1u);
     if (status != SALTS_OK) return status;
     fixture->reactive_owner_initialized = true;
     fixture->subscriber_callbacks = (cflow_subscriber_callbacks){
@@ -892,6 +1053,12 @@ static int adapter_bench_fixture_init(adapter_bench_fixture *fixture,
     salts_mutex_lock(&fixture->reactive_gate);
     fixture->reactive_loop_started = true;
     salts_mutex_unlock(&fixture->reactive_gate);
+  }
+  {
+    const salts_threadpool_config_t peer_pool_config = {1, 1};
+    fixture->peer_pool = salts_threadpool_create_with_config(&peer_pool_config);
+    if (fixture->peer_pool == NULL) return SALTS_ENOMEM;
+    fixture->peer_pool_initialized = true;
   }
   return SALTS_OK;
 }
@@ -1052,6 +1219,19 @@ static int adapter_bench_fixture_destroy(adapter_bench_fixture *fixture) {
   int status = SALTS_OK;
 
   if (fixture == NULL) return SALTS_EINVAL;
+  if (fixture->peer_pool_initialized) {
+    adapter_bench_keep_first_status(&status, salts_threadpool_wait_status(fixture->peer_pool));
+    salts_threadpool_shutdown(fixture->peer_pool);
+    salts_threadpool_destroy(fixture->peer_pool);
+    fixture->peer_pool = NULL;
+    fixture->peer_pool_initialized = false;
+  }
+#if defined(_WIN32)
+  if (fixture->peer_event != NULL) {
+    (void)CloseHandle(fixture->peer_event);
+    fixture->peer_event = NULL;
+  }
+#endif
   if (fixture->subscription_initialized) {
     cflow_subscription_close(&fixture->subscription);
     fixture->subscription_initialized = false;
@@ -1188,18 +1368,17 @@ static int adapter_bench_fixture_destroy(adapter_bench_fixture *fixture) {
 
 static int adapter_bench_direct_exchange(adapter_bench_fixture *fixture) {
   size_t offsets[2] = {0u, 0u};
+  const size_t role = (size_t)fixture->direction;
 
-  memset(fixture->received, 0, fixture->payload_size);
-  while (offsets[ADAPTER_BENCH_SEND] < fixture->payload_size ||
-         offsets[ADAPTER_BENCH_RECV] < fixture->payload_size) {
-    native_io_completion completions[2];
+  while (offsets[role] < fixture->payload_size) {
+    native_io_completion completions[1];
     size_t completion_count = 0u;
     uint64_t started = 0u;
     int status;
 
-    for (size_t role = 0u; role < 2u; ++role) {
+    {
       native_io_operation operation;
-      if (fixture->direct_pending[role] || offsets[role] >= fixture->payload_size) continue;
+      if (fixture->direct_pending[role]) return SALTS_EPROTO;
       operation = adapter_bench_operation(fixture, role, offsets[role]);
       if (fixture->stages != NULL) started = salts_hrtime();
       status =
@@ -1213,7 +1392,7 @@ static int adapter_bench_direct_exchange(adapter_bench_fixture *fixture) {
     }
 
     if (fixture->stages != NULL) started = salts_hrtime();
-    status = native_io_backend_observe(&fixture->direct, completions, 2u, ADAPTER_BENCH_TIMEOUT_MS,
+    status = native_io_backend_observe(&fixture->direct, completions, 1u, ADAPTER_BENCH_TIMEOUT_MS,
                                        &completion_count);
     if (fixture->stages != NULL) {
       adapter_bench_counter_add(&fixture->stages->observe_ns, salts_hrtime() - started);
@@ -1222,34 +1401,21 @@ static int adapter_bench_direct_exchange(adapter_bench_fixture *fixture) {
     if (status != SALTS_OK) return status;
     for (size_t index = 0u; index < completion_count; ++index) {
       const native_io_completion *completion = &completions[index];
-      size_t matched_role = 2u;
-
-      for (size_t role = 0u; role < 2u; ++role) {
-        if (fixture->direct_pending[role] &&
-            completion->request.slot == fixture->direct_requests[role].slot &&
-            completion->request.generation == fixture->direct_requests[role].generation) {
-          matched_role = role;
-          fixture->direct_pending[role] = false;
-          fixture->direct_requests[role] = (native_io_request){0};
-          break;
-        }
-      }
-      if (matched_role >= 2u) return SALTS_EPROTO;
+      if (!fixture->direct_pending[role] ||
+          completion->request.slot != fixture->direct_requests[role].slot ||
+          completion->request.generation != fixture->direct_requests[role].generation)
+        return SALTS_EPROTO;
+      fixture->direct_pending[role] = false;
+      fixture->direct_requests[role] = (native_io_request){0};
       if (completion->kind != NATIVE_IO_COMPLETION_OK || completion->bytes == 0u)
         return completion->status != SALTS_OK ? completion->status : SALTS_EPROTO;
-      if (completion->user_data == 0u || completion->user_data > 2u) {
+      if (completion->user_data != (uintptr_t)(role + 1u) ||
+          completion->bytes > fixture->payload_size - offsets[role])
         return SALTS_EPROTO;
-      }
-      {
-        const size_t role = (size_t)(completion->user_data - 1u);
-        if (role != matched_role || completion->bytes > fixture->payload_size - offsets[role])
-          return SALTS_EPROTO;
-        offsets[role] += completion->bytes;
-      }
+      offsets[role] += completion->bytes;
     }
   }
-  return memcmp(fixture->sent, fixture->received, fixture->payload_size) == 0 ? SALTS_OK
-                                                                              : SALTS_EPROTO;
+  return SALTS_OK;
 }
 
 static int adapter_bench_actor_run_transition(adapter_bench_fixture *fixture, size_t max_steps) {
@@ -1280,21 +1446,20 @@ static int adapter_bench_actor_run_transition(adapter_bench_fixture *fixture, si
 
 static int adapter_bench_actor_exchange(adapter_bench_fixture *fixture) {
   size_t offsets[2] = {0u, 0u};
+  const size_t role = (size_t)fixture->direction;
   const size_t release_before = fixture->release_count;
   const uint64_t operation_before = fixture->operation_count;
 
-  memset(fixture->received, 0, fixture->payload_size);
-  while (offsets[ADAPTER_BENCH_SEND] < fixture->payload_size ||
-         offsets[ADAPTER_BENCH_RECV] < fixture->payload_size) {
-    for (size_t role = 0u; role < 2u; ++role) {
+  while (offsets[role] < fixture->payload_size) {
+    {
       cflow_io_operation actor_operation;
       cflow_io_submit_result submitted;
       uint64_t started = 0u;
 
-      if (fixture->actor_pending[role] || offsets[role] >= fixture->payload_size) continue;
+      if (fixture->actor_pending[role]) return SALTS_EPROTO;
       fixture->actor_operations[role].native =
           adapter_bench_operation(fixture, role, offsets[role]);
-      fixture->actor_operations[role].role = (adapter_bench_role)role;
+      fixture->actor_operations[role].role = fixture->direction;
       fixture->actor_operations[role].release_count = &fixture->release_count;
       actor_operation =
           (cflow_io_operation){&fixture->actor_operations[role], adapter_bench_release};
@@ -1356,31 +1521,30 @@ static int adapter_bench_actor_exchange(adapter_bench_fixture *fixture) {
     }
     for (size_t index = 0u; index < fixture->delivery_count; ++index) {
       adapter_bench_delivery *delivery = &fixture->deliveries[index];
-      const size_t role = (size_t)delivery->operation->role;
+      const size_t completion_role = (size_t)delivery->operation->role;
       uint64_t started = 0u;
 
-      if (role >= 2u || !fixture->actor_pending[role] ||
-          delivery->request_id != fixture->actor_request_ids[role] ||
+      if (completion_role >= 2u || !fixture->actor_pending[completion_role] ||
+          delivery->request_id != fixture->actor_request_ids[completion_role] ||
           delivery->completion.kind != CFLOW_IO_COMPLETION_OK || delivery->completion.bytes == 0u ||
-          delivery->completion.bytes > fixture->payload_size - offsets[role])
+          delivery->completion.bytes > fixture->payload_size - offsets[completion_role])
         return delivery->completion.error != SALTS_OK ? delivery->completion.error : SALTS_EPROTO;
-      offsets[role] += delivery->completion.bytes;
+      offsets[completion_role] += delivery->completion.bytes;
       if (fixture->stages != NULL) started = salts_hrtime();
       if (cflow_io_actor_acknowledge(&fixture->actor, delivery->request_id) !=
           CFLOW_IO_ACK_RELEASED)
         return SALTS_EPROTO;
       if (fixture->stages != NULL)
         adapter_bench_counter_add(&fixture->stages->acknowledge_ns, salts_hrtime() - started);
-      fixture->actor_pending[role] = false;
-      fixture->actor_request_ids[role] = 0u;
+      fixture->actor_pending[completion_role] = false;
+      fixture->actor_request_ids[completion_role] = 0u;
     }
     fixture->delivery_count = 0u;
   }
   if (fixture->release_count - release_before != fixture->operation_count - operation_before) {
     return SALTS_EPROTO;
   }
-  return memcmp(fixture->sent, fixture->received, fixture->payload_size) == 0 ? SALTS_OK
-                                                                              : SALTS_EPROTO;
+  return SALTS_OK;
 }
 
 static int adapter_bench_reactive_wait_values(adapter_bench_fixture *fixture,
@@ -1405,11 +1569,11 @@ static int adapter_bench_reactive_wait_values(adapter_bench_fixture *fixture,
 }
 
 static int adapter_bench_reactive_exchange(adapter_bench_fixture *fixture) {
+  const size_t role = (size_t)fixture->direction;
   size_t release_before;
   size_t subscriber_before;
   uint64_t operation_before;
 
-  memset(fixture->received, 0, fixture->payload_size);
   salts_mutex_lock(&fixture->reactive_gate);
   release_before = fixture->release_count;
   subscriber_before = fixture->reactive_subscriber_values;
@@ -1419,21 +1583,20 @@ static int adapter_bench_reactive_exchange(adapter_bench_fixture *fixture) {
   salts_mutex_unlock(&fixture->reactive_gate);
   for (;;) {
     adapter_bench_stages *stages;
-    size_t requested = 0u;
     size_t target_values;
     uint64_t started = 0u;
     int status;
 
     salts_mutex_lock(&fixture->reactive_gate);
-    for (size_t role = 0u; role < 2u; ++role) {
-      if (fixture->reactive_offsets[role] < fixture->payload_size) ++requested;
+    target_values = fixture->reactive_subscriber_values + 1u;
+    if (fixture->reactive_offsets[role] >= fixture->payload_size) {
+      salts_mutex_unlock(&fixture->reactive_gate);
+      break;
     }
-    target_values = fixture->reactive_subscriber_values + requested;
     salts_mutex_unlock(&fixture->reactive_gate);
-    if (requested == 0u) break;
     stages = adapter_bench_stage_acquire(fixture);
     if (stages != NULL) started = salts_hrtime();
-    if (!cflow_subscription_request(&fixture->subscription, requested)) {
+    if (!cflow_subscription_request(&fixture->subscription, 1u)) {
       adapter_bench_stage_release(fixture, stages);
       return SALTS_EPROTO;
     }
@@ -1459,8 +1622,7 @@ static int adapter_bench_reactive_exchange(adapter_bench_fixture *fixture) {
       ++waits;
     }
   }
-  if (fixture->reactive_offsets[ADAPTER_BENCH_SEND] != fixture->payload_size ||
-      fixture->reactive_offsets[ADAPTER_BENCH_RECV] != fixture->payload_size ||
+  if (fixture->reactive_offsets[role] != fixture->payload_size ||
       fixture->release_count - release_before != fixture->operation_count - operation_before ||
       fixture->reactive_subscriber_values - subscriber_before !=
           fixture->operation_count - operation_before) {
@@ -1468,14 +1630,29 @@ static int adapter_bench_reactive_exchange(adapter_bench_fixture *fixture) {
     return SALTS_EPROTO;
   }
   salts_mutex_unlock(&fixture->reactive_gate);
-  return memcmp(fixture->sent, fixture->received, fixture->payload_size) == 0 ? SALTS_OK
-                                                                              : SALTS_EPROTO;
+  return SALTS_OK;
 }
 
-static int adapter_bench_exchange(adapter_bench_fixture *fixture) {
-  if (fixture->mode == ADAPTER_BENCH_DIRECT) return adapter_bench_direct_exchange(fixture);
-  return fixture->mode == ADAPTER_BENCH_ACTOR ? adapter_bench_actor_exchange(fixture)
-                                              : adapter_bench_reactive_exchange(fixture);
+static int adapter_bench_exchange(adapter_bench_fixture *fixture, uint64_t *out_latency_ns) {
+  uint64_t started;
+  int status;
+  int peer_status;
+
+  memset(fixture->received, 0, fixture->payload_size);
+  fixture->peer_status = SALTS_EBUSY;
+  status = salts_threadpool_submit(fixture->peer_pool, adapter_bench_peer_task, fixture);
+  if (status != SALTS_OK) return status;
+  started = salts_hrtime();
+  status = fixture->mode == ADAPTER_BENCH_DIRECT  ? adapter_bench_direct_exchange(fixture)
+           : fixture->mode == ADAPTER_BENCH_ACTOR ? adapter_bench_actor_exchange(fixture)
+                                                  : adapter_bench_reactive_exchange(fixture);
+  if (out_latency_ns != NULL) *out_latency_ns = salts_hrtime() - started;
+  peer_status = salts_threadpool_wait_status(fixture->peer_pool);
+  if (status == SALTS_OK) status = peer_status;
+  if (status == SALTS_OK) status = fixture->peer_status;
+  if (status == SALTS_OK && memcmp(fixture->sent, fixture->received, fixture->payload_size) != 0)
+    status = SALTS_EPROTO;
+  return status;
 }
 
 static void adapter_bench_reactive_validate_task(void *user) {
@@ -1649,10 +1826,10 @@ static int adapter_bench_run_sample(adapter_bench_fixture *fixture, adapter_benc
   int status = SALTS_OK;
 
   for (size_t transfer = 0u; transfer < ADAPTER_BENCH_TRANSFERS_PER_SAMPLE; ++transfer) {
-    const uint64_t started = salts_hrtime();
-    status = adapter_bench_exchange(fixture);
+    uint64_t latency_ns = 0u;
+    status = adapter_bench_exchange(fixture, &latency_ns);
     if (status != SALTS_OK) break;
-    result->latencies[result->latency_count++] = salts_hrtime() - started;
+    result->latencies[result->latency_count++] = latency_ns;
   }
   adapter_bench_counter_add(&result->wall_ns, salts_hrtime() - wall_started);
   return status;
@@ -1666,7 +1843,7 @@ static int adapter_bench_measure_cpu(adapter_bench_fixture *fixture, adapter_ben
   result->cpu_transfers = 0u;
   for (size_t pass = 0u; pass < ADAPTER_BENCH_CPU_MAX_PASSES && status == SALTS_OK; ++pass) {
     for (size_t transfer = 0u; transfer < ADAPTER_BENCH_TOTAL_TRANSFERS; ++transfer) {
-      status = adapter_bench_exchange(fixture);
+      status = adapter_bench_exchange(fixture, NULL);
       if (status != SALTS_OK) break;
     }
     if (status != SALTS_OK) break;
@@ -1688,7 +1865,7 @@ static int adapter_bench_measure_stages(adapter_bench_fixture *fixture,
   status = adapter_bench_stage_begin(fixture, &result->stages);
   if (status != SALTS_OK) return status;
   for (size_t transfer = 0u; transfer < ADAPTER_BENCH_STAGE_TRANSFERS; ++transfer) {
-    status = adapter_bench_exchange(fixture);
+    status = adapter_bench_exchange(fixture, NULL);
     if (status != SALTS_OK) break;
   }
   end_status = adapter_bench_stage_end(fixture, &result->stages);
@@ -1697,19 +1874,22 @@ static int adapter_bench_measure_stages(adapter_bench_fixture *fixture,
 }
 
 static void adapter_bench_print_tables(adapter_bench_transport transport,
+                                       adapter_bench_role direction,
                                        adapter_bench_result results[][ADAPTER_BENCH_MODE_COUNT],
                                        size_t payload_count) {
   const char *transport_name = adapter_bench_transport_name(transport);
-  printf("\nProtocol: loopback %s, %u samples x %u transfers, "
-         "window=2, rotating mode order per sample; CPU and stage "
+  const char *direction_name = adapter_bench_direction_name(direction);
+  printf("\nProtocol: loopback %s %s, %u samples x %u directional transfers, "
+         "Source window=1, one fixed peer worker, rotating mode order per sample; CPU and stage "
          "passes are measured separately.\n",
-         transport_name, (unsigned)ADAPTER_BENCH_SAMPLES,
+         transport_name, direction_name, (unsigned)ADAPTER_BENCH_SAMPLES,
          (unsigned)ADAPTER_BENCH_TRANSFERS_PER_SAMPLE);
   for (size_t payload = 0u; payload < payload_count; ++payload) {
     const adapter_bench_result *direct = &results[payload][ADAPTER_BENCH_DIRECT];
     const double direct_throughput = adapter_bench_throughput(direct);
 
-    printf("\nCFlow NativeIO %s / %zu KiB\n", transport_name, direct->payload_size / 1024u);
+    printf("\nCFlow NativeIO %s %s / %zu KiB\n", transport_name, direction_name,
+           direct->payload_size / 1024u);
     printf("| mode | p50 us | p50 vs direct | p95 us | p95 vs direct | "
            "p99 us | p99 vs direct | ops/s | MiB/s | throughput vs direct |\n");
     printf("| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
@@ -1728,11 +1908,12 @@ static void adapter_bench_print_tables(adapter_bench_transport transport,
              adapter_bench_delta(throughput, direct_throughput));
     }
   }
-  printf("\nThroughput counts application payload once.\n");
-  printf("One ops/s unit is one completed full-payload exchange; an exchange may require "
-         "multiple partial native requests.\n");
+  printf("\nThroughput counts the directional application payload once.\n");
+  printf("One ops/s unit is one completed full-payload %s operation; an operation may require "
+         "multiple partial native requests.\n",
+         direction_name);
 
-  printf("\nCFlow NativeIO %s semantic gates\n", transport_name);
+  printf("\nCFlow NativeIO %s %s semantic gates\n", transport_name, direction_name);
   printf("| payload | mode | errors | rejections | stale completions |\n");
   printf("| ---: | :--- | ---: | ---: | ---: |\n");
   for (size_t payload = 0u; payload < payload_count; ++payload) {
@@ -1744,7 +1925,9 @@ static void adapter_bench_print_tables(adapter_bench_transport transport,
     }
   }
 
-  printf("\nCFlow NativeIO %s process CPU\n", transport_name);
+  printf("\nCFlow NativeIO %s %s process CPU\n", transport_name, direction_name);
+  printf("Process CPU includes the measured owner, peer worker, and Reactive "
+         "Publisher/Subscriber workers; it is not per-thread CPU.\n");
   printf("| payload | mode | CPU us/transfer | MiB/CPU-s |\n");
   printf("| ---: | :--- | ---: | ---: |\n");
   for (size_t payload = 0u; payload < payload_count; ++payload) {
@@ -1761,7 +1944,7 @@ static void adapter_bench_print_tables(adapter_bench_transport transport,
          "quantized at the host accounting interval.\n");
 #endif
 
-  printf("\nCFlow NativeIO %s normalized mean stage costs\n", transport_name);
+  printf("\nCFlow NativeIO %s %s normalized mean stage costs\n", transport_name, direction_name);
   printf("| payload | mode | admission ns | native submit ns | observe ns | "
          "Actor transition ns | Executor delivery ns | acknowledgement ns | "
          "Source delivery ns | Source owner drive ns |\n");
@@ -1789,87 +1972,95 @@ static void adapter_bench_print_tables(adapter_bench_transport transport,
 }
 
 spec("CFlow NativeIO adapter benchmark") {
-  it("compares TCP and Pipe Actor and Source overhead against NativeIO direct") {
+  it("compares directional TCP and Pipe Actor and Source overhead against NativeIO direct") {
     static adapter_bench_result
-        results[ADAPTER_BENCH_TRANSPORT_COUNT]
+        results[ADAPTER_BENCH_TRANSPORT_COUNT][ADAPTER_BENCH_DIRECTION_COUNT]
                [sizeof(ADAPTER_BENCH_PAYLOADS) / sizeof(ADAPTER_BENCH_PAYLOADS[0])]
                [ADAPTER_BENCH_MODE_COUNT];
     const size_t payload_count = sizeof(ADAPTER_BENCH_PAYLOADS) / sizeof(ADAPTER_BENCH_PAYLOADS[0]);
 
     memset(results, 0, sizeof(results));
     for (size_t transport = 0u; transport < ADAPTER_BENCH_TRANSPORT_COUNT; ++transport) {
-      for (size_t payload = 0u; payload < payload_count; ++payload) {
-        static adapter_bench_fixture fixtures[ADAPTER_BENCH_MODE_COUNT];
-        bool validated[ADAPTER_BENCH_MODE_COUNT] = {false};
-        size_t initialized = 0u;
-        int status = SALTS_OK;
-        int cleanup_status = SALTS_OK;
+      for (size_t direction = 0u; direction < ADAPTER_BENCH_DIRECTION_COUNT; ++direction) {
+        for (size_t payload = 0u; payload < payload_count; ++payload) {
+          static adapter_bench_fixture fixtures[ADAPTER_BENCH_MODE_COUNT];
+          bool validated[ADAPTER_BENCH_MODE_COUNT] = {false};
+          size_t initialized = 0u;
+          int status = SALTS_OK;
+          int cleanup_status = SALTS_OK;
 
-        memset(fixtures, 0, sizeof(fixtures));
-        for (size_t mode = 0u; mode < ADAPTER_BENCH_MODE_COUNT; ++mode) {
-          adapter_bench_result *result = &results[transport][payload][mode];
-          result->payload_size = ADAPTER_BENCH_PAYLOADS[payload];
-          status = adapter_bench_fixture_init(&fixtures[mode], (adapter_bench_transport)transport,
-                                              (adapter_bench_mode)mode, result->payload_size, NULL);
-          initialized = mode + 1u;
-          if (status != SALTS_OK) break;
-          for (size_t warmup = 0u; warmup < ADAPTER_BENCH_WARMUP_TRANSFERS; ++warmup) {
-            status = adapter_bench_exchange(&fixtures[mode]);
+          memset(fixtures, 0, sizeof(fixtures));
+          for (size_t mode = 0u; mode < ADAPTER_BENCH_MODE_COUNT; ++mode) {
+            adapter_bench_result *result = &results[transport][direction][payload][mode];
+            result->payload_size = ADAPTER_BENCH_PAYLOADS[payload];
+            status = adapter_bench_fixture_init(
+                &fixtures[mode], (adapter_bench_transport)transport, (adapter_bench_mode)mode,
+                (adapter_bench_role)direction, result->payload_size, NULL);
+            initialized = mode + 1u;
+            if (status != SALTS_OK) break;
+            for (size_t warmup = 0u; warmup < ADAPTER_BENCH_WARMUP_TRANSFERS; ++warmup) {
+              status = adapter_bench_exchange(&fixtures[mode], NULL);
+              if (status != SALTS_OK) break;
+            }
             if (status != SALTS_OK) break;
           }
-          if (status != SALTS_OK) break;
-        }
 
-        if (status == SALTS_OK) {
-          for (size_t sample = 0u; sample < ADAPTER_BENCH_SAMPLES && status == SALTS_OK; ++sample) {
+          if (status == SALTS_OK) {
+            for (size_t sample = 0u; sample < ADAPTER_BENCH_SAMPLES && status == SALTS_OK;
+                 ++sample) {
+              for (size_t offset = 0u; offset < ADAPTER_BENCH_MODE_COUNT; ++offset) {
+                const size_t mode =
+                    (transport + direction + payload + sample + offset) % ADAPTER_BENCH_MODE_COUNT;
+                status = adapter_bench_run_sample(&fixtures[mode],
+                                                  &results[transport][direction][payload][mode]);
+                if (status != SALTS_OK) break;
+              }
+            }
+          }
+          if (status == SALTS_OK) {
             for (size_t offset = 0u; offset < ADAPTER_BENCH_MODE_COUNT; ++offset) {
               const size_t mode =
-                  (transport + payload + sample + offset) % ADAPTER_BENCH_MODE_COUNT;
-              status =
-                  adapter_bench_run_sample(&fixtures[mode], &results[transport][payload][mode]);
+                  (transport + direction + payload + offset) % ADAPTER_BENCH_MODE_COUNT;
+              status = adapter_bench_measure_cpu(&fixtures[mode],
+                                                 &results[transport][direction][payload][mode]);
               if (status != SALTS_OK) break;
             }
           }
-        }
-        if (status == SALTS_OK) {
-          for (size_t offset = 0u; offset < ADAPTER_BENCH_MODE_COUNT; ++offset) {
-            const size_t mode = (transport + payload + offset) % ADAPTER_BENCH_MODE_COUNT;
-            status = adapter_bench_measure_cpu(&fixtures[mode], &results[transport][payload][mode]);
-            if (status != SALTS_OK) break;
-          }
-        }
-        if (status == SALTS_OK) {
-          for (size_t offset = 0u; offset < ADAPTER_BENCH_MODE_COUNT; ++offset) {
-            const size_t mode = (transport + payload + offset + 1u) % ADAPTER_BENCH_MODE_COUNT;
-            status =
-                adapter_bench_measure_stages(&fixtures[mode], &results[transport][payload][mode]);
-            if (status != SALTS_OK) break;
-          }
-        }
-        for (size_t mode = 0u; mode < initialized; ++mode) {
-          adapter_bench_result *result = &results[transport][payload][mode];
           if (status == SALTS_OK) {
-            if (result->cpu_ns == 0u || result->cpu_transfers == 0u) {
-              status = SALTS_EPROTO;
-            } else {
-              validated[mode] = adapter_bench_validate(&fixtures[mode], result);
-              if (!validated[mode]) status = SALTS_EPROTO;
-              else adapter_bench_finalize(result);
+            for (size_t offset = 0u; offset < ADAPTER_BENCH_MODE_COUNT; ++offset) {
+              const size_t mode =
+                  (transport + direction + payload + offset + 1u) % ADAPTER_BENCH_MODE_COUNT;
+              status = adapter_bench_measure_stages(&fixtures[mode],
+                                                    &results[transport][direction][payload][mode]);
+              if (status != SALTS_OK) break;
             }
           }
+          for (size_t mode = 0u; mode < initialized; ++mode) {
+            adapter_bench_result *result = &results[transport][direction][payload][mode];
+            if (status == SALTS_OK) {
+              if (result->cpu_ns == 0u || result->cpu_transfers == 0u) {
+                status = SALTS_EPROTO;
+              } else {
+                validated[mode] = adapter_bench_validate(&fixtures[mode], result);
+                if (!validated[mode]) status = SALTS_EPROTO;
+                else adapter_bench_finalize(result);
+              }
+            }
+          }
+          for (size_t mode = 0u; mode < initialized; ++mode) {
+            adapter_bench_keep_first_status(&cleanup_status,
+                                            adapter_bench_fixture_destroy(&fixtures[mode]));
+          }
+          check_equal(status, SALTS_OK);
+          check_equal(cleanup_status, SALTS_OK);
+          if (status != SALTS_OK || cleanup_status != SALTS_OK) return;
+          for (size_t mode = 0u; mode < ADAPTER_BENCH_MODE_COUNT; ++mode)
+            check_true(validated[mode]);
         }
-        for (size_t mode = 0u; mode < initialized; ++mode) {
-          adapter_bench_keep_first_status(&cleanup_status,
-                                          adapter_bench_fixture_destroy(&fixtures[mode]));
-        }
-        check_equal(status, SALTS_OK);
-        check_equal(cleanup_status, SALTS_OK);
-        if (status != SALTS_OK || cleanup_status != SALTS_OK) return;
-        for (size_t mode = 0u; mode < ADAPTER_BENCH_MODE_COUNT; ++mode)
-          check_true(validated[mode]);
+        adapter_bench_print_tables((adapter_bench_transport)transport,
+                                   (adapter_bench_role)direction, results[transport][direction],
+                                   payload_count);
       }
-      adapter_bench_print_tables((adapter_bench_transport)transport, results[transport],
-                                 payload_count);
     }
   }
 }

@@ -336,7 +336,7 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
-      - name: Run NativeIO direct versus CFlow Actor and Source benchmark
+      - name: Run directional NativeIO direct versus CFlow Actor and Source benchmark
         if: steps.scope.outputs.adapted == 'true'
         shell: pwsh
         env:
@@ -354,7 +354,7 @@ jobs:
           $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "cflow-native-io-adapter-benchmark.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO direct versus CFlow Actor and Source: $env:BENCHMARK_HOST"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Directional NativeIO direct versus CFlow Actor and Source: $env:BENCHMARK_HOST"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 

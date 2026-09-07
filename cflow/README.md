@@ -902,14 +902,21 @@ semantics and corresponding control-plane cost, so a data-transfer-only Pipe
 should not be wrapped in Actor or Reactive by default.
 
 `cflow_native_io_adapter_benchmark` measures that layering cost for TCP and
-byte pipes at 1/4/8/16/32/64 KiB. It reports NativeIO direct,
-Actor/NativeIO, and `Source(window=2)` latency (p50/p95/p99), full-payload
-exchanges per second (`ops/s`), MiB/s, process CPU time, stage timings, and semantic-gate counters for
-errors, admission rejections, and stale completions. Fixture construction,
-buffers, endpoints, and owner pools are outside the timed transfer loop. The
-Source case uses one fixed one-worker pool for Publisher/NativeIO ownership and
-a separate one-worker Worker Scheduler for Subscription/Subscriber work, so
-the benchmark does not rely on accidental same-thread execution. Source
+byte pipes at 1/4/8/16/32/64 KiB. TX and RX are independent workloads: only
+the measured endpoint is attached to NativeIO, while one fixed peer worker
+drives the opposite raw endpoint with bounded waits. The report compares
+NativeIO direct, Actor/NativeIO, and `Source(window=1)` within the same
+direction; it does not publish a combined send-plus-receive latency or
+throughput ratio. Each
+direction reports p50/p95/p99 latency, full-payload operations per second
+(`ops/s`), MiB/s, process CPU time, stage timings, and semantic-gate counters
+for errors, admission rejections, and stale completions. Process CPU includes
+the measured owner, peer worker, and Reactive Publisher/Subscriber workers; it
+is not a per-thread measurement. Fixture construction, buffers, endpoints, and
+owner pools are outside the timed transfer loop. The Source case uses one fixed
+one-worker pool for Publisher/NativeIO ownership and a separate one-worker
+Worker Scheduler for Subscription/Subscriber work, so the benchmark does not
+rely on accidental same-thread execution. Source
 observation is encapsulated by its owner drive; therefore its `observe ns`
 column is zero and `Source owner drive ns` is the corresponding aggregate
 stage. Build with `BUILD_BENCHMARKS=ON`, then run the target directly; release
