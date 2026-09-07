@@ -37,7 +37,7 @@ ABI 1 程序意外装载含新公开结构布局的 ABI 2 动态库，但源码�
 - 用户不接触 poller 的后台 HTTP/1.1/HTTP/2 server；同一 route、middleware、Session 和
   GET/HEAD/POST/PUT/DELETE/PATCH/OPTIONS handler API 同时服务两种协议；
 - route-scoped 流式 request sink、服务端 response source 与文件响应；
-- HTTP/1.1 handler 可交出 generation-checked deferred response，在应用 worker 完成后从任意线程
+- HTTP/1.1/H2 handler 可交出 generation-checked deferred response，在应用 worker 完成后从任意线程
   复制提交响应并唤醒 owner；
 - 同一个显式 WebSocket route 同时支持 HTTP/1.1 Upgrade 与 RFC 8441 HTTP/2 Extended CONNECT，
   并提供无需用户驱动 poller 的 `ws://`/verified `wss://` 同步 client；两种协议继续复用
@@ -52,7 +52,7 @@ Server 的大型 payload 不在初始化时按槽位乘最大消息尺寸预留�
 `chttp_server_get_stats()` 观察当前/峰值字节和预算拒绝次数。
 
 当前有意不提供 HTTP/3、WebSocket extension/subprotocol、通用 CONNECT route、redirect、
-compression、proxy、multipart/Range、HTTP/2 deferred response 或自动 retry。
+compression、proxy、multipart/Range、deferred streaming body 或自动 retry。
 H1 client serializer 发送
 `Connection: keep-alive`；final response 只有在 llhttp 判定协议允许持久连接时才回到池中，
 `Connection: close`、EOF framing、解析失败、取消和 shutdown 都会关闭该连接。UDP/datagram 在
@@ -163,15 +163,18 @@ RFC 8441 Extended CONNECT 共用同一个 pre-body admission contract。完整�
 `chttp/tests/chttp_jwt_test.c`、`chttp/tests/chttp_server_test.c`、`chttp/tests/chttp_h2_server_test.c` 与
 `chttp/tests/chttp_websocket_test.c`。
 
-需要阻塞数据库或外部服务时，HTTP/1.1 handler 先复制业务所需的 request 字段，再调用
+需要阻塞数据库或外部服务时，HTTP/1.1/H2 handler 先复制业务所需的 request 字段，再调用
 `chttp_server_response_defer()` 封住当前 builder，并把拥有型 job 投递到应用已有的有界 worker
 队列。worker 必须成功调用一次 `chttp_server_deferred_reply()` 或
 `chttp_server_deferred_cancel()`；reply 在返回前复制 headers/body，成功后 job 即可释放响应内存。
 reply 失败会让 handle 保持 pending，调用方必须显式 retry 或 cancel；fail-fast 路径使用 cancel，
-不发送替代响应并关闭该 HTTP/1.1 连接。每条连接最多挂起一个响应，总量受
-`network.connection_capacity` 约束；同连接的后续流水请求会保留并在前一响应完整写出后恢复。
+不发送替代响应：H1 会关闭独占连接，H2 会发送 `RST_STREAM(CANCEL)` 且不影响 sibling stream。
+H1 每条连接最多挂起一个响应；H2 每个固定 stream slot 最多挂起一个，总量受
+`network.connection_capacity` 与 `h2_stream_capacity` 约束。同一 H1 连接的后续流水请求会保留并在
+前一响应完整写出后恢复；H2 sibling stream 可继续推进。
 队列 admission 失败时，handler 应直接同步返回 429/503，不得先 defer。deferred 当前要求
-`session_capacity == 0` 且只支持 HTTP/1.1；应用级 Session 应随 job 自行解析与持有。停服会等待
+`session_capacity == 0`；应用级 Session 应随 job 自行解析与持有。H2 的 RST_STREAM/peer close 会让
+尚未 claim 的 handle 变为 stale，GOAWAY drain 仍允许已接纳 stream 完成。停服会等待
 已经交出的 handle 完成，未完成时有超时的 `chttp_server_stop()` 返回 `SALTS_ETIMEDOUT`，调用方
 必须先终结工作再重试 stop。
 

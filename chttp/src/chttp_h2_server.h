@@ -23,11 +23,13 @@ void chttp_h2_server_connection_cancel_file_sources(chttp_h2_server_connection *
 int chttp_h2_server_connection_receive(chttp_h2_server_connection *h2, const void *data,
                                        size_t size);
 int chttp_h2_server_connection_flush(chttp_h2_server_connection *h2);
+int chttp_h2_server_connection_deferred_progress(chttp_h2_server_connection *h2);
+bool chttp_h2_server_connection_has_deferred(const chttp_h2_server_connection *h2);
 int chttp_h2_server_connection_begin_stop(chttp_h2_server_connection *h2);
 bool chttp_h2_server_connection_draining(const chttp_h2_server_connection *h2);
 bool chttp_h2_server_connection_stop_ready(const chttp_h2_server_connection *h2);
 bool chttp_h2_server_connection_stop_waiting(const chttp_h2_server_connection *h2);
-chttp_server_websocket_peer *chttp_h2_server_websocket_peer_find(
-    chttp_h2_server_connection *h2, int32_t stream_id);
+chttp_server_websocket_peer *chttp_h2_server_websocket_peer_find(chttp_h2_server_connection *h2,
+                                                                 int32_t stream_id);
 
 #endif /* CHTTP_H2_SERVER_H */

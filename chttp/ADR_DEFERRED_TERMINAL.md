@@ -37,7 +37,10 @@ handle.
   `SALTS_EINVAL`.
 
 The public handle layout is unchanged, so this is an additive source and ABI-compatible API change.
-HTTP/2 deferred responses remain unsupported and return `SALTS_ENOTSUP` at admission.
+The original HTTP/2 limitation was superseded by
+[Salts issue #214](https://github.com/qigao/salts/issues/214): regular H2 requests now use the same
+terminal API with one generation-checked control block per fixed stream slot. See
+[`../docs/CHTTP_H2_DEFERRED_RESPONSE_DESIGN.md`](../docs/CHTTP_H2_DEFERRED_RESPONSE_DESIGN.md).
 
 ## Ownership, bounds, and shutdown
 

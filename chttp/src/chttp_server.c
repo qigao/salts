@@ -563,6 +563,15 @@ static int chttp_server_connection_init(chttp_server_impl *server,
   connection->deferred_response.impl = &connection->deferred_builder;
   atomic_init(&connection->deferred_token,
               chttp_server_deferred_token(0u, CHTTP_SERVER_DEFERRED_IDLE));
+  connection->deferred_target =
+      (chttp_server_deferred_target){.server = server,
+                                     .connection = connection,
+                                     .request_state = &connection->request_state,
+                                     .response_builder = &connection->deferred_builder,
+                                     .response = &connection->deferred_response,
+                                     .token = &connection->deferred_token,
+                                     .kind = CHTTP_SERVER_DEFERRED_HTTP_1_1};
+  connection->request_state.response_builder.deferred_target = &connection->deferred_target;
   status = chttp_server_parser_init(&connection->parser, &parser_config);
   if (status == SALTS_OK && server->config.enable_http2)
     status = chttp_h2_server_connection_init(&connection->h2, connection);
@@ -912,9 +921,8 @@ static void chttp_server_on_state(void *user, cnet_connection handle, cnet_conne
 
 int chttp_server_send_pending(chttp_server_connection *connection) {
   int status;
-  if (chttp_server_deferred_token_state(
-          atomic_load_explicit(&connection->deferred_token, memory_order_acquire)) !=
-      CHTTP_SERVER_DEFERRED_IDLE)
+  if (chttp_server_deferred_token_state(atomic_load_explicit(
+          &connection->deferred_token, memory_order_acquire)) != CHTTP_SERVER_DEFERRED_IDLE)
     return SALTS_OK;
   if (connection->wire_protocol == CHTTP_SERVER_WIRE_HTTP_2 && connection->outbound_size == 0u) {
     status = chttp_h2_server_connection_flush(connection->h2);
@@ -1457,7 +1465,8 @@ static chttp_server_connection *chttp_server_free_connection(chttp_server_impl *
     if (!server->connections[index].active &&
         chttp_server_deferred_token_state(atomic_load_explicit(
             &server->connections[index].deferred_token, memory_order_acquire)) ==
-            CHTTP_SERVER_DEFERRED_IDLE)
+            CHTTP_SERVER_DEFERRED_IDLE &&
+        !chttp_h2_server_connection_has_deferred(server->connections[index].h2))
       return &server->connections[index];
   return NULL;
 }
@@ -1530,6 +1539,8 @@ static int chttp_server_deferred_progress(chttp_server_impl *server) {
     const chttp_server_deferred_state deferred_state =
         chttp_server_deferred_token_state(deferred_token);
     int status;
+    status = chttp_h2_server_connection_deferred_progress(connection->h2);
+    if (status != SALTS_OK) return status;
     if (deferred_state == CHTTP_SERVER_DEFERRED_CANCELED) {
       chttp_session_request_abort(&connection->request_state);
       chttp_server_request_state_reset(&connection->request_state);
@@ -1563,7 +1574,7 @@ static int chttp_server_deferred_progress(chttp_server_impl *server) {
       status = chttp_server_connection_reserve_outbound(
           connection, connection->outbound_size + server->max_response_wire_bytes);
     if (status == SALTS_OK)
-      status = chttp_server_response_serialize(builder, &connection->deferred_request,
+      status = chttp_server_response_serialize(builder, &connection->deferred_target.request,
                                                connection->outbound, connection->outbound_capacity,
                                                &connection->outbound_size);
     if (status != SALTS_OK) {
@@ -1579,7 +1590,8 @@ static int chttp_server_deferred_progress(chttp_server_impl *server) {
       chttp_server_connection_close(connection);
       continue;
     }
-    if (!connection->deferred_request.protocol_keep_alive) connection->close_after_write = true;
+    if (!connection->deferred_target.request.protocol_keep_alive)
+      connection->close_after_write = true;
     connection->deferred_response_writing = true;
     chttp_server_stats_response(server);
     atomic_store_explicit(
@@ -1623,7 +1635,8 @@ static bool chttp_server_connections_active(const chttp_server_impl *server) {
     if (server->connections[index].active ||
         chttp_server_deferred_token_state(atomic_load_explicit(
             &server->connections[index].deferred_token, memory_order_acquire)) !=
-            CHTTP_SERVER_DEFERRED_IDLE)
+            CHTTP_SERVER_DEFERRED_IDLE ||
+        chttp_h2_server_connection_has_deferred(server->connections[index].h2))
       return true;
   return false;
 }

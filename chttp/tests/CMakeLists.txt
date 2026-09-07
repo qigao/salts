@@ -164,7 +164,7 @@ set_target_properties(chttp_h2_client_test PROPERTIES
 
 cmake_add_test(chttp_h2_server_test
   SOURCES chttp_h2_server_test.c
-  LIBS salts_chttp Salts::TinyTest
+  LIBS salts_chttp Salts::CFlow Salts::TinyTest
   INCLUDES ../src
   FOLDER "chttp/tests")
 set_target_properties(chttp_h2_server_test PROPERTIES
