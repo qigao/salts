@@ -924,6 +924,7 @@ int chttp_server_send_pending(chttp_server_connection *connection) {
   if (chttp_server_deferred_token_state(atomic_load_explicit(
           &connection->deferred_token, memory_order_acquire)) != CHTTP_SERVER_DEFERRED_IDLE)
     return SALTS_OK;
+  if (connection->writing) return SALTS_OK;
   if (connection->wire_protocol == CHTTP_SERVER_WIRE_HTTP_2 && connection->outbound_size == 0u) {
     status = chttp_h2_server_connection_flush(connection->h2);
     if (status != SALTS_OK) {
