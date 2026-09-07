@@ -559,7 +559,11 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
   cnet_owner_request *request;
   const uint32_t timeout_ms = cnet_owner_request_timeout(session, role);
   const cnet_session_stage stage = cnet_owner_request_stage(session, role);
+#if defined(CNET_INTERNAL_PROFILING)
+  uint64_t lifecycle_started;
+#endif
   size_t index;
+  int result;
   int status;
 
   request = cnet_owner_acquire_request(impl);
@@ -567,6 +571,9 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
     return command != NULL
                ? cnet_owner_fail_accepted_command(impl, session, command, SALTS_ENOBUFS, stage)
                : cnet_owner_fail_session(impl, session, SALTS_ENOBUFS, stage);
+#if defined(CNET_INTERNAL_PROFILING)
+  lifecycle_started = cnet_owner_profile_start(impl);
+#endif
   request->session = session->handle;
   request->operation = *operation;
   request->requested_size = operation->length;
@@ -596,10 +603,13 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
                                              &request->coroutine);
 #endif
   if (status != SALTS_OK) {
-    if (request->active) return cnet_owner_fail_started_request(request, status);
-    return status;
+    result = request->active ? cnet_owner_fail_started_request(request, status) : status;
+    goto finish;
   }
-  if (!request->active) return cnet_owner_take_coroutine_status(impl);
+  if (!request->active) {
+    result = cnet_owner_take_coroutine_status(impl);
+    goto finish;
+  }
   index = (size_t)(request - impl->request_records);
   if (timeout_ms != 0u) {
     status =
@@ -610,10 +620,18 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
       status = cnet_owner_cancel_session_requests(impl, session->handle);
       if (status != SALTS_OK)
         cnet_owner_record_failure(session, status, CNET_SESSION_STAGE_SHUTDOWN);
-      return status;
+      result = status;
+      goto finish;
     }
   }
-  return cnet_owner_take_coroutine_status(impl);
+  result = cnet_owner_take_coroutine_status(impl);
+
+finish:
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_owner_profile_finish(impl, lifecycle_started, &impl->profile.request_lifecycle_ns,
+                            &impl->profile.request_lifecycle_calls);
+#endif
+  return result;
 }
 
 static int cnet_owner_tls_start_write(cnet_owner_impl *impl, cnet_owner_session *session,

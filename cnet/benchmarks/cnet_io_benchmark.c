@@ -107,9 +107,10 @@ typedef struct io_bench_series {
   cnet_benchmark_summary cnet_polls_per_round_trip;
   cnet_benchmark_summary cnet_owner_drive_ns;
   cnet_benchmark_summary cnet_command_stage_ns;
+  cnet_benchmark_summary cnet_request_control_ns;
   cnet_benchmark_summary cnet_request_start_ns;
   cnet_benchmark_summary cnet_observe_ns;
-  cnet_benchmark_summary cnet_request_completion_ns;
+  cnet_benchmark_summary cnet_completion_control_ns;
   cnet_benchmark_summary cnet_event_publish_ns;
   cnet_benchmark_summary cnet_requests_started_per_round_trip;
   cnet_benchmark_summary cnet_requests_completed_per_round_trip;
@@ -1363,6 +1364,18 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_command_stage_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
+    if (result->cnet_profile.request_lifecycle_calls != result->cnet_profile.request_start_calls ||
+        result->cnet_profile.request_lifecycle_ns < result->cnet_profile.request_start_ns)
+      return SALTS_ERANGE;
+    values[repeat] = io_bench_mean(result->cnet_profile.request_lifecycle_ns -
+                                       result->cnet_profile.request_start_ns,
+                                   result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status =
+        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_request_control_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->stage_profile_runs[repeat];
     values[repeat] = io_bench_mean(result->cnet_profile.request_start_ns, result->round_trips);
   }
   if (status == SALTS_OK)
@@ -1375,12 +1388,16 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_observe_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] =
-        io_bench_mean(result->cnet_profile.request_completion_ns, result->round_trips);
+    if (result->cnet_profile.request_completion_calls != result->cnet_profile.event_publish_calls ||
+        result->cnet_profile.request_completion_ns < result->cnet_profile.event_publish_ns)
+      return SALTS_ERANGE;
+    values[repeat] = io_bench_mean(result->cnet_profile.request_completion_ns -
+                                       result->cnet_profile.event_publish_ns,
+                                   result->round_trips);
   }
   if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                      &series->cnet_request_completion_ns);
+    status =
+        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_completion_control_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
     values[repeat] = io_bench_mean(result->cnet_profile.event_publish_ns, result->round_trips);
@@ -1547,25 +1564,27 @@ static void io_bench_print_cnet_stages(const char *protocol, const io_bench_seri
   }
 
   printf("\n%s CNet internal inclusive time per round trip\n", protocol);
-  printf("Nested columns overlap and must not be added. Request start is NativeIO coroutine spawn "
-         "through first await/submit. Request completion is terminal logical request control and "
-         "excludes intermediate partial-send completions; event publish includes the user "
-         "callback.\n");
-  printf("| payload | owner drive us | MAD us | command stage ns | MAD ns | request start us | "
-         "MAD us | observe us | MAD us | request completion ns | MAD ns | event publish ns | "
-         "MAD ns | requests started/RT | requests completed/RT | events/RT |\n");
+  printf("Nested columns overlap and must not be added. Request control excludes NativeIO "
+         "coroutine spawn; request start is that spawn "
+         "through first await/submit. Completion control excludes event publish and intermediate "
+         "partial-send completions; event publish includes the user callback.\n");
+  printf("| payload | owner drive us | MAD us | command stage ns | MAD ns | request control ns | "
+         "MAD ns | request start us | MAD us | observe us | MAD us | completion control ns | "
+         "MAD ns | event publish ns | MAD ns | requests started/RT | requests completed/RT | "
+         "events/RT |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-         "---: | ---: | ---: | ---: |\n");
+         "---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
     const io_bench_series *series = &cnet[index];
-    printf("| %zu KiB | %.3f | %.3f | %.1f | %.1f | %.3f | %.3f | %.3f | %.3f | %.1f | "
-           "%.1f | %.1f | %.1f | %.2f | %.2f | %.2f |\n",
+    printf("| %zu KiB | %.3f | %.3f | %.1f | %.1f | %.1f | %.1f | %.3f | %.3f | %.3f | "
+           "%.3f | %.1f | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f |\n",
            series->payload_size / 1024u, series->cnet_owner_drive_ns.median / 1000.0,
            series->cnet_owner_drive_ns.mad / 1000.0, series->cnet_command_stage_ns.median,
-           series->cnet_command_stage_ns.mad, series->cnet_request_start_ns.median / 1000.0,
+           series->cnet_command_stage_ns.mad, series->cnet_request_control_ns.median,
+           series->cnet_request_control_ns.mad, series->cnet_request_start_ns.median / 1000.0,
            series->cnet_request_start_ns.mad / 1000.0, series->cnet_observe_ns.median / 1000.0,
-           series->cnet_observe_ns.mad / 1000.0, series->cnet_request_completion_ns.median,
-           series->cnet_request_completion_ns.mad, series->cnet_event_publish_ns.median,
+           series->cnet_observe_ns.mad / 1000.0, series->cnet_completion_control_ns.median,
+           series->cnet_completion_control_ns.mad, series->cnet_event_publish_ns.median,
            series->cnet_event_publish_ns.mad, series->cnet_requests_started_per_round_trip.median,
            series->cnet_requests_completed_per_round_trip.median,
            series->cnet_events_per_round_trip.median);
