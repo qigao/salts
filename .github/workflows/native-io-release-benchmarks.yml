@@ -5,16 +5,34 @@ on:
     paths:
       - "native-io/**"
       - "coroutine/**"
+      - "concurrency/**"
+      - "platform/**"
+      - "cmeta/**"
+      - "cflow/**"
       - "cnet/**"
+      - "tinytest/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
       - "vcpkg.json"
+      - "vcpkg-configuration.json"
       - ".github/workflows/native-io-release-benchmarks.yml"
   push:
     branches: [master]
     paths:
       - "native-io/**"
       - "coroutine/**"
+      - "concurrency/**"
+      - "platform/**"
+      - "cmeta/**"
+      - "cflow/**"
       - "cnet/**"
+      - "tinytest/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
       - "vcpkg.json"
+      - "vcpkg-configuration.json"
       - ".github/workflows/native-io-release-benchmarks.yml"
   workflow_dispatch:
 
@@ -82,14 +100,35 @@ jobs:
               $cnetChanged = @($changed | Where-Object {
                   $_ -like 'cnet/*'
                 }).Count -gt 0
+              $cflowChanged = @($changed | Where-Object {
+                  $_ -like 'cflow/*'
+                }).Count -gt 0
               $coroutineChanged = @($changed | Where-Object {
                   $_ -like 'coroutine/*'
                 }).Count -gt 0
-              $dependencyChanged = @($changed | Where-Object {
-                  $_ -eq 'vcpkg.json'
+              $concurrencyChanged = @($changed | Where-Object {
+                  $_ -like 'concurrency/*'
                 }).Count -gt 0
-              $runAdapted = $nativeChanged -or $cnetChanged -or
-                $coroutineChanged -or $dependencyChanged -or $workflowChanged
+              $platformChanged = @($changed | Where-Object {
+                  $_ -like 'platform/*'
+                }).Count -gt 0
+              $cmetaChanged = @($changed | Where-Object {
+                  $_ -like 'cmeta/*'
+                }).Count -gt 0
+              $tinytestChanged = @($changed | Where-Object {
+                  $_ -like 'tinytest/*'
+                }).Count -gt 0
+              $buildChanged = @($changed | Where-Object {
+                  $_ -like 'cmake/*' -or $_ -eq 'CMakeLists.txt' -or
+                  $_ -eq 'CMakePresets.json'
+                }).Count -gt 0
+              $dependencyChanged = @($changed | Where-Object {
+                  $_ -eq 'vcpkg.json' -or $_ -eq 'vcpkg-configuration.json'
+                }).Count -gt 0
+              $runAdapted = $nativeChanged -or $cnetChanged -or $cflowChanged -or
+                $coroutineChanged -or $concurrencyChanged -or $platformChanged -or
+                $cmetaChanged -or $tinytestChanged -or $buildChanged -or
+                $dependencyChanged -or $workflowChanged
             }
           }
           "adapted=$($runAdapted.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
@@ -208,6 +247,7 @@ jobs:
               cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test \
               cnet_packet_endpoint_test cnet_vsock_integration_test \
               cnet_benchmark_stats_test \
+              cflow_io_native_adapter_test cflow_native_io_adapter_benchmark \
               concurrency_deadline_queue_test
 
       - name: Configure Windows Release
@@ -224,7 +264,7 @@ jobs:
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_benchmark_stats_test concurrency_deadline_queue_test
+          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_benchmark_stats_test cflow_io_native_adapter_test cflow_native_io_adapter_benchmark concurrency_deadline_queue_test
 
       - name: Configure and build macOS Release
         if: matrix.family == 'mac'
@@ -243,6 +283,7 @@ jobs:
               cnet_api_test cnet_header_cpp_test cnet_tls_test \
               cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test \
               cnet_packet_endpoint_test cnet_benchmark_stats_test \
+              cflow_io_native_adapter_test cflow_native_io_adapter_benchmark \
               concurrency_deadline_queue_test
 
       - name: Run NativeIO and NativeIPC contract tests
@@ -255,6 +296,12 @@ jobs:
         shell: pwsh
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --timeout 60 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run CFlow NativeIO adapter contract tests
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^cflow_io_native_adapter_test$' --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run libuv versus NativeIO direct/coroutine versus CNet benchmark
@@ -284,6 +331,28 @@ jobs:
           ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## libuv versus NativeIO direct/coroutine versus CNet: $env:BENCHMARK_HOST"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO direct versus CFlow Actor and Source benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          CFLOW_IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cflow_native_io_adapter_benchmark
+          BENCHMARK_HOST: ${{ matrix.host }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:CFLOW_IO_BENCHMARK_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "CFlow NativeIO adapter benchmark executable not found: $benchmark"
+          }
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "cflow-native-io-adapter-benchmark.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO direct versus CFlow Actor and Source: $env:BENCHMARK_HOST"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 

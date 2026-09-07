@@ -140,3 +140,10 @@ if (status != 0)
 网络性能比较位于 CNet 的 `cnet_io_benchmark`，由依赖 NativeIO 的上层 target 统一比较 libuv、NativeIO 与 CNet，避免 NativeIO 反向依赖 CNet。libuv 只链接 benchmark executable，不进入 NativeIO 的公开依赖或生产链接面。
 
 `native_io_pipe_benchmark` 在 Windows IOCP 上比较 raw overlapped named-pipe completion 与 NativeIO，在 Linux epoll 和 macOS/BSD kqueue 上比较 raw POSIX pipe 调用与 NativeIO。每个样本执行 256 次单向 transfer，覆盖 1/4/8/16/32/64 KiB；应用 payload 每次只计一次，不把读端和写端重复计算为两倍流量。fixture、buffer、handle/descriptor 与 backend 初始化位于计时区外，输出独立的 p50/p95 延迟、吞吐以及 raw submit、NativeIO submit/observe 阶段表。Linux io_uring 在对应 pipe backend 实现前不生成伪基线。
+
+CFlow 的 `cflow_native_io_adapter_benchmark` 使用相同 payload 档位，对比
+NativeIO direct、Actor/NativeIO 与固定 `window=2` 的 Source/NativeIO，并输出
+p50/p95/p99、ops/s、MiB/s、进程 CPU、分阶段耗时，以及错误、拒绝与 stale
+completion 语义门禁。该目标用于测量上层语义成本，不改变 NativeIO 的依赖方向；
+release benchmark CI 会把完整结果上传为
+`cflow-native-io-adapter-benchmark.md`。
