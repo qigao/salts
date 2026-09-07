@@ -106,6 +106,7 @@ typedef struct io_bench_series {
   cnet_benchmark_summary cnet_payload_validation_ns;
   cnet_benchmark_summary cnet_polls_per_round_trip;
   cnet_benchmark_summary cnet_owner_drive_ns;
+  cnet_benchmark_summary cnet_owner_control_ns;
   cnet_benchmark_summary cnet_command_stage_ns;
   cnet_benchmark_summary cnet_request_control_ns;
   cnet_benchmark_summary cnet_request_start_ns;
@@ -1358,6 +1359,18 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_owner_drive_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
+    const uint64_t nested_ns =
+        result->cnet_profile.request_lifecycle_ns + result->cnet_profile.observe_ns;
+    if (nested_ns < result->cnet_profile.request_lifecycle_ns ||
+        result->cnet_profile.owner_drive_ns < nested_ns)
+      return SALTS_ERANGE;
+    values[repeat] =
+        io_bench_mean(result->cnet_profile.owner_drive_ns - nested_ns, result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_owner_control_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->stage_profile_runs[repeat];
     values[repeat] = io_bench_mean(result->cnet_profile.command_stage_ns, result->round_trips);
   }
   if (status == SALTS_OK)
@@ -1568,18 +1581,19 @@ static void io_bench_print_cnet_stages(const char *protocol, const io_bench_seri
          "coroutine spawn; request start is that spawn "
          "through first await/submit. Completion control excludes event publish and intermediate "
          "partial-send completions; event publish includes the user callback.\n");
-  printf("| payload | owner drive us | MAD us | command stage ns | MAD ns | request control ns | "
-         "MAD ns | request start us | MAD us | observe us | MAD us | completion control ns | "
-         "MAD ns | event publish ns | MAD ns | requests started/RT | requests completed/RT | "
-         "events/RT |\n");
+  printf("| payload | owner drive us | MAD us | owner control ns | MAD ns | command stage ns | "
+         "MAD ns | request control ns | MAD ns | request start us | MAD us | observe us | MAD us | "
+         "completion control ns | MAD ns | event publish ns | MAD ns | requests started/RT | "
+         "requests completed/RT | events/RT |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-         "---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+         "---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
     const io_bench_series *series = &cnet[index];
-    printf("| %zu KiB | %.3f | %.3f | %.1f | %.1f | %.1f | %.1f | %.3f | %.3f | %.3f | "
-           "%.3f | %.1f | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f |\n",
+    printf("| %zu KiB | %.3f | %.3f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.3f | "
+           "%.3f | %.3f | %.3f | %.1f | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f |\n",
            series->payload_size / 1024u, series->cnet_owner_drive_ns.median / 1000.0,
-           series->cnet_owner_drive_ns.mad / 1000.0, series->cnet_command_stage_ns.median,
+           series->cnet_owner_drive_ns.mad / 1000.0, series->cnet_owner_control_ns.median,
+           series->cnet_owner_control_ns.mad, series->cnet_command_stage_ns.median,
            series->cnet_command_stage_ns.mad, series->cnet_request_control_ns.median,
            series->cnet_request_control_ns.mad, series->cnet_request_start_ns.median / 1000.0,
            series->cnet_request_start_ns.mad / 1000.0, series->cnet_observe_ns.median / 1000.0,
