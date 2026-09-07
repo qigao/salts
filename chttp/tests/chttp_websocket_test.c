@@ -13,7 +13,8 @@ enum {
   CHTTP_WEBSOCKET_TEST_H2_BUFFER_BYTES = 64u * 1024u,
   CHTTP_WEBSOCKET_TEST_H2_STREAM_CAPACITY = 8u,
   CHTTP_WEBSOCKET_TEST_H2_HPACK_BYTES = 4096u,
-  CHTTP_WEBSOCKET_TEST_H2_SETTINGS_COUNT = 16u
+  CHTTP_WEBSOCKET_TEST_H2_SETTINGS_COUNT = 16u,
+  CHTTP_WEBSOCKET_TEST_DUPLEX_ROUNDS = 128u
 };
 
 typedef struct chttp_websocket_test_probe {
@@ -378,6 +379,78 @@ spec("CHTTP WebSocket client/server") {
     check_equal(chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
                 SALTS_OK);
     check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_CLOSE);
+    check_equal(chttp_websocket_client_destroy(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(chttp_server_destroy(&server), SALTS_OK);
+  }
+
+  it("keeps H1 input admitted while an asynchronous WebSocket output is pending") {
+    static const char outbound[] = "server-output";
+    static const char ping[] = "peer-ping";
+    chttp_websocket_test_server_session_probe probe;
+    chttp_server server = {0};
+    chttp_server_config server_config = chttp_websocket_test_server_config();
+    chttp_server_websocket_options route = {.size = sizeof(route),
+                                            .path = "/duplex",
+                                            .on_open = chttp_websocket_test_capture_open,
+                                            .on_event = chttp_websocket_test_capture_event,
+                                            .user = &probe};
+    chttp_websocket_client client = {0};
+    chttp_websocket_client_config client_config = chttp_websocket_test_client_config();
+    chttp_websocket_connect_options connect_options = {.size = sizeof(connect_options)};
+    chttp_websocket_event event = {0};
+    unsigned int http_status = 0u;
+    uint16_t port = 0u;
+    char uri[128];
+
+    memset(&probe, 0, sizeof(probe));
+    atomic_init(&probe.captured, 0);
+    atomic_init(&probe.peer_present, 0);
+    check_equal(chttp_server_init(&server, &server_config), SALTS_OK);
+    check_equal(chttp_server_websocket_with(&server, &route), SALTS_OK);
+    check_equal(chttp_server_start(&server), SALTS_OK);
+    check_equal(chttp_server_port(&server, &port), SALTS_OK);
+    check_true(snprintf(uri, sizeof(uri), "ws://127.0.0.1:%u/duplex", (unsigned int)port) > 0);
+    connect_options.uri = uri;
+    connect_options.timeout_ms = CHTTP_WEBSOCKET_TEST_TIMEOUT_MS;
+    check_equal(chttp_websocket_client_init(&client, &client_config), SALTS_OK);
+    check_equal(chttp_websocket_client_connect(&client, &connect_options, &http_status), SALTS_OK);
+    check_equal(http_status, 101u);
+    check_equal(atomic_load_explicit(&probe.captured, memory_order_acquire), 1);
+
+    for (size_t round = 0u; round < CHTTP_WEBSOCKET_TEST_DUPLEX_ROUNDS; ++round) {
+      size_t messages = 0u;
+      int saw_pong = 0;
+      check_equal(chttp_server_websocket_send_text(&probe.session, outbound, sizeof(outbound) - 1u),
+                  SALTS_OK);
+      check_equal(chttp_server_websocket_send_text(&probe.session, outbound, sizeof(outbound) - 1u),
+                  SALTS_OK);
+      check_equal(chttp_websocket_client_send_ping(&client, ping, sizeof(ping) - 1u,
+                                                   CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+                  SALTS_OK);
+      for (size_t received = 0u; received < 3u; ++received) {
+        check_equal(
+            chttp_websocket_client_receive(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS, &event),
+            SALTS_OK);
+        if (event.kind == CHTTP_WEBSOCKET_EVENT_MESSAGE) {
+          check_equal(event.message_type, CHTTP_WEBSOCKET_MESSAGE_TEXT);
+          check_equal(event.size, sizeof(outbound) - 1u);
+          check_equal(memcmp(event.data, outbound, sizeof(outbound) - 1u), 0);
+          ++messages;
+        } else {
+          check_equal(event.kind, CHTTP_WEBSOCKET_EVENT_PONG);
+          check_equal(event.size, sizeof(ping) - 1u);
+          check_equal(memcmp(event.data, ping, sizeof(ping) - 1u), 0);
+          saw_pong = 1;
+        }
+      }
+      check_equal(messages, 2u);
+      check_true(saw_pong);
+    }
+
+    check_equal(
+        chttp_websocket_client_close(&client, 1000u, NULL, 0u, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS),
+        SALTS_OK);
     check_equal(chttp_websocket_client_destroy(&client, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(chttp_server_stop(&server, CHTTP_WEBSOCKET_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(chttp_server_destroy(&server), SALTS_OK);

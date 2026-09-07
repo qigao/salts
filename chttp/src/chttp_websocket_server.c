@@ -309,9 +309,20 @@ int chttp_server_websocket_upgrade(void *user, const chttp_server_request_view *
 
 int chttp_server_websocket_input(chttp_server_connection *connection, const void *data,
                                  size_t size) {
+  int status;
   if (connection == NULL || connection->websocket_peer.phase != CHTTP_SERVER_WEBSOCKET_OPEN)
     return SALTS_EINVAL;
-  return chttp_server_websocket_peer_feed(&connection->websocket_peer, data, size);
+  status = chttp_server_websocket_peer_feed(&connection->websocket_peer, data, size);
+  if (status != SALTS_EBUSY) return status;
+  if (!cnet_websocket_has_pending_output(&connection->websocket_peer.engine)) return status;
+  if (connection->websocket_upgrade_input_size != 0u) return SALTS_ENOBUFS;
+  status = chttp_server_buffer_grow(connection->server, &connection->websocket_upgrade_input,
+                                    &connection->websocket_upgrade_input_capacity, size,
+                                    connection->server->config.network.receive_buffer_bytes, 0u);
+  if (status != SALTS_OK) return status;
+  if (size != 0u) memcpy(connection->websocket_upgrade_input, data, size);
+  connection->websocket_upgrade_input_size = size;
+  return SALTS_OK;
 }
 
 int chttp_server_websocket_send_complete(chttp_server_connection *connection) {
