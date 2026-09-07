@@ -304,6 +304,7 @@ spec("CFlow NativeIO adapter pipe lifecycle") {
                     SALTS_OK);
         check_equal(received, payload);
         check_equal(completions.count, 2u);
+        check_equal(release_count, 0u);
         for (size_t index = 0u; index < completions.count; ++index) {
             check_equal(completions.values[index].kind, CFLOW_IO_COMPLETION_OK);
             check_equal(cflow_io_actor_acknowledge(&actor, completions.ids[index]),
@@ -378,6 +379,7 @@ spec("CFlow NativeIO adapter pipe lifecycle") {
                     SALTS_OK);
         check_equal(completions.count, 1u);
         check_equal(completions.values[0].kind, CFLOW_IO_COMPLETION_CANCELLED);
+        check_equal(release_count, 0u);
         check_equal(cflow_io_actor_acknowledge(&actor, completions.ids[0]),
                     CFLOW_IO_ACK_RELEASED);
         check_equal(release_count, 1u);
