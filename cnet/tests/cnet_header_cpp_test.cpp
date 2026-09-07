@@ -11,6 +11,9 @@ static_assert(std::is_standard_layout<cnet_connection>::value,
 static_assert(std::is_standard_layout<cnet_listener>::value, "listener must be a C value wrapper");
 static_assert(std::is_standard_layout<cnet_datagram>::value,
               "datagram must be a C value wrapper");
+#if !defined(CNET_STOP_DRAIN_CONTRACT_VERSION) || CNET_STOP_DRAIN_CONTRACT_VERSION < 1u
+  #error "CNet C++ consumers require stop-drain contract v1"
+#endif
 static_assert(std::is_standard_layout<cnet_kcp>::value, "KCP must be a C value wrapper");
 static_assert(std::is_standard_layout<cnet_secure_kcp>::value,
               "secure KCP must be a C value wrapper");

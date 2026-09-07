@@ -3,6 +3,10 @@
 
 #include <string.h>
 
+#if !defined(CNET_STOP_DRAIN_CONTRACT_VERSION) || CNET_STOP_DRAIN_CONTRACT_VERSION < 1u
+  #error "CNet C consumers require stop-drain contract v1"
+#endif
+
 #if defined(_WIN32)
   #include <winsock2.h>
   #include <ws2tcpip.h>
