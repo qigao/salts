@@ -101,7 +101,7 @@ typedef struct io_bench_series {
   cnet_benchmark_summary native_starts_per_round_trip;
   cnet_benchmark_summary native_observes_per_round_trip;
   cnet_benchmark_summary cnet_send_admission_ns;
-  cnet_benchmark_summary cnet_poll_ns;
+  cnet_benchmark_summary cnet_poll_control_ns;
   cnet_benchmark_summary cnet_callback_control_ns;
   cnet_benchmark_summary cnet_payload_validation_ns;
   cnet_benchmark_summary cnet_polls_per_round_trip;
@@ -1323,10 +1323,12 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
   status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_send_admission_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_poll_ns, result->cnet_poll_calls);
+    if (result->cnet_poll_ns < result->cnet_profile.owner_drive_ns) return SALTS_ERANGE;
+    values[repeat] = io_bench_mean(result->cnet_poll_ns - result->cnet_profile.owner_drive_ns,
+                                   result->round_trips);
   }
   if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_poll_ns);
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_poll_control_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
     const double callback_ns = io_bench_mean(result->cnet_callback_ns, result->cnet_callback_calls);
@@ -1562,16 +1564,17 @@ static void io_bench_print_native_stages(const char *protocol, const io_bench_se
 static void io_bench_print_cnet_stages(const char *protocol, const io_bench_series *cnet,
                                        size_t count) {
   printf("\n%s CNet public API per-run stage medians and MAD\n", protocol);
-  printf("| payload | send admit median ns | MAD ns | poll wall median us | MAD us | "
+  printf("Poll control excludes the nested owner drive.\n");
+  printf("| payload | send admit median ns | MAD ns | poll control median ns | MAD ns | "
          "callback control median ns | MAD ns | payload validation median ns | MAD ns | "
          "polls/RT |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
     const io_bench_series *series = &cnet[index];
-    printf("| %zu KiB | %.1f | %.1f | %.3f | %.3f | %.1f | %.1f | %.1f | %.1f | %.2f |\n",
+    printf("| %zu KiB | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.2f |\n",
            series->payload_size / 1024u, series->cnet_send_admission_ns.median,
-           series->cnet_send_admission_ns.mad, series->cnet_poll_ns.median / 1000.0,
-           series->cnet_poll_ns.mad / 1000.0, series->cnet_callback_control_ns.median,
+           series->cnet_send_admission_ns.mad, series->cnet_poll_control_ns.median,
+           series->cnet_poll_control_ns.mad, series->cnet_callback_control_ns.median,
            series->cnet_callback_control_ns.mad, series->cnet_payload_validation_ns.median,
            series->cnet_payload_validation_ns.mad, series->cnet_polls_per_round_trip.median);
   }
