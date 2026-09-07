@@ -62,6 +62,7 @@ typedef struct cflow_statechart_selection_snapshot {
 typedef struct cflow_statechart_instance_test_hooks {
     void (*before_external_receive)(void *user);
     void (*before_microstep_post)(void *user);
+    void (*before_driver_repost)(void *user);
     void (*after_microstep_cancel)(void *user);
     void (*before_root_completion_settle)(void *user);
     void *user;
