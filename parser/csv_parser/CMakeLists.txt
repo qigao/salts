@@ -50,6 +50,3 @@ target_link_libraries(${TARGET_NAME} PUBLIC Salts::QueryVM)
 # =============================================================================
 
 add_subdirectory(test)
-if(BUILD_BENCHMARKS)
-  add_subdirectory(benchmarks)
-endif()
