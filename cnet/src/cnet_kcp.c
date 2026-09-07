@@ -1,5 +1,7 @@
 #include <cnet/cnet.h>
 
+#include "cnet_kcp_internal.h"
+
 #include <ikcp.h>
 
 #include <limits.h>
@@ -7,7 +9,7 @@
 
 enum {
   CNET_KCP_PROTOCOL_OVERHEAD = 24,
-  CNET_KCP_FRAGMENT_LIMIT = 255,
+  CNET_KCP_FRAGMENT_LIMIT = 127,
   CNET_KCP_MIN_INTERVAL_MS = 10,
   CNET_KCP_MAX_INTERVAL_MS = 5000
 };
@@ -15,6 +17,7 @@ enum {
 typedef struct cnet_kcp_impl {
   cnet_kcp *owner;
   ikcpcb *protocol;
+  ikcpcb *marked_admission;
   unsigned char *receive_buffer;
   size_t max_message_bytes;
   size_t send_segment_capacity;
@@ -25,6 +28,26 @@ typedef struct cnet_kcp_impl {
   cnet_kcp_observer observer;
   int output_status;
 } cnet_kcp_impl;
+
+static int cnet_kcp_set_mtu(ikcpcb *protocol, uint32_t mtu) {
+  const int status = ikcp_setmtu(protocol, (int)mtu);
+  if (status == 0) return SALTS_OK;
+  return status == -2 ? SALTS_ENOMEM : SALTS_EINVAL;
+}
+
+static int cnet_kcp_marked_admission_reset(cnet_kcp_impl *impl) {
+  int status;
+  if (impl->marked_admission != NULL) ikcp_release(impl->marked_admission);
+  impl->marked_admission = ikcp_create(impl->protocol->conv, NULL);
+  if (impl->marked_admission == NULL) return SALTS_ENOMEM;
+  status = cnet_kcp_set_mtu(impl->marked_admission, impl->mtu);
+  if (status != SALTS_OK) {
+    ikcp_release(impl->marked_admission);
+    impl->marked_admission = NULL;
+    return status;
+  }
+  return SALTS_OK;
+}
 
 static cnet_kcp_impl *cnet_kcp_get(const cnet_kcp *session) {
   return session != NULL ? (cnet_kcp_impl *)session->impl : NULL;
@@ -99,6 +122,7 @@ static int cnet_kcp_drain(cnet_kcp_impl *impl) {
 
 int cnet_kcp_init(cnet_kcp *session, const cnet_kcp_config *config) {
   cnet_kcp_impl *impl;
+  int status;
   if (session == NULL) return SALTS_EINVAL;
   if (session->impl != NULL) return SALTS_EALREADY;
   if (!cnet_kcp_config_valid(config)) return SALTS_EINVAL;
@@ -125,26 +149,29 @@ int cnet_kcp_init(cnet_kcp *session, const cnet_kcp_config *config) {
   impl->output_status = SALTS_OK;
   impl->protocol->output = cnet_kcp_output_bridge;
   impl->protocol->stream = config->stream_mode ? 1 : 0;
-  if (ikcp_setmtu(impl->protocol, (int)config->mtu) != 0 ||
-      ikcp_wndsize(impl->protocol, (int)config->send_window, (int)config->receive_window) != 0 ||
+  status = cnet_kcp_set_mtu(impl->protocol, config->mtu);
+  if (status == SALTS_OK &&
+      (ikcp_wndsize(impl->protocol, (int)config->send_window, (int)config->receive_window) != 0 ||
       ikcp_nodelay(impl->protocol, 1, (int)config->interval_ms, (int)config->fast_resend,
-                   config->no_congestion_window ? 1 : 0) != 0) {
+                   config->no_congestion_window ? 1 : 0) != 0))
+    status = SALTS_EINVAL;
+  if (status != SALTS_OK) {
     ikcp_release(impl->protocol);
     free(impl->receive_buffer);
     free(impl);
-    return SALTS_EINVAL;
+    return status;
   }
   session->impl = impl;
   return SALTS_OK;
 }
 
-int cnet_kcp_send(cnet_kcp *session, const void *data, size_t size) {
+int cnet_kcp_send_validate(const cnet_kcp *session, const void *data, size_t size, bool marked) {
   cnet_kcp_impl *impl = cnet_kcp_get(session);
   size_t fragments;
   size_t retained;
   size_t mss;
-  int status;
   if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  if (marked && impl->stream_mode) return SALTS_ENOTSUP;
   if (size > impl->max_message_bytes || size > (size_t)INT_MAX) return SALTS_EMSGSIZE;
   mss = (size_t)impl->mtu - CNET_KCP_PROTOCOL_OVERHEAD;
   fragments = 1u + ((size - 1u) / mss);
@@ -153,8 +180,64 @@ int cnet_kcp_send(cnet_kcp *session, const void *data, size_t size) {
   if (retained > impl->send_segment_capacity ||
       fragments > impl->send_segment_capacity - retained)
     return SALTS_ENOBUFS;
+  return SALTS_OK;
+}
+
+static int cnet_kcp_send_marked_atomic(cnet_kcp_impl *impl, const void *data, size_t size,
+                                       cnet_kcp_send_marker *out_marker) {
+  int status;
+  if (impl->marked_admission == NULL) {
+    status = cnet_kcp_marked_admission_reset(impl);
+    if (status != SALTS_OK) return status;
+  }
+  status = ikcp_send(impl->marked_admission, (const char *)data, (int)size);
+  if (status != 0) {
+    (void)cnet_kcp_marked_admission_reset(impl);
+    return SALTS_ENOMEM;
+  }
+  while (!iqueue_is_empty(&impl->marked_admission->snd_queue)) {
+    struct IQUEUEHEAD *node = impl->marked_admission->snd_queue.next;
+    iqueue_del_init(node);
+    iqueue_add_tail(node, &impl->protocol->snd_queue);
+    --impl->marked_admission->nsnd_que;
+    ++impl->protocol->nsnd_que;
+  }
+  out_marker->final_sequence =
+      impl->protocol->snd_nxt + impl->protocol->nsnd_que - UINT32_C(1);
+  return SALTS_OK;
+}
+
+static int cnet_kcp_send_impl(cnet_kcp *session, const void *data, size_t size,
+                              cnet_kcp_send_marker *out_marker) {
+  cnet_kcp_impl *impl = cnet_kcp_get(session);
+  int status;
+  if (out_marker != NULL) *out_marker = (cnet_kcp_send_marker){0};
+  status = cnet_kcp_send_validate(session, data, size, out_marker != NULL);
+  if (status != SALTS_OK) return status;
+  if (out_marker != NULL) return cnet_kcp_send_marked_atomic(impl, data, size, out_marker);
   status = ikcp_send(impl->protocol, (const char *)data, (int)size);
   return status == 0 ? SALTS_OK : SALTS_EPROTO;
+}
+
+int cnet_kcp_send(cnet_kcp *session, const void *data, size_t size) {
+  return cnet_kcp_send_impl(session, data, size, NULL);
+}
+
+int cnet_kcp_send_marked(cnet_kcp *session, const void *data, size_t size,
+                         cnet_kcp_send_marker *out_marker) {
+  if (out_marker == NULL) return SALTS_EINVAL;
+  return cnet_kcp_send_impl(session, data, size, out_marker);
+}
+
+bool cnet_kcp_send_marker_complete(const cnet_kcp *session, cnet_kcp_send_marker marker) {
+  cnet_kcp_impl *impl = cnet_kcp_get(session);
+  return impl != NULL && (int32_t)(impl->protocol->snd_una - marker.final_sequence) > 0;
+}
+
+int cnet_kcp_terminal_status(const cnet_kcp *session) {
+  cnet_kcp_impl *impl = cnet_kcp_get(session);
+  if (impl == NULL) return SALTS_EINVAL;
+  return impl->protocol->state == 0u ? SALTS_OK : SALTS_ETIMEDOUT;
 }
 
 int cnet_kcp_input(cnet_kcp *session, const void *data, size_t size) {
@@ -197,6 +280,7 @@ int cnet_kcp_destroy(cnet_kcp *session) {
   if (session == NULL) return SALTS_EINVAL;
   impl = cnet_kcp_get(session);
   if (impl == NULL) return SALTS_OK;
+  if (impl->marked_admission != NULL) ikcp_release(impl->marked_admission);
   ikcp_release(impl->protocol);
   free(impl->receive_buffer);
   free(impl);

@@ -1,5 +1,6 @@
 #include <cnet/cnet.h>
 
+#include "cnet_kcp_internal.h"
 #include "cnet_kcp_secure_internal.h"
 #include "cnet_secure_kcp_internal.h"
 
@@ -30,12 +31,27 @@ typedef struct cnet_packet_key {
 
 typedef struct cnet_packet_endpoint_impl cnet_packet_endpoint_impl;
 
+typedef struct cnet_packet_send_operation {
+  cnet_packet_session session;
+  cnet_kcp_send_marker marker;
+  size_t size;
+  uint64_t tag;
+  uint32_t generation;
+  uint32_t next;
+  int terminal_status;
+  bool active;
+  bool notify;
+} cnet_packet_send_operation;
+
 typedef struct cnet_packet_record {
   cnet_packet_endpoint_impl *endpoint;
   cnet_packet_key key;
   cnet_kcp kcp;
   cnet_secure_kcp secure_kcp;
   size_t active_datagram_sends;
+  size_t pending_terminal_callbacks;
+  uint32_t kcp_send_head;
+  uint32_t kcp_send_tail;
   uint32_t derived_conversation;
   uint32_t generation;
   bool occupied;
@@ -49,13 +65,22 @@ struct cnet_packet_endpoint_impl {
   cnet_datagram datagram;
   cnet_packet_record *records;
   uint32_t *free_records;
+  cnet_packet_send_operation *send_operations;
+  uint32_t *free_send_operations;
   hash_map_t peer_index;
   size_t session_capacity;
   size_t free_record_count;
+  size_t send_operation_capacity;
+  size_t free_send_operation_count;
+  size_t tagged_send_count;
+  size_t max_datagram_bytes;
+  uint32_t ready_send_head;
+  uint32_t ready_send_tail;
   cnet_packet_protocol protocol;
   cnet_kcp_config kcp_template;
   cnet_kcp_security_config security_template;
   cnet_packet_observer observer;
+  cnet_packet_terminal_config terminal;
   size_t callback_depth;
   int pending_status;
   bool polling;
@@ -199,6 +224,108 @@ static cnet_packet_record *cnet_packet_record_from_handle(cnet_packet_endpoint_i
   return record->occupied && record->generation == session.generation ? record : NULL;
 }
 
+static uint64_t cnet_packet_send_operation_tag(const cnet_packet_send_operation *operation,
+                                               const cnet_packet_endpoint_impl *impl) {
+  const uint32_t slot = (uint32_t)((size_t)(operation - impl->send_operations) + 1u);
+  return ((uint64_t)operation->generation << 32u) | slot;
+}
+
+static cnet_packet_send_operation *
+cnet_packet_send_operation_from_tag(cnet_packet_endpoint_impl *impl, uint64_t tag) {
+  const uint32_t slot = (uint32_t)tag;
+  const uint32_t generation = (uint32_t)(tag >> 32u);
+  cnet_packet_send_operation *operation;
+  if (impl == NULL || slot == 0u || generation == 0u ||
+      (size_t)slot > impl->send_operation_capacity)
+    return NULL;
+  operation = &impl->send_operations[slot - 1u];
+  return operation->active && operation->generation == generation ? operation : NULL;
+}
+
+static int cnet_packet_send_operation_acquire(cnet_packet_endpoint_impl *impl,
+                                              cnet_packet_session session, size_t size,
+                                              uint64_t tag, bool notify,
+                                              cnet_packet_send_operation **out_operation) {
+  cnet_packet_send_operation *operation;
+  size_t index;
+  if (out_operation == NULL) return SALTS_EINVAL;
+  *out_operation = NULL;
+  if (impl->send_operations == NULL) return SALTS_ENOTSUP;
+  if (notify && impl->tagged_send_count >= impl->terminal.send_capacity) return SALTS_ENOBUFS;
+  if (impl->free_send_operation_count == 0u) return SALTS_ENOBUFS;
+  index = impl->free_send_operations[impl->free_send_operation_count - 1u];
+  operation = &impl->send_operations[index];
+  --impl->free_send_operation_count;
+  if (++operation->generation == 0u) ++operation->generation;
+  operation->session = session;
+  operation->marker = (cnet_kcp_send_marker){0};
+  operation->size = size;
+  operation->tag = tag;
+  operation->next = 0u;
+  operation->terminal_status = SALTS_OK;
+  operation->notify = notify;
+  operation->active = true;
+  if (notify) ++impl->tagged_send_count;
+  *out_operation = operation;
+  return SALTS_OK;
+}
+
+static void cnet_packet_send_operation_release(cnet_packet_endpoint_impl *impl,
+                                               cnet_packet_send_operation *operation) {
+  const size_t index = (size_t)(operation - impl->send_operations);
+  if (!operation->active) return;
+  if (operation->notify && impl->tagged_send_count != 0u) --impl->tagged_send_count;
+  operation->session = (cnet_packet_session){0};
+  operation->marker = (cnet_kcp_send_marker){0};
+  operation->size = 0u;
+  operation->tag = 0u;
+  operation->next = 0u;
+  operation->terminal_status = SALTS_OK;
+  operation->notify = false;
+  operation->active = false;
+  impl->free_send_operations[impl->free_send_operation_count++] = (uint32_t)index;
+}
+
+static void cnet_packet_send_operation_ready(cnet_packet_endpoint_impl *impl,
+                                             cnet_packet_record *record,
+                                             cnet_packet_send_operation *operation, int status) {
+  const uint32_t slot = (uint32_t)((size_t)(operation - impl->send_operations) + 1u);
+  operation->terminal_status = status < SALTS_OK ? status : SALTS_OK;
+  operation->next = 0u;
+  if (impl->ready_send_tail == 0u) impl->ready_send_head = slot;
+  else impl->send_operations[impl->ready_send_tail - 1u].next = slot;
+  impl->ready_send_tail = slot;
+  ++record->pending_terminal_callbacks;
+}
+
+static void cnet_packet_dispatch_ready_sends(cnet_packet_endpoint_impl *impl) {
+  while (impl->callback_depth == 0u && impl->ready_send_head != 0u) {
+    const uint32_t slot = impl->ready_send_head;
+    cnet_packet_send_operation *operation = &impl->send_operations[slot - 1u];
+    cnet_packet_record *record = cnet_packet_record_from_handle(impl, operation->session);
+    const cnet_packet_session session = operation->session;
+    const size_t size = operation->size;
+    const int status = operation->terminal_status;
+    const uint64_t tag = operation->tag;
+    impl->ready_send_head = operation->next;
+    if (impl->ready_send_head == 0u) impl->ready_send_tail = 0u;
+    cnet_packet_send_operation_release(impl, operation);
+    ++impl->callback_depth;
+    impl->terminal.on_send(impl->terminal.user, impl->owner, session, size, status, tag);
+    --impl->callback_depth;
+    if (record != NULL && record->pending_terminal_callbacks != 0u)
+      --record->pending_terminal_callbacks;
+  }
+}
+
+static void cnet_packet_sweep_closed(cnet_packet_endpoint_impl *impl);
+
+static void cnet_packet_callback_leave(cnet_packet_endpoint_impl *impl) {
+  --impl->callback_depth;
+  if (impl->callback_depth != 0u) return;
+  cnet_packet_dispatch_ready_sends(impl);
+}
+
 static cnet_packet_record *cnet_packet_record_from_key(cnet_packet_endpoint_impl *impl,
                                                         const cnet_packet_key *key) {
   const uint32_t *slot = (const uint32_t *)hash_map_get_const(&impl->peer_index, key);
@@ -218,7 +345,7 @@ static void cnet_packet_user_state(cnet_packet_endpoint_impl *impl, cnet_packet_
   impl->observer.on_state(impl->observer.user, impl->owner,
                           cnet_packet_record_handle(impl, record), state, &record->key.peer,
                           cnet_packet_record_conversation(record));
-  --impl->callback_depth;
+  cnet_packet_callback_leave(impl);
 }
 
 static void cnet_packet_user_error(cnet_packet_endpoint_impl *impl, cnet_packet_session session,
@@ -228,13 +355,54 @@ static void cnet_packet_user_error(cnet_packet_endpoint_impl *impl, cnet_packet_
   if (impl->observer.on_error == NULL) return;
   ++impl->callback_depth;
   impl->observer.on_error(impl->observer.user, impl->owner, session, status);
-  --impl->callback_depth;
+  cnet_packet_callback_leave(impl);
+}
+
+static void cnet_packet_record_append_kcp_send(cnet_packet_endpoint_impl *impl,
+                                               cnet_packet_record *record,
+                                               cnet_packet_send_operation *operation) {
+  const uint32_t slot = (uint32_t)((size_t)(operation - impl->send_operations) + 1u);
+  operation->next = 0u;
+  if (record->kcp_send_tail == 0u) record->kcp_send_head = slot;
+  else impl->send_operations[record->kcp_send_tail - 1u].next = slot;
+  record->kcp_send_tail = slot;
+}
+
+static bool cnet_packet_record_kcp_marker_complete(const cnet_packet_record *record,
+                                                   cnet_kcp_send_marker marker) {
+  if (record->secure_kcp_initialized)
+    return cnet_secure_kcp_send_marker_complete(&record->secure_kcp, marker);
+  return record->kcp_initialized && cnet_kcp_send_marker_complete(&record->kcp, marker);
+}
+
+static void cnet_packet_record_complete_kcp_sends(cnet_packet_endpoint_impl *impl,
+                                                  cnet_packet_record *record) {
+  while (record->kcp_send_head != 0u) {
+    cnet_packet_send_operation *operation = &impl->send_operations[record->kcp_send_head - 1u];
+    if (!cnet_packet_record_kcp_marker_complete(record, operation->marker)) break;
+    record->kcp_send_head = operation->next;
+    if (record->kcp_send_head == 0u) record->kcp_send_tail = 0u;
+    cnet_packet_send_operation_ready(impl, record, operation, SALTS_OK);
+  }
+  cnet_packet_dispatch_ready_sends(impl);
+}
+
+static void cnet_packet_record_cancel_kcp_sends(cnet_packet_endpoint_impl *impl,
+                                                cnet_packet_record *record, int status) {
+  while (record->kcp_send_head != 0u) {
+    cnet_packet_send_operation *operation = &impl->send_operations[record->kcp_send_head - 1u];
+    record->kcp_send_head = operation->next;
+    cnet_packet_send_operation_ready(impl, record, operation, status);
+  }
+  record->kcp_send_tail = 0u;
 }
 
 static void cnet_packet_record_finalize(cnet_packet_endpoint_impl *impl,
                                         cnet_packet_record *record) {
   const size_t index = (size_t)(record - impl->records);
-  if (!record->occupied || !record->closing || record->active_datagram_sends != 0u) return;
+  if (!record->occupied || !record->closing || record->active_datagram_sends != 0u ||
+      record->kcp_send_head != 0u || record->pending_terminal_callbacks != 0u)
+    return;
   if (record->kcp_initialized) {
     (void)cnet_kcp_destroy(&record->kcp);
     record->kcp_initialized = false;
@@ -262,9 +430,11 @@ static void cnet_packet_sweep_closed(cnet_packet_endpoint_impl *impl) {
 }
 
 static void cnet_packet_record_begin_close(cnet_packet_endpoint_impl *impl,
-                                           cnet_packet_record *record) {
+                                           cnet_packet_record *record, int terminal_status) {
   if (record->closing) return;
   record->closing = true;
+  cnet_packet_record_complete_kcp_sends(impl, record);
+  cnet_packet_record_cancel_kcp_sends(impl, record, terminal_status);
   if (impl->callback_depth == 0u && record->kcp_initialized) {
     (void)cnet_kcp_destroy(&record->kcp);
     record->kcp_initialized = false;
@@ -273,6 +443,23 @@ static void cnet_packet_record_begin_close(cnet_packet_endpoint_impl *impl,
     (void)cnet_secure_kcp_destroy(&record->secure_kcp);
     record->secure_kcp_initialized = false;
   }
+  cnet_packet_dispatch_ready_sends(impl);
+  cnet_packet_sweep_closed(impl);
+}
+
+static void cnet_packet_record_fail(cnet_packet_endpoint_impl *impl,
+                                    cnet_packet_record *record, int status) {
+  const cnet_packet_session session = cnet_packet_record_handle(impl, record);
+  if (impl->terminal.on_send == NULL) {
+    cnet_packet_user_error(impl, session, status);
+    if (record->occupied && !record->closing)
+      cnet_packet_record_begin_close(impl, record, status);
+    return;
+  }
+  ++impl->callback_depth;
+  cnet_packet_record_begin_close(impl, record, status);
+  cnet_packet_user_error(impl, session, status);
+  cnet_packet_callback_leave(impl);
   cnet_packet_sweep_closed(impl);
 }
 
@@ -306,7 +493,7 @@ static void cnet_packet_record_receive(cnet_packet_record *record,
   ++impl->callback_depth;
   impl->observer.on_receive(impl->observer.user, impl->owner,
                             cnet_packet_record_handle(impl, record), view);
-  --impl->callback_depth;
+  cnet_packet_callback_leave(impl);
 }
 
 static void cnet_packet_kcp_receive(void *user, cnet_kcp *session,
@@ -353,6 +540,9 @@ static int cnet_packet_record_open(cnet_packet_endpoint_impl *impl, const cnet_p
   record->endpoint = impl;
   record->key = *key;
   record->active_datagram_sends = 0u;
+  record->pending_terminal_callbacks = 0u;
+  record->kcp_send_head = 0u;
+  record->kcp_send_tail = 0u;
   record->derived_conversation = 0u;
   record->closing = false;
   if (++record->generation == 0u) ++record->generation;
@@ -428,10 +618,11 @@ static void cnet_packet_datagram_receive(void *user, cnet_datagram *datagram,
                                          const cnet_datagram_peer *peer,
                                          const cnet_receive_view *view) {
   cnet_packet_endpoint_impl *impl = (cnet_packet_endpoint_impl *)user;
-  cnet_packet_key key;
-  cnet_packet_record *record;
+  cnet_packet_key key = {0};
+  cnet_packet_record *record = NULL;
   cnet_packet_session handle = {0};
   uint32_t conversation = 0u;
+  bool key_ready = false;
   const bool secure_kcp = impl->protocol == CNET_PACKET_KCP &&
                           impl->security_template.mode == CNET_KCP_SECURITY_PSK_V1;
   int status;
@@ -447,17 +638,28 @@ static void cnet_packet_datagram_receive(void *user, cnet_datagram *datagram,
     }
     if (!secure_kcp) {
       conversation = cnet_packet_decode_u32_le((const unsigned char *)view->data);
-      if (conversation == 0u || !cnet_packet_kcp_wire_valid(view->data, view->size, conversation)) {
+      if (conversation == 0u ||
+          !cnet_packet_key_make(impl->protocol, false, peer, conversation, &key)) {
         cnet_packet_user_error(impl, handle, SALTS_EPROTO);
+        return;
+      }
+      key_ready = true;
+      record = cnet_packet_record_from_key(impl, &key);
+      if (!cnet_packet_kcp_wire_valid(view->data, view->size, conversation)) {
+        if (record != NULL) handle = cnet_packet_record_handle(impl, record);
+        if (record != NULL && !record->closing && impl->terminal.on_send != NULL)
+          cnet_packet_record_fail(impl, record, SALTS_EPROTO);
+        else
+          cnet_packet_user_error(impl, handle, SALTS_EPROTO);
         return;
       }
     }
   }
-  if (!cnet_packet_key_make(impl->protocol, secure_kcp, peer, conversation, &key)) {
+  if (!key_ready && !cnet_packet_key_make(impl->protocol, secure_kcp, peer, conversation, &key)) {
     cnet_packet_user_error(impl, handle, SALTS_EPROTO);
     return;
   }
-  record = cnet_packet_record_from_key(impl, &key);
+  if (record == NULL) record = cnet_packet_record_from_key(impl, &key);
   if (record == NULL) {
     if (secure_kcp && cnet_kcp_secure_client_hello_authenticate(
                           &impl->security_template, view->data, view->size) != SALTS_OK)
@@ -466,7 +668,8 @@ static void cnet_packet_datagram_receive(void *user, cnet_datagram *datagram,
     ++impl->callback_depth;
     status = impl->observer.on_admit(impl->observer.user, impl->owner, impl->protocol, &key.peer,
                                      key.conversation);
-    --impl->callback_depth;
+    cnet_packet_callback_leave(impl);
+    cnet_packet_sweep_closed(impl);
     if (status != SALTS_OK) return;
     status = cnet_packet_record_open(impl, &key, CNET_SECURE_KCP_SERVER, &handle);
     if (status != SALTS_OK) {
@@ -478,22 +681,28 @@ static void cnet_packet_datagram_receive(void *user, cnet_datagram *datagram,
   if (record == NULL || record->closing) return;
   handle = cnet_packet_record_handle(impl, record);
   if (secure_kcp) {
-    status = cnet_secure_kcp_input(&record->secure_kcp, view->data, view->size);
-    if (status != SALTS_OK && !cnet_packet_secure_input_rejected(status)) {
-      cnet_packet_user_error(impl, handle, status);
-      cnet_packet_record_begin_close(impl, record);
+    bool authenticated = false;
+    status = cnet_secure_kcp_input_classified(&record->secure_kcp, view->data, view->size,
+                                              &authenticated);
+    cnet_packet_record_complete_kcp_sends(impl, record);
+    if (status != SALTS_OK &&
+        (!cnet_packet_secure_input_rejected(status) ||
+         (authenticated && impl->terminal.on_send != NULL))) {
+      cnet_packet_record_fail(impl, record, status);
     }
   } else if (impl->protocol == CNET_PACKET_KCP) {
     status = cnet_kcp_input(&record->kcp, view->data, view->size);
+    cnet_packet_record_complete_kcp_sends(impl, record);
     if (status != SALTS_OK) {
-      cnet_packet_user_error(impl, handle, status);
-      if (status == SALTS_EPROTO || status == SALTS_EMSGSIZE)
-        cnet_packet_record_begin_close(impl, record);
+      if (!record->closing && (status == SALTS_EPROTO || status == SALTS_EMSGSIZE))
+        cnet_packet_record_fail(impl, record, status);
+      else
+        cnet_packet_user_error(impl, handle, status);
     }
   } else if (impl->observer.on_receive != NULL) {
     ++impl->callback_depth;
     impl->observer.on_receive(impl->observer.user, impl->owner, handle, view);
-    --impl->callback_depth;
+    cnet_packet_callback_leave(impl);
   }
   cnet_packet_sweep_closed(impl);
 }
@@ -502,11 +711,34 @@ static void cnet_packet_datagram_send(void *user, cnet_datagram *datagram,
                                       const cnet_datagram_peer *peer, size_t size, int status,
                                       uint64_t tag) {
   cnet_packet_endpoint_impl *impl = (cnet_packet_endpoint_impl *)user;
-  const cnet_packet_session handle = cnet_packet_tag_handle(tag);
-  cnet_packet_record *record = cnet_packet_record_from_handle(impl, handle);
+  cnet_packet_session handle;
+  cnet_packet_record *record;
   (void)datagram;
   (void)peer;
-  (void)size;
+  if (impl->protocol == CNET_PACKET_UDP && impl->terminal.on_send != NULL) {
+    cnet_packet_send_operation *operation = cnet_packet_send_operation_from_tag(impl, tag);
+    if (operation == NULL) {
+      cnet_packet_user_error(impl, (cnet_packet_session){0}, SALTS_EPROTO);
+      return;
+    }
+    handle = operation->session;
+    record = cnet_packet_record_from_handle(impl, handle);
+    if (record == NULL || record->active_datagram_sends == 0u || size != operation->size) {
+      cnet_packet_send_operation_release(impl, operation);
+      cnet_packet_user_error(impl, handle, SALTS_EPROTO);
+      return;
+    }
+    --record->active_datagram_sends;
+    if (operation->notify) cnet_packet_send_operation_ready(impl, record, operation, status);
+    else cnet_packet_send_operation_release(impl, operation);
+    if (status != SALTS_OK && !(impl->stopping && status == SALTS_ECANCELED))
+      cnet_packet_user_error(impl, handle, status);
+    cnet_packet_dispatch_ready_sends(impl);
+    cnet_packet_sweep_closed(impl);
+    return;
+  }
+  handle = cnet_packet_tag_handle(tag);
+  record = cnet_packet_record_from_handle(impl, handle);
   if (record == NULL || record->active_datagram_sends == 0u) {
     cnet_packet_user_error(impl, handle, SALTS_EPROTO);
     return;
@@ -559,21 +791,61 @@ static bool cnet_packet_config_valid(const cnet_packet_endpoint_config *config) 
          config->kcp.max_message_bytes != 0u && config->kcp.max_message_bytes <= (size_t)INT_MAX;
 }
 
+static bool cnet_packet_terminal_config_valid(const cnet_packet_endpoint_config *config,
+                                              const cnet_packet_terminal_config *terminal) {
+  size_t operation_capacity;
+  if (terminal == NULL) return true;
+  if (terminal->size != sizeof(*terminal) ||
+      terminal->version != CNET_PACKET_TERMINAL_API_VERSION || terminal->send_capacity == 0u ||
+      terminal->on_send == NULL)
+    return false;
+  if (config->protocol == CNET_PACKET_UDP &&
+      terminal->send_capacity > config->datagram.send_capacity)
+    return false;
+  if (config->protocol == CNET_PACKET_KCP && config->kcp.stream_mode) return false;
+  operation_capacity = config->protocol == CNET_PACKET_UDP ? config->datagram.send_capacity
+                                                            : terminal->send_capacity;
+  return operation_capacity <= UINT32_MAX &&
+         operation_capacity <= SIZE_MAX / sizeof(cnet_packet_send_operation) &&
+         operation_capacity <= SIZE_MAX / sizeof(uint32_t);
+}
+
 int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
                               const cnet_packet_endpoint_config *config) {
+  return cnet_packet_endpoint_init_ex(endpoint, config, NULL);
+}
+
+int cnet_packet_endpoint_init_ex(cnet_packet_endpoint *endpoint,
+                                 const cnet_packet_endpoint_config *config,
+                                 const cnet_packet_terminal_config *terminal) {
   cnet_packet_endpoint_impl *impl;
   cnet_datagram_config datagram_config;
+  size_t send_operation_capacity = 0u;
   stl_status map_status;
   size_t index;
   int status;
   if (endpoint == NULL) return SALTS_EINVAL;
   if (endpoint->impl != NULL) return SALTS_EALREADY;
-  if (!cnet_packet_config_valid(config)) return SALTS_EINVAL;
+  if (!cnet_packet_config_valid(config) || !cnet_packet_terminal_config_valid(config, terminal))
+    return SALTS_EINVAL;
+  if (terminal != NULL)
+    send_operation_capacity = config->protocol == CNET_PACKET_UDP ? config->datagram.send_capacity
+                                                                  : terminal->send_capacity;
   impl = (cnet_packet_endpoint_impl *)calloc(1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
   impl->records = (cnet_packet_record *)calloc(config->session_capacity, sizeof(*impl->records));
   impl->free_records = (uint32_t *)malloc(config->session_capacity * sizeof(*impl->free_records));
-  if (impl->records == NULL || impl->free_records == NULL) {
+  if (send_operation_capacity != 0u) {
+    impl->send_operations = (cnet_packet_send_operation *)calloc(send_operation_capacity,
+                                                                 sizeof(*impl->send_operations));
+    impl->free_send_operations =
+        (uint32_t *)malloc(send_operation_capacity * sizeof(*impl->free_send_operations));
+  }
+  if (impl->records == NULL || impl->free_records == NULL ||
+      (send_operation_capacity != 0u &&
+       (impl->send_operations == NULL || impl->free_send_operations == NULL))) {
+    free(impl->free_send_operations);
+    free(impl->send_operations);
     free(impl->free_records);
     free(impl->records);
     free(impl);
@@ -586,6 +858,8 @@ int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
   if (map_status == STL_OK) map_status = hash_map_reserve(&impl->peer_index, config->session_capacity);
   if (map_status != STL_OK) {
     hash_map_raw_destroy_storage(&impl->peer_index);
+    free(impl->free_send_operations);
+    free(impl->send_operations);
     free(impl->free_records);
     free(impl->records);
     free(impl);
@@ -594,13 +868,19 @@ int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
   impl->owner = endpoint;
   impl->session_capacity = config->session_capacity;
   impl->free_record_count = config->session_capacity;
+  impl->send_operation_capacity = send_operation_capacity;
+  impl->free_send_operation_count = send_operation_capacity;
+  impl->max_datagram_bytes = config->datagram.max_datagram_bytes;
   impl->protocol = config->protocol;
   impl->kcp_template = config->kcp;
   impl->security_template = config->security;
   impl->observer = config->observer;
+  if (terminal != NULL) impl->terminal = *terminal;
   impl->pending_status = SALTS_OK;
   for (index = 0u; index < config->session_capacity; ++index)
     impl->free_records[index] = (uint32_t)(config->session_capacity - index - 1u);
+  for (index = 0u; index < send_operation_capacity; ++index)
+    impl->free_send_operations[index] = (uint32_t)(send_operation_capacity - index - 1u);
   datagram_config = config->datagram;
   datagram_config.observer.on_receive = cnet_packet_datagram_receive;
   datagram_config.observer.on_send = cnet_packet_datagram_send;
@@ -608,6 +888,8 @@ int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
   status = cnet_datagram_init(&impl->datagram, &datagram_config);
   if (status != SALTS_OK) {
     hash_map_raw_destroy_storage(&impl->peer_index);
+    free(impl->free_send_operations);
+    free(impl->send_operations);
     free(impl->free_records);
     free(impl->records);
     crypto_wipe(&impl->security_template, sizeof(impl->security_template));
@@ -619,6 +901,8 @@ int cnet_packet_endpoint_init(cnet_packet_endpoint *endpoint,
     (void)cnet_datagram_stop(&impl->datagram, 1000u);
     (void)cnet_datagram_destroy(&impl->datagram);
     hash_map_raw_destroy_storage(&impl->peer_index);
+    free(impl->free_send_operations);
+    free(impl->send_operations);
     free(impl->free_records);
     free(impl->records);
     crypto_wipe(&impl->security_template, sizeof(impl->security_template));
@@ -670,25 +954,63 @@ int cnet_packet_session_close(cnet_packet_endpoint *endpoint, cnet_packet_sessio
   if (impl == NULL) return SALTS_EINVAL;
   if (record == NULL) return SALTS_ENOENT;
   if (record->closing) return SALTS_EALREADY;
-  cnet_packet_record_begin_close(impl, record);
+  cnet_packet_record_begin_close(impl, record, SALTS_ECANCELED);
   return SALTS_OK;
 }
 
-int cnet_packet_send(cnet_packet_endpoint *endpoint, cnet_packet_session session, const void *data,
-                     size_t size) {
+static int cnet_packet_send_impl(cnet_packet_endpoint *endpoint, cnet_packet_session session,
+                                 const void *data, size_t size, uint64_t tag, bool notify) {
   cnet_packet_endpoint_impl *impl = cnet_packet_get(endpoint);
   cnet_packet_record *record = cnet_packet_record_from_handle(impl, session);
+  cnet_packet_send_operation *operation = NULL;
+  uint64_t native_tag;
   int status;
   if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
   if (record == NULL) return SALTS_ENOENT;
   if (impl->stopping || record->closing) return SALTS_ESHUTDOWN;
-  if (record->secure_kcp_initialized)
-    return cnet_secure_kcp_send(&record->secure_kcp, data, size);
-  if (impl->protocol == CNET_PACKET_KCP) return cnet_kcp_send(&record->kcp, data, size);
-  status = cnet_datagram_send(&impl->datagram, &record->key.peer, data, size,
-                              cnet_packet_handle_tag(session));
+  if (notify && impl->terminal.on_send == NULL) return SALTS_ENOTSUP;
+  if (impl->protocol == CNET_PACKET_KCP) {
+    if (!notify)
+      return record->secure_kcp_initialized ? cnet_secure_kcp_send(&record->secure_kcp, data, size)
+                                            : cnet_kcp_send(&record->kcp, data, size);
+    status = record->secure_kcp_initialized
+                 ? cnet_secure_kcp_send_validate(&record->secure_kcp, data, size, true)
+                 : cnet_kcp_send_validate(&record->kcp, data, size, true);
+    if (status != SALTS_OK) return status;
+    status = cnet_packet_send_operation_acquire(impl, session, size, tag, true, &operation);
+    if (status != SALTS_OK) return status;
+    status = record->secure_kcp_initialized
+                 ? cnet_secure_kcp_send_marked(&record->secure_kcp, data, size, &operation->marker)
+                 : cnet_kcp_send_marked(&record->kcp, data, size, &operation->marker);
+    if (status != SALTS_OK) {
+      cnet_packet_send_operation_release(impl, operation);
+      return status;
+    }
+    cnet_packet_record_append_kcp_send(impl, record, operation);
+    return SALTS_OK;
+  }
+  if (size > impl->max_datagram_bytes) return SALTS_EMSGSIZE;
+  if (impl->terminal.on_send != NULL) {
+    status = cnet_packet_send_operation_acquire(impl, session, size, tag, notify, &operation);
+    if (status != SALTS_OK) return status;
+    native_tag = cnet_packet_send_operation_tag(operation, impl);
+  } else {
+    native_tag = cnet_packet_handle_tag(session);
+  }
+  status = cnet_datagram_send(&impl->datagram, &record->key.peer, data, size, native_tag);
+  if (status != SALTS_OK && operation != NULL) cnet_packet_send_operation_release(impl, operation);
   if (status == SALTS_OK) ++record->active_datagram_sends;
   return status;
+}
+
+int cnet_packet_send(cnet_packet_endpoint *endpoint, cnet_packet_session session, const void *data,
+                     size_t size) {
+  return cnet_packet_send_impl(endpoint, session, data, size, 0u, false);
+}
+
+int cnet_packet_send_tagged(cnet_packet_endpoint *endpoint, cnet_packet_session session,
+                            const void *data, size_t size, uint64_t tag) {
+  return cnet_packet_send_impl(endpoint, session, data, size, tag, true);
 }
 
 static void cnet_packet_update_kcp(cnet_packet_endpoint_impl *impl, uint32_t now_ms) {
@@ -701,6 +1023,17 @@ static void cnet_packet_update_kcp(cnet_packet_endpoint_impl *impl, uint32_t now
     status = record->secure_kcp_initialized
                  ? cnet_secure_kcp_update(&record->secure_kcp, now_ms)
                  : cnet_kcp_update(&record->kcp, now_ms);
+    cnet_packet_record_complete_kcp_sends(impl, record);
+    if (impl->terminal.on_send != NULL && !record->closing) {
+      const int terminal_status =
+          record->secure_kcp_initialized
+              ? cnet_secure_kcp_terminal_status(&record->secure_kcp)
+              : cnet_kcp_terminal_status(&record->kcp);
+      if (terminal_status == SALTS_ETIMEDOUT) {
+        cnet_packet_record_fail(impl, record, terminal_status);
+        continue;
+      }
+    }
     if (status != SALTS_OK)
       cnet_packet_user_error(impl, cnet_packet_record_handle(impl, record), status);
   }
@@ -767,12 +1100,16 @@ int cnet_packet_endpoint_stop(cnet_packet_endpoint *endpoint, uint32_t timeout_m
   impl->stopping = true;
   for (index = 0u; index < impl->session_capacity; ++index) {
     cnet_packet_record *record = &impl->records[index];
-    if (record->occupied) cnet_packet_record_begin_close(impl, record);
+    if (record->occupied) cnet_packet_record_begin_close(impl, record, SALTS_ECANCELED);
   }
   status = cnet_datagram_stop(&impl->datagram, timeout_ms);
   if (status != SALTS_OK) return status;
+  cnet_packet_dispatch_ready_sends(impl);
   cnet_packet_sweep_closed(impl);
-  if (impl->free_record_count != impl->session_capacity) return SALTS_EBUSY;
+  if (impl->free_record_count != impl->session_capacity || impl->ready_send_head != 0u ||
+      impl->tagged_send_count != 0u ||
+      impl->free_send_operation_count != impl->send_operation_capacity)
+    return SALTS_EBUSY;
   impl->stopped = true;
   return SALTS_OK;
 }
@@ -787,6 +1124,8 @@ int cnet_packet_endpoint_destroy(cnet_packet_endpoint *endpoint) {
   status = cnet_datagram_destroy(&impl->datagram);
   if (status != SALTS_OK) return status;
   hash_map_raw_destroy_storage(&impl->peer_index);
+  free(impl->free_send_operations);
+  free(impl->send_operations);
   free(impl->free_records);
   free(impl->records);
   crypto_wipe(&impl->security_template, sizeof(impl->security_template));

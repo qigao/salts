@@ -32,6 +32,7 @@ typedef struct cnet_secure_kcp_impl {
   bool started;
   bool kcp_initialized;
   bool established_notified;
+  bool last_record_authenticated;
 } cnet_secure_kcp_impl;
 
 static cnet_secure_kcp_impl *cnet_secure_kcp_get(const cnet_secure_kcp *session) {
@@ -143,9 +144,12 @@ static int cnet_secure_kcp_send_client_hello(cnet_secure_kcp_impl *impl, uint32_
 static int cnet_secure_kcp_deliver_record(void *user, const void *data, size_t size) {
   cnet_secure_kcp_impl *impl = (cnet_secure_kcp_impl *)user;
   size_t plain_size = 0u;
-  int status = cnet_kcp_secure_open(&impl->secure, data, size, impl->secure_receive_buffer,
-                                    impl->secure_buffer_size, &plain_size);
+  int status;
+  impl->last_record_authenticated = false;
+  status = cnet_kcp_secure_open(&impl->secure, data, size, impl->secure_receive_buffer,
+                                impl->secure_buffer_size, &plain_size);
   if (status != SALTS_OK) return status;
+  impl->last_record_authenticated = true;
   return cnet_kcp_input(&impl->kcp, impl->secure_receive_buffer, plain_size);
 }
 
@@ -223,11 +227,38 @@ int cnet_secure_kcp_send(cnet_secure_kcp *session, const void *data, size_t size
   return cnet_kcp_send(&impl->kcp, data, size);
 }
 
-int cnet_secure_kcp_input(cnet_secure_kcp *session, const void *data, size_t size) {
+int cnet_secure_kcp_send_validate(const cnet_secure_kcp *session, const void *data, size_t size,
+                                  bool marked) {
+  cnet_secure_kcp_impl *impl = cnet_secure_kcp_get(session);
+  if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  if (!impl->started || !impl->kcp_initialized) return SALTS_EBUSY;
+  return cnet_kcp_send_validate(&impl->kcp, data, size, marked);
+}
+
+int cnet_secure_kcp_send_marked(cnet_secure_kcp *session, const void *data, size_t size,
+                                cnet_kcp_send_marker *out_marker) {
+  cnet_secure_kcp_impl *impl = cnet_secure_kcp_get(session);
+  if (out_marker != NULL) *out_marker = (cnet_kcp_send_marker){0};
+  if (impl == NULL || out_marker == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  if (!impl->started || !impl->kcp_initialized) return SALTS_EBUSY;
+  return cnet_kcp_send_marked(&impl->kcp, data, size, out_marker);
+}
+
+bool cnet_secure_kcp_send_marker_complete(const cnet_secure_kcp *session,
+                                          cnet_kcp_send_marker marker) {
+  cnet_secure_kcp_impl *impl = cnet_secure_kcp_get(session);
+  return impl != NULL && impl->kcp_initialized && cnet_kcp_send_marker_complete(&impl->kcp, marker);
+}
+
+int cnet_secure_kcp_input_classified(cnet_secure_kcp *session, const void *data, size_t size,
+                                     bool *out_authenticated) {
   cnet_secure_kcp_impl *impl = cnet_secure_kcp_get(session);
   int status;
+  if (out_authenticated == NULL) return SALTS_EINVAL;
+  *out_authenticated = false;
   if (impl == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
   if (!impl->started) return SALTS_EBUSY;
+  impl->last_record_authenticated = false;
   if (cnet_kcp_secure_is_handshake(data, size)) {
     if (impl->role == CNET_SECURE_KCP_CLIENT) {
       status = cnet_kcp_secure_accept_server_hello(&impl->secure, data, size);
@@ -248,7 +279,14 @@ int cnet_secure_kcp_input(cnet_secure_kcp *session, const void *data, size_t siz
     }
   }
   if (!impl->kcp_initialized) return SALTS_EBUSY;
-  return cnet_kcp_fec_input(impl->fec, data, size, cnet_secure_kcp_deliver_record, impl);
+  status = cnet_kcp_fec_input(impl->fec, data, size, cnet_secure_kcp_deliver_record, impl);
+  *out_authenticated = impl->last_record_authenticated;
+  return status;
+}
+
+int cnet_secure_kcp_input(cnet_secure_kcp *session, const void *data, size_t size) {
+  bool authenticated;
+  return cnet_secure_kcp_input_classified(session, data, size, &authenticated);
 }
 
 int cnet_secure_kcp_update(cnet_secure_kcp *session, uint32_t now_ms) {
@@ -260,6 +298,13 @@ int cnet_secure_kcp_update(cnet_secure_kcp *session, uint32_t now_ms) {
       (uint32_t)(now_ms - impl->last_handshake_send_ms) >= impl->security.handshake_retry_ms)
     return cnet_secure_kcp_send_client_hello(impl, now_ms);
   return SALTS_OK;
+}
+
+int cnet_secure_kcp_terminal_status(const cnet_secure_kcp *session) {
+  cnet_secure_kcp_impl *impl = cnet_secure_kcp_get(session);
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!impl->started || !impl->kcp_initialized) return SALTS_EBUSY;
+  return cnet_kcp_terminal_status(&impl->kcp);
 }
 
 int cnet_secure_kcp_check(const cnet_secure_kcp *session, uint32_t now_ms,

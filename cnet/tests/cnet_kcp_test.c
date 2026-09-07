@@ -1,6 +1,8 @@
 #include "tinytest.h"
 #include <cnet/cnet.h>
 
+#include "../src/cnet_kcp_internal.h"
+
 #include <string.h>
 
 enum {
@@ -8,7 +10,11 @@ enum {
   CNET_KCP_TEST_PACKET_BYTES = 1500,
   CNET_KCP_TEST_MESSAGE_BYTES = 4096,
   CNET_KCP_TEST_STEP_MS = 10,
-  CNET_KCP_TEST_DEADLINE_MS = 10000
+  CNET_KCP_TEST_DEADLINE_MS = 10000,
+  CNET_KCP_TEST_MSS = 512 - 24,
+  CNET_KCP_TEST_MAX_FRAGMENTS = 127,
+  CNET_KCP_TEST_DEAD_LINK_STEP_MS = 60000,
+  CNET_KCP_TEST_DEAD_LINK_STEPS = 32
 };
 
 typedef struct cnet_kcp_test_packet {
@@ -118,6 +124,7 @@ spec("CNet bounded KCP session") {
     cnet_kcp_test_endpoint right_endpoint = {.outbound = &right_to_left};
     cnet_kcp_config left_config = cnet_kcp_test_config(&left_endpoint);
     cnet_kcp_config right_config = cnet_kcp_test_config(&right_endpoint);
+    cnet_kcp_send_marker marker = {0};
     unsigned char message[CNET_KCP_TEST_MESSAGE_BYTES];
     uint32_t now;
     size_t index;
@@ -126,7 +133,8 @@ spec("CNet bounded KCP session") {
     for (index = 0u; index < sizeof(message); ++index) message[index] = (unsigned char)index;
     check_equal(cnet_kcp_init(&left, &left_config), SALTS_OK);
     check_equal(cnet_kcp_init(&right, &right_config), SALTS_OK);
-    check_equal(cnet_kcp_send(&left, message, sizeof(message)), SALTS_OK);
+    check_equal(cnet_kcp_send_marked(&left, message, sizeof(message), &marker), SALTS_OK);
+    check_false(cnet_kcp_send_marker_complete(&left, marker));
 
     for (now = 0u; now <= CNET_KCP_TEST_DEADLINE_MS && right_endpoint.receive_count == 0;
          now += CNET_KCP_TEST_STEP_MS) {
@@ -138,6 +146,10 @@ spec("CNet bounded KCP session") {
     check_equal(right_endpoint.receive_count, 1);
     check_equal(right_endpoint.received_size, sizeof(message));
     check_equal(right_endpoint.received, message, sizeof(message));
+    check_false(cnet_kcp_send_marker_complete(&left, marker));
+    check_equal(cnet_kcp_update(&right, now), SALTS_OK);
+    check_equal(cnet_kcp_test_deliver(&right_to_left, &left), SALTS_OK);
+    check_true(cnet_kcp_send_marker_complete(&left, marker));
     check_equal(cnet_kcp_destroy(&right), SALTS_OK);
     check_equal(cnet_kcp_destroy(&left), SALTS_OK);
   }
@@ -162,5 +174,46 @@ spec("CNet bounded KCP session") {
     check_equal(cnet_kcp_update(&session, 0u), SALTS_EIO);
     check_equal(cnet_kcp_destroy(&session), SALTS_OK);
     check_null(session.impl);
+  }
+
+  it("accepts 127 message fragments and rejects 128 with a size error") {
+    cnet_kcp session = {0};
+    cnet_kcp_test_link link = {0};
+    cnet_kcp_test_endpoint endpoint = {.outbound = &link};
+    cnet_kcp_config config = cnet_kcp_test_config(&endpoint);
+    cnet_kcp_send_marker marker = {0};
+    unsigned char message[CNET_KCP_TEST_MSS * CNET_KCP_TEST_MAX_FRAGMENTS + 1u] = {0};
+
+    config.max_message_bytes = sizeof(message);
+    config.send_segment_capacity = CNET_KCP_TEST_MAX_FRAGMENTS + 1u;
+    check_equal(cnet_kcp_init(&session, &config), SALTS_OK);
+    check_equal(cnet_kcp_send_marked(&session, message, sizeof(message) - 1u, &marker), SALTS_OK);
+    check_equal(cnet_kcp_destroy(&session), SALTS_OK);
+
+    check_equal(cnet_kcp_init(&session, &config), SALTS_OK);
+    check_equal(cnet_kcp_send_marked(&session, message, sizeof(message), &marker), SALTS_EMSGSIZE);
+    check_equal(cnet_kcp_destroy(&session), SALTS_OK);
+  }
+
+  it("reports a deterministic terminal status after the KCP dead-link bound") {
+    static const unsigned char payload[] = "unacknowledged";
+    cnet_kcp session = {0};
+    cnet_kcp_test_link link = {0};
+    cnet_kcp_test_endpoint endpoint = {.outbound = &link};
+    cnet_kcp_config config = cnet_kcp_test_config(&endpoint);
+    cnet_kcp_send_marker marker = {0};
+    uint32_t now = 0u;
+    size_t step;
+
+    check_equal(cnet_kcp_init(&session, &config), SALTS_OK);
+    check_equal(cnet_kcp_send_marked(&session, payload, sizeof(payload), &marker), SALTS_OK);
+    for (step = 0u; step < CNET_KCP_TEST_DEAD_LINK_STEPS &&
+                    cnet_kcp_terminal_status(&session) == SALTS_OK;
+         ++step) {
+      check_equal(cnet_kcp_update(&session, now), SALTS_OK);
+      now += CNET_KCP_TEST_DEAD_LINK_STEP_MS;
+    }
+    check_equal(cnet_kcp_terminal_status(&session), SALTS_ETIMEDOUT);
+    check_equal(cnet_kcp_destroy(&session), SALTS_OK);
   }
 }

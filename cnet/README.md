@@ -119,11 +119,25 @@ derives the read-only conversation id.
 An unknown inbound key is admitted only when `observer.on_admit` returns
 `SALTS_OK`. This decision is synchronous on the poll owner; a missing callback
 rejects unknown peers. Capacity exhaustion reports `SALTS_ENOBUFS` rather than
-growing or evicting live sessions. `cnet_packet_send()` means that CNet copied
-and admitted the message. It does not claim remote delivery: KCP can emit and
-retransmit multiple UDP packets for one application message, so the facade does
-not invent a per-message ACK callback. Asynchronous socket failures and KCP
-output backpressure arrive through the generation-checked `on_error` callback.
+growing or evicting live sessions. `cnet_packet_send()` remains admission-only:
+it means that CNet copied and admitted the message and does not claim transport
+completion or remote delivery.
+
+Consumers that need authoritative per-message settlement use
+`cnet_packet_endpoint_init_ex()` with `cnet_packet_terminal_config`, then call
+`cnet_packet_send_tagged()`. The terminal configuration is size/versioned and
+reserves a fixed logical-operation capacity before the endpoint is published.
+Pool exhaustion returns `SALTS_ENOBUFS`; a failed admission never produces a
+callback. The opaque caller tag is copied and returned exactly once. UDP settles
+from its NativeIO datagram terminal. KCP, authenticated KCP, and FEC settle only
+after KCP's cumulative acknowledgement point passes the logical message's last
+segment; individual emitted or retransmitted UDP packet completions never settle
+the logical send. Tagged KCP rejects stream mode because it cannot retain these
+message boundaries. Explicit close/stop cancels unacknowledged KCP sends with
+`SALTS_ECANCELED`, drains UDP native terminals, and dispatches logical terminals
+before the corresponding CLOSED state. Asynchronous socket failures and KCP
+output backpressure also remain visible through the generation-checked
+`on_error` callback.
 
 The lower-level `cnet_datagram` API remains available for protocols that need
 raw peer-addressed UDP. Each successful send retains its caller tag and reports
