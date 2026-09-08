@@ -1,6 +1,6 @@
 #include "salts_cmeta_data.h"
-#include "salts_str.h"
-#include "salts_vstr.h"
+#include "tstr.h"
+#include "vstr.h"
 #include "tinytest.h"
 
 #include <stdint.h>

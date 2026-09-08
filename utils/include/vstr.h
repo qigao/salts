@@ -1,6 +1,6 @@
 // re2c --lang c
 /**
- * @file salts_vstr.h
+ * @file vstr.h
  * @brief Non-owning string view type for Salts (C string_view)
  *
  * Memory model:
@@ -9,8 +9,8 @@
  * - Use *_to_* helpers to copy into arena/pool/heap when needed
  */
 
-#ifndef SALTS_VSTR_H
-#define SALTS_VSTR_H
+#ifndef VSTR_H
+#define VSTR_H
 
 #include "platform.h"
 #include "memory_pool.h"
@@ -183,4 +183,4 @@ static inline vstr vstr_from_slice(const struct mem_slice_s *slice) {
 }
 #endif
 
-#endif /* SALTS_VSTR_H */
+#endif /* VSTR_H */

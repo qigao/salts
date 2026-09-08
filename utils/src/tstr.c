@@ -1,11 +1,11 @@
 /**
- * @file salts_str.c
+ * @file tstr.c
  * @brief tstr implementation wrapping SDS
  *
  * API uses snake_case: tstr_len, tstr_cat, tstr_cpy, etc.
  */
 
-#include "salts_str.h"
+#include "tstr.h"
 #include "sds.h"
 #include <simde/x86/sse2.h>
 #include <limits.h>

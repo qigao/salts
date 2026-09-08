@@ -1,5 +1,5 @@
-#include "salts_str.h"
-#include "salts_vstr.h"
+#include "tstr.h"
+#include "vstr.h"
 #include "tinytest.h"
 
 #include <cstddef>

@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
-#include <salts_vstr.h>
+#include <vstr.h>
 
 #ifdef __cplusplus
 extern "C" {

@@ -17,7 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <salts/thread.h>
-#include <salts_str.h>
+#include <tstr.h>
 #include <cstl/hash_map.h>
 
 #define MAX_ERROR_LEN 512
