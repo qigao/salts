@@ -2,7 +2,7 @@
 #define SALTS_LEVENSHTEIN_AUTOMATON_H
 
 #include "platform.h"
-#include "salts_vstr.h"
+#include "vstr.h"
 #include "salts_error.h"
 
 #include <stdbool.h>

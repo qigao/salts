@@ -2,10 +2,10 @@
 #define SALTS_CMETA_DATA_H
 
 #include "salts_cmeta_fixed_width.h"
-#include "salts_str.h"
+#include "tstr.h"
 #include "salts_api.h"
 #include "salts_uuid.h"
-#include "salts_vstr.h"
+#include "vstr.h"
 
 #include <cmeta/data.h>
 

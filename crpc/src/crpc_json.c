@@ -3,7 +3,7 @@
 #include <fmt.h>
 #include <json_cserde_reader.h>
 #include <json_parser.h>
-#include <salts_vstr.h>
+#include <vstr.h>
 
 #include <inttypes.h>
 #include <limits.h>

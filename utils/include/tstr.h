@@ -1,5 +1,5 @@
 /**
- * @file salts_str.h
+ * @file tstr.h
  * @brief High-performance dynamic string type for Salts
  *
  * API uses snake_case naming with tstr_ prefix:
@@ -12,7 +12,7 @@
  * - Compatible with C string functions for reading
  * - Seamless integration with vstr (string view)
  * - Typed "{}" formatting is provided by fmt.h via tstr_format() and
- *   tstr_append_format(). salts_str.h keeps only the printf-compatible
+ *   tstr_append_format(). tstr.h keeps only the printf-compatible
  *   tstr_cat_fmt() entry to avoid a reverse dependency on the formatter.
  *
  * Ownership model:
@@ -46,11 +46,11 @@
  *           use it is undefined behavior (use-after-free).
  */
 
-#ifndef SALTS_STR_H
-#define SALTS_STR_H
+#ifndef TSTR_H
+#define TSTR_H
 
 #include "platform.h"
-#include "salts_vstr.h"
+#include "vstr.h"
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -340,4 +340,4 @@ SALTS_C_API tstr tstr_join(char **argv, int argc, const char *sep);
 }
 #endif
 
-#endif /* SALTS_STR_H */
+#endif /* TSTR_H */

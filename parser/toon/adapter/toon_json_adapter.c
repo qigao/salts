@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <salts_buffer.h>
-#include <salts_vstr.h>
+#include <vstr.h>
 #include <cstl/hash_set.h>
 
 #define TOON_JSON_ARENA_INITIAL_SIZE (32U * 1024U)
