@@ -4,7 +4,7 @@
 #include "chttp_server_runtime.h"
 
 #include <salts_fs.h>
-#include <salts_str.h>
+#include <tstr.h>
 #include <salts_uuid.h>
 
 #include <stdbool.h>

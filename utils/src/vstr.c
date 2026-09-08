@@ -1,4 +1,4 @@
-#include "salts_vstr.h"
+#include "vstr.h"
 #include <simde/x86/sse2.h>
 #include <stdint.h>
 #include <stdlib.h>

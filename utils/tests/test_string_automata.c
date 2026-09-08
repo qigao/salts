@@ -1,8 +1,8 @@
 #include "ac_automaton.h"
 #include "levenshtein_automaton.h"
 #include "tinytest.h"
-#include "salts_str.h"
-#include "salts_vstr.h"
+#include "tstr.h"
+#include "vstr.h"
 
 #include <stdbool.h>
 #include <stddef.h>

@@ -1,7 +1,7 @@
 #include "crpc_internal.h"
 
 #include <json_cserde_reader.h>
-#include <salts_vstr.h>
+#include <vstr.h>
 
 #include <stdbool.h>
 #include <stdint.h>

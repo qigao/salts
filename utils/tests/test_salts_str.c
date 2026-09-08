@@ -1,9 +1,9 @@
 /**
- * @file test_salts_str.c
- * @brief Unit tests for salts_str.h (tstr dynamic string)
+ * @file test_tstr.c
+ * @brief Unit tests for tstr.h (tstr dynamic string)
  */
 
-#include "salts_str.h"
+#include "tstr.h"
 #include "tinytest.h"
 #include <stdint.h>
 #include <string.h>

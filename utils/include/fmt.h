@@ -8,7 +8,7 @@
 
 #include "platform.h"
 #include "fmt_lexer.h"
-#include "salts_str.h"
+#include "tstr.h"
 #include <cmeta/enum.h>
 #include <stddef.h>
 #include <stdint.h>

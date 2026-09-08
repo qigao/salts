@@ -4,7 +4,7 @@
 #include "csv_lexer.h"
 #include <salts_fs.h>
 #include <salts_mmap.h>
-#include <salts_str.h>
+#include <tstr.h>
 #include <cstl/hash_map.h>
 #include <cstl/vec.h>
 

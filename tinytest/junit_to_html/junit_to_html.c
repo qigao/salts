@@ -7,7 +7,7 @@
 
 #include <cmd_arger.h>
 #include <salts_fs.h>
-#include <salts_str.h>
+#include <tstr.h>
 #include <xml_parser/xml_parser.h>
 
 enum {

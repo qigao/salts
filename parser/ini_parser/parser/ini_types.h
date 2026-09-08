@@ -7,7 +7,7 @@
 #define INI_TYPES_H
 
 #include <stddef.h>
-#include "salts_str.h"
+#include "tstr.h"
 
 #ifdef __cplusplus
 extern "C" {

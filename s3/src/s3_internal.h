@@ -6,7 +6,7 @@
 #include <s3/s3_object.h>
 #include <s3/s3_signer.h>
 
-#include <salts_str.h>
+#include <tstr.h>
 #include <xml_parser/xml_parser.h>
 
 #include <stddef.h>
