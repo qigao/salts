@@ -223,6 +223,14 @@ typedef struct cnet_packet_observer {
 enum { CNET_PACKET_TERMINAL_API_VERSION = 1u };
 
 /**
+ * Version 1 guarantees that datagram and packet endpoint stop return a
+ * concrete error only after all admitted datagram sends and accepted tagged
+ * packet sends have published their terminal callbacks. `SALTS_ETIMEDOUT`
+ * remains retryable and does not discard the first concrete error.
+ */
+#define CNET_STOP_DRAIN_CONTRACT_VERSION 1u
+
+/**
  * Authoritative terminal for one successfully admitted tagged logical send.
  * Callback arguments are borrowed through callback return. UDP reports its
  * NativeIO datagram terminal; KCP reports completion only after every segment
@@ -965,7 +973,12 @@ int cnet_datagram_poll(cnet_datagram *datagram, uint32_t timeout_ms, size_t *out
 /** The only datagram operation allowed concurrently from a non-owner thread. */
 int cnet_datagram_wake(cnet_datagram *datagram);
 
-/** Closes admission, cancels retained I/O and drains terminal send callbacks. */
+/**
+ * Closes admission, cancels retained I/O and drains terminal send callbacks.
+ * A concrete cancellation/progress error is returned only after every admitted
+ * send has reached its terminal callback. `SALTS_ETIMEDOUT` leaves the bounded
+ * drain retryable without discarding the first concrete error.
+ */
 int cnet_datagram_stop(cnet_datagram *datagram, uint32_t timeout_ms);
 
 /** Requires a completed stop and releases all fixed storage. */
@@ -1079,7 +1092,11 @@ int cnet_packet_poll(cnet_packet_endpoint *endpoint, uint32_t timeout_ms, size_t
 /** The only packet endpoint operation allowed concurrently from a non-owner thread. */
 int cnet_packet_wake(cnet_packet_endpoint *endpoint);
 
-/** Stops admission, KCP timers and UDP I/O, then drains terminal socket writes. */
+/**
+ * Stops admission, KCP timers and UDP I/O, then drains terminal socket writes.
+ * Except for retryable `SALTS_ETIMEDOUT`, an error is returned only after every
+ * accepted tagged send has published exactly one terminal callback.
+ */
 int cnet_packet_endpoint_stop(cnet_packet_endpoint *endpoint, uint32_t timeout_ms);
 
 /** Requires completed stop and releases the peer index and all fixed storage. */
