@@ -1,11 +1,28 @@
 # Salts Canonical Architecture
 
-日期：2026-08-24  
+日期：2026-09-09
 状态：Canonical repository architecture
 
 本文定义 Salts 当前仓库级模块边界、public target ownership、依赖方向，以及与
 TurboParser 的集成边界。专项 API、错误语义、ABI 和阶段能力仍以公开头文件、测试及
 `docs/superpowers/specs/` 中的专项设计为事实源；本文不重复低层契约。
+
+### HTTP 服务仓库边界
+
+CHTTP、S3、CRPC 的源码、专属测试、示例及私有 cjwt/turbo_crypto 归
+[HTTPServices](../http-services/README.md) 所有。依赖方向为
+`S3 / CRPC → CHTTP → Salts::CNet / CFlow / Core / Parser`；CRPC 同时复用
+Salts 的 CMeta/CSerde。CNet、NativeIO、CFlow、通用 Crypto 与解析器继续由 Salts 提供。
+
+三个模块整体迁移，避免 CRPC 留在 Salts 导致包级循环依赖；本次不拆分 transport
+接口，也不改变协议算法、错误语义、容量、线程模型或运行时状态归属。
+HTTPServices 导出 `CHttp::Client`、`CHttp::Server` 和独立的 `CHttp::S3`。
+HTTP/RPC 按两端合并，S3 依赖 Client。消费端更新模块头文件和链接目标后重新编译。
+构建顺序为 Salts SDK → HTTPServices SDK → 消费端。
+
+验证包含 C/C++ 头文件链接、HTTP/S3/CRPC 原测试与 CNet 相邻回归。
+历史 `docs/superpowers/` 和 `book/` 记录保留原上下文，当前归属以本节和新仓库 README 为准。
+回滚时使用迁移前 Salts revision 与旧消费配置组成完整旧版本；不混用两套目标或 ABI。
 
 > 主图采用客户文稿视角，表达产品、语义 IR、CMeta 与 Platform/OS 的分层关系；右侧
 > `Cross-Cutting Capabilities` 表达跨层能力归属，不等价于 CMake target 的层级包含关系。

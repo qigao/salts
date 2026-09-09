@@ -33,48 +33,6 @@ if(NOT install_result EQUAL 0)
   message(FATAL_ERROR "Salts package install failed: ${install_result}")
 endif()
 
-set(expected_chttp_abi_version 2)
-set(expected_crpc_abi_version 2)
-if(WIN32)
-  set(expected_chttp_runtime
-      "${install_prefix}/bin/salts_chttp-${expected_chttp_abi_version}.dll")
-  set(expected_chttp_import_library
-      "${install_prefix}/lib/salts_chttp-${expected_chttp_abi_version}.lib")
-  foreach(expected_chttp_file IN ITEMS
-          "${expected_chttp_runtime}"
-          "${expected_chttp_import_library}")
-    if(NOT EXISTS "${expected_chttp_file}")
-      message(FATAL_ERROR
-              "Salts install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_file}")
-    endif()
-  endforeach()
-  set(expected_crpc_archive
-      "${install_prefix}/lib/salts_crpc-${expected_crpc_abi_version}.lib")
-elseif(APPLE)
-  set(expected_chttp_runtime
-      "${install_prefix}/lib/libsalts_chttp.${expected_chttp_abi_version}.dylib")
-  if(NOT EXISTS "${expected_chttp_runtime}")
-    message(FATAL_ERROR
-            "Salts install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_runtime}")
-  endif()
-  set(expected_crpc_archive
-      "${install_prefix}/lib/libsalts_crpc-${expected_crpc_abi_version}.a")
-else()
-  set(expected_chttp_runtime
-      "${install_prefix}/lib/libsalts_chttp.so.${expected_chttp_abi_version}")
-  if(NOT EXISTS "${expected_chttp_runtime}")
-    message(FATAL_ERROR
-            "Salts install is missing CHTTP ABI ${expected_chttp_abi_version} artifact: ${expected_chttp_runtime}")
-  endif()
-  set(expected_crpc_archive
-      "${install_prefix}/lib/libsalts_crpc-${expected_crpc_abi_version}.a")
-endif()
-
-if(NOT EXISTS "${expected_crpc_archive}")
-  message(FATAL_ERROR
-          "Salts install is missing CRPC ABI ${expected_crpc_abi_version} artifact: ${expected_crpc_archive}")
-endif()
-
 foreach(required_package_file IN ITEMS SaltsConfig.cmake SaltsTargets.cmake)
   if(NOT EXISTS
      "${install_prefix}/lib/cmake/Salts/${required_package_file}")

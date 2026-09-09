@@ -18,11 +18,17 @@ Salts 不是另一套运行时，也不会用隐式分配和无界状态隐藏�
 | [CSTL](cstl/README.md) | `Salts::CSTL` / `Salts::CSTLStream` | C11 类型化容器、算法，以及基于 CFlow 的现代流式 facade |
 | Platform / Concurrency | `Salts::Platform` / `Salts::Concurrency` | 跨平台抽象、线程池、Disruptor 与调度基础设施 |
 | [Coroutine](coroutine/README.md) / [NativeIO](native-io/README.md) | `Salts::Coroutine` / `Salts::NativeIO` | 有界 coroutine 执行与原生异步 I/O |
-| [CNet](cnet/README.md) / [CHTTP](chttp/README.md) / [CRPC](crpc/README.md) / [S3](s3/README.md) | `Salts::CNet` / `Salts::CHTTP` / `Salts::CRPC` / `Salts::S3` | 网络 transport、HTTP、RPC 与 S3 对象存储协议 |
+| [CNet](cnet/README.md) | `Salts::CNet` | 网络 transport、TLS 与 WebSocket session |
 | Parser engines | `Salts::JsonParser`、`Salts::XmlParser`、`Salts::QueryVM` 等 | JSON、YAML、TOML、XML、CSV、URI、协议解析与查询执行 |
 | Core | `Salts::Core` | 字符串、文件、日志、正则、进程、内存与通用工具 |
 
 模块边界、依赖方向和 canonical ownership 详见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+CHTTP、S3、CRPC 已迁入独立的 [HTTPServices 仓库](../http-services/README.md)。
+消费端先安装 Salts，再构建安装 HTTPServices，增加 `find_package(HTTPServices CONFIG REQUIRED)`；
+HTTP/RPC 分别使用 `CHttp::Client`、`CHttp::Server`，独立 S3 客户端使用 `CHttp::S3`；
+头文件迁移到各模块公开入口，消费端需要重新编译。
+Salts 本身不依赖或构建 HTTPServices。
 
 ## 构建与测试
 

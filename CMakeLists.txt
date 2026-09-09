@@ -64,14 +64,11 @@ add_subdirectory(cmeta)
 add_subdirectory(cflow)
 add_subdirectory(cstl)
 add_subdirectory(cnet)
-add_subdirectory(chttp)
 add_subdirectory(cserde)
 add_subdirectory(cbind)
 add_subdirectory(utils)
 add_subdirectory(cflow-process)
 add_subdirectory(parser)
-add_subdirectory(s3)
-add_subdirectory(crpc)
 add_subdirectory(cflow-fs)
 
 set(verify_installed_dependencies
@@ -81,7 +78,6 @@ set(verify_installed_dependencies
     salts_coroutine
     salts_native_io
     salts_cnet
-    salts_chttp
     salts_cmeta
     salts_cserde
     salts_cbind
@@ -91,7 +87,6 @@ set(verify_installed_dependencies
     salts
     salts_cflow_process
     salts_cflow_fs
-    salts_crpc
     ${SALTS_PARSER_TARGETS}
     salts_selector)
 add_custom_target(
