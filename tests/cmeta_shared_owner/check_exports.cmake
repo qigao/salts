@@ -1,0 +1,16 @@
+foreach(peer IN ITEMS "${PEER_A}" "${PEER_B}")
+  execute_process(COMMAND "${NM}" -D --defined-only "${peer}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE exports ERROR_VARIABLE error)
+  if(NOT result EQUAL 0)
+    message(FATAL_ERROR "Cannot inspect ${peer}: ${error}")
+  endif()
+  string(REGEX REPLACE "cmeta_owner_[ab]_(direct|find)" "" leaked "${exports}")
+  if(leaked MATCHES "[ \t]cmeta_")
+    message(FATAL_ERROR "Static CMeta leaked into the DSO public ABI:\n${exports}")
+  endif()
+  execute_process(COMMAND "${NM}" --defined-only "${peer}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE symbols ERROR_VARIABLE error)
+  if(NOT result EQUAL 0 OR NOT symbols MATCHES "[ \t]cmeta_type_double_ptr(\n|$)")
+    message(FATAL_ERROR "Expected local CMeta descriptor is missing: ${error}")
+  endif()
+endforeach()

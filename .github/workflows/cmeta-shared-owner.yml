@@ -1,0 +1,96 @@
+name: CMeta shared ownership
+
+on:
+  push:
+    branches: [fix/cmeta-252-shared-owner]
+  pull_request:
+    paths:
+      - 'cmeta/**'
+      - 'cmake/**'
+      - 'tests/cmeta_shared_owner/**'
+      - '.github/workflows/cmeta-shared-owner.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cmeta-owner-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  shared-owner:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      ASAN_OPTIONS: detect_leaks=1:detect_odr_violation=2:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Record immutable source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p evidence
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git rev-parse HEAD > evidence/head.txt
+          git diff --exit-code
+          git archive --format=tar.gz HEAD cmeta cmake tinytest tests/cmeta_shared_owner AGENTS.md > evidence/source.tar.gz
+      - name: Configure production CMeta target and two shared consumers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          extra=()
+          if [ "$RUNNER_OS" = Linux ]; then extra+=(-DCMETA_OWNER_SANITIZERS=ON); fi
+          cmake -S tests/cmeta_shared_owner -B build/cmeta-owner -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/build/cmeta-package" "${extra[@]}"
+      - name: Build
+        shell: bash
+        run: cmake --build build/cmeta-owner -j2
+      - name: Test CMeta and shared ownership
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ctest --test-dir build/cmeta-owner --no-tests=error --output-on-failure \
+            --output-junit "$GITHUB_WORKSPACE/evidence/tests.xml"
+      - name: Verify installed consumer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake --install build/cmeta-owner
+          extra=()
+          if [ "$RUNNER_OS" = Linux ]; then extra+=(-DCMETA_OWNER_SANITIZERS=ON); fi
+          cmake -S tests/cmeta_shared_owner -B build/cmeta-installed -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMETA_PACKAGE_DIR="$GITHUB_WORKSPACE/build/cmeta-package/lib/cmake/Salts" "${extra[@]}"
+          cmake --build build/cmeta-installed -j2
+          export PATH="$GITHUB_WORKSPACE/build/cmeta-package/bin:$PATH"
+          ctest --test-dir build/cmeta-installed --no-tests=error --output-on-failure \
+            --output-junit "$GITHUB_WORKSPACE/evidence/installed.xml"
+      - name: Check unchanged tracked source
+        if: always()
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cmeta-owner-${{ matrix.os }}-${{ github.run_id }}
+          retention-days: 7
+          path: |
+            evidence/
+            build/cmeta-owner/compile_commands.json
+            build/cmeta-owner/Testing/Temporary/
+            build/cmeta-installed/Testing/Temporary/

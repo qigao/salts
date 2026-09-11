@@ -15,6 +15,15 @@ cmake_config_target(
   FOLDER "cmeta"
   EXPORT_NAME CMeta)
 
+# A static CMeta archive may be embedded by Core and multiple bridge DSOs.
+# Keep each image's immutable descriptors and helpers local instead of exposing
+# preemptible duplicate globals. Type compatibility is semantic, not address-based.
+# Do not apply hidden visibility to an explicitly requested shared CMeta target.
+get_target_property(cmeta_library_type ${TARGET_NAME} TYPE)
+if(cmeta_library_type STREQUAL "STATIC_LIBRARY")
+  set_target_properties(${TARGET_NAME} PROPERTIES C_VISIBILITY_PRESET hidden)
+endif()
+
 target_compile_features(${TARGET_NAME} PUBLIC c_std_11)
 target_compile_options(${TARGET_NAME}
   PUBLIC $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:preprocessor>)
