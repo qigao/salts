@@ -52,3 +52,12 @@ add_executable(cmeta_shared_owner_test owner_test.c)
 target_link_libraries(cmeta_shared_owner_test PRIVATE
   cmeta_owner_a cmeta_owner_b Salts::CMeta)
 add_test(NAME cmeta_shared_owner_test COMMAND cmeta_shared_owner_test)
+
+get_target_property(cmeta_owner_type Salts::CMeta TYPE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND cmeta_owner_type STREQUAL "STATIC_LIBRARY")
+  add_test(NAME cmeta_static_exports_test
+    COMMAND "${CMAKE_COMMAND}" "-DNM=${CMAKE_NM}"
+      "-DPEER_A=$<TARGET_FILE:cmeta_owner_a>"
+      "-DPEER_B=$<TARGET_FILE:cmeta_owner_b>"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/check_exports.cmake")
+endif()
