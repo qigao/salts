@@ -32,9 +32,10 @@ jobs:
           encoded = encoded.replace('W5/h9+eKn', 'W5/h9+Kn').replace('AlT5tGPzVJJXm', 'AlT5tGPzVJXm')
           patch = gzip.decompress(base64.b64decode(encoded))
           assert hashlib.sha256(patch).hexdigest() == '0a1fb501700654d9eecb4abf2d3d8db0720c4bbdc4d86ad8334998977c2a2d34'
-          subprocess.run(['git', 'apply', '--index', '-'], input=patch, check=True)
+          # Actions cannot publish workflow changes. Those use the connected repository writer.
+          subprocess.run(['git', 'apply', '--index', '--exclude=.github/workflows/xml-sax.yml', '-'], input=patch, check=True)
           changed = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True).splitlines()
-          assert changed == ['.github/workflows/xml-sax.yml', 'parser/xml_parser/CMakeLists.txt',
+          assert changed == ['parser/xml_parser/CMakeLists.txt',
               'parser/xml_parser/include/xml_parser/xml_sax.h', 'parser/xml_parser/src/xml_sax.c',
               'parser/xml_parser/test/CMakeLists.txt', 'parser/xml_parser/test/xml_sax_parser_test.c'], changed
           PY
