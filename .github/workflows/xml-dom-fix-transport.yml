@@ -1,0 +1,54 @@
+name: Publish XML DOM creation fix
+on:
+  push:
+    branches: [work/xml-dom-fix-transport]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: f30fb55a9588b0d7212e80449cac841953314ae3
+      - name: Apply the observed UBSan repair
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = f30fb55a9588b0d7212e80449cac841953314ae3
+          test "$(git ls-remote --heads origin refs/heads/feat/xml-native-sax | cut -f1)" = f30fb55a9588b0d7212e80449cac841953314ae3
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p = Path('parser/xml_parser/vendor/cxml/src/query/cxqapi.c')
+          raw = p.read_bytes()
+          assert hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == '79c84dad59a229d9a103d768723430b671cdef77'
+          old = '''        memset(cxml_string_as_raw(&name->qname) +
+                 (name->pname_len ? name->pname_len + 1 : 0), 0, name->lname_len);'''
+          # Preserve the source's existing continuation indentation exactly.
+          old = old.replace('         (name->pname_len', '       (name->pname_len')
+          new = '''        // A newly created node has no qname allocation or previous local name.
+                  // Even a zero-byte memset must not form a pointer from that NULL buffer.
+                  if (name->lname_len != 0) {
+                      memset(cxml_string_as_raw(&name->qname) +
+                             (name->pname_len ? name->pname_len + 1 : 0), 0, name->lname_len);
+                  }'''
+          new = '\n'.join(line if index == 0 else line[10:] for index, line in enumerate(new.splitlines()))
+          text = raw.decode()
+          assert text.count(old) == 1, repr(old)
+          p.write_text(text.replace(old, new))
+          PY
+          git diff --check
+          git add parser/xml_parser/vendor/cxml/src/query/cxqapi.c
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix(xml): avoid null buffer operations when assigning a new DOM name'
+          git push origin HEAD:refs/heads/feat/xml-native-sax
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/head.txt
+          git diff HEAD^ HEAD > evidence/fix.patch
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xml-dom-fix-${{ github.run_id }}
+          path: evidence/
+          retention-days: 7
