@@ -1,0 +1,43 @@
+name: Export existing macOS merge failure log
+
+on:
+  push:
+    branches: [work/export-c73b-macos-log]
+    paths: ['.github/workflows/export-macos-merge-log.yml']
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  export-existing-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Read the original failed job without rerunning it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          gh api repos/qigao/salts/actions/jobs/103232136274 > evidence/job.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          job = json.loads(Path('evidence/job.json').read_text())
+          assert job['id'] == 103232136274, job['id']
+          assert job['run_id'] == 34589770548, job['run_id']
+          assert job['head_sha'] == 'c73b0d59268a6f018befb284aab71bd12d4c7a6c', job['head_sha']
+          assert job['conclusion'] == 'failure', job['conclusion']
+          PY
+          gh api repos/qigao/salts/actions/jobs/103232136274/logs > evidence/job.log
+          test -s evidence/job.log
+          sha256sum evidence/job.json evidence/job.log > evidence/sha256.txt
+      - name: Preserve raw job evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-c73b-original-job-log
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 7
