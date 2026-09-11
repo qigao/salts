@@ -21,20 +21,33 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p evidence
-          gh api repos/qigao/salts/actions/jobs/103232136274 > evidence/job.json
-          python3 - <<'PY'
+          python3 - <<'PY' > evidence/export.log 2>&1
           import json
+          import subprocess
           from pathlib import Path
+          requests = {
+              'run.json': 'repos/qigao/salts/actions/runs/34589770548',
+              'jobs.json': 'repos/qigao/salts/actions/runs/34589770548/jobs?per_page=100',
+              'job.json': 'repos/qigao/salts/actions/jobs/103232136274',
+              'job.log': 'repos/qigao/salts/actions/jobs/103232136274/logs',
+          }
+          success = True
+          for name, endpoint in requests.items():
+              result = subprocess.run(['gh', 'api', endpoint], capture_output=True, timeout=90)
+              Path('evidence', name).write_bytes(result.stdout)
+              Path('evidence', name + '.err').write_bytes(result.stderr)
+              print(name, 'exit', result.returncode, flush=True)
+              success = success and result.returncode == 0
+          assert success, 'An API read failed; see the corresponding .err file'
           job = json.loads(Path('evidence/job.json').read_text())
           assert job['id'] == 103232136274, job['id']
           assert job['run_id'] == 34589770548, job['run_id']
           assert job['head_sha'] == 'c73b0d59268a6f018befb284aab71bd12d4c7a6c', job['head_sha']
           assert job['conclusion'] == 'failure', job['conclusion']
+          assert Path('evidence/job.log').stat().st_size > 0
           PY
-          gh api repos/qigao/salts/actions/jobs/103232136274/logs > evidence/job.log
-          test -s evidence/job.log
-          sha256sum evidence/job.json evidence/job.log > evidence/sha256.txt
-      - name: Preserve raw job evidence
+      - name: Preserve raw job evidence and export diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: macos-c73b-original-job-log
