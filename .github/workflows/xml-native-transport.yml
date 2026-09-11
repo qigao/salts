@@ -1,0 +1,53 @@
+name: Publish reviewed native XML patch
+on:
+  push:
+    branches: [work/xml-native-sax-transport]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: transport
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: c73b0d59268a6f018befb284aab71bd12d4c7a6c
+          path: source
+      - name: Apply immutable reviewed patch and publish feature branch
+        working-directory: source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test "$(git rev-parse HEAD)" = c73b0d59268a6f018befb284aab71bd12d4c7a6c
+          test -z "$(git status --porcelain)"
+          test -z "$(git ls-remote --heads origin refs/heads/feat/xml-native-sax)"
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, gzip, hashlib, subprocess
+          encoded = Path('../transport/.github/native-xml.patch.b64').read_text()
+          encoded = encoded.replace('W5/h9+eKn', 'W5/h9+Kn').replace('AlT5tGPzVJJXm', 'AlT5tGPzVJXm')
+          patch = gzip.decompress(base64.b64decode(encoded))
+          assert hashlib.sha256(patch).hexdigest() == '0a1fb501700654d9eecb4abf2d3d8db0720c4bbdc4d86ad8334998977c2a2d34'
+          subprocess.run(['git', 'apply', '--index', '-'], input=patch, check=True)
+          changed = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True).splitlines()
+          assert changed == ['.github/workflows/xml-sax.yml', 'parser/xml_parser/CMakeLists.txt',
+              'parser/xml_parser/include/xml_parser/xml_sax.h', 'parser/xml_parser/src/xml_sax.c',
+              'parser/xml_parser/test/CMakeLists.txt', 'parser/xml_parser/test/xml_sax_parser_test.c'], changed
+          PY
+          git diff --cached --check
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'feat(xml): own the bounded incremental SAX parser in Salts'
+          mkdir -p "$RUNNER_TEMP/native-xml"
+          git rev-parse HEAD > "$RUNNER_TEMP/native-xml/head.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/native-xml/tree.txt"
+          git diff HEAD^ HEAD > "$RUNNER_TEMP/native-xml/reviewed.patch"
+          git push origin HEAD:refs/heads/feat/xml-native-sax
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-xml-published-${{ github.run_id }}
+          path: ${{ runner.temp }}/native-xml/
+          retention-days: 7
