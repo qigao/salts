@@ -24,19 +24,16 @@ jobs:
           p = Path('parser/xml_parser/vendor/cxml/src/query/cxqapi.c')
           raw = p.read_bytes()
           assert hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == '79c84dad59a229d9a103d768723430b671cdef77'
-          old = '''        memset(cxml_string_as_raw(&name->qname) +
-                 (name->pname_len ? name->pname_len + 1 : 0), 0, name->lname_len);'''
-          # Preserve the source's existing continuation indentation exactly.
-          old = old.replace('         (name->pname_len', '       (name->pname_len')
-          new = '''        // A newly created node has no qname allocation or previous local name.
-                  // Even a zero-byte memset must not form a pointer from that NULL buffer.
-                  if (name->lname_len != 0) {
-                      memset(cxml_string_as_raw(&name->qname) +
-                             (name->pname_len ? name->pname_len + 1 : 0), 0, name->lname_len);
-                  }'''
-          new = '\n'.join(line if index == 0 else line[10:] for index, line in enumerate(new.splitlines()))
+          old = '        memset(cxml_string_as_raw(&name->qname) +\n               (name->pname_len ? name->pname_len + 1 : 0), 0, name->lname_len);'
+          new = '\n'.join([
+              '        // A newly created node has no qname allocation or previous local name.',
+              '        // Even a zero-byte memset must not form a pointer from that NULL buffer.',
+              '        if (name->lname_len != 0) {',
+              '            memset(cxml_string_as_raw(&name->qname) +',
+              '                   (name->pname_len ? name->pname_len + 1 : 0), 0, name->lname_len);',
+              '        }'])
           text = raw.decode()
-          assert text.count(old) == 1, repr(old)
+          assert text.count(old) == 1
           p.write_text(text.replace(old, new))
           PY
           git diff --check
