@@ -1,6 +1,12 @@
 #include <cmeta/type_identity.h>
 #include "tinytest.h"
 
+/* RED contract for canonical built-in value generic identities. */
+extern const cmeta_generic_desc cmeta_pair_generic_desc;
+extern const cmeta_generic_desc cmeta_tuple_generic_desc;
+extern const cmeta_generic_desc cmeta_option_generic_desc;
+extern const cmeta_generic_desc cmeta_result_generic_desc;
+
 static const cmeta_generic_desc cmeta_test_box_generic =
     CMETA_GENERIC_DESC_INIT("test.Box", "Box", 1u, 1u, CMETA_GENERIC_VALUE);
 static const cmeta_generic_desc cmeta_test_pair_generic =
@@ -9,6 +15,9 @@ static const cmeta_generic_desc cmeta_test_unit_generic_a =
     CMETA_GENERIC_DESC_INIT("test.Unit", "Unit", 0u, 0u, CMETA_GENERIC_VALUE);
 static const cmeta_generic_desc cmeta_test_unit_generic_b =
     CMETA_GENERIC_DESC_INIT("test.Unit", "Unit", 0u, 0u, CMETA_GENERIC_VALUE);
+static const cmeta_generic_desc cmeta_test_canonical_pair_clone =
+    CMETA_GENERIC_DESC_INIT("cmeta.Pair", "Pair clone", 2u, 2u,
+                            CMETA_GENERIC_VALUE);
 
 static const cmeta_type_identity cmeta_test_atom_a =
     CMETA_TYPE_ID_ATOM_INIT("test.A");
@@ -40,10 +49,54 @@ static const cmeta_type_identity *const cmeta_test_nested_pair_args[] = {
 static const cmeta_type_identity cmeta_test_nested_pair =
     CMETA_TYPE_ID_APPLY_INIT(&cmeta_test_pair_generic,
                              cmeta_test_nested_pair_args);
+static const cmeta_type_identity cmeta_test_canonical_pair =
+    CMETA_TYPE_ID_APPLY_INIT(&cmeta_pair_generic_desc,
+                             cmeta_test_pair_ab_args);
+static const cmeta_type_identity cmeta_test_canonical_pair_clone_application =
+    CMETA_TYPE_ID_APPLY_INIT(&cmeta_test_canonical_pair_clone,
+                             cmeta_test_pair_ab_args);
 
 const cmeta_type_identity *cmeta_type_identity_peer_pair(void);
 
 spec("CMeta generic type applications") {
+  it("publishes canonical built-in value generic constructors") {
+    check_true(cmeta_generic_desc_valid(&cmeta_pair_generic_desc));
+    check_true(cmeta_generic_desc_valid(&cmeta_tuple_generic_desc));
+    check_true(cmeta_generic_desc_valid(&cmeta_option_generic_desc));
+    check_true(cmeta_generic_desc_valid(&cmeta_result_generic_desc));
+
+    check_true(strcmp(cmeta_pair_generic_desc.stable_id, "cmeta.Pair") == 0);
+    check_true(strcmp(cmeta_tuple_generic_desc.stable_id, "cmeta.Tuple") == 0);
+    check_true(strcmp(cmeta_option_generic_desc.stable_id, "cmeta.Option") == 0);
+    check_true(strcmp(cmeta_result_generic_desc.stable_id, "cmeta.Result") == 0);
+
+    check_equal(cmeta_pair_generic_desc.category, CMETA_GENERIC_VALUE);
+    check_equal(cmeta_tuple_generic_desc.category, CMETA_GENERIC_VALUE);
+    check_equal(cmeta_option_generic_desc.category, CMETA_GENERIC_VALUE);
+    check_equal(cmeta_result_generic_desc.category, CMETA_GENERIC_VALUE);
+
+    check_true(cmeta_generic_accepts_arity(&cmeta_pair_generic_desc, 2u));
+    check_false(cmeta_generic_accepts_arity(&cmeta_pair_generic_desc, 1u));
+    check_true(cmeta_generic_accepts_arity(&cmeta_tuple_generic_desc, 2u));
+    check_true(cmeta_generic_accepts_arity(&cmeta_tuple_generic_desc, 16u));
+    check_false(cmeta_generic_accepts_arity(&cmeta_tuple_generic_desc, 1u));
+    check_false(cmeta_generic_accepts_arity(&cmeta_tuple_generic_desc, 17u));
+    check_true(cmeta_generic_accepts_arity(&cmeta_option_generic_desc, 1u));
+    check_false(cmeta_generic_accepts_arity(&cmeta_option_generic_desc, 2u));
+    check_true(cmeta_generic_accepts_arity(&cmeta_result_generic_desc, 2u));
+    check_false(cmeta_generic_accepts_arity(&cmeta_result_generic_desc, 1u));
+  }
+
+  it("uses stable semantic identity rather than canonical descriptor address") {
+    check_true(&cmeta_pair_generic_desc != &cmeta_test_canonical_pair_clone);
+    check_true(cmeta_type_identity_valid(&cmeta_test_canonical_pair));
+    check_true(cmeta_type_identity_valid(
+        &cmeta_test_canonical_pair_clone_application));
+    check_true(cmeta_type_identity_equal(
+        &cmeta_test_canonical_pair,
+        &cmeta_test_canonical_pair_clone_application));
+  }
+
   it("validates generic applications from constructor arity and recursive arguments") {
     const cmeta_type_identity *box_args[] = {&cmeta_test_atom_a};
     const cmeta_type_identity *pair_args[] = {
