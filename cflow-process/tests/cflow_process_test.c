@@ -9,6 +9,7 @@
 #include <string.h>
 
 #if defined(_WIN32)
+  #include <tlhelp32.h>
   #include <windows.h>
 #elif defined(__linux__)
   #include <dirent.h>
@@ -63,6 +64,27 @@ static bool process_resource_count(size_t *out) {
   *out = (size_t)count;
   return true;
 }
+
+static bool process_thread_count(size_t *out) {
+  HANDLE snapshot;
+  THREADENTRY32 entry = {0};
+  const DWORD process_id = GetCurrentProcessId();
+  size_t count = 0u;
+  if (out == NULL) return false;
+  snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0u);
+  if (snapshot == INVALID_HANDLE_VALUE) return false;
+  entry.dwSize = sizeof(entry);
+  if (!Thread32First(snapshot, &entry)) {
+    (void)CloseHandle(snapshot);
+    return false;
+  }
+  do {
+    if (entry.th32OwnerProcessID == process_id) ++count;
+  } while (Thread32Next(snapshot, &entry));
+  (void)CloseHandle(snapshot);
+  *out = count;
+  return true;
+}
 #elif defined(__linux__)
 static bool process_resource_count(size_t *out) {
   DIR *directory;
@@ -70,6 +92,21 @@ static bool process_resource_count(size_t *out) {
   size_t count = 0u;
   if (out == NULL) return false;
   directory = opendir("/proc/self/fd");
+  if (directory == NULL) return false;
+  while ((entry = readdir(directory)) != NULL) {
+    if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) ++count;
+  }
+  (void)closedir(directory);
+  *out = count;
+  return true;
+}
+
+static bool process_thread_count(size_t *out) {
+  DIR *directory;
+  struct dirent *entry;
+  size_t count = 0u;
+  if (out == NULL) return false;
+  directory = opendir("/proc/self/task");
   if (directory == NULL) return false;
   while ((entry = readdir(directory)) != NULL) {
     if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) ++count;
@@ -123,6 +160,10 @@ static cflow_process_config process_test_config(process_completion_probe *probe)
   cflow_process_config config = {0};
 #ifdef _WIN32
   config.backend_kind = CFLOW_IO_NATIVE_IOCP;
+#elif defined(__linux__)
+  config.backend_kind = CFLOW_IO_NATIVE_EPOLL;
+#elif defined(__APPLE__)
+  config.backend_kind = CFLOW_IO_NATIVE_KQUEUE;
 #else
   config.backend_kind = CFLOW_IO_NATIVE_POLL;
 #endif
@@ -149,6 +190,63 @@ static int close_and_drain(cflow_process *process) {
 }
 
 spec("CFlow subprocess adapter") {
+  it("rejects an unavailable explicit backend without fallback") {
+    salts_process_options_t options;
+    cflow_process process = {0};
+    process_completion_probe probe = {0};
+    cflow_process_config config = process_test_config(&probe);
+
+#if defined(_WIN32)
+    config.backend_kind = CFLOW_IO_NATIVE_EPOLL;
+#else
+    config.backend_kind = CFLOW_IO_NATIVE_IOCP;
+#endif
+    init_process_options(&options, false);
+    check_equal(cflow_process_start(&process, &options, &config), SALTS_ENOTSUP);
+    check_null(process.impl);
+  }
+
+#if defined(_WIN32) || defined(__linux__)
+  it("advances platform-native pipe I/O without an autonomous backend worker") {
+    salts_process_options_t options;
+    cflow_process process = {0};
+    process_completion_probe probe = {0};
+    cflow_process_config config = process_test_config(&probe);
+    size_t before = 0u;
+    size_t after = 0u;
+
+    check_true(process_thread_count(&before));
+    init_process_options(&options, true);
+    check_equal(cflow_process_start(&process, &options, &config), SALTS_OK);
+    check_true(process_thread_count(&after));
+    check_equal(after, before + 1u);
+    check_equal(close_and_drain(&process), SALTS_OK);
+  }
+#endif
+
+#if !defined(_WIN32)
+  it("preserves explicit legacy POLL process compatibility pending issue 147") {
+    salts_process_options_t options;
+    cflow_process process = {0};
+    process_completion_probe probe = {0};
+    cflow_process_config config = process_test_config(&probe);
+    cflow_process_submit_result submitted;
+    const cflow_io_completion *completion;
+    char byte = 0;
+
+    config.backend_kind = CFLOW_IO_NATIVE_POLL;
+    init_process_options(&options, false);
+    check_equal(cflow_process_start(&process, &options, &config), SALTS_OK);
+    submitted = cflow_process_try_read_stdout(&process, 1u, &byte, sizeof(byte));
+    check_equal(submitted.status, CFLOW_PROCESS_SUBMIT_ACCEPTED);
+    check_equal(drive_until(&process, &probe, 1u), SALTS_OK);
+    completion = completion_for_stream(&probe, CFLOW_PROCESS_STDOUT);
+    check_not_null(completion);
+    check_equal(completion->kind, CFLOW_IO_COMPLETION_EOF);
+    check_equal(close_and_drain(&process), SALTS_OK);
+  }
+#endif
+
   it("moves bytes through bounded asynchronous standard streams") {
     static const char payload[] = "cflow-process-payload";
     salts_process_options_t options;
@@ -355,23 +453,42 @@ spec("CFlow subprocess adapter") {
     size_t before = 0u;
     size_t after = 0u;
     size_t iteration;
+    char byte = 0;
 
     check_true(process_resource_count(&before));
-    salts_process_options_init(&options);
-    options.program = "cflow-process-missing-executable-97531";
-    options.flags = 0u;
-    check_less(cflow_process_start(&process, &options, &config), SALTS_OK);
-    check_null(process.impl);
-    check_true(process_resource_count(&after));
-    check_equal(after, before);
     for (iteration = 0u; iteration < 3u; ++iteration) {
+      cflow_process_submit_result submitted;
+      cflow_process_stats stats;
+      const cflow_io_completion *completion;
+      size_t progressed = 0u;
+
+      salts_process_options_init(&options);
+      options.program = "cflow-process-missing-executable-97531";
+      options.flags = 0u;
+      check_less(cflow_process_start(&process, &options, &config), SALTS_OK);
+      check_null(process.impl);
+      check_true(process_resource_count(&after));
+      check_equal(after, before);
+
       memset(&probe, 0, sizeof(probe));
-      init_process_options(&options, false);
+      init_process_options(&options, true);
       check_equal(cflow_process_start(&process, &options, &config), SALTS_OK);
+      submitted = cflow_process_try_read_stdout(&process, 1u, &byte, sizeof(byte));
+      check_equal(submitted.status, CFLOW_PROCESS_SUBMIT_ACCEPTED);
+      check_equal(cflow_process_run_ready(&process, 64u, &progressed), SALTS_OK);
+      check_greater(progressed, (size_t)0u);
+      check_equal(cflow_process_try_cancel(&process, submitted.request_id),
+                  CFLOW_IO_CANCEL_ACCEPTED);
+      check_equal(drive_until(&process, &probe, 1u), SALTS_OK);
+      completion = completion_for_stream(&probe, CFLOW_PROCESS_STDOUT);
+      check_not_null(completion);
+      check_equal(completion->kind, CFLOW_IO_COMPLETION_CANCELLED);
+      check_true(cflow_process_get_stats(&process, &stats));
+      check_equal(stats.io.active_requests, (size_t)0u);
       check_equal(close_and_drain(&process), SALTS_OK);
+      check_true(process_resource_count(&after));
+      check_equal(after, before);
     }
-    check_true(process_resource_count(&after));
-    check_equal(after, before);
   }
 #endif
 }
