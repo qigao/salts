@@ -2,6 +2,19 @@
 
 #include <string.h>
 
+const cmeta_generic_desc cmeta_pair_generic_desc =
+    CMETA_GENERIC_DESC_INIT("cmeta.Pair", "Pair", 2u, 2u,
+                            CMETA_GENERIC_VALUE);
+const cmeta_generic_desc cmeta_tuple_generic_desc =
+    CMETA_GENERIC_DESC_INIT("cmeta.Tuple", "Tuple", 2u, 16u,
+                            CMETA_GENERIC_VALUE);
+const cmeta_generic_desc cmeta_option_generic_desc =
+    CMETA_GENERIC_DESC_INIT("cmeta.Option", "Option", 1u, 1u,
+                            CMETA_GENERIC_VALUE);
+const cmeta_generic_desc cmeta_result_generic_desc =
+    CMETA_GENERIC_DESC_INIT("cmeta.Result", "Result", 2u, 2u,
+                            CMETA_GENERIC_VALUE);
+
 static bool cmeta_nonempty(const char *s) {
     return s && s[0] != '\0';
 }
