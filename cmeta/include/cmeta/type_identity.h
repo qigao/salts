@@ -59,6 +59,12 @@ struct cmeta_type_identity {
     { CMETA_TYPE_APPLY, NULL, (constructor_), NULL, (args_), \
       sizeof(args_) / sizeof((args_)[0]) }
 
+/* Canonical constructors for CMeta-owned finite value-generic identities. */
+extern const cmeta_generic_desc cmeta_pair_generic_desc;
+extern const cmeta_generic_desc cmeta_tuple_generic_desc;
+extern const cmeta_generic_desc cmeta_option_generic_desc;
+extern const cmeta_generic_desc cmeta_result_generic_desc;
+
 bool cmeta_generic_desc_valid(const cmeta_generic_desc *desc);
 bool cmeta_generic_accepts_arity(const cmeta_generic_desc *desc, size_t arity);
 bool cmeta_type_application_valid(
