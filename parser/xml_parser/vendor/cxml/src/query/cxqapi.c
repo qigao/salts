@@ -1544,8 +1544,12 @@ int cxml_set_name(void *node, const char *pname, const char *lname){
             attrs = _unwrap__cxnode(attr, node)->parent->attributes;
         }
         // zero out lname chars-space in order to set the new lname
-        memset(cxml_string_as_raw(&name->qname) +
-               (name->pname_len ? name->pname_len + 1 : 0), 0, name->lname_len);
+        // A newly created node has no qname allocation or previous local name.
+        // Even a zero-byte memset must not form a pointer from that NULL buffer.
+        if (name->lname_len != 0) {
+            memset(cxml_string_as_raw(&name->qname) +
+                   (name->pname_len ? name->pname_len + 1 : 0), 0, name->lname_len);
+        }
         // remove old lname_len
         name->qname._len -= name->lname_len;
         // update lname_len, and lname

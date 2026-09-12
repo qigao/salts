@@ -1,0 +1,75 @@
+name: Native XML SAX
+on:
+  push:
+    branches: [master, feat/xml-native-sax]
+    paths: ['parser/xml_parser/**', 'utils/**', '.github/workflows/xml-sax.yml']
+  pull_request:
+    paths: ['parser/xml_parser/**', 'utils/**', '.github/workflows/xml-sax.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: xml-sax-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  native-xml:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      ASAN_OPTIONS: detect_leaks=1:detect_odr_violation=2:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01
+          path: vcpkg
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: xml-sax-vcpkg-b1b19307-v1
+      - name: Prepare toolchain and record exact source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/xml-sax"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git rev-parse HEAD > "$RUNNER_TEMP/xml-sax/head.txt"
+          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/xml-sax/source.tar.gz"
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config nasm re2c
+          ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+      - name: Build real parser targets with ASan and UBSan
+        shell: bash
+        env:
+          PROJECT_ROOT: ${{ runner.temp }}/salts-project
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: |
+          set -euxo pipefail
+          cmake --preset linux-dev-user -DENABLE_SANITIZER_UNDEFINED=ON \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          cmake --build build/linux-gcc-debug --target xml_parser_test xml_sax_parser_test -j2
+      - name: Run DOM and SAX regressions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ctest --test-dir build/linux-gcc-debug --no-tests=error \
+            -R '^(xml_parser_test|xml_sax_parser_test)$' --output-on-failure \
+            --output-junit "$RUNNER_TEMP/xml-sax/tests.xml"
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xml-sax-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/xml-sax/
+            build/linux-gcc-debug/compile_commands.json
+            build/linux-gcc-debug/Testing/Temporary/
