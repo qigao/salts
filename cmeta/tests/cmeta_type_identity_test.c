@@ -1,6 +1,8 @@
 #include <cmeta/type_identity.h>
 #include "tinytest.h"
 
+#include <string.h>
+
 /* RED contract for canonical built-in value generic identities. */
 extern const cmeta_generic_desc cmeta_pair_generic_desc;
 extern const cmeta_generic_desc cmeta_tuple_generic_desc;
