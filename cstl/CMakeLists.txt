@@ -17,7 +17,8 @@ add_library(${TARGET_NAME}
   src/rbtree.c
   src/sort.c
   src/set.c
-  src/vec.c)
+  src/vec.c
+  src/vec_alloc.c)
 
 cmake_config_target(
   ${TARGET_NAME}
