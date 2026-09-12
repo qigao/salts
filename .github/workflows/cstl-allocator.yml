@@ -1,0 +1,82 @@
+name: Allocator-bound CSTL Vec
+on:
+  push:
+    branches: [master, feat/cstl-allocator-258]
+    paths: ['cstl/**', 'cmeta/**', '.github/workflows/cstl-allocator.yml']
+  pull_request:
+    paths: ['cstl/**', 'cmeta/**', '.github/workflows/cstl-allocator.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cstl-allocator-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  allocator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      ASAN_OPTIONS: detect_leaks=1:detect_odr_violation=2:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01
+          path: vcpkg
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/vcpkg/archives
+          key: xml-sax-vcpkg-b1b19307-v1
+      - name: Prepare tools and record exact source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/allocator-evidence"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git rev-parse HEAD > "$RUNNER_TEMP/allocator-evidence/head.txt"
+          git archive --format=tar.gz HEAD > "$RUNNER_TEMP/allocator-evidence/source.tar.gz"
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config nasm re2c
+          ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+      - name: Build provider and unchanged sequence ownership and XML tests
+        shell: bash
+        env:
+          PROJECT_ROOT: ${{ runner.temp }}/salts-project
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+        run: |
+          set -euxo pipefail
+          cmake --preset linux-dev-user -DENABLE_SANITIZER_UNDEFINED=ON \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          cmake --build build/linux-gcc-debug --target cstl_vec_alloc_test \
+            cstl_vec_alloc_cpp_test cstl_sequence_test cstl_ownership_test \
+            xml_parser_test xml_sax_parser_test -j2
+      - name: Run allocator C and C++ and preserved regressions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ctest --test-dir build/linux-gcc-debug --no-tests=error \
+            -R '^(cstl_vec_alloc_test|cstl_vec_alloc_cpp_test|cstl_sequence_test|cstl_ownership_test|xml_parser_test|xml_sax_parser_test)$' \
+            --output-on-failure --output-junit "$RUNNER_TEMP/allocator-evidence/tests.xml"
+      - name: Verify unchanged source
+        if: always()
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cstl-allocator-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/allocator-evidence/
+            build/linux-gcc-debug/compile_commands.json
+            build/linux-gcc-debug/Testing/Temporary/

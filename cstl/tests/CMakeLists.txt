@@ -171,3 +171,18 @@ set_target_properties(
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF)
+
+cmake_add_test(cstl_vec_alloc_test
+  SOURCES cstl_vec_alloc_test.c
+  LIBS Salts::CSTL Salts::TinyTest
+  FOLDER "cstl/tests")
+
+cmake_add_test(cstl_vec_alloc_cpp_test
+  SOURCES cstl_vec_alloc_cpp_test.cpp
+  LIBS Salts::CSTL
+  FOLDER "cstl/tests")
+
+set_target_properties(cstl_vec_alloc_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+set_target_properties(cstl_vec_alloc_cpp_test PROPERTIES
+  CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
