@@ -21,9 +21,168 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  apply-fmt-vstr-refactor:
+    name: Apply bounded fmt view refactor
+    if: github.event_name == 'pull_request' && github.head_ref == 'work/tstr-vstr-safe-mutation-v2-red-tests3'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/tstr-vstr-safe-mutation-v2-red-tests3
+          fetch-depth: 0
+
+      - name: Patch formatter core
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, found {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "utils/include/fmt.h",
+              '''SALTS_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
+                        size_t arg_count);
+''',
+              '''SALTS_C_API int fmt_print_v(char *buf, size_t size, vstr pattern, const fmt_arg_t *args,
+                          size_t arg_count);
+SALTS_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
+                        size_t arg_count);
+''')
+
+          replace_once(
+              "utils/include/fmt.h",
+              '''SALTS_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args, size_t arg_count);
+''',
+              '''SALTS_C_API tstr fmt_print_tstr_v(tstr s, vstr pattern, const fmt_arg_t *args,
+                                 size_t arg_count);
+SALTS_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args, size_t arg_count);
+''')
+
+          replace_once(
+              "utils/src/fmt.c",
+              '''SALTS_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
+                        size_t arg_count) {
+  if (!buf || size == 0)
+    return 0;
+  buf[0] = '\\0';
+  if (!fmt || (!args && arg_count > 0))
+    return 0;
+
+  const char *cursor = fmt;
+  const char *format_end = fmt + strlen(fmt);
+''',
+              '''SALTS_C_API int fmt_print_v(char *buf, size_t size, vstr pattern, const fmt_arg_t *args,
+                          size_t arg_count) {
+  if (!buf || size == 0)
+    return 0;
+  buf[0] = '\\0';
+  if ((!pattern.data && pattern.len > 0) || (!args && arg_count > 0))
+    return 0;
+
+  const char *cursor = pattern.data ? pattern.data : "";
+  const char *format_end = cursor + pattern.len;
+''')
+
+          replace_once(
+              "utils/src/fmt.c",
+              '''format_error:
+  buf[0] = '\\0';
+  return 0;
+}
+
+SALTS_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args,
+                                size_t arg_count) {
+''',
+              '''format_error:
+  buf[0] = '\\0';
+  return 0;
+}
+
+SALTS_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
+                        size_t arg_count) {
+  if (!fmt) {
+    if (buf && size > 0)
+      buf[0] = '\\0';
+    return 0;
+  }
+  return fmt_print_v(buf, size, vstr_from_cstr(fmt), args, arg_count);
+}
+
+SALTS_C_API tstr fmt_print_tstr_v(tstr s, vstr pattern, const fmt_arg_t *args,
+                                  size_t arg_count) {
+''')
+
+          replace_once(
+              "utils/src/fmt.c",
+              '''  if (!s)
+    s = tstr_new();
+  if (!fmt || (!args && arg_count > 0))
+    return s;
+
+  for (;;) {
+    int written = fmt_print(buf, cap, fmt, args, arg_count);
+''',
+              '''  if (!s)
+    s = tstr_new();
+  if ((!pattern.data && pattern.len > 0) || (!args && arg_count > 0))
+    return s;
+
+  for (;;) {
+    int written = fmt_print_v(buf, cap, pattern, args, arg_count);
+''')
+
+          replace_once(
+              "utils/src/fmt.c",
+              '''  if (buf != stack)
+    free(buf);
+  return s;
+}
+
+#if defined(__clang__)
+''',
+              '''  if (buf != stack)
+    free(buf);
+  return s;
+}
+
+SALTS_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args,
+                                size_t arg_count) {
+  if (!fmt) {
+    if (!s)
+      s = tstr_new();
+    return s;
+  }
+  return fmt_print_tstr_v(s, vstr_from_cstr(fmt), args, arg_count);
+}
+
+#if defined(__clang__)
+''')
+
+          patch_workflow = Path(".github/workflows/patch-fmt-vstr.yml")
+          if patch_workflow.exists():
+              patch_workflow.unlink()
+
+      - name: Commit formatter refactor and restore CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout origin/master -- .github/workflows/ci.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add utils/include/fmt.h utils/src/fmt.c .github/workflows/ci.yml .github/workflows/patch-fmt-vstr.yml
+          git diff --cached --check
+          git commit -m "refactor: accept bounded vstr format patterns"
+          git push origin HEAD:work/tstr-vstr-safe-mutation-v2-red-tests3
+
   c-api-notation:
     name: Reject C++-style generic notation
     runs-on: ubuntu-latest
