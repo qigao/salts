@@ -1,5 +1,4 @@
-#include "tstr.h"
-#include "vstr.h"
+#include "str.h"
 #include "tinytest.h"
 
 spec("tstr/vstr v2 contract") {
