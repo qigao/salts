@@ -10,7 +10,7 @@ static std::string cpp_surface_message;
 static void cpp_surface_capture(const salts_log_entry_t *entry, void *user_data) {
   (void)user_data;
   ++cpp_surface_count;
-  cpp_surface_message = entry->message ? entry->message : "";
+  cpp_surface_message.assign(entry->message.data ? entry->message.data : "", entry->message.len);
 }
 
 spec("TLog C++ surface contract") {

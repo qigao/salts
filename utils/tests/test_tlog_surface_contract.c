@@ -8,12 +8,19 @@ static int surface_count;
 static char surface_message[128];
 static char surface_component[64];
 
+static void copy_view(char *dst, size_t dst_size, vstr value) {
+  size_t n;
+  if (dst_size == 0) return;
+  n = value.len < dst_size - 1 ? value.len : dst_size - 1;
+  if (n > 0) memcpy(dst, value.data, n);
+  dst[n] = '\0';
+}
+
 static void surface_capture(const salts_log_entry_t *entry, void *user_data) {
   (void)user_data;
   ++surface_count;
-  snprintf(surface_message, sizeof(surface_message), "%s", entry->message ? entry->message : "");
-  snprintf(surface_component, sizeof(surface_component), "%s",
-           entry->component ? entry->component : "");
+  copy_view(surface_message, sizeof(surface_message), entry->message);
+  copy_view(surface_component, sizeof(surface_component), entry->component);
 }
 
 spec("TLog surface contract") {

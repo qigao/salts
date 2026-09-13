@@ -77,10 +77,9 @@ typedef struct {
   uint64_t timestamp_ms;
   uint32_t thread_id;
   int line;
-  size_t message_len;
-  const char *component;
-  const char *file;
-  const char *message;
+  vstr component;
+  vstr file;
+  vstr message;
   char data[];
 } async_log_entry_t;
 
@@ -295,52 +294,47 @@ static uint64_t logger_disruptor_capacity(size_t buffer_size_bytes) {
 }
 
 static mem_buffer_t *async_entry_create(mem_pool_t *pool, const salts_log_entry_t *entry) {
-  vstr comp = vstr_from_cstr(entry->component);
-  vstr file = vstr_from_cstr(entry->file);
-  size_t comp_len = comp.len;
-  size_t file_len = file.len;
-  size_t msg_len = entry->message_len;
-
+  size_t comp_len = entry->component.len;
+  size_t file_len = entry->file.len;
+  size_t msg_len = entry->message.len;
   size_t total_size = sizeof(async_log_entry_t) + comp_len + STRING_PADDING + file_len +
                       STRING_PADDING + msg_len + STRING_PADDING;
-
   mem_buffer_t *buffer = mem_get_buffer(pool, total_size);
-  if (!buffer) {
-    return NULL;
-  }
+  if (!buffer) return NULL;
   mem_set_used(buffer, total_size);
 
   async_log_entry_t *ae = (async_log_entry_t *)buffer->data;
-
   ae->level = entry->level;
   ae->timestamp_ms = entry->timestamp_ms;
   ae->thread_id = entry->thread_id;
   ae->line = entry->line;
-  ae->message_len = msg_len;
 
   char *ptr = ae->data;
-  if (entry->component) {
-    ae->component = ptr;
-    memcpy(ptr, comp.data, comp_len);
-    memset(ptr + comp_len, 0, STRING_PADDING);
-    ptr += comp_len + STRING_PADDING;
+  if (comp_len > 0) {
+    memcpy(ptr, entry->component.data, comp_len);
+    ae->component = vstr_from_buf(ptr, comp_len);
   } else {
-    ae->component = NULL;
+    ae->component = (vstr){NULL, 0};
   }
+  memset(ptr + comp_len, 0, STRING_PADDING);
+  ptr += comp_len + STRING_PADDING;
 
-  if (entry->file) {
-    ae->file = ptr;
-    memcpy(ptr, file.data, file_len);
-    memset(ptr + file_len, 0, STRING_PADDING);
-    ptr += file_len + STRING_PADDING;
+  if (file_len > 0) {
+    memcpy(ptr, entry->file.data, file_len);
+    ae->file = vstr_from_buf(ptr, file_len);
   } else {
-    ae->file = NULL;
+    ae->file = (vstr){NULL, 0};
   }
+  memset(ptr + file_len, 0, STRING_PADDING);
+  ptr += file_len + STRING_PADDING;
 
-  ae->message = ptr;
-  memcpy(ptr, entry->message, msg_len);
+  if (msg_len > 0) {
+    memcpy(ptr, entry->message.data, msg_len);
+    ae->message = vstr_from_buf(ptr, msg_len);
+  } else {
+    ae->message = (vstr){NULL, 0};
+  }
   memset(ptr + msg_len, 0, STRING_PADDING);
-
   return buffer;
 }
 
@@ -406,22 +400,12 @@ static int format_with_pattern(char *buf, size_t buf_size, const compiled_patter
       break;
     }
     case LOG_TOKEN_COMPONENT:
-      if (entry->component) {
-        vstr component = vstr_from_cstr(entry->component);
-        written = (int)component.len;
-        if (written > 0 && dst + written < end) {
-          memcpy(dst, component.data, written);
-        }
-      }
+      written = (int)entry->component.len;
+      if (written > 0 && dst + written < end) memcpy(dst, entry->component.data, (size_t)written);
       break;
     case LOG_TOKEN_FILE:
-      if (entry->file) {
-        vstr file = vstr_from_cstr(entry->file);
-        written = (int)file.len;
-        if (written > 0 && dst + written < end) {
-          memcpy(dst, file.data, written);
-        }
-      }
+      written = (int)entry->file.len;
+      if (written > 0 && dst + written < end) memcpy(dst, entry->file.data, (size_t)written);
       break;
     case LOG_TOKEN_LINE: {
       if (entry->line <= 0) {
@@ -445,12 +429,8 @@ static int format_with_pattern(char *buf, size_t buf_size, const compiled_patter
       break;
     }
     case LOG_TOKEN_MESSAGE:
-      if (entry->message) {
-        written = (int)entry->message_len;
-        if (written > 0 && dst + written < end) {
-          memcpy(dst, entry->message, written);
-        }
-      }
+      written = (int)entry->message.len;
+      if (written > 0 && dst + written < end) memcpy(dst, entry->message.data, (size_t)written);
       break;
     case LOG_TOKEN_TEXT:
     case LOG_TOKEN_UNKNOWN:
@@ -848,8 +828,9 @@ static int filter_sink_allows(filter_sink_t *fs, const salts_log_entry_t *entry)
     return 0;
   }
   if (fs->component != NULL) {
-    if (entry->component == NULL ||
-        tstr_cmp((tstr)entry->component, fs->component) != 0) {
+    size_t expected_len = tstr_len(fs->component);
+    if (entry->component.len != expected_len ||
+        (expected_len > 0 && memcmp(entry->component.data, fs->component, expected_len) != 0)) {
       return 0;
     }
   }
@@ -947,8 +928,7 @@ static void format_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *e
   }
 
   formatted_entry = *entry;
-  formatted_entry.message = formatted;
-  formatted_entry.message_len = (size_t)len;
+  formatted_entry.message = vstr_from_buf(formatted, (size_t)len);
   sink_write_entry(fs->inner, &formatted_entry);
 }
 
@@ -1014,7 +994,7 @@ static void metrics_sink_write(salts_log_sink_t *sink, const salts_log_entry_t *
   }
 
   atomic_fetch_add(&ms->entries_forwarded, 1);
-  atomic_fetch_add(&ms->bytes_forwarded, entry->message_len);
+  atomic_fetch_add(&ms->bytes_forwarded, entry->message.len);
   sink_write_entry(ms->inner, entry);
 }
 
@@ -1158,8 +1138,7 @@ static void logger_drain_entries(tlog_t *logger, uint64_t first_seq, uint64_t la
       .component = ae->component,
       .file = ae->file,
       .line = ae->line,
-      .message = ae->message,
-      .message_len = ae->message_len
+      .message = ae->message
     };
 
     logger_write_to_sinks(logger, &entry);
@@ -1466,50 +1445,28 @@ static void logger_write_to_sinks(tlog_t *logger, const salts_log_entry_t *entry
   salts_mutex_unlock(&logger->sink_mutex);
 }
 
-void salts_log_typed(tlog_t *logger, salts_log_level_t level, const char *component,
-                     const char *file, int line, const char *fmt, const fmt_arg_t *args,
-                     size_t arg_count) {
-  if (!logger || !fmt)
-    return;
-  if (level < (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed))
-    return;
+void salts_log_typed(tlog_t *logger, salts_log_level_t level, vstr component,
+                     vstr file, int line, vstr pattern, const fmt_arg_t *args, size_t arg_count) {
+  if (!logger || !vstr_is_valid(component) || !vstr_is_valid(file) || !vstr_is_valid(pattern) ||
+      (!args && arg_count > 0)) return;
+  if (level < (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed)) return;
 
   if (arg_count == 0) {
-    salts_log_str(logger, level, component, file, line, fmt, strlen(fmt));
+    salts_log_str(logger, level, component, file, line, pattern);
     return;
   }
 
-  // Build message first in thread-local buffer
-  int msg_len = fmt_print(tls_msg_buf, MAX_MESSAGE_SIZE, fmt, args, arg_count);
+  int msg_len = fmt_print_v(tls_msg_buf, MAX_MESSAGE_SIZE, pattern, args, arg_count);
   if (msg_len < 0) msg_len = 0;
   if (msg_len >= MAX_MESSAGE_SIZE) msg_len = MAX_MESSAGE_SIZE - 1;
-
-  salts_log_entry_t entry = {
-    .level = level,
-    .timestamp_ms = salts_realtime_ms(),
-    .thread_id = get_cached_tid(),
-    .component = component,
-    .file = file,
-    .line = line,
-    .message = tls_msg_buf,
-    .message_len = (size_t)msg_len
-  };
-
-  mem_buffer_t *buffer = async_entry_create(&logger->async_pool, &entry);
-  if (!buffer) {
-    atomic_fetch_add(&logger->logs_dropped, 1);
-    return;
-  }
-
-  (void)logger_publish_entry(logger, buffer);
+  salts_log_str(logger, level, component, file, line,
+                vstr_from_buf(tls_msg_buf, (size_t)msg_len));
 }
 
-void salts_log_str(tlog_t *logger, salts_log_level_t level, const char *component, const char *file,
-                   int line, const char *message, size_t message_len) {
-  if (!logger || !message)
-    return;
-  if (level < (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed))
-    return;
+void salts_log_str(tlog_t *logger, salts_log_level_t level, vstr component, vstr file,
+                   int line, vstr message) {
+  if (!logger || !vstr_is_valid(component) || !vstr_is_valid(file) || !vstr_is_valid(message)) return;
+  if (level < (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed)) return;
 
   salts_log_entry_t entry = {.level = level,
                              .timestamp_ms = salts_realtime_ms(),
@@ -1517,15 +1474,12 @@ void salts_log_str(tlog_t *logger, salts_log_level_t level, const char *componen
                              .component = component,
                              .file = file,
                              .line = line,
-                             .message = message,
-                             .message_len = message_len};
-
+                             .message = message};
   mem_buffer_t *buffer = async_entry_create(&logger->async_pool, &entry);
   if (!buffer) {
     atomic_fetch_add(&logger->logs_dropped, 1);
     return;
   }
-
   (void)logger_publish_entry(logger, buffer);
 }
 

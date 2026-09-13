@@ -20,6 +20,7 @@
 #include <cmeta/enum.h>
 #include <cmeta/struct.h>
 #include "fmt.h"
+#include "str.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,11 +53,10 @@ CMETA_STRUCT(salts_log_entry_t,
     (salts_log_level_t, level),
     (uint64_t, timestamp_ms),
     (uint32_t, thread_id),
-    (const char *, component),
-    (const char *, file),
+    (vstr, component),
+    (vstr, file),
     (int, line),
-    (const char *, message),
-    (size_t, message_len)
+    (vstr, message)
 );
 
 // =============================================================================
@@ -65,7 +65,7 @@ CMETA_STRUCT(salts_log_entry_t,
 
 typedef struct salts_log_sink_s salts_log_sink_t;
 
-/* Low-level sink vtable callbacks are kept for ABI/source compatibility.
+/* Low-level sink vtable callbacks consume borrowed log-entry views.
  * New custom sinks should use salts_sink_custom_create().
  */
 typedef void (*salts_sink_write_fn)(salts_log_sink_t *sink, const salts_log_entry_t *entry);
@@ -116,11 +116,13 @@ SALTS_C_API void *salts_sink_get_user_data(const salts_log_sink_t *sink);
 
 #if SALTS_LOG_CAPTURE_SOURCE
   #define SALTS_LOG_SOURCE_FILE __FILE__
+  #define SALTS_LOG_SOURCE_FILE_VIEW VSTR_LIT(__FILE__)
   #define SALTS_LOG_SOURCE_LINE __LINE__
   #define SALTS_LOG_FULL_PATTERN                                                                   \
     "[{time_ms}] [{level}] [{thread}] [{component}] ({file}:{line}) {message}"
 #else
   #define SALTS_LOG_SOURCE_FILE NULL
+  #define SALTS_LOG_SOURCE_FILE_VIEW vstr_from_buf(NULL, 0)
   #define SALTS_LOG_SOURCE_LINE 0
   #define SALTS_LOG_FULL_PATTERN "[{time_ms}] [{level}] [{thread}] [{component}] {message}"
 #endif
@@ -345,14 +347,14 @@ SALTS_C_API void tlog_flush(tlog_t *logger);
 /**
  * @brief Log a pre-formatted string directly
  */
-SALTS_C_API void salts_log_str(tlog_t *logger, salts_log_level_t level, const char *component,
-                             const char *file, int line, const char *message, size_t message_len);
+SALTS_C_API void salts_log_str(tlog_t *logger, salts_log_level_t level, vstr component,
+                             vstr file, int line, vstr message);
 
 /**
  * @brief Log a message using typed arguments (auto-detects types for {})
  */
 SALTS_C_API void salts_log_typed(tlog_t *logger, salts_log_level_t level,
-                               const char *component, const char *file, int line, const char *fmt,
+                               vstr component, vstr file, int line, vstr pattern,
                                const fmt_arg_t *args, size_t arg_count);
 
 // =============================================================================
@@ -428,10 +430,11 @@ SALTS_C_API salts_log_level_t salts_log_level_from_name(const char *name);
   do {                                                                                             \
     tlog_t *_tlog_ptr = (logger_expr);                                                             \
     if (_tlog_ptr && (lvl) >= tlog_get_level(_tlog_ptr)) {                                        \
+      const char *_tlog_component = (comp);                                                        \
       const char *_tlog_message = (message_expr);                                                  \
-      salts_log_str(_tlog_ptr, (lvl), (comp), SALTS_LOG_SOURCE_FILE,                              \
-                    SALTS_LOG_SOURCE_LINE, _tlog_message,                                          \
-                    _tlog_message ? strlen(_tlog_message) : 0U);                                   \
+      salts_log_str(_tlog_ptr, (lvl), vstr_from_cstr(_tlog_component),                            \
+                    SALTS_LOG_SOURCE_FILE_VIEW, SALTS_LOG_SOURCE_LINE,                             \
+                    vstr_from_cstr(_tlog_message));                                                \
     }                                                                                              \
   } while (0)
 
@@ -443,7 +446,8 @@ inline void salts_log_cpp_wrapper(tlog_t *logger, salts_log_level_t level,
                                   const char *pattern, const Args &...args) {
   static_assert(sizeof...(Args) > 0, "formatted logging requires at least one argument");
   const fmt_arg_t arg_array[] = {FMT_ARG(args)...};
-  salts_log_typed(logger, level, component, file, line, pattern, arg_array, sizeof...(Args));
+  salts_log_typed(logger, level, vstr_from_cstr(component), vstr_from_cstr(file), line,
+                  vstr_from_cstr(pattern), arg_array, sizeof...(Args));
 }
 
 #define SALTS_LOG_FORMAT_IMPL(logger_expr, lvl, comp, pattern, ...)                               \
@@ -461,8 +465,11 @@ inline void salts_log_cpp_wrapper(tlog_t *logger, salts_log_level_t level,
   do {                                                                                             \
     tlog_t *_tlog_ptr = (logger_expr);                                                             \
     if (_tlog_ptr && (lvl) >= tlog_get_level(_tlog_ptr)) {                                        \
-      salts_log_typed(_tlog_ptr, (lvl), (comp), SALTS_LOG_SOURCE_FILE,                            \
-                      SALTS_LOG_SOURCE_LINE, (pattern), FMT_ARGS(__VA_ARGS__),                     \
+      const char *_tlog_component = (comp);                                                        \
+      const char *_tlog_pattern = (pattern);                                                       \
+      salts_log_typed(_tlog_ptr, (lvl), vstr_from_cstr(_tlog_component),                          \
+                      SALTS_LOG_SOURCE_FILE_VIEW, SALTS_LOG_SOURCE_LINE,                           \
+                      vstr_from_cstr(_tlog_pattern), FMT_ARGS(__VA_ARGS__),                        \
                       (size_t)FMT_ARG_COUNT(__VA_ARGS__));                                         \
     }                                                                                              \
   } while (0)

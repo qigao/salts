@@ -9,9 +9,10 @@ spec("TLog C++ Tests") {
     const cmeta_struct_desc *meta = salts_log_entry_t_meta();
 
     check_not_null(meta);
-    check(meta->field_count == static_cast<size_t>(8));
+    check(meta->field_count == static_cast<size_t>(7));
     check(meta->fields[0].offset == offsetof(salts_log_entry_t, level));
-    check(meta->fields[7].offset == offsetof(salts_log_entry_t, message_len));
+    check(meta->fields[6].offset == offsetof(salts_log_entry_t, message));
+    check(cmeta_struct_find_field(meta, "message_len") == nullptr);
   }
 
   it("should log const char* with {}") {
