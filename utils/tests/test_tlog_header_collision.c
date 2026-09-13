@@ -25,11 +25,10 @@ typedef struct salts_log_entry_collision_layout {
   salts_log_level_t level;
   uint64_t timestamp_ms;
   uint32_t thread_id;
-  const char *component;
-  const char *file;
+  vstr component;
+  vstr file;
   int line;
-  const char *message;
-  size_t message_len;
+  vstr message;
 } salts_log_entry_collision_layout;
 
 _Static_assert(sizeof(salts_log_entry_t) == sizeof(salts_log_entry_collision_layout),
@@ -37,8 +36,8 @@ _Static_assert(sizeof(salts_log_entry_t) == sizeof(salts_log_entry_collision_lay
 _Static_assert(CMETA_ALIGNOF(salts_log_entry_t) ==
                    CMETA_ALIGNOF(salts_log_entry_collision_layout),
                "salts_log_entry_t alignment changed under host macros");
-_Static_assert(offsetof(salts_log_entry_t, message_len) ==
-                   offsetof(salts_log_entry_collision_layout, message_len),
+_Static_assert(offsetof(salts_log_entry_t, message) ==
+                   offsetof(salts_log_entry_collision_layout, message),
                "salts_log_entry_t layout changed under host macros");
 
 spec("TLog C public-header collisions") {
@@ -47,9 +46,13 @@ spec("TLog C public-header collisions") {
 
     check_not_null(meta);
     check_equal(meta->name, "salts_log_entry_t");
-    check_equal(meta->field_count, (size_t)8);
+    check_equal(meta->field_count, (size_t)7);
     check_equal(meta->fields[0].offset, offsetof(salts_log_entry_t, level));
-    check_equal(meta->fields[7].offset, offsetof(salts_log_entry_t, message_len));
+    check_equal(meta->fields[6].offset, offsetof(salts_log_entry_t, message));
+    check_equal(meta->fields[3].type_name, "vstr");
+    check_equal(meta->fields[4].type_name, "vstr");
+    check_equal(meta->fields[6].type_name, "vstr");
+    check_null(cmeta_struct_find_field(meta, "message_len"));
     check_equal(host_struct_semantics, 101);
     check_equal(host_field_find_semantics, 105);
   }
