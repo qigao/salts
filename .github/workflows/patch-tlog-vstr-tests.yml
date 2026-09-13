@@ -1,0 +1,92 @@
+name: Migrate tlog tests to vstr ABI
+
+on:
+  push:
+    branches: [work/tlog-vstr-abi-v1]
+    paths: [.github/workflows/patch-tlog-vstr-tests.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/tlog-vstr-abi-v1
+          fetch-depth: 0
+      - name: Migrate existing tlog consumer tests
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}: {old[:100]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          h = "utils/include/tlog.h"
+          t = "utils/tests/test_tlog.c"
+          cpp = "utils/tests/test_tlog_cpp.cpp"
+
+          replace_once(h,
+              '#define SALTS_LOG_SOURCE_FILE_VIEW ((vstr){NULL, 0})',
+              '#define SALTS_LOG_SOURCE_FILE_VIEW vstr_from_buf(NULL, 0)')
+
+          legacy = '''typedef struct salts_log_entry_legacy_layout {\n  salts_log_level_t level;\n  uint64_t timestamp_ms;\n  uint32_t thread_id;\n  const char *component;\n  const char *file;\n  int line;\n  const char *message;\n  size_t message_len;\n} salts_log_entry_legacy_layout;\n\n_Static_assert(sizeof(salts_log_entry_t) == sizeof(salts_log_entry_legacy_layout),\n               "salts_log_entry_t size changed");\n_Static_assert(CMETA_ALIGNOF(salts_log_entry_t) ==\n                   CMETA_ALIGNOF(salts_log_entry_legacy_layout),\n               "salts_log_entry_t alignment changed");\n#define TLOG_ASSERT_ENTRY_OFFSET(field) \\\n  _Static_assert(offsetof(salts_log_entry_t, field) == \\\n                     offsetof(salts_log_entry_legacy_layout, field), \\\n                 "salts_log_entry_t offset changed: " #field)\nTLOG_ASSERT_ENTRY_OFFSET(level);\nTLOG_ASSERT_ENTRY_OFFSET(timestamp_ms);\nTLOG_ASSERT_ENTRY_OFFSET(thread_id);\nTLOG_ASSERT_ENTRY_OFFSET(component);\nTLOG_ASSERT_ENTRY_OFFSET(file);\nTLOG_ASSERT_ENTRY_OFFSET(line);\nTLOG_ASSERT_ENTRY_OFFSET(message);\nTLOG_ASSERT_ENTRY_OFFSET(message_len);\n#undef TLOG_ASSERT_ENTRY_OFFSET\n \n'''
+          replace_once(t, legacy, '')
+          replace_once(t, 'static const char *callback_file = NULL;',
+                          'static vstr callback_file = {NULL, 0};')
+          replace_once(t,
+          '''  printf("  [Callback] level=%s msg=%s\\n", salts_log_level_name(entry->level),\n         entry->message);''',
+          '''  printf("  [Callback] level=%s msg=%.*s\\n", salts_log_level_name(entry->level),\n         (int)entry->message.len, entry->message.data ? entry->message.data : "");''')
+          replace_once(t,
+          '''static void capture_message_callback(const salts_log_entry_t *entry, void *user_data) {\n  callback_user_data = user_data;\n  snprintf(callback_message, sizeof(callback_message), "%s", entry->message);\n  callback_count++;\n}''',
+          '''static void capture_message_callback(const salts_log_entry_t *entry, void *user_data) {\n  size_t n = entry->message.len < sizeof(callback_message) - 1\n                 ? entry->message.len\n                 : sizeof(callback_message) - 1;\n  callback_user_data = user_data;\n  if (n > 0) memcpy(callback_message, entry->message.data, n);\n  callback_message[n] = '\\0';\n  callback_count++;\n}''')
+          replace_once(t,
+          '''static int component_predicate(const salts_log_entry_t *entry, void *user_data) {\n  const char *required = (const char *)user_data;\n  return entry->component && required && strcmp(entry->component, required) == 0;\n}''',
+          '''static int component_predicate(const salts_log_entry_t *entry, void *user_data) {\n  const char *required = (const char *)user_data;\n  size_t required_len;\n  if (!required) return 0;\n  required_len = strlen(required);\n  return entry->component.len == required_len &&\n         (required_len == 0 || memcmp(entry->component.data, required, required_len) == 0);\n}''')
+          replace_once(t,
+          '''static void custom_sink_write_callback(const salts_log_entry_t *entry, void *user_data) {\n  callback_user_data = user_data;\n  snprintf(callback_message, sizeof(callback_message), "%s", entry->message);\n  custom_write_count++;\n}''',
+          '''static void custom_sink_write_callback(const salts_log_entry_t *entry, void *user_data) {\n  size_t n = entry->message.len < sizeof(callback_message) - 1\n                 ? entry->message.len\n                 : sizeof(callback_message) - 1;\n  callback_user_data = user_data;\n  if (n > 0) memcpy(callback_message, entry->message.data, n);\n  callback_message[n] = '\\0';\n  custom_write_count++;\n}''')
+
+          old_meta = '''    const char *names[] = {\n        "level", "timestamp_ms", "thread_id", "component",\n        "file", "line", "message", "message_len"};\n    const char *types[] = {\n        "salts_log_level_t", "uint64_t", "uint32_t", "const char *",\n        "const char *", "int", "const char *", "size_t"};\n    const size_t offsets[] = {\n        offsetof(salts_log_entry_t, level),\n        offsetof(salts_log_entry_t, timestamp_ms),\n        offsetof(salts_log_entry_t, thread_id),\n        offsetof(salts_log_entry_t, component),\n        offsetof(salts_log_entry_t, file),\n        offsetof(salts_log_entry_t, line),\n        offsetof(salts_log_entry_t, message),\n        offsetof(salts_log_entry_t, message_len)};\n    const size_t sizes[] = {\n        sizeof(salts_log_level_t), sizeof(uint64_t), sizeof(uint32_t),\n        sizeof(const char *), sizeof(const char *), sizeof(int),\n        sizeof(const char *), sizeof(size_t)};\n    const size_t aligns[] = {\n        CMETA_ALIGNOF(salts_log_level_t), CMETA_ALIGNOF(uint64_t),\n        CMETA_ALIGNOF(uint32_t), CMETA_ALIGNOF(const char *),\n        CMETA_ALIGNOF(const char *), CMETA_ALIGNOF(int),\n        CMETA_ALIGNOF(const char *), CMETA_ALIGNOF(size_t)};'''
+          new_meta = '''    const char *names[] = {\n        "level", "timestamp_ms", "thread_id", "component",\n        "file", "line", "message"};\n    const char *types[] = {\n        "salts_log_level_t", "uint64_t", "uint32_t", "vstr",\n        "vstr", "int", "vstr"};\n    const size_t offsets[] = {\n        offsetof(salts_log_entry_t, level),\n        offsetof(salts_log_entry_t, timestamp_ms),\n        offsetof(salts_log_entry_t, thread_id),\n        offsetof(salts_log_entry_t, component),\n        offsetof(salts_log_entry_t, file),\n        offsetof(salts_log_entry_t, line),\n        offsetof(salts_log_entry_t, message)};\n    const size_t sizes[] = {\n        sizeof(salts_log_level_t), sizeof(uint64_t), sizeof(uint32_t),\n        sizeof(vstr), sizeof(vstr), sizeof(int), sizeof(vstr)};\n    const size_t aligns[] = {\n        CMETA_ALIGNOF(salts_log_level_t), CMETA_ALIGNOF(uint64_t),\n        CMETA_ALIGNOF(uint32_t), CMETA_ALIGNOF(vstr),\n        CMETA_ALIGNOF(vstr), CMETA_ALIGNOF(int), CMETA_ALIGNOF(vstr)};'''
+          replace_once(t, old_meta, new_meta)
+          replace_once(t, '    check_equal(meta->field_count, (size_t)8);',
+                          '    check_equal(meta->field_count, (size_t)7);')
+          replace_once(t, '      check_equal(component_field->type_name, "const char *");',
+                          '      check_equal(component_field->type_name, "vstr");')
+          replace_once(t, '      check_equal(message_field->size, sizeof(const char *));',
+                          '      check_equal(message_field->size, sizeof(vstr));')
+          replace_once(t, '    check_null(cmeta_struct_find_field(meta, "missing"));',
+                          '    check_null(cmeta_struct_find_field(meta, "message_len"));\n    check_null(cmeta_struct_find_field(meta, "missing"));')
+
+          replace_once(t, '    callback_file = NULL;',
+                          '    callback_file = vstr_from_buf(NULL, 0);')
+          replace_once(t,
+          '''#if SALTS_LOG_CAPTURE_SOURCE\n    check_not_null(callback_file);\n    check(callback_line > 0);''',
+          '''#if SALTS_LOG_CAPTURE_SOURCE\n    check(callback_file.len > 0);\n    check(callback_file.data != NULL);\n    check(callback_line > 0);''')
+          replace_once(t,
+          '''#else\n    check(callback_file == NULL);\n    check_equal(callback_line, 0);''',
+          '''#else\n    check_equal(callback_file.len, (size_t)0);\n    check_equal(callback_line, 0);''')
+
+          replace_once(cpp,
+          '''    check(meta->field_count == static_cast<size_t>(8));\n    check(meta->fields[0].offset == offsetof(salts_log_entry_t, level));\n    check(meta->fields[7].offset == offsetof(salts_log_entry_t, message_len));''',
+          '''    check(meta->field_count == static_cast<size_t>(7));\n    check(meta->fields[0].offset == offsetof(salts_log_entry_t, level));\n    check(meta->fields[6].offset == offsetof(salts_log_entry_t, message));\n    check(cmeta_struct_find_field(meta, "message_len") == nullptr);''')
+
+          Path(".github/workflows/patch-tlog-vstr-tests.yml").unlink()
+      - name: Commit test migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "test: migrate tlog consumers to vstr ABI"
+          git push origin HEAD:work/tlog-vstr-abi-v1
