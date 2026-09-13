@@ -351,6 +351,8 @@ extern "C" { /* Re-open extern "C" */
  * arg_count > 0, or an invalid/incompatible specifier. On valid buf/size,
  * failures leave buf as an empty string.
  */
+SALTS_C_API int fmt_print_v(char *buf, size_t size, vstr pattern, const fmt_arg_t *args,
+                          size_t arg_count);
 SALTS_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
                         size_t arg_count);
 
@@ -376,6 +378,8 @@ SALTS_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg
  * @return Updated tstr. Callers must assign the return value. Invalid input
  *         or an incompatible specifier leaves the existing string unchanged.
  */
+SALTS_C_API tstr fmt_print_tstr_v(tstr s, vstr pattern, const fmt_arg_t *args,
+                                 size_t arg_count);
 SALTS_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args, size_t arg_count);
 
 /* ============================================================================

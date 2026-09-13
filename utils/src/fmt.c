@@ -491,16 +491,16 @@ static inline int format_arg_to_buffer(char *dst, char *end, const fmt_arg_t *ar
  * Internal re2c Formatting Loop
  * ============================================================================ */
 
-SALTS_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
-                        size_t arg_count) {
+SALTS_C_API int fmt_print_v(char *buf, size_t size, vstr pattern, const fmt_arg_t *args,
+                          size_t arg_count) {
   if (!buf || size == 0)
     return 0;
   buf[0] = '\0';
-  if (!fmt || (!args && arg_count > 0))
+  if ((!pattern.data && pattern.len > 0) || (!args && arg_count > 0))
     return 0;
 
-  const char *cursor = fmt;
-  const char *format_end = fmt + strlen(fmt);
+  const char *cursor = pattern.data ? pattern.data : "";
+  const char *format_end = cursor + pattern.len;
   char *dst = buf;
   char *end = buf + size - 1; /* Room for null terminator */
   size_t arg_idx = 0;
@@ -584,8 +584,18 @@ format_error:
   return 0;
 }
 
-SALTS_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args,
-                                size_t arg_count) {
+SALTS_C_API int fmt_print(char *buf, size_t size, const char *fmt, const fmt_arg_t *args,
+                        size_t arg_count) {
+  if (!fmt) {
+    if (buf && size > 0)
+      buf[0] = '\0';
+    return 0;
+  }
+  return fmt_print_v(buf, size, vstr_from_cstr(fmt), args, arg_count);
+}
+
+SALTS_C_API tstr fmt_print_tstr_v(tstr s, vstr pattern, const fmt_arg_t *args,
+                                  size_t arg_count) {
   enum { FMT_TSTR_STACK_CAP = 256 };
   char stack[FMT_TSTR_STACK_CAP];
   char *buf = stack;
@@ -593,11 +603,11 @@ SALTS_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args,
 
   if (!s)
     s = tstr_new();
-  if (!fmt || (!args && arg_count > 0))
+  if ((!pattern.data && pattern.len > 0) || (!args && arg_count > 0))
     return s;
 
   for (;;) {
-    int written = fmt_print(buf, cap, fmt, args, arg_count);
+    int written = fmt_print_v(buf, cap, pattern, args, arg_count);
     if (written < 0)
       break;
 
@@ -621,6 +631,16 @@ SALTS_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args,
   if (buf != stack)
     free(buf);
   return s;
+}
+
+SALTS_C_API tstr fmt_print_tstr(tstr s, const char *fmt, const fmt_arg_t *args,
+                                size_t arg_count) {
+  if (!fmt) {
+    if (!s)
+      s = tstr_new();
+    return s;
+  }
+  return fmt_print_tstr_v(s, vstr_from_cstr(fmt), args, arg_count);
 }
 
 #if defined(__clang__)
