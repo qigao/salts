@@ -7,38 +7,8 @@
 #include <string.h>
 #include "salts_thread.h"
 
-typedef struct salts_log_entry_legacy_layout {
-  salts_log_level_t level;
-  uint64_t timestamp_ms;
-  uint32_t thread_id;
-  const char *component;
-  const char *file;
-  int line;
-  const char *message;
-  size_t message_len;
-} salts_log_entry_legacy_layout;
-
-_Static_assert(sizeof(salts_log_entry_t) == sizeof(salts_log_entry_legacy_layout),
-               "salts_log_entry_t size changed");
-_Static_assert(CMETA_ALIGNOF(salts_log_entry_t) ==
-                   CMETA_ALIGNOF(salts_log_entry_legacy_layout),
-               "salts_log_entry_t alignment changed");
-#define TLOG_ASSERT_ENTRY_OFFSET(field) \
-  _Static_assert(offsetof(salts_log_entry_t, field) == \
-                     offsetof(salts_log_entry_legacy_layout, field), \
-                 "salts_log_entry_t offset changed: " #field)
-TLOG_ASSERT_ENTRY_OFFSET(level);
-TLOG_ASSERT_ENTRY_OFFSET(timestamp_ms);
-TLOG_ASSERT_ENTRY_OFFSET(thread_id);
-TLOG_ASSERT_ENTRY_OFFSET(component);
-TLOG_ASSERT_ENTRY_OFFSET(file);
-TLOG_ASSERT_ENTRY_OFFSET(line);
-TLOG_ASSERT_ENTRY_OFFSET(message);
-TLOG_ASSERT_ENTRY_OFFSET(message_len);
-#undef TLOG_ASSERT_ENTRY_OFFSET
- 
 static int callback_count = 0;
-static const char *callback_file = NULL;
+static vstr callback_file = {NULL, 0};
 static int callback_line = 0;
 static char callback_message[256];
 static void *callback_user_data = NULL;
@@ -51,8 +21,8 @@ static atomic_int blocking_callback_release;
 static void test_callback(const salts_log_entry_t *entry, void *user_data) {
   (void)user_data;
   callback_count++;
-  printf("  [Callback] level=%s msg=%s\n", salts_log_level_name(entry->level),
-         entry->message);
+  printf("  [Callback] level=%s msg=%.*s\n", salts_log_level_name(entry->level),
+         (int)entry->message.len, entry->message.data ? entry->message.data : "");
 }
 
 static void source_callback(const salts_log_entry_t *entry, void *user_data) {
@@ -69,19 +39,31 @@ static void count_only_callback(const salts_log_entry_t *entry, void *user_data)
 }
 
 static void capture_message_callback(const salts_log_entry_t *entry, void *user_data) {
+  size_t n = entry->message.len < sizeof(callback_message) - 1
+                 ? entry->message.len
+                 : sizeof(callback_message) - 1;
   callback_user_data = user_data;
-  snprintf(callback_message, sizeof(callback_message), "%s", entry->message);
+  if (n > 0) memcpy(callback_message, entry->message.data, n);
+  callback_message[n] = '\0';
   callback_count++;
 }
 
 static int component_predicate(const salts_log_entry_t *entry, void *user_data) {
   const char *required = (const char *)user_data;
-  return entry->component && required && strcmp(entry->component, required) == 0;
+  size_t required_len;
+  if (!required) return 0;
+  required_len = strlen(required);
+  return entry->component.len == required_len &&
+         (required_len == 0 || memcmp(entry->component.data, required, required_len) == 0);
 }
 
 static void custom_sink_write_callback(const salts_log_entry_t *entry, void *user_data) {
+  size_t n = entry->message.len < sizeof(callback_message) - 1
+                 ? entry->message.len
+                 : sizeof(callback_message) - 1;
   callback_user_data = user_data;
-  snprintf(callback_message, sizeof(callback_message), "%s", entry->message);
+  if (n > 0) memcpy(callback_message, entry->message.data, n);
+  callback_message[n] = '\0';
   custom_write_count++;
 }
 
@@ -242,10 +224,10 @@ spec("TLog Tests") {
     const cmeta_struct_desc *meta = salts_log_entry_t_meta();
     const char *names[] = {
         "level", "timestamp_ms", "thread_id", "component",
-        "file", "line", "message", "message_len"};
+        "file", "line", "message"};
     const char *types[] = {
-        "salts_log_level_t", "uint64_t", "uint32_t", "const char *",
-        "const char *", "int", "const char *", "size_t"};
+        "salts_log_level_t", "uint64_t", "uint32_t", "vstr",
+        "vstr", "int", "vstr"};
     const size_t offsets[] = {
         offsetof(salts_log_entry_t, level),
         offsetof(salts_log_entry_t, timestamp_ms),
@@ -253,17 +235,14 @@ spec("TLog Tests") {
         offsetof(salts_log_entry_t, component),
         offsetof(salts_log_entry_t, file),
         offsetof(salts_log_entry_t, line),
-        offsetof(salts_log_entry_t, message),
-        offsetof(salts_log_entry_t, message_len)};
+        offsetof(salts_log_entry_t, message)};
     const size_t sizes[] = {
         sizeof(salts_log_level_t), sizeof(uint64_t), sizeof(uint32_t),
-        sizeof(const char *), sizeof(const char *), sizeof(int),
-        sizeof(const char *), sizeof(size_t)};
+        sizeof(vstr), sizeof(vstr), sizeof(int), sizeof(vstr)};
     const size_t aligns[] = {
         CMETA_ALIGNOF(salts_log_level_t), CMETA_ALIGNOF(uint64_t),
-        CMETA_ALIGNOF(uint32_t), CMETA_ALIGNOF(const char *),
-        CMETA_ALIGNOF(const char *), CMETA_ALIGNOF(int),
-        CMETA_ALIGNOF(const char *), CMETA_ALIGNOF(size_t)};
+        CMETA_ALIGNOF(uint32_t), CMETA_ALIGNOF(vstr),
+        CMETA_ALIGNOF(vstr), CMETA_ALIGNOF(int), CMETA_ALIGNOF(vstr)};
     const cmeta_field_desc *component_field;
     const cmeta_field_desc *message_field;
 
@@ -271,7 +250,7 @@ spec("TLog Tests") {
     check_equal(meta->name, "salts_log_entry_t");
     check_equal(meta->size, sizeof(salts_log_entry_t));
     check_equal(meta->align, CMETA_ALIGNOF(salts_log_entry_t));
-    check_equal(meta->field_count, (size_t)8);
+    check_equal(meta->field_count, (size_t)7);
     for (size_t i = 0; i < meta->field_count; ++i) {
       check_equal(meta->fields[i].name, names[i]);
       check_equal(meta->fields[i].type_name, types[i]);
@@ -285,9 +264,10 @@ spec("TLog Tests") {
     check_not_null(component_field);
     check_not_null(message_field);
     if (component_field != NULL)
-      check_equal(component_field->type_name, "const char *");
+      check_equal(component_field->type_name, "vstr");
     if (message_field != NULL)
-      check_equal(message_field->size, sizeof(const char *));
+      check_equal(message_field->size, sizeof(vstr));
+    check_null(cmeta_struct_find_field(meta, "message_len"));
     check_null(cmeta_struct_find_field(meta, "missing"));
   }
 
@@ -610,7 +590,7 @@ spec("TLog Tests") {
 
   it("should capture source only for debug builds by default") {
     callback_count = 0;
-    callback_file = NULL;
+    callback_file = vstr_from_buf(NULL, 0);
     callback_line = 0;
 
     tlog_t *logger = tlog_create(NULL);
@@ -625,12 +605,13 @@ spec("TLog Tests") {
 
     check_equal(callback_count, 1);
 #if SALTS_LOG_CAPTURE_SOURCE
-    check_not_null(callback_file);
+    check(callback_file.len > 0);
+    check(callback_file.data != NULL);
     check(callback_line > 0);
     check(strstr(SALTS_LOG_FULL_PATTERN, "{file}") != NULL);
     check(strstr(SALTS_LOG_FULL_PATTERN, "{line}") != NULL);
 #else
-    check(callback_file == NULL);
+    check_equal(callback_file.len, (size_t)0);
     check_equal(callback_line, 0);
     check(strstr(SALTS_LOG_FULL_PATTERN, "{file}") == NULL);
     check(strstr(SALTS_LOG_FULL_PATTERN, "{line}") == NULL);

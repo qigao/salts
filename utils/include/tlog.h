@@ -122,7 +122,7 @@ SALTS_C_API void *salts_sink_get_user_data(const salts_log_sink_t *sink);
     "[{time_ms}] [{level}] [{thread}] [{component}] ({file}:{line}) {message}"
 #else
   #define SALTS_LOG_SOURCE_FILE NULL
-  #define SALTS_LOG_SOURCE_FILE_VIEW ((vstr){NULL, 0})
+  #define SALTS_LOG_SOURCE_FILE_VIEW vstr_from_buf(NULL, 0)
   #define SALTS_LOG_SOURCE_LINE 0
   #define SALTS_LOG_FULL_PATTERN "[{time_ms}] [{level}] [{thread}] [{component}] {message}"
 #endif
