@@ -76,8 +76,8 @@ spec("TLog Bench") {
     tlog_add_sink(logger, salts_sink_file_create(&opts));
 
     benchmark("file_sink", ITERS_HEAVY, 1) {
-      salts_log_str(logger, SALTS_LOG_LEVEL_INFO, "bench", __FILE__, __LINE__, "File log entry",
-                    14);
+      salts_log_str(logger, SALTS_LOG_LEVEL_INFO, VSTR_LIT("bench"), VSTR_LIT(__FILE__), __LINE__,
+                    VSTR_LIT("File log entry"));
     }
 
     tlog_destroy(logger);
@@ -98,8 +98,8 @@ spec("TLog Bench") {
 
     benchmark("raw_string_logging", ITERS_NORMAL, 1) {
       tlog_t *logger_ptr = tlog_get_default();
-      salts_log_str(logger_ptr, SALTS_LOG_LEVEL_INFO, "bench", __FILE__, __LINE__, "Raw message",
-                    11);
+      salts_log_str(logger_ptr, SALTS_LOG_LEVEL_INFO, VSTR_LIT("bench"), VSTR_LIT(__FILE__), __LINE__,
+                    VSTR_LIT("Raw message"));
     }
 
     tlog_destroy(tlog_get_default());
