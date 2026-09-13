@@ -16,7 +16,7 @@ spec("fmt vstr pattern contract") {
   it("appends a bounded pattern directly to tstr") {
     const char raw_pattern[] = {'<', '{', '}', '>', 'x'};
     const vstr pattern = vstr_from_buf(raw_pattern, 4U);
-    const vstr value = VSTR_LIT("view");
+    const vstr value = vstr_from_buf("view", 4U);
     const fmt_arg_t arg = fmt_arg_strv(value);
     tstr out = fmt_print_tstr_v(NULL, pattern, &arg, 1U);
 
