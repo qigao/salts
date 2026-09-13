@@ -1,0 +1,122 @@
+name: Apply tlog vstr ABI implementation
+
+on:
+  push:
+    branches:
+      - work/tlog-vstr-abi-v1
+    paths:
+      - .github/workflows/patch-tlog-vstr.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/tlog-vstr-abi-v1
+          fetch-depth: 0
+
+      - name: Apply view-native tlog runtime ABI
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}: {old[:80]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          h = "utils/include/tlog.h"
+          c = "utils/src/tlog.c"
+
+          replace_once(h, '#include "fmt.h"\n', '#include "fmt.h"\n#include "str.h"\n')
+          replace_once(h,
+          '''CMETA_STRUCT(salts_log_entry_t,\n    (salts_log_level_t, level),\n    (uint64_t, timestamp_ms),\n    (uint32_t, thread_id),\n    (const char *, component),\n    (const char *, file),\n    (int, line),\n    (const char *, message),\n    (size_t, message_len)\n);''',
+          '''CMETA_STRUCT(salts_log_entry_t,\n    (salts_log_level_t, level),\n    (uint64_t, timestamp_ms),\n    (uint32_t, thread_id),\n    (vstr, component),\n    (vstr, file),\n    (int, line),\n    (vstr, message)\n);''')
+          replace_once(h,
+          '''/* Low-level sink vtable callbacks are kept for ABI/source compatibility.\n * New custom sinks should use salts_sink_custom_create().\n */''',
+          '''/* Low-level sink vtable callbacks consume borrowed log-entry views.\n * New custom sinks should use salts_sink_custom_create().\n */''')
+          replace_once(h,
+          '''#if SALTS_LOG_CAPTURE_SOURCE\n  #define SALTS_LOG_SOURCE_FILE __FILE__\n  #define SALTS_LOG_SOURCE_LINE __LINE__''',
+          '''#if SALTS_LOG_CAPTURE_SOURCE\n  #define SALTS_LOG_SOURCE_FILE __FILE__\n  #define SALTS_LOG_SOURCE_FILE_VIEW VSTR_LIT(__FILE__)\n  #define SALTS_LOG_SOURCE_LINE __LINE__''')
+          replace_once(h,
+          '''#else\n  #define SALTS_LOG_SOURCE_FILE NULL\n  #define SALTS_LOG_SOURCE_LINE 0''',
+          '''#else\n  #define SALTS_LOG_SOURCE_FILE NULL\n  #define SALTS_LOG_SOURCE_FILE_VIEW ((vstr){NULL, 0})\n  #define SALTS_LOG_SOURCE_LINE 0''')
+          replace_once(h,
+          '''SALTS_C_API void salts_log_str(tlog_t *logger, salts_log_level_t level, const char *component,\n                             const char *file, int line, const char *message, size_t message_len);''',
+          '''SALTS_C_API void salts_log_str(tlog_t *logger, salts_log_level_t level, vstr component,\n                             vstr file, int line, vstr message);''')
+          replace_once(h,
+          '''SALTS_C_API void salts_log_typed(tlog_t *logger, salts_log_level_t level,\n                               const char *component, const char *file, int line, const char *fmt,\n                               const fmt_arg_t *args, size_t arg_count);''',
+          '''SALTS_C_API void salts_log_typed(tlog_t *logger, salts_log_level_t level,\n                               vstr component, vstr file, int line, vstr pattern,\n                               const fmt_arg_t *args, size_t arg_count);''')
+
+          replace_once(h,
+          '''    if (_tlog_ptr && (lvl) >= tlog_get_level(_tlog_ptr)) {                                        \\\n      const char *_tlog_message = (message_expr);                                                  \\\n      salts_log_str(_tlog_ptr, (lvl), (comp), SALTS_LOG_SOURCE_FILE,                              \\\n                    SALTS_LOG_SOURCE_LINE, _tlog_message,                                          \\\n                    _tlog_message ? strlen(_tlog_message) : 0U);                                   \\\n    }''',
+          '''    if (_tlog_ptr && (lvl) >= tlog_get_level(_tlog_ptr)) {                                        \\\n      const char *_tlog_component = (comp);                                                        \\\n      const char *_tlog_message = (message_expr);                                                  \\\n      salts_log_str(_tlog_ptr, (lvl), vstr_from_cstr(_tlog_component),                            \\\n                    SALTS_LOG_SOURCE_FILE_VIEW, SALTS_LOG_SOURCE_LINE,                             \\\n                    vstr_from_cstr(_tlog_message));                                                \\\n    }''')
+          replace_once(h,
+          '''  salts_log_typed(logger, level, component, file, line, pattern, arg_array, sizeof...(Args));''',
+          '''  salts_log_typed(logger, level, vstr_from_cstr(component), vstr_from_cstr(file), line,\n                  vstr_from_cstr(pattern), arg_array, sizeof...(Args));''')
+          replace_once(h,
+          '''      salts_log_typed(_tlog_ptr, (lvl), (comp), SALTS_LOG_SOURCE_FILE,                            \\\n                      SALTS_LOG_SOURCE_LINE, (pattern), FMT_ARGS(__VA_ARGS__),                     \\\n                      (size_t)FMT_ARG_COUNT(__VA_ARGS__));                                         \\\n''',
+          '''      const char *_tlog_component = (comp);                                                        \\\n      const char *_tlog_pattern = (pattern);                                                       \\\n      salts_log_typed(_tlog_ptr, (lvl), vstr_from_cstr(_tlog_component),                          \\\n                      SALTS_LOG_SOURCE_FILE_VIEW, SALTS_LOG_SOURCE_LINE,                           \\\n                      vstr_from_cstr(_tlog_pattern), FMT_ARGS(__VA_ARGS__),                        \\\n                      (size_t)FMT_ARG_COUNT(__VA_ARGS__));                                         \\\n''')
+
+          replace_once(c,
+          '''typedef struct {\n  salts_log_level_t level;\n  uint64_t timestamp_ms;\n  uint32_t thread_id;\n  int line;\n  size_t message_len;\n  const char *component;\n  const char *file;\n  const char *message;\n  char data[];\n} async_log_entry_t;''',
+          '''typedef struct {\n  salts_log_level_t level;\n  uint64_t timestamp_ms;\n  uint32_t thread_id;\n  int line;\n  vstr component;\n  vstr file;\n  vstr message;\n  char data[];\n} async_log_entry_t;''')
+
+          old_async = '''static mem_buffer_t *async_entry_create(mem_pool_t *pool, const salts_log_entry_t *entry) {\n  vstr comp = vstr_from_cstr(entry->component);\n  vstr file = vstr_from_cstr(entry->file);\n  size_t comp_len = comp.len;\n  size_t file_len = file.len;\n  size_t msg_len = entry->message_len;\n\n  size_t total_size = sizeof(async_log_entry_t) + comp_len + STRING_PADDING + file_len +\n                      STRING_PADDING + msg_len + STRING_PADDING;\n\n  mem_buffer_t *buffer = mem_get_buffer(pool, total_size);\n  if (!buffer) {\n    return NULL;\n  }\n  mem_set_used(buffer, total_size);\n\n  async_log_entry_t *ae = (async_log_entry_t *)buffer->data;\n\n  ae->level = entry->level;\n  ae->timestamp_ms = entry->timestamp_ms;\n  ae->thread_id = entry->thread_id;\n  ae->line = entry->line;\n  ae->message_len = msg_len;\n\n  char *ptr = ae->data;\n  if (entry->component) {\n    ae->component = ptr;\n    memcpy(ptr, comp.data, comp_len);\n    memset(ptr + comp_len, 0, STRING_PADDING);\n    ptr += comp_len + STRING_PADDING;\n  } else {\n    ae->component = NULL;\n  }\n\n  if (entry->file) {\n    ae->file = ptr;\n    memcpy(ptr, file.data, file_len);\n    memset(ptr + file_len, 0, STRING_PADDING);\n    ptr += file_len + STRING_PADDING;\n  } else {\n    ae->file = NULL;\n  }\n\n  ae->message = ptr;\n  memcpy(ptr, entry->message, msg_len);\n  memset(ptr + msg_len, 0, STRING_PADDING);\n\n  return buffer;\n}'''
+          new_async = '''static mem_buffer_t *async_entry_create(mem_pool_t *pool, const salts_log_entry_t *entry) {\n  size_t comp_len = entry->component.len;\n  size_t file_len = entry->file.len;\n  size_t msg_len = entry->message.len;\n  size_t total_size = sizeof(async_log_entry_t) + comp_len + STRING_PADDING + file_len +\n                      STRING_PADDING + msg_len + STRING_PADDING;\n  mem_buffer_t *buffer = mem_get_buffer(pool, total_size);\n  if (!buffer) return NULL;\n  mem_set_used(buffer, total_size);\n\n  async_log_entry_t *ae = (async_log_entry_t *)buffer->data;\n  ae->level = entry->level;\n  ae->timestamp_ms = entry->timestamp_ms;\n  ae->thread_id = entry->thread_id;\n  ae->line = entry->line;\n\n  char *ptr = ae->data;\n  if (comp_len > 0) {\n    memcpy(ptr, entry->component.data, comp_len);\n    ae->component = vstr_from_buf(ptr, comp_len);\n  } else {\n    ae->component = (vstr){NULL, 0};\n  }\n  memset(ptr + comp_len, 0, STRING_PADDING);\n  ptr += comp_len + STRING_PADDING;\n\n  if (file_len > 0) {\n    memcpy(ptr, entry->file.data, file_len);\n    ae->file = vstr_from_buf(ptr, file_len);\n  } else {\n    ae->file = (vstr){NULL, 0};\n  }\n  memset(ptr + file_len, 0, STRING_PADDING);\n  ptr += file_len + STRING_PADDING;\n\n  if (msg_len > 0) {\n    memcpy(ptr, entry->message.data, msg_len);\n    ae->message = vstr_from_buf(ptr, msg_len);\n  } else {\n    ae->message = (vstr){NULL, 0};\n  }\n  memset(ptr + msg_len, 0, STRING_PADDING);\n  return buffer;\n}'''
+          replace_once(c, old_async, new_async)
+
+          replace_once(c,
+          '''    case LOG_TOKEN_COMPONENT:\n      if (entry->component) {\n        vstr component = vstr_from_cstr(entry->component);\n        written = (int)component.len;\n        if (written > 0 && dst + written < end) {\n          memcpy(dst, component.data, written);\n        }\n      }\n      break;''',
+          '''    case LOG_TOKEN_COMPONENT:\n      written = (int)entry->component.len;\n      if (written > 0 && dst + written < end) memcpy(dst, entry->component.data, (size_t)written);\n      break;''')
+          replace_once(c,
+          '''    case LOG_TOKEN_FILE:\n      if (entry->file) {\n        vstr file = vstr_from_cstr(entry->file);\n        written = (int)file.len;\n        if (written > 0 && dst + written < end) {\n          memcpy(dst, file.data, written);\n        }\n      }\n      break;''',
+          '''    case LOG_TOKEN_FILE:\n      written = (int)entry->file.len;\n      if (written > 0 && dst + written < end) memcpy(dst, entry->file.data, (size_t)written);\n      break;''')
+          replace_once(c,
+          '''    case LOG_TOKEN_MESSAGE:\n      if (entry->message) {\n        written = (int)entry->message_len;\n        if (written > 0 && dst + written < end) {\n          memcpy(dst, entry->message, written);\n        }\n      }\n      break;''',
+          '''    case LOG_TOKEN_MESSAGE:\n      written = (int)entry->message.len;\n      if (written > 0 && dst + written < end) memcpy(dst, entry->message.data, (size_t)written);\n      break;''')
+
+          replace_once(c,
+          '''  if (fs->component != NULL) {\n    if (entry->component == NULL ||\n        tstr_cmp((tstr)entry->component, fs->component) != 0) {\n      return 0;\n    }\n  }''',
+          '''  if (fs->component != NULL) {\n    size_t expected_len = tstr_len(fs->component);\n    if (entry->component.len != expected_len ||\n        (expected_len > 0 && memcmp(entry->component.data, fs->component, expected_len) != 0)) {\n      return 0;\n    }\n  }''')
+          replace_once(c,
+          '''  formatted_entry = *entry;\n  formatted_entry.message = formatted;\n  formatted_entry.message_len = (size_t)len;''',
+          '''  formatted_entry = *entry;\n  formatted_entry.message = vstr_from_buf(formatted, (size_t)len);''')
+          replace_once(c, '  atomic_fetch_add(&ms->bytes_forwarded, entry->message_len);',
+                          '  atomic_fetch_add(&ms->bytes_forwarded, entry->message.len);')
+          replace_once(c,
+          '''      .line = ae->line,\n      .message = ae->message,\n      .message_len = ae->message_len\n    };''',
+          '''      .line = ae->line,\n      .message = ae->message\n    };''')
+
+          old_typed = '''void salts_log_typed(tlog_t *logger, salts_log_level_t level, const char *component,\n                     const char *file, int line, const char *fmt, const fmt_arg_t *args,\n                     size_t arg_count) {\n  if (!logger || !fmt)\n    return;\n  if (level < (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed))\n    return;\n\n  if (arg_count == 0) {\n    salts_log_str(logger, level, component, file, line, fmt, strlen(fmt));\n    return;\n  }\n\n  // Build message first in thread-local buffer\n  int msg_len = fmt_print(tls_msg_buf, MAX_MESSAGE_SIZE, fmt, args, arg_count);\n  if (msg_len < 0) msg_len = 0;\n  if (msg_len >= MAX_MESSAGE_SIZE) msg_len = MAX_MESSAGE_SIZE - 1;\n\n  salts_log_entry_t entry = {\n    .level = level,\n    .timestamp_ms = salts_realtime_ms(),\n    .thread_id = get_cached_tid(),\n    .component = component,\n    .file = file,\n    .line = line,\n    .message = tls_msg_buf,\n    .message_len = (size_t)msg_len\n  };\n\n  mem_buffer_t *buffer = async_entry_create(&logger->async_pool, &entry);\n  if (!buffer) {\n    atomic_fetch_add(&logger->logs_dropped, 1);\n    return;\n  }\n\n  (void)logger_publish_entry(logger, buffer);\n}\n\nvoid salts_log_str(tlog_t *logger, salts_log_level_t level, const char *component, const char *file,\n                   int line, const char *message, size_t message_len) {\n  if (!logger || !message)\n    return;\n  if (level < (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed))\n    return;\n\n  salts_log_entry_t entry = {.level = level,\n                             .timestamp_ms = salts_realtime_ms(),\n                             .thread_id = get_cached_tid(),\n                             .component = component,\n                             .file = file,\n                             .line = line,\n                             .message = message,\n                             .message_len = message_len};\n\n  mem_buffer_t *buffer = async_entry_create(&logger->async_pool, &entry);\n  if (!buffer) {\n    atomic_fetch_add(&logger->logs_dropped, 1);\n    return;\n  }\n\n  (void)logger_publish_entry(logger, buffer);\n}'''
+          new_typed = '''void salts_log_typed(tlog_t *logger, salts_log_level_t level, vstr component,\n                     vstr file, int line, vstr pattern, const fmt_arg_t *args, size_t arg_count) {\n  if (!logger || !vstr_is_valid(component) || !vstr_is_valid(file) || !vstr_is_valid(pattern) ||\n      (!args && arg_count > 0)) return;\n  if (level < (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed)) return;\n\n  if (arg_count == 0) {\n    salts_log_str(logger, level, component, file, line, pattern);\n    return;\n  }\n\n  int msg_len = fmt_print_v(tls_msg_buf, MAX_MESSAGE_SIZE, pattern, args, arg_count);\n  if (msg_len < 0) msg_len = 0;\n  if (msg_len >= MAX_MESSAGE_SIZE) msg_len = MAX_MESSAGE_SIZE - 1;\n  salts_log_str(logger, level, component, file, line,\n                vstr_from_buf(tls_msg_buf, (size_t)msg_len));\n}\n\nvoid salts_log_str(tlog_t *logger, salts_log_level_t level, vstr component, vstr file,\n                   int line, vstr message) {\n  if (!logger || !vstr_is_valid(component) || !vstr_is_valid(file) || !vstr_is_valid(message)) return;\n  if (level < (salts_log_level_t)atomic_load_explicit(&logger->min_level, memory_order_relaxed)) return;\n\n  salts_log_entry_t entry = {.level = level,\n                             .timestamp_ms = salts_realtime_ms(),\n                             .thread_id = get_cached_tid(),\n                             .component = component,\n                             .file = file,\n                             .line = line,\n                             .message = message};\n  mem_buffer_t *buffer = async_entry_create(&logger->async_pool, &entry);\n  if (!buffer) {\n    atomic_fetch_add(&logger->logs_dropped, 1);\n    return;\n  }\n  (void)logger_publish_entry(logger, buffer);\n}'''
+          replace_once(c, old_typed, new_typed)
+
+          bench = Path("utils/benchmarks/bench_tlog.c")
+          if bench.exists():
+              text = bench.read_text()
+              text = text.replace('salts_log_str(logger, SALTS_LOG_LEVEL_INFO, "bench", __FILE__, __LINE__, "File log entry",\n                    14);',
+                                  'salts_log_str(logger, SALTS_LOG_LEVEL_INFO, VSTR_LIT("bench"), VSTR_LIT(__FILE__), __LINE__,\n                    VSTR_LIT("File log entry"));')
+              text = text.replace('salts_log_str(logger_ptr, SALTS_LOG_LEVEL_INFO, "bench", __FILE__, __LINE__, "Raw message",\n                    11);',
+                                  'salts_log_str(logger_ptr, SALTS_LOG_LEVEL_INFO, VSTR_LIT("bench"), VSTR_LIT(__FILE__), __LINE__,\n                    VSTR_LIT("Raw message"));')
+              bench.write_text(text)
+
+          Path(".github/workflows/patch-tlog-vstr.yml").unlink()
+
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "refactor: make tlog runtime ABI view-native"
+          git push origin HEAD:work/tlog-vstr-abi-v1
