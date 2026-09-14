@@ -1,1 +1,0 @@
-Exact-head CI 7e63936230c53ebfba154cd8768cb052395a041f proves strict buffer ABI v2 compiles. The remaining cmeta_data_test failures are caused by its local test provider still omitting init_zero/move. The production admission remains strict; the fixture must be upgraded rather than adding compatibility fallback.

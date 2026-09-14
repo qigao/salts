@@ -263,9 +263,23 @@ static cmeta_status cmeta_data_test_buffer_read(
     return CMETA_OK;
 }
 
+static cmeta_status cmeta_data_test_buffer_init_zero(void *object) {
+    if (object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    *(int *)object = 0;
+    return CMETA_OK;
+}
+
 static void cmeta_data_test_buffer_restore_zero(void *object) {
     if (object != NULL)
         *(int *)object = 0;
+}
+
+static void cmeta_data_test_buffer_move(void *destination, void *source) {
+    if (destination == NULL || source == NULL)
+        return;
+    *(int *)destination = *(int *)source;
+    *(int *)source = 0;
 }
 
 static const cmeta_data_buffer_shape cmeta_data_test_owned_buffer_shape = {
@@ -280,7 +294,9 @@ static const cmeta_data_buffer_ops cmeta_data_test_buffer_ops = {
     .is_zero = cmeta_data_test_buffer_is_zero,
     .assign = cmeta_data_test_buffer_assign,
     .restore_zero = cmeta_data_test_buffer_restore_zero,
-    .read = cmeta_data_test_buffer_read
+    .read = cmeta_data_test_buffer_read,
+    .init_zero = cmeta_data_test_buffer_init_zero,
+    .move = cmeta_data_test_buffer_move
 };
 
 static const cmeta_data_desc cmeta_data_test_buffer_desc = {
@@ -629,7 +645,7 @@ spec("CMeta semantic data descriptors") {
     check_equal(size, (size_t)9u);
   }
 
-  it("reports a missing buffer read trait without breaking legacy ops") {
+  it("reports a missing buffer read trait without weakening v2 lifecycle") {
     static const unsigned char sentinel[] = {'x'};
     cmeta_data_buffer_ops ops = cmeta_data_test_buffer_ops;
     cmeta_data_desc desc = cmeta_data_test_buffer_desc;
@@ -637,19 +653,13 @@ spec("CMeta semantic data descriptors") {
     size_t size = 9u;
     const int object = 3;
 
-    ops.struct_size = offsetof(cmeta_data_buffer_ops, read);
+    ops.read = NULL;
     desc.buffer_ops = &ops;
     check_true(cmeta_data_buffer_ops_of(&desc) == &ops);
     check_equal(cmeta_data_buffer_read(&desc, &object, 3u, &data, &size),
                 CMETA_TRAIT_MISSING);
     check_true(data == sentinel);
     check_equal(size, (size_t)9u);
-
-    ops = cmeta_data_test_buffer_ops;
-    ops.read = NULL;
-    check_true(cmeta_data_buffer_ops_of(&desc) == &ops);
-    check_equal(cmeta_data_buffer_read(&desc, &object, 3u, &data, &size),
-                CMETA_TRAIT_MISSING);
   }
 
   it("rejects invalid buffer read arguments without publishing outputs") {
