@@ -198,8 +198,67 @@ static void legacy_prefix_stays_legacy(void) {
     assert(!cmeta_data_desc_valid(&legacy));
 }
 
+static cmeta_status legacy_tag_read(const void *object, int64_t *out) {
+    *out = ((const enum_value *)object)->engaged ? 1 : 0;
+    return CMETA_OK;
+}
+
+static cmeta_status legacy_tag_assign(void *object, int64_t tag) {
+    enum_value *value = object;
+    value->bits = 1u;
+    value->engaged = tag == 1;
+    return CMETA_OK;
+}
+
+static void canonical_enum_cannot_tag_legacy_variant(void) {
+    static const cmeta_enum_item_desc legacy_items[] = {{1, "ONE", "one"}};
+    static const cmeta_enum_desc legacy_meta = {"Legacy", legacy_items, 1u};
+    static const cmeta_data_enum_shape legacy_shape = {&legacy_meta};
+    static const cmeta_data_enum_ops legacy_ops = {
+        sizeof(cmeta_data_enum_ops), CMETA_DATA_ENUM_OPS_ABI_VERSION, &storage,
+        value_is_zero, legacy_tag_read, legacy_tag_assign, value_restore
+    };
+    static const cmeta_data_variant_ops variant_ops = {
+        sizeof(cmeta_data_variant_ops), CMETA_DATA_VARIANT_OPS_ABI_VERSION,
+        &storage, value_is_zero, legacy_tag_read, legacy_tag_assign, value_restore
+    };
+    static const cmeta_data_variant_case cases[] = {
+        {1, "test.Variant.one", "one", 0u, &cmeta_data_int}
+    };
+    cmeta_data_desc legacy_tag = desc;
+    cmeta_data_variant_shape variant_shape = {0u, &legacy_tag, cases, 1u};
+    cmeta_data_desc variant = desc;
+    enum_value object = {0}, before = object;
+    legacy_tag.shape = &legacy_shape;
+    legacy_tag.enum_ops = &legacy_ops;
+    legacy_tag.enum_bits_ops = NULL;
+    variant.kind = CMETA_DATA_VARIANT;
+    variant.shape = &variant_shape;
+    variant.enum_bits_ops = NULL;
+    variant.variant_ops = &variant_ops;
+    assert(cmeta_data_desc_valid(&variant));
+    assert(cmeta_data_variant_ops_of(&variant) == &variant_ops);
+    legacy_tag.struct_size = offsetof(cmeta_data_desc, enum_bits_ops);
+    assert(cmeta_data_desc_valid(&variant));
+    assert(cmeta_data_variant_ops_of(&variant) == &variant_ops);
+
+    variant_shape.tag = &desc;
+    assert(cmeta_data_desc_valid(&desc));
+    assert(cmeta_data_enum_bits_ops_of(&desc) == &ops);
+    assert(!cmeta_data_desc_valid(&variant));
+    assert(cmeta_data_variant_ops_of(&variant) == NULL);
+    assert(cmeta_data_variant_select(&variant, &object, 1) == CMETA_INVALID_ARGUMENT);
+    assert(memcmp(&object, &before, sizeof(object)) == 0);
+
+    variant_shape.tag = &legacy_tag;
+    legacy_tag.enum_ops = NULL;
+    assert(!cmeta_data_desc_valid(&variant));
+    assert(cmeta_data_variant_ops_of(&variant) == NULL);
+}
+
 int main(void) {
     domains_and_membership(); flags_and_atomicity();
     malformed_descriptors(); legacy_prefix_stays_legacy();
+    canonical_enum_cannot_tag_legacy_variant();
     return 0;
 }
