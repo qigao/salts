@@ -15,6 +15,12 @@
     CMETA_FIELD_END(cmeta_data_desc, variant_ops)
 #define CMETA_DATA_DESC_FIXED_OPS_SIZE \
     CMETA_FIELD_END(cmeta_data_desc, fixed_ops)
+#define CMETA_DATA_DESC_ENUM_BITS_OPS_SIZE \
+    CMETA_FIELD_END(cmeta_data_desc, enum_bits_ops)
+#define CMETA_DATA_ENUM_BITS_OPS_PREFIX_SIZE \
+    CMETA_FIELD_END(cmeta_data_enum_bits_ops, restore_zero)
+#define CMETA_ENUM_DOMAIN_PREFIX_SIZE \
+    CMETA_FIELD_END(cmeta_enum_domain, declared_mask)
 #define CMETA_DATA_BUFFER_OPS_PREFIX_SIZE \
     CMETA_FIELD_END(cmeta_data_buffer_ops, restore_zero)
 #define CMETA_DATA_BUFFER_OPS_READ_SIZE \
@@ -81,6 +87,47 @@ static bool cmeta_data_enum_shape_valid(const cmeta_data_enum_shape *shape) {
     meta = shape->meta;
     return cmeta_data_nonempty(meta->name) &&
            (meta->count == 0u || meta->items != NULL);
+}
+
+static uint64_t cmeta_data_enum_width_mask(uint8_t bits) {
+    return bits == 64u ? UINT64_MAX : (UINT64_C(1) << bits) - 1u;
+}
+
+static bool cmeta_data_enum_domain_valid(const cmeta_enum_domain *domain) {
+    size_t i;
+    uint64_t mask = 0u;
+    uint64_t width_mask;
+    if (domain == NULL || domain->struct_size < CMETA_ENUM_DOMAIN_PREFIX_SIZE ||
+        domain->abi_version != CMETA_ENUM_DOMAIN_ABI_VERSION ||
+        !cmeta_data_integer_bits_valid(domain->bits) ||
+        (domain->signedness != CMETA_ENUM_SIGNED &&
+         domain->signedness != CMETA_ENUM_UNSIGNED) ||
+        (domain->kind != CMETA_ENUM_ORDINARY && domain->kind != CMETA_ENUM_FLAGS) ||
+        (domain->count != 0u && domain->items == NULL))
+        return false;
+    width_mask = cmeta_data_enum_width_mask(domain->bits);
+    for (i = 0u; i < domain->count; ++i) {
+        const cmeta_enum_bits_item *item = &domain->items[i];
+        if ((item->bits & ~width_mask) != 0u ||
+            !cmeta_data_nonempty(item->symbol) || !cmeta_data_nonempty(item->text))
+            return false;
+        mask |= item->bits;
+    }
+    return domain->declared_mask ==
+           (domain->kind == CMETA_ENUM_FLAGS ? mask : 0u);
+}
+
+static bool cmeta_data_enum_bits_valid(const cmeta_enum_domain *domain,
+                                      uint64_t bits) {
+    size_t i;
+    if ((bits & ~cmeta_data_enum_width_mask(domain->bits)) != 0u)
+        return false;
+    if (domain->kind == CMETA_ENUM_FLAGS)
+        return (bits & ~domain->declared_mask) == 0u;
+    for (i = 0u; i < domain->count; ++i)
+        if (domain->items[i].bits == bits)
+            return true;
+    return false;
 }
 
 static bool cmeta_data_struct_shape_valid(
@@ -171,6 +218,14 @@ bool cmeta_data_desc_valid(const cmeta_data_desc *desc) {
                    cmeta_data_buffer_ownership_valid(
                        ((const cmeta_data_buffer_shape *)desc->shape)->ownership);
         case CMETA_DATA_ENUM:
+            if (desc->struct_size >= CMETA_DATA_DESC_ENUM_BITS_OPS_SIZE &&
+                desc->enum_bits_ops != NULL) {
+                const cmeta_data_enum_bits_ops *ops = desc->enum_bits_ops;
+                return desc->shape == NULL && desc->enum_ops == NULL &&
+                       ops->struct_size >= CMETA_DATA_ENUM_BITS_OPS_PREFIX_SIZE &&
+                       ops->abi_version == CMETA_DATA_ENUM_BITS_OPS_ABI_VERSION &&
+                       cmeta_data_enum_domain_valid(ops->domain);
+            }
             return cmeta_data_enum_shape_valid(
                 (const cmeta_data_enum_shape *)desc->shape);
         case CMETA_DATA_STRUCT:
@@ -529,6 +584,95 @@ cmeta_status cmeta_data_enum_restore_zero(
     return ops->is_zero(object) ? CMETA_OK : CMETA_CALLBACK_ERROR;
 }
 
+static cmeta_status cmeta_data_enum_bits_ops_status(
+    const cmeta_data_desc *desc, const cmeta_data_enum_bits_ops **out) {
+    const cmeta_data_enum_bits_ops *ops;
+    if (!cmeta_data_desc_valid(desc) || desc->kind != CMETA_DATA_ENUM ||
+        desc->struct_size < CMETA_DATA_DESC_ENUM_BITS_OPS_SIZE ||
+        desc->enum_bits_ops == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    ops = desc->enum_bits_ops;
+    if (!cmeta_type_desc_valid(ops->storage_type) || ops->is_zero == NULL ||
+        ops->read == NULL || ops->assign == NULL || ops->restore_zero == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (!cmeta_type_equal(desc->storage_type, ops->storage_type) ||
+        desc->storage_type->kind != ops->storage_type->kind ||
+        desc->storage_type->size != ops->storage_type->size ||
+        desc->storage_type->align != ops->storage_type->align)
+        return CMETA_TYPE_MISMATCH;
+    *out = ops;
+    return CMETA_OK;
+}
+
+const cmeta_data_enum_bits_ops *cmeta_data_enum_bits_ops_of(
+    const cmeta_data_desc *desc) {
+    const cmeta_data_enum_bits_ops *ops = NULL;
+    return cmeta_data_enum_bits_ops_status(desc, &ops) == CMETA_OK ? ops : NULL;
+}
+
+cmeta_status cmeta_data_enum_bits_is_zero(
+    const cmeta_data_desc *desc, const void *object, bool *out) {
+    const cmeta_data_enum_bits_ops *ops = NULL;
+    cmeta_status status;
+    if (object == NULL || out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_enum_bits_ops_status(desc, &ops);
+    if (status != CMETA_OK)
+        return status;
+    *out = ops->is_zero(object);
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_enum_read_bits(
+    const cmeta_data_desc *desc, const void *object, uint64_t *out) {
+    const cmeta_data_enum_bits_ops *ops = NULL;
+    uint64_t actual = 0u;
+    cmeta_status status;
+    if (object == NULL || out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_enum_bits_ops_status(desc, &ops);
+    if (status != CMETA_OK)
+        return status;
+    if (ops->read(object, &actual) != CMETA_OK ||
+        !cmeta_data_enum_bits_valid(ops->domain, actual))
+        return CMETA_CALLBACK_ERROR;
+    *out = actual;
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_enum_assign_bits(
+    const cmeta_data_desc *desc, void *object, uint64_t bits) {
+    const cmeta_data_enum_bits_ops *ops = NULL;
+    uint64_t actual = 0u;
+    cmeta_status status;
+    if (object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_enum_bits_ops_status(desc, &ops);
+    if (status != CMETA_OK)
+        return status;
+    if (!cmeta_data_enum_bits_valid(ops->domain, bits) || !ops->is_zero(object))
+        return CMETA_INVALID_ARGUMENT;
+    if (ops->assign(object, bits) != CMETA_OK ||
+        ops->read(object, &actual) != CMETA_OK || actual != bits) {
+        ops->restore_zero(object);
+        return CMETA_CALLBACK_ERROR;
+    }
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_enum_bits_restore_zero(
+    const cmeta_data_desc *desc, void *object) {
+    const cmeta_data_enum_bits_ops *ops = NULL;
+    cmeta_status status;
+    if (object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_enum_bits_ops_status(desc, &ops);
+    if (status != CMETA_OK)
+        return status;
+    ops->restore_zero(object);
+    return ops->is_zero(object) ? CMETA_OK : CMETA_CALLBACK_ERROR;
+}
+
 static cmeta_status cmeta_data_variant_ops_status(
     const cmeta_data_desc *desc, const cmeta_data_variant_ops **out) {
     const cmeta_data_variant_ops *ops;
@@ -697,53 +841,56 @@ static const cmeta_data_float_shape cmeta_data_double_shape = {
 const cmeta_data_desc cmeta_data_bool = {
     CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
     "cmeta.bool.data", "bool", CMETA_DATA_BOOL, &cmeta_type_bool, NULL,
-    NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL
 };
 const cmeta_data_desc cmeta_data_int = {
     CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
     "cmeta.int.data", "int", CMETA_DATA_SINT, &cmeta_type_int,
-    &cmeta_data_int_shape, NULL, NULL, NULL, NULL
+    &cmeta_data_int_shape, NULL, NULL, NULL, NULL, NULL
 };
 const cmeta_data_desc cmeta_data_long = {
     CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
     "cmeta.long.data", "long", CMETA_DATA_SINT, &cmeta_type_long,
-    &cmeta_data_long_shape, NULL, NULL, NULL, NULL
+    &cmeta_data_long_shape, NULL, NULL, NULL, NULL, NULL
 };
 const cmeta_data_desc cmeta_data_size = {
     CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
     "cmeta.size.data", "size_t", CMETA_DATA_UINT, &cmeta_type_size,
-    &cmeta_data_size_shape, NULL, NULL, NULL, NULL
+    &cmeta_data_size_shape, NULL, NULL, NULL, NULL, NULL
 };
 const cmeta_data_desc cmeta_data_float = {
     CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
     "cmeta.float.data", "float", CMETA_DATA_FLOAT, &cmeta_type_float,
-    &cmeta_data_float_shape_value, NULL, NULL, NULL, NULL
+    &cmeta_data_float_shape_value, NULL, NULL, NULL, NULL, NULL
 };
 const cmeta_data_desc cmeta_data_double = {
     CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
     "cmeta.double.data", "double", CMETA_DATA_FLOAT, &cmeta_type_double,
-    &cmeta_data_double_shape, NULL, NULL, NULL, NULL
+    &cmeta_data_double_shape, NULL, NULL, NULL, NULL, NULL
 };
 
 const cmeta_data_desc cmeta_data_sequence = {
     CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
     "cmeta.data.sequence", "sequence", CMETA_DATA_SEQUENCE, NULL, NULL,
-    NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL
 };
 const cmeta_data_desc cmeta_data_set = {
     CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
     "cmeta.data.set", "set", CMETA_DATA_SET, NULL, NULL, NULL, NULL, NULL,
-    NULL
+    NULL, NULL
 };
 const cmeta_data_desc cmeta_data_map = {
     CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
     "cmeta.data.map", "map", CMETA_DATA_MAP, NULL, NULL, NULL, NULL, NULL,
-    NULL
+    NULL, NULL
 };
 
 #undef CMETA_DATA_VARIANT_OPS_PREFIX_SIZE
 #undef CMETA_DATA_FIXED_OPS_PREFIX_SIZE
 #undef CMETA_DATA_ENUM_OPS_PREFIX_SIZE
+#undef CMETA_DATA_ENUM_BITS_OPS_PREFIX_SIZE
+#undef CMETA_ENUM_DOMAIN_PREFIX_SIZE
+#undef CMETA_DATA_DESC_ENUM_BITS_OPS_SIZE
 #undef CMETA_DATA_BUFFER_OPS_READ_SIZE
 #undef CMETA_DATA_BUFFER_OPS_PREFIX_SIZE
 #undef CMETA_DATA_DESC_VARIANT_OPS_SIZE

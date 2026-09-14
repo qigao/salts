@@ -3,6 +3,7 @@
 #undef NDEBUG
 #endif
 #include <assert.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* The provider stores canonical bits, independently of the declared width. */
@@ -74,6 +75,10 @@ static void rejects_without_mutation(uint64_t bits, cmeta_status expected) {
 }
 
 static void domains_and_membership(void) {
+    enum_value unknown = {2u, true};
+    uint64_t out = 42u;
+    assert(cmeta_data_enum_read_bits(&desc, &unknown, &out) == CMETA_CALLBACK_ERROR);
+    assert(out == 42u);
     domain.signedness = CMETA_ENUM_SIGNED;
     domain.bits = 8u; domain.count = 4u;
     roundtrip(128u); roundtrip(255u); roundtrip(0u);
@@ -153,6 +158,10 @@ static void malformed_descriptors(void) {
     domain.signedness = (cmeta_enum_signedness)99; REJECT(); domain = saved_domain;
     domain.kind = (cmeta_enum_domain_kind)99; REJECT(); domain = saved_domain;
     domain.items = NULL; REJECT(); domain = saved_domain;
+    {
+        const cmeta_enum_bits_item invalid_item = {1u, NULL, "one"};
+        domain.items = &invalid_item; domain.count = 1u; REJECT(); domain = saved_domain;
+    }
     domain.bits = 8u; REJECT(); domain = saved_domain;
     domain.declared_mask = 1u; REJECT(); domain = saved_domain;
     domain.kind = CMETA_ENUM_FLAGS; domain.declared_mask = 1u; REJECT(); domain = saved_domain;
@@ -172,12 +181,19 @@ static void legacy_prefix_stays_legacy(void) {
     static const cmeta_enum_desc old_meta = {"Legacy", old_items, 1u};
     static const cmeta_data_enum_shape old_shape = {&old_meta};
     cmeta_data_desc legacy = desc;
+    void *old_allocation;
     legacy.struct_size = offsetof(cmeta_data_desc, enum_bits_ops);
     legacy.shape = &old_shape;
     /* Out-of-prefix pointer must not be inspected. */
     legacy.enum_bits_ops = &ops;
     assert(cmeta_data_desc_valid(&legacy));
     assert(cmeta_data_enum_bits_ops_of(&legacy) == NULL);
+    old_allocation = malloc(legacy.struct_size);
+    assert(old_allocation != NULL);
+    memcpy(old_allocation, &legacy, legacy.struct_size);
+    assert(cmeta_data_desc_valid(old_allocation));
+    assert(cmeta_data_enum_bits_ops_of(old_allocation) == NULL);
+    free(old_allocation);
     legacy.struct_size = sizeof(legacy);
     assert(!cmeta_data_desc_valid(&legacy));
 }

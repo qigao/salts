@@ -34,6 +34,7 @@ enum {
 
 typedef struct cmeta_data_buffer_ops cmeta_data_buffer_ops;
 typedef struct cmeta_data_enum_ops cmeta_data_enum_ops;
+typedef struct cmeta_data_enum_bits_ops cmeta_data_enum_bits_ops;
 typedef struct cmeta_data_variant_ops cmeta_data_variant_ops;
 typedef struct cmeta_data_fixed_ops cmeta_data_fixed_ops;
 
@@ -50,6 +51,8 @@ typedef struct cmeta_data_desc {
     const cmeta_data_variant_ops *variant_ops;
     /** Optional exact native-value operations appended to the v1 prefix. */
     const cmeta_data_fixed_ops *fixed_ops;
+    /** Canonical enum domain provider; mutually exclusive with shape/enum_ops. */
+    const cmeta_data_enum_bits_ops *enum_bits_ops;
 } cmeta_data_desc;
 
 typedef struct cmeta_data_integer_shape {
@@ -201,7 +204,7 @@ struct cmeta_data_fixed_ops {
         sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,                \
         stable_id_ ".data", display_name_, CMETA_DATA_BYTES,               \
         &name_##_cmeta_type, &name_##_cmeta_shape, NULL, NULL, NULL,         \
-        &name_##_cmeta_fixed_ops}
+        &name_##_cmeta_fixed_ops, NULL}
 
 enum {
     CMETA_DATA_ENUM_OPS_ABI_VERSION = 1u
@@ -235,6 +238,39 @@ struct cmeta_data_enum_ops {
     cmeta_data_enum_is_zero_fn is_zero;
     cmeta_data_enum_read_fn read;
     cmeta_data_enum_assign_fn assign;
+    cmeta_data_enum_restore_zero_fn restore_zero;
+};
+
+enum { CMETA_DATA_ENUM_BITS_OPS_ABI_VERSION = 1u };
+typedef cmeta_status (*cmeta_data_enum_read_bits_fn)(const void *object,
+                                                    uint64_t *out);
+typedef cmeta_status (*cmeta_data_enum_assign_bits_fn)(void *object,
+                                                      uint64_t bits);
+
+/**
+ * Canonical enum provider, never routed through the legacy int64_t adapter.
+ * The descriptor sets shape and enum_ops to NULL and appends enum_bits_ops.
+ * domain is the sole membership/width/flags authority, not storage_type.
+ * Object alignment, ownership and lifetime follow storage_type. Metadata is
+ * immutable and borrowed; callbacks retain no arguments. Callers synchronize
+ * mutable objects; the facade provides no concurrent atomicity.
+ *
+ * is_zero/read never mutate the object. read initializes out on success.
+ * assign receives a semantic-zero destination and validated canonical bits;
+ * success must read back exactly those bits. Failure may partially mutate.
+ * restore_zero is no-fail, idempotent, handles partial objects and releases
+ * provider-owned resources. Failure rollback guarantees semantic zero, not
+ * byte-for-byte restoration. A broken cleanup callback cannot be repaired by
+ * the facade and is reported as CMETA_CALLBACK_ERROR.
+ */
+struct cmeta_data_enum_bits_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_type_desc *storage_type;
+    const cmeta_enum_domain *domain;
+    cmeta_data_enum_is_zero_fn is_zero;
+    cmeta_data_enum_read_bits_fn read;
+    cmeta_data_enum_assign_bits_fn assign;
     cmeta_data_enum_restore_zero_fn restore_zero;
 };
 
@@ -434,6 +470,37 @@ cmeta_status cmeta_data_enum_assign(
 
 /** Restore and verify the provider-defined enum semantic-zero state. */
 cmeta_status cmeta_data_enum_restore_zero(
+    const cmeta_data_desc *desc, void *object);
+
+/** Return a complete canonical domain provider, or NULL; no legacy fallback. */
+const cmeta_data_enum_bits_ops *cmeta_data_enum_bits_ops_of(
+    const cmeta_data_desc *desc);
+
+/** Query canonical enum semantic zero; output changes only on success. */
+cmeta_status cmeta_data_enum_bits_is_zero(
+    const cmeta_data_desc *desc, const void *object, bool *out);
+
+/**
+ * Read validated canonical bits. Every failure leaves out unchanged.
+ * Malformed arguments/descriptors return CMETA_INVALID_ARGUMENT; mismatched
+ * provider storage returns CMETA_TYPE_MISMATCH. Any provider failure or
+ * invalid provider result returns CMETA_CALLBACK_ERROR (not the callback's
+ * status), keeping provider execution failures distinct from malformed input.
+ */
+cmeta_status cmeta_data_enum_read_bits(
+    const cmeta_data_desc *desc, const void *object, uint64_t *out);
+
+/**
+ * Assign canonical bits to semantic zero, checking width and membership before
+ * mutation. Invalid values/nonzero destinations are unchanged and return
+ * CMETA_INVALID_ARGUMENT. Provider/read-back failure restores semantic zero
+ * and returns CMETA_CALLBACK_ERROR. Descriptor errors match read_bits.
+ */
+cmeta_status cmeta_data_enum_assign_bits(
+    const cmeta_data_desc *desc, void *object, uint64_t bits);
+
+/** Restore semantic zero and verify cleanup; errors match read_bits. */
+cmeta_status cmeta_data_enum_bits_restore_zero(
     const cmeta_data_desc *desc, void *object);
 
 /** Return a complete, storage-matching variant adapter, or NULL. */
