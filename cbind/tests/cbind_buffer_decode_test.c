@@ -136,10 +136,6 @@ static cbind_status decode_full(const cmeta_data_desc *shape,
                             source_index);
 }
 
-static bool failing_is_zero(const void *object) {
-    return object != NULL && *(const tstr *)object == NULL;
-}
-
 static cmeta_status failing_assign(void *object,
                                    const unsigned char *data,
                                    size_t size,
@@ -150,17 +146,6 @@ static cmeta_status failing_assign(void *object,
     (void)max_bytes;
     return CMETA_OUT_OF_MEMORY;
 }
-
-static void failing_restore(void *object) {
-    if (object != NULL)
-        *(tstr *)object = NULL;
-}
-
-static const cmeta_data_buffer_ops failing_ops = {
-    sizeof(cmeta_data_buffer_ops), CMETA_DATA_BUFFER_OPS_ABI_VERSION,
-    &salts_tstr_cmeta_type, CMETA_DATA_BUFFER_OWNED,
-    failing_is_zero, failing_assign, failing_restore
-};
 
 spec("CBind buffer preflight") {
   it("requires adapter metadata and the extended context before input") {
@@ -304,9 +289,11 @@ spec("CBind root buffer decode") {
     const cserde_token token = TOKEN_SLICE(
         CSERDE_BYTES, "x", 1u, CSERDE_VIEW_TRANSIENT);
     cmeta_data_desc data = owned_bytes;
+    cmeta_data_buffer_ops failing_ops = salts_tstr_cmeta_buffer_ops;
     tstr out = NULL;
     cbind_error error = CBIND_ERROR_INIT;
 
+    failing_ops.assign = failing_assign;
     data.buffer_ops = &failing_ops;
     check_equal(decode_full(&data, &token, 1u, &out, 0u, 1u,
                             &error, NULL), CBIND_TARGET_ERROR);
