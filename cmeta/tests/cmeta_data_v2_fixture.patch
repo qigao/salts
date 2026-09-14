@@ -1,0 +1,39 @@
+*** cmeta/tests/cmeta_data_test.c
+@@
+ static cmeta_status cmeta_data_test_buffer_read(...)
+@@
++static cmeta_status cmeta_data_test_buffer_init_zero(void *object) {
++    if (object == NULL) return CMETA_INVALID_ARGUMENT;
++    *(int *)object = 0;
++    return CMETA_OK;
++}
++
+ static void cmeta_data_test_buffer_restore_zero(void *object) {
+@@
+ }
++
++static void cmeta_data_test_buffer_move(void *destination, void *source) {
++    if (destination == NULL || source == NULL) return;
++    *(int *)destination = *(int *)source;
++    *(int *)source = 0;
++}
+@@
+     .restore_zero = cmeta_data_test_buffer_restore_zero,
+-    .read = cmeta_data_test_buffer_read
++    .read = cmeta_data_test_buffer_read,
++    .init_zero = cmeta_data_test_buffer_init_zero,
++    .move = cmeta_data_test_buffer_move
+ };
+@@
+-  it("reports a missing buffer read trait without breaking legacy ops") {
++  it("reports a missing buffer read trait without weakening v2 lifecycle") {
+@@
+-    ops.struct_size = offsetof(cmeta_data_buffer_ops, read);
++    ops.read = NULL;
+     desc.buffer_ops = &ops;
+@@
+-    ops = cmeta_data_test_buffer_ops;
+-    ops.read = NULL;
+-    check_true(cmeta_data_buffer_ops_of(&desc) == &ops);
+-    check_equal(cmeta_data_buffer_read(&desc, &object, 3u, &data, &size),
+-                CMETA_TRAIT_MISSING);
