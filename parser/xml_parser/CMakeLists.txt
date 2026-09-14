@@ -1,6 +1,6 @@
 add_subdirectory(vendor)
 
-add_library(xml_parser STATIC src/xml_parser.c)
+add_library(xml_parser STATIC src/xml_parser.c src/xml_sax.c)
 target_sources(xml_parser PRIVATE $<TARGET_OBJECTS:salts_cxml>)
 cmake_config_target(xml_parser
   ALIAS Salts::XmlParser
