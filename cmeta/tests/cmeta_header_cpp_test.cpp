@@ -11,6 +11,12 @@
 #include <cstddef>
 #include <type_traits>
 
+static_assert(std::is_standard_layout_v<cmeta_data_enum_bits_ops>,
+              "canonical enum provider remains a C ABI");
+static_assert(std::is_same_v<decltype(&cmeta_data_enum_assign_bits),
+              cmeta_status (*)(const cmeta_data_desc *, void *, uint64_t)>,
+              "canonical enum assignment does not narrow through int64_t");
+
 Struct(cmeta_cpp_record,
     (int, value),
     (const char *, name)
