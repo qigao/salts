@@ -34,7 +34,9 @@ enum {
 
 typedef struct cmeta_data_buffer_ops cmeta_data_buffer_ops;
 typedef struct cmeta_data_enum_ops cmeta_data_enum_ops;
+typedef struct cmeta_data_enum_bits_ops cmeta_data_enum_bits_ops;
 typedef struct cmeta_data_variant_ops cmeta_data_variant_ops;
+typedef struct cmeta_data_fixed_ops cmeta_data_fixed_ops;
 
 typedef struct cmeta_data_desc {
     size_t struct_size;
@@ -47,6 +49,10 @@ typedef struct cmeta_data_desc {
     const cmeta_data_buffer_ops *buffer_ops;
     const cmeta_data_enum_ops *enum_ops;
     const cmeta_data_variant_ops *variant_ops;
+    /** Optional exact native-value operations appended to the v1 prefix. */
+    const cmeta_data_fixed_ops *fixed_ops;
+    /** Canonical enum domain provider; mutually exclusive with shape/enum_ops. */
+    const cmeta_data_enum_bits_ops *enum_bits_ops;
 } cmeta_data_desc;
 
 typedef struct cmeta_data_integer_shape {
@@ -98,6 +104,109 @@ struct cmeta_data_buffer_ops {
 };
 
 enum {
+    CMETA_DATA_FIXED_OPS_ABI_VERSION = 1u
+};
+
+/**
+ * Exact native-value provider contract.
+ *
+ * extent is the complete native object extent and must exactly match the
+ * associated storage type. copy receives one source object of that extent and
+ * a semantic-zero destination. A failed copy may partially mutate the
+ * destination; the checked facade restores it to semantic zero before
+ * returning. restore_zero is no-fail, idempotent, and accepts partially
+ * initialized objects.
+ */
+typedef bool (*cmeta_data_fixed_is_zero_fn)(const void *object);
+typedef cmeta_status (*cmeta_data_fixed_copy_fn)(void *destination,
+                                                 const void *source);
+typedef void (*cmeta_data_fixed_restore_zero_fn)(void *object);
+
+struct cmeta_data_fixed_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_type_desc *storage_type;
+    size_t extent;
+    cmeta_data_fixed_is_zero_fn is_zero;
+    cmeta_data_fixed_copy_fn copy;
+    cmeta_data_fixed_restore_zero_fn restore_zero;
+};
+
+/**
+ * Define header-local canonical metadata for one bounded inline byte value.
+ *
+ * storage_type must be a complete native type, including an array typedef when
+ * the native value is an array. extent is explicit and compilation fails when
+ * it differs from sizeof(storage_type). The generated semantic zero is the
+ * all-zero byte representation; copy and restore neither allocate nor retain
+ * pointers. Repeated declarations in separate translation units compare by
+ * the supplied stable type identity rather than by descriptor address.
+ */
+#ifdef __cplusplus
+#define CMETA_DATA_BYTES_MUTABLE(object_) \
+    reinterpret_cast<unsigned char *>(object_)
+#define CMETA_DATA_BYTES_CONST(object_) \
+    reinterpret_cast<const unsigned char *>(object_)
+#else
+#define CMETA_DATA_BYTES_MUTABLE(object_) ((unsigned char *)(object_))
+#define CMETA_DATA_BYTES_CONST(object_) ((const unsigned char *)(object_))
+#endif
+
+#define CMETA_DEFINE_FIXED_BYTES(name_, storage_type_, extent_, stable_id_,  \
+                                 display_name_)                              \
+    typedef char name_##_cmeta_extent_must_match_storage[                    \
+        ((extent_) > 0u && sizeof(storage_type_) == (extent_)) ? 1 : -1];    \
+    static inline bool name_##_cmeta_is_zero(const void *object_) {          \
+        const unsigned char *bytes_;                                         \
+        size_t index_;                                                       \
+        if (object_ == NULL)                                                 \
+            return false;                                                    \
+        bytes_ = CMETA_DATA_BYTES_CONST(object_);                            \
+        for (index_ = 0u; index_ < (extent_); ++index_)                      \
+            if (bytes_[index_] != 0u)                                        \
+                return false;                                                \
+        return true;                                                         \
+    }                                                                        \
+    static inline cmeta_status name_##_cmeta_copy(                           \
+        void *destination_, const void *source_) {                           \
+        unsigned char *destination_bytes_;                                   \
+        const unsigned char *source_bytes_;                                  \
+        size_t index_;                                                       \
+        if (destination_ == NULL || source_ == NULL)                         \
+            return CMETA_INVALID_ARGUMENT;                                  \
+        destination_bytes_ = CMETA_DATA_BYTES_MUTABLE(destination_);         \
+        source_bytes_ = CMETA_DATA_BYTES_CONST(source_);                     \
+        for (index_ = 0u; index_ < (extent_); ++index_)                      \
+            destination_bytes_[index_] = source_bytes_[index_];              \
+        return CMETA_OK;                                                     \
+    }                                                                        \
+    static inline void name_##_cmeta_restore_zero(void *object_) {           \
+        unsigned char *bytes_;                                               \
+        size_t index_;                                                       \
+        if (object_ == NULL)                                                 \
+            return;                                                          \
+        bytes_ = CMETA_DATA_BYTES_MUTABLE(object_);                          \
+        for (index_ = 0u; index_ < (extent_); ++index_)                      \
+            bytes_[index_] = 0u;                                             \
+    }                                                                        \
+    static const cmeta_type_identity name_##_cmeta_identity =                \
+        CMETA_TYPE_ID_ATOM_INIT(stable_id_);                                 \
+    static const cmeta_type_desc name_##_cmeta_type = {                      \
+        #storage_type_, sizeof(storage_type_), CMETA_ALIGNOF(storage_type_), \
+        CMETA_T_OBJECT, NULL, NULL, &name_##_cmeta_identity};                \
+    static const cmeta_data_buffer_shape name_##_cmeta_shape = {             \
+        CMETA_DATA_BUFFER_OWNED};                                            \
+    static const cmeta_data_fixed_ops name_##_cmeta_fixed_ops = {            \
+        sizeof(cmeta_data_fixed_ops), CMETA_DATA_FIXED_OPS_ABI_VERSION,      \
+        &name_##_cmeta_type, (extent_), name_##_cmeta_is_zero,               \
+        name_##_cmeta_copy, name_##_cmeta_restore_zero};                     \
+    static const cmeta_data_desc name_##_cmeta_data = {                      \
+        sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,                \
+        stable_id_ ".data", display_name_, CMETA_DATA_BYTES,               \
+        &name_##_cmeta_type, &name_##_cmeta_shape, NULL, NULL, NULL,         \
+        &name_##_cmeta_fixed_ops, NULL}
+
+enum {
     CMETA_DATA_ENUM_OPS_ABI_VERSION = 1u
 };
 
@@ -129,6 +238,39 @@ struct cmeta_data_enum_ops {
     cmeta_data_enum_is_zero_fn is_zero;
     cmeta_data_enum_read_fn read;
     cmeta_data_enum_assign_fn assign;
+    cmeta_data_enum_restore_zero_fn restore_zero;
+};
+
+enum { CMETA_DATA_ENUM_BITS_OPS_ABI_VERSION = 1u };
+typedef cmeta_status (*cmeta_data_enum_read_bits_fn)(const void *object,
+                                                    uint64_t *out);
+typedef cmeta_status (*cmeta_data_enum_assign_bits_fn)(void *object,
+                                                      uint64_t bits);
+
+/**
+ * Canonical enum provider, never routed through the legacy int64_t adapter.
+ * The descriptor sets shape and enum_ops to NULL and appends enum_bits_ops.
+ * domain is the sole membership/width/flags authority, not storage_type.
+ * Object alignment, ownership and lifetime follow storage_type. Metadata is
+ * immutable and borrowed; callbacks retain no arguments. Callers synchronize
+ * mutable objects; the facade provides no concurrent atomicity.
+ *
+ * is_zero/read never mutate the object. read initializes out on success.
+ * assign receives a semantic-zero destination and validated canonical bits;
+ * success must read back exactly those bits. Failure may partially mutate.
+ * restore_zero is no-fail, idempotent, handles partial objects and releases
+ * provider-owned resources. Failure rollback guarantees semantic zero, not
+ * byte-for-byte restoration. A broken cleanup callback cannot be repaired by
+ * the facade and is reported as CMETA_CALLBACK_ERROR.
+ */
+struct cmeta_data_enum_bits_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_type_desc *storage_type;
+    const cmeta_enum_domain *domain;
+    cmeta_data_enum_is_zero_fn is_zero;
+    cmeta_data_enum_read_bits_fn read;
+    cmeta_data_enum_assign_bits_fn assign;
     cmeta_data_enum_restore_zero_fn restore_zero;
 };
 
@@ -279,6 +421,32 @@ cmeta_status cmeta_data_buffer_read(
     const cmeta_data_desc *desc, const void *object, size_t max_bytes,
     const unsigned char **out_data, size_t *out_size);
 
+/** Return a complete, storage-matching exact native-value provider, or NULL. */
+const cmeta_data_fixed_ops *cmeta_data_fixed_ops_of(
+    const cmeta_data_desc *desc);
+
+/** Return the provider-declared exact native object extent. */
+cmeta_status cmeta_data_fixed_extent(
+    const cmeta_data_desc *desc, size_t *out);
+
+/** Query the provider-defined semantic-zero state of a native object. */
+cmeta_status cmeta_data_fixed_is_zero(
+    const cmeta_data_desc *desc, const void *object, bool *out);
+
+/**
+ * Copy one exact native value into a semantic-zero destination.
+ *
+ * source_extent must equal the provider extent. Provider failure restores the
+ * destination to semantic zero before returning.
+ */
+cmeta_status cmeta_data_fixed_copy(
+    const cmeta_data_desc *desc, void *destination, const void *source,
+    size_t source_extent);
+
+/** Restore and verify the provider-defined semantic-zero state. */
+cmeta_status cmeta_data_fixed_restore_zero(
+    const cmeta_data_desc *desc, void *object);
+
 /** Return a complete, storage-matching enum adapter, or NULL. */
 const cmeta_data_enum_ops *cmeta_data_enum_ops_of(
     const cmeta_data_desc *desc);
@@ -302,6 +470,37 @@ cmeta_status cmeta_data_enum_assign(
 
 /** Restore and verify the provider-defined enum semantic-zero state. */
 cmeta_status cmeta_data_enum_restore_zero(
+    const cmeta_data_desc *desc, void *object);
+
+/** Return a complete canonical domain provider, or NULL; no legacy fallback. */
+const cmeta_data_enum_bits_ops *cmeta_data_enum_bits_ops_of(
+    const cmeta_data_desc *desc);
+
+/** Query canonical enum semantic zero; output changes only on success. */
+cmeta_status cmeta_data_enum_bits_is_zero(
+    const cmeta_data_desc *desc, const void *object, bool *out);
+
+/**
+ * Read validated canonical bits. Every failure leaves out unchanged.
+ * Malformed arguments/descriptors return CMETA_INVALID_ARGUMENT; mismatched
+ * provider storage returns CMETA_TYPE_MISMATCH. Any provider failure or
+ * invalid provider result returns CMETA_CALLBACK_ERROR (not the callback's
+ * status), keeping provider execution failures distinct from malformed input.
+ */
+cmeta_status cmeta_data_enum_read_bits(
+    const cmeta_data_desc *desc, const void *object, uint64_t *out);
+
+/**
+ * Assign canonical bits to semantic zero, checking width and membership before
+ * mutation. Invalid values/nonzero destinations are unchanged and return
+ * CMETA_INVALID_ARGUMENT. Provider/read-back failure restores semantic zero
+ * and returns CMETA_CALLBACK_ERROR. Descriptor errors match read_bits.
+ */
+cmeta_status cmeta_data_enum_assign_bits(
+    const cmeta_data_desc *desc, void *object, uint64_t bits);
+
+/** Restore semantic zero and verify cleanup; errors match read_bits. */
+cmeta_status cmeta_data_enum_bits_restore_zero(
     const cmeta_data_desc *desc, void *object);
 
 /** Return a complete, storage-matching variant adapter, or NULL. */

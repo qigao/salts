@@ -10,6 +10,7 @@ const cmeta_data_desc *salts_uuid_cmeta_data_from_peer(void);
 const cmeta_type_desc *salts_uuid_cmeta_type_from_peer(void);
 const cmeta_data_buffer_shape *salts_uuid_cmeta_shape_from_peer(void);
 const cmeta_data_buffer_ops *salts_uuid_cmeta_buffer_ops_from_peer(void);
+const cmeta_data_fixed_ops *salts_uuid_cmeta_fixed_ops_from_peer(void);
 
 _Static_assert(
     _Generic(&(salts_uuid_cmeta_buffer_ops),
@@ -19,6 +20,11 @@ _Static_assert(
 _Static_assert(sizeof(salts_uuid_cmeta_buffer_ops) ==
                    sizeof(cmeta_data_buffer_ops),
                "UUID adapter preserves its public object sizeof");
+_Static_assert(
+    _Generic(&(salts_uuid_cmeta_fixed_ops),
+             const cmeta_data_fixed_ops *: 1,
+             default: 0),
+    "UUID fixed-value provider preserves the public address type");
 _Static_assert(
     _Generic(&salts_uuid_cmeta_type, const cmeta_type_desc *: 1,
              default: 0) &&
@@ -161,6 +167,36 @@ spec("Salts CMeta buffer adapters") {
 }
 
 spec("Salts fixed-width CMeta descriptors") {
+  it("provides an octet-backed Bool with native fixed-value semantics") {
+    const uint8_t true_octet = 1u;
+    const uint8_t invalid_octet = 2u;
+    uint8_t value = 0u;
+    bool is_zero = false;
+    size_t extent = 0u;
+
+    check_equal(salts_bool8_cmeta_data.kind, CMETA_DATA_BOOL);
+    check_equal(salts_bool8_cmeta_data.storage_type->size, sizeof(uint8_t));
+    check_true(salts_bool8_cmeta_data.fixed_ops ==
+               &salts_bool8_cmeta_fixed_ops);
+    check_equal(cmeta_data_fixed_extent(&salts_bool8_cmeta_data, &extent),
+                CMETA_OK);
+    check_equal(extent, sizeof(uint8_t));
+    check_equal(cmeta_data_fixed_copy(&salts_bool8_cmeta_data, &value,
+                                      &true_octet, sizeof(true_octet)),
+                CMETA_OK);
+    check_equal(value, (uint8_t)1u);
+    check_equal(cmeta_data_fixed_restore_zero(&salts_bool8_cmeta_data, &value),
+                CMETA_OK);
+    check_equal(cmeta_data_fixed_is_zero(&salts_bool8_cmeta_data, &value,
+                                         &is_zero), CMETA_OK);
+    check_true(is_zero);
+    check_equal(cmeta_data_fixed_copy(&salts_bool8_cmeta_data, &value,
+                                      &invalid_octet,
+                                      sizeof(invalid_octet)),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(value, (uint8_t)0u);
+  }
+
   it("describes every signed width with exact storage ABI") {
     const cmeta_data_desc *const values[] = {
         &salts_int8_cmeta_data, &salts_int16_cmeta_data,
@@ -236,6 +272,27 @@ spec("Salts UUID CMeta adapter") {
                &salts_uuid_cmeta_shape);
     check_true(salts_uuid_cmeta_buffer_ops_from_peer() ==
                &salts_uuid_cmeta_buffer_ops);
+    check_true(salts_uuid_cmeta_fixed_ops_from_peer() ==
+               &salts_uuid_cmeta_fixed_ops);
+  }
+
+  it("copies UUID native storage through the canonical fixed-value provider") {
+    const salts_uuid_t source = {{
+        0x00u, 0x11u, 0x22u, 0x33u, 0x44u, 0x55u, 0x66u, 0x77u,
+        0x88u, 0x99u, 0xaau, 0xbbu, 0xccu, 0xddu, 0xeeu, 0xffu}};
+    salts_uuid_t destination = {{0}};
+    size_t extent = 0u;
+
+    check_true(salts_uuid_cmeta_data.fixed_ops ==
+               &salts_uuid_cmeta_fixed_ops);
+    check_equal(cmeta_data_fixed_extent(&salts_uuid_cmeta_data, &extent),
+                CMETA_OK);
+    check_equal(extent, (size_t)SALTS_UUID_SIZE);
+    check_equal(cmeta_data_fixed_copy(&salts_uuid_cmeta_data, &destination,
+                                      &source, sizeof(source)), CMETA_OK);
+    check_equal(destination.bytes, source.bytes, sizeof(source.bytes));
+    check_equal(cmeta_data_fixed_restore_zero(&salts_uuid_cmeta_data,
+                                              &destination), CMETA_OK);
   }
 
   it("keeps UUID as a valid write-only string adapter") {

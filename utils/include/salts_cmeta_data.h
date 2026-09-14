@@ -41,6 +41,7 @@ SALTS_CMETA_STATIC_ASSERT(sizeof(salts_uuid_t) == SALTS_UUID_SIZE,
 SALTS_API extern const cmeta_type_desc salts_uuid_cmeta_type;
 SALTS_API extern const cmeta_data_buffer_shape salts_uuid_cmeta_shape;
 SALTS_API extern const cmeta_data_buffer_ops salts_uuid_cmeta_buffer_ops;
+SALTS_API extern const cmeta_data_fixed_ops salts_uuid_cmeta_fixed_ops;
 SALTS_API extern const cmeta_data_desc salts_uuid_cmeta_data;
 
 /**

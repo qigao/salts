@@ -1,6 +1,6 @@
-#include <cstl/vec.h>
+#include <cstl/vec_alloc.h>
 
-#include "sequence_internal.h"
+#include "vec_memory.h"
 
 #include <string.h>
 
@@ -32,7 +32,8 @@ static stl_status vec_next_capacity(const vec_t *vec, size_t minimum,
     return STL_OK;
 }
 
-static stl_status vec_grow_to(vec_t *vec, size_t minimum, bool *changed) {
+static stl_status vec_grow_to(vec_t *vec, size_t minimum, bool *changed,
+                              const stl_allocator *allocator) {
     void *data;
     size_t capacity, index;
     stl_status status;
@@ -41,7 +42,7 @@ static stl_status vec_grow_to(vec_t *vec, size_t minimum, bool *changed) {
     if (minimum <= vec->capacity) return STL_OK;
     status = vec_next_capacity(vec, minimum, &capacity);
     if (status != STL_OK) return status;
-    status = sequence_allocate(capacity, vec->elem_stride, vec->elem_align, &data);
+    status = vec_memory_allocate(allocator, capacity, vec->elem_stride, vec->elem_align, &data);
     if (status != STL_OK) return status;
     if (!vec->element_type) {
         if (vec->size) memcpy(data, vec->data, vec->size * vec->elem_stride);
@@ -49,10 +50,10 @@ static stl_status vec_grow_to(vec_t *vec, size_t minimum, bool *changed) {
         for (index = 0u; index < vec->size; ++index) {
             status = sequence_move_destroy(vec->element_type, vec->elem_size,
                 (unsigned char *)data + index * vec->elem_stride, vec_slot(vec, index));
-            if (status != STL_OK) { sequence_deallocate(data); return status; }
+            if (status != STL_OK) { vec_memory_deallocate(allocator, data); return status; }
         }
     }
-    sequence_deallocate(vec->data);
+    vec_memory_deallocate(allocator, vec->data);
     vec->data = data;
     vec->capacity = capacity;
     if (changed) *changed = true;
@@ -60,20 +61,21 @@ static stl_status vec_grow_to(vec_t *vec, size_t minimum, bool *changed) {
 }
 
 static stl_status vec_prepare_copy(const vec_t *vec, const void *elem,
-                                                void **out_value) {
+                                                void **out_value, const stl_allocator *allocator) {
     stl_status status;
     if (!elem || !out_value) return STL_INVALID_ARGUMENT;
-    status = sequence_allocate(1u, vec->elem_stride, vec->elem_align, out_value);
+    status = vec_memory_allocate(allocator, 1u, vec->elem_stride, vec->elem_align, out_value);
     if (status != STL_OK) return status;
     status = sequence_copy(vec->element_type, vec->elem_size, *out_value, elem);
-    if (status != STL_OK) { sequence_deallocate(*out_value); *out_value = NULL; }
+    if (status != STL_OK) { vec_memory_deallocate(allocator, *out_value); *out_value = NULL; }
     return status;
 }
 
-static void vec_discard_prepared(const vec_t *vec, void *value) {
+static void vec_discard_prepared(const vec_t *vec, void *value,
+                                  const stl_allocator *allocator) {
     if (!value) return;
     (void)sequence_destroy_value(vec->element_type, value);
-    sequence_deallocate(value);
+    vec_memory_deallocate(allocator, value);
 }
 
 static stl_status vec_initialize(vec_t *vec, const cmeta_type_desc *type,
@@ -179,12 +181,13 @@ stl_status vec_clear(vec_t *vec) {
 
 stl_status vec_reserve(vec_t *vec, size_t min_capacity) {
     bool changed;
-    stl_status status = vec_grow_to(vec, min_capacity, &changed);
+    stl_status status = vec_grow_to(vec, min_capacity, &changed, NULL);
     if (status == STL_OK && changed) ++vec->generation;
     return status;
 }
 
-stl_status vec_resize(vec_t *vec, size_t new_size) {
+static stl_status vec_resize_using(vec_t *vec, size_t new_size,
+                                    const stl_allocator *allocator) {
     size_t old_size;
     stl_status status;
     if (!vec_valid(vec)) return STL_INVALID_ARGUMENT;
@@ -201,7 +204,7 @@ stl_status vec_resize(vec_t *vec, size_t new_size) {
         return STL_OK;
     }
     if (vec->element_type) return STL_TRAIT_MISSING;
-    status = vec_grow_to(vec, new_size, NULL);
+    status = vec_grow_to(vec, new_size, NULL, allocator);
     if (status != STL_OK) return status;
     memset(vec_slot(vec, old_size), 0, (new_size - old_size) * vec->elem_stride);
     vec->size = new_size;
@@ -209,18 +212,19 @@ stl_status vec_resize(vec_t *vec, size_t new_size) {
     return STL_OK;
 }
 
-stl_status vec_push(vec_t *vec, const void *elem) {
+static stl_status vec_push_using(vec_t *vec, const void *elem,
+                                  const stl_allocator *allocator) {
     void *prepared = NULL;
     stl_status status;
     if (!vec_valid(vec) || !elem) return STL_INVALID_ARGUMENT;
     if (vec->size >= vec->element_limit) return STL_CAPACITY_EXCEEDED;
-    status = vec_prepare_copy(vec, elem, &prepared);
+    status = vec_prepare_copy(vec, elem, &prepared, allocator);
     if (status != STL_OK) return status;
-    status = vec_grow_to(vec, vec->size + 1u, NULL);
-    if (status != STL_OK) { vec_discard_prepared(vec, prepared); return status; }
+    status = vec_grow_to(vec, vec->size + 1u, NULL, allocator);
+    if (status != STL_OK) { vec_discard_prepared(vec, prepared, allocator); return status; }
     status = sequence_move_destroy(vec->element_type, vec->elem_size,
         vec_slot(vec, vec->size), prepared);
-    sequence_deallocate(prepared);
+    vec_memory_deallocate(allocator, prepared);
     if (status != STL_OK) return status;
     ++vec->size; ++vec->generation;
     return STL_OK;
@@ -246,10 +250,10 @@ stl_status vec_insert(vec_t *vec, size_t index, const void *elem) {
     stl_status status;
     if (!vec_valid(vec) || !elem || index > vec->size) return STL_INVALID_ARGUMENT;
     if (vec->size >= vec->element_limit) return STL_CAPACITY_EXCEEDED;
-    status = vec_prepare_copy(vec, elem, &prepared);
+    status = vec_prepare_copy(vec, elem, &prepared, NULL);
     if (status != STL_OK) return status;
-    status = vec_grow_to(vec, vec->size + 1u, NULL);
-    if (status != STL_OK) { vec_discard_prepared(vec, prepared); return status; }
+    status = vec_grow_to(vec, vec->size + 1u, NULL, NULL);
+    if (status != STL_OK) { vec_discard_prepared(vec, prepared, NULL); return status; }
     if (!vec->element_type) {
         memmove(vec_slot(vec, index + 1u), vec_slot(vec, index),
                 (vec->size - index) * vec->elem_stride);
@@ -270,7 +274,7 @@ stl_status vec_set(vec_t *vec, size_t index, const void *elem) {
     void *prepared = NULL;
     stl_status status;
     if (!vec_valid(vec) || !elem || index >= vec->size) return STL_INVALID_ARGUMENT;
-    status = vec_prepare_copy(vec, elem, &prepared);
+    status = vec_prepare_copy(vec, elem, &prepared, NULL);
     if (status != STL_OK) return status;
     status = sequence_destroy_value(vec->element_type, vec_slot(vec, index));
     if (status == STL_OK)
@@ -332,3 +336,83 @@ size_t vec_size(const vec_t *vec) { return vec_valid(vec) ? vec->size : 0u; }
 size_t vec_capacity(const vec_t *vec) { return vec_valid(vec) ? vec->capacity : 0u; }
 uint64_t vec_generation(const vec_t *vec) { return vec ? vec->generation : UINT64_C(0); }
 bool vec_empty(const vec_t *vec) { return vec_size(vec) == 0u; }
+
+/* These wrappers preserve the original Vec allocation policy and ABI. */
+stl_status vec_push(vec_t *vec, const void *elem) {
+    return vec_push_using(vec, elem, NULL);
+}
+
+stl_status vec_resize(vec_t *vec, size_t size) {
+    return vec_resize_using(vec, size, NULL);
+}
+
+struct vec_alloc {
+    vec_t vec;
+    stl_allocator allocator;
+};
+
+static stl_status vec_alloc_create(const cmeta_type_desc *type, size_t size,
+    size_t align, size_t limit, const stl_allocator *allocator, vec_alloc_t **out) {
+    vec_t initial = {0};
+    stl_allocator selected;
+    stl_status status;
+    void *storage = NULL;
+    vec_alloc_t *owner;
+    if (out == NULL) return STL_INVALID_ARGUMENT;
+    *out = NULL;
+    if (allocator == NULL || allocator->allocate == NULL || allocator->deallocate == NULL)
+        return STL_INVALID_ARGUMENT;
+    selected = *allocator;
+    status = type != NULL ? vec_raw_init(&initial, type, limit)
+                          : vec_init_bytes(&initial, size, align, limit);
+    if (status != STL_OK) return status;
+    status = selected.allocate(selected.context, sizeof(vec_alloc_t), &storage);
+    if (status != STL_OK) return status;
+    if (storage == NULL) return STL_OUT_OF_MEMORY;
+    owner = (vec_alloc_t *)storage;
+    owner->vec = initial;
+    owner->allocator = selected;
+    *out = owner;
+    return STL_OK;
+}
+
+stl_status vec_alloc_new(const cmeta_type_desc *type, size_t limit,
+                         const stl_allocator *allocator, vec_alloc_t **out) {
+    if (type == NULL) {
+        if (out != NULL) *out = NULL;
+        return STL_INVALID_ARGUMENT;
+    }
+    return vec_alloc_create(type, 0u, 0u, limit, allocator, out);
+}
+
+stl_status vec_alloc_new_bytes(size_t size, size_t align, size_t limit,
+                               const stl_allocator *allocator, vec_alloc_t **out) {
+    return vec_alloc_create(NULL, size, align, limit, allocator, out);
+}
+
+stl_status vec_alloc_push(vec_alloc_t *owner, const void *element) {
+    if (owner == NULL) return STL_INVALID_ARGUMENT;
+    return vec_push_using(&owner->vec, element, &owner->allocator);
+}
+
+stl_status vec_alloc_resize(vec_alloc_t *owner, size_t size) {
+    if (owner == NULL) return STL_INVALID_ARGUMENT;
+    return vec_resize_using(&owner->vec, size, &owner->allocator);
+}
+
+void *vec_alloc_at(vec_alloc_t *owner, size_t index) {
+    return owner != NULL ? vec_at(&owner->vec, index) : NULL;
+}
+
+const vec_t *vec_alloc_view(const vec_alloc_t *owner) {
+    return owner != NULL ? &owner->vec : NULL;
+}
+
+void vec_alloc_destroy(vec_alloc_t *owner) {
+    stl_allocator allocator;
+    if (owner == NULL) return;
+    allocator = owner->allocator;
+    (void)vec_clear(&owner->vec);
+    vec_memory_deallocate(&allocator, owner->vec.data);
+    allocator.deallocate(allocator.context, owner, sizeof(*owner));
+}

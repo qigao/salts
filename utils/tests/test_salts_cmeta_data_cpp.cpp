@@ -17,9 +17,17 @@ static_assert(std::is_same_v<decltype(salts_int8_cmeta_type),
 static_assert(std::is_same_v<decltype(salts_uint64_cmeta_data),
                              const cmeta_data_desc>,
               "fixed-width data metadata is immutable");
+static_assert(std::is_same_v<decltype(salts_bool8_cmeta_fixed_ops),
+                             const cmeta_data_fixed_ops> &&
+                  std::is_same_v<decltype(salts_bool8_cmeta_data),
+                                 const cmeta_data_desc>,
+              "octet Bool exposes immutable fixed-value metadata");
 static_assert(std::is_same_v<decltype(salts_uuid_cmeta_buffer_ops),
                              const cmeta_data_buffer_ops>,
               "UUID adapter preserves its declared object type");
+static_assert(std::is_same_v<decltype(salts_uuid_cmeta_fixed_ops),
+                             const cmeta_data_fixed_ops>,
+              "UUID fixed-value provider preserves its declared object type");
 static_assert(std::is_same_v<decltype(salts_uuid_cmeta_shape),
                              const cmeta_data_buffer_shape>,
               "UUID shape preserves its declared object type");
@@ -41,6 +49,8 @@ extern "C" const cmeta_data_buffer_shape *
 salts_uuid_cmeta_shape_from_peer(void);
 extern "C" const cmeta_data_buffer_ops *
 salts_uuid_cmeta_buffer_ops_from_peer(void);
+extern "C" const cmeta_data_fixed_ops *
+salts_uuid_cmeta_fixed_ops_from_peer(void);
 
 spec("Salts CMeta buffer adapter C++ surface") {
   it("exposes semantically distinct tstr and vstr storage types") {
@@ -76,6 +86,8 @@ spec("Salts fixed-width and UUID CMeta C++ surface") {
                &salts_uuid_cmeta_shape);
     check_true(salts_uuid_cmeta_buffer_ops_from_peer() ==
                &salts_uuid_cmeta_buffer_ops);
+    check_true(salts_uuid_cmeta_fixed_ops_from_peer() ==
+               &salts_uuid_cmeta_fixed_ops);
     check_true(salts_uuid_cmeta_data_valid(peer));
   }
 }

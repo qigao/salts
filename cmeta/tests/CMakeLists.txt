@@ -1,5 +1,10 @@
 # CMeta public API regression tests.
 
+cmake_add_test(cmeta_enum_bits_test
+  SOURCES cmeta_enum_bits_test.c
+  LIBS Salts::CMeta
+  FOLDER "cmeta/tests")
+
 cmake_add_test(cmeta_core_test
   SOURCES cmeta_core_test.c cmeta_traits_peer.c
   LIBS Salts::CMeta Salts::TinyTest
@@ -21,7 +26,7 @@ cmake_add_test(cmeta_container_type_test
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_data_test
-  SOURCES cmeta_data_test.c
+  SOURCES cmeta_data_test.c cmeta_fixed_bytes_peer.c
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
