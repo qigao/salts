@@ -56,6 +56,12 @@ static void salts_uuid_cmeta_restore_zero(void *object) {
   if (object != NULL) memset(object, 0, sizeof(salts_uuid_t));
 }
 
+static cmeta_status salts_uuid_cmeta_copy(void *destination, const void *source) {
+  if (destination == NULL || source == NULL) return CMETA_INVALID_ARGUMENT;
+  memcpy(destination, source, sizeof(salts_uuid_t));
+  return CMETA_OK;
+}
+
 static const cmeta_type_identity salts_uuid_cmeta_identity = CMETA_TYPE_ID_ATOM_INIT("salts.uuid");
 
 SALTS_API const cmeta_type_desc salts_uuid_cmeta_type = {
@@ -67,6 +73,11 @@ SALTS_API const cmeta_data_buffer_shape salts_uuid_cmeta_shape = {CMETA_DATA_BUF
 SALTS_API const cmeta_data_buffer_ops salts_uuid_cmeta_buffer_ops = {
     sizeof(cmeta_data_buffer_ops), CMETA_DATA_BUFFER_OPS_ABI_VERSION, &salts_uuid_cmeta_type,
     CMETA_DATA_BUFFER_OWNED,       salts_uuid_cmeta_is_zero,          salts_uuid_cmeta_assign,
+    salts_uuid_cmeta_restore_zero, NULL};
+
+SALTS_API const cmeta_data_fixed_ops salts_uuid_cmeta_fixed_ops = {
+    sizeof(cmeta_data_fixed_ops), CMETA_DATA_FIXED_OPS_ABI_VERSION, &salts_uuid_cmeta_type,
+    sizeof(salts_uuid_t), salts_uuid_cmeta_is_zero, salts_uuid_cmeta_copy,
     salts_uuid_cmeta_restore_zero};
 
 SALTS_API const cmeta_data_desc salts_uuid_cmeta_data = {sizeof(cmeta_data_desc),
@@ -78,12 +89,14 @@ SALTS_API const cmeta_data_desc salts_uuid_cmeta_data = {sizeof(cmeta_data_desc)
                                                          &salts_uuid_cmeta_shape,
                                                          &salts_uuid_cmeta_buffer_ops,
                                                          NULL,
-                                                         NULL};
+                                                         NULL,
+                                                         &salts_uuid_cmeta_fixed_ops};
 
 SALTS_API bool salts_uuid_cmeta_data_valid(const cmeta_data_desc *candidate) {
   const cmeta_data_buffer_ops *ops = cmeta_data_buffer_ops_of(candidate);
+  const cmeta_data_fixed_ops *fixed_ops = cmeta_data_fixed_ops_of(candidate);
 
-  if (ops == NULL) return false;
+  if (ops == NULL || fixed_ops == NULL) return false;
 
   return strcmp(candidate->stable_id, "salts.uuid.data") == 0 &&
          strcmp(candidate->display_name, "salts_uuid_t") == 0 &&
@@ -98,5 +111,9 @@ SALTS_API bool salts_uuid_cmeta_data_valid(const cmeta_data_desc *candidate) {
          ops->ownership == CMETA_DATA_BUFFER_OWNED &&
          ops->is_zero == salts_uuid_cmeta_buffer_ops.is_zero &&
          ops->assign == salts_uuid_cmeta_buffer_ops.assign &&
-         ops->restore_zero == salts_uuid_cmeta_buffer_ops.restore_zero;
+         ops->restore_zero == salts_uuid_cmeta_buffer_ops.restore_zero &&
+         fixed_ops->extent == sizeof(salts_uuid_t) &&
+         fixed_ops->is_zero == salts_uuid_cmeta_fixed_ops.is_zero &&
+         fixed_ops->copy == salts_uuid_cmeta_fixed_ops.copy &&
+         fixed_ops->restore_zero == salts_uuid_cmeta_fixed_ops.restore_zero;
 }

@@ -35,6 +35,7 @@ enum {
 typedef struct cmeta_data_buffer_ops cmeta_data_buffer_ops;
 typedef struct cmeta_data_enum_ops cmeta_data_enum_ops;
 typedef struct cmeta_data_variant_ops cmeta_data_variant_ops;
+typedef struct cmeta_data_fixed_ops cmeta_data_fixed_ops;
 
 typedef struct cmeta_data_desc {
     size_t struct_size;
@@ -47,6 +48,8 @@ typedef struct cmeta_data_desc {
     const cmeta_data_buffer_ops *buffer_ops;
     const cmeta_data_enum_ops *enum_ops;
     const cmeta_data_variant_ops *variant_ops;
+    /** Optional exact native-value operations appended to the v1 prefix. */
+    const cmeta_data_fixed_ops *fixed_ops;
 } cmeta_data_desc;
 
 typedef struct cmeta_data_integer_shape {
@@ -95,6 +98,35 @@ struct cmeta_data_buffer_ops {
     cmeta_data_buffer_restore_zero_fn restore_zero;
     /** Optional borrowed read view appended to the v1 operations prefix. */
     cmeta_data_buffer_read_fn read;
+};
+
+enum {
+    CMETA_DATA_FIXED_OPS_ABI_VERSION = 1u
+};
+
+/**
+ * Exact native-value provider contract.
+ *
+ * extent is the complete native object extent and must exactly match the
+ * associated storage type. copy receives one source object of that extent and
+ * a semantic-zero destination. A failed copy may partially mutate the
+ * destination; the checked facade restores it to semantic zero before
+ * returning. restore_zero is no-fail, idempotent, and accepts partially
+ * initialized objects.
+ */
+typedef bool (*cmeta_data_fixed_is_zero_fn)(const void *object);
+typedef cmeta_status (*cmeta_data_fixed_copy_fn)(void *destination,
+                                                 const void *source);
+typedef void (*cmeta_data_fixed_restore_zero_fn)(void *object);
+
+struct cmeta_data_fixed_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_type_desc *storage_type;
+    size_t extent;
+    cmeta_data_fixed_is_zero_fn is_zero;
+    cmeta_data_fixed_copy_fn copy;
+    cmeta_data_fixed_restore_zero_fn restore_zero;
 };
 
 enum {
@@ -278,6 +310,32 @@ cmeta_status cmeta_data_buffer_restore_zero(
 cmeta_status cmeta_data_buffer_read(
     const cmeta_data_desc *desc, const void *object, size_t max_bytes,
     const unsigned char **out_data, size_t *out_size);
+
+/** Return a complete, storage-matching exact native-value provider, or NULL. */
+const cmeta_data_fixed_ops *cmeta_data_fixed_ops_of(
+    const cmeta_data_desc *desc);
+
+/** Return the provider-declared exact native object extent. */
+cmeta_status cmeta_data_fixed_extent(
+    const cmeta_data_desc *desc, size_t *out);
+
+/** Query the provider-defined semantic-zero state of a native object. */
+cmeta_status cmeta_data_fixed_is_zero(
+    const cmeta_data_desc *desc, const void *object, bool *out);
+
+/**
+ * Copy one exact native value into a semantic-zero destination.
+ *
+ * source_extent must equal the provider extent. Provider failure restores the
+ * destination to semantic zero before returning.
+ */
+cmeta_status cmeta_data_fixed_copy(
+    const cmeta_data_desc *desc, void *destination, const void *source,
+    size_t source_extent);
+
+/** Restore and verify the provider-defined semantic-zero state. */
+cmeta_status cmeta_data_fixed_restore_zero(
+    const cmeta_data_desc *desc, void *object);
 
 /** Return a complete, storage-matching enum adapter, or NULL. */
 const cmeta_data_enum_ops *cmeta_data_enum_ops_of(
