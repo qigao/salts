@@ -85,6 +85,7 @@ static const cmeta_data_desc cbind_variant_pair_data = {
 };
 
 static cbind_variant_select_mode cbind_variant_mode;
+static const cmeta_data_desc cbind_variant_text_data;
 
 static bool cbind_variant_is_zero(const void *object) {
     const cbind_variant_value *value = (const cbind_variant_value *)object;
@@ -125,7 +126,8 @@ static void cbind_variant_restore_zero(void *object) {
         (void)cmeta_container_restore_zero(
             &value->payload.pair.items, items->declared_type);
     } else if (value->tag == CBIND_VARIANT_TEXT) {
-        salts_tstr_cmeta_restore_zero(&value->payload.text);
+        (void)cmeta_data_buffer_restore_zero(&cbind_variant_text_data,
+                                             &value->payload.text);
     }
     memset(value, 0, sizeof(*value));
 }
