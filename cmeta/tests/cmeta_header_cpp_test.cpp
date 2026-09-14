@@ -104,8 +104,8 @@ static_assert(CMETA_CONTAINER_EXT_ABI_VERSION == 1u,
               "container extension ABI starts at version 1");
 static_assert(CMETA_DATA_DESC_ABI_VERSION == 1u,
               "semantic data descriptor ABI starts at version 1");
-static_assert(CMETA_DATA_BUFFER_OPS_ABI_VERSION == 1u,
-              "semantic buffer ops ABI starts at version 1");
+static_assert(CMETA_DATA_BUFFER_OPS_ABI_VERSION == 2u,
+              "semantic buffer ops ABI requires lifecycle version 2");
 static_assert(CMETA_DATA_FIXED_OPS_ABI_VERSION == 1u,
               "semantic fixed-value ops ABI starts at version 1");
 static_assert(std::is_same_v<TypeEval(CMetaCppStorage, small), int>,
