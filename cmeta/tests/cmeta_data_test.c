@@ -21,6 +21,64 @@ typedef struct cmeta_data_test_variant_storage {
     } value;
 } cmeta_data_test_variant_storage;
 
+typedef struct cmeta_data_test_fixed_storage {
+    unsigned char bytes[4];
+} cmeta_data_test_fixed_storage;
+
+static bool cmeta_data_test_fixed_copy_fails;
+
+static bool cmeta_data_test_fixed_is_zero(const void *object) {
+    static const cmeta_data_test_fixed_storage zero = {{0}};
+    return object != NULL && memcmp(object, &zero, sizeof(zero)) == 0;
+}
+
+static cmeta_status cmeta_data_test_fixed_copy(void *destination,
+                                               const void *source) {
+    if (destination == NULL || source == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    memcpy(destination, source, sizeof(cmeta_data_test_fixed_storage));
+    return cmeta_data_test_fixed_copy_fails ? CMETA_CALLBACK_ERROR : CMETA_OK;
+}
+
+static void cmeta_data_test_fixed_restore_zero(void *object) {
+    if (object != NULL)
+        memset(object, 0, sizeof(cmeta_data_test_fixed_storage));
+}
+
+static const cmeta_type_identity cmeta_data_test_fixed_identity =
+    CMETA_TYPE_ID_ATOM_INIT("test.Fixed4");
+static const cmeta_type_desc cmeta_data_test_fixed_type = {
+    .name = "cmeta_data_test_fixed_storage",
+    .size = sizeof(cmeta_data_test_fixed_storage),
+    .align = _Alignof(cmeta_data_test_fixed_storage),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = NULL,
+    .identity = &cmeta_data_test_fixed_identity
+};
+static const cmeta_data_buffer_shape cmeta_data_test_fixed_shape = {
+    .ownership = CMETA_DATA_BUFFER_OWNED
+};
+static const cmeta_data_fixed_ops cmeta_data_test_fixed_ops = {
+    .struct_size = sizeof(cmeta_data_fixed_ops),
+    .abi_version = CMETA_DATA_FIXED_OPS_ABI_VERSION,
+    .storage_type = &cmeta_data_test_fixed_type,
+    .extent = sizeof(cmeta_data_test_fixed_storage),
+    .is_zero = cmeta_data_test_fixed_is_zero,
+    .copy = cmeta_data_test_fixed_copy,
+    .restore_zero = cmeta_data_test_fixed_restore_zero
+};
+static const cmeta_data_desc cmeta_data_test_fixed_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.Fixed4.data",
+    .display_name = "Fixed4",
+    .kind = CMETA_DATA_BYTES,
+    .storage_type = &cmeta_data_test_fixed_type,
+    .shape = &cmeta_data_test_fixed_shape,
+    .fixed_ops = &cmeta_data_test_fixed_ops
+};
+
 typedef enum cmeta_data_test_variant_select_mode {
     CMETA_DATA_TEST_VARIANT_SELECT_OK,
     CMETA_DATA_TEST_VARIANT_SELECT_FAIL,
@@ -312,6 +370,93 @@ static const cmeta_data_desc cmeta_data_test_variant_desc = {
 };
 
 spec("CMeta semantic data descriptors") {
+  it("copies exact fixed native values through explicit provider authority") {
+    const cmeta_data_test_fixed_storage source = {{1u, 2u, 3u, 4u}};
+    cmeta_data_test_fixed_storage destination = {{0}};
+    size_t extent = 0u;
+    bool is_zero = false;
+
+    cmeta_data_test_fixed_copy_fails = false;
+    check_true(cmeta_data_fixed_ops_of(&cmeta_data_test_fixed_desc) ==
+               &cmeta_data_test_fixed_ops);
+    check_equal(cmeta_data_fixed_extent(&cmeta_data_test_fixed_desc, &extent),
+                CMETA_OK);
+    check_equal(extent, sizeof(source));
+    check_equal(cmeta_data_fixed_is_zero(&cmeta_data_test_fixed_desc,
+                                         &destination, &is_zero), CMETA_OK);
+    check_true(is_zero);
+    check_equal(cmeta_data_fixed_copy(&cmeta_data_test_fixed_desc,
+                                      &destination, &source, sizeof(source)),
+                CMETA_OK);
+    check_equal(destination.bytes, source.bytes, sizeof(source.bytes));
+    check_equal(cmeta_data_fixed_restore_zero(&cmeta_data_test_fixed_desc,
+                                              &destination), CMETA_OK);
+    check_true(cmeta_data_test_fixed_is_zero(&destination));
+  }
+
+  it("rejects fixed-value extent and descriptor mismatches without inference") {
+    const cmeta_data_test_fixed_storage source = {{1u, 2u, 3u, 4u}};
+    cmeta_data_test_fixed_storage destination = {{0}};
+    cmeta_data_fixed_ops ops = cmeta_data_test_fixed_ops;
+    cmeta_data_desc desc = cmeta_data_test_fixed_desc;
+    size_t extent = 99u;
+
+    check_equal(cmeta_data_fixed_copy(&desc, &destination, &source,
+                                      sizeof(source) - 1u),
+                CMETA_TYPE_MISMATCH);
+    check_true(cmeta_data_test_fixed_is_zero(&destination));
+
+    ops.abi_version += 1u;
+    desc.fixed_ops = &ops;
+    check_null(cmeta_data_fixed_ops_of(&desc));
+    check_equal(cmeta_data_fixed_extent(&desc, &extent),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(extent, (size_t)99u);
+
+    ops = cmeta_data_test_fixed_ops;
+    ops.storage_type = &cmeta_type_int;
+    desc.fixed_ops = &ops;
+    check_null(cmeta_data_fixed_ops_of(&desc));
+    check_equal(cmeta_data_fixed_extent(&desc, &extent),
+                CMETA_TYPE_MISMATCH);
+
+    ops = cmeta_data_test_fixed_ops;
+    ops.extent -= 1u;
+    desc.fixed_ops = &ops;
+    check_null(cmeta_data_fixed_ops_of(&desc));
+    check_equal(cmeta_data_fixed_extent(&desc, &extent),
+                CMETA_TYPE_MISMATCH);
+
+    ops = cmeta_data_test_fixed_ops;
+    ops.copy = NULL;
+    desc.fixed_ops = &ops;
+    check_null(cmeta_data_fixed_ops_of(&desc));
+    check_equal(cmeta_data_fixed_extent(&desc, &extent),
+                CMETA_INVALID_ARGUMENT);
+
+    desc = cmeta_data_test_fixed_desc;
+    desc.struct_size = offsetof(cmeta_data_desc, fixed_ops);
+    check_null(cmeta_data_fixed_ops_of(&desc));
+  }
+
+  it("rolls failed fixed-value copies back to provider semantic zero") {
+    const cmeta_data_test_fixed_storage source = {{1u, 2u, 3u, 4u}};
+    cmeta_data_test_fixed_storage destination = {{0}};
+
+    cmeta_data_test_fixed_copy_fails = true;
+    check_equal(cmeta_data_fixed_copy(&cmeta_data_test_fixed_desc,
+                                      &destination, &source, sizeof(source)),
+                CMETA_CALLBACK_ERROR);
+    check_true(cmeta_data_test_fixed_is_zero(&destination));
+    cmeta_data_test_fixed_copy_fails = false;
+
+    destination.bytes[0] = 9u;
+    check_equal(cmeta_data_fixed_copy(&cmeta_data_test_fixed_desc,
+                                      &destination, &source, sizeof(source)),
+                CMETA_INVALID_ARGUMENT);
+    check_equal(destination.bytes[0], (unsigned char)9u);
+  }
+
   it("exposes primitive semantic descriptors") {
     check_equal(cmeta_data_bool.kind, CMETA_DATA_BOOL);
     check_equal(cmeta_data_int.kind, CMETA_DATA_SINT);

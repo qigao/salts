@@ -179,9 +179,16 @@ int main(void) {
 }
 
 #elif defined(CONSUME_CMETA)
-  #include <cmeta/cmeta.h>
+  #include <cmeta/data.h>
 
-int main(void) { return cmeta_type_equal(&cmeta_type_int, &cmeta_type_int) ? 0 : 1; }
+int main(void) {
+  size_t extent = 0u;
+
+  return cmeta_type_equal(&cmeta_type_int, &cmeta_type_int) &&
+                 cmeta_data_fixed_extent(NULL, &extent) == CMETA_INVALID_ARGUMENT
+             ? 0
+             : 1;
+}
 
 #elif defined(CONSUME_CBIND)
   #include <cbind/cbind.h>

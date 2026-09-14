@@ -99,6 +99,8 @@ static_assert(CMETA_DATA_DESC_ABI_VERSION == 1u,
               "semantic data descriptor ABI starts at version 1");
 static_assert(CMETA_DATA_BUFFER_OPS_ABI_VERSION == 1u,
               "semantic buffer ops ABI starts at version 1");
+static_assert(CMETA_DATA_FIXED_OPS_ABI_VERSION == 1u,
+              "semantic fixed-value ops ABI starts at version 1");
 static_assert(std::is_same_v<TypeEval(CMetaCppStorage, small), int>,
               "C++17 can evaluate unary CMeta type functions");
 static_assert(std::is_same_v<TypeEval(CMetaCppCommon, small, wide), long>,
@@ -134,6 +136,8 @@ static_assert(std::is_standard_layout_v<cmeta_data_desc>,
               "semantic data descriptors must remain C-compatible standard-layout types");
 static_assert(std::is_standard_layout_v<cmeta_data_buffer_ops>,
               "semantic buffer ops must remain C-compatible standard-layout types");
+static_assert(std::is_standard_layout_v<cmeta_data_fixed_ops>,
+              "semantic fixed-value ops must remain a C-compatible standard-layout type");
 static_assert(std::is_standard_layout_v<cmeta_data_enum_ops>,
               "semantic enum ops must remain C-compatible standard-layout types");
 static_assert(std::is_standard_layout_v<cmeta_data_variant_ops>,
@@ -162,6 +166,14 @@ static bool cmeta_cpp_copy_construct(void *destination, const void *source) {
 }
 
 spec("CMeta C++ public headers") {
+  it("exposes the fixed-value facade without C-only types") {
+    const cmeta_data_fixed_ops ops = {
+        sizeof(cmeta_data_fixed_ops), CMETA_DATA_FIXED_OPS_ABI_VERSION,
+        &cmeta_type_int, sizeof(int), nullptr, nullptr, nullptr};
+
+    check_equal(ops.extent, sizeof(int));
+  }
+
   it("expands enum reflection without C-style casts") {
     cmeta_cpp_state state = CMETA_CPP_READY;
 
