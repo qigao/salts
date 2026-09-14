@@ -162,9 +162,9 @@ static bool cmeta_data_variant_tag_kind_valid(const cmeta_data_desc *tag) {
         (tag->kind != CMETA_DATA_SINT && tag->kind != CMETA_DATA_UINT &&
          tag->kind != CMETA_DATA_ENUM))
         return false;
-    /* Variant cases and tag callbacks still use the legacy int64_t domain. */
+    /* Parent variant ops own tag access; tags still require legacy metadata. */
     if (tag->kind == CMETA_DATA_ENUM)
-        return cmeta_data_enum_ops_of(tag) != NULL;
+        return cmeta_data_desc_valid(tag) && tag->shape != NULL;
     return cmeta_data_desc_valid(tag);
 }
 

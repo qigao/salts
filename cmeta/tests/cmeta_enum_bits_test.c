@@ -252,8 +252,14 @@ static void canonical_enum_cannot_tag_legacy_variant(void) {
 
     variant_shape.tag = &legacy_tag;
     legacy_tag.enum_ops = NULL;
-    assert(!cmeta_data_desc_valid(&variant));
-    assert(cmeta_data_variant_ops_of(&variant) == NULL);
+    assert(cmeta_data_desc_valid(&variant));
+    assert(cmeta_data_variant_ops_of(&variant) == &variant_ops);
+    /* The parent provider owns tag access; metadata-only enum tags are valid. */
+    legacy_tag.struct_size = offsetof(cmeta_data_desc, shape) + sizeof(legacy_tag.shape);
+    assert(cmeta_data_desc_valid(&variant));
+    assert(cmeta_data_variant_ops_of(&variant) == &variant_ops);
+    assert(cmeta_data_variant_select(&variant, &object, 1) == CMETA_OK);
+    assert(object.engaged && object.bits == 1u);
 }
 
 int main(void) {
