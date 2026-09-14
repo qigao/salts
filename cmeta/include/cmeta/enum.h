@@ -20,6 +20,46 @@ typedef struct cmeta_enum_desc {
     size_t count;
 } cmeta_enum_desc;
 
+enum { CMETA_ENUM_DOMAIN_ABI_VERSION = 1u };
+
+typedef enum cmeta_enum_signedness {
+    CMETA_ENUM_SIGNED,
+    CMETA_ENUM_UNSIGNED
+} cmeta_enum_signedness;
+
+typedef enum cmeta_enum_domain_kind {
+    CMETA_ENUM_ORDINARY,
+    CMETA_ENUM_FLAGS
+} cmeta_enum_domain_kind;
+
+typedef struct cmeta_enum_bits_item {
+    uint64_t bits;
+    const char *symbol;
+    const char *text;
+} cmeta_enum_bits_item;
+
+/**
+ * Immutable canonical enum domain, independent of native storage layout.
+ * bits is 8, 16, 32 or 64. Values use only the low declared-width bits; negatives
+ * use width-bit two's-complement (signed8 -1 is 255, not UINT64_MAX).
+ * No signed conversion is required to transport or compare canonical bits.
+ * Ordinary values must match an item exactly and declared_mask must be zero.
+ * Flags accept any subset of declared_mask, including zero; declared_mask
+ * must equal the bitwise OR of all items. Every item must fit the width and
+ * have nonempty symbol/text. Aliases are permitted. Empty domains are valid.
+ * Metadata and items remain provider-owned and live as long as their users.
+ */
+typedef struct cmeta_enum_domain {
+    size_t struct_size;
+    uint32_t abi_version;
+    cmeta_enum_signedness signedness;
+    uint8_t bits;
+    cmeta_enum_domain_kind kind;
+    const cmeta_enum_bits_item *items;
+    size_t count;
+    uint64_t declared_mask;
+} cmeta_enum_domain;
+
 #ifdef __cplusplus
 #define CMETA_ENUM_TO_INT64(value) static_cast<int64_t>(value)
 #define CMETA_ENUM_FROM_INT64(type, value) static_cast<type>(value)
