@@ -15,3 +15,7 @@ const cmeta_data_buffer_shape *salts_uuid_cmeta_shape_from_peer(void) {
 const cmeta_data_buffer_ops *salts_uuid_cmeta_buffer_ops_from_peer(void) {
   return &salts_uuid_cmeta_buffer_ops;
 }
+
+const cmeta_data_fixed_ops *salts_uuid_cmeta_fixed_ops_from_peer(void) {
+  return &salts_uuid_cmeta_fixed_ops;
+}

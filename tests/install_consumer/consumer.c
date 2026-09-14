@@ -179,9 +179,30 @@ int main(void) {
 }
 
 #elif defined(CONSUME_CMETA)
-  #include <cmeta/cmeta.h>
+  #include <cmeta/data.h>
 
-int main(void) { return cmeta_type_equal(&cmeta_type_int, &cmeta_type_int) ? 0 : 1; }
+typedef unsigned char installed_fixed_bytes[8];
+CMETA_DEFINE_FIXED_BYTES(installed_fixed_bytes_value,
+                         installed_fixed_bytes,
+                         sizeof(installed_fixed_bytes),
+                         "install.consumer.fixed-bytes-8",
+                         "Installed fixed bytes 8");
+
+int main(void) {
+  const installed_fixed_bytes source = {1u};
+  installed_fixed_bytes destination = {0};
+  size_t extent = 0u;
+
+  return cmeta_type_equal(&cmeta_type_int, &cmeta_type_int) &&
+                 cmeta_data_fixed_extent(
+                     &installed_fixed_bytes_value_cmeta_data, &extent) == CMETA_OK &&
+                 extent == sizeof(installed_fixed_bytes) &&
+                 cmeta_data_fixed_copy(
+                     &installed_fixed_bytes_value_cmeta_data, &destination,
+                     &source, sizeof(source)) == CMETA_OK
+             ? 0
+             : 1;
+}
 
 #elif defined(CONSUME_CBIND)
   #include <cbind/cbind.h>

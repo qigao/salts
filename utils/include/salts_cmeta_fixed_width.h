@@ -36,6 +36,47 @@ SALTS_CMETA_FIXED_WIDTH_STATIC_ASSERT(sizeof(uint64_t) * CHAR_BIT == 64u,
 
 #undef SALTS_CMETA_FIXED_WIDTH_STATIC_ASSERT
 
+static const cmeta_type_identity salts_bool8_cmeta_identity =
+    CMETA_TYPE_ID_ATOM_INIT("salts.bool8");
+static const cmeta_type_desc salts_bool8_cmeta_type = {
+    "uint8_t", sizeof(uint8_t), CMETA_ALIGNOF(uint8_t), CMETA_T_INTEGER,
+    NULL, NULL, &salts_bool8_cmeta_identity
+};
+
+static inline bool salts_bool8_cmeta_is_zero(const void *object) {
+  return object != NULL && *(const uint8_t *)object == 0u;
+}
+
+static inline cmeta_status salts_bool8_cmeta_copy(void *destination,
+                                                  const void *source) {
+  uint8_t value;
+  if (destination == NULL || source == NULL)
+    return CMETA_INVALID_ARGUMENT;
+  value = *(const uint8_t *)source;
+  if (value > 1u) return CMETA_INVALID_ARGUMENT;
+  *(uint8_t *)destination = value;
+  return CMETA_OK;
+}
+
+static inline void salts_bool8_cmeta_restore_zero(void *object) {
+  if (object != NULL)
+    *(uint8_t *)object = 0u;
+}
+
+/** Canonical octet-backed Bool provider for schemas with an 8-bit native ABI. */
+static const cmeta_data_fixed_ops salts_bool8_cmeta_fixed_ops = {
+    sizeof(cmeta_data_fixed_ops), CMETA_DATA_FIXED_OPS_ABI_VERSION,
+    &salts_bool8_cmeta_type, sizeof(uint8_t), salts_bool8_cmeta_is_zero,
+    salts_bool8_cmeta_copy, salts_bool8_cmeta_restore_zero
+};
+
+static const cmeta_data_desc salts_bool8_cmeta_data = {
+    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
+    "salts.bool8.data", "uint8_t Bool", CMETA_DATA_BOOL,
+    &salts_bool8_cmeta_type, NULL, NULL, NULL, NULL,
+    &salts_bool8_cmeta_fixed_ops
+};
+
 #define SALTS_CMETA_DEFINE_FIXED_WIDTH_INTEGER(name_, c_type_, data_kind_, bits_, id_)             \
   static const cmeta_type_identity name_##_cmeta_identity = CMETA_TYPE_ID_ATOM_INIT(id_);          \
   static const cmeta_type_desc name_##_cmeta_type = {                                              \
@@ -44,7 +85,7 @@ SALTS_CMETA_FIXED_WIDTH_STATIC_ASSERT(sizeof(uint64_t) * CHAR_BIT == 64u,
   static const cmeta_data_integer_shape name_##_cmeta_shape = {bits_};                             \
   static const cmeta_data_desc name_##_cmeta_data = {                                              \
       sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION, id_ ".data", #c_type_, data_kind_,     \
-      &name_##_cmeta_type,     &name_##_cmeta_shape,        NULL,        NULL,     NULL}
+      &name_##_cmeta_type,     &name_##_cmeta_shape,        NULL,        NULL,     NULL, NULL}
 
 SALTS_CMETA_DEFINE_FIXED_WIDTH_INTEGER(salts_int8, int8_t, CMETA_DATA_SINT, 8u, "salts.int8");
 SALTS_CMETA_DEFINE_FIXED_WIDTH_INTEGER(salts_int16, int16_t, CMETA_DATA_SINT, 16u, "salts.int16");
