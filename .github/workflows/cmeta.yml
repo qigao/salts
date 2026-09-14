@@ -184,7 +184,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm re2c
+          sudo apt-get install -y nasm ninja-build re2c
           if [ -n "${VCPKG_ROOT:-}" ] &&
              [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
             true

@@ -74,7 +74,7 @@ typedef struct cmeta_data_buffer_shape {
 } cmeta_data_buffer_shape;
 
 enum {
-    CMETA_DATA_BUFFER_OPS_ABI_VERSION = 1u
+    CMETA_DATA_BUFFER_OPS_ABI_VERSION = 2u
 };
 
 typedef bool (*cmeta_data_buffer_is_zero_fn)(const void *object);
@@ -90,7 +90,26 @@ typedef void (*cmeta_data_buffer_restore_zero_fn)(void *object);
  */
 typedef cmeta_status (*cmeta_data_buffer_read_fn)(
     const void *object, const unsigned char **out_data, size_t *out_size);
+/** Initialize one raw storage slot to the provider-defined semantic zero. */
+typedef cmeta_status (*cmeta_data_buffer_init_zero_fn)(void *object);
+/**
+ * Move one complete provider value into a semantic-zero destination.
+ *
+ * This operation is no-fail. It transfers provider-owned state without
+ * allocation and leaves source in semantic zero. Both objects remain valid for
+ * restore_zero after the call.
+ */
+typedef void (*cmeta_data_buffer_move_fn)(void *destination, void *source);
 
+/**
+ * Version-2 native buffer lifecycle provider.
+ *
+ * v2 is intentionally strict: init_zero and move are mandatory and providers
+ * compiled against v1 are not admitted. read remains optional because some
+ * exact fixed/native values use buffer assignment only and expose their read
+ * representation through a separate canonical authority. There is no v1
+ * fallback path.
+ */
 struct cmeta_data_buffer_ops {
     size_t struct_size;
     uint32_t abi_version;
@@ -99,8 +118,9 @@ struct cmeta_data_buffer_ops {
     cmeta_data_buffer_is_zero_fn is_zero;
     cmeta_data_buffer_assign_fn assign;
     cmeta_data_buffer_restore_zero_fn restore_zero;
-    /** Optional borrowed read view appended to the v1 operations prefix. */
     cmeta_data_buffer_read_fn read;
+    cmeta_data_buffer_init_zero_fn init_zero;
+    cmeta_data_buffer_move_fn move;
 };
 
 enum {
@@ -349,12 +369,25 @@ bool cmeta_data_desc_valid(const cmeta_data_desc *desc);
 
 /**
  * Return a validated STRING/BYTES adapter, or NULL when the descriptor does
- * not expose a complete, matching v1 adapter. Descriptor and adapter addresses
+ * not expose a complete, matching v2 adapter. Descriptor and adapter addresses
  * are not type identities; storage types are compared semantically and then
- * checked for exact kind, size, and alignment.
+ * checked for exact kind, size, and alignment. v1 providers are rejected;
+ * there is no compatibility fallback.
  */
 const cmeta_data_buffer_ops *cmeta_data_buffer_ops_of(
     const cmeta_data_desc *desc);
+
+/** Initialize one raw storage slot to provider semantic zero. */
+cmeta_status cmeta_data_buffer_init_zero(
+    const cmeta_data_desc *desc, void *object);
+
+/**
+ * Move source into an already semantic-zero destination and restore source to
+ * semantic zero. A violated provider postcondition returns
+ * CMETA_CALLBACK_ERROR after best-effort zero restoration.
+ */
+cmeta_status cmeta_data_buffer_move(
+    const cmeta_data_desc *desc, void *destination, void *source);
 
 /**
  * Query the provider-defined semantic zero state.
@@ -399,23 +432,12 @@ cmeta_status cmeta_data_buffer_restore_zero(
  * Read one bounded borrowed byte view without mutating the source object.
  *
  * The returned view remains provider-owned. It expires when the object is
- * assigned, restored, destroyed, concurrently mutated, or when the provider
- * otherwise invalidates its storage. The caller must not retain it across any
- * such boundary. A zero-length view may have a NULL data pointer.
+ * assigned, restored, moved, destroyed, concurrently mutated, or when the
+ * provider otherwise invalidates its storage. The caller must not retain it
+ * across any such boundary. A zero-length view may have a NULL data pointer.
  *
- * Providers compiled without the appended read callback remain valid for the
- * existing buffer operations; this function returns CMETA_TRAIT_MISSING for
- * them. Provider errors, malformed non-empty NULL views, and values larger
- * than max_bytes leave both caller outputs unchanged.
- *
- * @param max_bytes Hard per-view byte limit.
- * @param out_data Receives borrowed bytes only on success.
- * @param out_size Receives the exact byte count only on success.
- * @return CMETA_OK, CMETA_TRAIT_MISSING, CMETA_CAPACITY_EXCEEDED,
- *         CMETA_CALLBACK_ERROR, an exact provider error, or a descriptor/
- *         argument validation error.
- *
- * Example: `cmeta_data_buffer_read(desc, &value, 4096u, &data, &size)`.
+ * read remains an optional capability within an otherwise complete v2
+ * lifecycle provider. A provider without read returns CMETA_TRAIT_MISSING.
  */
 cmeta_status cmeta_data_buffer_read(
     const cmeta_data_desc *desc, const void *object, size_t max_bytes,

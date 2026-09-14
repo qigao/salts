@@ -85,6 +85,7 @@ static const cmeta_data_desc cbind_variant_pair_data = {
 };
 
 static cbind_variant_select_mode cbind_variant_mode;
+static cmeta_data_desc cbind_variant_text_data;
 
 static bool cbind_variant_is_zero(const void *object) {
     const cbind_variant_value *value = (const cbind_variant_value *)object;
@@ -125,7 +126,8 @@ static void cbind_variant_restore_zero(void *object) {
         (void)cmeta_container_restore_zero(
             &value->payload.pair.items, items->declared_type);
     } else if (value->tag == CBIND_VARIANT_TEXT) {
-        salts_tstr_cmeta_restore_zero(&value->payload.text);
+        (void)cmeta_data_buffer_restore_zero(&cbind_variant_text_data,
+                                             &value->payload.text);
     }
     memset(value, 0, sizeof(*value));
 }
@@ -133,16 +135,14 @@ static void cbind_variant_restore_zero(void *object) {
 static const cmeta_data_buffer_shape cbind_variant_text_shape = {
     .ownership = CMETA_DATA_BUFFER_OWNED
 };
-static const cmeta_data_desc cbind_variant_text_data = {
-    .struct_size = sizeof(cmeta_data_desc),
-    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
-    .stable_id = "test.cbind.variant.text.data",
-    .display_name = "text",
-    .kind = CMETA_DATA_STRING,
-    .storage_type = &salts_tstr_cmeta_type,
-    .shape = &cbind_variant_text_shape,
-    .buffer_ops = &salts_tstr_cmeta_buffer_ops
-};
+
+static void bind_variant_text_data(void) {
+    cbind_variant_text_data = salts_tstr_cmeta_data;
+    cbind_variant_text_data.stable_id = "test.cbind.variant.text.data";
+    cbind_variant_text_data.display_name = "text";
+    cbind_variant_text_data.kind = CMETA_DATA_STRING;
+    cbind_variant_text_data.shape = &cbind_variant_text_shape;
+}
 
 static const cmeta_data_variant_case cbind_variant_cases[] = {
     {CBIND_VARIANT_NUMBER, "test.cbind.variant.number", "number",
@@ -283,6 +283,7 @@ static cbind_status decode_tokens(const cmeta_data_desc *shape,
         4u, 64u);
     cbind_status status;
 
+    bind_variant_text_data();
     check(scratch_size <= sizeof(scratch));
     check_equal(cserde_reader_init(&reader, &cserde_recording_reader_ops,
                                    &source), CSERDE_OK);

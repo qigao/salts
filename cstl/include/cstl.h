@@ -3,6 +3,7 @@
 
 #include <cstl/bplus_tree.h>
 #include <cstl/btree.h>
+#include <cstl/byte_buffer.h>
 #include <cstl/deque.h>
 #include <cstl/hash_map.h>
 #include <cstl/hash_set.h>

@@ -26,26 +26,8 @@ static const cmeta_data_buffer_shape borrowed_shape = {
     .ownership = CMETA_DATA_BUFFER_BORROWED
 };
 
-static const cmeta_data_desc owned_string = {
-    .struct_size = sizeof(cmeta_data_desc),
-    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
-    .stable_id = "test.cbind.owned-string",
-    .display_name = "owned string",
-    .kind = CMETA_DATA_STRING,
-    .storage_type = &salts_tstr_cmeta_type,
-    .shape = &owned_shape,
-    .buffer_ops = &salts_tstr_cmeta_buffer_ops
-};
-static const cmeta_data_desc owned_bytes = {
-    .struct_size = sizeof(cmeta_data_desc),
-    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
-    .stable_id = "test.cbind.owned-bytes",
-    .display_name = "owned bytes",
-    .kind = CMETA_DATA_BYTES,
-    .storage_type = &salts_tstr_cmeta_type,
-    .shape = &owned_shape,
-    .buffer_ops = &salts_tstr_cmeta_buffer_ops
-};
+static cmeta_data_desc owned_string;
+static cmeta_data_desc owned_bytes;
 static const cmeta_data_desc borrowed_string = {
     .struct_size = sizeof(cmeta_data_desc),
     .abi_version = CMETA_DATA_DESC_ABI_VERSION,
@@ -56,6 +38,20 @@ static const cmeta_data_desc borrowed_string = {
     .shape = &borrowed_shape,
     .buffer_ops = &salts_vstr_cmeta_buffer_ops
 };
+
+static void bind_owned_tstr_descriptors(void) {
+    owned_string = salts_tstr_cmeta_data;
+    owned_string.stable_id = "test.cbind.owned-string";
+    owned_string.display_name = "owned string";
+    owned_string.kind = CMETA_DATA_STRING;
+    owned_string.shape = &owned_shape;
+
+    owned_bytes = salts_tstr_cmeta_data;
+    owned_bytes.stable_id = "test.cbind.owned-bytes";
+    owned_bytes.display_name = "owned bytes";
+    owned_bytes.kind = CMETA_DATA_BYTES;
+    owned_bytes.shape = &owned_shape;
+}
 
 Struct(cbind_buffer_record,
     (int, id),
@@ -136,10 +132,6 @@ static cbind_status decode_full(const cmeta_data_desc *shape,
                             source_index);
 }
 
-static bool failing_is_zero(const void *object) {
-    return object != NULL && *(const tstr *)object == NULL;
-}
-
 static cmeta_status failing_assign(void *object,
                                    const unsigned char *data,
                                    size_t size,
@@ -151,18 +143,11 @@ static cmeta_status failing_assign(void *object,
     return CMETA_OUT_OF_MEMORY;
 }
 
-static void failing_restore(void *object) {
-    if (object != NULL)
-        *(tstr *)object = NULL;
-}
-
-static const cmeta_data_buffer_ops failing_ops = {
-    sizeof(cmeta_data_buffer_ops), CMETA_DATA_BUFFER_OPS_ABI_VERSION,
-    &salts_tstr_cmeta_type, CMETA_DATA_BUFFER_OWNED,
-    failing_is_zero, failing_assign, failing_restore
-};
-
 spec("CBind buffer preflight") {
+  before_each() {
+    bind_owned_tstr_descriptors();
+  }
+
   it("requires adapter metadata and the extended context before input") {
     const cserde_token token = TOKEN_SLICE(
         CSERDE_STRING, "x", 1u, CSERDE_VIEW_STABLE);
@@ -224,6 +209,10 @@ spec("CBind buffer preflight") {
 }
 
 spec("CBind root buffer decode") {
+  before_each() {
+    bind_owned_tstr_descriptors();
+  }
+
   it("copies owned string and bytes tokens exactly") {
     static const unsigned char binary[] = {'a', 0, 'b'};
     const cserde_token string_token = TOKEN_SLICE(
@@ -304,9 +293,11 @@ spec("CBind root buffer decode") {
     const cserde_token token = TOKEN_SLICE(
         CSERDE_BYTES, "x", 1u, CSERDE_VIEW_TRANSIENT);
     cmeta_data_desc data = owned_bytes;
+    cmeta_data_buffer_ops failing_ops = salts_tstr_cmeta_buffer_ops;
     tstr out = NULL;
     cbind_error error = CBIND_ERROR_INIT;
 
+    failing_ops.assign = failing_assign;
     data.buffer_ops = &failing_ops;
     check_equal(decode_full(&data, &token, 1u, &out, 0u, 1u,
                             &error, NULL), CBIND_TARGET_ERROR);
@@ -316,6 +307,10 @@ spec("CBind root buffer decode") {
 }
 
 spec("CBind struct buffer decode") {
+  before_each() {
+    bind_owned_tstr_descriptors();
+  }
+
   it("decodes owned and borrowed fields with their declared lifetimes") {
     static const unsigned char payload[] = {'x', 0, 'y'};
     static const unsigned char alias[] = "view";

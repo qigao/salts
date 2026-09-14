@@ -18,6 +18,12 @@ static bool salts_uuid_cmeta_is_zero(const void *object) {
          memcmp(((const salts_uuid_t *)object)->bytes, zero.bytes, SALTS_UUID_SIZE) == 0;
 }
 
+static cmeta_status salts_uuid_cmeta_init_zero(void *object) {
+  if (object == NULL) return CMETA_INVALID_ARGUMENT;
+  memset(object, 0, sizeof(salts_uuid_t));
+  return CMETA_OK;
+}
+
 static cmeta_status salts_uuid_cmeta_assign(void *object, const unsigned char *data, size_t size,
                                             size_t max_bytes) {
   static const size_t group_ends[] = {4u, 6u, 8u, 10u};
@@ -56,6 +62,12 @@ static void salts_uuid_cmeta_restore_zero(void *object) {
   if (object != NULL) memset(object, 0, sizeof(salts_uuid_t));
 }
 
+static void salts_uuid_cmeta_move(void *destination, void *source) {
+  if (destination == NULL || source == NULL) return;
+  memcpy(destination, source, sizeof(salts_uuid_t));
+  memset(source, 0, sizeof(salts_uuid_t));
+}
+
 static cmeta_status salts_uuid_cmeta_copy(void *destination, const void *source) {
   if (destination == NULL || source == NULL) return CMETA_INVALID_ARGUMENT;
   memcpy(destination, source, sizeof(salts_uuid_t));
@@ -73,7 +85,7 @@ SALTS_API const cmeta_data_buffer_shape salts_uuid_cmeta_shape = {CMETA_DATA_BUF
 SALTS_API const cmeta_data_buffer_ops salts_uuid_cmeta_buffer_ops = {
     sizeof(cmeta_data_buffer_ops), CMETA_DATA_BUFFER_OPS_ABI_VERSION, &salts_uuid_cmeta_type,
     CMETA_DATA_BUFFER_OWNED,       salts_uuid_cmeta_is_zero,          salts_uuid_cmeta_assign,
-    salts_uuid_cmeta_restore_zero, NULL};
+    salts_uuid_cmeta_restore_zero, NULL, salts_uuid_cmeta_init_zero, salts_uuid_cmeta_move};
 
 SALTS_API const cmeta_data_fixed_ops salts_uuid_cmeta_fixed_ops = {
     sizeof(cmeta_data_fixed_ops), CMETA_DATA_FIXED_OPS_ABI_VERSION, &salts_uuid_cmeta_type,
@@ -90,7 +102,8 @@ SALTS_API const cmeta_data_desc salts_uuid_cmeta_data = {sizeof(cmeta_data_desc)
                                                          &salts_uuid_cmeta_buffer_ops,
                                                          NULL,
                                                          NULL,
-                                                         &salts_uuid_cmeta_fixed_ops};
+                                                         &salts_uuid_cmeta_fixed_ops,
+                                                         NULL};
 
 SALTS_API bool salts_uuid_cmeta_data_valid(const cmeta_data_desc *candidate) {
   const cmeta_data_buffer_ops *ops = cmeta_data_buffer_ops_of(candidate);
@@ -112,8 +125,91 @@ SALTS_API bool salts_uuid_cmeta_data_valid(const cmeta_data_desc *candidate) {
          ops->is_zero == salts_uuid_cmeta_buffer_ops.is_zero &&
          ops->assign == salts_uuid_cmeta_buffer_ops.assign &&
          ops->restore_zero == salts_uuid_cmeta_buffer_ops.restore_zero &&
+         ops->init_zero == salts_uuid_cmeta_buffer_ops.init_zero &&
+         ops->move == salts_uuid_cmeta_buffer_ops.move &&
          fixed_ops->extent == sizeof(salts_uuid_t) &&
          fixed_ops->is_zero == salts_uuid_cmeta_fixed_ops.is_zero &&
          fixed_ops->copy == salts_uuid_cmeta_fixed_ops.copy &&
          fixed_ops->restore_zero == salts_uuid_cmeta_fixed_ops.restore_zero;
 }
+
+static bool salts_tstr_cmeta_is_zero(const void *object) {
+  return object != NULL && *(const tstr *)object == NULL;
+}
+
+static cmeta_status salts_tstr_cmeta_init_zero(void *object) {
+  if (object == NULL) return CMETA_INVALID_ARGUMENT;
+  *(tstr *)object = NULL;
+  return CMETA_OK;
+}
+
+static cmeta_status salts_tstr_cmeta_read(
+    const void *object, const unsigned char **out_data, size_t *out_size) {
+  const tstr value = object != NULL ? *(const tstr *)object : NULL;
+  if (object == NULL || out_data == NULL || out_size == NULL)
+    return CMETA_INVALID_ARGUMENT;
+  *out_data = (const unsigned char *)value;
+  *out_size = tstr_len(value);
+  return CMETA_OK;
+}
+
+static cmeta_status salts_tstr_cmeta_assign(
+    void *object, const unsigned char *data, size_t size, size_t max_bytes) {
+  tstr value;
+
+  if (object == NULL || (size != 0u && data == NULL))
+    return CMETA_INVALID_ARGUMENT;
+  if (size > max_bytes)
+    return CMETA_CAPACITY_EXCEEDED;
+  if (*(tstr *)object != NULL)
+    return CMETA_INVALID_ARGUMENT;
+  if (size == 0u)
+    return CMETA_OK;
+
+  value = tstr_new_len(data, size);
+  if (value == NULL)
+    return CMETA_OUT_OF_MEMORY;
+  *(tstr *)object = value;
+  return CMETA_OK;
+}
+
+static void salts_tstr_cmeta_restore_zero(void *object) {
+  if (object != NULL)
+    tstr_freep((tstr *)object);
+}
+
+static void salts_tstr_cmeta_move(void *destination, void *source) {
+  tstr *to = (tstr *)destination;
+  tstr *from = (tstr *)source;
+  if (to == NULL || from == NULL)
+    return;
+  *to = *from;
+  *from = NULL;
+}
+
+static const cmeta_type_identity salts_tstr_cmeta_identity =
+    CMETA_TYPE_ID_ATOM_INIT("salts.tstr");
+
+SALTS_API const cmeta_type_desc salts_tstr_cmeta_type = {
+    "tstr", sizeof(tstr), CMETA_ALIGNOF(tstr), CMETA_T_OBJECT,
+    NULL, NULL, &salts_tstr_cmeta_identity
+};
+
+SALTS_API const cmeta_data_buffer_shape salts_tstr_cmeta_shape = {
+    CMETA_DATA_BUFFER_OWNED
+};
+
+SALTS_API const cmeta_data_buffer_ops salts_tstr_cmeta_buffer_ops = {
+    sizeof(cmeta_data_buffer_ops), CMETA_DATA_BUFFER_OPS_ABI_VERSION,
+    &salts_tstr_cmeta_type, CMETA_DATA_BUFFER_OWNED,
+    salts_tstr_cmeta_is_zero, salts_tstr_cmeta_assign,
+    salts_tstr_cmeta_restore_zero, salts_tstr_cmeta_read,
+    salts_tstr_cmeta_init_zero, salts_tstr_cmeta_move
+};
+
+SALTS_API const cmeta_data_desc salts_tstr_cmeta_data = {
+    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
+    "salts.tstr.data", "tstr", CMETA_DATA_STRING,
+    &salts_tstr_cmeta_type, &salts_tstr_cmeta_shape,
+    &salts_tstr_cmeta_buffer_ops, NULL, NULL, NULL, NULL
+};

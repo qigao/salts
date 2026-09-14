@@ -3,7 +3,7 @@ set(TARGET_NAME salts_cmeta)
 add_library(${TARGET_NAME}
   src/cmeta.c
   src/container_type.c
-  src/data.c
+  src/data_v2.c
   src/declared_type.c
   src/entry.c
   src/infer.c
