@@ -7,6 +7,7 @@ add_library(${TARGET_NAME}
   src/instance_meta.c
   src/bplus_tree.c
   src/btree.c
+  src/byte_buffer.c
   src/deque.c
   src/hash_map.c
   src/hash_set.c
