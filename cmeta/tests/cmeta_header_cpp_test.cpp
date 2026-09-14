@@ -3,6 +3,7 @@
 #include <cmeta/cmeta.h>
 #include <cmeta/collector.h>
 #include <cmeta/data.h>
+#include "cmeta_fixed_bytes_fixture.h"
 #include <cmeta/range.h>
 #include <cmeta/meta.h>
 #include "tinytest.hpp"
@@ -138,6 +139,8 @@ static_assert(std::is_standard_layout_v<cmeta_data_buffer_ops>,
               "semantic buffer ops must remain C-compatible standard-layout types");
 static_assert(std::is_standard_layout_v<cmeta_data_fixed_ops>,
               "semantic fixed-value ops must remain a C-compatible standard-layout type");
+static_assert(sizeof(cmeta_fixed_bytes_fixture) == 6u,
+              "fixed-byte declarations preserve their explicit native extent");
 static_assert(std::is_standard_layout_v<cmeta_data_enum_ops>,
               "semantic enum ops must remain C-compatible standard-layout types");
 static_assert(std::is_standard_layout_v<cmeta_data_variant_ops>,
@@ -172,6 +175,8 @@ spec("CMeta C++ public headers") {
         &cmeta_type_int, sizeof(int), nullptr, nullptr, nullptr};
 
     check_equal(ops.extent, sizeof(int));
+    check_equal(cmeta_fixed_bytes_fixture_value_cmeta_fixed_ops.extent,
+                sizeof(cmeta_fixed_bytes_fixture));
   }
 
   it("expands enum reflection without C-style casts") {

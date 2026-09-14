@@ -1,7 +1,11 @@
 #include <cmeta/data.h>
+#include "cmeta_fixed_bytes_fixture.h"
 #include "tinytest.h"
 
 #include <stddef.h>
+
+const cmeta_data_desc *cmeta_fixed_bytes_fixture_from_peer(void);
+const cmeta_data_fixed_ops *cmeta_fixed_bytes_fixture_ops_from_peer(void);
 
 Struct(cmeta_data_test_record,
     (int, id),
@@ -370,6 +374,26 @@ static const cmeta_data_desc cmeta_data_test_variant_desc = {
 };
 
 spec("CMeta semantic data descriptors") {
+  it("declares bounded fixed bytes as canonical provider metadata") {
+    const cmeta_fixed_bytes_fixture source = {1u, 2u, 3u, 4u, 5u, 6u};
+    cmeta_fixed_bytes_fixture destination = {0};
+    const cmeta_data_desc *peer = cmeta_fixed_bytes_fixture_from_peer();
+    size_t extent = 0u;
+
+    check_true(cmeta_data_desc_valid(peer));
+    check_true(cmeta_type_equal(peer->storage_type,
+                                &cmeta_fixed_bytes_fixture_value_cmeta_type));
+    check_true(peer != &cmeta_fixed_bytes_fixture_value_cmeta_data);
+    check_true(cmeta_fixed_bytes_fixture_ops_from_peer() !=
+               &cmeta_fixed_bytes_fixture_value_cmeta_fixed_ops);
+    check_equal(cmeta_data_fixed_extent(peer, &extent), CMETA_OK);
+    check_equal(extent, sizeof(cmeta_fixed_bytes_fixture));
+    check_equal(cmeta_data_fixed_copy(peer, &destination, &source,
+                                      sizeof(source)), CMETA_OK);
+    check_equal(destination, source, sizeof(source));
+    check_equal(cmeta_data_fixed_restore_zero(peer, &destination), CMETA_OK);
+  }
+
   it("copies exact fixed native values through explicit provider authority") {
     const cmeta_data_test_fixed_storage source = {{1u, 2u, 3u, 4u}};
     cmeta_data_test_fixed_storage destination = {{0}};
