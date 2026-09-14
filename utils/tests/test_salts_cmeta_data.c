@@ -61,16 +61,15 @@ static const cmeta_data_buffer_shape borrowed_shape = {
     .ownership = CMETA_DATA_BUFFER_BORROWED
 };
 
-static const cmeta_data_desc tstr_bytes = {
-    .struct_size = sizeof(cmeta_data_desc),
-    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
-    .stable_id = "test.tstr.bytes",
-    .display_name = "tstr bytes",
-    .kind = CMETA_DATA_BYTES,
-    .storage_type = &salts_tstr_cmeta_type,
-    .shape = &owned_shape,
-    .buffer_ops = &salts_tstr_cmeta_buffer_ops
-};
+static cmeta_data_desc tstr_bytes;
+
+static void bind_tstr_bytes(void) {
+    tstr_bytes = salts_tstr_cmeta_data;
+    tstr_bytes.stable_id = "test.tstr.bytes";
+    tstr_bytes.display_name = "tstr bytes";
+    tstr_bytes.kind = CMETA_DATA_BYTES;
+    tstr_bytes.shape = &owned_shape;
+}
 
 static const cmeta_data_desc vstr_string = {
     .struct_size = sizeof(cmeta_data_desc),
@@ -84,6 +83,10 @@ static const cmeta_data_desc vstr_string = {
 };
 
 spec("Salts CMeta buffer adapters") {
+  before_each() {
+    bind_tstr_bytes();
+  }
+
   it("copies exact owned tstr bytes including embedded NUL") {
     static const unsigned char input[] = {'a', 0, 'b'};
     const unsigned char *view = NULL;
