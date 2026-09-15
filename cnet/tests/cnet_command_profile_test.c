@@ -38,8 +38,10 @@ spec("CNet command queue diagnostic profile") {
     check_equal(cnet_command_queue_profile_take(&queue, &profile), SALTS_OK);
 
     check_equal(profile.publish_calls, UINT64_C(1));
+    check_equal(profile.payload_publish_calls, UINT64_C(1));
     check_equal(profile.payload_copy_calls, UINT64_C(1));
-    check_true(profile.publish_ns >= profile.payload_copy_ns);
+    check_true(profile.publish_ns >= profile.payload_publish_ns);
+    check_true(profile.payload_publish_ns >= profile.payload_copy_ns);
     check_true(profile.payload_copy_ns > UINT64_C(0));
 
     check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
