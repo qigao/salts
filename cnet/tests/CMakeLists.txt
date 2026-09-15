@@ -41,6 +41,17 @@ set_target_properties(cnet_command_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+cmake_add_test(cnet_command_profile_test
+  SOURCES cnet_command_profile_test.c
+  LIBS salts_cnet_profile Salts::TinyTest
+  INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER "cnet/tests")
+set_target_properties(cnet_command_profile_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+  LINKER_LANGUAGE CXX)
+
 cmake_add_test(cnet_uri_test
   SOURCES cnet_uri_test.c
   LIBS salts_cnet Salts::TinyTest
