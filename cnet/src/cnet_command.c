@@ -1,6 +1,9 @@
 #include "cnet_command.h"
 
 #include <salts_buffer.h>
+#if defined(CNET_INTERNAL_PROFILING)
+  #include <salts/clock.h>
+#endif
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -41,6 +44,10 @@ typedef struct cnet_command_queue_impl {
   size_t peak_queued_bytes;
   uint64_t rejected_commands;
   uint64_t rejected_bytes;
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_command_queue_profile profile;
+  bool profile_active;
+#endif
   bool admission_open;
   bool close_complete;
 } cnet_command_queue_impl;
@@ -65,6 +72,21 @@ static void cnet_command_record_rejection(cnet_command_queue_impl *impl, size_t 
   cnet_command_saturating_add(&impl->rejected_commands, 1u);
   cnet_command_saturating_add(&impl->rejected_bytes, (uint64_t)bytes);
 }
+
+#if defined(CNET_INTERNAL_PROFILING)
+static uint64_t cnet_command_profile_start(const cnet_command_queue_impl *impl) {
+  return impl->profile_active ? salts_hrtime() : 0u;
+}
+
+static void cnet_command_profile_finish(cnet_command_queue_impl *impl, uint64_t started_ns,
+                                        uint64_t *elapsed_ns, uint64_t *calls) {
+  uint64_t elapsed;
+  if (!impl->profile_active) return;
+  elapsed = salts_hrtime() - started_ns;
+  cnet_command_saturating_add(elapsed_ns, elapsed);
+  cnet_command_saturating_add(calls, 1u);
+}
+#endif
 
 static uint32_t cnet_command_next_generation(uint32_t generation) {
   return generation == UINT32_MAX ? 1u : generation + 1u;
@@ -166,6 +188,10 @@ int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *co
   mem_buffer_t *payload = NULL;
   size_t slot;
   size_t queue_tail;
+#if defined(CNET_INTERNAL_PROFILING)
+  uint64_t publish_started;
+  uint64_t payload_copy_started = 0u;
+#endif
 
   if (impl == NULL || !cnet_command_valid(command)) return SALTS_EINVAL;
   if (command->size > impl->max_payload_bytes) {
@@ -185,6 +211,9 @@ int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *co
     cnet_command_record_rejection(impl, command->size);
     return SALTS_ENOBUFS;
   }
+#if defined(CNET_INTERNAL_PROFILING)
+  publish_started = cnet_command_profile_start(impl);
+#endif
   slot = impl->free_slots[impl->free_count - 1u];
   entry = cnet_command_entry_at(impl, slot);
   if (entry->state != CNET_COMMAND_ENTRY_FREE) return SALTS_EPROTO;
@@ -204,6 +233,9 @@ int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *co
   entry->payload = payload;
   entry->generation = cnet_command_next_generation(entry->generation);
   entry->state = CNET_COMMAND_ENTRY_QUEUED;
+#if defined(CNET_INTERNAL_PROFILING)
+  if (command->size != 0u) payload_copy_started = cnet_command_profile_start(impl);
+#endif
   if (command->segment_count != 0u) {
     size_t offset = 0u;
     for (size_t index = 0u; index < command->segment_count; ++index) {
@@ -214,6 +246,11 @@ int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *co
   } else if (command->size != 0u) {
     memcpy(mem_buffer_data(entry->payload), command->data, command->size);
   }
+#if defined(CNET_INTERNAL_PROFILING)
+  if (command->size != 0u)
+    cnet_command_profile_finish(impl, payload_copy_started, &impl->profile.payload_copy_ns,
+                                &impl->profile.payload_copy_calls);
+#endif
   if (entry->payload != NULL) mem_set_used(entry->payload, entry->size);
 
   queue_tail = (impl->queued_head + impl->queued_count) & impl->mask;
@@ -223,6 +260,10 @@ int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *co
   impl->queued_bytes += command->size;
   if (impl->peak_commands < impl->live_commands) impl->peak_commands = impl->live_commands;
   if (impl->peak_queued_bytes < impl->queued_bytes) impl->peak_queued_bytes = impl->queued_bytes;
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_command_profile_finish(impl, publish_started, &impl->profile.publish_ns,
+                              &impl->profile.publish_calls);
+#endif
   return SALTS_OK;
 }
 
@@ -301,6 +342,25 @@ bool cnet_command_queue_get_stats(const cnet_command_queue *queue,
       impl->rejected_commands, impl->rejected_bytes, impl->admission_open};
   return true;
 }
+
+#if defined(CNET_INTERNAL_PROFILING)
+int cnet_command_queue_profile_begin(cnet_command_queue *queue) {
+  cnet_command_queue_impl *impl = cnet_command_impl(queue);
+  if (impl == NULL) return SALTS_EINVAL;
+  memset(&impl->profile, 0, sizeof(impl->profile));
+  impl->profile_active = true;
+  return SALTS_OK;
+}
+
+int cnet_command_queue_profile_take(cnet_command_queue *queue,
+                                    cnet_command_queue_profile *out_profile) {
+  cnet_command_queue_impl *impl = cnet_command_impl(queue);
+  if (impl == NULL || out_profile == NULL) return SALTS_EINVAL;
+  *out_profile = impl->profile;
+  impl->profile_active = false;
+  return SALTS_OK;
+}
+#endif
 
 int cnet_command_queue_destroy(cnet_command_queue *queue) {
   cnet_command_queue_impl *impl = cnet_command_impl(queue);
