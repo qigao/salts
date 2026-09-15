@@ -51,6 +51,9 @@ set_target_properties(cnet_command_profile_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF
   LINKER_LANGUAGE CXX)
+# The release benchmark workflow explicitly builds cnet_command_test; keep its
+# diagnostic attribution contract in the same build closure.
+add_dependencies(cnet_command_test cnet_command_profile_test)
 
 cmake_add_test(cnet_uri_test
   SOURCES cnet_uri_test.c
