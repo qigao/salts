@@ -1,6 +1,6 @@
 name: Dev apply CNet direct-owner patch
 
-# Branch-only edit helper; removed before final review.
+# Branch-only edit helper; staged edits are fail-closed and this file is removed before final review.
 on:
   push:
     branches: [refactor/cnet-direct-owner-290]
