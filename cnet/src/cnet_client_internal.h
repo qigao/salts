@@ -25,6 +25,11 @@ int cnet_client_adopt_tls_server(cnet_client *client, uintptr_t native_socket,
                                  cnet_connection *out_connection);
 
 #if defined(CNET_INTERNAL_PROFILING)
+typedef enum cnet_owner_io_mode {
+  CNET_OWNER_IO_COROUTINE = 0,
+  CNET_OWNER_IO_DIRECT = 1
+} cnet_owner_io_mode;
+
 typedef struct cnet_client_poll_profile {
   cnet_owner_profile owner;
   uint64_t client_poll_ns;
@@ -42,6 +47,12 @@ typedef struct cnet_client_poll_profile {
 /** Samples internal poll-owner/client/dispatcher stages in a private diagnostic build. */
 int cnet_client_profile_begin(cnet_client *client);
 int cnet_client_profile_take(cnet_client *client, cnet_client_poll_profile *out_profile);
+
+/**
+ * Selects the execution model of a dedicated diagnostic CNet build. The
+ * installed/shared library does not expose or compile this experiment.
+ */
+int cnet_client_profile_set_owner_io_mode(cnet_client *client, cnet_owner_io_mode mode);
 #endif
 
 #endif /* CNET_CLIENT_INTERNAL_H */

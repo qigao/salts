@@ -23,3 +23,36 @@ set_target_properties(cnet_io_benchmark PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF
   LINKER_LANGUAGE CXX)
+
+# #288 matched performance runner. It deliberately does not link either CNet
+# variant: each sample dlopens/LoadLibrary's exactly one uninstrumented B0/B1
+# DSO so duplicate C symbols cannot interpose across variants.
+cmake_add_benchmark(cnet_owner_lifecycle_benchmark
+  SOURCES ../tests/cnet_owner_lifecycle_benchmark_test.c cnet_benchmark_stats.c
+  LIBS Salts::Platform Salts::NativeIO Salts::Core ${CMAKE_DL_LIBS}
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../include
+  FOLDER "cnet/benchmarks")
+add_dependencies(cnet_owner_lifecycle_benchmark
+  salts_cnet
+  salts_cnet_direct_experiment)
+set_target_properties(cnet_owner_lifecycle_benchmark PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+# The release workflow already builds cnet_io_benchmark explicitly. Keep the
+# matched B0/B1 runner in that same build closure without adding workflow-only
+# target knowledge.
+add_dependencies(cnet_io_benchmark cnet_owner_lifecycle_benchmark)
+
+if(BUILD_TESTS)
+  # The canonical release workflow runs ^cnet_.*_test$ before the full I/O
+  # benchmark. This writes B0/B1 evidence into native-io-results; the later
+  # full benchmark adds the same-job NativeIO A/A control and uploads both.
+  add_test(
+    NAME cnet_owner_lifecycle_benchmark_test
+    COMMAND $<TARGET_FILE:cnet_owner_lifecycle_benchmark>
+            $<TARGET_FILE:salts_cnet>
+            $<TARGET_FILE:salts_cnet_direct_experiment>
+            ${CMAKE_SOURCE_DIR}/native-io-results/cnet-owner-lifecycle-benchmark.md)
+endif()

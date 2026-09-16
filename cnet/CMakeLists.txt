@@ -70,6 +70,50 @@ if(BUILD_TESTS OR BUILD_BENCHMARKS)
     target_compile_definitions(salts_cnet_profile PUBLIC CNET_INTERNAL_TESTING=1)
   endif()
   set_target_properties(salts_cnet_profile PROPERTIES FOLDER "cnet/diagnostics")
+
+  # #288 is an intentionally disposable diagnostic variant. Generate one
+  # owner source from the canonical implementation and replace only the
+  # coroutine request lifecycle with direct NativeIO submit/observe/cancel.
+  set(CNET_DIRECT_OWNER_SOURCE
+      ${CMAKE_CURRENT_BINARY_DIR}/generated/cnet_owner_direct.c)
+  add_custom_command(
+    OUTPUT ${CNET_DIRECT_OWNER_SOURCE}
+    COMMAND ${CMAKE_COMMAND}
+            -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/src/cnet_owner.c
+            -DOUTPUT=${CNET_DIRECT_OWNER_SOURCE}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_direct_owner.cmake
+    DEPENDS
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/cnet_owner.c
+      ${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_direct_owner.cmake
+    VERBATIM)
+  set(CNET_DIRECT_SOURCE_FILES ${CNET_SOURCE_FILES})
+  list(REMOVE_ITEM CNET_DIRECT_SOURCE_FILES src/cnet_owner.c)
+  list(APPEND CNET_DIRECT_SOURCE_FILES
+       ${CNET_DIRECT_OWNER_SOURCE}
+       src/cnet_direct_profile_control.c)
+  add_library(salts_cnet_direct_profile STATIC ${CNET_DIRECT_SOURCE_FILES})
+  cnet_configure_target(salts_cnet_direct_profile)
+  target_compile_definitions(
+    salts_cnet_direct_profile
+    PUBLIC CNET_INTERNAL_PROFILING=1 CNET_DIRECT_OWNER_EXPERIMENT=1)
+  if(BUILD_TESTS)
+    target_compile_definitions(salts_cnet_direct_profile PUBLIC CNET_INTERNAL_TESTING=1)
+  endif()
+  set_target_properties(salts_cnet_direct_profile PROPERTIES FOLDER "cnet/diagnostics")
+
+  # Uninstrumented B1 library used only by the matched lifecycle benchmark.
+  # It intentionally has the same public ABI as salts_cnet but is neither
+  # installed nor exported. The benchmark loads B0/B1 one at a time by path.
+  set(CNET_DIRECT_RELEASE_SOURCE_FILES ${CNET_DIRECT_SOURCE_FILES})
+  list(REMOVE_ITEM CNET_DIRECT_RELEASE_SOURCE_FILES src/cnet_direct_profile_control.c)
+  add_library(salts_cnet_direct_experiment SHARED ${CNET_DIRECT_RELEASE_SOURCE_FILES})
+  cnet_configure_target(salts_cnet_direct_experiment)
+  target_compile_definitions(salts_cnet_direct_experiment PRIVATE CNET_DIRECT_OWNER_EXPERIMENT=1)
+  set_target_properties(
+    salts_cnet_direct_experiment
+    PROPERTIES
+      WINDOWS_EXPORT_ALL_SYMBOLS ON
+      FOLDER "cnet/diagnostics")
 endif()
 
 install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
