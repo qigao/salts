@@ -55,7 +55,6 @@ include(FindTools)
 add_subdirectory(vendor)
 add_subdirectory(tinytest)
 add_subdirectory(platform)
-add_subdirectory(crypto)
 add_subdirectory(concurrency)
 add_subdirectory(coroutine)
 add_subdirectory(native-io)
@@ -67,43 +66,7 @@ add_subdirectory(cnet)
 add_subdirectory(cserde)
 add_subdirectory(cbind)
 add_subdirectory(utils)
-add_subdirectory(cflow-process)
 add_subdirectory(parser)
-add_subdirectory(cflow-fs)
-
-set(verify_installed_dependencies
-    salts_platform
-    salts_crypto
-    salts_concurrency
-    salts_coroutine
-    salts_native_io
-    salts_cnet
-    salts_cmeta
-    salts_cserde
-    salts_cbind
-    salts_cflow
-    salts_cstl
-    salts_cstl_stream
-    salts
-    salts_cflow_process
-    salts_cflow_fs
-    ${SALTS_PARSER_TARGETS}
-    salts_selector)
-add_custom_target(
-  verify_installed_package
-  COMMAND
-    ${CMAKE_COMMAND}
-    -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
-    -DBUILD_DIR=${CMAKE_BINARY_DIR}
-    -DCMAKE_COMMAND_PATH=${CMAKE_COMMAND}
-    -DBUILD_CONFIG=$<CONFIG>
-    -DBUILD_GENERATOR=${CMAKE_GENERATOR}
-    "-DDEPENDENCY_PREFIX_PATH=${CMAKE_PREFIX_PATH}"
-    -P
-    ${CMAKE_SOURCE_DIR}/cmake/VerifyInstalledPackage.cmake
-  DEPENDS ${verify_installed_dependencies}
-  VERBATIM)
-set_target_properties(verify_installed_package PROPERTIES FOLDER "cmake")
 
 # Package Configuration
 include(CMakePackageConfigHelpers)

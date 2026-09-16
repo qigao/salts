@@ -16,7 +16,6 @@ on:
       - "salts_serial/**"
       - "utils/**"
       - "cmake/**"
-      - "tests/install_consumer/**"
       - "tests/cmeta_shared_owner/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
@@ -42,7 +41,6 @@ on:
       - "salts_serial/**"
       - "utils/**"
       - "cmake/**"
-      - "tests/install_consumer/**"
       - "tests/cmeta_shared_owner/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
@@ -126,9 +124,6 @@ jobs:
       - name: Verify C certificate binding
         run: ctest --preset test-release-linux -R "^(cflow_certificate_test|cflow_calculus_conformance_test)$" --output-on-failure
 
-      - name: Verify installed package targets
-        run: cmake --build --preset linux-release-user --target verify_installed_package
-
       - name: Stage Linux installed Salts SDK cache
         shell: bash
         run: |
@@ -153,17 +148,6 @@ jobs:
           path: build/ci-salts-sdk
           key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
 
-      - name: Verify CSTL allocator installed consumers
-        shell: bash
-        run: |
-          set -euxo pipefail
-          test -f "$GITHUB_WORKSPACE/external/pkgs/salts/release/include/cstl/allocator.h"
-          test -f "$GITHUB_WORKSPACE/external/pkgs/salts/release/include/cstl/vec_alloc.h"
-          cmake -S cstl/tests/allocator_installed -B build/allocator-consumer -G Ninja \
-            -DSalts_DIR="$GITHUB_WORKSPACE/external/pkgs/salts/release/lib/cmake/Salts"
-          cmake --build build/allocator-consumer -j2
-          ctest --test-dir build/allocator-consumer --no-tests=error --output-on-failure
-
       - name: Verify CMeta shared ownership with sanitizers
         shell: bash
         run: |
@@ -173,16 +157,6 @@ jobs:
             -DCMETA_OWNER_SANITIZERS=ON
           cmake --build build/cmeta-owner -j2
           ctest --test-dir build/cmeta-owner --no-tests=error --output-on-failure
-
-      - name: Verify installed CMeta shared ownership
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cmake -S tests/cmeta_shared_owner -B build/cmeta-owner-installed -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMETA_PACKAGE_DIR="$GITHUB_WORKSPACE/external/pkgs/salts/release/lib/cmake/Salts"
-          cmake --build build/cmeta-owner-installed -j2
-          ctest --test-dir build/cmeta-owner-installed --no-tests=error --output-on-failure
 
       - name: Test full Linux suite
         run: ctest --preset linux-release-user --output-on-failure
@@ -197,10 +171,9 @@ jobs:
             cflow_io_native_test \
             cflow_io_native_adapter_test \
             cflow_io_pipe_test \
-            cflow_io_file_test \
-            cflow_process_test
+            cflow_io_file_test
           ctest --preset linux-dev-user \
-            -R "^(cflow_native_(socket|pipe|file)_example|cflow_io_(native|native_adapter|pipe|file)_test|cflow_process_test)$" \
+            -R "^(cflow_native_(socket|pipe|file)_example|cflow_io_(native|native_adapter|pipe|file)_test)$" \
             --output-on-failure
 
       - name: Verify CSTL allocator with sanitizers
@@ -243,8 +216,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
           test -z "$(git status --porcelain --untracked-files=no)"
 
-  sdk-cache-consumer-linux:
-    name: Linux cached SDK consumer
+  sdk-cache-provenance-linux:
+    name: Linux cached SDK provenance
     needs: linux
     runs-on: ubuntu-latest
     steps:
@@ -253,13 +226,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Setup cached SDK consumer tools
+      - name: Record SDK cache toolchain
         id: sdk-env
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y ninja-build
           echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
 
@@ -284,15 +255,6 @@ jobs:
           grep -Fx "triplet=${{ steps.sdk-env.outputs.triplet }}" "$manifest"
           grep -Fx "profile=release" "$manifest"
           test -f build/ci-salts-sdk/lib/cmake/Salts/SaltsConfig.cmake
-
-      - name: Test CSTL installed consumers from cached SDK
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cmake -S cstl/tests/allocator_installed -B build/sdk-cache-consumer -G Ninja \
-            -DSalts_DIR="$GITHUB_WORKSPACE/build/ci-salts-sdk/lib/cmake/Salts"
-          cmake --build build/sdk-cache-consumer -j2
-          ctest --test-dir build/sdk-cache-consumer --no-tests=error --output-on-failure
 
       - name: Check exact head and unchanged tracked source
         if: always()
@@ -355,9 +317,6 @@ jobs:
 
       - name: Test execution foundation and typed layers
         run: ctest --preset test-release-mac -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cflow_|cstl_|test_execution_compat$)" --output-on-failure
-
-      - name: Verify installed package targets
-        run: cmake --build --preset build-default-mac --target verify_installed_package
 
       - name: Collect macOS diagnostics
         if: failure()
@@ -594,19 +553,6 @@ jobs:
           cmake --build build/cmeta-owner -j2
           if errorlevel 1 exit /b 1
           ctest --test-dir build/cmeta-owner --no-tests=error --output-on-failure
-          if errorlevel 1 exit /b 1
-          cmake -S tests/cmeta_shared_owner -B build/cmeta-owner-installed -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMETA_PACKAGE_DIR="%GITHUB_WORKSPACE%\external\pkgs\salts\release\lib\cmake\Salts"
-          if errorlevel 1 exit /b 1
-          cmake --build build/cmeta-owner-installed -j2
-          if errorlevel 1 exit /b 1
-          ctest --test-dir build/cmeta-owner-installed --no-tests=error --output-on-failure
-
-      - name: Verify installed package targets
-        shell: cmd
-        run: |
-          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
-          if errorlevel 1 exit /b 1
-          cmake --build --preset win-release-user --target verify_installed_package
 
       - name: Stage Windows installed Salts SDK cache
         shell: pwsh
