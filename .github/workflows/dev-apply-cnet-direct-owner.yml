@@ -1,7 +1,7 @@
 name: Dev apply CNet direct-owner patch
 
 # Branch-only edit helper; staged edits are fail-closed and this file is removed before final review.
-# Task 4 GREEN candidate is now ready for exact-head partial-resubmission verification.
+# Task 4 exact-read correction is test-only; this commit triggers the final partial-resubmission GREEN matrix.
 on:
   push:
     branches: [refactor/cnet-direct-owner-290]
