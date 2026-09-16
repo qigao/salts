@@ -106,6 +106,13 @@ int cnet_benchmark_assess_run_quality(const cnet_benchmark_summary *null_p50,
   return SALTS_OK;
 }
 
+const char *cnet_benchmark_run_quality_label(cnet_benchmark_run_quality_state state) {
+  if (state == CNET_BENCHMARK_RUN_QUALIFIED) return "qualified for performance decisions";
+  if (state == CNET_BENCHMARK_RUN_NOISE_LIMITED)
+    return "noise-limited; do not use for optimization decisions";
+  return "unknown";
+}
+
 int cnet_benchmark_attribute_send(uint64_t send_admit_ns, uint64_t send_admit_calls,
                                   uint64_t queue_publish_ns, uint64_t queue_publish_calls,
                                   uint64_t payload_copy_ns, uint64_t payload_copy_calls,
