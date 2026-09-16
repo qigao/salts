@@ -19,7 +19,7 @@ Salts 不是另一套运行时，也不会用隐式分配和无界状态隐藏�
 | Platform / Concurrency | `Salts::Platform` / `Salts::Concurrency` | 跨平台抽象、线程池、Disruptor 与调度基础设施 |
 | [Coroutine](coroutine/README.md) / [NativeIO](native-io/README.md) | `Salts::Coroutine` / `Salts::NativeIO` | 有界 coroutine 执行与原生异步 I/O |
 | [CNet](cnet/README.md) | `Salts::CNet` | 网络 transport、TLS 与 WebSocket session |
-| Parser engines | `Salts::JsonParser`、`Salts::XmlParser`、`Salts::QueryVM` 等 | JSON、YAML、TOML、XML、CSV、URI、协议解析与查询执行 |
+| URI parser | `Salts::UriParser` | CNet 与底层网络能力共享的 URI 词法/结构解析 primitive |
 | Core | `Salts::Core` | 字符串、文件、日志、正则、进程、内存与通用工具 |
 
 模块边界、依赖方向和 canonical ownership 详见 [ARCHITECTURE.md](ARCHITECTURE.md)。
@@ -33,6 +33,12 @@ Salts 本身不依赖或构建 HTTPServices。
 Crypto、CFlow 文件系统适配器与 CFlow 进程适配器由 SaltsUtils 提供，公开 target 分别为
 `Salts::Crypto`、`Salts::FS` 与 `Salts::Process`。Salts 继续拥有它们依赖的
 `Salts::Platform`、`Salts::Core`、`Salts::CFlow` 以及底层同步文件系统/进程 API。
+
+QueryVM 与 JSON、XML、YAML、CSV、INI、TLV/LTV、Modbus、SOA、DotEnv、Cmd、TOON、TOML、
+DateTime 等格式/协议 parser 也由 SaltsUtils 构建、安装并导出。它们继续使用共享的
+`Salts::` target namespace，但不再由 Salts package 导出。`Salts::UriParser` 是唯一保留在
+Salts 的 parser target，因为 `Salts::CNet` 直接依赖这一低层 URI primitive；Salts 不依赖
+SaltsUtils。
 
 ## 构建与测试
 
