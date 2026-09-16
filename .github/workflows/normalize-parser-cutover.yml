@@ -1,0 +1,61 @@
+name: Normalize parser cutover CI
+
+on:
+  push:
+    branches:
+      - migration/move-parser-capabilities
+    paths:
+      - .github/workflows/normalize-parser-cutover.yml
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: migration/move-parser-capabilities
+          fetch-depth: 0
+
+      - name: Move CI ownership from parser to UriParser
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('.github/workflows/cmeta.yml')
+          text = path.read_text()
+          parser_trigger = '      - "parser/**"\n'
+          uri_trigger = '      - "uri/**"\n'
+          count = text.count(parser_trigger)
+          if count != 2:
+              raise SystemExit(f'expected 2 parser path triggers, found {count}')
+          text = text.replace(parser_trigger, uri_trigger)
+
+          pattern = re.compile(
+              r'\n      - name: Verify XML DOM and SAX with sanitizers\n'
+              r'.*?'
+              r'(?=\n      - name: Check exact head and unchanged tracked source)',
+              re.S,
+          )
+          text, count = pattern.subn('', text)
+          if count != 1:
+              raise SystemExit(f'expected 1 XML sanitizer step, removed {count}')
+          path.write_text(text)
+          PY
+
+          ! grep -n '"parser/\*\*"' .github/workflows/cmeta.yml
+          ! grep -n 'xml_parser_test\|xml_sax_parser_test' .github/workflows/cmeta.yml
+          grep -n '"uri/\*\*"' .github/workflows/cmeta.yml
+
+          git diff --check
+          git rm .github/workflows/normalize-parser-cutover.yml
+          git add .github/workflows/cmeta.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'ci: move parser verification ownership to salts-utils'
+          git push origin HEAD:migration/move-parser-capabilities
