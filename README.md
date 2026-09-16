@@ -30,6 +30,10 @@ HTTP/RPC 分别使用 `CHttp::Client`、`CHttp::Server`，独立 S3 客户端使
 头文件迁移到各模块公开入口，消费端需要重新编译。
 Salts 本身不依赖或构建 HTTPServices。
 
+Crypto、CFlow 文件系统适配器与 CFlow 进程适配器由 SaltsUtils 提供，公开 target 分别为
+`Salts::Crypto`、`Salts::FS` 与 `Salts::Process`。Salts 继续拥有它们依赖的
+`Salts::Platform`、`Salts::Core`、`Salts::CFlow` 以及底层同步文件系统/进程 API。
+
 ## 构建与测试
 
 最低要求为 CMake 3.20、支持 C11/C++17 的编译器，以及 vcpkg。仓库 preset 使用
@@ -53,12 +57,7 @@ ctest --preset linux-release-user
 cmake --build --preset install-linux-release-user
 ```
 
-安装后的 CMake package 位于 `<prefix>/lib/cmake/Salts`。可用以下 target 验证一份
-干净安装能否被独立工程消费：
-
-```sh
-cmake --build --preset win-release-user --target verify_installed_package
-```
+安装后的 CMake package 位于 `<prefix>/lib/cmake/Salts`。
 
 ## 在 CMake 工程中使用
 
@@ -70,9 +69,6 @@ target_link_libraries(my_target PRIVATE
   Salts::CFlow
   Salts::CSTL)
 ```
-
-完整的安装包消费工程和各 target 的头文件验证见
-[tests/install_consumer](tests/install_consumer)。
 
 ## STL 接口
 
@@ -91,4 +87,3 @@ CSTL 是 Salts 内部的容器子系统名称，公开头为 `<cstl/...>` 和聚
 - [CMeta 语言与语义参考](cmeta/LANGUAGE_REFERENCE.md)
 - [CFlow 示例](cflow/examples/README.md)
 - [CSTL 类型化容器与 Stream](cstl/README.md)
-- [安装包验证工程](tests/install_consumer)
