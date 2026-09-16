@@ -43,6 +43,16 @@ static int cnet_benchmark_summarize_impl(const double *values, size_t count, boo
   return SALTS_OK;
 }
 
+static bool cnet_benchmark_u64_add(uint64_t left, uint64_t right, uint64_t *out) {
+  if (out == NULL || left > UINT64_MAX - right) return false;
+  *out = left + right;
+  return true;
+}
+
+static double cnet_benchmark_per_rt(uint64_t total_ns, size_t round_trips) {
+  return (double)total_ns / (double)round_trips;
+}
+
 int cnet_benchmark_summarize(const double *values, size_t count,
                              cnet_benchmark_summary *out_summary) {
   return cnet_benchmark_summarize_impl(values, count, true, out_summary);
@@ -91,6 +101,142 @@ int cnet_benchmark_attribute_send(uint64_t send_admit_ns, uint64_t send_admit_ca
       (double)queue_publish_ns / calls,
       (double)(queue_publish_ns - payload_copy_ns) / calls,
       (double)payload_copy_ns / calls,
+  };
+  return SALTS_OK;
+}
+
+int cnet_benchmark_attribute_fixed_control(
+    const cnet_benchmark_fixed_control_sample *sample,
+    cnet_benchmark_fixed_control_attribution *out_attribution) {
+  uint64_t owner_nested_ns;
+  uint64_t dispatcher_nested_ns;
+  uint64_t event_nested_ns;
+  uint64_t total_budget_ns;
+  uint64_t fixed_control_ns;
+  uint64_t shared_native_ns;
+  uint64_t benchmark_work_ns;
+  uint64_t accounted_ns;
+
+  uint64_t send_public_control_ns;
+  uint64_t queue_control_ns;
+  uint64_t client_poll_wrapper_ns;
+  uint64_t owner_control_ns;
+  uint64_t request_control_ns;
+  uint64_t native_observe_residual_ns;
+  uint64_t completion_control_ns;
+  uint64_t event_publish_residual_ns;
+  uint64_t dispatcher_invoke_framework_ns;
+  uint64_t client_observer_control_ns;
+  uint64_t benchmark_callback_residual_ns;
+
+  if (sample == NULL || out_attribution == NULL || sample->round_trips == 0u)
+    return SALTS_EINVAL;
+
+  if (sample->send_admit_ns < sample->queue_publish_ns ||
+      sample->queue_publish_ns < sample->payload_copy_ns ||
+      sample->client_poll_ns < sample->owner_drive_ns ||
+      sample->request_lifecycle_ns < sample->request_start_ns ||
+      sample->observe_ns < sample->request_completion_ns ||
+      sample->request_completion_ns < sample->event_publish_ns ||
+      sample->dispatcher_observer_ns < sample->benchmark_callback_ns ||
+      sample->benchmark_callback_ns < sample->benchmark_payload_check_ns)
+    return SALTS_ERANGE;
+
+  if (!cnet_benchmark_u64_add(sample->request_lifecycle_ns, sample->observe_ns,
+                              &owner_nested_ns) ||
+      sample->owner_drive_ns < owner_nested_ns)
+    return SALTS_ERANGE;
+
+  if (!cnet_benchmark_u64_add(sample->dispatcher_observer_ns, sample->dispatcher_release_ns,
+                              &dispatcher_nested_ns) ||
+      sample->dispatcher_invoke_ns < dispatcher_nested_ns)
+    return SALTS_ERANGE;
+
+  if (!cnet_benchmark_u64_add(sample->dispatcher_prepare_ns, sample->dispatcher_invoke_ns,
+                              &event_nested_ns) ||
+      sample->event_publish_ns < event_nested_ns)
+    return SALTS_ERANGE;
+
+  send_public_control_ns = sample->send_admit_ns - sample->queue_publish_ns;
+  queue_control_ns = sample->queue_publish_ns - sample->payload_copy_ns;
+  client_poll_wrapper_ns = sample->client_poll_ns - sample->owner_drive_ns;
+  owner_control_ns = sample->owner_drive_ns - owner_nested_ns;
+  request_control_ns = sample->request_lifecycle_ns - sample->request_start_ns;
+  native_observe_residual_ns = sample->observe_ns - sample->request_completion_ns;
+  completion_control_ns = sample->request_completion_ns - sample->event_publish_ns;
+  event_publish_residual_ns = sample->event_publish_ns - event_nested_ns;
+  dispatcher_invoke_framework_ns = sample->dispatcher_invoke_ns - dispatcher_nested_ns;
+  client_observer_control_ns = sample->dispatcher_observer_ns - sample->benchmark_callback_ns;
+  benchmark_callback_residual_ns =
+      sample->benchmark_callback_ns - sample->benchmark_payload_check_ns;
+
+  fixed_control_ns = 0u;
+#define CNET_FIXED_ADD(value)                                                        \
+  do {                                                                               \
+    uint64_t next_fixed = 0u;                                                        \
+    if (!cnet_benchmark_u64_add(fixed_control_ns, (value), &next_fixed))            \
+      return SALTS_ERANGE;                                                           \
+    fixed_control_ns = next_fixed;                                                   \
+  } while (0)
+  CNET_FIXED_ADD(send_public_control_ns);
+  CNET_FIXED_ADD(queue_control_ns);
+  CNET_FIXED_ADD(client_poll_wrapper_ns);
+  CNET_FIXED_ADD(owner_control_ns);
+  CNET_FIXED_ADD(request_control_ns);
+  CNET_FIXED_ADD(completion_control_ns);
+  CNET_FIXED_ADD(event_publish_residual_ns);
+  CNET_FIXED_ADD(sample->dispatcher_prepare_ns);
+  CNET_FIXED_ADD(dispatcher_invoke_framework_ns);
+  CNET_FIXED_ADD(client_observer_control_ns);
+  CNET_FIXED_ADD(sample->dispatcher_release_ns);
+#undef CNET_FIXED_ADD
+
+  if (!cnet_benchmark_u64_add(sample->request_start_ns, native_observe_residual_ns,
+                              &shared_native_ns) ||
+      !cnet_benchmark_u64_add(sample->benchmark_payload_check_ns,
+                              benchmark_callback_residual_ns, &benchmark_work_ns) ||
+      !cnet_benchmark_u64_add(sample->send_admit_ns, sample->client_poll_ns,
+                              &total_budget_ns))
+    return SALTS_ERANGE;
+
+  accounted_ns = 0u;
+  if (!cnet_benchmark_u64_add(fixed_control_ns, shared_native_ns, &accounted_ns) ||
+      !cnet_benchmark_u64_add(accounted_ns, sample->payload_copy_ns, &accounted_ns) ||
+      !cnet_benchmark_u64_add(accounted_ns, benchmark_work_ns, &accounted_ns) ||
+      accounted_ns > total_budget_ns)
+    return SALTS_ERANGE;
+
+  *out_attribution = (cnet_benchmark_fixed_control_attribution){
+      .total_budget_ns = cnet_benchmark_per_rt(total_budget_ns, sample->round_trips),
+      .send_public_control_ns = cnet_benchmark_per_rt(send_public_control_ns, sample->round_trips),
+      .queue_control_ns = cnet_benchmark_per_rt(queue_control_ns, sample->round_trips),
+      .payload_copy_ns = cnet_benchmark_per_rt(sample->payload_copy_ns, sample->round_trips),
+      .client_poll_wrapper_ns = cnet_benchmark_per_rt(client_poll_wrapper_ns, sample->round_trips),
+      .owner_control_ns = cnet_benchmark_per_rt(owner_control_ns, sample->round_trips),
+      .request_control_ns = cnet_benchmark_per_rt(request_control_ns, sample->round_trips),
+      .native_request_start_ns = cnet_benchmark_per_rt(sample->request_start_ns, sample->round_trips),
+      .native_observe_residual_ns =
+          cnet_benchmark_per_rt(native_observe_residual_ns, sample->round_trips),
+      .completion_control_ns = cnet_benchmark_per_rt(completion_control_ns, sample->round_trips),
+      .event_publish_residual_ns =
+          cnet_benchmark_per_rt(event_publish_residual_ns, sample->round_trips),
+      .dispatcher_prepare_ns =
+          cnet_benchmark_per_rt(sample->dispatcher_prepare_ns, sample->round_trips),
+      .dispatcher_invoke_framework_ns =
+          cnet_benchmark_per_rt(dispatcher_invoke_framework_ns, sample->round_trips),
+      .client_observer_control_ns =
+          cnet_benchmark_per_rt(client_observer_control_ns, sample->round_trips),
+      .dispatcher_release_ns =
+          cnet_benchmark_per_rt(sample->dispatcher_release_ns, sample->round_trips),
+      .benchmark_payload_check_ns =
+          cnet_benchmark_per_rt(sample->benchmark_payload_check_ns, sample->round_trips),
+      .benchmark_callback_residual_ns =
+          cnet_benchmark_per_rt(benchmark_callback_residual_ns, sample->round_trips),
+      .fixed_control_total_ns = cnet_benchmark_per_rt(fixed_control_ns, sample->round_trips),
+      .shared_native_total_ns = cnet_benchmark_per_rt(shared_native_ns, sample->round_trips),
+      .benchmark_work_total_ns = cnet_benchmark_per_rt(benchmark_work_ns, sample->round_trips),
+      .closure_residual_ns =
+          cnet_benchmark_per_rt(total_budget_ns - accounted_ns, sample->round_trips),
   };
   return SALTS_OK;
 }
