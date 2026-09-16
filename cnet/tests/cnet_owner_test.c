@@ -234,7 +234,9 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
 #endif
 #if defined(CNET_INTERNAL_PROFILING)
   cnet_owner_profile receive_profile = {0};
+  cnet_owner_profile send_profile = {0};
   const bool profile_suspended_receive = timeout == CNET_OWNER_TEST_NO_TIMEOUT && !resolve_host;
+  const bool profile_partial_send = timeout == CNET_OWNER_TEST_NO_TIMEOUT && !resolve_host;
 #endif
   unsigned char received[sizeof(payload)] = {0};
   size_t event_index;
@@ -400,6 +402,12 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
       clock.now_ms = 100u;
       clock.next_ms = 111u;
     }
+#if defined(CNET_INTERNAL_PROFILING) && defined(CNET_INTERNAL_TESTING)
+    if (profile_partial_send) {
+      check_equal(cnet_owner_test_set_send_chunk_bytes(&owner, 1u), SALTS_OK);
+      check_equal(cnet_owner_profile_begin(&owner), SALTS_OK);
+    }
+#endif
     command = (cnet_command){timeout == CNET_OWNER_TEST_WRITE_TIMEOUT ? CNET_COMMAND_SEND_CLOSE
                                                                       : CNET_COMMAND_SEND,
                              session, payload, sizeof(payload), 0u};
@@ -416,6 +424,15 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
       check_equal(event.kind, CNET_EVENT_SEND);
       check_equal(event.argument, sizeof(payload));
       check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+#if defined(CNET_INTERNAL_PROFILING) && defined(CNET_INTERNAL_TESTING)
+      if (profile_partial_send) {
+        check_equal(cnet_owner_profile_take(&owner, &send_profile), SALTS_OK);
+        check_equal(send_profile.request_start_calls, UINT64_C(1));
+        check_equal(send_profile.request_resubmit_calls, UINT64_C(3));
+        check_equal(send_profile.request_completion_calls, UINT64_C(1));
+        check_equal(cnet_owner_test_set_send_chunk_bytes(&owner, 0u), SALTS_OK);
+      }
+#endif
 
       command = (cnet_command){CNET_COMMAND_CLOSE, session, NULL, 0u, 0u};
       check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
