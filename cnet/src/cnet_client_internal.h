@@ -9,6 +9,7 @@
 #include "cnet_owner.h"
 #endif
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /** Consumes one connected TCP socket, closing it on immediate admission failure. */
@@ -38,6 +39,9 @@ typedef struct cnet_client_poll_profile {
   uint64_t dispatcher_release_ns;
   uint64_t dispatcher_release_calls;
 } cnet_client_poll_profile;
+
+/** Selects the private benchmark-only dispatcher-bypass mode before admission. */
+int cnet_client_set_diagnostic_direct_dispatch(cnet_client *client, bool enabled);
 
 /** Samples internal poll-owner/client/dispatcher stages in a private diagnostic build. */
 int cnet_client_profile_begin(cnet_client *client);
