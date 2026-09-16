@@ -17,7 +17,7 @@ target_include_directories(
   log_pattern_lexer PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
                            $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
 find_path(SIMDE_INCLUDE_DIRS "simde/x86/sse2.h" REQUIRED)
-target_include_directories(log_pattern_lexer PRIVATE ${PROJECT_SOURCE_DIR}/parser ${SIMDE_INCLUDE_DIRS})
+target_include_directories(log_pattern_lexer PRIVATE ${SIMDE_INCLUDE_DIRS})
 target_link_libraries(log_pattern_lexer PRIVATE Salts::Platform)
 
 # Export for parent
@@ -48,7 +48,7 @@ cmake_config_target(fmt_lexer
 target_include_directories(
   fmt_lexer PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
                    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
-target_include_directories(fmt_lexer PRIVATE ${PROJECT_SOURCE_DIR}/parser ${SIMDE_INCLUDE_DIRS})
+target_include_directories(fmt_lexer PRIVATE ${SIMDE_INCLUDE_DIRS})
 target_link_libraries(fmt_lexer
   PUBLIC Salts::CMeta
   PRIVATE Salts::Platform Salts::Concurrency)
