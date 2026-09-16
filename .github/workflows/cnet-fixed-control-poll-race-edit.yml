@@ -1,0 +1,31 @@
+name: CNet poll-profile race edit
+
+on:
+  push:
+    branches:
+      - perf/cnet-fixed-control-attribution-270
+    paths:
+      - .github/workflows/cnet-fixed-control-poll-race-edit.yml
+
+permissions:
+  contents: write
+
+jobs:
+  edit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: perf/cnet-fixed-control-attribution-270
+      - name: Apply poll profile ordering fix
+        run: |
+          python3 .github/scripts/cnet_fixed_control_poll_race_edit.py
+          git diff --check
+          git diff -- cnet/src/cnet_client.c
+      - name: Commit poll profile ordering fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add cnet/src/cnet_client.c
+          git commit -m 'fix(cnet): serialize poll profile completion'
+          git push origin HEAD:perf/cnet-fixed-control-attribution-270
