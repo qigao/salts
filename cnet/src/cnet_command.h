@@ -29,6 +29,23 @@ typedef struct cnet_command_queue_stats {
   bool admission_open;
 } cnet_command_queue_stats;
 
+#if defined(CNET_INTERNAL_PROFILING)
+/**
+ * Inclusive command-publication timing collected only during an explicit
+ * diagnostic sample. `publish_ns` covers every successful command;
+ * `payload_publish_ns` covers successful payload-bearing commands and includes
+ * `payload_copy_ns`.
+ */
+typedef struct cnet_command_queue_profile {
+  uint64_t publish_ns;
+  uint64_t payload_publish_ns;
+  uint64_t payload_copy_ns;
+  uint64_t publish_calls;
+  uint64_t payload_publish_calls;
+  uint64_t payload_copy_calls;
+} cnet_command_queue_profile;
+#endif
+
 typedef enum cnet_command_kind {
   CNET_COMMAND_NONE = 0,
   CNET_COMMAND_CONNECT,
@@ -86,6 +103,14 @@ int cnet_command_queue_close(cnet_command_queue *queue);
 /** Returns one owner-thread diagnostic snapshot. */
 bool cnet_command_queue_get_stats(const cnet_command_queue *queue,
                                   cnet_command_queue_stats *out_stats);
+
+#if defined(CNET_INTERNAL_PROFILING)
+/** Starts one diagnostic sample and clears the previous sample. */
+int cnet_command_queue_profile_begin(cnet_command_queue *queue);
+/** Takes the current diagnostic sample and disables command profiling. */
+int cnet_command_queue_profile_take(cnet_command_queue *queue,
+                                    cnet_command_queue_profile *out_profile);
+#endif
 
 /** Requires closed admission, no borrowed view, and a fully drained queue. */
 int cnet_command_queue_destroy(cnet_command_queue *queue);

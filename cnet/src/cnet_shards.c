@@ -194,14 +194,36 @@ int cnet_shards_poll(cnet_shards *shards, uint32_t timeout_ms) {
 #if defined(CNET_INTERNAL_PROFILING)
 int cnet_shards_profile_begin(cnet_shards *shards) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_command_queue_profile command_profile = {0};
+  int status;
   if (impl == NULL || impl->stopping || impl->stopped) return SALTS_EINVAL;
-  return cnet_owner_profile_begin(&impl->records[0].owner);
+  status = cnet_command_queue_profile_begin(&impl->records[0].commands);
+  if (status != SALTS_OK) return status;
+  status = cnet_owner_profile_begin(&impl->records[0].owner);
+  if (status != SALTS_OK)
+    (void)cnet_command_queue_profile_take(&impl->records[0].commands, &command_profile);
+  return status;
 }
 
 int cnet_shards_profile_take(cnet_shards *shards, cnet_owner_profile *out_profile) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_command_queue_profile command_profile = {0};
+  int status;
   if (impl == NULL || out_profile == NULL) return SALTS_EINVAL;
-  return cnet_owner_profile_take(&impl->records[0].owner, out_profile);
+  status = cnet_owner_profile_take(&impl->records[0].owner, out_profile);
+  if (status != SALTS_OK) {
+    (void)cnet_command_queue_profile_take(&impl->records[0].commands, &command_profile);
+    return status;
+  }
+  status = cnet_command_queue_profile_take(&impl->records[0].commands, &command_profile);
+  if (status != SALTS_OK) return status;
+  out_profile->command_queue_publish_ns = command_profile.publish_ns;
+  out_profile->command_queue_payload_publish_ns = command_profile.payload_publish_ns;
+  out_profile->command_queue_payload_copy_ns = command_profile.payload_copy_ns;
+  out_profile->command_queue_publish_calls = command_profile.publish_calls;
+  out_profile->command_queue_payload_publish_calls = command_profile.payload_publish_calls;
+  out_profile->command_queue_payload_copy_calls = command_profile.payload_copy_calls;
+  return SALTS_OK;
 }
 #endif
 

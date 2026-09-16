@@ -68,7 +68,7 @@ typedef struct cnet_owner_config {
 } cnet_owner_config;
 
 #if defined(CNET_INTERNAL_PROFILING)
-/** Inclusive owner-stage timings collected only during an explicit diagnostic sample. */
+/** Diagnostic timings collected only during an explicit quiescent sample. */
 typedef struct cnet_owner_profile {
   uint64_t owner_drive_ns;
   uint64_t receive_rearm_stage_ns;
@@ -90,6 +90,13 @@ typedef struct cnet_owner_profile {
   uint64_t observe_calls;
   uint64_t request_completion_calls;
   uint64_t event_publish_calls;
+  /** Producer-side command queue timing; payload publish includes payload copy. */
+  uint64_t command_queue_publish_ns;
+  uint64_t command_queue_payload_publish_ns;
+  uint64_t command_queue_payload_copy_ns;
+  uint64_t command_queue_publish_calls;
+  uint64_t command_queue_payload_publish_calls;
+  uint64_t command_queue_payload_copy_calls;
 } cnet_owner_profile;
 #endif
 
