@@ -23,11 +23,40 @@ spec("CNet benchmark paired statistics") {
     check_equal(summary.mad, 10.0);
   }
 
+  it("separates send admission into exclusive producer-side stages") {
+    cnet_benchmark_send_attribution attribution = {0};
+
+    check_equal(cnet_benchmark_attribute_send(1000u, 2u, 600u, 2u, 400u, 2u, &attribution),
+                SALTS_OK);
+    check_equal(attribution.send_admit_ns, 500.0);
+    check_equal(attribution.public_control_ns, 200.0);
+    check_equal(attribution.queue_publish_ns, 300.0);
+    check_equal(attribution.queue_staging_control_ns, 100.0);
+    check_equal(attribution.payload_copy_ns, 200.0);
+  }
+
+  it("rejects inconsistent send attribution samples") {
+    cnet_benchmark_send_attribution attribution = {0};
+
+    check_equal(cnet_benchmark_attribute_send(1000u, 2u, 600u, 1u, 400u, 2u, &attribution),
+                SALTS_ERANGE);
+    check_equal(cnet_benchmark_attribute_send(500u, 1u, 600u, 1u, 400u, 1u, &attribution),
+                SALTS_ERANGE);
+    check_equal(cnet_benchmark_attribute_send(1000u, 1u, 600u, 1u, 700u, 1u, &attribution),
+                SALTS_ERANGE);
+  }
+
   it("rejects invalid or non-finite samples") {
     const double invalid[] = {1.0, 0.0};
     cnet_benchmark_summary summary = {0};
 
     check_equal(cnet_benchmark_summarize(NULL, 1u, &summary), SALTS_EINVAL);
     check_equal(cnet_benchmark_summarize(invalid, 2u, &summary), SALTS_ERANGE);
+    check_equal(cnet_benchmark_attribute_send(1u, 1u, 1u, 1u, 1u, 1u, NULL), SALTS_EINVAL);
+    {
+      cnet_benchmark_send_attribution attribution = {0};
+      check_equal(cnet_benchmark_attribute_send(1u, 0u, 1u, 1u, 1u, 1u, &attribution),
+                  SALTS_EINVAL);
+    }
   }
 }
