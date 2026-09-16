@@ -713,7 +713,10 @@ int main(int argc, char **argv) {
     cnet_benchmark_summary summary = {0};
     if (cnet_benchmark_summarize_paired_delta(baseline, candidate, 5u, &summary) != SALTS_OK)
       return 1;
-    return summary.median == -3.0 ? 0 : 1;
+    {
+      const double error = summary.median + 3.0;
+      return error >= -1e-12 && error <= 1e-12 ? 0 : 1;
+    }
   }
   if (argc != 4) {
     fprintf(stderr,
