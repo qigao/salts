@@ -25,6 +25,17 @@ typedef struct cnet_benchmark_send_attribution {
   double payload_copy_ns;
 } cnet_benchmark_send_attribution;
 
+/**
+ * Additive attribution of exclusive fixed-control leaves inside one separately
+ * measured control envelope. `residual_ns` is whatever part of the envelope is
+ * not explained by the supplied non-overlapping leaves.
+ */
+typedef struct cnet_benchmark_fixed_control_attribution {
+  double control_envelope_ns;
+  double accounted_control_ns;
+  double residual_ns;
+} cnet_benchmark_fixed_control_attribution;
+
 int cnet_benchmark_summarize(const double *values, size_t count,
                              cnet_benchmark_summary *out_summary);
 int cnet_benchmark_summarize_paired_delta(const double *baseline, const double *candidate,
@@ -34,5 +45,12 @@ int cnet_benchmark_attribute_send(uint64_t send_admit_ns, uint64_t send_admit_ca
                                   uint64_t queue_publish_ns, uint64_t queue_publish_calls,
                                   uint64_t payload_copy_ns, uint64_t payload_copy_calls,
                                   cnet_benchmark_send_attribution *out_attribution);
+
+int cnet_benchmark_attribute_fixed_control(
+    double control_envelope_ns, double public_admission_control_ns,
+    double queue_staging_control_ns, double poll_control_ns, double receive_rearm_control_ns,
+    double command_control_ns, double owner_residual_ns, double request_control_ns,
+    double completion_control_ns, double event_and_callback_control_ns,
+    cnet_benchmark_fixed_control_attribution *out_attribution);
 
 #endif
