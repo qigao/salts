@@ -4,7 +4,7 @@
 
 **Goal:** Accelerate every native GitHub Actions build with a shared ABI-scoped vcpkg binary cache and make exact-head Linux/Windows installed Salts SDKs reusable by independent consumer checks without weakening source or benchmark provenance.
 
-**Architecture:** `cmeta.yml` and `native-io-release-benchmarks.yml` share one vcpkg binary-cache key convention so compatible native jobs can reuse dependency packages across workflows and Salts commits. `cmeta.yml` additionally publishes exact-SHA Linux/Windows Release SDK caches for consumer-only jobs; current-source conformance, sanitizer, and benchmark jobs always compile Salts from the checked-out head. A small Linux installed-consumer probe restores the SDK cache after the provider job and proves that cached Salts remains a usable `find_package(Salts CONFIG REQUIRED)` package.
+**Architecture:** `cmeta.yml` and `native-io-release-benchmarks.yml` share one vcpkg binary-cache key convention so compatible native jobs can reuse dependency packages across workflows and Salts commits. `cmeta.yml` additionally publishes exact-SHA Linux/Windows Release SDK caches for consumer-only jobs; current-source conformance, sanitizer, and benchmark jobs always compile Salts from the checked-out head. A small Linux installed-consumer job restores the SDK cache after the provider job and proves that cached Salts remains a usable `find_package(Salts CONFIG REQUIRED)` package.
 
 **Tech Stack:** GitHub Actions, `actions/cache@v4`, `actions/cache/save@v4`, `actions/cache/restore@v4`, vcpkg manifest binary caching, CMake presets, Ninja, CTest.
 
@@ -38,17 +38,15 @@
 
 - [ ] **Step 1: Record the cache coverage RED**
 
-Run against the implementation branch:
-
 ```bash
 rg -n "vcpkg-binary-v2|VCPKG_BINARY_SOURCES" .github/workflows/cmeta.yml
 ```
 
-Expected: only the pre-existing Windows binary-cache implementation is present and it uses the old key/fingerprint.
+Expected: only the pre-existing Windows `VCPKG_BINARY_SOURCES` implementation is present; no `vcpkg-binary-v2` key exists.
 
 - [ ] **Step 2: Add Linux ABI identity and binary-cache environment**
 
-Give `Setup re2c and vcpkg` the id `linux-env`. After resolving `VCPKG_ROOT`, add:
+Give `Setup re2c and vcpkg` the id `linux-env`. After resolving `VCPKG_ROOT`, append:
 
 ```bash
 binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
@@ -70,13 +68,16 @@ Immediately after setup add:
           key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-
+
+      - name: Report Linux vcpkg cache state
+        run: echo "vcpkg cache hit=${{ steps.linux-vcpkg-cache.outputs.cache-hit }}"
 ```
 
 Do not cache `vcpkg_installed` or any CMake build directory.
 
 - [ ] **Step 3: Add macOS ABI identity and binary-cache environment**
 
-Give `Setup re2c and vcpkg` the id `macos-env`. Preserve the existing `VCPKG_ROOT` resolution and add:
+Give macOS `Setup re2c and vcpkg` the id `macos-env`. Preserve the existing `VCPKG_ROOT` resolution, then append:
 
 ```bash
 binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
@@ -98,31 +99,43 @@ Then add:
           key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-
+
+      - name: Report macOS vcpkg cache state
+        run: echo "vcpkg cache hit=${{ steps.macos-vcpkg-cache.outputs.cache-hit }}"
 ```
 
-`default-osx-${RUNNER_ARCH}` intentionally represents the host-derived default vcpkg triplet used by the existing macOS preset without changing that preset.
+`default-osx-${RUNNER_ARCH}` names the host-derived default vcpkg target without changing the existing macOS preset.
 
 - [ ] **Step 4: Strengthen the existing Windows key**
 
-Keep `Setup Windows build environment` and its binary-cache directory. Add:
+In `Setup Windows build environment`, keep the existing binary-cache directory and add:
 
 ```powershell
 "triplet=x64-windows" >> $env:GITHUB_OUTPUT
 ```
 
-Replace the cache key with:
+Replace the current cache block with:
 
 ```yaml
+      - name: Restore Windows vcpkg binary cache
+        id: windows-vcpkg-cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
           key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-
+
+      - name: Report Windows vcpkg cache state
+        shell: pwsh
+        run: Write-Host "vcpkg cache hit=${{ steps.windows-vcpkg-cache.outputs.cache-hit }}"
 ```
 
-Delete the broader old restore prefix that stopped at OS/arch.
+Delete the old broader restore prefix that stopped at OS/arch.
 
 - [ ] **Step 5: Add Android ABI identity and binary-cache environment**
 
-Give `Setup re2c and validate toolchains` the id `android-env`. After validating `ANDROID_NDK_HOME`, add:
+Give `Setup re2c and validate toolchains` the id `android-env`. After validating `ANDROID_NDK_HOME`, append:
 
 ```bash
 binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
@@ -147,20 +160,12 @@ Then add:
           key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-
+
+      - name: Report Android vcpkg cache state
+        run: echo "vcpkg cache hit=${{ steps.android-vcpkg-cache.outputs.cache-hit }}"
 ```
 
-- [ ] **Step 6: Make hit/miss visible without changing behavior**
-
-After each cache step add a one-line platform-specific log step. Example:
-
-```yaml
-      - name: Report Linux vcpkg cache state
-        run: echo "vcpkg cache hit=${{ steps.linux-vcpkg-cache.outputs.cache-hit }}"
-```
-
-Repeat for macOS, Windows, and Android using their cache-step ids. Do not branch test execution on `cache-hit`.
-
-- [ ] **Step 7: Validate and commit**
+- [ ] **Step 6: Validate and commit**
 
 ```bash
 rg -n "vcpkg-binary-v2|VCPKG_BINARY_SOURCES|cache hit=" .github/workflows/cmeta.yml
@@ -169,9 +174,9 @@ git add .github/workflows/cmeta.yml
 git commit -m "ci: share vcpkg binary caches across native conformance"
 ```
 
-- [ ] **Step 8: Verify exact-head GREEN**
+- [ ] **Step 7: Verify exact-head GREEN**
 
-Require the `CMeta conformance` workflow to remain green on Linux/macOS/Windows/Android. A first run may report misses. Confirm each native job logs its vcpkg cache state and still executes its existing build/tests.
+Require `CMeta conformance` to remain green on Linux/macOS/Windows/Android. A first run may report misses. Each native job must log its cache state and still execute configure/build/tests.
 
 ---
 
@@ -181,7 +186,7 @@ Require the `CMeta conformance` workflow to remain green on Linux/macOS/Windows/
 - Modify: `.github/workflows/native-io-release-benchmarks.yml`
 
 **Interfaces:**
-- Consumes: the same dependency fingerprint and ABI naming convention from Task C1.
+- Consumes: the key convention from C1.
 - Produces: dependency cache reuse without changing benchmark executable provenance or benchmark protocol.
 
 - [ ] **Step 1: Record the benchmark cache RED**
@@ -190,29 +195,110 @@ Require the `CMeta conformance` workflow to remain green on Linux/macOS/Windows/
 rg -n "vcpkg-binary-v2|VCPKG_BINARY_SOURCES" .github/workflows/native-io-release-benchmarks.yml
 ```
 
-Expected: only the older Windows-only cache exists.
+Expected: only the old Windows cache exists.
 
 - [ ] **Step 2: Add Linux cache setup and restore**
 
-Extend `Setup Linux dependencies` with the same `build/vcpkg-binary-cache`, `VCPKG_BINARY_SOURCES`, image output, and `x64-linux` triplet used by Task C1. Give the step id `linux-env`, then add `actions/cache@v4` using exactly the Task C1 Linux key and restore prefix.
+Give `Setup Linux dependencies` id `linux-env` and append:
+
+```bash
+binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
+mkdir -p "$binary_cache"
+echo "VCPKG_BINARY_CACHE=$binary_cache" >> "$GITHUB_ENV"
+echo "VCPKG_BINARY_SOURCES=clear;files,$binary_cache,readwrite" >> "$GITHUB_ENV"
+echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
+```
+
+Add immediately after it:
+
+```yaml
+      - name: Restore Linux vcpkg binary cache
+        if: matrix.family == 'linux'
+        id: linux-vcpkg-cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          restore-keys: |
+            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-
+
+      - name: Report Linux vcpkg cache state
+        if: matrix.family == 'linux'
+        shell: bash
+        run: echo "vcpkg cache hit=${{ steps.linux-vcpkg-cache.outputs.cache-hit }}"
+```
 
 - [ ] **Step 3: Add macOS cache setup and restore**
 
-Extend `Setup macOS dependencies` with the same repository-local binary cache and `default-osx-${RUNNER_ARCH}` identity from Task C1. Give the step id `macos-env`, then add the same macOS key convention.
+Give `Setup macOS dependencies` id `macos-env` and append after the existing `VCPKG_ROOT` resolution:
+
+```bash
+binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
+mkdir -p "$binary_cache"
+echo "VCPKG_BINARY_CACHE=$binary_cache" >> "$GITHUB_ENV"
+echo "VCPKG_BINARY_SOURCES=clear;files,$binary_cache,readwrite" >> "$GITHUB_ENV"
+echo "image=${ImageOS:-macos}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
+```
+
+Add:
+
+```yaml
+      - name: Restore macOS vcpkg binary cache
+        if: matrix.family == 'mac'
+        id: macos-vcpkg-cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          restore-keys: |
+            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-
+
+      - name: Report macOS vcpkg cache state
+        if: matrix.family == 'mac'
+        shell: bash
+        run: echo "vcpkg cache hit=${{ steps.macos-vcpkg-cache.outputs.cache-hit }}"
+```
 
 - [ ] **Step 4: Upgrade Windows benchmark cache key**
 
-Add `triplet=x64-windows` to `windows-env` outputs and replace its current key/fallback with the Task C1 Windows `vcpkg-binary-v2` convention. The `windows-2022` runner image remains naturally isolated from `cmeta.yml` when the image identity differs.
+In `Setup Windows build environment`, add:
 
-- [ ] **Step 5: Report cache state and preserve benchmark provenance**
-
-Add cache-state log steps for each matrix family. Do not condition configure/build/contract tests/benchmark execution on a cache hit. Keep benchmark metadata using:
-
-```yaml
-BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+```powershell
+"triplet=x64-windows" >> $env:GITHUB_OUTPUT
 ```
 
-and keep compiling `cnet_io_benchmark` plus profile targets from the checked-out source.
+Replace the current Windows cache block with:
+
+```yaml
+      - name: Restore Windows vcpkg binary cache
+        if: matrix.family == 'windows'
+        id: windows-vcpkg-cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          restore-keys: |
+            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-
+
+      - name: Report Windows vcpkg cache state
+        if: matrix.family == 'windows'
+        shell: pwsh
+        run: Write-Host "vcpkg cache hit=${{ steps.windows-vcpkg-cache.outputs.cache-hit }}"
+```
+
+The `windows-2022` benchmark runner remains isolated from `windows-latest` conformance if image identity differs.
+
+- [ ] **Step 5: Preserve benchmark provenance**
+
+Do not condition configure/build/contract tests/benchmark execution on a cache hit. Keep:
+
+```yaml
+          BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+```
+
+and keep compiling `cnet_io_benchmark`, NativeIO tests, and CNet/profile tests from the checked-out source.
 
 - [ ] **Step 6: Validate and commit**
 
@@ -225,7 +311,7 @@ git commit -m "ci(perf): reuse native vcpkg binary cache"
 
 - [ ] **Step 7: Verify four-platform benchmark GREEN**
 
-Require epoll, io_uring, kqueue, and IOCP exact-head build/contracts/benchmark/artifact success. Confirm benchmark metadata still reports the PR head SHA. Cache state is build evidence only and must not alter the IOCP run-quality decision.
+Require epoll, io_uring, kqueue, and IOCP exact-head build/contracts/benchmark/artifact success. Benchmark metadata must still report the PR head SHA. Cache state is build evidence only and must not alter the IOCP run-quality decision.
 
 ---
 
@@ -235,8 +321,8 @@ Require epoll, io_uring, kqueue, and IOCP exact-head build/contracts/benchmark/a
 - Modify: `.github/workflows/cmeta.yml`
 
 **Interfaces:**
-- Consumes: canonical Release installs already produced by Linux and Windows jobs at `external/pkgs/salts/release`.
-- Produces: immutable cache namespace `salts-sdk-v1-<os>-<arch>-<image>-<triplet>-release-<exact-sha>-<dependency-hash>`.
+- Consumes: canonical Release installs already produced at `external/pkgs/salts/release`.
+- Produces: `salts-sdk-v1-<os>-<arch>-<image>-<triplet>-release-<exact-sha>-<dependency-hash>`.
 
 - [ ] **Step 1: Record the SDK-cache RED**
 
@@ -268,11 +354,7 @@ After `Verify installed package targets`, add:
           triplet=${{ steps.linux-env.outputs.triplet }}
           profile=release
           EOF
-```
 
-- [ ] **Step 3: Save the Linux SDK with no cross-SHA fallback**
-
-```yaml
       - name: Save Linux installed Salts SDK cache
         uses: actions/cache/save@v4
         with:
@@ -280,13 +362,35 @@ After `Verify installed package targets`, add:
           key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
 ```
 
-There is deliberately no `restore-keys` field.
+There is deliberately no restore prefix.
 
-- [ ] **Step 4: Stage and save the Windows SDK**
+- [ ] **Step 3: Stage and attest the Windows SDK after install verification**
 
-After Windows `Verify installed package targets`, stage `external\pkgs\salts\release` into `build\ci-salts-sdk`, write the same six manifest fields with PowerShell, assert `lib\cmake\Salts\SaltsConfig.cmake` exists, and save it with:
+Add:
 
 ```yaml
+      - name: Stage Windows installed Salts SDK cache
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sdk = Join-Path $env:GITHUB_WORKSPACE "build\ci-salts-sdk"
+          $source = Join-Path $env:GITHUB_WORKSPACE "external\pkgs\salts\release"
+          if (Test-Path -LiteralPath $sdk) { Remove-Item -Recurse -Force $sdk }
+          New-Item -ItemType Directory -Force -Path $sdk | Out-Null
+          Copy-Item -Path (Join-Path $source '*') -Destination $sdk -Recurse -Force
+          $config = Join-Path $sdk "lib\cmake\Salts\SaltsConfig.cmake"
+          if (-not (Test-Path -LiteralPath $config -PathType Leaf)) {
+            throw "installed SaltsConfig.cmake missing: $config"
+          }
+          @(
+            "commit=${{ github.event.pull_request.head.sha || github.sha }}"
+            "os=${{ runner.os }}"
+            "arch=${{ runner.arch }}"
+            "image=${{ steps.windows-env.outputs.image }}"
+            "triplet=${{ steps.windows-env.outputs.triplet }}"
+            "profile=release"
+          ) | Set-Content -LiteralPath (Join-Path $sdk "salts-sdk-manifest.txt")
+
       - name: Save Windows installed Salts SDK cache
         uses: actions/cache/save@v4
         with:
@@ -294,9 +398,9 @@ After Windows `Verify installed package targets`, stage `external\pkgs\salts\rel
           key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
 ```
 
-Do not restore this SDK into the provider/source build jobs.
+Do not restore this SDK into Linux/Windows source-build provider jobs.
 
-- [ ] **Step 5: Validate and commit**
+- [ ] **Step 4: Validate and commit**
 
 ```bash
 rg -n "salts-sdk-v1|salts-sdk-manifest|cache/save" .github/workflows/cmeta.yml
@@ -305,9 +409,9 @@ git add .github/workflows/cmeta.yml
 git commit -m "ci: publish exact-head Salts SDK cache"
 ```
 
-- [ ] **Step 6: Verify provider jobs remain source-built and GREEN**
+- [ ] **Step 5: Verify provider jobs remain source-built and GREEN**
 
-Linux and Windows must still run configure/build/tests/install before the SDK save steps. macOS and Android behavior remains unchanged except for Task C1 vcpkg caching.
+Linux and Windows must still run configure/build/tests/install before SDK save. macOS/Android remain unchanged except C1 vcpkg caching.
 
 ---
 
@@ -318,12 +422,10 @@ Linux and Windows must still run configure/build/tests/install before the SDK sa
 - Consume: `cstl/tests/allocator_installed/**`
 
 **Interfaces:**
-- Consumes: Task C3 Linux SDK cache.
-- Produces: a cheap independent `sdk-cache-consumer-linux` job that restores no provider build tree and validates the manifest before compiling/running installed C and C++ consumers.
+- Consumes: C3 Linux SDK cache.
+- Produces: `sdk-cache-consumer-linux`, which restores no provider build tree and validates cache provenance before compiling/running installed C/C++ consumers.
 
 - [ ] **Step 1: Add an exact-head Linux cache consumer job**
-
-Add a job after `linux`:
 
 ```yaml
   sdk-cache-consumer-linux:
@@ -336,11 +438,13 @@ Add a job after `linux`:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Identify cached SDK ABI
+      - name: Setup cached SDK consumer tools
         id: sdk-env
         shell: bash
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
           echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
 
@@ -356,8 +460,6 @@ Add a job after `linux`:
 Do not add `restore-keys`.
 
 - [ ] **Step 2: Verify SDK provenance before use**
-
-Add:
 
 ```yaml
       - name: Verify cached SDK provenance
@@ -375,7 +477,7 @@ Add:
           test -f build/ci-salts-sdk/lib/cmake/Salts/SaltsConfig.cmake
 ```
 
-- [ ] **Step 3: Build and run the independent installed consumers**
+- [ ] **Step 3: Build and run independent installed consumers**
 
 ```yaml
       - name: Test CSTL installed consumers from cached SDK
@@ -388,7 +490,7 @@ Add:
           ctest --test-dir build/sdk-cache-consumer --no-tests=error --output-on-failure
 ```
 
-The job must not configure or build the root Salts project.
+This job must not configure or build the root Salts project.
 
 - [ ] **Step 4: Validate and commit**
 
@@ -401,49 +503,46 @@ git commit -m "ci: verify cached Salts SDK consumers"
 
 - [ ] **Step 5: Verify producer→consumer GREEN**
 
-Require the Linux provider job to save the exact-head SDK cache and `Linux cached SDK consumer` to restore that exact key, validate all manifest fields, then pass the installed C/C++ consumer tests.
+Require Linux provider to save the exact-head SDK and `Linux cached SDK consumer` to restore that exact key, validate all manifest fields, then pass installed C/C++ consumer tests.
 
 ---
 
 ### Task C5: Demonstrate reusable vcpkg hits and audit cache safety
 
 **Files:**
-- No new production files.
 - Inspect: `.github/workflows/cmeta.yml`
 - Inspect: `.github/workflows/native-io-release-benchmarks.yml`
 
 **Interfaces:**
 - Consumes: C1–C4.
-- Produces: evidence that dependency reuse works across repeated/native runs while SDK reuse remains exact-head only.
+- Produces: repeat-run cache-hit evidence and final provenance audit.
 
-- [ ] **Step 1: Re-run exact-head native conformance after the first cache-populating GREEN**
+- [ ] **Step 1: Re-run exact-head conformance after first cache-populating GREEN**
 
-Use GitHub Actions re-run on the unchanged PR head. Require at least Linux and Windows vcpkg cache log lines to report a valid cache hit. macOS/Android hits are expected when their first-run save completed and the ABI key is unchanged; a platform-specific miss must be explained by a changed image/toolchain key, not hidden.
+Use GitHub Actions re-run on the unchanged PR head. Require Linux and Windows vcpkg cache log lines to show a valid hit. macOS/Android hits are also expected if image/toolchain keys did not change; explain any miss by the printed ABI key rather than hiding it.
 
-- [ ] **Step 2: Verify cross-workflow vcpkg reuse where ABI tuples match**
+- [ ] **Step 2: Verify cross-workflow reuse where ABI tuples match**
 
-Run the exact-head NativeIO/CNet benchmark workflow after C2. For Linux/macOS hosts whose runner image/arch/triplet/dependency fingerprint matches a populated `cmeta.yml` cache, require the log to show reuse of the same `vcpkg-binary-v2` namespace. Windows may legitimately use a distinct cache because benchmark uses `windows-2022` while conformance currently uses `windows-latest`.
+Run the exact-head NativeIO/CNet workflow after C2. Linux/macOS jobs whose runner image/arch/triplet/dependency fingerprint matches a populated `cmeta.yml` cache should restore the same `vcpkg-binary-v2` namespace. Windows may legitimately use a separate cache because the benchmark uses `windows-2022` while conformance currently uses `windows-latest`.
 
-- [ ] **Step 3: Audit that SDK cache cannot cross SHAs**
+- [ ] **Step 3: Audit SDK restore isolation**
 
 ```bash
 rg -n "salts-sdk-v1|restore-keys|fail-on-cache-miss" .github/workflows/cmeta.yml
 ```
 
-Manually verify the SDK restore key contains `${{ github.event.pull_request.head.sha || github.sha }}` and the SDK restore step has no `restore-keys`.
+Require the SDK restore key to include `${{ github.event.pull_request.head.sha || github.sha }}` and require no SDK `restore-keys` block.
 
-- [ ] **Step 4: Audit that benchmark still builds current sources**
+- [ ] **Step 4: Audit benchmark source provenance**
 
-Confirm `native-io-release-benchmarks.yml` still configures/builds the root tree and still builds `cnet_io_benchmark`, NativeIO tests, and CNet/profile tests before executing the benchmark. There must be no `salts-sdk-v1` reference in the performance workflow.
+```bash
+rg -n "salts-sdk-v1|cnet_io_benchmark|BENCHMARK_COMMIT" .github/workflows/native-io-release-benchmarks.yml
+```
+
+Expected: no `salts-sdk-v1`; benchmark targets are still built; `BENCHMARK_COMMIT` still resolves to the tested head.
 
 - [ ] **Step 5: Record evidence in PR #282**
 
-Update the PR body/comment with:
+Record first-run cache population, repeat-run vcpkg hit, exact-head SDK consumer restore/pass, and four-platform benchmark GREEN. State explicitly that cache reuse changed build/setup time only and did not replace source builds or benchmark executables.
 
-- first-run miss/population evidence;
-- repeat-run vcpkg hit evidence;
-- cached SDK consumer exact-head restore/pass evidence;
-- four-platform benchmark exact-head GREEN after cache integration;
-- explicit statement that caches changed build/setup time only, not test or benchmark provenance.
-
-After this task, resume the parent cleanup plan at Task 2 (CSTL allocator migration), then Task 3 (XML migration), trigger narrowing, and legacy-workflow deletion.
+After C5, resume the parent cleanup plan at Task 2 (CSTL allocator migration), Task 3 (XML migration), performance-trigger narrowing, and legacy-workflow deletion.
