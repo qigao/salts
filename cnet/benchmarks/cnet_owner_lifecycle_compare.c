@@ -488,8 +488,9 @@ static int compare_client_init(compare_client *fixture, compare_api *api,
   status = api->connect(&fixture->client, &options, &fixture->connection);
   if (status == SALTS_OK) status = compare_wait(fixture, &fixture->connected, 1);
   if (status == SALTS_OK) {
-    const size_t demand =
-        CNET_OWNER_COMPARE_PAYLOAD_BYTES * (size_t)CNET_OWNER_COMPARE_TOTAL_EXCHANGES;
+    /* Demand counts future receive callbacks, not bytes. A partial TCP chunk
+       replenishes one demand from compare_cnet_receive(). */
+    const size_t demand = (size_t)CNET_OWNER_COMPARE_TOTAL_EXCHANGES;
     status = api->receive(&fixture->client, fixture->connection, demand);
   }
   return status;
