@@ -1,0 +1,31 @@
+name: CNet fixed-control RED edit
+
+on:
+  push:
+    branches:
+      - perf/cnet-fixed-control-attribution-270
+    paths:
+      - .github/workflows/cnet-fixed-control-red-edit.yml
+
+permissions:
+  contents: write
+
+jobs:
+  edit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: perf/cnet-fixed-control-attribution-270
+      - name: Apply fixed-control RED contract
+        run: |
+          python3 .github/scripts/cnet_fixed_control_red_edit.py
+          git diff --check
+          git diff -- cnet/tests/CMakeLists.txt cnet/tests/cnet_client_control_profile_contract_test.c
+      - name: Commit RED contract
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add cnet/tests/CMakeLists.txt cnet/tests/cnet_client_control_profile_contract_test.c
+          git commit -m 'test(cnet): require composed fixed-control profile'
+          git push origin HEAD:perf/cnet-fixed-control-attribution-270
