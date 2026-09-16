@@ -23,6 +23,26 @@ spec("CNet benchmark paired statistics") {
     check_equal(summary.mad, 10.0);
   }
 
+  it("qualifies only runs that resolve the known baseline outside same-run A/A noise") {
+    const cnet_benchmark_summary quiet_null = {-0.52, 1.03};
+    const cnet_benchmark_summary resolved_baseline = {11.72, 0.78};
+    const cnet_benchmark_summary noisy_null = {-0.67, 3.49};
+    const cnet_benchmark_summary unresolved_baseline = {-0.66, 4.47};
+    cnet_benchmark_run_quality quality = {0};
+
+    check_equal(cnet_benchmark_assess_run_quality(&quiet_null, &resolved_baseline, &quality),
+                SALTS_OK);
+    check_equal(quality.state, CNET_BENCHMARK_RUN_QUALIFIED);
+    check_true(quality.noise_envelope_pp > 3.60 && quality.noise_envelope_pp < 3.62);
+    check_true(quality.baseline_lower_bound_pp > 10.93 && quality.baseline_lower_bound_pp < 10.95);
+
+    check_equal(cnet_benchmark_assess_run_quality(&noisy_null, &unresolved_baseline, &quality),
+                SALTS_OK);
+    check_equal(quality.state, CNET_BENCHMARK_RUN_NOISE_LIMITED);
+    check_true(quality.noise_envelope_pp > 11.13 && quality.noise_envelope_pp < 11.15);
+    check_true(quality.baseline_lower_bound_pp < 0.0);
+  }
+
   it("separates send admission into exclusive producer-side stages") {
     cnet_benchmark_send_attribution attribution = {0};
 
