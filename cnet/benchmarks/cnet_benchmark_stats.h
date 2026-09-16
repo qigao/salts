@@ -9,6 +9,17 @@ typedef struct cnet_benchmark_summary {
   double mad;
 } cnet_benchmark_summary;
 
+typedef enum cnet_benchmark_run_quality_state {
+  CNET_BENCHMARK_RUN_QUALIFIED = 0,
+  CNET_BENCHMARK_RUN_NOISE_LIMITED
+} cnet_benchmark_run_quality_state;
+
+typedef struct cnet_benchmark_run_quality {
+  cnet_benchmark_run_quality_state state;
+  double noise_envelope_pp;
+  double baseline_lower_bound_pp;
+} cnet_benchmark_run_quality;
+
 /**
  * Per-call producer-side send admission attribution. `queue_publish_ns` is
  * inclusive and equals queue staging/control plus payload copy. The exclusive
@@ -80,6 +91,11 @@ int cnet_benchmark_summarize(const double *values, size_t count,
                              cnet_benchmark_summary *out_summary);
 int cnet_benchmark_summarize_paired_delta(const double *baseline, const double *candidate,
                                           size_t count, cnet_benchmark_summary *out_summary);
+
+int cnet_benchmark_assess_run_quality(const cnet_benchmark_summary *null_p50,
+                                      const cnet_benchmark_summary *baseline_p50,
+                                      cnet_benchmark_run_quality *out_quality);
+const char *cnet_benchmark_run_quality_label(cnet_benchmark_run_quality_state state);
 
 int cnet_benchmark_attribute_send(uint64_t send_admit_ns, uint64_t send_admit_calls,
                                   uint64_t queue_publish_ns, uint64_t queue_publish_calls,

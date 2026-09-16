@@ -1603,6 +1603,30 @@ static int io_bench_print_null_control(const char *protocol,
   return SALTS_OK;
 }
 
+static int io_bench_print_run_quality(const io_bench_series *direct_a,
+                                      const io_bench_series *direct_b,
+                                      const io_bench_series *native,
+                                      const io_bench_series *cnet) {
+  cnet_benchmark_summary null_p50 = {0};
+  cnet_benchmark_summary baseline_p50 = {0};
+  cnet_benchmark_run_quality quality = {0};
+  int status = io_bench_paired_delta(direct_a, direct_b, IO_BENCH_METRIC_P50, &null_p50);
+  if (status == SALTS_OK)
+    status = io_bench_paired_delta(native, cnet, IO_BENCH_METRIC_P50, &baseline_p50);
+  if (status == SALTS_OK)
+    status = cnet_benchmark_assess_run_quality(&null_p50, &baseline_p50, &quality);
+  if (status != SALTS_OK) return status;
+
+  printf("\nIOCP TCP 1 KiB benchmark run quality\n");
+  printf("NativeIO A/A p50: %+.2f%% +/- %.2fpp\n", null_p50.median, null_p50.mad);
+  printf("CNet vs NativeIO direct p50: %+.2f%% +/- %.2fpp\n", baseline_p50.median,
+         baseline_p50.mad);
+  printf("A/A noise envelope: %.2fpp\n", quality.noise_envelope_pp);
+  printf("Baseline lower bound: %.2fpp\n", quality.baseline_lower_bound_pp);
+  printf("RUN QUALITY: %s\n", cnet_benchmark_run_quality_label(quality.state));
+  return SALTS_OK;
+}
+
 static int io_bench_print_latency(const char *protocol, const char *percentile,
                                   const io_bench_series *libuv, const io_bench_series *native,
                                   const io_bench_series *coroutine, const io_bench_series *cnet,
@@ -2011,6 +2035,9 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
       check_equal(io_bench_print_null_control("TCP", direct_aa_a_tcp, direct_aa_b_tcp, tcp_count),
                   SALTS_OK);
       check_equal(io_bench_print_null_control("UDP", direct_aa_a_udp, direct_aa_b_udp, udp_count),
+                  SALTS_OK);
+      check_equal(io_bench_print_run_quality(&direct_aa_a_tcp[0], &direct_aa_b_tcp[0],
+                                             &native_tcp[0], &cnet_tcp[0]),
                   SALTS_OK);
     }
 

@@ -3,6 +3,8 @@
 
 #include <salts/error_codes.h>
 
+#include <string.h>
+
 spec("CNet benchmark paired statistics") {
   it("reports the median and MAD without pooling independent runs") {
     const double values[] = {30.0, 10.0, 200.0, 20.0, 5.0};
@@ -21,6 +23,35 @@ spec("CNet benchmark paired statistics") {
     check_equal(cnet_benchmark_summarize_paired_delta(baseline, candidate, 5u, &summary), SALTS_OK);
     check_equal(summary.median, 20.0);
     check_equal(summary.mad, 10.0);
+  }
+
+  it("qualifies only runs that resolve the known baseline outside same-run A/A noise") {
+    const cnet_benchmark_summary quiet_null = {-0.52, 1.03};
+    const cnet_benchmark_summary resolved_baseline = {11.72, 0.78};
+    const cnet_benchmark_summary noisy_null = {-0.67, 3.49};
+    const cnet_benchmark_summary unresolved_baseline = {-0.66, 4.47};
+    cnet_benchmark_run_quality quality = {0};
+
+    check_equal(cnet_benchmark_assess_run_quality(&quiet_null, &resolved_baseline, &quality),
+                SALTS_OK);
+    check_equal(quality.state, CNET_BENCHMARK_RUN_QUALIFIED);
+    check_true(quality.noise_envelope_pp > 3.60 && quality.noise_envelope_pp < 3.62);
+    check_true(quality.baseline_lower_bound_pp > 10.93 && quality.baseline_lower_bound_pp < 10.95);
+
+    check_equal(cnet_benchmark_assess_run_quality(&noisy_null, &unresolved_baseline, &quality),
+                SALTS_OK);
+    check_equal(quality.state, CNET_BENCHMARK_RUN_NOISE_LIMITED);
+    check_true(quality.noise_envelope_pp > 11.13 && quality.noise_envelope_pp < 11.15);
+    check_true(quality.baseline_lower_bound_pp < 0.0);
+  }
+
+  it("uses stable report labels for qualified and noise-limited runs") {
+    check_equal(strcmp(cnet_benchmark_run_quality_label(CNET_BENCHMARK_RUN_QUALIFIED),
+                       "qualified for performance decisions"),
+                0);
+    check_equal(strcmp(cnet_benchmark_run_quality_label(CNET_BENCHMARK_RUN_NOISE_LIMITED),
+                       "noise-limited; do not use for optimization decisions"),
+                0);
   }
 
   it("separates send admission into exclusive producer-side stages") {
