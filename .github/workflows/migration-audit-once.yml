@@ -1,0 +1,74 @@
+name: migration audit once
+
+on:
+  push:
+    branches:
+      - migration/move-salts-capabilities
+    paths:
+      - .github/workflows/migration-audit-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: migration/move-salts-capabilities
+          fetch-depth: 0
+      - name: Clean active ownership documentation and audit
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('cflow/README.md')
+          text = p.read_text(encoding='utf-8')
+          old = '''Subprocess standard-stream ownership is provided by the separate
+`Salts::CFlowProcess` adapter target. Message framing, asynchronous
+pathname open, file metadata/directory operations, and devices remain separate
+contracts.'''
+          new = '''Higher-level filesystem and subprocess adapters are owned by SaltsUtils as
+`Salts::FS` and `Salts::Process`. CFlow keeps the portable execution and native
+I/O primitives they consume; it does not export compatibility adapter targets.'''
+          if old not in text:
+              raise SystemExit('expected CFlowProcess documentation block not found')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+          stale_files="$(find . -path './.git' -prune -o -path './docs/superpowers' -prune -o \
+            \( -iname '*install*consumer*' -o -iname 'VerifyInstalled*' -o -iname '*package_consumer*' \) -print)"
+          if [ -n "$stale_files" ]; then
+            printf 'forbidden install-verification paths:\n%s\n' "$stale_files"
+            exit 1
+          fi
+
+          if grep -RInE 'Salts::CFlowFS|Salts::CFlowProcess|verify_installed_package|VerifyInstalled|install_consumer|package_consumer' \
+              --exclude-dir=.git --exclude-dir=docs .; then
+            echo 'forbidden active ownership/install-verification reference remains'
+            exit 1
+          fi
+
+          if grep -RInE 'add_subdirectory\((crypto|cflow-fs|cflow-process)\)|Salts::Crypto' \
+              CMakeLists.txt cmake tests cstl cflow platform concurrency coroutine native-io cnet cmeta cserde cbind utils parser 2>/dev/null; then
+            echo 'moved target ownership remains in Salts active build surface'
+            exit 1
+          fi
+
+          test ! -e crypto
+          test ! -e cflow-fs
+          test ! -e cflow-process
+
+      - name: Commit cleanup and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm .github/workflows/migration-audit-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "docs: finalize salts capability ownership cutover"
+          git push origin HEAD:migration/move-salts-capabilities
