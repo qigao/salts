@@ -54,9 +54,10 @@ typedef struct cnet_owner_session {
 
 typedef struct cnet_owner_request {
   cnet_owner_impl *owner;
-  native_io_coroutine_task coroutine;
+  native_io_request native_request;
   native_io_operation operation;
   size_t requested_size;
+  size_t submitted_size;
   size_t completed_size;
   cnet_session_handle session;
   cnet_command_view command;
@@ -319,7 +320,7 @@ static int cnet_owner_cancel_session_requests(cnet_owner_impl *impl, cnet_sessio
     if (!request->active || request->session.slot != session.slot ||
         request->session.generation != session.generation)
       continue;
-    status = native_io_backend_cancel_coroutine(&impl->backend, request->coroutine);
+    status = native_io_backend_cancel(&impl->backend, request->native_request);
     if (status != SALTS_OK && status != SALTS_EALREADY && first_error == SALTS_OK)
       first_error = status;
   }
@@ -337,7 +338,7 @@ static int cnet_owner_cancel_receive_requests(cnet_owner_impl *impl, cnet_sessio
          request->role != CNET_OWNER_REQUEST_TLS_READ) ||
         request->session.slot != session.slot || request->session.generation != session.generation)
       continue;
-    status = native_io_backend_cancel_coroutine(&impl->backend, request->coroutine);
+    status = native_io_backend_cancel(&impl->backend, request->native_request);
     if (status != SALTS_OK && status != SALTS_EALREADY && first_error == SALTS_OK)
       first_error = status;
   }
@@ -553,6 +554,38 @@ static int cnet_owner_fail_started_request(cnet_owner_request *request, int fail
   return cnet_owner_fail_session(impl, session, failure, stage);
 }
 
+static int cnet_owner_submit_request(cnet_owner_impl *impl, cnet_owner_request *request,
+                                     bool first_submit) {
+  native_io_operation submitted;
+  native_io_request native_request = {0};
+  size_t index;
+  int status;
+
+  if (impl == NULL || request == NULL || !request->active || request->owner != impl)
+    return SALTS_EPROTO;
+  index = (size_t)(request - impl->request_records);
+  if (index >= impl->request_capacity) return SALTS_EPROTO;
+
+  submitted = request->operation;
+  submitted.user_data = (uintptr_t)(index + 1u);
+  request->submitted_size = submitted.length;
+#if defined(CNET_INTERNAL_PROFILING)
+  if (first_submit) {
+    const uint64_t profile_started = cnet_owner_profile_start(impl);
+    status = native_io_backend_submit(&impl->backend, &submitted, &native_request);
+    cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_start_ns,
+                              &impl->profile.request_start_calls);
+  } else {
+    status = native_io_backend_submit(&impl->backend, &submitted, &native_request);
+  }
+#else
+  status = native_io_backend_submit(&impl->backend, &submitted, &native_request);
+  (void)first_submit;
+#endif
+  if (status == SALTS_OK) request->native_request = native_request;
+  return status;
+}
+
 static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *session,
                                     cnet_command_view *command, cnet_owner_request_role role,
                                     const native_io_operation *operation, bool close_after_send) {
@@ -590,27 +623,12 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
     session->read_active = true;
   if (role == CNET_OWNER_REQUEST_SEND || role == CNET_OWNER_REQUEST_TLS_WRITE)
     session->write_active = true;
-#if defined(CNET_INTERNAL_PROFILING)
-  {
-    const uint64_t profile_started = cnet_owner_profile_start(impl);
-    status = native_io_backend_spawn_coroutine(&impl->backend, cnet_owner_coroutine_entry, request,
-                                               &request->coroutine);
-    cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_start_ns,
-                              &impl->profile.request_start_calls);
-  }
-#else
-  status = native_io_backend_spawn_coroutine(&impl->backend, cnet_owner_coroutine_entry, request,
-                                             &request->coroutine);
-#endif
-  if (status != SALTS_OK) {
-    result = request->active ? cnet_owner_fail_started_request(request, status) : status;
-    goto finish;
-  }
-  if (!request->active) {
-    result = cnet_owner_take_coroutine_status(impl);
-    goto finish;
-  }
   index = (size_t)(request - impl->request_records);
+  status = cnet_owner_submit_request(impl, request, true);
+  if (status != SALTS_OK) {
+    result = cnet_owner_fail_started_request(request, status);
+    goto finish;
+  }
   if (timeout_ms != 0u) {
     status =
         salts_deadline_queue_schedule(&impl->deadlines, cnet_owner_deadline_after(impl, timeout_ms),
@@ -624,7 +642,7 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
       goto finish;
     }
   }
-  result = cnet_owner_take_coroutine_status(impl);
+  result = SALTS_OK;
 
 finish:
 #if defined(CNET_INTERNAL_PROFILING)
@@ -1416,6 +1434,87 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
   return cnet_owner_finalize_session(impl, session);
 }
 
+static bool cnet_owner_native_request_equal(native_io_request left, native_io_request right) {
+  return left.slot == right.slot && left.generation == right.generation;
+}
+
+static bool cnet_owner_native_endpoint_equal(native_io_endpoint left, native_io_endpoint right) {
+  return left.slot == right.slot && left.generation == right.generation;
+}
+
+static int cnet_owner_finish_direct_completion(cnet_owner_impl *impl,
+                                               cnet_owner_request *request,
+                                               const native_io_completion *completion) {
+  int status;
+#if defined(CNET_INTERNAL_PROFILING)
+  const uint64_t profile_started = cnet_owner_profile_start(impl);
+#endif
+  status = cnet_owner_complete(impl, request, completion);
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_completion_ns,
+                            &impl->profile.request_completion_calls);
+#endif
+  return status;
+}
+
+static int cnet_owner_fail_direct_request(cnet_owner_impl *impl, cnet_owner_request *request,
+                                          int failure) {
+  int status;
+#if defined(CNET_INTERNAL_PROFILING)
+  const uint64_t profile_started = cnet_owner_profile_start(impl);
+#endif
+  status = cnet_owner_fail_started_request(request, failure);
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_completion_ns,
+                            &impl->profile.request_completion_calls);
+#endif
+  return status;
+}
+
+static int cnet_owner_route_completion(cnet_owner_impl *impl,
+                                       const native_io_completion *completion) {
+  cnet_owner_request *request;
+  size_t index;
+
+  if (completion == NULL || completion->user_data == 0u ||
+      completion->user_data > (uintptr_t)impl->request_capacity)
+    return SALTS_EPROTO;
+  index = (size_t)completion->user_data - 1u;
+  request = &impl->request_records[index];
+  if (!request->active || request->owner != impl ||
+      !native_io_request_valid(request->native_request) ||
+      !cnet_owner_native_request_equal(request->native_request, completion->request) ||
+      !cnet_owner_native_endpoint_equal(request->operation.endpoint, completion->endpoint))
+    return SALTS_EPROTO;
+
+  if ((request->role == CNET_OWNER_REQUEST_SEND ||
+       request->role == CNET_OWNER_REQUEST_TLS_WRITE) &&
+      completion->kind == NATIVE_IO_COMPLETION_OK) {
+    native_io_completion terminal = *completion;
+    int status;
+
+    if (completion->bytes == 0u || completion->bytes > request->submitted_size)
+      return cnet_owner_fail_direct_request(impl, request, SALTS_EIO);
+    request->completed_size += completion->bytes;
+    if (request->completed_size < request->requested_size) {
+      if (request->operation.kind == NATIVE_IO_OPERATION_UDP_SEND_TO)
+        return cnet_owner_fail_direct_request(impl, request, SALTS_EIO);
+      request->operation.buffer =
+          (unsigned char *)request->operation.buffer + completion->bytes;
+      request->operation.length -= completion->bytes;
+      status = cnet_owner_submit_request(impl, request, false);
+      return status == SALTS_OK ? SALTS_OK
+                                : cnet_owner_fail_direct_request(impl, request, status);
+    }
+    if (request->completed_size != request->requested_size)
+      return cnet_owner_fail_direct_request(impl, request, SALTS_EIO);
+    terminal.bytes = request->completed_size;
+    return cnet_owner_finish_direct_completion(impl, request, &terminal);
+  }
+
+  return cnet_owner_finish_direct_completion(impl, request, completion);
+}
+
 static void cnet_owner_coroutine_entry(native_io_coroutine *coroutine, void *user_data) {
   cnet_owner_request *request = (cnet_owner_request *)user_data;
   cnet_owner_impl *impl = request != NULL ? request->owner : NULL;
@@ -1751,9 +1850,11 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
       return cnet_owner_process_deadlines(impl);
     }
     if (status != SALTS_OK) return status;
-    status = cnet_owner_take_coroutine_status(impl);
-    if (status != SALTS_OK) return status;
-    if (completion_count != 0u) return SALTS_EPROTO;
+    for (size_t completion_index = 0u; completion_index < completion_count;
+         ++completion_index) {
+      status = cnet_owner_route_completion(impl, &impl->completions[completion_index]);
+      if (status != SALTS_OK) return status;
+    }
     if (impl->published_event_count != published_before) return SALTS_OK;
     status = cnet_owner_process_deadlines(impl);
     if (status != SALTS_OK) return status;
