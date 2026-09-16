@@ -61,3 +61,13 @@ int cnet_io_benchmark_select_backend(const char *requested, cnet_io_benchmark_ba
   *selected = candidate;
   return SALTS_OK;
 }
+
+int cnet_io_benchmark_protocol_default(cnet_io_benchmark_protocol *protocol) {
+  if (protocol == NULL) return SALTS_EINVAL;
+#ifdef _WIN32
+  *protocol = (cnet_io_benchmark_protocol){.native_direct_aa_control = true};
+#else
+  *protocol = (cnet_io_benchmark_protocol){.native_direct_aa_control = false};
+#endif
+  return SALTS_OK;
+}
