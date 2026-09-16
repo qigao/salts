@@ -107,9 +107,7 @@ static void cnet_client_record_error(cnet_client_impl *impl, int status) {
                                                 memory_order_acq_rel, memory_order_acquire);
 }
 
-static int cnet_client_dispatch(void *context, uint32_t shard, const cnet_event *event) {
-  return cnet_dispatcher_publish((cnet_dispatcher *)context, shard, event);
-}
+static int cnet_client_dispatch(void *context, uint32_t shard, const cnet_event *event);
 
 static bool cnet_client_salts_status(int status) {
   if (status == SALTS_OK) return true;
@@ -243,6 +241,69 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
   }
 }
 
+#if defined(CNET_INTERNAL_PROFILING)
+static int cnet_client_direct_dispatch(cnet_client_impl *impl, uint32_t shard,
+                                       const cnet_event *event) {
+  cnet_client_record *record;
+  cnet_shard_connection internal;
+  cnet_dispatch_view view;
+  cnet_session_terminal terminal = {0};
+  size_t index;
+  bool terminal_event;
+  int status = SALTS_OK;
+
+  if (impl == NULL || event == NULL || shard >= impl->shard_count || event->session.slot == 0u ||
+      (size_t)event->session.slot > impl->capacity_per_shard)
+    return SALTS_EINVAL;
+
+  index = (size_t)shard * impl->capacity_per_shard + (size_t)event->session.slot - 1u;
+  if (index >= impl->record_count) return SALTS_EPROTO;
+
+  salts_mutex_lock(&impl->lock);
+  record = &impl->records[index];
+  if (!record->active || record->internal.shard != shard ||
+      record->internal.session.slot != event->session.slot ||
+      record->internal.session.generation != event->session.generation) {
+    salts_mutex_unlock(&impl->lock);
+    cnet_client_record_error(impl, SALTS_EPROTO);
+    return SALTS_EPROTO;
+  }
+  internal = record->internal;
+  salts_mutex_unlock(&impl->lock);
+
+  view = (cnet_dispatch_view){event->kind,   event->session, event->state, event->status,
+                              event->stage, event->data,    event->size,  event->argument};
+  terminal_event = event->kind == CNET_EVENT_STATE && cnet_client_terminal(event->state);
+  cnet_client_observe(record, &view);
+
+  if (terminal_event) {
+    status = cnet_shards_recycle(&impl->shards, internal, &terminal);
+    if (status == SALTS_OK) {
+      const bool valid_closed = event->state == CNET_EVENT_STATE_CLOSED &&
+                                terminal.kind == CNET_SESSION_TERMINAL_CLOSED &&
+                                terminal.status == SALTS_OK;
+      const bool valid_failed = event->state == CNET_EVENT_STATE_FAILED &&
+                                terminal.kind == CNET_SESSION_TERMINAL_FAILED &&
+                                terminal.status == event->status && terminal.stage == event->stage;
+      if (!valid_closed && !valid_failed) status = SALTS_EPROTO;
+    }
+  }
+  if (status != SALTS_OK) cnet_client_record_error(impl, status);
+  return status;
+}
+#endif
+
+static int cnet_client_dispatch(void *context, uint32_t shard, const cnet_event *event) {
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_client_impl *impl = (cnet_client_impl *)context;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->diagnostic_direct_dispatch) return cnet_client_direct_dispatch(impl, shard, event);
+  return cnet_dispatcher_publish(&impl->dispatcher, shard, event);
+#else
+  return cnet_dispatcher_publish((cnet_dispatcher *)context, shard, event);
+#endif
+}
+
 static void cnet_client_cleanup_init(cnet_client_impl *impl) {
   if (impl == NULL) return;
   if (impl->shards.impl != NULL) (void)cnet_shards_stop(&impl->shards, 5000u);
@@ -355,8 +416,13 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
     return status;
   }
   status = cnet_dispatcher_init(&impl->dispatcher, &impl->shards);
-  if (status == SALTS_OK)
+  if (status == SALTS_OK) {
+#if defined(CNET_INTERNAL_PROFILING)
+    status = cnet_shards_bind_event_sink(&impl->shards, cnet_client_dispatch, impl);
+#else
     status = cnet_shards_bind_event_sink(&impl->shards, cnet_client_dispatch, &impl->dispatcher);
+#endif
+  }
   if (status != SALTS_OK) {
     cnet_client_cleanup_init(impl);
     return status;
@@ -434,7 +500,13 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
   record->tls_upgrade_pending = false;
   record->receive_pending = 0u;
   ++impl->active_count;
+#if defined(CNET_INTERNAL_PROFILING)
+  status = impl->diagnostic_direct_dispatch
+               ? SALTS_OK
+               : cnet_dispatcher_register(&impl->dispatcher, internal, cnet_client_observe, record);
+#else
   status = cnet_dispatcher_register(&impl->dispatcher, internal, cnet_client_observe, record);
+#endif
   if (status == SALTS_OK) {
     *out_connection = record->public_handle;
   } else {
