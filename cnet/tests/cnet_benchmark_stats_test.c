@@ -3,6 +3,8 @@
 
 #include <salts/error_codes.h>
 
+#include <string.h>
+
 spec("CNet benchmark paired statistics") {
   it("reports the median and MAD without pooling independent runs") {
     const double values[] = {30.0, 10.0, 200.0, 20.0, 5.0};
@@ -41,6 +43,15 @@ spec("CNet benchmark paired statistics") {
     check_equal(quality.state, CNET_BENCHMARK_RUN_NOISE_LIMITED);
     check_true(quality.noise_envelope_pp > 11.13 && quality.noise_envelope_pp < 11.15);
     check_true(quality.baseline_lower_bound_pp < 0.0);
+  }
+
+  it("uses stable report labels for qualified and noise-limited runs") {
+    check_equal(strcmp(cnet_benchmark_run_quality_label(CNET_BENCHMARK_RUN_QUALIFIED),
+                       "qualified for performance decisions"),
+                0);
+    check_equal(strcmp(cnet_benchmark_run_quality_label(CNET_BENCHMARK_RUN_NOISE_LIMITED),
+                       "noise-limited; do not use for optimization decisions"),
+                0);
   }
 
   it("separates send admission into exclusive producer-side stages") {
