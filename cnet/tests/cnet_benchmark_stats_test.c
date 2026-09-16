@@ -35,6 +35,18 @@ spec("CNet benchmark paired statistics") {
     check_equal(attribution.payload_copy_ns, 200.0);
   }
 
+  it("requires one additive exclusive fixed-control attribution") {
+    cnet_benchmark_fixed_control_attribution attribution = {0};
+
+    check_equal(cnet_benchmark_attribute_fixed_control(
+                    1000.0, 100.0, 80.0, 120.0, 140.0, 60.0, 90.0, 70.0, 50.0, 40.0,
+                    &attribution),
+                SALTS_OK);
+    check_equal(attribution.control_envelope_ns, 1000.0);
+    check_equal(attribution.accounted_control_ns, 750.0);
+    check_equal(attribution.residual_ns, 250.0);
+  }
+
   it("rejects inconsistent send attribution samples") {
     cnet_benchmark_send_attribution attribution = {0};
 
