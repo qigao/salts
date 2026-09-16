@@ -46,6 +46,16 @@ int cnet_benchmark_attribute_send(uint64_t send_admit_ns, uint64_t send_admit_ca
                                   uint64_t payload_copy_ns, uint64_t payload_copy_calls,
                                   cnet_benchmark_send_attribution *out_attribution);
 
+/**
+ * Derives the non-overlapping fixed-control envelope for one diagnostic sample.
+ * Request completion executes after coroutine await resumes and is therefore
+ * nested inside observe; subtract only observe-exclusive native execution.
+ */
+int cnet_benchmark_fixed_control_envelope(
+    double send_admit_ns, double payload_copy_ns, double poll_ns, double request_start_ns,
+    double observe_ns, double request_completion_ns, double payload_check_ns,
+    double *out_envelope_ns);
+
 int cnet_benchmark_attribute_fixed_control(
     double control_envelope_ns, double public_admission_control_ns,
     double queue_staging_control_ns, double poll_control_ns, double receive_rearm_control_ns,
