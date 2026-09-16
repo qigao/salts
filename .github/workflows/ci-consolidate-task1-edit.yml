@@ -8,7 +8,7 @@ on:
       - .github/workflows/ci-consolidate-task1-edit.yml
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   edit:
@@ -23,11 +23,10 @@ jobs:
           python3 .github/scripts/ci_consolidate_task1.py
           git diff --check
           git diff -- .github/workflows/cmeta.yml
-      - name: Commit Task 1 patch
-        run: |
-          set -euxo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .github/workflows/cmeta.yml
-          git commit -m 'ci(cmeta): migrate shared-owner regression'
-          git push origin HEAD:ci/consolidate-canonical-workflows
+      - name: Export patched workflow
+        uses: actions/upload-artifact@v6
+        with:
+          name: cmeta-task1-patched
+          path: .github/workflows/cmeta.yml
+          if-no-files-found: error
+          retention-days: 1
