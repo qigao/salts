@@ -227,6 +227,11 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   cnet_event queued_state = {0};
   cnet_event_view event = {0};
   cnet_session_terminal terminal = {0};
+#if defined(CNET_INTERNAL_TESTING)
+  cnet_owner_test_request_snapshot first_request = {0};
+  cnet_owner_test_request_snapshot second_request = {0};
+  cnet_owner_test_request_snapshot after_stale = {0};
+#endif
 #if defined(CNET_INTERNAL_PROFILING)
   cnet_owner_profile receive_profile = {0};
   const bool profile_suspended_receive = timeout == CNET_OWNER_TEST_NO_TIMEOUT && !resolve_host;
@@ -322,6 +327,10 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
     check_equal(coroutine_stats.retained_frames, 0u);
   }
 #endif
+#if defined(CNET_INTERNAL_TESTING)
+  if (timeout == CNET_OWNER_TEST_NO_TIMEOUT && resolve_host)
+    check_true(cnet_owner_test_request_snapshot(&owner, 0u, &first_request));
+#endif
   if (timeout == CNET_OWNER_TEST_READ_TIMEOUT) {
     clock.now_ms = 111u;
     clock.next_ms = 111u;
@@ -331,10 +340,52 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
 #endif
     check_equal(send(accepted, (const char *)payload, (int)sizeof(payload), 0),
                 (int)sizeof(payload));
-    check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), SALTS_OK);
+#if defined(CNET_INTERNAL_TESTING)
+    if (resolve_host) {
+      native_io_completion observed[1] = {{0}};
+      native_io_completion batch[2] = {{0}};
+      size_t observed_count = 0u;
+      check_equal(cnet_owner_test_observe_raw(&owner, observed, 1u,
+                                              CNET_OWNER_TEST_TIMEOUT_MS,
+                                              &observed_count),
+                  SALTS_OK);
+      check_equal(observed_count, 1u);
+      batch[0].kind = NATIVE_IO_COMPLETION_FAILED;
+      batch[0].status = SALTS_EPROTO;
+      batch[0].user_data = 0u;
+      batch[1] = observed[0];
+      check_equal(cnet_owner_test_process_completion_batch(&owner, batch, 2u), SALTS_EPROTO);
+      check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+    } else
+#endif
+    {
+      check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), SALTS_OK);
+    }
     check_equal(event.kind, CNET_EVENT_RECEIVE);
     check_equal(event.data, payload, sizeof(payload));
     check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+#if defined(CNET_INTERNAL_TESTING)
+    if (resolve_host) {
+      native_io_completion stale = {0};
+      command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
+      check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+      check_equal(cnet_owner_drive(&owner, 0u), SALTS_OK);
+      check_true(cnet_owner_test_request_snapshot(&owner, 0u, &second_request));
+      check_equal(second_request.token, first_request.token);
+      check_true(second_request.native_request.slot != first_request.native_request.slot ||
+                 second_request.native_request.generation != first_request.native_request.generation);
+      stale.request = first_request.native_request;
+      stale.endpoint = second_request.endpoint;
+      stale.kind = NATIVE_IO_COMPLETION_CANCELLED;
+      stale.status = SALTS_OK;
+      stale.user_data = second_request.token;
+      check_equal(cnet_owner_test_process_completion_batch(&owner, &stale, 1u), SALTS_EPROTO);
+      check_true(cnet_owner_test_request_snapshot(&owner, 0u, &after_stale));
+      check_true(after_stale.active);
+      check_equal(after_stale.native_request.slot, second_request.native_request.slot);
+      check_equal(after_stale.native_request.generation, second_request.native_request.generation);
+    }
+#endif
 #if defined(CNET_INTERNAL_PROFILING)
     if (profile_suspended_receive) {
       check_equal(cnet_owner_profile_take(&owner, &receive_profile), SALTS_OK);
