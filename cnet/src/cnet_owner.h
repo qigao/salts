@@ -134,6 +134,8 @@ int cnet_owner_test_observe_raw(cnet_owner *owner, native_io_completion *events,
 int cnet_owner_test_process_completion_batch(cnet_owner *owner,
                                              const native_io_completion *events,
                                              size_t count);
+/** Makes the next successful/already-pending native cancellation report SALTS_EALREADY. */
+int cnet_owner_test_force_cancel_ealready_once(cnet_owner *owner);
 #endif
 
 #if defined(CNET_INTERNAL_PROFILING)

@@ -108,6 +108,9 @@ struct cnet_owner_impl {
   cnet_owner_profile profile;
   bool profile_active;
 #endif
+#if defined(CNET_INTERNAL_TESTING)
+  bool test_force_cancel_ealready_once;
+#endif
   bool closed;
   bool resolver_closed;
   int coroutine_status;
@@ -311,6 +314,23 @@ static int cnet_owner_arm_pending_receives(cnet_owner_impl *impl) {
   return SALTS_OK;
 }
 
+static int cnet_owner_cancel_native_request(cnet_owner_impl *impl,
+                                            cnet_owner_request *request) {
+  int status;
+  if (impl == NULL || request == NULL || !request->active || request->owner != impl ||
+      !native_io_request_valid(request->native_request))
+    return SALTS_EPROTO;
+  status = native_io_backend_cancel(&impl->backend, request->native_request);
+#if defined(CNET_INTERNAL_TESTING)
+  if (impl->test_force_cancel_ealready_once &&
+      (status == SALTS_OK || status == SALTS_EALREADY)) {
+    impl->test_force_cancel_ealready_once = false;
+    return SALTS_EALREADY;
+  }
+#endif
+  return status;
+}
+
 static int cnet_owner_cancel_session_requests(cnet_owner_impl *impl, cnet_session_handle session) {
   size_t index;
   int first_error = SALTS_OK;
@@ -320,7 +340,7 @@ static int cnet_owner_cancel_session_requests(cnet_owner_impl *impl, cnet_sessio
     if (!request->active || request->session.slot != session.slot ||
         request->session.generation != session.generation)
       continue;
-    status = native_io_backend_cancel(&impl->backend, request->native_request);
+    status = cnet_owner_cancel_native_request(impl, request);
     if (status != SALTS_OK && status != SALTS_EALREADY && first_error == SALTS_OK)
       first_error = status;
   }
@@ -338,7 +358,7 @@ static int cnet_owner_cancel_receive_requests(cnet_owner_impl *impl, cnet_sessio
          request->role != CNET_OWNER_REQUEST_TLS_READ) ||
         request->session.slot != session.slot || request->session.generation != session.generation)
       continue;
-    status = native_io_backend_cancel(&impl->backend, request->native_request);
+    status = cnet_owner_cancel_native_request(impl, request);
     if (status != SALTS_OK && status != SALTS_EALREADY && first_error == SALTS_OK)
       first_error = status;
   }
@@ -1936,6 +1956,14 @@ int cnet_owner_test_process_completion_batch(cnet_owner *owner,
   cnet_owner_impl *impl = cnet_owner_get(owner);
   if (impl == NULL) return SALTS_EINVAL;
   return cnet_owner_process_completion_batch(impl, events, count);
+}
+
+int cnet_owner_test_force_cancel_ealready_once(cnet_owner *owner) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  if (impl == NULL) return SALTS_EINVAL;
+  if (impl->test_force_cancel_ealready_once) return SALTS_EALREADY;
+  impl->test_force_cancel_ealready_once = true;
+  return SALTS_OK;
 }
 #endif
 
