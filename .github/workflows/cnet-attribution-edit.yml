@@ -1,10 +1,35 @@
-name: CNet attribution edit probe
+name: CNet attribution edit
 
 on:
   push:
 
+permissions:
+  contents: write
+
 jobs:
-  probe:
+  edit:
     runs-on: ubuntu-24.04
     steps:
-      - run: echo probe-ok
+      - uses: actions/checkout@v6
+        with:
+          ref: perf/cnet-public-path-attribution-266
+      - name: Apply benchmark attribution patch
+        run: |
+          if grep -q 'cnet_send_public_control_ns' cnet/benchmarks/cnet_io_benchmark.c; then
+            echo 'attribution patch already applied'
+            exit 0
+          fi
+          python3 .github/scripts/cnet_attribution_edit.py
+          git diff --check
+          git diff -- cnet/benchmarks/cnet_io_benchmark.c
+      - name: Commit benchmark attribution patch
+        run: |
+          if git diff --quiet -- cnet/benchmarks/cnet_io_benchmark.c; then
+            echo 'no patch to commit'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add cnet/benchmarks/cnet_io_benchmark.c
+          git commit -m 'perf(cnet): report exclusive send admission attribution'
+          git push origin HEAD:perf/cnet-public-path-attribution-266
