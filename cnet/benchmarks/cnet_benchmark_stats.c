@@ -154,7 +154,6 @@ int cnet_benchmark_attribute_fixed_control(
   uint64_t client_poll_wrapper_ns;
   uint64_t owner_control_ns;
   uint64_t request_control_ns;
-  uint64_t native_observe_residual_ns;
   uint64_t completion_control_ns;
   uint64_t event_publish_residual_ns;
   uint64_t dispatcher_invoke_framework_ns;
@@ -168,13 +167,15 @@ int cnet_benchmark_attribute_fixed_control(
       sample->queue_publish_ns < sample->payload_copy_ns ||
       sample->client_poll_ns < sample->owner_drive_ns ||
       sample->request_lifecycle_ns < sample->request_start_ns ||
-      sample->observe_ns < sample->request_completion_ns ||
       sample->request_completion_ns < sample->event_publish_ns ||
       sample->dispatcher_observer_ns < sample->benchmark_callback_ns ||
       sample->benchmark_callback_ns < sample->benchmark_payload_check_ns)
     return SALTS_ERANGE;
 
-  if (!cnet_benchmark_u64_add(sample->request_lifecycle_ns, sample->observe_ns,
+  if (!cnet_benchmark_u64_add(sample->request_lifecycle_ns, sample->request_resubmit_ns,
+                              &owner_nested_ns) ||
+      !cnet_benchmark_u64_add(owner_nested_ns, sample->observe_ns, &owner_nested_ns) ||
+      !cnet_benchmark_u64_add(owner_nested_ns, sample->request_completion_ns,
                               &owner_nested_ns) ||
       sample->owner_drive_ns < owner_nested_ns)
     return SALTS_ERANGE;
@@ -194,7 +195,6 @@ int cnet_benchmark_attribute_fixed_control(
   client_poll_wrapper_ns = sample->client_poll_ns - sample->owner_drive_ns;
   owner_control_ns = sample->owner_drive_ns - owner_nested_ns;
   request_control_ns = sample->request_lifecycle_ns - sample->request_start_ns;
-  native_observe_residual_ns = sample->observe_ns - sample->request_completion_ns;
   completion_control_ns = sample->request_completion_ns - sample->event_publish_ns;
   event_publish_residual_ns = sample->event_publish_ns - event_nested_ns;
   dispatcher_invoke_framework_ns = sample->dispatcher_invoke_ns - dispatcher_nested_ns;
@@ -223,8 +223,9 @@ int cnet_benchmark_attribute_fixed_control(
   CNET_FIXED_ADD(sample->dispatcher_release_ns);
 #undef CNET_FIXED_ADD
 
-  if (!cnet_benchmark_u64_add(sample->request_start_ns, native_observe_residual_ns,
+  if (!cnet_benchmark_u64_add(sample->request_start_ns, sample->request_resubmit_ns,
                               &shared_native_ns) ||
+      !cnet_benchmark_u64_add(shared_native_ns, sample->observe_ns, &shared_native_ns) ||
       !cnet_benchmark_u64_add(sample->benchmark_payload_check_ns,
                               benchmark_callback_residual_ns, &benchmark_work_ns) ||
       !cnet_benchmark_u64_add(sample->send_admit_ns, sample->client_poll_ns,
@@ -247,8 +248,9 @@ int cnet_benchmark_attribute_fixed_control(
       .owner_control_ns = cnet_benchmark_per_rt(owner_control_ns, sample->round_trips),
       .request_control_ns = cnet_benchmark_per_rt(request_control_ns, sample->round_trips),
       .native_request_start_ns = cnet_benchmark_per_rt(sample->request_start_ns, sample->round_trips),
-      .native_observe_residual_ns =
-          cnet_benchmark_per_rt(native_observe_residual_ns, sample->round_trips),
+      .native_request_resubmit_ns =
+          cnet_benchmark_per_rt(sample->request_resubmit_ns, sample->round_trips),
+      .native_observe_ns = cnet_benchmark_per_rt(sample->observe_ns, sample->round_trips),
       .completion_control_ns = cnet_benchmark_per_rt(completion_control_ns, sample->round_trips),
       .event_publish_residual_ns =
           cnet_benchmark_per_rt(event_publish_residual_ns, sample->round_trips),

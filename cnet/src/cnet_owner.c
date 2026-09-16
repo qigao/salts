@@ -114,7 +114,6 @@ struct cnet_owner_impl {
 #endif
   bool closed;
   bool resolver_closed;
-  int coroutine_status;
 };
 
 static uint64_t cnet_owner_system_now(void *context) {
@@ -263,7 +262,6 @@ static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *ses
 static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *session);
 static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *request,
                                const native_io_completion *completion);
-static void cnet_owner_coroutine_entry(native_io_coroutine *coroutine, void *user_data);
 
 static int cnet_owner_flush_state_events(cnet_owner_impl *impl, bool *out_blocked) {
   size_t published = 0u;
@@ -457,12 +455,6 @@ static int cnet_owner_release_request(cnet_owner_request *request) {
   memset(request, 0, sizeof(*request));
   impl->free_requests[impl->free_request_count++] = (uint32_t)index;
   return SALTS_OK;
-}
-
-static int cnet_owner_take_coroutine_status(cnet_owner_impl *impl) {
-  const int status = impl->coroutine_status;
-  impl->coroutine_status = SALTS_OK;
-  return status;
 }
 
 static int cnet_owner_receive_operation_kind(cnet_uri_scheme scheme,
@@ -1558,54 +1550,6 @@ static int cnet_owner_process_completion_batch(cnet_owner_impl *impl,
   return first_error;
 }
 
-static void cnet_owner_coroutine_entry(native_io_coroutine *coroutine, void *user_data) {
-  cnet_owner_request *request = (cnet_owner_request *)user_data;
-  cnet_owner_impl *impl = request != NULL ? request->owner : NULL;
-  native_io_completion completion = {0};
-#if defined(CNET_INTERNAL_PROFILING)
-  uint64_t profile_started;
-#endif
-  int status;
-  if (impl == NULL || !request->active) return;
-  do {
-    status = native_io_coroutine_await(coroutine, &request->operation, &completion);
-    if (status != SALTS_OK ||
-        (request->role != CNET_OWNER_REQUEST_SEND &&
-         request->role != CNET_OWNER_REQUEST_TLS_WRITE) ||
-        completion.kind != NATIVE_IO_COMPLETION_OK)
-      break;
-    if (completion.bytes == 0u || completion.bytes > request->operation.length) {
-      status = SALTS_EIO;
-      break;
-    }
-    request->completed_size += completion.bytes;
-    if (request->completed_size == request->requested_size) break;
-    if (request->operation.kind == NATIVE_IO_OPERATION_UDP_SEND_TO) {
-      status = SALTS_EIO;
-      break;
-    }
-    request->operation.buffer = (unsigned char *)request->operation.buffer + completion.bytes;
-    request->operation.length -= completion.bytes;
-  } while (true);
-#if defined(CNET_INTERNAL_PROFILING)
-  /* The await above suspends this stackful coroutine. Start after it returns so
-   * the diagnostic measures terminal request control, not time spent waiting
-   * for I/O. Intermediate partial-send completions are intentionally excluded. */
-  profile_started = cnet_owner_profile_start(impl);
-#endif
-  if (status == SALTS_OK &&
-      (request->role == CNET_OWNER_REQUEST_SEND || request->role == CNET_OWNER_REQUEST_TLS_WRITE) &&
-      completion.kind == NATIVE_IO_COMPLETION_OK)
-    completion.bytes = request->completed_size;
-  if (status == SALTS_OK) status = cnet_owner_complete(impl, request, &completion);
-  else status = cnet_owner_fail_started_request(request, status);
-  if (status != SALTS_OK && impl->coroutine_status == SALTS_OK) impl->coroutine_status = status;
-#if defined(CNET_INTERNAL_PROFILING)
-  cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_completion_ns,
-                            &impl->profile.request_completion_calls);
-#endif
-}
-
 static int cnet_owner_process_deadlines(cnet_owner_impl *impl) {
   salts_deadline_event next = {0};
   uint64_t now_ms;
@@ -1920,11 +1864,6 @@ int cnet_owner_wake(cnet_owner *owner) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
   if (impl == NULL) return SALTS_EINVAL;
   return native_io_backend_wake(&impl->backend);
-}
-
-bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats) {
-  const cnet_owner_impl *impl = owner != NULL ? (const cnet_owner_impl *)owner->impl : NULL;
-  return impl != NULL && native_io_backend_get_coroutine_stats(&impl->backend, out_stats);
 }
 
 #if defined(CNET_INTERNAL_TESTING)
