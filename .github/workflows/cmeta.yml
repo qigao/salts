@@ -16,6 +16,7 @@ on:
       - "utils/**"
       - "cmake/**"
       - "tests/install_consumer/**"
+      - "tests/cmeta_shared_owner/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
       - "CMakeUserPresets.json"
@@ -38,6 +39,7 @@ on:
       - "utils/**"
       - "cmake/**"
       - "tests/install_consumer/**"
+      - "tests/cmeta_shared_owner/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
       - "CMakeUserPresets.json"
@@ -55,6 +57,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - name: Verify Lean refinement certificate
         uses: leanprover/lean-action@v1
@@ -99,6 +104,26 @@ jobs:
       - name: Verify installed package targets
         run: cmake --build --preset linux-release-user --target verify_installed_package
 
+      - name: Verify CMeta shared ownership with sanitizers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S tests/cmeta_shared_owner -B build/cmeta-owner -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMETA_OWNER_SANITIZERS=ON
+          cmake --build build/cmeta-owner -j2
+          ctest --test-dir build/cmeta-owner --no-tests=error --output-on-failure
+
+      - name: Verify installed CMeta shared ownership
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S tests/cmeta_shared_owner -B build/cmeta-owner-installed -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMETA_PACKAGE_DIR="$GITHUB_WORKSPACE/external/pkgs/salts/release/lib/cmake/Salts"
+          cmake --build build/cmeta-owner-installed -j2
+          ctest --test-dir build/cmeta-owner-installed --no-tests=error --output-on-failure
+
       - name: Test full Linux suite
         run: ctest --preset linux-release-user --output-on-failure
 
@@ -118,11 +143,22 @@ jobs:
             -R "^(cflow_native_(socket|pipe|file)_example|cflow_io_(native|native_adapter|pipe|file)_test|cflow_process_test)$" \
             --output-on-failure
 
+      - name: Check exact head and unchanged tracked source
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          test -z "$(git status --porcelain --untracked-files=no)"
+
   macos:
     name: macOS 15 release
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - name: Setup re2c and vcpkg
         shell: bash
@@ -179,6 +215,9 @@ jobs:
       ANDROID_INSTALL_PREFIX: ${{ github.workspace }}/build/android-arm64-package
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - name: Setup re2c and validate toolchains
         shell: bash
@@ -257,6 +296,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - name: Setup re2c
         shell: powershell
@@ -345,9 +387,38 @@ jobs:
           if errorlevel 1 exit /b 1
           cmake --build --preset install-win-release-user
 
+      - name: Verify CMeta shared ownership
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          cmake -S tests/cmeta_shared_owner -B build/cmeta-owner -G Ninja -DCMAKE_BUILD_TYPE=Release
+          if errorlevel 1 exit /b 1
+          cmake --build build/cmeta-owner -j2
+          if errorlevel 1 exit /b 1
+          ctest --test-dir build/cmeta-owner --no-tests=error --output-on-failure
+          if errorlevel 1 exit /b 1
+          cmake -S tests/cmeta_shared_owner -B build/cmeta-owner-installed -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMETA_PACKAGE_DIR="%GITHUB_WORKSPACE%\external\pkgs\salts\release\lib\cmake\Salts"
+          if errorlevel 1 exit /b 1
+          cmake --build build/cmeta-owner-installed -j2
+          if errorlevel 1 exit /b 1
+          ctest --test-dir build/cmeta-owner-installed --no-tests=error --output-on-failure
+
       - name: Verify installed package targets
         shell: cmd
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user --target verify_installed_package
+
+
+      - name: Check exact head and unchanged tracked source
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $expected = "${{ github.event.pull_request.head.sha || github.sha }}"
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $expected) { throw "expected head $expected, got $actual" }
+          $dirty = @(git status --porcelain --untracked-files=no)
+          if ($dirty.Count -ne 0) { throw "tracked source changed: $($dirty -join '; ')" }
