@@ -15,6 +15,21 @@ spec("CNet benchmark paired statistics") {
     check_equal(summary.mad, 10.0);
   }
 
+  it("summarizes nonnegative diagnostic stages including zero resubmits") {
+    const double mixed[] = {0.0, 1.0, 2.0, 3.0, 4.0};
+    const double all_zero[] = {0.0, 0.0, 0.0};
+    const double invalid[] = {0.0, -1.0};
+    cnet_benchmark_summary summary = {0};
+
+    check_equal(cnet_benchmark_summarize_nonnegative(mixed, 5u, &summary), SALTS_OK);
+    check_equal(summary.median, 2.0);
+    check_equal(summary.mad, 1.0);
+    check_equal(cnet_benchmark_summarize_nonnegative(all_zero, 3u, &summary), SALTS_OK);
+    check_equal(summary.median, 0.0);
+    check_equal(summary.mad, 0.0);
+    check_equal(cnet_benchmark_summarize_nonnegative(invalid, 2u, &summary), SALTS_ERANGE);
+  }
+
   it("computes deltas from matched baseline and candidate runs") {
     const double baseline[] = {100.0, 200.0, 400.0, 800.0, 1600.0};
     const double candidate[] = {105.0, 220.0, 480.0, 1040.0, 4800.0};
