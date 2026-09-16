@@ -12,6 +12,7 @@ on:
       - "concurrency/**"
       - "tinytest/**"
       - "cstl/**"
+      - "parser/**"
       - "salts_serial/**"
       - "utils/**"
       - "cmake/**"
@@ -22,6 +23,8 @@ on:
       - "CMakeUserPresets.json"
       - "presets/**"
       - "vcpkg.json"
+      - "vcpkg-configuration.json"
+      - "vcpkg-ports/**"
       - ".github/workflows/cmeta.yml"
   push:
     branches: [master]
@@ -35,6 +38,7 @@ on:
       - "concurrency/**"
       - "tinytest/**"
       - "cstl/**"
+      - "parser/**"
       - "salts_serial/**"
       - "utils/**"
       - "cmake/**"
@@ -45,6 +49,8 @@ on:
       - "CMakeUserPresets.json"
       - "presets/**"
       - "vcpkg.json"
+      - "vcpkg-configuration.json"
+      - "vcpkg-ports/**"
       - ".github/workflows/cmeta.yml"
   workflow_dispatch:
 
@@ -123,6 +129,41 @@ jobs:
       - name: Verify installed package targets
         run: cmake --build --preset linux-release-user --target verify_installed_package
 
+      - name: Stage Linux installed Salts SDK cache
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sdk="$GITHUB_WORKSPACE/build/ci-salts-sdk"
+          rm -rf "$sdk"
+          mkdir -p "$sdk"
+          cp -a "$GITHUB_WORKSPACE/external/pkgs/salts/release/." "$sdk/"
+          test -f "$sdk/lib/cmake/Salts/SaltsConfig.cmake"
+          cat > "$sdk/salts-sdk-manifest.txt" <<EOF
+          commit=${{ github.event.pull_request.head.sha || github.sha }}
+          os=${{ runner.os }}
+          arch=${{ runner.arch }}
+          image=${{ steps.linux-env.outputs.image }}
+          triplet=${{ steps.linux-env.outputs.triplet }}
+          profile=release
+          EOF
+
+      - name: Save Linux installed Salts SDK cache
+        uses: actions/cache/save@v4
+        with:
+          path: build/ci-salts-sdk
+          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+
+      - name: Verify CSTL allocator installed consumers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -f "$GITHUB_WORKSPACE/external/pkgs/salts/release/include/cstl/allocator.h"
+          test -f "$GITHUB_WORKSPACE/external/pkgs/salts/release/include/cstl/vec_alloc.h"
+          cmake -S cstl/tests/allocator_installed -B build/allocator-consumer -G Ninja \
+            -DSalts_DIR="$GITHUB_WORKSPACE/external/pkgs/salts/release/lib/cmake/Salts"
+          cmake --build build/allocator-consumer -j2
+          ctest --test-dir build/allocator-consumer --no-tests=error --output-on-failure
+
       - name: Verify CMeta shared ownership with sanitizers
         shell: bash
         run: |
@@ -161,6 +202,97 @@ jobs:
           ctest --preset linux-dev-user \
             -R "^(cflow_native_(socket|pipe|file)_example|cflow_io_(native|native_adapter|pipe|file)_test|cflow_process_test)$" \
             --output-on-failure
+
+      - name: Verify CSTL allocator with sanitizers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake --preset linux-dev-user -DBUILD_BENCHMARKS=OFF \
+            -DENABLE_SANITIZER_ADDRESS=ON \
+            -DENABLE_SANITIZER_UNDEFINED=ON
+          cmake --build --preset linux-dev-user --target \
+            cstl_vec_alloc_test \
+            cstl_vec_alloc_cpp_test \
+            cstl_sequence_test \
+            cstl_ownership_test \
+            cstl_header_test \
+            cstl_header_cpp_test
+          ctest --preset linux-dev-user \
+            -R "^(cstl_vec_alloc_test|cstl_vec_alloc_cpp_test|cstl_sequence_test|cstl_ownership_test|cstl_header_test|cstl_header_cpp_test)$" \
+            --output-on-failure
+
+      - name: Verify XML DOM and SAX with sanitizers
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake --preset linux-dev-user -DBUILD_BENCHMARKS=OFF \
+            -DENABLE_SANITIZER_ADDRESS=ON \
+            -DENABLE_SANITIZER_UNDEFINED=ON
+          cmake --build --preset linux-dev-user --target \
+            xml_parser_test \
+            xml_sax_parser_test
+          ctest --preset linux-dev-user \
+            -R "^(xml_parser_test|xml_sax_parser_test)$" \
+            --output-on-failure
+
+      - name: Check exact head and unchanged tracked source
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+  sdk-cache-consumer-linux:
+    name: Linux cached SDK consumer
+    needs: linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Setup cached SDK consumer tools
+        id: sdk-env
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
+
+      - name: Restore exact-head Salts SDK
+        id: salts-sdk-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/ci-salts-sdk
+          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.sdk-env.outputs.image }}-${{ steps.sdk-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          fail-on-cache-miss: true
+
+      - name: Verify cached SDK provenance
+        shell: bash
+        run: |
+          set -euxo pipefail
+          manifest="$GITHUB_WORKSPACE/build/ci-salts-sdk/salts-sdk-manifest.txt"
+          test -f "$manifest"
+          grep -Fx "commit=${{ github.event.pull_request.head.sha || github.sha }}" "$manifest"
+          grep -Fx "os=${{ runner.os }}" "$manifest"
+          grep -Fx "arch=${{ runner.arch }}" "$manifest"
+          grep -Fx "image=${{ steps.sdk-env.outputs.image }}" "$manifest"
+          grep -Fx "triplet=${{ steps.sdk-env.outputs.triplet }}" "$manifest"
+          grep -Fx "profile=release" "$manifest"
+          test -f build/ci-salts-sdk/lib/cmake/Salts/SaltsConfig.cmake
+
+      - name: Test CSTL installed consumers from cached SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S cstl/tests/allocator_installed -B build/sdk-cache-consumer -G Ninja \
+            -DSalts_DIR="$GITHUB_WORKSPACE/build/ci-salts-sdk/lib/cmake/Salts"
+          cmake --build build/sdk-cache-consumer -j2
+          ctest --test-dir build/sdk-cache-consumer --no-tests=error --output-on-failure
 
       - name: Check exact head and unchanged tracked source
         if: always()
@@ -475,6 +607,34 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user --target verify_installed_package
+
+      - name: Stage Windows installed Salts SDK cache
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $sdk = Join-Path $env:GITHUB_WORKSPACE "build\ci-salts-sdk"
+          $source = Join-Path $env:GITHUB_WORKSPACE "external\pkgs\salts\release"
+          if (Test-Path -LiteralPath $sdk) { Remove-Item -Recurse -Force $sdk }
+          New-Item -ItemType Directory -Force -Path $sdk | Out-Null
+          Copy-Item -Path (Join-Path $source '*') -Destination $sdk -Recurse -Force
+          $config = Join-Path $sdk "lib\cmake\Salts\SaltsConfig.cmake"
+          if (-not (Test-Path -LiteralPath $config -PathType Leaf)) {
+            throw "installed SaltsConfig.cmake missing: $config"
+          }
+          @(
+            "commit=${{ github.event.pull_request.head.sha || github.sha }}"
+            "os=${{ runner.os }}"
+            "arch=${{ runner.arch }}"
+            "image=${{ steps.windows-env.outputs.image }}"
+            "triplet=${{ steps.windows-env.outputs.triplet }}"
+            "profile=release"
+          ) | Set-Content -LiteralPath (Join-Path $sdk "salts-sdk-manifest.txt")
+
+      - name: Save Windows installed Salts SDK cache
+        uses: actions/cache/save@v4
+        with:
+          path: build/ci-salts-sdk
+          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
 
       - name: Check exact head and unchanged tracked source
         if: always()
