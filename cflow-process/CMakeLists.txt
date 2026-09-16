@@ -10,7 +10,7 @@ target_include_directories(salts_cflow_process PUBLIC
   $<INSTALL_INTERFACE:include>)
 target_link_libraries(salts_cflow_process
   PUBLIC Salts::Core Salts::CFlow
-  PRIVATE Salts::Platform)
+  PRIVATE Salts::NativeIO Salts::Platform)
 install(TARGETS salts_cflow_process EXPORT SaltsTargets)
 install(DIRECTORY include/cflow DESTINATION include FILES_MATCHING PATTERN "*.h")
 

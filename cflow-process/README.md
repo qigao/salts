@@ -1,12 +1,13 @@
 # CFlowProcess
 
-`Salts::CFlowProcess` combines the existing Core process owner with the
-CFlow native byte-pipe Actor. It is a separate target because Core already uses
-CFlow internally; placing this adapter in CFlow would create a dependency cycle.
+`Salts::CFlowProcess` combines the existing Core process owner with NativeIPC
+pipe ownership and a CFlow IO Actor. It is a separate target because Core
+already uses CFlow internally; placing this adapter in CFlow would create a
+dependency cycle.
 
-The adapter owns one `salts_process_t`, three parent-side asynchronous pipe
-endpoints, one fixed-capacity native backend, one manual Executor, one IO Actor,
-and exactly `request_capacity` operation slots. It never exposes raw endpoints,
+The adapter owns one `salts_process_t`, three parent-side NativeIPC endpoints,
+one fixed-capacity selected backend, one manual Executor, one IO Actor, and
+exactly `request_capacity` operation slots. It never exposes raw endpoints,
 captures output into an unbounded buffer, or creates a second process state
 machine.
 
@@ -17,6 +18,13 @@ only for the call. It rejects Core capture/pipe flags because the adapter must
 remain the only standard-stream consumer. `backend_kind`, `request_capacity`,
 `command_capacity`, `completion_batch_capacity`, and `completion` are required;
 unsupported native pipe backends return `SALTS_ENOTSUP` without fallback.
+
+`IOCP`, `EPOLL`, `IO_URING`, and `KQUEUE` select the matching root NativeIO
+backend exactly. These paths create no I/O worker: the fixed owner thread
+submits and observes NativeIO from `cflow_process_run_ready()`. Explicit
+`CFLOW_IO_NATIVE_POLL` retains the deprecated autonomous CFlow compatibility
+backend until issue #147 authorizes public removal. It is never selected as an
+implicit fallback for another backend.
 
 `try_write_stdin`, `try_read_stdout`, and `try_read_stderr` borrow each buffer
 until its terminal callback returns. Accepted operations receive a nonzero
@@ -75,6 +83,20 @@ int main(void) {
         options.program = "powershell.exe";
         options.args = args;
         config.backend_kind = CFLOW_IO_NATIVE_IOCP;
+    }
+#elif defined(__linux__)
+    {
+        static const char *args[] = {NULL};
+        options.program = "/usr/bin/true";
+        options.args = args;
+        config.backend_kind = CFLOW_IO_NATIVE_EPOLL;
+    }
+#elif defined(__APPLE__)
+    {
+        static const char *args[] = {NULL};
+        options.program = "/usr/bin/true";
+        options.args = args;
+        config.backend_kind = CFLOW_IO_NATIVE_KQUEUE;
     }
 #else
     {
