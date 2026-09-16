@@ -47,6 +47,15 @@ spec("CNet benchmark paired statistics") {
     check_equal(attribution.residual_ns, 250.0);
   }
 
+  it("derives the fixed-control envelope without double-counting completion under observe") {
+    double envelope_ns = 0.0;
+
+    check_equal(cnet_benchmark_fixed_control_envelope(1000.0, 100.0, 5000.0, 1500.0, 3000.0,
+                                                      600.0, 200.0, &envelope_ns),
+                SALTS_OK);
+    check_equal(envelope_ns, 1800.0);
+  }
+
   it("rejects inconsistent send attribution samples") {
     cnet_benchmark_send_attribution attribution = {0};
 
