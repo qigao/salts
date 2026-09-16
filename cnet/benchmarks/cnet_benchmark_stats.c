@@ -95,6 +95,39 @@ int cnet_benchmark_attribute_send(uint64_t send_admit_ns, uint64_t send_admit_ca
   return SALTS_OK;
 }
 
+int cnet_benchmark_fixed_control_envelope(
+    double send_admit_ns, double payload_copy_ns, double poll_ns, double request_start_ns,
+    double observe_ns, double request_completion_ns, double payload_check_ns,
+    double *out_envelope_ns) {
+  double send_fixed;
+  double observe_native;
+  double excluded_poll;
+  double poll_fixed;
+  double envelope;
+  const double values[] = {send_admit_ns,       payload_copy_ns, request_start_ns,
+                           poll_ns,              observe_ns,      request_completion_ns,
+                           payload_check_ns};
+
+  if (out_envelope_ns == NULL) return SALTS_EINVAL;
+  for (size_t index = 0u; index < sizeof(values) / sizeof(values[0]); ++index) {
+    if (!isfinite(values[index]) || values[index] < 0.0) return SALTS_ERANGE;
+  }
+  if (send_admit_ns < payload_copy_ns || observe_ns < request_completion_ns)
+    return SALTS_ERANGE;
+
+  send_fixed = send_admit_ns - payload_copy_ns;
+  observe_native = observe_ns - request_completion_ns;
+  excluded_poll = request_start_ns + observe_native;
+  if (!isfinite(excluded_poll)) return SALTS_ERANGE;
+  excluded_poll += payload_check_ns;
+  if (!isfinite(excluded_poll) || poll_ns < excluded_poll) return SALTS_ERANGE;
+  poll_fixed = poll_ns - excluded_poll;
+  envelope = send_fixed + poll_fixed;
+  if (!isfinite(envelope) || envelope <= 0.0) return SALTS_ERANGE;
+  *out_envelope_ns = envelope;
+  return SALTS_OK;
+}
+
 int cnet_benchmark_attribute_fixed_control(
     double control_envelope_ns, double public_admission_control_ns,
     double queue_staging_control_ns, double poll_control_ns, double receive_rearm_control_ns,
