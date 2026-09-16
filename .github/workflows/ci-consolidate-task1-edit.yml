@@ -1,0 +1,33 @@
+name: CI consolidation task1 edit
+
+on:
+  push:
+    branches:
+      - ci/consolidate-canonical-workflows
+    paths:
+      - .github/workflows/ci-consolidate-task1-edit.yml
+
+permissions:
+  contents: write
+
+jobs:
+  edit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ci/consolidate-canonical-workflows
+      - name: Apply Task 1 patch
+        run: |
+          set -euxo pipefail
+          python3 .github/scripts/ci_consolidate_task1.py
+          git diff --check
+          git diff -- .github/workflows/cmeta.yml
+      - name: Commit Task 1 patch
+        run: |
+          set -euxo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/cmeta.yml
+          git commit -m 'ci(cmeta): migrate shared-owner regression'
+          git push origin HEAD:ci/consolidate-canonical-workflows
