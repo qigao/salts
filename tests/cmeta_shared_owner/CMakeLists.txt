@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(CMetaSharedOwner VERSION 1.1.0 LANGUAGES C CXX)
 include(CTest)
-include(GNUInstallDirs)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -24,22 +23,15 @@ endif()
 
 get_filename_component(SALTS_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 include("${SALTS_SOURCE_ROOT}/cmake/CmakeUtils.cmake")
-if(CMETA_PACKAGE_DIR)
-  find_package(Salts CONFIG REQUIRED PATHS "${CMETA_PACKAGE_DIR}" NO_DEFAULT_PATH)
-else()
-  # Use the production target, not a test-owned copy of its source list.
-  add_library(tinytest STATIC "${SALTS_SOURCE_ROOT}/tinytest/src/tinytest.c"
-                             "${SALTS_SOURCE_ROOT}/tinytest/src/tinymock.c")
-  add_library(Salts::TinyTest ALIAS tinytest)
-  target_include_directories(tinytest PUBLIC "${SALTS_SOURCE_ROOT}/tinytest/include")
-  set(BUILD_TESTS ON)
-  add_subdirectory("${SALTS_SOURCE_ROOT}/cmeta" cmeta)
-  install(EXPORT SaltsTargets FILE SaltsTargets.cmake NAMESPACE Salts::
-          DESTINATION lib/cmake/Salts)
-  file(WRITE "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"
-       "include(\"\${CMAKE_CURRENT_LIST_DIR}/SaltsTargets.cmake\")\n")
-  install(FILES "${CMAKE_BINARY_DIR}/SaltsConfig.cmake" DESTINATION lib/cmake/Salts)
-endif()
+
+# Use the production build-tree target, not an installed package or a test-owned
+# copy of the CMeta source list.
+add_library(tinytest STATIC "${SALTS_SOURCE_ROOT}/tinytest/src/tinytest.c"
+                           "${SALTS_SOURCE_ROOT}/tinytest/src/tinymock.c")
+add_library(Salts::TinyTest ALIAS tinytest)
+target_include_directories(tinytest PUBLIC "${SALTS_SOURCE_ROOT}/tinytest/include")
+set(BUILD_TESTS ON)
+add_subdirectory("${SALTS_SOURCE_ROOT}/cmeta" cmeta)
 
 foreach(peer IN ITEMS a b)
   add_library(cmeta_owner_${peer} SHARED owner_peer.c)
