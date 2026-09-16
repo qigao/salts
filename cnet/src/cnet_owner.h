@@ -112,6 +112,7 @@ int cnet_owner_wake(cnet_owner *owner);
 bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats);
 
 #if defined(CNET_INTERNAL_TESTING)
+/** Test-only view of the NativeIO request and coroutine ownership beneath this owner. */
 bool cnet_owner_test_backend_stats(const cnet_owner *owner,
                                    native_io_backend_stats *out_native,
                                    native_io_coroutine_stats *out_coroutine);
