@@ -190,6 +190,7 @@ int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *co
   size_t queue_tail;
 #if defined(CNET_INTERNAL_PROFILING)
   uint64_t publish_started;
+  uint64_t payload_publish_started = 0u;
   uint64_t payload_copy_started = 0u;
 #endif
 
@@ -213,6 +214,7 @@ int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *co
   }
 #if defined(CNET_INTERNAL_PROFILING)
   publish_started = cnet_command_profile_start(impl);
+  if (command->size != 0u) payload_publish_started = publish_started;
 #endif
   slot = impl->free_slots[impl->free_count - 1u];
   entry = cnet_command_entry_at(impl, slot);
@@ -261,6 +263,9 @@ int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *co
   if (impl->peak_commands < impl->live_commands) impl->peak_commands = impl->live_commands;
   if (impl->peak_queued_bytes < impl->queued_bytes) impl->peak_queued_bytes = impl->queued_bytes;
 #if defined(CNET_INTERNAL_PROFILING)
+  if (command->size != 0u)
+    cnet_command_profile_finish(impl, payload_publish_started, &impl->profile.payload_publish_ns,
+                                &impl->profile.payload_publish_calls);
   cnet_command_profile_finish(impl, publish_started, &impl->profile.publish_ns,
                               &impl->profile.publish_calls);
 #endif
