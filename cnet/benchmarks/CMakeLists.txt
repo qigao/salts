@@ -23,3 +23,15 @@ set_target_properties(cnet_io_benchmark PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF
   LINKER_LANGUAGE CXX)
+
+cmake_add_benchmark(cnet_owner_lifecycle_compare
+  SOURCES cnet_owner_lifecycle_compare.c cnet_benchmark_stats.c
+  LIBS Salts::Platform Salts::Core Salts::NativeIO
+  FOLDER "cnet/benchmarks")
+target_include_directories(cnet_owner_lifecycle_compare PRIVATE ../include ../src)
+if(UNIX AND NOT APPLE)
+  target_link_libraries(cnet_owner_lifecycle_compare PRIVATE dl)
+endif()
+add_test(NAME cnet_owner_lifecycle_compare_self_test
+  COMMAND cnet_owner_lifecycle_compare --self-test)
+add_dependencies(cnet_io_benchmark cnet_owner_lifecycle_compare)

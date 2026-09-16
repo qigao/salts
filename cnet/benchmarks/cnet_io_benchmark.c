@@ -117,6 +117,7 @@ typedef struct io_bench_series {
   cnet_benchmark_summary cnet_owner_residual_ns;
   cnet_benchmark_summary cnet_request_control_ns;
   cnet_benchmark_summary cnet_request_start_ns;
+  cnet_benchmark_summary cnet_request_resubmit_ns;
   cnet_benchmark_summary cnet_observe_ns;
   cnet_benchmark_summary cnet_completion_control_ns;
   cnet_benchmark_summary cnet_event_publish_ns;
@@ -1455,15 +1456,21 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
         cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_command_control_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    const uint64_t owner_nested_ns =
-        result->cnet_profile.owner.request_lifecycle_ns + result->cnet_profile.owner.observe_ns;
+    uint64_t owner_nested_ns = result->cnet_profile.owner.request_lifecycle_ns;
     const uint64_t rearm_control_ns = result->cnet_profile.owner.receive_rearm_stage_ns -
                                       result->cnet_profile.owner.receive_rearm_request_lifecycle_ns;
+    if (owner_nested_ns > UINT64_MAX - result->cnet_profile.owner.request_resubmit_ns)
+      return SALTS_ERANGE;
+    owner_nested_ns += result->cnet_profile.owner.request_resubmit_ns;
+    if (owner_nested_ns > UINT64_MAX - result->cnet_profile.owner.observe_ns) return SALTS_ERANGE;
+    owner_nested_ns += result->cnet_profile.owner.observe_ns;
+    if (owner_nested_ns > UINT64_MAX - result->cnet_profile.owner.request_completion_ns)
+      return SALTS_ERANGE;
+    owner_nested_ns += result->cnet_profile.owner.request_completion_ns;
     const uint64_t command_control_ns =
         result->cnet_profile.owner.command_stage_ns - result->cnet_profile.owner.command_request_lifecycle_ns;
     const uint64_t categorized_control_ns = rearm_control_ns + command_control_ns;
-    if (owner_nested_ns < result->cnet_profile.owner.request_lifecycle_ns ||
-        categorized_control_ns < rearm_control_ns ||
+    if (categorized_control_ns < rearm_control_ns ||
         result->cnet_profile.owner.owner_drive_ns < owner_nested_ns ||
         result->cnet_profile.owner.owner_drive_ns - owner_nested_ns < categorized_control_ns)
       return SALTS_ERANGE;
@@ -1491,6 +1498,14 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
   }
   if (status == SALTS_OK)
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_request_start_ns);
+  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
+    const io_bench_result *result = &series->stage_profile_runs[repeat];
+    values[repeat] = io_bench_mean(result->cnet_profile.owner.request_resubmit_ns,
+                                   result->round_trips);
+  }
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize_nonnegative(values, IO_BENCH_REPLICATES,
+                                                  &series->cnet_request_resubmit_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
     values[repeat] = io_bench_mean(result->cnet_profile.owner.observe_ns, result->round_trips);
@@ -1749,6 +1764,7 @@ static int io_bench_fixed_control_attribution(
       .owner_drive_ns = owner->owner_drive_ns,
       .request_lifecycle_ns = owner->request_lifecycle_ns,
       .request_start_ns = owner->request_start_ns,
+      .request_resubmit_ns = owner->request_resubmit_ns,
       .observe_ns = owner->observe_ns,
       .request_completion_ns = owner->request_completion_ns,
       .event_publish_ns = owner->event_publish_ns,
@@ -1847,25 +1863,29 @@ static void io_bench_print_cnet_stages(const char *protocol, const io_bench_seri
 
   printf("\n%s CNet internal inclusive time per round trip\n", protocol);
   printf("Nested columns overlap and must not be added. Request control excludes NativeIO "
-         "coroutine spawn; request start is that spawn "
-         "through first await/submit. Completion control excludes event publish and intermediate "
-         "partial-send completions; event publish includes the user callback.\n");
+         "submission. Request start = first NativeIO submit; request resubmit = partial-send "
+         "continuation submit; observe = backend wait/dequeue only; completion control = CNet "
+         "routing/terminal control after observe and excludes event publish; event publish "
+         "includes the user callback.\n");
   printf("| payload | owner drive us | MAD us | owner control ns | MAD ns | command stage ns | "
-         "MAD ns | request control ns | MAD ns | request start us | MAD us | observe us | MAD us | "
-         "completion control ns | MAD ns | event publish ns | MAD ns | requests started/RT | "
+         "MAD ns | request control ns | MAD ns | request start us | MAD us | request resubmit us | "
+         "MAD us | observe us | MAD us | completion control ns | MAD ns | event publish ns | MAD ns | "
+         "requests started/RT | "
          "requests completed/RT | events/RT |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-         "---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+         "---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
     const io_bench_series *series = &cnet[index];
     printf("| %zu KiB | %.3f | %.3f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.3f | "
-           "%.3f | %.3f | %.3f | %.1f | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f |\n",
+           "%.3f | %.3f | %.3f | %.3f | %.3f | %.1f | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f |\n",
            series->payload_size / 1024u, series->cnet_owner_drive_ns.median / 1000.0,
            series->cnet_owner_drive_ns.mad / 1000.0, series->cnet_owner_control_ns.median,
            series->cnet_owner_control_ns.mad, series->cnet_command_stage_ns.median,
            series->cnet_command_stage_ns.mad, series->cnet_request_control_ns.median,
            series->cnet_request_control_ns.mad, series->cnet_request_start_ns.median / 1000.0,
-           series->cnet_request_start_ns.mad / 1000.0, series->cnet_observe_ns.median / 1000.0,
+           series->cnet_request_start_ns.mad / 1000.0,
+           series->cnet_request_resubmit_ns.median / 1000.0,
+           series->cnet_request_resubmit_ns.mad / 1000.0, series->cnet_observe_ns.median / 1000.0,
            series->cnet_observe_ns.mad / 1000.0, series->cnet_completion_control_ns.median,
            series->cnet_completion_control_ns.mad, series->cnet_event_publish_ns.median,
            series->cnet_event_publish_ns.mad, series->cnet_requests_started_per_round_trip.median,

@@ -46,6 +46,7 @@ typedef struct cnet_benchmark_fixed_control_sample {
   uint64_t owner_drive_ns;
   uint64_t request_lifecycle_ns;
   uint64_t request_start_ns;
+  uint64_t request_resubmit_ns;
   uint64_t observe_ns;
   uint64_t request_completion_ns;
   uint64_t event_publish_ns;
@@ -72,7 +73,8 @@ typedef struct cnet_benchmark_fixed_control_attribution {
   double owner_control_ns;
   double request_control_ns;
   double native_request_start_ns;
-  double native_observe_residual_ns;
+  double native_request_resubmit_ns;
+  double native_observe_ns;
   double completion_control_ns;
   double event_publish_residual_ns;
   double dispatcher_prepare_ns;
@@ -89,6 +91,8 @@ typedef struct cnet_benchmark_fixed_control_attribution {
 
 int cnet_benchmark_summarize(const double *values, size_t count,
                              cnet_benchmark_summary *out_summary);
+int cnet_benchmark_summarize_nonnegative(const double *values, size_t count,
+                                         cnet_benchmark_summary *out_summary);
 int cnet_benchmark_summarize_paired_delta(const double *baseline, const double *candidate,
                                           size_t count, cnet_benchmark_summary *out_summary);
 

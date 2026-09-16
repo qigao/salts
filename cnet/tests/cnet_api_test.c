@@ -828,6 +828,7 @@ spec("CNet public client API") {
     check_equal(profile.owner.command_request_lifecycle_calls, (uint64_t)0u);
     check_equal(profile.owner.request_lifecycle_calls, (uint64_t)0u);
     check_equal(profile.owner.request_start_calls, (uint64_t)0u);
+    check_equal(profile.owner.request_resubmit_calls, (uint64_t)0u);
     check_equal(profile.owner.observe_calls, (uint64_t)1u);
     check_equal(profile.owner.request_completion_calls, (uint64_t)0u);
     check_equal(profile.owner.event_publish_calls, (uint64_t)0u);
@@ -840,6 +841,7 @@ spec("CNet public client API") {
     check_true(profile.owner.owner_drive_ns >= profile.owner.receive_rearm_stage_ns);
     check_equal(profile.owner.receive_rearm_request_lifecycle_ns, (uint64_t)0u);
     check_equal(profile.owner.command_request_lifecycle_ns, (uint64_t)0u);
+    check_equal(profile.owner.request_resubmit_ns, (uint64_t)0u);
     check_true(profile.owner.owner_drive_ns >= profile.owner.command_stage_ns);
     check_true(profile.owner.owner_drive_ns >= profile.owner.request_lifecycle_ns);
     check_true(profile.owner.owner_drive_ns >= profile.owner.request_start_ns);

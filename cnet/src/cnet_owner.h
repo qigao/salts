@@ -77,6 +77,7 @@ typedef struct cnet_owner_profile {
   uint64_t command_request_lifecycle_ns;
   uint64_t request_lifecycle_ns;
   uint64_t request_start_ns;
+  uint64_t request_resubmit_ns;
   uint64_t observe_ns;
   uint64_t request_completion_ns;
   uint64_t event_publish_ns;
@@ -87,6 +88,7 @@ typedef struct cnet_owner_profile {
   uint64_t command_request_lifecycle_calls;
   uint64_t request_lifecycle_calls;
   uint64_t request_start_calls;
+  uint64_t request_resubmit_calls;
   uint64_t observe_calls;
   uint64_t request_completion_calls;
   uint64_t event_publish_calls;
@@ -102,14 +104,40 @@ typedef struct cnet_owner_profile {
 
 int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config);
 
-/** Processes bounded commands and one NativeIO completion batch. */
+/** Processes bounded commands and directly settles one NativeIO completion batch. */
 int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms);
 
 /** Thread-safe advisory wake for an owner blocked in drive. */
 int cnet_owner_wake(cnet_owner *owner);
 
-/** Reports the bounded NativeIO coroutine state owned by this shard. */
-bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats);
+#if defined(CNET_INTERNAL_TESTING)
+typedef struct cnet_owner_test_request_snapshot {
+  uintptr_t token;
+  native_io_request native_request;
+  native_io_endpoint endpoint;
+  bool active;
+} cnet_owner_test_request_snapshot;
+
+/** Test-only view of the NativeIO request and coroutine ownership beneath this owner. */
+bool cnet_owner_test_backend_stats(const cnet_owner *owner,
+                                   native_io_backend_stats *out_native,
+                                   native_io_coroutine_stats *out_coroutine);
+/** Captures the CNet routing token plus authoritative NativeIO identity for one request record. */
+bool cnet_owner_test_get_request_snapshot(const cnet_owner *owner, size_t request_index,
+                                          cnet_owner_test_request_snapshot *out_snapshot);
+/** Observes NativeIO without routing the returned completion through the owner. */
+int cnet_owner_test_observe_raw(cnet_owner *owner, native_io_completion *events,
+                                size_t event_capacity, uint32_t timeout_ms,
+                                size_t *out_count);
+/** Routes every supplied completion and returns the first routing error after the whole batch. */
+int cnet_owner_test_process_completion_batch(cnet_owner *owner,
+                                             const native_io_completion *events,
+                                             size_t count);
+/** Makes the next successful/already-pending native cancellation report SALTS_EALREADY. */
+int cnet_owner_test_force_cancel_ealready_once(cnet_owner *owner);
+/** Caps each test-build stream-send submission without changing logical send ownership. */
+int cnet_owner_test_set_send_chunk_bytes(cnet_owner *owner, size_t bytes);
+#endif
 
 #if defined(CNET_INTERNAL_PROFILING)
 /** Begins/takes a quiescent, single-owner diagnostic sample. */
