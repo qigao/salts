@@ -57,4 +57,11 @@ spec("CNet I/O benchmark backend selection") {
     check_equal(cnet_io_benchmark_select_backend("io_uring", &selected), SALTS_ENOTSUP);
 #endif
   }
+
+  it("requires an identical-path NativeIO direct A/A null control") {
+    cnet_io_benchmark_protocol protocol = {0};
+
+    check_equal(cnet_io_benchmark_protocol_default(&protocol), SALTS_OK);
+    check_true(protocol.native_direct_aa_control);
+  }
 }
