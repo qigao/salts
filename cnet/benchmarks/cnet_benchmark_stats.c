@@ -58,6 +58,15 @@ int cnet_benchmark_summarize(const double *values, size_t count,
   return cnet_benchmark_summarize_impl(values, count, true, out_summary);
 }
 
+int cnet_benchmark_summarize_nonnegative(const double *values, size_t count,
+                                         cnet_benchmark_summary *out_summary) {
+  if (values == NULL || out_summary == NULL || count == 0u) return SALTS_EINVAL;
+  for (size_t index = 0u; index < count; ++index) {
+    if (!isfinite(values[index]) || values[index] < 0.0) return SALTS_ERANGE;
+  }
+  return cnet_benchmark_summarize_impl(values, count, false, out_summary);
+}
+
 int cnet_benchmark_summarize_paired_delta(const double *baseline, const double *candidate,
                                           size_t count, cnet_benchmark_summary *out_summary) {
   double *deltas;

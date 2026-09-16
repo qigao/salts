@@ -1504,8 +1504,8 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
                                    result->round_trips);
   }
   if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                      &series->cnet_request_resubmit_ns);
+    status = cnet_benchmark_summarize_nonnegative(values, IO_BENCH_REPLICATES,
+                                                  &series->cnet_request_resubmit_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
     values[repeat] = io_bench_mean(result->cnet_profile.owner.observe_ns, result->round_trips);
