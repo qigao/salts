@@ -94,3 +94,27 @@ int cnet_benchmark_attribute_send(uint64_t send_admit_ns, uint64_t send_admit_ca
   };
   return SALTS_OK;
 }
+
+int cnet_benchmark_attribute_fixed_control(
+    double control_envelope_ns, double public_admission_control_ns,
+    double queue_staging_control_ns, double poll_control_ns, double receive_rearm_control_ns,
+    double command_control_ns, double owner_residual_ns, double request_control_ns,
+    double completion_control_ns, double event_and_callback_control_ns,
+    cnet_benchmark_fixed_control_attribution *out_attribution) {
+  const double leaves[] = {public_admission_control_ns, queue_staging_control_ns, poll_control_ns,
+                           receive_rearm_control_ns, command_control_ns, owner_residual_ns,
+                           request_control_ns, completion_control_ns, event_and_callback_control_ns};
+  double accounted = 0.0;
+
+  if (out_attribution == NULL) return SALTS_EINVAL;
+  if (!isfinite(control_envelope_ns) || control_envelope_ns <= 0.0) return SALTS_ERANGE;
+  for (size_t index = 0u; index < sizeof(leaves) / sizeof(leaves[0]); ++index) {
+    if (!isfinite(leaves[index]) || leaves[index] < 0.0) return SALTS_ERANGE;
+    accounted += leaves[index];
+    if (!isfinite(accounted) || accounted > control_envelope_ns) return SALTS_ERANGE;
+  }
+
+  *out_attribution = (cnet_benchmark_fixed_control_attribution){
+      control_envelope_ns, accounted, control_envelope_ns - accounted};
+  return SALTS_OK;
+}
