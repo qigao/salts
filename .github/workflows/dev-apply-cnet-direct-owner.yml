@@ -5,6 +5,7 @@ on:
     branches: [refactor/cnet-direct-owner-290]
     paths:
       - ".github/dev-apply.patch"
+      - ".github/dev-edit.py"
 
 permissions:
   contents: write
@@ -21,14 +22,21 @@ jobs:
         with:
           ref: refactor/cnet-direct-owner-290
           fetch-depth: 0
-      - name: Apply staged patch and amend commit
+      - name: Apply staged edit and amend commit
         shell: bash
         run: |
           set -euo pipefail
-          test -f .github/dev-apply.patch
-          git apply --check .github/dev-apply.patch
-          git apply .github/dev-apply.patch
-          git rm .github/dev-apply.patch
+          if [ -f .github/dev-edit.py ]; then
+            python3 .github/dev-edit.py
+            git rm .github/dev-edit.py
+          elif [ -f .github/dev-apply.patch ]; then
+            git apply --check .github/dev-apply.patch
+            git apply .github/dev-apply.patch
+            git rm .github/dev-apply.patch
+          else
+            echo "no staged edit found" >&2
+            exit 1
+          fi
           git add -A
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
