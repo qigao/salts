@@ -95,6 +95,7 @@ int cnet_benchmark_summarize_paired_delta(const double *baseline, const double *
 int cnet_benchmark_assess_run_quality(const cnet_benchmark_summary *null_p50,
                                       const cnet_benchmark_summary *baseline_p50,
                                       cnet_benchmark_run_quality *out_quality);
+const char *cnet_benchmark_run_quality_label(cnet_benchmark_run_quality_state state);
 
 int cnet_benchmark_attribute_send(uint64_t send_admit_ns, uint64_t send_admit_calls,
                                   uint64_t queue_publish_ns, uint64_t queue_publish_calls,
