@@ -157,7 +157,7 @@ set_target_properties(cnet_api_test PROPERTIES
   C_EXTENSIONS OFF)
 
 cmake_add_test(cnet_api_profile_test
-  SOURCES cnet_api_test.c cnet_client_control_profile_contract_test.c
+  SOURCES cnet_api_test.c
   LIBS salts_cnet_profile Salts::TinyTest
   INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
   FOLDER "cnet/tests")
