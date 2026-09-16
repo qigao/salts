@@ -59,6 +59,11 @@ struct cnet_client_impl {
   bool poll_active;
   bool stop_active;
   bool stopped;
+#if defined(CNET_INTERNAL_PROFILING)
+  uint64_t profile_client_poll_ns;
+  uint64_t profile_client_poll_calls;
+  bool profile_active;
+#endif
 };
 
 static SALTS_THREAD_LOCAL cnet_client_impl *cnet_active_callback_client;
@@ -896,6 +901,9 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
   const uint64_t started_ms = salts_monotonic_ms();
   uint32_t remaining_ms = timeout_ms;
   int status;
+#if defined(CNET_INTERNAL_PROFILING)
+  uint64_t profile_started = 0u;
+#endif
   if (out_events == NULL) return SALTS_EINVAL;
   *out_events = 0u;
   if (impl == NULL) return SALTS_EINVAL;
@@ -910,6 +918,9 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
   }
   salts_mutex_unlock(&impl->lock);
   if (status != SALTS_OK) return status;
+#if defined(CNET_INTERNAL_PROFILING)
+  if (impl->profile_active) profile_started = salts_hrtime();
+#endif
 
   for (;;) {
     bool externally_woken = false;
@@ -937,31 +948,71 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
   *out_events = impl->poll_callback_count;
   impl->poll_active = false;
   salts_mutex_unlock(&impl->lock);
+#if defined(CNET_INTERNAL_PROFILING)
+  if (profile_started != 0u) {
+    impl->profile_client_poll_ns += salts_hrtime() - profile_started;
+    ++impl->profile_client_poll_calls;
+  }
+#endif
   return status;
 }
 
 #if defined(CNET_INTERNAL_PROFILING)
 int cnet_client_profile_begin(cnet_client *client) {
   cnet_client_impl *impl = cnet_client_get(client);
+  cnet_owner_profile ignored_owner = {0};
+  bool shards_started = false;
   int status;
   if (impl == NULL) return SALTS_EINVAL;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
   salts_mutex_lock(&impl->lock);
   if (!impl->admission_open || impl->stopped) status = SALTS_ESHUTDOWN;
-  else if (impl->poll_active || impl->stop_active) status = SALTS_EBUSY;
-  else status = cnet_shards_profile_begin(&impl->shards);
+  else if (impl->poll_active || impl->stop_active || impl->profile_active) status = SALTS_EBUSY;
+  else {
+    status = cnet_shards_profile_begin(&impl->shards);
+    if (status == SALTS_OK) {
+      shards_started = true;
+      status = cnet_dispatcher_profile_begin(&impl->dispatcher);
+    }
+    if (status == SALTS_OK) {
+      impl->profile_client_poll_ns = 0u;
+      impl->profile_client_poll_calls = 0u;
+      impl->profile_active = true;
+    } else if (shards_started) {
+      (void)cnet_shards_profile_take(&impl->shards, &ignored_owner);
+    }
+  }
   salts_mutex_unlock(&impl->lock);
   return status;
 }
 
 int cnet_client_profile_take(cnet_client *client, cnet_client_poll_profile *out_profile) {
   cnet_client_impl *impl = cnet_client_get(client);
+  cnet_dispatcher_profile dispatcher_profile = {0};
   int status;
   if (impl == NULL || out_profile == NULL) return SALTS_EINVAL;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
   salts_mutex_lock(&impl->lock);
-  if (impl->poll_active || impl->stop_active) status = SALTS_EBUSY;
-  else status = cnet_shards_profile_take(&impl->shards, out_profile);
+  if (impl->poll_active || impl->stop_active || !impl->profile_active) status = SALTS_EBUSY;
+  else {
+    memset(out_profile, 0, sizeof(*out_profile));
+    status = cnet_shards_profile_take(&impl->shards, &out_profile->owner);
+    if (status == SALTS_OK)
+      status = cnet_dispatcher_profile_take(&impl->dispatcher, &dispatcher_profile);
+    if (status == SALTS_OK) {
+      out_profile->client_poll_ns = impl->profile_client_poll_ns;
+      out_profile->client_poll_calls = impl->profile_client_poll_calls;
+      out_profile->dispatcher_prepare_ns = dispatcher_profile.prepare_ns;
+      out_profile->dispatcher_prepare_calls = dispatcher_profile.prepare_calls;
+      out_profile->dispatcher_invoke_ns = dispatcher_profile.invoke_ns;
+      out_profile->dispatcher_invoke_calls = dispatcher_profile.invoke_calls;
+      out_profile->dispatcher_observer_ns = dispatcher_profile.observer_ns;
+      out_profile->dispatcher_observer_calls = dispatcher_profile.observer_calls;
+      out_profile->dispatcher_release_ns = dispatcher_profile.release_ns;
+      out_profile->dispatcher_release_calls = dispatcher_profile.release_calls;
+      impl->profile_active = false;
+    }
+  }
   salts_mutex_unlock(&impl->lock);
   return status;
 }
