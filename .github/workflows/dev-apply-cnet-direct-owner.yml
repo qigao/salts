@@ -1,0 +1,36 @@
+name: Dev apply CNet direct-owner patch
+
+on:
+  push:
+    branches: [refactor/cnet-direct-owner-290]
+    paths:
+      - ".github/dev-apply.patch"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dev-apply-cnet-direct-owner
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refactor/cnet-direct-owner-290
+          fetch-depth: 0
+      - name: Apply staged patch and amend commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .github/dev-apply.patch
+          git apply --check .github/dev-apply.patch
+          git apply .github/dev-apply.patch
+          git rm .github/dev-apply.patch
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --amend --no-edit
+          git push --force-with-lease origin HEAD:refactor/cnet-direct-owner-290
