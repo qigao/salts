@@ -14,7 +14,7 @@
 
 - Execution is blocked until #286 Z1 retained-buffer ownership is validated on an exact head and the implementation base contains `cnet_send_buffer()` plus the retained command payload mode.
 - `cnet_send()`, `cnet_sendv()`, and `cnet_send_buffer()` public semantics remain unchanged.
-- Add exactly one new public surface: `int cnet_send_slice(cnet_client *, cnet_connection, const mem_slice_t *)`.
+- Add exactly one public send surface: `int cnet_send_slice(cnet_client *, cnet_connection, const mem_slice_t *)`.
 - `vstr` remains a non-owning borrowed view; do not add `cnet_send_vstr()`.
 - A successful slice admission retains exactly one additional backing `mem_buffer_t` reference before returning.
 - The caller-owned `mem_slice_t` object is borrowed only during `cnet_send_slice()` and is never stored by CNet.
@@ -31,17 +31,15 @@
 
 ---
 
-### Task 0: Verify the #286 dependency before creating an implementation branch
+### Task 0: Verify the #286 dependency and freeze the implementation base
 
 **Files:** Evidence-only task. Do not modify source.
 
 **Interfaces:**
-- Consumes: #286 retained-buffer implementation.
-- Produces: a recorded base SHA that is safe for #292 implementation.
+- Consumes: validated #286 retained-buffer implementation.
+- Produces: local ref `refs/cnet-slice/base`, used by every final diff/audit command in this plan.
 
-- [ ] **Step 1: Verify the public retained-buffer API exists on the intended base**
-
-Run:
+- [ ] **Step 1: Verify the retained-buffer dependency exists on the intended base**
 
 ```bash
 git grep -n 'int cnet_send_buffer' -- cnet/include/cnet/cnet.h cnet/src/cnet_client.c
@@ -49,11 +47,9 @@ git grep -n 'CNET_COMMAND_PAYLOAD_RETAINED_BUFFER' -- cnet/src/cnet_command.h cn
 git grep -n 'cnet_owner_test_set_send_chunk_bytes' -- cnet/src/cnet_owner.h cnet/src/cnet_owner.c
 ```
 
-Expected: all three concepts exist. If any is absent, stop: #286 has not reached the dependency state required by this plan.
+Expected: all three concepts exist. If any command returns no match, stop execution because #286 has not reached the required dependency state.
 
-- [ ] **Step 2: Verify #286 ownership/zero-copy contracts are green on that exact SHA**
-
-Run the targets introduced/extended by #286:
+- [ ] **Step 2: Verify #286 ownership/zero-copy contracts on the same SHA**
 
 ```bash
 cmake --preset linux-release-user -DBUILD_TESTS=ON -DBUILD_BENCHMARKS=ON
@@ -65,21 +61,20 @@ ctest --test-dir build/linux-gcc-release \
   --timeout 60 --output-on-failure
 ```
 
-Expected: all applicable tests pass and retained-buffer profile coverage proves `payload_copy_calls == 0`.
+Expected: all applicable tests pass and retained-buffer command profiling proves `payload_copy_calls == 0`.
 
-- [ ] **Step 3: Record the implementation base**
-
-Capture:
+- [ ] **Step 3: Freeze the exact base locally**
 
 ```bash
-git rev-parse HEAD
+git update-ref refs/cnet-slice/base "$(git rev-parse HEAD)"
+git rev-parse refs/cnet-slice/base
 ```
 
-Create the #292 implementation branch from exactly that SHA, not from the documentation branch if the documentation branch predates #286.
+Create the implementation branch from the same `HEAD`. The documentation branch is not the implementation base if it predates #286.
 
 ---
 
-### Task 1: Extend the retained command representation from whole-buffer to retained-view
+### Task 1: Extend retained commands from whole-buffer ownership to explicit retained views
 
 **Files:**
 - Modify: `cnet/src/cnet_command.h`
@@ -88,12 +83,12 @@ Create the #292 implementation branch from exactly that SHA, not from the docume
 - Modify: `cnet/tests/cnet_command_profile_test.c`
 
 **Interfaces:**
-- Consumes: #286 `cnet_command.retained_buffer`, `CNET_COMMAND_PAYLOAD_RETAINED_BUFFER`, command-owned buffer retain/release, `cnet_command_view {data,size,_sequence}`.
-- Produces: retained command publication with explicit `retained_data` subrange pointer while preserving one backing-buffer reference and zero command payload copies.
+- Consumes: #286 `cnet_command.retained_buffer`, `CNET_COMMAND_PAYLOAD_RETAINED_BUFFER`, command-owned retain/release, `cnet_command_view {data,size,_sequence}`.
+- Produces: `cnet_command.retained_data` and exact retained subrange pointer identity with the existing payload kind.
 
-- [ ] **Step 1: Write the retained-subrange command RED**
+- [ ] **Step 1: Write the command-queue RED**
 
-Extend the retained command helper in `cnet_command_test.c` to construct an explicit view:
+In `cnet_command_test.c`, define:
 
 ```c
 static cnet_command make_retained_view_send(uint32_t slot, mem_buffer_t *buffer,
@@ -109,63 +104,40 @@ static cnet_command make_retained_view_send(uint32_t slot, mem_buffer_t *buffer,
 }
 ```
 
-Add a middle-range test:
+Add a middle-range test that allocates a 32-byte backing buffer, publishes bytes `[8,20)`, and requires:
 
 ```c
-it("retains one backing buffer while exposing an interior retained view") {
-  mem_pool_t pool;
-  mem_buffer_t *buffer;
-  cnet_command_view view = {0};
-  const cnet_command_queue_config config = {.capacity = 2u, .max_payload_bytes = 64u};
-
-  check_equal(mem_init(&pool, 0u), 0);
-  buffer = mem_get_buffer(&pool, 32u);
-  check_not_null(buffer);
-  for (size_t i = 0u; i < 32u; ++i) mem_buffer_data(buffer)[i] = (char)i;
-  mem_set_used(buffer, 32u);
-
-  check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-  cnet_command command =
-      make_retained_view_send(1u, buffer, mem_buffer_const_data(buffer) + 8u, 12u);
-  check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-  check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
-
-  check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-  check_true(view.data == mem_buffer_const_data(buffer) + 8u);
-  check_equal(view.size, 12u);
-  check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-  check_equal(mem_buffer_ref_count(buffer), UINT32_C(1));
-
-  mem_buffer_release(buffer);
-  check_equal(cnet_command_queue_close(&queue), SALTS_OK);
-  check_equal(cnet_command_queue_destroy(&queue), SALTS_OK);
-  mem_destroy(&pool);
-}
+check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
+check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
+check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+check_true(view.data == mem_buffer_const_data(buffer) + 8u);
+check_equal(view.size, 12u);
+check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+check_equal(mem_buffer_ref_count(buffer), UINT32_C(1));
 ```
 
-Add fail-closed internal validation cases using manually forged retained descriptors:
+Add forged retained descriptors for these exact invalid cases:
 
 ```text
 retained_data == NULL
-retained_data before backing start
-retained_data == backing start + used
+retained_data address below backing start
+retained_data address at backing start + used
 size > used - offset
 ```
 
-Each must return `SALTS_EINVAL` without changing the buffer refcount.
+Every invalid publish returns `SALTS_EINVAL` and leaves the backing refcount unchanged.
 
-- [ ] **Step 2: Extend the retained profile RED**
+- [ ] **Step 2: Write the profiling RED**
 
-In `cnet_command_profile_test.c`, publish an interior retained range and assert:
+In `cnet_command_profile_test.c`, publish an interior retained range and require:
 
 ```c
 check_equal(profile.publish_calls, UINT64_C(1));
 check_equal(profile.payload_publish_calls, UINT64_C(1));
 check_equal(profile.payload_copy_calls, UINT64_C(0));
 check_equal(profile.payload_copy_ns, UINT64_C(0));
+check_true(view.data == interior_pointer);
 ```
-
-The taken command view must preserve exact pointer identity with the interior input pointer.
 
 - [ ] **Step 3: Run RED**
 
@@ -173,25 +145,23 @@ The taken command view must preserve exact pointer identity with the interior in
 cmake --build --preset linux-release-user --target cnet_command_test cnet_command_profile_test
 ```
 
-Expected RED: `cnet_command.retained_data` does not exist. Do not accept an unrelated configure/link failure as RED evidence.
+Expected first RED: `cnet_command.retained_data` is absent. An unrelated configure/link failure is not valid RED evidence.
 
 - [ ] **Step 4: Add explicit retained-view metadata**
 
-In `cnet_command.h`, append to `cnet_command`:
+Append to `cnet_command` in `cnet_command.h`:
 
 ```c
 const void *retained_data;
 ```
 
-Keep the payload kind unchanged; a slice is still `CNET_COMMAND_PAYLOAD_RETAINED_BUFFER`.
-
-In `cnet_command.c`, extend `cnet_command_entry` with:
+Extend `cnet_command_entry` in `cnet_command.c`:
 
 ```c
 const void *payload_data;
 ```
 
-Add a fail-closed helper:
+Add:
 
 ```c
 static bool cnet_command_retained_range_valid(mem_buffer_t *buffer,
@@ -208,7 +178,6 @@ static bool cnet_command_retained_range_valid(mem_buffer_t *buffer,
   base_ptr = mem_buffer_const_data(buffer);
   used = mem_buffer_used(buffer);
   if (base_ptr == NULL || used == 0u) return false;
-
   base = (uintptr_t)base_ptr;
   start = (uintptr_t)data;
   if (start < base) return false;
@@ -220,21 +189,20 @@ static bool cnet_command_retained_range_valid(mem_buffer_t *buffer,
 }
 ```
 
-For retained SEND validation require:
+Retained SEND validation becomes:
 
 ```c
-command->kind == CNET_COMMAND_SEND
-command->data == NULL
-command->segments == NULL
-command->segment_count == 0u
-cnet_command_retained_range_valid(command->retained_buffer,
-                                  command->retained_data,
-                                  command->size)
+return command->kind == CNET_COMMAND_SEND &&
+       command->data == NULL &&
+       command->segments == NULL && command->segment_count == 0u &&
+       cnet_command_retained_range_valid(command->retained_buffer,
+                                         command->retained_data,
+                                         command->size);
 ```
 
-- [ ] **Step 5: Snapshot the view pointer into the command entry**
+- [ ] **Step 5: Snapshot the retained view into the queue entry**
 
-After all admission checks and after retaining the owner:
+After all synchronous admission checks:
 
 ```c
 entry->payload = payload;
@@ -242,26 +210,26 @@ entry->payload_data = retained ? command->retained_data
                                : (payload != NULL ? mem_buffer_const_data(payload) : NULL);
 ```
 
-For copied commands, assign `payload_data` only after the copy has been created. For retained commands, never call `mem_set_used()` and never copy payload bytes.
+For retained mode, never call `mem_set_used()` and never execute the scalar/vector payload `memcpy` path.
 
-Change `cnet_command_queue_take()` to:
+Change take to:
 
 ```c
 out_view->data = entry->size != 0u ? entry->payload_data : NULL;
 ```
 
-On release, clear both:
+On release clear:
 
 ```c
 entry->payload = NULL;
 entry->payload_data = NULL;
 ```
 
-Continue releasing exactly one `entry->payload` reference and continue charging only copied payload bytes to `queued_bytes`.
+Release exactly one retained backing reference and continue charging only copied bytes to `queued_bytes`.
 
-- [ ] **Step 6: Preserve whole-buffer #286 behavior**
+- [ ] **Step 6: Preserve #286 whole-buffer semantics**
 
-Change the #286 internal whole-buffer command constructor to set:
+Every whole-buffer retained command must now set:
 
 ```c
 .retained_buffer = buffer,
@@ -269,7 +237,7 @@ Change the #286 internal whole-buffer command constructor to set:
 .size = mem_buffer_used(buffer)
 ```
 
-No public `cnet_send_buffer()` semantics change.
+`cnet_send_buffer()` behavior and refcount contract do not change.
 
 - [ ] **Step 7: Run GREEN and commit**
 
@@ -277,15 +245,15 @@ No public `cnet_send_buffer()` semantics change.
 cmake --build --preset linux-release-user --target cnet_command_test cnet_command_profile_test
 ctest --test-dir build/linux-gcc-release -R '^cnet_command(_profile)?_test$' --output-on-failure
 git add cnet/src/cnet_command.h cnet/src/cnet_command.c \
-        cnet/tests/cnet_command_test.c cnet/tests/cnet_command_profile_test.c
+  cnet/tests/cnet_command_test.c cnet/tests/cnet_command_profile_test.c
 git commit -m "feat(cnet): retain explicit zero-copy payload views"
 ```
 
-Expected: copied, whole-buffer retained, and interior retained-view tests all pass; retained profile copy counters remain zero.
+Expected: copied, whole-buffer retained, and interior retained-view command tests all pass; retained copy counters remain zero.
 
 ---
 
-### Task 2: Add canonical `cnet_send_slice()` validation and client/shard admission
+### Task 2: Add canonical `cnet_send_slice()` validation and admission
 
 **Files:**
 - Modify: `cnet/include/cnet/cnet.h`
@@ -296,19 +264,19 @@ Expected: copied, whole-buffer retained, and interior retained-view tests all pa
 - Modify: `cnet/tests/cnet_header_cpp_test.cpp`
 
 **Interfaces:**
-- Consumes: Task 1 retained view command representation.
-- Produces: public `cnet_send_slice()` and one internal retained-view shard helper used by both whole-buffer and slice sends.
+- Consumes: Task 1 retained-view command representation.
+- Produces: public `cnet_send_slice()` and one internal `cnet_shards_send_retained()` path shared by whole-buffer and slice sends.
 
-- [ ] **Step 1: Write the public API compile RED**
+- [ ] **Step 1: Write the public compile RED**
 
-In `cnet_send_buffer_api_test.c`, create one pool/external buffer and canonical slice, then call:
+In `cnet_send_buffer_api_test.c`, construct a canonical slice and reference the missing API:
 
 ```c
 mem_slice_t slice = mem_slice(buffer, 8u, 16u);
 check_equal(cnet_send_slice(&client, connection, &slice), SALTS_OK);
 ```
 
-In `cnet_header_cpp_test.cpp`, add only a signature check:
+In `cnet_header_cpp_test.cpp` add:
 
 ```cpp
 using cnet_send_slice_signature =
@@ -325,9 +293,9 @@ cmake --build --preset linux-release-user --target cnet_send_buffer_api_test cne
 
 Expected RED: `cnet_send_slice` is undeclared.
 
-- [ ] **Step 3: Add the public declaration with exact ownership semantics**
+- [ ] **Step 3: Add the public declaration**
 
-Beside `cnet_send_buffer()` in `cnet/include/cnet/cnet.h`, add:
+Beside `cnet_send_buffer()` in `cnet/include/cnet/cnet.h` add:
 
 ```c
 /**
@@ -342,11 +310,9 @@ int cnet_send_slice(cnet_client *client, cnet_connection connection,
                     const mem_slice_t *slice);
 ```
 
-Do not add `vstr` to the CNet public header.
+Do not include or expose `vstr` from CNet.
 
-- [ ] **Step 4: Add one canonical retained-range validator in the client layer**
-
-In `cnet_client.c`, add:
+- [ ] **Step 4: Add one defensive retained-view validator in the client layer**
 
 ```c
 static int cnet_client_validate_retained_view(const cnet_client_impl *impl,
@@ -365,7 +331,6 @@ static int cnet_client_validate_retained_view(const cnet_client_impl *impl,
   base_ptr = mem_buffer_const_data(buffer);
   used = mem_buffer_used(buffer);
   if (base_ptr == NULL || used == 0u) return SALTS_EINVAL;
-
   base = (uintptr_t)base_ptr;
   start = (uintptr_t)data;
   if (start < base) return SALTS_EINVAL;
@@ -378,9 +343,9 @@ static int cnet_client_validate_retained_view(const cnet_client_impl *impl,
 }
 ```
 
-This helper performs no retain and no queue admission.
+This helper retains nothing.
 
-- [ ] **Step 5: Generalize the client send input to carry a retained view**
+- [ ] **Step 5: Generalize internal client send input**
 
 Extend `cnet_client_send_input` with:
 
@@ -389,7 +354,7 @@ mem_buffer_t *retained_buffer;
 const void *retained_data;
 ```
 
-Replace the internal whole-buffer-only shard call with a retained-view call:
+In `cnet_client_send_admit()` use:
 
 ```c
 if (input->retained_buffer != NULL)
@@ -399,11 +364,11 @@ if (input->retained_buffer != NULL)
                                      input->size);
 ```
 
-All connection state, write-pending, TLS-upgrade, close, stale-handle, queue-full, and shutdown checks remain in their existing order after payload validation.
+Do not alter existing connection state/write-pending/TLS-upgrade/close admission ordering.
 
-- [ ] **Step 6: Make whole-buffer send use the same retained-view path**
+- [ ] **Step 6: Route whole-buffer send through the same retained-view helper**
 
-Implement `cnet_send_buffer()` as:
+`cnet_send_buffer()` becomes:
 
 ```c
 int cnet_send_buffer(cnet_client *client, cnet_connection connection,
@@ -426,8 +391,6 @@ int cnet_send_buffer(cnet_client *client, cnet_connection connection,
 }
 ```
 
-This preserves #286 semantics while sharing validation/plumbing.
-
 - [ ] **Step 7: Implement `cnet_send_slice()` with frozen error ordering**
 
 ```c
@@ -448,11 +411,11 @@ int cnet_send_slice(cnet_client *client, cnet_connection connection,
 }
 ```
 
-Because validation occurs before `cnet_client_send_admit()`, invalid slice errors precede stale/busy/queue/shutdown errors exactly as specified.
+Validation therefore resolves `SALTS_EINVAL` / `SALTS_EMSGSIZE` before stale/busy/queue/shutdown admission results.
 
 - [ ] **Step 8: Replace the internal whole-buffer shard helper with one retained-view helper**
 
-In `cnet_shards.h/.c`, define:
+Declare in `cnet_shards.h`:
 
 ```c
 int cnet_shards_send_retained(cnet_shards *shards,
@@ -462,7 +425,7 @@ int cnet_shards_send_retained(cnet_shards *shards,
                               size_t size);
 ```
 
-Implementation:
+Implement in `cnet_shards.c`:
 
 ```c
 int cnet_shards_send_retained(cnet_shards *shards,
@@ -483,24 +446,24 @@ int cnet_shards_send_retained(cnet_shards *shards,
 }
 ```
 
-Remove the old internal `cnet_shards_send_buffer()` declaration/callers rather than keeping two internal ownership paths.
+Delete the old internal `cnet_shards_send_buffer()` declaration and callers so there is only one retained ownership path.
 
-- [ ] **Step 9: Add validation/error-order tests before network settlement**
+- [ ] **Step 9: Add defensive validation/error-order tests**
 
-In `cnet_send_buffer_api_test.c`, after client initialization and before requiring a live connection, construct manual slices and assert:
+Before requiring a live connection, manually construct slices and assert:
 
 ```text
 NULL slice                                  -> SALTS_EINVAL
 slice.buffer == NULL                        -> SALTS_EINVAL
 slice.data == NULL                          -> SALTS_EINVAL
 slice.length == 0                           -> SALTS_EINVAL
-slice.data before backing start             -> SALTS_EINVAL
-slice.data == backing start + used          -> SALTS_EINVAL
+slice.data address below backing start      -> SALTS_EINVAL
+slice.data address == backing start + used  -> SALTS_EINVAL
 slice.length > used - offset                -> SALTS_EINVAL
 canonical slice length > max_send_bytes     -> SALTS_EMSGSIZE
 ```
 
-For every rejection record `mem_buffer_ref_count()` before/after and require no change.
+For each rejection, snapshot `mem_buffer_ref_count()` before/after and require no change.
 
 - [ ] **Step 10: Run GREEN and commit**
 
@@ -511,14 +474,14 @@ ctest --test-dir build/linux-gcc-release \
   -R '^(cnet_command(_profile)?_test|cnet_send_buffer_api_test|cnet_header_cpp_test)$' \
   --output-on-failure
 git add cnet/include/cnet/cnet.h cnet/src/cnet_client.c \
-        cnet/src/cnet_shards.h cnet/src/cnet_shards.c \
-        cnet/tests/cnet_send_buffer_api_test.c cnet/tests/cnet_header_cpp_test.cpp
+  cnet/src/cnet_shards.h cnet/src/cnet_shards.c \
+  cnet/tests/cnet_send_buffer_api_test.c cnet/tests/cnet_header_cpp_test.cpp
 git commit -m "feat(cnet): admit retained zero-copy slices"
 ```
 
 ---
 
-### Task 3: Prove subrange bytes and exact ownership through normal, partial, failure, and TLS terminals
+### Task 3: Prove exact subrange bytes and terminal ownership
 
 **Files:**
 - Modify: `cnet/tests/cnet_send_buffer_api_test.c`
@@ -526,60 +489,59 @@ git commit -m "feat(cnet): admit retained zero-copy slices"
 - Modify: `cnet/tests/cnet_tls_test.c`
 
 **Interfaces:**
-- Consumes: Task 2 public API and #286 retained command release authority plus `cnet_owner_test_set_send_chunk_bytes()`.
-- Produces: deterministic evidence that slice sends keep one backing owner through every logical terminal and never leak adjacent bytes.
+- Consumes: Task 2 API, #286 command release authority, and #286 `cnet_owner_test_set_send_chunk_bytes()`.
+- Produces: deterministic normal/partial/failure/TLS ownership evidence for retained slices.
 
-- [ ] **Step 1: Add the successful middle-subrange public ownership test**
+- [ ] **Step 1: Add one successful external middle-slice public test**
 
-Reuse the existing external-buffer free probe in `cnet_send_buffer_api_test.c`. Allocate 80 bytes with distinct guard bytes and a 64-byte payload:
+Allocate 80 distinct bytes, wrap them externally, and create a 64-byte slice at offset 8. Copy the expected 64 bytes into a local test array before any release callback can free the external allocation.
 
-```c
-unsigned char *storage = (unsigned char *)malloc(80u);
-for (size_t i = 0u; i < 80u; ++i) storage[i] = (unsigned char)i;
-mem_buffer_t *buffer = mem_wrap_external(storage, 80u,
-                                         cnet_send_buffer_test_free, &slice_free);
-check_not_null(buffer);
-mem_slice_t slice = mem_slice(buffer, 8u, 64u);
-check_equal(slice.length, 64u);
-check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
+Require this refcount sequence:
 
-check_equal(cnet_send_slice(&client, connection, &slice), SALTS_OK);
-check_equal(mem_buffer_ref_count(buffer), UINT32_C(3));
-mem_slice_release(&slice);
-check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
-mem_buffer_release(buffer);
-check_equal(atomic_load_explicit(&slice_free.freed, memory_order_acquire), 0);
+```text
+wrapped buffer                         1
+mem_slice(buffer, 8, 64)              2
+successful cnet_send_slice            3
+caller mem_slice_release              2
+caller mem_buffer_release             1  (CNet only)
+logical terminal                      0  (free callback exactly once)
 ```
 
-Drive to one `on_send` terminal, then require the free callback fired exactly once and the peer received bytes `storage[8..71]` only. The expected peer buffer must be copied before the external free callback can release `storage`.
+The peer must receive exactly the copied expected 64-byte middle range and one `on_send` callback must report size 64.
 
 - [ ] **Step 2: Add first-byte and final-byte range tests**
 
-Using the same connected fixture, admit one-byte canonical slices at:
+With a live connection, send canonical slices:
 
 ```text
 offset 0, length 1
 offset used - 1, length 1
 ```
 
-For each, verify the peer receives exactly that byte and exactly one send callback reports size 1.
+For each, verify exactly one byte on the peer and one send callback of size 1.
 
 - [ ] **Step 3: Add rejection ownership regressions**
 
-For valid canonical slices, verify the existing states return their original #286 errors without retaining:
+For valid canonical slices, verify these existing connection/admission states preserve #286 errors and do not retain:
 
 ```text
-command queue full   -> SALTS_ENOBUFS
-another write live   -> SALTS_EBUSY
-stale connection     -> SALTS_ENOENT
-client stopped       -> SALTS_ESHUTDOWN
+command queue full -> SALTS_ENOBUFS
+another write live -> SALTS_EBUSY
+stale connection   -> SALTS_ENOENT
+client stopped     -> SALTS_ESHUTDOWN
 ```
 
-Snapshot the backing refcount around every call and require equality on rejection.
+The backing refcount before and after every rejected call must be identical.
 
-- [ ] **Step 4: Extend the deterministic partial-send owner test with an interior retained view**
+- [ ] **Step 4: Extend the #286 deterministic partial-send owner test**
 
-In the #286 retained owner test, create one backing buffer whose used bytes are eight guard bytes + four payload bytes + eight guard bytes. Publish:
+Create backing bytes:
+
+```text
+8 guard bytes | 4 payload bytes | 8 guard bytes
+```
+
+Publish:
 
 ```c
 const void *payload = mem_buffer_const_data(buffer) + 8u;
@@ -590,30 +552,21 @@ cnet_command command = {.kind = CNET_COMMAND_SEND,
                         .retained_data = payload};
 ```
 
-Before driving, call:
+Set:
 
 ```c
 check_equal(cnet_owner_test_set_send_chunk_bytes(&owner, 1u), SALTS_OK);
 ```
 
-Require:
+Require four one-byte NativeIO submissions but one logical send event, exact peer bytes, zero guard-byte leakage, and one retained backing reference until the logical terminal.
 
-```text
-peer receives exactly the 4 payload bytes, never guard bytes
-one logical send event of size 4
-backing ref remains held through the first three intermediate completions
-backing ref releases exactly once after the logical terminal
-```
+- [ ] **Step 5: Re-run #286 timeout/close ownership logic using an interior retained view**
 
-Do not add a second chunk seam.
-
-- [ ] **Step 5: Reuse #286 timeout/close ownership tests with a retained subrange**
-
-Run the same forced timeout/close path once with `.retained_data` pointing inside the buffer and `.size` smaller than `mem_buffer_used(buffer)`. Require the external free callback remains zero until the authoritative terminal and becomes exactly one after cleanup.
+Use a backing buffer whose `used` size exceeds the command view size. Point `.retained_data` inside it, trigger the existing deterministic timeout/close path, and require the external free callback remains zero until authoritative terminal cleanup and becomes exactly one afterward.
 
 - [ ] **Step 6: Extend TLS retained-send coverage**
 
-In `cnet_tls_test.c`, send an interior retained view through the same TLS command path and assert the application peer receives only the slice bytes. CNet command profiling must still report zero plaintext command-stage copies for that send. Do not assert ciphertext zero-copy.
+Send an interior retained view through the existing TLS retained path. Verify the application peer receives only the slice bytes and command profiling still reports zero plaintext command-stage payload copies. Do not assert ciphertext or kernel zero-copy.
 
 - [ ] **Step 7: Run GREEN and commit**
 
@@ -624,25 +577,22 @@ ctest --test-dir build/linux-gcc-release \
   -R '^(cnet_send_buffer_api_test|cnet_owner(_profile)?_test|cnet_tls_test)$' \
   --timeout 60 --output-on-failure
 git add cnet/tests/cnet_send_buffer_api_test.c \
-        cnet/tests/cnet_owner_test.c cnet/tests/cnet_tls_test.c
+  cnet/tests/cnet_owner_test.c cnet/tests/cnet_tls_test.c
 git commit -m "test(cnet): prove retained slice terminal ownership"
 ```
 
 ---
 
-### Task 4: Add retained-slice benchmark/proof rows without changing the zero-copy claim
+### Task 4: Measure retained slice overhead against whole-buffer retained sends
 
 **Files:**
 - Modify: `cnet/benchmarks/cnet_io_benchmark.c`
-- Modify: `cnet/tests/cnet_benchmark_stats_test.c` only if a new paired-summary helper is required; otherwise do not touch it.
 
 **Interfaces:**
-- Consumes: #286 retained-buffer benchmark driver and existing paired median/MAD/A-A machinery.
-- Produces: retained whole-buffer vs retained slice comparison for identical payload bytes, with independent admission metrics.
+- Consumes: #286 retained-buffer benchmark path plus existing paired median/MAD and same-run A/A machinery.
+- Produces: retained whole-buffer vs retained-slice rows for identical payload bytes.
 
-- [ ] **Step 1: Add a slice send mode to the existing retained CNet benchmark fixture**
-
-Do not add another CNet implementation. Extend the retained benchmark fixture with:
+- [ ] **Step 1: Add a retained send-mode enum**
 
 ```c
 typedef enum io_bench_cnet_retained_mode {
@@ -651,36 +601,30 @@ typedef enum io_bench_cnet_retained_mode {
 } io_bench_cnet_retained_mode;
 ```
 
-For the slice mode allocate one backing buffer with 16 guard bytes before and after the measured payload. Create:
+The slice fixture allocates 16 guard bytes before and after the measured payload and creates:
 
 ```c
 mem_slice_t slice = mem_slice(buffer, 16u, payload_size);
 ```
 
-The measured admission call is only:
+Create/release the slice outside the timed admission interval. The measured admission call is only `cnet_send_slice()`.
 
-```c
-cnet_send_slice(&fixture->client, fixture->connection, &slice)
-```
+- [ ] **Step 2: Add benchmark correctness assertions**
 
-Create/release the slice outside the timed admission interval. Keep the backing buffer and immutable bytes alive for the sample exactly as the retained-buffer driver already does.
+Before accepting each measured sample, require echoed bytes equal the exact interior slice bytes. The guard bytes are never part of expected output.
 
-- [ ] **Step 2: Add deterministic benchmark correctness checks**
-
-Before recording a sample, require the echoed payload equals the exact interior slice bytes. Guard bytes are not included in the expected payload.
-
-Profile passes must require:
+Profile passes require:
 
 ```text
 retained buffer payload_copy_calls == 0
 retained slice  payload_copy_calls == 0
 ```
 
-Legacy copied CNet remains nonzero where the #286 benchmark already proves that behavior.
+Keep the existing copied CNet row unchanged.
 
-- [ ] **Step 3: Add paired retained-buffer vs retained-slice reporting**
+- [ ] **Step 3: Add paired retained-buffer vs retained-slice summaries**
 
-For 1/4/8/16/32/64 KiB TCP rows, report:
+For TCP 1/4/8/16/32/64 KiB, report:
 
 ```text
 retained buffer admission ns median/MAD
@@ -690,49 +634,46 @@ slice vs buffer p95 paired median/MAD
 slice vs buffer rate paired median/MAD
 ```
 
-Reuse the existing same-run repeat ordering and `cnet_benchmark_summarize_paired_delta()` helper. Do not hard-code a required speedup: the expected result is comparable retained-path behavior, not “slice must beat buffer.”
+Use the existing repeat order and `cnet_benchmark_summarize_paired_delta()`; do not add another statistics implementation.
 
-- [ ] **Step 4: Define the evidence interpretation in the report text**
+- [ ] **Step 4: Add exact evidence wording**
 
-The benchmark output must say:
+The report must include:
 
 ```text
 Retained-slice zero-copy is established by pointer identity and zero command payload-copy counters.
 Timing compares retained-view overhead only; it does not claim TLS ciphertext or kernel/network-stack zero-copy.
 ```
 
-- [ ] **Step 5: Run the benchmark locally for correctness**
+- [ ] **Step 5: Run benchmark correctness locally**
 
 ```bash
-cmake --build --preset linux-release-user --target cnet_io_benchmark cnet_benchmark_stats_test
-ctest --test-dir build/linux-gcc-release -R '^cnet_benchmark_stats_test$' --output-on-failure
-CNET_IO_BENCHMARK_BACKEND=epoll build/linux-gcc-release/bin/cnet_io_benchmark > /tmp/cnet-slice-benchmark.md
+cmake --build --preset linux-release-user --target cnet_io_benchmark
+CNET_IO_BENCHMARK_BACKEND=epoll build/linux-gcc-release/bin/cnet_io_benchmark \
+  > /tmp/cnet-slice-benchmark.md
 ```
 
-Expected: benchmark exits zero, slice rows exist, zero-copy counters are zero, and no guard-byte mismatch occurs.
+Expected: exit zero, slice rows exist for every payload size, guard-byte checks pass, and retained-slice copy counters are zero.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add cnet/benchmarks/cnet_io_benchmark.c cnet/tests/cnet_benchmark_stats_test.c
+git add cnet/benchmarks/cnet_io_benchmark.c
 git commit -m "bench(cnet): measure retained slice sends"
 ```
 
-If `cnet_benchmark_stats_test.c` was not changed, omit it from `git add`.
-
 ---
 
-### Task 5: Close public documentation and regression coverage
+### Task 5: Close documentation and full Linux regressions
 
 **Files:**
 - Modify: `cnet/README.md`
-- Test: existing CNet contract suite.
 
 **Interfaces:** No new runtime interface beyond `cnet_send_slice()`.
 
 - [ ] **Step 1: Document the ownership layers**
 
-Add a concise retained-send section to `cnet/README.md` stating:
+Add a retained-send section with these exact distinctions:
 
 ```text
 cnet_send / cnet_sendv
@@ -749,18 +690,16 @@ vstr
   non-owning borrowed view only; not an asynchronous CNet ownership token
 ```
 
-Also state that retained sends do not consume copied `command_buffer_bytes` and that TLS still performs normal encryption/ciphertext buffering.
+State that retained sends do not consume copied `command_buffer_bytes` and TLS still performs normal encryption/ciphertext buffering.
 
 - [ ] **Step 2: Audit forbidden surface**
-
-Run:
 
 ```bash
 git grep -n 'cnet_send_vstr' -- cnet || true
 git grep -n -E 'retained_slice_queue|slice_payload_pool|CNET_COMMAND_PAYLOAD_RETAINED_SLICE' -- cnet || true
 ```
 
-Expected: no matches. There must be no second slice payload kind, queue, or pool.
+Expected: no matches.
 
 - [ ] **Step 3: Run the full Linux CNet regression set**
 
@@ -777,7 +716,7 @@ ctest --test-dir build/linux-gcc-release \
   -R '^cnet_.*_test$' --timeout 60 --output-on-failure
 ```
 
-Expected: all applicable tests pass; VSOCK retains its existing unsupported-host skip contract.
+Expected: all applicable tests pass; VSOCK keeps its existing unsupported-host skip behavior.
 
 - [ ] **Step 4: Commit**
 
@@ -788,29 +727,25 @@ git commit -m "docs(cnet): describe retained slice sends"
 
 ---
 
-### Task 6: Exact-head cross-platform verification and final #292 evidence
+### Task 6: Exact-head cross-platform verification and final evidence
 
 **Files:** Evidence-only task. Any source failure returns to the task that owns that behavior.
 
-**Interfaces:** Produces merge-readiness evidence; does not modify runtime code.
+**Interfaces:** Produces #292 merge-readiness evidence; performs no runtime modification.
 
-- [ ] **Step 1: Audit the final implementation boundary**
-
-Run:
+- [ ] **Step 1: Audit the final implementation boundary against the frozen dependency base**
 
 ```bash
-git diff --stat <dependency-base-sha>...HEAD
-git diff --name-only <dependency-base-sha>...HEAD
+git diff --stat refs/cnet-slice/base...HEAD
+git diff --name-only refs/cnet-slice/base...HEAD
 git grep -n 'cnet_send_slice' -- cnet/include/cnet/cnet.h cnet/src/cnet_client.c
 git grep -n 'CNET_COMMAND_PAYLOAD_RETAINED_SLICE' -- cnet || true
 git grep -n 'cnet_send_vstr' -- cnet || true
 ```
 
-Expected: one public slice API, reuse of `CNET_COMMAND_PAYLOAD_RETAINED_BUFFER`, and no `cnet_send_vstr()`.
+Expected: one public slice API, reuse of `CNET_COMMAND_PAYLOAD_RETAINED_BUFFER`, no slice-specific payload kind, and no `cnet_send_vstr()`.
 
-- [ ] **Step 2: Verify deterministic ownership/proof tests on the exact head**
-
-Run:
+- [ ] **Step 2: Verify deterministic ownership/zero-copy tests on the exact head**
 
 ```bash
 cmake --build --preset linux-release-user --target \
@@ -822,11 +757,11 @@ ctest --test-dir build/linux-gcc-release \
   --timeout 60 --output-on-failure
 ```
 
-Expected: pointer/range/refcount/copy-counter/partial/TLS tests all pass.
+Expected: range, pointer identity, refcount, copy-counter, partial-send, timeout/close, TLS, and header tests all pass.
 
 - [ ] **Step 3: Require one exact-head release matrix**
 
-Record the same implementation head for:
+Record the same implementation SHA for:
 
 ```text
 Windows IOCP
@@ -835,24 +770,24 @@ Linux io_uring
 macOS kqueue
 ```
 
-All four jobs must pass build, NativeIO/CNet contracts, benchmark, and artifact upload before #292 is considered complete.
+All four jobs must pass build, NativeIO/CNet contracts, benchmark, and artifact upload.
 
-- [ ] **Step 4: Inspect the Windows IOCP artifact**
+- [ ] **Step 4: Inspect Windows IOCP performance evidence**
 
-Confirm the artifact contains the existing #286 copied/retained evidence plus retained-slice rows. Record:
+Record:
 
 ```text
 head SHA
 workflow run ID
 four job IDs
-four artifact IDs/digests
+four artifact IDs and SHA-256 digests
 64 KiB retained-buffer admission median/MAD
 64 KiB retained-slice admission median/MAD
 64 KiB slice-vs-buffer p50/p95/rate paired median/MAD
 same-run A/A noise envelope
 ```
 
-The merge gate is not “slice must be faster.” It is:
+The performance gate is:
 
 ```text
 correctness green
@@ -861,8 +796,15 @@ slice admission remains payload-size-independent within measurement noise
 no material aggregate p95/rate regression versus retained-buffer send
 ```
 
+Do not require slice sends to outperform whole-buffer retained sends.
+
 - [ ] **Step 5: Record final evidence on #292 and stop before merge**
 
-Comment on #292 with the exact head/run/jobs/artifacts, deterministic zero-copy proof, ownership results, and performance interpretation. Explicitly state that #293 remains an independent helper-hardening issue and that `cnet_send_vstr()` was not introduced.
+The #292 comment must include exact head/run/jobs/artifacts, deterministic zero-copy proof, ownership results, performance interpretation, and these two explicit statements:
+
+```text
+#293 remains an independent mem_slice() helper-hardening issue.
+No cnet_send_vstr() or borrowed-lifetime asynchronous API was introduced.
+```
 
 Do not merge automatically.
