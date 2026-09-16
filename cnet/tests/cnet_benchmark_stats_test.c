@@ -72,42 +72,44 @@ spec("CNet benchmark paired statistics") {
         .send_admit_ns = 1000u,
         .queue_publish_ns = 600u,
         .payload_copy_ns = 300u,
-        .client_poll_ns = 9000u,
-        .owner_drive_ns = 8000u,
+        .client_poll_ns = 10000u,
+        .owner_drive_ns = 9000u,
         .request_lifecycle_ns = 2000u,
         .request_start_ns = 1500u,
-        .observe_ns = 4000u,
-        .request_completion_ns = 3000u,
-        .event_publish_ns = 2400u,
+        .request_resubmit_ns = 200u,
+        .observe_ns = 3000u,
+        .request_completion_ns = 2500u,
+        .event_publish_ns = 1900u,
         .dispatcher_prepare_ns = 200u,
-        .dispatcher_invoke_ns = 2000u,
-        .dispatcher_observer_ns = 1500u,
+        .dispatcher_invoke_ns = 1500u,
+        .dispatcher_observer_ns = 1100u,
         .dispatcher_release_ns = 100u,
-        .benchmark_callback_ns = 1000u,
-        .benchmark_payload_check_ns = 600u};
+        .benchmark_callback_ns = 800u,
+        .benchmark_payload_check_ns = 500u};
     cnet_benchmark_fixed_control_attribution attribution = {0};
 
     check_equal(cnet_benchmark_attribute_fixed_control(&sample, &attribution), SALTS_OK);
-    check_equal(attribution.total_budget_ns, 10000.0);
+    check_equal(attribution.total_budget_ns, 11000.0);
     check_equal(attribution.send_public_control_ns, 400.0);
     check_equal(attribution.queue_control_ns, 300.0);
     check_equal(attribution.payload_copy_ns, 300.0);
     check_equal(attribution.client_poll_wrapper_ns, 1000.0);
-    check_equal(attribution.owner_control_ns, 2000.0);
+    check_equal(attribution.owner_control_ns, 1300.0);
     check_equal(attribution.request_control_ns, 500.0);
     check_equal(attribution.native_request_start_ns, 1500.0);
-    check_equal(attribution.native_observe_residual_ns, 1000.0);
+    check_equal(attribution.native_request_resubmit_ns, 200.0);
+    check_equal(attribution.native_observe_ns, 3000.0);
     check_equal(attribution.completion_control_ns, 600.0);
     check_equal(attribution.event_publish_residual_ns, 200.0);
     check_equal(attribution.dispatcher_prepare_ns, 200.0);
-    check_equal(attribution.dispatcher_invoke_framework_ns, 400.0);
-    check_equal(attribution.client_observer_control_ns, 500.0);
+    check_equal(attribution.dispatcher_invoke_framework_ns, 300.0);
+    check_equal(attribution.client_observer_control_ns, 300.0);
     check_equal(attribution.dispatcher_release_ns, 100.0);
-    check_equal(attribution.benchmark_payload_check_ns, 600.0);
-    check_equal(attribution.benchmark_callback_residual_ns, 400.0);
-    check_equal(attribution.fixed_control_total_ns, 6200.0);
-    check_equal(attribution.shared_native_total_ns, 2500.0);
-    check_equal(attribution.benchmark_work_total_ns, 1000.0);
+    check_equal(attribution.benchmark_payload_check_ns, 500.0);
+    check_equal(attribution.benchmark_callback_residual_ns, 300.0);
+    check_equal(attribution.fixed_control_total_ns, 5200.0);
+    check_equal(attribution.shared_native_total_ns, 4700.0);
+    check_equal(attribution.benchmark_work_total_ns, 800.0);
     check_equal(attribution.closure_residual_ns, 0.0);
   }
 
