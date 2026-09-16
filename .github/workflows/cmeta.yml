@@ -12,7 +12,7 @@ on:
       - "concurrency/**"
       - "tinytest/**"
       - "cstl/**"
-      - "parser/**"
+      - "uri/**"
       - "salts_serial/**"
       - "utils/**"
       - "cmake/**"
@@ -37,7 +37,7 @@ on:
       - "concurrency/**"
       - "tinytest/**"
       - "cstl/**"
-      - "parser/**"
+      - "uri/**"
       - "salts_serial/**"
       - "utils/**"
       - "cmake/**"
@@ -192,20 +192,6 @@ jobs:
             cstl_header_cpp_test
           ctest --preset linux-dev-user \
             -R "^(cstl_vec_alloc_test|cstl_vec_alloc_cpp_test|cstl_sequence_test|cstl_ownership_test|cstl_header_test|cstl_header_cpp_test)$" \
-            --output-on-failure
-
-      - name: Verify XML DOM and SAX with sanitizers
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cmake --preset linux-dev-user -DBUILD_BENCHMARKS=OFF \
-            -DENABLE_SANITIZER_ADDRESS=ON \
-            -DENABLE_SANITIZER_UNDEFINED=ON
-          cmake --build --preset linux-dev-user --target \
-            xml_parser_test \
-            xml_sax_parser_test
-          ctest --preset linux-dev-user \
-            -R "^(xml_parser_test|xml_sax_parser_test)$" \
             --output-on-failure
 
       - name: Check exact head and unchanged tracked source
