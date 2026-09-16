@@ -169,7 +169,7 @@ set_target_properties(cnet_api_profile_test PROPERTIES
 
 cmake_add_test(cnet_api_direct_owner_test
   SOURCES cnet_api_test.c cnet_direct_owner_test_adapter.c
-  LIBS salts_cnet_profile Salts::TinyTest
+  LIBS salts_cnet_direct_profile Salts::TinyTest
   DEFS cnet_client_init=cnet_direct_owner_test_client_init
   INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
   FOLDER "cnet/tests")
