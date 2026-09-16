@@ -1,27 +1,28 @@
 # Salts Canonical Architecture
 
-日期：2026-09-09
+日期：2026-09-16
 状态：Canonical repository architecture
 
 本文定义 Salts 当前仓库级模块边界、public target ownership、依赖方向，以及与
-TurboParser 的集成边界。专项 API、错误语义、ABI 和阶段能力仍以公开头文件、测试及
+SaltsUtils 的集成边界。专项 API、错误语义、ABI 和阶段能力仍以公开头文件、测试及
 `docs/superpowers/specs/` 中的专项设计为事实源；本文不重复低层契约。
 
 ### HTTP 服务仓库边界
 
 CHTTP、S3、CRPC 的源码、专属测试、示例及私有 cjwt/turbo_crypto 归
-[HTTPServices](../http-services/README.md) 所有。依赖方向为
-`S3 / CRPC → CHTTP → Salts::CNet / CFlow / Core / Parser`；CRPC 同时复用
-Salts 的 CMeta/CSerde。CNet、NativeIO、CFlow、通用 Crypto 与解析器继续由 Salts 提供。
+HTTPServices 所有。依赖方向的 Salts 基础层为
+`S3 / CRPC → CHTTP → Salts::CNet / CFlow / Core`；CRPC 同时复用
+Salts 的 CMeta/CSerde。CNet、NativeIO、CFlow 与底层 `Salts::UriParser` 继续由 Salts 提供；
+Crypto、QueryVM 与各格式/协议 parser 由 SaltsUtils 提供。
 
 三个模块整体迁移，避免 CRPC 留在 Salts 导致包级循环依赖；本次不拆分 transport
 接口，也不改变协议算法、错误语义、容量、线程模型或运行时状态归属。
 HTTPServices 导出 `CHttp::Client`、`CHttp::Server` 和独立的 `CHttp::S3`。
 HTTP/RPC 按两端合并，S3 依赖 Client。消费端更新模块头文件和链接目标后重新编译。
-构建顺序为 Salts SDK → HTTPServices SDK → 消费端。
+构建顺序为 Salts SDK → SaltsUtils SDK（需要 parser/utility capability 时）→ 上层消费端。
 
-验证包含 C/C++ 头文件链接、HTTP/S3/CRPC 原测试与 CNet 相邻回归。
-历史 `docs/superpowers/` 和 `book/` 记录保留原上下文，当前归属以本节和新仓库 README 为准。
+验证包含 C/C++ 头文件链接、上层原测试与 CNet 相邻回归。
+历史 `docs/superpowers/` 和 `book/` 记录保留原上下文，当前归属以本文和各仓库 README 为准。
 回滚时使用迁移前 Salts revision 与旧消费配置组成完整旧版本；不混用两套目标或 ABI。
 
 > 主图采用客户文稿视角，表达产品、语义 IR、CMeta 与 Platform/OS 的分层关系；右侧
@@ -184,11 +185,11 @@ runtime target。Layer 2/3 共同属于 CFlow；Layer 1 是 CMeta 语义工具�
 `CSerde` 与 `CBind` 在客户视角中属于 `Cross-Cutting Capabilities`：它们横跨 parser、native
 value、Stream/Graph 等使用场景，但这不改变模块依赖事实。当前 target 仍然是
 `CBind -> CMeta + CSerde`，`CSerde` 不依赖 CFlow/CMeta，CBind 也不依赖 CFlow、CSTL、
-Core 或 TurboParser。
+Core 或 SaltsUtils。
 
 `tinytest/`、vendor、build tools 与 Lean/formal generation 属于测试、构建或验证平面，
-不进入上面的 runtime ownership 图。设备采集与串口子系统由 TurboParser 所有，
-Salts 不再导出对应 targets。
+不进入上面的 runtime ownership 图。设备采集、串口、QueryVM 与格式/协议 parser 由
+SaltsUtils 所有；Salts 不再导出对应 targets，唯一例外是底层 `Salts::UriParser`。
 
 ## 2. Single sources of truth
 
@@ -220,7 +221,7 @@ semantic shape 在 canonical CSerde values 与 native C storage 之间绑定。
 
 因此 CBind 是 parser-independent kernel：数据库、IPC、自定义 binary source 或测试
 provider 只要实现 CSerde contract，也可以直接复用 CBind。CBind 不直接依赖
-TurboParser、CSTL、CFlow 或 Core。
+SaltsUtils、CSTL、CFlow 或 Core。
 
 ### CFlow — execution truth
 
@@ -255,6 +256,15 @@ Platform 定义。
 `Salts::Core` 保留字符串、文件、日志、正则、进程、内存及其他通用工具。它公开依赖
 CMeta、Platform、Concurrency，并私有消费 STL/CFlow；Core 不应重新成为 container、
 metadata、data binding 或 execution semantics 的第二事实源。
+
+### UriParser — low-level URI syntax primitive
+
+`Salts::UriParser` 是 Salts 唯一拥有的 parser target。它提供 URI 词法/结构解析 primitive，
+供 `Salts::CNet` 直接消费。UriParser 不依赖 SaltsUtils；Salts package 也不查找或链接
+SaltsUtils，因此 package graph 保持单向 `SaltsUtils -> installed Salts`。
+
+QueryVM 与其他格式/协议 parser 不属于 Salts package；它们由 SaltsUtils 构建与导出，并在需要
+URI 能力时通过 installed `Salts::UriParser` 消费该 primitive。
 
 ## 3. CFlow internal architecture
 
@@ -317,7 +327,7 @@ Canonical data path 固定为：
 ```text
 native format syntax
         ↓
-TurboParser parser/event model
+SaltsUtils parser/event model
         ↓ format projection
 CSerde canonical values
         ↓
@@ -333,7 +343,7 @@ CFlow Stream<T> / Graph / Machine
 
 关键禁止项：
 
-- `CBind -> TurboParser`；
+- `CBind -> SaltsUtils`；
 - `CBind -> CSTL`；
 - `CBind -> CFlow`；
 - `CFlow -> CSTL`；
@@ -341,11 +351,11 @@ CFlow Stream<T> / Graph / Machine
 - 把 `Stream<cserde_token>` 暴露为可任意 `filter/map` 的业务 stream；
 - 在 DataBind/TBE/CFlow 中维护第二套通用 type/semantic/binding truth。
 
-TurboParser 是独立 package，其公共 parser runtime 以 `Salts::Core` 和独立 parser
-component targets 为基础依赖，不依赖 CSerde 或 CBind。具体 parser 与 CSerde 的组合只能位于
-显式 adapter target；例如 `Salts::JsonCSerdeAdapter` 组合
-`Salts::JsonParser` 与 `Salts::CSerde`，而不会把 CSerde 传播给 JsonParser 或
-TurboParser。
+SaltsUtils 是独立 package，拥有 QueryVM 与 JSON/XML/YAML/CSV/INI/TLV/LTV 等格式/协议
+parser component targets。它只通过已安装 Salts package 使用 `Salts::Core`、`Salts::CSTL`、
+`Salts::CSerde`、`Salts::UriParser` 等底层能力；Salts 不反向查找 SaltsUtils。具体 parser 与
+CSerde 的组合只能位于显式 adapter target；例如 `Salts::JsonCSerdeAdapter` 组合
+`Salts::JsonParser` 与 `Salts::CSerde`，而不会把 CSerde 传播给 JsonParser。
 
 ## 5. Public target dependency matrix
 
@@ -358,22 +368,23 @@ TurboParser。
 | `Salts::Concurrency` | `Platform` | none | concurrency substrate |
 | `Salts::CFlow` | `CMeta`, `Platform` | `Concurrency` | graph/dataflow execution |
 | `Salts::CSTL` | `CMeta` | none | container algorithms |
-| `Salts::CSTLStream` | `STL`, `CFlow` | INTERFACE composition | container stream integration |
-| `Salts::Core` | `CMeta`, `Platform`, `Concurrency` | `STL`, `CFlow` plus utility vendors | general utilities |
+| `Salts::CSTLStream` | `CSTL`, `CFlow` | INTERFACE composition | container stream integration |
+| `Salts::Core` | `CMeta`, `Platform`, `Concurrency` | `CSTL`, `CFlow` plus utility vendors | general utilities |
+| `Salts::UriParser` | none | generated URI lexer | low-level URI syntax primitive |
 
-该表只描述 canonical Salts public/runtime target graph；具体第三方 vendor 与 build/test
-target 不属于此表的 ownership 语义。
+该表只描述 canonical Salts public/runtime target graph；SaltsUtils-owned parser/query targets、
+具体第三方 vendor 与 build/test target 不属于此表的 ownership 语义。
 
 ## 6. Architectural invariants
 
 1. **依赖只向基础事实源收敛。** CMeta/CSerde 不因上层使用场景反向依赖 CBind、CFlow、
-   CSTL 或 TurboParser。
+   CSTL 或 SaltsUtils。
 2. **同一语义只保留一个 truth。** 类型与 semantic shape 属于 CMeta；canonical events
    属于 CSerde；native binding 属于 CBind；execution 属于 CFlow；container algorithms
    属于 CSTL。
-3. **repo ownership 与 link dependency 分离。** CBind/CSerde 属于 Salts；TurboParser
-   不消费或重新导出它们，具体格式组合通过独立 adapter target 显式表达。
-4. **组合能力位于 adapter/composition layer。** Parser + CBind、CBind + CFlow、STL + CFlow
+3. **repo ownership 与 link dependency 分离。** CBind/CSerde/UriParser 属于 Salts；SaltsUtils
+   通过 installed Salts targets 消费它们，具体格式组合通过独立 adapter target 显式表达。
+4. **组合能力位于 adapter/composition layer。** Parser + CBind、CBind + CFlow、CSTL + CFlow
    不通过反向依赖污染底层 kernel。
 5. **raw structural transport 不是业务 stream。** CSerde token grammar 必须完整保留；CFlow
    pipeline 从完整 semantic/native value 边界开始。
@@ -382,6 +393,8 @@ target 不属于此表的 ownership 语义。
    且 target 可见性不改变各模块的 semantic ownership。
 7. **canonical 边界不得静默漂移。** 如果 public target ownership 或依赖方向改变，先更新
    本文，并在对应专项 spec 中明确 migration 与验证方式。
+8. **Salts 不反向依赖 SaltsUtils。** UriParser 留在 Salts 是为保持 `CNet -> UriParser` 的底层
+   dependency；其他 parser/query capability 上移后只能形成 `SaltsUtils -> Salts`。
 
 ## 7. Detailed design references
 
@@ -392,5 +405,6 @@ target 不属于此表的 ownership 语义。
 - `docs/superpowers/specs/2026-08-21-container-cmeta-cflow-design.md` — CSTL/CMeta/CFlow 分层来源；
 - `docs/superpowers/specs/2026-08-22-cmeta-cflow-calculus-v1-design.md` — CMeta/CFlow calculus 与 operator policy；
 - `docs/superpowers/specs/2026-08-22-cflow-execution-foundation-design.md` — execution substrate；
-- `docs/superpowers/specs/2026-08-23-serialization-data-binding-design.md` — CMeta/CSerde/CBind/TurboParser data architecture；
-- `docs/superpowers/specs/2026-08-24-cflow-machine-runtime-design.md` — typed Machine runtime。
+- `docs/superpowers/specs/2026-08-23-serialization-data-binding-design.md` — historical CMeta/CSerde/CBind/parser data architecture；
+- `docs/superpowers/specs/2026-08-24-cflow-machine-runtime-design.md` — typed Machine runtime；
+- SaltsUtils `docs/superpowers/specs/2026-09-16-parser-capability-ownership-migration.md` — current parser package cutover.
