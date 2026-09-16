@@ -1424,10 +1424,9 @@ CFlow may retain up to two Platform
 registrations per socket identity (one read lane and one write lane), so a
 request capacity of N produces a checked reactor capacity of 2N.
 
-Subprocess standard-stream ownership is provided by the separate
-`Salts::CFlowProcess` adapter target. Message framing, asynchronous
-pathname open, file metadata/directory operations, and devices remain separate
-contracts.
+Higher-level filesystem and subprocess adapters are owned by SaltsUtils as
+`Salts::FS` and `Salts::Process`. CFlow keeps the portable execution and native
+I/O primitives they consume; it does not export compatibility adapter targets.
 POSIX regular-file readiness does not
 represent asynchronous disk completion. “Device” would mean an OS-specific descriptor/handle adapter;
 USB transfer semantics, discovery, permissions, cancellation, and hot-unplug
