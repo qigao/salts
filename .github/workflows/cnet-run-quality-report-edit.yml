@@ -1,0 +1,31 @@
+name: CNet run-quality report GREEN edit
+
+on:
+  push:
+    branches:
+      - perf/cnet-run-quality-gate-279
+    paths:
+      - .github/workflows/cnet-run-quality-report-edit.yml
+
+permissions:
+  contents: write
+
+jobs:
+  edit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: perf/cnet-run-quality-gate-279
+      - name: Apply run-quality report GREEN
+        run: |
+          python3 .github/scripts/cnet_run_quality_report_edit.py
+          git diff --check
+          git diff -- cnet/benchmarks/cnet_benchmark_stats.c cnet/benchmarks/cnet_io_benchmark.c
+      - name: Commit run-quality report GREEN
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add cnet/benchmarks/cnet_benchmark_stats.c cnet/benchmarks/cnet_io_benchmark.c
+          git commit -m 'perf(cnet): report IOCP benchmark run quality'
+          git push origin HEAD:perf/cnet-run-quality-gate-279
