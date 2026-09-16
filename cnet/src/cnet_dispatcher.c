@@ -47,11 +47,28 @@ struct cnet_dispatcher_impl {
   atomic_int first_error;
   bool admission_open;
   bool drained;
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_dispatcher_profile profile;
+  bool profile_active;
+#endif
 };
 
 static cnet_dispatcher_impl *cnet_dispatcher_get(cnet_dispatcher *dispatcher) {
   return dispatcher != NULL ? (cnet_dispatcher_impl *)dispatcher->impl : NULL;
 }
+
+#if defined(CNET_INTERNAL_PROFILING)
+static uint64_t cnet_dispatcher_profile_start(const cnet_dispatcher_impl *impl) {
+  return impl->profile_active ? salts_hrtime() : 0u;
+}
+
+static void cnet_dispatcher_profile_finish(cnet_dispatcher_impl *impl, uint64_t started,
+                                           uint64_t *total_ns, uint64_t *calls) {
+  if (started == 0u) return;
+  *total_ns += salts_hrtime() - started;
+  ++*calls;
+}
+#endif
 
 static cnet_dispatch_entry *cnet_dispatcher_entry(cnet_dispatcher_impl *impl,
                                                   cnet_shard_connection connection) {
@@ -148,33 +165,62 @@ static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
                                    uint64_t release_token, cnet_dispatch_job *out_job) {
   const cnet_shard_connection connection = {shard, event->session};
   cnet_dispatch_entry *entry;
+  int status = SALTS_OK;
+#if defined(CNET_INTERNAL_PROFILING)
+  const uint64_t profile_started = cnet_dispatcher_profile_start(impl);
+#endif
 
   salts_mutex_lock(&impl->lock);
   entry = cnet_dispatcher_entry(impl, connection);
   if (entry == NULL || !entry->active ||
       entry->connection.session.generation != connection.session.generation) {
-    salts_mutex_unlock(&impl->lock);
-    return SALTS_EBUSY;
+    status = SALTS_EBUSY;
+  } else {
+    *out_job = (cnet_dispatch_job){.invoke = entry->observer,
+                                   .context = entry->observer_context,
+                                   .event = {event->kind, event->session, event->state, event->status,
+                                             event->stage, event->data, event->size, event->argument},
+                                   .release = release,
+                                   .release_context = entry,
+                                   .release_token = release_token};
   }
-  *out_job = (cnet_dispatch_job){.invoke = entry->observer,
-                                 .context = entry->observer_context,
-                                 .event = {event->kind, event->session, event->state, event->status,
-                                           event->stage, event->data, event->size, event->argument},
-                                 .release = release,
-                                 .release_context = entry,
-                                 .release_token = release_token};
   salts_mutex_unlock(&impl->lock);
-  return SALTS_OK;
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_dispatcher_profile_finish(impl, profile_started, &impl->profile.prepare_ns,
+                                 &impl->profile.prepare_calls);
+#endif
+  return status;
 }
 
-static int cnet_dispatcher_invoke(const cnet_dispatch_job *job) {
+static int cnet_dispatcher_invoke(cnet_dispatcher_impl *impl, const cnet_dispatch_job *job) {
   const cnet_dispatch_view view = {job->event.kind,   job->event.session, job->event.state,
                                    job->event.status, job->event.stage,   job->event.data,
                                    job->event.size,   job->event.argument};
   int status = SALTS_OK;
+#if defined(CNET_INTERNAL_PROFILING)
+  const uint64_t invoke_started = cnet_dispatcher_profile_start(impl);
+  const uint64_t observer_started = cnet_dispatcher_profile_start(impl);
+#endif
 
   job->invoke(job->context, &view);
-  if (job->release != NULL) status = job->release(job->release_context, &view, job->release_token);
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_dispatcher_profile_finish(impl, observer_started, &impl->profile.observer_ns,
+                                 &impl->profile.observer_calls);
+#endif
+  if (job->release != NULL) {
+#if defined(CNET_INTERNAL_PROFILING)
+    const uint64_t release_started = cnet_dispatcher_profile_start(impl);
+#endif
+    status = job->release(job->release_context, &view, job->release_token);
+#if defined(CNET_INTERNAL_PROFILING)
+    cnet_dispatcher_profile_finish(impl, release_started, &impl->profile.release_ns,
+                                   &impl->profile.release_calls);
+#endif
+  }
+#if defined(CNET_INTERNAL_PROFILING)
+  cnet_dispatcher_profile_finish(impl, invoke_started, &impl->profile.invoke_ns,
+                                 &impl->profile.invoke_calls);
+#endif
   return status;
 }
 
@@ -266,7 +312,7 @@ int cnet_dispatcher_publish(cnet_dispatcher *dispatcher, uint32_t shard, const c
   if (event->kind == CNET_EVENT_STATE && cnet_dispatcher_terminal_state(event->state))
     release = cnet_dispatcher_release_direct;
   status = cnet_dispatcher_prepare(impl, shard, event, release, 0u, &job);
-  if (status == SALTS_OK) status = cnet_dispatcher_invoke(&job);
+  if (status == SALTS_OK) status = cnet_dispatcher_invoke(impl, &job);
   return status;
 }
 
@@ -295,7 +341,7 @@ int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard) {
     status = cnet_dispatcher_prepare(impl, shard, &event, cnet_dispatcher_release_lease,
                                      lane->event._sequence, &job);
   }
-  if (status == SALTS_OK) status = cnet_dispatcher_invoke(&job);
+  if (status == SALTS_OK) status = cnet_dispatcher_invoke(impl, &job);
   if (status == SALTS_OK) {
     memset(&lane->event, 0, sizeof(lane->event));
     atomic_store_explicit(&lane->pending, false, memory_order_release);
@@ -429,6 +475,37 @@ bool cnet_dispatcher_drained(const cnet_dispatcher *dispatcher) {
   salts_mutex_unlock((salts_mutex_t *)&impl->lock);
   return drained;
 }
+
+#if defined(CNET_INTERNAL_PROFILING)
+int cnet_dispatcher_profile_begin(cnet_dispatcher *dispatcher) {
+  cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
+  int status = SALTS_OK;
+  if (impl == NULL) return SALTS_EINVAL;
+  salts_mutex_lock(&impl->lock);
+  if (impl->profile_active) status = SALTS_EBUSY;
+  else {
+    memset(&impl->profile, 0, sizeof(impl->profile));
+    impl->profile_active = true;
+  }
+  salts_mutex_unlock(&impl->lock);
+  return status;
+}
+
+int cnet_dispatcher_profile_take(cnet_dispatcher *dispatcher,
+                                 cnet_dispatcher_profile *out_profile) {
+  cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
+  int status = SALTS_OK;
+  if (impl == NULL || out_profile == NULL) return SALTS_EINVAL;
+  salts_mutex_lock(&impl->lock);
+  if (!impl->profile_active) status = SALTS_EBUSY;
+  else {
+    *out_profile = impl->profile;
+    impl->profile_active = false;
+  }
+  salts_mutex_unlock(&impl->lock);
+  return status;
+}
+#endif
 
 int cnet_dispatcher_destroy(cnet_dispatcher *dispatcher) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);

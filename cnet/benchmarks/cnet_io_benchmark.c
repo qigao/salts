@@ -1333,10 +1333,10 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
       const io_bench_result *result = &series->stage_profile_runs[repeat];
       status = cnet_benchmark_attribute_send(
           result->cnet_send_admission_ns, result->cnet_send_admission_calls,
-          result->cnet_profile.command_queue_payload_publish_ns,
-          result->cnet_profile.command_queue_payload_publish_calls,
-          result->cnet_profile.command_queue_payload_copy_ns,
-          result->cnet_profile.command_queue_payload_copy_calls, &attribution[repeat]);
+          result->cnet_profile.owner.command_queue_payload_publish_ns,
+          result->cnet_profile.owner.command_queue_payload_publish_calls,
+          result->cnet_profile.owner.command_queue_payload_copy_ns,
+          result->cnet_profile.owner.command_queue_payload_copy_calls, &attribution[repeat]);
       if (status != SALTS_OK) return status;
       values[repeat] = attribution[repeat].send_admit_ns;
     }
@@ -1365,8 +1365,8 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
   }
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    if (result->cnet_poll_ns < result->cnet_profile.owner_drive_ns) return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_poll_ns - result->cnet_profile.owner_drive_ns,
+    if (result->cnet_poll_ns < result->cnet_profile.owner.owner_drive_ns) return SALTS_ERANGE;
+    values[repeat] = io_bench_mean(result->cnet_poll_ns - result->cnet_profile.owner.owner_drive_ns,
                                    result->round_trips);
   }
   if (status == SALTS_OK)
@@ -1397,30 +1397,30 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
         cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_polls_per_round_trip);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_profile.owner_drive_ns, result->round_trips);
+    values[repeat] = io_bench_mean(result->cnet_profile.owner.owner_drive_ns, result->round_trips);
   }
   if (status == SALTS_OK)
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_owner_drive_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
     const uint64_t nested_ns =
-        result->cnet_profile.request_lifecycle_ns + result->cnet_profile.observe_ns;
-    if (nested_ns < result->cnet_profile.request_lifecycle_ns ||
-        result->cnet_profile.owner_drive_ns < nested_ns)
+        result->cnet_profile.owner.request_lifecycle_ns + result->cnet_profile.owner.observe_ns;
+    if (nested_ns < result->cnet_profile.owner.request_lifecycle_ns ||
+        result->cnet_profile.owner.owner_drive_ns < nested_ns)
       return SALTS_ERANGE;
     values[repeat] =
-        io_bench_mean(result->cnet_profile.owner_drive_ns - nested_ns, result->round_trips);
+        io_bench_mean(result->cnet_profile.owner.owner_drive_ns - nested_ns, result->round_trips);
   }
   if (status == SALTS_OK)
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_owner_control_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    if (result->cnet_profile.receive_rearm_stage_calls != result->cnet_profile.owner_drive_calls ||
-        result->cnet_profile.receive_rearm_stage_ns <
-            result->cnet_profile.receive_rearm_request_lifecycle_ns)
+    if (result->cnet_profile.owner.receive_rearm_stage_calls != result->cnet_profile.owner.owner_drive_calls ||
+        result->cnet_profile.owner.receive_rearm_stage_ns <
+            result->cnet_profile.owner.receive_rearm_request_lifecycle_ns)
       return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_profile.receive_rearm_stage_ns -
-                                       result->cnet_profile.receive_rearm_request_lifecycle_ns,
+    values[repeat] = io_bench_mean(result->cnet_profile.owner.receive_rearm_stage_ns -
+                                       result->cnet_profile.owner.receive_rearm_request_lifecycle_ns,
                                    result->round_trips);
   }
   if (status == SALTS_OK)
@@ -1428,26 +1428,26 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
                                       &series->cnet_receive_rearm_control_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_profile.command_stage_ns, result->round_trips);
+    values[repeat] = io_bench_mean(result->cnet_profile.owner.command_stage_ns, result->round_trips);
   }
   if (status == SALTS_OK)
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_command_stage_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
     const uint64_t categorized_request_ns =
-        result->cnet_profile.receive_rearm_request_lifecycle_ns +
-        result->cnet_profile.command_request_lifecycle_ns;
+        result->cnet_profile.owner.receive_rearm_request_lifecycle_ns +
+        result->cnet_profile.owner.command_request_lifecycle_ns;
     const uint64_t categorized_request_calls =
-        result->cnet_profile.receive_rearm_request_lifecycle_calls +
-        result->cnet_profile.command_request_lifecycle_calls;
-    if (categorized_request_ns < result->cnet_profile.receive_rearm_request_lifecycle_ns ||
-        categorized_request_calls < result->cnet_profile.receive_rearm_request_lifecycle_calls ||
-        categorized_request_ns != result->cnet_profile.request_lifecycle_ns ||
-        categorized_request_calls != result->cnet_profile.request_lifecycle_calls ||
-        result->cnet_profile.command_stage_ns < result->cnet_profile.command_request_lifecycle_ns)
+        result->cnet_profile.owner.receive_rearm_request_lifecycle_calls +
+        result->cnet_profile.owner.command_request_lifecycle_calls;
+    if (categorized_request_ns < result->cnet_profile.owner.receive_rearm_request_lifecycle_ns ||
+        categorized_request_calls < result->cnet_profile.owner.receive_rearm_request_lifecycle_calls ||
+        categorized_request_ns != result->cnet_profile.owner.request_lifecycle_ns ||
+        categorized_request_calls != result->cnet_profile.owner.request_lifecycle_calls ||
+        result->cnet_profile.owner.command_stage_ns < result->cnet_profile.owner.command_request_lifecycle_ns)
       return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_profile.command_stage_ns -
-                                       result->cnet_profile.command_request_lifecycle_ns,
+    values[repeat] = io_bench_mean(result->cnet_profile.owner.command_stage_ns -
+                                       result->cnet_profile.owner.command_request_lifecycle_ns,
                                    result->round_trips);
   }
   if (status == SALTS_OK)
@@ -1456,18 +1456,18 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
     const uint64_t owner_nested_ns =
-        result->cnet_profile.request_lifecycle_ns + result->cnet_profile.observe_ns;
-    const uint64_t rearm_control_ns = result->cnet_profile.receive_rearm_stage_ns -
-                                      result->cnet_profile.receive_rearm_request_lifecycle_ns;
+        result->cnet_profile.owner.request_lifecycle_ns + result->cnet_profile.owner.observe_ns;
+    const uint64_t rearm_control_ns = result->cnet_profile.owner.receive_rearm_stage_ns -
+                                      result->cnet_profile.owner.receive_rearm_request_lifecycle_ns;
     const uint64_t command_control_ns =
-        result->cnet_profile.command_stage_ns - result->cnet_profile.command_request_lifecycle_ns;
+        result->cnet_profile.owner.command_stage_ns - result->cnet_profile.owner.command_request_lifecycle_ns;
     const uint64_t categorized_control_ns = rearm_control_ns + command_control_ns;
-    if (owner_nested_ns < result->cnet_profile.request_lifecycle_ns ||
+    if (owner_nested_ns < result->cnet_profile.owner.request_lifecycle_ns ||
         categorized_control_ns < rearm_control_ns ||
-        result->cnet_profile.owner_drive_ns < owner_nested_ns ||
-        result->cnet_profile.owner_drive_ns - owner_nested_ns < categorized_control_ns)
+        result->cnet_profile.owner.owner_drive_ns < owner_nested_ns ||
+        result->cnet_profile.owner.owner_drive_ns - owner_nested_ns < categorized_control_ns)
       return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_profile.owner_drive_ns - owner_nested_ns -
+    values[repeat] = io_bench_mean(result->cnet_profile.owner.owner_drive_ns - owner_nested_ns -
                                        categorized_control_ns,
                                    result->round_trips);
   }
@@ -1475,11 +1475,11 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_owner_residual_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    if (result->cnet_profile.request_lifecycle_calls != result->cnet_profile.request_start_calls ||
-        result->cnet_profile.request_lifecycle_ns < result->cnet_profile.request_start_ns)
+    if (result->cnet_profile.owner.request_lifecycle_calls != result->cnet_profile.owner.request_start_calls ||
+        result->cnet_profile.owner.request_lifecycle_ns < result->cnet_profile.owner.request_start_ns)
       return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_profile.request_lifecycle_ns -
-                                       result->cnet_profile.request_start_ns,
+    values[repeat] = io_bench_mean(result->cnet_profile.owner.request_lifecycle_ns -
+                                       result->cnet_profile.owner.request_start_ns,
                                    result->round_trips);
   }
   if (status == SALTS_OK)
@@ -1487,23 +1487,23 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
         cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_request_control_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_profile.request_start_ns, result->round_trips);
+    values[repeat] = io_bench_mean(result->cnet_profile.owner.request_start_ns, result->round_trips);
   }
   if (status == SALTS_OK)
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_request_start_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_profile.observe_ns, result->round_trips);
+    values[repeat] = io_bench_mean(result->cnet_profile.owner.observe_ns, result->round_trips);
   }
   if (status == SALTS_OK)
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_observe_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    if (result->cnet_profile.request_completion_calls != result->cnet_profile.event_publish_calls ||
-        result->cnet_profile.request_completion_ns < result->cnet_profile.event_publish_ns)
+    if (result->cnet_profile.owner.request_completion_calls != result->cnet_profile.owner.event_publish_calls ||
+        result->cnet_profile.owner.request_completion_ns < result->cnet_profile.owner.event_publish_ns)
       return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_profile.request_completion_ns -
-                                       result->cnet_profile.event_publish_ns,
+    values[repeat] = io_bench_mean(result->cnet_profile.owner.request_completion_ns -
+                                       result->cnet_profile.owner.event_publish_ns,
                                    result->round_trips);
   }
   if (status == SALTS_OK)
@@ -1511,14 +1511,14 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
         cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_completion_control_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_profile.event_publish_ns, result->round_trips);
+    values[repeat] = io_bench_mean(result->cnet_profile.owner.event_publish_ns, result->round_trips);
   }
   if (status == SALTS_OK)
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_event_publish_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    if (result->cnet_profile.event_publish_ns < result->cnet_callback_ns) return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_profile.event_publish_ns - result->cnet_callback_ns,
+    if (result->cnet_profile.owner.event_publish_ns < result->cnet_callback_ns) return SALTS_ERANGE;
+    values[repeat] = io_bench_mean(result->cnet_profile.owner.event_publish_ns - result->cnet_callback_ns,
                                    result->round_trips);
   }
   if (status == SALTS_OK)
@@ -1526,7 +1526,7 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
                                       &series->cnet_event_framework_control_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = (double)result->cnet_profile.request_start_calls / (double)result->round_trips;
+    values[repeat] = (double)result->cnet_profile.owner.request_start_calls / (double)result->round_trips;
   }
   if (status == SALTS_OK)
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
@@ -1534,14 +1534,14 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
     values[repeat] =
-        (double)result->cnet_profile.request_completion_calls / (double)result->round_trips;
+        (double)result->cnet_profile.owner.request_completion_calls / (double)result->round_trips;
   }
   if (status == SALTS_OK)
     status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
                                       &series->cnet_requests_completed_per_round_trip);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = (double)result->cnet_profile.event_publish_calls / (double)result->round_trips;
+    values[repeat] = (double)result->cnet_profile.owner.event_publish_calls / (double)result->round_trips;
   }
   if (status == SALTS_OK)
     status =
@@ -1600,6 +1600,30 @@ static int io_bench_print_null_control(const char *protocol,
              (double)b->p95_ns / 1000.0, io_bench_rate(a), io_bench_rate(b));
     }
   }
+  return SALTS_OK;
+}
+
+static int io_bench_print_run_quality(const io_bench_series *direct_a,
+                                      const io_bench_series *direct_b,
+                                      const io_bench_series *native,
+                                      const io_bench_series *cnet) {
+  cnet_benchmark_summary null_p50 = {0};
+  cnet_benchmark_summary baseline_p50 = {0};
+  cnet_benchmark_run_quality quality = {0};
+  int status = io_bench_paired_delta(direct_a, direct_b, IO_BENCH_METRIC_P50, &null_p50);
+  if (status == SALTS_OK)
+    status = io_bench_paired_delta(native, cnet, IO_BENCH_METRIC_P50, &baseline_p50);
+  if (status == SALTS_OK)
+    status = cnet_benchmark_assess_run_quality(&null_p50, &baseline_p50, &quality);
+  if (status != SALTS_OK) return status;
+
+  printf("\nIOCP TCP 1 KiB benchmark run quality\n");
+  printf("NativeIO A/A p50: %+.2f%% +/- %.2fpp\n", null_p50.median, null_p50.mad);
+  printf("CNet vs NativeIO direct p50: %+.2f%% +/- %.2fpp\n", baseline_p50.median,
+         baseline_p50.mad);
+  printf("A/A noise envelope: %.2fpp\n", quality.noise_envelope_pp);
+  printf("Baseline lower bound: %.2fpp\n", quality.baseline_lower_bound_pp);
+  printf("RUN QUALITY: %s\n", cnet_benchmark_run_quality_label(quality.state));
   return SALTS_OK;
 }
 
@@ -1706,6 +1730,84 @@ static void io_bench_print_native_stages(const char *protocol, const io_bench_se
            coroutine[index].native_observe_ns.mad / 1000.0,
            coroutine[index].native_observes_per_round_trip.median);
   }
+}
+
+static int io_bench_fixed_control_attribution(
+    const io_bench_result *result, cnet_benchmark_fixed_control_attribution *out_attribution) {
+  const cnet_owner_profile *owner;
+  cnet_benchmark_fixed_control_sample sample;
+
+  if (result == NULL || out_attribution == NULL || result->round_trips == 0u) return SALTS_EINVAL;
+  owner = &result->cnet_profile.owner;
+  if (result->cnet_poll_ns < result->cnet_profile.client_poll_ns) return SALTS_ERANGE;
+  sample = (cnet_benchmark_fixed_control_sample){
+      .round_trips = result->round_trips,
+      .send_admit_ns = result->cnet_send_admission_ns,
+      .queue_publish_ns = owner->command_queue_payload_publish_ns,
+      .payload_copy_ns = owner->command_queue_payload_copy_ns,
+      .client_poll_ns = result->cnet_poll_ns,
+      .owner_drive_ns = owner->owner_drive_ns,
+      .request_lifecycle_ns = owner->request_lifecycle_ns,
+      .request_start_ns = owner->request_start_ns,
+      .observe_ns = owner->observe_ns,
+      .request_completion_ns = owner->request_completion_ns,
+      .event_publish_ns = owner->event_publish_ns,
+      .dispatcher_prepare_ns = result->cnet_profile.dispatcher_prepare_ns,
+      .dispatcher_invoke_ns = result->cnet_profile.dispatcher_invoke_ns,
+      .dispatcher_observer_ns = result->cnet_profile.dispatcher_observer_ns,
+      .dispatcher_release_ns = result->cnet_profile.dispatcher_release_ns,
+      .benchmark_callback_ns = result->cnet_callback_ns,
+      .benchmark_payload_check_ns = result->cnet_benchmark_payload_check_ns};
+  return cnet_benchmark_attribute_fixed_control(&sample, out_attribution);
+}
+
+static int io_bench_print_cnet_fixed_control(const char *protocol, const io_bench_series *cnet,
+                                             size_t count) {
+  printf("\n%s CNet closed diagnostic budget per repeat\n", protocol);
+  printf("All columns are exclusive after nested clocks are removed. Fixed + shared NativeIO + "
+         "payload copy + benchmark work + closure residual = profiled send + public client poll.\n");
+  printf("| payload | repeat | total budget us | fixed control us | shared NativeIO us | payload "
+         "copy us | benchmark work us | closure residual ns |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  for (size_t index = 0u; index < count; ++index) {
+    for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
+      cnet_benchmark_fixed_control_attribution attribution = {0};
+      int status = io_bench_fixed_control_attribution(&cnet[index].stage_profile_runs[repeat],
+                                                      &attribution);
+      if (status != SALTS_OK) return status;
+      printf("| %zu KiB | %zu | %.3f | %.3f | %.3f | %.3f | %.3f | %.1f |\n",
+             cnet[index].payload_size / 1024u, repeat + 1u, attribution.total_budget_ns / 1000.0,
+             attribution.fixed_control_total_ns / 1000.0,
+             attribution.shared_native_total_ns / 1000.0, attribution.payload_copy_ns / 1000.0,
+             attribution.benchmark_work_total_ns / 1000.0, attribution.closure_residual_ns);
+    }
+  }
+
+  printf("\n%s CNet exclusive fixed-control components per repeat\n", protocol);
+  printf("| payload | repeat | send public ns | queue control ns | client poll wrapper ns | owner "
+         "control ns | request control ns | completion control ns | event residual ns | "
+         "dispatcher prepare ns | dispatcher framework ns | client observer ns | dispatcher "
+         "release ns |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
+         "---: |\n");
+  for (size_t index = 0u; index < count; ++index) {
+    for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
+      cnet_benchmark_fixed_control_attribution attribution = {0};
+      int status = io_bench_fixed_control_attribution(&cnet[index].stage_profile_runs[repeat],
+                                                      &attribution);
+      if (status != SALTS_OK) return status;
+      printf("| %zu KiB | %zu | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | "
+             "%.1f | %.1f | %.1f |\n",
+             cnet[index].payload_size / 1024u, repeat + 1u,
+             attribution.send_public_control_ns, attribution.queue_control_ns,
+             attribution.client_poll_wrapper_ns, attribution.owner_control_ns,
+             attribution.request_control_ns, attribution.completion_control_ns,
+             attribution.event_publish_residual_ns, attribution.dispatcher_prepare_ns,
+             attribution.dispatcher_invoke_framework_ns, attribution.client_observer_control_ns,
+             attribution.dispatcher_release_ns);
+    }
+  }
+  return SALTS_OK;
 }
 
 static void io_bench_print_cnet_stages(const char *protocol, const io_bench_series *cnet,
@@ -1934,6 +2036,9 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
                   SALTS_OK);
       check_equal(io_bench_print_null_control("UDP", direct_aa_a_udp, direct_aa_b_udp, udp_count),
                   SALTS_OK);
+      check_equal(io_bench_print_run_quality(&direct_aa_a_tcp[0], &direct_aa_b_tcp[0],
+                                             &native_tcp[0], &cnet_tcp[0]),
+                  SALTS_OK);
     }
 
     check_equal(io_bench_print_latency("TCP", "p50", libuv_tcp, native_tcp, coroutine_tcp, cnet_tcp,
@@ -1947,6 +2052,7 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
         SALTS_OK);
     io_bench_print_native_stages("TCP", native_tcp, coroutine_tcp, tcp_count);
     io_bench_print_cnet_stages("TCP", cnet_tcp, tcp_count);
+    check_equal(io_bench_print_cnet_fixed_control("TCP", cnet_tcp, tcp_count), SALTS_OK);
     check_equal(io_bench_print_latency("UDP", "p50", libuv_udp, native_udp, coroutine_udp, cnet_udp,
                                        udp_count, false),
                 SALTS_OK);
@@ -1958,5 +2064,6 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
         SALTS_OK);
     io_bench_print_native_stages("UDP", native_udp, coroutine_udp, udp_count);
     io_bench_print_cnet_stages("UDP", cnet_udp, udp_count);
+    check_equal(io_bench_print_cnet_fixed_control("UDP", cnet_udp, udp_count), SALTS_OK);
   }
 }
