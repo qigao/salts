@@ -32,12 +32,16 @@ typedef struct cnet_command_queue_stats {
 #if defined(CNET_INTERNAL_PROFILING)
 /**
  * Inclusive command-publication timing collected only during an explicit
- * diagnostic sample. `publish_ns` includes `payload_copy_ns`.
+ * diagnostic sample. `publish_ns` covers every successful command;
+ * `payload_publish_ns` covers successful payload-bearing commands and includes
+ * `payload_copy_ns`.
  */
 typedef struct cnet_command_queue_profile {
   uint64_t publish_ns;
+  uint64_t payload_publish_ns;
   uint64_t payload_copy_ns;
   uint64_t publish_calls;
+  uint64_t payload_publish_calls;
   uint64_t payload_copy_calls;
 } cnet_command_queue_profile;
 #endif
