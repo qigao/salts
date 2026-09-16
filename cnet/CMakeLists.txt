@@ -100,6 +100,20 @@ if(BUILD_TESTS OR BUILD_BENCHMARKS)
     target_compile_definitions(salts_cnet_direct_profile PUBLIC CNET_INTERNAL_TESTING=1)
   endif()
   set_target_properties(salts_cnet_direct_profile PROPERTIES FOLDER "cnet/diagnostics")
+
+  # Uninstrumented B1 library used only by the matched lifecycle benchmark.
+  # It intentionally has the same public ABI as salts_cnet but is neither
+  # installed nor exported. The benchmark loads B0/B1 one at a time by path.
+  set(CNET_DIRECT_RELEASE_SOURCE_FILES ${CNET_DIRECT_SOURCE_FILES})
+  list(REMOVE_ITEM CNET_DIRECT_RELEASE_SOURCE_FILES src/cnet_direct_profile_control.c)
+  add_library(salts_cnet_direct_experiment SHARED ${CNET_DIRECT_RELEASE_SOURCE_FILES})
+  cnet_configure_target(salts_cnet_direct_experiment)
+  target_compile_definitions(salts_cnet_direct_experiment PRIVATE CNET_DIRECT_OWNER_EXPERIMENT=1)
+  set_target_properties(
+    salts_cnet_direct_experiment
+    PROPERTIES
+      WINDOWS_EXPORT_ALL_SYMBOLS ON
+      FOLDER "cnet/diagnostics")
 endif()
 
 install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
