@@ -77,7 +77,7 @@ typedef struct io_bench_result {
   uint64_t cnet_send_admission_ns;
   uint64_t cnet_poll_ns;
   uint64_t cnet_callback_ns;
-  uint64_t cnet_payload_validation_ns;
+  uint64_t cnet_benchmark_payload_check_ns;
   size_t cnet_receive_admission_calls;
   size_t cnet_send_admission_calls;
   size_t cnet_poll_calls;
@@ -101,9 +101,13 @@ typedef struct io_bench_series {
   cnet_benchmark_summary native_starts_per_round_trip;
   cnet_benchmark_summary native_observes_per_round_trip;
   cnet_benchmark_summary cnet_send_admission_ns;
+  cnet_benchmark_summary cnet_send_public_control_ns;
+  cnet_benchmark_summary cnet_send_queue_publish_ns;
+  cnet_benchmark_summary cnet_send_queue_control_ns;
+  cnet_benchmark_summary cnet_send_payload_copy_ns;
   cnet_benchmark_summary cnet_poll_control_ns;
   cnet_benchmark_summary cnet_callback_control_ns;
-  cnet_benchmark_summary cnet_payload_validation_ns;
+  cnet_benchmark_summary cnet_benchmark_payload_check_ns;
   cnet_benchmark_summary cnet_polls_per_round_trip;
   cnet_benchmark_summary cnet_owner_drive_ns;
   cnet_benchmark_summary cnet_owner_control_ns;
@@ -185,7 +189,7 @@ typedef struct io_bench_cnet {
   uint64_t send_admission_ns;
   uint64_t poll_ns;
   uint64_t callback_ns;
-  uint64_t payload_validation_ns;
+  uint64_t benchmark_payload_check_ns;
   size_t receive_admission_calls;
   size_t send_admission_calls;
   size_t poll_calls;
@@ -949,10 +953,10 @@ static void io_bench_cnet_receive(void *user, cnet_connection connection,
     return;
   }
   {
-    const uint64_t validation_started = fixture->measuring ? salts_hrtime() : 0u;
+    const uint64_t payload_check_started = fixture->measuring ? salts_hrtime() : 0u;
     const int payload_matches =
         memcmp(fixture->expected_data + fixture->received, view->data, view->size) == 0;
-    if (fixture->measuring) fixture->payload_validation_ns += salts_hrtime() - validation_started;
+    if (fixture->measuring) fixture->benchmark_payload_check_ns += salts_hrtime() - payload_check_started;
     if (!payload_matches) {
       const unsigned char *received = (const unsigned char *)view->data;
       size_t mismatch = 0u;
@@ -1001,7 +1005,7 @@ static int io_bench_cnet_begin_measurement(io_bench_cnet *fixture) {
   fixture->send_admission_ns = 0u;
   fixture->poll_ns = 0u;
   fixture->callback_ns = 0u;
-  fixture->payload_validation_ns = 0u;
+  fixture->benchmark_payload_check_ns = 0u;
   fixture->receive_admission_calls = 0u;
   fixture->send_admission_calls = 0u;
   fixture->poll_calls = 0u;
@@ -1222,7 +1226,7 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     result->cnet_send_admission_ns = fixture.cnet.send_admission_ns;
     result->cnet_poll_ns = fixture.cnet.poll_ns;
     result->cnet_callback_ns = fixture.cnet.callback_ns;
-    result->cnet_payload_validation_ns = fixture.cnet.payload_validation_ns;
+    result->cnet_benchmark_payload_check_ns = fixture.cnet.benchmark_payload_check_ns;
     result->cnet_receive_admission_calls = fixture.cnet.receive_admission_calls;
     result->cnet_send_admission_calls = fixture.cnet.send_admission_calls;
     result->cnet_poll_calls = fixture.cnet.poll_calls;
@@ -1319,12 +1323,42 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
   }
   if (status != SALTS_OK || driver != IO_BENCH_CNET) return status;
 
-  for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] =
-        io_bench_mean(result->cnet_send_admission_ns, result->cnet_send_admission_calls);
+  {
+    cnet_benchmark_send_attribution attribution[IO_BENCH_REPLICATES];
+    for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
+      const io_bench_result *result = &series->stage_profile_runs[repeat];
+      status = cnet_benchmark_attribute_send(
+          result->cnet_send_admission_ns, result->cnet_send_admission_calls,
+          result->cnet_profile.command_queue_payload_publish_ns,
+          result->cnet_profile.command_queue_payload_publish_calls,
+          result->cnet_profile.command_queue_payload_copy_ns,
+          result->cnet_profile.command_queue_payload_copy_calls, &attribution[repeat]);
+      if (status != SALTS_OK) return status;
+      values[repeat] = attribution[repeat].send_admit_ns;
+    }
+    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
+                                      &series->cnet_send_admission_ns);
+    for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat)
+      values[repeat] = attribution[repeat].public_control_ns;
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
+                                        &series->cnet_send_public_control_ns);
+    for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat)
+      values[repeat] = attribution[repeat].queue_publish_ns;
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
+                                        &series->cnet_send_queue_publish_ns);
+    for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat)
+      values[repeat] = attribution[repeat].queue_staging_control_ns;
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
+                                        &series->cnet_send_queue_control_ns);
+    for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat)
+      values[repeat] = attribution[repeat].payload_copy_ns;
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
+                                        &series->cnet_send_payload_copy_ns);
   }
-  status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_send_admission_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
     if (result->cnet_poll_ns < result->cnet_profile.owner_drive_ns) return SALTS_ERANGE;
@@ -1336,20 +1370,20 @@ static int io_bench_series_finalize(io_bench_series *series, io_bench_driver dri
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
     const double callback_ns = io_bench_mean(result->cnet_callback_ns, result->cnet_callback_calls);
-    const double validation_ns =
-        io_bench_mean(result->cnet_payload_validation_ns, result->cnet_callback_calls);
-    values[repeat] = callback_ns > validation_ns ? callback_ns - validation_ns : 0.0;
+    const double payload_check_ns =
+        io_bench_mean(result->cnet_benchmark_payload_check_ns, result->cnet_callback_calls);
+    values[repeat] = callback_ns > payload_check_ns ? callback_ns - payload_check_ns : 0.0;
   }
   if (status == SALTS_OK)
     status =
         cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_callback_control_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_payload_validation_ns, result->cnet_callback_calls);
+    values[repeat] = io_bench_mean(result->cnet_benchmark_payload_check_ns, result->cnet_callback_calls);
   }
   if (status == SALTS_OK)
     status =
-        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_payload_validation_ns);
+        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_benchmark_payload_check_ns);
   for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
     const io_bench_result *result = &series->stage_profile_runs[repeat];
     values[repeat] = (double)result->cnet_poll_calls / (double)result->round_trips;
@@ -1630,10 +1664,27 @@ static void io_bench_print_native_stages(const char *protocol, const io_bench_se
 
 static void io_bench_print_cnet_stages(const char *protocol, const io_bench_series *cnet,
                                        size_t count) {
+  printf("\n%s CNet producer-side send attribution per call\n", protocol);
+  printf("Send admission = public control + queue publish; queue publish = queue staging/control "
+         "+ payload copy. These are exclusive producer-side stages derived per diagnostic repeat.\n");
+  printf("| payload | send admit ns | MAD ns | public control ns | MAD ns | queue publish ns | "
+         "MAD ns | queue staging/control ns | MAD ns | payload copy ns | MAD ns |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  for (size_t index = 0u; index < count; ++index) {
+    const io_bench_series *series = &cnet[index];
+    printf("| %zu KiB | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f |\n",
+           series->payload_size / 1024u, series->cnet_send_admission_ns.median,
+           series->cnet_send_admission_ns.mad, series->cnet_send_public_control_ns.median,
+           series->cnet_send_public_control_ns.mad, series->cnet_send_queue_publish_ns.median,
+           series->cnet_send_queue_publish_ns.mad, series->cnet_send_queue_control_ns.median,
+           series->cnet_send_queue_control_ns.mad, series->cnet_send_payload_copy_ns.median,
+           series->cnet_send_payload_copy_ns.mad);
+  }
+
   printf("\n%s CNet public API per-run stage medians and MAD\n", protocol);
   printf("Poll control excludes the nested owner drive.\n");
   printf("| payload | send admit median ns | MAD ns | poll control median ns | MAD ns | "
-         "callback control median ns | MAD ns | payload validation median ns | MAD ns | "
+         "callback control median ns | MAD ns | benchmark payload check median ns | MAD ns | "
          "polls/RT |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
@@ -1642,8 +1693,8 @@ static void io_bench_print_cnet_stages(const char *protocol, const io_bench_seri
            series->payload_size / 1024u, series->cnet_send_admission_ns.median,
            series->cnet_send_admission_ns.mad, series->cnet_poll_control_ns.median,
            series->cnet_poll_control_ns.mad, series->cnet_callback_control_ns.median,
-           series->cnet_callback_control_ns.mad, series->cnet_payload_validation_ns.median,
-           series->cnet_payload_validation_ns.mad, series->cnet_polls_per_round_trip.median);
+           series->cnet_callback_control_ns.mad, series->cnet_benchmark_payload_check_ns.median,
+           series->cnet_benchmark_payload_check_ns.mad, series->cnet_polls_per_round_trip.median);
   }
 
   printf("\n%s CNet internal inclusive time per round trip\n", protocol);
