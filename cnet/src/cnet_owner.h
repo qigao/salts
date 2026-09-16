@@ -111,6 +111,12 @@ int cnet_owner_wake(cnet_owner *owner);
 /** Reports the bounded NativeIO coroutine state owned by this shard. */
 bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats);
 
+#if defined(CNET_INTERNAL_TESTING)
+bool cnet_owner_test_backend_stats(const cnet_owner *owner,
+                                   native_io_backend_stats *out_native,
+                                   native_io_coroutine_stats *out_coroutine);
+#endif
+
 #if defined(CNET_INTERNAL_PROFILING)
 /** Begins/takes a quiescent, single-owner diagnostic sample. */
 int cnet_owner_profile_begin(cnet_owner *owner);

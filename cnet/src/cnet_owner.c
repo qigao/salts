@@ -1786,6 +1786,17 @@ bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine
   return impl != NULL && native_io_backend_get_coroutine_stats(&impl->backend, out_stats);
 }
 
+#if defined(CNET_INTERNAL_TESTING)
+bool cnet_owner_test_backend_stats(const cnet_owner *owner,
+                                   native_io_backend_stats *out_native,
+                                   native_io_coroutine_stats *out_coroutine) {
+  const cnet_owner_impl *impl = owner != NULL ? (const cnet_owner_impl *)owner->impl : NULL;
+  if (impl == NULL || out_native == NULL || out_coroutine == NULL) return false;
+  return native_io_backend_get_stats(&impl->backend, out_native) &&
+         native_io_backend_get_coroutine_stats(&impl->backend, out_coroutine);
+}
+#endif
+
 #if defined(CNET_INTERNAL_PROFILING)
 int cnet_owner_profile_begin(cnet_owner *owner) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
