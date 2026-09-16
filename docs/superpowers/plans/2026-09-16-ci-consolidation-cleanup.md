@@ -4,7 +4,7 @@
 
 **Goal:** Reduce the permanent GitHub Actions surface from seven workflows to four canonical workflows while preserving shared-owner, CSTL allocator, XML sanitizer, formal/generated-contract, and NativeIO/CNet performance evidence.
 
-**Architecture:** `cmeta.yml` becomes the durable native conformance owner for Linux/macOS/Windows/Android plus the three migrated regression families. `cmeta-cflow-calculus.yml` remains the formal/generated-contract gate, `ci.yml` remains the lightweight notation gate, and `native-io-release-benchmarks.yml` remains the sole performance workflow with narrower automatic triggers. The three completed feature workflows are deleted only after the replacement checks are present and green.
+**Architecture:** `cmeta.yml` becomes the durable native conformance owner for Linux/macOS/Windows/Android plus the three migrated regression families. `cmeta-cflow-calculus.yml` remains the formal/generated-contract gate, `ci.yml` remains the lightweight notation gate, and `native-io-release-benchmarks.yml` remains the sole performance workflow with narrower automatic triggers. The three completed feature workflows are deleted only after replacement coverage is present and green.
 
 **Tech Stack:** GitHub Actions YAML, CMake/CMake presets, CTest, Ninja, GCC/Clang/MSVC, ASan/UBSan, Lean, existing Salts test projects.
 
@@ -16,6 +16,8 @@
 - Do not change production CNet, NativeIO, CSTL, XML, CMeta, or CFlow behavior.
 - Do not delete a feature workflow before its durable regression coverage is demonstrated in `cmeta.yml`.
 - Keep Linux/macOS/Windows native conformance and Android arm64 package verification.
+- Canonical PR jobs modified by this cleanup must checkout `${{ github.event.pull_request.head.sha || github.sha }}` explicitly so final evidence is exact-head rather than the synthetic PR merge ref.
+- Migrated Linux/Windows regression jobs must leave tracked source unchanged.
 - Keep Lean/generated-contract verification independent from native conformance.
 - Keep epoll, io_uring, kqueue, and IOCP performance evidence and the IOCP run-quality gate.
 - A noise-limited performance run remains evidence-only and must not fail functional CI.
@@ -28,7 +30,7 @@
 
 **Modify**
 
-- `.github/workflows/cmeta.yml` — canonical native conformance triggers and migrated regression steps.
+- `.github/workflows/cmeta.yml` — canonical native conformance triggers, exact-head checkout, source-cleanliness checks, and migrated regression steps.
 - `.github/workflows/native-io-release-benchmarks.yml` — performance-only automatic trigger scope.
 
 **Delete after migration is green**
@@ -39,22 +41,17 @@
 
 **Consume without changing unless a discovered incompatibility forces a design stop**
 
-- `tests/cmeta_shared_owner/CMakeLists.txt`
-- `tests/cmeta_shared_owner/owner_test.c`
-- `tests/cmeta_shared_owner/owner_peer.c`
-- `tests/cmeta_shared_owner/check_exports.cmake`
-- `cstl/tests/allocator_installed/CMakeLists.txt`
+- `tests/cmeta_shared_owner/**`
+- `cstl/tests/allocator_installed/**`
 - `cstl/tests/cstl_vec_alloc_test.c`
 - `cstl/tests/cstl_vec_alloc_cpp_test.cpp`
-- `parser/xml_parser/test/CMakeLists.txt`
-- `parser/xml_parser/test/xml_parser_test.c`
-- `parser/xml_parser/test/xml_sax_parser_test.c`
+- `parser/xml_parser/test/**`
 
-If any consumed test project cannot run under canonical CI without weakening its existing contract, stop that deletion and revise the spec instead of editing production code to accommodate CI cleanup.
+If a consumed test project cannot run under canonical CI without weakening its existing contract, stop deletion of that workflow and revise the spec instead of changing production code to accommodate cleanup.
 
 ---
 
-### Task 1: Migrate CMeta shared-owner regression into canonical conformance
+### Task 1: Establish exact-head canonical conformance and migrate CMeta shared-owner regression
 
 **Files:**
 - Modify: `.github/workflows/cmeta.yml`
@@ -62,31 +59,39 @@ If any consumed test project cannot run under canonical CI without weakening its
 
 **Interfaces:**
 - Consumes: production `Salts::CMeta`, canonical installed package at `external/pkgs/salts/release/lib/cmake/Salts`, existing `CMETA_OWNER_SANITIZERS` option.
-- Produces: Linux sanitized shared-owner regression, Linux installed-package shared-owner regression, Windows shared-owner regression, Windows installed-package shared-owner regression.
+- Produces: exact-head Linux/macOS/Windows/Android conformance checkout; Linux sanitized shared-owner regression; Linux/Windows installed-package shared-owner regression; tracked-source cleanliness proof for Linux and Windows.
 
 - [ ] **Step 1: Record the pre-change coverage RED**
-
-Run from the implementation branch before editing:
 
 ```bash
 rg -n "cmeta_shared_owner|cmeta-owner|tests/cmeta_shared_owner" .github/workflows/cmeta.yml
 ```
 
-Expected: no matches. This is the coverage RED: the canonical workflow does not yet own the regression.
+Expected: no matches.
 
-- [ ] **Step 2: Add shared-owner paths to canonical triggers**
+- [ ] **Step 2: Make all four canonical jobs checkout the PR head explicitly**
 
-Add this path to both `pull_request.paths` and `push.paths` in `.github/workflows/cmeta.yml`:
+For each checkout step in the `linux`, `macos`, `android`, and `windows` jobs, preserve its current action version but add:
+
+```yaml
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+```
+
+Do not change the platform matrix or runner versions as part of this task.
+
+- [ ] **Step 3: Add shared-owner paths to canonical triggers**
+
+Add to both `pull_request.paths` and `push.paths`:
 
 ```yaml
       - "tests/cmeta_shared_owner/**"
 ```
 
-Keep `.github/workflows/cmeta.yml` itself in both trigger lists.
+- [ ] **Step 4: Add Linux source-mode sanitized regression**
 
-- [ ] **Step 3: Add Linux source-mode sanitized regression**
-
-After the canonical Linux release install/package verification, add a dedicated step:
+After the canonical Linux release install/package verification, add:
 
 ```yaml
       - name: Verify CMeta shared ownership with sanitizers
@@ -100,11 +105,9 @@ After the canonical Linux release install/package verification, add a dedicated 
           ctest --test-dir build/cmeta-owner --no-tests=error --output-on-failure
 ```
 
-Expected tests include `cmeta_shared_owner_test`; on Linux the project also registers `cmeta_static_exports_test` when `Salts::CMeta` is static.
+Expected: `cmeta_shared_owner_test` runs; Linux also runs `cmeta_static_exports_test` when `Salts::CMeta` is static.
 
-- [ ] **Step 4: Add Linux installed-package regression**
-
-After `Install release profile`, configure the same test project against the canonical installed SDK:
+- [ ] **Step 5: Add Linux installed-package regression**
 
 ```yaml
       - name: Verify installed CMeta shared ownership
@@ -118,11 +121,11 @@ After `Install release profile`, configure the same test project against the can
           ctest --test-dir build/cmeta-owner-installed --no-tests=error --output-on-failure
 ```
 
-Do not point this at a test-owned copy of CMeta.
+This must use the canonical installed SDK, not a test-owned CMeta copy.
 
-- [ ] **Step 5: Add Windows source and installed-package regressions**
+- [ ] **Step 6: Add Windows source and installed-package regressions**
 
-After the canonical Windows release install, add one `cmd` step that enters the existing Visual Studio environment and runs both modes:
+After the canonical Windows release install:
 
 ```yaml
       - name: Verify CMeta shared ownership
@@ -143,34 +146,56 @@ After the canonical Windows release install, add one `cmd` step that enters the 
           ctest --test-dir build/cmeta-owner-installed --no-tests=error --output-on-failure
 ```
 
-- [ ] **Step 6: Validate the workflow diff locally**
+- [ ] **Step 7: Add tracked-source cleanliness checks**
 
-Run:
+At the end of the Linux job:
+
+```yaml
+      - name: Check exact head and unchanged tracked source
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          test -z "$(git status --porcelain --untracked-files=no)"
+```
+
+At the end of the Windows job:
+
+```yaml
+      - name: Check exact head and unchanged tracked source
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $expected = "${{ github.event.pull_request.head.sha || github.sha }}"
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $expected) { throw "expected head $expected, got $actual" }
+          $dirty = @(git status --porcelain --untracked-files=no)
+          if ($dirty.Count -ne 0) { throw "tracked source changed: $($dirty -join '; ')" }
+```
+
+- [ ] **Step 8: Validate and commit**
 
 ```bash
 git diff --check
-rg -n "tests/cmeta_shared_owner|Verify CMeta shared ownership|Verify installed CMeta shared ownership" .github/workflows/cmeta.yml
-```
-
-Expected: trigger path plus Linux/Windows regression steps are present; no stale feature-branch trigger is added.
-
-- [ ] **Step 7: Commit the migration**
-
-```bash
+rg -n "tests/cmeta_shared_owner|Verify CMeta shared ownership|Check exact head" .github/workflows/cmeta.yml
 git add .github/workflows/cmeta.yml
 git commit -m "ci(cmeta): migrate shared-owner regression"
 ```
 
-- [ ] **Step 8: Verify remote GREEN before proceeding**
+- [ ] **Step 9: Verify remote GREEN before proceeding**
 
-Push the branch and inspect the exact-head `CMeta conformance` run. Required evidence:
+Require exact-head `CMeta conformance` evidence:
 
-- Linux release job succeeds and logs `cmeta_shared_owner_test` plus `cmeta_static_exports_test` when applicable.
-- Linux installed-package shared-owner step succeeds.
-- Windows release job succeeds and runs the source and installed shared-owner tests.
-- macOS and Android existing jobs remain green.
+- Linux, macOS, Windows, Android checkouts resolve to the PR head SHA.
+- Linux runs `cmeta_shared_owner_test` and `cmeta_static_exports_test` when applicable.
+- Linux installed shared-owner test passes.
+- Windows source and installed shared-owner tests pass.
+- Linux/Windows tracked-source checks pass.
+- Existing macOS and Android jobs remain green.
 
-If any of these fail because the test project cannot be embedded without contract loss, stop and revise the design; do not delete `cmeta-shared-owner.yml`.
+If these fail because the test project cannot be embedded without contract loss, stop and revise the design; do not delete `cmeta-shared-owner.yml`.
 
 ---
 
@@ -183,8 +208,8 @@ If any of these fail because the test project cannot be embedded without contrac
 - Consume: `cstl/tests/cstl_vec_alloc_cpp_test.cpp`
 
 **Interfaces:**
-- Consumes: existing `linux-dev-user` ASan preset and canonical release SDK installation.
-- Produces: allocator C/C++ sanitizer regression and independent installed SDK consumers without a second standalone workflow/vcpkg checkout.
+- Consumes: `linux-dev-user` ASan preset and canonical release SDK installation.
+- Produces: allocator C/C++ ASan+UBSan regression and independent installed SDK consumers without another vcpkg checkout.
 
 - [ ] **Step 1: Record the pre-change coverage RED**
 
@@ -194,9 +219,7 @@ rg -n "cstl_vec_alloc_test|allocator_installed|allocator-consumer" .github/workf
 
 Expected: no allocator-specific canonical step.
 
-- [ ] **Step 2: Add allocator sanitizer regression to the Linux job**
-
-Add a dedicated step before or adjacent to the existing CFlow sanitizer step:
+- [ ] **Step 2: Add allocator sanitizer regression**
 
 ```yaml
       - name: Verify CSTL allocator with sanitizers
@@ -218,11 +241,11 @@ Add a dedicated step before or adjacent to the existing CFlow sanitizer step:
             --output-on-failure
 ```
 
-Do not create a second vcpkg checkout; reuse the canonical environment.
+Do not copy the standalone vcpkg bootstrap from `cstl-allocator.yml`.
 
 - [ ] **Step 3: Add independent installed C/C++ consumers**
 
-After the canonical Linux `Install release profile` step, add:
+After canonical Linux `Install release profile`:
 
 ```yaml
       - name: Verify CSTL allocator installed consumers
@@ -237,34 +260,20 @@ After the canonical Linux `Install release profile` step, add:
           ctest --test-dir build/allocator-consumer --no-tests=error --output-on-failure
 ```
 
-This must use the canonical installed SDK, not a second full SDK build.
-
-- [ ] **Step 4: Validate the diff**
+- [ ] **Step 4: Validate and commit**
 
 ```bash
 git diff --check
 rg -n "Verify CSTL allocator|cstl_vec_alloc_test|allocator-consumer" .github/workflows/cmeta.yml
-```
-
-Expected: one sanitizer step and one installed-consumer step; no standalone vcpkg bootstrap logic copied from `cstl-allocator.yml`.
-
-- [ ] **Step 5: Commit**
-
-```bash
 git add .github/workflows/cmeta.yml
 git commit -m "ci(cstl): migrate allocator regression coverage"
 ```
 
-- [ ] **Step 6: Verify remote GREEN**
+- [ ] **Step 5: Verify remote GREEN**
 
-On the new exact head, require the Linux conformance logs to show:
+Require exact-head Linux logs showing all six sanitizer tests pass and the installed `allocator_c`/`allocator_cpp` consumers build and pass. Linux full suite, macOS, Windows, Android, and tracked-source checks must remain green.
 
-- all six allocator/ownership/header sanitizer tests pass;
-- installed `allocator_c` and `allocator_cpp` consumers build and pass;
-- Linux full suite remains green;
-- macOS, Windows, Android jobs remain green.
-
-Do not proceed to workflow deletion if the installed consumer is missing from canonical evidence.
+Do not proceed to workflow deletion if the installed consumer is absent from canonical evidence.
 
 ---
 
@@ -275,8 +284,8 @@ Do not proceed to workflow deletion if the installed consumer is missing from ca
 - Consume: `parser/xml_parser/test/**`
 
 **Interfaces:**
-- Consumes: existing `xml_parser_test`, `xml_sax_parser_test`, canonical `linux-dev-user` sanitizer build.
-- Produces: parser changes automatically invoke `cmeta.yml`, and DOM/SAX regressions run with ASan/UBSan.
+- Consumes: `xml_parser_test`, `xml_sax_parser_test`, canonical `linux-dev-user` sanitizer build.
+- Produces: parser changes activate `cmeta.yml`; DOM/SAX regressions run under ASan+UBSan on the exact PR head.
 
 - [ ] **Step 1: Record trigger and sanitizer RED**
 
@@ -296,8 +305,6 @@ Add to both `pull_request.paths` and `push.paths`:
 
 - [ ] **Step 3: Add XML sanitizer regression**
 
-Reuse the same canonical debug/sanitizer preset rather than a separate feature workflow:
-
 ```yaml
       - name: Verify XML DOM and SAX with sanitizers
         shell: bash
@@ -314,27 +321,20 @@ Reuse the same canonical debug/sanitizer preset rather than a separate feature w
             --output-on-failure
 ```
 
-- [ ] **Step 4: Validate the diff**
+- [ ] **Step 4: Validate and commit**
 
 ```bash
 git diff --check
 rg -n '"parser/\*\*"|Verify XML DOM and SAX|xml_sax_parser_test' .github/workflows/cmeta.yml
-```
-
-Expected: parser trigger appears in both event blocks and XML sanitizer step is present once.
-
-- [ ] **Step 5: Commit**
-
-```bash
 git add .github/workflows/cmeta.yml
 git commit -m "ci(xml): migrate DOM and SAX sanitizer coverage"
 ```
 
-- [ ] **Step 6: Verify remote GREEN**
+- [ ] **Step 5: Verify remote GREEN**
 
-Require exact-head Linux conformance evidence that `xml_parser_test` and `xml_sax_parser_test` both pass under the sanitizer build. Existing Linux full suite, macOS, Windows, and Android jobs must also remain green.
+Require exact-head Linux evidence that `xml_parser_test` and `xml_sax_parser_test` pass under sanitizers. Linux full suite, macOS, Windows, Android, and tracked-source checks must remain green.
 
-At this checkpoint all durable coverage from the three legacy workflows must be present and demonstrated in `cmeta.yml`. Do not delete any legacy workflow before this checkpoint is satisfied.
+At this checkpoint all durable coverage from the three legacy workflows must be demonstrated in `cmeta.yml`. Do not delete a legacy workflow before this checkpoint.
 
 ---
 
@@ -345,7 +345,7 @@ At this checkpoint all durable coverage from the three legacy workflows must be 
 
 **Interfaces:**
 - Consumes: existing four-platform matrix, benchmark contracts, Windows A/A control, IOCP run-quality gate.
-- Produces: performance workflow automatically runs only for performance-relevant runtime/build changes; manual dispatch remains unchanged.
+- Produces: automatic performance runs only for performance-relevant runtime/build changes; manual dispatch unchanged.
 
 - [ ] **Step 1: Record the over-broad trigger RED**
 
@@ -353,18 +353,18 @@ At this checkpoint all durable coverage from the three legacy workflows must be 
 rg -n 'cmeta/\*\*|tinytest/\*\*|cmetaChanged|tinytestChanged' .github/workflows/native-io-release-benchmarks.yml
 ```
 
-Expected: matches exist in both top-level path filters and the `Select affected benchmark layers` script.
+Expected: matches exist.
 
 - [ ] **Step 2: Remove broad automatic path filters**
 
-From both `pull_request.paths` and `push.paths`, remove only:
+Remove only these from both `pull_request.paths` and `push.paths`:
 
 ```yaml
       - "cmeta/**"
       - "tinytest/**"
 ```
 
-Keep these automatic trigger surfaces:
+Keep:
 
 ```yaml
       - "native-io/**"
@@ -382,9 +382,9 @@ Keep these automatic trigger surfaces:
 
 Keep `workflow_dispatch` unchanged.
 
-- [ ] **Step 3: Remove the matching internal scope branches**
+- [ ] **Step 3: Remove matching internal scope branches**
 
-Delete the `cmetaChanged` and `tinytestChanged` calculations from `Select affected benchmark layers` and remove them from `$runAdapted`:
+Delete `cmetaChanged` and `tinytestChanged` calculations and reduce `$runAdapted` to:
 
 ```powershell
 $runAdapted = $nativeChanged -or $cnetChanged -or
@@ -392,38 +392,23 @@ $runAdapted = $nativeChanged -or $cnetChanged -or
   $buildChanged -or $dependencyChanged -or $workflowChanged
 ```
 
-Do not remove the scope step itself; manual dispatch must continue to force `$runAdapted = $true`.
+Keep the scope step because manual dispatch must force `$runAdapted = $true`.
 
-- [ ] **Step 4: Validate the trigger contract**
+- [ ] **Step 4: Validate and commit**
 
 ```bash
 git diff --check
 ! rg -n 'cmeta/\*\*|tinytest/\*\*|cmetaChanged|tinytestChanged' .github/workflows/native-io-release-benchmarks.yml
 rg -n 'workflow_dispatch|native-io/\*\*|cnet/\*\*|vcpkg-configuration.json' .github/workflows/native-io-release-benchmarks.yml
-```
-
-Expected: no broad CMeta/TinyTest automatic trigger remains; manual dispatch and all performance-relevant paths remain.
-
-- [ ] **Step 5: Commit**
-
-```bash
 git add .github/workflows/native-io-release-benchmarks.yml
 git commit -m "ci(perf): narrow NativeIO CNet benchmark triggers"
 ```
 
-- [ ] **Step 6: Verify exact-head four-platform benchmark GREEN**
+- [ ] **Step 5: Verify exact-head four-platform benchmark GREEN**
 
-Because the workflow file itself changed, the PR must run the performance workflow. Require:
+The workflow file change must trigger the performance workflow. Require epoll, io_uring, kqueue, and IOCP success; all artifacts upload; Windows artifact contains exactly one `RUN QUALITY:` line. A noise-limited label is still a successful harness run.
 
-- epoll / Ubuntu success;
-- io_uring / Ubuntu success;
-- kqueue / macOS success;
-- IOCP / Windows success;
-- all benchmark artifacts upload successfully;
-- Windows artifact still contains exactly one `RUN QUALITY:` decision line;
-- a `noise-limited` label, if produced, does not fail the job.
-
-No performance conclusion is required from this cleanup run; this is harness/regression validation only.
+Do not make a new performance optimization claim from this cleanup run.
 
 ---
 
@@ -435,26 +420,25 @@ No performance conclusion is required from this cleanup run; this is harness/reg
 - Delete: `.github/workflows/xml-sax.yml`
 
 **Interfaces:**
-- Consumes: GREEN canonical evidence from Tasks 1–3.
+- Consumes: GREEN exact-head canonical evidence from Tasks 1–3.
 - Produces: exactly four permanent workflows with no stale feature-branch triggers.
 
 - [ ] **Step 1: Enforce the deletion precondition**
 
-Before deleting anything, record the exact-head `CMeta conformance` run from Task 3 and verify its Linux, macOS, Windows, and Android jobs are all `success`. Confirm logs contain:
+Verify the latest exact-head `CMeta conformance` run is all green and logs visibly contain:
 
 ```text
 cmeta_shared_owner_test
+cmeta_static_exports_test (Linux when applicable)
 cstl_vec_alloc_test
 cstl_vec_alloc_cpp_test
 xml_parser_test
 xml_sax_parser_test
 ```
 
-Also confirm the installed shared-owner and allocator-consumer steps succeeded.
+Also confirm installed shared-owner and allocator-consumer steps succeeded. If any item is absent, stop; do not delete the corresponding workflow.
 
-If any item is absent, stop. Do not delete the corresponding legacy workflow.
-
-- [ ] **Step 2: Delete the legacy workflow files**
+- [ ] **Step 2: Delete legacy workflow files**
 
 ```bash
 git rm \
@@ -463,15 +447,14 @@ git rm \
   .github/workflows/xml-sax.yml
 ```
 
-- [ ] **Step 3: Verify the permanent workflow inventory**
-
-Run:
+- [ ] **Step 3: Verify the workflow inventory and stale references**
 
 ```bash
 find .github/workflows -maxdepth 1 -type f -name '*.yml' -printf '%f\n' | sort
+! rg -n 'fix/cmeta-252-shared-owner|feat/xml-native-sax|cmeta-shared-owner\.yml|cstl-allocator\.yml|xml-sax\.yml' .github/workflows
 ```
 
-Expected exactly:
+Expected inventory:
 
 ```text
 ci.yml
@@ -480,15 +463,7 @@ cmeta.yml
 native-io-release-benchmarks.yml
 ```
 
-- [ ] **Step 4: Scan for stale feature-workflow references**
-
-```bash
-! rg -n 'fix/cmeta-252-shared-owner|feat/xml-native-sax|cmeta-shared-owner\.yml|cstl-allocator\.yml|xml-sax\.yml' .github/workflows
-```
-
-Expected: no matches.
-
-- [ ] **Step 5: Validate and commit**
+- [ ] **Step 4: Validate and commit**
 
 ```bash
 git diff --check
@@ -505,17 +480,15 @@ git commit -m "ci: remove completed feature workflows"
 - Review: `.github/workflows/cmeta.yml`
 - Review: `.github/workflows/cmeta-cflow-calculus.yml`
 - Review: `.github/workflows/native-io-release-benchmarks.yml`
-- Review: complete implementation PR diff
+- Review: implementation PR diff
 
 **Interfaces:**
-- Consumes: final branch containing Tasks 1–5.
-- Produces: merge-ready CI cleanup with exact-head evidence and no lost coverage.
+- Consumes: final branch from Tasks 1–5.
+- Produces: merge-ready cleanup with exact-head evidence and no lost coverage.
 
-- [ ] **Step 1: Wait for final-head canonical CI**
+- [ ] **Step 1: Require final-head canonical CI**
 
-Because the PR changes both `cmeta.yml` and `native-io-release-benchmarks.yml`, each synchronize event evaluates the PR-wide changed-file set and should run both workflows on the final head. Do not cite an earlier commit's run as final evidence.
-
-Required final-head results:
+Do not cite earlier commit runs. The final head must show:
 
 ```text
 CMeta conformance
@@ -531,9 +504,11 @@ NativeIO and CNet release benchmarks
   IOCP / Windows 2022 MSVC       success
 ```
 
+Confirm the checkout/logged SHA in canonical conformance is the PR head, not a synthetic merge commit.
+
 - [ ] **Step 2: Verify migrated checks in final-head logs**
 
-Inspect the final `cmeta.yml` job logs and confirm all of these are visibly executed, not merely buildable:
+Confirm visible execution of:
 
 ```text
 cmeta_shared_owner_test
@@ -545,30 +520,29 @@ allocator installed C consumer
 allocator installed C++ consumer
 xml_parser_test
 xml_sax_parser_test
+tracked-source unchanged checks
 ```
 
 - [ ] **Step 3: Verify performance artifact contract**
 
-From the final IOCP artifact, confirm:
+Download the final IOCP artifact and run:
 
 ```bash
 rg -n '^RUN QUALITY: ' libuv-native-io-cnet-benchmark.md
 ```
 
-Expected: exactly one line, with one of the two existing stable labels:
+Expected exactly one of:
 
 ```text
 RUN QUALITY: qualified for performance decisions
 RUN QUALITY: noise-limited; do not use for optimization decisions
 ```
 
-Do not use the cleanup run to make a new performance optimization claim.
+Do not use this cleanup run for a new optimization claim.
 
-- [ ] **Step 4: Audit final changed files**
+- [ ] **Step 4: Audit final changed files and workflow inventory**
 
-The implementation PR should contain only the expected workflow changes/deletions. If the spec/plan were merged separately before implementation, the implementation PR should not contain them again.
-
-Expected implementation paths:
+If the design/plan PR was merged first, expected implementation paths are exactly:
 
 ```text
 .github/workflows/cmeta.yml
@@ -586,11 +560,11 @@ find .github/workflows -maxdepth 1 -type f -name '*.yml' -printf '%f\n' | sort
 rg -n 'fix/cmeta-252-shared-owner|feat/xml-native-sax' .github/workflows || true
 ```
 
-There must be no temporary patch workflow/script and no production-source change.
+There must be no temporary workflow/script and no production-source change.
 
-- [ ] **Step 5: Review the surviving responsibility split**
+- [ ] **Step 5: Review final responsibility split**
 
-Verify the final repository semantics match the design:
+Verify:
 
 ```text
 ci.yml                         policy/notation only
@@ -599,17 +573,17 @@ cmeta-cflow-calculus.yml       Lean/generated contracts
 native-io-release-benchmarks   performance evidence only
 ```
 
-If a surviving workflow duplicates an entire migrated feature gate, remove the duplicate before declaring completion; do not broaden cleanup into unrelated refactors.
+Do not broaden this cleanup into unrelated refactoring.
 
 - [ ] **Step 6: Prepare merge-ready PR metadata**
 
 Update the implementation PR body with:
 
-- design/spec link;
+- spec link;
 - old workflow count `7`, new workflow count `4`;
-- exact migrated regression evidence;
+- migrated regression evidence;
 - final exact-head CI run IDs;
-- statement that no production source changed;
-- statement that performance trigger scope removed only `cmeta/**` and `tinytest/**` automatic triggers while retaining `workflow_dispatch`.
+- no-production-source-change statement;
+- performance trigger statement: only `cmeta/**` and `tinytest/**` automatic triggers were removed, while `workflow_dispatch` remains.
 
-Then request final review. Do not merge until the exact-head evidence above is present.
+Request final review. Do not merge until final-head evidence is present.
