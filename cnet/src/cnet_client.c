@@ -946,14 +946,14 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
 
   salts_mutex_lock(&impl->lock);
   *out_events = impl->poll_callback_count;
-  impl->poll_active = false;
-  salts_mutex_unlock(&impl->lock);
 #if defined(CNET_INTERNAL_PROFILING)
   if (profile_started != 0u) {
     impl->profile_client_poll_ns += salts_hrtime() - profile_started;
     ++impl->profile_client_poll_calls;
   }
 #endif
+  impl->poll_active = false;
+  salts_mutex_unlock(&impl->lock);
   return status;
 }
 
