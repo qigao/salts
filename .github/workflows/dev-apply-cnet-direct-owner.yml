@@ -1,6 +1,7 @@
 name: Dev apply CNet direct-owner patch
 
 # Branch-only edit helper; staged edits are fail-closed and this file is removed before final review.
+# This comment-only commit intentionally triggers the Task 4 partial-resubmission RED on a user-authored head.
 on:
   push:
     branches: [refactor/cnet-direct-owner-290]
