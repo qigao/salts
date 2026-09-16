@@ -1,7 +1,7 @@
 name: Dev apply CNet direct-owner patch
 
 # Branch-only edit helper; staged edits are fail-closed and this file is removed before final review.
-# This comment-only commit triggers the Task 5 nonnegative diagnostic-summary RED on a user-authored head.
+# This comment-only commit triggers the Task 5 direct-owner attribution GREEN matrix on a user-authored head.
 on:
   push:
     branches: [refactor/cnet-direct-owner-290]
