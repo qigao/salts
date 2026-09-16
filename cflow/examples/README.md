@@ -40,10 +40,6 @@ On macOS use `release-mac-ninja`, `build-default-mac`, and
 regular-file example reports that no asynchronous regular-file backend is
 declared and exits 77.
 
-`verify_installed_package` compiles these exact three source files against the
-installed `Salts::CFlow` target. It does not substitute separate smoke-test
-programs.
-
 ## Lifecycle and ownership
 
 The socket and typed-pipe examples make the raw Actor assembly visible:
@@ -83,12 +79,12 @@ unsupported contract, not missing fallback work.
 
 | Host/backend | Socket | Typed byte pipe | Regular file | Hosted evidence |
 |---|---|---|---|---|
-| Windows / IOCP | Example and contract test | Example and contract test using overlapped named pipes | Example and contract tests for `READ_AT`/`WRITE_AT`; flush is unsupported | Windows release job, full CTest, installed-package consumer |
+| Windows / IOCP | Example and contract test | Example and contract test using overlapped named pipes | Example and contract tests for `READ_AT`/`WRITE_AT`; flush is unsupported | Windows release job and full CTest |
 | Linux / epoll | Contract test | Contract test with nonblocking descriptors | — | Linux release and ASan lifecycle jobs |
 | Linux / poll | Example and contract test | Example and contract test | — | Linux release and ASan lifecycle jobs |
 | Linux / io_uring | Contract test when execution initialization is permitted | Contract test when execution initialization is permitted | Example and contract test when execution initialization is permitted, including native flush coverage in the contract test | Linux release and ASan lifecycle jobs; unavailable kernel/policy is reported without fallback |
 | macOS / kqueue | Contract test | Contract test with nonblocking descriptors | — | macOS 15 release job |
-| macOS / poll | Example and contract test | Example and contract test | — | macOS 15 release job and installed-package consumer |
+| macOS / poll | Example and contract test | Example and contract test | — | macOS 15 release job |
 
 Named-pipe/FIFO rendezvous remains the separate `cflow_io_pipe` control plane.
 `cflow_io_pipe_test` covers Windows named-pipe accept/connect and POSIX FIFO
@@ -104,8 +100,7 @@ open. The data examples intentionally start from already connected endpoints.
 | Close stops admission and drains | quiescence plus zero active requests/slots before destroy | all three examples and facade tests |
 | Retained identities are bounded and forgotten | successful `forget_socket`, `forget_pipe`, or facade-owned file forget after handle close | native identity capacity/scope tests and socket/pipe examples |
 | Init and malformed-input failure publish no partial object | null/unpublished facade and unchanged output checks | `cflow_io_file_init_failure_test` and native validation tests |
-| Process adapter releases OS resources | Windows process handle count or Linux `/proc/self/fd` count returns to baseline across failure and repeated lifecycle cycles | `cflow_process_test` |
-| Heap lifetime safety on Linux | AddressSanitizer executes examples plus native, facade, pipe-control, process, and minicoro lifecycle tests | Linux ASan lifecycle job |
+| Heap lifetime safety on Linux | AddressSanitizer executes examples plus native, facade, pipe-control, and minicoro lifecycle tests | Linux ASan lifecycle job |
 
 These checks establish bounded ownership and cleanup behavior. They are not
 throughput or latency measurements, so this document makes no performance claim.
