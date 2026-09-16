@@ -1,0 +1,31 @@
+name: CNet run-quality GREEN edit
+
+on:
+  push:
+    branches:
+      - perf/cnet-run-quality-gate-279
+    paths:
+      - .github/workflows/cnet-run-quality-green-edit.yml
+
+permissions:
+  contents: write
+
+jobs:
+  edit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: perf/cnet-run-quality-gate-279
+      - name: Apply run-quality GREEN
+        run: |
+          python3 .github/scripts/cnet_run_quality_green_edit.py
+          git diff --check
+          git diff -- cnet/benchmarks/cnet_benchmark_stats.c
+      - name: Commit run-quality GREEN
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add cnet/benchmarks/cnet_benchmark_stats.c
+          git commit -m 'feat(cnet): assess benchmark run quality'
+          git push origin HEAD:perf/cnet-run-quality-gate-279
