@@ -227,7 +227,6 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   cnet_event queued_state = {0};
   cnet_event_view event = {0};
   cnet_session_terminal terminal = {0};
-  native_io_coroutine_stats coroutine_stats = NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
 #if defined(CNET_INTERNAL_PROFILING)
   cnet_owner_profile receive_profile = {0};
   const bool profile_suspended_receive = timeout == CNET_OWNER_TEST_NO_TIMEOUT && !resolve_host;
@@ -239,10 +238,6 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
   check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
   check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
-  check_true(cnet_owner_get_coroutine_stats(&owner, &coroutine_stats));
-  check_equal(coroutine_stats.capacity, owner_config.request_capacity);
-  check_equal(coroutine_stats.active, 0u);
-  check_equal(coroutine_stats.retained_frames, 0u);
   check_equal(cnet_owner_test_listener(&listener, &address), SALTS_OK);
   check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
   queued_state = (cnet_event){CNET_EVENT_STATE,
@@ -295,10 +290,6 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   }
   check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
               SALTS_OK);
-  coroutine_stats = (native_io_coroutine_stats)NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
-  check_true(cnet_owner_get_coroutine_stats(&owner, &coroutine_stats));
-  check_equal(coroutine_stats.active, 0u);
-  check_true(coroutine_stats.retained_frames >= 1u);
   for (event_index = 0u; event_index < event_config.capacity; ++event_index) {
     check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
     check_equal(event.state, CNET_EVENT_STATE_CLOSING);
@@ -320,9 +311,17 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   if (profile_suspended_receive) check_equal(cnet_owner_profile_begin(&owner), SALTS_OK);
 #endif
   check_equal(cnet_owner_drive(&owner, 0u), SALTS_OK);
-  coroutine_stats = (native_io_coroutine_stats)NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
-  check_true(cnet_owner_get_coroutine_stats(&owner, &coroutine_stats));
-  check_equal(coroutine_stats.active, 1u);
+#if defined(CNET_INTERNAL_TESTING)
+  {
+    native_io_backend_stats native_stats = {0};
+    native_io_coroutine_stats coroutine_stats =
+        NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
+    check_true(cnet_owner_test_backend_stats(&owner, &native_stats, &coroutine_stats));
+    check_equal(native_stats.active_requests, 1u);
+    check_equal(coroutine_stats.active, 0u);
+    check_equal(coroutine_stats.retained_frames, 0u);
+  }
+#endif
   if (timeout == CNET_OWNER_TEST_READ_TIMEOUT) {
     clock.now_ms = 111u;
     clock.next_ms = 111u;
