@@ -44,8 +44,8 @@ function(cnet_configure_target target_name)
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/tools/wsparser)
   target_link_libraries(
     ${target_name}
-    PUBLIC Salts::NativeIO Salts::Concurrency
-    PRIVATE Salts::UriParser Salts::Platform Salts::CSTL Salts::Core monocypher salts_reed
+    PUBLIC Salts::NativeIO Salts::Concurrency Salts::Core
+    PRIVATE Salts::UriParser Salts::Platform Salts::CSTL monocypher salts_reed
             ${cnet_cares_link_items} kcp::kcp c-ares::cares
             OpenSSL::SSL OpenSSL::Crypto
             $<$<PLATFORM_ID:Windows>:crypt32>)

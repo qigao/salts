@@ -70,6 +70,9 @@ using cnet_start_tls_function = int (*)(cnet_client *, cnet_connection,
                                         const cnet_start_tls_options *);
 static_assert(std::is_same<decltype(&cnet_start_tls), cnet_start_tls_function>::value,
               "TLS upgrade must keep its C linkage signature");
+using cnet_send_buffer_function = int (*)(cnet_client *, cnet_connection, mem_buffer_t *);
+static_assert(std::is_same<decltype(&cnet_send_buffer), cnet_send_buffer_function>::value,
+              "retained-buffer send must keep its C linkage signature");
 using cnet_packet_poll_function = int (*)(cnet_packet_endpoint *, std::uint32_t, std::size_t *);
 static_assert(std::is_same<decltype(&cnet_packet_poll), cnet_packet_poll_function>::value,
               "packet poll must keep its C linkage signature");
