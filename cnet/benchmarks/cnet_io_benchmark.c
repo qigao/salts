@@ -1715,12 +1715,13 @@ static int io_bench_fixed_control_attribution(
 
   if (result == NULL || out_attribution == NULL || result->round_trips == 0u) return SALTS_EINVAL;
   owner = &result->cnet_profile.owner;
+  if (result->cnet_poll_ns < result->cnet_profile.client_poll_ns) return SALTS_ERANGE;
   sample = (cnet_benchmark_fixed_control_sample){
       .round_trips = result->round_trips,
       .send_admit_ns = result->cnet_send_admission_ns,
       .queue_publish_ns = owner->command_queue_payload_publish_ns,
       .payload_copy_ns = owner->command_queue_payload_copy_ns,
-      .client_poll_ns = result->cnet_profile.client_poll_ns,
+      .client_poll_ns = result->cnet_poll_ns,
       .owner_drive_ns = owner->owner_drive_ns,
       .request_lifecycle_ns = owner->request_lifecycle_ns,
       .request_start_ns = owner->request_start_ns,
@@ -1740,7 +1741,7 @@ static int io_bench_print_cnet_fixed_control(const char *protocol, const io_benc
                                              size_t count) {
   printf("\n%s CNet closed diagnostic budget per repeat\n", protocol);
   printf("All columns are exclusive after nested clocks are removed. Fixed + shared NativeIO + "
-         "payload copy + benchmark work + closure residual = profiled send + client poll.\n");
+         "payload copy + benchmark work + closure residual = profiled send + public client poll.\n");
   printf("| payload | repeat | total budget us | fixed control us | shared NativeIO us | payload "
          "copy us | benchmark work us | closure residual ns |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
