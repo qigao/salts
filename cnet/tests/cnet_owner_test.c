@@ -120,6 +120,23 @@ static void cnet_owner_test_close_socket(cnet_owner_test_socket socket_value) {
 #endif
 }
 
+static int cnet_owner_test_receive_all(cnet_owner_test_socket socket_value,
+                                       unsigned char *data, size_t size) {
+  size_t offset = 0u;
+  while (offset < size) {
+#if defined(_WIN32)
+    const size_t remaining = size - offset;
+    const int chunk = remaining > (size_t)INT_MAX ? INT_MAX : (int)remaining;
+    const int received = recv(socket_value, (char *)data + offset, chunk, 0);
+#else
+    const ssize_t received = recv(socket_value, data + offset, size - offset, 0);
+#endif
+    if (received <= 0) return SALTS_EIO;
+    offset += (size_t)received;
+  }
+  return SALTS_OK;
+}
+
 static int cnet_owner_test_listener(cnet_owner_test_socket *out_listener,
                                     struct sockaddr_in *out_address) {
 #if defined(_WIN32)
@@ -417,8 +434,7 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
                   SALTS_OK);
     } else {
       check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), SALTS_OK);
-      check_equal(recv(accepted, (char *)received, (int)sizeof(received), 0),
-                  (int)sizeof(received));
+      check_equal(cnet_owner_test_receive_all(accepted, received, sizeof(received)), SALTS_OK);
       check_equal(received, payload, sizeof(payload));
       check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
       check_equal(event.kind, CNET_EVENT_SEND);
