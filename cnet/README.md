@@ -303,10 +303,10 @@ ALPN wire behavior follows [RFC 7301](https://www.rfc-editor.org/rfc/rfc7301).
 
 One client owns one session engine and one NativeIO backend. CNet creates no
 I/O worker thread. The application repeatedly calls `cnet_client_poll`; that
-call drains bounded commands, observes NativeIO, resumes owner-affine
-coroutines, and invokes callbacks before returning. Calls to poll must not
-overlap. Callbacks for the client are FIFO and non-concurrent, and no internal
-lock is held while user code runs.
+call drains bounded commands, observes NativeIO direct completions, routes those
+completions through the CNet owner, and invokes callbacks before returning.
+Calls to poll must not overlap. Callbacks for the client are FIFO and
+non-concurrent, and no internal lock is held while user code runs.
 
 The core client is single-thread-owned: connect/send/receive/close and poll are
 issued by that owner or by its inline callback. Cross-thread producers use an
@@ -318,13 +318,22 @@ delivers a public callback or reaches its timeout. A zero timeout performs one
 nonblocking progress pass. This keeps completion batching internal instead of
 forcing the application to call poll once per backend completion.
 
-TCP and VSOCK connect, send, and receive execute as NativeIO stream coroutines. The
-poll owner starts `native_io_coroutine_await()`, and the same caller's NativeIO
-observation resumes the frame with its generation-checked terminal completion.
-Callback-issued send/receive/close commands enter the same bounded local queue;
-they require no operating-system wake or owner-thread handoff. Cancellation
-retains the payload, request record, and frame until a terminal completion is
-observed.
+CNet's stream owner uses NativeIO direct completion ownership internally for
+TCP, VSOCK, and Pipe stream requests. A successful first submission stores the
+generation-checked NativeIO request in the bounded CNet request record; observed
+completions are routed back to that exact live record before CNet publishes the
+logical event. Callback-issued send/receive/close commands enter the same
+bounded local queue; they require no operating-system wake or owner-thread
+handoff.
+
+Cancellation is a request, not terminal evidence. CNet retains the request and
+any owned payload until the matching terminal NativeIO completion is observed;
+an `SALTS_EALREADY` cancellation result therefore does not recycle ownership.
+Partial stream writes remain one logical CNet send and may require multiple
+NativeIO submissions before the single terminal send event is published.
+NativeIO coroutine APIs remain available to other consumers and to the
+standalone NativeIO coroutine benchmark; CNet simply no longer creates one
+coroutine per stream I/O.
 
 The URI, observer, and send bytes are copied before their admitting call returns
 success. For `cnet_sendv`, both the descriptor array and its immutable backing
@@ -349,8 +358,8 @@ enter this path.
 ## Shutdown and errors
 
 `cnet_client_stop(client, timeout_ms)` closes admission and drives the same
-caller-owned loop until connections, NativeIO requests, coroutines, and
-terminal callbacks settle. `SALTS_ETIMEDOUT` is retryable and preserves the
+caller-owned loop until connections, NativeIO requests, and terminal callbacks
+settle. `SALTS_ETIMEDOUT` is retryable and preserves the
 client. Destroying a client before successful stop returns `SALTS_EBUSY`.
 If progress has already recorded a fatal error, stop keeps that first error as
 its return value while still driving close/recycle to quiescence. The caller
