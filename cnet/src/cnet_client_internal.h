@@ -25,9 +25,21 @@ int cnet_client_adopt_tls_server(cnet_client *client, uintptr_t native_socket,
                                  cnet_connection *out_connection);
 
 #if defined(CNET_INTERNAL_PROFILING)
-typedef cnet_owner_profile cnet_client_poll_profile;
+typedef struct cnet_client_poll_profile {
+  cnet_owner_profile owner;
+  uint64_t client_poll_ns;
+  uint64_t client_poll_calls;
+  uint64_t dispatcher_prepare_ns;
+  uint64_t dispatcher_prepare_calls;
+  uint64_t dispatcher_invoke_ns;
+  uint64_t dispatcher_invoke_calls;
+  uint64_t dispatcher_observer_ns;
+  uint64_t dispatcher_observer_calls;
+  uint64_t dispatcher_release_ns;
+  uint64_t dispatcher_release_calls;
+} cnet_client_poll_profile;
 
-/** Samples internal poll-owner stages in a private diagnostic build. */
+/** Samples internal poll-owner/client/dispatcher stages in a private diagnostic build. */
 int cnet_client_profile_begin(cnet_client *client);
 int cnet_client_profile_take(cnet_client *client, cnet_client_poll_profile *out_profile);
 #endif

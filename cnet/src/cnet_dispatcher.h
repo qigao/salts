@@ -52,6 +52,23 @@ int cnet_dispatcher_wait_idle(cnet_dispatcher *dispatcher, uint32_t timeout_ms);
 int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms);
 bool cnet_dispatcher_drained(const cnet_dispatcher *dispatcher);
 
+#if defined(CNET_INTERNAL_PROFILING)
+typedef struct cnet_dispatcher_profile {
+  uint64_t prepare_ns;
+  uint64_t prepare_calls;
+  uint64_t invoke_ns;
+  uint64_t invoke_calls;
+  uint64_t observer_ns;
+  uint64_t observer_calls;
+  uint64_t release_ns;
+  uint64_t release_calls;
+} cnet_dispatcher_profile;
+
+int cnet_dispatcher_profile_begin(cnet_dispatcher *dispatcher);
+int cnet_dispatcher_profile_take(cnet_dispatcher *dispatcher,
+                                 cnet_dispatcher_profile *out_profile);
+#endif
+
 /** Requires a completed drain and no retained event lease. */
 int cnet_dispatcher_destroy(cnet_dispatcher *dispatcher);
 
