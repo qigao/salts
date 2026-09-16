@@ -7,14 +7,13 @@ on:
       - "coroutine/**"
       - "concurrency/**"
       - "platform/**"
-      - "cmeta/**"
       - "cnet/**"
-      - "tinytest/**"
       - "cmake/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
+      - "vcpkg-ports/**"
       - ".github/workflows/native-io-release-benchmarks.yml"
   push:
     branches: [master]
@@ -23,14 +22,13 @@ on:
       - "coroutine/**"
       - "concurrency/**"
       - "platform/**"
-      - "cmeta/**"
       - "cnet/**"
-      - "tinytest/**"
       - "cmake/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
+      - "vcpkg-ports/**"
       - ".github/workflows/native-io-release-benchmarks.yml"
   workflow_dispatch:
 
@@ -86,7 +84,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Select affected benchmark layers
         id: scope
@@ -101,7 +101,8 @@ jobs:
                 $base -match '^0+$') {
               $runAdapted = $true
             } else {
-              $changed = @(git diff --name-only $base $env:GITHUB_SHA)
+              $head = (git rev-parse HEAD).Trim()
+              $changed = @(git diff --name-only $base $head)
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
               $workflowChanged = @($changed | Where-Object {
                   $_ -eq '.github/workflows/native-io-release-benchmarks.yml'
@@ -121,29 +122,24 @@ jobs:
               $platformChanged = @($changed | Where-Object {
                   $_ -like 'platform/*'
                 }).Count -gt 0
-              $cmetaChanged = @($changed | Where-Object {
-                  $_ -like 'cmeta/*'
-                }).Count -gt 0
-              $tinytestChanged = @($changed | Where-Object {
-                  $_ -like 'tinytest/*'
-                }).Count -gt 0
               $buildChanged = @($changed | Where-Object {
                   $_ -like 'cmake/*' -or $_ -eq 'CMakeLists.txt' -or
                   $_ -eq 'CMakePresets.json'
                 }).Count -gt 0
               $dependencyChanged = @($changed | Where-Object {
-                  $_ -eq 'vcpkg.json' -or $_ -eq 'vcpkg-configuration.json'
+                  $_ -eq 'vcpkg.json' -or $_ -eq 'vcpkg-configuration.json' -or
+                  $_ -like 'vcpkg-ports/*'
                 }).Count -gt 0
               $runAdapted = $nativeChanged -or $cnetChanged -or
                 $coroutineChanged -or $concurrencyChanged -or $platformChanged -or
-                $cmetaChanged -or $tinytestChanged -or $buildChanged -or
-                $dependencyChanged -or $workflowChanged
+                $buildChanged -or $dependencyChanged -or $workflowChanged
             }
           }
           "adapted=$($runAdapted.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       - name: Setup Linux dependencies
         if: matrix.family == 'linux'
+        id: linux-env
         shell: bash
         run: |
           set -euo pipefail
@@ -156,6 +152,27 @@ jobs:
             VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
             echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
           fi
+          binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
+          mkdir -p "$binary_cache"
+          echo "VCPKG_BINARY_CACHE=$binary_cache" >> "$GITHUB_ENV"
+          echo "VCPKG_BINARY_SOURCES=clear;files,$binary_cache,readwrite" >> "$GITHUB_ENV"
+          echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Linux vcpkg binary cache
+        if: matrix.family == 'linux'
+        id: linux-vcpkg-cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          restore-keys: |
+            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-
+
+      - name: Report Linux vcpkg cache state
+        if: matrix.family == 'linux'
+        shell: bash
+        run: echo "vcpkg cache hit=${{ steps.linux-vcpkg-cache.outputs.cache-hit }}"
 
       - name: Setup Windows dependencies
         if: matrix.family == 'windows'
@@ -208,19 +225,26 @@ jobs:
           "VCPKG_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
           "VCPKG_BINARY_SOURCES=clear;files,$binaryCache,readwrite" >> $env:GITHUB_ENV
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
+          "triplet=x64-windows" >> $env:GITHUB_OUTPUT
 
       - name: Restore Windows vcpkg binary cache
         if: matrix.family == 'windows'
+        id: windows-vcpkg-cache
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-x64-windows-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
           restore-keys: |
-            vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-x64-windows-
-            vcpkg-binary-${{ runner.os }}-${{ runner.arch }}-
+            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-
+
+      - name: Report Windows vcpkg cache state
+        if: matrix.family == 'windows'
+        shell: pwsh
+        run: Write-Host "vcpkg cache hit=${{ steps.windows-vcpkg-cache.outputs.cache-hit }}"
 
       - name: Setup macOS dependencies
         if: matrix.family == 'mac'
+        id: macos-env
         shell: bash
         run: |
           set -euo pipefail
@@ -237,6 +261,27 @@ jobs:
             echo "A valid VCPKG_ROOT is unavailable" >&2
             exit 1
           fi
+          binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
+          mkdir -p "$binary_cache"
+          echo "VCPKG_BINARY_CACHE=$binary_cache" >> "$GITHUB_ENV"
+          echo "VCPKG_BINARY_SOURCES=clear;files,$binary_cache,readwrite" >> "$GITHUB_ENV"
+          echo "image=${ImageOS:-macos}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore macOS vcpkg binary cache
+        if: matrix.family == 'mac'
+        id: macos-vcpkg-cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          restore-keys: |
+            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-
+
+      - name: Report macOS vcpkg cache state
+        if: matrix.family == 'mac'
+        shell: bash
+        run: echo "vcpkg cache hit=${{ steps.macos-vcpkg-cache.outputs.cache-hit }}"
 
       - name: Configure and build Linux Release
         if: matrix.family == 'linux'
