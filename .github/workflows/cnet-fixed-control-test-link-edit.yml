@@ -1,0 +1,31 @@
+name: CNet fixed-control test-link edit
+
+on:
+  push:
+    branches:
+      - perf/cnet-fixed-control-attribution-270
+    paths:
+      - .github/workflows/cnet-fixed-control-test-link-edit.yml
+
+permissions:
+  contents: write
+
+jobs:
+  edit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: perf/cnet-fixed-control-attribution-270
+      - name: Repair TinyTest profile target composition
+        run: |
+          python3 .github/scripts/cnet_fixed_control_test_link_edit.py
+          git diff --check
+          git diff -- cnet/tests/CMakeLists.txt cnet/tests/cnet_client_control_profile_contract_test.c
+      - name: Commit test composition fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A cnet/tests/CMakeLists.txt cnet/tests/cnet_client_control_profile_contract_test.c
+          git commit -m 'fix(cnet): keep profile contract in one TinyTest spec'
+          git push origin HEAD:perf/cnet-fixed-control-attribution-270
