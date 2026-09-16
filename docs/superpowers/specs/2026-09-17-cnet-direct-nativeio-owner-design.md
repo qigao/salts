@@ -91,7 +91,7 @@ cnet_owner_start_request()
         |
         +-- acquire bounded cnet_owner_request
         +-- attach logical CNet metadata
-        +-- set operation.user_data = CNet request token
+        +-- set operation.user_data = request_index + 1
         +-- native_io_backend_submit()
         +-- store returned native_io_request {slot,generation}
         +-- schedule logical deadline if configured
@@ -141,7 +141,7 @@ CNet must never treat an array index, pointer address, or `user_data` token alon
 
 ### 6.2 CNet routing token
 
-Before submit, CNet sets `native_io_operation.user_data` to a non-zero token identifying the bounded CNet request record. The preferred token is `request_index + 1` because request capacity is already bounded to a range representable by `uintptr_t`; zero remains invalid.
+Before submit, CNet sets `native_io_operation.user_data` to exactly `request_index + 1`. Zero is invalid. `request_capacity` is already bounded to `UINT32_MAX`, so this token is representable by the supported `uintptr_t` targets.
 
 On completion:
 
@@ -153,7 +153,7 @@ On completion:
 
 A stale or duplicate completion that targets a recycled CNet record therefore fails the NativeIO generation check even if it carries the same record token.
 
-A mismatch is an internal protocol error and must fail closed; it must not settle a different request.
+A mismatch is an internal protocol error and must fail closed: the mismatched completion must never settle the addressed record. Because the whole observed completion batch has already been dequeued by NativeIO, the owner records the first protocol/semantic error and continues processing every other completion in that returned batch that can still be safely identified. The drive returns the recorded error only after the batch has been consumed.
 
 ## 7. Direct request admission
 
@@ -166,7 +166,7 @@ The existing ordering is retained as far as possible:
 3. transfer command ownership into the request when applicable;
 4. increment session and owner active-request counts;
 5. set read/write-active flags according to role;
-6. assign the CNet request routing token to the copied operation;
+6. assign `request_index + 1` to the copied operation's `user_data`;
 7. call `native_io_backend_submit()`;
 8. on success, store the returned `native_io_request`;
 9. schedule the existing logical request deadline when configured.
@@ -179,9 +179,11 @@ If deadline scheduling fails after a successful submit, CNet records the failure
 
 `cnet_owner_drive()` becomes the direct completion router.
 
-`native_io_backend_observe()` may return up to `completion_batch_capacity` terminal completions. CNet must consume and settle the complete returned batch before discarding the array or returning from that drive because every returned completion ends a NativeIO borrow and names a terminal request.
+`native_io_backend_observe()` may return up to `completion_batch_capacity` terminal completions. CNet must consume the complete returned batch before discarding the array or returning from that drive because every returned completion ends a NativeIO borrow and names a terminal request.
 
 For each completion, the owner performs the identity checks in section 6 and then dispatches by request role.
+
+Per-completion errors do not permit early return from the batch. The owner retains the first error status, continues settling later completions that can be safely mapped, and returns the first error after batch consumption. An identity-mismatched completion is never applied to a CNet record; later valid completions in the same batch are still processed.
 
 Event publication may fill the public event queue while a completion batch is being processed. Existing owner-local pending-event storage remains the backpressure mechanism. Its capacity is already derived from the completion batch size and must remain sufficient to let the owner settle the whole observed batch without losing later terminal completions.
 
@@ -202,13 +204,15 @@ When a direct completion for SEND or TLS_WRITE is `NATIVE_IO_COMPLETION_OK`:
 3. if `completed_size == requested_size`, normalize terminal completion bytes to the logical total and enter `cnet_owner_complete()`;
 4. otherwise, datagram partial send is an error as today;
 5. for stream/pipe continuation, advance `operation.buffer` and reduce `operation.length`;
-6. reapply the same CNet request routing token;
+6. retain the same `request_index + 1` routing token;
 7. directly submit the remaining operation;
 8. replace the request record's stored `native_io_request` with the newly returned generation-checked handle.
 
 The CNet request record, command view, active counts, read/write-active flag, and deadline are not released or recreated between partial submits.
 
 A partial-send resubmit failure uses the existing started-request failure/session-failure path. No send event is published for an incomplete logical send.
+
+A resubmitted operation cannot appear in the completion array that was already returned by the current `observe()` call. If a later entry in that current array carries the same CNet token, its older NativeIO generation therefore cannot match the newly stored request handle and is rejected as stale/duplicate.
 
 ## 10. Cancellation, deadlines, and close races
 
@@ -230,6 +234,8 @@ This applies to:
 - stop/drain paths.
 
 The existing CNet pending failure status/stage remains the source for user-visible timeout/shutdown error semantics. A later CANCELLED completion must not overwrite an earlier recorded timeout/failure reason.
+
+If `native_io_backend_cancel()` itself returns an unexpected error, CNet records that error but still must not release a request whose NativeIO terminal has not been observed.
 
 ## 11. Existing semantic handlers remain canonical
 
@@ -275,15 +281,18 @@ NativeIO's documented payload borrow lasts from successful submit until the matc
 
 The installed CNet API remains unchanged. Internal profiling must describe the canonical direct path instead of preserving coroutine-specific wording.
 
-The profiling design follows these rules:
+The profiling design is fixed as follows:
 
 - `owner_drive_ns` and `observe_ns` keep their current meanings;
-- the stage currently called `request_start_ns` represents the first direct NativeIO submit of one logical CNet request rather than coroutine spawn-through-first-await;
-- partial-send resubmission cost must not be silently mislabeled as coroutine control; it is either separately accounted for in owner/completion residuals or given an explicitly named internal diagnostic field if exact attribution requires it;
-- `request_completion_ns` continues to represent logical CNet terminal completion control and excludes intermediate partial-send completions;
-- benchmark documentation and fixed-control attribution must be reviewed so no formula continues to claim that `request_start_ns` measures coroutine spawn.
+- `request_start_ns` / `request_start_calls` measure the first direct NativeIO submit for each logical CNet request, preserving one start sample per logical request;
+- add internal diagnostic `request_resubmit_ns` / `request_resubmit_calls` for partial-send continuation submits;
+- `request_completion_ns` / `request_completion_calls` continue to represent logical CNet terminal completion control and exclude intermediate partial-send completions;
+- `request_lifecycle_ns` remains owner-side logical request admission/control and must not include I/O wait time;
+- benchmark documentation and fixed-control attribution must be updated so no formula or label claims that `request_start_ns` measures coroutine spawn.
 
-Performance acceptance is based on uninstrumented p50/p95/rate comparison rows. Stage attribution is diagnostic evidence and must not be used if its accounting identity is invalid after the semantic change.
+Profile tests must explicitly prove the new relationships, including that a deterministic partial send increments resubmit counters without creating a second logical request start/completion.
+
+Performance acceptance is based on uninstrumented p50/p95/rate comparison rows. Stage attribution is diagnostic evidence and must not be used unless its accounting identity is valid under the direct model.
 
 ## 15. Removal of CNet coroutine ownership surface
 
@@ -329,10 +338,12 @@ Required deterministic coverage includes:
 - close with pending read/write;
 - direct cancel returning `SALTS_OK` while terminal remains pending;
 - direct cancel returning `SALTS_EALREADY` while terminal remains pending;
+- unexpected cancel error does not release an unobserved request;
 - peer failure;
 - stop/drain;
 - stale or duplicate completion token cannot settle a recycled CNet request;
 - matching CNet token with mismatched NativeIO generation fails closed;
+- a mismatched completion early in a returned batch does not prevent later valid completions in that same batch from being settled;
 - TLS client/server owner integration and STARTTLS paths;
 - pipe and VSOCK paths where supported;
 - command/payload ownership remains exact through terminal settlement.
@@ -359,7 +370,7 @@ The production migration requires controlled exact-head evidence with:
 - paired p50, p95, and rate median/MAD;
 - same-run NativeIO direct A/A null control.
 
-The comparison baseline must be the pre-migration canonical coroutine owner, not an unrelated historical hosted run. Verification should build/run baseline and candidate within the same CI job or otherwise produce a same-host, same-run paired artifact. This may use CI-only orchestration around the base SHA and candidate SHA; it must not require retaining a second production owner implementation in the source tree.
+The comparison baseline must be the pre-migration canonical coroutine owner, not an unrelated historical hosted run. Verification should build/run baseline and candidate within the same CI job or otherwise produce a same-host, same-run paired artifact. The preferred production verification method is CI-only orchestration that builds the PR base SHA and candidate SHA separately and feeds their CNet DSOs into one paired runner. This does not require a second owner implementation in product sources.
 
 Acceptance requires:
 
@@ -396,7 +407,9 @@ The production design is complete only when all of the following are true:
 - one canonical CNet stream owner exists;
 - every accepted direct NativeIO operation is represented by one active bounded CNet request record;
 - every active record stores the exact current NativeIO request handle;
+- `operation.user_data` is exactly `request_index + 1` for owner-managed direct requests;
 - completion routing requires both a valid CNet record token and matching NativeIO slot/generation;
+- an invalid completion never settles the addressed record and never causes later valid completions from the same observed batch to be discarded;
 - no CNet request or payload borrow is released before its authoritative terminal completion is observed;
 - partial stream sends retain one logical CNet request and one logical deadline across resubmits;
 - cancellation never substitutes for terminal observation;
