@@ -110,6 +110,7 @@ struct cnet_owner_impl {
 #endif
 #if defined(CNET_INTERNAL_TESTING)
   bool test_force_cancel_ealready_once;
+  size_t test_send_chunk_bytes;
 #endif
   bool closed;
   bool resolver_closed;
@@ -588,15 +589,24 @@ static int cnet_owner_submit_request(cnet_owner_impl *impl, cnet_owner_request *
 
   submitted = request->operation;
   submitted.user_data = (uintptr_t)(index + 1u);
+#if defined(CNET_INTERNAL_TESTING)
+  if (impl->test_send_chunk_bytes != 0u &&
+      (request->role == CNET_OWNER_REQUEST_SEND ||
+       request->role == CNET_OWNER_REQUEST_TLS_WRITE) &&
+      submitted.length > impl->test_send_chunk_bytes)
+    submitted.length = impl->test_send_chunk_bytes;
+#endif
   request->submitted_size = submitted.length;
 #if defined(CNET_INTERNAL_PROFILING)
-  if (first_submit) {
+  {
     const uint64_t profile_started = cnet_owner_profile_start(impl);
     status = native_io_backend_submit(&impl->backend, &submitted, &native_request);
-    cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_start_ns,
-                              &impl->profile.request_start_calls);
-  } else {
-    status = native_io_backend_submit(&impl->backend, &submitted, &native_request);
+    if (first_submit)
+      cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_start_ns,
+                                &impl->profile.request_start_calls);
+    else
+      cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_resubmit_ns,
+                                &impl->profile.request_resubmit_calls);
   }
 #else
   status = native_io_backend_submit(&impl->backend, &submitted, &native_request);
@@ -1963,6 +1973,13 @@ int cnet_owner_test_force_cancel_ealready_once(cnet_owner *owner) {
   if (impl == NULL) return SALTS_EINVAL;
   if (impl->test_force_cancel_ealready_once) return SALTS_EALREADY;
   impl->test_force_cancel_ealready_once = true;
+  return SALTS_OK;
+}
+
+int cnet_owner_test_set_send_chunk_bytes(cnet_owner *owner, size_t bytes) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  if (impl == NULL) return SALTS_EINVAL;
+  impl->test_send_chunk_bytes = bytes;
   return SALTS_OK;
 }
 #endif

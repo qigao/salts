@@ -77,6 +77,7 @@ typedef struct cnet_owner_profile {
   uint64_t command_request_lifecycle_ns;
   uint64_t request_lifecycle_ns;
   uint64_t request_start_ns;
+  uint64_t request_resubmit_ns;
   uint64_t observe_ns;
   uint64_t request_completion_ns;
   uint64_t event_publish_ns;
@@ -87,6 +88,7 @@ typedef struct cnet_owner_profile {
   uint64_t command_request_lifecycle_calls;
   uint64_t request_lifecycle_calls;
   uint64_t request_start_calls;
+  uint64_t request_resubmit_calls;
   uint64_t observe_calls;
   uint64_t request_completion_calls;
   uint64_t event_publish_calls;
@@ -136,6 +138,8 @@ int cnet_owner_test_process_completion_batch(cnet_owner *owner,
                                              size_t count);
 /** Makes the next successful/already-pending native cancellation report SALTS_EALREADY. */
 int cnet_owner_test_force_cancel_ealready_once(cnet_owner *owner);
+/** Caps each test-build stream-send submission without changing logical send ownership. */
+int cnet_owner_test_set_send_chunk_bytes(cnet_owner *owner, size_t bytes);
 #endif
 
 #if defined(CNET_INTERNAL_PROFILING)
