@@ -329,7 +329,7 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
 #endif
 #if defined(CNET_INTERNAL_TESTING)
   if (timeout == CNET_OWNER_TEST_NO_TIMEOUT && resolve_host)
-    check_true(cnet_owner_test_request_snapshot(&owner, 0u, &first_request));
+    check_true(cnet_owner_test_get_request_snapshot(&owner, 0u, &first_request));
 #endif
   if (timeout == CNET_OWNER_TEST_READ_TIMEOUT) {
     clock.now_ms = 111u;
@@ -370,7 +370,7 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
       command = (cnet_command){CNET_COMMAND_RECEIVE, session, NULL, 0u, 1u};
       check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
       check_equal(cnet_owner_drive(&owner, 0u), SALTS_OK);
-      check_true(cnet_owner_test_request_snapshot(&owner, 0u, &second_request));
+      check_true(cnet_owner_test_get_request_snapshot(&owner, 0u, &second_request));
       check_equal(second_request.token, first_request.token);
       check_true(second_request.native_request.slot != first_request.native_request.slot ||
                  second_request.native_request.generation != first_request.native_request.generation);
@@ -380,7 +380,7 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
       stale.status = SALTS_OK;
       stale.user_data = second_request.token;
       check_equal(cnet_owner_test_process_completion_batch(&owner, &stale, 1u), SALTS_EPROTO);
-      check_true(cnet_owner_test_request_snapshot(&owner, 0u, &after_stale));
+      check_true(cnet_owner_test_get_request_snapshot(&owner, 0u, &after_stale));
       check_true(after_stale.active);
       check_equal(after_stale.native_request.slot, second_request.native_request.slot);
       check_equal(after_stale.native_request.generation, second_request.native_request.generation);

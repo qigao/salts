@@ -1515,6 +1515,19 @@ static int cnet_owner_route_completion(cnet_owner_impl *impl,
   return cnet_owner_finish_direct_completion(impl, request, completion);
 }
 
+static int cnet_owner_process_completion_batch(cnet_owner_impl *impl,
+                                                const native_io_completion *events,
+                                                size_t count) {
+  int first_error = SALTS_OK;
+  size_t index;
+  if (impl == NULL || (events == NULL && count != 0u)) return SALTS_EINVAL;
+  for (index = 0u; index < count; ++index) {
+    const int status = cnet_owner_route_completion(impl, &events[index]);
+    if (status != SALTS_OK && first_error == SALTS_OK) first_error = status;
+  }
+  return first_error;
+}
+
 static void cnet_owner_coroutine_entry(native_io_coroutine *coroutine, void *user_data) {
   cnet_owner_request *request = (cnet_owner_request *)user_data;
   cnet_owner_impl *impl = request != NULL ? request->owner : NULL;
@@ -1850,11 +1863,8 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
       return cnet_owner_process_deadlines(impl);
     }
     if (status != SALTS_OK) return status;
-    for (size_t completion_index = 0u; completion_index < completion_count;
-         ++completion_index) {
-      status = cnet_owner_route_completion(impl, &impl->completions[completion_index]);
-      if (status != SALTS_OK) return status;
-    }
+    status = cnet_owner_process_completion_batch(impl, impl->completions, completion_count);
+    if (status != SALTS_OK) return status;
     if (impl->published_event_count != published_before) return SALTS_OK;
     status = cnet_owner_process_deadlines(impl);
     if (status != SALTS_OK) return status;
@@ -1895,6 +1905,37 @@ bool cnet_owner_test_backend_stats(const cnet_owner *owner,
   if (impl == NULL || out_native == NULL || out_coroutine == NULL) return false;
   return native_io_backend_get_stats(&impl->backend, out_native) &&
          native_io_backend_get_coroutine_stats(&impl->backend, out_coroutine);
+}
+
+bool cnet_owner_test_get_request_snapshot(const cnet_owner *owner, size_t request_index,
+                                          cnet_owner_test_request_snapshot *out_snapshot) {
+  const cnet_owner_impl *impl = owner != NULL ? (const cnet_owner_impl *)owner->impl : NULL;
+  const cnet_owner_request *request;
+  if (impl == NULL || out_snapshot == NULL || request_index >= impl->request_capacity) return false;
+  request = &impl->request_records[request_index];
+  *out_snapshot = (cnet_owner_test_request_snapshot){
+      .token = (uintptr_t)(request_index + 1u),
+      .native_request = request->native_request,
+      .endpoint = request->operation.endpoint,
+      .active = request->active};
+  return true;
+}
+
+int cnet_owner_test_observe_raw(cnet_owner *owner, native_io_completion *events,
+                                size_t event_capacity, uint32_t timeout_ms,
+                                size_t *out_count) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  if (impl == NULL || events == NULL || event_capacity == 0u || out_count == NULL)
+    return SALTS_EINVAL;
+  return native_io_backend_observe(&impl->backend, events, event_capacity, timeout_ms, out_count);
+}
+
+int cnet_owner_test_process_completion_batch(cnet_owner *owner,
+                                             const native_io_completion *events,
+                                             size_t count) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  if (impl == NULL) return SALTS_EINVAL;
+  return cnet_owner_process_completion_batch(impl, events, count);
 }
 #endif
 

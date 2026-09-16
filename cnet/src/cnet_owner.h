@@ -112,10 +112,25 @@ int cnet_owner_wake(cnet_owner *owner);
 bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats);
 
 #if defined(CNET_INTERNAL_TESTING)
+typedef struct cnet_owner_test_request_snapshot {
+  uintptr_t token;
+  native_io_request native_request;
+  native_io_endpoint endpoint;
+  bool active;
+} cnet_owner_test_request_snapshot;
+
 /** Test-only view of the NativeIO request and coroutine ownership beneath this owner. */
 bool cnet_owner_test_backend_stats(const cnet_owner *owner,
                                    native_io_backend_stats *out_native,
                                    native_io_coroutine_stats *out_coroutine);
+bool cnet_owner_test_get_request_snapshot(const cnet_owner *owner, size_t request_index,
+                                          cnet_owner_test_request_snapshot *out_snapshot);
+int cnet_owner_test_observe_raw(cnet_owner *owner, native_io_completion *events,
+                                size_t event_capacity, uint32_t timeout_ms,
+                                size_t *out_count);
+int cnet_owner_test_process_completion_batch(cnet_owner *owner,
+                                             const native_io_completion *events,
+                                             size_t count);
 #endif
 
 #if defined(CNET_INTERNAL_PROFILING)
