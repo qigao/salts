@@ -17,7 +17,7 @@ diff --git a/cnet/src/cnet_owner.h b/cnet/src/cnet_owner.h
 diff --git a/cnet/src/cnet_owner.c b/cnet/src/cnet_owner.c
 --- a/cnet/src/cnet_owner.c
 +++ b/cnet/src/cnet_owner.c
-@@ -1781,4 +1781,16 @@ bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats) {
+@@ -1781,6 +1781,18 @@ bool cnet_owner_get_coroutine_stats(const cnet_owner *owner, native_io_coroutine_stats *out_stats) {
    const cnet_owner_impl *impl = owner != NULL ? (const cnet_owner_impl *)owner->impl : NULL;
    return impl != NULL && native_io_backend_get_coroutine_stats(&impl->backend, out_stats);
  }
