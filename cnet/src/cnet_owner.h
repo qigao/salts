@@ -123,11 +123,14 @@ typedef struct cnet_owner_test_request_snapshot {
 bool cnet_owner_test_backend_stats(const cnet_owner *owner,
                                    native_io_backend_stats *out_native,
                                    native_io_coroutine_stats *out_coroutine);
+/** Captures the CNet routing token plus authoritative NativeIO identity for one request record. */
 bool cnet_owner_test_get_request_snapshot(const cnet_owner *owner, size_t request_index,
                                           cnet_owner_test_request_snapshot *out_snapshot);
+/** Observes NativeIO without routing the returned completion through the owner. */
 int cnet_owner_test_observe_raw(cnet_owner *owner, native_io_completion *events,
                                 size_t event_capacity, uint32_t timeout_ms,
                                 size_t *out_count);
+/** Routes every supplied completion and returns the first routing error after the whole batch. */
 int cnet_owner_test_process_completion_batch(cnet_owner *owner,
                                              const native_io_completion *events,
                                              size_t count);
