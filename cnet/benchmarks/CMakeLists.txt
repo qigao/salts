@@ -40,9 +40,17 @@ set_target_properties(cnet_owner_lifecycle_benchmark PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+# The release workflow already builds cnet_io_benchmark explicitly. Keep the
+# matched B0/B1 runner in that same build closure without adding workflow-only
+# target knowledge.
+add_dependencies(cnet_io_benchmark cnet_owner_lifecycle_benchmark)
+
 if(BUILD_TESTS)
+  # The canonical release workflow runs ^cnet_.*_test$ before the full I/O
+  # benchmark. This writes B0/B1 evidence into native-io-results; the later
+  # full benchmark adds the same-job NativeIO A/A control and uploads both.
   add_test(
-    NAME cnet_owner_lifecycle_benchmark
+    NAME cnet_owner_lifecycle_benchmark_test
     COMMAND $<TARGET_FILE:cnet_owner_lifecycle_benchmark>
             $<TARGET_FILE:salts_cnet>
             $<TARGET_FILE:salts_cnet_direct_experiment>
