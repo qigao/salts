@@ -70,3 +70,27 @@ int cnet_benchmark_summarize_paired_delta(const double *baseline, const double *
   free(deltas);
   return status;
 }
+
+int cnet_benchmark_attribute_send(uint64_t send_admit_ns, uint64_t send_admit_calls,
+                                  uint64_t queue_publish_ns, uint64_t queue_publish_calls,
+                                  uint64_t payload_copy_ns, uint64_t payload_copy_calls,
+                                  cnet_benchmark_send_attribution *out_attribution) {
+  double calls;
+
+  if (out_attribution == NULL || send_admit_calls == 0u || queue_publish_calls == 0u ||
+      payload_copy_calls == 0u)
+    return SALTS_EINVAL;
+  if (send_admit_calls != queue_publish_calls || send_admit_calls != payload_copy_calls ||
+      send_admit_ns < queue_publish_ns || queue_publish_ns < payload_copy_ns)
+    return SALTS_ERANGE;
+
+  calls = (double)send_admit_calls;
+  *out_attribution = (cnet_benchmark_send_attribution){
+      (double)send_admit_ns / calls,
+      (double)(send_admit_ns - queue_publish_ns) / calls,
+      (double)queue_publish_ns / calls,
+      (double)(queue_publish_ns - payload_copy_ns) / calls,
+      (double)payload_copy_ns / calls,
+  };
+  return SALTS_OK;
+}
