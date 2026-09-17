@@ -366,6 +366,8 @@ int cflow_io_native_backend_forget_file(
     cflow_io_native_impl *impl = native_impl(backend);
     if (impl == NULL || impl->ops == NULL || closed_handle == UINTPTR_MAX)
         return SALTS_EINVAL;
+    if (impl->kind == CFLOW_IO_NATIVE_IO_URING)
+        return SALTS_OK;
     if (impl->ops->forget_file == NULL)
         return SALTS_ENOTSUP;
     return impl->ops->forget_file(impl, closed_handle);
