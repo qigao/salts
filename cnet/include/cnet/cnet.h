@@ -692,6 +692,17 @@ int cnet_send(cnet_client *client, cnet_connection connection, const void *data,
 int cnet_send_buffer(cnet_client *client, cnet_connection connection, mem_buffer_t *buffer);
 
 /**
+ * Retains the backing buffer of one non-empty canonical mem_slice_t on
+ * successful admission and sends exactly slice->length bytes beginning at
+ * slice->data without copying them into CNet command storage. The slice object
+ * itself is borrowed only for this call. The caller may immediately release
+ * the slice after SALTS_OK, but must not mutate admitted bytes or backing
+ * data/used/capacity while the logical send remains in flight.
+ */
+int cnet_send_slice(cnet_client *client, cnet_connection connection,
+                    const mem_slice_t *slice);
+
+/**
  * Copies the ordered concatenation of immutable, non-empty `segments` into
  * one bounded command slot before returning success. The descriptor array and
  * its backing ranges are borrowed only for this call. Completion, ordering,

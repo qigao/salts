@@ -783,10 +783,36 @@ int cnet_tls_export_channel_binding(cnet_client *client, cnet_connection connect
   return status;
 }
 
+static int cnet_client_validate_retained_view(const cnet_client_impl *impl,
+                                              mem_buffer_t *buffer,
+                                              const void *data, size_t size) {
+  const void *base_ptr;
+  uintptr_t base;
+  uintptr_t start;
+  uintptr_t delta;
+  size_t used;
+  size_t offset;
+
+  if (impl == NULL || buffer == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
+  base_ptr = mem_buffer_const_data(buffer);
+  used = mem_buffer_used(buffer);
+  if (base_ptr == NULL || used == 0u) return SALTS_EINVAL;
+  base = (uintptr_t)base_ptr;
+  start = (uintptr_t)data;
+  if (start < base) return SALTS_EINVAL;
+  delta = start - base;
+  if (delta > (uintptr_t)SIZE_MAX) return SALTS_EINVAL;
+  offset = (size_t)delta;
+  if (offset >= used || size > used - offset) return SALTS_EINVAL;
+  if (size > impl->max_send_bytes) return SALTS_EMSGSIZE;
+  return SALTS_OK;
+}
+
 typedef struct cnet_client_send_input {
   const void *data;
   const cnet_const_buffer *segments;
   mem_buffer_t *retained_buffer;
+  const void *retained_data;
   size_t size;
   size_t segment_count;
   bool close_after_send;
@@ -807,7 +833,8 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
       status = SALTS_EBUSY;
     else {
       if (input->retained_buffer != NULL)
-        status = cnet_shards_send_buffer(&impl->shards, internal, input->retained_buffer, input->size);
+        status = cnet_shards_send_retained(&impl->shards, internal, input->retained_buffer,
+                                           input->retained_data, input->size);
       else if (input->segments != NULL)
         status = cnet_shards_sendv(&impl->shards, internal, input->segments, input->segment_count,
                                    input->size);
@@ -834,15 +861,32 @@ int cnet_send(cnet_client *client, cnet_connection connection, const void *data,
 
 int cnet_send_buffer(cnet_client *client, cnet_connection connection, mem_buffer_t *buffer) {
   cnet_client_impl *impl = cnet_client_get(client);
+  const void *data;
   size_t size;
-  cnet_client_send_input input;
+  int status;
 
   if (impl == NULL || buffer == NULL) return SALTS_EINVAL;
+  data = mem_buffer_const_data(buffer);
   size = mem_buffer_used(buffer);
-  if (size == 0u || mem_buffer_const_data(buffer) == NULL) return SALTS_EINVAL;
-  if (size > impl->max_send_bytes) return SALTS_EMSGSIZE;
-  input = (cnet_client_send_input){.retained_buffer = buffer, .size = size};
-  return cnet_client_send_admit(impl, connection, &input);
+  status = cnet_client_validate_retained_view(impl, buffer, data, size);
+  if (status != SALTS_OK) return status;
+  return cnet_client_send_admit(
+      impl, connection,
+      &(cnet_client_send_input){.retained_buffer = buffer, .retained_data = data, .size = size});
+}
+
+int cnet_send_slice(cnet_client *client, cnet_connection connection, const mem_slice_t *slice) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  int status;
+
+  if (impl == NULL || slice == NULL) return SALTS_EINVAL;
+  status = cnet_client_validate_retained_view(impl, slice->buffer, slice->data, slice->length);
+  if (status != SALTS_OK) return status;
+  return cnet_client_send_admit(
+      impl, connection,
+      &(cnet_client_send_input){.retained_buffer = slice->buffer,
+                                .retained_data = slice->data,
+                                .size = slice->length});
 }
 
 int cnet_sendv(cnet_client *client, cnet_connection connection, const cnet_const_buffer *segments,
