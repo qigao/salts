@@ -2076,21 +2076,15 @@ static int io_bench_run_retained_row(size_t payload, size_t row,
 static int io_bench_print_retained_comparison(const io_bench_series *retained_buffer,
                                               const io_bench_series *retained_slice,
                                               size_t count) {
-  printf("
-TCP CNet retained buffer versus retained slice
-");
+  printf("\nTCP CNet retained buffer versus retained slice\n");
   printf("Retained-slice zero-copy is established by pointer identity and zero command "
          "payload-copy counters. Timing compares retained-view overhead only; it does not claim "
-         "TLS ciphertext or kernel/network-stack zero-copy.
-");
+         "TLS ciphertext or kernel/network-stack zero-copy.\n");
   printf("mem_slice construction/release and guard-buffer preparation occur outside the timed "
-         "send-admission interval.
-");
+         "send-admission interval.\n");
   printf("| payload | buffer admit ns | MAD ns | slice admit ns | MAD ns | slice vs buffer p50 "
-         "median +/- MAD | p95 median +/- MAD | rate median +/- MAD |
-");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-");
+         "median +/- MAD | p95 median +/- MAD | rate median +/- MAD |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
     cnet_benchmark_summary p50_delta = {0};
     cnet_benchmark_summary p95_delta = {0};
@@ -2105,8 +2099,7 @@ TCP CNet retained buffer versus retained slice
                                      IO_BENCH_METRIC_RATE, &rate_delta);
     if (status != SALTS_OK) return status;
     printf("| %zu KiB | %.1f | %.1f | %.1f | %.1f | %+.2f%% +/- %.2fpp | %+.2f%% +/- "
-           "%.2fpp | %+.2f%% +/- %.2fpp |
-",
+           "%.2fpp | %+.2f%% +/- %.2fpp |\n",
            retained_buffer[index].payload_size / 1024u,
            retained_buffer[index].cnet_send_admission_ns.median,
            retained_buffer[index].cnet_send_admission_ns.mad,
