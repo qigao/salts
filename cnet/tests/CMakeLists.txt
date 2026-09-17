@@ -33,7 +33,7 @@ set_target_properties(cnet_session_test PROPERTIES
 
 cmake_add_test(cnet_command_test
   SOURCES cnet_command_test.c
-  LIBS salts_cnet Salts::TinyTest
+  LIBS salts_cnet Salts::Core Salts::TinyTest
   INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
   FOLDER "cnet/tests")
 set_target_properties(cnet_command_test PROPERTIES
@@ -43,7 +43,7 @@ set_target_properties(cnet_command_test PROPERTIES
 
 cmake_add_test(cnet_command_profile_test
   SOURCES cnet_command_profile_test.c
-  LIBS salts_cnet_profile Salts::TinyTest
+  LIBS salts_cnet_profile Salts::Core Salts::TinyTest
   INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
   FOLDER "cnet/tests")
 set_target_properties(cnet_command_profile_test PROPERTIES
@@ -147,7 +147,7 @@ set_target_properties(cnet_dispatcher_test PROPERTIES
   C_EXTENSIONS OFF)
 
 cmake_add_test(cnet_api_test
-  SOURCES cnet_api_test.c
+  SOURCES cnet_api_test.c cnet_send_buffer_api_test.c
   LIBS salts_cnet Salts::TinyTest
   INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
   FOLDER "cnet/tests")
@@ -157,7 +157,7 @@ set_target_properties(cnet_api_test PROPERTIES
   C_EXTENSIONS OFF)
 
 cmake_add_test(cnet_api_profile_test
-  SOURCES cnet_api_test.c
+  SOURCES cnet_api_test.c cnet_send_buffer_api_test.c
   LIBS salts_cnet_profile Salts::TinyTest
   INCLUDES ${CNET_TEST_PRIVATE_INCLUDE}
   FOLDER "cnet/tests")

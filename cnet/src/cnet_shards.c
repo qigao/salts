@@ -343,6 +343,18 @@ int cnet_shards_send(cnet_shards *shards, cnet_shard_connection connection, cons
   return cnet_shards_publish(impl, connection, &command);
 }
 
+int cnet_shards_send_buffer(cnet_shards *shards, cnet_shard_connection connection,
+                            mem_buffer_t *buffer, size_t size) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  const cnet_command command = {.kind = CNET_COMMAND_SEND,
+                                .connection = connection.session,
+                                .size = size,
+                                .retained_buffer = buffer};
+  if (impl == NULL || buffer == NULL || size == 0u) return SALTS_EINVAL;
+  if (size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
+  return cnet_shards_publish(impl, connection, &command);
+}
+
 int cnet_shards_sendv(cnet_shards *shards, cnet_shard_connection connection,
                       const cnet_const_buffer *segments, size_t segment_count, size_t total_size) {
   cnet_shards_impl *impl = cnet_shards_get(shards);

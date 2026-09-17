@@ -3,6 +3,7 @@
 
 #include <salts/error_codes.h>
 #include <salts/native_io.h>
+#include <salts_buffer.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -680,6 +681,15 @@ int cnet_start_tls_server(cnet_client *client, cnet_connection connection,
  * closing, plus a bounded queue error.
  */
 int cnet_send(cnet_client *client, cnet_connection connection, const void *data, size_t size);
+
+/**
+ * Retains one non-empty immutable buffer on successful admission and sends the
+ * first mem_buffer_used(buffer) bytes without copying them into CNet command
+ * storage. The caller may release its reference immediately after SALTS_OK,
+ * but must not mutate data/used/capacity while the logical send is in flight.
+ * Rejection retains no lasting reference.
+ */
+int cnet_send_buffer(cnet_client *client, cnet_connection connection, mem_buffer_t *buffer);
 
 /**
  * Copies the ordered concatenation of immutable, non-empty `segments` into

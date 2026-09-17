@@ -1,6 +1,8 @@
 #include "cnet_command.h"
 #include "tinytest.h"
 
+#include <salts_buffer.h>
+
 #include <stdint.h>
 #include <string.h>
 
@@ -32,6 +34,16 @@ static cnet_command make_sendv(uint32_t slot, const cnet_const_buffer *segments,
   command.size = size;
   command.segments = segments;
   command.segment_count = segment_count;
+  return command;
+}
+
+static cnet_command make_retained_send(uint32_t slot, mem_buffer_t *buffer) {
+  cnet_command command = {0};
+  command.kind = CNET_COMMAND_SEND;
+  command.connection.slot = slot;
+  command.connection.generation = 1u;
+  command.size = mem_buffer_used(buffer);
+  command.retained_buffer = buffer;
   return command;
 }
 
@@ -367,6 +379,98 @@ spec("CNet bounded command queue") {
       check_equal(*(const uint8_t *)third_view.data, third_payload);
       check_equal(cnet_command_queue_release(&queue, &third_view), SALTS_OK);
       check_equal(cnet_command_queue_release(&queue, &first_view), SALTS_OK);
+    }
+
+    it("retains one payload reference and preserves pointer identity") {
+      mem_pool_t pool = {0};
+      mem_buffer_t *buffer;
+      cnet_command command;
+      cnet_command_view view = {0};
+      cnet_command_view stale = {0};
+      cnet_command_queue_stats stats = {0};
+      const cnet_command_queue_config config = {.capacity = 1u, .max_payload_bytes = 64u};
+      const void *original;
+      uint32_t initial_refs;
+
+      check_equal(mem_init(&pool, 0u), 0);
+      buffer = mem_get_buffer(&pool, 16u);
+      check_true(buffer != NULL);
+      memset(mem_buffer_data(buffer), 0x3c, 16u);
+      mem_set_used(buffer, 16u);
+      original = mem_buffer_const_data(buffer);
+      initial_refs = mem_buffer_ref_count(buffer);
+
+      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+      command = make_retained_send(1u, buffer);
+      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
+      check_equal(mem_buffer_ref_count(buffer), initial_refs + UINT32_C(1));
+      check_true(cnet_command_queue_get_stats(&queue, &stats));
+      check_equal(stats.queued_bytes, 0u);
+      check_equal(stats.peak_queued_bytes, 0u);
+
+      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+      check_true(view.data == original);
+      check_equal(view.size, 16u);
+      stale = view;
+      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+      check_equal(mem_buffer_ref_count(buffer), initial_refs);
+      check_equal(cnet_command_queue_release(&queue, &stale), SALTS_EINVAL);
+      check_equal(mem_buffer_ref_count(buffer), initial_refs);
+
+      mem_buffer_release(buffer);
+      mem_destroy(&pool);
+    }
+
+    it("does not retain a zero-copy buffer when the queue is full") {
+      mem_pool_t pool = {0};
+      mem_buffer_t *buffer;
+      cnet_command retained;
+      cnet_command blocker = {.kind = CNET_COMMAND_RECEIVE,
+                              .connection = {.slot = 1u, .generation = 1u},
+                              .argument = 1u};
+      cnet_command_view view = {0};
+      const cnet_command_queue_config config = {.capacity = 1u, .max_payload_bytes = 64u};
+      uint32_t initial_refs;
+
+      check_equal(mem_init(&pool, 0u), 0);
+      buffer = mem_get_buffer(&pool, 16u);
+      check_true(buffer != NULL);
+      mem_set_used(buffer, 16u);
+      initial_refs = mem_buffer_ref_count(buffer);
+      retained = make_retained_send(2u, buffer);
+
+      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+      check_equal(cnet_command_queue_publish(&queue, &blocker), SALTS_OK);
+      check_equal(cnet_command_queue_publish(&queue, &retained), SALTS_ENOBUFS);
+      check_equal(mem_buffer_ref_count(buffer), initial_refs);
+      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+
+      mem_buffer_release(buffer);
+      mem_destroy(&pool);
+    }
+
+    it("does not retain a zero-copy buffer after admission closes") {
+      mem_pool_t pool = {0};
+      mem_buffer_t *buffer;
+      cnet_command retained;
+      const cnet_command_queue_config config = {.capacity = 1u, .max_payload_bytes = 64u};
+      uint32_t initial_refs;
+
+      check_equal(mem_init(&pool, 0u), 0);
+      buffer = mem_get_buffer(&pool, 16u);
+      check_true(buffer != NULL);
+      mem_set_used(buffer, 16u);
+      initial_refs = mem_buffer_ref_count(buffer);
+      retained = make_retained_send(1u, buffer);
+
+      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+      check_equal(cnet_command_queue_close(&queue), SALTS_OK);
+      check_equal(cnet_command_queue_publish(&queue, &retained), SALTS_ESHUTDOWN);
+      check_equal(mem_buffer_ref_count(buffer), initial_refs);
+
+      mem_buffer_release(buffer);
+      mem_destroy(&pool);
     }
 
     it("rejects a stale release token after slot reuse") {

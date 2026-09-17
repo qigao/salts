@@ -8,6 +8,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+typedef struct mem_buffer_s mem_buffer_t;
+
 typedef struct cnet_command_queue {
   void *impl;
 } cnet_command_queue;
@@ -15,13 +17,14 @@ typedef struct cnet_command_queue {
 typedef struct cnet_command_queue_config {
   uint64_t capacity;
   size_t max_payload_bytes;
-  /** Aggregate live payload budget; zero preserves capacity times max payload. */
+  /** Aggregate live copied-payload budget; zero preserves capacity times max payload. */
   size_t payload_capacity_bytes;
 } cnet_command_queue_config;
 
 typedef struct cnet_command_queue_stats {
   size_t live_commands;
   size_t peak_commands;
+  /** Copied payload bytes retained by live commands; retained buffers do not consume this budget. */
   size_t queued_bytes;
   size_t peak_queued_bytes;
   uint64_t rejected_commands;
@@ -34,7 +37,7 @@ typedef struct cnet_command_queue_stats {
  * Inclusive command-publication timing collected only during an explicit
  * diagnostic sample. `publish_ns` covers every successful command;
  * `payload_publish_ns` covers successful payload-bearing commands and includes
- * `payload_copy_ns`.
+ * `payload_copy_ns` only for copied payloads.
  */
 typedef struct cnet_command_queue_profile {
   uint64_t publish_ns;
@@ -57,10 +60,17 @@ typedef enum cnet_command_kind {
   CNET_COMMAND_STOP
 } cnet_command_kind;
 
+typedef enum cnet_command_payload_kind {
+  CNET_COMMAND_PAYLOAD_NONE = 0,
+  CNET_COMMAND_PAYLOAD_COPIED,
+  CNET_COMMAND_PAYLOAD_RETAINED_BUFFER
+} cnet_command_payload_kind;
+
 /**
- * One producer-owned descriptor. Either `data` or `segments` supplies the
- * bytes and is borrowed only for `cnet_command_queue_publish`; successful
- * publication copies the checked `size` bytes into one queue-owned slot.
+ * One producer-owned descriptor. Copied commands borrow `data` or `segments`
+ * only for `cnet_command_queue_publish()`. A retained SEND instead supplies
+ * `retained_buffer`; successful publication retains that buffer until the
+ * corresponding command view is released.
  */
 typedef struct cnet_command {
   cnet_command_kind kind;
@@ -70,6 +80,7 @@ typedef struct cnet_command {
   size_t argument;
   const cnet_const_buffer *segments;
   size_t segment_count;
+  mem_buffer_t *retained_buffer;
 } cnet_command;
 
 /**
