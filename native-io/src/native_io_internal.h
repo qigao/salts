@@ -54,6 +54,18 @@ struct salts_io_impl {
   size_t coroutine_completion_capacity;
 };
 
+#if defined(__linux__)
+typedef struct native_io_uring_profile {
+  uint64_t sqes_published;
+  uint64_t enter_calls;
+  uint64_t enter_submitted;
+  uint64_t pressure_flushes;
+} native_io_uring_profile;
+
+bool native_io_io_uring_profile_take(const native_io_backend *backend,
+                                     native_io_uring_profile *out_profile);
+#endif
+
 bool native_io_platform_backend_supported(native_io_backend_kind kind);
 bool native_io_platform_pipe_supported(native_io_backend_kind kind);
 int native_io_platform_backend_init(native_io_backend *backend,
