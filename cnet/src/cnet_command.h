@@ -81,6 +81,7 @@ typedef struct cnet_command {
   const cnet_const_buffer *segments;
   size_t segment_count;
   mem_buffer_t *retained_buffer;
+  const void *retained_data;
 } cnet_command;
 
 /**

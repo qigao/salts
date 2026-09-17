@@ -26,6 +26,7 @@ typedef struct cnet_command_entry {
   cnet_command_payload_kind payload_kind;
   size_t copied_payload_bytes;
   mem_buffer_t *payload;
+  const void *payload_data;
 } cnet_command_entry;
 
 typedef struct cnet_command_queue_impl {
@@ -102,11 +103,34 @@ static bool cnet_is_power_of_two(uint64_t value) {
   return value != 0u && (value & (value - 1u)) == 0u;
 }
 
+static bool cnet_command_retained_range_valid(mem_buffer_t *buffer, const void *data, size_t size) {
+  const void *base_ptr;
+  uintptr_t base;
+  uintptr_t start;
+  uintptr_t delta;
+  size_t used;
+  size_t offset;
+
+  if (buffer == NULL || data == NULL || size == 0u) return false;
+  base_ptr = mem_buffer_const_data(buffer);
+  used = mem_buffer_used(buffer);
+  if (base_ptr == NULL || used == 0u) return false;
+  base = (uintptr_t)base_ptr;
+  start = (uintptr_t)data;
+  if (start < base) return false;
+  delta = start - base;
+  if (delta > (uintptr_t)SIZE_MAX) return false;
+  offset = (size_t)delta;
+  if (offset >= used) return false;
+  return size <= used - offset;
+}
+
 static bool cnet_command_valid(const cnet_command *command) {
   size_t segment_bytes = 0u;
   const bool retained = command != NULL && command->retained_buffer != NULL;
   if (command == NULL || command->kind <= CNET_COMMAND_NONE || command->kind > CNET_COMMAND_STOP)
     return false;
+  if (command->retained_buffer == NULL && command->retained_data != NULL) return false;
 
   if (command->kind == CNET_COMMAND_STOP)
     return !cnet_session_handle_valid(command->connection) && command->data == NULL &&
@@ -124,8 +148,8 @@ static bool cnet_command_valid(const cnet_command *command) {
     if (retained)
       return command->kind == CNET_COMMAND_SEND && command->data == NULL &&
              command->segments == NULL && command->segment_count == 0u &&
-             command->size == mem_buffer_used(command->retained_buffer) &&
-             mem_buffer_const_data(command->retained_buffer) != NULL;
+             cnet_command_retained_range_valid(command->retained_buffer, command->retained_data,
+                                               command->size);
     if (command->segments == NULL || command->segment_count == 0u)
       return command->data != NULL && command->segments == NULL && command->segment_count == 0u;
     if (command->data != NULL || command->segment_count > command->size) return false;
@@ -249,6 +273,8 @@ int cnet_command_queue_publish(cnet_command_queue *queue, const cnet_command *co
                                                        : CNET_COMMAND_PAYLOAD_NONE;
   entry->copied_payload_bytes = copied_bytes;
   entry->payload = payload;
+  entry->payload_data = retained ? command->retained_data
+                                 : payload != NULL ? mem_buffer_const_data(payload) : NULL;
   entry->generation = cnet_command_next_generation(entry->generation);
   entry->state = CNET_COMMAND_ENTRY_QUEUED;
 #if defined(CNET_INTERNAL_PROFILING)
@@ -307,7 +333,7 @@ int cnet_command_queue_take(cnet_command_queue *queue, cnet_command_view *out_vi
   entry->state = CNET_COMMAND_ENTRY_BORROWED;
   out_view->kind = entry->kind;
   out_view->connection = entry->connection;
-  out_view->data = entry->size != 0u ? mem_buffer_const_data(entry->payload) : NULL;
+  out_view->data = entry->size != 0u ? entry->payload_data : NULL;
   out_view->size = entry->size;
   out_view->argument = entry->argument;
   out_view->_sequence = cnet_command_token(slot, entry->generation);
@@ -331,17 +357,21 @@ int cnet_command_queue_release(cnet_command_queue *queue, cnet_command_view *vie
       impl->free_count >= impl->capacity)
     return SALTS_EPROTO;
   if ((entry->payload_kind == CNET_COMMAND_PAYLOAD_COPIED &&
-       (entry->payload == NULL || entry->copied_payload_bytes != entry->size)) ||
+       (entry->payload == NULL || entry->payload_data != mem_buffer_const_data(entry->payload) ||
+        entry->copied_payload_bytes != entry->size)) ||
       (entry->payload_kind == CNET_COMMAND_PAYLOAD_RETAINED_BUFFER &&
-       (entry->payload == NULL || entry->copied_payload_bytes != 0u)) ||
+       (entry->payload == NULL || entry->copied_payload_bytes != 0u ||
+        !cnet_command_retained_range_valid(entry->payload, entry->payload_data, entry->size))) ||
       (entry->payload_kind == CNET_COMMAND_PAYLOAD_NONE &&
-       (entry->payload != NULL || entry->size != 0u || entry->copied_payload_bytes != 0u)))
+       (entry->payload != NULL || entry->payload_data != NULL || entry->size != 0u ||
+        entry->copied_payload_bytes != 0u)))
     return SALTS_EPROTO;
 
   --impl->live_commands;
   impl->queued_bytes -= entry->copied_payload_bytes;
   mem_buffer_release(entry->payload);
   entry->payload = NULL;
+  entry->payload_data = NULL;
   entry->payload_kind = CNET_COMMAND_PAYLOAD_NONE;
   entry->copied_payload_bytes = 0u;
   entry->kind = CNET_COMMAND_NONE;

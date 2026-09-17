@@ -44,6 +44,7 @@ static cnet_command make_retained_send(uint32_t slot, mem_buffer_t *buffer) {
   command.connection.generation = 1u;
   command.size = mem_buffer_used(buffer);
   command.retained_buffer = buffer;
+  command.retained_data = mem_buffer_const_data(buffer);
   return command;
 }
 
