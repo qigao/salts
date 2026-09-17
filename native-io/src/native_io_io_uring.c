@@ -235,23 +235,55 @@ static int uring_enter(salts_io_uring_impl *impl, unsigned submit, unsigned mini
   return status < 0 ? -errno : status;
 }
 
-static int uring_publish_sqe(salts_io_uring_impl *impl, const struct io_uring_sqe *prepared) {
+static unsigned uring_pending_sqes(const salts_io_uring_impl *impl) {
   const unsigned head =
       atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
   const unsigned tail =
-      atomic_load_explicit((_Atomic unsigned *)impl->sq_tail, memory_order_relaxed);
+      atomic_load_explicit((_Atomic unsigned *)impl->sq_tail, memory_order_acquire);
+  return tail - head;
+}
+
+static int uring_flush_sq(salts_io_uring_impl *impl, bool pressure_flush) {
+  salts_io_uring_sigpipe_guard sigpipe_guard = {0};
+  int status;
+  if (pressure_flush) uring_counter_increment(&impl->profile.pressure_flushes);
+  if (uring_pending_sqes(impl) == 0u) return SALTS_OK;
+  status = uring_sigpipe_guard_begin(&sigpipe_guard);
+  if (status != SALTS_OK) return status;
+  for (;;) {
+    const unsigned pending = uring_pending_sqes(impl);
+    if (pending == 0u) {
+      status = SALTS_OK;
+      break;
+    }
+    status = uring_enter(impl, pending, 0u, 0u);
+    if (status < 0) break;
+    if (status == 0) {
+      status = SALTS_EIO;
+      break;
+    }
+  }
+  uring_sigpipe_guard_end(&sigpipe_guard);
+  return status;
+}
+
+static int uring_publish_sqe(salts_io_uring_impl *impl, const struct io_uring_sqe *prepared) {
+  unsigned head = atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
+  unsigned tail = atomic_load_explicit((_Atomic unsigned *)impl->sq_tail, memory_order_relaxed);
   unsigned index;
-  int submitted;
-  if (tail - head >= *impl->sq_entries) return SALTS_EBUSY;
+  if (tail - head >= *impl->sq_entries) {
+    const int status = uring_flush_sq(impl, true);
+    if (status != SALTS_OK) return status;
+    head = atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
+    tail = atomic_load_explicit((_Atomic unsigned *)impl->sq_tail, memory_order_relaxed);
+    if (tail - head >= *impl->sq_entries) return SALTS_EBUSY;
+  }
   index = tail & *impl->sq_mask;
   impl->sqes[index] = *prepared;
   impl->sq_array[index] = index;
   atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail + 1u, memory_order_release);
   uring_counter_increment(&impl->profile.sqes_published);
-  submitted = uring_enter(impl, 1u, 0u, 0u);
-  if (submitted == 1) return SALTS_OK;
-  atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail, memory_order_release);
-  return submitted < 0 ? submitted : SALTS_EIO;
+  return SALTS_OK;
 }
 
 static void uring_prepare_operation(salts_io_uring_request_record *record, struct io_uring_sqe *sqe,
@@ -646,15 +678,17 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
                            : impl->completion_batch_capacity;
   const uint64_t started_ms = salts_monotonic_ms();
   uint32_t wait_timeout = timeout_ms;
+  int status;
   uring_process_cq(impl);
   uring_drain_terminals(impl, events, limit, out_count);
+  status = uring_flush_sq(impl, false);
+  if (status != SALTS_OK) return status;
   if (*out_count != 0u) return SALTS_OK;
   for (;;) {
     struct pollfd descriptors[2] = {{impl->ring_fd, POLLIN, 0}, {impl->wake_fd, POLLIN, 0}};
     const int native_timeout = wait_timeout == UINT32_MAX         ? -1
                                : wait_timeout > (uint32_t)INT_MAX ? INT_MAX
                                                                   : (int)wait_timeout;
-    int status;
     do {
       status = poll(descriptors, 2u, native_timeout);
     } while (status < 0 && errno == EINTR);
