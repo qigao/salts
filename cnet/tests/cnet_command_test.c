@@ -47,6 +47,18 @@ static cnet_command make_retained_send(uint32_t slot, mem_buffer_t *buffer) {
   return command;
 }
 
+static cnet_command make_retained_view_send(uint32_t slot, mem_buffer_t *buffer,
+                                            const void *data, size_t size) {
+  cnet_command command = {0};
+  command.kind = CNET_COMMAND_SEND;
+  command.connection.slot = slot;
+  command.connection.generation = 1u;
+  command.size = size;
+  command.retained_buffer = buffer;
+  command.retained_data = data;
+  return command;
+}
+
 spec("CNet bounded command queue") {
   before_each() { memset(&queue, 0, sizeof(queue)); }
 
@@ -415,6 +427,75 @@ spec("CNet bounded command queue") {
       check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
       check_equal(mem_buffer_ref_count(buffer), initial_refs);
       check_equal(cnet_command_queue_release(&queue, &stale), SALTS_EINVAL);
+      check_equal(mem_buffer_ref_count(buffer), initial_refs);
+
+      mem_buffer_release(buffer);
+      mem_destroy(&pool);
+    }
+
+    it("retains an explicit interior payload view and preserves pointer identity") {
+      mem_pool_t pool = {0};
+      mem_buffer_t *buffer;
+      cnet_command command;
+      cnet_command_view view = {0};
+      const cnet_command_queue_config config = {.capacity = 1u, .max_payload_bytes = 64u};
+      const void *interior;
+      uint32_t initial_refs;
+
+      check_equal(mem_init(&pool, 0u), 0);
+      buffer = mem_get_buffer(&pool, 32u);
+      check_true(buffer != NULL);
+      memset(mem_buffer_data(buffer), 0x4d, 32u);
+      mem_set_used(buffer, 32u);
+      interior = mem_buffer_const_data(buffer) + 8u;
+      initial_refs = mem_buffer_ref_count(buffer);
+
+      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+      command = make_retained_view_send(1u, buffer, interior, 12u);
+      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
+      check_equal(mem_buffer_ref_count(buffer), initial_refs + UINT32_C(1));
+      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+      check_true(view.data == interior);
+      check_equal(view.size, 12u);
+      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+      check_equal(mem_buffer_ref_count(buffer), initial_refs);
+
+      mem_buffer_release(buffer);
+      mem_destroy(&pool);
+    }
+
+    it("rejects invalid retained payload views without retaining") {
+      mem_pool_t pool = {0};
+      mem_buffer_t *buffer;
+      cnet_command command;
+      const cnet_command_queue_config config = {.capacity = 1u, .max_payload_bytes = 64u};
+      const uint8_t *base;
+      uint32_t initial_refs;
+
+      check_equal(mem_init(&pool, 0u), 0);
+      buffer = mem_get_buffer(&pool, 32u);
+      check_true(buffer != NULL);
+      mem_set_used(buffer, 32u);
+      base = mem_buffer_const_data(buffer);
+      initial_refs = mem_buffer_ref_count(buffer);
+
+      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+
+      command = make_retained_view_send(1u, buffer, NULL, 1u);
+      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EINVAL);
+      check_equal(mem_buffer_ref_count(buffer), initial_refs);
+
+      command = make_retained_view_send(1u, buffer,
+                                        (const void *)((uintptr_t)base - (uintptr_t)1u), 1u);
+      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EINVAL);
+      check_equal(mem_buffer_ref_count(buffer), initial_refs);
+
+      command = make_retained_view_send(1u, buffer, base + 32u, 1u);
+      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EINVAL);
+      check_equal(mem_buffer_ref_count(buffer), initial_refs);
+
+      command = make_retained_view_send(1u, buffer, base + 24u, 9u);
+      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EINVAL);
       check_equal(mem_buffer_ref_count(buffer), initial_refs);
 
       mem_buffer_release(buffer);
