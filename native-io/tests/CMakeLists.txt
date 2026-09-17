@@ -12,14 +12,7 @@ if(WIN32)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  cmake_add_test(native_io_uring_batch_test
-    SOURCES native_io_uring_batch_test.c
-    LIBS Salts::NativeIO
-    FOLDER "native-io/tests")
-  set_target_properties(native_io_uring_batch_test PROPERTIES
-    C_STANDARD 11
-    C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF)
+  target_sources(native_io_test PRIVATE native_io_uring_batch_test.c)
 endif()
 
 cmake_add_test(native_io_header_cpp_test
