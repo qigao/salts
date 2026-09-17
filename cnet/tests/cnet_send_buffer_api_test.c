@@ -166,6 +166,73 @@ static cnet_client_config cnet_send_buffer_test_config(void) {
 }
 
 spec("CNet retained buffer public send API") {
+  it("validates retained slices before connection admission without retaining") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_send_buffer_test_config();
+    cnet_send_buffer_free_probe probe;
+    cnet_send_buffer_free_probe oversize_probe;
+    mem_buffer_t *buffer;
+    mem_buffer_t *oversize_buffer;
+    const char *base;
+    mem_slice_t slice;
+    mem_slice_t oversize_slice;
+    uint32_t refs;
+
+    atomic_init(&probe.freed, 0);
+    atomic_init(&oversize_probe.freed, 0);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+
+    buffer = cnet_send_buffer_test_external(32u, 0x71u, &probe);
+    check_true(buffer != NULL);
+    base = mem_buffer_const_data(buffer);
+    refs = mem_buffer_ref_count(buffer);
+
+    check_equal(cnet_send_slice(&client, (cnet_connection){0}, NULL), SALTS_EINVAL);
+    check_equal(mem_buffer_ref_count(buffer), refs);
+
+    slice = (mem_slice_t){.data = (char *)base, .length = 1u, .buffer = NULL};
+    check_equal(cnet_send_slice(&client, (cnet_connection){0}, &slice), SALTS_EINVAL);
+    check_equal(mem_buffer_ref_count(buffer), refs);
+
+    slice = (mem_slice_t){.data = NULL, .length = 1u, .buffer = buffer};
+    check_equal(cnet_send_slice(&client, (cnet_connection){0}, &slice), SALTS_EINVAL);
+    check_equal(mem_buffer_ref_count(buffer), refs);
+
+    slice = (mem_slice_t){.data = (char *)base, .length = 0u, .buffer = buffer};
+    check_equal(cnet_send_slice(&client, (cnet_connection){0}, &slice), SALTS_EINVAL);
+    check_equal(mem_buffer_ref_count(buffer), refs);
+
+    slice = (mem_slice_t){.data = (char *)((uintptr_t)base - (uintptr_t)1u),
+                          .length = 1u,
+                          .buffer = buffer};
+    check_equal(cnet_send_slice(&client, (cnet_connection){0}, &slice), SALTS_EINVAL);
+    check_equal(mem_buffer_ref_count(buffer), refs);
+
+    slice = (mem_slice_t){.data = (char *)base + 32u, .length = 1u, .buffer = buffer};
+    check_equal(cnet_send_slice(&client, (cnet_connection){0}, &slice), SALTS_EINVAL);
+    check_equal(mem_buffer_ref_count(buffer), refs);
+
+    slice = (mem_slice_t){.data = (char *)base + 24u, .length = 9u, .buffer = buffer};
+    check_equal(cnet_send_slice(&client, (cnet_connection){0}, &slice), SALTS_EINVAL);
+    check_equal(mem_buffer_ref_count(buffer), refs);
+
+    oversize_buffer = cnet_send_buffer_test_external(257u, 0x72u, &oversize_probe);
+    check_true(oversize_buffer != NULL);
+    oversize_slice = mem_slice(oversize_buffer, 0u, 257u);
+    check_true(oversize_slice.buffer == oversize_buffer);
+    refs = mem_buffer_ref_count(oversize_buffer);
+    check_equal(cnet_send_slice(&client, (cnet_connection){0}, &oversize_slice), SALTS_EMSGSIZE);
+    check_equal(mem_buffer_ref_count(oversize_buffer), refs);
+    mem_slice_release(&oversize_slice);
+    mem_buffer_release(oversize_buffer);
+    check_equal(atomic_load_explicit(&oversize_probe.freed, memory_order_acquire), 1);
+
+    mem_buffer_release(buffer);
+    check_equal(atomic_load_explicit(&probe.freed, memory_order_acquire), 1);
+    check_equal(cnet_client_stop(&client, CNET_SEND_BUFFER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+  }
+
   it("owns one reference only after admission and releases it at terminal send") {
     cnet_client client = {0};
     cnet_client_config config = cnet_send_buffer_test_config();
