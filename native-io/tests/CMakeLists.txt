@@ -11,6 +11,10 @@ if(WIN32)
   target_link_libraries(native_io_test PRIVATE ws2_32)
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(native_io_test PRIVATE native_io_uring_batch_test.c)
+endif()
+
 cmake_add_test(native_io_header_cpp_test
   SOURCES native_io_header_cpp_test.cpp
   LIBS Salts::NativeIO
