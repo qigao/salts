@@ -699,6 +699,8 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
       return SALTS_EIO;
     uring_process_cq(impl);
     uring_drain_terminals(impl, events, limit, out_count);
+    status = uring_flush_sq(impl, false);
+    if (status != SALTS_OK) return status;
     if (*out_count != 0u) return SALTS_OK;
     if ((descriptors[1].revents & POLLIN) != 0) {
       uint64_t wake_count;
