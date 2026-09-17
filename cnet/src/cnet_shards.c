@@ -1,6 +1,7 @@
 #include "cnet_shards.h"
 
 #include <salts/thread.h>
+#include <salts_buffer.h>
 
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -343,15 +344,17 @@ int cnet_shards_send(cnet_shards *shards, cnet_shard_connection connection, cons
   return cnet_shards_publish(impl, connection, &command);
 }
 
-int cnet_shards_send_buffer(cnet_shards *shards, cnet_shard_connection connection,
-                            mem_buffer_t *buffer, size_t size) {
+int cnet_shards_send_retained(cnet_shards *shards, cnet_shard_connection connection,
+                              mem_buffer_t *buffer, const void *data, size_t size) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
-  const cnet_command command = {.kind = CNET_COMMAND_SEND,
-                                .connection = connection.session,
-                                .size = size,
-                                .retained_buffer = buffer};
-  if (impl == NULL || buffer == NULL || size == 0u) return SALTS_EINVAL;
+  cnet_command command;
+  if (impl == NULL || buffer == NULL || data == NULL || size == 0u) return SALTS_EINVAL;
   if (size > impl->max_command_payload_bytes) return SALTS_EMSGSIZE;
+  command = (cnet_command){.kind = CNET_COMMAND_SEND,
+                           .connection = connection.session,
+                           .size = size,
+                           .retained_buffer = buffer,
+                           .retained_data = data};
   return cnet_shards_publish(impl, connection, &command);
 }
 
