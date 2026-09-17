@@ -6,6 +6,7 @@
 
 #include <salts/error_codes.h>
 
+#define TINYTEST_NO_MAIN 1
 #include "tinytest.h"
 
 #include <fcntl.h>
