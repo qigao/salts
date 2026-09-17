@@ -581,6 +581,9 @@ spec("CNet bounded TLS engine") {
     uint16_t port = 0u;
     uint64_t deadline;
     bool accepted = false;
+    mem_pool_t secure_pool = {0};
+    mem_buffer_t *secure_buffer = NULL;
+    mem_slice_t secure_slice = {0};
 
     check_not_null(cert_path);
     check_not_null(key_path);
@@ -678,17 +681,35 @@ spec("CNet bounded TLS engine") {
     check_false(client_probe.failed);
     check_false(server_probe.failed);
 
+    check_equal(mem_init(&secure_pool, 0u), 0);
+    secure_buffer = mem_get_buffer(&secure_pool, sizeof(secure_request) - 1u + 16u);
+    check_not_null(secure_buffer);
+    memset(mem_buffer_data(secure_buffer), 0xa5, 8u);
+    memcpy(mem_buffer_data(secure_buffer) + 8u, secure_request, sizeof(secure_request) - 1u);
+    memset(mem_buffer_data(secure_buffer) + 8u + sizeof(secure_request) - 1u, 0x5a, 8u);
+    mem_set_used(secure_buffer, sizeof(secure_request) - 1u + 16u);
+    secure_slice = mem_slice(secure_buffer, 8u, sizeof(secure_request) - 1u);
+    check_true(secure_slice.buffer == secure_buffer);
+    check_equal(mem_buffer_ref_count(secure_buffer), UINT32_C(2));
+
     check_equal(cnet_receive(&server, server_connection, 1u), SALTS_OK);
-    check_equal(cnet_send(&client, client_connection, secure_request, sizeof(secure_request) - 1u),
-                SALTS_OK);
+    check_equal(cnet_send_slice(&client, client_connection, &secure_slice), SALTS_OK);
+    check_equal(mem_buffer_ref_count(secure_buffer), UINT32_C(3));
+    mem_slice_release(&secure_slice);
+    check_equal(mem_buffer_ref_count(secure_buffer), UINT32_C(2));
+    mem_buffer_release(secure_buffer);
+    check_equal(mem_buffer_ref_count(secure_buffer), UINT32_C(1));
     deadline = salts_monotonic_ms() + 5000u;
-    while (server_probe.received_size == 0u && salts_monotonic_ms() < deadline) {
+    while ((server_probe.received_size == 0u || client_probe.sent < 2) &&
+           salts_monotonic_ms() < deadline) {
       size_t events = 0u;
       check_equal(cnet_client_poll(&client, 1u, &events), SALTS_OK);
       check_equal(cnet_client_poll(&server, 1u, &events), SALTS_OK);
     }
     check_equal(server_probe.received_size, sizeof(secure_request) - 1u);
     check_equal(memcmp(server_probe.received, secure_request, sizeof(secure_request) - 1u), 0);
+    check_equal(client_probe.sent, 2);
+    mem_destroy(&secure_pool);
 
     check_equal(cnet_receive(&server, server_connection, 1u), SALTS_OK);
     check_equal(cnet_close(&client, client_connection), SALTS_OK);
