@@ -56,6 +56,7 @@ spec("NativeIO io_uring submission batching") {
     native_io_completion events[2] = {0};
     native_io_operation operations[2];
     native_io_uring_profile before = {0};
+    native_io_uring_profile after = {0};
     unsigned char received[sizeof(payload)] = {0};
 
     check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
@@ -89,6 +90,11 @@ spec("NativeIO io_uring submission batching") {
 
     check_equal(native_io_uring_batch_observe_all(&backend, events, 2u), SALTS_OK);
     check_equal(memcmp(received, payload, sizeof(payload)), 0);
+    check_true(native_io_io_uring_profile_take(&backend, &after));
+    check_equal(after.sqes_published, (uint64_t)2u);
+    check_equal(after.enter_calls, (uint64_t)1u);
+    check_equal(after.enter_submitted, (uint64_t)2u);
+    check_equal(after.pressure_flushes, (uint64_t)0u);
 
     (void)close(descriptors[0]);
     (void)close(descriptors[1]);
