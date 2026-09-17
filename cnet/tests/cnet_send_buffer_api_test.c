@@ -64,6 +64,21 @@ static int cnet_send_buffer_test_set_receive_timeout(cnet_send_buffer_test_socke
 #endif
 }
 
+static int cnet_send_buffer_test_receive_all(cnet_send_buffer_test_socket socket_value,
+                                             unsigned char *data, size_t size) {
+  size_t offset = 0u;
+  while (offset < size) {
+#if defined(_WIN32)
+    const int received = recv(socket_value, (char *)data + offset, (int)(size - offset), 0);
+#else
+    const ssize_t received = recv(socket_value, data + offset, size - offset, 0);
+#endif
+    if (received <= 0) return SALTS_EIO;
+    offset += (size_t)received;
+  }
+  return SALTS_OK;
+}
+
 static int cnet_send_buffer_test_listener(cnet_send_buffer_test_socket *out_listener,
                                           uint16_t *out_port) {
   struct sockaddr_in address;
@@ -165,7 +180,88 @@ static cnet_client_config cnet_send_buffer_test_config(void) {
   return config;
 }
 
+static void cnet_send_slice_test_range(size_t offset, size_t length) {
+  enum { BACKING_BYTES = 80 };
+  cnet_client client = {0};
+  cnet_client_config config = cnet_send_buffer_test_config();
+  cnet_send_buffer_test_probe probe = {.expected_send_size = length};
+  cnet_send_buffer_free_probe free_probe;
+  cnet_send_buffer_test_socket listener = CNET_SEND_BUFFER_TEST_INVALID_SOCKET;
+  cnet_send_buffer_test_socket accepted = CNET_SEND_BUFFER_TEST_INVALID_SOCKET;
+  cnet_connection connection = {0};
+  cnet_connect_options options;
+  cnet_observer observer = {.on_state = cnet_send_buffer_test_state,
+                            .on_receive = cnet_send_buffer_test_receive,
+                            .on_send = cnet_send_buffer_test_sent,
+                            .user = &probe};
+  unsigned char *raw = (unsigned char *)malloc(BACKING_BYTES);
+  mem_buffer_t *buffer;
+  mem_slice_t slice;
+  unsigned char expected[CNET_SEND_BUFFER_TEST_BYTES] = {0};
+  unsigned char received[CNET_SEND_BUFFER_TEST_BYTES] = {0};
+  char uri[64];
+  uint16_t port = 0u;
+
+  check_true(length > 0u && length <= sizeof(expected));
+  check_true(offset < BACKING_BYTES && length <= BACKING_BYTES - offset);
+  check_true(raw != NULL);
+  for (size_t index = 0u; index < BACKING_BYTES; ++index) raw[index] = (unsigned char)(index + 1u);
+  memcpy(expected, raw + offset, length);
+  atomic_init(&probe.connected, 0);
+  atomic_init(&probe.sent, 0);
+  atomic_init(&probe.terminal, 0);
+  atomic_init(&probe.failed, 0);
+  atomic_init(&free_probe.freed, 0);
+
+  buffer = mem_wrap_external(raw, BACKING_BYTES, cnet_send_buffer_test_free, &free_probe);
+  check_true(buffer != NULL);
+  slice = mem_slice(buffer, offset, length);
+  check_true(slice.buffer == buffer);
+  check_true(slice.data == mem_buffer_data(buffer) + offset);
+  check_equal(slice.length, length);
+  check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
+
+  check_equal(cnet_client_init(&client, &config), SALTS_OK);
+  check_equal(cnet_send_buffer_test_listener(&listener, &port), SALTS_OK);
+  check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
+  options = (cnet_connect_options){.uri = uri, .observer = observer};
+  check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+  check_equal(cnet_send_buffer_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+  accepted = accept(listener, NULL, NULL);
+  check_true(accepted != CNET_SEND_BUFFER_TEST_INVALID_SOCKET);
+  check_equal(cnet_send_buffer_test_set_receive_timeout(accepted), SALTS_OK);
+
+  check_equal(cnet_send_slice(&client, connection, &slice), SALTS_OK);
+  check_equal(mem_buffer_ref_count(buffer), UINT32_C(3));
+  mem_slice_release(&slice);
+  check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
+  mem_buffer_release(buffer);
+  check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 0);
+
+  check_equal(cnet_send_buffer_test_poll_until(&client, &probe.sent, 1), SALTS_OK);
+  check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
+  check_equal(cnet_send_buffer_test_receive_all(accepted, received, length), SALTS_OK);
+  check_equal(received, expected, length);
+  check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
+
+  check_equal(cnet_close(&client, connection), SALTS_OK);
+  check_equal(cnet_send_buffer_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
+  check_equal(cnet_client_stop(&client, CNET_SEND_BUFFER_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_client_destroy(&client), SALTS_OK);
+  cnet_send_buffer_test_close_socket(accepted);
+  cnet_send_buffer_test_close_socket(listener);
+}
+
 spec("CNet retained buffer public send API") {
+  it("sends exactly one retained middle slice until terminal release") {
+    cnet_send_slice_test_range(8u, 64u);
+  }
+
+  it("sends first and final retained bytes without guard leakage") {
+    cnet_send_slice_test_range(0u, 1u);
+    cnet_send_slice_test_range(79u, 1u);
+  }
+
   it("validates retained slices before connection admission without retaining") {
     cnet_client client = {0};
     cnet_client_config config = cnet_send_buffer_test_config();
@@ -259,6 +355,10 @@ spec("CNet retained buffer public send API") {
     mem_buffer_t *busy_buffer;
     mem_buffer_t *stale_buffer;
     mem_buffer_t *shutdown_buffer;
+    mem_slice_t full_slice = {0};
+    mem_slice_t busy_slice = {0};
+    mem_slice_t stale_slice = {0};
+    mem_slice_t shutdown_slice = {0};
     unsigned char received[CNET_SEND_BUFFER_TEST_BYTES] = {0};
     unsigned char expected[CNET_SEND_BUFFER_TEST_BYTES];
     char uri[64];
@@ -311,7 +411,13 @@ spec("CNet retained buffer public send API") {
     full_buffer = cnet_send_buffer_test_external(1u, 0x33u, &full_free);
     check_true(full_buffer != NULL);
     check_equal(mem_buffer_ref_count(full_buffer), UINT32_C(1));
+    full_slice = mem_slice(full_buffer, 0u, 1u);
+    check_equal(mem_buffer_ref_count(full_buffer), UINT32_C(2));
     check_equal(cnet_send_buffer(&client, connection, full_buffer), SALTS_ENOBUFS);
+    check_equal(mem_buffer_ref_count(full_buffer), UINT32_C(2));
+    check_equal(cnet_send_slice(&client, connection, &full_slice), SALTS_ENOBUFS);
+    check_equal(mem_buffer_ref_count(full_buffer), UINT32_C(2));
+    mem_slice_release(&full_slice);
     check_equal(mem_buffer_ref_count(full_buffer), UINT32_C(1));
     mem_buffer_release(full_buffer);
     check_equal(atomic_load_explicit(&full_free.freed, memory_order_acquire), 1);
@@ -326,7 +432,13 @@ spec("CNet retained buffer public send API") {
     busy_buffer = cnet_send_buffer_test_external(1u, 0x44u, &busy_free);
     check_true(busy_buffer != NULL);
     check_equal(mem_buffer_ref_count(busy_buffer), UINT32_C(1));
+    busy_slice = mem_slice(busy_buffer, 0u, 1u);
+    check_equal(mem_buffer_ref_count(busy_buffer), UINT32_C(2));
     check_equal(cnet_send_buffer(&client, connection, busy_buffer), SALTS_EBUSY);
+    check_equal(mem_buffer_ref_count(busy_buffer), UINT32_C(2));
+    check_equal(cnet_send_slice(&client, connection, &busy_slice), SALTS_EBUSY);
+    check_equal(mem_buffer_ref_count(busy_buffer), UINT32_C(2));
+    mem_slice_release(&busy_slice);
     check_equal(mem_buffer_ref_count(busy_buffer), UINT32_C(1));
     mem_buffer_release(busy_buffer);
     check_equal(atomic_load_explicit(&busy_free.freed, memory_order_acquire), 1);
@@ -344,7 +456,13 @@ spec("CNet retained buffer public send API") {
     stale_buffer = cnet_send_buffer_test_external(1u, 0x55u, &stale_free);
     check_true(stale_buffer != NULL);
     check_equal(mem_buffer_ref_count(stale_buffer), UINT32_C(1));
+    stale_slice = mem_slice(stale_buffer, 0u, 1u);
+    check_equal(mem_buffer_ref_count(stale_buffer), UINT32_C(2));
     check_equal(cnet_send_buffer(&client, connection, stale_buffer), SALTS_ENOENT);
+    check_equal(mem_buffer_ref_count(stale_buffer), UINT32_C(2));
+    check_equal(cnet_send_slice(&client, connection, &stale_slice), SALTS_ENOENT);
+    check_equal(mem_buffer_ref_count(stale_buffer), UINT32_C(2));
+    mem_slice_release(&stale_slice);
     check_equal(mem_buffer_ref_count(stale_buffer), UINT32_C(1));
     mem_buffer_release(stale_buffer);
     check_equal(atomic_load_explicit(&stale_free.freed, memory_order_acquire), 1);
@@ -353,7 +471,13 @@ spec("CNet retained buffer public send API") {
     shutdown_buffer = cnet_send_buffer_test_external(1u, 0x66u, &shutdown_free);
     check_true(shutdown_buffer != NULL);
     check_equal(mem_buffer_ref_count(shutdown_buffer), UINT32_C(1));
+    shutdown_slice = mem_slice(shutdown_buffer, 0u, 1u);
+    check_equal(mem_buffer_ref_count(shutdown_buffer), UINT32_C(2));
     check_equal(cnet_send_buffer(&client, connection, shutdown_buffer), SALTS_ESHUTDOWN);
+    check_equal(mem_buffer_ref_count(shutdown_buffer), UINT32_C(2));
+    check_equal(cnet_send_slice(&client, connection, &shutdown_slice), SALTS_ESHUTDOWN);
+    check_equal(mem_buffer_ref_count(shutdown_buffer), UINT32_C(2));
+    mem_slice_release(&shutdown_slice);
     check_equal(mem_buffer_ref_count(shutdown_buffer), UINT32_C(1));
     mem_buffer_release(shutdown_buffer);
     check_equal(atomic_load_explicit(&shutdown_free.freed, memory_order_acquire), 1);
