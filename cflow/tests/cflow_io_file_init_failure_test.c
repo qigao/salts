@@ -7,6 +7,7 @@
 #include <salts/thread.h>
 
 static size_t file_init_failure_backend_calls;
+static size_t file_forget_backend_calls;
 
 static void file_init_failure_completion(void *user, cflow_io_request_id request_id,
                                          cflow_io_lease_id lease_id,
@@ -42,6 +43,13 @@ static int file_init_failure_backend_init(cflow_io_native_backend *backend,
   (void)config;
   ++file_init_failure_backend_calls;
   return SALTS_EIO;
+}
+
+static int file_forget_backend_busy(cflow_io_native_impl *impl, uintptr_t closed_handle) {
+  (void)impl;
+  (void)closed_handle;
+  ++file_forget_backend_calls;
+  return SALTS_EBUSY;
 }
 
 #define salts_mutex_init file_init_failure_mutex_init
@@ -105,5 +113,15 @@ spec("CFlow async file facade initialization failures") {
                 SALTS_ENOMEM);
     check_equal(file_init_failure_backend_calls, (size_t)0u);
     check_null(file.impl);
+  }
+
+  it("forgets an io_uring file without consulting a global busy backend") {
+    static const cflow_io_native_impl_ops ops = {.forget_file = file_forget_backend_busy};
+    cflow_io_native_impl impl = {.ops = &ops, .kind = CFLOW_IO_NATIVE_IO_URING};
+    cflow_io_native_backend backend = {.impl = &impl};
+
+    file_forget_backend_calls = 0u;
+    check_equal(cflow_io_native_backend_forget_file(&backend, (uintptr_t)7u), SALTS_OK);
+    check_equal(file_forget_backend_calls, (size_t)0u);
   }
 }
