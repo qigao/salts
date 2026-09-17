@@ -1,0 +1,32 @@
+name: dev apply cnet slice 292 task3
+
+on:
+  push:
+    branches:
+      - perf/cnet-zero-copy-slice-292
+    paths:
+      - .github/dev-edit.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: perf/cnet-zero-copy-slice-292
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Apply fail-closed test transform
+        run: |
+          set -euo pipefail
+          python .github/dev-edit.py
+          rm .github/dev-edit.py .github/workflows/dev-apply-292-task3.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cnet/tests/cnet_owner_test.c cnet/tests/cnet_tls_test.c
+          git rm --cached --ignore-unmatch .github/dev-edit.py .github/workflows/dev-apply-292-task3.yml || true
+          git commit --amend --no-edit
+          git push --force-with-lease origin HEAD:perf/cnet-zero-copy-slice-292
