@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# Trigger the branch-only repair workflow after the workflow file exists.
 path = Path('cnet/benchmarks/cnet_io_benchmark.c')
 text = path.read_text()
 start_marker = 'static int io_bench_print_retained_comparison('
