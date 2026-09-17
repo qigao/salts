@@ -794,6 +794,42 @@ bool native_io_io_uring_profile_take(const native_io_backend *backend,
   return true;
 }
 
+int native_io_io_uring_test_pressure(native_io_backend *backend,
+                                     native_io_uring_profile *before_final_flush,
+                                     native_io_uring_profile *after_final_flush) {
+  salts_io_impl *base;
+  salts_io_uring_impl *impl;
+  struct io_uring_sqe sqe = {0};
+  unsigned entries;
+  unsigned index;
+  int status;
+  if (backend == NULL || before_final_flush == NULL || after_final_flush == NULL ||
+      backend->impl == NULL)
+    return SALTS_EINVAL;
+  base = (salts_io_impl *)backend->impl;
+  if (base->kind != NATIVE_IO_BACKEND_IO_URING) return SALTS_ENOTSUP;
+  impl = (salts_io_uring_impl *)backend->impl;
+  if (impl->sq_entries == NULL) return SALTS_EINVAL;
+  entries = *impl->sq_entries;
+  if (entries == 0u || entries == UINT_MAX) return SALTS_ERANGE;
+
+  sqe.opcode = IORING_OP_NOP;
+  sqe.fd = -1;
+  sqe.user_data = SALTS_IO_URING_CANCEL_TOKEN;
+  for (index = 0u; index <= entries; ++index) {
+    status = uring_publish_sqe(impl, &sqe);
+    if (status != SALTS_OK) return status;
+  }
+
+  *before_final_flush = impl->profile;
+  uring_process_cq(impl);
+  status = uring_flush_sq(impl, false);
+  if (status != SALTS_OK) return status;
+  uring_process_cq(impl);
+  *after_final_flush = impl->profile;
+  return SALTS_OK;
+}
+
 static const salts_io_impl_ops uring_ops = {
     uring_attach_socket, uring_release_socket, uring_submit,      uring_cancel,
     uring_observe,       uring_wake,           uring_close,       uring_destroy,
