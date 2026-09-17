@@ -64,6 +64,9 @@ typedef struct native_io_uring_profile {
 
 bool native_io_io_uring_profile_take(const native_io_backend *backend,
                                      native_io_uring_profile *out_profile);
+int native_io_io_uring_test_pressure(native_io_backend *backend,
+                                     native_io_uring_profile *before_final_flush,
+                                     native_io_uring_profile *after_final_flush);
 #endif
 
 bool native_io_platform_backend_supported(native_io_backend_kind kind);
