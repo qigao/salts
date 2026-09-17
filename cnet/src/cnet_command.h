@@ -68,9 +68,10 @@ typedef enum cnet_command_payload_kind {
 
 /**
  * One producer-owned descriptor. Copied commands borrow `data` or `segments`
- * only for `cnet_command_queue_publish()`. A retained SEND instead supplies
- * `retained_buffer`; successful publication retains that buffer until the
- * corresponding command view is released.
+ * only for `cnet_command_queue_publish()`. A retained SEND supplies one
+ * backing `retained_buffer` plus an explicit `retained_data` view inside its
+ * current used range; successful publication retains only the backing buffer
+ * until the corresponding command view is released.
  */
 typedef struct cnet_command {
   cnet_command_kind kind;
