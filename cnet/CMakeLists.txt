@@ -1,4 +1,4 @@
-set(TARGET_NAME salts_cnet)
+set(TARGET_NAME cnet)
 
 find_package(c-ares CONFIG REQUIRED)
 find_package(kcp CONFIG REQUIRED)
@@ -63,13 +63,13 @@ cnet_configure_target(${TARGET_NAME})
 if(BUILD_TESTS OR BUILD_BENCHMARKS)
   # Diagnostics use a private static copy so profiling and deterministic test
   # faults add neither exported symbols nor hot-path branches to installed CNet.
-  add_library(salts_cnet_profile STATIC ${CNET_SOURCE_FILES})
-  cnet_configure_target(salts_cnet_profile)
-  target_compile_definitions(salts_cnet_profile PUBLIC CNET_INTERNAL_PROFILING=1)
+  add_library(cnet_profile STATIC ${CNET_SOURCE_FILES})
+  cnet_configure_target(cnet_profile)
+  target_compile_definitions(cnet_profile PUBLIC CNET_INTERNAL_PROFILING=1)
   if(BUILD_TESTS)
-    target_compile_definitions(salts_cnet_profile PUBLIC CNET_INTERNAL_TESTING=1)
+    target_compile_definitions(cnet_profile PUBLIC CNET_INTERNAL_TESTING=1)
   endif()
-  set_target_properties(salts_cnet_profile PROPERTIES FOLDER "cnet/diagnostics")
+  set_target_properties(cnet_profile PROPERTIES FOLDER "cnet/diagnostics")
 endif()
 
 install(TARGETS ${TARGET_NAME} EXPORT SaltsTargets)
