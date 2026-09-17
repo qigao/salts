@@ -65,6 +65,7 @@ int cnet_shards_connect(cnet_shards *shards, const cnet_owner_connect_payload *p
                         cnet_shard_connection *out_connection);
 int cnet_shards_send(cnet_shards *shards, cnet_shard_connection connection, const void *data,
                      size_t size);
+/** Publishes one retained backing owner plus an already-validated immutable byte view. */
 int cnet_shards_send_retained(cnet_shards *shards, cnet_shard_connection connection,
                               mem_buffer_t *buffer, const void *data, size_t size);
 int cnet_shards_sendv(cnet_shards *shards, cnet_shard_connection connection,
