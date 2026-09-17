@@ -210,4 +210,22 @@ spec("NativeIO io_uring submission batching") {
     check_equal(native_io_backend_close(&backend), SALTS_OK);
     check_equal(native_io_backend_destroy(&backend), SALTS_OK);
   }
+
+  it("flushes a full SQ ring under pressure without dropping published entries") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+    native_io_uring_profile before_final_flush = {0};
+    native_io_uring_profile after_final_flush = {0};
+
+    check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+    check_equal(native_io_io_uring_test_pressure(&backend, &before_final_flush,
+                                                &after_final_flush),
+                SALTS_OK);
+    check_true(before_final_flush.pressure_flushes > (uint64_t)0u);
+    check_true(before_final_flush.enter_submitted <= before_final_flush.sqes_published);
+    check_true(before_final_flush.enter_submitted < before_final_flush.sqes_published);
+    check_equal(after_final_flush.enter_submitted, after_final_flush.sqes_published);
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+  }
 }
