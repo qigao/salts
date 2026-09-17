@@ -89,6 +89,7 @@ typedef struct salts_io_uring_impl {
   uint64_t rejected_full;
   uint64_t native_submit_errors;
   uint64_t native_cancel_errors;
+  native_io_uring_profile profile;
   int ring_fd;
   int wake_fd;
   void *sq_ring;
@@ -226,9 +227,11 @@ static void uring_lane_remove(salts_io_uring_impl *impl, salts_io_uring_endpoint
 static int uring_enter(salts_io_uring_impl *impl, unsigned submit, unsigned minimum,
                        unsigned flags) {
   int status;
+  uring_counter_increment(&impl->profile.enter_calls);
   do {
     status = (int)syscall(__NR_io_uring_enter, impl->ring_fd, submit, minimum, flags, NULL, 0u);
   } while (status < 0 && errno == EINTR);
+  if (status > 0) impl->profile.enter_submitted += (uint64_t)status;
   return status < 0 ? -errno : status;
 }
 
@@ -244,6 +247,7 @@ static int uring_publish_sqe(salts_io_uring_impl *impl, const struct io_uring_sq
   impl->sqes[index] = *prepared;
   impl->sq_array[index] = index;
   atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail + 1u, memory_order_release);
+  uring_counter_increment(&impl->profile.sqes_published);
   submitted = uring_enter(impl, 1u, 0u, 0u);
   if (submitted == 1) return SALTS_OK;
   atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail, memory_order_release);
@@ -739,6 +743,18 @@ static bool uring_get_stats(const salts_io_impl *base, native_io_backend_stats *
                                         impl->native_submit_errors,
                                         impl->native_cancel_errors,
                                         impl->admission_open};
+  return true;
+}
+
+bool native_io_io_uring_profile_take(const native_io_backend *backend,
+                                     native_io_uring_profile *out_profile) {
+  const salts_io_impl *base;
+  const salts_io_uring_impl *impl;
+  if (backend == NULL || out_profile == NULL || backend->impl == NULL) return false;
+  base = (const salts_io_impl *)backend->impl;
+  if (base->kind != NATIVE_IO_BACKEND_IO_URING) return false;
+  impl = (const salts_io_uring_impl *)backend->impl;
+  *out_profile = impl->profile;
   return true;
 }
 
