@@ -1,8 +1,16 @@
 # CSTL
 
-CSTL is Salts's C11 standard-library-style collection module. It owns
-the concrete data-structure algorithms, while CMeta supplies finite typed
-facades and metadata around those raw algorithms.
+**Typed C11 containers and algorithms with native compiled C implementations.**
+
+CSTL is Salts's standard-library-style collection layer. CMeta supplies finite
+typed facades and metadata, while CSTL owns the concrete data-structure
+algorithms. The generated typed surface is thin; vector growth, hashing, tree
+balancing, allocation, and other core algorithms remain ordinary compiled C.
+
+This is a central example of the Salts model: modern typed syntax at the API
+surface while preserving explicit ownership and native C execution underneath.
+
+**Tags:** C11 · containers · generic-programming · algorithms · vector · hashmap · btree · range · stream
 
 Link the installed CMake target and include the typed header (the aggregate
 header includes it as well):
