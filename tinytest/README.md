@@ -1,10 +1,17 @@
-# tinytest
+# TinyTest
 
-BDD/TDD testing framework for C and C++. The runtime is a static library with no
-dependency beyond libc. C tests include `tinytest.h`; C++ tests include
-`tinytest.hpp`; both link `Salts::TinyTest`.
+**Lightweight BDD/TDD testing for C and C++ with strict-C11 generic assertions.**
 
-Features: spec/describe/it, given/when/then, TDD TEST_CASE/SECTION, check/check_warn, strict-C11 generic assertions, benchmarking, TAP, JUnit XML, color output, test filtering.
+TinyTest is the testing component shipped with Salts. Its runtime is a static
+library with no dependency beyond libc, so tests do not need the Salts execution
+runtime merely to use the framework. C tests include `tinytest.h`; C++ tests
+include `tinytest.hpp`; both link `Salts::TinyTest`.
+
+Features include spec/describe/it, given/when/then, TDD
+`TEST_CASE`/`SECTION`, fatal/non-fatal checks, strict-C11 generic
+assertions, benchmarking, TAP, JUnit XML, color output, and test filtering.
+
+**Tags:** C11 · C++ · testing · BDD · TDD · assertions · generic-programming · TAP · JUnit
 
 ## Quick Start
 
