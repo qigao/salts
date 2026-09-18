@@ -1,6 +1,16 @@
 # CFlow
 
-CFlow is a typed structured graph/dataflow library built on CMeta.
+**Typed Graph, Stream, Reactive, Actor, Machine, and Statechart execution built on CMeta.**
+
+CFlow is Salts's structured execution layer. It lifts CMeta's shared type and
+semantic model into graph/dataflow construction, synchronous streams,
+demand-driven reactive execution, actors, state machines, statecharts, and
+bounded native-I/O integration.
+
+CFlow does not replace C with a hidden runtime. Live execution state has an
+explicit owner, capacity, lifecycle, cancellation path, and error boundary.
+
+**Tags:** C11 · dataflow · graph · reactive-streams · actor-model · state-machine · statechart · async-io · backpressure
 
 Dependency:
 
