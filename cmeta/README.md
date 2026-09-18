@@ -1,9 +1,18 @@
 # CMeta v50
 
-CMeta is a pragmatic modern-C dialect/toolkit built on strict C11: a finite,
-schema-driven compile-time metadata/code-generation layer plus ordinary C
-runtime protocols. It does not attempt to reproduce unrestricted C++ templates
-or design a universal language before concrete use cases require it.
+**Finite generic programming, typed metadata, and semantic code generation for strict C11.**
+
+CMeta is the semantic foundation of Salts. It uses standard C11 techniques such
+as finite macro specialization and generic selection where appropriate to make
+strongly typed APIs practical without introducing a managed runtime or changing
+native C object layout. It provides type identity, metadata, traits, interfaces,
+contracts, ranges, typed callables, and finite compile-time computation.
+
+CMeta is intentionally finite and schema-driven. It does not try to reproduce
+unrestricted C++ templates or invent a universal replacement language before
+concrete use cases require it.
+
+**Tags:** C11 · generic-programming · metadata · reflection · traits · interfaces · contracts · code-generation
 
 The authoritative syntax and layering contract is
 [`LANGUAGE_REFERENCE.md`](LANGUAGE_REFERENCE.md).
