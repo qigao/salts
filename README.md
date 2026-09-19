@@ -1,51 +1,128 @@
 # Salts
 
-Salts 是一个以 C11 为核心、兼容 C++17 的现代 C 基础设施库。它以 CMeta
-统一类型与语义，以 CFlow 提供流式计算、Reactive、Actor 与状态机执行模型，并以
-CSTL 承载类型化容器和算法，让 C 在保留显式内存、错误与生命周期控制的同时，
-拥有更现代的编程模型和接口。
+**Modern typed systems programming in C11.**
 
-Salts 不是另一套运行时，也不会用隐式分配和无界状态隐藏成本。公开能力强调明确的
-所有权、容量、背压、错误传播和跨平台行为。
+Salts brings programming models usually associated with higher-level languages to C while preserving explicit ownership, predictable execution, native data layouts, and ordinary C deployment.
 
-## 核心能力
+It uses strict C11 techniques such as generic selection (`_Generic`) where appropriate, finite typed macros, compile-time specialization, and CMeta metadata to provide typed containers, reflection-like metadata, interfaces and contracts, streams, reactive pipelines, actors, state machines, statecharts, coroutines, and asynchronous I/O.
 
-| 模块 | CMake target | 职责 |
+These abstractions are designed to compile down to ordinary C data structures and function calls. Salts does not require a managed runtime or garbage collector, and it does not hide ownership, capacity, backpressure, errors, or lifecycle behind unbounded implicit state.
+
+**Tags:** C11 · generic-programming · systems-programming · typed-metadata · dataflow · reactive-streams · actor-model · state-machine · async-io · containers
+
+## Why Salts?
+
+Salts is built around a small set of shared semantics instead of independent framework-specific runtimes:
+
+- **CMeta** defines type identity, metadata, traits, interfaces, contracts, ranges, and finite generic specialization.
+- **CSTL** provides typed C11 containers and algorithms backed by compiled native C implementations.
+- **CFlow** lifts the same type model into Graph, Stream, Reactive, Actor, Machine, and Statechart execution.
+- **NativeIO / Coroutine / Concurrency** provide bounded asynchronous execution over native platform facilities.
+- **CNet** provides transport/session primitives while keeping progress, ownership, and shutdown explicit.
+- **CSerde / CBind** provide format-neutral token and native binding primitives.
+
+The result is a modern programming model without replacing C's underlying execution model.
+
+## Ecosystem
+
+Salts is the foundation for a growing family of C/C++ projects. Higher layers reuse the same type, ownership, async-I/O, lifecycle, and error semantics instead of creating independent runtimes.
+
+```mermaid
+flowchart TB
+    A["Frameworks & Applications<br/>TurboFlow · RulesForge · Flowie · TurboSCXML · Praktor"]
+    D["Domain Infrastructure<br/>CHTTP · TurboDB · TinyTest"]
+    E["Extensions<br/>salts-utils · salts-net · DataBind (schema/compiler)"]
+    S["Salts Foundation<br/>CMeta · CFlow · CSTL · CSerde/CBind<br/>NativeIO · Coroutine · Concurrency · CNet · Platform · Core"]
+    P["Design Principles<br/>C11 generics · typed macros · CMeta semantics<br/>explicit ownership · bounded execution · no hidden managed runtime"]
+
+    P --> S
+    S --> E
+    E --> D
+    D --> A
+```
+
+### Foundation
+
+| Module | CMake target | Responsibility |
 | --- | --- | --- |
-| [CMeta](cmeta/README.md) | `Salts::CMeta` | 类型标识、Enum/Struct 元数据、typed callable、interface、contract 与 range |
-| CSerde / [CBind](cbind/README.md) | `Salts::CSerde` / `Salts::CBind` | 格式无关 token 协议与原生 C 数据绑定 |
-| [CFlow](cflow/README.md) | `Salts::CFlow` | typed graph、Stream、Reactive、Actor、状态机与可解释/编译执行 |
-| [CSTL](cstl/README.md) | `Salts::CSTL` / `Salts::CSTLStream` | C11 类型化容器、算法，以及基于 CFlow 的现代流式 facade |
-| Platform / Concurrency | `Salts::Platform` / `Salts::Concurrency` | 跨平台抽象、线程池、Disruptor 与调度基础设施 |
-| [Coroutine](coroutine/README.md) / [NativeIO](native-io/README.md) | `Salts::Coroutine` / `Salts::NativeIO` | 有界 coroutine 执行与原生异步 I/O |
-| [CNet](cnet/README.md) | `Salts::CNet` | 网络 transport、TLS 与 WebSocket session |
-| URI parser | `Salts::UriParser` | CNet 与底层网络能力共享的 URI 词法/结构解析 primitive |
-| Core | `Salts::Core` | 字符串、文件、日志、正则、进程、内存与通用工具 |
+| [CMeta](cmeta/README.md) | `Salts::CMeta` | Type identity, Enum/Struct metadata, traits, typed callables, interfaces, contracts, ranges, and finite compile-time specialization |
+| [CFlow](cflow/README.md) | `Salts::CFlow` | Typed Graph, Stream, Reactive, Actor, Machine, Statechart, interpretation, and compiled execution |
+| [CSTL](cstl/README.md) | `Salts::CSTL` / `Salts::CSTLStream` | Typed C11 containers, algorithms, ranges, and Stream facade |
+| CSerde / [CBind](cbind/README.md) | `Salts::CSerde` / `Salts::CBind` | Format-neutral token contracts and native C binding primitives |
+| Platform / Concurrency | `Salts::Platform` / `Salts::Concurrency` | Cross-platform primitives, executors, thread pools, synchronization, and scheduling foundations |
+| [Coroutine](coroutine/README.md) / [NativeIO](native-io/README.md) | `Salts::Coroutine` / `Salts::NativeIO` | Bounded coroutine execution and native asynchronous I/O |
+| [CNet](cnet/README.md) | `Salts::CNet` | Transport, TLS, WebSocket/session primitives, explicit progress and shutdown |
+| Core | `Salts::Core` | Strings, files, logging, regex, process primitives, memory, and common utilities |
+| [TinyTest](tinytest/README.md) | `Salts::TinyTest` | Lightweight C/C++ BDD/TDD testing with strict-C11 generic assertions |
 
-模块边界、依赖方向和 canonical ownership 详见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+The canonical module boundaries and dependency direction are documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-CHTTP、S3、CRPC 已迁入独立的 [HTTPServices 仓库](../http-services/README.md)。
-消费端先安装 Salts，再构建安装 HTTPServices，增加 `find_package(HTTPServices CONFIG REQUIRED)`；
-HTTP/RPC 分别使用 `CHttp::Client`、`CHttp::Server`，独立 S3 客户端使用 `CHttp::S3`；
-头文件迁移到各模块公开入口，消费端需要重新编译。
-Salts 本身不依赖或构建 HTTPServices。
+### Extension layer
 
-Crypto、CFlow 文件系统适配器与 CFlow 进程适配器由 SaltsUtils 提供，公开 target 分别为
-`Salts::Crypto`、`Salts::FS` 与 `Salts::Process`。Salts 继续拥有它们依赖的
-`Salts::Platform`、`Salts::Core`、`Salts::CFlow` 以及底层同步文件系统/进程 API。
+- [salts-utils](https://github.com/qigao/salts-utils) — parsers, QueryVM, crypto, filesystem/process adapters, templates, Unicode, media helpers, and other higher-level utilities.
+- [salts-net](https://github.com/qigao/salts-net) — protocol and network tooling built on CNet/CMeta, including ICE/STUN/TURN, SNMP, LDAP, email, proxying, and related adapters.
+- **DataBind** — schema/compiler/native-dynamic binding infrastructure. It is currently hosted under salts-utils while its package/repository boundary is being separated from general utilities.
 
-QueryVM 与 JSON、XML、YAML、CSV、INI、TLV/LTV、Modbus、SOA、DotEnv、Cmd、TOON、TOML、
-DateTime 等格式/协议 parser 也由 SaltsUtils 构建、安装并导出。它们继续使用共享的
-`Salts::` target namespace，但不再由 Salts package 导出。`Salts::UriParser` 是唯一保留在
-Salts 的 parser target，因为 `Salts::CNet` 直接依赖这一低层 URI primitive；Salts 不依赖
-SaltsUtils。
+### Domain infrastructure
 
-## 构建与测试
+- [CHTTP](https://github.com/qigao/chttp) — HTTP client/server, RPC, S3, WebSocket, and OpenAPI-oriented infrastructure built on the Salts networking/runtime model.
+- [TurboDB](https://github.com/qigao/turbodb) — storage/database infrastructure that reuses Salts typed and bounded execution primitives.
+- **TinyTest** — the lightweight testing framework shipped with Salts and used across the ecosystem.
 
-最低要求为 CMake 3.20、支持 C11/C++17 的编译器，以及 vcpkg。仓库 preset 使用
-`VCPKG_ROOT` 定位 vcpkg，并使用 `PROJECT_ROOT` 推导统一的构建产物与安装根目录。
+### Frameworks and applications
 
-Windows Release：
+- [TurboFlow](https://github.com/qigao/turbo-flow) — graph/workflow and durable execution infrastructure.
+- [RulesForge](https://github.com/qigao/RulesForge) — rule/execution infrastructure.
+- [Flowie](https://github.com/qigao/flowie) — MQTT server/client infrastructure.
+- [TurboSCXML](https://github.com/qigao/turbo-scxml) — W3C SCXML compiled to CFlow Statechart execution.
+- **Praktor** — Actor-model application/runtime work built on CFlow Actor semantics.
+
+The intended dependency direction is downward only: higher-level projects may reuse Salts foundations, while Salts itself does not depend on those applications or domain frameworks.
+
+## Design principles
+
+### Modern abstractions, native C semantics
+
+Salts intentionally uses C11's compile-time facilities to make strongly typed APIs practical without introducing a second managed language runtime.
+
+For example:
+
+```c
+Struct(User,
+    (int, id),
+    (double, score)
+);
+
+typed(Vec, UserVec, User);
+typed(Option, MaybeUser, User);
+```
+
+Typed containers remain thin generated facades over compiled C algorithms, and CMeta descriptors describe semantics without changing the native object representation.
+
+### Explicit ownership and bounded state
+
+Public APIs favor explicit ownership transfer, borrowing rules, capacities, backpressure, cancellation, and failure semantics. Long-lived execution should not silently allocate unbounded state or introduce hidden fallback behavior.
+
+### One semantic model across layers
+
+CMeta supplies the shared type/trait vocabulary. CFlow, CSTL, serializers, bindings, networking adapters, and downstream projects reuse that vocabulary instead of maintaining parallel type systems.
+
+### No hidden managed runtime
+
+Salts uses ordinary native libraries and platform primitives. Runtime machinery is explicit in the API surface: scheduler, executor, subscription, actor, statechart instance, I/O owner, and similar state has a concrete lifetime and owner.
+
+## Build and test
+
+Requirements:
+
+- CMake 3.20+
+- a C11/C++17-capable compiler
+- vcpkg
+- Ninja or another supported CMake generator
+
+Repository presets use `VCPKG_ROOT` to locate vcpkg and `PROJECT_ROOT` to derive shared build/package locations.
+
+### Windows Release
 
 ```powershell
 cmake --preset win-release-user
@@ -54,7 +131,7 @@ ctest --preset win-release-user
 cmake --build --preset install-win-release-user
 ```
 
-Linux Release：
+### Linux Release
 
 ```sh
 cmake --preset linux-release-user
@@ -63,9 +140,9 @@ ctest --preset linux-release-user
 cmake --build --preset install-linux-release-user
 ```
 
-安装后的 CMake package 位于 `<prefix>/lib/cmake/Salts`。
+The installed CMake package is placed under `<prefix>/lib/cmake/Salts`.
 
-## 在 CMake 工程中使用
+## Using Salts from CMake
 
 ```cmake
 find_package(Salts CONFIG REQUIRED)
@@ -76,20 +153,30 @@ target_link_libraries(my_target PRIVATE
   Salts::CSTL)
 ```
 
-## STL 接口
+Use the narrowest targets that match the program's actual requirements.
 
-Salts 是 CMake project、package 和导出 namespace：
+## Package and API conventions
 
-- 使用 `find_package(Salts CONFIG REQUIRED)`；
-- 使用 `Salts::*` targets；
-- package metadata 安装到 `lib/cmake/Salts`；
-- preset 安装根变量为 `SALTS_ROOT`。
+Salts is the CMake project, installed package, and exported target namespace:
 
-CSTL 是 Salts 内部的容器子系统名称，公开头为 `<cstl/...>` 和聚合头
-`<cstl.h>`。`salts_*` / `cstl_*` C 标识符与物理库名保持稳定。
+- use `find_package(Salts CONFIG REQUIRED)`;
+- link `Salts::*` targets explicitly;
+- package metadata is installed under `lib/cmake/Salts`;
+- repository presets use `SALTS_ROOT` for the installed SDK root.
 
-## 延伸阅读
+CSTL is the container subsystem inside Salts. Its public headers use `<cstl/...>` plus the aggregate `<cstl.h>`. Native C identifiers such as `salts_*` and `cstl_*` remain explicit and stable at their owning module boundary.
 
-- [CMeta 语言与语义参考](cmeta/LANGUAGE_REFERENCE.md)
-- [CFlow 示例](cflow/examples/README.md)
-- [CSTL 类型化容器与 Stream](cstl/README.md)
+Higher-level parsers, QueryVM, crypto, filesystem/process adapters, and related utilities are maintained by salts-utils. HTTP/RPC/S3 infrastructure is maintained by CHTTP. Protocol-oriented network tooling is maintained by salts-net. Salts remains the lower-level foundation and does not depend on those repositories.
+
+## Further reading
+
+- [Canonical architecture](ARCHITECTURE.md)
+- [CMeta language and semantics](cmeta/LANGUAGE_REFERENCE.md)
+- [CFlow examples](cflow/examples/README.md)
+- [CSTL typed containers and Stream](cstl/README.md)
+- [NativeIO](native-io/README.md)
+- [CNet](cnet/README.md)
+
+---
+
+**Small modules. Strong semantics. A more capable C.**

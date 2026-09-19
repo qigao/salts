@@ -1,33 +1,97 @@
 # Salts Canonical Architecture
 
-日期：2026-09-16
-状态：Canonical repository architecture
+**Status:** canonical repository and ecosystem architecture  
+**Updated:** 2026-09-18
 
-本文定义 Salts 当前仓库级模块边界、public target ownership、依赖方向，以及与
-SaltsUtils 的集成边界。专项 API、错误语义、ABI 和阶段能力仍以公开头文件、测试及
-`docs/superpowers/specs/` 中的专项设计为事实源；本文不重复低层契约。
+This document defines Salts module ownership, public target boundaries,
+dependency direction, and the relationship between the Salts foundation and
+higher-level ecosystem repositories. Detailed API/ABI/error contracts remain
+authoritative in public headers, tests, and focused design specifications.
 
-### HTTP 服务仓库边界
+## Ecosystem ownership boundary
 
-CHTTP、S3、CRPC 的源码、专属测试、示例及私有 cjwt/turbo_crypto 归
-HTTPServices 所有。依赖方向的 Salts 基础层为
-`S3 / CRPC → CHTTP → Salts::CNet / CFlow / Core`；CRPC 同时复用
-Salts 的 CMeta/CSerde。CNet、NativeIO、CFlow 与底层 `Salts::UriParser` 继续由 Salts 提供；
-Crypto、QueryVM 与各格式/协议 parser 由 SaltsUtils 提供。
+Salts is the **foundation**, not an umbrella repository for every higher-level
+feature.
 
-三个模块整体迁移，避免 CRPC 留在 Salts 导致包级循环依赖；本次不拆分 transport
-接口，也不改变协议算法、错误语义、容量、线程模型或运行时状态归属。
-HTTPServices 导出 `CHttp::Client`、`CHttp::Server` 和独立的 `CHttp::S3`。
-HTTP/RPC 按两端合并，S3 依赖 Client。消费端更新模块头文件和链接目标后重新编译。
-构建顺序为 Salts SDK → SaltsUtils SDK（需要 parser/utility capability 时）→ 上层消费端。
+```text
+Frameworks / applications
+  TurboFlow · RulesForge · Flowie · TurboSCXML · Praktor
+                         ↑
+Domain infrastructure
+  CHTTP · TurboDB · TinyTest
+                         ↑
+Extension layer
+  salts-utils · salts-net · DataBind
+                         ↑
+Salts foundation
+  CMeta · CFlow · CSTL · CSerde/CBind
+  NativeIO · Coroutine · Concurrency · CNet · Platform · Core
+```
 
-验证包含 C/C++ 头文件链接、上层原测试与 CNet 相邻回归。
-历史 `docs/superpowers/` 和 `book/` 记录保留原上下文，当前归属以本文和各仓库 README 为准。
-回滚时使用迁移前 Salts revision 与旧消费配置组成完整旧版本；不混用两套目标或 ABI。
+The dependency direction is upward only: higher layers may consume the Salts
+foundation, while Salts does not depend on those domain/application projects.
 
-> 主图采用客户文稿视角，表达产品、语义 IR、CMeta 与 Platform/OS 的分层关系；右侧
-> `Cross-Cutting Capabilities` 表达跨层能力归属，不等价于 CMake target 的层级包含关系。
-> 实际 public/private target 依赖仍以第 5 节 dependency matrix 为准。
+### Salts
+
+Salts owns the common systems semantics:
+
+- CMeta type identity, metadata, traits, interfaces, contracts, and finite generic specialization;
+- CFlow Graph/Stream/Reactive/Actor/Machine/Statechart execution;
+- CSTL typed containers, algorithms, and ranges;
+- CSerde/CBind format-neutral token/native-binding primitives;
+- NativeIO, Coroutine, Concurrency, CNet, Platform, and Core;
+- TinyTest as the lightweight testing component shipped with the foundation.
+
+### salts-utils
+
+salts-utils owns general higher-level utilities such as parser components,
+QueryVM, crypto, filesystem/process adapters, templates, Unicode, media helpers,
+and related tooling. It consumes an installed Salts SDK and does not make Salts
+depend on the utility layer.
+
+### salts-net
+
+salts-net owns protocol/network tooling built on CNet/CMeta, such as
+ICE/STUN/TURN, SNMP, LDAP, email protocols, proxying, and related adapters. It is
+an extension sibling of salts-utils, not part of the Salts kernel.
+
+### DataBind
+
+DataBind is the target sibling boundary for schema/compiler/native-dynamic
+binding. Its implementation is currently hosted in salts-utils while the
+package/repository extraction is completed. CMeta remains the semantic source of
+native type identity; DataBind owns schema overlay, validation, compiler/codegen,
+and binding/orchestration concerns.
+
+### CHTTP
+
+CHTTP owns HTTP client/server, JSON-RPC, S3, WebSocket-facing service
+infrastructure, and OpenAPI-related functionality. It consumes Salts networking
+and runtime semantics through its installed package boundary. The historical
+`HTTPServices` name is not the canonical repository boundary.
+
+### TurboDB
+
+TurboDB owns storage/database behavior and durable provider semantics. It may
+reuse Salts typed/bounded execution primitives, but storage policy remains a
+TurboDB concern.
+
+### Framework/application repositories
+
+TurboFlow, RulesForge, Flowie, TurboSCXML, Praktor, and similar projects build
+on lower layers without pushing product semantics back into Salts.
+
+In particular:
+
+- TurboSCXML compiles W3C SCXML into **CFlow Statechart** execution;
+- TurboFlow composes provider-neutral business graphs and durable workflows;
+- RulesForge owns RETE rule execution;
+- Flowie owns MQTT broker/client semantics.
+
+> The diagrams below describe Salts's internal semantic/execution layering.
+> Ecosystem repository layering is a separate concern from the public/private
+> CMake dependency graph. The dependency matrix later in this document remains
+> authoritative for concrete Salts targets.
 
 ## 1. Layered canonical architecture
 
