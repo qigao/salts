@@ -57,11 +57,12 @@ an extension sibling of salts-utils, not part of the Salts kernel.
 
 ### DataBind
 
-DataBind is the target sibling boundary for schema/compiler/native-dynamic
-binding. Its implementation is currently hosted in salts-utils while the
-package/repository extraction is completed. CMeta remains the semantic source of
-native type identity; DataBind owns schema overlay, validation, compiler/codegen,
-and binding/orchestration concerns.
+DataBind is the sibling boundary for schema/compiler/native-dynamic binding.
+It already has an independent installed CMake package owner. Its sources remain
+physically hosted with salts-utils only while the repository extraction is
+completed. CMeta remains the semantic source of native type identity; DataBind
+owns schema overlay, validation, compiler/codegen, and binding/orchestration
+concerns.
 
 ### CHTTP
 
