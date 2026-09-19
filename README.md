@@ -61,7 +61,7 @@ The canonical module boundaries and dependency direction are documented in [ARCH
 
 - [salts-utils](https://github.com/qigao/salts-utils) — parsers, QueryVM, crypto, filesystem/process adapters, templates, Unicode, media helpers, and other higher-level utilities.
 - [salts-net](https://github.com/qigao/salts-net) — protocol and network tooling built on CNet/CMeta, including ICE/STUN/TURN, SNMP, LDAP, email, proxying, and related adapters.
-- **DataBind** — schema/compiler/native-dynamic binding infrastructure. It is currently hosted under salts-utils while its package/repository boundary is being separated from general utilities.
+- **DataBind** — independently packaged schema/compiler/native-dynamic binding infrastructure. Its sources are still physically hosted with salts-utils during staged repository extraction, but package ownership is already separate.
 
 ### Domain infrastructure
 
