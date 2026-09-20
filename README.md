@@ -180,3 +180,9 @@ Higher-level parsers, QueryVM, crypto, filesystem/process adapters, and related 
 ---
 
 **Small modules. Strong semantics. A more capable C.**
+
+## License
+
+Salts first-party code is licensed under the Apache License 2.0. See
+[LICENSE](LICENSE). Bundled third-party components retain their upstream
+licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
