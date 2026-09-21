@@ -21,7 +21,7 @@ Domain infrastructure
   CHTTP · TurboDB · TinyTest
                          ↑
 Extension layer
-  salts-utils · salts-net · DataBind
+  salts-utils (including DataBind) · salts-net
                          ↑
 Salts foundation
   CMeta · CFlow · CSTL · CSerde/CBind
@@ -45,8 +45,8 @@ Salts owns the common systems semantics:
 ### salts-utils
 
 salts-utils owns general higher-level utilities such as parser components,
-QueryVM, crypto, filesystem/process adapters, templates, Unicode, media helpers,
-and related tooling. It consumes an installed Salts SDK and does not make Salts
+QueryVM, DataBind schema/compiler/binding, crypto, filesystem/process adapters,
+templates, Unicode, media helpers, and related tooling. It consumes an installed Salts SDK and does not make Salts
 depend on the utility layer.
 
 ### salts-net
@@ -55,14 +55,12 @@ salts-net owns protocol/network tooling built on CNet/CMeta, such as
 ICE/STUN/TURN, SNMP, LDAP, email protocols, proxying, and related adapters. It is
 an extension sibling of salts-utils, not part of the Salts kernel.
 
-### DataBind
+### DataBind within salts-utils
 
-DataBind is the sibling boundary for schema/compiler/native-dynamic binding.
-It already has an independent installed CMake package owner. Its sources remain
-physically hosted with salts-utils only while the repository extraction is
-completed. CMeta remains the semantic source of native type identity; DataBind
-owns schema overlay, validation, compiler/codegen, and binding/orchestration
-concerns.
+DataBind is a SaltsUtils component for schema/compiler/native-dynamic binding.
+CMeta remains the semantic source of native type identity; DataBind implements
+schema overlay, validation, compiler/codegen, and binding/orchestration within
+SaltsUtils. Its source, build, installation, and exports belong to SaltsUtils.
 
 ### CHTTP
 
