@@ -31,7 +31,7 @@ Salts is the foundation for a growing family of C/C++ projects. Higher layers re
 flowchart TB
     A["Frameworks & Applications<br/>TurboFlow · RulesForge · Flowie · TurboSCXML · Praktor"]
     D["Domain Infrastructure<br/>CHTTP · TurboDB · TinyTest"]
-    E["Extensions<br/>salts-utils · salts-net · DataBind (schema/compiler)"]
+    E["Extensions<br/>salts-utils (including DataBind) · salts-net"]
     S["Salts Foundation<br/>CMeta · CFlow · CSTL · CSerde/CBind<br/>NativeIO · Coroutine · Concurrency · CNet · Platform · Core"]
     P["Design Principles<br/>C11 generics · typed macros · CMeta semantics<br/>explicit ownership · bounded execution · no hidden managed runtime"]
 
@@ -59,9 +59,8 @@ The canonical module boundaries and dependency direction are documented in [ARCH
 
 ### Extension layer
 
-- [salts-utils](https://github.com/qigao/salts-utils) — parsers, QueryVM, crypto, filesystem/process adapters, templates, Unicode, media helpers, and other higher-level utilities.
+- [salts-utils](https://github.com/qigao/salts-utils) — DataBind schema/compiler/native-dynamic binding, parsers, QueryVM, crypto, filesystem/process adapters, templates, Unicode, media helpers, and other higher-level utilities.
 - [salts-net](https://github.com/qigao/salts-net) — protocol and network tooling built on CNet/CMeta, including ICE/STUN/TURN, SNMP, LDAP, email, proxying, and related adapters.
-- **DataBind** — independently packaged schema/compiler/native-dynamic binding infrastructure. Its sources are still physically hosted with salts-utils during staged repository extraction, but package ownership is already separate.
 
 ### Domain infrastructure
 
