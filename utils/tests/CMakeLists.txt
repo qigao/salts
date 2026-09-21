@@ -11,9 +11,11 @@ set(FMT_SURFACE_CONTRACT_CPP
     ${CMAKE_CURRENT_SOURCE_DIR}/test_fmt_surface_contract.cpp)
 set(EXECUTION_COMPAT_C
     ${CMAKE_CURRENT_SOURCE_DIR}/test_execution_compat.c)
+set(SALTS_FS_REPLACE_FAULT_C
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_salts_fs_replace_fault.c)
 cmake_add_source(TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
                  "test_*.c" EXCLUDES ${TLOG_HEADER_COLLISION_C} ${FMT_SURFACE_CONTRACT_C}
-                 ${EXECUTION_COMPAT_C})
+                 ${EXECUTION_COMPAT_C} ${SALTS_FS_REPLACE_FAULT_C})
 cmake_add_source(CXX_TEST_SOURCES DIRS ${CMAKE_CURRENT_SOURCE_DIR} PATTERNS
                  "test_*.cpp" EXCLUDES ${TLOG_HEADER_COLLISION_CPP} ${FMT_SURFACE_CONTRACT_CPP})
 
@@ -52,6 +54,27 @@ set_target_properties(test_execution_compat PROPERTIES
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND TARGET test_tlog)
   target_compile_options(test_tlog PRIVATE -Werror=null-dereference)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_library(salts_fs_fsync_fault SHARED salts_fs_fsync_fault.c)
+  target_compile_features(salts_fs_fsync_fault PRIVATE c_std_11)
+  set_target_properties(salts_fs_fsync_fault PROPERTIES
+                        PREFIX ""
+                        FOLDER "utils/tests")
+
+  add_executable(salts_fs_replace_fault_test
+                 ${SALTS_FS_REPLACE_FAULT_C})
+  target_compile_features(salts_fs_replace_fault_test PRIVATE c_std_11)
+  target_link_libraries(salts_fs_replace_fault_test PRIVATE Salts::Core)
+  set_target_properties(salts_fs_replace_fault_test
+                        PROPERTIES C_STANDARD_REQUIRED ON
+                                   FOLDER "utils/tests")
+  add_test(
+    NAME test_salts_fs_replace_fault
+    COMMAND ${CMAKE_COMMAND} -E env
+            "LD_PRELOAD=$<TARGET_FILE:salts_fs_fsync_fault>"
+            $<TARGET_FILE:salts_fs_replace_fault_test>)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
