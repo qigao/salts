@@ -137,6 +137,8 @@ static int err_from_win32(DWORD error) {
   case ERROR_LOCK_VIOLATION:
   case ERROR_IO_PENDING:
     return -EAGAIN;
+  case ERROR_NOT_SAME_DEVICE:
+    return -EXDEV;
   default:
     return -EIO;
   }
@@ -1288,6 +1290,77 @@ int salts_fs_rename(const char *old_path, const char *new_path) {
   }
 #endif
   return 0;
+}
+
+int salts_fs_replace_durable(const char *staging_path,
+                             const char *destination_path,
+                             salts_fs_replace_state_t *state) {
+  salts_file_t staging;
+  int rc;
+
+  if (state == NULL)
+    return -EINVAL;
+  *state = SALTS_FS_REPLACE_NOT_PUBLISHED;
+
+  if (staging_path == NULL || destination_path == NULL ||
+      staging_path[0] == '\0' || destination_path[0] == '\0' ||
+      strcmp(staging_path, destination_path) == 0)
+    return -EINVAL;
+
+#ifndef _WIN32
+  char parent[SALTS_FS_MAX_PATH];
+  rc = salts_fs_path_dirname(destination_path, parent, sizeof(parent));
+  if (rc != 0)
+    return rc;
+#endif
+
+  staging = salts_fs_open(staging_path, SALTS_FS_O_RDWR, 0);
+  if (staging == SALTS_INVALID_FILE)
+    return -ENOENT;
+
+  rc = salts_fs_fsync(staging);
+  if (rc != 0) {
+    (void)salts_fs_close(staging);
+    return rc;
+  }
+  rc = salts_fs_close(staging);
+  if (rc != 0)
+    return rc;
+
+#ifdef _WIN32
+  if (!MoveFileExA(staging_path, destination_path,
+                   MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    return err_from_win32(GetLastError());
+
+  *state = SALTS_FS_REPLACE_PUBLISHED_DURABLE;
+  return 0;
+#else
+  if (rename(staging_path, destination_path) != 0)
+    return err_from_errno();
+
+  *state = SALTS_FS_REPLACE_DURABILITY_UNKNOWN;
+
+  {
+    int dir_flags = O_RDONLY;
+    int parent_fd;
+#ifdef O_DIRECTORY
+    dir_flags |= O_DIRECTORY;
+#endif
+    parent_fd = open(parent, dir_flags);
+    if (parent_fd < 0)
+      return err_from_errno();
+
+    if (fsync(parent_fd) != 0) {
+      const int error = err_from_errno();
+      (void)close(parent_fd);
+      return error;
+    }
+    (void)close(parent_fd);
+  }
+
+  *state = SALTS_FS_REPLACE_PUBLISHED_DURABLE;
+  return 0;
+#endif
 }
 
 int64_t salts_fs_tell(salts_file_t fd) {

@@ -452,6 +452,43 @@ SALTS_C_API int salts_fs_unlock(salts_file_t fd, int64_t offset, uint64_t len);
 SALTS_C_API int salts_fs_rename(const char *old_path, const char *new_path);
 
 /**
+ * @brief Publication state returned by salts_fs_replace_durable().
+ *
+ * NOT_PUBLISHED means Salts did not perform the namespace replacement.
+ * PUBLISHED_DURABLE means the replacement completed and the platform durability
+ * step succeeded.
+ * DURABILITY_UNKNOWN means the namespace replacement completed, but a later
+ * durability step failed so callers must not assume that retrying the same
+ * publication is safe.
+ */
+typedef enum salts_fs_replace_state_e {
+  SALTS_FS_REPLACE_NOT_PUBLISHED = 0,
+  SALTS_FS_REPLACE_PUBLISHED_DURABLE = 1,
+  SALTS_FS_REPLACE_DURABILITY_UNKNOWN = 2
+} salts_fs_replace_state_t;
+
+/**
+ * @brief Durably publish a completed staging file over a destination file.
+ *
+ * The staging file and destination must be on the same filesystem/volume.
+ * Cross-filesystem copy is never used as a fallback.
+ *
+ * POSIX: flush staging, rename, then fsync the destination parent directory.
+ * Windows: flush staging, then MoveFileEx(REPLACE_EXISTING|WRITE_THROUGH).
+ *
+ * @param staging_path Completed staging file. Consumed by a successful
+ *                     namespace replacement.
+ * @param destination_path Destination file to replace/create.
+ * @param state Required output publication state; initialized to
+ *              SALTS_FS_REPLACE_NOT_PUBLISHED before validation.
+ * @return 0 only when state is SALTS_FS_REPLACE_PUBLISHED_DURABLE. A negative
+ *         error may accompany NOT_PUBLISHED or DURABILITY_UNKNOWN.
+ */
+SALTS_C_API int salts_fs_replace_durable(
+    const char *staging_path, const char *destination_path,
+    salts_fs_replace_state_t *state);
+
+/**
  * @brief Get current file position
  *
  * @param fd File handle
