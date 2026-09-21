@@ -52,8 +52,12 @@ install(FILES ${tinytest_meta_headers}
   DESTINATION include/tinymeta
   COMPONENT TinyTest)
 
-# Examples live in examples/ and are plain executables rather than CTest cases.
-add_subdirectory(examples)
+# Respect the repository-wide build switches. Consumers configuring Salts as a
+# production package must not implicitly build TinyTest examples/tests.
+if(BUILD_EXAMPLES)
+  add_subdirectory(examples)
+endif()
 
-# Tests live in test/ and register executable targets and CTest entries.
-add_subdirectory(test)
+if(BUILD_TESTS)
+  add_subdirectory(test)
+endif()
