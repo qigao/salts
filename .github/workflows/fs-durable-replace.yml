@@ -3,7 +3,16 @@ name: Durable FS replacement contract
 on:
   push:
     branches:
-      - feat/fs-durable-replace
+      - master
+      - fix/fs-durable-replace-failure-receipts
+    paths:
+      - "utils/src/salts_fs.c"
+      - "utils/include/salts_fs.h"
+      - "utils/tests/test_salts_fs.c"
+      - "utils/tests/test_salts_fs_replace_fault.c"
+      - "utils/tests/salts_fs_fsync_fault.c"
+      - "utils/tests/CMakeLists.txt"
+      - ".github/workflows/fs-durable-replace.yml"
   workflow_dispatch:
 
 permissions:
@@ -67,7 +76,39 @@ jobs:
             --target test_salts_fs salts_fs_replace_fault_test salts_fs_fsync_fault \
             --parallel 4 2>&1 | tee fs-build.log
           ctest --test-dir build/fs-contract \
-            -R '^test_salts_fs(_replace_fault)?$' \
+            -R '^test_salts_fs(_replace_(pre|post)_publish_fault)?
+            --verbose --no-tests=error 2>&1 | tee fs-ctest.log
+
+      - name: Configure and run Windows contract
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          cmake -S . -B build\fs-contract -G Ninja ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake" ^
+            -DVCPKG_TARGET_TRIPLET=x64-windows ^
+            -DVCPKG_INSTALLED_DIR="%GITHUB_WORKSPACE%\vcpkg_installed\fs-windows" ^
+            > fs-configure.log 2>&1
+          if errorlevel 1 (type fs-configure.log & exit /b 1)
+          cmake --build build\fs-contract --target test_salts_fs --parallel 4 > fs-build.log 2>&1
+          if errorlevel 1 (type fs-build.log & exit /b 1)
+          ctest --test-dir build\fs-contract -R "^test_salts_fs$" --verbose --no-tests=error > fs-ctest.log 2>&1
+          if errorlevel 1 (type fs-ctest.log & exit /b 1)
+          type fs-ctest.log
+
+      - name: Upload contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fs-durable-replace-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            fs-configure.log
+            fs-build.log
+            fs-ctest.log
+          if-no-files-found: warn
+ \
             --verbose --no-tests=error 2>&1 | tee fs-ctest.log
 
       - name: Configure and run Windows contract
