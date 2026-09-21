@@ -71,8 +71,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
                         PROPERTIES C_STANDARD_REQUIRED ON
                                    FOLDER "utils/tests")
   add_test(
-    NAME test_salts_fs_replace_fault
+    NAME test_salts_fs_replace_pre_publish_fault
     COMMAND ${CMAKE_COMMAND} -E env
+            "SALTS_FS_TEST_FAIL_FSYNC_CALL=1"
+            "LD_PRELOAD=$<TARGET_FILE:salts_fs_fsync_fault>"
+            $<TARGET_FILE:salts_fs_replace_fault_test>)
+  add_test(
+    NAME test_salts_fs_replace_post_publish_fault
+    COMMAND ${CMAKE_COMMAND} -E env
+            "SALTS_FS_TEST_FAIL_FSYNC_CALL=2"
             "LD_PRELOAD=$<TARGET_FILE:salts_fs_fsync_fault>"
             $<TARGET_FILE:salts_fs_replace_fault_test>)
 endif()
