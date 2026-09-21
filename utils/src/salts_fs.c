@@ -1314,9 +1314,13 @@ int salts_fs_replace_durable(const char *staging_path,
     return rc;
 #endif
 
-  staging = salts_fs_open(staging_path, SALTS_FS_O_RDWR, 0);
-  if (staging == SALTS_INVALID_FILE)
-    return -ENOENT;
+  {
+    const int native_flags = salts_fs_flags_to_native(SALTS_FS_O_RDWR);
+    const int native_fd = fs_open(staging_path, native_flags, 0);
+    if (native_fd < 0)
+      return err_from_errno();
+    staging = (salts_file_t)native_fd;
+  }
 
   rc = salts_fs_fsync(staging);
   if (rc != 0) {
