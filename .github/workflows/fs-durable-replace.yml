@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - master
-      - fix/fs-durable-replace-failure-receipts
     paths:
       - "utils/src/salts_fs.c"
       - "utils/include/salts_fs.h"
