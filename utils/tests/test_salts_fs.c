@@ -274,6 +274,58 @@ spec("Salts FS Tests") {
     }
   }
 
+
+  describe("durable replace") {
+    it("publishes a complete replacement durably") {
+      salts_fs_replace_state_t state = SALTS_FS_REPLACE_NOT_PUBLISHED;
+      salts_fs_buf_t source = salts_fs_buf_init((char *)"replacement", 11);
+      salts_fs_buf_t destination = salts_fs_buf_init((char *)"stale", 5);
+      salts_fs_buf_t actual = {0};
+
+      check_equal(salts_fs_write_file(g_file, &source), 0);
+      check_equal(salts_fs_write_file(g_file2, &destination), 0);
+      check_equal(salts_fs_replace_durable(g_file, g_file2, &state), 0);
+      check_equal(state, SALTS_FS_REPLACE_PUBLISHED_DURABLE);
+      check_less(salts_fs_access(g_file, SALTS_FS_ACCESS_EXISTS), 0);
+      check_equal(salts_fs_read_file(g_file2, &actual), 0);
+      check_equal(actual.len, source.len);
+      check_equal(actual.base, source.base, source.len);
+      salts_fs_buf_free(&actual);
+    }
+
+    it("keeps NOT_PUBLISHED when the staging file is missing") {
+      salts_fs_replace_state_t state = SALTS_FS_REPLACE_PUBLISHED_DURABLE;
+      salts_fs_buf_t destination = salts_fs_buf_init((char *)"stable", 6);
+      salts_fs_buf_t actual = {0};
+
+      salts_fs_unlink(g_file);
+      check_equal(salts_fs_write_file(g_file2, &destination), 0);
+      check_less(salts_fs_replace_durable(g_file, g_file2, &state), 0);
+      check_equal(state, SALTS_FS_REPLACE_NOT_PUBLISHED);
+      check_equal(salts_fs_read_file(g_file2, &actual), 0);
+      check_equal(actual.len, destination.len);
+      check_equal(actual.base, destination.base, destination.len);
+      salts_fs_buf_free(&actual);
+    }
+
+    it("rejects self replacement before publication") {
+      salts_fs_replace_state_t state = SALTS_FS_REPLACE_PUBLISHED_DURABLE;
+      salts_fs_buf_t data = salts_fs_buf_init((char *)"same", 4);
+      salts_fs_buf_t actual = {0};
+
+      check_equal(salts_fs_write_file(g_file, &data), 0);
+      check_equal(salts_fs_replace_durable(g_file, g_file, &state), -EINVAL);
+      check_equal(state, SALTS_FS_REPLACE_NOT_PUBLISHED);
+      check_equal(salts_fs_read_file(g_file, &actual), 0);
+      check_equal(actual.base, data.base, data.len);
+      salts_fs_buf_free(&actual);
+    }
+
+    it("requires an output publication state") {
+      check_equal(salts_fs_replace_durable(g_file, g_file2, NULL), -EINVAL);
+    }
+  }
+
   /* ── Streaming open/read/write/close ────────────────────────────────────── */
 
   describe("Streaming operations") {
