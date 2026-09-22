@@ -10,7 +10,10 @@ typedef struct platform_stack {
 } stack_t;
 #endif
 
-#define CSTL_NO_LEGACY_STACK_T 1
+/* Model Android's platform-reserved stack_t on the host CI compiler. */
+#ifndef __ANDROID__
+#define __ANDROID__ 1
+#endif
 #include <cstl.h>
 #include "tinytest.h"
 
