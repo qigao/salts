@@ -10,7 +10,6 @@ typedef struct platform_stack {
 } stack_t;
 #endif
 
-#define CSTL_NO_LEGACY_STACK_T 1
 #include <cstl.h>
 #include "tinytest.h"
 
