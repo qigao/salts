@@ -28,12 +28,5 @@
       "name": "boringssl"
     }
   ],
-  "overrides": [
-    {
-      "name": "c-ares",
-      "version": "1.34.5",
-      "port-version": 1
-    }
-  ],
   "builtin-baseline": "b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01"
 }

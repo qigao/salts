@@ -13,7 +13,6 @@ on:
       - "CMakePresets.json"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - ".github/workflows/native-io-release-benchmarks.yml"
       - ".github/actions/setup-re2c-tools/**"
   push:
@@ -29,7 +28,6 @@ on:
       - "CMakePresets.json"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - ".github/workflows/native-io-release-benchmarks.yml"
       - ".github/actions/setup-re2c-tools/**"
   workflow_dispatch:
@@ -134,8 +132,7 @@ jobs:
                   $_ -eq 'CMakePresets.json'
                 }).Count -gt 0
               $dependencyChanged = @($changed | Where-Object {
-                  $_ -eq 'vcpkg.json' -or $_ -eq 'vcpkg-configuration.json' -or
-                  $_ -like 'vcpkg-ports/*'
+                  $_ -eq 'vcpkg.json' -or $_ -eq 'vcpkg-configuration.json'
                 }).Count -gt 0
               $runAdapted = $nativeChanged -or $cnetChanged -or
                 $coroutineChanged -or $concurrencyChanged -or $platformChanged -or
@@ -153,7 +150,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes nasm ninja-build
           echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+          if [ -n "${VCPKG_ROOT:-}" ] &&
+             [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            true
+          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] &&
+               [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
             echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
           else
             VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
@@ -162,7 +163,6 @@ jobs:
           binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$binary_cache"
           echo "VCPKG_BINARY_CACHE=$binary_cache" >> "$GITHUB_ENV"
-          echo "VCPKG_BINARY_SOURCES=clear;files,$binary_cache,readwrite" >> "$GITHUB_ENV"
           echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
 
@@ -172,7 +172,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-
 
@@ -188,10 +188,13 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLATION_ROOT)) {
-            throw "VCPKG_INSTALLATION_ROOT is unavailable"
+          $vcpkgRoot = $env:VCPKG_ROOT
+          if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) {
+            $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
           }
-          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) {
+            throw "VCPKG_ROOT is unavailable"
+          }
           $vcpkgToolchain = Join-Path $vcpkgRoot "scripts\buildsystems\vcpkg.cmake"
           if (-not (Test-Path -LiteralPath $vcpkgToolchain -PathType Leaf)) {
             throw "vcpkg toolchain is unavailable: $vcpkgToolchain"
@@ -225,7 +228,6 @@ jobs:
           "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
           "VCPKG_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
-          "VCPKG_BINARY_SOURCES=clear;files,$binaryCache,readwrite" >> $env:GITHUB_ENV
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
           "triplet=x64-windows" >> $env:GITHUB_OUTPUT
 
@@ -235,7 +237,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-
 
@@ -266,7 +268,6 @@ jobs:
           binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$binary_cache"
           echo "VCPKG_BINARY_CACHE=$binary_cache" >> "$GITHUB_ENV"
-          echo "VCPKG_BINARY_SOURCES=clear;files,$binary_cache,readwrite" >> "$GITHUB_ENV"
           echo "image=${ImageOS:-macos}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
 
@@ -276,7 +277,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-
 
