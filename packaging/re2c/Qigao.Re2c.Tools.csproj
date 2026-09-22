@@ -5,9 +5,9 @@
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <PackageId>Qigao.Re2c.Tools</PackageId>
-    <PackageVersion Condition="'$(PackageVersion)' == ''">4.6.0</PackageVersion>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">4.6.1</PackageVersion>
     <Authors>qigao</Authors>
-    <Description>Prebuilt re2c 4.6 host tools for Linux, macOS, and Windows CI.</Description>
+    <Description>Prebuilt re2c 4.6 host tools and stdlib for Linux, macOS, and Windows CI.</Description>
     <PackageTags>re2c;lexer;generator;native;build-tool</PackageTags>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
