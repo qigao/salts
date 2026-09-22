@@ -9,7 +9,7 @@
     <Authors>qigao</Authors>
     <Description>Prebuilt re2c 4.6 host tools for Linux, macOS, and Windows CI.</Description>
     <PackageTags>re2c;lexer;generator;native;build-tool</PackageTags>
-    <PackageLicenseFile>LICENSE.re2c</PackageLicenseFile>
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/qigao/salts</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -18,7 +18,7 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
-    <None Include="LICENSE.re2c" Pack="true" PackagePath="\" />
+    <None Include="LICENSE.txt" Pack="true" PackagePath="\" />
     <None Include="$(PackageRoot)/tools/**/*" Pack="true" PackagePath="tools/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>
