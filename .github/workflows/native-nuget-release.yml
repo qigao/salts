@@ -64,6 +64,7 @@ jobs:
           fi
           cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$cache"
+          echo "VCPKG_BINARY_CACHE=$cache" >> "$GITHUB_ENV"
           echo "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> "$GITHUB_ENV"
           echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
@@ -128,6 +129,7 @@ jobs:
           fi
           cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$cache"
+          echo "VCPKG_BINARY_CACHE=$cache" >> "$GITHUB_ENV"
           echo "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> "$GITHUB_ENV"
           echo "image=${ImageOS:-macos}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
@@ -192,6 +194,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $cache | Out-Null
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_CACHE=$cache" >> $env:GITHUB_ENV
           "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> $env:GITHUB_ENV
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
           "triplet=x64-windows" >> $env:GITHUB_OUTPUT
@@ -265,6 +268,7 @@ jobs:
           test -n "${ANDROID_NDK_HOME:-}"
           cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$cache"
+          echo "VCPKG_BINARY_CACHE=$cache" >> "$GITHUB_ENV"
           echo "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> "$GITHUB_ENV"
           ndk_revision="$(awk -F'= ' '/Pkg.Revision/ {print $2}' "$ANDROID_NDK_HOME/source.properties")"
           echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
