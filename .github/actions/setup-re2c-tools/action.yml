@@ -1,113 +1,21 @@
-name: Set up re2c tools
-description: Restore the versioned Qigao.Re2c.Tools host SDK from GitHub Packages.
+name: Set up shared build dependencies
+description: Restore centralized re2c host binary and shared vcpkg binary cache.
 
 inputs:
   version:
-    description: Qigao.Re2c.Tools package version
+    description: Qigao.Re2c.Binary package version
     required: false
     default: "4.6.3"
 
 runs:
   using: composite
   steps:
-    - name: Set up .NET
-      uses: actions/setup-dotnet@v4
+    - name: Restore centralized re2c binary
+      uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
       with:
-        dotnet-version: "8.0.x"
+        version: ${{ inputs.version }}
 
-    - name: Restore re2c tools on Unix
-      if: runner.os != 'Windows'
-      shell: bash
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-        RE2C_TOOLS_VERSION: ${{ inputs.version }}
-      run: |
-        set -euo pipefail
-        packages="${RUNNER_TEMP}/qigao-re2c-tools"
-        config="${RUNNER_TEMP}/qigao-re2c.config"
-        project="${RUNNER_TEMP}/qigao-re2c.csproj"
-
-        cat > "$config" <<'EOF'
-        <?xml version="1.0" encoding="utf-8"?>
-        <configuration><packageSources><clear /></packageSources></configuration>
-        EOF
-
-        dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json \
-          --name github --username qigao --password "$GITHUB_TOKEN" \
-          --store-password-in-clear-text --configfile "$config"
-
-        cat > "$project" <<EOF
-        <Project Sdk="Microsoft.NET.Sdk">
-          <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
-          <ItemGroup>
-            <PackageReference Include="Qigao.Re2c.Tools" Version="[$RE2C_TOOLS_VERSION]" />
-          </ItemGroup>
-        </Project>
-        EOF
-
-        dotnet restore "$project" --packages "$packages" --configfile "$config" --no-cache
-
-        case "$RUNNER_OS/$RUNNER_ARCH" in
-          Linux/X64) rid=linux-x64 ;;
-          macOS/X64) rid=macos-x64 ;;
-          macOS/ARM64) rid=macos-arm64 ;;
-          *) echo "unsupported re2c host: $RUNNER_OS/$RUNNER_ARCH" >&2; exit 1 ;;
-        esac
-
-        root="$packages/qigao.re2c.tools/$RE2C_TOOLS_VERSION/tools/$rid"
-        test -f "$root/bin/re2c"
-        test -f "$root/share/re2c/stdlib/unicode_categories.re"
-        test -f "$root/share/re2c/stdlib/unicode_properties.re"
-        chmod +x "$root/bin/re2c"
-        test "$("$root/bin/re2c" --version)" = "re2c 4.6"
-
-        echo "RE2C_ROOT=$root" >> "$GITHUB_ENV"
-        echo "$root/bin" >> "$GITHUB_PATH"
-
-    - name: Restore re2c tools on Windows
-      if: runner.os == 'Windows'
-      shell: pwsh
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-        RE2C_TOOLS_VERSION: ${{ inputs.version }}
-      run: |
-        $ErrorActionPreference = "Stop"
-        if ($env:RUNNER_ARCH -ne "X64") { throw "unsupported re2c host: Windows/$env:RUNNER_ARCH" }
-
-        $packages = Join-Path $env:RUNNER_TEMP "qigao-re2c-tools"
-        $config = Join-Path $env:RUNNER_TEMP "qigao-re2c.config"
-        $project = Join-Path $env:RUNNER_TEMP "qigao-re2c.csproj"
-
-        @'
-        <?xml version="1.0" encoding="utf-8"?>
-        <configuration><packageSources><clear /></packageSources></configuration>
-        '@ | Set-Content -LiteralPath $config
-
-        dotnet nuget add source https://nuget.pkg.github.com/qigao/index.json --name github --username qigao --password $env:GITHUB_TOKEN --store-password-in-clear-text --configfile $config
-        if ($LASTEXITCODE -ne 0) { throw "failed to configure GitHub Packages source" }
-
-        @"
-        <Project Sdk="Microsoft.NET.Sdk">
-          <PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup>
-          <ItemGroup>
-            <PackageReference Include="Qigao.Re2c.Tools" Version="[$env:RE2C_TOOLS_VERSION]" />
-          </ItemGroup>
-        </Project>
-        "@ | Set-Content -LiteralPath $project
-
-        dotnet restore $project --packages $packages --configfile $config --no-cache
-        if ($LASTEXITCODE -ne 0) { throw "failed to restore Qigao.Re2c.Tools" }
-
-        $root = Join-Path $packages "qigao.re2c.tools\$env:RE2C_TOOLS_VERSION\tools\windows-x64"
-        $exe = Join-Path $root "bin\re2c.exe"
-        $categories = Join-Path $root "share\re2c\stdlib\unicode_categories.re"
-        $properties = Join-Path $root "share\re2c\stdlib\unicode_properties.re"
-        foreach ($path in @($exe, $categories, $properties)) {
-          if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "missing restored re2c file: $path" }
-        }
-
-        $actual = (& $exe --version).Trim()
-        if ($actual -ne "re2c 4.6") { throw "unexpected re2c version: $actual" }
-
-        "RE2C_ROOT=$root" >> $env:GITHUB_ENV
-        (Join-Path $root "bin") >> $env:GITHUB_PATH
+    - name: Configure shared vcpkg binary cache
+      uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+      with:
+        mode: read
