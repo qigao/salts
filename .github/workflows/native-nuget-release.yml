@@ -58,7 +58,11 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y nasm
-          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+          if [ -n "${VCPKG_ROOT:-}" ] &&
+             [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            true
+          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] &&
+               [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
             echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
           else
             vcpkg_bin="$(readlink -f "$(command -v vcpkg)")"
