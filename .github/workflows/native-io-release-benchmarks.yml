@@ -162,7 +162,6 @@ jobs:
           binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$binary_cache"
           echo "VCPKG_BINARY_CACHE=$binary_cache" >> "$GITHUB_ENV"
-          echo "VCPKG_BINARY_SOURCES=clear;files,$binary_cache,readwrite" >> "$GITHUB_ENV"
           echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
 
@@ -225,7 +224,6 @@ jobs:
           "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
           "VCPKG_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
-          "VCPKG_BINARY_SOURCES=clear;files,$binaryCache,readwrite" >> $env:GITHUB_ENV
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
           "triplet=x64-windows" >> $env:GITHUB_OUTPUT
 
@@ -266,7 +264,6 @@ jobs:
           binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$binary_cache"
           echo "VCPKG_BINARY_CACHE=$binary_cache" >> "$GITHUB_ENV"
-          echo "VCPKG_BINARY_SOURCES=clear;files,$binary_cache,readwrite" >> "$GITHUB_ENV"
           echo "image=${ImageOS:-macos}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
 
