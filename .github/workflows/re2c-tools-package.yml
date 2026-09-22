@@ -104,7 +104,8 @@ jobs:
         run: |
           cmake --build build/re2c --config Release --parallel 2
           & ".\build\re2c\re2c.exe" --version
-          New-Item -ItemType Directory -Force -Path stage\package-tools\windows-x64\bin | Out-Null\n          New-Item -ItemType Directory -Force -Path stage\package-tools\windows-x64\share\re2c\stdlib | Out-Null
+          New-Item -ItemType Directory -Force -Path stage\package-tools\windows-x64\bin | Out-Null
+          New-Item -ItemType Directory -Force -Path stage\package-tools\windows-x64\share\re2c\stdlib | Out-Null
           Copy-Item ".\build\re2c\re2c.exe" ".\stage\package-tools\windows-x64\bin\re2c.exe"
           Copy-Item ".\upstream\re2c\include\*" ".\stage\package-tools\windows-x64\share\re2c\stdlib" -Recurse
       - uses: actions/upload-artifact@v4
