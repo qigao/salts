@@ -25,6 +25,7 @@ on:
       - "vcpkg-configuration.json"
       - "vcpkg-ports/**"
       - ".github/workflows/cmeta.yml"
+      - ".github/actions/setup-re2c-tools/**"
   push:
     branches: [master]
     paths:
@@ -50,10 +51,12 @@ on:
       - "vcpkg-configuration.json"
       - "vcpkg-ports/**"
       - ".github/workflows/cmeta.yml"
+      - ".github/actions/setup-re2c-tools/**"
   workflow_dispatch:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   linux:
@@ -73,12 +76,15 @@ jobs:
           test: true
           lake-package-directory: formal/cmeta_cflow_calculus
 
-      - name: Setup re2c and vcpkg
+      - name: Restore versioned re2c tools
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Setup vcpkg
         id: linux-env
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm re2c
+          sudo apt-get install -y nasm
           echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
           if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
             echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
@@ -259,11 +265,14 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Setup re2c and vcpkg
+      - name: Restore versioned re2c tools
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Setup vcpkg
         id: macos-env
         shell: bash
         run: |
-          brew install nasm re2c
+          brew install nasm
           if [ -n "${VCPKG_ROOT:-}" ] &&
              [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
             true
@@ -334,12 +343,15 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Setup re2c and validate toolchains
+      - name: Restore versioned re2c tools
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Validate Android toolchains
         id: android-env
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm ninja-build re2c
+          sudo apt-get install -y nasm ninja-build
           if [ -n "${VCPKG_ROOT:-}" ] &&
              [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
             true
@@ -437,9 +449,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Setup re2c
-        shell: powershell
-        run: choco install re2c -y --no-progress
+      - name: Restore versioned re2c tools
+        uses: ./.github/actions/setup-re2c-tools
 
       - name: Setup Windows build environment
         id: windows-env
