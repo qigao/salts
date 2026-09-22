@@ -35,13 +35,12 @@ jobs:
           -DRE2C_BUILD_RE2JAVA=OFF -DRE2C_BUILD_RE2JS=OFF -DRE2C_BUILD_RE2OCAML=OFF
           -DRE2C_BUILD_RE2PY=OFF -DRE2C_BUILD_RE2RUST=OFF -DRE2C_BUILD_RE2SWIFT=OFF
           -DRE2C_BUILD_RE2V=OFF -DRE2C_BUILD_RE2ZIG=OFF -DRE2C_BUILD_LIBS=OFF
-      - name: Build and install
+      - name: Build and stage
         run: |
           cmake --build build/re2c --parallel 2
-          cmake --install build/re2c --prefix "$GITHUB_WORKSPACE/stage/tools/linux-x64" --strip
-          "$GITHUB_WORKSPACE/stage/tools/linux-x64/bin/re2c" --version
+          build/re2c/re2c --version
           mkdir -p stage/package-tools/linux-x64
-          cp stage/tools/linux-x64/bin/re2c stage/package-tools/linux-x64/re2c
+          cp build/re2c/re2c stage/package-tools/linux-x64/re2c
       - uses: actions/upload-artifact@v4
         with:
           name: re2c-tools-linux-x64
@@ -63,20 +62,19 @@ jobs:
           -DRE2C_BUILD_RE2JAVA=OFF -DRE2C_BUILD_RE2JS=OFF -DRE2C_BUILD_RE2OCAML=OFF
           -DRE2C_BUILD_RE2PY=OFF -DRE2C_BUILD_RE2RUST=OFF -DRE2C_BUILD_RE2SWIFT=OFF
           -DRE2C_BUILD_RE2V=OFF -DRE2C_BUILD_RE2ZIG=OFF -DRE2C_BUILD_LIBS=OFF
-      - name: Build and install
+      - name: Build and stage
         shell: bash
         run: |
           set -euo pipefail
           cmake --build build/re2c --parallel 2
-          cmake --install build/re2c --prefix "$GITHUB_WORKSPACE/stage/install" --strip
-          stage/install/bin/re2c --version
+          build/re2c/re2c --version
           case "$RUNNER_ARCH" in
             X64) rid=macos-x64 ;;
             ARM64) rid=macos-arm64 ;;
             *) echo "unsupported RUNNER_ARCH=$RUNNER_ARCH" >&2; exit 1 ;;
           esac
           mkdir -p "stage/package-tools/$rid"
-          cp stage/install/bin/re2c "stage/package-tools/$rid/re2c"
+          cp build/re2c/re2c "stage/package-tools/$rid/re2c"
       - uses: actions/upload-artifact@v4
         with:
           name: re2c-tools-macos
@@ -99,14 +97,13 @@ jobs:
             -DRE2C_BUILD_RE2JAVA=OFF -DRE2C_BUILD_RE2JS=OFF -DRE2C_BUILD_RE2OCAML=OFF `
             -DRE2C_BUILD_RE2PY=OFF -DRE2C_BUILD_RE2RUST=OFF -DRE2C_BUILD_RE2SWIFT=OFF `
             -DRE2C_BUILD_RE2V=OFF -DRE2C_BUILD_RE2ZIG=OFF -DRE2C_BUILD_LIBS=OFF
-      - name: Build and install
+      - name: Build and stage
         shell: pwsh
         run: |
           cmake --build build/re2c --config Release --parallel 2
-          cmake --install build/re2c --config Release --prefix "$env:GITHUB_WORKSPACE\stage\install"
-          & "$env:GITHUB_WORKSPACE\stage\install\bin\re2c.exe" --version
+          & build\re2c\Release\re2c.exe --version
           New-Item -ItemType Directory -Force -Path stage\package-tools\windows-x64 | Out-Null
-          Copy-Item stage\install\bin\re2c.exe stage\package-tools\windows-x64\re2c.exe
+          Copy-Item build\re2c\Release\re2c.exe stage\package-tools\windows-x64\re2c.exe
       - uses: actions/upload-artifact@v4
         with:
           name: re2c-tools-windows-x64
