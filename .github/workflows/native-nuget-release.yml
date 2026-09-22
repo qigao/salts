@@ -5,16 +5,19 @@ on:
     paths:
       - "packaging/nuget/**"
       - ".github/workflows/native-nuget-release.yml"
+      - ".github/actions/setup-re2c-tools/**"
   push:
     branches: [master]
     paths:
       - "CMakeLists.txt"
       - "packaging/nuget/**"
       - ".github/workflows/native-nuget-release.yml"
+      - ".github/actions/setup-re2c-tools/**"
   workflow_dispatch:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   metadata:
@@ -41,13 +44,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Restore versioned re2c tools
+        uses: ./.github/actions/setup-re2c-tools
       - name: Setup build environment
         id: env
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y nasm re2c
+          sudo apt-get install -y nasm
           if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
             echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
           else
@@ -102,7 +107,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brew install nasm re2c
+          brew install nasm
           if [ -n "${VCPKG_ROOT:-}" ] && [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
             true
           elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] && [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
@@ -161,9 +166,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup re2c
-        shell: powershell
-        run: choco install re2c -y --no-progress
+      - name: Restore versioned re2c tools
+        uses: ./.github/actions/setup-re2c-tools
       - name: Setup build environment
         id: env
         shell: pwsh
@@ -233,7 +237,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y nasm ninja-build re2c
+          sudo apt-get install -y nasm ninja-build
           if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
             echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
           elif [ -n "${VCPKG_ROOT:-}" ]; then
