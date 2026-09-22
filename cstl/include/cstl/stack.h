@@ -11,9 +11,11 @@ typedef struct stack {
   vec_t raw;
 } cstl_stack_t;
 
-/* Darwin reserves stack_t for signal-stack state. New code should use the
- * prefixed handle; the legacy alias remains available where it is unambiguous. */
-#if !defined(__APPLE__) && !defined(CSTL_NO_LEGACY_STACK_T)
+/* Darwin and Android reserve stack_t for signal-stack state. New code should
+ * use the prefixed handle; the legacy alias remains available only where it is
+ * unambiguous. */
+#if !defined(__APPLE__) && !defined(__ANDROID__) && \
+    !defined(CSTL_NO_LEGACY_STACK_T)
 typedef cstl_stack_t stack_t;
 #endif
 
