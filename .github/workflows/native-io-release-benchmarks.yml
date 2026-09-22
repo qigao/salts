@@ -107,7 +107,7 @@ jobs:
               $changed = @(git diff --name-only $base $head)
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
               $workflowChanged = @($changed | Where-Object {
-                  $_ -eq '.github/workflows/native-io-release-benchmarks.yml' -or
+                  $_ -eq '.github/workflows/native-io-release-benchmarks.yml'
                 }).Count -gt 0
               $nativeChanged = @($changed | Where-Object {
                   $_ -like 'native-io/*'
