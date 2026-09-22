@@ -3,6 +3,10 @@ name: Salts native NuGet release
 on:
   pull_request:
     paths:
+      - "CMakeLists.txt"
+      - "vcpkg.json"
+      - "vcpkg-configuration.json"
+      - "vcpkg-ports/**"
       - "packaging/nuget/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
@@ -10,6 +14,9 @@ on:
     branches: [master]
     paths:
       - "CMakeLists.txt"
+      - "vcpkg.json"
+      - "vcpkg-configuration.json"
+      - "vcpkg-ports/**"
       - "packaging/nuget/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
