@@ -19,4 +19,5 @@ Android is intentionally not included:
 re2c runs on the host and generates source code before the Android cross-build.
 
 Upstream project: https://github.com/skvadrik/re2c
-Package version: 4.6.1 (upstream re2c 4.6; packaging revision 1)\nUpstream release: 4.6
+Package version: 4.6.1 (upstream re2c 4.6; packaging revision 1)
+Upstream release: 4.6
