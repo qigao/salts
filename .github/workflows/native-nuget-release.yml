@@ -1,0 +1,358 @@
+name: Salts native NuGet release
+
+on:
+  pull_request:
+    paths:
+      - "packaging/nuget/**"
+      - ".github/workflows/native-nuget-release.yml"
+  push:
+    branches: [master]
+    paths:
+      - "CMakeLists.txt"
+      - "packaging/nuget/**"
+      - ".github/workflows/native-nuget-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    name: Release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read project version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(awk '/^[[:space:]]*VERSION[[:space:]]+[0-9]/{print $2; exit}' CMakeLists.txt)"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Linux x64 SDK
+    needs: metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup build environment
+        id: env
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y nasm re2c
+          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          else
+            vcpkg_bin="$(readlink -f "$(command -v vcpkg)")"
+            echo "VCPKG_ROOT=$(dirname "$vcpkg_bin")" >> "$GITHUB_ENV"
+          fi
+          cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
+          mkdir -p "$cache"
+          echo "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> "$GITHUB_ENV"
+          echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          restore-keys: |
+            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
+      - name: Configure minimal Release SDK
+        run: cmake --preset linux-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+      - name: Build
+        run: cmake --build --preset linux-release-user --parallel 2
+      - name: Install SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/sdk/linux-x64"
+          cmake --install build/linux-gcc-release --prefix "$prefix" --strip
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
+          version=${{ needs.metadata.outputs.version }}
+          commit=$GITHUB_SHA
+          os=linux
+          arch=x64
+          profile=release
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-sdk-linux-x64
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+
+  macos:
+    name: macOS SDK
+    needs: metadata
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup build environment
+        id: env
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install nasm re2c
+          if [ -n "${VCPKG_ROOT:-}" ] && [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            true
+          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] && [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          elif [ -f "$(brew --prefix)/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
+            echo "VCPKG_ROOT=$(brew --prefix)/share/vcpkg" >> "$GITHUB_ENV"
+          else
+            echo "A valid VCPKG_ROOT is unavailable" >&2
+            exit 1
+          fi
+          cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
+          mkdir -p "$cache"
+          echo "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> "$GITHUB_ENV"
+          echo "image=${ImageOS:-macos}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          restore-keys: |
+            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
+      - name: Configure minimal Release SDK
+        run: cmake --preset release-mac-ninja -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+      - name: Build
+        run: cmake --build --preset build-default-mac --parallel 2
+      - name: Install SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RUNNER_ARCH" in
+            X64) rid=macos-x64 ;;
+            ARM64) rid=macos-arm64 ;;
+            *) echo "unsupported RUNNER_ARCH=$RUNNER_ARCH" >&2; exit 1 ;;
+          esac
+          prefix="$GITHUB_WORKSPACE/stage/sdk/$rid"
+          cmake --install build/mac-clang-release --prefix "$prefix" --strip
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
+          version=${{ needs.metadata.outputs.version }}
+          commit=$GITHUB_SHA
+          os=macos
+          arch=$RUNNER_ARCH
+          profile=release
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-sdk-macos
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+
+  windows:
+    name: Windows x64 SDK
+    needs: metadata
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup re2c
+        shell: powershell
+        run: choco install re2c -y --no-progress
+      - name: Setup build environment
+        id: env
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:VCPKG_INSTALLATION_ROOT)) { throw "VCPKG_INSTALLATION_ROOT is unavailable" }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ([string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio x64 C++ toolchain was not found" }
+          $cache = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg-binary-cache"
+          New-Item -ItemType Directory -Force -Path $cache | Out-Null
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+          "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> $env:GITHUB_ENV
+          "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
+          "triplet=x64-windows" >> $env:GITHUB_OUTPUT
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          restore-keys: |
+            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
+      - name: Configure minimal Release SDK
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          cmake --preset win-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+      - name: Build
+        shell: cmd
+        run: |
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          cmake --build --preset win-release-user --parallel 2
+      - name: Install SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $prefix = Join-Path $env:GITHUB_WORKSPACE "stage\sdk\windows-x64"
+          cmake --install build/Msvc-Release --prefix $prefix --config Release
+          $config = Join-Path $prefix "lib\cmake\Salts\SaltsConfig.cmake"
+          if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
+          @(
+            "version=${{ needs.metadata.outputs.version }}"
+            "commit=$env:GITHUB_SHA"
+            "os=windows"
+            "arch=x64"
+            "profile=release"
+          ) | Set-Content -LiteralPath (Join-Path $prefix "salts-sdk-manifest.txt")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-sdk-windows-x64
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+
+  android:
+    name: Android arm64-v8a SDK
+    needs: metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup build environment
+        id: env
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y nasm ninja-build re2c
+          if [ -n "${VCPKG_INSTALLATION_ROOT:-}" ]; then
+            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
+          elif [ -n "${VCPKG_ROOT:-}" ]; then
+            true
+          else
+            echo "vcpkg is unavailable" >&2
+            exit 1
+          fi
+          test -n "${ANDROID_NDK_HOME:-}"
+          cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
+          mkdir -p "$cache"
+          echo "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> "$GITHUB_ENV"
+          ndk_revision="$(awk -F'= ' '/Pkg.Revision/ {print $2}' "$ANDROID_NDK_HOME/source.properties")"
+          echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "triplet=arm64-android" >> "$GITHUB_OUTPUT"
+          echo "ndk=$ndk_revision" >> "$GITHUB_OUTPUT"
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg-binary-cache
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          restore-keys: |
+            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-
+      - name: Configure minimal Android Release SDK
+        run: cmake --preset android-arm64-v8a-release -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
+      - name: Build
+        run: cmake --build --preset build-android-arm64-v8a-release --parallel 2
+      - name: Install SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
+          cmake --install build/android-arm64-v8a-release --prefix "$prefix"
+          test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          cat > "$prefix/salts-sdk-manifest.txt" <<EOF
+          version=${{ needs.metadata.outputs.version }}
+          commit=$GITHUB_SHA
+          os=android
+          abi=arm64-v8a
+          api=android-24
+          profile=release
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-sdk-android-arm64-v8a
+          path: stage/sdk
+          if-no-files-found: error
+          compression-level: 9
+
+  pack:
+    name: Pack Salts.Native
+    needs: [metadata, linux, macos, windows, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: salts-sdk-*
+          path: package/sdk
+          merge-multiple: true
+      - name: Verify package payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f package/sdk/linux-x64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/windows-x64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/android-arm64-v8a/lib/cmake/Salts/SaltsConfig.cmake
+          test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 4
+          find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print
+          du -sh package/sdk
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Create NuGet package
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet pack packaging/nuget/Salts.Native.csproj --configuration Release --output dist -p:PackageVersion=${{ needs.metadata.outputs.version }} -p:PackageRoot="$GITHUB_WORKSPACE/package" -p:RepositoryCommit="$GITHUB_SHA"
+          test -f "dist/Salts.Native.${{ needs.metadata.outputs.version }}.nupkg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: salts-native-nuget
+          path: dist/*.nupkg
+          if-no-files-found: error
+
+  publish:
+    name: Publish package and GitHub Release
+    if: github.event_name != 'pull_request'
+    needs: [metadata, pack]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: salts-native-nuget
+          path: dist
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Publish to GitHub Packages
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          dotnet nuget add source --username qigao --password "$GITHUB_TOKEN" --store-password-in-clear-text --name github https://nuget.pkg.github.com/qigao/index.json
+          dotnet nuget push "dist/Salts.Native.${{ needs.metadata.outputs.version }}.nupkg" --api-key "$GITHUB_TOKEN" --source github --skip-duplicate
+      - name: Create tag and GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $TAG already exists; package publish was idempotent"
+            exit 0
+          fi
+          gh release create "$TAG" dist/*.nupkg --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Salts $VERSION" --generate-notes
