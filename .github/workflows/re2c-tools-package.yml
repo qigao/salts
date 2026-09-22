@@ -1,0 +1,159 @@
+name: re2c tools package
+
+on:
+  pull_request:
+    paths:
+      - "packaging/re2c/**"
+      - ".github/workflows/re2c-tools-package.yml"
+  push:
+    branches: [master]
+    paths:
+      - "packaging/re2c/**"
+      - ".github/workflows/re2c-tools-package.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RE2C_UPSTREAM_TAG: "4.6"
+  RE2C_PACKAGE_VERSION: "4.6.0"
+
+jobs:
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch re2c 4.6
+        run: git clone --depth 1 --branch "$RE2C_UPSTREAM_TAG" https://github.com/skvadrik/re2c.git upstream/re2c
+      - name: Configure
+        run: >-
+          cmake -S upstream/re2c -B build/re2c -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DRE2C_BUILD_RE2D=OFF -DRE2C_BUILD_RE2GO=OFF -DRE2C_BUILD_RE2HS=OFF
+          -DRE2C_BUILD_RE2JAVA=OFF -DRE2C_BUILD_RE2JS=OFF -DRE2C_BUILD_RE2OCAML=OFF
+          -DRE2C_BUILD_RE2PY=OFF -DRE2C_BUILD_RE2RUST=OFF -DRE2C_BUILD_RE2SWIFT=OFF
+          -DRE2C_BUILD_RE2V=OFF -DRE2C_BUILD_RE2ZIG=OFF -DRE2C_BUILD_LIBS=OFF
+      - name: Build and install
+        run: |
+          cmake --build build/re2c --parallel 2
+          cmake --install build/re2c --prefix "$GITHUB_WORKSPACE/stage/tools/linux-x64" --strip
+          "$GITHUB_WORKSPACE/stage/tools/linux-x64/bin/re2c" --version
+          mkdir -p stage/package-tools/linux-x64
+          cp stage/tools/linux-x64/bin/re2c stage/package-tools/linux-x64/re2c
+      - uses: actions/upload-artifact@v4
+        with:
+          name: re2c-tools-linux-x64
+          path: stage/package-tools
+          if-no-files-found: error
+
+  macos:
+    name: macOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch re2c 4.6
+        run: git clone --depth 1 --branch "$RE2C_UPSTREAM_TAG" https://github.com/skvadrik/re2c.git upstream/re2c
+      - name: Configure
+        run: >-
+          cmake -S upstream/re2c -B build/re2c -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DRE2C_BUILD_RE2D=OFF -DRE2C_BUILD_RE2GO=OFF -DRE2C_BUILD_RE2HS=OFF
+          -DRE2C_BUILD_RE2JAVA=OFF -DRE2C_BUILD_RE2JS=OFF -DRE2C_BUILD_RE2OCAML=OFF
+          -DRE2C_BUILD_RE2PY=OFF -DRE2C_BUILD_RE2RUST=OFF -DRE2C_BUILD_RE2SWIFT=OFF
+          -DRE2C_BUILD_RE2V=OFF -DRE2C_BUILD_RE2ZIG=OFF -DRE2C_BUILD_LIBS=OFF
+      - name: Build and install
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/re2c --parallel 2
+          cmake --install build/re2c --prefix "$GITHUB_WORKSPACE/stage/install" --strip
+          stage/install/bin/re2c --version
+          case "$RUNNER_ARCH" in
+            X64) rid=macos-x64 ;;
+            ARM64) rid=macos-arm64 ;;
+            *) echo "unsupported RUNNER_ARCH=$RUNNER_ARCH" >&2; exit 1 ;;
+          esac
+          mkdir -p "stage/package-tools/$rid"
+          cp stage/install/bin/re2c "stage/package-tools/$rid/re2c"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: re2c-tools-macos
+          path: stage/package-tools
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch re2c 4.6
+        shell: pwsh
+        run: git clone --depth 1 --branch $env:RE2C_UPSTREAM_TAG https://github.com/skvadrik/re2c.git upstream/re2c
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S upstream/re2c -B build/re2c -A x64 `
+            -DRE2C_BUILD_RE2D=OFF -DRE2C_BUILD_RE2GO=OFF -DRE2C_BUILD_RE2HS=OFF `
+            -DRE2C_BUILD_RE2JAVA=OFF -DRE2C_BUILD_RE2JS=OFF -DRE2C_BUILD_RE2OCAML=OFF `
+            -DRE2C_BUILD_RE2PY=OFF -DRE2C_BUILD_RE2RUST=OFF -DRE2C_BUILD_RE2SWIFT=OFF `
+            -DRE2C_BUILD_RE2V=OFF -DRE2C_BUILD_RE2ZIG=OFF -DRE2C_BUILD_LIBS=OFF
+      - name: Build and install
+        shell: pwsh
+        run: |
+          cmake --build build/re2c --config Release --parallel 2
+          cmake --install build/re2c --config Release --prefix "$env:GITHUB_WORKSPACE\stage\install"
+          & "$env:GITHUB_WORKSPACE\stage\install\bin\re2c.exe" --version
+          New-Item -ItemType Directory -Force -Path stage\package-tools\windows-x64 | Out-Null
+          Copy-Item stage\install\bin\re2c.exe stage\package-tools\windows-x64\re2c.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: re2c-tools-windows-x64
+          path: stage/package-tools
+          if-no-files-found: error
+
+  pack:
+    name: Pack NuGet
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: re2c-tools-*
+          path: package/tools
+          merge-multiple: true
+      - name: Verify payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x package/tools/linux-x64/re2c
+          test -f package/tools/windows-x64/re2c.exe
+          find package/tools -maxdepth 2 -type f -print
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Pack
+        run: >-
+          dotnet pack packaging/re2c/Qigao.Re2c.Tools.csproj
+          --configuration Release --output dist
+          -p:PackageVersion="$RE2C_PACKAGE_VERSION"
+          -p:PackageRoot="$GITHUB_WORKSPACE/package"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: re2c-tools-nuget
+          path: dist/*.nupkg
+          if-no-files-found: error
+      - name: Publish to GitHub Packages
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          dotnet nuget add source --username qigao --password "$GITHUB_TOKEN" --store-password-in-clear-text --name github https://nuget.pkg.github.com/qigao/index.json
+          dotnet nuget push "dist/Qigao.Re2c.Tools.$RE2C_PACKAGE_VERSION.nupkg" --api-key "$GITHUB_TOKEN" --source github --skip-duplicate
