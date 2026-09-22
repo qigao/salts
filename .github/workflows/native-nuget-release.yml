@@ -102,6 +102,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Restore versioned re2c tools
+        uses: ./.github/actions/setup-re2c-tools
       - name: Setup build environment
         id: env
         shell: bash
@@ -231,6 +233,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Restore versioned re2c tools
+        uses: ./.github/actions/setup-re2c-tools
       - name: Setup build environment
         id: env
         shell: bash
