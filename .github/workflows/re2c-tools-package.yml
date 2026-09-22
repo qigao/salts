@@ -17,7 +17,7 @@ permissions:
 
 env:
   RE2C_UPSTREAM_TAG: "4.6"
-  RE2C_PACKAGE_VERSION: "4.6.2"
+  RE2C_PACKAGE_VERSION: "4.6.3"
 
 jobs:
   linux:
@@ -152,14 +152,16 @@ jobs:
         run: |
           set -euo pipefail
           nupkg="dist/Qigao.Re2c.Tools.$RE2C_PACKAGE_VERSION.nupkg"
-          unzip -l "$nupkg" | tee "$RUNNER_TEMP/re2c-nupkg.txt"
-          grep -F "tools/linux-x64/bin/re2c" "$RUNNER_TEMP/re2c-nupkg.txt"
-          grep -F "tools/windows-x64/bin/re2c.exe" "$RUNNER_TEMP/re2c-nupkg.txt"
-          grep -F "share/re2c/stdlib/unicode_categories.re" "$RUNNER_TEMP/re2c-nupkg.txt"
-          if grep -q "tools/macos-arm64/" "$RUNNER_TEMP/re2c-nupkg.txt"; then
-            grep -F "tools/macos-arm64/bin/re2c" "$RUNNER_TEMP/re2c-nupkg.txt"
+          unzip -Z1 "$nupkg" | sort | tee "$RUNNER_TEMP/re2c-nupkg.txt"
+          grep -Fx "tools/linux-x64/bin/re2c" "$RUNNER_TEMP/re2c-nupkg.txt"
+          grep -Fx "tools/windows-x64/bin/re2c.exe" "$RUNNER_TEMP/re2c-nupkg.txt"
+          grep -Fx "tools/linux-x64/share/re2c/stdlib/unicode_categories.re" "$RUNNER_TEMP/re2c-nupkg.txt"
+          grep -Fx "tools/linux-x64/share/re2c/stdlib/syntax/c" "$RUNNER_TEMP/re2c-nupkg.txt"
+          if grep -Fxq "tools/macos-arm64/bin/re2c" "$RUNNER_TEMP/re2c-nupkg.txt"; then
+            grep -Fx "tools/macos-arm64/share/re2c/stdlib/syntax/c" "$RUNNER_TEMP/re2c-nupkg.txt"
           else
-            grep -F "tools/macos-x64/bin/re2c" "$RUNNER_TEMP/re2c-nupkg.txt"
+            grep -Fx "tools/macos-x64/bin/re2c" "$RUNNER_TEMP/re2c-nupkg.txt"
+            grep -Fx "tools/macos-x64/share/re2c/stdlib/syntax/c" "$RUNNER_TEMP/re2c-nupkg.txt"
           fi
       - uses: actions/upload-artifact@v4
         with:
