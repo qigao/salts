@@ -5,7 +5,7 @@
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <PackageId>Qigao.Re2c.Tools</PackageId>
-    <PackageVersion Condition="'$(PackageVersion)' == ''">4.6.2</PackageVersion>
+    <PackageVersion Condition="'$(PackageVersion)' == ''">4.6.3</PackageVersion>
     <Authors>qigao</Authors>
     <Description>Prebuilt re2c 4.6 host tools and stdlib for Linux, macOS, and Windows CI.</Description>
     <PackageTags>re2c;lexer;generator;native;build-tool</PackageTags>
@@ -19,9 +19,6 @@
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
     <None Include="LICENSE.txt" Pack="true" PackagePath="\" />
-    <None Include="$(PackageRoot)/tools/**/*" Pack="true" PackagePath="tools/%(RecursiveDir)%(Filename)%(Extension)" />
-    <None Include="$(PackageRoot)/tools/linux-x64/bin/re2c" Pack="true" PackagePath="tools/linux-x64/bin/re2c" />
-    <None Include="$(PackageRoot)/tools/macos-x64/bin/re2c" Pack="true" PackagePath="tools/macos-x64/bin/re2c" Condition="Exists('$(PackageRoot)/tools/macos-x64/bin/re2c')" />
-    <None Include="$(PackageRoot)/tools/macos-arm64/bin/re2c" Pack="true" PackagePath="tools/macos-arm64/bin/re2c" Condition="Exists('$(PackageRoot)/tools/macos-arm64/bin/re2c')" />
+    <None Include="$(PackageRoot)/tools/**/*" Pack="true" PackagePath="tools/%(RecursiveDir)" />
   </ItemGroup>
 </Project>
