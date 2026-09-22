@@ -128,7 +128,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -x package/tools/linux-x64/re2c
+          test -f package/tools/linux-x64/re2c
           test -f package/tools/windows-x64/re2c.exe
           find package/tools -maxdepth 2 -type f -print
       - uses: actions/setup-dotnet@v4
