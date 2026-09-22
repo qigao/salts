@@ -58,9 +58,9 @@ cstl_stack_t pending = StackOf(int);
 ```
 
 `cstl_stack_t` is the canonical raw Stack handle. The historical
-`stack_t` alias remains available outside Darwin unless
-`CSTL_NO_LEGACY_STACK_T` is defined. Darwin reserves `stack_t` for its
-signal-stack API, so portable code must use `cstl_stack_t` or the
+`stack_t` alias remains available outside Darwin and Android unless
+`CSTL_NO_LEGACY_STACK_T` is defined. Darwin and Android reserve `stack_t`
+for their signal-stack APIs, so portable code must use `cstl_stack_t` or the
 `Stack(T, name)` declaration facade.
 
 These forms bind CMeta descriptors to erased CSTL handles without
