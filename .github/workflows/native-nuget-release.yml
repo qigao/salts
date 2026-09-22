@@ -58,16 +58,8 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y nasm
-          if [ -n "${VCPKG_ROOT:-}" ] &&
-             [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-            true
-          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] &&
-               [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
-          else
-            vcpkg_bin="$(readlink -f "$(command -v vcpkg)")"
-            echo "VCPKG_ROOT=$(dirname "$vcpkg_bin")" >> "$GITHUB_ENV"
-          fi
+          test -n "${VCPKG_ROOT:-}"
+          test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$cache"
           echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
@@ -118,16 +110,8 @@ jobs:
         run: |
           set -euo pipefail
           brew install nasm
-          if [ -n "${VCPKG_ROOT:-}" ] && [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-            true
-          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] && [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
-          elif [ -f "$(brew --prefix)/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
-            echo "VCPKG_ROOT=$(brew --prefix)/share/vcpkg" >> "$GITHUB_ENV"
-          else
-            echo "A valid VCPKG_ROOT is unavailable" >&2
-            exit 1
-          fi
+          test -n "${VCPKG_ROOT:-}"
+          test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$cache"
           echo "image=${ImageOS:-macos}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
@@ -183,14 +167,12 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $vcpkgRoot = $env:VCPKG_ROOT
-          if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) { $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT }
           if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) { throw "VCPKG_ROOT is unavailable" }
           $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
           $vsInstall = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if ([string]::IsNullOrWhiteSpace($vsInstall)) { throw "Visual Studio x64 C++ toolchain was not found" }
           $cache = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg-binary-cache"
           New-Item -ItemType Directory -Force -Path $cache | Out-Null
-          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
           "triplet=x64-windows" >> $env:GITHUB_OUTPUT
@@ -250,16 +232,8 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y nasm ninja-build
-          if [ -n "${VCPKG_ROOT:-}" ] &&
-             [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-            true
-          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] &&
-               [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
-          else
-            echo "vcpkg is unavailable" >&2
-            exit 1
-          fi
+          test -n "${VCPKG_ROOT:-}"
+          test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           test -n "${ANDROID_NDK_HOME:-}"
           cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$cache"

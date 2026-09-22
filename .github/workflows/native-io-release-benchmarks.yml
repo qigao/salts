@@ -150,16 +150,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes nasm ninja-build
           echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-          if [ -n "${VCPKG_ROOT:-}" ] &&
-             [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-            true
-          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] &&
-               [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
-          else
-            VCPKG_BIN="$(readlink -f "$(command -v vcpkg)")"
-            echo "VCPKG_ROOT=$(dirname "$VCPKG_BIN")" >> "$GITHUB_ENV"
-          fi
+          test -n "${VCPKG_ROOT:-}"
+          test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$binary_cache"
           echo "VCPKG_BINARY_CACHE=$binary_cache" >> "$GITHUB_ENV"
@@ -189,9 +181,6 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           $vcpkgRoot = $env:VCPKG_ROOT
-          if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) {
-            $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
-          }
           if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) {
             throw "VCPKG_ROOT is unavailable"
           }
@@ -225,7 +214,6 @@ jobs:
           $binaryCache = Join-Path $env:GITHUB_WORKSPACE "build\vcpkg-binary-cache"
           New-Item -ItemType Directory -Force -Path $binaryCache | Out-Null
           "PROJECT_ROOT=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
-          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
           "VCPKG_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
@@ -253,18 +241,8 @@ jobs:
         run: |
           set -euo pipefail
           brew install nasm
-          if [ -n "${VCPKG_ROOT:-}" ] &&
-             [ -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-            true
-          elif [ -n "${VCPKG_INSTALLATION_ROOT:-}" ] &&
-               [ -f "$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" ]; then
-            echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> "$GITHUB_ENV"
-          elif [ -f "$(brew --prefix)/share/vcpkg/scripts/buildsystems/vcpkg.cmake" ]; then
-            echo "VCPKG_ROOT=$(brew --prefix)/share/vcpkg" >> "$GITHUB_ENV"
-          else
-            echo "A valid VCPKG_ROOT is unavailable" >&2
-            exit 1
-          fi
+          test -n "${VCPKG_ROOT:-}"
+          test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
           binary_cache="$GITHUB_WORKSPACE/build/vcpkg-binary-cache"
           mkdir -p "$binary_cache"
           echo "VCPKG_BINARY_CACHE=$binary_cache" >> "$GITHUB_ENV"
