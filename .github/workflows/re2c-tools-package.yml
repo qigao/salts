@@ -17,7 +17,7 @@ permissions:
 
 env:
   RE2C_UPSTREAM_TAG: "4.6"
-  RE2C_PACKAGE_VERSION: "4.6.0"
+  RE2C_PACKAGE_VERSION: "4.6.1"
 
 jobs:
   linux:
@@ -39,8 +39,9 @@ jobs:
         run: |
           cmake --build build/re2c --parallel 2
           build/re2c/re2c --version
-          mkdir -p stage/package-tools/linux-x64
+          mkdir -p stage/package-tools/linux-x64/share/re2c/stdlib
           cp build/re2c/re2c stage/package-tools/linux-x64/re2c
+          cp -a upstream/re2c/include/. stage/package-tools/linux-x64/share/re2c/stdlib/
       - uses: actions/upload-artifact@v4
         with:
           name: re2c-tools-linux-x64
@@ -73,8 +74,9 @@ jobs:
             ARM64) rid=macos-arm64 ;;
             *) echo "unsupported RUNNER_ARCH=$RUNNER_ARCH" >&2; exit 1 ;;
           esac
-          mkdir -p "stage/package-tools/$rid"
+          mkdir -p "stage/package-tools/$rid/share/re2c/stdlib"
           cp build/re2c/re2c "stage/package-tools/$rid/re2c"
+          cp -a upstream/re2c/include/. "stage/package-tools/$rid/share/re2c/stdlib/"
       - uses: actions/upload-artifact@v4
         with:
           name: re2c-tools-macos
@@ -102,8 +104,9 @@ jobs:
         run: |
           cmake --build build/re2c --config Release --parallel 2
           & ".\build\re2c\re2c.exe" --version
-          New-Item -ItemType Directory -Force -Path stage\package-tools\windows-x64 | Out-Null
+          New-Item -ItemType Directory -Force -Path stage\package-tools\windows-x64\share\re2c\stdlib | Out-Null
           Copy-Item ".\build\re2c\re2c.exe" ".\stage\package-tools\windows-x64\re2c.exe"
+          Copy-Item ".\upstream\re2c\include\*" ".\stage\package-tools\windows-x64\share\re2c\stdlib" -Recurse
       - uses: actions/upload-artifact@v4
         with:
           name: re2c-tools-windows-x64
@@ -130,7 +133,10 @@ jobs:
           set -euo pipefail
           test -f package/tools/linux-x64/re2c
           test -f package/tools/windows-x64/re2c.exe
-          find package/tools -maxdepth 2 -type f -print
+          test -f package/tools/linux-x64/share/re2c/stdlib/unicode_categories.re
+          test -f package/tools/linux-x64/share/re2c/stdlib/unicode_properties.re
+          test -f package/tools/windows-x64/share/re2c/stdlib/unicode_categories.re
+          find package/tools -maxdepth 5 -type f -print
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
