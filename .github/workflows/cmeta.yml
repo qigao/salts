@@ -23,9 +23,7 @@ on:
       - "presets/**"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - ".github/workflows/cmeta.yml"
-      - ".github/actions/setup-re2c-tools/**"
   push:
     branches: [master]
     paths:
@@ -49,9 +47,7 @@ on:
       - "presets/**"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - ".github/workflows/cmeta.yml"
-      - ".github/actions/setup-re2c-tools/**"
   workflow_dispatch:
 
 permissions:
@@ -77,7 +73,7 @@ jobs:
           lake-package-directory: formal/cmeta_cflow_calculus
 
       - name: Restore versioned re2c tools
-        uses: ./.github/actions/setup-re2c-tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
 
       - name: Setup vcpkg
         id: linux-env
@@ -99,14 +95,17 @@ jobs:
           echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
 
+      - name: Configure shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+
       - name: Restore Linux vcpkg binary cache
         id: linux-vcpkg-cache
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-
 
       - name: Report Linux vcpkg cache state
         run: echo "vcpkg cache hit=${{ steps.linux-vcpkg-cache.outputs.cache-hit }}"
@@ -152,7 +151,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: build/ci-salts-sdk
-          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: salts-sdk-v2-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
 
       - name: Verify CMeta shared ownership with sanitizers
         shell: bash
@@ -218,6 +217,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Resolve shared vcpkg cache revision
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+
       - name: Record SDK cache toolchain
         id: sdk-env
         shell: bash
@@ -231,7 +233,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/ci-salts-sdk
-          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.sdk-env.outputs.image }}-${{ steps.sdk-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: salts-sdk-v2-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.sdk-env.outputs.image }}-${{ steps.sdk-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           fail-on-cache-miss: true
 
       - name: Verify cached SDK provenance
@@ -266,7 +268,7 @@ jobs:
           persist-credentials: false
 
       - name: Restore versioned re2c tools
-        uses: ./.github/actions/setup-re2c-tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
 
       - name: Setup vcpkg
         id: macos-env
@@ -292,14 +294,17 @@ jobs:
           echo "image=${ImageOS:-macos}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
 
+      - name: Configure shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+
       - name: Restore macOS vcpkg binary cache
         id: macos-vcpkg-cache
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-
 
       - name: Report macOS vcpkg cache state
         run: echo "vcpkg cache hit=${{ steps.macos-vcpkg-cache.outputs.cache-hit }}"
@@ -344,7 +349,7 @@ jobs:
           persist-credentials: false
 
       - name: Restore versioned re2c tools
-        uses: ./.github/actions/setup-re2c-tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
 
       - name: Validate Android toolchains
         id: android-env
@@ -380,14 +385,17 @@ jobs:
           echo "triplet=arm64-android" >> "$GITHUB_OUTPUT"
           echo "ndk=$ndk_revision" >> "$GITHUB_OUTPUT"
 
+      - name: Configure shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+
       - name: Restore Android vcpkg binary cache
         id: android-vcpkg-cache
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-
+            vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-
 
       - name: Report Android vcpkg cache state
         run: echo "vcpkg cache hit=${{ steps.android-vcpkg-cache.outputs.cache-hit }}"
@@ -450,7 +458,7 @@ jobs:
           persist-credentials: false
 
       - name: Restore versioned re2c tools
-        uses: ./.github/actions/setup-re2c-tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
 
       - name: Setup Windows build environment
         id: windows-env
@@ -499,14 +507,17 @@ jobs:
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
           "triplet=x64-windows" >> $env:GITHUB_OUTPUT
 
+      - name: Configure shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+
       - name: Restore Windows vcpkg binary cache
         id: windows-vcpkg-cache
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-
 
       - name: Report Windows vcpkg cache state
         shell: pwsh
@@ -577,7 +588,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: build/ci-salts-sdk
-          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: salts-sdk-v2-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
 
       - name: Check exact head and unchanged tracked source
         if: always()

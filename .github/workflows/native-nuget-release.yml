@@ -6,20 +6,16 @@ on:
       - "CMakeLists.txt"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - "packaging/nuget/**"
       - ".github/workflows/native-nuget-release.yml"
-      - ".github/actions/setup-re2c-tools/**"
   push:
     branches: [master]
     paths:
       - "CMakeLists.txt"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - "packaging/nuget/**"
       - ".github/workflows/native-nuget-release.yml"
-      - ".github/actions/setup-re2c-tools/**"
   workflow_dispatch:
 
 permissions:
@@ -52,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Restore versioned re2c tools
-        uses: ./.github/actions/setup-re2c-tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
       - name: Setup build environment
         id: env
         shell: bash
@@ -71,13 +67,16 @@ jobs:
           echo "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> "$GITHUB_ENV"
           echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
+      - name: Configure shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+
       - name: Restore vcpkg binary cache
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
       - name: Configure minimal Release SDK
         run: cmake --preset linux-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
@@ -110,7 +109,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Restore versioned re2c tools
-        uses: ./.github/actions/setup-re2c-tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
       - name: Setup build environment
         id: env
         shell: bash
@@ -132,13 +131,16 @@ jobs:
           echo "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> "$GITHUB_ENV"
           echo "image=${ImageOS:-macos}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
+      - name: Configure shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+
       - name: Restore vcpkg binary cache
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
       - name: Configure minimal Release SDK
         run: cmake --preset release-mac-ninja -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
@@ -176,7 +178,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Restore versioned re2c tools
-        uses: ./.github/actions/setup-re2c-tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
       - name: Setup build environment
         id: env
         shell: pwsh
@@ -193,13 +195,16 @@ jobs:
           "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> $env:GITHUB_ENV
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
           "triplet=x64-windows" >> $env:GITHUB_OUTPUT
+      - name: Configure shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+
       - name: Restore vcpkg binary cache
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
       - name: Configure minimal Release SDK
         shell: cmd
         run: |
@@ -241,7 +246,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Restore versioned re2c tools
-        uses: ./.github/actions/setup-re2c-tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
       - name: Setup build environment
         id: env
         shell: bash
@@ -265,13 +270,16 @@ jobs:
           echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=arm64-android" >> "$GITHUB_OUTPUT"
           echo "ndk=$ndk_revision" >> "$GITHUB_OUTPUT"
+      - name: Configure shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+
       - name: Restore vcpkg binary cache
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-
+            vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-
       - name: Configure minimal Android Release SDK
         run: cmake --preset android-arm64-v8a-release -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build

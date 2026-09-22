@@ -13,9 +13,7 @@ on:
       - "CMakePresets.json"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - ".github/workflows/native-io-release-benchmarks.yml"
-      - ".github/actions/setup-re2c-tools/**"
   push:
     branches: [master]
     paths:
@@ -29,9 +27,7 @@ on:
       - "CMakePresets.json"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - ".github/workflows/native-io-release-benchmarks.yml"
-      - ".github/actions/setup-re2c-tools/**"
   workflow_dispatch:
 
 permissions:
@@ -92,7 +88,7 @@ jobs:
           persist-credentials: false
 
       - name: Restore versioned re2c tools
-        uses: ./.github/actions/setup-re2c-tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
 
       - name: Select affected benchmark layers
         id: scope
@@ -112,7 +108,6 @@ jobs:
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
               $workflowChanged = @($changed | Where-Object {
                   $_ -eq '.github/workflows/native-io-release-benchmarks.yml' -or
-                  $_ -like '.github/actions/setup-re2c-tools/*'
                 }).Count -gt 0
               $nativeChanged = @($changed | Where-Object {
                   $_ -like 'native-io/*'
@@ -134,8 +129,7 @@ jobs:
                   $_ -eq 'CMakePresets.json'
                 }).Count -gt 0
               $dependencyChanged = @($changed | Where-Object {
-                  $_ -eq 'vcpkg.json' -or $_ -eq 'vcpkg-configuration.json' -or
-                  $_ -like 'vcpkg-ports/*'
+                  $_ -eq 'vcpkg.json' -or $_ -eq 'vcpkg-configuration.json'
                 }).Count -gt 0
               $runAdapted = $nativeChanged -or $cnetChanged -or
                 $coroutineChanged -or $concurrencyChanged -or $platformChanged -or
@@ -166,15 +160,19 @@ jobs:
           echo "image=${ImageOS:-linux}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=x64-linux" >> "$GITHUB_OUTPUT"
 
+      - name: Configure shared vcpkg cache for Linux
+        if: matrix.family == 'linux'
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+
       - name: Restore Linux vcpkg binary cache
         if: matrix.family == 'linux'
         id: linux-vcpkg-cache
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-
 
       - name: Report Linux vcpkg cache state
         if: matrix.family == 'linux'
@@ -229,15 +227,19 @@ jobs:
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
           "triplet=x64-windows" >> $env:GITHUB_OUTPUT
 
+      - name: Configure shared vcpkg cache for Windows
+        if: matrix.family == 'windows'
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+
       - name: Restore Windows vcpkg binary cache
         if: matrix.family == 'windows'
         id: windows-vcpkg-cache
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-
 
       - name: Report Windows vcpkg cache state
         if: matrix.family == 'windows'
@@ -270,15 +272,19 @@ jobs:
           echo "image=${ImageOS:-macos}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
           echo "triplet=default-osx-${RUNNER_ARCH}" >> "$GITHUB_OUTPUT"
 
+      - name: Configure shared vcpkg cache for macOS
+        if: matrix.family == 'mac'
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
+
       - name: Restore macOS vcpkg binary cache
         if: matrix.family == 'mac'
         id: macos-vcpkg-cache
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ env.VCPKG_CACHE_REVISION }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-
 
       - name: Report macOS vcpkg cache state
         if: matrix.family == 'mac'

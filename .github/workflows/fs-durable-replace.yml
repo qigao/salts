@@ -12,7 +12,6 @@ on:
       - "utils/tests/salts_fs_fsync_fault.c"
       - "utils/tests/CMakeLists.txt"
       - ".github/workflows/fs-durable-replace.yml"
-      - ".github/actions/setup-re2c-tools/**"
   workflow_dispatch:
 
 permissions:
@@ -39,7 +38,7 @@ jobs:
           persist-credentials: false
 
       - name: Restore versioned re2c tools
-        uses: ./.github/actions/setup-re2c-tools
+        uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
 
       - name: Set up Linux tools
         if: runner.os == 'Linux'
@@ -63,6 +62,9 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vs)) { throw 'x64 MSVC was not found' }
           "VSINSTALL=$vs" >> $env:GITHUB_ENV
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+
+      - name: Configure shared vcpkg cache
+        uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
 
       - name: Configure and run Linux contract
         if: runner.os == 'Linux'
