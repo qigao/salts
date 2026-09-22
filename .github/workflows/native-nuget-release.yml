@@ -6,7 +6,6 @@ on:
       - "CMakeLists.txt"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - "packaging/nuget/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
@@ -16,7 +15,6 @@ on:
       - "CMakeLists.txt"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - "packaging/nuget/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
@@ -74,7 +72,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
       - name: Configure minimal Release SDK
@@ -134,7 +132,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
       - name: Configure minimal Release SDK
@@ -194,7 +192,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
       - name: Configure minimal Release SDK
@@ -265,7 +263,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-
       - name: Configure minimal Android Release SDK

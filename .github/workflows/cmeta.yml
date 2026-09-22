@@ -23,7 +23,6 @@ on:
       - "presets/**"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - ".github/workflows/cmeta.yml"
       - ".github/actions/setup-re2c-tools/**"
   push:
@@ -49,7 +48,6 @@ on:
       - "presets/**"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - ".github/workflows/cmeta.yml"
       - ".github/actions/setup-re2c-tools/**"
   workflow_dispatch:
@@ -103,7 +101,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-
 
@@ -151,7 +149,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: build/ci-salts-sdk
-          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
 
       - name: Verify CMeta shared ownership with sanitizers
         shell: bash
@@ -230,7 +228,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/ci-salts-sdk
-          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.sdk-env.outputs.image }}-${{ steps.sdk-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.sdk-env.outputs.image }}-${{ steps.sdk-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           fail-on-cache-miss: true
 
       - name: Verify cached SDK provenance
@@ -295,7 +293,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-
 
@@ -382,7 +380,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-
 
@@ -500,7 +498,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-
 
@@ -573,7 +571,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: build/ci-salts-sdk
-          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
 
       - name: Check exact head and unchanged tracked source
         if: always()

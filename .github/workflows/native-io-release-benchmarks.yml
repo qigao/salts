@@ -13,7 +13,6 @@ on:
       - "CMakePresets.json"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - ".github/workflows/native-io-release-benchmarks.yml"
       - ".github/actions/setup-re2c-tools/**"
   push:
@@ -29,7 +28,6 @@ on:
       - "CMakePresets.json"
       - "vcpkg.json"
       - "vcpkg-configuration.json"
-      - "vcpkg-ports/**"
       - ".github/workflows/native-io-release-benchmarks.yml"
       - ".github/actions/setup-re2c-tools/**"
   workflow_dispatch:
@@ -134,8 +132,7 @@ jobs:
                   $_ -eq 'CMakePresets.json'
                 }).Count -gt 0
               $dependencyChanged = @($changed | Where-Object {
-                  $_ -eq 'vcpkg.json' -or $_ -eq 'vcpkg-configuration.json' -or
-                  $_ -like 'vcpkg-ports/*'
+                  $_ -eq 'vcpkg.json' -or $_ -eq 'vcpkg-configuration.json'
                 }).Count -gt 0
               $runAdapted = $nativeChanged -or $cnetChanged -or
                 $coroutineChanged -or $concurrencyChanged -or $platformChanged -or
@@ -171,7 +168,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-
 
@@ -233,7 +230,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-
 
@@ -273,7 +270,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'vcpkg-ports/**') }}
+          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-
 
