@@ -11,7 +11,11 @@ other C/C++ CI pipelines.
 - `tools/windows-x64/re2c.exe`
 - `tools/macos-x64/re2c` or `tools/macos-arm64/re2c`
 
-Use the executable matching the build host. NuGet/Actions ZIP extraction may not preserve\nUnix executable bits, so Linux/macOS consumers should run `chmod +x` on the restored\n`re2c` file before invoking it.\n\nAndroid is intentionally not included:
+Use the executable matching the build host. NuGet/Actions ZIP extraction may not preserve
+Unix executable bits, so Linux/macOS consumers should run `chmod +x` on the restored
+`re2c` file before invoking it.
+
+Android is intentionally not included:
 re2c runs on the host and generates source code before the Android cross-build.
 
 Upstream project: https://github.com/skvadrik/re2c
