@@ -436,8 +436,5 @@ cmeta_gen_status cmeta_callable_generate(const cmeta_callable *fn, const void *i
 #if !defined(CMETA_FUNCTION_H)
 #include <cmeta/function.h>
 #endif
-#if !defined(CMETA_META_INTERFACE_H)
-#include <cmeta/interface.h>
-#endif
 
 #endif
