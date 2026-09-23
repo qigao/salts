@@ -8,31 +8,39 @@
 # A later migration may move tinymock.c into a dedicated archive without
 # changing the public Salts::TinyMock target contract.
 
-add_library(tinymock INTERFACE)
-add_library(Salts::TinyMock ALIAS tinymock)
+add_library(tinymock STATIC
+  src/tinymock_history.c)
 
-set_target_properties(tinymock PROPERTIES
+cmake_config_target(tinymock
+  ALIAS Salts::TinyMock
+  FOLDER "tinymock"
   EXPORT_NAME TinyMock)
 
+target_compile_features(tinymock PUBLIC c_std_11)
+
 target_link_libraries(tinymock
-  INTERFACE
+  PUBLIC
     Salts::TinyTest
     Salts::CMeta)
 
 target_include_directories(tinymock
-  INTERFACE
+  PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>)
 
 install(
   TARGETS tinymock
   EXPORT SaltsTargets
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   COMPONENT TinyMock)
 
 install(
   FILES
     include/tinymock_cmeta.h
     include/tinymock_function.h
+    include/tinymock_history.h
   DESTINATION include
   COMPONENT TinyMock)
 
