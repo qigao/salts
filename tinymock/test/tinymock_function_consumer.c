@@ -8,3 +8,19 @@ int tinymock_function_consumer_run(int input) {
 int tinymock_function_consumer_pointer(int *value) {
   return tinymock_fixture_pointer(value);
 }
+
+int tinymock_function_consumer_write_size(int input, size_t *written) {
+  return tinymock_fixture_write_size(input, written);
+}
+
+int tinymock_function_consumer_adjust_int(int *value) {
+  return tinymock_fixture_adjust_int(value);
+}
+
+int tinymock_function_consumer_unknown_ptr(int *value) {
+  return tinymock_fixture_unknown_ptr(value);
+}
+
+int tinymock_function_consumer_nullable_out(size_t *written) {
+  return tinymock_fixture_nullable_out(written);
+}
