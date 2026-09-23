@@ -294,6 +294,17 @@ implements(Source, file_source, capabilities,
 
 This is a `{ self, vtable }` protocol mechanism, not a class hierarchy.
 
+
+Interface method schemas have two reflection levels. Historical `R0..R4`,
+`V0..V4`, and `D0` rows define the exact dispatch ABI only; their method
+reflection does not invent FunctionDesc semantics. Frameworks that need shared
+function semantics use `F0..F4`, `FV0..FV4`, or `FD0` rows and explicitly
+provide contract, return descriptor/carrier, and five-field parameter rows.
+Those methods expose canonical `cmeta_function_desc` and
+`cmeta_function_abi_desc` through the interface metadata, so TinyMock, service
+binding, and execution-admission consumers do not maintain an interface-only
+signature registry.
+
 ## Layering principle
 
 ```text
