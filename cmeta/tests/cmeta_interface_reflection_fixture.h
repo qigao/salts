@@ -13,4 +13,10 @@
 CMETA_INTERFACE(cmeta_reflection_counter,
                 CMETA_INTERFACE_REFLECTION_METHODS);
 
+#define CMETA_INTERFACE_LEGACY_METHODS(X, I) \
+    X(I,R1,int,add,int,delta)
+
+CMETA_INTERFACE(cmeta_reflection_legacy,
+                CMETA_INTERFACE_LEGACY_METHODS);
+
 #endif /* CMETA_INTERFACE_REFLECTION_FIXTURE_H */
