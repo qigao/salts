@@ -66,6 +66,17 @@ set_target_properties(cmeta_tinymock_selective_override_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+
+cmake_add_test(cmeta_tinymock_return_test
+  SOURCES tinymock_return_test.c
+  LIBS Salts::TinyMock
+  FOLDER "tinymock/tests")
+
+set_target_properties(cmeta_tinymock_return_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 function(tinymock_add_compile_failure_test target_name source expected_diagnostic)
   add_executable(${target_name} EXCLUDE_FROM_ALL ${source})
   target_link_libraries(${target_name} PRIVATE Salts::TinyMock)
