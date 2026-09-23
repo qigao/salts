@@ -1,8 +1,15 @@
 #include "tinytest.h"
 #include <cflow/cflow.h>
+#include <cflow/clock.h>
 
 #include <type_traits>
 
+static_assert(std::is_standard_layout<cflow_clock>::value,
+              "Clock must remain a C-compatible interface");
+static_assert(std::is_standard_layout<cflow_instant>::value,
+              "Clock instant must remain a C-compatible value");
+static_assert(std::is_standard_layout<cflow_duration>::value,
+              "Clock duration must remain a C-compatible value");
 static_assert(std::is_standard_layout<cflow_publisher>::value,
               "Reactive Publisher must be a C-compatible interface");
 static_assert(std::is_standard_layout<cflow_subscriber>::value,
@@ -266,6 +273,7 @@ static_assert(std::is_same<decltype(&cflow_stream_for_each_result),
 
 suite("CFlow C++ public header") {
   it("exposes the aggregate API to C++ consumers") {
+    const cmeta_interface_desc *clock_meta = cflow_clock_interface();
     cflow_subscription run = {};
     cflow_scheduler resume_scheduler = {};
     cflow_publish_context resume_context = {};
@@ -325,6 +333,12 @@ suite("CFlow C++ public header") {
     const cmeta_type_desc *event_type = nullptr;
     int received = 0;
 
+    check_true(cmeta_interface_desc_valid(clock_meta));
+    check_true(cmeta_interface_method_reflection_valid(
+        &clock_meta->methods[0]));
+    check_true(cmeta_type_equal(
+        clock_meta->methods[0].function->return_type,
+        &cmeta_type_cflow_instant));
     check_null(run.impl);
     check_null(resume_context.scheduler);
     check_true(resume_context.downstream_demand == 0u);
