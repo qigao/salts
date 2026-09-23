@@ -8,7 +8,7 @@ function(salts_tinymock_override_functions target)
 
   set(options)
   set(one_value_args)
-  set(multi_value_args HEADERS)
+  set(multi_value_args HEADERS FUNCTIONS)
   cmake_parse_arguments(TINYMOCK
     "${options}" "${one_value_args}" "${multi_value_args}" ${ARGN})
 
@@ -23,6 +23,22 @@ function(salts_tinymock_override_functions target)
       "salts_tinymock_override_functions requires HEADERS")
   endif()
 
+  set(selection_preamble "")
+  if(TINYMOCK_FUNCTIONS)
+    string(APPEND selection_preamble
+      "#define TINYMOCK_SELECTIVE_FUNCTION_OVERRIDES 1\n")
+    foreach(function_name IN LISTS TINYMOCK_FUNCTIONS)
+      if(NOT function_name MATCHES "^[A-Za-z_][A-Za-z0-9_]*$")
+        message(FATAL_ERROR
+          "salts_tinymock_override_functions: invalid function name "
+          "'${function_name}'")
+      endif()
+      string(APPEND selection_preamble
+        "#define TINYMOCK_SELECTED_FUNCTION_${function_name} "
+        "TINYMOCk_PP_PROBE_()\n")
+    endforeach()
+  endif()
+
   set(index 0)
   foreach(header IN LISTS TINYMOCK_HEADERS)
     math(EXPR index "${index} + 1")
@@ -34,7 +50,7 @@ function(salts_tinymock_override_functions target)
       CONTENT
 "#define TINYTEST_NO_MAIN 1
 #define TINYMOCK_GENERATE_FUNCTION_OVERRIDES 1
-#include <tinymock_function.h>
+${selection_preamble}#include <tinymock_function.h>
 #include <${header}>
 ")
 
