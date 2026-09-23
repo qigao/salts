@@ -13,6 +13,8 @@ TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_unknown_ptr);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_nullable_out);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_notify);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_shutdown);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_box_copy);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_pointer_answer);
 
 suite("TinyMock reflected free functions") {
   it("generates replacement definitions without repeating signatures") {
@@ -203,6 +205,72 @@ suite("TinyMock reflected free functions") {
 
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_notify);
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_shutdown);
+  }
+
+  it("records, matches, captures, and returns aggregate values") {
+    tinymock_fixture_box input = {7};
+    tinymock_fixture_box expected_input = {7};
+    tinymock_fixture_box scripted = {41};
+    tinymock_fixture_box result;
+    tinymock_cmeta_captor captor;
+
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_box_copy);
+    check_true(TINYMOCk_FUNCTION_SET_RETURN(
+        tinymock_fixture_box_copy, scripted));
+
+    result = tinymock_function_consumer_box(input);
+    check_equal(result.value, 41);
+
+    tinymock_mock_verify_times(
+        TINYMOCk_FUNCTION(tinymock_fixture_box_copy), 1);
+    check_true(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
+        tinymock_fixture_box_copy, 0, "input", expected_input));
+
+    tinymock_cmeta_captor_init(&captor);
+    check_true(TINYMOCk_FUNCTION_CAPTURE(
+        tinymock_fixture_box_copy, 0, "input", &captor));
+    check_true(cmeta_type_equal(
+        tinymock_cmeta_captor_type(&captor),
+        &tinymock_fixture_box_type));
+    check_equal(
+        ((const tinymock_fixture_box *)
+            tinymock_cmeta_captor_value(&captor))->value,
+        7);
+
+    input.value = 99;
+    check_equal(
+        ((const tinymock_fixture_box *)
+            tinymock_cmeta_captor_value(&captor))->value,
+        7);
+
+    tinymock_cmeta_captor_destroy(&captor);
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_box_copy);
+  }
+
+  it("lets typed scalar and pointer returns override legacy defaults") {
+    int typed_add = 88;
+    int pointer_value = 123;
+    int *typed_pointer = &pointer_value;
+
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_add);
+    tinymock_mock_set_default_return(
+        TINYMOCk_FUNCTION(tinymock_fixture_add),
+        TINYMOCk_RETURN(17));
+
+    check_true(TINYMOCk_FUNCTION_SET_RETURN(
+        tinymock_fixture_add, typed_add));
+    check_equal(tinymock_function_consumer_run(1), 88);
+
+    TINYMOCk_FUNCTION_CLEAR_RETURN(tinymock_fixture_add);
+    check_equal(tinymock_function_consumer_run(1), 17);
+
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_pointer_answer);
+    check_true(TINYMOCk_FUNCTION_SET_RETURN(
+        tinymock_fixture_pointer_answer, typed_pointer));
+    check_true(tinymock_function_consumer_pointer_answer() == &pointer_value);
+
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_add);
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_pointer_answer);
   }
 
   it("keeps stubbing independent from verification") {
