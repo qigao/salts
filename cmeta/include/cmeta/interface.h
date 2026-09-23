@@ -62,13 +62,10 @@ typedef uint32_t cmeta_interface_method_flags;
 
 #ifdef __cplusplus
 #define CMETA_IFACE_SIZE_CAST(value) static_cast<size_t>(value)
-#define CMETA_IFACE_PARAM_FLAGS_CAST(value) \
-    static_cast<cmeta_param_flags>(value)
 #define CMETA_IFACE_METHOD_FLAGS_CAST(value) \
     static_cast<cmeta_interface_method_flags>(value)
 #else
 #define CMETA_IFACE_SIZE_CAST(value) ((size_t)(value))
-#define CMETA_IFACE_PARAM_FLAGS_CAST(value) ((cmeta_param_flags)(value))
 #define CMETA_IFACE_METHOD_FLAGS_CAST(value) \
     ((cmeta_interface_method_flags)(value))
 #endif
