@@ -7,6 +7,7 @@ on:
       - "vcpkg.json"
       - "vcpkg-configuration.json"
       - "packaging/nuget/**"
+      - "tinymock/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
   push:
@@ -16,6 +17,7 @@ on:
       - "vcpkg.json"
       - "vcpkg-configuration.json"
       - "packaging/nuget/**"
+      - "tinymock/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
   workflow_dispatch:
