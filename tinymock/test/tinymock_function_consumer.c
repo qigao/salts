@@ -32,3 +32,12 @@ void tinymock_function_consumer_notify(int event, size_t *written) {
 void tinymock_function_consumer_shutdown(void) {
   tinymock_fixture_shutdown();
 }
+
+tinymock_fixture_box
+tinymock_function_consumer_box(tinymock_fixture_box input) {
+  return tinymock_fixture_box_copy(input);
+}
+
+int *tinymock_function_consumer_pointer_answer(void) {
+  return tinymock_fixture_pointer_answer();
+}

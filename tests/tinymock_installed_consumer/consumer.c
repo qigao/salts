@@ -15,3 +15,8 @@ int tinymock_installed_real(int value) {
 int tinymock_installed_consumer_real(int value) {
   return tinymock_installed_real(value);
 }
+
+tinymock_installed_box
+tinymock_installed_consumer_box(tinymock_installed_box input) {
+  return tinymock_installed_box_copy(input);
+}
