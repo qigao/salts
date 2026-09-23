@@ -235,7 +235,7 @@ A fifth field supplies an explicit carrier for exact execution boundaries.
 
 `FunctionAbi(name)` exposes a separate `cmeta_function_abi_desc` sidecar.
 Carriers distinguish void, scalar, object-pointer, aggregate, function-pointer,
-opaque, and unspecified boundaries. This sidecar does not change the binary
+enum, opaque, and unspecified boundaries. This sidecar does not change the binary
 layout of `cmeta_param_desc` or `cmeta_function_desc`.
 
 This reflection model is intentionally independent of `cmeta_callable` and
