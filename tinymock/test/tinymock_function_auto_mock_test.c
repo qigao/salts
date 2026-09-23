@@ -4,6 +4,14 @@
 #include "tinymock_function_consumer.h"
 #include "tinymock_function_fixture.h"
 
+static int tinymock_test_callback_a(int value) {
+  return value + 3;
+}
+
+static int tinymock_test_callback_b(int value) {
+  return value + 9;
+}
+
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_add);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_answer);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_pointer);
@@ -16,7 +24,7 @@ TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_shutdown);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_box_copy);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_pointer_answer);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_apply_callback);
-TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_callback_answer);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_tinymock_test_callback_answer);
 
 suite("TinyMock reflected free functions") {
   it("generates replacement definitions without repeating signatures") {
@@ -281,11 +289,8 @@ suite("TinyMock reflected free functions") {
     tinymock_fixture_callback returned_callback;
     tinymock_cmeta_captor captor;
 
-    int callback_a(int value) { return value + 3; }
-    int callback_b(int value) { return value + 9; }
-
-    expected_callback = callback_a;
-    scripted_callback = callback_b;
+    expected_callback = tinymock_test_callback_a;
+    scripted_callback = tinymock_test_callback_b;
 
     TINYMOCk_FUNCTION_RESET(tinymock_fixture_apply_callback);
     tinymock_mock_set_default_return(
@@ -293,7 +298,7 @@ suite("TinyMock reflected free functions") {
         TINYMOCk_RETURN(77));
 
     check_equal(
-        tinymock_function_consumer_apply_callback(callback_a, 4),
+        tinymock_function_consumer_apply_callback(tinymock_test_callback_a, 4),
         77);
     tinymock_mock_verify_times(
         TINYMOCk_FUNCTION(tinymock_fixture_apply_callback), 1);
@@ -302,7 +307,7 @@ suite("TinyMock reflected free functions") {
         tinymock_fixture_apply_callback, 0, "callback",
         expected_callback));
 
-    expected_callback = callback_b;
+    expected_callback = tinymock_test_callback_b;
     check_false(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
         tinymock_fixture_apply_callback, 0, "callback",
         expected_callback));
@@ -315,19 +320,19 @@ suite("TinyMock reflected free functions") {
         &tinymock_fixture_callback_type));
     check_true(
         *(const tinymock_fixture_callback *)
-            tinymock_cmeta_captor_value(&captor) == callback_a);
+            tinymock_cmeta_captor_value(&captor) == tinymock_test_callback_a);
     tinymock_cmeta_captor_destroy(&captor);
 
-    TINYMOCk_FUNCTION_RESET(tinymock_fixture_callback_answer);
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_tinymock_test_callback_answer);
     check_true(TINYMOCk_FUNCTION_SET_RETURN(
-        tinymock_fixture_callback_answer, scripted_callback));
+        tinymock_fixture_tinymock_test_callback_answer, scripted_callback));
 
-    returned_callback = tinymock_function_consumer_callback_answer();
-    check_true(returned_callback == callback_b);
+    returned_callback = tinymock_function_consumer_tinymock_test_callback_answer();
+    check_true(returned_callback == tinymock_test_callback_b);
     check_equal(returned_callback(5), 14);
 
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_apply_callback);
-    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_callback_answer);
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_tinymock_test_callback_answer);
   }
 
   it("keeps stubbing independent from verification") {
