@@ -30,8 +30,17 @@ install(
   COMPONENT TinyMock)
 
 install(
-  FILES include/tinymock_cmeta.h
+  FILES
+    include/tinymock_cmeta.h
+    include/tinymock_function.h
   DESTINATION include
+  COMPONENT TinyMock)
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SaltsTinyMock.cmake)
+
+install(
+  FILES cmake/SaltsTinyMock.cmake
+  DESTINATION lib/cmake/Salts
   COMPONENT TinyMock)
 
 if(BUILD_TESTS)
