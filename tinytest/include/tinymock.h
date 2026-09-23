@@ -177,6 +177,14 @@ void tinymock_mock_script_error(tinymock_mock_t *mock, const char *message);
 tinymock_value_t tinymock_mock_dispatch(tinymock_mock_t *mock, size_t argc,
                                         const tinymock_value_t *actual_args);
 
+size_t tinymock_mock_call_count(const tinymock_mock_t *mock);
+const tinymock_recorded_call_t *tinymock_mock_call_at(
+    const tinymock_mock_t *mock, size_t index);
+void tinymock_mock_verify_times(tinymock_mock_t *mock, size_t expected);
+void tinymock_mock_verify_never(tinymock_mock_t *mock);
+void tinymock_mock_verify_at_least(tinymock_mock_t *mock, size_t minimum);
+void tinymock_mock_verify_at_most(tinymock_mock_t *mock, size_t maximum);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
@@ -199,7 +207,8 @@ static inline void tinymock_failure_adapter__(const char *message) {
     TTEST_C11_EQUAL_ASSOCIATIONS__(tinymock_detail_box_signed, \
       tinymock_detail_box_unsigned, tinymock_detail_box_float, \
       tinymock_detail_box_double, tinymock_detail_box_long_double, \
-      tinymock_detail_box_cstr, tinymock_detail_box_ptr) \
+      tinymock_detail_box_cstr, tinymock_detail_box_ptr), \
+    default: tinymock_detail_box_ptr \
   )(value)
 
 #define TINYMOCk_VALUE_AS(type, value) \
@@ -207,7 +216,8 @@ static inline void tinymock_failure_adapter__(const char *message) {
     TTEST_C11_EQUAL_ASSOCIATIONS__(tinymock_detail_unbox_signed, \
       tinymock_detail_unbox_unsigned, tinymock_detail_unbox_float, \
       tinymock_detail_unbox_double, tinymock_detail_unbox_long_double, \
-      tinymock_detail_unbox_cstr, tinymock_detail_unbox_ptr) \
+      tinymock_detail_unbox_cstr, tinymock_detail_unbox_ptr), \
+    default: tinymock_detail_unbox_ptr \
   )(value))
 
 #define TINYMOCk_ARG(value) tinymock_expected_arg(TINYMOCk_VALUE(value))
@@ -270,7 +280,7 @@ static inline void tinymock_failure_adapter__(const char *message) {
   TINYMOCk_GENERATED__ RET NAME(TINYMOCk_PARAMS__(__VA_ARGS__)) { \
     tinymock_value_t actual_args[] = {TINYMOCk_ACTUAL_VALUES__(__VA_ARGS__)}; \
     tinymock_value_t result = \
-        tinymock_mock_invoke(&TINYMOCk_MOCK_DATA(NAME), (size_t)(count), actual_args); \
+        tinymock_mock_dispatch(&TINYMOCk_MOCK_DATA(NAME), (size_t)(count), actual_args); \
     return TINYMOCk_VALUE_AS(RET, result); \
   }
 
@@ -286,7 +296,7 @@ static inline void tinymock_failure_adapter__(const char *message) {
   } \
   TINYMOCk_GENERATED__ void NAME(TINYMOCk_PARAMS__(__VA_ARGS__)) { \
     tinymock_value_t actual_args[] = {TINYMOCk_ACTUAL_VALUES__(__VA_ARGS__)}; \
-    (void)tinymock_mock_invoke(&TINYMOCk_MOCK_DATA(NAME), (size_t)(count), actual_args); \
+    (void)tinymock_mock_dispatch(&TINYMOCk_MOCK_DATA(NAME), (size_t)(count), actual_args); \
   }
 
 #define TINYMOCk_MOCK_SELECT__(RET, NAME, count, ...) \
@@ -308,7 +318,7 @@ static inline void tinymock_failure_adapter__(const char *message) {
     tinymock_mock_expect(&TINYMOCk_MOCK_DATA(NAME), 0, NULL, true, ret); \
   } \
   TINYMOCk_GENERATED__ RET NAME(void) { \
-    tinymock_value_t result = tinymock_mock_invoke(&TINYMOCk_MOCK_DATA(NAME), 0, NULL); \
+    tinymock_value_t result = tinymock_mock_dispatch(&TINYMOCk_MOCK_DATA(NAME), 0, NULL); \
     return TINYMOCk_VALUE_AS(RET, result); \
   }
 
@@ -318,7 +328,7 @@ static inline void tinymock_failure_adapter__(const char *message) {
     tinymock_mock_expect(&TINYMOCk_MOCK_DATA(NAME), 0, NULL, false, tinymock_value_zero()); \
   } \
   TINYMOCk_GENERATED__ void NAME(void) { \
-    (void)tinymock_mock_invoke(&TINYMOCk_MOCK_DATA(NAME), 0, NULL); \
+    (void)tinymock_mock_dispatch(&TINYMOCk_MOCK_DATA(NAME), 0, NULL); \
   }
 
 #define TINYMOCk_MOCK_DECLARE(NAME) extern tinymock_mock_t TINYMOCk_MOCK_DATA(NAME)

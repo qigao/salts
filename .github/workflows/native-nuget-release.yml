@@ -7,6 +7,7 @@ on:
       - "vcpkg.json"
       - "vcpkg-configuration.json"
       - "packaging/nuget/**"
+      - "tinymock/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
   push:
@@ -16,6 +17,7 @@ on:
       - "vcpkg.json"
       - "vcpkg-configuration.json"
       - "packaging/nuget/**"
+      - "tinymock/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
   workflow_dispatch:
@@ -82,6 +84,8 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/linux-x64"
           cmake --install build/linux-gcc-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/include/tinymock_cmeta.h"
+          grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
           commit=$GITHUB_SHA
@@ -139,6 +143,8 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/$rid"
           cmake --install build/mac-clang-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/include/tinymock_cmeta.h"
+          grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
           commit=$GITHUB_SHA
@@ -202,7 +208,13 @@ jobs:
           $prefix = Join-Path $env:GITHUB_WORKSPACE "stage\sdk\windows-x64"
           cmake --install build/Msvc-Release --prefix $prefix --config Release
           $config = Join-Path $prefix "lib\cmake\Salts\SaltsConfig.cmake"
+          $targets = Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake"
+          $tinymockHeader = Join-Path $prefix "include\tinymock_cmeta.h"
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
+          if (-not (Test-Path -LiteralPath $tinymockHeader -PathType Leaf)) { throw "missing $tinymockHeader" }
+          if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::TinyMock" -Quiet)) {
+            throw "missing Salts::TinyMock export in $targets"
+          }
           @(
             "version=${{ needs.metadata.outputs.version }}"
             "commit=$env:GITHUB_SHA"
@@ -259,6 +271,8 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
           cmake --install build/android-arm64-v8a-release --prefix "$prefix"
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/include/tinymock_cmeta.h"
+          grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
           commit=$GITHUB_SHA

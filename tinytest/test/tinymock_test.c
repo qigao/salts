@@ -17,6 +17,15 @@ TINYMOCk_MOCK0(int, tinymock_zero)
 static int g_tinymock_mismatch_marker = 0;
 
 suite("TinyMock") {
+  it("should box typed object pointers through pointer identity") {
+    struct tinymock_pointer_probe { int value; } probe = {17};
+    struct tinymock_pointer_probe *pointer = &probe;
+    tinymock_value_t boxed = TINYMOCk_VALUE(pointer);
+
+    check_equal(boxed.kind, TINYMOCk_VALUE_POINTER);
+    check(TINYMOCk_VALUE_AS(struct tinymock_pointer_probe *, boxed) == pointer);
+  }
+
 
   it("should match int arguments and return mocked value") {
     mock_tinymock_add_reset();
@@ -126,6 +135,47 @@ suite("TinyMock") {
                              TINYMOCk_RETURN(21));
     check_equal(tinymock_six(1, 2, 3, 4, 5, 6), 21);
     mock_tinymock_six_verify();
+  }
+
+  it("should count calls beyond the bounded argument record capacity") {
+    size_t index;
+
+    mock_tinymock_default_reset();
+    mock_tinymock_default_set_default_return(TINYMOCk_RETURN(-9));
+
+    for (index = 0; index < TINYMOCk_MAX_CALLS + 5u; ++index)
+      check_equal(tinymock_default((int)index), -9);
+
+    check_equal(tinymock_mock_call_count(&tinymock_tinymock_default),
+                (size_t)TINYMOCk_MAX_CALLS + 5u);
+    tinymock_mock_verify_times(&tinymock_tinymock_default,
+                               (size_t)TINYMOCk_MAX_CALLS + 5u);
+    check_not_null(tinymock_mock_call_at(
+        &tinymock_tinymock_default, TINYMOCk_MAX_CALLS - 1u));
+    check_null(tinymock_mock_call_at(
+        &tinymock_tinymock_default, TINYMOCk_MAX_CALLS));
+  }
+
+  it("should record generated wrapper calls for independent verification") {
+    const tinymock_recorded_call_t *call;
+
+    mock_tinymock_default_reset();
+    mock_tinymock_default_set_default_return(TINYMOCk_RETURN(-9));
+
+    check_equal(tinymock_default(777), -9);
+    check_equal(tinymock_mock_call_count(&tinymock_tinymock_default), (size_t)1);
+    tinymock_mock_verify_times(&tinymock_tinymock_default, 1);
+    tinymock_mock_verify_at_least(&tinymock_tinymock_default, 1);
+    tinymock_mock_verify_at_most(&tinymock_tinymock_default, 1);
+
+    call = tinymock_mock_call_at(&tinymock_tinymock_default, 0);
+    check_not_null(call);
+    check_equal(call->argc, (size_t)1);
+    check_equal(TINYMOCk_VALUE_AS(int, call->args[0]), 777);
+    check_null(tinymock_mock_call_at(&tinymock_tinymock_default, 1));
+
+    mock_tinymock_zero_reset();
+    tinymock_mock_verify_never(&tinymock_tinymock_zero);
   }
 
   it_should_fail("should stop on argument mismatch and not execute subsequent code") {
