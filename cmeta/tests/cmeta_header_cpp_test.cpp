@@ -6,6 +6,7 @@
 #include "cmeta_fixed_bytes_fixture.h"
 #include <cmeta/range.h>
 #include <cmeta/meta.h>
+#include <cmeta/interface.h>
 #include "tinytest.hpp"
 
 #include <cstddef>
@@ -19,6 +20,10 @@ static_assert(std::is_standard_layout_v<cmeta_function_desc>,
               "function reflection remains a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_function_abi_desc>,
               "function ABI reflection remains a C ABI");
+static_assert(std::is_standard_layout_v<cmeta_interface_method_desc>,
+              "interface method reflection remains a C ABI");
+static_assert(std::is_standard_layout_v<cmeta_interface_desc>,
+              "interface reflection remains a C ABI");
 static_assert(std::is_same_v<decltype(&cmeta_data_enum_assign_bits),
               cmeta_status (*)(const cmeta_data_desc *, void *, uint64_t)>,
               "canonical enum assignment does not narrow through int64_t");
