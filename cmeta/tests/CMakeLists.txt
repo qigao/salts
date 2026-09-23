@@ -80,6 +80,20 @@ cmake_add_test(cmeta_function_reflection_test
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
+
+cmake_add_test(cmeta_interface_function_test
+  SOURCES
+    cmeta_interface_function_test.c
+    cmeta_interface_function_peer_a.c
+    cmeta_interface_function_peer_b.c
+  LIBS Salts::CMeta Salts::TinyTest
+  FOLDER "cmeta/tests")
+
+set_target_properties(cmeta_interface_function_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 function(cmeta_add_compile_failure_test target_name source expected_diagnostic)
   add_executable(${target_name} EXCLUDE_FROM_ALL ${source})
   target_link_libraries(${target_name} PRIVATE Salts::CMeta)
@@ -148,7 +162,7 @@ set_target_properties(cmeta_data_test PROPERTIES
   C_EXTENSIONS OFF)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  foreach(tgt cmeta_core_test cmeta_type_identity_test cmeta_declared_type_test cmeta_container_type_test cmeta_data_test cmeta_collector_test cmeta_function_reflection_test)
+  foreach(tgt cmeta_core_test cmeta_type_identity_test cmeta_declared_type_test cmeta_container_type_test cmeta_data_test cmeta_collector_test cmeta_function_reflection_test cmeta_interface_function_test)
     target_compile_options(${tgt} PRIVATE -Werror=missing-field-initializers)
   endforeach()
 endif()
