@@ -30,6 +30,15 @@ add_library(tinytest STATIC "${SALTS_SOURCE_ROOT}/tinytest/src/tinytest.c"
                            "${SALTS_SOURCE_ROOT}/tinytest/src/tinymock.c")
 add_library(Salts::TinyTest ALIAS tinytest)
 target_include_directories(tinytest PUBLIC "${SALTS_SOURCE_ROOT}/tinytest/include")
+
+# Mirror the root TinyMock usage boundary because this isolated harness adds
+# CMeta directly and therefore does not pass through the root tinymock/
+# subdirectory. Salts::CMeta is a forward target reference resolved when the
+# CMeta subdirectory is added below.
+add_library(tinymock INTERFACE)
+add_library(Salts::TinyMock ALIAS tinymock)
+target_link_libraries(tinymock INTERFACE Salts::TinyTest Salts::CMeta)
+
 set(BUILD_TESTS ON)
 add_subdirectory("${SALTS_SOURCE_ROOT}/cmeta" cmeta)
 
