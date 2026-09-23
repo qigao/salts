@@ -64,9 +64,13 @@ typedef uint32_t cmeta_interface_method_flags;
 #define CMETA_IFACE_SIZE_CAST(value) static_cast<size_t>(value)
 #define CMETA_IFACE_PARAM_FLAGS_CAST(value) \
     static_cast<cmeta_param_flags>(value)
+#define CMETA_IFACE_METHOD_FLAGS_CAST(value) \
+    static_cast<cmeta_interface_method_flags>(value)
 #else
 #define CMETA_IFACE_SIZE_CAST(value) ((size_t)(value))
 #define CMETA_IFACE_PARAM_FLAGS_CAST(value) ((cmeta_param_flags)(value))
+#define CMETA_IFACE_METHOD_FLAGS_CAST(value) \
+    ((cmeta_interface_method_flags)(value))
 #endif
 
 enum {
@@ -120,7 +124,7 @@ cmeta_interface_method_reflection_valid(const cmeta_interface_method_desc *metho
            cmeta_function_abi_desc_valid(method->abi) &&
            method->abi->function == method->function &&
            method->function->param_count == CMETA_IFACE_SIZE_CAST(method->dispatch_arity) &&
-           (method->flags & ~CMETA_INTERFACE_METHOD_FLAG_MASK) == 0u;
+           (method->flags & ~CMETA_IFACE_METHOD_FLAGS_CAST(CMETA_INTERFACE_METHOD_FLAG_MASK)) == 0u;
 }
 
 CMETA_INLINE bool
@@ -135,7 +139,7 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
         if (method->size < sizeof(*method) ||
             method->name == NULL || method->name[0] == '\0' ||
             method->dispatch_arity > 4u ||
-            (method->flags & ~CMETA_INTERFACE_METHOD_FLAG_MASK) != 0u)
+            (method->flags & ~CMETA_IFACE_METHOD_FLAGS_CAST(CMETA_INTERFACE_METHOD_FLAG_MASK)) != 0u)
             return false;
         if ((method->function == NULL) != (method->abi == NULL))
             return false;
