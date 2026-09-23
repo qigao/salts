@@ -24,7 +24,7 @@ static Point make_point(int *calls, int x, int y) {
     return point;
 }
 
-spec("TinyTest CMeta equality") {
+spec("TinyTest custom equality") {
     it("compares registered values through check_equal") {
         Point actual = {3, 5};
         Point expected = {3, 5};

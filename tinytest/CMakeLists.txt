@@ -14,7 +14,7 @@ set(tinytest_public_headers
 set(tinytest_meta_headers
   "${tinytest_include_dir}/tinymeta/traits.h"
   "${tinytest_include_dir}/tinymeta/pp.h"
-  "${tinytest_include_dir}/tinymeta/cmeta.h"
+  "${tinytest_include_dir}/tinymeta/equality.h"
   "${tinytest_include_dir}/tinymeta/internal.h")
 
 set(tinytest_sources
