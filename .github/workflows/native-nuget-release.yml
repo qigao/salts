@@ -84,6 +84,7 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/linux-x64"
           cmake --install build/linux-gcc-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
@@ -143,6 +144,7 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/$rid"
           cmake --install build/mac-clang-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
@@ -209,8 +211,10 @@ jobs:
           cmake --install build/Msvc-Release --prefix $prefix --config Release
           $config = Join-Path $prefix "lib\cmake\Salts\SaltsConfig.cmake"
           $targets = Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake"
+          $functionHeader = Join-Path $prefix "include\cmeta\function.h"
           $tinymockHeader = Join-Path $prefix "include\tinymock_cmeta.h"
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
+          if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
           if (-not (Test-Path -LiteralPath $tinymockHeader -PathType Leaf)) { throw "missing $tinymockHeader" }
           if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::TinyMock" -Quiet)) {
             throw "missing Salts::TinyMock export in $targets"
@@ -271,6 +275,7 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
           cmake --install build/android-arm64-v8a-release --prefix "$prefix"
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
@@ -304,8 +309,11 @@ jobs:
         run: |
           set -euo pipefail
           test -f package/sdk/linux-x64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/linux-x64/include/cmeta/function.h
           test -f package/sdk/windows-x64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/windows-x64/include/cmeta/function.h
           test -f package/sdk/android-arm64-v8a/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/android-arm64-v8a/include/cmeta/function.h
           test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 4
           find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print
           du -sh package/sdk
