@@ -2,6 +2,7 @@
 #include <cflow/cflow.h>
 #include <cflow/time.h>
 
+#include <cstring>
 #include <type_traits>
 
 static_assert(std::is_standard_layout<cflow_publisher>::value,
@@ -328,8 +329,8 @@ suite("CFlow C++ public header") {
 
     check_true(cmeta_type_desc_valid(&cflow_type_duration));
     check_true(cmeta_type_desc_valid(&cflow_type_instant));
-    check_equal(cflow_type_duration.name, "cflow_duration");
-    check_equal(cflow_type_instant.name, "cflow_instant");
+    check_true(std::strcmp(cflow_type_duration.name, "cflow_duration") == 0);
+    check_true(std::strcmp(cflow_type_instant.name, "cflow_instant") == 0);
     check_false(cmeta_type_equal(&cflow_type_duration, &cflow_type_instant));
 
     check_null(run.impl);
