@@ -39,23 +39,50 @@ function(salts_tinymock_override_functions target)
     endforeach()
   endif()
 
-  set(index 0)
-  foreach(header IN LISTS TINYMOCK_HEADERS)
-    math(EXPR index "${index} + 1")
-    set(output
-      "${CMAKE_CURRENT_BINARY_DIR}/${target}.tinymock.${index}.c")
+  if(TINYMOCK_FUNCTIONS)
+    set(header_includes "")
+    foreach(header IN LISTS TINYMOCK_HEADERS)
+      string(APPEND header_includes "#include <${header}>\n")
+    endforeach()
 
+    set(selection_checks "")
+    foreach(function_name IN LISTS TINYMOCK_FUNCTIONS)
+      string(APPEND selection_checks
+        "_Static_assert(sizeof(struct tinymock_required_FunctionDecl_${function_name}) == 1u, "
+        "\"TinyMock selected function ${function_name} must be declared with FunctionDecl\");\n")
+    endforeach()
+
+    set(output
+      "${CMAKE_CURRENT_BINARY_DIR}/${target}.tinymock.selected.c")
     file(GENERATE
       OUTPUT "${output}"
       CONTENT
 "#define TINYTEST_NO_MAIN 1
 #define TINYMOCK_GENERATE_FUNCTION_OVERRIDES 1
 ${selection_preamble}#include <tinymock_function.h>
+${header_includes}
+${selection_checks}")
+
+    target_sources(${target} PRIVATE "${output}")
+  else()
+    set(index 0)
+    foreach(header IN LISTS TINYMOCK_HEADERS)
+      math(EXPR index "${index} + 1")
+      set(output
+        "${CMAKE_CURRENT_BINARY_DIR}/${target}.tinymock.${index}.c")
+
+      file(GENERATE
+        OUTPUT "${output}"
+        CONTENT
+"#define TINYTEST_NO_MAIN 1
+#define TINYMOCK_GENERATE_FUNCTION_OVERRIDES 1
+#include <tinymock_function.h>
 #include <${header}>
 ")
 
-    target_sources(${target} PRIVATE "${output}")
-  endforeach()
+      target_sources(${target} PRIVATE "${output}")
+    endforeach()
+  endif()
 
   target_link_libraries(${target} PRIVATE Salts::TinyMock)
 endfunction()

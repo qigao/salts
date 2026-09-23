@@ -122,11 +122,19 @@
 #define TINYMOCk_FUNCTION_IS_SELECTED_(name) \
   TINYMOCk_PP_IS_PROBE_(TINYMOCk_FUNCTION_SELECTED_MARK_(name))
 
+#define TINYMOCk_FUNCTION_WITNESS_TAG_I(name) \
+  tinymock_required_FunctionDecl_##name
+#define TINYMOCk_FUNCTION_WITNESS_TAG(name) \
+  TINYMOCk_FUNCTION_WITNESS_TAG_I(name)
+
 #if defined(TINYMOCK_SELECTIVE_FUNCTION_OVERRIDES)
 #define TINYMOCk_FUNCTION_SHOULD_GENERATE_(name) \
   TINYMOCk_FUNCTION_IS_SELECTED_(name)
+#define TINYMOCk_FUNCTION_SELECTION_WITNESS(name) \
+  struct TINYMOCk_FUNCTION_WITNESS_TAG(name) { char seen; };
 #else
 #define TINYMOCk_FUNCTION_SHOULD_GENERATE_(name) 1
+#define TINYMOCk_FUNCTION_SELECTION_WITNESS(name)
 #endif
 
 #ifdef CMETA_FUNCTION_DECL_EXTENSION
@@ -214,11 +222,16 @@
 
 #define TINYMOCk_FUNCTION_VALUE_RETURN_ADMIT(return_abi_carrier, name) \
   _Static_assert( \
+      (return_abi_carrier) != CMETA_ABI_VOID, \
+      "TinyMock auto-mock return for " #name \
+      " uses CMETA_ABI_VOID with a non-literal void spelling; use literal void"); \
+  _Static_assert( \
       (return_abi_carrier) == CMETA_ABI_SCALAR || \
       (return_abi_carrier) == CMETA_ABI_OBJECT_POINTER || \
       (return_abi_carrier) == CMETA_ABI_AGGREGATE || \
       (return_abi_carrier) == CMETA_ABI_FUNCTION_POINTER || \
-      (return_abi_carrier) == CMETA_ABI_ENUM, \
+      (return_abi_carrier) == CMETA_ABI_ENUM || \
+      (return_abi_carrier) == CMETA_ABI_VOID, \
       "TinyMock auto-mock return for " #name \
       " uses an unsupported or unspecified ABI carrier")
 
@@ -381,6 +394,7 @@
     contract, return_type, return_desc, return_abi_carrier, name, ...)
 #define TINYMOCk_FUNCTION_DECL_ABI_SELECTED_1( \
     contract, return_type, return_desc, return_abi_carrier, name, ...) \
+  TINYMOCk_FUNCTION_SELECTION_WITNESS(name) \
   TINYMOCk_RETURN_SELECT_(TINYMOCk_FUNCTION_DECL_ABI_EXTENSION_, return_type)( \
       contract, return_type, return_desc, return_abi_carrier, name, __VA_ARGS__)
 
@@ -435,6 +449,7 @@
     contract, return_type, return_desc, return_abi_carrier, name)
 #define TINYMOCk_FUNCTION0_DECL_ABI_SELECTED_1( \
     contract, return_type, return_desc, return_abi_carrier, name) \
+  TINYMOCk_FUNCTION_SELECTION_WITNESS(name) \
   TINYMOCk_RETURN_SELECT_(TINYMOCk_FUNCTION0_DECL_ABI_EXTENSION_, return_type)( \
       contract, return_type, return_desc, return_abi_carrier, name)
 

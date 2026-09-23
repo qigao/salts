@@ -308,10 +308,44 @@ first declaring an ordered expectation. Existing `TINYMOCk_MOCK(...)` usage
 keeps its strict expectation API.
 
 The bridge deliberately reuses the interface X-list rather than defining a
-second reflection schema. Its current value carrier is limited to TinyMock's
-portable scalar/string/pointer set. CMeta trait-backed arbitrary object
-matching/capture and generic free-function reflection are separate follow-up
-work; unsupported by-value structures are not silently treated as mockable.
+second reflection schema. CMeta-aware free-function mocking now uses the same
+type/trait truth through `FunctionDecl(...)`, `FunctionMeta(...)`, and
+`FunctionAbi(...)`.
+
+### Reflected free-function auto-mocking
+
+A test target can generate exact-ABI replacement definitions from production
+headers without repeating any C signature:
+
+```cmake
+salts_tinymock_override_functions(my_test
+  HEADERS my_api.h
+  FUNCTIONS send_packet close_session)
+```
+
+`FUNCTIONS` is optional. When omitted, every supported reflected
+`FunctionDecl` in each header is generated. When present, only the selected
+names are generated and all selected headers are replayed in one test-only
+translation unit. Each selected name must actually be declared through
+`FunctionDecl`/`Function0Decl`; an ordinary prototype, variadic function,
+direct array declarator, static-inline helper, or missing name fails the Test
+Build selection witness instead of silently producing no mock.
+
+The current reflected ABI carriers include builtin scalar, object pointer,
+aggregate-by-value, function-pointer, enum, and literal void. Aggregate,
+function-pointer, and enum values use CMeta typed history/return state instead
+of the legacy `TINYMOCk_VALUE` generic carrier. Explicit descriptors with
+`CMETA_ABI_UNSPECIFIED` and `CMETA_ABI_OPAQUE` remain rejected until a
+consumer-specific lowering is defined.
+
+Void auto-mocking deliberately recognizes literal `void` in the declaration
+grammar. A typedef alias to void is rejected with a direct TinyMock diagnostic;
+use literal `void` in the reflected declaration or an adapter.
+
+For replacement-definition instrumentation, the real selected implementation
+object must not also be linked into that test target. Selective `FUNCTIONS`
+allows other reflected functions from the same header to keep their normal real
+implementations.
 
 Invocation history can be queried independently of strict expectation
 verification:
