@@ -7,6 +7,18 @@ typedef struct cmeta_function_test_box {
     int value;
 } cmeta_function_test_box;
 
+typedef int (*cmeta_function_test_callback)(int);
+
+static const cmeta_type_desc cmeta_function_test_callback_type = {
+    .name = "cmeta_function_test_callback",
+    .size = sizeof(cmeta_function_test_callback),
+    .align = _Alignof(cmeta_function_test_callback),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = NULL,
+    .identity = NULL
+};
+
 static const cmeta_type_desc cmeta_function_test_box_type = {
     .name = "cmeta_function_test_box",
     .size = sizeof(cmeta_function_test_box),
@@ -46,6 +58,23 @@ FunctionDeclAs(fallible, int, &cmeta_type_int, cmeta_function_test_box_write,
     (cmeta_function_test_box *, output, CMETA_PARAM_OUT,
      &cmeta_function_test_box_ptr_type));
 
+FunctionDeclAsAbi(value, cmeta_function_test_box,
+                  &cmeta_function_test_box_type, CMETA_ABI_AGGREGATE,
+                  cmeta_function_test_box_copy_abi,
+    (cmeta_function_test_box, input, CMETA_PARAM_IN,
+     &cmeta_function_test_box_type, CMETA_ABI_AGGREGATE));
+
+FunctionDeclAsAbi(fallible, int, &cmeta_type_int, CMETA_ABI_SCALAR,
+                  cmeta_function_test_box_write_abi,
+    (cmeta_function_test_box *, output, CMETA_PARAM_OUT,
+     &cmeta_function_test_box_ptr_type, CMETA_ABI_OBJECT_POINTER));
+
+FunctionDeclAsAbi(value, int, &cmeta_type_int, CMETA_ABI_SCALAR,
+                  cmeta_function_test_callback_apply,
+    (cmeta_function_test_callback, callback, CMETA_PARAM_IN,
+     &cmeta_function_test_callback_type, CMETA_ABI_FUNCTION_POINTER),
+    (int, value, CMETA_PARAM_IN));
+
 int cmeta_function_test_sum(int left, int right) {
     return left + right;
 }
@@ -73,6 +102,20 @@ int cmeta_function_test_box_write(cmeta_function_test_box *output) {
     return 0;
 }
 
+cmeta_function_test_box
+cmeta_function_test_box_copy_abi(cmeta_function_test_box input) {
+    return input;
+}
+
+int cmeta_function_test_box_write_abi(cmeta_function_test_box *output) {
+    return cmeta_function_test_box_write(output);
+}
+
+int cmeta_function_test_callback_apply(cmeta_function_test_callback callback,
+                                       int value) {
+    return callback ? callback(value) : -1;
+}
+
 suite("CMeta function reflection") {
     it("publishes ordinary function metadata without consumer signature duplication") {
         const cmeta_function_desc *fn = FunctionMeta(cmeta_function_test_sum);
@@ -97,6 +140,27 @@ suite("CMeta function reflection") {
         check_true(cmeta_type_equal(right->type, &cmeta_type_int));
         check_null(cmeta_function_param(fn, 2u));
         check_null(cmeta_function_find_param(fn, "missing"));
+    }
+
+    it("publishes ABI sidecars without changing function descriptors") {
+        const cmeta_function_abi_desc *sum_abi =
+            FunctionAbi(cmeta_function_test_sum);
+        const cmeta_function_abi_desc *legacy_abi =
+            FunctionAbi(cmeta_function_test_box_copy);
+
+        check_true(cmeta_function_abi_desc_valid(sum_abi));
+        check_equal(sum_abi->return_carrier,
+                    (cmeta_abi_carrier)CMETA_ABI_SCALAR);
+        check_equal(cmeta_function_param_abi(sum_abi, 0u),
+                    (cmeta_abi_carrier)CMETA_ABI_SCALAR);
+        check_equal(cmeta_function_param_abi(sum_abi, 1u),
+                    (cmeta_abi_carrier)CMETA_ABI_SCALAR);
+
+        check_true(cmeta_function_abi_desc_valid(legacy_abi));
+        check_equal(legacy_abi->return_carrier,
+                    (cmeta_abi_carrier)CMETA_ABI_UNSPECIFIED);
+        check_equal(cmeta_function_param_abi(legacy_abi, 0u),
+                    (cmeta_abi_carrier)CMETA_ABI_UNSPECIFIED);
     }
 
     it("supports zero-parameter functions") {
@@ -143,6 +207,53 @@ suite("CMeta function reflection") {
                                     &cmeta_function_test_box_ptr_type));
         check_true(cmeta_type_equal(copy_fn->return_type,
                                     &cmeta_function_test_box_type));
+    }
+
+    it("distinguishes aggregate, object-pointer, and function-pointer ABI") {
+        const cmeta_function_abi_desc *copy_abi =
+            FunctionAbi(cmeta_function_test_box_copy_abi);
+        const cmeta_function_abi_desc *write_abi =
+            FunctionAbi(cmeta_function_test_box_write_abi);
+        const cmeta_function_abi_desc *callback_abi =
+            FunctionAbi(cmeta_function_test_callback_apply);
+
+        check_true(cmeta_function_abi_desc_valid(copy_abi));
+        check_true(cmeta_function_abi_desc_valid(write_abi));
+        check_true(cmeta_function_abi_desc_valid(callback_abi));
+
+        check_equal(copy_abi->return_carrier,
+                    (cmeta_abi_carrier)CMETA_ABI_AGGREGATE);
+        check_equal(cmeta_function_param_abi(copy_abi, 0u),
+                    (cmeta_abi_carrier)CMETA_ABI_AGGREGATE);
+
+        check_equal(cmeta_function_param_abi(write_abi, 0u),
+                    (cmeta_abi_carrier)CMETA_ABI_OBJECT_POINTER);
+
+        check_equal(cmeta_function_param_abi(callback_abi, 0u),
+                    (cmeta_abi_carrier)CMETA_ABI_FUNCTION_POINTER);
+        check_equal(cmeta_function_param_abi(callback_abi, 1u),
+                    (cmeta_abi_carrier)CMETA_ABI_SCALAR);
+
+        check_true(cmeta_abi_carrier_matches_type(
+            CMETA_ABI_OBJECT_POINTER, &cmeta_function_test_box_ptr_type));
+        check_false(cmeta_abi_carrier_matches_type(
+            CMETA_ABI_OBJECT_POINTER, &cmeta_function_test_callback_type));
+    }
+
+    it("rejects ABI sidecars that contradict semantic types") {
+        cmeta_function_abi_desc abi =
+            *FunctionAbi(cmeta_function_test_box_copy_abi);
+        cmeta_abi_carrier params[1] = { CMETA_ABI_AGGREGATE };
+
+        check_true(cmeta_function_abi_desc_valid(&abi));
+
+        abi.return_carrier = CMETA_ABI_OBJECT_POINTER;
+        check_false(cmeta_function_abi_desc_valid(&abi));
+
+        abi = *FunctionAbi(cmeta_function_test_box_copy_abi);
+        abi.param_carriers = params;
+        params[0] = CMETA_ABI_OBJECT_POINTER;
+        check_false(cmeta_function_abi_desc_valid(&abi));
     }
 
     it("rejects malformed parameter metadata") {

@@ -65,3 +65,40 @@ set_target_properties(cmeta_tinymock_selective_override_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+function(tinymock_add_compile_failure_test target_name source expected_diagnostic)
+  add_executable(${target_name} EXCLUDE_FROM_ALL ${source})
+  target_link_libraries(${target_name} PRIVATE Salts::TinyMock)
+  set_target_properties(${target_name} PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    FOLDER "tinymock/tests/compile_fail")
+  add_test(
+    NAME ${target_name}
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+            --config $<CONFIG> --target ${target_name})
+  set_tests_properties(${target_name} PROPERTIES
+    PASS_REGULAR_EXPRESSION "${expected_diagnostic}"
+    RUN_SERIAL TRUE)
+endfunction()
+
+tinymock_add_compile_failure_test(
+  cmeta_tinymock_unspecified_pointer_compile_fail
+  compile_fail/tinymock_unspecified_pointer.c
+  "TinyMock auto-mock parameter tinymock_bad_unspecified.value has unspecified ABI carrier")
+
+tinymock_add_compile_failure_test(
+  cmeta_tinymock_aggregate_param_compile_fail
+  compile_fail/tinymock_aggregate_param.c
+  "TinyMock auto-mock parameter tinymock_bad_aggregate.input uses an unsupported ABI carrier")
+
+tinymock_add_compile_failure_test(
+  cmeta_tinymock_function_pointer_compile_fail
+  compile_fail/tinymock_function_pointer_param.c
+  "TinyMock auto-mock parameter tinymock_bad_function_pointer.callback uses an unsupported ABI carrier")
+
+tinymock_add_compile_failure_test(
+  cmeta_tinymock_aggregate_return_compile_fail
+  compile_fail/tinymock_aggregate_return.c
+  "TinyMock auto-mock return for tinymock_bad_return uses an unsupported or unspecified ABI carrier")

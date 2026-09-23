@@ -17,6 +17,8 @@ schema-driven, and intentionally compositional rather than a universal language.
 - `typed_any(...)` first-class callable declarations with semantic contracts;
 - generic C function/parameter reflection through `cmeta_function_desc` and
   `cmeta_param_desc`, independent of callable execution;
+- separate `cmeta_function_abi_desc` sidecars for exact call-boundary carrier
+  admission without changing semantic descriptor ABI;
 - `interface(...)` / `implements(...)` protocol/vtable declarations;
 - known-type and callable-type universe separation;
 - semantic type identity for atoms, pointers, const forms, and generic applications;
@@ -226,10 +228,15 @@ FunctionDecl(value, int, add,
 ```
 
 The three-field parameter form resolves its descriptor through
-`CMETA_TYPEOF(type)`; a fourth field may supply an explicit provider-owned
-descriptor for custom or pointer types. `FunctionDeclAs` similarly accepts an
-explicit return descriptor. Invalid or unregistered descriptors are rejected by
-`cmeta_function_desc_valid()`.
+`CMETA_TYPEOF(type)` and carries scalar ABI metadata. A fourth field may supply
+an explicit provider-owned descriptor while leaving the ABI carrier unspecified.
+A fifth field supplies an explicit carrier for exact execution boundaries.
+`FunctionDeclAsAbi` does the same for custom return types.
+
+`FunctionAbi(name)` exposes a separate `cmeta_function_abi_desc` sidecar.
+Carriers distinguish void, scalar, object-pointer, aggregate, function-pointer,
+opaque, and unspecified boundaries. This sidecar does not change the binary
+layout of `cmeta_param_desc` or `cmeta_function_desc`.
 
 This reflection model is intentionally independent of `cmeta_callable` and
 does not provide universal runtime invocation. TinyMock, service binding, code
