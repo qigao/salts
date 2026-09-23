@@ -41,6 +41,11 @@ install(
   DESTINATION lib/cmake/Salts
   COMPONENT TinyMock)
 
+configure_file(
+  cmake/TinyMockFunctions.cmake
+  "${CMAKE_BINARY_DIR}/TinyMockFunctions.cmake"
+  COPYONLY)
+
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/TinyMockFunctions.cmake")
 
 if(BUILD_TESTS)
