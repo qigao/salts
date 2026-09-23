@@ -67,6 +67,40 @@ bool salts_simd_splat(const cmeta_vector_desc *desc,
                       salts_v128 *out,
                       salts_simd_scalar scalar);
 
+
+bool salts_simd_load_splat(const cmeta_vector_desc *desc,
+                           salts_v128 *out,
+                           const void *source);
+
+bool salts_simd_load_extend(const cmeta_vector_desc *desc,
+                            salts_v128 *out,
+                            const void *source);
+
+bool salts_simd_load_zero(uint16_t loaded_bits,
+                          salts_v128 *out,
+                          const void *source);
+
+bool salts_simd_extract_lane(const cmeta_vector_desc *desc,
+                             const salts_v128 *value,
+                             uint16_t lane,
+                             salts_simd_scalar *out);
+
+bool salts_simd_replace_lane(const cmeta_vector_desc *desc,
+                             salts_v128 *out,
+                             const salts_v128 *value,
+                             uint16_t lane,
+                             salts_simd_scalar scalar);
+
+bool salts_simd_shuffle_bytes(salts_v128 *out,
+                              const salts_v128 *left,
+                              const salts_v128 *right,
+                              const uint8_t lanes[16]);
+
+bool salts_simd_swizzle_bytes(salts_v128 *out,
+                              const salts_v128 *value,
+                              const salts_v128 *indices);
+
+
 bool salts_simd_unary(const cmeta_vector_desc *desc,
                       salts_simd_unary_op op,
                       salts_v128 *out,

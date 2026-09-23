@@ -27,6 +27,199 @@ static void test_descriptors(void) {
 }
 
 
+
+static void test_load_extend(void) {
+    const int8_t i8_source[8] = {-1, 2, -3, 4, -5, 6, -7, 8};
+    const int16_t i16_expected[8] = {-1, 2, -3, 4, -5, 6, -7, 8};
+    const uint8_t u8_source[8] = {255u, 2u, 253u, 4u, 251u, 6u, 249u, 8u};
+    const uint16_t u16_expected[8] = {255u, 2u, 253u, 4u, 251u, 6u, 249u, 8u};
+
+    const int16_t i16_source[4] = {-1, 2, -300, 400};
+    const int32_t i32_expected[4] = {-1, 2, -300, 400};
+    const uint16_t u16_source[4] = {65535u, 2u, 65000u, 400u};
+    const uint32_t u32_expected[4] = {65535u, 2u, 65000u, 400u};
+
+    const int32_t i32_source[2] = {-1, INT32_MIN};
+    const int64_t i64_expected[2] = {-1, (int64_t)INT32_MIN};
+    const uint32_t u32_source[2] = {UINT32_MAX, UINT32_C(0x80000000)};
+    const uint64_t u64_expected[2] = {UINT32_MAX, UINT32_C(0x80000000)};
+
+    salts_v128 result = {{0}};
+    int16_t i16_actual[8] = {0};
+    uint16_t u16_actual[8] = {0};
+    int32_t i32_actual[4] = {0};
+    uint32_t u32_actual[4] = {0};
+    int64_t i64_actual[2] = {0};
+    uint64_t u64_actual[2] = {0};
+
+    assert(salts_simd_load_extend(
+        &cmeta_vector_i16x8, &result, i8_source));
+    salts_simd_v128_store(i16_actual, &result);
+    assert(memcmp(i16_actual, i16_expected, sizeof(i16_actual)) == 0);
+
+    assert(salts_simd_load_extend(
+        &cmeta_vector_u16x8, &result, u8_source));
+    salts_simd_v128_store(u16_actual, &result);
+    assert(memcmp(u16_actual, u16_expected, sizeof(u16_actual)) == 0);
+
+    assert(salts_simd_load_extend(
+        &cmeta_vector_i32x4, &result, i16_source));
+    salts_simd_v128_store(i32_actual, &result);
+    assert(memcmp(i32_actual, i32_expected, sizeof(i32_actual)) == 0);
+
+    assert(salts_simd_load_extend(
+        &cmeta_vector_u32x4, &result, u16_source));
+    salts_simd_v128_store(u32_actual, &result);
+    assert(memcmp(u32_actual, u32_expected, sizeof(u32_actual)) == 0);
+
+    assert(salts_simd_load_extend(
+        &cmeta_vector_i64x2, &result, i32_source));
+    salts_simd_v128_store(i64_actual, &result);
+    assert(memcmp(i64_actual, i64_expected, sizeof(i64_actual)) == 0);
+
+    assert(salts_simd_load_extend(
+        &cmeta_vector_u64x2, &result, u32_source));
+    salts_simd_v128_store(u64_actual, &result);
+    assert(memcmp(u64_actual, u64_expected, sizeof(u64_actual)) == 0);
+
+    assert(!salts_simd_load_extend(
+        &cmeta_vector_i8x16, &result, i8_source));
+}
+
+static void test_load_splat_and_zero(void) {
+    const uint8_t byte = UINT8_C(0xa5);
+    const uint16_t word = UINT16_C(0x1234);
+    const uint32_t dword = UINT32_C(0x89abcdef);
+    const uint64_t qword = UINT64_C(0x0123456789abcdef);
+    uint8_t bytes[16] = {0};
+    uint16_t words[8] = {0};
+    uint32_t dwords[4] = {0};
+    uint64_t qwords[2] = {0};
+    salts_v128 value = {{0}};
+    size_t i;
+
+    assert(salts_simd_load_splat(
+        &cmeta_vector_u8x16, &value, &byte));
+    salts_simd_v128_store(bytes, &value);
+    for (i = 0u; i < 16u; ++i) assert(bytes[i] == byte);
+
+    assert(salts_simd_load_splat(
+        &cmeta_vector_u16x8, &value, &word));
+    salts_simd_v128_store(words, &value);
+    for (i = 0u; i < 8u; ++i) assert(words[i] == word);
+
+    assert(salts_simd_load_splat(
+        &cmeta_vector_u32x4, &value, &dword));
+    salts_simd_v128_store(dwords, &value);
+    for (i = 0u; i < 4u; ++i) assert(dwords[i] == dword);
+
+    assert(salts_simd_load_splat(
+        &cmeta_vector_u64x2, &value, &qword));
+    salts_simd_v128_store(qwords, &value);
+    assert(qwords[0] == qword && qwords[1] == qword);
+
+    memset(bytes, 0xff, sizeof(bytes));
+    assert(salts_simd_load_zero(32u, &value, &dword));
+    salts_simd_v128_store(bytes, &value);
+    assert(memcmp(bytes, &dword, sizeof(dword)) == 0);
+    for (i = sizeof(dword); i < sizeof(bytes); ++i) assert(bytes[i] == 0u);
+
+    memset(bytes, 0xff, sizeof(bytes));
+    assert(salts_simd_load_zero(64u, &value, &qword));
+    salts_simd_v128_store(bytes, &value);
+    assert(memcmp(bytes, &qword, sizeof(qword)) == 0);
+    for (i = sizeof(qword); i < sizeof(bytes); ++i) assert(bytes[i] == 0u);
+
+    assert(!salts_simd_load_zero(16u, &value, &word));
+}
+
+static void test_lane_extract_replace(void) {
+    const int16_t original[8] = {10, 20, 30, 40, 50, 60, 70, 80};
+    const int16_t expected[8] = {10, 20, 30, -1234, 50, 60, 70, 80};
+    int16_t actual[8] = {0};
+    salts_v128 value = {{0}};
+    salts_v128 replaced = {{0}};
+    salts_simd_scalar scalar = {0};
+    salts_simd_scalar extracted = {0};
+
+    salts_simd_v128_load(&value, original);
+
+    scalar.i16 = -1234;
+    assert(salts_simd_replace_lane(
+        &cmeta_vector_i16x8, &replaced, &value, 3u, scalar));
+    salts_simd_v128_store(actual, &replaced);
+    assert(memcmp(actual, expected, sizeof(actual)) == 0);
+
+    assert(salts_simd_extract_lane(
+        &cmeta_vector_i16x8, &replaced, 3u, &extracted));
+    assert(extracted.i16 == -1234);
+
+    assert(!salts_simd_replace_lane(
+        &cmeta_vector_i16x8, &replaced, &value, 8u, scalar));
+    assert(!salts_simd_extract_lane(
+        &cmeta_vector_i16x8, &value, 8u, &extracted));
+
+    {
+        const uint8_t unsigned_bytes[16] = {
+            0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u,
+            8u, 9u, 10u, 11u, 12u, 13u, 14u, 255u
+        };
+        salts_simd_v128_load(&value, unsigned_bytes);
+        assert(salts_simd_extract_lane(
+            &cmeta_vector_u8x16, &value, 15u, &extracted));
+        assert(extracted.u8 == 255u);
+    }
+}
+
+static void test_shuffle_and_swizzle(void) {
+    const uint8_t left_data[16] = {
+        0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u,
+        8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u
+    };
+    const uint8_t right_data[16] = {
+        16u, 17u, 18u, 19u, 20u, 21u, 22u, 23u,
+        24u, 25u, 26u, 27u, 28u, 29u, 30u, 31u
+    };
+    const uint8_t lanes[16] = {
+        31u, 0u, 16u, 15u, 17u, 1u, 30u, 2u,
+        29u, 3u, 28u, 4u, 27u, 5u, 26u, 6u
+    };
+    const uint8_t expected_shuffle[16] = {
+        31u, 0u, 16u, 15u, 17u, 1u, 30u, 2u,
+        29u, 3u, 28u, 4u, 27u, 5u, 26u, 6u
+    };
+    const uint8_t swizzle_index_data[16] = {
+        15u, 0u, 1u, 16u, 2u, 17u, 3u, 255u,
+        4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u
+    };
+    const uint8_t expected_swizzle[16] = {
+        15u, 0u, 1u, 0u, 2u, 0u, 3u, 0u,
+        4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u
+    };
+    uint8_t actual[16] = {0};
+    uint8_t bad_lanes[16];
+    salts_v128 left = {{0}}, right = {{0}}, indices = {{0}}, result = {{0}};
+
+    salts_simd_v128_load(&left, left_data);
+    salts_simd_v128_load(&right, right_data);
+
+    assert(salts_simd_shuffle_bytes(
+        &result, &left, &right, lanes));
+    salts_simd_v128_store(actual, &result);
+    assert(memcmp(actual, expected_shuffle, sizeof(actual)) == 0);
+
+    memcpy(bad_lanes, lanes, sizeof(bad_lanes));
+    bad_lanes[7] = 32u;
+    assert(!salts_simd_shuffle_bytes(
+        &result, &left, &right, bad_lanes));
+
+    salts_simd_v128_load(&indices, swizzle_index_data);
+    assert(salts_simd_swizzle_bytes(
+        &result, &left, &indices));
+    salts_simd_v128_store(actual, &result);
+    assert(memcmp(actual, expected_swizzle, sizeof(actual)) == 0);
+}
+
 static void test_generic_splat(void) {
     salts_simd_scalar scalar = {0};
     salts_v128 value = {{0}};
@@ -278,6 +471,10 @@ static void test_f32x4(void) {
 
 int main(void) {
     test_descriptors();
+    test_load_extend();
+    test_load_splat_and_zero();
+    test_lane_extract_replace();
+    test_shuffle_and_swizzle();
     test_generic_splat();
     test_generic_integer_binary();
     test_generic_float_binary();

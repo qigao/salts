@@ -26,6 +26,262 @@ void salts_simd_v128_store(void *destination, const salts_v128 *value) {
     simde_wasm_v128_store(destination, salts_simd_load_value(value));
 }
 
+
+bool salts_simd_load_splat(const cmeta_vector_desc *desc,
+                           salts_v128 *out,
+                           const void *source) {
+    simde_v128_t result;
+
+    if (!salts_simd_desc_valid(desc) || desc->is_mask ||
+        out == NULL || source == NULL)
+        return false;
+
+    switch (desc->lane_bits) {
+        case 8u:
+            result = simde_wasm_v128_load8_splat(source);
+            break;
+        case 16u:
+            result = simde_wasm_v128_load16_splat(source);
+            break;
+        case 32u:
+            result = simde_wasm_v128_load32_splat(source);
+            break;
+        case 64u:
+            result = simde_wasm_v128_load64_splat(source);
+            break;
+        default:
+            return false;
+    }
+
+    salts_simd_store_value(out, result);
+    return true;
+}
+
+bool salts_simd_load_extend(const cmeta_vector_desc *desc,
+                            salts_v128 *out,
+                            const void *source) {
+    simde_v128_t low;
+    simde_v128_t result;
+
+    if (!salts_simd_desc_valid(desc) || desc->is_mask ||
+        out == NULL || source == NULL)
+        return false;
+
+    low = simde_wasm_v128_load64_zero(source);
+
+    switch (desc->lane_kind) {
+        case CMETA_VECTOR_I16:
+            result = simde_wasm_i16x8_extend_low_i8x16(low);
+            break;
+        case CMETA_VECTOR_U16:
+            result = simde_wasm_u16x8_extend_low_u8x16(low);
+            break;
+        case CMETA_VECTOR_I32:
+            result = simde_wasm_i32x4_extend_low_i16x8(low);
+            break;
+        case CMETA_VECTOR_U32:
+            result = simde_wasm_u32x4_extend_low_u16x8(low);
+            break;
+        case CMETA_VECTOR_I64:
+            result = simde_wasm_i64x2_extend_low_i32x4(low);
+            break;
+        case CMETA_VECTOR_U64:
+            result = simde_wasm_u64x2_extend_low_u32x4(low);
+            break;
+        default:
+            return false;
+    }
+
+    salts_simd_store_value(out, result);
+    return true;
+}
+
+bool salts_simd_load_zero(uint16_t loaded_bits,
+                          salts_v128 *out,
+                          const void *source) {
+    simde_v128_t result;
+
+    if (out == NULL || source == NULL)
+        return false;
+
+    if (loaded_bits == 32u)
+        result = simde_wasm_v128_load32_zero(source);
+    else if (loaded_bits == 64u)
+        result = simde_wasm_v128_load64_zero(source);
+    else
+        return false;
+
+    salts_simd_store_value(out, result);
+    return true;
+}
+
+bool salts_simd_extract_lane(const cmeta_vector_desc *desc,
+                             const salts_v128 *value,
+                             uint16_t lane,
+                             salts_simd_scalar *out) {
+    simde_v128_private private_value;
+
+    if (!salts_simd_desc_valid(desc) || desc->is_mask ||
+        value == NULL || out == NULL ||
+        lane >= desc->lane_count)
+        return false;
+
+    private_value = simde_v128_to_private(
+        salts_simd_load_value(value));
+
+    switch (desc->lane_kind) {
+        case CMETA_VECTOR_I8:
+            out->i8 = private_value.i8[lane];
+            return true;
+        case CMETA_VECTOR_U8:
+            out->u8 = private_value.u8[lane];
+            return true;
+        case CMETA_VECTOR_I16:
+            out->i16 = private_value.i16[lane];
+            return true;
+        case CMETA_VECTOR_U16:
+            out->u16 = private_value.u16[lane];
+            return true;
+        case CMETA_VECTOR_I32:
+            out->i32 = private_value.i32[lane];
+            return true;
+        case CMETA_VECTOR_U32:
+            out->u32 = private_value.u32[lane];
+            return true;
+        case CMETA_VECTOR_I64:
+            out->i64 = private_value.i64[lane];
+            return true;
+        case CMETA_VECTOR_U64:
+            out->u64 = private_value.u64[lane];
+            return true;
+        case CMETA_VECTOR_F32:
+            out->f32 = private_value.f32[lane];
+            return true;
+        case CMETA_VECTOR_F64:
+            out->f64 = private_value.f64[lane];
+            return true;
+        case CMETA_VECTOR_BOOL:
+        default:
+            return false;
+    }
+}
+
+bool salts_simd_replace_lane(const cmeta_vector_desc *desc,
+                             salts_v128 *out,
+                             const salts_v128 *value,
+                             uint16_t lane,
+                             salts_simd_scalar scalar) {
+    simde_v128_private private_value;
+
+    if (!salts_simd_desc_valid(desc) || desc->is_mask ||
+        out == NULL || value == NULL ||
+        lane >= desc->lane_count)
+        return false;
+
+    private_value = simde_v128_to_private(
+        salts_simd_load_value(value));
+
+    switch (desc->lane_kind) {
+        case CMETA_VECTOR_I8:
+            private_value.i8[lane] = scalar.i8;
+            break;
+        case CMETA_VECTOR_U8:
+            private_value.u8[lane] = scalar.u8;
+            break;
+        case CMETA_VECTOR_I16:
+            private_value.i16[lane] = scalar.i16;
+            break;
+        case CMETA_VECTOR_U16:
+            private_value.u16[lane] = scalar.u16;
+            break;
+        case CMETA_VECTOR_I32:
+            private_value.i32[lane] = scalar.i32;
+            break;
+        case CMETA_VECTOR_U32:
+            private_value.u32[lane] = scalar.u32;
+            break;
+        case CMETA_VECTOR_I64:
+            private_value.i64[lane] = scalar.i64;
+            break;
+        case CMETA_VECTOR_U64:
+            private_value.u64[lane] = scalar.u64;
+            break;
+        case CMETA_VECTOR_F32:
+            private_value.f32[lane] = scalar.f32;
+            break;
+        case CMETA_VECTOR_F64:
+            private_value.f64[lane] = scalar.f64;
+            break;
+        case CMETA_VECTOR_BOOL:
+        default:
+            return false;
+    }
+
+    salts_simd_store_value(
+        out, simde_v128_from_private(private_value));
+    return true;
+}
+
+bool salts_simd_shuffle_bytes(salts_v128 *out,
+                              const salts_v128 *left,
+                              const salts_v128 *right,
+                              const uint8_t lanes[16]) {
+    simde_v128_private left_private;
+    simde_v128_private right_private;
+    simde_v128_private result_private;
+    uint16_t index;
+
+    if (out == NULL || left == NULL ||
+        right == NULL || lanes == NULL)
+        return false;
+
+    left_private = simde_v128_to_private(
+        salts_simd_load_value(left));
+    right_private = simde_v128_to_private(
+        salts_simd_load_value(right));
+
+    for (index = 0u; index < 16u; ++index) {
+        uint8_t lane = lanes[index];
+        if (lane >= 32u)
+            return false;
+        result_private.u8[index] =
+            lane < 16u
+                ? left_private.u8[lane]
+                : right_private.u8[lane - 16u];
+    }
+
+    salts_simd_store_value(
+        out, simde_v128_from_private(result_private));
+    return true;
+}
+
+bool salts_simd_swizzle_bytes(salts_v128 *out,
+                              const salts_v128 *value,
+                              const salts_v128 *indices) {
+    simde_v128_private value_private;
+    simde_v128_private index_private;
+    simde_v128_private result_private;
+    uint16_t index;
+
+    if (out == NULL || value == NULL || indices == NULL)
+        return false;
+
+    value_private = simde_v128_to_private(
+        salts_simd_load_value(value));
+    index_private = simde_v128_to_private(
+        salts_simd_load_value(indices));
+
+    for (index = 0u; index < 16u; ++index) {
+        uint8_t lane = index_private.u8[index];
+        result_private.u8[index] =
+            lane < 16u ? value_private.u8[lane] : 0u;
+    }
+
+    salts_simd_store_value(
+        out, simde_v128_from_private(result_private));
+    return true;
+}
+
 bool salts_simd_splat(const cmeta_vector_desc *desc,
                       salts_v128 *out,
                       salts_simd_scalar scalar) {
