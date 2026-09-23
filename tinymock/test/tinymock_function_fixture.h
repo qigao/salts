@@ -3,6 +3,34 @@
 
 #include <cmeta/function.h>
 
+typedef int (*tinymock_fixture_callback)(int);
+
+static bool tinymock_fixture_callback_equal(
+    const void *left, const void *right) {
+  const tinymock_fixture_callback *a =
+      (const tinymock_fixture_callback *)left;
+  const tinymock_fixture_callback *b =
+      (const tinymock_fixture_callback *)right;
+  return a && b && *a == *b;
+}
+
+static const cmeta_type_traits tinymock_fixture_callback_traits = {
+  .flags = CMETA_TRAIT_EQUAL |
+           CMETA_TRAIT_TRIVIAL_COPY |
+           CMETA_TRAIT_TRIVIAL_DESTROY,
+  .equal = tinymock_fixture_callback_equal
+};
+
+static const cmeta_type_desc tinymock_fixture_callback_type = {
+  .name = "tinymock_fixture_callback",
+  .size = sizeof(tinymock_fixture_callback),
+  .align = _Alignof(tinymock_fixture_callback),
+  .kind = CMETA_T_OBJECT,
+  .pointee = NULL,
+  .traits = &tinymock_fixture_callback_traits,
+  .identity = NULL
+};
+
 typedef struct tinymock_fixture_box {
   int value;
 } tinymock_fixture_box;
@@ -68,5 +96,16 @@ FunctionDeclAsAbi(value, tinymock_fixture_box,
 Function0DeclAsAbi(value, int *, &cmeta_type_int_ptr,
                    CMETA_ABI_OBJECT_POINTER,
                    tinymock_fixture_pointer_answer);
+
+FunctionDeclAsAbi(value, int, &cmeta_type_int, CMETA_ABI_SCALAR,
+                  tinymock_fixture_apply_callback,
+    (tinymock_fixture_callback, callback, CMETA_PARAM_IN,
+     &tinymock_fixture_callback_type, CMETA_ABI_FUNCTION_POINTER),
+    (int, value, CMETA_PARAM_IN));
+
+Function0DeclAsAbi(value, tinymock_fixture_callback,
+                   &tinymock_fixture_callback_type,
+                   CMETA_ABI_FUNCTION_POINTER,
+                   tinymock_fixture_callback_answer);
 
 #endif /* TINYMOCK_FUNCTION_FIXTURE_H */
