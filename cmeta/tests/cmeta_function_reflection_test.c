@@ -7,18 +7,6 @@ typedef struct cmeta_function_test_box {
     int value;
 } cmeta_function_test_box;
 
-typedef int (*cmeta_function_test_callback)(int);
-
-static const cmeta_type_desc cmeta_function_test_callback_type = {
-    .name = "cmeta_function_test_callback",
-    .size = sizeof(cmeta_function_test_callback),
-    .align = _Alignof(cmeta_function_test_callback),
-    .kind = CMETA_T_OBJECT,
-    .pointee = NULL,
-    .traits = NULL,
-    .identity = NULL
-};
-
 static const cmeta_type_desc cmeta_function_test_box_type = {
     .name = "cmeta_function_test_box",
     .size = sizeof(cmeta_function_test_box),
@@ -45,28 +33,18 @@ FunctionDecl(value, int, cmeta_function_test_sum,
 
 Function0Decl(pure, int, cmeta_function_test_answer);
 
-FunctionDeclAsAbi(fallible, int, &cmeta_type_int, CMETA_ABI_SCALAR,
-                  cmeta_function_test_store,
+FunctionDeclAs(fallible, int, &cmeta_type_int, cmeta_function_test_store,
     (int, value, CMETA_PARAM_IN),
-    (size_t *, written, CMETA_PARAM_OUT, &cmeta_type_size_ptr,
-     CMETA_ABI_OBJECT_POINTER));
+    (size_t *, written, CMETA_PARAM_OUT, &cmeta_type_size_ptr));
 
-FunctionDeclAsAbi(value, cmeta_function_test_box,
-                  &cmeta_function_test_box_type, CMETA_ABI_AGGREGATE,
-                  cmeta_function_test_box_copy,
+FunctionDeclAs(value, cmeta_function_test_box,
+               &cmeta_function_test_box_type, cmeta_function_test_box_copy,
     (cmeta_function_test_box, input, CMETA_PARAM_IN,
-     &cmeta_function_test_box_type, CMETA_ABI_AGGREGATE));
+     &cmeta_function_test_box_type));
 
-FunctionDeclAsAbi(fallible, int, &cmeta_type_int, CMETA_ABI_SCALAR,
-                  cmeta_function_test_box_write,
+FunctionDeclAs(fallible, int, &cmeta_type_int, cmeta_function_test_box_write,
     (cmeta_function_test_box *, output, CMETA_PARAM_OUT,
-     &cmeta_function_test_box_ptr_type, CMETA_ABI_OBJECT_POINTER));
-
-FunctionDeclAsAbi(value, int, &cmeta_type_int, CMETA_ABI_SCALAR,
-                  cmeta_function_test_callback_apply,
-    (cmeta_function_test_callback, callback, CMETA_PARAM_IN,
-     &cmeta_function_test_callback_type, CMETA_ABI_FUNCTION_POINTER),
-    (int, value, CMETA_PARAM_IN));
+     &cmeta_function_test_box_ptr_type));
 
 int cmeta_function_test_sum(int left, int right) {
     return left + right;
@@ -95,11 +73,6 @@ int cmeta_function_test_box_write(cmeta_function_test_box *output) {
     return 0;
 }
 
-int cmeta_function_test_callback_apply(cmeta_function_test_callback callback,
-                                       int value) {
-    return callback ? callback(value) : -1;
-}
-
 suite("CMeta function reflection") {
     it("publishes ordinary function metadata without consumer signature duplication") {
         const cmeta_function_desc *fn = FunctionMeta(cmeta_function_test_sum);
@@ -113,15 +86,11 @@ suite("CMeta function reflection") {
         check_equal(fn->param_count, (size_t)2u);
         check_equal(fn->effects, CMETA_CONTRACT_EFFECTS(value));
         check_equal(fn->properties, CMETA_CONTRACT_PROPERTIES(value));
-        check_equal(fn->return_abi_carrier,
-                    (cmeta_abi_carrier)CMETA_ABI_SCALAR);
 
         check_not_null(left);
         check_equal(left->name, "left");
         check_true(cmeta_type_equal(left->type, &cmeta_type_int));
         check_equal(left->flags, (cmeta_param_flags)CMETA_PARAM_IN);
-        check_equal(left->abi_carrier,
-                    (cmeta_abi_carrier)CMETA_ABI_SCALAR);
 
         check_not_null(right);
         check_equal(right->name, "right");
@@ -138,8 +107,6 @@ suite("CMeta function reflection") {
         check_equal(fn->param_count, (size_t)0u);
         check_null(fn->params);
         check_true(cmeta_type_equal(fn->return_type, &cmeta_type_int));
-        check_equal(fn->return_abi_carrier,
-                    (cmeta_abi_carrier)CMETA_ABI_SCALAR);
         check_equal(cmeta_function_test_answer(), 42);
     }
 
@@ -154,10 +121,6 @@ suite("CMeta function reflection") {
         check_equal(written->flags, (cmeta_param_flags)CMETA_PARAM_OUT);
         check_true(cmeta_type_equal(written->type, &cmeta_type_size_ptr));
         check_true(written->type->kind == CMETA_T_POINTER);
-        check_equal(written->abi_carrier,
-                    (cmeta_abi_carrier)CMETA_ABI_OBJECT_POINTER);
-        check_equal(fn->return_abi_carrier,
-                    (cmeta_abi_carrier)CMETA_ABI_SCALAR);
     }
 
     it("supports provider-owned custom value and pointer descriptors") {
@@ -180,40 +143,16 @@ suite("CMeta function reflection") {
                                     &cmeta_function_test_box_ptr_type));
         check_true(cmeta_type_equal(copy_fn->return_type,
                                     &cmeta_function_test_box_type));
-        check_equal(copy_fn->return_abi_carrier,
-                    (cmeta_abi_carrier)CMETA_ABI_AGGREGATE);
-        check_equal(input->abi_carrier,
-                    (cmeta_abi_carrier)CMETA_ABI_AGGREGATE);
-        check_equal(output->abi_carrier,
-                    (cmeta_abi_carrier)CMETA_ABI_OBJECT_POINTER);
-    }
-
-    it("distinguishes object pointers from function pointers") {
-        const cmeta_function_desc *fn =
-            FunctionMeta(cmeta_function_test_callback_apply);
-        const cmeta_param_desc *callback =
-            cmeta_function_find_param(fn, "callback");
-
-        check_true(cmeta_function_desc_valid(fn));
-        check_not_null(callback);
-        check_equal(callback->abi_carrier,
-                    (cmeta_abi_carrier)CMETA_ABI_FUNCTION_POINTER);
-        check_true(cmeta_abi_carrier_matches_type(
-            callback->abi_carrier, callback->type));
-        check_true(cmeta_abi_carrier_matches_type(
-            CMETA_ABI_OBJECT_POINTER, &cmeta_function_test_box_ptr_type));
-        check_false(cmeta_abi_carrier_matches_type(
-            CMETA_ABI_OBJECT_POINTER, &cmeta_function_test_callback_type));
     }
 
     it("rejects malformed parameter metadata") {
         cmeta_param_desc param = {
             sizeof(cmeta_param_desc), "value", &cmeta_type_int,
-            CMETA_PARAM_IN, CMETA_ABI_SCALAR
+            CMETA_PARAM_IN
         };
         cmeta_param_desc pointer_param = {
             sizeof(cmeta_param_desc), "value", &cmeta_type_size_ptr,
-            CMETA_PARAM_IN, CMETA_ABI_OBJECT_POINTER
+            CMETA_PARAM_IN
         };
 
         check_true(cmeta_param_desc_valid(&param));
@@ -232,12 +171,6 @@ suite("CMeta function reflection") {
 
         param.flags = CMETA_PARAM_OUT;
         check_false(cmeta_param_desc_valid(&param));
-
-        param.flags = CMETA_PARAM_IN;
-        param.abi_carrier = CMETA_ABI_OBJECT_POINTER;
-        check_false(cmeta_param_desc_valid(&param));
-        param.abi_carrier = CMETA_ABI_SCALAR;
-        check_true(cmeta_param_desc_valid(&param));
 
         pointer_param.flags = CMETA_PARAM_UNKNOWN;
         check_true(cmeta_param_desc_valid(&pointer_param));
@@ -264,9 +197,9 @@ suite("CMeta function reflection") {
         cmeta_function_desc fn = *valid;
         cmeta_param_desc duplicate[2] = {
             { sizeof(cmeta_param_desc), "same", &cmeta_type_int,
-              CMETA_PARAM_IN, CMETA_ABI_SCALAR },
+              CMETA_PARAM_IN },
             { sizeof(cmeta_param_desc), "same", &cmeta_type_int,
-              CMETA_PARAM_IN, CMETA_ABI_SCALAR }
+              CMETA_PARAM_IN }
         };
 
         check_true(cmeta_function_desc_valid(valid));
