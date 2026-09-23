@@ -14,9 +14,14 @@ enum {
 };
 
 #define CMETA_CLOCK_METHODS(X,I) \
-    X(I,R0,cflow_instant,now,_) \
-    X(I,R1,bool,advance,cflow_duration,delta) \
-    X(I,V0,void,destroy,_)
+    X(I,F0,cflow_instant,now,stateful, \
+      &cmeta_type_cflow_instant,CMETA_ABI_AGGREGATE) \
+    X(I,F1,bool,advance,stateful, \
+      &cmeta_type_bool,CMETA_ABI_SCALAR, \
+      (cflow_duration,delta,CMETA_PARAM_IN, \
+       &cmeta_type_cflow_duration,CMETA_ABI_AGGREGATE)) \
+    X(I,F0,void,destroy,stateful, \
+      &cmeta_type_void,CMETA_ABI_VOID)
 CMETA_INTERFACE(cflow_clock, CMETA_CLOCK_METHODS);
 
 bool cflow_clock_system_init(cflow_clock *clock);
