@@ -29,37 +29,39 @@ static bool cflow_instant_cmeta_equal(const void *left_, const void *right_) {
 }
 
 static const cmeta_type_traits cmeta_traits_cflow_duration = {
-    .flags = CMETA_TRAIT_EQUAL |
-             CMETA_TRAIT_TRIVIAL_COPY |
-             CMETA_TRAIT_TRIVIAL_DESTROY,
-    .equal = cflow_duration_cmeta_equal
+    CMETA_TRAIT_EQUAL |
+        CMETA_TRAIT_TRIVIAL_COPY |
+        CMETA_TRAIT_TRIVIAL_DESTROY,
+    cflow_duration_cmeta_equal,
+    NULL, NULL, NULL, NULL, NULL
 };
 
 static const cmeta_type_traits cmeta_traits_cflow_instant = {
-    .flags = CMETA_TRAIT_EQUAL |
-             CMETA_TRAIT_TRIVIAL_COPY |
-             CMETA_TRAIT_TRIVIAL_DESTROY,
-    .equal = cflow_instant_cmeta_equal
+    CMETA_TRAIT_EQUAL |
+        CMETA_TRAIT_TRIVIAL_COPY |
+        CMETA_TRAIT_TRIVIAL_DESTROY,
+    cflow_instant_cmeta_equal,
+    NULL, NULL, NULL, NULL, NULL
 };
 
 static const cmeta_type_desc cmeta_type_cflow_duration = {
-    .name = "cflow_duration",
-    .size = sizeof(cflow_duration),
-    .align = _Alignof(cflow_duration),
-    .kind = CMETA_T_OBJECT,
-    .pointee = NULL,
-    .traits = &cmeta_traits_cflow_duration,
-    .identity = NULL
+    "cflow_duration",
+    sizeof(cflow_duration),
+    CMETA_ALIGNOF(cflow_duration),
+    CMETA_T_OBJECT,
+    NULL,
+    &cmeta_traits_cflow_duration,
+    NULL
 };
 
 static const cmeta_type_desc cmeta_type_cflow_instant = {
-    .name = "cflow_instant",
-    .size = sizeof(cflow_instant),
-    .align = _Alignof(cflow_instant),
-    .kind = CMETA_T_OBJECT,
-    .pointee = NULL,
-    .traits = &cmeta_traits_cflow_instant,
-    .identity = NULL
+    "cflow_instant",
+    sizeof(cflow_instant),
+    CMETA_ALIGNOF(cflow_instant),
+    CMETA_T_OBJECT,
+    NULL,
+    &cmeta_traits_cflow_instant,
+    NULL
 };
 
 static inline uint64_t cflow_u64_mul_sat(uint64_t value, uint64_t scale) {
