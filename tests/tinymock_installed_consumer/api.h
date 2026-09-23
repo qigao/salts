@@ -9,4 +9,7 @@ FunctionDecl(value, int, tinymock_installed_add,
 
 Function0Decl(value, void, tinymock_installed_shutdown);
 
+FunctionDecl(value, int, tinymock_installed_real,
+    (int, value, CMETA_PARAM_IN));
+
 #endif /* TINYMOCK_INSTALLED_API_H */
