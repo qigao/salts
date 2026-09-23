@@ -347,22 +347,91 @@ bool salts_simd_unary(const cmeta_vector_desc *desc,
                       salts_v128 *out,
                       const salts_v128 *value) {
     simde_v128_t input;
+    simde_v128_t result;
 
     if (!salts_simd_desc_valid(desc) || out == NULL || value == NULL)
         return false;
 
     input = salts_simd_load_value(value);
 
-    switch (op) {
-        case SALTS_SIMD_UNARY_NOT:
-            salts_simd_store_value(out, simde_wasm_v128_not(input));
-            return true;
-        case SALTS_SIMD_UNARY_ABS:
-        case SALTS_SIMD_UNARY_NEG:
-        case SALTS_SIMD_UNARY_SQRT:
+    if (op == SALTS_SIMD_UNARY_NOT) {
+        salts_simd_store_value(out, simde_wasm_v128_not(input));
+        return true;
+    }
+    if (desc->is_mask)
+        return false;
+
+    switch (desc->lane_kind) {
+        case CMETA_VECTOR_I8:
+            if (op == SALTS_SIMD_UNARY_ABS)
+                result = simde_wasm_i8x16_abs(input);
+            else if (op == SALTS_SIMD_UNARY_NEG)
+                result = simde_wasm_i8x16_neg(input);
+            else if (op == SALTS_SIMD_UNARY_POPCOUNT)
+                result = simde_wasm_i8x16_popcnt(input);
+            else
+                return false;
+            break;
+        case CMETA_VECTOR_U8:
+            if (op == SALTS_SIMD_UNARY_POPCOUNT)
+                result = simde_wasm_i8x16_popcnt(input);
+            else
+                return false;
+            break;
+        case CMETA_VECTOR_I16:
+            if (op == SALTS_SIMD_UNARY_ABS)
+                result = simde_wasm_i16x8_abs(input);
+            else if (op == SALTS_SIMD_UNARY_NEG)
+                result = simde_wasm_i16x8_neg(input);
+            else
+                return false;
+            break;
+        case CMETA_VECTOR_I32:
+            if (op == SALTS_SIMD_UNARY_ABS)
+                result = simde_wasm_i32x4_abs(input);
+            else if (op == SALTS_SIMD_UNARY_NEG)
+                result = simde_wasm_i32x4_neg(input);
+            else
+                return false;
+            break;
+        case CMETA_VECTOR_I64:
+            if (op == SALTS_SIMD_UNARY_ABS)
+                result = simde_wasm_i64x2_abs(input);
+            else if (op == SALTS_SIMD_UNARY_NEG)
+                result = simde_wasm_i64x2_neg(input);
+            else
+                return false;
+            break;
+        case CMETA_VECTOR_F32:
+            if (op == SALTS_SIMD_UNARY_ABS)
+                result = simde_wasm_f32x4_abs(input);
+            else if (op == SALTS_SIMD_UNARY_NEG)
+                result = simde_wasm_f32x4_neg(input);
+            else if (op == SALTS_SIMD_UNARY_SQRT)
+                result = simde_wasm_f32x4_sqrt(input);
+            else
+                return false;
+            break;
+        case CMETA_VECTOR_F64:
+            if (op == SALTS_SIMD_UNARY_ABS)
+                result = simde_wasm_f64x2_abs(input);
+            else if (op == SALTS_SIMD_UNARY_NEG)
+                result = simde_wasm_f64x2_neg(input);
+            else if (op == SALTS_SIMD_UNARY_SQRT)
+                result = simde_wasm_f64x2_sqrt(input);
+            else
+                return false;
+            break;
+        case CMETA_VECTOR_U16:
+        case CMETA_VECTOR_U32:
+        case CMETA_VECTOR_U64:
+        case CMETA_VECTOR_BOOL:
         default:
             return false;
     }
+
+    salts_simd_store_value(out, result);
+    return true;
 }
 
 bool salts_simd_binary(const cmeta_vector_desc *desc,
@@ -405,6 +474,14 @@ bool salts_simd_binary(const cmeta_vector_desc *desc,
                 result = simde_wasm_i8x16_add(a, b);
             else if (op == SALTS_SIMD_BINARY_SUB)
                 result = simde_wasm_i8x16_sub(a, b);
+            else if (op == SALTS_SIMD_BINARY_MIN)
+                result = desc->lane_kind == CMETA_VECTOR_I8
+                    ? simde_wasm_i8x16_min(a, b)
+                    : simde_wasm_u8x16_min(a, b);
+            else if (op == SALTS_SIMD_BINARY_MAX)
+                result = desc->lane_kind == CMETA_VECTOR_I8
+                    ? simde_wasm_i8x16_max(a, b)
+                    : simde_wasm_u8x16_max(a, b);
             else
                 return false;
             break;
@@ -417,6 +494,14 @@ bool salts_simd_binary(const cmeta_vector_desc *desc,
                 result = simde_wasm_i16x8_sub(a, b);
             else if (op == SALTS_SIMD_BINARY_MUL)
                 result = simde_wasm_i16x8_mul(a, b);
+            else if (op == SALTS_SIMD_BINARY_MIN)
+                result = desc->lane_kind == CMETA_VECTOR_I16
+                    ? simde_wasm_i16x8_min(a, b)
+                    : simde_wasm_u16x8_min(a, b);
+            else if (op == SALTS_SIMD_BINARY_MAX)
+                result = desc->lane_kind == CMETA_VECTOR_I16
+                    ? simde_wasm_i16x8_max(a, b)
+                    : simde_wasm_u16x8_max(a, b);
             else
                 return false;
             break;
@@ -429,6 +514,14 @@ bool salts_simd_binary(const cmeta_vector_desc *desc,
                 result = simde_wasm_i32x4_sub(a, b);
             else if (op == SALTS_SIMD_BINARY_MUL)
                 result = simde_wasm_i32x4_mul(a, b);
+            else if (op == SALTS_SIMD_BINARY_MIN)
+                result = desc->lane_kind == CMETA_VECTOR_I32
+                    ? simde_wasm_i32x4_min(a, b)
+                    : simde_wasm_u32x4_min(a, b);
+            else if (op == SALTS_SIMD_BINARY_MAX)
+                result = desc->lane_kind == CMETA_VECTOR_I32
+                    ? simde_wasm_i32x4_max(a, b)
+                    : simde_wasm_u32x4_max(a, b);
             else
                 return false;
             break;
@@ -454,6 +547,10 @@ bool salts_simd_binary(const cmeta_vector_desc *desc,
                 result = simde_wasm_f32x4_mul(a, b);
             else if (op == SALTS_SIMD_BINARY_DIV)
                 result = simde_wasm_f32x4_div(a, b);
+            else if (op == SALTS_SIMD_BINARY_MIN)
+                result = simde_wasm_f32x4_min(a, b);
+            else if (op == SALTS_SIMD_BINARY_MAX)
+                result = simde_wasm_f32x4_max(a, b);
             else
                 return false;
             break;
@@ -467,6 +564,10 @@ bool salts_simd_binary(const cmeta_vector_desc *desc,
                 result = simde_wasm_f64x2_mul(a, b);
             else if (op == SALTS_SIMD_BINARY_DIV)
                 result = simde_wasm_f64x2_div(a, b);
+            else if (op == SALTS_SIMD_BINARY_MIN)
+                result = simde_wasm_f64x2_min(a, b);
+            else if (op == SALTS_SIMD_BINARY_MAX)
+                result = simde_wasm_f64x2_max(a, b);
             else
                 return false;
             break;
@@ -678,6 +779,94 @@ bool salts_simd_compare(const cmeta_vector_desc *desc,
 
     salts_simd_store_value(out_mask, result);
     return true;
+}
+
+bool salts_simd_saturating_binary(
+    const cmeta_vector_desc *desc,
+    salts_simd_saturating_op op,
+    salts_v128 *out,
+    const salts_v128 *left,
+    const salts_v128 *right) {
+    simde_v128_t a;
+    simde_v128_t b;
+    simde_v128_t result;
+
+    if (!salts_simd_desc_valid(desc) || desc->is_mask ||
+        out == NULL || left == NULL || right == NULL)
+        return false;
+
+    a = salts_simd_load_value(left);
+    b = salts_simd_load_value(right);
+
+    switch (desc->lane_kind) {
+        case CMETA_VECTOR_I8:
+            result = op == SALTS_SIMD_SATURATING_ADD
+                ? simde_wasm_i8x16_add_sat(a, b)
+                : simde_wasm_i8x16_sub_sat(a, b);
+            break;
+        case CMETA_VECTOR_U8:
+            result = op == SALTS_SIMD_SATURATING_ADD
+                ? simde_wasm_u8x16_add_sat(a, b)
+                : simde_wasm_u8x16_sub_sat(a, b);
+            break;
+        case CMETA_VECTOR_I16:
+            result = op == SALTS_SIMD_SATURATING_ADD
+                ? simde_wasm_i16x8_add_sat(a, b)
+                : simde_wasm_i16x8_sub_sat(a, b);
+            break;
+        case CMETA_VECTOR_U16:
+            result = op == SALTS_SIMD_SATURATING_ADD
+                ? simde_wasm_u16x8_add_sat(a, b)
+                : simde_wasm_u16x8_sub_sat(a, b);
+            break;
+        default:
+            return false;
+    }
+
+    salts_simd_store_value(out, result);
+    return true;
+}
+
+bool salts_simd_reduce(const cmeta_vector_desc *desc,
+                       salts_simd_reduce_op op,
+                       const salts_v128 *value,
+                       uint32_t *out) {
+    simde_v128_t input;
+
+    if (!salts_simd_desc_valid(desc) || value == NULL || out == NULL)
+        return false;
+
+    input = salts_simd_load_value(value);
+
+    if (op == SALTS_SIMD_REDUCE_ANY_TRUE) {
+        *out = simde_wasm_v128_any_true(input) ? 1u : 0u;
+        return true;
+    }
+
+    if (desc->is_mask)
+        return false;
+
+    if (op == SALTS_SIMD_REDUCE_ALL_TRUE) {
+        switch (desc->lane_bits) {
+            case 8u: *out = simde_wasm_i8x16_all_true(input) ? 1u : 0u; return true;
+            case 16u: *out = simde_wasm_i16x8_all_true(input) ? 1u : 0u; return true;
+            case 32u: *out = simde_wasm_i32x4_all_true(input) ? 1u : 0u; return true;
+            case 64u: *out = simde_wasm_i64x2_all_true(input) ? 1u : 0u; return true;
+            default: return false;
+        }
+    }
+
+    if (op == SALTS_SIMD_REDUCE_BITMASK) {
+        switch (desc->lane_bits) {
+            case 8u: *out = simde_wasm_i8x16_bitmask(input); return true;
+            case 16u: *out = simde_wasm_i16x8_bitmask(input); return true;
+            case 32u: *out = simde_wasm_i32x4_bitmask(input); return true;
+            case 64u: *out = simde_wasm_i64x2_bitmask(input); return true;
+            default: return false;
+        }
+    }
+
+    return false;
 }
 
 bool salts_simd_shift(const cmeta_vector_desc *desc,
