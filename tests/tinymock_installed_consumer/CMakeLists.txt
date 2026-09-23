@@ -21,4 +21,6 @@ salts_tinymock_override_functions(
   FUNCTIONS
     tinymock_installed_add
     tinymock_installed_shutdown
-    tinymock_installed_box_copy)
+    tinymock_installed_box_copy
+    tinymock_installed_apply_callback
+    tinymock_installed_callback_answer)
