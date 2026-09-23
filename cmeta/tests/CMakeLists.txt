@@ -65,6 +65,16 @@ cmake_add_test(cmeta_infer_test
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
+cmake_add_test(cmeta_abi_test
+  SOURCES cmeta_abi_test.c
+  LIBS Salts::CMeta Salts::TinyTest
+  FOLDER "cmeta/tests")
+
+set_target_properties(cmeta_abi_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 cmake_add_test(cmeta_function_reflection_test
   SOURCES cmeta_function_reflection_test.c
   LIBS Salts::CMeta Salts::TinyTest
