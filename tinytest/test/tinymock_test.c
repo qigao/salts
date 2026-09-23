@@ -128,6 +128,25 @@ suite("TinyMock") {
     mock_tinymock_six_verify();
   }
 
+  it("should count calls beyond the bounded argument record capacity") {
+    size_t index;
+
+    mock_tinymock_default_reset();
+    mock_tinymock_default_set_default_return(TINYMOCk_RETURN(-9));
+
+    for (index = 0; index < TINYMOCk_MAX_CALLS + 5u; ++index)
+      check_equal(tinymock_default((int)index), -9);
+
+    check_equal(tinymock_mock_call_count(&tinymock_tinymock_default),
+                (size_t)TINYMOCk_MAX_CALLS + 5u);
+    tinymock_mock_verify_times(&tinymock_tinymock_default,
+                               (size_t)TINYMOCk_MAX_CALLS + 5u);
+    check_not_null(tinymock_mock_call_at(
+        &tinymock_tinymock_default, TINYMOCk_MAX_CALLS - 1u));
+    check_null(tinymock_mock_call_at(
+        &tinymock_tinymock_default, TINYMOCk_MAX_CALLS));
+  }
+
   it("should record generated wrapper calls for independent verification") {
     const tinymock_recorded_call_t *call;
 
