@@ -93,6 +93,7 @@ add_library(${TARGET_NAME}
   src/stream_execution.c
   src/subflow.c
   src/temporal.c
+  src/time.c
   src/timer_queue.c
   src/timer_event.c
   src/verify.c)
