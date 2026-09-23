@@ -17,6 +17,15 @@ TINYMOCk_MOCK0(int, tinymock_zero)
 static int g_tinymock_mismatch_marker = 0;
 
 suite("TinyMock") {
+  it("should box typed object pointers through pointer identity") {
+    struct tinymock_pointer_probe { int value; } probe = {17};
+    struct tinymock_pointer_probe *pointer = &probe;
+    tinymock_value_t boxed = TINYMOCk_VALUE(pointer);
+
+    check_equal(boxed.kind, TINYMOCk_VALUE_POINTER);
+    check(TINYMOCk_VALUE_AS(struct tinymock_pointer_probe *, boxed) == pointer);
+  }
+
 
   it("should match int arguments and return mocked value") {
     mock_tinymock_add_reset();
