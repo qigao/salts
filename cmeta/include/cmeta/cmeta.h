@@ -1,7 +1,6 @@
 #ifndef CMETA_H
 #define CMETA_H
 
-#include <cmeta/interface.h>
 #include <cmeta/status.h>
 #include <cmeta/type_identity.h>
 #include <cmeta/type_traits.h>
@@ -428,4 +427,17 @@ cmeta_gen_status cmeta_callable_generate(const cmeta_callable *fn, const void *i
 #ifdef __cplusplus
 }
 #endif
+
+/*
+ * Load higher-level reflection only after base type/effect/property semantics
+ * are complete. The guards keep direct cmeta.h/function.h/interface.h
+ * inclusion acyclic.
+ */
+#if !defined(CMETA_FUNCTION_H)
+#include <cmeta/function.h>
+#endif
+#if !defined(CMETA_META_INTERFACE_H)
+#include <cmeta/interface.h>
+#endif
+
 #endif
