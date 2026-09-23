@@ -6,6 +6,7 @@
 
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_add);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_answer);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_pointer);
 
 suite("TinyMock reflected free functions") {
   it("generates replacement definitions without repeating signatures") {
@@ -36,6 +37,26 @@ suite("TinyMock reflected free functions") {
     check_equal(TINYMOCk_VALUE_AS(int, call->args[0]), 9);
     check_equal(TINYMOCk_VALUE_AS(int, call->args[1]), 25);
 
+    {
+      int expected_left = 9;
+      int expected_right = 25;
+      tinymock_cmeta_captor captor;
+
+      check_true(TINYMOCk_FUNCTION_ARG_EQUAL(
+          tinymock_fixture_add, 0, "left", expected_left));
+      check_equal(TINYMOCk_FUNCTION_COUNT_EQUAL(
+          tinymock_fixture_add, "right", expected_right), (size_t)1);
+
+      tinymock_cmeta_captor_init(&captor);
+      check_true(TINYMOCk_FUNCTION_CAPTURE(
+          tinymock_fixture_add, 0, "right", &captor));
+      check_true(cmeta_type_equal(
+          tinymock_cmeta_captor_type(&captor), &cmeta_type_int));
+      check_equal(*(const int *)tinymock_cmeta_captor_value(&captor), 25);
+      check_equal(tinymock_cmeta_captor_count(&captor), (size_t)1);
+      tinymock_cmeta_captor_destroy(&captor);
+    }
+
     add_meta = TINYMOCk_FUNCTION_META(tinymock_fixture_add);
     check_not_null(add_meta);
     check_true(cmeta_function_desc_valid(add_meta));
@@ -44,6 +65,32 @@ suite("TinyMock reflected free functions") {
     check_true(cmeta_type_equal(add_meta->return_type, &cmeta_type_int));
     check_true(cmeta_type_equal(
         cmeta_function_param(add_meta, 0)->type, &cmeta_type_int));
+
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_add);
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_answer);
+  }
+
+  it("matches reflected pointer arguments by identity") {
+    int value = 7;
+    int *expected = &value;
+
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_pointer);
+    tinymock_mock_set_default_return(
+        TINYMOCk_FUNCTION(tinymock_fixture_pointer),
+        TINYMOCk_RETURN(33));
+
+    check_equal(tinymock_function_consumer_pointer(&value), 33);
+    check_true(TINYMOCk_FUNCTION_ARG_EQUAL(
+        tinymock_fixture_pointer, 0, "value", expected));
+
+    {
+      int other = 7;
+      int *different = &other;
+      check_false(TINYMOCk_FUNCTION_ARG_EQUAL(
+          tinymock_fixture_pointer, 0, "value", different));
+    }
+
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_pointer);
   }
 
   it("keeps stubbing independent from verification") {
@@ -66,5 +113,8 @@ suite("TinyMock reflected free functions") {
         TINYMOCk_FUNCTION(tinymock_fixture_answer), 2);
     tinymock_mock_verify_at_most(
         TINYMOCk_FUNCTION(tinymock_fixture_answer), 2);
+
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_add);
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_answer);
   }
 }
