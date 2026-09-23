@@ -495,14 +495,18 @@ suite("CMeta core") {
         check_equal(cmeta_test_counter_value(&counter), 0);
 
         check_not_null(meta);
+        check_true(cmeta_interface_desc_valid(meta));
         check_equal(meta->name, "cmeta_test_counter");
         check_equal(meta->method_count, (size_t)3);
         check_equal(meta->methods[0].name, "add");
-        check_equal(meta->methods[0].arity, 1u);
+        check_true(cmeta_interface_method_desc_valid(&meta->methods[0]));
+        check_false(cmeta_interface_method_reflection_valid(&meta->methods[0]));
+        check_null(meta->methods[0].function);
+        check_null(meta->methods[0].abi);
         check_equal(meta->methods[1].name, "value");
-        check_equal(meta->methods[1].arity, 0u);
+        check_false(cmeta_interface_method_reflection_valid(&meta->methods[1]));
         check_equal(meta->methods[2].name, "reset");
-        check_equal(meta->methods[2].arity, 0u);
+        check_false(cmeta_interface_method_reflection_valid(&meta->methods[2]));
     }
 
     it("rejects an interface whose required vtable method is missing") {
@@ -526,6 +530,10 @@ suite("CMeta core") {
             cmeta_test_basic_owner_as_cmeta_test_owner(&destroy_count);
 
         check_true(cmeta_test_owner_valid(&owner));
+        check_true(cmeta_interface_method_is_owning(
+            &cmeta_test_owner_interface()->methods[0]));
+        check_false(cmeta_interface_method_reflection_valid(
+            &cmeta_test_owner_interface()->methods[0]));
         cmeta_test_owner_destroy(&owner);
         check_equal(destroy_count, 1);
         check_false(cmeta_test_owner_valid(&owner));
