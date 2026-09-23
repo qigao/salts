@@ -128,6 +128,28 @@ suite("TinyMock") {
     mock_tinymock_six_verify();
   }
 
+  it("should record generated wrapper calls for independent verification") {
+    const tinymock_recorded_call_t *call;
+
+    mock_tinymock_default_reset();
+    mock_tinymock_default_set_default_return(TINYMOCk_RETURN(-9));
+
+    check_equal(tinymock_default(777), -9);
+    check_equal(tinymock_mock_call_count(&tinymock_tinymock_default), (size_t)1);
+    tinymock_mock_verify_times(&tinymock_tinymock_default, 1);
+    tinymock_mock_verify_at_least(&tinymock_tinymock_default, 1);
+    tinymock_mock_verify_at_most(&tinymock_tinymock_default, 1);
+
+    call = tinymock_mock_call_at(&tinymock_tinymock_default, 0);
+    check_not_null(call);
+    check_equal(call->argc, (size_t)1);
+    check_equal(TINYMOCk_VALUE_AS(int, call->args[0]), 777);
+    check_null(tinymock_mock_call_at(&tinymock_tinymock_default, 1));
+
+    mock_tinymock_zero_reset();
+    tinymock_mock_verify_never(&tinymock_tinymock_zero);
+  }
+
   it_should_fail("should stop on argument mismatch and not execute subsequent code") {
     g_tinymock_mismatch_marker = 1;
 
