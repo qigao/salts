@@ -26,4 +26,10 @@ FunctionDecl(value, int, tinymock_fixture_nullable_out,
     (size_t *, written, CMETA_PARAM_OUT | CMETA_PARAM_NULLABLE,
      &cmeta_type_size_ptr));
 
+FunctionDecl(value, void, tinymock_fixture_notify,
+    (int, event, CMETA_PARAM_IN),
+    (size_t *, written, CMETA_PARAM_OUT, &cmeta_type_size_ptr));
+
+Function0Decl(value, void, tinymock_fixture_shutdown);
+
 #endif /* TINYMOCK_FUNCTION_FIXTURE_H */
