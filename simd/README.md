@@ -83,3 +83,24 @@ descriptor:
 - i64x2/u64x2 widen 2 lanes from 32-bit source values.
 
 Signedness is therefore semantic metadata, not a separate backend flag.
+
+
+## Advanced numeric core
+
+The generic operation layer also covers reusable advanced numeric semantics:
+
+- `SALTS_SIMD_UNARY_ABS`, `NEG`, `SQRT`;
+- `SALTS_SIMD_UNARY_POPCOUNT` for byte vectors;
+- `SALTS_SIMD_BINARY_MIN` / `MAX`;
+- signed/unsigned saturating add/sub for 8- and 16-bit integer lanes;
+- reductions:
+  - any true;
+  - all lanes true;
+  - lane sign-bit mask.
+
+These remain descriptor-driven. Signedness and lane width come from
+`cmeta_vector_desc`; consumers do not pass a second lane-type enum.
+
+Unsupported descriptor/operation pairs return `false`. This is intentional:
+higher layers such as TurboWasm may keep validated instructions fail-closed
+until the reusable Salts primitive exists.
