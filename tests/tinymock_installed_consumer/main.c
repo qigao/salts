@@ -3,8 +3,12 @@
 
 #include <cmeta/function.h>
 #include <tinymock_function.h>
+#include <tinymock_cmeta.h>
 
 #include "api.h"
+
+TINYMOCk_INTERFACE(tinymock_installed_interface,
+                   TINYMOCK_INSTALLED_INTERFACE_METHODS);
 
 static int tinymock_installed_callback_a(int value) {
   return value + 4;
@@ -37,18 +41,46 @@ int main(void) {
   const cmeta_function_desc *meta;
 
   {
-    const cmeta_interface_desc *iface =
+    const cmeta_interface_desc *iface_meta =
         tinymock_installed_interface_interface();
     const cmeta_interface_method_desc *method;
+    tinymock_tinymock_installed_interface mock;
+    tinymock_installed_interface iface;
+    tinymock_installed_box input = {6};
+    tinymock_installed_box expected = {6};
+    tinymock_installed_box scripted = {42};
+    tinymock_installed_box result;
 
-    assert(cmeta_interface_desc_valid(iface));
-    assert(iface->method_count == 1u);
-    method = &iface->methods[0];
+    assert(cmeta_interface_desc_valid(iface_meta));
+    assert(iface_meta->method_count == 2u);
+    method = &iface_meta->methods[0];
     assert(cmeta_interface_method_reflection_valid(method));
     assert(method->function == tinymock_installed_interface_apply_function());
     assert(method->abi == tinymock_installed_interface_apply_function_abi());
     assert(method->function->param_count == 1u);
     assert(method->abi->return_carrier == CMETA_ABI_SCALAR);
+
+    method = &iface_meta->methods[1];
+    assert(cmeta_interface_method_reflection_valid(method));
+    assert(method->function ==
+           tinymock_installed_interface_map_box_function());
+    assert(method->abi->return_carrier == CMETA_ABI_AGGREGATE);
+
+    tinymock_tinymock_installed_interface_init(&mock);
+    iface = tinymock_tinymock_installed_interface_as_interface(&mock);
+
+    tinymock_mock_set_default_return(
+        TINYMOCk_INTERFACE_METHOD(&mock, apply),
+        TINYMOCk_RETURN(31));
+    assert(tinymock_installed_interface_apply(&iface, 3) == 31);
+
+    assert(TINYMOCk_INTERFACE_SET_RETURN(&mock, map_box, scripted));
+    result = tinymock_installed_interface_map_box(&iface, input);
+    assert(result.value == 42);
+    assert(TINYMOCk_INTERFACE_ARG_EQUAL_TYPED(
+        &mock, map_box, 0u, "input", expected));
+
+    tinymock_tinymock_installed_interface_destroy(&mock);
   }
 
   TINYMOCk_FUNCTION_RESET(tinymock_installed_add);
