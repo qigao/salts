@@ -144,6 +144,26 @@ suite("TinyMock reflected output actions") {
     check_equal(action_destroy_count, (size_t)3);
   }
 
+  it("reset releases the owned scripted value") {
+    tinymock_cmeta_actions actions;
+    tinymock_action_managed scripted = {12};
+
+    action_copy_count = 0u;
+    action_destroy_count = 0u;
+
+    tinymock_cmeta_actions_init(&actions, &action_out_function);
+    check_true(tinymock_cmeta_actions_set_output_name(
+        &actions, &action_out_function, "out", &scripted));
+    check_equal(action_copy_count, (size_t)1);
+    check_equal(action_destroy_count, (size_t)0);
+
+    tinymock_cmeta_actions_reset(&actions, &action_out_function);
+    check_equal(action_destroy_count, (size_t)1);
+
+    tinymock_cmeta_actions_destroy(&actions);
+    check_equal(action_destroy_count, (size_t)1);
+  }
+
   it("destroys replaced scripted values and rejects null nonnullable output") {
     tinymock_cmeta_actions actions;
     tinymock_action_managed first = {1};
