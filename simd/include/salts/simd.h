@@ -31,7 +31,8 @@ typedef enum salts_simd_unary_op {
     SALTS_SIMD_UNARY_NOT = 0,
     SALTS_SIMD_UNARY_ABS,
     SALTS_SIMD_UNARY_NEG,
-    SALTS_SIMD_UNARY_SQRT
+    SALTS_SIMD_UNARY_SQRT,
+    SALTS_SIMD_UNARY_POPCOUNT
 } salts_simd_unary_op;
 
 typedef enum salts_simd_binary_op {
@@ -59,6 +60,18 @@ typedef enum salts_simd_shift_op {
     SALTS_SIMD_SHIFT_LEFT = 0,
     SALTS_SIMD_SHIFT_RIGHT
 } salts_simd_shift_op;
+
+
+typedef enum salts_simd_saturating_op {
+    SALTS_SIMD_SATURATING_ADD = 0,
+    SALTS_SIMD_SATURATING_SUB
+} salts_simd_saturating_op;
+
+typedef enum salts_simd_reduce_op {
+    SALTS_SIMD_REDUCE_ANY_TRUE = 0,
+    SALTS_SIMD_REDUCE_ALL_TRUE,
+    SALTS_SIMD_REDUCE_BITMASK
+} salts_simd_reduce_op;
 
 void salts_simd_v128_load(salts_v128 *out, const void *source);
 void salts_simd_v128_store(void *destination, const salts_v128 *value);
@@ -123,6 +136,19 @@ bool salts_simd_shift(const cmeta_vector_desc *desc,
                       salts_v128 *out,
                       const salts_v128 *value,
                       uint32_t count);
+
+
+bool salts_simd_saturating_binary(
+    const cmeta_vector_desc *desc,
+    salts_simd_saturating_op op,
+    salts_v128 *out,
+    const salts_v128 *left,
+    const salts_v128 *right);
+
+bool salts_simd_reduce(const cmeta_vector_desc *desc,
+                       salts_simd_reduce_op op,
+                       const salts_v128 *value,
+                       uint32_t *out);
 
 bool salts_simd_select(const cmeta_vector_desc *desc,
                        salts_v128 *out,
