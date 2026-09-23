@@ -99,6 +99,18 @@ jobs:
           arch=x64
           profile=release
           EOF
+      - name: Verify installed TinyMock consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/sdk/linux-x64"
+          cmake -S tests/tinymock_installed_consumer \
+            -B build/tinymock-installed-consumer \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build/tinymock-installed-consumer --parallel 2
+          ./build/tinymock-installed-consumer/tinymock_installed_consumer
       - uses: actions/upload-artifact@v4
         with:
           name: salts-sdk-linux-x64
