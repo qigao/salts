@@ -41,3 +41,12 @@ tinymock_function_consumer_box(tinymock_fixture_box input) {
 int *tinymock_function_consumer_pointer_answer(void) {
   return tinymock_fixture_pointer_answer();
 }
+
+int tinymock_function_consumer_apply_callback(
+    tinymock_fixture_callback callback, int value) {
+  return tinymock_fixture_apply_callback(callback, value);
+}
+
+tinymock_fixture_callback tinymock_function_consumer_callback_answer(void) {
+  return tinymock_fixture_callback_answer();
+}
