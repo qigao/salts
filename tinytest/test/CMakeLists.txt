@@ -51,8 +51,8 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(c11_generic_test PRIVATE -Werror=implicit-function-declaration)
 endif()
 
-cmake_add_test(tinytest_cmeta_equal_test
-  SOURCES cmeta_equal_test.c
+cmake_add_test(tinytest_equality_test
+  SOURCES equality_test.c
   LIBS Salts::TinyTest
   FOLDER "tinytest/tests")
 
