@@ -2,6 +2,7 @@
 #define TINYMOCK_INSTALLED_API_H
 
 #include <cmeta/function.h>
+#include <cmeta/interface.h>
 
 Enum(tinymock_installed_mode,
     (TINYMOCK_INSTALLED_MODE_IDLE, 0, "idle"),
@@ -125,7 +126,11 @@ FunctionDeclAsAbi(value, tinymock_installed_mode,
 #define TINYMOCK_INSTALLED_INTERFACE_METHODS(X,I) \
     X(I,F1,int,apply,value, \
       &cmeta_type_int,CMETA_ABI_SCALAR, \
-      (int,value,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR))
+      (int,value,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR)) \
+    X(I,F1,tinymock_installed_box,map_box,value, \
+      &tinymock_installed_box_type,CMETA_ABI_AGGREGATE, \
+      (tinymock_installed_box,input,CMETA_PARAM_IN, \
+       &tinymock_installed_box_type,CMETA_ABI_AGGREGATE))
 
 CMETA_INTERFACE(tinymock_installed_interface,
                 TINYMOCK_INSTALLED_INTERFACE_METHODS);
