@@ -56,6 +56,10 @@ typedef struct cmeta_function_abi_desc {
 bool cmeta_param_desc_valid(const cmeta_param_desc *desc);
 bool cmeta_function_desc_valid(const cmeta_function_desc *desc);
 bool cmeta_function_abi_desc_valid(const cmeta_function_abi_desc *desc);
+bool cmeta_function_desc_equal(const cmeta_function_desc *left,
+                               const cmeta_function_desc *right);
+bool cmeta_function_abi_desc_equal(const cmeta_function_abi_desc *left,
+                                   const cmeta_function_abi_desc *right);
 
 cmeta_abi_carrier
 cmeta_function_param_abi(const cmeta_function_abi_desc *desc, size_t index);
@@ -184,6 +188,41 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
  * Extensions expand before the final declaration anchor, so they must emit
  * complete declarations/definitions of their own.
  */
+/*
+ * Canonical metadata emitters reused by FunctionDecl and interface-method
+ * reflection. 'symbol' is the C identifier used for TU-local storage while
+ * display_name is the stable semantic name exposed by the descriptor.
+ */
+#define CMETA_FUNCTION_METADATA_AS_ABI( \
+    symbol, display_name, contract, return_desc, return_abi_carrier, ...) \
+    CMETA_LOCAL const cmeta_param_desc symbol##__function_params[] = { \
+        CMETA_PP_FOR_EACH_A(CMETA_FUNCTION_PARAM_META, ~, __VA_ARGS__) \
+    }; \
+    CMETA_LOCAL const cmeta_function_desc symbol##__function_meta = { \
+        sizeof(cmeta_function_desc), (display_name), (return_desc), \
+        symbol##__function_params, CMETA_PP_NARG(__VA_ARGS__), \
+        CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract) \
+    }; \
+    CMETA_LOCAL const cmeta_abi_carrier symbol##__function_param_abi[] = { \
+        CMETA_PP_FOR_EACH_A(CMETA_FUNCTION_PARAM_ABI_ROW, ~, __VA_ARGS__) \
+    }; \
+    CMETA_LOCAL const cmeta_function_abi_desc symbol##__function_abi_meta = { \
+        sizeof(cmeta_function_abi_desc), &symbol##__function_meta, \
+        (return_abi_carrier), symbol##__function_param_abi, \
+        CMETA_PP_NARG(__VA_ARGS__) \
+    }
+
+#define CMETA_FUNCTION0_METADATA_AS_ABI( \
+    symbol, display_name, contract, return_desc, return_abi_carrier) \
+    CMETA_LOCAL const cmeta_function_desc symbol##__function_meta = { \
+        sizeof(cmeta_function_desc), (display_name), (return_desc), NULL, 0u, \
+        CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract) \
+    }; \
+    CMETA_LOCAL const cmeta_function_abi_desc symbol##__function_abi_meta = { \
+        sizeof(cmeta_function_abi_desc), &symbol##__function_meta, \
+        (return_abi_carrier), NULL, 0u \
+    }
+
 #ifndef CMETA_FUNCTION_DECL_EXTENSION
 #define CMETA_FUNCTION_DECL_EXTENSION(contract, return_type, return_desc, name, ...)
 #endif
@@ -206,22 +245,8 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
     contract, return_type, return_desc, return_abi_carrier, name, ...) \
     return_type name( \
         CMETA_PP_FOR_EACH_I(CMETA_FUNCTION_PARAM_DECL, ~, __VA_ARGS__)); \
-    CMETA_LOCAL const cmeta_param_desc name##__function_params[] = { \
-        CMETA_PP_FOR_EACH_A(CMETA_FUNCTION_PARAM_META, ~, __VA_ARGS__) \
-    }; \
-    CMETA_LOCAL const cmeta_function_desc name##__function_meta = { \
-        sizeof(cmeta_function_desc), #name, (return_desc), \
-        name##__function_params, CMETA_PP_NARG(__VA_ARGS__), \
-        CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract) \
-    }; \
-    CMETA_LOCAL const cmeta_abi_carrier name##__function_param_abi[] = { \
-        CMETA_PP_FOR_EACH_A(CMETA_FUNCTION_PARAM_ABI_ROW, ~, __VA_ARGS__) \
-    }; \
-    CMETA_LOCAL const cmeta_function_abi_desc name##__function_abi_meta = { \
-        sizeof(cmeta_function_abi_desc), &name##__function_meta, \
-        (return_abi_carrier), name##__function_param_abi, \
-        CMETA_PP_NARG(__VA_ARGS__) \
-    }; \
+    CMETA_FUNCTION_METADATA_AS_ABI( \
+        name, #name, contract, return_desc, return_abi_carrier, __VA_ARGS__); \
     CMETA_INLINE const cmeta_function_desc *name##_function(void) { \
         return &name##__function_meta; \
     } \
@@ -247,14 +272,8 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
 #define CMETA_FUNCTION0_DECL_AS_ABI( \
     contract, return_type, return_desc, return_abi_carrier, name) \
     return_type name(void); \
-    CMETA_LOCAL const cmeta_function_desc name##__function_meta = { \
-        sizeof(cmeta_function_desc), #name, (return_desc), NULL, 0u, \
-        CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract) \
-    }; \
-    CMETA_LOCAL const cmeta_function_abi_desc name##__function_abi_meta = { \
-        sizeof(cmeta_function_abi_desc), &name##__function_meta, \
-        (return_abi_carrier), NULL, 0u \
-    }; \
+    CMETA_FUNCTION0_METADATA_AS_ABI( \
+        name, #name, contract, return_desc, return_abi_carrier); \
     CMETA_INLINE const cmeta_function_desc *name##_function(void) { \
         return &name##__function_meta; \
     } \
