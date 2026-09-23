@@ -255,6 +255,65 @@ the `TINYMOCK_CPP_MOCK_METHOD*` method generators.
 `TINYMOCk_VALUE_AS(type, value)` unboxes it. Both are strict-C11 `_Generic`
 interfaces; the ABI-specific conversion handlers are implementation details.
 
+### CMeta interface auto-mocking
+
+Strict-C11 tests can replay an existing `CMETA_INTERFACE` method schema into a
+mock vtable without hand-writing a second implementation:
+
+```c
+#include <cmeta/interface.h>
+#include "tinytest.h"
+#include "tinymock_cmeta.h"
+
+#define COUNTER_METHODS(X, I) \
+    X(I,R1,int,add,int,delta) \
+    X(I,R0,int,value,_) \
+    X(I,V0,void,reset,_)
+
+CMETA_INTERFACE(counter, COUNTER_METHODS);
+TINYMOCk_INTERFACE(counter, COUNTER_METHODS);
+
+spec("counter consumer") {
+    it("records interface calls independently from stubbing") {
+        tinymock_counter mock;
+        counter dependency;
+
+        tinymock_counter_init(&mock);
+        dependency = tinymock_counter_as_interface(&mock);
+
+        tinymock_mock_set_default_return(
+            TINYMOCk_INTERFACE_METHOD(&mock, add), TINYMOCk_RETURN(7));
+
+        check_equal(counter_add(&dependency, 3), 7);
+        tinymock_mock_verify_times(
+            TINYMOCk_INTERFACE_METHOD(&mock, add), 1);
+    }
+}
+```
+
+Generated interface mocks are relaxed by default: unstubbed methods return the
+portable TinyMock zero/null value so calls can be recorded and verified without
+first declaring an ordered expectation. Existing `TINYMOCk_MOCK(...)` usage
+keeps its strict expectation API.
+
+The bridge deliberately reuses the interface X-list rather than defining a
+second reflection schema. Its current value carrier is limited to TinyMock's
+portable scalar/string/pointer set. CMeta trait-backed arbitrary object
+matching/capture and generic free-function reflection are separate follow-up
+work; unsupported by-value structures are not silently treated as mockable.
+
+Invocation history can be queried independently of strict expectation
+verification:
+
+```c
+tinymock_mock_verify_times(mock, 2);
+tinymock_mock_verify_never(other);
+tinymock_mock_verify_at_least(mock, 1);
+tinymock_mock_verify_at_most(mock, 3);
+
+const tinymock_recorded_call_t *call = tinymock_mock_call_at(mock, 0);
+```
+
 ## Benchmarking
 
 ```c
