@@ -15,7 +15,12 @@ static size_t tinymock_cmeta_recorded_limit(size_t count) {
   return count < TINYMOCk_MAX_CALLS ? count : TINYMOCk_MAX_CALLS;
 }
 
-static bool tinymock_cmeta_function_equal(
+void tinymock_cmeta_snapshot_init(tinymock_cmeta_snapshot *snapshot) {
+  if (!snapshot) return;
+  memset(snapshot, 0, sizeof(*snapshot));
+}
+
+bool tinymock_cmeta_function_equal(
     const cmeta_function_desc *left,
     const cmeta_function_desc *right) {
   size_t index;
@@ -45,7 +50,7 @@ static bool tinymock_cmeta_function_equal(
   return true;
 }
 
-static void tinymock_cmeta_snapshot_clear(tinymock_cmeta_snapshot *snapshot) {
+void tinymock_cmeta_snapshot_reset(tinymock_cmeta_snapshot *snapshot) {
   const cmeta_type_traits *traits;
   if (!snapshot) return;
 
@@ -77,7 +82,7 @@ static bool tinymock_cmeta_snapshot_allocate(
   return true;
 }
 
-static bool tinymock_cmeta_snapshot_copy(
+bool tinymock_cmeta_snapshot_copy(
     tinymock_cmeta_snapshot *snapshot,
     const cmeta_type_desc *type,
     const void *source,
@@ -116,15 +121,53 @@ static bool tinymock_cmeta_snapshot_copy(
     return true;
   }
 
-  tinymock_cmeta_snapshot_clear(snapshot);
+  tinymock_cmeta_snapshot_reset(snapshot);
   return false;
+}
+
+bool tinymock_cmeta_snapshot_write(
+    const tinymock_cmeta_snapshot *snapshot,
+    void *destination,
+    bool replace_existing) {
+  const cmeta_type_traits *traits;
+  const cmeta_type_desc *type;
+
+  if (!snapshot || !snapshot->constructed || !snapshot->data ||
+      !destination || !snapshot->type)
+    return false;
+
+  type = snapshot->type;
+  traits = type->traits;
+
+  if (type->kind == CMETA_T_POINTER) {
+    memcpy(destination, snapshot->data, type->size);
+    return true;
+  }
+
+  if (traits &&
+      (traits->flags & (CMETA_TRAIT_TRIVIAL_COPY |
+                        CMETA_TRAIT_TRIVIAL_DESTROY)) ==
+          (CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY)) {
+    memcpy(destination, snapshot->data, type->size);
+    return true;
+  }
+
+  if (cmeta_type_require_traits(
+          type, CMETA_TRAIT_COPY | CMETA_TRAIT_DESTROY) != CMETA_OK ||
+      !traits || !traits->copy_construct || !traits->destroy)
+    return false;
+
+  if (replace_existing)
+    traits->destroy(destination);
+
+  return traits->copy_construct(destination, snapshot->data);
 }
 
 static void tinymock_cmeta_call_clear(tinymock_cmeta_recorded_call *call) {
   size_t index;
   if (!call) return;
   for (index = 0; index < call->argc && index < TINYMOCk_MAX_ARGS; ++index)
-    tinymock_cmeta_snapshot_clear(&call->args[index]);
+    tinymock_cmeta_snapshot_reset(&call->args[index]);
   memset(call, 0, sizeof(*call));
 }
 
@@ -334,7 +377,7 @@ void tinymock_cmeta_captor_init(tinymock_cmeta_captor *captor) {
 
 void tinymock_cmeta_captor_reset(tinymock_cmeta_captor *captor) {
   if (!captor) return;
-  tinymock_cmeta_snapshot_clear(&captor->value);
+  tinymock_cmeta_snapshot_reset(&captor->value);
   captor->capture_count = 0u;
 }
 
@@ -358,7 +401,7 @@ bool tinymock_cmeta_captor_capture(
   if (!snapshot->constructed || !snapshot->type || !snapshot->data)
     return false;
 
-  tinymock_cmeta_snapshot_clear(&captor->value);
+  tinymock_cmeta_snapshot_reset(&captor->value);
   if (!tinymock_cmeta_snapshot_copy(
           &captor->value, snapshot->type, snapshot->data,
           snapshot->has_pointer_identity ? &(tinymock_value_t){

@@ -7,6 +7,10 @@
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_add);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_answer);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_pointer);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_write_size);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_adjust_int);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_unknown_ptr);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_nullable_out);
 
 suite("TinyMock reflected free functions") {
   it("generates replacement definitions without repeating signatures") {
@@ -91,6 +95,69 @@ suite("TinyMock reflected free functions") {
     }
 
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_pointer);
+  }
+
+  it("scripts reflected OUT and INOUT parameters") {
+    size_t written = 0u;
+    size_t scripted_written = 64u;
+    int adjusted = 5;
+    int scripted_adjusted = 41;
+
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_write_size);
+    tinymock_mock_set_default_return(
+        TINYMOCk_FUNCTION(tinymock_fixture_write_size),
+        TINYMOCk_RETURN(7));
+    check_true(TINYMOCk_FUNCTION_SET_OUT(
+        tinymock_fixture_write_size, "written", scripted_written));
+
+    check_equal(
+        tinymock_function_consumer_write_size(9, &written), 7);
+    check_equal(written, (size_t)64);
+    tinymock_mock_verify_times(
+        TINYMOCk_FUNCTION(tinymock_fixture_write_size), 1);
+
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_adjust_int);
+    tinymock_mock_set_default_return(
+        TINYMOCk_FUNCTION(tinymock_fixture_adjust_int),
+        TINYMOCk_RETURN(8));
+    check_true(TINYMOCk_FUNCTION_SET_OUT(
+        tinymock_fixture_adjust_int, "value", scripted_adjusted));
+
+    check_equal(tinymock_function_consumer_adjust_int(&adjusted), 8);
+    check_equal(adjusted, 41);
+
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_write_size);
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_adjust_int);
+  }
+
+  it("rejects unsafe output metadata and handles nullable null") {
+    int input = 5;
+    int scripted = 9;
+    size_t nullable_value = 22u;
+
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_pointer);
+    check_false(TINYMOCk_FUNCTION_SET_OUT(
+        tinymock_fixture_pointer, "value", scripted));
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_pointer);
+
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_unknown_ptr);
+    check_false(TINYMOCk_FUNCTION_SET_OUT(
+        tinymock_fixture_unknown_ptr, "value", scripted));
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_unknown_ptr);
+
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_nullable_out);
+    tinymock_mock_set_default_return(
+        TINYMOCk_FUNCTION(tinymock_fixture_nullable_out),
+        TINYMOCk_RETURN(3));
+    check_true(TINYMOCk_FUNCTION_SET_OUT(
+        tinymock_fixture_nullable_out, "written", nullable_value));
+
+    check_equal(tinymock_function_consumer_nullable_out(NULL), 3);
+    tinymock_mock_verify_times(
+        TINYMOCk_FUNCTION(tinymock_fixture_nullable_out), 1);
+
+    check_equal(input, 5);
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_nullable_out);
   }
 
   it("keeps stubbing independent from verification") {

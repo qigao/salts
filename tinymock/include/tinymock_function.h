@@ -38,15 +38,20 @@
 #define TINYMOCk_FUNCTION_DESTROY_NAME_I(name) tinymock_function_##name##_destroy
 #define TINYMOCk_FUNCTION_DESTROY_NAME(name) TINYMOCk_FUNCTION_DESTROY_NAME_I(name)
 
+#define TINYMOCk_FUNCTION_ACTIONS_NAME_I(name) tinymock_function_##name##_actions
+#define TINYMOCk_FUNCTION_ACTIONS_NAME(name) TINYMOCk_FUNCTION_ACTIONS_NAME_I(name)
+
 #define TINYMOCk_FUNCTION_DECLARE(name) \
   extern tinymock_mock_t TINYMOCk_FUNCTION_STATE_NAME(name); \
   extern struct tinymock_cmeta_history TINYMOCk_FUNCTION_HISTORY_NAME(name); \
+  extern struct tinymock_cmeta_actions TINYMOCk_FUNCTION_ACTIONS_NAME(name); \
   void TINYMOCk_FUNCTION_RESET_NAME(name)(void); \
   void TINYMOCk_FUNCTION_DESTROY_NAME(name)(void); \
   const struct cmeta_function_desc *TINYMOCk_FUNCTION_META_NAME(name)(void)
 
 #define TINYMOCk_FUNCTION(name) (&TINYMOCk_FUNCTION_STATE_NAME(name))
 #define TINYMOCk_FUNCTION_HISTORY(name) (&TINYMOCk_FUNCTION_HISTORY_NAME(name))
+#define TINYMOCk_FUNCTION_ACTIONS(name) (&TINYMOCk_FUNCTION_ACTIONS_NAME(name))
 #define TINYMOCk_FUNCTION_RESET(name) TINYMOCk_FUNCTION_RESET_NAME(name)()
 #define TINYMOCk_FUNCTION_DESTROY(name) TINYMOCk_FUNCTION_DESTROY_NAME(name)()
 #define TINYMOCk_FUNCTION_META(name) TINYMOCk_FUNCTION_META_NAME(name)()
@@ -64,6 +69,15 @@
 #define TINYMOCk_FUNCTION_CAPTURE(name, call_index, param_name, captor) \
   tinymock_cmeta_captor_capture_name( \
       (captor), TINYMOCk_FUNCTION_HISTORY(name), (call_index), (param_name))
+
+#define TINYMOCk_FUNCTION_SET_OUT(name, param_name, value_lvalue) \
+  tinymock_cmeta_actions_set_output_name( \
+      TINYMOCk_FUNCTION_ACTIONS(name), TINYMOCk_FUNCTION_META(name), \
+      (param_name), &(value_lvalue))
+
+#define TINYMOCk_FUNCTION_CLEAR_OUT(name, param_name) \
+  tinymock_cmeta_actions_clear_output_name( \
+      TINYMOCk_FUNCTION_ACTIONS(name), (param_name))
 
 #if defined(TINYMOCK_GENERATE_FUNCTION_OVERRIDES)
 
@@ -92,6 +106,7 @@
 #define TINYMOCk_FUNCTION_DEFINE_STATE(fn_name) \
   tinymock_mock_t TINYMOCk_FUNCTION_STATE_NAME(fn_name); \
   tinymock_cmeta_history TINYMOCk_FUNCTION_HISTORY_NAME(fn_name); \
+  tinymock_cmeta_actions TINYMOCk_FUNCTION_ACTIONS_NAME(fn_name); \
   void TINYMOCk_FUNCTION_RESET_NAME(fn_name)(void) { \
     const cmeta_function_desc *meta__ = FunctionMeta(fn_name); \
     TINYMOCk_ASSERT(cmeta_function_desc_valid(meta__), \
@@ -100,9 +115,11 @@
     tinymock_mock_set_default_return(&TINYMOCk_FUNCTION_STATE_NAME(fn_name), \
                                      tinymock_value_zero()); \
     tinymock_cmeta_history_reset(&TINYMOCk_FUNCTION_HISTORY_NAME(fn_name), meta__); \
+    tinymock_cmeta_actions_reset(&TINYMOCk_FUNCTION_ACTIONS_NAME(fn_name), meta__); \
   } \
   void TINYMOCk_FUNCTION_DESTROY_NAME(fn_name)(void) { \
     tinymock_cmeta_history_destroy(&TINYMOCk_FUNCTION_HISTORY_NAME(fn_name)); \
+    tinymock_cmeta_actions_destroy(&TINYMOCk_FUNCTION_ACTIONS_NAME(fn_name)); \
   } \
   const cmeta_function_desc *TINYMOCk_FUNCTION_META_NAME(fn_name)(void) { \
     return FunctionMeta(fn_name); \
@@ -125,6 +142,11 @@
         "tinymock cannot snapshot reflected arguments for %s", #name); \
     tinymock_value_t result__ = tinymock_mock_dispatch( \
         &TINYMOCk_FUNCTION_STATE_NAME(name), CMETA_PP_NARG(__VA_ARGS__), args__); \
+    TINYMOCk_ASSERT( \
+        tinymock_cmeta_actions_apply( \
+            &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
+            CMETA_PP_NARG(__VA_ARGS__), args__), \
+        "tinymock cannot apply reflected output actions for %s", #name); \
     return TINYMOCk_VALUE_AS(return_type, result__); \
   }
 
@@ -151,5 +173,6 @@
 
 #include <cmeta/function.h>
 #include "tinymock_history.h"
+#include "tinymock_actions.h"
 
 #endif /* TINYMOCK_FUNCTION_H */

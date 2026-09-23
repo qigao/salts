@@ -89,6 +89,8 @@ jobs:
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           test -f "$prefix/include/tinymock_function.h"
+          test -f "$prefix/include/tinymock_history.h"
+          test -f "$prefix/include/tinymock_actions.h"
           test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
@@ -164,6 +166,8 @@ jobs:
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           test -f "$prefix/include/tinymock_function.h"
+          test -f "$prefix/include/tinymock_history.h"
+          test -f "$prefix/include/tinymock_actions.h"
           test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
@@ -234,11 +238,15 @@ jobs:
           $functionHeader = Join-Path $prefix "include\cmeta\function.h"
           $tinymockHeader = Join-Path $prefix "include\tinymock_cmeta.h"
           $tinymockFunctionHeader = Join-Path $prefix "include\tinymock_function.h"
+          $tinymockHistoryHeader = Join-Path $prefix "include\tinymock_history.h"
+          $tinymockActionsHeader = Join-Path $prefix "include\tinymock_actions.h"
           $tinymockCMake = Join-Path $prefix "lib\cmake\Salts\SaltsTinyMock.cmake"
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
           if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
           if (-not (Test-Path -LiteralPath $tinymockHeader -PathType Leaf)) { throw "missing $tinymockHeader" }
           if (-not (Test-Path -LiteralPath $tinymockFunctionHeader -PathType Leaf)) { throw "missing $tinymockFunctionHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockHistoryHeader -PathType Leaf)) { throw "missing $tinymockHistoryHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockActionsHeader -PathType Leaf)) { throw "missing $tinymockActionsHeader" }
           if (-not (Test-Path -LiteralPath $tinymockCMake -PathType Leaf)) { throw "missing $tinymockCMake" }
           if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::TinyMock" -Quiet)) {
             throw "missing Salts::TinyMock export in $targets"
@@ -305,6 +313,8 @@ jobs:
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           test -f "$prefix/include/tinymock_function.h"
+          test -f "$prefix/include/tinymock_history.h"
+          test -f "$prefix/include/tinymock_actions.h"
           test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"

@@ -37,6 +37,22 @@ typedef struct tinymock_cmeta_captor {
   size_t capture_count;
 } tinymock_cmeta_captor;
 
+void tinymock_cmeta_snapshot_init(tinymock_cmeta_snapshot *snapshot);
+void tinymock_cmeta_snapshot_reset(tinymock_cmeta_snapshot *snapshot);
+bool tinymock_cmeta_snapshot_copy(
+    tinymock_cmeta_snapshot *snapshot,
+    const cmeta_type_desc *type,
+    const void *source,
+    const tinymock_value_t *boxed);
+bool tinymock_cmeta_snapshot_write(
+    const tinymock_cmeta_snapshot *snapshot,
+    void *destination,
+    bool replace_existing);
+
+bool tinymock_cmeta_function_equal(
+    const cmeta_function_desc *left,
+    const cmeta_function_desc *right);
+
 void tinymock_cmeta_history_init(tinymock_cmeta_history *history,
                                  const cmeta_function_desc *function);
 void tinymock_cmeta_history_reset(tinymock_cmeta_history *history,
