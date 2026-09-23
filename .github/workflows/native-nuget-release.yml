@@ -97,6 +97,7 @@ jobs:
           test -f "$prefix/include/cmeta/interface.h"
           grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
           grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
+          grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
           grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymeta/equality.h"
           test ! -e "$prefix/include/tinymeta/cmeta.h"
@@ -181,6 +182,7 @@ jobs:
           test -f "$prefix/include/cmeta/interface.h"
           grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
           grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
+          grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
           grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymeta/equality.h"
           test ! -e "$prefix/include/tinymeta/cmeta.h"
@@ -346,6 +348,7 @@ jobs:
           test -f "$prefix/include/cmeta/interface.h"
           grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
           grep -F "cmeta_interface_desc_valid" "$prefix/include/cmeta/interface.h"
+          grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
           grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymeta/equality.h"
           test ! -e "$prefix/include/tinymeta/cmeta.h"
@@ -406,9 +409,13 @@ jobs:
           test -n "$mac_header"
           test -n "$mac_interface"
           grep -F "cmeta_interface_desc_valid" package/sdk/linux-x64/include/cmeta/interface.h
+          grep -F "cmeta_interface_desc_equal" package/sdk/linux-x64/include/cmeta/interface.h
           grep -F "cmeta_interface_desc_valid" package/sdk/windows-x64/include/cmeta/interface.h
+          grep -F "cmeta_interface_desc_equal" package/sdk/windows-x64/include/cmeta/interface.h
           grep -F "cmeta_interface_desc_valid" package/sdk/android-arm64-v8a/include/cmeta/interface.h
+          grep -F "cmeta_interface_desc_equal" package/sdk/android-arm64-v8a/include/cmeta/interface.h
           grep -F "cmeta_interface_desc_valid" "$mac_interface"
+          grep -F "cmeta_interface_desc_equal" "$mac_interface"
           grep -F "cmeta_function_abi_desc" "$mac_header"
           test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 4
           find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print
