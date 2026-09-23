@@ -19,6 +19,10 @@ static_assert(std::is_standard_layout_v<cmeta_function_desc>,
               "function reflection remains a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_function_abi_desc>,
               "function ABI reflection remains a C ABI");
+static_assert(std::is_standard_layout_v<cmeta_interface_method_desc>,
+              "interface method reflection remains a C ABI");
+static_assert(std::is_standard_layout_v<cmeta_interface_desc>,
+              "interface reflection remains a C ABI");
 static_assert(std::is_same_v<decltype(&cmeta_data_enum_assign_bits),
               cmeta_status (*)(const cmeta_data_desc *, void *, uint64_t)>,
               "canonical enum assignment does not narrow through int64_t");
@@ -32,6 +36,15 @@ Enum(cmeta_cpp_state,
     (CMETA_CPP_READY, 3, "ready"),
     (CMETA_CPP_DONE, 7, "done")
 );
+
+#define CMETA_CPP_INTERFACE_METHODS(X,I) \
+    X(I,F1,int,add,value, \
+      &cmeta_type_int,CMETA_ABI_SCALAR, \
+      (int,delta,CMETA_PARAM_IN,&cmeta_type_int,CMETA_ABI_SCALAR)) \
+    X(I,F0,int,value,value, \
+      &cmeta_type_int,CMETA_ABI_SCALAR)
+
+CMETA_INTERFACE(cmeta_cpp_reflected_interface, CMETA_CPP_INTERFACE_METHODS);
 
 TypeFunction(CMetaCppStorage,
     (small, int),
@@ -181,6 +194,20 @@ static bool cmeta_cpp_copy_construct(void *destination, const void *source) {
 }
 
 spec("CMeta C++ public headers") {
+  it("publishes reflected interface functions through C++17") {
+    const cmeta_interface_desc *meta = cmeta_cpp_reflected_interface_interface();
+
+    check_true(cmeta_interface_desc_valid(meta));
+    check_equal(meta->method_count, static_cast<size_t>(2));
+    check_true(cmeta_interface_method_reflection_valid(&meta->methods[0]));
+    check_equal(meta->methods[0].function->name,
+                "cmeta_cpp_reflected_interface.add");
+    check_equal(meta->methods[0].function->param_count,
+                static_cast<size_t>(1));
+    check_equal(meta->methods[0].abi->return_carrier,
+                CMETA_ABI_SCALAR);
+  }
+
   it("exposes the fixed-value facade without C-only types") {
     const cmeta_data_fixed_ops ops = {
         sizeof(cmeta_data_fixed_ops), CMETA_DATA_FIXED_OPS_ABI_VERSION,

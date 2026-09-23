@@ -497,12 +497,16 @@ suite("CMeta core") {
         check_not_null(meta);
         check_equal(meta->name, "cmeta_test_counter");
         check_equal(meta->method_count, (size_t)3);
+        check_true(cmeta_interface_desc_valid(meta));
         check_equal(meta->methods[0].name, "add");
-        check_equal(meta->methods[0].arity, 1u);
+        check_equal(cmeta_interface_method_arity(&meta->methods[0]), (size_t)1u);
         check_equal(meta->methods[1].name, "value");
-        check_equal(meta->methods[1].arity, 0u);
+        check_equal(cmeta_interface_method_arity(&meta->methods[1]), (size_t)0u);
         check_equal(meta->methods[2].name, "reset");
-        check_equal(meta->methods[2].arity, 0u);
+        check_equal(cmeta_interface_method_arity(&meta->methods[2]), (size_t)0u);
+        check_null(cmeta_interface_method_function(&meta->methods[0]));
+        check_null(cmeta_interface_method_abi(&meta->methods[0]));
+        check_false(cmeta_interface_method_reflection_valid(&meta->methods[0]));
     }
 
     it("rejects an interface whose required vtable method is missing") {

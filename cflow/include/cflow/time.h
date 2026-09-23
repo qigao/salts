@@ -1,6 +1,8 @@
 #ifndef CFLOW_TIME_H
 #define CFLOW_TIME_H
 
+#include <cmeta/cmeta.h>
+
 #include <stdint.h>
 
 typedef struct cflow_duration {
@@ -14,6 +16,17 @@ typedef struct cflow_instant {
 typedef struct cflow_deadline {
     uint64_t ns;
 } cflow_deadline;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+extern const cmeta_type_desc cflow_type_duration;
+extern const cmeta_type_desc cflow_type_instant;
+
+#ifdef __cplusplus
+}
+#endif
 
 static inline uint64_t cflow_u64_mul_sat(uint64_t value, uint64_t scale) {
     if (value != 0u && scale > UINT64_MAX / value) return UINT64_MAX;

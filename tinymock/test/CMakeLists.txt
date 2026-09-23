@@ -8,6 +8,16 @@ set_target_properties(cmeta_tinymock_interface_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+cmake_add_test(cmeta_tinymock_cflow_clock_interface_test
+  SOURCES tinymock_cflow_clock_interface_test.c
+  LIBS Salts::TinyMock Salts::CFlow
+  FOLDER "tinymock/tests")
+
+set_target_properties(cmeta_tinymock_cflow_clock_interface_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
 cmake_add_test(cmeta_tinymock_function_auto_mock_test
   SOURCES
     tinymock_function_auto_mock_test.c

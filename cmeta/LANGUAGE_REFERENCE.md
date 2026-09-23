@@ -300,11 +300,47 @@ Declares a small protocol/vtable interface.
 interface(Source, SOURCE_METHODS);
 ```
 
-Method row kinds are:
+Method row kinds are split into two levels:
 
 ```text
-R0 R1 R2 R3 R4   non-void return, 0..4 arguments after self
-V0 V1 V2 V3 V4   void return,     0..4 arguments after self
+R0..R4   non-void ABI-only rows
+V0..V4   void ABI-only rows
+D0       owning destructor ABI-only row
+
+F0..F4   fully reflected non-void rows
+FV0..FV4 fully reflected void rows
+FD0      fully reflected owning destructor
+```
+
+Legacy `R/V/D` rows preserve the exact vtable/wrapper ABI but intentionally do
+not synthesize semantic function metadata from C spelling. Their
+`cmeta_interface_method_desc.function` and `.abi` are `NULL`; use
+`cmeta_interface_method_arity()` for dispatch arity.
+
+Fully reflected `F/FV/FD` rows additionally state the semantic contract,
+return descriptor, return ABI carrier, and each parameter as the exact
+five-field FunctionDecl row:
+
+```text
+(type, name, flags, descriptor, abi_carrier)
+```
+
+For those rows, `cmeta_interface_method_function()` and
+`cmeta_interface_method_abi()` expose the same canonical
+`cmeta_function_desc` / `cmeta_function_abi_desc` model used by ordinary
+`FunctionDecl`. CMeta never infers OUT/INOUT, ownership, effects, or custom
+type identity from pointer spelling or names.
+
+Example:
+
+```c
+#define CLOCK_METHODS(X, I) \
+    X(I, F0, cflow_instant, now, stateful,
+      &cflow_type_instant, CMETA_ABI_AGGREGATE) \
+    X(I, F1, bool, advance, stateful,
+      &cmeta_type_bool, CMETA_ABI_SCALAR,
+      (cflow_duration, delta, CMETA_PARAM_IN,
+       &cflow_type_duration, CMETA_ABI_AGGREGATE))
 ```
 
 An interface value is conceptually `{ self, vtable }` plus implementation and

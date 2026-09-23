@@ -1,7 +1,6 @@
 #ifndef CMETA_H
 #define CMETA_H
 
-#include <cmeta/interface.h>
 #include <cmeta/status.h>
 #include <cmeta/type_identity.h>
 #include <cmeta/type_traits.h>
@@ -428,4 +427,14 @@ cmeta_gen_status cmeta_callable_generate(const cmeta_callable *fn, const void *i
 #ifdef __cplusplus
 }
 #endif
+
+/*
+ * High-level reflection layers are loaded only after base CMeta type/effect
+ * contracts are complete. This keeps direct <cmeta/interface.h> inclusion
+ * safe while preserving the historical transitive <cmeta/cmeta.h> surface.
+ */
+#if !defined(CMETA_FUNCTION_H)
+#include <cmeta/function.h>
+#endif
+
 #endif
