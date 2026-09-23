@@ -54,6 +54,7 @@ flowchart TB
 | [CNet](cnet/README.md) | `Salts::CNet` | Transport, TLS, WebSocket/session primitives, explicit progress and shutdown |
 | Core | `Salts::Core` | Strings, files, logging, regex, process primitives, memory, and common utilities |
 | [TinyTest](tinytest/README.md) | `Salts::TinyTest` | Lightweight C/C++ BDD/TDD testing with strict-C11 generic assertions |
+| [TinyMock](tinymock/README.md) | `Salts::TinyMock` | CMeta-driven interface and reflected free-function test doubles with shared invocation verification |
 
 The canonical module boundaries and dependency direction are documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -66,7 +67,7 @@ The canonical module boundaries and dependency direction are documented in [ARCH
 
 - [CHTTP](https://github.com/qigao/chttp) — HTTP client/server, RPC, S3, WebSocket, and OpenAPI-oriented infrastructure built on the Salts networking/runtime model.
 - [TurboDB](https://github.com/qigao/turbodb) — storage/database infrastructure that reuses Salts typed and bounded execution primitives.
-- **TinyTest** — the lightweight testing framework shipped with Salts and used across the ecosystem.
+- **TinyTest / TinyMock** — lightweight test execution plus CMeta-driven interface/function test doubles shipped with Salts and used across the ecosystem.
 
 ### Frameworks and applications
 
