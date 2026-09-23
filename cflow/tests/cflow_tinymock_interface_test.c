@@ -1,12 +1,51 @@
 #include <cflow/reactive.h>
+#include <cflow/clock.h>
 #include <cmeta/cmeta.h>
 
 #include "tinytest.h"
 #include "tinymock_cmeta.h"
 
 TINYMOCk_INTERFACE(cflow_subscriber, CMETA_SUBSCRIBER_METHODS);
+TINYMOCk_INTERFACE(cflow_clock, CMETA_CLOCK_METHODS);
 
 suite("TinyMock existing CMeta interface") {
+  it("consumes reflected Clock FunctionDesc without repeating signatures") {
+    tinymock_cflow_clock mock;
+    cflow_clock clock;
+    cflow_instant scripted_now = {100u};
+    bool scripted_advance = true;
+    cflow_duration delta = cflow_duration_from_ns(25u);
+    cflow_duration expected_delta = cflow_duration_from_ns(25u);
+
+    tinymock_cflow_clock_init(&mock);
+    clock = tinymock_cflow_clock_as_interface(&mock);
+
+    check_true(TINYMOCk_INTERFACE_METHOD_SET_RETURN(
+        cflow_clock, &mock, now, scripted_now));
+    check_true(TINYMOCk_INTERFACE_METHOD_SET_RETURN(
+        cflow_clock, &mock, advance, scripted_advance));
+
+    check_equal(cflow_clock_now(&clock).ns, UINT64_C(100));
+    check_true(cflow_clock_advance(&clock, delta));
+
+    check_true(TINYMOCk_INTERFACE_METHOD_ARG_EQUAL_TYPED(
+        cflow_clock, &mock, advance, 0u, "delta", expected_delta));
+    check_true(cmeta_function_desc_equal(
+        TINYMOCk_INTERFACE_METHOD_FUNCTION(cflow_clock, advance),
+        cflow_clock_interface()->methods[1].function));
+    check_equal(
+        TINYMOCk_INTERFACE_METHOD_ABI(
+            cflow_clock, advance)->return_carrier,
+        (cmeta_abi_carrier)CMETA_ABI_SCALAR);
+
+    tinymock_mock_verify_times(
+        TINYMOCk_INTERFACE_METHOD(&mock, now), 1);
+    tinymock_mock_verify_times(
+        TINYMOCk_INTERFACE_METHOD(&mock, advance), 1);
+
+    tinymock_cflow_clock_destroy(&mock);
+  }
+
   it("mocks the public cflow_subscriber interface without a hand-written vtable") {
     tinymock_cflow_subscriber mock;
     cflow_subscriber subscriber;
