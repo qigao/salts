@@ -41,8 +41,8 @@ cmake_add_test(cmeta_meta_header_test
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_tinymock_interface_test
-  SOURCES cmeta_tinymock_interface_test.c
-  LIBS Salts::CMeta Salts::TinyTest
+  SOURCES tinymock_cmeta_interface_test.c
+  LIBS Salts::TinyMock
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_language_surface_test
