@@ -158,37 +158,46 @@
   CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index) \
   (const void *)&TINYMOCk_FUNCTION_PARAM_NAME_APPLY(row)
 
-#define TINYMOCk_FUNCTION_PARAM_ADMIT_3(type, name, flags) \
+#define TINYMOCk_FUNCTION_PARAM_ADMIT_3(function_name, type, name, flags) \
   _Static_assert(1, "TinyMock scalar ABI admission")
-#define TINYMOCk_FUNCTION_PARAM_ADMIT_4(type, name, flags, descriptor) \
+#define TINYMOCk_FUNCTION_PARAM_ADMIT_4( \
+    function_name, type, name, flags, descriptor) \
   _Static_assert(0, \
-      "TinyMock auto-mock parameter " #name \
+      "TinyMock auto-mock parameter " #function_name "." #name \
       " has unspecified ABI carrier; use the 5-field FunctionDecl row")
-#define TINYMOCk_FUNCTION_PARAM_ADMIT_5(type, name, flags, descriptor, abi_carrier) \
+#define TINYMOCk_FUNCTION_PARAM_ADMIT_5( \
+    function_name, type, name, flags, descriptor, abi_carrier) \
   _Static_assert( \
       (abi_carrier) == CMETA_ABI_SCALAR || \
       (abi_carrier) == CMETA_ABI_OBJECT_POINTER, \
-      "TinyMock auto-mock parameter " #name \
+      "TinyMock auto-mock parameter " #function_name "." #name \
       " uses an unsupported ABI carrier")
-#define TINYMOCk_FUNCTION_PARAM_ADMIT_APPLY_I(...) \
+#define TINYMOCk_FUNCTION_PARAM_ADMIT_APPLY_I(function_name, ...) \
   CMETA_PP_CAT(TINYMOCk_FUNCTION_PARAM_ADMIT_, \
-               CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
-#define TINYMOCk_FUNCTION_PARAM_ADMIT_APPLY(row) \
-  TINYMOCk_FUNCTION_PARAM_ADMIT_APPLY_I row
+               CMETA_PP_NARG(__VA_ARGS__))(function_name, __VA_ARGS__)
+#define TINYMOCk_FUNCTION_PARAM_ADMIT_APPLY(function_name, row) \
+  TINYMOCk_FUNCTION_PARAM_ADMIT_APPLY_I(function_name, \
+                                         TINYMOCk_FUNCTION_PARAM_ROW_EXPAND row)
+#define TINYMOCk_FUNCTION_PARAM_ROW_EXPAND(...) __VA_ARGS__
 #define TINYMOCk_FUNCTION_PARAM_ADMIT_ROW(row, function_name) \
-  TINYMOCk_FUNCTION_PARAM_ADMIT_APPLY(row);
+  TINYMOCk_FUNCTION_PARAM_ADMIT_APPLY(function_name, row);
 
 #define TINYMOCk_FUNCTION_ADMIT_PARAMS(function_name, ...) \
   CMETA_PP_FOR_EACH_A( \
       TINYMOCk_FUNCTION_PARAM_ADMIT_ROW, function_name, __VA_ARGS__)
 
-#define TINYMOCk_FUNCTION_RETURN_ADMIT(return_abi_carrier, name) \
+#define TINYMOCk_FUNCTION_VALUE_RETURN_ADMIT(return_abi_carrier, name) \
   _Static_assert( \
       (return_abi_carrier) == CMETA_ABI_SCALAR || \
-      (return_abi_carrier) == CMETA_ABI_OBJECT_POINTER || \
-      (return_abi_carrier) == CMETA_ABI_VOID, \
+      (return_abi_carrier) == CMETA_ABI_OBJECT_POINTER, \
       "TinyMock auto-mock return for " #name \
       " uses an unsupported or unspecified ABI carrier")
+
+#define TINYMOCk_FUNCTION_VOID_RETURN_ADMIT(return_abi_carrier, name) \
+  _Static_assert( \
+      (return_abi_carrier) == CMETA_ABI_VOID, \
+      "TinyMock auto-mock void return for " #name \
+      " must use CMETA_ABI_VOID")
 
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_SCALAR(type, result) \
   return TINYMOCk_VALUE_AS(type, result)
@@ -235,7 +244,10 @@
     return FunctionAbi(fn_name); \
   }
 
-#define TINYMOCk_FUNCTION_DECL_EXTENSION_0(contract, return_type, return_desc, name, ...) \
+#define TINYMOCk_FUNCTION_DECL_ABI_EXTENSION_0( \
+    contract, return_type, return_desc, return_abi_carrier, name, ...) \
+  TINYMOCk_FUNCTION_VALUE_RETURN_ADMIT(return_abi_carrier, name); \
+  TINYMOCk_FUNCTION_ADMIT_PARAMS(name, __VA_ARGS__) \
   TINYMOCk_FUNCTION_DEFINE_STATE(name) \
   return_type name( \
       CMETA_PP_FOR_EACH_I(CMETA_FUNCTION_PARAM_DECL, ~, __VA_ARGS__)) { \
@@ -257,10 +269,14 @@
             &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
             CMETA_PP_NARG(__VA_ARGS__), args__), \
         "tinymock cannot apply reflected output actions for %s", #name); \
-    return TINYMOCk_VALUE_AS(return_type, result__); \
+    TINYMOCk_FUNCTION_RETURN_VALUE( \
+        return_abi_carrier, return_type, result__); \
   }
 
-#define TINYMOCk_FUNCTION_DECL_EXTENSION_1(contract, return_type, return_desc, name, ...) \
+#define TINYMOCk_FUNCTION_DECL_ABI_EXTENSION_1( \
+    contract, return_type, return_desc, return_abi_carrier, name, ...) \
+  TINYMOCk_FUNCTION_VOID_RETURN_ADMIT(return_abi_carrier, name); \
+  TINYMOCk_FUNCTION_ADMIT_PARAMS(name, __VA_ARGS__) \
   TINYMOCk_FUNCTION_DEFINE_STATE(name) \
   return_type name( \
       CMETA_PP_FOR_EACH_I(CMETA_FUNCTION_PARAM_DECL, ~, __VA_ARGS__)) { \
@@ -285,17 +301,22 @@
     return; \
   }
 
-#define TINYMOCk_FUNCTION_DECL_SELECTED_0(contract, return_type, return_desc, name, ...)
-#define TINYMOCk_FUNCTION_DECL_SELECTED_1(contract, return_type, return_desc, name, ...) \
-  TINYMOCk_RETURN_SELECT_(TINYMOCk_FUNCTION_DECL_EXTENSION_, return_type)( \
-      contract, return_type, return_desc, name, __VA_ARGS__)
+#define TINYMOCk_FUNCTION_DECL_ABI_SELECTED_0( \
+    contract, return_type, return_desc, return_abi_carrier, name, ...)
+#define TINYMOCk_FUNCTION_DECL_ABI_SELECTED_1( \
+    contract, return_type, return_desc, return_abi_carrier, name, ...) \
+  TINYMOCk_RETURN_SELECT_(TINYMOCk_FUNCTION_DECL_ABI_EXTENSION_, return_type)( \
+      contract, return_type, return_desc, return_abi_carrier, name, __VA_ARGS__)
 
-#define TINYMOCk_FUNCTION_DECL_EXTENSION(contract, return_type, return_desc, name, ...) \
-  TINYMOCk_CAT(TINYMOCk_FUNCTION_DECL_SELECTED_, \
+#define TINYMOCk_FUNCTION_DECL_ABI_EXTENSION( \
+    contract, return_type, return_desc, return_abi_carrier, name, ...) \
+  TINYMOCk_CAT(TINYMOCk_FUNCTION_DECL_ABI_SELECTED_, \
                TINYMOCk_FUNCTION_SHOULD_GENERATE_(name))( \
-      contract, return_type, return_desc, name, __VA_ARGS__)
+      contract, return_type, return_desc, return_abi_carrier, name, __VA_ARGS__)
 
-#define TINYMOCk_FUNCTION0_DECL_EXTENSION_0(contract, return_type, return_desc, name) \
+#define TINYMOCk_FUNCTION0_DECL_ABI_EXTENSION_0( \
+    contract, return_type, return_desc, return_abi_carrier, name) \
+  TINYMOCk_FUNCTION_VALUE_RETURN_ADMIT(return_abi_carrier, name); \
   TINYMOCk_FUNCTION_DEFINE_STATE(name) \
   return_type name(void) { \
     TINYMOCk_ASSERT( \
@@ -310,10 +331,13 @@
             &TINYMOCk_FUNCTION_ACTIONS_NAME(name), FunctionMeta(name), \
             0u, NULL), \
         "tinymock cannot apply reflected output actions for %s", #name); \
-    return TINYMOCk_VALUE_AS(return_type, result__); \
+    TINYMOCk_FUNCTION_RETURN_VALUE( \
+        return_abi_carrier, return_type, result__); \
   }
 
-#define TINYMOCk_FUNCTION0_DECL_EXTENSION_1(contract, return_type, return_desc, name) \
+#define TINYMOCk_FUNCTION0_DECL_ABI_EXTENSION_1( \
+    contract, return_type, return_desc, return_abi_carrier, name) \
+  TINYMOCk_FUNCTION_VOID_RETURN_ADMIT(return_abi_carrier, name); \
   TINYMOCk_FUNCTION_DEFINE_STATE(name) \
   return_type name(void) { \
     TINYMOCk_ASSERT( \
@@ -331,21 +355,31 @@
     return; \
   }
 
-#define TINYMOCk_FUNCTION0_DECL_SELECTED_0(contract, return_type, return_desc, name)
-#define TINYMOCk_FUNCTION0_DECL_SELECTED_1(contract, return_type, return_desc, name) \
-  TINYMOCk_RETURN_SELECT_(TINYMOCk_FUNCTION0_DECL_EXTENSION_, return_type)( \
-      contract, return_type, return_desc, name)
+#define TINYMOCk_FUNCTION0_DECL_ABI_SELECTED_0( \
+    contract, return_type, return_desc, return_abi_carrier, name)
+#define TINYMOCk_FUNCTION0_DECL_ABI_SELECTED_1( \
+    contract, return_type, return_desc, return_abi_carrier, name) \
+  TINYMOCk_RETURN_SELECT_(TINYMOCk_FUNCTION0_DECL_ABI_EXTENSION_, return_type)( \
+      contract, return_type, return_desc, return_abi_carrier, name)
 
-#define TINYMOCk_FUNCTION0_DECL_EXTENSION(contract, return_type, return_desc, name) \
-  TINYMOCk_CAT(TINYMOCk_FUNCTION0_DECL_SELECTED_, \
+#define TINYMOCk_FUNCTION0_DECL_ABI_EXTENSION( \
+    contract, return_type, return_desc, return_abi_carrier, name) \
+  TINYMOCk_CAT(TINYMOCk_FUNCTION0_DECL_ABI_SELECTED_, \
                TINYMOCk_FUNCTION_SHOULD_GENERATE_(name))( \
-      contract, return_type, return_desc, name)
+      contract, return_type, return_desc, return_abi_carrier, name)
 
-#define CMETA_FUNCTION_DECL_EXTENSION(contract, return_type, return_desc, name, ...) \
-  TINYMOCk_FUNCTION_DECL_EXTENSION(contract, return_type, return_desc, name, __VA_ARGS__)
+#define CMETA_FUNCTION_DECL_EXTENSION(contract, return_type, return_desc, name, ...)
+#define CMETA_FUNCTION0_DECL_EXTENSION(contract, return_type, return_desc, name)
 
-#define CMETA_FUNCTION0_DECL_EXTENSION(contract, return_type, return_desc, name) \
-  TINYMOCk_FUNCTION0_DECL_EXTENSION(contract, return_type, return_desc, name)
+#define CMETA_FUNCTION_DECL_ABI_EXTENSION( \
+    contract, return_type, return_desc, return_abi_carrier, name, ...) \
+  TINYMOCk_FUNCTION_DECL_ABI_EXTENSION( \
+      contract, return_type, return_desc, return_abi_carrier, name, __VA_ARGS__)
+
+#define CMETA_FUNCTION0_DECL_ABI_EXTENSION( \
+    contract, return_type, return_desc, return_abi_carrier, name) \
+  TINYMOCk_FUNCTION0_DECL_ABI_EXTENSION( \
+      contract, return_type, return_desc, return_abi_carrier, name)
 
 #endif /* TINYMOCK_GENERATE_FUNCTION_OVERRIDES */
 
