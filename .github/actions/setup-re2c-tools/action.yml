@@ -10,6 +10,33 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Pin Go host toolchain
+      uses: actions/setup-go@v5
+      with:
+        go-version: "1.24.x"
+        cache: false
+
+    - name: Prepare Linux vcpkg host dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          ninja-build pkg-config nasm libudev-dev
+
+    - name: Prepare Windows vcpkg host dependencies
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: choco install nasm ninja -y --no-progress
+
+    - name: Prepare macOS vcpkg host dependencies
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        set -euo pipefail
+        brew install ninja nasm autoconf automake autoconf-archive libtool
+
     - name: Restore centralized re2c binary
       uses: qigao/vcpkg-cache/.github/actions/setup-re2c-tools@master
       with:
