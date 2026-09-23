@@ -1,5 +1,6 @@
 #include "tinytest.h"
 #include <cflow/cflow.h>
+#include <cflow/time.h>
 
 #include <type_traits>
 
@@ -324,6 +325,12 @@ suite("CFlow C++ public header") {
     cflow_event_id event_id = 0u;
     const cmeta_type_desc *event_type = nullptr;
     int received = 0;
+
+    check_true(cmeta_type_desc_valid(&cflow_type_duration));
+    check_true(cmeta_type_desc_valid(&cflow_type_instant));
+    check_equal(cflow_type_duration.name, "cflow_duration");
+    check_equal(cflow_type_instant.name, "cflow_instant");
+    check_false(cmeta_type_equal(&cflow_type_duration, &cflow_type_instant));
 
     check_null(run.impl);
     check_null(resume_context.scheduler);
