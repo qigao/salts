@@ -8,6 +8,7 @@ on:
       - "vcpkg-configuration.json"
       - "packaging/nuget/**"
       - "tinymock/**"
+      - "cmake/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
   push:
@@ -18,6 +19,7 @@ on:
       - "vcpkg-configuration.json"
       - "packaging/nuget/**"
       - "tinymock/**"
+      - "cmake/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
   workflow_dispatch:
@@ -86,7 +88,10 @@ jobs:
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymock_cmeta.h"
+          test -f "$prefix/include/tinymock_function.h"
+          test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
           commit=$GITHUB_SHA
@@ -146,7 +151,10 @@ jobs:
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymock_cmeta.h"
+          test -f "$prefix/include/tinymock_function.h"
+          test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
           commit=$GITHUB_SHA
@@ -213,11 +221,18 @@ jobs:
           $targets = Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake"
           $functionHeader = Join-Path $prefix "include\cmeta\function.h"
           $tinymockHeader = Join-Path $prefix "include\tinymock_cmeta.h"
+          $tinymockFunctionHeader = Join-Path $prefix "include\tinymock_function.h"
+          $tinymockCMake = Join-Path $prefix "lib\cmake\Salts\SaltsTinyMock.cmake"
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
           if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
           if (-not (Test-Path -LiteralPath $tinymockHeader -PathType Leaf)) { throw "missing $tinymockHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockFunctionHeader -PathType Leaf)) { throw "missing $tinymockFunctionHeader" }
+          if (-not (Test-Path -LiteralPath $tinymockCMake -PathType Leaf)) { throw "missing $tinymockCMake" }
           if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::TinyMock" -Quiet)) {
             throw "missing Salts::TinyMock export in $targets"
+          }
+          if (-not (Select-String -LiteralPath $tinymockCMake -SimpleMatch "salts_tinymock_override_functions" -Quiet)) {
+            throw "missing TinyMock CMake helper in $tinymockCMake"
           }
           @(
             "version=${{ needs.metadata.outputs.version }}"
@@ -277,7 +292,10 @@ jobs:
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymock_cmeta.h"
+          test -f "$prefix/include/tinymock_function.h"
+          test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
           commit=$GITHUB_SHA
