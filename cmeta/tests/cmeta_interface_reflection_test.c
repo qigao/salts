@@ -77,7 +77,15 @@ suite("CMeta interface function reflection") {
     }
 
     it("keeps legacy rows explicitly reflection-free") {
-        const cmeta_interface_desc *legacy = cmeta_test_counter_interface();
-        (void)legacy;
+        const cmeta_interface_desc *legacy =
+            cmeta_reflection_legacy_interface();
+
+        check_true(cmeta_interface_desc_valid(legacy));
+        check_equal(legacy->method_count, (size_t)1);
+        check_true(cmeta_interface_method_desc_valid(&legacy->methods[0]));
+        check_false(cmeta_interface_method_reflection_valid(
+            &legacy->methods[0]));
+        check_null(legacy->methods[0].function);
+        check_null(legacy->methods[0].abi);
     }
 }
