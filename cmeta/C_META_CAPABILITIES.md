@@ -212,9 +212,10 @@ not act on committed collectors.
 
 `cmeta_function_desc` and `cmeta_param_desc` describe ordinary C functions
 without defining an erased invocation ABI. A reflected declaration records
-parameter order/names, CMeta type descriptors, IN/OUT/INOUT direction,
-optional pointer ownership/nullability flags, return type, and the shared
-effect/property contract.
+parameter order/names, CMeta type descriptors, explicit
+UNKNOWN/IN/OUT/INOUT direction, optional pointer ownership/nullability flags,
+return type, and the shared effect/property contract. UNKNOWN is a valid zero
+state and must not be strengthened by consumers from pointer spelling or names.
 
 The C declaration helpers are descriptive:
 
