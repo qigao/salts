@@ -207,7 +207,8 @@ static inline void tinymock_failure_adapter__(const char *message) {
     TTEST_C11_EQUAL_ASSOCIATIONS__(tinymock_detail_box_signed, \
       tinymock_detail_box_unsigned, tinymock_detail_box_float, \
       tinymock_detail_box_double, tinymock_detail_box_long_double, \
-      tinymock_detail_box_cstr, tinymock_detail_box_ptr) \
+      tinymock_detail_box_cstr, tinymock_detail_box_ptr), \
+    default: tinymock_detail_box_ptr \
   )(value)
 
 #define TINYMOCk_VALUE_AS(type, value) \
@@ -215,7 +216,8 @@ static inline void tinymock_failure_adapter__(const char *message) {
     TTEST_C11_EQUAL_ASSOCIATIONS__(tinymock_detail_unbox_signed, \
       tinymock_detail_unbox_unsigned, tinymock_detail_unbox_float, \
       tinymock_detail_unbox_double, tinymock_detail_unbox_long_double, \
-      tinymock_detail_unbox_cstr, tinymock_detail_unbox_ptr) \
+      tinymock_detail_unbox_cstr, tinymock_detail_unbox_ptr), \
+    default: tinymock_detail_unbox_ptr \
   )(value))
 
 #define TINYMOCk_ARG(value) tinymock_expected_arg(TINYMOCk_VALUE(value))
