@@ -120,6 +120,13 @@ suite("CFlow reflected function projection") {
         check_true(cflow_graph_add_function_projection(
             &mock_graph, &mock_projection));
 
+        /*
+         * Graph owns the already-bound callable/type projection. Reflection
+         * descriptors are control-plane admission inputs only.
+         */
+        local_projection = (cflow_function_projection){0};
+        mock_projection = (cflow_function_projection){0};
+
         local_root = cflow_graph_subgraph(&local_graph, local_graph.root);
         mock_root = cflow_graph_subgraph(&mock_graph, mock_graph.root);
         check_not_null(local_root);
