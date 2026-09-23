@@ -235,12 +235,23 @@ General parameter rows are:
 ```text
 (type, name, flags)
 (type, name, flags, explicit_descriptor)
+(type, name, flags, explicit_descriptor, abi_carrier)
 ```
 
-The three-field form resolves `type` with `CMETA_TYPEOF(type)`. Use the
-four-field form when a provider owns the semantic descriptor, such as a
-reflected pointer or application-defined value. For an application-defined
-return type, use `FunctionDeclAs(...)` with its explicit return descriptor.
+The three-field form resolves `type` with `CMETA_TYPEOF(type)` and records a
+scalar ABI carrier. The four-field form remains the compatibility form for a
+provider-owned semantic descriptor and leaves ABI carrier unspecified. Consumers
+that generate exact C call boundaries (TinyMock, FFI, plugin bridges) should use
+the five-field form to state an explicit ABI carrier such as
+`CMETA_ABI_OBJECT_POINTER`, `CMETA_ABI_AGGREGATE`, or
+`CMETA_ABI_FUNCTION_POINTER`.
+
+For an application-defined return type, `FunctionDeclAs` preserves an
+unspecified ABI carrier. Use `FunctionDeclAsAbi` when the return carrier is
+part of the execution contract. `FunctionAbi(name)` returns the immutable
+`cmeta_function_abi_desc` sidecar paired with `FunctionMeta(name)`.
+
+Use `FunctionDeclAs(...)` with its explicit return descriptor.
 `Function0Decl(...)` and `Function0DeclAs(...)` are the zero-parameter
 forms.
 
