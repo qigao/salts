@@ -80,6 +80,8 @@ set_target_properties(cmeta_tinymock_return_test PROPERTIES
 function(tinymock_add_compile_failure_test target_name source expected_diagnostic)
   add_executable(${target_name} EXCLUDE_FROM_ALL ${source})
   target_link_libraries(${target_name} PRIVATE Salts::TinyMock)
+  target_include_directories(${target_name} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR})
   set_target_properties(${target_name} PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
@@ -104,3 +106,34 @@ tinymock_add_compile_failure_test(
   compile_fail/tinymock_opaque_param.c
   "TinyMock auto-mock parameter tinymock_bad_opaque_param.input uses an unsupported ABI carrier")
 
+tinymock_add_compile_failure_test(
+  cmeta_tinymock_typedef_void_compile_fail
+  compile_fail/tinymock_typedef_void.c
+  "TinyMock auto-mock return for tinymock_bad_typedef_void uses CMETA_ABI_VOID with a non-literal void spelling")
+
+tinymock_add_compile_failure_test(
+  cmeta_tinymock_variadic_selection_compile_fail
+  compile_fail/tinymock_variadic_selection.c
+  "tinymock_required_FunctionDecl_tinymock_bad_variadic")
+salts_tinymock_override_functions(
+  cmeta_tinymock_variadic_selection_compile_fail
+  HEADERS compile_fail/tinymock_variadic_header.h
+  FUNCTIONS tinymock_bad_variadic)
+
+tinymock_add_compile_failure_test(
+  cmeta_tinymock_array_selection_compile_fail
+  compile_fail/tinymock_array_selection.c
+  "tinymock_required_FunctionDecl_tinymock_bad_array")
+salts_tinymock_override_functions(
+  cmeta_tinymock_array_selection_compile_fail
+  HEADERS compile_fail/tinymock_array_header.h
+  FUNCTIONS tinymock_bad_array)
+
+tinymock_add_compile_failure_test(
+  cmeta_tinymock_static_inline_selection_compile_fail
+  compile_fail/tinymock_static_inline_selection.c
+  "tinymock_required_FunctionDecl_tinymock_bad_inline")
+salts_tinymock_override_functions(
+  cmeta_tinymock_static_inline_selection_compile_fail
+  HEADERS compile_fail/tinymock_static_inline_header.h
+  FUNCTIONS tinymock_bad_inline)
