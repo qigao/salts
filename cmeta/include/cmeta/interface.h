@@ -128,6 +128,31 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
 #define CMETA_IFACE_ARITY_V3 3u
 #define CMETA_IFACE_ARITY_V4 4u
 #define CMETA_IFACE_ARITY_D0 0u
+#define CMETA_IFACE_ARITY_F0 0u
+#define CMETA_IFACE_ARITY_F1 1u
+#define CMETA_IFACE_ARITY_F2 2u
+#define CMETA_IFACE_ARITY_F3 3u
+#define CMETA_IFACE_ARITY_F4 4u
+#define CMETA_IFACE_ARITY_FV0 0u
+#define CMETA_IFACE_ARITY_FV1 1u
+#define CMETA_IFACE_ARITY_FV2 2u
+#define CMETA_IFACE_ARITY_FV3 3u
+#define CMETA_IFACE_ARITY_FV4 4u
+#define CMETA_IFACE_ARITY_FD0 0u
+
+/* Fully-reflected interface parameters use the exact five-field FunctionDecl
+ * row. No descriptor or ABI category is inferred from C spelling. */
+#define CMETA_IFACE_PARAM_DECL_I(type, name, flags, descriptor, abi_carrier) \
+    type name
+#define CMETA_IFACE_PARAM_DECL(row) CMETA_IFACE_PARAM_DECL_I row
+#define CMETA_IFACE_PARAM_NAME_I(type, name, flags, descriptor, abi_carrier) name
+#define CMETA_IFACE_PARAM_NAME(row) CMETA_IFACE_PARAM_NAME_I row
+#define CMETA_IFACE_PARAM_META_I(type, name, flags, descriptor, abi_carrier) \
+    { sizeof(cmeta_param_desc), #name, (descriptor), (cmeta_param_flags)(flags) }
+#define CMETA_IFACE_PARAM_META(row) CMETA_IFACE_PARAM_META_I row
+#define CMETA_IFACE_PARAM_ABI_I(type, name, flags, descriptor, abi_carrier) \
+    (abi_carrier)
+#define CMETA_IFACE_PARAM_ABI(row) CMETA_IFACE_PARAM_ABI_I row
 
 /* vtable fields */
 #define CMETA_IFACE_VT_R0(I,R,N,_) R (*N)(void *self);
@@ -141,6 +166,29 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
 #define CMETA_IFACE_VT_V3(I,R,N,T1,A1,T2,A2,T3,A3) void (*N)(void *self, T1 A1, T2 A2, T3 A3);
 #define CMETA_IFACE_VT_V4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) void (*N)(void *self, T1 A1, T2 A2, T3 A3, T4 A4);
 #define CMETA_IFACE_VT_D0(I,R,N,_) void (*N)(void *self);
+#define CMETA_IFACE_VT_F0(I,R,N,C,RD,RA) R (*N)(void *self);
+#define CMETA_IFACE_VT_F1(I,R,N,C,RD,RA,P1) \
+    R (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1));
+#define CMETA_IFACE_VT_F2(I,R,N,C,RD,RA,P1,P2) \
+    R (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2));
+#define CMETA_IFACE_VT_F3(I,R,N,C,RD,RA,P1,P2,P3) \
+    R (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2), \
+           CMETA_IFACE_PARAM_DECL(P3));
+#define CMETA_IFACE_VT_F4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
+    R (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2), \
+           CMETA_IFACE_PARAM_DECL(P3), CMETA_IFACE_PARAM_DECL(P4));
+#define CMETA_IFACE_VT_FV0(I,R,N,C,RD,RA) void (*N)(void *self);
+#define CMETA_IFACE_VT_FV1(I,R,N,C,RD,RA,P1) \
+    void (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1));
+#define CMETA_IFACE_VT_FV2(I,R,N,C,RD,RA,P1,P2) \
+    void (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2));
+#define CMETA_IFACE_VT_FV3(I,R,N,C,RD,RA,P1,P2,P3) \
+    void (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2), \
+              CMETA_IFACE_PARAM_DECL(P3));
+#define CMETA_IFACE_VT_FV4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
+    void (*N)(void *self, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2), \
+              CMETA_IFACE_PARAM_DECL(P3), CMETA_IFACE_PARAM_DECL(P4));
+#define CMETA_IFACE_VT_FD0(I,R,N,C,RD,RA) void (*N)(void *self);
 #define CMETA_IFACE_VT_ROW(I,K,R,N,...) CMETA_PP_CAT(CMETA_IFACE_VT_,K)(I,R,N,__VA_ARGS__)
 
 /* wrapper definitions. D0 is an owning zero-argument destructor: it preserves
@@ -162,6 +210,65 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
         self->self = NULL; \
         self->vtable = NULL; \
     }
+#define CMETA_IFACE_IMPL_F0(I,R,N,C,RD,RA) \
+    CMETA_INLINE R I##_##N(I *self) { return self->vtable->N(self->self); }
+#define CMETA_IFACE_IMPL_F1(I,R,N,C,RD,RA,P1) \
+    CMETA_INLINE R I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1)) { \
+        return self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1)); \
+    }
+#define CMETA_IFACE_IMPL_F2(I,R,N,C,RD,RA,P1,P2) \
+    CMETA_INLINE R I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1), \
+                           CMETA_IFACE_PARAM_DECL(P2)) { \
+        return self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1), \
+                               CMETA_IFACE_PARAM_NAME(P2)); \
+    }
+#define CMETA_IFACE_IMPL_F3(I,R,N,C,RD,RA,P1,P2,P3) \
+    CMETA_INLINE R I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1), \
+                           CMETA_IFACE_PARAM_DECL(P2), CMETA_IFACE_PARAM_DECL(P3)) { \
+        return self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1), \
+                               CMETA_IFACE_PARAM_NAME(P2), CMETA_IFACE_PARAM_NAME(P3)); \
+    }
+#define CMETA_IFACE_IMPL_F4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
+    CMETA_INLINE R I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1), \
+                           CMETA_IFACE_PARAM_DECL(P2), CMETA_IFACE_PARAM_DECL(P3), \
+                           CMETA_IFACE_PARAM_DECL(P4)) { \
+        return self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1), \
+                               CMETA_IFACE_PARAM_NAME(P2), CMETA_IFACE_PARAM_NAME(P3), \
+                               CMETA_IFACE_PARAM_NAME(P4)); \
+    }
+#define CMETA_IFACE_IMPL_FV0(I,R,N,C,RD,RA) \
+    CMETA_INLINE void I##_##N(I *self) { self->vtable->N(self->self); }
+#define CMETA_IFACE_IMPL_FV1(I,R,N,C,RD,RA,P1) \
+    CMETA_INLINE void I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1)) { \
+        self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1)); \
+    }
+#define CMETA_IFACE_IMPL_FV2(I,R,N,C,RD,RA,P1,P2) \
+    CMETA_INLINE void I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1), \
+                              CMETA_IFACE_PARAM_DECL(P2)) { \
+        self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1), \
+                        CMETA_IFACE_PARAM_NAME(P2)); \
+    }
+#define CMETA_IFACE_IMPL_FV3(I,R,N,C,RD,RA,P1,P2,P3) \
+    CMETA_INLINE void I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1), \
+                              CMETA_IFACE_PARAM_DECL(P2), CMETA_IFACE_PARAM_DECL(P3)) { \
+        self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1), \
+                        CMETA_IFACE_PARAM_NAME(P2), CMETA_IFACE_PARAM_NAME(P3)); \
+    }
+#define CMETA_IFACE_IMPL_FV4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
+    CMETA_INLINE void I##_##N(I *self, CMETA_IFACE_PARAM_DECL(P1), \
+                              CMETA_IFACE_PARAM_DECL(P2), CMETA_IFACE_PARAM_DECL(P3), \
+                              CMETA_IFACE_PARAM_DECL(P4)) { \
+        self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME(P1), \
+                        CMETA_IFACE_PARAM_NAME(P2), CMETA_IFACE_PARAM_NAME(P3), \
+                        CMETA_IFACE_PARAM_NAME(P4)); \
+    }
+#define CMETA_IFACE_IMPL_FD0(I,R,N,C,RD,RA) \
+    CMETA_INLINE void I##_##N(I *self) { \
+        if (!self || !self->self || !self->vtable || !self->vtable->N) return; \
+        self->vtable->N(self->self); \
+        self->self = NULL; \
+        self->vtable = NULL; \
+    }
 #define CMETA_IFACE_IMPL_ROW(I,K,R,N,...) CMETA_PP_CAT(CMETA_IFACE_IMPL_,K)(I,R,N,__VA_ARGS__)
 
 /* required-method validation */
@@ -176,6 +283,17 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
 #define CMETA_IFACE_VALID_V3(I,R,N,T1,A1,T2,A2,T3,A3) && self->vtable->N != NULL
 #define CMETA_IFACE_VALID_V4(I,R,N,T1,A1,T2,A2,T3,A3,T4,A4) && self->vtable->N != NULL
 #define CMETA_IFACE_VALID_D0(I,R,N,_) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_F0(I,R,N,C,RD,RA) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_F1(I,R,N,C,RD,RA,P1) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_F2(I,R,N,C,RD,RA,P1,P2) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_F3(I,R,N,C,RD,RA,P1,P2,P3) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_F4(I,R,N,C,RD,RA,P1,P2,P3,P4) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_FV0(I,R,N,C,RD,RA) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_FV1(I,R,N,C,RD,RA,P1) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_FV2(I,R,N,C,RD,RA,P1,P2) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_FV3(I,R,N,C,RD,RA,P1,P2,P3) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_FV4(I,R,N,C,RD,RA,P1,P2,P3,P4) && self->vtable->N != NULL
+#define CMETA_IFACE_VALID_FD0(I,R,N,C,RD,RA) && self->vtable->N != NULL
 #define CMETA_IFACE_VALID_ROW(I,K,R,N,...) CMETA_PP_CAT(CMETA_IFACE_VALID_,K)(I,R,N,__VA_ARGS__)
 
 #define CMETA_IFACE_META_ROW(I,K,R,N,...) { #N, #R, CMETA_PP_CAT(CMETA_IFACE_ARITY_,K) },
