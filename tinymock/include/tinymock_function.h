@@ -79,6 +79,22 @@
   tinymock_cmeta_actions_clear_output_name( \
       TINYMOCk_FUNCTION_ACTIONS(name), (param_name))
 
+static inline tinymock_value_t
+tinymock_auto_mock_object_pointer_or_unsupported_by_value_parameter__(
+    const void *value) {
+  return tinymock_detail_box_ptr(value);
+}
+
+#define TINYMOCk_FUNCTION_VALUE(value) \
+  _Generic((value), \
+    TTEST_C11_EQUAL_ASSOCIATIONS__(tinymock_detail_box_signed, \
+      tinymock_detail_box_unsigned, tinymock_detail_box_float, \
+      tinymock_detail_box_double, tinymock_detail_box_long_double, \
+      tinymock_detail_box_cstr, tinymock_detail_box_ptr), \
+    default: \
+      tinymock_auto_mock_object_pointer_or_unsupported_by_value_parameter__ \
+  )(value)
+
 #if defined(TINYMOCK_GENERATE_FUNCTION_OVERRIDES)
 
 #define TINYMOCk_PP_SECOND_(a, b, ...) b
@@ -118,7 +134,7 @@
 
 #define TINYMOCk_FUNCTION_ACTUAL_ROW(index, row, ignored) \
   CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index) \
-  TINYMOCk_VALUE(TINYMOCk_FUNCTION_PARAM_NAME_APPLY(row))
+  TINYMOCk_FUNCTION_VALUE(TINYMOCk_FUNCTION_PARAM_NAME_APPLY(row))
 
 #define TINYMOCk_FUNCTION_TYPED_ARG_ROW(index, row, ignored) \
   CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index) \
@@ -130,8 +146,26 @@
   tinymock_cmeta_actions TINYMOCk_FUNCTION_ACTIONS_NAME(fn_name); \
   void TINYMOCk_FUNCTION_RESET_NAME(fn_name)(void) { \
     const cmeta_function_desc *meta__ = FunctionMeta(fn_name); \
+    tinymock_cmeta_admission admission__; \
     TINYMOCk_ASSERT(cmeta_function_desc_valid(meta__), \
                     "tinymock reflected function metadata is invalid: %s", #fn_name); \
+    admission__ = tinymock_cmeta_function_admit(meta__); \
+    if (admission__.code == \
+        TINYMOCk_CMETA_ADMISSION_UNSUPPORTED_PARAMETER_BY_VALUE) { \
+      const cmeta_param_desc *param__ = \
+          cmeta_function_param(meta__, admission__.param_index); \
+      TINYMOCk_ASSERT(false, \
+          "tinymock auto-mock unsupported by-value parameter %s.%s", \
+          #fn_name, param__ ? param__->name : "(unknown)"); \
+    } else if (admission__.code == \
+               TINYMOCk_CMETA_ADMISSION_UNSUPPORTED_RETURN_BY_VALUE) { \
+      TINYMOCk_ASSERT(false, \
+          "tinymock auto-mock unsupported by-value return for %s", #fn_name); \
+    } else { \
+      TINYMOCk_ASSERT(admission__.code == TINYMOCk_CMETA_ADMISSION_OK, \
+          "tinymock auto-mock invalid reflected ABI for %s: %s", #fn_name, \
+          tinymock_cmeta_admission_message(admission__.code)); \
+    } \
     tinymock_mock_init(&TINYMOCk_FUNCTION_STATE_NAME(fn_name), meta__->name); \
     tinymock_mock_set_default_return(&TINYMOCk_FUNCTION_STATE_NAME(fn_name), \
                                      tinymock_value_zero()); \
@@ -263,5 +297,6 @@
 #include <cmeta/function.h>
 #include "tinymock_history.h"
 #include "tinymock_actions.h"
+#include "tinymock_admission.h"
 
 #endif /* TINYMOCK_FUNCTION_H */
