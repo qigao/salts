@@ -36,6 +36,21 @@ TINYMOCk_FUNCTION_DECLARE(tinymock_installed_mode_echo);
 int main(void) {
   const cmeta_function_desc *meta;
 
+  {
+    const cmeta_interface_desc *iface =
+        tinymock_installed_interface_interface();
+    const cmeta_interface_method_desc *method;
+
+    assert(cmeta_interface_desc_valid(iface));
+    assert(iface->method_count == 1u);
+    method = &iface->methods[0];
+    assert(cmeta_interface_method_reflection_valid(method));
+    assert(method->function == tinymock_installed_interface_apply_function());
+    assert(method->abi == tinymock_installed_interface_apply_function_abi());
+    assert(method->function->param_count == 1u);
+    assert(method->abi->return_carrier == CMETA_ABI_SCALAR);
+  }
+
   TINYMOCk_FUNCTION_RESET(tinymock_installed_add);
   tinymock_mock_set_default_return(
       TINYMOCk_FUNCTION(tinymock_installed_add),
