@@ -340,6 +340,42 @@ bool tinymock_cmeta_history_arg_equal_name(
       history, call_index, index, expected, expected_boxed);
 }
 
+bool tinymock_cmeta_history_arg_equal_typed(
+    const tinymock_cmeta_history *history,
+    size_t call_index,
+    size_t param_index,
+    const void *expected) {
+  const tinymock_cmeta_snapshot *snapshot;
+  const cmeta_type_traits *traits;
+
+  if (!history || !expected || call_index >= history->call_count ||
+      call_index >= TINYMOCk_MAX_CALLS ||
+      param_index >= history->calls[call_index].argc)
+    return false;
+
+  snapshot = &history->calls[call_index].args[param_index];
+  if (!snapshot->constructed || !snapshot->type || !snapshot->data ||
+      snapshot->type->kind == CMETA_T_POINTER)
+    return false;
+
+  traits = snapshot->type->traits;
+  return traits && (traits->flags & CMETA_TRAIT_EQUAL) != 0u &&
+         traits->equal &&
+         traits->equal(snapshot->data, expected);
+}
+
+bool tinymock_cmeta_history_arg_equal_typed_name(
+    const tinymock_cmeta_history *history,
+    size_t call_index,
+    const char *param_name,
+    const void *expected) {
+  size_t index;
+  if (!tinymock_cmeta_param_index_by_name(history, param_name, &index))
+    return false;
+  return tinymock_cmeta_history_arg_equal_typed(
+      history, call_index, index, expected);
+}
+
 size_t tinymock_cmeta_history_count_equal(
     const tinymock_cmeta_history *history,
     size_t param_index,
