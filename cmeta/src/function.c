@@ -1,0 +1,75 @@
+#include <cmeta/function.h>
+
+#include <string.h>
+
+static bool cmeta_param_flags_valid(cmeta_param_flags flags) {
+    const cmeta_param_flags direction = flags & CMETA_PARAM_DIRECTION_MASK;
+    const cmeta_param_flags ownership = flags & CMETA_PARAM_OWNERSHIP_MASK;
+
+    if ((flags & CMETA_PARAM_FLAG_MASK) != flags)
+        return false;
+    if (direction == 0u)
+        return false;
+    if (ownership == CMETA_PARAM_OWNERSHIP_MASK)
+        return false;
+    return true;
+}
+
+bool cmeta_param_desc_valid(const cmeta_param_desc *desc) {
+    if (desc == NULL || desc->size < sizeof(*desc) ||
+        desc->name == NULL || desc->name[0] == '\0' ||
+        !cmeta_type_desc_valid(desc->type) ||
+        !cmeta_param_flags_valid(desc->flags))
+        return false;
+
+    if ((desc->flags & (CMETA_PARAM_OUT | CMETA_PARAM_NULLABLE |
+                        CMETA_PARAM_OWNERSHIP_MASK)) != 0u &&
+        desc->type->kind != CMETA_T_POINTER)
+        return false;
+
+    return true;
+}
+
+bool cmeta_function_desc_valid(const cmeta_function_desc *desc) {
+    size_t i;
+    size_t j;
+
+    if (desc == NULL || desc->size < sizeof(*desc) ||
+        desc->name == NULL || desc->name[0] == '\0' ||
+        !cmeta_type_desc_valid(desc->return_type) ||
+        !cmeta_effect_property_contract_valid(desc->effects, desc->properties))
+        return false;
+
+    if (desc->param_count != 0u && desc->params == NULL)
+        return false;
+
+    for (i = 0u; i < desc->param_count; ++i) {
+        if (!cmeta_param_desc_valid(&desc->params[i]))
+            return false;
+        for (j = 0u; j < i; ++j)
+            if (strcmp(desc->params[i].name, desc->params[j].name) == 0)
+                return false;
+    }
+
+    return true;
+}
+
+const cmeta_param_desc *
+cmeta_function_param(const cmeta_function_desc *desc, size_t index) {
+    if (desc == NULL || index >= desc->param_count || desc->params == NULL)
+        return NULL;
+    return &desc->params[index];
+}
+
+const cmeta_param_desc *
+cmeta_function_find_param(const cmeta_function_desc *desc, const char *name) {
+    size_t i;
+
+    if (desc == NULL || name == NULL || desc->params == NULL)
+        return NULL;
+    for (i = 0u; i < desc->param_count; ++i)
+        if (desc->params[i].name != NULL &&
+            strcmp(desc->params[i].name, name) == 0)
+            return &desc->params[i];
+    return NULL;
+}
