@@ -65,3 +65,36 @@ set_target_properties(cmeta_tinymock_selective_override_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+cmake_add_test(cmeta_tinymock_admission_test
+  SOURCES tinymock_admission_test.c
+  LIBS Salts::TinyMock
+  FOLDER "tinymock/tests")
+
+set_target_properties(cmeta_tinymock_admission_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+
+function(tinymock_add_compile_failure_test
+         target_name source expected_diagnostic)
+  add_executable(${target_name} EXCLUDE_FROM_ALL ${source})
+  target_link_libraries(${target_name} PRIVATE Salts::TinyMock)
+  set_target_properties(${target_name} PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+    FOLDER "tinymock/tests/compile_fail")
+  add_test(
+    NAME ${target_name}
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+            --config $<CONFIG> --target ${target_name})
+  set_tests_properties(${target_name} PROPERTIES
+    PASS_REGULAR_EXPRESSION "${expected_diagnostic}"
+    RUN_SERIAL TRUE)
+endfunction()
+
+tinymock_add_compile_failure_test(
+  cmeta_tinymock_by_value_param_compile_fail
+  compile_fail/tinymock_by_value_param.c
+  "tinymock_auto_mock_object_pointer_or_unsupported_by_value_parameter__")
