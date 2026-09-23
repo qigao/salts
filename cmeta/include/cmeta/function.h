@@ -120,6 +120,22 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
 #define CMETA_FUNCTION_PARAM_META(row, ignored) \
     CMETA_FUNCTION_PARAM_META_APPLY(row)
 
+/*
+ * Optional declaration consumers may replay the exact FunctionDecl schema at
+ * preprocessing time (for example to generate a test-only exact-ABI adapter).
+ * The default is empty and CMeta never depends on those consumers.
+ *
+ * Extensions expand before the final declaration anchor, so they must emit
+ * complete declarations/definitions of their own.
+ */
+#ifndef CMETA_FUNCTION_DECL_EXTENSION
+#define CMETA_FUNCTION_DECL_EXTENSION(contract, return_type, return_desc, name, ...)
+#endif
+
+#ifndef CMETA_FUNCTION0_DECL_EXTENSION
+#define CMETA_FUNCTION0_DECL_EXTENSION(contract, return_type, return_desc, name)
+#endif
+
 #define CMETA_FUNCTION_DECL_AS(contract, return_type, return_desc, name, ...) \
     return_type name( \
         CMETA_PP_FOR_EACH_I(CMETA_FUNCTION_PARAM_DECL, ~, __VA_ARGS__)); \
@@ -134,6 +150,7 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
     CMETA_INLINE const cmeta_function_desc *name##_function(void) { \
         return &name##__function_meta; \
     } \
+    CMETA_FUNCTION_DECL_EXTENSION(contract, return_type, return_desc, name, __VA_ARGS__) \
     typedef char name##__function_declaration_complete[1]
 
 #define CMETA_FUNCTION_DECL(contract, return_type, name, ...) \
@@ -150,6 +167,7 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
     CMETA_INLINE const cmeta_function_desc *name##_function(void) { \
         return &name##__function_meta; \
     } \
+    CMETA_FUNCTION0_DECL_EXTENSION(contract, return_type, return_desc, name) \
     typedef char name##__function_declaration_complete[1]
 
 #define CMETA_FUNCTION0_DECL(contract, return_type, name) \

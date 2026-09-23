@@ -7,3 +7,20 @@ set_target_properties(cmeta_tinymock_interface_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
+
+cmake_add_test(cmeta_tinymock_function_auto_mock_test
+  SOURCES
+    tinymock_function_auto_mock_test.c
+    tinymock_function_consumer.c
+  LIBS Salts::TinyTest
+  INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}
+  FOLDER "tinymock/tests")
+
+salts_tinymock_override_functions(
+  cmeta_tinymock_function_auto_mock_test
+  HEADERS tinymock_function_fixture.h)
+
+set_target_properties(cmeta_tinymock_function_auto_mock_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
