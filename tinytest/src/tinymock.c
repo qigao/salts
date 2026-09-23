@@ -320,14 +320,12 @@ void tinymock_mock_script_error(tinymock_mock_t *mock, const char *message) {
 tinymock_value_t tinymock_mock_dispatch(tinymock_mock_t *mock, size_t argc,
                                         const tinymock_value_t *actual_args) {
   size_t index;
-  tinymock_recorded_call_t *call;
-  if (!tinymock_require__(mock, mock->call_count < TINYMOCk_MAX_CALLS,
-                         "tinymock %s: too many recorded calls", mock->name))
-    return tinymock_value_zero();
 
-  call = &mock->calls[mock->call_count];
-  call->argc = argc;
-  for (index = 0; index < argc; ++index) call->args[index] = actual_args[index];
+  if (mock->call_count < TINYMOCk_MAX_CALLS) {
+    tinymock_recorded_call_t *call = &mock->calls[mock->call_count];
+    call->argc = argc;
+    for (index = 0; index < argc; ++index) call->args[index] = actual_args[index];
+  }
 
   if (mock->script_cursor < mock->script_count) {
     tinymock_script_t *script = &mock->scripts[mock->script_cursor++];
@@ -346,7 +344,8 @@ size_t tinymock_mock_call_count(const tinymock_mock_t *mock) {
 
 const tinymock_recorded_call_t *tinymock_mock_call_at(
     const tinymock_mock_t *mock, size_t index) {
-  if (!mock || index >= mock->call_count) return NULL;
+  if (!mock || index >= mock->call_count || index >= TINYMOCk_MAX_CALLS)
+    return NULL;
   return &mock->calls[index];
 }
 
