@@ -8,7 +8,8 @@ add_library(${TARGET_NAME}
   src/entry.c
   src/function.c
   src/infer.c
-  src/type_identity.c)
+  src/type_identity.c
+  src/vector.c)
 
 cmake_config_target(
   ${TARGET_NAME}
