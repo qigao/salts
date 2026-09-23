@@ -134,13 +134,13 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
 
 #define CMETA_IFACE_PARAM_META_3(type,name,flags) \
     { sizeof(cmeta_param_desc), #name, CMETA_TYPEOF(type), \
-      (cmeta_param_flags)(flags) },
+      (flags) },
 #define CMETA_IFACE_PARAM_META_4(type,name,flags,descriptor) \
     { sizeof(cmeta_param_desc), #name, (descriptor), \
-      (cmeta_param_flags)(flags) },
+      (flags) },
 #define CMETA_IFACE_PARAM_META_5(type,name,flags,descriptor,carrier) \
     { sizeof(cmeta_param_desc), #name, (descriptor), \
-      (cmeta_param_flags)(flags) },
+      (flags) },
 #define CMETA_IFACE_PARAM_META_APPLY_I(...) \
     CMETA_PP_CAT(CMETA_IFACE_PARAM_META_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
 #define CMETA_IFACE_PARAM_META_APPLY(row) CMETA_IFACE_PARAM_META_APPLY_I row
