@@ -57,6 +57,11 @@ bool cmeta_param_desc_valid(const cmeta_param_desc *desc);
 bool cmeta_function_desc_valid(const cmeta_function_desc *desc);
 bool cmeta_function_abi_desc_valid(const cmeta_function_abi_desc *desc);
 
+bool cmeta_function_desc_equal(const cmeta_function_desc *left,
+                               const cmeta_function_desc *right);
+bool cmeta_function_abi_desc_equal(const cmeta_function_abi_desc *left,
+                                   const cmeta_function_abi_desc *right);
+
 cmeta_abi_carrier
 cmeta_function_param_abi(const cmeta_function_abi_desc *desc, size_t index);
 
