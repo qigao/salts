@@ -7,6 +7,8 @@ on:
       - "vcpkg.json"
       - "vcpkg-configuration.json"
       - "packaging/nuget/**"
+      - "cmeta/**"
+      - "cmeta/**"
       - "tinymock/**"
       - "cmake/**"
       - ".github/workflows/native-nuget-release.yml"
@@ -87,6 +89,7 @@ jobs:
           cmake --install build/linux-gcc-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/cmeta/abi.h"
           test -f "$prefix/include/tinymeta/equality.h"
           test ! -e "$prefix/include/tinymeta/cmeta.h"
           test -f "$prefix/include/tinymock_cmeta.h"
@@ -167,6 +170,7 @@ jobs:
           cmake --install build/mac-clang-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/cmeta/abi.h"
           test -f "$prefix/include/tinymeta/equality.h"
           test ! -e "$prefix/include/tinymeta/cmeta.h"
           test -f "$prefix/include/tinymock_cmeta.h"
@@ -242,6 +246,7 @@ jobs:
           $config = Join-Path $prefix "lib\cmake\Salts\SaltsConfig.cmake"
           $targets = Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake"
           $functionHeader = Join-Path $prefix "include\cmeta\function.h"
+          $abiHeader = Join-Path $prefix "include\cmeta\abi.h"
           $tinyEqualityHeader = Join-Path $prefix "include\tinymeta\equality.h"
           $oldTinyCMetaHeader = Join-Path $prefix "include\tinymeta\cmeta.h"
           $tinymockHeader = Join-Path $prefix "include\tinymock_cmeta.h"
@@ -252,6 +257,7 @@ jobs:
           $tinymockCMake = Join-Path $prefix "lib\cmake\Salts\SaltsTinyMock.cmake"
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
           if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
+          if (-not (Test-Path -LiteralPath $abiHeader -PathType Leaf)) { throw "missing $abiHeader" }
           if (-not (Test-Path -LiteralPath $tinyEqualityHeader -PathType Leaf)) { throw "missing $tinyEqualityHeader" }
           if (Test-Path -LiteralPath $oldTinyCMetaHeader) { throw "obsolete $oldTinyCMetaHeader is still installed" }
           if (-not (Test-Path -LiteralPath $tinymockHeader -PathType Leaf)) { throw "missing $tinymockHeader" }
@@ -323,6 +329,7 @@ jobs:
           cmake --install build/android-arm64-v8a-release --prefix "$prefix"
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
+          test -f "$prefix/include/cmeta/abi.h"
           test -f "$prefix/include/tinymeta/equality.h"
           test ! -e "$prefix/include/tinymeta/cmeta.h"
           test -f "$prefix/include/tinymock_cmeta.h"
@@ -365,12 +372,15 @@ jobs:
           set -euo pipefail
           test -f package/sdk/linux-x64/lib/cmake/Salts/SaltsConfig.cmake
           test -f package/sdk/linux-x64/include/cmeta/function.h
+          test -f package/sdk/linux-x64/include/cmeta/abi.h
           test -f package/sdk/linux-x64/include/tinymeta/equality.h
           test ! -e package/sdk/linux-x64/include/tinymeta/cmeta.h
           test -f package/sdk/windows-x64/lib/cmake/Salts/SaltsConfig.cmake
           test -f package/sdk/windows-x64/include/cmeta/function.h
+          test -f package/sdk/windows-x64/include/cmeta/abi.h
           test -f package/sdk/android-arm64-v8a/lib/cmake/Salts/SaltsConfig.cmake
           test -f package/sdk/android-arm64-v8a/include/cmeta/function.h
+          test -f package/sdk/android-arm64-v8a/include/cmeta/abi.h
           test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 4
           find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print
           du -sh package/sdk
