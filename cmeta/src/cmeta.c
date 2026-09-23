@@ -1,4 +1,5 @@
 #include <cmeta/cmeta.h>
+#include <cmeta/vector.h>
 
 #include <float.h>
 #include <limits.h>
@@ -265,6 +266,20 @@ static const cmeta_type_desc *const cmeta_type_registry[] = {
 #define CMETA_TYPE_REG_ITEM(row, ignored) &CMETA_TYPE_DESC(row),
     CMETA_PP_FOR_EACH_A(CMETA_TYPE_REG_ITEM, ~, CMETA_KNOWN_TYPE_LIST)
 #undef CMETA_TYPE_REG_ITEM
+    &cmeta_type_i8x16,
+    &cmeta_type_u8x16,
+    &cmeta_type_i16x8,
+    &cmeta_type_u16x8,
+    &cmeta_type_i32x4,
+    &cmeta_type_u32x4,
+    &cmeta_type_i64x2,
+    &cmeta_type_u64x2,
+    &cmeta_type_f32x4,
+    &cmeta_type_f64x2,
+    &cmeta_type_b8x16,
+    &cmeta_type_b16x8,
+    &cmeta_type_b32x4,
+    &cmeta_type_b64x2
 };
 
 size_t cmeta_type_registry_count(void) {

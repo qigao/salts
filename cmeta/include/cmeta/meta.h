@@ -14,6 +14,7 @@
 #include <cmeta/struct.h>
 #include <cmeta/type_select.h>
 #include <cmeta/type_traits.h>
+#include <cmeta/vector.h>
 #ifndef __cplusplus
   #include <cmeta/contract.h>
   #include <cmeta/generic.h>
