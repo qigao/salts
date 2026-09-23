@@ -79,6 +79,11 @@ cmake_add_test(cflow_reactive_test
   LIBS Salts::CFlow Salts::Platform Salts::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_tinymock_interface_test
+  SOURCES cflow_tinymock_interface_test.c
+  LIBS Salts::CFlow Salts::TinyMock
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_readiness_test
   SOURCES
     cflow_readiness_test.c
