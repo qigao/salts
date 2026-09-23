@@ -271,7 +271,9 @@ jobs:
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
           if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
           if (-not (Test-Path -LiteralPath $interfaceHeader -PathType Leaf)) { throw "missing $interfaceHeader" }
-          if ((Get-Content -LiteralPath $interfaceHeader -Raw) -notmatch "cmeta_interface_desc_valid") { throw "missing canonical Interface reflection in $interfaceHeader" }
+          $interfaceText = Get-Content -LiteralPath $interfaceHeader -Raw
+          if ($interfaceText -notmatch "cmeta_interface_desc_valid") { throw "missing canonical Interface reflection in $interfaceHeader" }
+          if ($interfaceText -notmatch "cmeta_interface_desc_equal") { throw "missing canonical Interface equality in $interfaceHeader" }
           if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "cmeta_function_abi_desc" -Quiet)) { throw "missing cmeta_function_abi_desc in $functionHeader" }
           if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "FunctionAbi" -Quiet)) { throw "missing FunctionAbi in $functionHeader" }
           if (-not (Test-Path -LiteralPath $tinyEqualityHeader -PathType Leaf)) { throw "missing $tinyEqualityHeader" }
