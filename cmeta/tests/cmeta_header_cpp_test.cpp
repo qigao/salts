@@ -17,6 +17,8 @@ static_assert(std::is_standard_layout_v<cmeta_param_desc>,
               "function parameter reflection remains a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_function_desc>,
               "function reflection remains a C ABI");
+static_assert(std::is_standard_layout_v<cmeta_function_abi_desc>,
+              "function ABI reflection remains a C ABI");
 static_assert(std::is_same_v<decltype(&cmeta_data_enum_assign_bits),
               cmeta_status (*)(const cmeta_data_desc *, void *, uint64_t)>,
               "canonical enum assignment does not narrow through int64_t");
