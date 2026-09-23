@@ -2,6 +2,7 @@
 #define CFLOW_TIME_H
 
 #include <stdint.h>
+#include <cmeta/cmeta.h>
 
 typedef struct cflow_duration {
     uint64_t ns;
@@ -14,6 +15,52 @@ typedef struct cflow_instant {
 typedef struct cflow_deadline {
     uint64_t ns;
 } cflow_deadline;
+
+static bool cflow_duration_cmeta_equal(const void *left_, const void *right_) {
+    const cflow_duration *left = (const cflow_duration *)left_;
+    const cflow_duration *right = (const cflow_duration *)right_;
+    return left != NULL && right != NULL && left->ns == right->ns;
+}
+
+static bool cflow_instant_cmeta_equal(const void *left_, const void *right_) {
+    const cflow_instant *left = (const cflow_instant *)left_;
+    const cflow_instant *right = (const cflow_instant *)right_;
+    return left != NULL && right != NULL && left->ns == right->ns;
+}
+
+static const cmeta_type_traits cmeta_traits_cflow_duration = {
+    .flags = CMETA_TRAIT_EQUAL |
+             CMETA_TRAIT_TRIVIAL_COPY |
+             CMETA_TRAIT_TRIVIAL_DESTROY,
+    .equal = cflow_duration_cmeta_equal
+};
+
+static const cmeta_type_traits cmeta_traits_cflow_instant = {
+    .flags = CMETA_TRAIT_EQUAL |
+             CMETA_TRAIT_TRIVIAL_COPY |
+             CMETA_TRAIT_TRIVIAL_DESTROY,
+    .equal = cflow_instant_cmeta_equal
+};
+
+static const cmeta_type_desc cmeta_type_cflow_duration = {
+    .name = "cflow_duration",
+    .size = sizeof(cflow_duration),
+    .align = _Alignof(cflow_duration),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cmeta_traits_cflow_duration,
+    .identity = NULL
+};
+
+static const cmeta_type_desc cmeta_type_cflow_instant = {
+    .name = "cflow_instant",
+    .size = sizeof(cflow_instant),
+    .align = _Alignof(cflow_instant),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = &cmeta_traits_cflow_instant,
+    .identity = NULL
+};
 
 static inline uint64_t cflow_u64_mul_sat(uint64_t value, uint64_t scale) {
     if (value != 0u && scale > UINT64_MAX / value) return UINT64_MAX;
