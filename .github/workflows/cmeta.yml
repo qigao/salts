@@ -18,6 +18,7 @@ on:
       - "utils/**"
       - "cmake/**"
       - "tests/cmeta_shared_owner/**"
+      - "tests/tinymock_installed_sdk/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
       - "CMakeUserPresets.json"
@@ -44,6 +45,7 @@ on:
       - "utils/**"
       - "cmake/**"
       - "tests/cmeta_shared_owner/**"
+      - "tests/tinymock_installed_sdk/**"
       - "CMakeLists.txt"
       - "CMakePresets.json"
       - "CMakeUserPresets.json"
@@ -237,6 +239,18 @@ jobs:
           grep -Fx "triplet=${{ needs.linux.outputs.sdk-triplet }}" "$manifest"
           grep -Fx "profile=release" "$manifest"
           test -f build/ci-salts-sdk/lib/cmake/Salts/SaltsConfig.cmake
+
+      - name: Verify installed TinyMock reflected-function consumer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S tests/tinymock_installed_sdk \
+            -B build/tinymock-installed-sdk \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/build/ci-salts-sdk"
+          cmake --build build/tinymock-installed-sdk -j2
+          ctest --test-dir build/tinymock-installed-sdk \
+            --no-tests=error --output-on-failure
 
       - name: Check exact head and unchanged tracked source
         if: always()
