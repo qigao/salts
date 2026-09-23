@@ -243,8 +243,8 @@ scalar ABI carrier. The four-field form remains the compatibility form for a
 provider-owned semantic descriptor and leaves ABI carrier unspecified. Consumers
 that generate exact C call boundaries (TinyMock, FFI, plugin bridges) should use
 the five-field form to state an explicit ABI carrier such as
-`CMETA_ABI_OBJECT_POINTER`, `CMETA_ABI_AGGREGATE`, or
-`CMETA_ABI_FUNCTION_POINTER`.
+`CMETA_ABI_OBJECT_POINTER`, `CMETA_ABI_AGGREGATE`,
+`CMETA_ABI_FUNCTION_POINTER`, or `CMETA_ABI_ENUM`.
 
 For an application-defined return type, `FunctionDeclAs` preserves an
 unspecified ABI carrier. Use `FunctionDeclAsAbi` when the return carrier is
