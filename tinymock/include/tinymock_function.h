@@ -61,18 +61,18 @@
   CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index) \
   TINYMOCk_VALUE(TINYMOCk_FUNCTION_PARAM_NAME_APPLY(row))
 
-#define TINYMOCk_FUNCTION_DEFINE_STATE(name) \
-  tinymock_mock_t TINYMOCk_FUNCTION_STATE_NAME(name); \
-  void TINYMOCk_FUNCTION_RESET_NAME(name)(void) { \
-    const cmeta_function_desc *meta__ = FunctionMeta(name); \
+#define TINYMOCk_FUNCTION_DEFINE_STATE(fn_name) \
+  tinymock_mock_t TINYMOCk_FUNCTION_STATE_NAME(fn_name); \
+  void TINYMOCk_FUNCTION_RESET_NAME(fn_name)(void) { \
+    const cmeta_function_desc *meta__ = FunctionMeta(fn_name); \
     TINYMOCk_ASSERT(cmeta_function_desc_valid(meta__), \
-                    "tinymock reflected function metadata is invalid: %s", #name); \
-    tinymock_mock_init(&TINYMOCk_FUNCTION_STATE_NAME(name), meta__->name); \
-    tinymock_mock_set_default_return(&TINYMOCk_FUNCTION_STATE_NAME(name), \
+                    "tinymock reflected function metadata is invalid: %s", #fn_name); \
+    tinymock_mock_init(&TINYMOCk_FUNCTION_STATE_NAME(fn_name), meta__->name); \
+    tinymock_mock_set_default_return(&TINYMOCk_FUNCTION_STATE_NAME(fn_name), \
                                      tinymock_value_zero()); \
   } \
-  const cmeta_function_desc *TINYMOCk_FUNCTION_META_NAME(name)(void) { \
-    return FunctionMeta(name); \
+  const cmeta_function_desc *TINYMOCk_FUNCTION_META_NAME(fn_name)(void) { \
+    return FunctionMeta(fn_name); \
   }
 
 #define TINYMOCk_FUNCTION_DECL_EXTENSION(contract, return_type, return_desc, name, ...) \
