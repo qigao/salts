@@ -2,7 +2,6 @@
 #define CMETA_FUNCTION_H
 
 #include <cmeta/cmeta.h>
-#include <cmeta/abi.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -33,7 +32,6 @@ typedef struct cmeta_param_desc {
     const char *name;
     const cmeta_type_desc *type;
     cmeta_param_flags flags;
-    cmeta_abi_carrier abi_carrier;
 } cmeta_param_desc;
 
 typedef struct cmeta_function_desc {
@@ -44,7 +42,6 @@ typedef struct cmeta_function_desc {
     size_t param_count;
     cmeta_effects effects;
     cmeta_properties properties;
-    cmeta_abi_carrier return_abi_carrier;
 } cmeta_function_desc;
 
 bool cmeta_param_desc_valid(const cmeta_param_desc *desc);
@@ -78,33 +75,16 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
  *
  *   (type, name, flags)
  *   (type, name, flags, descriptor)
- *   (type, name, flags, descriptor, abi_carrier)
  *
- * The three-field form uses CMETA_TYPEOF(type) and is a scalar ABI carrier.
- * The four-field form is the compatibility escape hatch for an explicit
- * descriptor and preserves ABI carrier = CMETA_ABI_UNSPECIFIED.
- * The five-field form is the exact ABI/FFI form for custom values, object
- * pointers, function pointers, and other explicitly classified declarations.
+ * The three-field form uses CMETA_TYPEOF(type). The four-field form is the
+ * explicit escape hatch for reflected custom/pointer types whose descriptor is
+ * supplied by another provider.
  */
 
 #define CMETA_FUNCTION_RETURN_TYPEOF(type) \
     _Generic((type *)0, \
         void *: &cmeta_type_void, \
         default: CMETA_TYPEOF(type))
-
-#define CMETA_FUNCTION_ABI_SECOND_(a, b, ...) b
-#define CMETA_FUNCTION_ABI_PROBE_() ~, 1
-#define CMETA_FUNCTION_ABI_IS_PROBE_(...) \
-    CMETA_FUNCTION_ABI_SECOND_(__VA_ARGS__, 0, 0)
-#define CMETA_FUNCTION_ABI_VOID_MARK_void CMETA_FUNCTION_ABI_PROBE_()
-#define CMETA_FUNCTION_RETURN_IS_VOID_(type) \
-    CMETA_FUNCTION_ABI_IS_PROBE_( \
-        CMETA_PP_CAT(CMETA_FUNCTION_ABI_VOID_MARK_, type))
-#define CMETA_FUNCTION_RETURN_ABI_0 CMETA_ABI_SCALAR
-#define CMETA_FUNCTION_RETURN_ABI_1 CMETA_ABI_VOID
-#define CMETA_FUNCTION_RETURN_ABI(type) \
-    CMETA_PP_CAT(CMETA_FUNCTION_RETURN_ABI_, \
-                 CMETA_FUNCTION_RETURN_IS_VOID_(type))
 
 #define CMETA_FUNCTION_COMMA_0
 #define CMETA_FUNCTION_COMMA_1 ,
@@ -125,8 +105,6 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
 
 #define CMETA_FUNCTION_PARAM_DECL_3(type, name, flags) type name
 #define CMETA_FUNCTION_PARAM_DECL_4(type, name, flags, descriptor) type name
-#define CMETA_FUNCTION_PARAM_DECL_5(type, name, flags, descriptor, abi_carrier) \
-    type name
 #define CMETA_FUNCTION_PARAM_DECL_APPLY_I(...) \
     CMETA_PP_CAT(CMETA_FUNCTION_PARAM_DECL_, \
                  CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
@@ -138,13 +116,10 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
 
 #define CMETA_FUNCTION_PARAM_META_3(type, name, flags) \
     { sizeof(cmeta_param_desc), #name, CMETA_TYPEOF(type), \
-      (cmeta_param_flags)(flags), CMETA_ABI_SCALAR },
+      (cmeta_param_flags)(flags) },
 #define CMETA_FUNCTION_PARAM_META_4(type, name, flags, descriptor) \
     { sizeof(cmeta_param_desc), #name, (descriptor), \
-      (cmeta_param_flags)(flags), CMETA_ABI_UNSPECIFIED },
-#define CMETA_FUNCTION_PARAM_META_5(type, name, flags, descriptor, abi_carrier) \
-    { sizeof(cmeta_param_desc), #name, (descriptor), \
-      (cmeta_param_flags)(flags), (abi_carrier) },
+      (cmeta_param_flags)(flags) },
 #define CMETA_FUNCTION_PARAM_META_APPLY_I(...) \
     CMETA_PP_CAT(CMETA_FUNCTION_PARAM_META_, \
                  CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
@@ -169,18 +144,7 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
 #define CMETA_FUNCTION0_DECL_EXTENSION(contract, return_type, return_desc, name)
 #endif
 
-#ifndef CMETA_FUNCTION_DECL_ABI_EXTENSION
-#define CMETA_FUNCTION_DECL_ABI_EXTENSION( \
-    contract, return_type, return_desc, return_abi_carrier, name, ...)
-#endif
-
-#ifndef CMETA_FUNCTION0_DECL_ABI_EXTENSION
-#define CMETA_FUNCTION0_DECL_ABI_EXTENSION( \
-    contract, return_type, return_desc, return_abi_carrier, name)
-#endif
-
-#define CMETA_FUNCTION_DECL_AS_ABI( \
-    contract, return_type, return_desc, return_abi_carrier, name, ...) \
+#define CMETA_FUNCTION_DECL_AS(contract, return_type, return_desc, name, ...) \
     return_type name( \
         CMETA_PP_FOR_EACH_I(CMETA_FUNCTION_PARAM_DECL, ~, __VA_ARGS__)); \
     CMETA_LOCAL const cmeta_param_desc name##__function_params[] = { \
@@ -189,52 +153,34 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
     CMETA_LOCAL const cmeta_function_desc name##__function_meta = { \
         sizeof(cmeta_function_desc), #name, (return_desc), \
         name##__function_params, CMETA_PP_NARG(__VA_ARGS__), \
-        CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract), \
-        (return_abi_carrier) \
+        CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract) \
     }; \
     CMETA_INLINE const cmeta_function_desc *name##_function(void) { \
         return &name##__function_meta; \
     } \
-    CMETA_FUNCTION_DECL_EXTENSION( \
-        contract, return_type, return_desc, name, __VA_ARGS__) \
-    CMETA_FUNCTION_DECL_ABI_EXTENSION( \
-        contract, return_type, return_desc, return_abi_carrier, name, __VA_ARGS__) \
+    CMETA_FUNCTION_DECL_EXTENSION(contract, return_type, return_desc, name, __VA_ARGS__) \
     typedef char name##__function_declaration_complete[1]
 
-#define CMETA_FUNCTION_DECL_AS(contract, return_type, return_desc, name, ...) \
-    CMETA_FUNCTION_DECL_AS_ABI( \
-        contract, return_type, return_desc, CMETA_ABI_UNSPECIFIED, \
-        name, __VA_ARGS__)
-
 #define CMETA_FUNCTION_DECL(contract, return_type, name, ...) \
-    CMETA_FUNCTION_DECL_AS_ABI( \
-        contract, return_type, CMETA_FUNCTION_RETURN_TYPEOF(return_type), \
-        CMETA_FUNCTION_RETURN_ABI(return_type), name, __VA_ARGS__)
+    CMETA_FUNCTION_DECL_AS(contract, return_type, \
+                           CMETA_FUNCTION_RETURN_TYPEOF(return_type), \
+                           name, __VA_ARGS__)
 
-#define CMETA_FUNCTION0_DECL_AS_ABI( \
-    contract, return_type, return_desc, return_abi_carrier, name) \
+#define CMETA_FUNCTION0_DECL_AS(contract, return_type, return_desc, name) \
     return_type name(void); \
     CMETA_LOCAL const cmeta_function_desc name##__function_meta = { \
         sizeof(cmeta_function_desc), #name, (return_desc), NULL, 0u, \
-        CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract), \
-        (return_abi_carrier) \
+        CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract) \
     }; \
     CMETA_INLINE const cmeta_function_desc *name##_function(void) { \
         return &name##__function_meta; \
     } \
     CMETA_FUNCTION0_DECL_EXTENSION(contract, return_type, return_desc, name) \
-    CMETA_FUNCTION0_DECL_ABI_EXTENSION( \
-        contract, return_type, return_desc, return_abi_carrier, name) \
     typedef char name##__function_declaration_complete[1]
 
-#define CMETA_FUNCTION0_DECL_AS(contract, return_type, return_desc, name) \
-    CMETA_FUNCTION0_DECL_AS_ABI( \
-        contract, return_type, return_desc, CMETA_ABI_UNSPECIFIED, name)
-
 #define CMETA_FUNCTION0_DECL(contract, return_type, name) \
-    CMETA_FUNCTION0_DECL_AS_ABI( \
-        contract, return_type, CMETA_FUNCTION_RETURN_TYPEOF(return_type), \
-        CMETA_FUNCTION_RETURN_ABI(return_type), name)
+    CMETA_FUNCTION0_DECL_AS(contract, return_type, \
+                            CMETA_FUNCTION_RETURN_TYPEOF(return_type), name)
 
 #define CMETA_FUNCTION_META(name) (name##_function())
 
@@ -246,20 +192,12 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
 #define FunctionDeclAs(...) CMETA_FUNCTION_DECL_AS(__VA_ARGS__)
 #endif
 
-#ifndef FunctionDeclAsAbi
-#define FunctionDeclAsAbi(...) CMETA_FUNCTION_DECL_AS_ABI(__VA_ARGS__)
-#endif
-
 #ifndef Function0Decl
 #define Function0Decl(...) CMETA_FUNCTION0_DECL(__VA_ARGS__)
 #endif
 
 #ifndef Function0DeclAs
 #define Function0DeclAs(...) CMETA_FUNCTION0_DECL_AS(__VA_ARGS__)
-#endif
-
-#ifndef Function0DeclAsAbi
-#define Function0DeclAsAbi(...) CMETA_FUNCTION0_DECL_AS_ABI(__VA_ARGS__)
 #endif
 
 #ifndef FunctionMeta
