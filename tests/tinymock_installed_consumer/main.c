@@ -52,6 +52,7 @@ int main(void) {
     tinymock_installed_box result;
 
     assert(cmeta_interface_desc_valid(iface_meta));
+    assert(cmeta_interface_desc_equal(iface_meta, iface_meta));
     assert(iface_meta->method_count == 2u);
     method = &iface_meta->methods[0];
     assert(cmeta_interface_method_reflection_valid(method));
