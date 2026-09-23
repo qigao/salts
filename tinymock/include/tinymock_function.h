@@ -191,7 +191,8 @@
   _Static_assert( \
       (abi_carrier) == CMETA_ABI_SCALAR || \
       (abi_carrier) == CMETA_ABI_OBJECT_POINTER || \
-      (abi_carrier) == CMETA_ABI_AGGREGATE, \
+      (abi_carrier) == CMETA_ABI_AGGREGATE || \
+      (abi_carrier) == CMETA_ABI_FUNCTION_POINTER, \
       "TinyMock auto-mock parameter " #function_name "." #name \
       " uses an unsupported ABI carrier")
 #define TINYMOCk_FUNCTION_PARAM_ADMIT_APPLY_I(function_name, ...) \
@@ -212,7 +213,8 @@
   _Static_assert( \
       (return_abi_carrier) == CMETA_ABI_SCALAR || \
       (return_abi_carrier) == CMETA_ABI_OBJECT_POINTER || \
-      (return_abi_carrier) == CMETA_ABI_AGGREGATE, \
+      (return_abi_carrier) == CMETA_ABI_AGGREGATE || \
+      (return_abi_carrier) == CMETA_ABI_FUNCTION_POINTER, \
       "TinyMock auto-mock return for " #name \
       " uses an unsupported or unspecified ABI carrier")
 
@@ -252,9 +254,18 @@
                     #name); \
     return typed_result__; \
   } while (0)
-#define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_UNSPECIFIED(name, type, result) \
-  return *(type *)0
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_FUNCTION_POINTER(name, type, result) \
+  do { \
+    type typed_result__ = (type)0; \
+    bool typed_ok__ = tinymock_cmeta_return_write( \
+        TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
+        &typed_result__); \
+    TINYMOCk_ASSERT(typed_ok__, \
+                    "tinymock function-pointer return for %s requires a typed return", \
+                    #name); \
+    return typed_result__; \
+  } while (0)
+#define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_UNSPECIFIED(name, type, result) \
   return *(type *)0
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_OPAQUE(name, type, result) \
   return *(type *)0
