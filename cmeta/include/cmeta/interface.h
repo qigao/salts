@@ -7,6 +7,7 @@
 
 #include <cmeta/pp.h>
 #include <cmeta/function.h>
+#include <cmeta/type_select.h>
 
 /*
  * CMeta Interface/Object Protocol
@@ -114,6 +115,50 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
     return true;
 }
 
+/* Fully-reflected interface rows reuse FunctionDesc semantics, but these
+ * schema helpers are interface-owned so public interface headers remain valid
+ * in both C11 and C++17. */
+#define CMETA_IFACE_PARAM_DECL_3(type,name,flags) type name
+#define CMETA_IFACE_PARAM_DECL_4(type,name,flags,descriptor) type name
+#define CMETA_IFACE_PARAM_DECL_5(type,name,flags,descriptor,carrier) type name
+#define CMETA_IFACE_PARAM_DECL_APPLY_I(...) \
+    CMETA_PP_CAT(CMETA_IFACE_PARAM_DECL_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define CMETA_IFACE_PARAM_DECL_APPLY(row) CMETA_IFACE_PARAM_DECL_APPLY_I row
+
+#define CMETA_IFACE_PARAM_NAME_3(type,name,flags) name
+#define CMETA_IFACE_PARAM_NAME_4(type,name,flags,descriptor) name
+#define CMETA_IFACE_PARAM_NAME_5(type,name,flags,descriptor,carrier) name
+#define CMETA_IFACE_PARAM_NAME_APPLY_I(...) \
+    CMETA_PP_CAT(CMETA_IFACE_PARAM_NAME_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define CMETA_IFACE_PARAM_NAME_APPLY(row) CMETA_IFACE_PARAM_NAME_APPLY_I row
+
+#define CMETA_IFACE_PARAM_META_3(type,name,flags) \
+    { sizeof(cmeta_param_desc), #name, CMETA_TYPEOF(type), \
+      (cmeta_param_flags)(flags) },
+#define CMETA_IFACE_PARAM_META_4(type,name,flags,descriptor) \
+    { sizeof(cmeta_param_desc), #name, (descriptor), \
+      (cmeta_param_flags)(flags) },
+#define CMETA_IFACE_PARAM_META_5(type,name,flags,descriptor,carrier) \
+    { sizeof(cmeta_param_desc), #name, (descriptor), \
+      (cmeta_param_flags)(flags) },
+#define CMETA_IFACE_PARAM_META_APPLY_I(...) \
+    CMETA_PP_CAT(CMETA_IFACE_PARAM_META_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define CMETA_IFACE_PARAM_META_APPLY(row) CMETA_IFACE_PARAM_META_APPLY_I row
+
+#define CMETA_IFACE_PARAM_ABI_3(type,name,flags) CMETA_ABI_SCALAR
+#define CMETA_IFACE_PARAM_ABI_4(type,name,flags,descriptor) CMETA_ABI_UNSPECIFIED
+#define CMETA_IFACE_PARAM_ABI_5(type,name,flags,descriptor,carrier) (carrier)
+#define CMETA_IFACE_PARAM_ABI_APPLY_I(...) \
+    CMETA_PP_CAT(CMETA_IFACE_PARAM_ABI_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define CMETA_IFACE_PARAM_ABI_APPLY(row) CMETA_IFACE_PARAM_ABI_APPLY_I row
+
+#define CMETA_IFACE_PP_SECOND_(a,b,...) b
+#define CMETA_IFACE_PP_PROBE_() ~, 1
+#define CMETA_IFACE_PP_IS_PROBE_(...) CMETA_IFACE_PP_SECOND_(__VA_ARGS__,0,0)
+#define CMETA_IFACE_VOID_MARK_void CMETA_IFACE_PP_PROBE_()
+#define CMETA_IFACE_RETURN_IS_VOID_(type) \
+    CMETA_IFACE_PP_IS_PROBE_(CMETA_PP_CAT(CMETA_IFACE_VOID_MARK_,type))
+
 #define CMETA_IFACE_ARITY_R0 0u
 #define CMETA_IFACE_ARITY_R1 1u
 #define CMETA_IFACE_ARITY_R2 2u
@@ -141,19 +186,19 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
 #define CMETA_IFACE_VT_F0(I,R,N,contract,return_desc,return_abi) \
     R (*N)(void *self);
 #define CMETA_IFACE_VT_F1(I,R,N,contract,return_desc,return_abi,P1) \
-    R (*N)(void *self, CMETA_FUNCTION_PARAM_DECL_APPLY(P1));
+    R (*N)(void *self, CMETA_IFACE_PARAM_DECL_APPLY(P1));
 #define CMETA_IFACE_VT_F2(I,R,N,contract,return_desc,return_abi,P1,P2) \
-    R (*N)(void *self, CMETA_FUNCTION_PARAM_DECL_APPLY(P1), \
-           CMETA_FUNCTION_PARAM_DECL_APPLY(P2));
+    R (*N)(void *self, CMETA_IFACE_PARAM_DECL_APPLY(P1), \
+           CMETA_IFACE_PARAM_DECL_APPLY(P2));
 #define CMETA_IFACE_VT_F3(I,R,N,contract,return_desc,return_abi,P1,P2,P3) \
-    R (*N)(void *self, CMETA_FUNCTION_PARAM_DECL_APPLY(P1), \
-           CMETA_FUNCTION_PARAM_DECL_APPLY(P2), \
-           CMETA_FUNCTION_PARAM_DECL_APPLY(P3));
+    R (*N)(void *self, CMETA_IFACE_PARAM_DECL_APPLY(P1), \
+           CMETA_IFACE_PARAM_DECL_APPLY(P2), \
+           CMETA_IFACE_PARAM_DECL_APPLY(P3));
 #define CMETA_IFACE_VT_F4(I,R,N,contract,return_desc,return_abi,P1,P2,P3,P4) \
-    R (*N)(void *self, CMETA_FUNCTION_PARAM_DECL_APPLY(P1), \
-           CMETA_FUNCTION_PARAM_DECL_APPLY(P2), \
-           CMETA_FUNCTION_PARAM_DECL_APPLY(P3), \
-           CMETA_FUNCTION_PARAM_DECL_APPLY(P4));
+    R (*N)(void *self, CMETA_IFACE_PARAM_DECL_APPLY(P1), \
+           CMETA_IFACE_PARAM_DECL_APPLY(P2), \
+           CMETA_IFACE_PARAM_DECL_APPLY(P3), \
+           CMETA_IFACE_PARAM_DECL_APPLY(P4));
 #define CMETA_IFACE_VT_FD0(I,R,N,contract,return_desc,return_abi) \
     void (*N)(void *self);
 #define CMETA_IFACE_VT_ROW(I,K,R,N,...) CMETA_PP_CAT(CMETA_IFACE_VT_,K)(I,R,N,__VA_ARGS__)
@@ -183,84 +228,84 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
 #define CMETA_IFACE_IMPL_F0_1(I,R,N,contract,return_desc,return_abi) \
     CMETA_INLINE void I##_##N(I *self) { self->vtable->N(self->self); }
 #define CMETA_IFACE_IMPL_F0(I,R,N,...) \
-    CMETA_PP_CAT(CMETA_IFACE_IMPL_F0_, CMETA_FUNCTION_RETURN_IS_VOID_(R))( \
+    CMETA_PP_CAT(CMETA_IFACE_IMPL_F0_, CMETA_IFACE_RETURN_IS_VOID_(R))( \
         I,R,N,__VA_ARGS__)
 
 #define CMETA_IFACE_IMPL_F1_0(I,R,N,contract,return_desc,return_abi,P1) \
-    CMETA_INLINE R I##_##N(I *self, CMETA_FUNCTION_PARAM_DECL_APPLY(P1)) { \
-        return self->vtable->N(self->self, CMETA_FUNCTION_PARAM_NAME_APPLY(P1)); \
+    CMETA_INLINE R I##_##N(I *self, CMETA_IFACE_PARAM_DECL_APPLY(P1)) { \
+        return self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME_APPLY(P1)); \
     }
 #define CMETA_IFACE_IMPL_F1_1(I,R,N,contract,return_desc,return_abi,P1) \
-    CMETA_INLINE void I##_##N(I *self, CMETA_FUNCTION_PARAM_DECL_APPLY(P1)) { \
-        self->vtable->N(self->self, CMETA_FUNCTION_PARAM_NAME_APPLY(P1)); \
+    CMETA_INLINE void I##_##N(I *self, CMETA_IFACE_PARAM_DECL_APPLY(P1)) { \
+        self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME_APPLY(P1)); \
     }
 #define CMETA_IFACE_IMPL_F1(I,R,N,...) \
-    CMETA_PP_CAT(CMETA_IFACE_IMPL_F1_, CMETA_FUNCTION_RETURN_IS_VOID_(R))( \
+    CMETA_PP_CAT(CMETA_IFACE_IMPL_F1_, CMETA_IFACE_RETURN_IS_VOID_(R))( \
         I,R,N,__VA_ARGS__)
 
 #define CMETA_IFACE_IMPL_F2_0(I,R,N,contract,return_desc,return_abi,P1,P2) \
-    CMETA_INLINE R I##_##N(I *self, CMETA_FUNCTION_PARAM_DECL_APPLY(P1), \
-                           CMETA_FUNCTION_PARAM_DECL_APPLY(P2)) { \
-        return self->vtable->N(self->self, CMETA_FUNCTION_PARAM_NAME_APPLY(P1), \
-                               CMETA_FUNCTION_PARAM_NAME_APPLY(P2)); \
+    CMETA_INLINE R I##_##N(I *self, CMETA_IFACE_PARAM_DECL_APPLY(P1), \
+                           CMETA_IFACE_PARAM_DECL_APPLY(P2)) { \
+        return self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME_APPLY(P1), \
+                               CMETA_IFACE_PARAM_NAME_APPLY(P2)); \
     }
 #define CMETA_IFACE_IMPL_F2_1(I,R,N,contract,return_desc,return_abi,P1,P2) \
-    CMETA_INLINE void I##_##N(I *self, CMETA_FUNCTION_PARAM_DECL_APPLY(P1), \
-                              CMETA_FUNCTION_PARAM_DECL_APPLY(P2)) { \
-        self->vtable->N(self->self, CMETA_FUNCTION_PARAM_NAME_APPLY(P1), \
-                        CMETA_FUNCTION_PARAM_NAME_APPLY(P2)); \
+    CMETA_INLINE void I##_##N(I *self, CMETA_IFACE_PARAM_DECL_APPLY(P1), \
+                              CMETA_IFACE_PARAM_DECL_APPLY(P2)) { \
+        self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME_APPLY(P1), \
+                        CMETA_IFACE_PARAM_NAME_APPLY(P2)); \
     }
 #define CMETA_IFACE_IMPL_F2(I,R,N,...) \
-    CMETA_PP_CAT(CMETA_IFACE_IMPL_F2_, CMETA_FUNCTION_RETURN_IS_VOID_(R))( \
+    CMETA_PP_CAT(CMETA_IFACE_IMPL_F2_, CMETA_IFACE_RETURN_IS_VOID_(R))( \
         I,R,N,__VA_ARGS__)
 
 #define CMETA_IFACE_IMPL_F3_0(I,R,N,contract,return_desc,return_abi,P1,P2,P3) \
-    CMETA_INLINE R I##_##N(I *self, CMETA_FUNCTION_PARAM_DECL_APPLY(P1), \
-                           CMETA_FUNCTION_PARAM_DECL_APPLY(P2), \
-                           CMETA_FUNCTION_PARAM_DECL_APPLY(P3)) { \
-        return self->vtable->N(self->self, CMETA_FUNCTION_PARAM_NAME_APPLY(P1), \
-                               CMETA_FUNCTION_PARAM_NAME_APPLY(P2), \
-                               CMETA_FUNCTION_PARAM_NAME_APPLY(P3)); \
+    CMETA_INLINE R I##_##N(I *self, CMETA_IFACE_PARAM_DECL_APPLY(P1), \
+                           CMETA_IFACE_PARAM_DECL_APPLY(P2), \
+                           CMETA_IFACE_PARAM_DECL_APPLY(P3)) { \
+        return self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME_APPLY(P1), \
+                               CMETA_IFACE_PARAM_NAME_APPLY(P2), \
+                               CMETA_IFACE_PARAM_NAME_APPLY(P3)); \
     }
 #define CMETA_IFACE_IMPL_F3_1(I,R,N,contract,return_desc,return_abi,P1,P2,P3) \
-    CMETA_INLINE void I##_##N(I *self, CMETA_FUNCTION_PARAM_DECL_APPLY(P1), \
-                              CMETA_FUNCTION_PARAM_DECL_APPLY(P2), \
-                              CMETA_FUNCTION_PARAM_DECL_APPLY(P3)) { \
-        self->vtable->N(self->self, CMETA_FUNCTION_PARAM_NAME_APPLY(P1), \
-                        CMETA_FUNCTION_PARAM_NAME_APPLY(P2), \
-                        CMETA_FUNCTION_PARAM_NAME_APPLY(P3)); \
+    CMETA_INLINE void I##_##N(I *self, CMETA_IFACE_PARAM_DECL_APPLY(P1), \
+                              CMETA_IFACE_PARAM_DECL_APPLY(P2), \
+                              CMETA_IFACE_PARAM_DECL_APPLY(P3)) { \
+        self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME_APPLY(P1), \
+                        CMETA_IFACE_PARAM_NAME_APPLY(P2), \
+                        CMETA_IFACE_PARAM_NAME_APPLY(P3)); \
     }
 #define CMETA_IFACE_IMPL_F3(I,R,N,...) \
-    CMETA_PP_CAT(CMETA_IFACE_IMPL_F3_, CMETA_FUNCTION_RETURN_IS_VOID_(R))( \
+    CMETA_PP_CAT(CMETA_IFACE_IMPL_F3_, CMETA_IFACE_RETURN_IS_VOID_(R))( \
         I,R,N,__VA_ARGS__)
 
 #define CMETA_IFACE_IMPL_F4_0(I,R,N,contract,return_desc,return_abi,P1,P2,P3,P4) \
-    CMETA_INLINE R I##_##N(I *self, CMETA_FUNCTION_PARAM_DECL_APPLY(P1), \
-                           CMETA_FUNCTION_PARAM_DECL_APPLY(P2), \
-                           CMETA_FUNCTION_PARAM_DECL_APPLY(P3), \
-                           CMETA_FUNCTION_PARAM_DECL_APPLY(P4)) { \
-        return self->vtable->N(self->self, CMETA_FUNCTION_PARAM_NAME_APPLY(P1), \
-                               CMETA_FUNCTION_PARAM_NAME_APPLY(P2), \
-                               CMETA_FUNCTION_PARAM_NAME_APPLY(P3), \
-                               CMETA_FUNCTION_PARAM_NAME_APPLY(P4)); \
+    CMETA_INLINE R I##_##N(I *self, CMETA_IFACE_PARAM_DECL_APPLY(P1), \
+                           CMETA_IFACE_PARAM_DECL_APPLY(P2), \
+                           CMETA_IFACE_PARAM_DECL_APPLY(P3), \
+                           CMETA_IFACE_PARAM_DECL_APPLY(P4)) { \
+        return self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME_APPLY(P1), \
+                               CMETA_IFACE_PARAM_NAME_APPLY(P2), \
+                               CMETA_IFACE_PARAM_NAME_APPLY(P3), \
+                               CMETA_IFACE_PARAM_NAME_APPLY(P4)); \
     }
 #define CMETA_IFACE_IMPL_F4_1(I,R,N,contract,return_desc,return_abi,P1,P2,P3,P4) \
-    CMETA_INLINE void I##_##N(I *self, CMETA_FUNCTION_PARAM_DECL_APPLY(P1), \
-                              CMETA_FUNCTION_PARAM_DECL_APPLY(P2), \
-                              CMETA_FUNCTION_PARAM_DECL_APPLY(P3), \
-                              CMETA_FUNCTION_PARAM_DECL_APPLY(P4)) { \
-        self->vtable->N(self->self, CMETA_FUNCTION_PARAM_NAME_APPLY(P1), \
-                        CMETA_FUNCTION_PARAM_NAME_APPLY(P2), \
-                        CMETA_FUNCTION_PARAM_NAME_APPLY(P3), \
-                        CMETA_FUNCTION_PARAM_NAME_APPLY(P4)); \
+    CMETA_INLINE void I##_##N(I *self, CMETA_IFACE_PARAM_DECL_APPLY(P1), \
+                              CMETA_IFACE_PARAM_DECL_APPLY(P2), \
+                              CMETA_IFACE_PARAM_DECL_APPLY(P3), \
+                              CMETA_IFACE_PARAM_DECL_APPLY(P4)) { \
+        self->vtable->N(self->self, CMETA_IFACE_PARAM_NAME_APPLY(P1), \
+                        CMETA_IFACE_PARAM_NAME_APPLY(P2), \
+                        CMETA_IFACE_PARAM_NAME_APPLY(P3), \
+                        CMETA_IFACE_PARAM_NAME_APPLY(P4)); \
     }
 #define CMETA_IFACE_IMPL_F4(I,R,N,...) \
-    CMETA_PP_CAT(CMETA_IFACE_IMPL_F4_, CMETA_FUNCTION_RETURN_IS_VOID_(R))( \
+    CMETA_PP_CAT(CMETA_IFACE_IMPL_F4_, CMETA_IFACE_RETURN_IS_VOID_(R))( \
         I,R,N,__VA_ARGS__)
 
 #define CMETA_IFACE_IMPL_FD0(I,R,N,contract,return_desc,return_abi) \
     typedef char I##_##N##_reflected_destructor_requires_literal_void[ \
-        CMETA_FUNCTION_RETURN_IS_VOID_(R) ? 1 : -1]; \
+        CMETA_IFACE_RETURN_IS_VOID_(R) ? 1 : -1]; \
     CMETA_INLINE void I##_##N(I *self) { \
         if (!self || !self->self || !self->vtable || !self->vtable->N) return; \
         self->vtable->N(self->self); \
@@ -324,10 +369,10 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
 
 #define CMETA_IFACE_FUNCTION_F1(I,R,N,contract,return_desc,return_abi,P1) \
     CMETA_LOCAL const cmeta_param_desc I##_##N##_function_params[] = { \
-        CMETA_FUNCTION_PARAM_META_APPLY(P1) \
+        CMETA_IFACE_PARAM_META_APPLY(P1) \
     }; \
     CMETA_LOCAL const cmeta_abi_carrier I##_##N##_function_param_abi[] = { \
-        CMETA_FUNCTION_PARAM_ABI_APPLY(P1), \
+        CMETA_IFACE_PARAM_ABI_APPLY(P1), \
     }; \
     CMETA_LOCAL const cmeta_function_desc I##_##N##_function_meta = { \
         sizeof(cmeta_function_desc), #I "." #N, (return_desc), \
@@ -342,12 +387,12 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
 
 #define CMETA_IFACE_FUNCTION_F2(I,R,N,contract,return_desc,return_abi,P1,P2) \
     CMETA_LOCAL const cmeta_param_desc I##_##N##_function_params[] = { \
-        CMETA_FUNCTION_PARAM_META_APPLY(P1) \
-        CMETA_FUNCTION_PARAM_META_APPLY(P2) \
+        CMETA_IFACE_PARAM_META_APPLY(P1) \
+        CMETA_IFACE_PARAM_META_APPLY(P2) \
     }; \
     CMETA_LOCAL const cmeta_abi_carrier I##_##N##_function_param_abi[] = { \
-        CMETA_FUNCTION_PARAM_ABI_APPLY(P1), \
-        CMETA_FUNCTION_PARAM_ABI_APPLY(P2), \
+        CMETA_IFACE_PARAM_ABI_APPLY(P1), \
+        CMETA_IFACE_PARAM_ABI_APPLY(P2), \
     }; \
     CMETA_LOCAL const cmeta_function_desc I##_##N##_function_meta = { \
         sizeof(cmeta_function_desc), #I "." #N, (return_desc), \
@@ -362,14 +407,14 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
 
 #define CMETA_IFACE_FUNCTION_F3(I,R,N,contract,return_desc,return_abi,P1,P2,P3) \
     CMETA_LOCAL const cmeta_param_desc I##_##N##_function_params[] = { \
-        CMETA_FUNCTION_PARAM_META_APPLY(P1) \
-        CMETA_FUNCTION_PARAM_META_APPLY(P2) \
-        CMETA_FUNCTION_PARAM_META_APPLY(P3) \
+        CMETA_IFACE_PARAM_META_APPLY(P1) \
+        CMETA_IFACE_PARAM_META_APPLY(P2) \
+        CMETA_IFACE_PARAM_META_APPLY(P3) \
     }; \
     CMETA_LOCAL const cmeta_abi_carrier I##_##N##_function_param_abi[] = { \
-        CMETA_FUNCTION_PARAM_ABI_APPLY(P1), \
-        CMETA_FUNCTION_PARAM_ABI_APPLY(P2), \
-        CMETA_FUNCTION_PARAM_ABI_APPLY(P3), \
+        CMETA_IFACE_PARAM_ABI_APPLY(P1), \
+        CMETA_IFACE_PARAM_ABI_APPLY(P2), \
+        CMETA_IFACE_PARAM_ABI_APPLY(P3), \
     }; \
     CMETA_LOCAL const cmeta_function_desc I##_##N##_function_meta = { \
         sizeof(cmeta_function_desc), #I "." #N, (return_desc), \
@@ -384,16 +429,16 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
 
 #define CMETA_IFACE_FUNCTION_F4(I,R,N,contract,return_desc,return_abi,P1,P2,P3,P4) \
     CMETA_LOCAL const cmeta_param_desc I##_##N##_function_params[] = { \
-        CMETA_FUNCTION_PARAM_META_APPLY(P1) \
-        CMETA_FUNCTION_PARAM_META_APPLY(P2) \
-        CMETA_FUNCTION_PARAM_META_APPLY(P3) \
-        CMETA_FUNCTION_PARAM_META_APPLY(P4) \
+        CMETA_IFACE_PARAM_META_APPLY(P1) \
+        CMETA_IFACE_PARAM_META_APPLY(P2) \
+        CMETA_IFACE_PARAM_META_APPLY(P3) \
+        CMETA_IFACE_PARAM_META_APPLY(P4) \
     }; \
     CMETA_LOCAL const cmeta_abi_carrier I##_##N##_function_param_abi[] = { \
-        CMETA_FUNCTION_PARAM_ABI_APPLY(P1), \
-        CMETA_FUNCTION_PARAM_ABI_APPLY(P2), \
-        CMETA_FUNCTION_PARAM_ABI_APPLY(P3), \
-        CMETA_FUNCTION_PARAM_ABI_APPLY(P4), \
+        CMETA_IFACE_PARAM_ABI_APPLY(P1), \
+        CMETA_IFACE_PARAM_ABI_APPLY(P2), \
+        CMETA_IFACE_PARAM_ABI_APPLY(P3), \
+        CMETA_IFACE_PARAM_ABI_APPLY(P4), \
     }; \
     CMETA_LOCAL const cmeta_function_desc I##_##N##_function_meta = { \
         sizeof(cmeta_function_desc), #I "." #N, (return_desc), \
