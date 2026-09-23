@@ -8,6 +8,7 @@ on:
       - "vcpkg-configuration.json"
       - "packaging/nuget/**"
       - "tinymock/**"
+      - "cmeta/**"
       - "cmake/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
@@ -19,6 +20,7 @@ on:
       - "vcpkg-configuration.json"
       - "packaging/nuget/**"
       - "tinymock/**"
+      - "cmeta/**"
       - "cmake/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
@@ -87,6 +89,8 @@ jobs:
           cmake --install build/linux-gcc-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           test -f "$prefix/include/tinymock_function.h"
           test -f "$prefix/include/tinymock_history.h"
@@ -165,6 +169,8 @@ jobs:
           cmake --install build/mac-clang-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           test -f "$prefix/include/tinymock_function.h"
           test -f "$prefix/include/tinymock_history.h"
@@ -246,6 +252,8 @@ jobs:
           $tinymockCMake = Join-Path $prefix "lib\cmake\Salts\SaltsTinyMock.cmake"
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
           if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
+          if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "cmeta_function_abi_desc" -Quiet)) { throw "missing cmeta_function_abi_desc in $functionHeader" }
+          if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "FunctionAbi" -Quiet)) { throw "missing FunctionAbi in $functionHeader" }
           if (-not (Test-Path -LiteralPath $tinymockHeader -PathType Leaf)) { throw "missing $tinymockHeader" }
           if (-not (Test-Path -LiteralPath $tinymockFunctionHeader -PathType Leaf)) { throw "missing $tinymockFunctionHeader" }
           if (-not (Test-Path -LiteralPath $tinymockHistoryHeader -PathType Leaf)) { throw "missing $tinymockHistoryHeader" }
@@ -315,6 +323,8 @@ jobs:
           cmake --install build/android-arm64-v8a-release --prefix "$prefix"
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           test -f "$prefix/include/tinymock_function.h"
           test -f "$prefix/include/tinymock_history.h"
@@ -359,6 +369,9 @@ jobs:
           test -f package/sdk/windows-x64/include/cmeta/function.h
           test -f package/sdk/android-arm64-v8a/lib/cmake/Salts/SaltsConfig.cmake
           test -f package/sdk/android-arm64-v8a/include/cmeta/function.h
+          grep -F "cmeta_function_abi_desc" package/sdk/linux-x64/include/cmeta/function.h
+          grep -F "cmeta_function_abi_desc" package/sdk/windows-x64/include/cmeta/function.h
+          grep -F "cmeta_function_abi_desc" package/sdk/android-arm64-v8a/include/cmeta/function.h
           test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 4
           find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print
           du -sh package/sdk
