@@ -7,8 +7,10 @@
 #include "api.h"
 
 int tinymock_installed_consumer_run(int value);
+void tinymock_installed_consumer_shutdown(void);
 
 TINYMOCk_FUNCTION_DECLARE(tinymock_installed_add);
+TINYMOCk_FUNCTION_DECLARE(tinymock_installed_shutdown);
 
 int main(void) {
   const cmeta_function_desc *meta;
@@ -26,5 +28,16 @@ int main(void) {
   assert(meta != NULL);
   assert(cmeta_function_desc_valid(meta));
   assert(meta->param_count == 2u);
+
+  TINYMOCk_FUNCTION_RESET(tinymock_installed_shutdown);
+  tinymock_installed_consumer_shutdown();
+  tinymock_mock_verify_times(
+      TINYMOCk_FUNCTION(tinymock_installed_shutdown), 1u);
+  assert(cmeta_type_equal(
+      TINYMOCk_FUNCTION_META(tinymock_installed_shutdown)->return_type,
+      &cmeta_type_void));
+
+  TINYMOCk_FUNCTION_DESTROY(tinymock_installed_add);
+  TINYMOCk_FUNCTION_DESTROY(tinymock_installed_shutdown);
   return 0;
 }
