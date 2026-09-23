@@ -11,10 +11,11 @@
  * declarations. The CMeta declaration extension hook replays those exact rows
  * into external replacement definitions.
  *
- * Phase-2a intentionally supports TinyMock's existing portable value carrier:
- * scalar values, strings and object pointers. Literal-void and value-return
- * functions are generated separately at preprocessing time. Arbitrary by-value
- * objects, variadics and function-pointer values remain outside this backend.
+ * Reflected wrappers use the legacy portable value carrier only where it is
+ * sound (builtin scalar/object-pointer compatibility paths). Aggregate,
+ * function-pointer, and enum values use CMeta typed history/return state.
+ * Literal-void and value-return functions are generated separately at
+ * preprocessing time. Variadic declarations remain outside this backend.
  */
 
 #include "tinymock.h"
