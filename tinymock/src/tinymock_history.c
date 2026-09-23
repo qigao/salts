@@ -9,6 +9,36 @@ static size_t tinymock_cmeta_recorded_limit(size_t count) {
   return count < TINYMOCk_MAX_CALLS ? count : TINYMOCk_MAX_CALLS;
 }
 
+static bool tinymock_cmeta_function_equal(
+    const cmeta_function_desc *left,
+    const cmeta_function_desc *right) {
+  size_t index;
+
+  if (left == right)
+    return left != NULL && cmeta_function_desc_valid(left);
+  if (!left || !right ||
+      !cmeta_function_desc_valid(left) ||
+      !cmeta_function_desc_valid(right))
+    return false;
+
+  if (strcmp(left->name, right->name) != 0 ||
+      left->param_count != right->param_count ||
+      left->effects != right->effects ||
+      left->properties != right->properties ||
+      !cmeta_type_equal(left->return_type, right->return_type))
+    return false;
+
+  for (index = 0; index < left->param_count; ++index) {
+    const cmeta_param_desc *a = &left->params[index];
+    const cmeta_param_desc *b = &right->params[index];
+    if (strcmp(a->name, b->name) != 0 ||
+        a->flags != b->flags ||
+        !cmeta_type_equal(a->type, b->type))
+      return false;
+  }
+  return true;
+}
+
 static void tinymock_cmeta_snapshot_clear(tinymock_cmeta_snapshot *snapshot) {
   const cmeta_type_traits *traits;
   if (!snapshot) return;
@@ -131,7 +161,7 @@ bool tinymock_cmeta_history_record(
     return false;
 
   if (history->function &&
-      strcmp(history->function->name, function->name) != 0)
+      !tinymock_cmeta_function_equal(history->function, function))
     return false;
   history->function = function;
 
