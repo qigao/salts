@@ -180,13 +180,6 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
 #define CMETA_IFACE_PARAM_DECL(row) CMETA_IFACE_PARAM_DECL_I row
 #define CMETA_IFACE_PARAM_NAME_I(type, name, flags, descriptor, abi_carrier) name
 #define CMETA_IFACE_PARAM_NAME(row) CMETA_IFACE_PARAM_NAME_I row
-#define CMETA_IFACE_PARAM_META_I(type, name, flags, descriptor, abi_carrier) \
-    { sizeof(cmeta_param_desc), #name, (descriptor), \
-      CMETA_IFACE_PARAM_FLAGS_CAST(flags) }
-#define CMETA_IFACE_PARAM_META(row) CMETA_IFACE_PARAM_META_I row
-#define CMETA_IFACE_PARAM_ABI_I(type, name, flags, descriptor, abi_carrier) \
-    (abi_carrier)
-#define CMETA_IFACE_PARAM_ABI(row) CMETA_IFACE_PARAM_ABI_I row
 
 /* vtable fields */
 #define CMETA_IFACE_VT_R0(I,R,N,_) R (*N)(void *self);
@@ -350,104 +343,53 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
         return &I##_##N##__function_abi_meta; \
     }
 
-#define CMETA_IFACE_FUNCTION0(I,R,N,C,RD,RA) \
-    CMETA_LOCAL const cmeta_function_desc I##_##N##__function_meta = { \
-        sizeof(cmeta_function_desc), #I "." #N, (RD), NULL, 0u, \
-        CMETA_CONTRACT_EFFECTS(C), CMETA_CONTRACT_PROPERTIES(C) \
-    }; \
-    CMETA_LOCAL const cmeta_function_abi_desc I##_##N##__function_abi_meta = { \
-        sizeof(cmeta_function_abi_desc), &I##_##N##__function_meta, \
-        (RA), NULL, 0u \
-    }; \
+#define CMETA_IFACE_FUNCTION_REFLECTED_0(I,R,N,C,RD,RA) \
+    CMETA_FUNCTION0_METADATA_AS_ABI( \
+        I##_##N, #I "." #N, C, RD, RA); \
     CMETA_IFACE_FUNCTION_GETTERS(I,N)
 
-#define CMETA_IFACE_FUNCTION1(I,R,N,C,RD,RA,P1) \
-    CMETA_LOCAL const cmeta_param_desc I##_##N##__function_params[] = { \
-        CMETA_IFACE_PARAM_META(P1) \
-    }; \
-    CMETA_LOCAL const cmeta_abi_carrier I##_##N##__function_param_abi[] = { \
-        CMETA_IFACE_PARAM_ABI(P1) \
-    }; \
-    CMETA_LOCAL const cmeta_function_desc I##_##N##__function_meta = { \
-        sizeof(cmeta_function_desc), #I "." #N, (RD), \
-        I##_##N##__function_params, 1u, \
-        CMETA_CONTRACT_EFFECTS(C), CMETA_CONTRACT_PROPERTIES(C) \
-    }; \
-    CMETA_LOCAL const cmeta_function_abi_desc I##_##N##__function_abi_meta = { \
-        sizeof(cmeta_function_abi_desc), &I##_##N##__function_meta, \
-        (RA), I##_##N##__function_param_abi, 1u \
-    }; \
+#define CMETA_IFACE_FUNCTION_REFLECTED_1(I,R,N,C,RD,RA,P1) \
+    CMETA_FUNCTION_METADATA_AS_ABI( \
+        I##_##N, #I "." #N, C, RD, RA, P1); \
     CMETA_IFACE_FUNCTION_GETTERS(I,N)
 
-#define CMETA_IFACE_FUNCTION2(I,R,N,C,RD,RA,P1,P2) \
-    CMETA_LOCAL const cmeta_param_desc I##_##N##__function_params[] = { \
-        CMETA_IFACE_PARAM_META(P1), CMETA_IFACE_PARAM_META(P2) \
-    }; \
-    CMETA_LOCAL const cmeta_abi_carrier I##_##N##__function_param_abi[] = { \
-        CMETA_IFACE_PARAM_ABI(P1), CMETA_IFACE_PARAM_ABI(P2) \
-    }; \
-    CMETA_LOCAL const cmeta_function_desc I##_##N##__function_meta = { \
-        sizeof(cmeta_function_desc), #I "." #N, (RD), \
-        I##_##N##__function_params, 2u, \
-        CMETA_CONTRACT_EFFECTS(C), CMETA_CONTRACT_PROPERTIES(C) \
-    }; \
-    CMETA_LOCAL const cmeta_function_abi_desc I##_##N##__function_abi_meta = { \
-        sizeof(cmeta_function_abi_desc), &I##_##N##__function_meta, \
-        (RA), I##_##N##__function_param_abi, 2u \
-    }; \
+#define CMETA_IFACE_FUNCTION_REFLECTED_2(I,R,N,C,RD,RA,P1,P2) \
+    CMETA_FUNCTION_METADATA_AS_ABI( \
+        I##_##N, #I "." #N, C, RD, RA, P1, P2); \
     CMETA_IFACE_FUNCTION_GETTERS(I,N)
 
-#define CMETA_IFACE_FUNCTION3(I,R,N,C,RD,RA,P1,P2,P3) \
-    CMETA_LOCAL const cmeta_param_desc I##_##N##__function_params[] = { \
-        CMETA_IFACE_PARAM_META(P1), CMETA_IFACE_PARAM_META(P2), \
-        CMETA_IFACE_PARAM_META(P3) \
-    }; \
-    CMETA_LOCAL const cmeta_abi_carrier I##_##N##__function_param_abi[] = { \
-        CMETA_IFACE_PARAM_ABI(P1), CMETA_IFACE_PARAM_ABI(P2), \
-        CMETA_IFACE_PARAM_ABI(P3) \
-    }; \
-    CMETA_LOCAL const cmeta_function_desc I##_##N##__function_meta = { \
-        sizeof(cmeta_function_desc), #I "." #N, (RD), \
-        I##_##N##__function_params, 3u, \
-        CMETA_CONTRACT_EFFECTS(C), CMETA_CONTRACT_PROPERTIES(C) \
-    }; \
-    CMETA_LOCAL const cmeta_function_abi_desc I##_##N##__function_abi_meta = { \
-        sizeof(cmeta_function_abi_desc), &I##_##N##__function_meta, \
-        (RA), I##_##N##__function_param_abi, 3u \
-    }; \
+#define CMETA_IFACE_FUNCTION_REFLECTED_3(I,R,N,C,RD,RA,P1,P2,P3) \
+    CMETA_FUNCTION_METADATA_AS_ABI( \
+        I##_##N, #I "." #N, C, RD, RA, P1, P2, P3); \
     CMETA_IFACE_FUNCTION_GETTERS(I,N)
 
-#define CMETA_IFACE_FUNCTION4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
-    CMETA_LOCAL const cmeta_param_desc I##_##N##__function_params[] = { \
-        CMETA_IFACE_PARAM_META(P1), CMETA_IFACE_PARAM_META(P2), \
-        CMETA_IFACE_PARAM_META(P3), CMETA_IFACE_PARAM_META(P4) \
-    }; \
-    CMETA_LOCAL const cmeta_abi_carrier I##_##N##__function_param_abi[] = { \
-        CMETA_IFACE_PARAM_ABI(P1), CMETA_IFACE_PARAM_ABI(P2), \
-        CMETA_IFACE_PARAM_ABI(P3), CMETA_IFACE_PARAM_ABI(P4) \
-    }; \
-    CMETA_LOCAL const cmeta_function_desc I##_##N##__function_meta = { \
-        sizeof(cmeta_function_desc), #I "." #N, (RD), \
-        I##_##N##__function_params, 4u, \
-        CMETA_CONTRACT_EFFECTS(C), CMETA_CONTRACT_PROPERTIES(C) \
-    }; \
-    CMETA_LOCAL const cmeta_function_abi_desc I##_##N##__function_abi_meta = { \
-        sizeof(cmeta_function_abi_desc), &I##_##N##__function_meta, \
-        (RA), I##_##N##__function_param_abi, 4u \
-    }; \
+#define CMETA_IFACE_FUNCTION_REFLECTED_4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
+    CMETA_FUNCTION_METADATA_AS_ABI( \
+        I##_##N, #I "." #N, C, RD, RA, P1, P2, P3, P4); \
     CMETA_IFACE_FUNCTION_GETTERS(I,N)
 
-#define CMETA_IFACE_FUNCTION_F0(I,R,N,C,RD,RA) CMETA_IFACE_FUNCTION0(I,R,N,C,RD,RA)
-#define CMETA_IFACE_FUNCTION_F1(I,R,N,C,RD,RA,P1) CMETA_IFACE_FUNCTION1(I,R,N,C,RD,RA,P1)
-#define CMETA_IFACE_FUNCTION_F2(I,R,N,C,RD,RA,P1,P2) CMETA_IFACE_FUNCTION2(I,R,N,C,RD,RA,P1,P2)
-#define CMETA_IFACE_FUNCTION_F3(I,R,N,C,RD,RA,P1,P2,P3) CMETA_IFACE_FUNCTION3(I,R,N,C,RD,RA,P1,P2,P3)
-#define CMETA_IFACE_FUNCTION_F4(I,R,N,C,RD,RA,P1,P2,P3,P4) CMETA_IFACE_FUNCTION4(I,R,N,C,RD,RA,P1,P2,P3,P4)
-#define CMETA_IFACE_FUNCTION_FV0(I,R,N,C,RD,RA) CMETA_IFACE_FUNCTION0(I,R,N,C,RD,RA)
-#define CMETA_IFACE_FUNCTION_FV1(I,R,N,C,RD,RA,P1) CMETA_IFACE_FUNCTION1(I,R,N,C,RD,RA,P1)
-#define CMETA_IFACE_FUNCTION_FV2(I,R,N,C,RD,RA,P1,P2) CMETA_IFACE_FUNCTION2(I,R,N,C,RD,RA,P1,P2)
-#define CMETA_IFACE_FUNCTION_FV3(I,R,N,C,RD,RA,P1,P2,P3) CMETA_IFACE_FUNCTION3(I,R,N,C,RD,RA,P1,P2,P3)
-#define CMETA_IFACE_FUNCTION_FV4(I,R,N,C,RD,RA,P1,P2,P3,P4) CMETA_IFACE_FUNCTION4(I,R,N,C,RD,RA,P1,P2,P3,P4)
-#define CMETA_IFACE_FUNCTION_FD0(I,R,N,C,RD,RA) CMETA_IFACE_FUNCTION0(I,R,N,C,RD,RA)
+#define CMETA_IFACE_FUNCTION_F0(I,R,N,C,RD,RA) \
+    CMETA_IFACE_FUNCTION_REFLECTED_0(I,R,N,C,RD,RA)
+#define CMETA_IFACE_FUNCTION_F1(I,R,N,C,RD,RA,P1) \
+    CMETA_IFACE_FUNCTION_REFLECTED_1(I,R,N,C,RD,RA,P1)
+#define CMETA_IFACE_FUNCTION_F2(I,R,N,C,RD,RA,P1,P2) \
+    CMETA_IFACE_FUNCTION_REFLECTED_2(I,R,N,C,RD,RA,P1,P2)
+#define CMETA_IFACE_FUNCTION_F3(I,R,N,C,RD,RA,P1,P2,P3) \
+    CMETA_IFACE_FUNCTION_REFLECTED_3(I,R,N,C,RD,RA,P1,P2,P3)
+#define CMETA_IFACE_FUNCTION_F4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
+    CMETA_IFACE_FUNCTION_REFLECTED_4(I,R,N,C,RD,RA,P1,P2,P3,P4)
+#define CMETA_IFACE_FUNCTION_FV0(I,R,N,C,RD,RA) \
+    CMETA_IFACE_FUNCTION_REFLECTED_0(I,R,N,C,RD,RA)
+#define CMETA_IFACE_FUNCTION_FV1(I,R,N,C,RD,RA,P1) \
+    CMETA_IFACE_FUNCTION_REFLECTED_1(I,R,N,C,RD,RA,P1)
+#define CMETA_IFACE_FUNCTION_FV2(I,R,N,C,RD,RA,P1,P2) \
+    CMETA_IFACE_FUNCTION_REFLECTED_2(I,R,N,C,RD,RA,P1,P2)
+#define CMETA_IFACE_FUNCTION_FV3(I,R,N,C,RD,RA,P1,P2,P3) \
+    CMETA_IFACE_FUNCTION_REFLECTED_3(I,R,N,C,RD,RA,P1,P2,P3)
+#define CMETA_IFACE_FUNCTION_FV4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
+    CMETA_IFACE_FUNCTION_REFLECTED_4(I,R,N,C,RD,RA,P1,P2,P3,P4)
+#define CMETA_IFACE_FUNCTION_FD0(I,R,N,C,RD,RA) \
+    CMETA_IFACE_FUNCTION_REFLECTED_0(I,R,N,C,RD,RA)
 #define CMETA_IFACE_FUNCTION_ROW(I,K,R,N,...) \
     CMETA_PP_CAT(CMETA_IFACE_FUNCTION_,K)(I,R,N,__VA_ARGS__)
 
