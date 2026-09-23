@@ -56,10 +56,13 @@ cmake_add_test(cmeta_tinymock_selective_override_test
 
 salts_tinymock_override_functions(
   cmeta_tinymock_selective_override_test
-  HEADERS tinymock_selective_fixture.h
+  HEADERS
+    tinymock_selective_fixture.h
+    tinymock_selective_extra_fixture.h
   FUNCTIONS
     tinymock_selective_mocked
-    tinymock_selective_void)
+    tinymock_selective_void
+    tinymock_selective_extra)
 
 set_target_properties(cmeta_tinymock_selective_override_test PROPERTIES
   C_STANDARD 11
