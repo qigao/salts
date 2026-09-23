@@ -12,4 +12,18 @@ Function0Decl(value, int, tinymock_fixture_answer);
 FunctionDecl(value, int, tinymock_fixture_pointer,
     (int *, value, CMETA_PARAM_IN, &cmeta_type_int_ptr));
 
+FunctionDecl(value, int, tinymock_fixture_write_size,
+    (int, input, CMETA_PARAM_IN),
+    (size_t *, written, CMETA_PARAM_OUT, &cmeta_type_size_ptr));
+
+FunctionDecl(value, int, tinymock_fixture_adjust_int,
+    (int *, value, CMETA_PARAM_INOUT, &cmeta_type_int_ptr));
+
+FunctionDecl(value, int, tinymock_fixture_unknown_ptr,
+    (int *, value, CMETA_PARAM_UNKNOWN, &cmeta_type_int_ptr));
+
+FunctionDecl(value, int, tinymock_fixture_nullable_out,
+    (size_t *, written, CMETA_PARAM_OUT | CMETA_PARAM_NULLABLE,
+     &cmeta_type_size_ptr));
+
 #endif /* TINYMOCK_FUNCTION_FIXTURE_H */
