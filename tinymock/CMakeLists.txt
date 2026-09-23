@@ -38,6 +38,11 @@ install(
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/SaltsTinyMock.cmake)
 
+configure_file(
+  cmake/SaltsTinyMock.cmake
+  ${CMAKE_BINARY_DIR}/SaltsTinyMock.cmake
+  COPYONLY)
+
 install(
   FILES cmake/SaltsTinyMock.cmake
   DESTINATION lib/cmake/Salts
