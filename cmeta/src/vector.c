@@ -13,7 +13,7 @@ static const cmeta_type_traits cmeta_vector_storage_traits = {
         .name = display_name, \
         .size = sizeof(cmeta_v128_storage), \
         .align = _Alignof(cmeta_v128_storage), \
-        .kind = (mask_value) ? CMETA_T_MASK : CMETA_T_VECTOR, \
+        .kind = CMETA_T_OBJECT, \
         .pointee = NULL, \
         .traits = &cmeta_vector_storage_traits, \
         .identity = &cmeta_id_##symbol \
@@ -59,11 +59,11 @@ bool cmeta_vector_desc_valid(const cmeta_vector_desc *desc) {
     if (desc->lane_bits == 0u || desc->lane_count == 0u ||
         (size_t)desc->lane_bits * (size_t)desc->lane_count != 128u)
         return false;
+    if (desc->type->kind != CMETA_T_OBJECT)
+        return false;
     if (desc->is_mask)
-        return desc->type->kind == CMETA_T_MASK &&
-               desc->lane_kind == CMETA_VECTOR_BOOL;
-    return desc->type->kind == CMETA_T_VECTOR &&
-           desc->lane_kind != CMETA_VECTOR_BOOL;
+        return desc->lane_kind == CMETA_VECTOR_BOOL;
+    return desc->lane_kind != CMETA_VECTOR_BOOL;
 }
 
 const cmeta_vector_desc *cmeta_vector_desc_for_type(const cmeta_type_desc *type) {
