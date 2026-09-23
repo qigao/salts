@@ -20,4 +20,5 @@ salts_tinymock_override_functions(
   HEADERS api.h
   FUNCTIONS
     tinymock_installed_add
-    tinymock_installed_shutdown)
+    tinymock_installed_shutdown
+    tinymock_installed_box_copy)
