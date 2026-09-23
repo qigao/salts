@@ -339,3 +339,38 @@ tinymock_value_t tinymock_mock_dispatch(tinymock_mock_t *mock, size_t argc,
 
   return tinymock_mock_invoke(mock, argc, actual_args);
 }
+
+size_t tinymock_mock_call_count(const tinymock_mock_t *mock) {
+  return mock ? mock->call_count : 0u;
+}
+
+const tinymock_recorded_call_t *tinymock_mock_call_at(
+    const tinymock_mock_t *mock, size_t index) {
+  if (!mock || index >= mock->call_count) return NULL;
+  return &mock->calls[index];
+}
+
+void tinymock_mock_verify_times(tinymock_mock_t *mock, size_t expected) {
+  tinymock_require__(mock, mock && mock->call_count == expected,
+                     "tinymock %s: expected exactly %zu calls, got %zu",
+                     mock && mock->name ? mock->name : "(unnamed)",
+                     expected, mock ? mock->call_count : 0u);
+}
+
+void tinymock_mock_verify_never(tinymock_mock_t *mock) {
+  tinymock_mock_verify_times(mock, 0u);
+}
+
+void tinymock_mock_verify_at_least(tinymock_mock_t *mock, size_t minimum) {
+  tinymock_require__(mock, mock && mock->call_count >= minimum,
+                     "tinymock %s: expected at least %zu calls, got %zu",
+                     mock && mock->name ? mock->name : "(unnamed)",
+                     minimum, mock ? mock->call_count : 0u);
+}
+
+void tinymock_mock_verify_at_most(tinymock_mock_t *mock, size_t maximum) {
+  tinymock_require__(mock, mock && mock->call_count <= maximum,
+                     "tinymock %s: expected at most %zu calls, got %zu",
+                     mock && mock->name ? mock->name : "(unnamed)",
+                     maximum, mock ? mock->call_count : 0u);
+}
