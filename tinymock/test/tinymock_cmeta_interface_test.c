@@ -47,6 +47,7 @@ suite("TinyMock CMeta interface bridge") {
     tinymock_mock_verify_times(TINYMOCk_INTERFACE_METHOD(&mock, value), 1);
     tinymock_mock_verify_never(TINYMOCk_INTERFACE_METHOD(&mock, add));
     tinymock_mock_verify_never(TINYMOCk_INTERFACE_METHOD(&mock, reset_to));
+    tinymock_tinymock_cmeta_counter_destroy(&mock);
   }
 
   it("stubs returns and records typed method arguments") {
@@ -81,5 +82,6 @@ suite("TinyMock CMeta interface bridge") {
     check_not_null(call);
     check_equal(call->argc, (size_t)1);
     check_equal(TINYMOCk_VALUE_AS(int, call->args[0]), 9);
+    tinymock_tinymock_cmeta_counter_destroy(&mock);
   }
 }
