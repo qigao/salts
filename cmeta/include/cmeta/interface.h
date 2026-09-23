@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include <cmeta/pp.h>
+#include <cmeta/function.h>
 
 /*
  * CMeta Interface/Object Protocol
@@ -37,17 +38,84 @@
  *   interface(sample_waitable, WAITABLE_METHODS);
  */
 
+typedef uint32_t cmeta_interface_method_flags;
+
+enum {
+    CMETA_INTERFACE_METHOD_NONE = 0u,
+    /* Dispatch invalidates the owning interface handle after the call. */
+    CMETA_INTERFACE_METHOD_OWNS_SELF = 1u << 0,
+    CMETA_INTERFACE_METHOD_FLAG_MASK = CMETA_INTERFACE_METHOD_OWNS_SELF
+};
+
 typedef struct cmeta_interface_method_desc {
+    size_t size;
     const char *name;
-    const char *return_type;
-    unsigned arity;
+    /* Exact dispatch shape retained even for legacy ABI-only rows. */
+    unsigned dispatch_arity;
+    cmeta_interface_method_flags flags;
+    /* Canonical CMeta function semantics; NULL for legacy ABI-only rows. */
+    const cmeta_function_desc *function;
+    const cmeta_function_abi_desc *abi;
 } cmeta_interface_method_desc;
 
 typedef struct cmeta_interface_desc {
+    size_t size;
     const char *name;
     const cmeta_interface_method_desc *methods;
     size_t method_count;
 } cmeta_interface_desc;
+
+CMETA_INLINE const cmeta_function_desc *
+cmeta_interface_method_function(const cmeta_interface_method_desc *method) {
+    return method != NULL ? method->function : NULL;
+}
+
+CMETA_INLINE const cmeta_function_abi_desc *
+cmeta_interface_method_abi(const cmeta_interface_method_desc *method) {
+    return method != NULL ? method->abi : NULL;
+}
+
+CMETA_INLINE size_t
+cmeta_interface_method_arity(const cmeta_interface_method_desc *method) {
+    if (method == NULL) return 0u;
+    return method->function != NULL ? method->function->param_count
+                                    : (size_t)method->dispatch_arity;
+}
+
+CMETA_INLINE bool
+cmeta_interface_method_reflection_valid(const cmeta_interface_method_desc *method) {
+    return method != NULL && method->size >= sizeof(*method) &&
+           method->name != NULL && method->name[0] != '\0' &&
+           method->function != NULL && method->abi != NULL &&
+           cmeta_function_desc_valid(method->function) &&
+           cmeta_function_abi_desc_valid(method->abi) &&
+           method->abi->function == method->function &&
+           method->function->param_count == (size_t)method->dispatch_arity &&
+           (method->flags & ~CMETA_INTERFACE_METHOD_FLAG_MASK) == 0u;
+}
+
+CMETA_INLINE bool
+cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
+    size_t i;
+    if (desc == NULL || desc->size < sizeof(*desc) ||
+        desc->name == NULL || desc->name[0] == '\0' ||
+        (desc->method_count != 0u && desc->methods == NULL))
+        return false;
+    for (i = 0u; i < desc->method_count; ++i) {
+        const cmeta_interface_method_desc *method = &desc->methods[i];
+        if (method->size < sizeof(*method) ||
+            method->name == NULL || method->name[0] == '\0' ||
+            method->dispatch_arity > 4u ||
+            (method->flags & ~CMETA_INTERFACE_METHOD_FLAG_MASK) != 0u)
+            return false;
+        if ((method->function == NULL) != (method->abi == NULL))
+            return false;
+        if (method->function != NULL &&
+            !cmeta_interface_method_reflection_valid(method))
+            return false;
+    }
+    return true;
+}
 
 #define CMETA_IFACE_ARITY_R0 0u
 #define CMETA_IFACE_ARITY_R1 1u
