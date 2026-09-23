@@ -60,6 +60,15 @@
 
 typedef uint32_t cmeta_interface_method_flags;
 
+#ifdef __cplusplus
+#define CMETA_IFACE_SIZE_CAST(value) static_cast<size_t>(value)
+#define CMETA_IFACE_PARAM_FLAGS_CAST(value) \
+    static_cast<cmeta_param_flags>(value)
+#else
+#define CMETA_IFACE_SIZE_CAST(value) ((size_t)(value))
+#define CMETA_IFACE_PARAM_FLAGS_CAST(value) ((cmeta_param_flags)(value))
+#endif
+
 enum {
     CMETA_INTERFACE_METHOD_NONE = 0u,
     /* Dispatch invalidates the owning interface handle after the call. */
@@ -99,7 +108,7 @@ CMETA_INLINE size_t
 cmeta_interface_method_arity(const cmeta_interface_method_desc *method) {
     if (method == NULL) return 0u;
     return method->function != NULL ? method->function->param_count
-                                    : (size_t)method->dispatch_arity;
+                                    : CMETA_IFACE_SIZE_CAST(method->dispatch_arity);
 }
 
 CMETA_INLINE bool
@@ -110,7 +119,7 @@ cmeta_interface_method_reflection_valid(const cmeta_interface_method_desc *metho
            cmeta_function_desc_valid(method->function) &&
            cmeta_function_abi_desc_valid(method->abi) &&
            method->abi->function == method->function &&
-           method->function->param_count == (size_t)method->dispatch_arity &&
+           method->function->param_count == CMETA_IFACE_SIZE_CAST(method->dispatch_arity) &&
            (method->flags & ~CMETA_INTERFACE_METHOD_FLAG_MASK) == 0u;
 }
 
@@ -168,7 +177,8 @@ cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
 #define CMETA_IFACE_PARAM_NAME_I(type, name, flags, descriptor, abi_carrier) name
 #define CMETA_IFACE_PARAM_NAME(row) CMETA_IFACE_PARAM_NAME_I row
 #define CMETA_IFACE_PARAM_META_I(type, name, flags, descriptor, abi_carrier) \
-    { sizeof(cmeta_param_desc), #name, (descriptor), (cmeta_param_flags)(flags) }
+    { sizeof(cmeta_param_desc), #name, (descriptor), \
+      CMETA_IFACE_PARAM_FLAGS_CAST(flags) }
 #define CMETA_IFACE_PARAM_META(row) CMETA_IFACE_PARAM_META_I row
 #define CMETA_IFACE_PARAM_ABI_I(type, name, flags, descriptor, abi_carrier) \
     (abi_carrier)
