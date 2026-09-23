@@ -90,6 +90,18 @@
 #define TINYMOCk_RETURN_SELECT_(prefix, type) \
   TINYMOCk_CAT(prefix, TINYMOCk_RETURN_IS_VOID_(type))
 
+#define TINYMOCk_FUNCTION_SELECTED_MARK_(name) \
+  TINYMOCk_CAT(TINYMOCK_SELECTED_FUNCTION_, name)
+#define TINYMOCk_FUNCTION_IS_SELECTED_(name) \
+  TINYMOCk_PP_IS_PROBE_(TINYMOCk_FUNCTION_SELECTED_MARK_(name))
+
+#if defined(TINYMOCK_SELECTIVE_FUNCTION_OVERRIDES)
+#define TINYMOCk_FUNCTION_SHOULD_GENERATE_(name) \
+  TINYMOCk_FUNCTION_IS_SELECTED_(name)
+#else
+#define TINYMOCk_FUNCTION_SHOULD_GENERATE_(name) 1
+#endif
+
 #ifdef CMETA_FUNCTION_DECL_EXTENSION
 #undef CMETA_FUNCTION_DECL_EXTENSION
 #endif
@@ -184,8 +196,14 @@
     return; \
   }
 
-#define TINYMOCk_FUNCTION_DECL_EXTENSION(contract, return_type, return_desc, name, ...) \
+#define TINYMOCk_FUNCTION_DECL_SELECTED_0(contract, return_type, return_desc, name, ...)
+#define TINYMOCk_FUNCTION_DECL_SELECTED_1(contract, return_type, return_desc, name, ...) \
   TINYMOCk_RETURN_SELECT_(TINYMOCk_FUNCTION_DECL_EXTENSION_, return_type)( \
+      contract, return_type, return_desc, name, __VA_ARGS__)
+
+#define TINYMOCk_FUNCTION_DECL_EXTENSION(contract, return_type, return_desc, name, ...) \
+  TINYMOCk_CAT(TINYMOCk_FUNCTION_DECL_SELECTED_, \
+               TINYMOCk_FUNCTION_SHOULD_GENERATE_(name))( \
       contract, return_type, return_desc, name, __VA_ARGS__)
 
 #define TINYMOCk_FUNCTION0_DECL_EXTENSION_0(contract, return_type, return_desc, name) \
@@ -224,8 +242,14 @@
     return; \
   }
 
-#define TINYMOCk_FUNCTION0_DECL_EXTENSION(contract, return_type, return_desc, name) \
+#define TINYMOCk_FUNCTION0_DECL_SELECTED_0(contract, return_type, return_desc, name)
+#define TINYMOCk_FUNCTION0_DECL_SELECTED_1(contract, return_type, return_desc, name) \
   TINYMOCk_RETURN_SELECT_(TINYMOCk_FUNCTION0_DECL_EXTENSION_, return_type)( \
+      contract, return_type, return_desc, name)
+
+#define TINYMOCk_FUNCTION0_DECL_EXTENSION(contract, return_type, return_desc, name) \
+  TINYMOCk_CAT(TINYMOCk_FUNCTION0_DECL_SELECTED_, \
+               TINYMOCk_FUNCTION_SHOULD_GENERATE_(name))( \
       contract, return_type, return_desc, name)
 
 #define CMETA_FUNCTION_DECL_EXTENSION(contract, return_type, return_desc, name, ...) \
