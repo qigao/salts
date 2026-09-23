@@ -100,6 +100,9 @@ Function0Decl(value, void, tinymock_installed_shutdown);
 FunctionDecl(value, int, tinymock_installed_real,
     (int, value, CMETA_PARAM_IN));
 
+FunctionDecl(value, int, tinymock_installed_projected,
+    (int, request, CMETA_PARAM_IN));
+
 FunctionDeclAsAbi(value, tinymock_installed_box,
                   &tinymock_installed_box_type, CMETA_ABI_AGGREGATE,
                   tinymock_installed_box_copy,

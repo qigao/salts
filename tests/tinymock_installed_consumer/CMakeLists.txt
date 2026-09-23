@@ -10,6 +10,8 @@ add_executable(tinymock_installed_consumer
 target_include_directories(tinymock_installed_consumer PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}")
 
+target_link_libraries(tinymock_installed_consumer PRIVATE Salts::CFlow)
+
 set_target_properties(tinymock_installed_consumer PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON

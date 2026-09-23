@@ -84,6 +84,11 @@ cmake_add_test(cflow_interface_reflection_test
   LIBS Salts::CFlow Salts::TinyTest
   FOLDER "cflow/tests")
 
+cmake_add_test(cflow_function_projection_test
+  SOURCES cflow_function_projection_test.c
+  LIBS Salts::CFlow Salts::TinyTest
+  FOLDER "cflow/tests")
+
 cmake_add_test(cflow_tinymock_interface_test
   SOURCES cflow_tinymock_interface_test.c
   LIBS Salts::CFlow Salts::TinyMock
@@ -260,6 +265,7 @@ set_target_properties(
   cflow_backend_test
   cflow_reactive_test
   cflow_interface_reflection_test
+  cflow_function_projection_test
   cflow_tinymock_interface_test
   cflow_readiness_test
   cflow_event_mailbox_test

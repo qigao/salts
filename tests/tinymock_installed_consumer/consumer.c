@@ -16,6 +16,10 @@ int tinymock_installed_consumer_real(int value) {
   return tinymock_installed_real(value);
 }
 
+int tinymock_installed_projected(int request) {
+  return request + 30;
+}
+
 tinymock_installed_box
 tinymock_installed_consumer_box(tinymock_installed_box input) {
   return tinymock_installed_box_copy(input);
