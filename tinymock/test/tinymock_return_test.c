@@ -48,7 +48,7 @@ static const cmeta_function_desc return_managed_function = {
   &return_managed_type,
   NULL,
   0u,
-  CMETA_EFFECT_NONE,
+  CMETA_EFFECT_PURE,
   CMETA_PROP_NONE
 };
 
