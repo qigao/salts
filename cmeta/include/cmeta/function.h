@@ -73,7 +73,10 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
  * supplied by another provider.
  */
 
-#define CMETA_FUNCTION_RETURN_TYPEOF(type)     _Generic((type *)0,         void *: &cmeta_type_void,         default: CMETA_TYPEOF(type))
+#define CMETA_FUNCTION_RETURN_TYPEOF(type) \
+    _Generic((type *)0, \
+        void *: &cmeta_type_void, \
+        default: CMETA_TYPEOF(type))
 
 #define CMETA_FUNCTION_COMMA_0
 #define CMETA_FUNCTION_COMMA_1 ,
@@ -94,23 +97,64 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
 
 #define CMETA_FUNCTION_PARAM_DECL_3(type, name, flags) type name
 #define CMETA_FUNCTION_PARAM_DECL_4(type, name, flags, descriptor) type name
-#define CMETA_FUNCTION_PARAM_DECL_APPLY_I(...)     CMETA_PP_CAT(CMETA_FUNCTION_PARAM_DECL_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
-#define CMETA_FUNCTION_PARAM_DECL_APPLY(row)     CMETA_FUNCTION_PARAM_DECL_APPLY_I row
-#define CMETA_FUNCTION_PARAM_DECL(index, row, ignored)     CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index)     CMETA_FUNCTION_PARAM_DECL_APPLY(row)
+#define CMETA_FUNCTION_PARAM_DECL_APPLY_I(...) \
+    CMETA_PP_CAT(CMETA_FUNCTION_PARAM_DECL_, \
+                 CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define CMETA_FUNCTION_PARAM_DECL_APPLY(row) \
+    CMETA_FUNCTION_PARAM_DECL_APPLY_I row
+#define CMETA_FUNCTION_PARAM_DECL(index, row, ignored) \
+    CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index) \
+    CMETA_FUNCTION_PARAM_DECL_APPLY(row)
 
-#define CMETA_FUNCTION_PARAM_META_3(type, name, flags)     { sizeof(cmeta_param_desc), #name, CMETA_TYPEOF(type),       (cmeta_param_flags)(flags) },
-#define CMETA_FUNCTION_PARAM_META_4(type, name, flags, descriptor)     { sizeof(cmeta_param_desc), #name, (descriptor),       (cmeta_param_flags)(flags) },
-#define CMETA_FUNCTION_PARAM_META_APPLY_I(...)     CMETA_PP_CAT(CMETA_FUNCTION_PARAM_META_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
-#define CMETA_FUNCTION_PARAM_META_APPLY(row)     CMETA_FUNCTION_PARAM_META_APPLY_I row
-#define CMETA_FUNCTION_PARAM_META(row, ignored)     CMETA_FUNCTION_PARAM_META_APPLY(row)
+#define CMETA_FUNCTION_PARAM_META_3(type, name, flags) \
+    { sizeof(cmeta_param_desc), #name, CMETA_TYPEOF(type), \
+      (cmeta_param_flags)(flags) },
+#define CMETA_FUNCTION_PARAM_META_4(type, name, flags, descriptor) \
+    { sizeof(cmeta_param_desc), #name, (descriptor), \
+      (cmeta_param_flags)(flags) },
+#define CMETA_FUNCTION_PARAM_META_APPLY_I(...) \
+    CMETA_PP_CAT(CMETA_FUNCTION_PARAM_META_, \
+                 CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define CMETA_FUNCTION_PARAM_META_APPLY(row) \
+    CMETA_FUNCTION_PARAM_META_APPLY_I row
+#define CMETA_FUNCTION_PARAM_META(row, ignored) \
+    CMETA_FUNCTION_PARAM_META_APPLY(row)
 
-#define CMETA_FUNCTION_DECL_AS(contract, return_type, return_desc, name, ...)     return_type name(         CMETA_PP_FOR_EACH_I(CMETA_FUNCTION_PARAM_DECL, ~, __VA_ARGS__));     CMETA_LOCAL const cmeta_param_desc name##__function_params[] = {         CMETA_PP_FOR_EACH_A(CMETA_FUNCTION_PARAM_META, ~, __VA_ARGS__)     };     CMETA_LOCAL const cmeta_function_desc name##__function_meta = {         sizeof(cmeta_function_desc), #name, (return_desc),         name##__function_params, CMETA_PP_NARG(__VA_ARGS__),         CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract)     };     CMETA_INLINE const cmeta_function_desc *name##_function(void) {         return &name##__function_meta;     }     typedef char name##__function_declaration_complete[1]
+#define CMETA_FUNCTION_DECL_AS(contract, return_type, return_desc, name, ...) \
+    return_type name( \
+        CMETA_PP_FOR_EACH_I(CMETA_FUNCTION_PARAM_DECL, ~, __VA_ARGS__)); \
+    CMETA_LOCAL const cmeta_param_desc name##__function_params[] = { \
+        CMETA_PP_FOR_EACH_A(CMETA_FUNCTION_PARAM_META, ~, __VA_ARGS__) \
+    }; \
+    CMETA_LOCAL const cmeta_function_desc name##__function_meta = { \
+        sizeof(cmeta_function_desc), #name, (return_desc), \
+        name##__function_params, CMETA_PP_NARG(__VA_ARGS__), \
+        CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract) \
+    }; \
+    CMETA_INLINE const cmeta_function_desc *name##_function(void) { \
+        return &name##__function_meta; \
+    } \
+    typedef char name##__function_declaration_complete[1]
 
-#define CMETA_FUNCTION_DECL(contract, return_type, name, ...)     CMETA_FUNCTION_DECL_AS(contract, return_type,                            CMETA_FUNCTION_RETURN_TYPEOF(return_type),                            name, __VA_ARGS__)
+#define CMETA_FUNCTION_DECL(contract, return_type, name, ...) \
+    CMETA_FUNCTION_DECL_AS(contract, return_type, \
+                           CMETA_FUNCTION_RETURN_TYPEOF(return_type), \
+                           name, __VA_ARGS__)
 
-#define CMETA_FUNCTION0_DECL_AS(contract, return_type, return_desc, name)     return_type name(void);     CMETA_LOCAL const cmeta_function_desc name##__function_meta = {         sizeof(cmeta_function_desc), #name, (return_desc), NULL, 0u,         CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract)     };     CMETA_INLINE const cmeta_function_desc *name##_function(void) {         return &name##__function_meta;     }     typedef char name##__function_declaration_complete[1]
+#define CMETA_FUNCTION0_DECL_AS(contract, return_type, return_desc, name) \
+    return_type name(void); \
+    CMETA_LOCAL const cmeta_function_desc name##__function_meta = { \
+        sizeof(cmeta_function_desc), #name, (return_desc), NULL, 0u, \
+        CMETA_CONTRACT_EFFECTS(contract), CMETA_CONTRACT_PROPERTIES(contract) \
+    }; \
+    CMETA_INLINE const cmeta_function_desc *name##_function(void) { \
+        return &name##__function_meta; \
+    } \
+    typedef char name##__function_declaration_complete[1]
 
-#define CMETA_FUNCTION0_DECL(contract, return_type, name)     CMETA_FUNCTION0_DECL_AS(contract, return_type,                             CMETA_FUNCTION_RETURN_TYPEOF(return_type), name)
+#define CMETA_FUNCTION0_DECL(contract, return_type, name) \
+    CMETA_FUNCTION0_DECL_AS(contract, return_type, \
+                            CMETA_FUNCTION_RETURN_TYPEOF(return_type), name)
 
 #define CMETA_FUNCTION_META(name) (name##_function())
 
