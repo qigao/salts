@@ -621,7 +621,7 @@ int main(int argc, char **argv) {
 
 #if defined(TTEST_HAS_C11_GENERIC__)
   #include "tinymeta/traits.h"
-  #include "tinymeta/cmeta.h"
+  #include "tinymeta/equality.h"
 #endif
 
 /* Use before_all()/after_all() as the cross-language names for one-time setup/teardown hooks. */
