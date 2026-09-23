@@ -218,6 +218,55 @@ Contracts map to the existing CMeta effect/property bitsets. They express
 programmer intent and optimization/runtime constraints; they do not introduce a
 new execution model.
 
+### `FunctionDecl(...)`
+
+Declares an ordinary C function prototype together with immutable descriptive
+metadata. It does not replace `typed_any(...)` and does not create an erased
+runtime invocation mechanism.
+
+```c
+FunctionDecl(io, int, send_packet,
+    (int, fd, CMETA_PARAM_IN),
+    (size_t *, written, CMETA_PARAM_OUT, &cmeta_type_size_ptr));
+```
+
+General parameter rows are:
+
+```text
+(type, name, flags)
+(type, name, flags, explicit_descriptor)
+```
+
+The three-field form resolves `type` with `CMETA_TYPEOF(type)`. Use the
+four-field form when a provider owns the semantic descriptor, such as a
+reflected pointer or application-defined value. For an application-defined
+return type, use `FunctionDeclAs(...)` with its explicit return descriptor.
+`Function0Decl(...)` and `Function0DeclAs(...)` are the zero-parameter
+forms.
+
+Direction flags are:
+
+```text
+CMETA_PARAM_IN
+CMETA_PARAM_OUT
+CMETA_PARAM_INOUT
+```
+
+Pointer parameters may additionally declare `CMETA_PARAM_NULLABLE`,
+`CMETA_PARAM_BORROWED`, or `CMETA_PARAM_OWNED`. Borrowed and owned are
+mutually exclusive. OUT/nullable/ownership metadata requires a pointer
+descriptor.
+
+The generated `FunctionMeta(name)` view is TU-local immutable metadata.
+Consumers compare the referenced CMeta types semantically rather than relying
+on descriptor address identity across translation units.
+
+Function reflection answers "what is this C function?". Execution remains a
+separate concern: an exact-ABI generated adapter, `cmeta_callable`, CFlow, or
+another consumer-specific mechanism must perform the actual call. CMeta does not
+parse arbitrary C prototypes at runtime and does not provide libffi-style
+universal invocation.
+
 ### `interface(...)`
 
 Declares a small protocol/vtable interface.
