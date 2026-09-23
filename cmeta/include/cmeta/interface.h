@@ -124,6 +124,15 @@ cmeta_interface_method_reflection_valid(const cmeta_interface_method_desc *metho
            (method->flags & ~CMETA_IFACE_METHOD_FLAGS_CAST(CMETA_INTERFACE_METHOD_FLAG_MASK)) == 0u;
 }
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+bool cmeta_interface_desc_equal(const cmeta_interface_desc *left,
+                                const cmeta_interface_desc *right);
+#ifdef __cplusplus
+}
+#endif
+
 CMETA_INLINE bool
 cmeta_interface_desc_valid(const cmeta_interface_desc *desc) {
     size_t i;

@@ -8,6 +8,7 @@ add_library(${TARGET_NAME}
   src/declared_type.c
   src/entry.c
   src/function.c
+  src/interface.c
   src/infer.c
   src/type_identity.c
   src/vector.c)

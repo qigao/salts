@@ -198,6 +198,7 @@ spec("CMeta C++ public headers") {
     const cmeta_interface_desc *meta = cmeta_cpp_reflected_interface_interface();
 
     check_true(cmeta_interface_desc_valid(meta));
+    check_true(cmeta_interface_desc_equal(meta, meta));
     check_equal(meta->method_count, static_cast<size_t>(2));
     check_true(cmeta_interface_method_reflection_valid(&meta->methods[0]));
     check_equal(meta->methods[0].function->name,
