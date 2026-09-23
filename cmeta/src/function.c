@@ -3,12 +3,9 @@
 #include <string.h>
 
 static bool cmeta_param_flags_valid(cmeta_param_flags flags) {
-    const cmeta_param_flags direction = flags & CMETA_PARAM_DIRECTION_MASK;
     const cmeta_param_flags ownership = flags & CMETA_PARAM_OWNERSHIP_MASK;
 
     if ((flags & CMETA_PARAM_FLAG_MASK) != flags)
-        return false;
-    if (direction == 0u)
         return false;
     if (ownership == CMETA_PARAM_OWNERSHIP_MASK)
         return false;
