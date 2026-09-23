@@ -9,4 +9,7 @@ FunctionDecl(value, int, tinymock_fixture_add,
 
 Function0Decl(value, int, tinymock_fixture_answer);
 
+FunctionDecl(value, int, tinymock_fixture_pointer,
+    (int *, value, CMETA_PARAM_IN, &cmeta_type_int_ptr));
+
 #endif /* TINYMOCK_FUNCTION_FIXTURE_H */
