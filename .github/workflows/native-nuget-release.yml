@@ -406,6 +406,21 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
+      - name: Enforce immutable package version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if existing="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish 2>/dev/null)"; then
+            if [[ "$existing" != "$GITHUB_SHA" ]]; then
+              echo "release $TAG already points to $existing, not $GITHUB_SHA" >&2
+              echo "bump the Salts project/package version before publishing a changed SDK" >&2
+              exit 1
+            fi
+            echo "release $TAG already belongs to this commit; publish retry is idempotent"
+          fi
       - name: Publish to GitHub Packages
         shell: bash
         env:
