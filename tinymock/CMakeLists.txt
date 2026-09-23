@@ -10,7 +10,8 @@
 
 add_library(tinymock STATIC
   src/tinymock_history.c
-  src/tinymock_actions.c)
+  src/tinymock_actions.c
+  src/tinymock_admission.c)
 
 cmake_config_target(tinymock
   ALIAS Salts::TinyMock
@@ -43,6 +44,7 @@ install(
     include/tinymock_function.h
     include/tinymock_history.h
     include/tinymock_actions.h
+    include/tinymock_admission.h
   DESTINATION include
   COMPONENT TinyMock)
 
