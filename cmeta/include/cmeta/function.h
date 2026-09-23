@@ -331,4 +331,13 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
 
 #endif /* !__cplusplus */
 
+/*
+ * Preserve the historical transitive interface surface only after the complete
+ * function reflection types/macros above are visible. This order keeps direct
+ * <cmeta/function.h> and direct <cmeta/interface.h> inclusion acyclic.
+ */
+#if !defined(CMETA_META_INTERFACE_H)
+#include <cmeta/interface.h>
+#endif
+
 #endif /* CMETA_FUNCTION_H */
