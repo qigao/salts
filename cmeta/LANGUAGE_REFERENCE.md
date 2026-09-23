@@ -247,15 +247,23 @@ forms.
 Direction flags are:
 
 ```text
+CMETA_PARAM_UNKNOWN
 CMETA_PARAM_IN
 CMETA_PARAM_OUT
 CMETA_PARAM_INOUT
 ```
 
+`CMETA_PARAM_UNKNOWN` is the zero value and is a valid explicit statement
+that direction is not authoritative. Consumers may use
+`cmeta_param_direction_known()` before applying IN/OUT-specific behavior and
+must not infer direction from pointer spelling or parameter names.
+
 Pointer parameters may additionally declare `CMETA_PARAM_NULLABLE`,
 `CMETA_PARAM_BORROWED`, or `CMETA_PARAM_OWNED`. Borrowed and owned are
-mutually exclusive. OUT/nullable/ownership metadata requires a pointer
-descriptor.
+mutually exclusive. These pointer semantics are independent of direction:
+nullable/borrowed/owned may be known while direction remains UNKNOWN.
+OUT/nullability/ownership metadata still requires a pointer descriptor where
+the respective semantic demands it.
 
 The generated `FunctionMeta(name)` view is TU-local immutable metadata.
 Consumers compare the referenced CMeta types semantically rather than relying
