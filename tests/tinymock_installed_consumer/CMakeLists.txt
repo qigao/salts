@@ -17,4 +17,7 @@ set_target_properties(tinymock_installed_consumer PROPERTIES
 
 salts_tinymock_override_functions(
   tinymock_installed_consumer
-  HEADERS api.h)
+  HEADERS api.h
+  FUNCTIONS
+    tinymock_installed_add
+    tinymock_installed_shutdown)
