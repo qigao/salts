@@ -32,7 +32,8 @@ function(salts_tinymock_override_functions target)
     file(GENERATE
       OUTPUT "${output}"
       CONTENT
-"#define TINYMOCK_GENERATE_FUNCTION_OVERRIDES 1
+"#define TINYTEST_NO_MAIN 1
+#define TINYMOCK_GENERATE_FUNCTION_OVERRIDES 1
 #include <tinymock_function.h>
 #include <${header}>
 ")
