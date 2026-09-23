@@ -13,6 +13,12 @@
  * into exact-ABI mock definitions without parsing arbitrary C prototypes.
  */
 
+#ifdef TINYMOCk_FUNCTION_DEFINITIONS
+#ifndef TINYTEST_NO_MAIN
+#define TINYTEST_NO_MAIN
+#endif
+#endif
+
 #include "tinymock.h"
 #include <cmeta/function.h>
 
