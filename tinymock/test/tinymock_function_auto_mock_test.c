@@ -327,7 +327,7 @@ suite("TinyMock reflected free functions") {
     check_true(TINYMOCk_FUNCTION_SET_RETURN(
         tinymock_fixture_tinymock_test_callback_answer, scripted_callback));
 
-    returned_callback = tinymock_function_consumer_tinymock_test_callback_answer();
+    returned_callback = tinymock_function_consumer_callback_answer();
     check_true(returned_callback == tinymock_test_callback_b);
     check_equal(returned_callback(5), 14);
 
