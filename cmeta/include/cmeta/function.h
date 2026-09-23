@@ -151,6 +151,16 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
     CMETA_PP_CAT(CMETA_FUNCTION_COMMA_, index) \
     CMETA_FUNCTION_PARAM_DECL_APPLY(row)
 
+#define CMETA_FUNCTION_PARAM_NAME_3(type, name, flags) name
+#define CMETA_FUNCTION_PARAM_NAME_4(type, name, flags, descriptor) name
+#define CMETA_FUNCTION_PARAM_NAME_5(type, name, flags, descriptor, abi_carrier) \
+    name
+#define CMETA_FUNCTION_PARAM_NAME_APPLY_I(...) \
+    CMETA_PP_CAT(CMETA_FUNCTION_PARAM_NAME_, \
+                 CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define CMETA_FUNCTION_PARAM_NAME_APPLY(row) \
+    CMETA_FUNCTION_PARAM_NAME_APPLY_I row
+
 #define CMETA_FUNCTION_PARAM_META_3(type, name, flags) \
     { sizeof(cmeta_param_desc), #name, CMETA_TYPEOF(type), \
       (cmeta_param_flags)(flags) },
