@@ -5,6 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef union tinymock_cmeta_max_align {
+  long double as_long_double;
+  long long as_long_long;
+  void *as_pointer;
+} tinymock_cmeta_max_align;
+
 static size_t tinymock_cmeta_recorded_limit(size_t count) {
   return count < TINYMOCk_MAX_CALLS ? count : TINYMOCk_MAX_CALLS;
 }
@@ -60,7 +66,8 @@ static bool tinymock_cmeta_snapshot_allocate(
     const cmeta_type_desc *type) {
   if (!snapshot || !cmeta_type_desc_valid(type) || type->size == 0u)
     return false;
-  if (type->align == 0u || type->align > _Alignof(max_align_t))
+  if (type->align == 0u ||
+      type->align > _Alignof(tinymock_cmeta_max_align))
     return false;
 
   snapshot->allocation = malloc(type->size);
