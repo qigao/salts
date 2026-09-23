@@ -23,31 +23,7 @@ void tinymock_cmeta_snapshot_init(tinymock_cmeta_snapshot *snapshot) {
 bool tinymock_cmeta_function_equal(
     const cmeta_function_desc *left,
     const cmeta_function_desc *right) {
-  size_t index;
-
-  if (left == right)
-    return left != NULL && cmeta_function_desc_valid(left);
-  if (!left || !right ||
-      !cmeta_function_desc_valid(left) ||
-      !cmeta_function_desc_valid(right))
-    return false;
-
-  if (strcmp(left->name, right->name) != 0 ||
-      left->param_count != right->param_count ||
-      left->effects != right->effects ||
-      left->properties != right->properties ||
-      !cmeta_type_equal(left->return_type, right->return_type))
-    return false;
-
-  for (index = 0; index < left->param_count; ++index) {
-    const cmeta_param_desc *a = &left->params[index];
-    const cmeta_param_desc *b = &right->params[index];
-    if (strcmp(a->name, b->name) != 0 ||
-        a->flags != b->flags ||
-        !cmeta_type_equal(a->type, b->type))
-      return false;
-  }
-  return true;
+  return cmeta_function_desc_equal(left, right);
 }
 
 void tinymock_cmeta_snapshot_reset(tinymock_cmeta_snapshot *snapshot) {
