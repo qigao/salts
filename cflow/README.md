@@ -28,6 +28,7 @@ include/cflow/
 ├── meta.h           CFlow operator-aware CMeta bridge
 ├── operators.h      single-source Operators(...) schema
 ├── graph.h
+├── function_projection.h reflected FunctionDesc -> executable Graph admission
 ├── stream.h
 ├── stream_execution.h asynchronous Stream collection handle
 ├── lower.h
@@ -222,6 +223,70 @@ Initialization publishes an owning handle only on success and destruction
 restores that handle to zero. Read-only snapshots do not advance control state.
 Where a higher layer reports `cflow_status`, the object's domain-specific enum
 and statistics remain the authoritative detailed protocol evidence.
+
+## Reflected function projection
+
+CMeta function reflection is descriptive; it is not an invocation ABI. CFlow
+therefore admits reflected functions only together with a proven exact
+`cmeta_callable` adapter:
+
+```text
+cmeta_function_desc + cmeta_function_abi_desc
+                 |
+                 | control-plane semantic/ABI validation
+                 v
+          exact cmeta_callable
+                 |
+                 v
+      cflow_function_projection
+                 |
+                 v
+        existing Graph / Plan
+```
+
+The first admitted shape is an explicit `CFLOW_OP_MAP` projection with one
+`CMETA_PARAM_IN` parameter and one non-void result. Admission requires the
+adapter's VALUE signature, input/output type identity, effects, and properties
+to match the canonical FunctionDesc exactly. Multi-parameter, OUT/INOUT, void,
+generator, and other shapes remain explicit unsupported results rather than
+being dynamically invoked.
+
+Effects are preserved, not normalized away. A reflected stateful or I/O unary
+operation can therefore enter a Graph through a matching adapter, and existing
+CFlow effect analysis keeps it as a conservative optimization barrier.
+
+Strict-C11 code can generate an exact adapter without repeating the function
+signature:
+
+```c
+FunctionDecl(value, int, normalize_request,
+    (int, request, CMETA_PARAM_IN));
+
+CFLOW_REFLECTED_ADAPTER(normalize_request);
+
+cflow_function_projection projection = {0};
+cflow_function_projection_admit(
+    FunctionMeta(normalize_request),
+    FunctionAbi(normalize_request),
+    CFLOW_REFLECTED_CALLABLE(normalize_request),
+    CFLOW_OP_MAP,
+    &projection);
+```
+
+Adapter generation remains finite and compile-time: the function must belong to
+the configured CMeta callable signature universe. CFlow does not use libffi or
+parse C prototypes at runtime.
+
+The reflected descriptors are control-plane truth. Once a projection is added
+to a Graph, Graph/Plan execution owns a copied bound callable plus concrete
+input/output descriptors and performs no reflection lookup per value.
+
+Transport and host context remain outside CFlow. HTTP/RPC routes, DataBind wire
+fields, principals, deadlines, tracing, cancellation policy, and backend
+selection belong to the higher runtime. Such a runtime may bind LOCAL, MOCK,
+PLUGIN, or REMOTE implementations to semantically compatible adapters while
+keeping the same Graph topology. Context that an adapter needs is adapter/host
+state, not an inferred payload field.
 
 ## Meta bridge
 

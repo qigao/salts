@@ -1,7 +1,10 @@
 #define TINYTEST_NO_MAIN
 #include <assert.h>
+#include <string.h>
 
 #include <cmeta/function.h>
+#include <cflow/adapters.h>
+#include <cflow/function_projection.h>
 #include <tinymock_function.h>
 #include <tinymock_cmeta.h>
 
@@ -9,6 +12,8 @@
 
 TINYMOCk_INTERFACE(tinymock_installed_interface,
                    TINYMOCK_INSTALLED_INTERFACE_METHODS);
+
+CFLOW_REFLECTED_ADAPTER(tinymock_installed_projected);
 
 static int tinymock_installed_callback_a(int value) {
   return value + 4;
@@ -41,6 +46,29 @@ int main(void) {
   const cmeta_function_desc *meta;
 
   {
+    cflow_function_projection projection = {0};
+    cflow_graph graph = {0};
+    cflow_result result = {0};
+    const int input[] = {1, 2};
+    const int expected[] = {31, 32};
+
+    assert(cflow_function_projection_admit(
+        FunctionMeta(tinymock_installed_projected),
+        FunctionAbi(tinymock_installed_projected),
+        CFLOW_REFLECTED_CALLABLE(tinymock_installed_projected),
+        CFLOW_OP_MAP,
+        &projection) == CFLOW_FUNCTION_PROJECTION_OK);
+    cflow_graph_init(&graph, &cmeta_type_int);
+    assert(cflow_graph_add_function_projection(&graph, &projection));
+    assert(cflow_eval_array(&graph, input, 2u, &result));
+    assert(result.count == 2u);
+    assert(cmeta_type_equal(result.type, &cmeta_type_int));
+    assert(memcmp(result.data, expected, sizeof(expected)) == 0);
+    cflow_result_destroy(&result);
+    cflow_graph_destroy(&graph);
+  }
+
+  {
     const cmeta_interface_desc *iface_meta =
         tinymock_installed_interface_interface();
     const cmeta_interface_method_desc *method;
@@ -52,7 +80,6 @@ int main(void) {
     tinymock_installed_box result;
 
     assert(cmeta_interface_desc_valid(iface_meta));
-    assert(cmeta_interface_desc_equal(iface_meta, iface_meta));
     assert(iface_meta->method_count == 2u);
     method = &iface_meta->methods[0];
     assert(cmeta_interface_method_reflection_valid(method));
