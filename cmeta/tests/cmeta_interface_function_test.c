@@ -44,9 +44,44 @@ static void check_reflected_counter(const cmeta_interface_desc *meta) {
     check_true(cmeta_interface_method_reflection_valid(&meta->methods[2]));
 }
 
+static void reflected_owner_destroy(void *self) {
+    int *count = (int *)self;
+    if (count != NULL) ++*count;
+}
+
+CMETA_IMPLEMENTS(cmeta_reflected_owner, reflected_owner_impl, 0u,
+    .destroy = reflected_owner_destroy
+);
+
 suite("CMeta interface function reflection") {
     it("publishes canonical FunctionDesc and FunctionAbi from one method schema") {
         check_reflected_counter(cmeta_reflected_counter_interface());
+    }
+
+    it("keeps reflected owning dispatch separate from function semantics") {
+        int destroy_count = 0;
+        cmeta_reflected_owner owner =
+            reflected_owner_impl_as_cmeta_reflected_owner(&destroy_count);
+        const cmeta_interface_desc *meta = cmeta_reflected_owner_interface();
+        const cmeta_interface_method_desc *method = &meta->methods[0];
+
+        check_true(cmeta_interface_desc_valid(meta));
+        check_true(cmeta_interface_method_reflection_valid(method));
+        check_equal(method->flags,
+                    (cmeta_interface_method_flags)CMETA_INTERFACE_METHOD_OWNS_SELF);
+        check_equal(method->function->effects,
+                    (cmeta_effects)CMETA_EFFECT_STATEFUL);
+        check_true(cmeta_type_equal(
+            method->function->return_type, &cmeta_type_void));
+        check_equal(method->abi->return_carrier,
+                    (cmeta_abi_carrier)CMETA_ABI_VOID);
+
+        check_true(cmeta_reflected_owner_valid(&owner));
+        cmeta_reflected_owner_destroy(&owner);
+        check_equal(destroy_count, 1);
+        check_false(cmeta_reflected_owner_valid(&owner));
+        check_null(owner.self);
+        check_null(owner.vtable);
     }
 
     it("compares TU-local interface function semantics by value, not address") {
