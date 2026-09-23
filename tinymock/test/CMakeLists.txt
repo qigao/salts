@@ -89,16 +89,16 @@ tinymock_add_compile_failure_test(
   "TinyMock auto-mock parameter tinymock_bad_unspecified.value has unspecified ABI carrier")
 
 tinymock_add_compile_failure_test(
-  cmeta_tinymock_aggregate_param_compile_fail
-  compile_fail/tinymock_aggregate_param.c
-  "TinyMock auto-mock parameter tinymock_bad_aggregate.input uses an unsupported ABI carrier")
-
-tinymock_add_compile_failure_test(
   cmeta_tinymock_function_pointer_compile_fail
   compile_fail/tinymock_function_pointer_param.c
   "TinyMock auto-mock parameter tinymock_bad_function_pointer.callback uses an unsupported ABI carrier")
 
 tinymock_add_compile_failure_test(
-  cmeta_tinymock_aggregate_return_compile_fail
-  compile_fail/tinymock_aggregate_return.c
-  "TinyMock auto-mock return for tinymock_bad_return uses an unsupported or unspecified ABI carrier")
+  cmeta_tinymock_opaque_param_compile_fail
+  compile_fail/tinymock_opaque_param.c
+  "TinyMock auto-mock parameter tinymock_bad_opaque_param.input uses an unsupported ABI carrier")
+
+tinymock_add_compile_failure_test(
+  cmeta_tinymock_function_pointer_return_compile_fail
+  compile_fail/tinymock_function_pointer_return.c
+  "TinyMock auto-mock return for tinymock_bad_function_pointer_return uses an unsupported or unspecified ABI carrier")
