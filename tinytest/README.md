@@ -313,6 +313,12 @@ second reflection schema. CMeta-aware free-function mocking now uses the same
 type/trait truth through `FunctionDecl(...)`, `FunctionMeta(...)`, and
 `FunctionAbi(...)`.
 
+When an interface uses fully reflected CMeta `F/FV/FD` rows, TinyMock also
+consumes the interface method's canonical `cmeta_function_desc` /
+`cmeta_function_abi_desc`; it does not reconstruct a second method signature
+from the method name or arity. Legacy `R/V/D` rows remain ABI-only and retain
+the compatibility mock path.
+
 ### Reflected free-function auto-mocking
 
 A test target can generate exact-ABI replacement definitions from production
