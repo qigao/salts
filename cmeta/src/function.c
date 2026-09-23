@@ -51,6 +51,52 @@ bool cmeta_function_desc_valid(const cmeta_function_desc *desc) {
     return true;
 }
 
+bool cmeta_function_desc_equal(const cmeta_function_desc *left,
+                               const cmeta_function_desc *right) {
+    size_t i;
+
+    if (left == right)
+        return left != NULL && cmeta_function_desc_valid(left);
+    if (!cmeta_function_desc_valid(left) ||
+        !cmeta_function_desc_valid(right))
+        return false;
+    if (strcmp(left->name, right->name) != 0 ||
+        !cmeta_type_equal(left->return_type, right->return_type) ||
+        left->param_count != right->param_count ||
+        left->effects != right->effects ||
+        left->properties != right->properties)
+        return false;
+
+    for (i = 0u; i < left->param_count; ++i) {
+        const cmeta_param_desc *a = &left->params[i];
+        const cmeta_param_desc *b = &right->params[i];
+        if (strcmp(a->name, b->name) != 0 ||
+            a->flags != b->flags ||
+            !cmeta_type_equal(a->type, b->type))
+            return false;
+    }
+    return true;
+}
+
+bool cmeta_function_abi_desc_equal(const cmeta_function_abi_desc *left,
+                                   const cmeta_function_abi_desc *right) {
+    size_t i;
+
+    if (left == right)
+        return left != NULL && cmeta_function_abi_desc_valid(left);
+    if (!cmeta_function_abi_desc_valid(left) ||
+        !cmeta_function_abi_desc_valid(right) ||
+        !cmeta_function_desc_equal(left->function, right->function) ||
+        left->return_carrier != right->return_carrier ||
+        left->param_count != right->param_count)
+        return false;
+
+    for (i = 0u; i < left->param_count; ++i)
+        if (left->param_carriers[i] != right->param_carriers[i])
+            return false;
+    return true;
+}
+
 bool cmeta_function_abi_desc_valid(const cmeta_function_abi_desc *desc) {
     size_t i;
 
