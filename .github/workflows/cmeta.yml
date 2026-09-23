@@ -7,6 +7,7 @@ on:
       - "cserde/**"
       - "cbind/**"
       - "cflow/**"
+      - "simd/**"
       - "formal/cmeta_cflow_calculus/**"
       - "platform/**"
       - "concurrency/**"
@@ -33,6 +34,7 @@ on:
       - "cserde/**"
       - "cbind/**"
       - "cflow/**"
+      - "simd/**"
       - "formal/cmeta_cflow_calculus/**"
       - "platform/**"
       - "concurrency/**"
@@ -120,7 +122,7 @@ jobs:
         run: cmake --build --preset linux-release-user
 
       - name: Test execution foundation and typed layers
-        run: ctest --preset linux-release-user -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cbind_|cflow_|cstl_|test_execution_compat$|tinytest_equality_test$|test_salts_process$)" --output-on-failure
+        run: ctest --preset linux-release-user -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cbind_|cflow_|cstl_|salts_simd_|test_execution_compat$|tinytest_equality_test$|test_salts_process$)" --output-on-failure
 
       - name: Install release profile
         run: cmake --build --preset install-linux-release-user
@@ -290,7 +292,7 @@ jobs:
         run: cmake --build --preset build-default-mac
 
       - name: Test execution foundation and typed layers
-        run: ctest --preset test-release-mac -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cflow_|cstl_|test_execution_compat$|tinytest_equality_test$)" --output-on-failure
+        run: ctest --preset test-release-mac -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cflow_|cstl_|salts_simd_|test_execution_compat$|tinytest_equality_test$)" --output-on-failure
 
       - name: Collect macOS diagnostics
         if: failure()
@@ -499,7 +501,7 @@ jobs:
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
-          ctest --preset win-release-user -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cbind_|cflow_|cstl_|test_execution_compat$|tinytest_equality_test$|test_salts_process$)" --output-on-failure
+          ctest --preset win-release-user -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cbind_|cflow_|cstl_|salts_simd_|test_execution_compat$|tinytest_equality_test$|test_salts_process$)" --output-on-failure
 
       - name: Install release profile
         shell: cmd
