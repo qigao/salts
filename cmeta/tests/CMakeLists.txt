@@ -40,8 +40,8 @@ cmake_add_test(cmeta_meta_header_test
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
-cmake_add_test(tinymock_cmeta_interface_test
-  SOURCES tinymock_cmeta_interface_test.c
+cmake_add_test(cmeta_tinymock_interface_test
+  SOURCES cmeta_tinymock_interface_test.c
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
@@ -148,7 +148,7 @@ set_target_properties(cmeta_meta_header_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
-set_target_properties(tinymock_cmeta_interface_test PROPERTIES
+set_target_properties(cmeta_tinymock_interface_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
