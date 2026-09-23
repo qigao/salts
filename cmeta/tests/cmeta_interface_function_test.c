@@ -90,8 +90,18 @@ suite("CMeta interface function reflection") {
         const cmeta_interface_desc *peer_b = cmeta_interface_function_peer_b();
         size_t i;
 
+        cmeta_interface_desc renamed = *local;
+
         check_reflected_counter(peer_a);
         check_reflected_counter(peer_b);
+
+        check_true(cmeta_interface_desc_equal(local, peer_a));
+        check_true(cmeta_interface_desc_equal(peer_a, peer_b));
+        check_true(cmeta_interface_desc_equal(local, local));
+
+        renamed.name = "different.interface";
+        check_true(cmeta_interface_desc_valid(&renamed));
+        check_false(cmeta_interface_desc_equal(local, &renamed));
 
         for (i = 0u; i < local->method_count; ++i) {
             check_true(cmeta_function_desc_equal(
