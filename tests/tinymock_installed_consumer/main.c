@@ -8,6 +8,7 @@
 
 int tinymock_installed_consumer_run(int value);
 void tinymock_installed_consumer_shutdown(void);
+int tinymock_installed_consumer_real(int value);
 
 TINYMOCk_FUNCTION_DECLARE(tinymock_installed_add);
 TINYMOCk_FUNCTION_DECLARE(tinymock_installed_shutdown);
@@ -21,6 +22,7 @@ int main(void) {
       TINYMOCk_RETURN(11));
 
   assert(tinymock_installed_consumer_run(7) == 11);
+  assert(tinymock_installed_consumer_real(7) == 27);
   assert(tinymock_mock_call_count(
              TINYMOCk_FUNCTION(tinymock_installed_add)) == 1u);
 
