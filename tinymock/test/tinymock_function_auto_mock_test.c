@@ -24,7 +24,7 @@ TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_shutdown);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_box_copy);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_pointer_answer);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_apply_callback);
-TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_tinymock_test_callback_answer);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_callback_answer);
 
 suite("TinyMock reflected free functions") {
   it("generates replacement definitions without repeating signatures") {
@@ -323,16 +323,16 @@ suite("TinyMock reflected free functions") {
             tinymock_cmeta_captor_value(&captor) == tinymock_test_callback_a);
     tinymock_cmeta_captor_destroy(&captor);
 
-    TINYMOCk_FUNCTION_RESET(tinymock_fixture_tinymock_test_callback_answer);
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_callback_answer);
     check_true(TINYMOCk_FUNCTION_SET_RETURN(
-        tinymock_fixture_tinymock_test_callback_answer, scripted_callback));
+        tinymock_fixture_callback_answer, scripted_callback));
 
     returned_callback = tinymock_function_consumer_callback_answer();
     check_true(returned_callback == tinymock_test_callback_b);
     check_equal(returned_callback(5), 14);
 
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_apply_callback);
-    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_tinymock_test_callback_answer);
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_callback_answer);
   }
 
   it("keeps stubbing independent from verification") {
