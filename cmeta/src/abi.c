@@ -3,7 +3,7 @@
 
 bool cmeta_abi_carrier_valid(cmeta_abi_carrier carrier) {
     return carrier >= CMETA_ABI_UNSPECIFIED &&
-           carrier <= CMETA_ABI_OPAQUE;
+           carrier <= CMETA_ABI_ENUM;
 }
 
 const char *cmeta_abi_carrier_name(cmeta_abi_carrier carrier) {
@@ -15,6 +15,7 @@ const char *cmeta_abi_carrier_name(cmeta_abi_carrier carrier) {
     case CMETA_ABI_AGGREGATE: return "aggregate";
     case CMETA_ABI_FUNCTION_POINTER: return "function_pointer";
     case CMETA_ABI_OPAQUE: return "opaque";
+    case CMETA_ABI_ENUM: return "enum";
     default: return "invalid";
     }
 }
@@ -47,6 +48,8 @@ bool cmeta_abi_carrier_matches_type(cmeta_abi_carrier carrier,
         return type->kind != CMETA_T_VOID;
     case CMETA_ABI_OPAQUE:
         return type->kind != CMETA_T_VOID;
+    case CMETA_ABI_ENUM:
+        return type->kind == CMETA_T_INTEGER;
     default:
         return false;
     }

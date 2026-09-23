@@ -11,10 +11,11 @@
  * declarations. The CMeta declaration extension hook replays those exact rows
  * into external replacement definitions.
  *
- * Phase-2a intentionally supports TinyMock's existing portable value carrier:
- * scalar values, strings and object pointers. Literal-void and value-return
- * functions are generated separately at preprocessing time. Arbitrary by-value
- * objects, variadics and function-pointer values remain outside this backend.
+ * Reflected wrappers use the legacy portable value carrier only where it is
+ * sound (builtin scalar/object-pointer compatibility paths). Aggregate,
+ * function-pointer, and enum values use CMeta typed history/return state.
+ * Literal-void and value-return functions are generated separately at
+ * preprocessing time. Variadic declarations remain outside this backend.
  */
 
 #include "tinymock.h"
@@ -159,6 +160,7 @@
 #define TINYMOCk_FUNCTION_BOX_CMETA_ABI_AGGREGATE(value) tinymock_value_zero()
 #define TINYMOCk_FUNCTION_BOX_CMETA_ABI_FUNCTION_POINTER(value) tinymock_value_zero()
 #define TINYMOCk_FUNCTION_BOX_CMETA_ABI_OPAQUE(value) tinymock_value_zero()
+#define TINYMOCk_FUNCTION_BOX_CMETA_ABI_ENUM(value) tinymock_value_zero()
 #define TINYMOCk_FUNCTION_BOX_(carrier, value) \
   CMETA_PP_CAT(TINYMOCk_FUNCTION_BOX_, carrier)(value)
 
@@ -192,7 +194,8 @@
       (abi_carrier) == CMETA_ABI_SCALAR || \
       (abi_carrier) == CMETA_ABI_OBJECT_POINTER || \
       (abi_carrier) == CMETA_ABI_AGGREGATE || \
-      (abi_carrier) == CMETA_ABI_FUNCTION_POINTER, \
+      (abi_carrier) == CMETA_ABI_FUNCTION_POINTER || \
+      (abi_carrier) == CMETA_ABI_ENUM, \
       "TinyMock auto-mock parameter " #function_name "." #name \
       " uses an unsupported ABI carrier")
 #define TINYMOCk_FUNCTION_PARAM_ADMIT_APPLY_I(function_name, ...) \
@@ -214,7 +217,8 @@
       (return_abi_carrier) == CMETA_ABI_SCALAR || \
       (return_abi_carrier) == CMETA_ABI_OBJECT_POINTER || \
       (return_abi_carrier) == CMETA_ABI_AGGREGATE || \
-      (return_abi_carrier) == CMETA_ABI_FUNCTION_POINTER, \
+      (return_abi_carrier) == CMETA_ABI_FUNCTION_POINTER || \
+      (return_abi_carrier) == CMETA_ABI_ENUM, \
       "TinyMock auto-mock return for " #name \
       " uses an unsupported or unspecified ABI carrier")
 
@@ -262,6 +266,17 @@
         &typed_result__); \
     TINYMOCk_ASSERT(typed_ok__, \
                     "tinymock function-pointer return for %s requires a typed return", \
+                    #name); \
+    return typed_result__; \
+  } while (0)
+#define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_ENUM(name, type, result) \
+  do { \
+    type typed_result__ = (type)0; \
+    bool typed_ok__ = tinymock_cmeta_return_write( \
+        TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
+        &typed_result__); \
+    TINYMOCk_ASSERT(typed_ok__, \
+                    "tinymock enum return for %s requires a typed return", \
                     #name); \
     return typed_result__; \
   } while (0)

@@ -25,6 +25,7 @@ TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_box_copy);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_pointer_answer);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_apply_callback);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_callback_answer);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_mode_echo);
 
 suite("TinyMock reflected free functions") {
   it("generates replacement definitions without repeating signatures") {
@@ -333,6 +334,53 @@ suite("TinyMock reflected free functions") {
 
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_apply_callback);
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_callback_answer);
+  }
+
+  it("records, captures, and returns typed enum values") {
+    tinymock_fixture_mode input = TINYMOCK_FIXTURE_MODE_READY;
+    tinymock_fixture_mode expected = TINYMOCK_FIXTURE_MODE_READY;
+    tinymock_fixture_mode scripted = TINYMOCK_FIXTURE_MODE_DONE;
+    tinymock_fixture_mode result;
+    tinymock_cmeta_captor captor;
+
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_mode_echo);
+    check_true(TINYMOCk_FUNCTION_SET_RETURN(
+        tinymock_fixture_mode_echo, scripted));
+
+    result = tinymock_function_consumer_mode(input);
+    check_equal((int)result, (int)TINYMOCK_FIXTURE_MODE_DONE);
+
+    tinymock_mock_verify_times(
+        TINYMOCk_FUNCTION(tinymock_fixture_mode_echo), 1);
+
+    check_true(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
+        tinymock_fixture_mode_echo, 0, "input", expected));
+
+    expected = TINYMOCK_FIXTURE_MODE_IDLE;
+    check_false(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
+        tinymock_fixture_mode_echo, 0, "input", expected));
+
+    tinymock_cmeta_captor_init(&captor);
+    check_true(TINYMOCk_FUNCTION_CAPTURE(
+        tinymock_fixture_mode_echo, 0, "input", &captor));
+    check_true(cmeta_type_equal(
+        tinymock_cmeta_captor_type(&captor),
+        &tinymock_fixture_mode_type));
+    check_equal(
+        (int)*(const tinymock_fixture_mode *)
+            tinymock_cmeta_captor_value(&captor),
+        (int)TINYMOCK_FIXTURE_MODE_READY);
+    tinymock_cmeta_captor_destroy(&captor);
+
+    check_equal(
+        TINYMOCk_FUNCTION_ABI(tinymock_fixture_mode_echo)->return_carrier,
+        (cmeta_abi_carrier)CMETA_ABI_ENUM);
+    check_equal(
+        cmeta_function_param_abi(
+            TINYMOCk_FUNCTION_ABI(tinymock_fixture_mode_echo), 0u),
+        (cmeta_abi_carrier)CMETA_ABI_ENUM);
+
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_mode_echo);
   }
 
   it("keeps stubbing independent from verification") {

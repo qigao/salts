@@ -30,3 +30,8 @@ tinymock_installed_callback
 tinymock_installed_consumer_callback_answer(void) {
   return tinymock_installed_callback_answer();
 }
+
+tinymock_installed_mode
+tinymock_installed_consumer_mode(tinymock_installed_mode input) {
+  return tinymock_installed_mode_echo(input);
+}

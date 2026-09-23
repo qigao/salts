@@ -3,6 +3,38 @@
 
 #include <cmeta/function.h>
 
+Enum(tinymock_installed_mode,
+    (TINYMOCK_INSTALLED_MODE_IDLE, 0, "idle"),
+    (TINYMOCK_INSTALLED_MODE_READY, 1, "ready"),
+    (TINYMOCK_INSTALLED_MODE_DONE, 2, "done")
+);
+
+static bool tinymock_installed_mode_equal(
+    const void *left, const void *right) {
+  const tinymock_installed_mode *a =
+      (const tinymock_installed_mode *)left;
+  const tinymock_installed_mode *b =
+      (const tinymock_installed_mode *)right;
+  return a && b && *a == *b;
+}
+
+static const cmeta_type_traits tinymock_installed_mode_traits = {
+  .flags = CMETA_TRAIT_EQUAL |
+           CMETA_TRAIT_TRIVIAL_COPY |
+           CMETA_TRAIT_TRIVIAL_DESTROY,
+  .equal = tinymock_installed_mode_equal
+};
+
+static const cmeta_type_desc tinymock_installed_mode_type = {
+  .name = "tinymock_installed_mode",
+  .size = sizeof(tinymock_installed_mode),
+  .align = _Alignof(tinymock_installed_mode),
+  .kind = CMETA_T_INTEGER,
+  .pointee = NULL,
+  .traits = &tinymock_installed_mode_traits,
+  .identity = NULL
+};
+
 typedef int (*tinymock_installed_callback)(int);
 
 static bool tinymock_installed_callback_equal(
@@ -83,5 +115,11 @@ Function0DeclAsAbi(value, tinymock_installed_callback,
                    &tinymock_installed_callback_type,
                    CMETA_ABI_FUNCTION_POINTER,
                    tinymock_installed_callback_answer);
+
+FunctionDeclAsAbi(value, tinymock_installed_mode,
+                  &tinymock_installed_mode_type, CMETA_ABI_ENUM,
+                  tinymock_installed_mode_echo,
+    (tinymock_installed_mode, input, CMETA_PARAM_IN,
+     &tinymock_installed_mode_type, CMETA_ABI_ENUM));
 
 #endif /* TINYMOCK_INSTALLED_API_H */

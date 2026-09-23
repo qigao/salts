@@ -28,7 +28,8 @@ typedef enum cmeta_abi_carrier {
     CMETA_ABI_OBJECT_POINTER,
     CMETA_ABI_AGGREGATE,
     CMETA_ABI_FUNCTION_POINTER,
-    CMETA_ABI_OPAQUE
+    CMETA_ABI_OPAQUE,
+    CMETA_ABI_ENUM
 } cmeta_abi_carrier;
 
 bool cmeta_abi_carrier_valid(cmeta_abi_carrier carrier);

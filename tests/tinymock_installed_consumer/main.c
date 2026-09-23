@@ -23,12 +23,15 @@ int tinymock_installed_consumer_apply_callback(
     tinymock_installed_callback callback, int value);
 tinymock_installed_callback
 tinymock_installed_consumer_callback_answer(void);
+tinymock_installed_mode
+tinymock_installed_consumer_mode(tinymock_installed_mode input);
 
 TINYMOCk_FUNCTION_DECLARE(tinymock_installed_add);
 TINYMOCk_FUNCTION_DECLARE(tinymock_installed_shutdown);
 TINYMOCk_FUNCTION_DECLARE(tinymock_installed_box_copy);
 TINYMOCk_FUNCTION_DECLARE(tinymock_installed_apply_callback);
 TINYMOCk_FUNCTION_DECLARE(tinymock_installed_callback_answer);
+TINYMOCk_FUNCTION_DECLARE(tinymock_installed_mode_echo);
 
 int main(void) {
   const cmeta_function_desc *meta;
@@ -87,6 +90,25 @@ int main(void) {
     assert(returned(2) == 12);
   }
 
+  {
+    tinymock_installed_mode input = TINYMOCK_INSTALLED_MODE_READY;
+    tinymock_installed_mode expected = TINYMOCK_INSTALLED_MODE_READY;
+    tinymock_installed_mode scripted = TINYMOCK_INSTALLED_MODE_DONE;
+    tinymock_installed_mode result;
+
+    TINYMOCk_FUNCTION_RESET(tinymock_installed_mode_echo);
+    assert(TINYMOCk_FUNCTION_SET_RETURN(
+        tinymock_installed_mode_echo, scripted));
+
+    result = tinymock_installed_consumer_mode(input);
+    assert(result == TINYMOCK_INSTALLED_MODE_DONE);
+    assert(TINYMOCk_FUNCTION_ARG_EQUAL_TYPED(
+        tinymock_installed_mode_echo, 0u, "input", expected));
+    assert(TINYMOCk_FUNCTION_ABI(
+        tinymock_installed_mode_echo)->return_carrier ==
+        CMETA_ABI_ENUM);
+  }
+
   TINYMOCk_FUNCTION_RESET(tinymock_installed_shutdown);
   tinymock_installed_consumer_shutdown();
   tinymock_mock_verify_times(
@@ -100,5 +122,6 @@ int main(void) {
   TINYMOCk_FUNCTION_DESTROY(tinymock_installed_box_copy);
   TINYMOCk_FUNCTION_DESTROY(tinymock_installed_apply_callback);
   TINYMOCk_FUNCTION_DESTROY(tinymock_installed_callback_answer);
+  TINYMOCk_FUNCTION_DESTROY(tinymock_installed_mode_echo);
   return 0;
 }

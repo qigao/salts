@@ -50,3 +50,8 @@ int tinymock_function_consumer_apply_callback(
 tinymock_fixture_callback tinymock_function_consumer_callback_answer(void) {
   return tinymock_fixture_callback_answer();
 }
+
+tinymock_fixture_mode
+tinymock_function_consumer_mode(tinymock_fixture_mode input) {
+  return tinymock_fixture_mode_echo(input);
+}
