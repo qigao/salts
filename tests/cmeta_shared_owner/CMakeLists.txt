@@ -30,7 +30,6 @@ add_library(tinytest STATIC "${SALTS_SOURCE_ROOT}/tinytest/src/tinytest.c"
                            "${SALTS_SOURCE_ROOT}/tinytest/src/tinymock.c")
 add_library(Salts::TinyTest ALIAS tinytest)
 target_include_directories(tinytest PUBLIC "${SALTS_SOURCE_ROOT}/tinytest/include")
-
 set(BUILD_TESTS ON)
 add_subdirectory("${SALTS_SOURCE_ROOT}/cmeta" cmeta)
 
