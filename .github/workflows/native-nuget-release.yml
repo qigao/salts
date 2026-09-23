@@ -8,6 +8,7 @@ on:
       - "vcpkg-configuration.json"
       - "packaging/nuget/**"
       - "tinymock/**"
+      - "cmeta/**"
       - "cmake/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
@@ -19,6 +20,7 @@ on:
       - "vcpkg-configuration.json"
       - "packaging/nuget/**"
       - "tinymock/**"
+      - "cmeta/**"
       - "cmake/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
@@ -44,6 +46,11 @@ jobs:
           set -euo pipefail
           version="$(awk '/^[[:space:]]*VERSION[[:space:]]+[0-9]/{print $2; exit}' CMakeLists.txt)"
           test -n "$version"
+          vcpkg_version="$(python3 -c 'import json; print(json.load(open("vcpkg.json", encoding="utf-8"))["version-semver"])')"
+          if [ "$vcpkg_version" != "$version" ]; then
+            echo "release version mismatch: CMake=$version vcpkg=$vcpkg_version" >&2
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
@@ -87,6 +94,8 @@ jobs:
           cmake --install build/linux-gcc-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymeta/equality.h"
           test ! -e "$prefix/include/tinymeta/cmeta.h"
           test -f "$prefix/include/tinymock_cmeta.h"
@@ -167,6 +176,8 @@ jobs:
           cmake --install build/mac-clang-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymeta/equality.h"
           test ! -e "$prefix/include/tinymeta/cmeta.h"
           test -f "$prefix/include/tinymock_cmeta.h"
@@ -252,6 +263,8 @@ jobs:
           $tinymockCMake = Join-Path $prefix "lib\cmake\Salts\SaltsTinyMock.cmake"
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
           if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
+          if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "cmeta_function_abi_desc" -Quiet)) { throw "missing cmeta_function_abi_desc in $functionHeader" }
+          if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "FunctionAbi" -Quiet)) { throw "missing FunctionAbi in $functionHeader" }
           if (-not (Test-Path -LiteralPath $tinyEqualityHeader -PathType Leaf)) { throw "missing $tinyEqualityHeader" }
           if (Test-Path -LiteralPath $oldTinyCMetaHeader) { throw "obsolete $oldTinyCMetaHeader is still installed" }
           if (-not (Test-Path -LiteralPath $tinymockHeader -PathType Leaf)) { throw "missing $tinymockHeader" }
@@ -323,6 +336,8 @@ jobs:
           cmake --install build/android-arm64-v8a-release --prefix "$prefix"
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
           test -f "$prefix/include/cmeta/function.h"
+          grep -F "cmeta_function_abi_desc" "$prefix/include/cmeta/function.h"
+          grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymeta/equality.h"
           test ! -e "$prefix/include/tinymeta/cmeta.h"
           test -f "$prefix/include/tinymock_cmeta.h"
@@ -371,6 +386,12 @@ jobs:
           test -f package/sdk/windows-x64/include/cmeta/function.h
           test -f package/sdk/android-arm64-v8a/lib/cmake/Salts/SaltsConfig.cmake
           test -f package/sdk/android-arm64-v8a/include/cmeta/function.h
+          grep -F "cmeta_function_abi_desc" package/sdk/linux-x64/include/cmeta/function.h
+          grep -F "cmeta_function_abi_desc" package/sdk/windows-x64/include/cmeta/function.h
+          grep -F "cmeta_function_abi_desc" package/sdk/android-arm64-v8a/include/cmeta/function.h
+          mac_header="$(find package/sdk -path '*/include/cmeta/function.h' -path '*macos-*' -print -quit)"
+          test -n "$mac_header"
+          grep -F "cmeta_function_abi_desc" "$mac_header"
           test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 4
           find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print
           du -sh package/sdk
@@ -391,7 +412,7 @@ jobs:
 
   publish:
     name: Publish package and GitHub Release
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
     needs: [metadata, pack]
     runs-on: ubuntu-latest
     permissions:
@@ -405,6 +426,28 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
+      - name: Enforce immutable release identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if existing_tag="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha 2>/dev/null)"; then
+            if [ "$existing_tag" != "$GITHUB_SHA" ]; then
+              echo "tag $TAG resolves to $existing_tag, not $GITHUB_SHA" >&2
+              echo "bump the Salts project/package version before publishing a changed SDK" >&2
+              exit 1
+            fi
+            echo "tag $TAG already resolves to this commit"
+          fi
+          if existing_release="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish 2>/dev/null)"; then
+            if [ "$existing_release" != "$GITHUB_SHA" ] && [ "$existing_release" != "$TAG" ]; then
+              echo "release $TAG targets $existing_release, not $GITHUB_SHA" >&2
+              exit 1
+            fi
+            echo "release $TAG already exists for this release identity"
+          fi
       - name: Publish to GitHub Packages
         shell: bash
         env:
