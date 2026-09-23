@@ -38,6 +38,9 @@
 #define TINYMOCk_INTERFACE_AS(I) \
   TINYMOCk_CAT(TINYMOCk_INTERFACE_TYPE(I), _as_interface)
 
+#define TINYMOCk_INTERFACE_ANCHOR(I) \
+  TINYMOCk_CAT(TINYMOCk_INTERFACE_TYPE(I), _interface_anchor_t)
+
 #define TINYMOCk_INTERFACE_FIELD_ROW(I, K, R, N, ...) \
   tinymock_mock_t N;
 
@@ -153,7 +156,8 @@
   } \
   static inline I TINYMOCk_INTERFACE_AS(I)(TINYMOCk_INTERFACE_TYPE(I) *mock) { \
     return I##_bind(mock, &TINYMOCk_INTERFACE_VTABLE(I)); \
-  }
+  } \
+  typedef int TINYMOCk_INTERFACE_ANCHOR(I)
 
 #define TINYMOCk_INTERFACE(I, METHODS) \
   TINYMOCk_INTERFACE_WITH_CAPS(I, METHODS, 0u)
