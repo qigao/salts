@@ -82,6 +82,14 @@ typed_any(value, int, surface_increment, (int value)) {
     return value + 1;
 }
 
+FunctionDecl(value, int, surface_reflected_add,
+    (int, left, CMETA_PARAM_IN),
+    (int, right, CMETA_PARAM_IN));
+
+int surface_reflected_add(int left, int right) {
+    return left + right;
+}
+
 enum {
     SURFACE_COUNTER_CAN_RESET = 1u << 0
 };
@@ -142,6 +150,8 @@ int main(void) {
     SurfaceCounter counter =
         surface_counter_impl_as_SurfaceCounter(&counter_state);
     const cmeta_interface_desc *interface_meta = SurfaceCounter_interface();
+    const cmeta_function_desc *function_meta =
+        FunctionMeta(surface_reflected_add);
     static const char *const contract_names[] = {
         "unknown", "value", "pure", "idempotent", "associative",
         "fallible", "io", "async", "stateful"
@@ -188,6 +198,13 @@ int main(void) {
     REQUIRE(output == 7);
     REQUIRE(surface_increment.meta.effects == CMETA_CONTRACT_EFFECTS(value));
     REQUIRE(surface_increment.meta.properties == CMETA_CONTRACT_PROPERTIES(value));
+
+    REQUIRE(cmeta_function_desc_valid(function_meta));
+    REQUIRE(strcmp(function_meta->name, "surface_reflected_add") == 0);
+    REQUIRE(function_meta->param_count == 2u);
+    REQUIRE(cmeta_type_equal(function_meta->return_type, &cmeta_type_int));
+    REQUIRE(cmeta_function_find_param(function_meta, "left") != NULL);
+    REQUIRE(surface_reflected_add(3, 4) == 7);
 
     REQUIRE(SurfaceCounter_valid(&counter));
     REQUIRE(SurfaceCounter_has(&counter, SURFACE_COUNTER_CAN_RESET));

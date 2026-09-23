@@ -15,6 +15,8 @@ schema-driven, and intentionally compositional rather than a universal language.
   `cmeta_infer_dfa_build/eval`;
 - CMeta value kinds: `Pair`, `Tuple`, `Option`, `Result`;
 - `typed_any(...)` first-class callable declarations with semantic contracts;
+- generic C function/parameter reflection through `cmeta_function_desc` and
+  `cmeta_param_desc`, independent of callable execution;
 - `interface(...)` / `implements(...)` protocol/vtable declarations;
 - known-type and callable-type universe separation;
 - semantic type identity for atoms, pointers, const forms, and generic applications;
@@ -33,6 +35,7 @@ Enum(...)
 Traits(...)
 typed(...)
 typed_any(...)
+FunctionDecl(...)
 interface(...)
 implements(...)
 ```
@@ -204,6 +207,33 @@ canonical zero handle without allocation. Providers may append
 committed storage and restores the complete handle to all-bits-zero. This
 lifecycle operation is intentionally separate from Collector abort, which does
 not act on committed collectors.
+
+### Function reflection
+
+`cmeta_function_desc` and `cmeta_param_desc` describe ordinary C functions
+without defining an erased invocation ABI. A reflected declaration records
+parameter order/names, CMeta type descriptors, IN/OUT/INOUT direction,
+optional pointer ownership/nullability flags, return type, and the shared
+effect/property contract.
+
+The C declaration helpers are descriptive:
+
+```c
+FunctionDecl(value, int, add,
+    (int, left, CMETA_PARAM_IN),
+    (int, right, CMETA_PARAM_IN));
+```
+
+The three-field parameter form resolves its descriptor through
+`CMETA_TYPEOF(type)`; a fourth field may supply an explicit provider-owned
+descriptor for custom or pointer types. `FunctionDeclAs` similarly accepts an
+explicit return descriptor. Invalid or unregistered descriptors are rejected by
+`cmeta_function_desc_valid()`.
+
+This reflection model is intentionally independent of `cmeta_callable` and
+does not provide universal runtime invocation. TinyMock, service binding, code
+generation, or CFlow adapters may consume the metadata and generate an exact-ABI
+adapter appropriate to their own execution boundary.
 
 ### Callable
 

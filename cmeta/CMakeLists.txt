@@ -6,6 +6,7 @@ add_library(${TARGET_NAME}
   src/data_v2.c
   src/declared_type.c
   src/entry.c
+  src/function.c
   src/infer.c
   src/type_identity.c)
 
