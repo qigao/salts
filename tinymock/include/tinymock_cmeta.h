@@ -8,15 +8,10 @@
  * It does not define a second interface/function reflection model and it does
  * not make TinyTest itself depend on CMeta.
  *
- * Phase-1 scope:
- *   - exact interface vtable generation from the CMeta X-list;
- *   - one TinyMock invocation ledger per method;
- *   - relaxed zero/default behavior until a method is explicitly stubbed;
- *   - call-count verification and boxed argument inspection through tinymock.h.
- *
- * Method arguments and return values currently use TinyMock's portable C11
- * scalar/string/pointer carrier. Generic CMeta value/trait-backed argument
- * storage is a later phase and must not be faked with a second type registry.
+ * Legacy R/V/D rows keep the original boxed TinyMock compatibility path.
+ * Fully reflected F0/F1 rows consume the interface method's canonical
+ * cmeta_function_desc/cmeta_function_abi_desc and reuse TinyMock's typed
+ * history/actions/return runtime. No second interface-only type registry exists.
  */
 
 #include "tinymock.h"
@@ -402,5 +397,24 @@
   (&((mock)->TINYMOCk_INTERFACE_ACTIONS_FIELD(method)))
 #define TINYMOCk_INTERFACE_METHOD_RETURN(mock, method) \
   (&((mock)->TINYMOCk_INTERFACE_RETURN_FIELD(method)))
+
+#define TINYMOCk_INTERFACE_METHOD_FUNCTION(I, method) \
+  (I##_##method##_function())
+#define TINYMOCk_INTERFACE_METHOD_ABI(I, method) \
+  (I##_##method##_function_abi())
+#define TINYMOCk_INTERFACE_METHOD_SET_RETURN(I, mock, method, value_lvalue) \
+  tinymock_cmeta_return_set( \
+      TINYMOCk_INTERFACE_METHOD_RETURN((mock), method), \
+      TINYMOCk_INTERFACE_METHOD_FUNCTION(I, method), &(value_lvalue))
+#define TINYMOCk_INTERFACE_METHOD_ARG_EQUAL_TYPED( \
+    I, mock, method, call_index, param_name, expected_lvalue) \
+  tinymock_cmeta_history_arg_equal_typed_name( \
+      TINYMOCk_INTERFACE_METHOD_HISTORY((mock), method), \
+      (call_index), (param_name), &(expected_lvalue))
+#define TINYMOCk_INTERFACE_METHOD_CAPTURE( \
+    I, mock, method, call_index, param_name, captor) \
+  tinymock_cmeta_captor_capture_name( \
+      (captor), TINYMOCk_INTERFACE_METHOD_HISTORY((mock), method), \
+      (call_index), (param_name))
 
 #endif /* TINYMOCK_CMETA_H */
