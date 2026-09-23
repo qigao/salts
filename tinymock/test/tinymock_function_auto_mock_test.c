@@ -11,6 +11,8 @@ TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_write_size);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_adjust_int);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_unknown_ptr);
 TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_nullable_out);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_notify);
+TINYMOCk_FUNCTION_DECLARE(tinymock_fixture_shutdown);
 
 suite("TinyMock reflected free functions") {
   it("generates replacement definitions without repeating signatures") {
@@ -158,6 +160,49 @@ suite("TinyMock reflected free functions") {
 
     check_equal(input, 5);
     TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_nullable_out);
+  }
+
+  it("auto-mocks parameterized and zero-argument void functions") {
+    size_t written = 0u;
+    size_t scripted_written = 77u;
+    int expected_event = 9;
+    tinymock_cmeta_captor captor;
+
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_notify);
+    TINYMOCk_FUNCTION_RESET(tinymock_fixture_shutdown);
+
+    check_true(TINYMOCk_FUNCTION_SET_OUT(
+        tinymock_fixture_notify, "written", scripted_written));
+
+    tinymock_function_consumer_notify(9, &written);
+    tinymock_function_consumer_shutdown();
+
+    check_equal(written, (size_t)77);
+    tinymock_mock_verify_times(
+        TINYMOCk_FUNCTION(tinymock_fixture_notify), 1);
+    tinymock_mock_verify_times(
+        TINYMOCk_FUNCTION(tinymock_fixture_shutdown), 1);
+
+    check_true(TINYMOCk_FUNCTION_ARG_EQUAL(
+        tinymock_fixture_notify, 0, "event", expected_event));
+
+    tinymock_cmeta_captor_init(&captor);
+    check_true(TINYMOCk_FUNCTION_CAPTURE(
+        tinymock_fixture_notify, 0, "event", &captor));
+    check_true(cmeta_type_equal(
+        tinymock_cmeta_captor_type(&captor), &cmeta_type_int));
+    check_equal(*(const int *)tinymock_cmeta_captor_value(&captor), 9);
+    tinymock_cmeta_captor_destroy(&captor);
+
+    check_true(cmeta_type_equal(
+        TINYMOCk_FUNCTION_META(tinymock_fixture_notify)->return_type,
+        &cmeta_type_void));
+    check_true(cmeta_type_equal(
+        TINYMOCk_FUNCTION_META(tinymock_fixture_shutdown)->return_type,
+        &cmeta_type_void));
+
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_notify);
+    TINYMOCk_FUNCTION_DESTROY(tinymock_fixture_shutdown);
   }
 
   it("keeps stubbing independent from verification") {

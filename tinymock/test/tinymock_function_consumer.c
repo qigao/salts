@@ -24,3 +24,11 @@ int tinymock_function_consumer_unknown_ptr(int *value) {
 int tinymock_function_consumer_nullable_out(size_t *written) {
   return tinymock_fixture_nullable_out(written);
 }
+
+void tinymock_function_consumer_notify(int event, size_t *written) {
+  tinymock_fixture_notify(event, written);
+}
+
+void tinymock_function_consumer_shutdown(void) {
+  tinymock_fixture_shutdown();
+}
