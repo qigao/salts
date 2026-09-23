@@ -16,7 +16,9 @@ bool cmeta_param_desc_valid(const cmeta_param_desc *desc) {
     if (desc == NULL || desc->size < sizeof(*desc) ||
         desc->name == NULL || desc->name[0] == '\0' ||
         !cmeta_type_desc_valid(desc->type) ||
-        !cmeta_param_flags_valid(desc->flags))
+        !cmeta_param_flags_valid(desc->flags) ||
+        !cmeta_abi_carrier_valid(desc->abi_carrier) ||
+        !cmeta_abi_carrier_matches_type(desc->abi_carrier, desc->type))
         return false;
 
     if ((desc->flags & (CMETA_PARAM_OUT | CMETA_PARAM_NULLABLE |
@@ -34,6 +36,9 @@ bool cmeta_function_desc_valid(const cmeta_function_desc *desc) {
     if (desc == NULL || desc->size < sizeof(*desc) ||
         desc->name == NULL || desc->name[0] == '\0' ||
         !cmeta_type_desc_valid(desc->return_type) ||
+        !cmeta_abi_carrier_valid(desc->return_abi_carrier) ||
+        !cmeta_abi_carrier_matches_type(desc->return_abi_carrier,
+                                        desc->return_type) ||
         !cmeta_effect_property_contract_valid(desc->effects, desc->properties))
         return false;
 
