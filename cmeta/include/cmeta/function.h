@@ -327,4 +327,10 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
 
 #endif /* !__cplusplus */
 
+/* Preserve the historical transitive interface surface, but only after
+ * cmeta_function_desc/cmeta_function_abi_desc are fully defined. */
+#if !defined(CMETA_META_INTERFACE_H)
+#include <cmeta/interface.h>
+#endif
+
 #endif /* CMETA_FUNCTION_H */
