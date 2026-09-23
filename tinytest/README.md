@@ -257,6 +257,17 @@ interfaces; the ABI-specific conversion handlers are implementation details.
 
 ### CMeta interface auto-mocking
 
+Use the explicit TinyMock usage target for CMeta-aware mocking:
+
+```cmake
+target_link_libraries(my_test PRIVATE Salts::TinyMock)
+```
+
+`Salts::TinyMock` propagates `Salts::TinyTest + Salts::CMeta`. During the
+compatibility migration its runtime objects still live in the TinyTest archive,
+so existing TinyTest-only consumers keep their current binary contract while
+new code can already declare the final dependency boundary.
+
 Strict-C11 tests can replay an existing `CMETA_INTERFACE` method schema into a
 mock vtable without hand-writing a second implementation:
 
