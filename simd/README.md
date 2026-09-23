@@ -48,3 +48,38 @@ private SIMDe/native implementation
 
 TurboWasm, CFlow, DSP, image, and database frontends can share this execution
 boundary without importing SIMDe or defining another vector type system.
+
+
+## Lane and memory transforms
+
+Salts also provides portable transforms over caller-owned, already-validated
+bytes:
+
+```c
+salts_simd_load_splat(desc, out, source);
+salts_simd_load_extend(desc, out, source);
+salts_simd_load_zero(loaded_bits, out, source);
+
+salts_simd_extract_lane(desc, value, lane, &scalar);
+salts_simd_replace_lane(desc, out, value, lane, scalar);
+
+salts_simd_shuffle_bytes(out, left, right, lanes);
+salts_simd_swizzle_bytes(out, value, indices);
+```
+
+These helpers do **not** own:
+- memory allocation;
+- effective-address calculation;
+- bounds checking;
+- Wasm memarg decoding or traps.
+
+A runtime such as TurboWasm first checks its memory/table rules, then hands the
+checked bytes or v128 value to Salts for the portable transformation.
+
+`salts_simd_load_extend` derives the widening rule from the destination CMeta
+descriptor:
+- i16x8/u16x8 widen 8 lanes from 8-bit source values;
+- i32x4/u32x4 widen 4 lanes from 16-bit source values;
+- i64x2/u64x2 widen 2 lanes from 32-bit source values.
+
+Signedness is therefore semantic metadata, not a separate backend flag.
