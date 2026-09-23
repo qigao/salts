@@ -22,12 +22,32 @@
  * an interface value is only { self, vtable } plus capability metadata.
  *
  * A method schema is a single X-list replayed by interface() for the vtable,
- * inline wrappers, and translation-unit-local reflection metadata.  Row kind
- * encodes return-kind + arity:
+ * inline wrappers, and translation-unit-local reflection metadata.
+ *
+ * Legacy ABI-only rows:
  *
  *   R0..R4  non-void return, 0..4 arguments after self
  *   V0..V4  void return,     0..4 arguments after self
  *   D0       owning destructor; V0 ABI plus handle invalidation after return
+ *
+ * These rows preserve the historical exact C dispatch surface. Their
+ * cmeta_interface_method_desc publishes dispatch arity/flags only and leaves
+ * function/abi NULL; CMeta does not infer semantic type descriptors, parameter
+ * direction, effects, or ABI carriers from C spelling.
+ *
+ * Fully reflected rows:
+ *
+ *   F0..F4   value return + canonical FunctionDesc/FunctionAbi
+ *   FV0..FV4 void return  + canonical FunctionDesc/FunctionAbi
+ *   FD0       owning destructor + canonical FunctionDesc/FunctionAbi
+ *
+ * Reflected parameters use the exact five-field FunctionDecl parameter row:
+ *
+ *   (type, name, flags, descriptor, abi_carrier)
+ *
+ * and each reflected method row also states contract, return descriptor, and
+ * return ABI carrier. Thus the same X-list remains the single source for exact
+ * vtable ABI, wrappers, and canonical function semantics.
  *
  * Example:
  *
