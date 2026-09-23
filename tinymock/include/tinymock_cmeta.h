@@ -130,15 +130,151 @@
 #define TINYMOCk_INTERFACE_CALLBACK_D0(I, R, N, _) \
   TINYMOCk_INTERFACE_CALLBACK_V0(I, R, N, _)
 
+#define TINYMOCk_INTERFACE_CALLBACK_F0(I,R,N,C,RD,RA) \
+  static R TINYMOCk_INTERFACE_CALLBACK(I, N)(void *opaque) { \
+    TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
+    tinymock_value_t result = tinymock_mock_dispatch(&mock->N, 0u, NULL); \
+    return TINYMOCk_VALUE_AS(R, result); \
+  }
+#define TINYMOCk_INTERFACE_CALLBACK_F1(I,R,N,C,RD,RA,P1) \
+  static R TINYMOCk_INTERFACE_CALLBACK(I, N)( \
+      void *opaque, CMETA_IFACE_PARAM_DECL(P1)) { \
+    TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
+    tinymock_value_t args[] = { \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P1)) \
+    }; \
+    tinymock_value_t result = tinymock_mock_dispatch(&mock->N, 1u, args); \
+    return TINYMOCk_VALUE_AS(R, result); \
+  }
+#define TINYMOCk_INTERFACE_CALLBACK_F2(I,R,N,C,RD,RA,P1,P2) \
+  static R TINYMOCk_INTERFACE_CALLBACK(I, N)( \
+      void *opaque, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2)) { \
+    TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
+    tinymock_value_t args[] = { \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P1)), \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P2)) \
+    }; \
+    tinymock_value_t result = tinymock_mock_dispatch(&mock->N, 2u, args); \
+    return TINYMOCk_VALUE_AS(R, result); \
+  }
+#define TINYMOCk_INTERFACE_CALLBACK_F3(I,R,N,C,RD,RA,P1,P2,P3) \
+  static R TINYMOCk_INTERFACE_CALLBACK(I, N)( \
+      void *opaque, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2), \
+      CMETA_IFACE_PARAM_DECL(P3)) { \
+    TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
+    tinymock_value_t args[] = { \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P1)), \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P2)), \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P3)) \
+    }; \
+    tinymock_value_t result = tinymock_mock_dispatch(&mock->N, 3u, args); \
+    return TINYMOCk_VALUE_AS(R, result); \
+  }
+#define TINYMOCk_INTERFACE_CALLBACK_F4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
+  static R TINYMOCk_INTERFACE_CALLBACK(I, N)( \
+      void *opaque, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2), \
+      CMETA_IFACE_PARAM_DECL(P3), CMETA_IFACE_PARAM_DECL(P4)) { \
+    TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
+    tinymock_value_t args[] = { \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P1)), \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P2)), \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P3)), \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P4)) \
+    }; \
+    tinymock_value_t result = tinymock_mock_dispatch(&mock->N, 4u, args); \
+    return TINYMOCk_VALUE_AS(R, result); \
+  }
+
+#define TINYMOCk_INTERFACE_CALLBACK_FV0(I,R,N,C,RD,RA) \
+  static void TINYMOCk_INTERFACE_CALLBACK(I, N)(void *opaque) { \
+    TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
+    (void)tinymock_mock_dispatch(&mock->N, 0u, NULL); \
+  }
+#define TINYMOCk_INTERFACE_CALLBACK_FV1(I,R,N,C,RD,RA,P1) \
+  static void TINYMOCk_INTERFACE_CALLBACK(I, N)( \
+      void *opaque, CMETA_IFACE_PARAM_DECL(P1)) { \
+    TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
+    tinymock_value_t args[] = { \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P1)) \
+    }; \
+    (void)tinymock_mock_dispatch(&mock->N, 1u, args); \
+  }
+#define TINYMOCk_INTERFACE_CALLBACK_FV2(I,R,N,C,RD,RA,P1,P2) \
+  static void TINYMOCk_INTERFACE_CALLBACK(I, N)( \
+      void *opaque, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2)) { \
+    TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
+    tinymock_value_t args[] = { \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P1)), \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P2)) \
+    }; \
+    (void)tinymock_mock_dispatch(&mock->N, 2u, args); \
+  }
+#define TINYMOCk_INTERFACE_CALLBACK_FV3(I,R,N,C,RD,RA,P1,P2,P3) \
+  static void TINYMOCk_INTERFACE_CALLBACK(I, N)( \
+      void *opaque, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2), \
+      CMETA_IFACE_PARAM_DECL(P3)) { \
+    TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
+    tinymock_value_t args[] = { \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P1)), \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P2)), \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P3)) \
+    }; \
+    (void)tinymock_mock_dispatch(&mock->N, 3u, args); \
+  }
+#define TINYMOCk_INTERFACE_CALLBACK_FV4(I,R,N,C,RD,RA,P1,P2,P3,P4) \
+  static void TINYMOCk_INTERFACE_CALLBACK(I, N)( \
+      void *opaque, CMETA_IFACE_PARAM_DECL(P1), CMETA_IFACE_PARAM_DECL(P2), \
+      CMETA_IFACE_PARAM_DECL(P3), CMETA_IFACE_PARAM_DECL(P4)) { \
+    TINYMOCk_INTERFACE_TYPE(I) *mock = (TINYMOCk_INTERFACE_TYPE(I) *)opaque; \
+    tinymock_value_t args[] = { \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P1)), \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P2)), \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P3)), \
+      TINYMOCk_VALUE(CMETA_IFACE_PARAM_NAME(P4)) \
+    }; \
+    (void)tinymock_mock_dispatch(&mock->N, 4u, args); \
+  }
+#define TINYMOCk_INTERFACE_CALLBACK_FD0(I,R,N,C,RD,RA) \
+  TINYMOCk_INTERFACE_CALLBACK_FV0(I,R,N,C,RD,RA)
+
 #define TINYMOCk_INTERFACE_CALLBACK_ROW(I, K, R, N, ...) \
   TINYMOCk_CAT(TINYMOCk_INTERFACE_CALLBACK_, K)(I, R, N, __VA_ARGS__)
 
 #define TINYMOCk_INTERFACE_VTABLE_ROW(I, K, R, N, ...) \
   .N = TINYMOCk_INTERFACE_CALLBACK(I, N),
 
-#define TINYMOCk_INTERFACE_INIT_ROW(I, K, R, N, ...) \
+#define TINYMOCk_INTERFACE_INIT_LEGACY(I,N) \
   tinymock_mock_init(&mock->N, #I "." #N); \
   tinymock_mock_set_default_return(&mock->N, tinymock_value_zero());
+
+#define TINYMOCk_INTERFACE_INIT_REFLECTED(I,N) \
+  tinymock_mock_init(&mock->N, I##_##N##_function()->name); \
+  tinymock_mock_set_default_return(&mock->N, tinymock_value_zero());
+
+#define TINYMOCk_INTERFACE_INIT_R0(I,R,N,...) TINYMOCk_INTERFACE_INIT_LEGACY(I,N)
+#define TINYMOCk_INTERFACE_INIT_R1(I,R,N,...) TINYMOCk_INTERFACE_INIT_LEGACY(I,N)
+#define TINYMOCk_INTERFACE_INIT_R2(I,R,N,...) TINYMOCk_INTERFACE_INIT_LEGACY(I,N)
+#define TINYMOCk_INTERFACE_INIT_R3(I,R,N,...) TINYMOCk_INTERFACE_INIT_LEGACY(I,N)
+#define TINYMOCk_INTERFACE_INIT_R4(I,R,N,...) TINYMOCk_INTERFACE_INIT_LEGACY(I,N)
+#define TINYMOCk_INTERFACE_INIT_V0(I,R,N,...) TINYMOCk_INTERFACE_INIT_LEGACY(I,N)
+#define TINYMOCk_INTERFACE_INIT_V1(I,R,N,...) TINYMOCk_INTERFACE_INIT_LEGACY(I,N)
+#define TINYMOCk_INTERFACE_INIT_V2(I,R,N,...) TINYMOCk_INTERFACE_INIT_LEGACY(I,N)
+#define TINYMOCk_INTERFACE_INIT_V3(I,R,N,...) TINYMOCk_INTERFACE_INIT_LEGACY(I,N)
+#define TINYMOCk_INTERFACE_INIT_V4(I,R,N,...) TINYMOCk_INTERFACE_INIT_LEGACY(I,N)
+#define TINYMOCk_INTERFACE_INIT_D0(I,R,N,...) TINYMOCk_INTERFACE_INIT_LEGACY(I,N)
+#define TINYMOCk_INTERFACE_INIT_F0(I,R,N,...) TINYMOCk_INTERFACE_INIT_REFLECTED(I,N)
+#define TINYMOCk_INTERFACE_INIT_F1(I,R,N,...) TINYMOCk_INTERFACE_INIT_REFLECTED(I,N)
+#define TINYMOCk_INTERFACE_INIT_F2(I,R,N,...) TINYMOCk_INTERFACE_INIT_REFLECTED(I,N)
+#define TINYMOCk_INTERFACE_INIT_F3(I,R,N,...) TINYMOCk_INTERFACE_INIT_REFLECTED(I,N)
+#define TINYMOCk_INTERFACE_INIT_F4(I,R,N,...) TINYMOCk_INTERFACE_INIT_REFLECTED(I,N)
+#define TINYMOCk_INTERFACE_INIT_FV0(I,R,N,...) TINYMOCk_INTERFACE_INIT_REFLECTED(I,N)
+#define TINYMOCk_INTERFACE_INIT_FV1(I,R,N,...) TINYMOCk_INTERFACE_INIT_REFLECTED(I,N)
+#define TINYMOCk_INTERFACE_INIT_FV2(I,R,N,...) TINYMOCk_INTERFACE_INIT_REFLECTED(I,N)
+#define TINYMOCk_INTERFACE_INIT_FV3(I,R,N,...) TINYMOCk_INTERFACE_INIT_REFLECTED(I,N)
+#define TINYMOCk_INTERFACE_INIT_FV4(I,R,N,...) TINYMOCk_INTERFACE_INIT_REFLECTED(I,N)
+#define TINYMOCk_INTERFACE_INIT_FD0(I,R,N,...) TINYMOCk_INTERFACE_INIT_REFLECTED(I,N)
+#define TINYMOCk_INTERFACE_INIT_ROW(I, K, R, N, ...) \
+  TINYMOCk_CAT(TINYMOCk_INTERFACE_INIT_, K)(I,R,N,__VA_ARGS__)
 
 #define TINYMOCk_INTERFACE_WITH_CAPS(I, METHODS, CAPS) \
   typedef struct TINYMOCk_INTERFACE_TYPE(I) { \
@@ -163,5 +299,7 @@
   TINYMOCk_INTERFACE_WITH_CAPS(I, METHODS, 0u)
 
 #define TINYMOCk_INTERFACE_METHOD(mock, method) (&((mock)->method))
+#define TINYMOCk_INTERFACE_METHOD_FUNCTION(I, method) I##_##method##_function()
+#define TINYMOCk_INTERFACE_METHOD_ABI(I, method) I##_##method##_function_abi()
 
 #endif /* TINYMOCK_CMETA_H */
