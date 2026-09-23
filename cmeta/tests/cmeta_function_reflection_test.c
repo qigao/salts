@@ -161,11 +161,25 @@ suite("CMeta function reflection") {
         check_false(cmeta_param_desc_valid(&param));
         param.size = sizeof(cmeta_param_desc);
 
-        param.flags = 0u;
-        check_false(cmeta_param_desc_valid(&param));
+        param.flags = CMETA_PARAM_UNKNOWN;
+        check_true(cmeta_param_desc_valid(&param));
+        check_false(cmeta_param_direction_known(&param));
+
+        param.flags = CMETA_PARAM_IN;
+        check_true(cmeta_param_desc_valid(&param));
+        check_true(cmeta_param_direction_known(&param));
 
         param.flags = CMETA_PARAM_OUT;
         check_false(cmeta_param_desc_valid(&param));
+
+        pointer_param.flags = CMETA_PARAM_UNKNOWN;
+        check_true(cmeta_param_desc_valid(&pointer_param));
+        check_false(cmeta_param_direction_known(&pointer_param));
+
+        pointer_param.flags = CMETA_PARAM_NULLABLE |
+                              CMETA_PARAM_BORROWED;
+        check_true(cmeta_param_desc_valid(&pointer_param));
+        check_false(cmeta_param_direction_known(&pointer_param));
 
         pointer_param.flags = CMETA_PARAM_IN |
                               CMETA_PARAM_BORROWED |

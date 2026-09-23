@@ -13,6 +13,8 @@ extern "C" {
 typedef uint32_t cmeta_param_flags;
 
 enum {
+    /* Zero preserves an explicit "direction not specified" state. */
+    CMETA_PARAM_UNKNOWN = 0u,
     CMETA_PARAM_IN = 1u << 0,
     CMETA_PARAM_OUT = 1u << 1,
     CMETA_PARAM_INOUT = CMETA_PARAM_IN | CMETA_PARAM_OUT,
@@ -44,6 +46,12 @@ typedef struct cmeta_function_desc {
 
 bool cmeta_param_desc_valid(const cmeta_param_desc *desc);
 bool cmeta_function_desc_valid(const cmeta_function_desc *desc);
+
+static inline bool
+cmeta_param_direction_known(const cmeta_param_desc *desc) {
+    return desc != NULL &&
+           (desc->flags & CMETA_PARAM_DIRECTION_MASK) != CMETA_PARAM_UNKNOWN;
+}
 
 const cmeta_param_desc *
 cmeta_function_param(const cmeta_function_desc *desc, size_t index);
