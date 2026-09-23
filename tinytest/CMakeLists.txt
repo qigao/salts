@@ -9,7 +9,8 @@ set(tinytest_public_headers
   "${tinytest_include_dir}/tinytest.h"
   "${tinytest_include_dir}/tinytest.hpp"
   "${tinytest_include_dir}/tinymock.h"
-  "${tinytest_include_dir}/tinymock.hpp")
+  "${tinytest_include_dir}/tinymock.hpp"
+  "${tinytest_include_dir}/tinymock_cmeta.h")
 
 set(tinytest_meta_headers
   "${tinytest_include_dir}/tinymeta/traits.h"
