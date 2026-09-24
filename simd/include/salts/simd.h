@@ -183,6 +183,16 @@ bool salts_simd_extadd_pairwise(const cmeta_vector_desc *dst_desc,
                                 salts_v128 *out,
                                 const salts_v128 *value);
 
+bool salts_simd_q15mulr_sat(const cmeta_vector_desc *desc,
+                            salts_v128 *out,
+                            const salts_v128 *left,
+                            const salts_v128 *right);
+
+bool salts_simd_dot_pairwise(const cmeta_vector_desc *dst_desc,
+                             salts_v128 *out,
+                             const salts_v128 *left,
+                             const salts_v128 *right);
+
 bool salts_simd_select(const cmeta_vector_desc *desc,
                        salts_v128 *out,
                        const salts_v128 *when_set,
