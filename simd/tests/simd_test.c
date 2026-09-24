@@ -590,6 +590,106 @@ static void test_rounding_and_residual_binary(void) {
         &result, &a, &b));
 }
 
+
+static void test_numeric_conversions(void) {
+    const float trunc_f32[4] = {
+        1.9f, -2.9f, 1.0e30f, -1.0e30f
+    };
+    const int32_t trunc_i32_expected[4] = {
+        1, -2, INT32_MAX, INT32_MIN
+    };
+    const float trunc_u32_source[4] = {
+        -1.0f, 2.9f, 1.0e30f, 0.0f
+    };
+    const uint32_t trunc_u32_expected[4] = {
+        0u, 2u, UINT32_MAX, 0u
+    };
+    const double trunc_f64[2] = {3.9, -4.9};
+    const int32_t trunc_f64_expected[4] = {3, -4, 0, 0};
+    const int32_t convert_i32[4] = {-3, 4, 5, -6};
+    const float convert_f32_expected[4] = {-3.0f, 4.0f, 5.0f, -6.0f};
+    const uint32_t convert_u32[4] = {1u, 2u, 3u, 4u};
+    const double convert_f64_expected[2] = {1.0, 2.0};
+    const double demote_source[2] = {1.5, -2.25};
+    const float demote_expected[4] = {1.5f, -2.25f, 0.0f, 0.0f};
+    const float promote_source[4] = {1.5f, -2.25f, 99.0f, 100.0f};
+    const double promote_expected[2] = {1.5, -2.25};
+
+    int32_t i32_actual[4] = {0};
+    uint32_t u32_actual[4] = {0};
+    float f32_actual[4] = {0};
+    double f64_actual[2] = {0};
+    salts_v128 value = {{0}}, result = {{0}};
+
+    salts_simd_v128_load(&value, trunc_f32);
+    assert(salts_simd_convert(
+        &cmeta_vector_i32x4, &cmeta_vector_f32x4,
+        SALTS_SIMD_CONVERT_TRUNC_SAT, SALTS_SIMD_LANES_FULL,
+        &result, &value));
+    salts_simd_v128_store(i32_actual, &result);
+    assert(memcmp(
+        i32_actual, trunc_i32_expected, sizeof(i32_actual)) == 0);
+
+    salts_simd_v128_load(&value, trunc_u32_source);
+    assert(salts_simd_convert(
+        &cmeta_vector_u32x4, &cmeta_vector_f32x4,
+        SALTS_SIMD_CONVERT_TRUNC_SAT, SALTS_SIMD_LANES_FULL,
+        &result, &value));
+    salts_simd_v128_store(u32_actual, &result);
+    assert(memcmp(
+        u32_actual, trunc_u32_expected, sizeof(u32_actual)) == 0);
+
+    salts_simd_v128_load(&value, trunc_f64);
+    assert(salts_simd_convert(
+        &cmeta_vector_i32x4, &cmeta_vector_f64x2,
+        SALTS_SIMD_CONVERT_TRUNC_SAT, SALTS_SIMD_LANES_LOW_ZERO,
+        &result, &value));
+    salts_simd_v128_store(i32_actual, &result);
+    assert(memcmp(
+        i32_actual, trunc_f64_expected, sizeof(i32_actual)) == 0);
+
+    salts_simd_v128_load(&value, convert_i32);
+    assert(salts_simd_convert(
+        &cmeta_vector_f32x4, &cmeta_vector_i32x4,
+        SALTS_SIMD_CONVERT_NUMERIC, SALTS_SIMD_LANES_FULL,
+        &result, &value));
+    salts_simd_v128_store(f32_actual, &result);
+    assert(memcmp(
+        f32_actual, convert_f32_expected, sizeof(f32_actual)) == 0);
+
+    salts_simd_v128_load(&value, convert_u32);
+    assert(salts_simd_convert(
+        &cmeta_vector_f64x2, &cmeta_vector_u32x4,
+        SALTS_SIMD_CONVERT_NUMERIC, SALTS_SIMD_LANES_LOW,
+        &result, &value));
+    salts_simd_v128_store(f64_actual, &result);
+    assert(memcmp(
+        f64_actual, convert_f64_expected, sizeof(f64_actual)) == 0);
+
+    salts_simd_v128_load(&value, demote_source);
+    assert(salts_simd_convert(
+        &cmeta_vector_f32x4, &cmeta_vector_f64x2,
+        SALTS_SIMD_CONVERT_DEMOTE, SALTS_SIMD_LANES_LOW_ZERO,
+        &result, &value));
+    salts_simd_v128_store(f32_actual, &result);
+    assert(memcmp(
+        f32_actual, demote_expected, sizeof(f32_actual)) == 0);
+
+    salts_simd_v128_load(&value, promote_source);
+    assert(salts_simd_convert(
+        &cmeta_vector_f64x2, &cmeta_vector_f32x4,
+        SALTS_SIMD_CONVERT_PROMOTE, SALTS_SIMD_LANES_LOW,
+        &result, &value));
+    salts_simd_v128_store(f64_actual, &result);
+    assert(memcmp(
+        f64_actual, promote_expected, sizeof(f64_actual)) == 0);
+
+    assert(!salts_simd_convert(
+        &cmeta_vector_i16x8, &cmeta_vector_f32x4,
+        SALTS_SIMD_CONVERT_TRUNC_SAT, SALTS_SIMD_LANES_FULL,
+        &result, &value));
+}
+
 static void test_generic_splat(void) {
     salts_simd_scalar scalar = {0};
     salts_v128 value = {{0}};
@@ -863,6 +963,7 @@ int main(void) {
     test_saturating_binary();
     test_reductions();
     test_rounding_and_residual_binary();
+    test_numeric_conversions();
     test_widen_narrow_families();
     test_generic_splat();
     test_generic_integer_binary();
