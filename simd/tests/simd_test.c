@@ -310,7 +310,6 @@ static void test_advanced_min_max(void) {
     assert(memcmp(actual_u, max_u, sizeof(actual_u)) == 0);
 }
 
-
 static void test_pseudo_min_max(void) {
     const float left_f32[4] = {1.0f, 8.0f, -3.0f, 4.0f};
     const float right_f32[4] = {2.0f, 7.0f, -4.0f, 5.0f};
@@ -428,6 +427,88 @@ static void test_reductions(void) {
         &cmeta_vector_i8x16, SALTS_SIMD_REDUCE_ANY_TRUE,
         &value, &reduced));
     assert(reduced == 0u);
+}
+
+
+static void test_widen_narrow_families(void) {
+    const int16_t narrow_low[8] = {
+        -200, -128, -1, 0, 1, 127, 128, 300
+    };
+    const int16_t narrow_high[8] = {
+        -300, -129, -2, 2, 126, 200, 1000, -1000
+    };
+    const int8_t narrow_expected[16] = {
+        -128, -128, -1, 0, 1, 127, 127, 127,
+        -128, -128, -2, 2, 126, 127, 127, -128
+    };
+    const int8_t extend_source[16] = {
+        -8, -7, -6, -5, -4, -3, -2, -1,
+        1, 2, 3, 4, 5, 6, 7, 8
+    };
+    const int16_t extend_expected[8] = {
+        1, 2, 3, 4, 5, 6, 7, 8
+    };
+    const int8_t mul_left[16] = {
+        1, 2, 3, 4, 5, 6, 7, 8,
+        9, 10, 11, 12, 13, 14, 15, 16
+    };
+    const int8_t mul_right[16] = {
+        2, 3, 4, 5, 6, 7, 8, 9,
+        10, 11, 12, 13, 14, 15, 16, 17
+    };
+    const int16_t mul_expected[8] = {
+        90, 110, 132, 156, 182, 210, 240, 272
+    };
+    const int8_t pairwise_source[16] = {
+        1, 2, 3, 4, -1, -2, -3, -4,
+        5, 6, 7, 8, -5, -6, -7, -8
+    };
+    const int16_t pairwise_expected[8] = {
+        3, 7, -3, -7, 11, 15, -11, -15
+    };
+
+    int8_t narrow_actual[16] = {0};
+    int16_t wide_actual[8] = {0};
+    salts_v128 a = {{0}}, b = {{0}}, result = {{0}};
+
+    salts_simd_v128_load(&a, narrow_low);
+    salts_simd_v128_load(&b, narrow_high);
+    assert(salts_simd_narrow(
+        &cmeta_vector_i8x16, &result, &a, &b));
+    salts_simd_v128_store(narrow_actual, &result);
+    assert(memcmp(
+        narrow_actual, narrow_expected, sizeof(narrow_actual)) == 0);
+
+    salts_simd_v128_load(&a, extend_source);
+    assert(salts_simd_extend_half(
+        &cmeta_vector_i16x8, SALTS_SIMD_HALF_HIGH,
+        &result, &a));
+    salts_simd_v128_store(wide_actual, &result);
+    assert(memcmp(
+        wide_actual, extend_expected, sizeof(wide_actual)) == 0);
+
+    salts_simd_v128_load(&a, mul_left);
+    salts_simd_v128_load(&b, mul_right);
+    assert(salts_simd_extmul_half(
+        &cmeta_vector_i16x8, SALTS_SIMD_HALF_HIGH,
+        &result, &a, &b));
+    salts_simd_v128_store(wide_actual, &result);
+    assert(memcmp(
+        wide_actual, mul_expected, sizeof(wide_actual)) == 0);
+
+    salts_simd_v128_load(&a, pairwise_source);
+    assert(salts_simd_extadd_pairwise(
+        &cmeta_vector_i16x8, &result, &a));
+    salts_simd_v128_store(wide_actual, &result);
+    assert(memcmp(
+        wide_actual, pairwise_expected, sizeof(wide_actual)) == 0);
+
+    assert(!salts_simd_extend_half(
+        &cmeta_vector_f32x4, SALTS_SIMD_HALF_LOW,
+        &result, &a));
+    assert(!salts_simd_extmul_half(
+        &cmeta_vector_i16x8, (salts_simd_half)99,
+        &result, &a, &b));
 }
 
 static void test_generic_splat(void) {
@@ -702,6 +783,7 @@ int main(void) {
     test_pseudo_min_max();
     test_saturating_binary();
     test_reductions();
+    test_widen_narrow_families();
     test_generic_splat();
     test_generic_integer_binary();
     test_generic_float_binary();
