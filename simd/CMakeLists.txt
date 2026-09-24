@@ -21,6 +21,13 @@ target_include_directories(
   PRIVATE $<BUILD_INTERFACE:${SIMDE_INCLUDE_DIRS}>)
 target_link_libraries(${TARGET_NAME} PUBLIC Salts::CMeta)
 
+# Some SIMDe scalar fallbacks (for example nearest) use libm symbols such as
+# nearbyint/nearbyintf. Keep that runtime dependency in the exported static
+# link contract on platforms where libm is separate.
+if(NOT WIN32)
+  target_link_libraries(${TARGET_NAME} PUBLIC m)
+endif()
+
 install(
   TARGETS ${TARGET_NAME}
   EXPORT SaltsTargets
