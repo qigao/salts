@@ -43,9 +43,9 @@ example : builtinOperatorPolicy.validate builtinSignatureManifest = .ok () := by
 example : builtinOperatorPolicy.WellFormed builtinSignatureManifest :=
   builtinOperatorPolicy_wellFormed
 
-example : builtinOperatorPolicy.map.length = 7 := by decide
+example : builtinOperatorPolicy.map.length = 8 := by decide
 
-example : builtinOperatorPolicy.allUnary.length = 9 := by decide
+example : builtinOperatorPolicy.allUnary.length = 11 := by decide
 
 example : unregisteredPolicy.validate builtinSignatureManifest =
     .error .unregisteredSignature := by rfl

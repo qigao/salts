@@ -114,7 +114,7 @@ typedef enum cmeta_sig {
 #define CMETA_ENUM_U(in, ret) CMETA_SIG_NAME(CMETA_U_ID(in, ret)),
 #define CMETA_ENUM_B(a, b, ret) CMETA_SIG_NAME(CMETA_B_ID(a, b, ret)),
 #define CMETA_ENUM_G(in, out) CMETA_SIG_NAME(CMETA_G_ID(in, out)),
-    CMETA_ALL_SIGNATURES(CMETA_ENUM_U, CMETA_ENUM_B, CMETA_ENUM_G)
+    CMETA_ABI_SIGNATURES(CMETA_ENUM_U, CMETA_ENUM_B, CMETA_ENUM_G)
 #undef CMETA_ENUM_U
 #undef CMETA_ENUM_B
 #undef CMETA_ENUM_G

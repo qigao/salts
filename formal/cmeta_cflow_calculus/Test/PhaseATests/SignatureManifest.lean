@@ -35,14 +35,17 @@ def renderedHeaderHasRequiredMacros : Bool :=
   | .error _ => false
   | .ok header =>
       (header.splitOn "CMETA_BUILTIN_TYPE_LIST").length > 1 &&
-        (header.splitOn "CMETA_BUILTIN_BINARY_RELATION_LIST").length > 1
+        (header.splitOn "CMETA_BUILTIN_BINARY_RELATION_LIST").length > 1 &&
+        (header.splitOn "CMETA_BUILTIN_ABI_SIGNATURES").length > 1
 
 example : builtinSignatureManifest.validate = .ok () := by rfl
 
 example : builtinSignatureManifest.WellFormed :=
   builtinSignatureManifest_wellFormed
 
-example : builtinSignatureManifest.binary.length = 2 := by decide
+example : builtinSignatureManifest.binary.length = 3 := by decide
+
+example : builtinSignatureManifest.abiOrder.length = 14 := by decide
 
 example : builtinSignatureManifest.binary.length < 5 ^ 3 :=
   builtinBinaryRelations_finite

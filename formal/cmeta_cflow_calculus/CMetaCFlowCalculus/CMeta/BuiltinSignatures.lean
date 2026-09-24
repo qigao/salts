@@ -10,6 +10,8 @@ def builtinUnaryDoubleToInt : UnaryRelation := { input := "D", output := "I" }
 def builtinUnaryIntToDouble : UnaryRelation := { input := "I", output := "D" }
 def builtinUnaryIntToFloat : UnaryRelation := { input := "I", output := "F" }
 def builtinUnaryFloatToDouble : UnaryRelation := { input := "F", output := "D" }
+def builtinUnaryDoubleToBool : UnaryRelation := { input := "D", output := "B" }
+def builtinUnaryDoubleToDouble : UnaryRelation := { input := "D", output := "D" }
 
 def builtinBinaryLongLongToLong : BinaryRelation :=
   { left := "L", right := "L", output := "L" }
@@ -17,10 +19,15 @@ def builtinBinaryLongLongToLong : BinaryRelation :=
 def builtinBinaryLongDoubleToDouble : BinaryRelation :=
   { left := "L", right := "D", output := "D" }
 
+def builtinBinaryDoubleDoubleToDouble : BinaryRelation :=
+  { left := "D", right := "D", output := "D" }
+
 def builtinGeneratorIntToLong : GeneratorRelation :=
   { input := "I", output := "L" }
 
-/-- The built-in CMeta type/signature facts in stable public ABI order. -/
+/-- The built-in CMeta type/signature facts. Membership and ABI order are
+    deliberately separate so new relations can be appended without renumbering
+    existing cmeta_sig values. -/
 def builtinSignatureManifest : SignatureManifest where
   types := [
     { token := "B", cType := "CMETA_BOOL_TYPE",
@@ -43,14 +50,33 @@ def builtinSignatureManifest : SignatureManifest where
     builtinUnaryDoubleToInt,
     builtinUnaryIntToDouble,
     builtinUnaryIntToFloat,
-    builtinUnaryFloatToDouble
+    builtinUnaryFloatToDouble,
+    builtinUnaryDoubleToBool,
+    builtinUnaryDoubleToDouble
   ]
   binary := [
     builtinBinaryLongLongToLong,
-    builtinBinaryLongDoubleToDouble
+    builtinBinaryLongDoubleToDouble,
+    builtinBinaryDoubleDoubleToDouble
   ]
   generators := [
     builtinGeneratorIntToLong
+  ]
+  abiOrder := [
+    .unary builtinUnaryIntToInt,
+    .unary builtinUnaryIntToBool,
+    .unary builtinUnaryIntToLong,
+    .unary builtinUnaryLongToDouble,
+    .unary builtinUnaryDoubleToInt,
+    .unary builtinUnaryIntToDouble,
+    .unary builtinUnaryIntToFloat,
+    .unary builtinUnaryFloatToDouble,
+    .binary builtinBinaryLongLongToLong,
+    .binary builtinBinaryLongDoubleToDouble,
+    .generator builtinGeneratorIntToLong,
+    .unary builtinUnaryDoubleToBool,
+    .unary builtinUnaryDoubleToDouble,
+    .binary builtinBinaryDoubleDoubleToDouble
   ]
 
 theorem builtinSignatureManifest_wellFormed :

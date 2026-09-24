@@ -101,4 +101,22 @@
     CMETA_VALUE_SIGNATURES(U, B) \
     CMETA_GENERATOR_SIGNATURES(G)
 
+/* The default relation-profile SDK has an explicit Lean-generated ABI order so
+ * adding a relation does not renumber existing cmeta_sig values. Full,
+ * balanced, custom-policy and user-relation builds keep their policy-derived
+ * ordering; those configurations already require a coherent rebuild of CMeta
+ * and all translation units. */
+#if !defined(CMETA_SIGNATURE_PROFILE_FULL) && \
+    !defined(CMETA_SIGNATURE_PROFILE_BALANCED) && \
+    !defined(CMETA_CUSTOM_UNARY_POLICY) && \
+    !defined(CMETA_CUSTOM_BINARY_POLICY) && \
+    !defined(CMETA_CUSTOM_GENERATOR_POLICY) && \
+    !defined(CMETA_HAS_USER_RELATION_CONFIG)
+#define CMETA_ABI_SIGNATURES(U, B, G) \
+    CMETA_BUILTIN_ABI_SIGNATURES(U, B, G)
+#else
+#define CMETA_ABI_SIGNATURES(U, B, G) \
+    CMETA_ALL_SIGNATURES(U, B, G)
+#endif
+
 #endif

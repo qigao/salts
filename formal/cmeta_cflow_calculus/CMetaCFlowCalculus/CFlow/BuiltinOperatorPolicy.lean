@@ -7,7 +7,10 @@ open CMeta
 
 /-- The current CFlow operator admission facts in stable generated order. -/
 def builtinOperatorPolicy : OperatorPolicyManifest where
-  filter := [builtinUnaryIntToBool]
+  filter := [
+    builtinUnaryIntToBool,
+    builtinUnaryDoubleToBool
+  ]
   map := [
     builtinUnaryIntToInt,
     builtinUnaryIntToLong,
@@ -15,11 +18,15 @@ def builtinOperatorPolicy : OperatorPolicyManifest where
     builtinUnaryDoubleToInt,
     builtinUnaryIntToDouble,
     builtinUnaryIntToFloat,
-    builtinUnaryFloatToDouble
+    builtinUnaryFloatToDouble,
+    builtinUnaryDoubleToDouble
   ]
   transform := [builtinUnaryIntToLong]
   flatMap := [builtinGeneratorIntToLong]
-  reduce := [builtinBinaryLongLongToLong]
+  reduce := [
+    builtinBinaryLongLongToLong,
+    builtinBinaryDoubleDoubleToDouble
+  ]
   zip := [builtinBinaryLongDoubleToDouble]
 
 theorem builtinOperatorPolicy_wellFormed :
