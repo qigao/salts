@@ -310,6 +310,41 @@ static void test_advanced_min_max(void) {
     assert(memcmp(actual_u, max_u, sizeof(actual_u)) == 0);
 }
 
+
+static void test_pseudo_min_max(void) {
+    const float left_f32[4] = {1.0f, 8.0f, -3.0f, 4.0f};
+    const float right_f32[4] = {2.0f, 7.0f, -4.0f, 5.0f};
+    const float expected_pmin_f32[4] = {1.0f, 7.0f, -4.0f, 4.0f};
+    const double left_f64[2] = {9.0, -2.0};
+    const double right_f64[2] = {8.0, -3.0};
+    const double expected_pmax_f64[2] = {9.0, -2.0};
+    float actual_f32[4] = {0};
+    double actual_f64[2] = {0};
+    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+
+    salts_simd_v128_load(&left, left_f32);
+    salts_simd_v128_load(&right, right_f32);
+    assert(salts_simd_binary(
+        &cmeta_vector_f32x4, SALTS_SIMD_BINARY_PSEUDO_MIN,
+        &result, &left, &right));
+    salts_simd_v128_store(actual_f32, &result);
+    assert(memcmp(
+        actual_f32, expected_pmin_f32, sizeof(actual_f32)) == 0);
+
+    salts_simd_v128_load(&left, left_f64);
+    salts_simd_v128_load(&right, right_f64);
+    assert(salts_simd_binary(
+        &cmeta_vector_f64x2, SALTS_SIMD_BINARY_PSEUDO_MAX,
+        &result, &left, &right));
+    salts_simd_v128_store(actual_f64, &result);
+    assert(memcmp(
+        actual_f64, expected_pmax_f64, sizeof(actual_f64)) == 0);
+
+    assert(!salts_simd_binary(
+        &cmeta_vector_i32x4, SALTS_SIMD_BINARY_PSEUDO_MIN,
+        &result, &left, &right));
+}
+
 static void test_saturating_binary(void) {
     const int8_t left_s[16] = {
         120, -120, 100, -100, 1, -1, 127, -128,
@@ -664,6 +699,7 @@ int main(void) {
     test_shuffle_and_swizzle();
     test_advanced_unary();
     test_advanced_min_max();
+    test_pseudo_min_max();
     test_saturating_binary();
     test_reductions();
     test_generic_splat();
