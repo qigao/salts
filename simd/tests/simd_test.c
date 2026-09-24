@@ -220,6 +220,181 @@ static void test_shuffle_and_swizzle(void) {
     assert(memcmp(actual, expected_swizzle, sizeof(actual)) == 0);
 }
 
+
+static void test_advanced_unary(void) {
+    const int32_t ints[4] = {-1, -2, 3, -4};
+    const int32_t expected_abs[4] = {1, 2, 3, 4};
+    const int32_t expected_neg[4] = {1, 2, -3, 4};
+    const float floats[4] = {1.0f, 4.0f, 9.0f, 16.0f};
+    const float expected_sqrt[4] = {1.0f, 2.0f, 3.0f, 4.0f};
+    const uint8_t pop_source[16] = {
+        0u, 1u, 3u, 7u, 15u, 31u, 63u, 127u,
+        255u, 0x55u, 0xaau, 0x81u, 0x80u, 0x0fu, 0xf0u, 0xfeu
+    };
+    const uint8_t pop_expected[16] = {
+        0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u,
+        8u, 4u, 4u, 2u, 1u, 4u, 4u, 7u
+    };
+    int32_t int_actual[4] = {0};
+    float float_actual[4] = {0};
+    uint8_t pop_actual[16] = {0};
+    salts_v128 value = {{0}}, result = {{0}};
+
+    salts_simd_v128_load(&value, ints);
+    assert(salts_simd_unary(
+        &cmeta_vector_i32x4, SALTS_SIMD_UNARY_ABS,
+        &result, &value));
+    salts_simd_v128_store(int_actual, &result);
+    assert(memcmp(int_actual, expected_abs, sizeof(int_actual)) == 0);
+
+    assert(salts_simd_unary(
+        &cmeta_vector_i32x4, SALTS_SIMD_UNARY_NEG,
+        &result, &value));
+    salts_simd_v128_store(int_actual, &result);
+    assert(memcmp(int_actual, expected_neg, sizeof(int_actual)) == 0);
+
+    salts_simd_v128_load(&value, floats);
+    assert(salts_simd_unary(
+        &cmeta_vector_f32x4, SALTS_SIMD_UNARY_SQRT,
+        &result, &value));
+    salts_simd_v128_store(float_actual, &result);
+    assert(memcmp(float_actual, expected_sqrt, sizeof(float_actual)) == 0);
+
+    salts_simd_v128_load(&value, pop_source);
+    assert(salts_simd_unary(
+        &cmeta_vector_u8x16, SALTS_SIMD_UNARY_POPCOUNT,
+        &result, &value));
+    salts_simd_v128_store(pop_actual, &result);
+    assert(memcmp(pop_actual, pop_expected, sizeof(pop_actual)) == 0);
+}
+
+static void test_advanced_min_max(void) {
+    const int32_t left_s[4] = {-5, 100, -1, 7};
+    const int32_t right_s[4] = {-3, 2, -9, 7};
+    const int32_t min_s[4] = {-5, 2, -9, 7};
+    const int32_t max_s[4] = {-3, 100, -1, 7};
+    const uint32_t left_u[4] = {UINT32_MAX, 1u, 8u, 3u};
+    const uint32_t right_u[4] = {1u, 2u, 4u, 9u};
+    const uint32_t min_u[4] = {1u, 1u, 4u, 3u};
+    const uint32_t max_u[4] = {UINT32_MAX, 2u, 8u, 9u};
+    int32_t actual_s[4] = {0};
+    uint32_t actual_u[4] = {0};
+    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+
+    salts_simd_v128_load(&left, left_s);
+    salts_simd_v128_load(&right, right_s);
+    assert(salts_simd_binary(
+        &cmeta_vector_i32x4, SALTS_SIMD_BINARY_MIN,
+        &result, &left, &right));
+    salts_simd_v128_store(actual_s, &result);
+    assert(memcmp(actual_s, min_s, sizeof(actual_s)) == 0);
+
+    assert(salts_simd_binary(
+        &cmeta_vector_i32x4, SALTS_SIMD_BINARY_MAX,
+        &result, &left, &right));
+    salts_simd_v128_store(actual_s, &result);
+    assert(memcmp(actual_s, max_s, sizeof(actual_s)) == 0);
+
+    salts_simd_v128_load(&left, left_u);
+    salts_simd_v128_load(&right, right_u);
+    assert(salts_simd_binary(
+        &cmeta_vector_u32x4, SALTS_SIMD_BINARY_MIN,
+        &result, &left, &right));
+    salts_simd_v128_store(actual_u, &result);
+    assert(memcmp(actual_u, min_u, sizeof(actual_u)) == 0);
+
+    assert(salts_simd_binary(
+        &cmeta_vector_u32x4, SALTS_SIMD_BINARY_MAX,
+        &result, &left, &right));
+    salts_simd_v128_store(actual_u, &result);
+    assert(memcmp(actual_u, max_u, sizeof(actual_u)) == 0);
+}
+
+static void test_saturating_binary(void) {
+    const int8_t left_s[16] = {
+        120, -120, 100, -100, 1, -1, 127, -128,
+        10, 20, 30, 40, -10, -20, -30, -40
+    };
+    const int8_t right_s[16] = {
+        20, -20, 50, -50, 2, -2, 1, -1,
+        -100, 100, 100, 100, -100, -100, -100, -100
+    };
+    const int8_t add_s[16] = {
+        127, -128, 127, -128, 3, -3, 127, -128,
+        -90, 120, 127, 127, -110, -120, -128, -128
+    };
+    const uint8_t left_u[16] = {
+        250u, 1u, 200u, 0u, 10u, 20u, 30u, 40u,
+        50u, 60u, 70u, 80u, 90u, 100u, 110u, 120u
+    };
+    const uint8_t right_u[16] = {
+        10u, 2u, 100u, 1u, 20u, 30u, 40u, 50u,
+        60u, 70u, 80u, 90u, 100u, 110u, 120u, 130u
+    };
+    const uint8_t sub_u[16] = {
+        240u, 0u, 100u, 0u, 0u, 0u, 0u, 0u,
+        0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u
+    };
+    int8_t actual_s[16] = {0};
+    uint8_t actual_u[16] = {0};
+    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+
+    salts_simd_v128_load(&left, left_s);
+    salts_simd_v128_load(&right, right_s);
+    assert(salts_simd_saturating_binary(
+        &cmeta_vector_i8x16, SALTS_SIMD_SATURATING_ADD,
+        &result, &left, &right));
+    salts_simd_v128_store(actual_s, &result);
+    assert(memcmp(actual_s, add_s, sizeof(actual_s)) == 0);
+
+    salts_simd_v128_load(&left, left_u);
+    salts_simd_v128_load(&right, right_u);
+    assert(salts_simd_saturating_binary(
+        &cmeta_vector_u8x16, SALTS_SIMD_SATURATING_SUB,
+        &result, &left, &right));
+    salts_simd_v128_store(actual_u, &result);
+    assert(memcmp(actual_u, sub_u, sizeof(actual_u)) == 0);
+}
+
+static void test_reductions(void) {
+    const int16_t all_nonzero[8] = {1, -1, 2, -2, 3, -3, 4, -4};
+    const int16_t with_zero[8] = {1, -1, 2, 0, 3, -3, 4, -4};
+    const int8_t bitmask_lanes[16] = {
+        -1, 1, -2, 2, -3, 3, -4, 4,
+        -5, 5, -6, 6, -7, 7, -8, 8
+    };
+    uint32_t reduced = 0u;
+    salts_v128 value = {{0}};
+
+    salts_simd_v128_load(&value, all_nonzero);
+    assert(salts_simd_reduce(
+        &cmeta_vector_i16x8, SALTS_SIMD_REDUCE_ALL_TRUE,
+        &value, &reduced));
+    assert(reduced == 1u);
+
+    salts_simd_v128_load(&value, with_zero);
+    assert(salts_simd_reduce(
+        &cmeta_vector_i16x8, SALTS_SIMD_REDUCE_ALL_TRUE,
+        &value, &reduced));
+    assert(reduced == 0u);
+    assert(salts_simd_reduce(
+        &cmeta_vector_i16x8, SALTS_SIMD_REDUCE_ANY_TRUE,
+        &value, &reduced));
+    assert(reduced == 1u);
+
+    salts_simd_v128_load(&value, bitmask_lanes);
+    assert(salts_simd_reduce(
+        &cmeta_vector_i8x16, SALTS_SIMD_REDUCE_BITMASK,
+        &value, &reduced));
+    assert(reduced == UINT32_C(0x5555));
+
+    memset(&value, 0, sizeof(value));
+    assert(salts_simd_reduce(
+        &cmeta_vector_i8x16, SALTS_SIMD_REDUCE_ANY_TRUE,
+        &value, &reduced));
+    assert(reduced == 0u);
+}
+
 static void test_generic_splat(void) {
     salts_simd_scalar scalar = {0};
     salts_v128 value = {{0}};
@@ -416,9 +591,21 @@ static void test_generic_unsupported_pairs(void) {
         &result, &left, &right));
 
     assert(!salts_simd_unary(
-        &cmeta_vector_i32x4,
+        &cmeta_vector_u32x4,
         SALTS_SIMD_UNARY_ABS,
         &result, &left));
+    assert(!salts_simd_unary(
+        &cmeta_vector_i32x4,
+        SALTS_SIMD_UNARY_SQRT,
+        &result, &left));
+    assert(!salts_simd_reduce(
+        &cmeta_vector_f32x4,
+        SALTS_SIMD_REDUCE_ALL_TRUE,
+        &left, &(uint32_t){0u}));
+    assert(!salts_simd_saturating_binary(
+        &cmeta_vector_i8x16,
+        (salts_simd_saturating_op)99,
+        &result, &left, &right));
 }
 
 static void test_i32x4(void) {
@@ -475,6 +662,10 @@ int main(void) {
     test_load_splat_and_zero();
     test_lane_extract_replace();
     test_shuffle_and_swizzle();
+    test_advanced_unary();
+    test_advanced_min_max();
+    test_saturating_binary();
+    test_reductions();
     test_generic_splat();
     test_generic_integer_binary();
     test_generic_float_binary();
