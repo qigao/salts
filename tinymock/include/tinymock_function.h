@@ -11,9 +11,10 @@
  * declarations. The CMeta declaration extension hook replays those exact rows
  * into external replacement definitions.
  *
- * Reflected wrappers use the legacy portable value carrier only where it is
- * sound (builtin scalar/object-pointer compatibility paths). Aggregate,
- * function-pointer, and enum values use CMeta typed history/return state.
+ * Reflected wrappers use the legacy portable value carrier only for builtin
+ * scalar compatibility. Object pointers use the explicit pointer carrier;
+ * aggregate, function-pointer, and enum values use CMeta typed history/return
+ * state.
  * Literal-void and value-return functions are generated separately at
  * preprocessing time. Variadic declarations remain outside this backend.
  */
@@ -162,7 +163,8 @@
   TINYMOCk_FUNCTION_PARAM_NAME_APPLY(row)
 
 #define TINYMOCk_FUNCTION_BOX_CMETA_ABI_SCALAR(value) TINYMOCk_VALUE(value)
-#define TINYMOCk_FUNCTION_BOX_CMETA_ABI_OBJECT_POINTER(value) TINYMOCk_VALUE(value)
+#define TINYMOCk_FUNCTION_BOX_CMETA_ABI_OBJECT_POINTER(value) \
+  tinymock_detail_box_ptr((const void *)(value))
 #define TINYMOCk_FUNCTION_BOX_CMETA_ABI_UNSPECIFIED(value) tinymock_value_zero()
 #define TINYMOCk_FUNCTION_BOX_CMETA_ABI_VOID(value) tinymock_value_zero()
 #define TINYMOCk_FUNCTION_BOX_CMETA_ABI_AGGREGATE(value) tinymock_value_zero()
@@ -259,7 +261,18 @@
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_SCALAR(name, type, result) \
   TINYMOCk_FUNCTION_RETURN_TYPED_OR_LEGACY(name, type, result)
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_OBJECT_POINTER(name, type, result) \
-  TINYMOCk_FUNCTION_RETURN_TYPED_OR_LEGACY(name, type, result)
+  do { \
+    type typed_result__; \
+    if (tinymock_cmeta_return_enabled(TINYMOCk_FUNCTION_RETURN_STATE(name))) { \
+      bool typed_ok__ = tinymock_cmeta_return_write( \
+          TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
+          &typed_result__); \
+      TINYMOCk_ASSERT(typed_ok__, \
+                      "tinymock cannot materialize typed return for %s", #name); \
+      if (typed_ok__) return typed_result__; \
+    } \
+    return (type)tinymock_detail_unbox_ptr(result); \
+  } while (0)
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_AGGREGATE(name, type, result) \
   do { \
     type typed_result__ = {0}; \

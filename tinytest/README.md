@@ -339,9 +339,10 @@ direct array declarator, static-inline helper, or missing name fails the Test
 Build selection witness instead of silently producing no mock.
 
 The current reflected ABI carriers include builtin scalar, object pointer,
-aggregate-by-value, function-pointer, enum, and literal void. Aggregate,
-function-pointer, and enum values use CMeta typed history/return state instead
-of the legacy `TINYMOCk_VALUE` generic carrier. Explicit descriptors with
+aggregate-by-value, function-pointer, enum, and literal void. Object pointers
+use TinyMock's explicit pointer carrier; aggregate, function-pointer, and enum
+values use CMeta typed history/return state. These reflected categories do not
+depend on the legacy `TINYMOCk_VALUE` generic carrier. Explicit descriptors with
 `CMETA_ABI_UNSPECIFIED` and `CMETA_ABI_OPAQUE` remain rejected until a
 consumer-specific lowering is defined.
 
