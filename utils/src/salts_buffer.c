@@ -955,8 +955,11 @@ void mem_buffer_release(mem_buffer_t* buffer) {
 
 mem_slice_t mem_slice(mem_buffer_t* buffer, size_t offset, size_t length) {
     mem_slice_t slice = {0};
+    size_t remaining;
+
     if (!buffer || offset >= buffer->used) return slice;
-    if (offset + length > buffer->used) length = buffer->used - offset;
+    remaining = buffer->used - offset;
+    if (length > remaining) length = remaining;
     slice.data = buffer->data + offset;
     slice.length = length;
     slice.buffer = buffer;

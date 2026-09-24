@@ -307,6 +307,63 @@ spec("Salts Buffer (mem_pool_t) Tests") {
     mem_destroy(&pool);
   }
 
+  it("should clamp slice ranges without size_t overflow") {
+    mem_pool_t pool;
+    mem_buffer_t* buffer;
+    mem_slice_t slice;
+
+    mem_init(&pool, 0);
+    buffer = mem_get_buffer(&pool, 32U);
+    check_not_null(buffer);
+    memcpy(buffer->data, "abcdefgh", 8U);
+    buffer->used = 8U;
+
+    slice = mem_slice(buffer, 2U, SIZE_MAX);
+    check_equal((const void *)(slice.data),
+                (const void *)(mem_buffer_data(buffer) + 2U));
+    check_equal(slice.length, 6U);
+    check_equal((const void *)(slice.buffer), (const void *)(buffer));
+    check_equal((size_t)mem_buffer_ref_count(buffer), 2U);
+    mem_slice_release(&slice);
+    check_equal((size_t)mem_buffer_ref_count(buffer), 1U);
+
+    slice = mem_slice(buffer, buffer->used, 1U);
+    check_null(slice.data);
+    check_null(slice.buffer);
+    check_equal(slice.length, 0U);
+    check_equal((size_t)mem_buffer_ref_count(buffer), 1U);
+
+    slice = mem_slice(buffer, buffer->used + 1U, SIZE_MAX);
+    check_null(slice.data);
+    check_null(slice.buffer);
+    check_equal(slice.length, 0U);
+    check_equal((size_t)mem_buffer_ref_count(buffer), 1U);
+
+    mem_release(buffer);
+    mem_destroy(&pool);
+  }
+
+  it("should preserve overflow-safe slicing for external buffers") {
+    char data[] = "external";
+    mem_buffer_t* buffer;
+    mem_slice_t slice;
+
+    atomic_store_explicit(&g_external_free_calls, 0, memory_order_relaxed);
+    buffer = mem_wrap_external(data, sizeof(data), external_free_probe, NULL);
+    check_not_null(buffer);
+
+    slice = mem_slice(buffer, 1U, SIZE_MAX);
+    check_equal((const void *)(slice.data), (const void *)(data + 1U));
+    check_equal(slice.length, sizeof(data) - 1U);
+    check_equal((const void *)(slice.buffer), (const void *)(buffer));
+    check_equal((size_t)mem_buffer_ref_count(buffer), 2U);
+
+    mem_slice_release(&slice);
+    check_equal((size_t)mem_buffer_ref_count(buffer), 1U);
+    mem_release(buffer);
+    check_equal(atomic_load_explicit(&g_external_free_calls, memory_order_relaxed), 1);
+  }
+
   it("should handle external wrapping") {
     char data[] = "External static data";
     int user_data = 42;
