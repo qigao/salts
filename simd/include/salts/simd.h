@@ -75,6 +75,11 @@ typedef enum salts_simd_reduce_op {
     SALTS_SIMD_REDUCE_BITMASK
 } salts_simd_reduce_op;
 
+typedef enum salts_simd_half {
+    SALTS_SIMD_HALF_LOW = 0,
+    SALTS_SIMD_HALF_HIGH
+} salts_simd_half;
+
 void salts_simd_v128_load(salts_v128 *out, const void *source);
 void salts_simd_v128_store(void *destination, const salts_v128 *value);
 
@@ -151,6 +156,26 @@ bool salts_simd_reduce(const cmeta_vector_desc *desc,
                        salts_simd_reduce_op op,
                        const salts_v128 *value,
                        uint32_t *out);
+
+bool salts_simd_narrow(const cmeta_vector_desc *dst_desc,
+                       salts_v128 *out,
+                       const salts_v128 *low,
+                       const salts_v128 *high);
+
+bool salts_simd_extend_half(const cmeta_vector_desc *dst_desc,
+                            salts_simd_half half,
+                            salts_v128 *out,
+                            const salts_v128 *value);
+
+bool salts_simd_extmul_half(const cmeta_vector_desc *dst_desc,
+                            salts_simd_half half,
+                            salts_v128 *out,
+                            const salts_v128 *left,
+                            const salts_v128 *right);
+
+bool salts_simd_extadd_pairwise(const cmeta_vector_desc *dst_desc,
+                                salts_v128 *out,
+                                const salts_v128 *value);
 
 bool salts_simd_select(const cmeta_vector_desc *desc,
                        salts_v128 *out,
