@@ -1089,6 +1089,43 @@ bool salts_simd_extadd_pairwise(const cmeta_vector_desc *dst_desc,
     return true;
 }
 
+
+bool salts_simd_q15mulr_sat(const cmeta_vector_desc *desc,
+                            salts_v128 *out,
+                            const salts_v128 *left,
+                            const salts_v128 *right) {
+    if (!salts_simd_desc_valid(desc) || desc->is_mask ||
+        desc->lane_kind != CMETA_VECTOR_I16 ||
+        desc->lane_count != 8u ||
+        out == NULL || left == NULL || right == NULL)
+        return false;
+
+    salts_simd_store_value(
+        out,
+        simde_wasm_i16x8_q15mulr_sat(
+            salts_simd_load_value(left),
+            salts_simd_load_value(right)));
+    return true;
+}
+
+bool salts_simd_dot_pairwise(const cmeta_vector_desc *dst_desc,
+                             salts_v128 *out,
+                             const salts_v128 *left,
+                             const salts_v128 *right) {
+    if (!salts_simd_desc_valid(dst_desc) || dst_desc->is_mask ||
+        dst_desc->lane_kind != CMETA_VECTOR_I32 ||
+        dst_desc->lane_count != 4u ||
+        out == NULL || left == NULL || right == NULL)
+        return false;
+
+    salts_simd_store_value(
+        out,
+        simde_wasm_i32x4_dot_i16x8(
+            salts_simd_load_value(left),
+            salts_simd_load_value(right)));
+    return true;
+}
+
 bool salts_simd_shift(const cmeta_vector_desc *desc,
                       salts_simd_shift_op op,
                       salts_v128 *out,
