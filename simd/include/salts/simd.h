@@ -32,7 +32,11 @@ typedef enum salts_simd_unary_op {
     SALTS_SIMD_UNARY_ABS,
     SALTS_SIMD_UNARY_NEG,
     SALTS_SIMD_UNARY_SQRT,
-    SALTS_SIMD_UNARY_POPCOUNT
+    SALTS_SIMD_UNARY_POPCOUNT,
+    SALTS_SIMD_UNARY_CEIL,
+    SALTS_SIMD_UNARY_FLOOR,
+    SALTS_SIMD_UNARY_TRUNC,
+    SALTS_SIMD_UNARY_NEAREST
 } salts_simd_unary_op;
 
 typedef enum salts_simd_binary_op {
