@@ -395,6 +395,86 @@ static void test_reductions(void) {
     assert(reduced == 0u);
 }
 
+
+static void test_rounding_and_residual_binary(void) {
+    const float f32_source[4] = {1.2f, -1.2f, 2.5f, -2.5f};
+    const float ceil_expected[4] = {2.0f, -1.0f, 3.0f, -2.0f};
+    const float floor_expected[4] = {1.0f, -2.0f, 2.0f, -3.0f};
+    const float trunc_expected[4] = {1.0f, -1.0f, 2.0f, -2.0f};
+    const uint8_t avg_left[16] = {
+        0u, 1u, 2u, 3u, 10u, 11u, 100u, 101u,
+        200u, 201u, 250u, 251u, 254u, 255u, 7u, 8u
+    };
+    const uint8_t avg_right[16] = {
+        1u, 2u, 3u, 4u, 11u, 12u, 101u, 102u,
+        201u, 202u, 251u, 252u, 255u, 255u, 8u, 9u
+    };
+    const uint8_t avg_expected[16] = {
+        1u, 2u, 3u, 4u, 11u, 12u, 101u, 102u,
+        201u, 202u, 251u, 252u, 255u, 255u, 8u, 9u
+    };
+    const uint32_t andnot_left[4] = {
+        UINT32_C(0xffffffff), UINT32_C(0x0f0f0f0f),
+        UINT32_C(0xaaaaaaaa), UINT32_C(0x12345678)
+    };
+    const uint32_t andnot_right[4] = {
+        UINT32_C(0x00ff00ff), UINT32_C(0xf0f0f0f0),
+        UINT32_C(0x55555555), UINT32_C(0xffff0000)
+    };
+    const uint32_t andnot_expected[4] = {
+        UINT32_C(0xff00ff00), UINT32_C(0x0f0f0f0f),
+        UINT32_C(0xaaaaaaaa), UINT32_C(0x00005678)
+    };
+
+    float f32_actual[4] = {0};
+    uint8_t avg_actual[16] = {0};
+    uint32_t andnot_actual[4] = {0};
+    salts_v128 a = {{0}}, b = {{0}}, result = {{0}};
+
+    salts_simd_v128_load(&a, f32_source);
+    assert(salts_simd_unary(
+        &cmeta_vector_f32x4, SALTS_SIMD_UNARY_CEIL,
+        &result, &a));
+    salts_simd_v128_store(f32_actual, &result);
+    assert(memcmp(f32_actual, ceil_expected, sizeof(f32_actual)) == 0);
+
+    assert(salts_simd_unary(
+        &cmeta_vector_f32x4, SALTS_SIMD_UNARY_FLOOR,
+        &result, &a));
+    salts_simd_v128_store(f32_actual, &result);
+    assert(memcmp(f32_actual, floor_expected, sizeof(f32_actual)) == 0);
+
+    assert(salts_simd_unary(
+        &cmeta_vector_f32x4, SALTS_SIMD_UNARY_TRUNC,
+        &result, &a));
+    salts_simd_v128_store(f32_actual, &result);
+    assert(memcmp(f32_actual, trunc_expected, sizeof(f32_actual)) == 0);
+
+    salts_simd_v128_load(&a, avg_left);
+    salts_simd_v128_load(&b, avg_right);
+    assert(salts_simd_binary(
+        &cmeta_vector_u8x16,
+        SALTS_SIMD_BINARY_AVERAGE_ROUND_UNSIGNED,
+        &result, &a, &b));
+    salts_simd_v128_store(avg_actual, &result);
+    assert(memcmp(avg_actual, avg_expected, sizeof(avg_actual)) == 0);
+
+    salts_simd_v128_load(&a, andnot_left);
+    salts_simd_v128_load(&b, andnot_right);
+    assert(salts_simd_binary(
+        &cmeta_vector_u32x4,
+        SALTS_SIMD_BINARY_AND_NOT,
+        &result, &a, &b));
+    salts_simd_v128_store(andnot_actual, &result);
+    assert(memcmp(
+        andnot_actual, andnot_expected, sizeof(andnot_actual)) == 0);
+
+    assert(!salts_simd_binary(
+        &cmeta_vector_i8x16,
+        SALTS_SIMD_BINARY_AVERAGE_ROUND_UNSIGNED,
+        &result, &a, &b));
+}
+
 static void test_generic_splat(void) {
     salts_simd_scalar scalar = {0};
     salts_v128 value = {{0}};
@@ -666,6 +746,7 @@ int main(void) {
     test_advanced_min_max();
     test_saturating_binary();
     test_reductions();
+    test_rounding_and_residual_binary();
     test_generic_splat();
     test_generic_integer_binary();
     test_generic_float_binary();
