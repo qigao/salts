@@ -794,6 +794,9 @@ bool salts_simd_saturating_binary(
     if (!salts_simd_desc_valid(desc) || desc->is_mask ||
         out == NULL || left == NULL || right == NULL)
         return false;
+    if (op != SALTS_SIMD_SATURATING_ADD &&
+        op != SALTS_SIMD_SATURATING_SUB)
+        return false;
 
     a = salts_simd_load_value(left);
     b = salts_simd_load_value(right);
@@ -844,6 +847,11 @@ bool salts_simd_reduce(const cmeta_vector_desc *desc,
     }
 
     if (desc->is_mask)
+        return false;
+
+    if (desc->lane_kind == CMETA_VECTOR_F32 ||
+        desc->lane_kind == CMETA_VECTOR_F64 ||
+        desc->lane_kind == CMETA_VECTOR_BOOL)
         return false;
 
     if (op == SALTS_SIMD_REDUCE_ALL_TRUE) {
