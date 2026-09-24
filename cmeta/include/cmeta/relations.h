@@ -3,6 +3,15 @@
 
 #include <cmeta/types.h>
 
+/* Default installed-SDK builds use the Lean-generated stable built-in ABI
+ * order. Custom relation builds retain their historical policy-derived enum
+ * ordering and must, as before, rebuild CMeta and every consumer together. */
+#if defined(CMETA_USER_UNARY_RELATION_LIST) || \
+    defined(CMETA_USER_BINARY_RELATION_LIST) || \
+    defined(CMETA_USER_GENERATOR_RELATION_LIST)
+#define CMETA_HAS_USER_RELATION_CONFIG 1
+#endif
+
 #ifndef CMETA_USER_UNARY_RELATION_LIST
 #define CMETA_USER_UNARY_RELATION_LIST
 #endif
