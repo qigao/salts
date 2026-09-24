@@ -86,6 +86,19 @@ typedef enum salts_simd_half {
     SALTS_SIMD_HALF_HIGH
 } salts_simd_half;
 
+typedef enum salts_simd_convert_op {
+    SALTS_SIMD_CONVERT_TRUNC_SAT = 0,
+    SALTS_SIMD_CONVERT_NUMERIC,
+    SALTS_SIMD_CONVERT_DEMOTE,
+    SALTS_SIMD_CONVERT_PROMOTE
+} salts_simd_convert_op;
+
+typedef enum salts_simd_lane_policy {
+    SALTS_SIMD_LANES_FULL = 0,
+    SALTS_SIMD_LANES_LOW,
+    SALTS_SIMD_LANES_LOW_ZERO
+} salts_simd_lane_policy;
+
 void salts_simd_v128_load(salts_v128 *out, const void *source);
 void salts_simd_v128_store(void *destination, const salts_v128 *value);
 
@@ -192,6 +205,13 @@ bool salts_simd_dot_pairwise(const cmeta_vector_desc *dst_desc,
                              salts_v128 *out,
                              const salts_v128 *left,
                              const salts_v128 *right);
+
+bool salts_simd_convert(const cmeta_vector_desc *dst_desc,
+                        const cmeta_vector_desc *src_desc,
+                        salts_simd_convert_op op,
+                        salts_simd_lane_policy lane_policy,
+                        salts_v128 *out,
+                        const salts_v128 *value);
 
 bool salts_simd_select(const cmeta_vector_desc *desc,
                        salts_v128 *out,
