@@ -9,6 +9,8 @@ on:
       - "packaging/nuget/**"
       - "tinymock/**"
       - "cmeta/**"
+      - "cflow/**"
+      - "tests/cflow_installed_consumer/**"
       - "cmake/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
@@ -21,6 +23,8 @@ on:
       - "packaging/nuget/**"
       - "tinymock/**"
       - "cmeta/**"
+      - "cflow/**"
+      - "tests/cflow_installed_consumer/**"
       - "cmake/**"
       - ".github/workflows/native-nuget-release.yml"
       - ".github/actions/setup-re2c-tools/**"
@@ -109,6 +113,7 @@ jobs:
           test -f "$prefix/include/tinymock_return.h"
           test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
@@ -129,6 +134,18 @@ jobs:
             -DCMAKE_PREFIX_PATH="$prefix"
           cmake --build build/tinymock-installed-consumer --parallel 2
           ./build/tinymock-installed-consumer/tinymock_installed_consumer
+      - name: Verify installed CFlow projection consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$GITHUB_WORKSPACE/stage/sdk/linux-x64"
+          cmake -S tests/cflow_installed_consumer \
+            -B build/cflow-installed-consumer \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$prefix"
+          cmake --build build/cflow-installed-consumer --parallel 2
+          ./build/cflow-installed-consumer/cflow_installed_consumer
       - uses: actions/upload-artifact@v4
         with:
           name: salts-sdk-linux-x64
@@ -195,6 +212,7 @@ jobs:
           test -f "$prefix/include/tinymock_return.h"
           test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
@@ -291,6 +309,9 @@ jobs:
           if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::TinyMock" -Quiet)) {
             throw "missing Salts::TinyMock export in $targets"
           }
+          if (-not (Select-String -LiteralPath $targets -SimpleMatch "Salts::CFlow" -Quiet)) {
+            throw "missing Salts::CFlow export in $targets"
+          }
           if (-not (Select-String -LiteralPath $tinymockCMake -SimpleMatch "salts_tinymock_override_functions" -Quiet)) {
             throw "missing TinyMock CMake helper in $tinymockCMake"
           }
@@ -366,6 +387,7 @@ jobs:
           test -f "$prefix/include/tinymock_return.h"
           test -f "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           grep -F "Salts::TinyMock" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
+          grep -F "Salts::CFlow" "$prefix/lib/cmake/Salts/SaltsTargets.cmake"
           grep -F "salts_tinymock_override_functions" "$prefix/lib/cmake/Salts/SaltsTinyMock.cmake"
           cat > "$prefix/salts-sdk-manifest.txt" <<EOF
           version=${{ needs.metadata.outputs.version }}
@@ -400,6 +422,7 @@ jobs:
           test -f package/sdk/linux-x64/lib/cmake/Salts/SaltsConfig.cmake
           test -f package/sdk/linux-x64/include/cmeta/function.h
           test -f package/sdk/linux-x64/include/cflow/function_projection.h
+          grep -F "Salts::CFlow" package/sdk/linux-x64/lib/cmake/Salts/SaltsTargets.cmake
           test -f package/sdk/linux-x64/include/cmeta/interface.h
           test -f package/sdk/linux-x64/include/tinymeta/equality.h
           test ! -e package/sdk/linux-x64/include/tinymeta/cmeta.h
