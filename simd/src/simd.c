@@ -1126,6 +1126,112 @@ bool salts_simd_dot_pairwise(const cmeta_vector_desc *dst_desc,
     return true;
 }
 
+bool salts_simd_convert(const cmeta_vector_desc *dst_desc,
+                        const cmeta_vector_desc *src_desc,
+                        salts_simd_convert_op op,
+                        salts_simd_lane_policy lane_policy,
+                        salts_v128 *out,
+                        const salts_v128 *value) {
+    simde_v128_t input;
+    simde_v128_t result;
+
+    if (!salts_simd_desc_valid(dst_desc) ||
+        !salts_simd_desc_valid(src_desc) ||
+        dst_desc->is_mask || src_desc->is_mask ||
+        out == NULL || value == NULL)
+        return false;
+
+    input = salts_simd_load_value(value);
+
+    if (op == SALTS_SIMD_CONVERT_TRUNC_SAT &&
+        src_desc->lane_kind == CMETA_VECTOR_F32 &&
+        src_desc->lane_count == 4u &&
+        lane_policy == SALTS_SIMD_LANES_FULL) {
+        if (dst_desc->lane_kind == CMETA_VECTOR_I32 &&
+            dst_desc->lane_count == 4u)
+            result = simde_wasm_i32x4_trunc_sat_f32x4(input);
+        else if (dst_desc->lane_kind == CMETA_VECTOR_U32 &&
+                 dst_desc->lane_count == 4u)
+            result = simde_wasm_u32x4_trunc_sat_f32x4(input);
+        else
+            return false;
+        salts_simd_store_value(out, result);
+        return true;
+    }
+
+    if (op == SALTS_SIMD_CONVERT_TRUNC_SAT &&
+        src_desc->lane_kind == CMETA_VECTOR_F64 &&
+        src_desc->lane_count == 2u &&
+        lane_policy == SALTS_SIMD_LANES_LOW_ZERO) {
+        if (dst_desc->lane_kind == CMETA_VECTOR_I32 &&
+            dst_desc->lane_count == 4u)
+            result = simde_wasm_i32x4_trunc_sat_f64x2_zero(input);
+        else if (dst_desc->lane_kind == CMETA_VECTOR_U32 &&
+                 dst_desc->lane_count == 4u)
+            result = simde_wasm_u32x4_trunc_sat_f64x2_zero(input);
+        else
+            return false;
+        salts_simd_store_value(out, result);
+        return true;
+    }
+
+    if (op == SALTS_SIMD_CONVERT_NUMERIC &&
+        dst_desc->lane_kind == CMETA_VECTOR_F32 &&
+        dst_desc->lane_count == 4u &&
+        lane_policy == SALTS_SIMD_LANES_FULL) {
+        if (src_desc->lane_kind == CMETA_VECTOR_I32 &&
+            src_desc->lane_count == 4u)
+            result = simde_wasm_f32x4_convert_i32x4(input);
+        else if (src_desc->lane_kind == CMETA_VECTOR_U32 &&
+                 src_desc->lane_count == 4u)
+            result = simde_wasm_f32x4_convert_u32x4(input);
+        else
+            return false;
+        salts_simd_store_value(out, result);
+        return true;
+    }
+
+    if (op == SALTS_SIMD_CONVERT_NUMERIC &&
+        dst_desc->lane_kind == CMETA_VECTOR_F64 &&
+        dst_desc->lane_count == 2u &&
+        lane_policy == SALTS_SIMD_LANES_LOW) {
+        if (src_desc->lane_kind == CMETA_VECTOR_I32 &&
+            src_desc->lane_count == 4u)
+            result = simde_wasm_f64x2_convert_low_i32x4(input);
+        else if (src_desc->lane_kind == CMETA_VECTOR_U32 &&
+                 src_desc->lane_count == 4u)
+            result = simde_wasm_f64x2_convert_low_u32x4(input);
+        else
+            return false;
+        salts_simd_store_value(out, result);
+        return true;
+    }
+
+    if (op == SALTS_SIMD_CONVERT_DEMOTE &&
+        dst_desc->lane_kind == CMETA_VECTOR_F32 &&
+        dst_desc->lane_count == 4u &&
+        src_desc->lane_kind == CMETA_VECTOR_F64 &&
+        src_desc->lane_count == 2u &&
+        lane_policy == SALTS_SIMD_LANES_LOW_ZERO) {
+        salts_simd_store_value(
+            out, simde_wasm_f32x4_demote_f64x2_zero(input));
+        return true;
+    }
+
+    if (op == SALTS_SIMD_CONVERT_PROMOTE &&
+        dst_desc->lane_kind == CMETA_VECTOR_F64 &&
+        dst_desc->lane_count == 2u &&
+        src_desc->lane_kind == CMETA_VECTOR_F32 &&
+        src_desc->lane_count == 4u &&
+        lane_policy == SALTS_SIMD_LANES_LOW) {
+        salts_simd_store_value(
+            out, simde_wasm_f64x2_promote_low_f32x4(input));
+        return true;
+    }
+
+    return false;
+}
+
 bool salts_simd_shift(const cmeta_vector_desc *desc,
                       salts_simd_shift_op op,
                       salts_v128 *out,
