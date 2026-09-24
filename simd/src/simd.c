@@ -551,6 +551,10 @@ bool salts_simd_binary(const cmeta_vector_desc *desc,
                 result = simde_wasm_f32x4_min(a, b);
             else if (op == SALTS_SIMD_BINARY_MAX)
                 result = simde_wasm_f32x4_max(a, b);
+            else if (op == SALTS_SIMD_BINARY_PSEUDO_MIN)
+                result = simde_wasm_f32x4_pmin(a, b);
+            else if (op == SALTS_SIMD_BINARY_PSEUDO_MAX)
+                result = simde_wasm_f32x4_pmax(a, b);
             else
                 return false;
             break;
@@ -568,6 +572,10 @@ bool salts_simd_binary(const cmeta_vector_desc *desc,
                 result = simde_wasm_f64x2_min(a, b);
             else if (op == SALTS_SIMD_BINARY_MAX)
                 result = simde_wasm_f64x2_max(a, b);
+            else if (op == SALTS_SIMD_BINARY_PSEUDO_MIN)
+                result = simde_wasm_f64x2_pmin(a, b);
+            else if (op == SALTS_SIMD_BINARY_PSEUDO_MAX)
+                result = simde_wasm_f64x2_pmax(a, b);
             else
                 return false;
             break;
