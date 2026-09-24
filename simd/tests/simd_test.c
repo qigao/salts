@@ -598,6 +598,14 @@ static void test_generic_unsupported_pairs(void) {
         &cmeta_vector_i32x4,
         SALTS_SIMD_UNARY_SQRT,
         &result, &left));
+    assert(!salts_simd_reduce(
+        &cmeta_vector_f32x4,
+        SALTS_SIMD_REDUCE_ALL_TRUE,
+        &left, &(uint32_t){0u}));
+    assert(!salts_simd_saturating_binary(
+        &cmeta_vector_i8x16,
+        (salts_simd_saturating_op)99,
+        &result, &left, &right));
 }
 
 static void test_i32x4(void) {
