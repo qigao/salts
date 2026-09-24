@@ -21,6 +21,11 @@ target_include_directories(
   PRIVATE $<BUILD_INTERFACE:${SIMDE_INCLUDE_DIRS}>)
 target_link_libraries(${TARGET_NAME} PUBLIC Salts::CMeta)
 
+# SIMDe scalar fallbacks for nearest use nearbyint/nearbyintf.
+if(NOT WIN32)
+  target_link_libraries(${TARGET_NAME} PUBLIC m)
+endif()
+
 install(
   TARGETS ${TARGET_NAME}
   EXPORT SaltsTargets
