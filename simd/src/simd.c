@@ -885,6 +885,185 @@ bool salts_simd_reduce(const cmeta_vector_desc *desc,
     return false;
 }
 
+
+bool salts_simd_narrow(const cmeta_vector_desc *dst_desc,
+                       salts_v128 *out,
+                       const salts_v128 *low,
+                       const salts_v128 *high) {
+    simde_v128_t a;
+    simde_v128_t b;
+    simde_v128_t result;
+
+    if (!salts_simd_desc_valid(dst_desc) || dst_desc->is_mask ||
+        out == NULL || low == NULL || high == NULL)
+        return false;
+
+    a = salts_simd_load_value(low);
+    b = salts_simd_load_value(high);
+
+    switch (dst_desc->lane_kind) {
+        case CMETA_VECTOR_I8:
+            result = simde_wasm_i8x16_narrow_i16x8(a, b);
+            break;
+        case CMETA_VECTOR_U8:
+            result = simde_wasm_u8x16_narrow_i16x8(a, b);
+            break;
+        case CMETA_VECTOR_I16:
+            result = simde_wasm_i16x8_narrow_i32x4(a, b);
+            break;
+        case CMETA_VECTOR_U16:
+            result = simde_wasm_u16x8_narrow_i32x4(a, b);
+            break;
+        default:
+            return false;
+    }
+
+    salts_simd_store_value(out, result);
+    return true;
+}
+
+bool salts_simd_extend_half(const cmeta_vector_desc *dst_desc,
+                            salts_simd_half half,
+                            salts_v128 *out,
+                            const salts_v128 *value) {
+    simde_v128_t input;
+    simde_v128_t result;
+
+    if (!salts_simd_desc_valid(dst_desc) || dst_desc->is_mask ||
+        out == NULL || value == NULL ||
+        (half != SALTS_SIMD_HALF_LOW && half != SALTS_SIMD_HALF_HIGH))
+        return false;
+
+    input = salts_simd_load_value(value);
+
+    switch (dst_desc->lane_kind) {
+        case CMETA_VECTOR_I16:
+            result = half == SALTS_SIMD_HALF_LOW
+                ? simde_wasm_i16x8_extend_low_i8x16(input)
+                : simde_wasm_i16x8_extend_high_i8x16(input);
+            break;
+        case CMETA_VECTOR_U16:
+            result = half == SALTS_SIMD_HALF_LOW
+                ? simde_wasm_u16x8_extend_low_u8x16(input)
+                : simde_wasm_u16x8_extend_high_u8x16(input);
+            break;
+        case CMETA_VECTOR_I32:
+            result = half == SALTS_SIMD_HALF_LOW
+                ? simde_wasm_i32x4_extend_low_i16x8(input)
+                : simde_wasm_i32x4_extend_high_i16x8(input);
+            break;
+        case CMETA_VECTOR_U32:
+            result = half == SALTS_SIMD_HALF_LOW
+                ? simde_wasm_u32x4_extend_low_u16x8(input)
+                : simde_wasm_u32x4_extend_high_u16x8(input);
+            break;
+        case CMETA_VECTOR_I64:
+            result = half == SALTS_SIMD_HALF_LOW
+                ? simde_wasm_i64x2_extend_low_i32x4(input)
+                : simde_wasm_i64x2_extend_high_i32x4(input);
+            break;
+        case CMETA_VECTOR_U64:
+            result = half == SALTS_SIMD_HALF_LOW
+                ? simde_wasm_u64x2_extend_low_u32x4(input)
+                : simde_wasm_u64x2_extend_high_u32x4(input);
+            break;
+        default:
+            return false;
+    }
+
+    salts_simd_store_value(out, result);
+    return true;
+}
+
+bool salts_simd_extmul_half(const cmeta_vector_desc *dst_desc,
+                            salts_simd_half half,
+                            salts_v128 *out,
+                            const salts_v128 *left,
+                            const salts_v128 *right) {
+    simde_v128_t a;
+    simde_v128_t b;
+    simde_v128_t result;
+
+    if (!salts_simd_desc_valid(dst_desc) || dst_desc->is_mask ||
+        out == NULL || left == NULL || right == NULL ||
+        (half != SALTS_SIMD_HALF_LOW && half != SALTS_SIMD_HALF_HIGH))
+        return false;
+
+    a = salts_simd_load_value(left);
+    b = salts_simd_load_value(right);
+
+    switch (dst_desc->lane_kind) {
+        case CMETA_VECTOR_I16:
+            result = half == SALTS_SIMD_HALF_LOW
+                ? simde_wasm_i16x8_extmul_low_i8x16(a, b)
+                : simde_wasm_i16x8_extmul_high_i8x16(a, b);
+            break;
+        case CMETA_VECTOR_U16:
+            result = half == SALTS_SIMD_HALF_LOW
+                ? simde_wasm_u16x8_extmul_low_u8x16(a, b)
+                : simde_wasm_u16x8_extmul_high_u8x16(a, b);
+            break;
+        case CMETA_VECTOR_I32:
+            result = half == SALTS_SIMD_HALF_LOW
+                ? simde_wasm_i32x4_extmul_low_i16x8(a, b)
+                : simde_wasm_i32x4_extmul_high_i16x8(a, b);
+            break;
+        case CMETA_VECTOR_U32:
+            result = half == SALTS_SIMD_HALF_LOW
+                ? simde_wasm_u32x4_extmul_low_u16x8(a, b)
+                : simde_wasm_u32x4_extmul_high_u16x8(a, b);
+            break;
+        case CMETA_VECTOR_I64:
+            result = half == SALTS_SIMD_HALF_LOW
+                ? simde_wasm_i64x2_extmul_low_i32x4(a, b)
+                : simde_wasm_i64x2_extmul_high_i32x4(a, b);
+            break;
+        case CMETA_VECTOR_U64:
+            result = half == SALTS_SIMD_HALF_LOW
+                ? simde_wasm_u64x2_extmul_low_u32x4(a, b)
+                : simde_wasm_u64x2_extmul_high_u32x4(a, b);
+            break;
+        default:
+            return false;
+    }
+
+    salts_simd_store_value(out, result);
+    return true;
+}
+
+bool salts_simd_extadd_pairwise(const cmeta_vector_desc *dst_desc,
+                                salts_v128 *out,
+                                const salts_v128 *value) {
+    simde_v128_t input;
+    simde_v128_t result;
+
+    if (!salts_simd_desc_valid(dst_desc) || dst_desc->is_mask ||
+        out == NULL || value == NULL)
+        return false;
+
+    input = salts_simd_load_value(value);
+
+    switch (dst_desc->lane_kind) {
+        case CMETA_VECTOR_I16:
+            result = simde_wasm_i16x8_extadd_pairwise_i8x16(input);
+            break;
+        case CMETA_VECTOR_U16:
+            result = simde_wasm_u16x8_extadd_pairwise_u8x16(input);
+            break;
+        case CMETA_VECTOR_I32:
+            result = simde_wasm_i32x4_extadd_pairwise_i16x8(input);
+            break;
+        case CMETA_VECTOR_U32:
+            result = simde_wasm_u32x4_extadd_pairwise_u16x8(input);
+            break;
+        default:
+            return false;
+    }
+
+    salts_simd_store_value(out, result);
+    return true;
+}
+
 bool salts_simd_shift(const cmeta_vector_desc *desc,
                       salts_simd_shift_op op,
                       salts_v128 *out,
