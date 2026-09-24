@@ -511,6 +511,52 @@ static void test_widen_narrow_families(void) {
         &result, &a, &b));
 }
 
+static void test_q15_and_dot(void) {
+    const int16_t q15_left[8] = {
+        16384, 32767, -32768, 8192,
+        -16384, 1000, -1000, 0
+    };
+    const int16_t q15_right[8] = {
+        16384, 32767, -32768, 16384,
+        16384, 2000, 2000, 32767
+    };
+    const int16_t q15_expected[8] = {
+        8192, 32766, 32767, 4096,
+        -8192, 61, -61, 0
+    };
+    const int16_t dot_left[8] = {
+        1, 2, 3, 4, -1, -2, 100, 200
+    };
+    const int16_t dot_right[8] = {
+        10, 20, 30, 40, 5, 6, -2, 3
+    };
+    const int32_t dot_expected[4] = {
+        50, 250, -17, 400
+    };
+    int16_t q15_actual[8] = {0};
+    int32_t dot_actual[4] = {0};
+    salts_v128 left = {{0}}, right = {{0}}, result = {{0}};
+
+    salts_simd_v128_load(&left, q15_left);
+    salts_simd_v128_load(&right, q15_right);
+    assert(salts_simd_q15mulr_sat(
+        &cmeta_vector_i16x8, &result, &left, &right));
+    salts_simd_v128_store(q15_actual, &result);
+    assert(memcmp(q15_actual, q15_expected, sizeof(q15_actual)) == 0);
+
+    salts_simd_v128_load(&left, dot_left);
+    salts_simd_v128_load(&right, dot_right);
+    assert(salts_simd_dot_pairwise(
+        &cmeta_vector_i32x4, &result, &left, &right));
+    salts_simd_v128_store(dot_actual, &result);
+    assert(memcmp(dot_actual, dot_expected, sizeof(dot_actual)) == 0);
+
+    assert(!salts_simd_q15mulr_sat(
+        &cmeta_vector_u16x8, &result, &left, &right));
+    assert(!salts_simd_dot_pairwise(
+        &cmeta_vector_u32x4, &result, &left, &right));
+}
+
 static void test_generic_splat(void) {
     salts_simd_scalar scalar = {0};
     salts_v128 value = {{0}};
@@ -784,6 +830,7 @@ int main(void) {
     test_saturating_binary();
     test_reductions();
     test_widen_narrow_families();
+    test_q15_and_dot();
     test_generic_splat();
     test_generic_integer_binary();
     test_generic_float_binary();
