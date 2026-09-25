@@ -114,6 +114,7 @@ typedef struct salts_io_uring_impl {
   struct io_uring_cqe *cqes;
   bool single_mmap;
   bool ext_arg_wait;
+  bool ring_wake;
   bool wake_armed;
   bool admission_open;
   atomic_bool wake_pending;
@@ -297,7 +298,7 @@ static int uring_publish_sqe(salts_io_uring_impl *impl, const struct io_uring_sq
 static int uring_arm_wake(salts_io_uring_impl *impl) {
   struct io_uring_sqe sqe;
   int status;
-  if (impl->wake_armed) return SALTS_OK;
+  if (!impl->ring_wake || impl->wake_armed) return SALTS_OK;
   memset(&sqe, 0, sizeof(sqe));
   sqe.opcode = IORING_OP_POLL_ADD;
   sqe.fd = impl->wake_fd;
@@ -750,6 +751,13 @@ static int uring_process_cq(salts_io_uring_impl *impl, bool *out_saw_wake) {
       int arm_status;
       impl->wake_armed = false;
       if (result < 0) {
+        /* An internal poll can be cancelled when the task that re-armed it
+         * exits. This is a control-path capability loss, not a user I/O
+         * failure. Preserve wake semantics with the outer poll fallback. */
+        if (result == -ECANCELED || result == -EINVAL || result == -EOPNOTSUPP) {
+          impl->ring_wake = false;
+          continue;
+        }
         atomic_store_explicit((_Atomic unsigned *)impl->cq_head, head, memory_order_release);
         return result;
       }
@@ -763,8 +771,12 @@ static int uring_process_cq(salts_io_uring_impl *impl, bool *out_saw_wake) {
       atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
       arm_status = uring_arm_wake(impl);
       if (arm_status != SALTS_OK) {
-        atomic_store_explicit((_Atomic unsigned *)impl->cq_head, head, memory_order_release);
-        return arm_status;
+        if (arm_status == -ECANCELED || arm_status == -EINVAL || arm_status == -EOPNOTSUPP) {
+          impl->ring_wake = false;
+        } else {
+          atomic_store_explicit((_Atomic unsigned *)impl->cq_head, head, memory_order_release);
+          return arm_status;
+        }
       }
       if (out_saw_wake != NULL) *out_saw_wake = true;
       continue;
@@ -900,13 +912,30 @@ static int uring_submit_staged_and_wait(salts_io_uring_impl *impl, uint32_t time
   return SALTS_OK;
 }
 
-static int uring_poll_ring_fallback(salts_io_uring_impl *impl, uint32_t timeout_ms) {
-  struct pollfd descriptor = {impl->ring_fd, POLLIN, 0};
-  const int native_timeout = timeout_ms > (uint32_t)INT_MAX ? INT_MAX : (int)timeout_ms;
-  const int status = poll(&descriptor, 1u, native_timeout);
+static int uring_poll_fallback(salts_io_uring_impl *impl, uint32_t timeout_ms,
+                               bool *out_saw_wake) {
+  struct pollfd descriptors[2] = {
+      {impl->ring_fd, POLLIN, 0},
+      {impl->wake_fd, POLLIN, 0}};
+  const int native_timeout = timeout_ms == UINT32_MAX         ? -1
+                             : timeout_ms > (uint32_t)INT_MAX ? INT_MAX
+                                                              : (int)timeout_ms;
+  const int status = poll(descriptors, 2u, native_timeout);
   if (status == 0) return SALTS_ETIMEDOUT;
   if (status < 0) return errno == EINTR ? -EINTR : -errno;
-  if ((descriptor.revents & (POLLERR | POLLNVAL)) != 0) return SALTS_EIO;
+  if ((descriptors[0].revents & (POLLERR | POLLNVAL)) != 0 ||
+      (descriptors[1].revents & (POLLERR | POLLNVAL)) != 0)
+    return SALTS_EIO;
+  if ((descriptors[1].revents & POLLIN) != 0) {
+    uint64_t wake_count;
+    ssize_t read_status;
+    do {
+      read_status = read(impl->wake_fd, &wake_count, sizeof(wake_count));
+    } while (read_status < 0 && errno == EINTR);
+    if (read_status < 0 && errno != EAGAIN) return -errno;
+    atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
+    if (out_saw_wake != NULL) *out_saw_wake = true;
+  }
   return SALTS_OK;
 }
 
@@ -937,12 +966,12 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
     if (wait_timeout == 0u) return SALTS_ETIMEDOUT;
     saw_wake = false;
 
-    if (wait_timeout != UINT32_MAX && !impl->ext_arg_wait) {
+    if (!impl->ring_wake || (wait_timeout != UINT32_MAX && !impl->ext_arg_wait)) {
       status = uring_progress(impl, &saw_wake);
       if (status != SALTS_OK) return status;
       uring_drain_terminals(impl, events, limit, out_count);
       if (*out_count != 0u || saw_wake) return SALTS_OK;
-      status = uring_poll_ring_fallback(impl, wait_timeout);
+      status = uring_poll_fallback(impl, wait_timeout, &saw_wake);
       if (status == SALTS_ETIMEDOUT) return SALTS_ETIMEDOUT;
       if (status == -EINTR) continue;
       if (status != SALTS_OK) return status;
@@ -1164,6 +1193,7 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
   impl->endpoint_capacity = config->endpoint_capacity;
   impl->request_capacity = config->request_capacity;
   impl->completion_batch_capacity = config->completion_batch_capacity;
+  impl->ring_wake = true;
   impl->free_endpoint_count = config->endpoint_capacity;
   impl->free_request_count = config->request_capacity;
   impl->admission_open = true;
