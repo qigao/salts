@@ -1179,7 +1179,9 @@ static bool cmeta_data_value_copy_supported_depth(
         case CMETA_DATA_BYTES: {
             const cmeta_data_buffer_ops *ops = cmeta_data_buffer_ops_of(desc);
             return ops != NULL &&
-                   ops->struct_size >= CMETA_BUFFER_V2_READ_SIZE &&
+                   ops->struct_size >=
+                       offsetof(cmeta_data_buffer_ops, read) +
+                           sizeof(((cmeta_data_buffer_ops *)0)->read) &&
                    ops->read != NULL;
         }
         case CMETA_DATA_ENUM:
