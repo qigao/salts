@@ -427,3 +427,79 @@ cmeta_status cmeta_data_map_foreach(
 #undef CMETA_MAP_OPS_SIZE
 #undef CMETA_MAP_DESC_OPS_SIZE
 #undef CMETA_MAP_FIELD_END
+
+
+#define CMETA_CONSTRUCT_FIELD_END(type, member) \
+    (offsetof(type, member) + sizeof(((type *)0)->member))
+#define CMETA_CONSTRUCT_DESC_SIZE \
+    CMETA_CONSTRUCT_FIELD_END(cmeta_data_desc, construct_ops)
+#define CMETA_CONSTRUCT_OPS_SIZE \
+    CMETA_CONSTRUCT_FIELD_END(cmeta_data_construct_ops, move)
+
+static cmeta_status cmeta_data_construct_ops_status(
+    const cmeta_data_desc *desc, const cmeta_data_construct_ops **out) {
+    const cmeta_data_construct_ops *ops;
+    if (out != NULL) *out = NULL;
+    if (!cmeta_data_desc_valid(desc) ||
+        desc->struct_size < CMETA_CONSTRUCT_DESC_SIZE ||
+        desc->construct_ops == NULL)
+        return CMETA_TRAIT_MISSING;
+    ops = desc->construct_ops;
+    if (ops->struct_size < CMETA_CONSTRUCT_OPS_SIZE ||
+        ops->abi_version != CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION ||
+        ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
+        ops->init_zero == NULL || ops->restore_zero == NULL || ops->move == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (desc->storage_type == NULL ||
+        !cmeta_type_equal(desc->storage_type, ops->storage_type) ||
+        desc->storage_type->size != ops->storage_type->size ||
+        desc->storage_type->align != ops->storage_type->align)
+        return CMETA_TYPE_MISMATCH;
+    if (out != NULL) *out = ops;
+    return CMETA_OK;
+}
+
+const cmeta_data_construct_ops *cmeta_data_construct_ops_of(
+    const cmeta_data_desc *desc) {
+    const cmeta_data_construct_ops *ops = NULL;
+    return cmeta_data_construct_ops_status(desc, &ops) == CMETA_OK ? ops : NULL;
+}
+
+cmeta_status cmeta_data_construct_init_zero(
+    const cmeta_data_desc *desc, void *object) {
+    const cmeta_data_construct_ops *ops = NULL;
+    cmeta_status status;
+    if (object == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_construct_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    status = ops->init_zero(object);
+    if (status != CMETA_OK) ops->restore_zero(object);
+    return status;
+}
+
+cmeta_status cmeta_data_construct_restore_zero(
+    const cmeta_data_desc *desc, void *object) {
+    const cmeta_data_construct_ops *ops = NULL;
+    cmeta_status status;
+    if (object == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_construct_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    ops->restore_zero(object);
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_construct_move(
+    const cmeta_data_desc *desc, void *destination, void *source) {
+    const cmeta_data_construct_ops *ops = NULL;
+    cmeta_status status;
+    if (destination == NULL || source == NULL || destination == source)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_construct_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    ops->move(destination, source);
+    return CMETA_OK;
+}
+
+#undef CMETA_CONSTRUCT_OPS_SIZE
+#undef CMETA_CONSTRUCT_DESC_SIZE
+#undef CMETA_CONSTRUCT_FIELD_END
