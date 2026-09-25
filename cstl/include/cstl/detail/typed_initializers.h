@@ -3,44 +3,66 @@
 
 /* Self-describing initializer facts shared by declaration and expression DSLs.
  * They bind CMeta metadata but perform no allocation. */
-#define SALTS_STL_VEC_INITIALIZER(T) \
-  { .cmeta = { &stl_vec_container_desc }, .element_type = CMETA_TYPEOF(T) }
-#define SALTS_STL_DEQUE_INITIALIZER(T) \
-  { .cmeta = { &stl_deque_container_desc }, .element_type = CMETA_TYPEOF(T) }
-#define SALTS_STL_LIST_INITIALIZER(T) \
-  { { &stl_list_container_desc }, CMETA_TYPEOF(T), NULL, UINT64_C(0) }
-#define SALTS_STL_STACK_INITIALIZER(T) \
+#define SALTS_STL_VEC_INITIALIZER_WITH_TYPE(T, D) \
+  { .cmeta = { &stl_vec_container_desc }, .element_type = (D) }
+#define SALTS_STL_DEQUE_INITIALIZER_WITH_TYPE(T, D) \
+  { .cmeta = { &stl_deque_container_desc }, .element_type = (D) }
+#define SALTS_STL_LIST_INITIALIZER_WITH_TYPE(T, D) \
+  { { &stl_list_container_desc }, (D), NULL, UINT64_C(0) }
+#define SALTS_STL_STACK_INITIALIZER_WITH_TYPE(T, D) \
   { .raw = { .cmeta = { &stl_stack_container_desc }, \
-             .element_type = CMETA_TYPEOF(T) } }
-#define SALTS_STL_QUEUE_INITIALIZER(T) \
+             .element_type = (D) } }
+#define SALTS_STL_QUEUE_INITIALIZER_WITH_TYPE(T, D) \
   { .raw = { .cmeta = { &stl_queue_container_desc }, \
-             .element_type = CMETA_TYPEOF(T) } }
-#define SALTS_STL_HEAP_INITIALIZER(T) \
-  { .cmeta = { &stl_heap_container_desc }, .element_type = CMETA_TYPEOF(T) }
-#define SALTS_STL_SET_INITIALIZER(T) \
-  { .cmeta = { &stl_set_container_desc }, .element_type = CMETA_TYPEOF(T) }
-#define SALTS_STL_HASH_SET_INITIALIZER(T) \
+             .element_type = (D) } }
+#define SALTS_STL_HEAP_INITIALIZER_WITH_TYPE(T, D) \
+  { .cmeta = { &stl_heap_container_desc }, .element_type = (D) }
+#define SALTS_STL_SET_INITIALIZER_WITH_TYPE(T, D) \
+  { .cmeta = { &stl_set_container_desc }, .element_type = (D) }
+#define SALTS_STL_HASH_SET_INITIALIZER_WITH_TYPE(T, D) \
   { .cmeta = { &stl_hash_set_container_desc }, \
-    .element_type = CMETA_TYPEOF(T) }
-#define SALTS_STL_HASH_MAP_INITIALIZER(K, V) \
+    .element_type = (D) }
+#define SALTS_STL_HASH_MAP_INITIALIZER_WITH_TYPES(K, V, KD, VD) \
   { .cmeta = { &stl_hash_map_container_desc }, \
-    .key_type = CMETA_TYPEOF(K), \
-    .value_type = CMETA_TYPEOF(V) }
-#define SALTS_STL_MAP_INITIALIZER(K, V) \
-  { { &stl_map_container_desc }, CMETA_TYPEOF(K), CMETA_TYPEOF(V), NULL, \
-    UINT64_C(0) }
-#define SALTS_STL_MULTIMAP_INITIALIZER(K, V) \
+    .key_type = (KD), .value_type = (VD) }
+#define SALTS_STL_MAP_INITIALIZER_WITH_TYPES(K, V, KD, VD) \
+  { { &stl_map_container_desc }, (KD), (VD), NULL, UINT64_C(0) }
+#define SALTS_STL_MULTIMAP_INITIALIZER_WITH_TYPES(K, V, KD, VD) \
   { .cmeta = { &stl_multimap_container_desc }, \
-    .key_type = CMETA_TYPEOF(K), \
-    .value_type = CMETA_TYPEOF(V) }
-#define SALTS_STL_BTREE_INITIALIZER(K, V) \
+    .key_type = (KD), .value_type = (VD) }
+#define SALTS_STL_BTREE_INITIALIZER_WITH_TYPES(K, V, KD, VD) \
   { .cmeta = { &stl_btree_container_desc }, \
-    .key_type = CMETA_TYPEOF(K), \
-    .value_type = CMETA_TYPEOF(V) }
-#define SALTS_STL_BPLUS_TREE_INITIALIZER(K, V) \
+    .key_type = (KD), .value_type = (VD) }
+#define SALTS_STL_BPLUS_TREE_INITIALIZER_WITH_TYPES(K, V, KD, VD) \
   { .cmeta = { &stl_bplus_tree_container_desc }, \
-    .key_type = CMETA_TYPEOF(K), \
-    .value_type = CMETA_TYPEOF(V) }
+    .key_type = (KD), .value_type = (VD) }
+
+#define SALTS_STL_VEC_INITIALIZER(T) \
+  SALTS_STL_VEC_INITIALIZER_WITH_TYPE(T, CMETA_TYPEOF(T))
+#define SALTS_STL_DEQUE_INITIALIZER(T) \
+  SALTS_STL_DEQUE_INITIALIZER_WITH_TYPE(T, CMETA_TYPEOF(T))
+#define SALTS_STL_LIST_INITIALIZER(T) \
+  SALTS_STL_LIST_INITIALIZER_WITH_TYPE(T, CMETA_TYPEOF(T))
+#define SALTS_STL_STACK_INITIALIZER(T) \
+  SALTS_STL_STACK_INITIALIZER_WITH_TYPE(T, CMETA_TYPEOF(T))
+#define SALTS_STL_QUEUE_INITIALIZER(T) \
+  SALTS_STL_QUEUE_INITIALIZER_WITH_TYPE(T, CMETA_TYPEOF(T))
+#define SALTS_STL_HEAP_INITIALIZER(T) \
+  SALTS_STL_HEAP_INITIALIZER_WITH_TYPE(T, CMETA_TYPEOF(T))
+#define SALTS_STL_SET_INITIALIZER(T) \
+  SALTS_STL_SET_INITIALIZER_WITH_TYPE(T, CMETA_TYPEOF(T))
+#define SALTS_STL_HASH_SET_INITIALIZER(T) \
+  SALTS_STL_HASH_SET_INITIALIZER_WITH_TYPE(T, CMETA_TYPEOF(T))
+#define SALTS_STL_HASH_MAP_INITIALIZER(K, V) \
+  SALTS_STL_HASH_MAP_INITIALIZER_WITH_TYPES(K, V, CMETA_TYPEOF(K), CMETA_TYPEOF(V))
+#define SALTS_STL_MAP_INITIALIZER(K, V) \
+  SALTS_STL_MAP_INITIALIZER_WITH_TYPES(K, V, CMETA_TYPEOF(K), CMETA_TYPEOF(V))
+#define SALTS_STL_MULTIMAP_INITIALIZER(K, V) \
+  SALTS_STL_MULTIMAP_INITIALIZER_WITH_TYPES(K, V, CMETA_TYPEOF(K), CMETA_TYPEOF(V))
+#define SALTS_STL_BTREE_INITIALIZER(K, V) \
+  SALTS_STL_BTREE_INITIALIZER_WITH_TYPES(K, V, CMETA_TYPEOF(K), CMETA_TYPEOF(V))
+#define SALTS_STL_BPLUS_TREE_INITIALIZER(K, V) \
+  SALTS_STL_BPLUS_TREE_INITIALIZER_WITH_TYPES(K, V, CMETA_TYPEOF(K), CMETA_TYPEOF(V))
 
 /* Expression DSL. Compound literals allow initialization, assignment, return,
  * and argument passing without introducing generated user-visible C types. */
