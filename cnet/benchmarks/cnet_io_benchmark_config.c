@@ -1,6 +1,8 @@
 #include "cnet_io_benchmark_config.h"
 
 #include <salts/error_codes.h>
+#include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int cnet_io_benchmark_backend_from_name(const char *name,
@@ -62,12 +64,35 @@ int cnet_io_benchmark_select_backend(const char *requested, cnet_io_benchmark_ba
   return SALTS_OK;
 }
 
-int cnet_io_benchmark_protocol_default(cnet_io_benchmark_protocol *protocol) {
-  if (protocol == NULL) return SALTS_EINVAL;
-#ifdef _WIN32
-  *protocol = (cnet_io_benchmark_protocol){.native_direct_aa_control = true};
-#else
-  *protocol = (cnet_io_benchmark_protocol){.native_direct_aa_control = false};
-#endif
+int cnet_io_benchmark_select_trace(const char *requested, cnet_io_benchmark_trace *selected) {
+  static const char *const drivers[IO_BENCH_DRIVER_COUNT] = {
+      [IO_BENCH_LIBUV] = "libuv:", [IO_BENCH_NATIVE_IO] = "native:",
+      [IO_BENCH_NATIVE_IO_COROUTINE] = "coroutine:", [IO_BENCH_CNET] = "cnet:"};
+  cnet_io_benchmark_trace result = {0};
+  const char *size_text = NULL;
+  char *end = NULL;
+  unsigned long bytes;
+  if (selected == NULL) return SALTS_EINVAL;
+  if (requested == NULL) { *selected = result; return SALTS_OK; }
+  for (unsigned driver = 0u; driver < sizeof(drivers) / sizeof(drivers[0]); ++driver) {
+    const size_t length = strlen(drivers[driver]);
+    if (strncmp(requested, drivers[driver], length) != 0) continue;
+    result.driver = (io_bench_driver)driver;
+    if (strncmp(requested + length, "tcp:", 4u) == 0) result.udp = false;
+    else if (strncmp(requested + length, "udp:", 4u) == 0) result.udp = true;
+    else return SALTS_EINVAL;
+    size_text = requested + length + 4u;
+    break;
+  }
+  if (size_text == NULL || *size_text < '0' || *size_text > '9') return SALTS_EINVAL;
+  errno = 0;
+  bytes = strtoul(size_text, &end, 10);
+  if (errno != 0 || *end != '\0' || bytes == 0u ||
+      bytes > CNET_IO_BENCHMARK_MAX_PAYLOAD ||
+      (result.udp && bytes > CNET_IO_BENCHMARK_MAX_DATAGRAM))
+    return SALTS_ERANGE;
+  result.enabled = true;
+  result.payload_size = (size_t)bytes;
+  *selected = result;
   return SALTS_OK;
 }

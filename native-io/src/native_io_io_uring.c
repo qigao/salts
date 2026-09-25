@@ -327,6 +327,9 @@ static void uring_release_request(salts_io_uring_impl *impl, salts_io_uring_requ
 static void uring_make_completion(salts_io_uring_impl *impl, salts_io_uring_request_record *request,
                                   int result, native_io_completion *completion) {
   const bool cancelled = request->cancel_requested && result == -ECANCELED;
+  if (result >= 0 && request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM &&
+      (request->message.msg_flags & MSG_TRUNC) != 0)
+    result = -EMSGSIZE;
   if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_CONNECT) {
     salts_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
     if (endpoint != NULL) {
@@ -627,13 +630,6 @@ static void uring_drain_terminals(salts_io_uring_impl *impl, native_io_completio
   }
 }
 
-static uint32_t uring_remaining_timeout(uint64_t started_ms, uint32_t timeout_ms) {
-  uint64_t elapsed;
-  if (timeout_ms == UINT32_MAX) return UINT32_MAX;
-  elapsed = salts_monotonic_ms() - started_ms;
-  return elapsed >= timeout_ms ? 0u : timeout_ms - (uint32_t)elapsed;
-}
-
 static int uring_observe(salts_io_impl *base, native_io_completion *events, size_t event_capacity,
                          uint32_t timeout_ms, size_t *out_count) {
   salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
@@ -651,11 +647,13 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
                                : wait_timeout > (uint32_t)INT_MAX ? INT_MAX
                                                                   : (int)wait_timeout;
     int status;
-    do {
-      status = poll(descriptors, 2u, native_timeout);
-    } while (status < 0 && errno == EINTR);
+    status = poll(descriptors, 2u, native_timeout);
+    if ((status < 0 && errno == EINTR) || status == 0) {
+      wait_timeout = native_io_remaining_timeout(started_ms, timeout_ms);
+      if (wait_timeout == 0u) return SALTS_ETIMEDOUT;
+      continue;
+    }
     if (status < 0) return -errno;
-    if (status == 0) return SALTS_ETIMEDOUT;
     if ((descriptors[0].revents & (POLLERR | POLLNVAL)) != 0 ||
         (descriptors[1].revents & (POLLERR | POLLNVAL)) != 0)
       return SALTS_EIO;
@@ -672,7 +670,7 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
       atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
       return SALTS_OK;
     }
-    wait_timeout = uring_remaining_timeout(started_ms, timeout_ms);
+    wait_timeout = native_io_remaining_timeout(started_ms, timeout_ms);
     if (wait_timeout == 0u) return SALTS_ETIMEDOUT;
   }
 }

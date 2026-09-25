@@ -3,9 +3,29 @@
 
 #include <salts/error_codes.h>
 
-#include <string.h>
-
 spec("CNet benchmark paired statistics") {
+  it("keeps unmeasured wall time instead of forcing diagnostic closure") {
+    const cnet_benchmark_phase_sample sample = {1000u, 100u, 500u, 80u};
+    cnet_benchmark_phase_budget budget = {0};
+    check_equal(cnet_benchmark_phase_decompose(&sample, 2u, &budget), SALTS_OK);
+    check_equal(budget.wall_ns, 500.0);
+    check_equal(budget.start_ns, 50.0);
+    check_equal(budget.drive_ns, 250.0);
+    check_equal(budget.check_ns, 40.0);
+    check_equal(budget.remainder_ns, 160.0);
+  }
+
+  it("rejects overlapping or overflowing diagnostic spans without clamping") {
+    const cnet_benchmark_phase_sample overlap = {100u, 60u, 50u, 0u};
+    const cnet_benchmark_phase_sample overflow = {UINT64_MAX, UINT64_MAX, 1u, 0u};
+    cnet_benchmark_phase_budget budget = {0};
+    check_equal(cnet_benchmark_phase_decompose(&overlap, 1u, &budget), SALTS_ERANGE);
+    check_equal(cnet_benchmark_phase_decompose(&overflow, 1u, &budget), SALTS_ERANGE);
+    check_equal(cnet_benchmark_phase_decompose(&overlap, 0u, &budget), SALTS_EINVAL);
+    check_equal(cnet_benchmark_phase_decompose(NULL, 1u, &budget), SALTS_EINVAL);
+    check_equal(cnet_benchmark_phase_decompose(&overlap, 1u, NULL), SALTS_EINVAL);
+  }
+
   it("reports the median and MAD without pooling independent runs") {
     const double values[] = {30.0, 10.0, 200.0, 20.0, 5.0};
     cnet_benchmark_summary summary = {0};
@@ -13,21 +33,6 @@ spec("CNet benchmark paired statistics") {
     check_equal(cnet_benchmark_summarize(values, 5u, &summary), SALTS_OK);
     check_equal(summary.median, 20.0);
     check_equal(summary.mad, 10.0);
-  }
-
-  it("summarizes nonnegative diagnostic stages including zero resubmits") {
-    const double mixed[] = {0.0, 1.0, 2.0, 3.0, 4.0};
-    const double all_zero[] = {0.0, 0.0, 0.0};
-    const double invalid[] = {0.0, -1.0};
-    cnet_benchmark_summary summary = {0};
-
-    check_equal(cnet_benchmark_summarize_nonnegative(mixed, 5u, &summary), SALTS_OK);
-    check_equal(summary.median, 2.0);
-    check_equal(summary.mad, 1.0);
-    check_equal(cnet_benchmark_summarize_nonnegative(all_zero, 3u, &summary), SALTS_OK);
-    check_equal(summary.median, 0.0);
-    check_equal(summary.mad, 0.0);
-    check_equal(cnet_benchmark_summarize_nonnegative(invalid, 2u, &summary), SALTS_ERANGE);
   }
 
   it("computes deltas from matched baseline and candidate runs") {
@@ -38,47 +43,6 @@ spec("CNet benchmark paired statistics") {
     check_equal(cnet_benchmark_summarize_paired_delta(baseline, candidate, 5u, &summary), SALTS_OK);
     check_equal(summary.median, 20.0);
     check_equal(summary.mad, 10.0);
-  }
-
-  it("qualifies only runs that resolve the known baseline outside same-run A/A noise") {
-    const cnet_benchmark_summary quiet_null = {-0.52, 1.03};
-    const cnet_benchmark_summary resolved_baseline = {11.72, 0.78};
-    const cnet_benchmark_summary noisy_null = {-0.67, 3.49};
-    const cnet_benchmark_summary unresolved_baseline = {-0.66, 4.47};
-    cnet_benchmark_run_quality quality = {0};
-
-    check_equal(cnet_benchmark_assess_run_quality(&quiet_null, &resolved_baseline, &quality),
-                SALTS_OK);
-    check_equal(quality.state, CNET_BENCHMARK_RUN_QUALIFIED);
-    check_true(quality.noise_envelope_pp > 3.60 && quality.noise_envelope_pp < 3.62);
-    check_true(quality.baseline_lower_bound_pp > 10.93 && quality.baseline_lower_bound_pp < 10.95);
-
-    check_equal(cnet_benchmark_assess_run_quality(&noisy_null, &unresolved_baseline, &quality),
-                SALTS_OK);
-    check_equal(quality.state, CNET_BENCHMARK_RUN_NOISE_LIMITED);
-    check_true(quality.noise_envelope_pp > 11.13 && quality.noise_envelope_pp < 11.15);
-    check_true(quality.baseline_lower_bound_pp < 0.0);
-  }
-
-  it("uses stable report labels for qualified and noise-limited runs") {
-    check_equal(strcmp(cnet_benchmark_run_quality_label(CNET_BENCHMARK_RUN_QUALIFIED),
-                       "qualified for performance decisions"),
-                0);
-    check_equal(strcmp(cnet_benchmark_run_quality_label(CNET_BENCHMARK_RUN_NOISE_LIMITED),
-                       "noise-limited; do not use for optimization decisions"),
-                0);
-  }
-
-  it("separates send admission into exclusive producer-side stages") {
-    cnet_benchmark_send_attribution attribution = {0};
-
-    check_equal(cnet_benchmark_attribute_send(1000u, 2u, 600u, 2u, 400u, 2u, &attribution),
-                SALTS_OK);
-    check_equal(attribution.send_admit_ns, 500.0);
-    check_equal(attribution.public_control_ns, 200.0);
-    check_equal(attribution.queue_publish_ns, 300.0);
-    check_equal(attribution.queue_staging_control_ns, 100.0);
-    check_equal(attribution.payload_copy_ns, 200.0);
   }
 
   it("closes one diagnostic CNet round trip into exclusive fixed, native, copy, and benchmark work") {
@@ -162,29 +126,12 @@ spec("CNet benchmark paired statistics") {
     check_equal(cnet_benchmark_attribute_fixed_control(&sample, &attribution), SALTS_ERANGE);
   }
 
-  it("rejects inconsistent send attribution samples") {
-    cnet_benchmark_send_attribution attribution = {0};
-
-    check_equal(cnet_benchmark_attribute_send(1000u, 2u, 600u, 1u, 400u, 2u, &attribution),
-                SALTS_ERANGE);
-    check_equal(cnet_benchmark_attribute_send(500u, 1u, 600u, 1u, 400u, 1u, &attribution),
-                SALTS_ERANGE);
-    check_equal(cnet_benchmark_attribute_send(1000u, 1u, 600u, 1u, 700u, 1u, &attribution),
-                SALTS_ERANGE);
-  }
-
   it("rejects invalid or non-finite samples") {
     const double invalid[] = {1.0, 0.0};
     cnet_benchmark_summary summary = {0};
 
     check_equal(cnet_benchmark_summarize(NULL, 1u, &summary), SALTS_EINVAL);
     check_equal(cnet_benchmark_summarize(invalid, 2u, &summary), SALTS_ERANGE);
-    check_equal(cnet_benchmark_attribute_send(1u, 1u, 1u, 1u, 1u, 1u, NULL), SALTS_EINVAL);
-    {
-      cnet_benchmark_send_attribution attribution = {0};
-      check_equal(cnet_benchmark_attribute_send(1u, 0u, 1u, 1u, 1u, 1u, &attribution),
-                  SALTS_EINVAL);
-    }
     {
       cnet_benchmark_fixed_control_sample sample = {0};
       cnet_benchmark_fixed_control_attribution attribution = {0};

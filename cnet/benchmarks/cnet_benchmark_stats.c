@@ -58,15 +58,6 @@ int cnet_benchmark_summarize(const double *values, size_t count,
   return cnet_benchmark_summarize_impl(values, count, true, out_summary);
 }
 
-int cnet_benchmark_summarize_nonnegative(const double *values, size_t count,
-                                         cnet_benchmark_summary *out_summary) {
-  if (values == NULL || out_summary == NULL || count == 0u) return SALTS_EINVAL;
-  for (size_t index = 0u; index < count; ++index) {
-    if (!isfinite(values[index]) || values[index] < 0.0) return SALTS_ERANGE;
-  }
-  return cnet_benchmark_summarize_impl(values, count, false, out_summary);
-}
-
 int cnet_benchmark_summarize_paired_delta(const double *baseline, const double *candidate,
                                           size_t count, cnet_benchmark_summary *out_summary) {
   double *deltas;
@@ -90,59 +81,20 @@ int cnet_benchmark_summarize_paired_delta(const double *baseline, const double *
   return status;
 }
 
-int cnet_benchmark_assess_run_quality(const cnet_benchmark_summary *null_p50,
-                                      const cnet_benchmark_summary *baseline_p50,
-                                      cnet_benchmark_run_quality *out_quality) {
-  double noise_envelope_pp;
-  double baseline_lower_bound_pp;
-
-  if (null_p50 == NULL || baseline_p50 == NULL || out_quality == NULL) return SALTS_EINVAL;
-  if (!isfinite(null_p50->median) || !isfinite(null_p50->mad) || null_p50->mad < 0.0 ||
-      !isfinite(baseline_p50->median) || !isfinite(baseline_p50->mad) || baseline_p50->mad < 0.0)
+int cnet_benchmark_phase_decompose(const cnet_benchmark_phase_sample *sample, size_t round_trips,
+                                  cnet_benchmark_phase_budget *out_budget) {
+  uint64_t measured_ns;
+  if (sample == NULL || out_budget == NULL || round_trips == 0u) return SALTS_EINVAL;
+  if (!cnet_benchmark_u64_add(sample->start_ns, sample->drive_ns, &measured_ns) ||
+      !cnet_benchmark_u64_add(measured_ns, sample->check_ns, &measured_ns) ||
+      measured_ns > sample->wall_ns)
     return SALTS_ERANGE;
-
-  noise_envelope_pp = fabs(null_p50->median) + 3.0 * null_p50->mad;
-  baseline_lower_bound_pp = baseline_p50->median - baseline_p50->mad;
-  if (!isfinite(noise_envelope_pp) || !isfinite(baseline_lower_bound_pp)) return SALTS_ERANGE;
-
-  *out_quality = (cnet_benchmark_run_quality){
-      .state = baseline_p50->median > 0.0 && baseline_lower_bound_pp > noise_envelope_pp
-                   ? CNET_BENCHMARK_RUN_QUALIFIED
-                   : CNET_BENCHMARK_RUN_NOISE_LIMITED,
-      .noise_envelope_pp = noise_envelope_pp,
-      .baseline_lower_bound_pp = baseline_lower_bound_pp,
-  };
-  return SALTS_OK;
-}
-
-const char *cnet_benchmark_run_quality_label(cnet_benchmark_run_quality_state state) {
-  if (state == CNET_BENCHMARK_RUN_QUALIFIED) return "qualified for performance decisions";
-  if (state == CNET_BENCHMARK_RUN_NOISE_LIMITED)
-    return "noise-limited; do not use for optimization decisions";
-  return "unknown";
-}
-
-int cnet_benchmark_attribute_send(uint64_t send_admit_ns, uint64_t send_admit_calls,
-                                  uint64_t queue_publish_ns, uint64_t queue_publish_calls,
-                                  uint64_t payload_copy_ns, uint64_t payload_copy_calls,
-                                  cnet_benchmark_send_attribution *out_attribution) {
-  double calls;
-
-  if (out_attribution == NULL || send_admit_calls == 0u || queue_publish_calls == 0u ||
-      payload_copy_calls == 0u)
-    return SALTS_EINVAL;
-  if (send_admit_calls != queue_publish_calls || send_admit_calls != payload_copy_calls ||
-      send_admit_ns < queue_publish_ns || queue_publish_ns < payload_copy_ns)
-    return SALTS_ERANGE;
-
-  calls = (double)send_admit_calls;
-  *out_attribution = (cnet_benchmark_send_attribution){
-      (double)send_admit_ns / calls,
-      (double)(send_admit_ns - queue_publish_ns) / calls,
-      (double)queue_publish_ns / calls,
-      (double)(queue_publish_ns - payload_copy_ns) / calls,
-      (double)payload_copy_ns / calls,
-  };
+  *out_budget = (cnet_benchmark_phase_budget){
+      .wall_ns = cnet_benchmark_per_rt(sample->wall_ns, round_trips),
+      .start_ns = cnet_benchmark_per_rt(sample->start_ns, round_trips),
+      .drive_ns = cnet_benchmark_per_rt(sample->drive_ns, round_trips),
+      .check_ns = cnet_benchmark_per_rt(sample->check_ns, round_trips),
+      .remainder_ns = cnet_benchmark_per_rt(sample->wall_ns - measured_ns, round_trips)};
   return SALTS_OK;
 }
 

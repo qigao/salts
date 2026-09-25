@@ -104,17 +104,21 @@ static int kqueue_driver_wait(void *driver_state, salts_io_ready_event *events,
       event_capacity < state->event_capacity ? event_capacity : state->event_capacity;
   struct timespec timeout;
   const struct timespec *timeout_pointer = NULL;
+  const uint64_t started_ms = salts_monotonic_ms();
+  uint32_t remaining_ms = timeout_ms;
   int count;
-  if (timeout_ms != UINT32_MAX) {
-    timeout.tv_sec = (time_t)(timeout_ms / 1000u);
-    timeout.tv_nsec = (long)(timeout_ms % 1000u) * 1000000L;
-    timeout_pointer = &timeout;
-  }
-  do {
+  for (;;) {
+    if (remaining_ms != UINT32_MAX) {
+      timeout.tv_sec = (time_t)(remaining_ms / 1000u);
+      timeout.tv_nsec = (long)(remaining_ms % 1000u) * 1000000L;
+      timeout_pointer = &timeout;
+    }
     count = kevent(state->kqueue_fd, NULL, 0, state->events, (int)limit, timeout_pointer);
-  } while (count < 0 && errno == EINTR);
+    if (count > 0 || (count < 0 && errno != EINTR)) break;
+    remaining_ms = native_io_remaining_timeout(started_ms, timeout_ms);
+    if (remaining_ms == 0u) return SALTS_ETIMEDOUT;
+  }
   if (count < 0) return -errno;
-  if (count == 0) return SALTS_ETIMEDOUT;
   for (int index = 0; index < count; ++index) {
     const struct kevent *native = &state->events[index];
     uint32_t interests = 0u;

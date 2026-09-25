@@ -7,6 +7,7 @@
 #include <salts/error_codes.h>
 #include <salts/native_io.h>
 #include <salts/thread.h>
+#include <salts_fs.h>
 
 #include "cnet_benchmark_stats.h"
 #include "cnet_client_internal.h"
@@ -19,6 +20,7 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +31,7 @@
   #endif
   #include <winsock2.h>
   #include <ws2tcpip.h>
+  #include <windows.h>
 typedef SOCKET io_bench_socket;
 typedef int io_bench_socklen;
   #define IO_BENCH_INVALID_SOCKET INVALID_SOCKET
@@ -46,12 +49,7 @@ typedef socklen_t io_bench_socklen;
 #endif
 
 typedef enum io_bench_protocol { IO_BENCH_TCP = 0, IO_BENCH_UDP } io_bench_protocol;
-typedef enum io_bench_driver {
-  IO_BENCH_LIBUV = 0,
-  IO_BENCH_NATIVE_IO,
-  IO_BENCH_NATIVE_IO_COROUTINE,
-  IO_BENCH_CNET
-} io_bench_driver;
+enum { IO_BENCH_PASS_A = 0, IO_BENCH_PASS_DIAGNOSTIC, IO_BENCH_PASS_B, IO_BENCH_PASS_COUNT };
 
 enum {
   IO_BENCH_REPLICATES = 5,
@@ -60,12 +58,22 @@ enum {
   IO_BENCH_TOTAL_EXCHANGES = IO_BENCH_EXCHANGES_PER_REPLICATE,
   IO_BENCH_ALL_EXCHANGES = IO_BENCH_WARMUP_EXCHANGES + IO_BENCH_TOTAL_EXCHANGES,
   IO_BENCH_TIMEOUT_MS = 5000,
-  IO_BENCH_MAX_PAYLOAD = 65536,
-  IO_BENCH_COMPLETION_CAPACITY = 4
+  IO_BENCH_MAX_PAYLOAD = CNET_IO_BENCHMARK_MAX_PAYLOAD,
+  IO_BENCH_COMPLETION_CAPACITY = 4,
+  IO_BENCH_CSV_LINE_CAPACITY = 1024
 };
 
 static const size_t IO_BENCH_TCP_PAYLOADS[] = {1024u, 4096u, 8192u, 16384u, 32768u, 65536u};
 static const size_t IO_BENCH_UDP_PAYLOADS[] = {1024u, 4096u, 8192u};
+
+typedef struct io_bench_sample {
+  uint64_t wall_ns;
+  uint64_t start_ns;
+  uint64_t drive_ns;
+  uint64_t check_ns;
+  size_t start_calls;
+  size_t drive_calls;
+} io_bench_sample;
 
 typedef struct io_bench_result {
   size_t payload_size;
@@ -73,6 +81,12 @@ typedef struct io_bench_result {
   uint64_t wall_ns;
   uint64_t p50_ns;
   uint64_t p95_ns;
+  uint64_t cpu_ns;
+  uint64_t cpu_cycles;
+  uint64_t voluntary_switches;
+  uint64_t involuntary_switches;
+  uint64_t payload_check_ns;
+  io_bench_sample samples[IO_BENCH_TOTAL_EXCHANGES];
   uint64_t cnet_receive_admission_ns;
   uint64_t cnet_send_admission_ns;
   uint64_t cnet_poll_ns;
@@ -96,35 +110,7 @@ typedef struct io_bench_series {
   cnet_benchmark_summary p50_ns;
   cnet_benchmark_summary p95_ns;
   cnet_benchmark_summary rate_per_second;
-  cnet_benchmark_summary native_start_ns;
-  cnet_benchmark_summary native_observe_ns;
-  cnet_benchmark_summary native_starts_per_round_trip;
-  cnet_benchmark_summary native_observes_per_round_trip;
-  cnet_benchmark_summary cnet_send_admission_ns;
-  cnet_benchmark_summary cnet_send_public_control_ns;
-  cnet_benchmark_summary cnet_send_queue_publish_ns;
-  cnet_benchmark_summary cnet_send_queue_control_ns;
-  cnet_benchmark_summary cnet_send_payload_copy_ns;
-  cnet_benchmark_summary cnet_poll_control_ns;
-  cnet_benchmark_summary cnet_callback_control_ns;
-  cnet_benchmark_summary cnet_benchmark_payload_check_ns;
-  cnet_benchmark_summary cnet_polls_per_round_trip;
-  cnet_benchmark_summary cnet_owner_drive_ns;
-  cnet_benchmark_summary cnet_owner_control_ns;
-  cnet_benchmark_summary cnet_receive_rearm_control_ns;
-  cnet_benchmark_summary cnet_command_stage_ns;
-  cnet_benchmark_summary cnet_command_control_ns;
-  cnet_benchmark_summary cnet_owner_residual_ns;
-  cnet_benchmark_summary cnet_request_control_ns;
-  cnet_benchmark_summary cnet_request_start_ns;
-  cnet_benchmark_summary cnet_request_resubmit_ns;
-  cnet_benchmark_summary cnet_observe_ns;
-  cnet_benchmark_summary cnet_completion_control_ns;
-  cnet_benchmark_summary cnet_event_publish_ns;
-  cnet_benchmark_summary cnet_event_framework_control_ns;
-  cnet_benchmark_summary cnet_requests_started_per_round_trip;
-  cnet_benchmark_summary cnet_requests_completed_per_round_trip;
-  cnet_benchmark_summary cnet_events_per_round_trip;
+  io_bench_result control_runs[IO_BENCH_REPLICATES];
 } io_bench_series;
 
 typedef struct io_bench_server {
@@ -524,6 +510,14 @@ static int io_bench_native_exchange(io_bench_native *fixture, const unsigned cha
   return memcmp(sent, received, length) == 0 ? SALTS_OK : SALTS_EIO;
 }
 
+static int io_bench_check_profiled(const unsigned char *sent, const unsigned char *received,
+                                   size_t length, io_bench_result *result) {
+  const uint64_t started = salts_hrtime();
+  const int status = memcmp(sent, received, length) == 0 ? SALTS_OK : SALTS_EIO;
+  result->payload_check_ns += salts_hrtime() - started;
+  return status;
+}
+
 static void io_bench_record_stage(uint64_t started, uint64_t *total_ns, size_t *calls) {
   *total_ns += salts_hrtime() - started;
   ++*calls;
@@ -590,7 +584,7 @@ static int io_bench_native_exchange_profiled(io_bench_native *fixture, const uns
       } else return SALTS_EPROTO;
     }
   }
-  return memcmp(sent, received, length) == 0 ? SALTS_OK : SALTS_EIO;
+  return io_bench_check_profiled(sent, received, length, result);
 }
 
 static void io_bench_native_coroutine_operation_entry(native_io_coroutine *coroutine,
@@ -712,7 +706,7 @@ static int io_bench_native_coroutine_exchange_profiled(io_bench_native *fixture,
   }
   if (send.status != SALTS_OK) return send.status;
   if (receive.status != SALTS_OK) return receive.status;
-  return memcmp(sent, received, length) == 0 ? SALTS_OK : SALTS_EIO;
+  return io_bench_check_profiled(sent, received, length, result);
 }
 
 static int io_bench_native_destroy(io_bench_native *fixture) {
@@ -840,38 +834,56 @@ static int io_bench_libuv_init(io_bench_libuv *fixture, io_bench_protocol protoc
 }
 
 static int io_bench_libuv_exchange(io_bench_libuv *fixture, const unsigned char *sent,
-                                   unsigned char *received, size_t length) {
+                                   unsigned char *received, size_t length,
+                                   io_bench_result *result) {
   uv_buf_t buffer = uv_buf_init((char *)sent, (unsigned int)length);
   int status;
+  uint64_t started;
   fixture->received_data = received;
   fixture->payload_size = length;
   fixture->received = 0u;
   fixture->status = SALTS_OK;
   fixture->done = false;
   fixture->write_pending = true;
+  started = result != NULL ? salts_hrtime() : 0u;
   if (fixture->protocol == IO_BENCH_TCP) {
     status =
         uv_read_start((uv_stream_t *)&fixture->tcp, io_bench_libuv_alloc, io_bench_libuv_tcp_read);
+    if (result != NULL)
+      io_bench_record_stage(started, &result->native_start_ns, &result->native_start_calls);
     if (status == 0) {
       fixture->read_active = true;
       fixture->tcp_write.data = fixture;
+      started = result != NULL ? salts_hrtime() : 0u;
       status = uv_write(&fixture->tcp_write, (uv_stream_t *)&fixture->tcp, &buffer, 1u,
                         io_bench_libuv_tcp_written);
+      if (result != NULL)
+        io_bench_record_stage(started, &result->native_start_ns, &result->native_start_calls);
     }
   } else {
     status = uv_udp_recv_start(&fixture->udp, io_bench_libuv_alloc, io_bench_libuv_udp_read);
+    if (result != NULL)
+      io_bench_record_stage(started, &result->native_start_ns, &result->native_start_calls);
     if (status == 0) {
       fixture->read_active = true;
       fixture->udp_write.data = fixture;
+      started = result != NULL ? salts_hrtime() : 0u;
       status = uv_udp_send(&fixture->udp_write, &fixture->udp, &buffer, 1u, NULL,
                            io_bench_libuv_udp_written);
+      if (result != NULL)
+        io_bench_record_stage(started, &result->native_start_ns, &result->native_start_calls);
     }
   }
   if (status < 0) return status;
   while (!fixture->done) {
-    if (uv_run(&fixture->loop, UV_RUN_ONCE) == 0 && !fixture->done) return SALTS_EIO;
+    const uint64_t drive_started = result != NULL ? salts_hrtime() : 0u;
+    const int alive = uv_run(&fixture->loop, UV_RUN_ONCE);
+    if (result != NULL)
+      io_bench_record_stage(drive_started, &result->native_observe_ns, &result->native_observe_calls);
+    if (alive == 0 && !fixture->done) return SALTS_EIO;
   }
   if (fixture->status != SALTS_OK) return fixture->status;
+  if (result != NULL) return io_bench_check_profiled(sent, received, length, result);
   return memcmp(sent, received, length) == 0 ? SALTS_OK : SALTS_EIO;
 }
 
@@ -1129,7 +1141,7 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
 static int io_bench_exchange(io_bench_fixture *fixture, const unsigned char *sent,
                              unsigned char *received, size_t length) {
   if (fixture->driver == IO_BENCH_LIBUV)
-    return io_bench_libuv_exchange(&fixture->libuv, sent, received, length);
+    return io_bench_libuv_exchange(&fixture->libuv, sent, received, length, NULL);
   if (fixture->driver == IO_BENCH_NATIVE_IO)
     return io_bench_native_exchange(&fixture->native, sent, received, length);
   if (fixture->driver == IO_BENCH_NATIVE_IO_COROUTINE)
@@ -1140,6 +1152,8 @@ static int io_bench_exchange(io_bench_fixture *fixture, const unsigned char *sen
 static int io_bench_exchange_profiled(io_bench_fixture *fixture, const unsigned char *sent,
                                       unsigned char *received, size_t length,
                                       io_bench_result *result) {
+  if (fixture->driver == IO_BENCH_LIBUV)
+    return io_bench_libuv_exchange(&fixture->libuv, sent, received, length, result);
   if (fixture->driver == IO_BENCH_NATIVE_IO)
     return io_bench_native_exchange_profiled(&fixture->native, sent, received, length, result);
   if (fixture->driver == IO_BENCH_NATIVE_IO_COROUTINE)
@@ -1174,6 +1188,47 @@ static const char *io_bench_driver_name(io_bench_driver driver) {
   return driver == IO_BENCH_NATIVE_IO_COROUTINE ? "NativeIO coroutine" : "CNet";
 }
 
+/* The same outer API boundaries are sampled for all four drivers. CNet's
+ * payload check is nested in poll, unlike the other drivers' final memcmp. */
+static io_bench_sample io_bench_snapshot(const io_bench_fixture *fixture,
+                                         const io_bench_result *result) {
+  if (fixture->driver == IO_BENCH_CNET)
+    return (io_bench_sample){.start_ns = fixture->cnet.send_admission_ns,
+                             .drive_ns = fixture->cnet.poll_ns,
+                             .check_ns = fixture->cnet.benchmark_payload_check_ns,
+                             .start_calls = fixture->cnet.send_admission_calls,
+                             .drive_calls = fixture->cnet.poll_calls};
+  return (io_bench_sample){.start_ns = result->native_start_ns,
+                           .drive_ns = result->native_observe_ns,
+                           .check_ns = result->payload_check_ns,
+                           .start_calls = result->native_start_calls,
+                           .drive_calls = result->native_observe_calls};
+}
+
+static uint64_t io_bench_cpu_ns(const uv_rusage_t *usage) {
+  return ((uint64_t)usage->ru_utime.tv_sec + (uint64_t)usage->ru_stime.tv_sec) * UINT64_C(1000000000) +
+         ((uint64_t)usage->ru_utime.tv_usec + (uint64_t)usage->ru_stime.tv_usec) * UINT64_C(1000);
+}
+
+static bool io_bench_trace_enabled;
+
+static int io_bench_print_host(void) {
+  uv_utsname_t host;
+  uv_cpu_info_t *cpus = NULL;
+  int count = 0;
+  int status = uv_os_uname(&host);
+  if (status != 0) return status;
+  status = uv_cpu_info(&cpus, &count);
+  if (status != 0) return status;
+  if (count <= 0 || cpus == NULL) status = SALTS_EIO;
+  else printf("Host: %s %s %s; first CPU model: %s; logical CPUs: %d; available parallelism: %u. "
+              "Client/peer affinity is not pinned.\n",
+              host.sysname, host.release, host.machine, cpus[0].model, count,
+              uv_available_parallelism());
+  uv_free_cpu_info(cpus, count);
+  return status;
+}
+
 static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size_t payload_size,
                         bool profile_stages, native_io_backend_kind backend_kind,
                         io_bench_result *result) {
@@ -1183,6 +1238,11 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   uint64_t *latencies = NULL;
   uint64_t wall_started = 0u;
   size_t latency_count = 0u;
+  uv_rusage_t usage_before = {0};
+  uv_rusage_t usage_after = {0};
+#ifdef _WIN32
+  ULONG64 cycles_before = 0u, cycles_after = 0u;
+#endif
   const char *phase = "init";
   int status;
   memset(result, 0, sizeof(*result));
@@ -1207,18 +1267,67 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     if (status != SALTS_OK) goto cleanup;
   }
   phase = "measure";
+  if (io_bench_trace_enabled) {
+    fprintf(stderr, "IO_BENCH_MEASURE_BEGIN rounds=%d\n", IO_BENCH_TOTAL_EXCHANGES);
+    fflush(stderr);
+  }
+  status = uv_getrusage_thread(&usage_before);
+  if (status != 0) goto cleanup;
+#ifdef _WIN32
+  if (!QueryThreadCycleTime(GetCurrentThread(), &cycles_before)) {
+    status = uv_translate_sys_error((int)GetLastError());
+    goto cleanup;
+  }
+#endif
   wall_started = salts_hrtime();
   for (size_t exchange = 0u; exchange < IO_BENCH_EXCHANGES_PER_REPLICATE; ++exchange) {
+    const io_bench_sample before = profile_stages ? io_bench_snapshot(&fixture, result)
+                                                   : (io_bench_sample){0};
     const uint64_t started = salts_hrtime();
     status = profile_stages
                  ? io_bench_exchange_profiled(&fixture, sent, received, payload_size, result)
                  : io_bench_exchange(&fixture, sent, received, payload_size);
     if (status != SALTS_OK) goto cleanup;
-    latencies[latency_count++] = salts_hrtime() - started;
+    const uint64_t elapsed = salts_hrtime() - started;
+    io_bench_sample *sample = &result->samples[latency_count];
+    latencies[latency_count++] = elapsed;
+    if (profile_stages) {
+      const io_bench_sample after = io_bench_snapshot(&fixture, result);
+      sample->start_ns = after.start_ns - before.start_ns;
+      sample->drive_ns = after.drive_ns - before.drive_ns;
+      sample->check_ns = after.check_ns - before.check_ns;
+      sample->start_calls = after.start_calls - before.start_calls;
+      sample->drive_calls = after.drive_calls - before.drive_calls;
+      if (driver == IO_BENCH_CNET) {
+        if (sample->drive_ns < sample->check_ns) { status = SALTS_ERANGE; goto cleanup; }
+        sample->drive_ns -= sample->check_ns;
+      }
+    }
+    sample->wall_ns = elapsed;
   }
   result->payload_size = payload_size;
   result->round_trips = latency_count;
   result->wall_ns = salts_hrtime() - wall_started;
+#ifdef _WIN32
+  if (!QueryThreadCycleTime(GetCurrentThread(), &cycles_after) || cycles_after < cycles_before) {
+    status = SALTS_EIO;
+    goto cleanup;
+  }
+  result->cpu_cycles = cycles_after - cycles_before;
+#endif
+  status = uv_getrusage_thread(&usage_after);
+  if (status != 0) goto cleanup;
+  if (io_bench_trace_enabled) {
+    fprintf(stderr, "IO_BENCH_MEASURE_END rounds=%d\n", IO_BENCH_TOTAL_EXCHANGES);
+    fflush(stderr);
+  }
+  if (io_bench_cpu_ns(&usage_after) < io_bench_cpu_ns(&usage_before)) {
+    status = SALTS_ERANGE;
+    goto cleanup;
+  }
+  result->cpu_ns = io_bench_cpu_ns(&usage_after) - io_bench_cpu_ns(&usage_before);
+  result->voluntary_switches = usage_after.ru_nvcsw - usage_before.ru_nvcsw;
+  result->involuntary_switches = usage_after.ru_nivcsw - usage_before.ru_nivcsw;
   qsort(latencies, latency_count, sizeof(latencies[0]), io_bench_u64_compare);
   result->p50_ns = latencies[(latency_count - 1u) * 50u / 100u];
   result->p95_ns = latencies[(latency_count - 1u) * 95u / 100u];
@@ -1294,276 +1403,6 @@ static int io_bench_series_finalize_comparison(io_bench_series *series) {
   return status;
 }
 
-static int io_bench_series_finalize(io_bench_series *series, io_bench_driver driver) {
-  double values[IO_BENCH_REPLICATES];
-  int status = io_bench_series_finalize_comparison(series);
-  if (status != SALTS_OK) return status;
-  if (driver == IO_BENCH_NATIVE_IO || driver == IO_BENCH_NATIVE_IO_COROUTINE) {
-    for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-      const io_bench_result *result = &series->stage_profile_runs[repeat];
-      values[repeat] = io_bench_mean(result->native_start_ns, result->round_trips);
-    }
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->native_start_ns);
-    for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-      const io_bench_result *result = &series->stage_profile_runs[repeat];
-      values[repeat] = io_bench_mean(result->native_observe_ns, result->round_trips);
-    }
-    if (status == SALTS_OK)
-      status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->native_observe_ns);
-    for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-      const io_bench_result *result = &series->stage_profile_runs[repeat];
-      values[repeat] = (double)result->native_start_calls / (double)result->round_trips;
-    }
-    if (status == SALTS_OK)
-      status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                        &series->native_starts_per_round_trip);
-    for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-      const io_bench_result *result = &series->stage_profile_runs[repeat];
-      values[repeat] = (double)result->native_observe_calls / (double)result->round_trips;
-    }
-    if (status == SALTS_OK)
-      status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                        &series->native_observes_per_round_trip);
-    return status;
-  }
-  if (status != SALTS_OK || driver != IO_BENCH_CNET) return status;
-
-  {
-    cnet_benchmark_send_attribution attribution[IO_BENCH_REPLICATES];
-    for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-      const io_bench_result *result = &series->stage_profile_runs[repeat];
-      status = cnet_benchmark_attribute_send(
-          result->cnet_send_admission_ns, result->cnet_send_admission_calls,
-          result->cnet_profile.owner.command_queue_payload_publish_ns,
-          result->cnet_profile.owner.command_queue_payload_publish_calls,
-          result->cnet_profile.owner.command_queue_payload_copy_ns,
-          result->cnet_profile.owner.command_queue_payload_copy_calls, &attribution[repeat]);
-      if (status != SALTS_OK) return status;
-      values[repeat] = attribution[repeat].send_admit_ns;
-    }
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                      &series->cnet_send_admission_ns);
-    for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat)
-      values[repeat] = attribution[repeat].public_control_ns;
-    if (status == SALTS_OK)
-      status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                        &series->cnet_send_public_control_ns);
-    for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat)
-      values[repeat] = attribution[repeat].queue_publish_ns;
-    if (status == SALTS_OK)
-      status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                        &series->cnet_send_queue_publish_ns);
-    for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat)
-      values[repeat] = attribution[repeat].queue_staging_control_ns;
-    if (status == SALTS_OK)
-      status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                        &series->cnet_send_queue_control_ns);
-    for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat)
-      values[repeat] = attribution[repeat].payload_copy_ns;
-    if (status == SALTS_OK)
-      status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                        &series->cnet_send_payload_copy_ns);
-  }
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    if (result->cnet_poll_ns < result->cnet_profile.owner.owner_drive_ns) return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_poll_ns - result->cnet_profile.owner.owner_drive_ns,
-                                   result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_poll_control_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    const double callback_ns = io_bench_mean(result->cnet_callback_ns, result->cnet_callback_calls);
-    const double payload_check_ns =
-        io_bench_mean(result->cnet_benchmark_payload_check_ns, result->cnet_callback_calls);
-    values[repeat] = callback_ns > payload_check_ns ? callback_ns - payload_check_ns : 0.0;
-  }
-  if (status == SALTS_OK)
-    status =
-        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_callback_control_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_benchmark_payload_check_ns, result->cnet_callback_calls);
-  }
-  if (status == SALTS_OK)
-    status =
-        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_benchmark_payload_check_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = (double)result->cnet_poll_calls / (double)result->round_trips;
-  }
-  if (status == SALTS_OK)
-    status =
-        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_polls_per_round_trip);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_profile.owner.owner_drive_ns, result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_owner_drive_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    const uint64_t nested_ns =
-        result->cnet_profile.owner.request_lifecycle_ns + result->cnet_profile.owner.observe_ns;
-    if (nested_ns < result->cnet_profile.owner.request_lifecycle_ns ||
-        result->cnet_profile.owner.owner_drive_ns < nested_ns)
-      return SALTS_ERANGE;
-    values[repeat] =
-        io_bench_mean(result->cnet_profile.owner.owner_drive_ns - nested_ns, result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_owner_control_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    if (result->cnet_profile.owner.receive_rearm_stage_calls != result->cnet_profile.owner.owner_drive_calls ||
-        result->cnet_profile.owner.receive_rearm_stage_ns <
-            result->cnet_profile.owner.receive_rearm_request_lifecycle_ns)
-      return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_profile.owner.receive_rearm_stage_ns -
-                                       result->cnet_profile.owner.receive_rearm_request_lifecycle_ns,
-                                   result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                      &series->cnet_receive_rearm_control_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_profile.owner.command_stage_ns, result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_command_stage_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    const uint64_t categorized_request_ns =
-        result->cnet_profile.owner.receive_rearm_request_lifecycle_ns +
-        result->cnet_profile.owner.command_request_lifecycle_ns;
-    const uint64_t categorized_request_calls =
-        result->cnet_profile.owner.receive_rearm_request_lifecycle_calls +
-        result->cnet_profile.owner.command_request_lifecycle_calls;
-    if (categorized_request_ns < result->cnet_profile.owner.receive_rearm_request_lifecycle_ns ||
-        categorized_request_calls < result->cnet_profile.owner.receive_rearm_request_lifecycle_calls ||
-        categorized_request_ns != result->cnet_profile.owner.request_lifecycle_ns ||
-        categorized_request_calls != result->cnet_profile.owner.request_lifecycle_calls ||
-        result->cnet_profile.owner.command_stage_ns < result->cnet_profile.owner.command_request_lifecycle_ns)
-      return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_profile.owner.command_stage_ns -
-                                       result->cnet_profile.owner.command_request_lifecycle_ns,
-                                   result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status =
-        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_command_control_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    uint64_t owner_nested_ns = result->cnet_profile.owner.request_lifecycle_ns;
-    const uint64_t rearm_control_ns = result->cnet_profile.owner.receive_rearm_stage_ns -
-                                      result->cnet_profile.owner.receive_rearm_request_lifecycle_ns;
-    if (owner_nested_ns > UINT64_MAX - result->cnet_profile.owner.request_resubmit_ns)
-      return SALTS_ERANGE;
-    owner_nested_ns += result->cnet_profile.owner.request_resubmit_ns;
-    if (owner_nested_ns > UINT64_MAX - result->cnet_profile.owner.observe_ns) return SALTS_ERANGE;
-    owner_nested_ns += result->cnet_profile.owner.observe_ns;
-    if (owner_nested_ns > UINT64_MAX - result->cnet_profile.owner.request_completion_ns)
-      return SALTS_ERANGE;
-    owner_nested_ns += result->cnet_profile.owner.request_completion_ns;
-    const uint64_t command_control_ns =
-        result->cnet_profile.owner.command_stage_ns - result->cnet_profile.owner.command_request_lifecycle_ns;
-    const uint64_t categorized_control_ns = rearm_control_ns + command_control_ns;
-    if (categorized_control_ns < rearm_control_ns ||
-        result->cnet_profile.owner.owner_drive_ns < owner_nested_ns ||
-        result->cnet_profile.owner.owner_drive_ns - owner_nested_ns < categorized_control_ns)
-      return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_profile.owner.owner_drive_ns - owner_nested_ns -
-                                       categorized_control_ns,
-                                   result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_owner_residual_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    if (result->cnet_profile.owner.request_lifecycle_calls != result->cnet_profile.owner.request_start_calls ||
-        result->cnet_profile.owner.request_lifecycle_ns < result->cnet_profile.owner.request_start_ns)
-      return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_profile.owner.request_lifecycle_ns -
-                                       result->cnet_profile.owner.request_start_ns,
-                                   result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status =
-        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_request_control_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_profile.owner.request_start_ns, result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_request_start_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_profile.owner.request_resubmit_ns,
-                                   result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize_nonnegative(values, IO_BENCH_REPLICATES,
-                                                  &series->cnet_request_resubmit_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_profile.owner.observe_ns, result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_observe_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    if (result->cnet_profile.owner.request_completion_calls != result->cnet_profile.owner.event_publish_calls ||
-        result->cnet_profile.owner.request_completion_ns < result->cnet_profile.owner.event_publish_ns)
-      return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_profile.owner.request_completion_ns -
-                                       result->cnet_profile.owner.event_publish_ns,
-                                   result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status =
-        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_completion_control_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = io_bench_mean(result->cnet_profile.owner.event_publish_ns, result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_event_publish_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    if (result->cnet_profile.owner.event_publish_ns < result->cnet_callback_ns) return SALTS_ERANGE;
-    values[repeat] = io_bench_mean(result->cnet_profile.owner.event_publish_ns - result->cnet_callback_ns,
-                                   result->round_trips);
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                      &series->cnet_event_framework_control_ns);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = (double)result->cnet_profile.owner.request_start_calls / (double)result->round_trips;
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                      &series->cnet_requests_started_per_round_trip);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] =
-        (double)result->cnet_profile.owner.request_completion_calls / (double)result->round_trips;
-  }
-  if (status == SALTS_OK)
-    status = cnet_benchmark_summarize(values, IO_BENCH_REPLICATES,
-                                      &series->cnet_requests_completed_per_round_trip);
-  for (size_t repeat = 0u; status == SALTS_OK && repeat < IO_BENCH_REPLICATES; ++repeat) {
-    const io_bench_result *result = &series->stage_profile_runs[repeat];
-    values[repeat] = (double)result->cnet_profile.owner.event_publish_calls / (double)result->round_trips;
-  }
-  if (status == SALTS_OK)
-    status =
-        cnet_benchmark_summarize(values, IO_BENCH_REPLICATES, &series->cnet_events_per_round_trip);
-  return status;
-}
-
 static int io_bench_paired_delta(const io_bench_series *baseline, const io_bench_series *candidate,
                                  io_bench_metric metric, cnet_benchmark_summary *out_summary) {
   double baseline_values[IO_BENCH_REPLICATES];
@@ -1574,72 +1413,6 @@ static int io_bench_paired_delta(const io_bench_series *baseline, const io_bench
   }
   return cnet_benchmark_summarize_paired_delta(baseline_values, candidate_values,
                                                IO_BENCH_REPLICATES, out_summary);
-}
-
-static int io_bench_print_null_control(const char *protocol,
-                                       const io_bench_series *direct_a,
-                                       const io_bench_series *direct_b, size_t count) {
-  printf("\n%s NativeIO direct A/A null-control paired deltas\n", protocol);
-  printf("| payload | p50 B vs A median +/- MAD | p95 B vs A median +/- MAD | "
-         "rate B vs A median +/- MAD |\n");
-  printf("| ---: | ---: | ---: | ---: |\n");
-  for (size_t index = 0u; index < count; ++index) {
-    cnet_benchmark_summary p50 = {0};
-    cnet_benchmark_summary p95 = {0};
-    cnet_benchmark_summary rate = {0};
-    int status = io_bench_paired_delta(&direct_a[index], &direct_b[index],
-                                       IO_BENCH_METRIC_P50, &p50);
-    if (status == SALTS_OK)
-      status = io_bench_paired_delta(&direct_a[index], &direct_b[index],
-                                     IO_BENCH_METRIC_P95, &p95);
-    if (status == SALTS_OK)
-      status = io_bench_paired_delta(&direct_a[index], &direct_b[index],
-                                     IO_BENCH_METRIC_RATE, &rate);
-    if (status != SALTS_OK) return status;
-    printf("| %zu KiB | %+.2f%% +/- %.2fpp | %+.2f%% +/- %.2fpp | %+.2f%% +/- %.2fpp |\n",
-           direct_a[index].payload_size / 1024u, p50.median, p50.mad, p95.median, p95.mad,
-           rate.median, rate.mad);
-  }
-
-  printf("\n%s NativeIO direct A/A null-control raw repeats\n", protocol);
-  printf("| payload | repeat | direct A p50 us | direct B p50 us | direct A p95 us | "
-         "direct B p95 us | direct A RT/s | direct B RT/s |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-  for (size_t index = 0u; index < count; ++index) {
-    for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-      const io_bench_result *a = &direct_a[index].runs[repeat];
-      const io_bench_result *b = &direct_b[index].runs[repeat];
-      printf("| %zu KiB | %zu | %.3f | %.3f | %.3f | %.3f | %.0f | %.0f |\n",
-             direct_a[index].payload_size / 1024u, repeat + 1u, (double)a->p50_ns / 1000.0,
-             (double)b->p50_ns / 1000.0, (double)a->p95_ns / 1000.0,
-             (double)b->p95_ns / 1000.0, io_bench_rate(a), io_bench_rate(b));
-    }
-  }
-  return SALTS_OK;
-}
-
-static int io_bench_print_run_quality(const io_bench_series *direct_a,
-                                      const io_bench_series *direct_b,
-                                      const io_bench_series *native,
-                                      const io_bench_series *cnet) {
-  cnet_benchmark_summary null_p50 = {0};
-  cnet_benchmark_summary baseline_p50 = {0};
-  cnet_benchmark_run_quality quality = {0};
-  int status = io_bench_paired_delta(direct_a, direct_b, IO_BENCH_METRIC_P50, &null_p50);
-  if (status == SALTS_OK)
-    status = io_bench_paired_delta(native, cnet, IO_BENCH_METRIC_P50, &baseline_p50);
-  if (status == SALTS_OK)
-    status = cnet_benchmark_assess_run_quality(&null_p50, &baseline_p50, &quality);
-  if (status != SALTS_OK) return status;
-
-  printf("\nIOCP TCP 1 KiB benchmark run quality\n");
-  printf("NativeIO A/A p50: %+.2f%% +/- %.2fpp\n", null_p50.median, null_p50.mad);
-  printf("CNet vs NativeIO direct p50: %+.2f%% +/- %.2fpp\n", baseline_p50.median,
-         baseline_p50.mad);
-  printf("A/A noise envelope: %.2fpp\n", quality.noise_envelope_pp);
-  printf("Baseline lower bound: %.2fpp\n", quality.baseline_lower_bound_pp);
-  printf("RUN QUALITY: %s\n", cnet_benchmark_run_quality_label(quality.state));
-  return SALTS_OK;
 }
 
 static int io_bench_print_latency(const char *protocol, const char *percentile,
@@ -1661,23 +1434,23 @@ static int io_bench_print_latency(const char *protocol, const char *percentile,
            baseline->median / 1000.0, coroutine_value->median / 1000.0, cnet_value->median / 1000.0,
            libuv_value->median / 1000.0);
   }
-  printf("\n%s %s paired latency delta versus NativeIO direct\n", protocol, percentile);
-  printf("| payload | NativeIO coroutine median +/- MAD | CNet median +/- MAD | "
-         "libuv median +/- MAD |\n");
+  printf("\n%s %s paired latency delta versus libuv\n", protocol, percentile);
+  printf("| payload | NativeIO direct median +/- MAD | NativeIO coroutine median +/- MAD | "
+         "CNet median +/- MAD |\n");
   printf("| ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
     cnet_benchmark_summary coroutine_delta = {0};
     cnet_benchmark_summary cnet_delta = {0};
-    cnet_benchmark_summary libuv_delta = {0};
-    int status = io_bench_paired_delta(&native[index], &coroutine[index], metric, &coroutine_delta);
+    cnet_benchmark_summary native_delta = {0};
+    int status = io_bench_paired_delta(&libuv[index], &coroutine[index], metric, &coroutine_delta);
     if (status == SALTS_OK)
-      status = io_bench_paired_delta(&native[index], &cnet[index], metric, &cnet_delta);
+      status = io_bench_paired_delta(&libuv[index], &cnet[index], metric, &cnet_delta);
     if (status == SALTS_OK)
-      status = io_bench_paired_delta(&native[index], &libuv[index], metric, &libuv_delta);
+      status = io_bench_paired_delta(&libuv[index], &native[index], metric, &native_delta);
     if (status != SALTS_OK) return status;
     printf("| %zu KiB | %+.2f%% +/- %.2fpp | %+.2f%% +/- %.2fpp | %+.2f%% +/- %.2fpp |\n",
-           libuv[index].payload_size / 1024u, coroutine_delta.median, coroutine_delta.mad,
-           cnet_delta.median, cnet_delta.mad, libuv_delta.median, libuv_delta.mad);
+           libuv[index].payload_size / 1024u, native_delta.median, native_delta.mad,
+           coroutine_delta.median, coroutine_delta.mad, cnet_delta.median, cnet_delta.mad);
   }
   return SALTS_OK;
 }
@@ -1694,57 +1467,28 @@ static int io_bench_print_rate(const char *protocol, const io_bench_series *libu
            native[index].rate_per_second.median, coroutine[index].rate_per_second.median,
            cnet[index].rate_per_second.median, libuv[index].rate_per_second.median);
   }
-  printf("\n%s paired rate delta versus NativeIO direct\n", protocol);
-  printf("| payload | NativeIO coroutine median +/- MAD | CNet median +/- MAD | "
-         "libuv median +/- MAD |\n");
+  printf("\n%s paired rate delta versus libuv\n", protocol);
+  printf("| payload | NativeIO direct median +/- MAD | NativeIO coroutine median +/- MAD | "
+         "CNet median +/- MAD |\n");
   printf("| ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
     cnet_benchmark_summary coroutine_delta = {0};
     cnet_benchmark_summary cnet_delta = {0};
-    cnet_benchmark_summary libuv_delta = {0};
-    int status = io_bench_paired_delta(&native[index], &coroutine[index], IO_BENCH_METRIC_RATE,
+    cnet_benchmark_summary native_delta = {0};
+    int status = io_bench_paired_delta(&libuv[index], &coroutine[index], IO_BENCH_METRIC_RATE,
                                        &coroutine_delta);
     if (status == SALTS_OK)
       status =
-          io_bench_paired_delta(&native[index], &cnet[index], IO_BENCH_METRIC_RATE, &cnet_delta);
+          io_bench_paired_delta(&libuv[index], &cnet[index], IO_BENCH_METRIC_RATE, &cnet_delta);
     if (status == SALTS_OK)
       status =
-          io_bench_paired_delta(&native[index], &libuv[index], IO_BENCH_METRIC_RATE, &libuv_delta);
+          io_bench_paired_delta(&libuv[index], &native[index], IO_BENCH_METRIC_RATE, &native_delta);
     if (status != SALTS_OK) return status;
     printf("| %zu KiB | %+.2f%% +/- %.2fpp | %+.2f%% +/- %.2fpp | %+.2f%% +/- %.2fpp |\n",
-           libuv[index].payload_size / 1024u, coroutine_delta.median, coroutine_delta.mad,
-           cnet_delta.median, cnet_delta.mad, libuv_delta.median, libuv_delta.mad);
+           libuv[index].payload_size / 1024u, native_delta.median, native_delta.mad,
+           coroutine_delta.median, coroutine_delta.mad, cnet_delta.median, cnet_delta.mad);
   }
   return SALTS_OK;
-}
-
-static void io_bench_print_native_stages(const char *protocol, const io_bench_series *native,
-                                         const io_bench_series *coroutine, size_t count) {
-  printf("\n%s NativeIO diagnostic inclusive time per round trip\n", protocol);
-  printf("Direct start is backend submit. Coroutine start is task spawn through the first "
-         "await/submit. Observe includes backend wait and, for coroutine, completion routing and "
-         "task resume.\n");
-  printf("| payload | direct submit us | MAD us | submits/RT | direct observe us | MAD us | "
-         "observes/RT | coroutine start us | MAD us | starts/RT | coroutine observe us | MAD us | "
-         "observes/RT |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-         "---: | ---: |\n");
-  for (size_t index = 0u; index < count; ++index) {
-    printf("| %zu KiB | %.3f | %.3f | %.2f | %.3f | %.3f | %.2f | %.3f | %.3f | %.2f | "
-           "%.3f | %.3f | %.2f |\n",
-           native[index].payload_size / 1024u, native[index].native_start_ns.median / 1000.0,
-           native[index].native_start_ns.mad / 1000.0,
-           native[index].native_starts_per_round_trip.median,
-           native[index].native_observe_ns.median / 1000.0,
-           native[index].native_observe_ns.mad / 1000.0,
-           native[index].native_observes_per_round_trip.median,
-           coroutine[index].native_start_ns.median / 1000.0,
-           coroutine[index].native_start_ns.mad / 1000.0,
-           coroutine[index].native_starts_per_round_trip.median,
-           coroutine[index].native_observe_ns.median / 1000.0,
-           coroutine[index].native_observe_ns.mad / 1000.0,
-           coroutine[index].native_observes_per_round_trip.median);
-  }
 }
 
 static int io_bench_fixed_control_attribution(
@@ -1777,159 +1521,259 @@ static int io_bench_fixed_control_attribution(
   return cnet_benchmark_attribute_fixed_control(&sample, out_attribution);
 }
 
-static int io_bench_print_cnet_fixed_control(const char *protocol, const io_bench_series *cnet,
-                                             size_t count) {
-  printf("\n%s CNet closed diagnostic budget per repeat\n", protocol);
-  printf("All columns are exclusive after nested clocks are removed. Fixed + shared NativeIO + "
-         "payload copy + benchmark work + closure residual = profiled send + public client poll.\n");
-  printf("| payload | repeat | total budget us | fixed control us | shared NativeIO us | payload "
-         "copy us | benchmark work us | closure residual ns |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+static int io_bench_phase_budget(const io_bench_result *result,
+                                  cnet_benchmark_phase_budget *budget) {
+  cnet_benchmark_phase_sample sample = {.wall_ns = result->wall_ns};
+  for (size_t i = 0u; i < result->round_trips; ++i) {
+    sample.start_ns += result->samples[i].start_ns;
+    sample.drive_ns += result->samples[i].drive_ns;
+    sample.check_ns += result->samples[i].check_ns;
+  }
+  return cnet_benchmark_phase_decompose(&sample, result->round_trips, budget);
+}
+
+static int io_bench_print_diagnostics(const char *protocol, const io_bench_series *libuv,
+                                      const io_bench_series *native,
+                                      const io_bench_series *coroutine,
+                                      const io_bench_series *cnet, size_t count) {
+  const io_bench_series *drivers[] = {libuv, native, coroutine, cnet};
+  printf("\n%s measurement quality and client-thread cost\n", protocol);
+  printf("A/A is paired B/A p50 median +/- MAD, not a confidence interval. Probe drift is "
+         "diagnostic mean RTT versus the mean of its surrounding A/B runs. CPU spans the whole "
+         "batch; wall-CPU includes blocked AND runnable time, not just kernel wait. CPU accounting "
+         "can be coarse, especially on Windows; a negative estimate is retained, never clamped.\n");
+#ifdef _WIN32
+  printf("Windows CPU cost is QueryThreadCycleTime cycles/RT, never converted to time. "
+         "Coarse CPU ns remain in CSV; wall-CPU is unresolved, not reported as precise wait.\n");
+#else
+  printf("Client CPU cost is microseconds/RT.\n");
+#endif
+  printf("| payload | driver | A/A p50 %% +/- MAD pp | probe mean %% +/- MAD pp | "
+         "diagnostic mean us | client CPU cost/RT | wall-CPU us/RT |\n");
+  printf("| ---: | --- | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
-    for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-      cnet_benchmark_fixed_control_attribution attribution = {0};
-      int status = io_bench_fixed_control_attribution(&cnet[index].stage_profile_runs[repeat],
-                                                      &attribution);
+    for (unsigned driver = 0u; driver < IO_BENCH_DRIVER_COUNT; ++driver) {
+      const io_bench_series *series = &drivers[driver][index];
+      double a[IO_BENCH_REPLICATES], b[IO_BENCH_REPLICATES];
+      double unprofiled[IO_BENCH_REPLICATES], profiled[IO_BENCH_REPLICATES];
+      double cpu = 0.0, wall = 0.0;
+      cnet_benchmark_summary noise = {0}, probe = {0};
+      for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
+        const io_bench_result *raw = &series->runs[repeat];
+        const io_bench_result *control = &series->control_runs[repeat];
+        const io_bench_result *diag = &series->stage_profile_runs[repeat];
+        a[repeat] = (double)raw->p50_ns;
+        b[repeat] = (double)control->p50_ns;
+        unprofiled[repeat] = (io_bench_mean(raw->wall_ns, raw->round_trips) +
+                              io_bench_mean(control->wall_ns, control->round_trips)) / 2.0;
+        profiled[repeat] = io_bench_mean(diag->wall_ns, diag->round_trips);
+#ifdef _WIN32
+        cpu += io_bench_mean(diag->cpu_cycles, diag->round_trips) / IO_BENCH_REPLICATES;
+#else
+        cpu += io_bench_mean(diag->cpu_ns, diag->round_trips) / IO_BENCH_REPLICATES;
+#endif
+        wall += profiled[repeat] / IO_BENCH_REPLICATES;
+      }
+      int status = cnet_benchmark_summarize_paired_delta(a, b, IO_BENCH_REPLICATES, &noise);
+      if (status == SALTS_OK)
+        status = cnet_benchmark_summarize_paired_delta(unprofiled, profiled, IO_BENCH_REPLICATES,
+                                                       &probe);
       if (status != SALTS_OK) return status;
-      printf("| %zu KiB | %zu | %.3f | %.3f | %.3f | %.3f | %.3f | %.1f |\n",
-             cnet[index].payload_size / 1024u, repeat + 1u, attribution.total_budget_ns / 1000.0,
-             attribution.fixed_control_total_ns / 1000.0,
-             attribution.shared_native_total_ns / 1000.0, attribution.payload_copy_ns / 1000.0,
-             attribution.benchmark_work_total_ns / 1000.0, attribution.closure_residual_ns);
+      printf("| %zu KiB | %s | %+.2f +/- %.2f | %+.2f +/- %.2f | %.3f | ",
+             series->payload_size / 1024u, io_bench_driver_name((io_bench_driver)driver),
+             noise.median, noise.mad, probe.median, probe.mad, wall / 1000.0);
+#ifdef _WIN32
+      printf("%.0f cycles | unresolved |\n", cpu);
+#else
+      printf("%.3f us | %+.3f |\n", cpu / 1000.0, (wall - cpu) / 1000.0);
+#endif
     }
   }
 
-  printf("\n%s CNet exclusive fixed-control components per repeat\n", protocol);
-  printf("| payload | repeat | send public ns | queue control ns | client poll wrapper ns | owner "
-         "control ns | request control ns | completion control ns | event residual ns | "
-         "dispatcher prepare ns | dispatcher framework ns | client observer ns | dispatcher "
-         "release ns |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-         "---: |\n");
+  printf("\n%s diagnostic boundary deltas versus libuv (us/RT)\n", protocol);
+  printf("Arithmetic mean of paired per-repeat differences, NOT differences of p50/p95. "
+         "Start + drive + check + remainder = diagnostic mean gap only. "
+         "Start: uv read-arm/write, NativeIO submit, coroutine spawn, or CNet send admission. "
+         "Drive: uv_run, backend observe, or CNet poll, excluding payload verification. "
+         "CNet executes queued submits inside drive. These different API boundaries locate work "
+         "but do NOT prove a CPU or syscall cause. Drive still mixes wait and dispatch. "
+         "Remainder includes harness and probe bookkeeping; unresolved causes require a trace.\n");
+  printf("| payload | driver | mean gap | start delta | drive delta | check delta | remainder delta |\n");
+  printf("| ---: | --- | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
+    for (unsigned driver = 1u; driver < IO_BENCH_DRIVER_COUNT; ++driver) {
+      cnet_benchmark_phase_budget delta = {0};
+      for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
+        cnet_benchmark_phase_budget reference = {0}, candidate = {0};
+        int status = io_bench_phase_budget(&libuv[index].stage_profile_runs[repeat], &reference);
+        if (status == SALTS_OK)
+          status = io_bench_phase_budget(&drivers[driver][index].stage_profile_runs[repeat],
+                                         &candidate);
+        if (status != SALTS_OK) return status;
+        delta.wall_ns += (candidate.wall_ns - reference.wall_ns) / IO_BENCH_REPLICATES;
+        delta.start_ns += (candidate.start_ns - reference.start_ns) / IO_BENCH_REPLICATES;
+        delta.drive_ns += (candidate.drive_ns - reference.drive_ns) / IO_BENCH_REPLICATES;
+        delta.check_ns += (candidate.check_ns - reference.check_ns) / IO_BENCH_REPLICATES;
+        delta.remainder_ns += (candidate.remainder_ns - reference.remainder_ns) / IO_BENCH_REPLICATES;
+      }
+      printf("| %zu KiB | %s | %+.3f | %+.3f | %+.3f | %+.3f | %+.3f |\n",
+             libuv[index].payload_size / 1024u, io_bench_driver_name((io_bench_driver)driver),
+             delta.wall_ns / 1000.0, delta.start_ns / 1000.0, delta.drive_ns / 1000.0,
+             delta.check_ns / 1000.0, delta.remainder_ns / 1000.0);
+    }
+  }
+
+  printf("\n%s CNet diagnostic internal evidence (mean us/RT)\n", protocol);
+  printf("Within CNet only, not an explanation of the libuv gap. "
+         "Observe still includes waiting. Payload copy is the admitted send copy only.\n");
+  printf("| payload | fixed control | send copy | NativeIO submit/resubmit | observe | starts/RT | completions/RT |\n");
+  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  for (size_t index = 0u; index < count; ++index) {
+    double fixed = 0.0, copy = 0.0, submit = 0.0, observe = 0.0, starts = 0.0, completions = 0.0;
     for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-      cnet_benchmark_fixed_control_attribution attribution = {0};
-      int status = io_bench_fixed_control_attribution(&cnet[index].stage_profile_runs[repeat],
-                                                      &attribution);
+      const io_bench_result *result = &cnet[index].stage_profile_runs[repeat];
+      cnet_benchmark_fixed_control_attribution attribution;
+      const int status = io_bench_fixed_control_attribution(result, &attribution);
       if (status != SALTS_OK) return status;
-      printf("| %zu KiB | %zu | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | "
-             "%.1f | %.1f | %.1f |\n",
-             cnet[index].payload_size / 1024u, repeat + 1u,
-             attribution.send_public_control_ns, attribution.queue_control_ns,
-             attribution.client_poll_wrapper_ns, attribution.owner_control_ns,
-             attribution.request_control_ns, attribution.completion_control_ns,
-             attribution.event_publish_residual_ns, attribution.dispatcher_prepare_ns,
-             attribution.dispatcher_invoke_framework_ns, attribution.client_observer_control_ns,
-             attribution.dispatcher_release_ns);
+      fixed += attribution.fixed_control_total_ns / IO_BENCH_REPLICATES;
+      copy += attribution.payload_copy_ns / IO_BENCH_REPLICATES;
+      submit += (attribution.native_request_start_ns + attribution.native_request_resubmit_ns) /
+                IO_BENCH_REPLICATES;
+      observe += attribution.native_observe_ns / IO_BENCH_REPLICATES;
+      starts += io_bench_mean(result->cnet_profile.owner.request_start_calls, result->round_trips) /
+                IO_BENCH_REPLICATES;
+      completions += io_bench_mean(result->cnet_profile.owner.request_completion_calls,
+                                   result->round_trips) / IO_BENCH_REPLICATES;
+    }
+    printf("| %zu KiB | %.3f | %.3f | %.3f | %.3f | %.2f | %.2f |\n",
+           cnet[index].payload_size / 1024u, fixed / 1000.0, copy / 1000.0, submit / 1000.0,
+           observe / 1000.0, starts, completions);
+  }
+  return SALTS_OK;
+}
+
+/* Artifacts are written only AFTER all timed runs. The fixed sample arrays bound
+ * memory by payload rows * drivers * passes * repeats * exchanges, never traffic. */
+static int io_bench_csv_line(salts_file_t file, const char *format, ...) {
+  char line[IO_BENCH_CSV_LINE_CAPACITY];
+  va_list args;
+  va_start(args, format);
+  const int length = vsnprintf(line, sizeof(line), format, args);
+  va_end(args);
+  if (length < 0 || (size_t)length >= sizeof(line)) return SALTS_ERANGE;
+  size_t offset = 0u;
+  while (offset < (size_t)length) {
+    const int written = salts_fs_write(file, line + offset, (size_t)length - offset);
+    if (written < 0) return written;
+    if (written == 0) return SALTS_EIO;
+    offset += (size_t)written;
+  }
+  return SALTS_OK;
+}
+
+static int io_bench_write_series(salts_file_t runs, salts_file_t samples,
+                                  const char *backend, const char *protocol,
+                                  io_bench_driver driver, const io_bench_series *series) {
+  const io_bench_result *passes[] = {series->runs, series->stage_profile_runs, series->control_runs};
+  static const char *const names[] = {"A", "diagnostic", "B"};
+  for (unsigned pass = 0u; pass < IO_BENCH_PASS_COUNT; ++pass) {
+    for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
+      const io_bench_result *result = &passes[pass][repeat];
+      size_t start_calls = 0u, drive_calls = 0u;
+      for (size_t i = 0u; i < result->round_trips; ++i) {
+        const io_bench_sample *sample = &result->samples[i];
+        cnet_benchmark_phase_sample phases = {sample->wall_ns, sample->start_ns,
+                                               sample->drive_ns, sample->check_ns};
+        cnet_benchmark_phase_budget budget;
+        int status = cnet_benchmark_phase_decompose(&phases, 1u, &budget);
+        if (status != SALTS_OK) return status;
+        start_calls += sample->start_calls;
+        drive_calls += sample->drive_calls;
+        if (pass == IO_BENCH_PASS_DIAGNOSTIC)
+          status = io_bench_csv_line(samples, "%s,%s,%zu,%s,%s,%zu,%zu,%llu,%llu,%llu,%llu,%.0f,%zu,%zu\n",
+              backend, protocol, result->payload_size, io_bench_driver_name(driver), names[pass],
+              repeat + 1u, i + 1u, (unsigned long long)sample->wall_ns,
+              (unsigned long long)sample->start_ns, (unsigned long long)sample->drive_ns,
+              (unsigned long long)sample->check_ns, budget.remainder_ns,
+              sample->start_calls, sample->drive_calls);
+        else
+          status = io_bench_csv_line(samples, "%s,%s,%zu,%s,%s,%zu,%zu,%llu,,,,,,\n",
+              backend, protocol, result->payload_size, io_bench_driver_name(driver), names[pass],
+              repeat + 1u, i + 1u, (unsigned long long)sample->wall_ns);
+        if (status != SALTS_OK) return status;
+      }
+      char switches[IO_BENCH_CSV_LINE_CAPACITY];
+#ifdef __linux__
+      (void)snprintf(switches, sizeof(switches), "%llu,%llu",
+                     (unsigned long long)result->voluntary_switches,
+                     (unsigned long long)result->involuntary_switches);
+#else
+      /* libuv does not provide these thread counters on Windows/macOS. */
+      (void)snprintf(switches, sizeof(switches), ",");
+#endif
+      int status = io_bench_csv_line(runs, "%s,%s,%zu,%s,%s,%zu,%zu,%llu,%llu,%llu,%llu,%s,",
+          backend, protocol, result->payload_size, io_bench_driver_name(driver), names[pass],
+          repeat + 1u, result->round_trips, (unsigned long long)result->wall_ns,
+          (unsigned long long)result->cpu_ns, (unsigned long long)result->p50_ns,
+          (unsigned long long)result->p95_ns, switches);
+      if (status == SALTS_OK)
+        status = pass == IO_BENCH_PASS_DIAGNOSTIC ? io_bench_csv_line(runs, "%zu,%zu,", start_calls, drive_calls)
+                            : io_bench_csv_line(runs, ",,");
+#ifdef _WIN32
+      if (status == SALTS_OK)
+        status = io_bench_csv_line(runs, "%llu\n", (unsigned long long)result->cpu_cycles);
+#else
+      if (status == SALTS_OK) status = io_bench_csv_line(runs, "\n");
+#endif
+      if (status != SALTS_OK) return status;
     }
   }
   return SALTS_OK;
 }
 
-static void io_bench_print_cnet_stages(const char *protocol, const io_bench_series *cnet,
-                                       size_t count) {
-  printf("\n%s CNet producer-side send attribution per call\n", protocol);
-  printf("Send admission = public control + queue publish; queue publish = queue staging/control "
-         "+ payload copy. These are exclusive producer-side stages derived per diagnostic repeat.\n");
-  printf("| payload | send admit ns | MAD ns | public control ns | MAD ns | queue publish ns | "
-         "MAD ns | queue staging/control ns | MAD ns | payload copy ns | MAD ns |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-  for (size_t index = 0u; index < count; ++index) {
-    const io_bench_series *series = &cnet[index];
-    printf("| %zu KiB | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f |\n",
-           series->payload_size / 1024u, series->cnet_send_admission_ns.median,
-           series->cnet_send_admission_ns.mad, series->cnet_send_public_control_ns.median,
-           series->cnet_send_public_control_ns.mad, series->cnet_send_queue_publish_ns.median,
-           series->cnet_send_queue_publish_ns.mad, series->cnet_send_queue_control_ns.median,
-           series->cnet_send_queue_control_ns.mad, series->cnet_send_payload_copy_ns.median,
-           series->cnet_send_payload_copy_ns.mad);
+static int io_bench_write_artifacts(const char *prefix, const char *backend,
+                                     const io_bench_series *tcp[IO_BENCH_DRIVER_COUNT], size_t tcp_count,
+                                     const io_bench_series *udp[IO_BENCH_DRIVER_COUNT], size_t udp_count) {
+  char path[IO_BENCH_CSV_LINE_CAPACITY];
+  salts_file_t runs = SALTS_INVALID_FILE, samples = SALTS_INVALID_FILE;
+  int status = SALTS_OK;
+  if (prefix == NULL) return SALTS_OK;
+  if (*prefix == '\0') return SALTS_EINVAL;
+  int length = snprintf(path, sizeof(path), "%s.runs.csv", prefix);
+  if (length < 0 || (size_t)length >= sizeof(path)) return SALTS_ERANGE;
+  runs = salts_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+                      SALTS_FS_DEFAULT_MODE);
+  if (runs == SALTS_INVALID_FILE) return SALTS_EIO;
+  length = snprintf(path, sizeof(path), "%s.samples.csv", prefix);
+  if (length < 0 || (size_t)length >= sizeof(path)) { status = SALTS_ERANGE; goto cleanup; }
+  samples = salts_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+                         SALTS_FS_DEFAULT_MODE);
+  if (samples == SALTS_INVALID_FILE) { status = SALTS_EIO; goto cleanup; }
+  status = io_bench_csv_line(runs, "backend,protocol,payload_bytes,driver,pass,repeat,round_trips,"
+      "wall_ns,client_cpu_ns,p50_ns,p95_ns,voluntary_switches,involuntary_switches,start_calls,drive_calls,client_cpu_cycles\n");
+  if (status == SALTS_OK)
+    status = io_bench_csv_line(samples, "backend,protocol,payload_bytes,driver,pass,repeat,sample,"
+        "wall_ns,start_ns,drive_ns,check_ns,remainder_ns,start_calls,drive_calls\n");
+  for (unsigned driver = 0u; status == SALTS_OK && driver < IO_BENCH_DRIVER_COUNT; ++driver) {
+    for (size_t row = 0u; status == SALTS_OK && row < tcp_count; ++row)
+      status = io_bench_write_series(runs, samples, backend, "TCP", (io_bench_driver)driver,
+                                     &tcp[driver][row]);
+    for (size_t row = 0u; status == SALTS_OK && row < udp_count; ++row)
+      status = io_bench_write_series(runs, samples, backend, "UDP", (io_bench_driver)driver,
+                                     &udp[driver][row]);
   }
-
-  printf("\n%s CNet public API per-run stage medians and MAD\n", protocol);
-  printf("Poll control excludes the nested owner drive.\n");
-  printf("| payload | send admit median ns | MAD ns | poll control median ns | MAD ns | "
-         "callback control median ns | MAD ns | benchmark payload check median ns | MAD ns | "
-         "polls/RT |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-  for (size_t index = 0u; index < count; ++index) {
-    const io_bench_series *series = &cnet[index];
-    printf("| %zu KiB | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.2f |\n",
-           series->payload_size / 1024u, series->cnet_send_admission_ns.median,
-           series->cnet_send_admission_ns.mad, series->cnet_poll_control_ns.median,
-           series->cnet_poll_control_ns.mad, series->cnet_callback_control_ns.median,
-           series->cnet_callback_control_ns.mad, series->cnet_benchmark_payload_check_ns.median,
-           series->cnet_benchmark_payload_check_ns.mad, series->cnet_polls_per_round_trip.median);
-  }
-
-  printf("\n%s CNet internal inclusive time per round trip\n", protocol);
-  printf("Nested columns overlap and must not be added. Request control excludes NativeIO "
-         "submission. Request start = first NativeIO submit; request resubmit = partial-send "
-         "continuation submit; observe = backend wait/dequeue only; completion control = CNet "
-         "routing/terminal control after observe and excludes event publish; event publish "
-         "includes the user callback.\n");
-  printf("| payload | owner drive us | MAD us | owner control ns | MAD ns | command stage ns | "
-         "MAD ns | request control ns | MAD ns | request start us | MAD us | request resubmit us | "
-         "MAD us | observe us | MAD us | completion control ns | MAD ns | event publish ns | MAD ns | "
-         "requests started/RT | "
-         "requests completed/RT | events/RT |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-         "---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-  for (size_t index = 0u; index < count; ++index) {
-    const io_bench_series *series = &cnet[index];
-    printf("| %zu KiB | %.3f | %.3f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.3f | "
-           "%.3f | %.3f | %.3f | %.3f | %.3f | %.1f | %.1f | %.1f | %.1f | %.2f | %.2f | %.2f |\n",
-           series->payload_size / 1024u, series->cnet_owner_drive_ns.median / 1000.0,
-           series->cnet_owner_drive_ns.mad / 1000.0, series->cnet_owner_control_ns.median,
-           series->cnet_owner_control_ns.mad, series->cnet_command_stage_ns.median,
-           series->cnet_command_stage_ns.mad, series->cnet_request_control_ns.median,
-           series->cnet_request_control_ns.mad, series->cnet_request_start_ns.median / 1000.0,
-           series->cnet_request_start_ns.mad / 1000.0,
-           series->cnet_request_resubmit_ns.median / 1000.0,
-           series->cnet_request_resubmit_ns.mad / 1000.0, series->cnet_observe_ns.median / 1000.0,
-           series->cnet_observe_ns.mad / 1000.0, series->cnet_completion_control_ns.median,
-           series->cnet_completion_control_ns.mad, series->cnet_event_publish_ns.median,
-           series->cnet_event_publish_ns.mad, series->cnet_requests_started_per_round_trip.median,
-           series->cnet_requests_completed_per_round_trip.median,
-           series->cnet_events_per_round_trip.median);
-  }
-
-  printf("\n%s CNet exclusive control detail per round trip\n", protocol);
-  printf("Each exclusive value is derived per repeat before median/MAD aggregation. Receive "
-         "rearm and command control exclude their nested request lifecycles. Owner residual is "
-         "the remaining owner control. Event framework excludes the measured user callback "
-         "body.\n");
-  printf("| payload | receive rearm control ns | MAD ns | command control ns | MAD ns | owner "
-         "residual ns | MAD ns | event framework control ns | MAD ns |\n");
-  printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-  for (size_t index = 0u; index < count; ++index) {
-    const io_bench_series *series = &cnet[index];
-    printf("| %zu KiB | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f | %.1f |\n",
-           series->payload_size / 1024u, series->cnet_receive_rearm_control_ns.median,
-           series->cnet_receive_rearm_control_ns.mad, series->cnet_command_control_ns.median,
-           series->cnet_command_control_ns.mad, series->cnet_owner_residual_ns.median,
-           series->cnet_owner_residual_ns.mad, series->cnet_event_framework_control_ns.median,
-           series->cnet_event_framework_control_ns.mad);
-  }
-}
-
-static int io_bench_run_direct_aa_row(io_bench_protocol protocol, size_t payload, size_t row,
-                                      io_bench_series *direct_a, io_bench_series *direct_b,
-                                      native_io_backend_kind backend_kind) {
-  for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-    io_bench_series *first = ((row + repeat) & 1u) == 0u ? direct_a : direct_b;
-    io_bench_series *second = first == direct_a ? direct_b : direct_a;
-    int status = io_bench_run(protocol, IO_BENCH_NATIVE_IO, payload, false, backend_kind,
-                              &first->runs[repeat]);
-    if (status == SALTS_OK)
-      status = io_bench_run(protocol, IO_BENCH_NATIVE_IO, payload, false, backend_kind,
-                            &second->runs[repeat]);
-    if (status != SALTS_OK) return status;
+cleanup:
+  if (samples != SALTS_INVALID_FILE) {
+    const int close_status = salts_fs_close(samples);
+    if (status == SALTS_OK) status = close_status;
   }
   {
-    int status = io_bench_series_finalize_comparison(direct_a);
-    if (status == SALTS_OK) status = io_bench_series_finalize_comparison(direct_b);
-    return status;
+    const int close_status = salts_fs_close(runs);
+    if (status == SALTS_OK) status = close_status;
   }
+  if (status != SALTS_OK)
+    fprintf(stderr, "benchmark artifact write failed: prefix=%s status=%d\n", prefix, status);
+  return status;
 }
 
 static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t row,
@@ -1937,33 +1781,22 @@ static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t r
                             io_bench_series *coroutine, io_bench_series *cnet,
                             native_io_backend_kind backend_kind) {
   io_bench_series *series[] = {libuv, native, coroutine, cnet};
-  const io_bench_driver order[][4] = {
-      {IO_BENCH_LIBUV, IO_BENCH_NATIVE_IO, IO_BENCH_NATIVE_IO_COROUTINE, IO_BENCH_CNET},
-      {IO_BENCH_NATIVE_IO, IO_BENCH_NATIVE_IO_COROUTINE, IO_BENCH_CNET, IO_BENCH_LIBUV},
-      {IO_BENCH_NATIVE_IO_COROUTINE, IO_BENCH_CNET, IO_BENCH_LIBUV, IO_BENCH_NATIVE_IO},
-      {IO_BENCH_CNET, IO_BENCH_LIBUV, IO_BENCH_NATIVE_IO, IO_BENCH_NATIVE_IO_COROUTINE}};
-  const io_bench_driver profile_order[][3] = {
-      {IO_BENCH_NATIVE_IO, IO_BENCH_NATIVE_IO_COROUTINE, IO_BENCH_CNET},
-      {IO_BENCH_NATIVE_IO_COROUTINE, IO_BENCH_CNET, IO_BENCH_NATIVE_IO},
-      {IO_BENCH_CNET, IO_BENCH_NATIVE_IO, IO_BENCH_NATIVE_IO_COROUTINE}};
+  /* Sandwich the diagnostic quartet between identical uninstrumented quartets.
+   * Reversing the outer order every repeat prevents A/B from naming time order. */
   for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-    for (size_t index = 0u; index < 4u; ++index) {
-      const io_bench_driver driver = order[(row + repeat) % 4u][index];
-      const int status = io_bench_run(protocol, driver, payload, false, backend_kind,
-                                      &series[driver]->runs[repeat]);
-      if (status != SALTS_OK) return status;
+    for (unsigned pass = 0u; pass < IO_BENCH_PASS_COUNT; ++pass) {
+      for (unsigned index = 0u; index < IO_BENCH_DRIVER_COUNT; ++index) {
+        const io_bench_driver driver = (io_bench_driver)((row + repeat + index) % IO_BENCH_DRIVER_COUNT);
+        io_bench_result *result = pass == IO_BENCH_PASS_DIAGNOSTIC ? &series[driver]->stage_profile_runs[repeat]
+            : ((pass == IO_BENCH_PASS_A) == ((repeat & 1u) == 0u)) ? &series[driver]->runs[repeat]
+                                                     : &series[driver]->control_runs[repeat];
+        const int status = io_bench_run(protocol, driver, payload, pass == IO_BENCH_PASS_DIAGNOSTIC, backend_kind, result);
+        if (status != SALTS_OK) return status;
+      }
     }
   }
-  for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-    for (size_t index = 0u; index < 3u; ++index) {
-      const io_bench_driver driver = profile_order[(row + repeat) % 3u][index];
-      const int status = io_bench_run(protocol, driver, payload, true, backend_kind,
-                                      &series[driver]->stage_profile_runs[repeat]);
-      if (status != SALTS_OK) return status;
-    }
-  }
-  for (size_t driver = 0u; driver < 4u; ++driver) {
-    const int status = io_bench_series_finalize(series[driver], (io_bench_driver)driver);
+  for (size_t driver = 0u; driver < IO_BENCH_DRIVER_COUNT; ++driver) {
+    const int status = io_bench_series_finalize_comparison(series[driver]);
     if (status != SALTS_OK) return status;
   }
   return SALTS_OK;
@@ -1972,118 +1805,92 @@ static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t r
 spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchmark") {
   it("compares persistent TCP and UDP clients against one common echo peer") {
     cnet_io_benchmark_backend backend = {0};
-    cnet_io_benchmark_protocol benchmark_protocol = {0};
+    cnet_io_benchmark_trace trace = {0};
     const char *requested_backend = getenv("CNET_IO_BENCHMARK_BACKEND");
-    const int backend_status = cnet_io_benchmark_select_backend(requested_backend, &backend);
-    const int protocol_status = cnet_io_benchmark_protocol_default(&benchmark_protocol);
-    const size_t tcp_count = sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0]);
-    const size_t udp_count = sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0]);
-    io_bench_series libuv_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {
-        0};
-    io_bench_series native_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {
-        0};
-    io_bench_series direct_aa_a_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) /
-                                          sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {0};
-    io_bench_series direct_aa_b_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) /
-                                          sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {0};
-    io_bench_series
-        coroutine_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {0};
-    io_bench_series cnet_tcp[sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0])] = {
-        0};
-    io_bench_series libuv_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {
-        0};
-    io_bench_series native_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {
-        0};
-    io_bench_series direct_aa_a_udp[sizeof(IO_BENCH_UDP_PAYLOADS) /
-                                          sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {0};
-    io_bench_series direct_aa_b_udp[sizeof(IO_BENCH_UDP_PAYLOADS) /
-                                          sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {0};
-    io_bench_series
-        coroutine_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {0};
-    io_bench_series cnet_udp[sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0])] = {
-        0};
-
-    if (backend_status != SALTS_OK)
+    const char *requested_trace = getenv("CNET_IO_BENCHMARK_TRACE");
+    const char *output_prefix = getenv("CNET_IO_BENCHMARK_OUTPUT");
+    int status = cnet_io_benchmark_select_backend(requested_backend, &backend);
+    if (status != SALTS_OK)
       fprintf(stderr, "CNET_IO_BENCHMARK_BACKEND selection failed: value='%s', status=%d\n",
-              requested_backend == NULL ? "<unset>" : requested_backend, backend_status);
-    check_equal(backend_status, SALTS_OK);
-    check_equal(protocol_status, SALTS_OK);
-    if (backend_status != SALTS_OK || protocol_status != SALTS_OK) return;
-
-    printf("\nBaseline: NativeIO direct; reference: libuv %s; NativeIO backend: %s; CNet: public "
-           "byte API.\n",
-           uv_version_string(), backend.name);
-    printf("Each repeat uses a fresh client and dedicated blocking echo peer; driver order rotates "
-           "within every matched quartet.\n");
-    printf("CNet publishes one bounded receive demand per repeat and consumes borrowed callback "
-           "views without an extra payload copy.\n");
-    printf("Per-I/O deadlines are disabled in the comparison; timeout behavior is covered by "
-           "contract tests.\n");
-    printf(
-        "Workload: %d independent repeats; each has %d warmups then %d persistent round trips.\n",
-        IO_BENCH_REPLICATES, IO_BENCH_WARMUP_EXCHANGES, IO_BENCH_EXCHANGES_PER_REPLICATE);
-    printf("Tables report per-repeat medians. Deltas are paired before median/MAD aggregation; "
-           "latency > 0 is slower and rate > 0 is faster.\n");
-    printf("Stage clocks run in separate diagnostic repeats and do not instrument the "
-           "comparison rows.\n");
-    if (benchmark_protocol.native_direct_aa_control)
-      printf("IOCP null control: NativeIO direct A/B uses independent fresh fixtures with paired "
-             "alternating order and the same warmup/measurement/statistics pipeline.\n");
-
-    for (size_t index = 0u; index < tcp_count; ++index)
-      check_equal(io_bench_run_row(IO_BENCH_TCP, IO_BENCH_TCP_PAYLOADS[index], index,
-                                   &libuv_tcp[index], &native_tcp[index], &coroutine_tcp[index],
-                                   &cnet_tcp[index], backend.kind),
-                  SALTS_OK);
-    for (size_t index = 0u; index < udp_count; ++index)
-      check_equal(io_bench_run_row(IO_BENCH_UDP, IO_BENCH_UDP_PAYLOADS[index], index,
-                                   &libuv_udp[index], &native_udp[index], &coroutine_udp[index],
-                                   &cnet_udp[index], backend.kind),
-                  SALTS_OK);
-
-    if (benchmark_protocol.native_direct_aa_control) {
-      for (size_t index = 0u; index < tcp_count; ++index)
-        check_equal(io_bench_run_direct_aa_row(IO_BENCH_TCP, IO_BENCH_TCP_PAYLOADS[index], index,
-                                               &direct_aa_a_tcp[index], &direct_aa_b_tcp[index],
-                                               backend.kind),
-                    SALTS_OK);
-      for (size_t index = 0u; index < udp_count; ++index)
-        check_equal(io_bench_run_direct_aa_row(IO_BENCH_UDP, IO_BENCH_UDP_PAYLOADS[index], index,
-                                               &direct_aa_a_udp[index], &direct_aa_b_udp[index],
-                                               backend.kind),
-                    SALTS_OK);
-      check_equal(io_bench_print_null_control("TCP", direct_aa_a_tcp, direct_aa_b_tcp, tcp_count),
-                  SALTS_OK);
-      check_equal(io_bench_print_null_control("UDP", direct_aa_a_udp, direct_aa_b_udp, udp_count),
-                  SALTS_OK);
-      check_equal(io_bench_print_run_quality(&direct_aa_a_tcp[0], &direct_aa_b_tcp[0],
-                                             &native_tcp[0], &cnet_tcp[0]),
-                  SALTS_OK);
+              requested_backend == NULL ? "<unset>" : requested_backend, status);
+    check_equal(status, SALTS_OK);
+    if (status != SALTS_OK) return;
+    status = cnet_io_benchmark_select_trace(requested_trace, &trace);
+    if (status != SALTS_OK)
+      fprintf(stderr, "CNET_IO_BENCHMARK_TRACE selection failed: value='%s', status=%d\n",
+              requested_trace == NULL ? "<unset>" : requested_trace, status);
+    check_equal(status, SALTS_OK);
+    if (status != SALTS_OK) return;
+    if (trace.enabled) {
+      static io_bench_result traced;
+      printf("TRACE ONLY: %s backend=%s libuv=%s; not a performance score.\n",
+             requested_trace, backend.name, uv_version_string());
+      io_bench_trace_enabled = true;
+      status = io_bench_run(trace.udp ? IO_BENCH_UDP : IO_BENCH_TCP,
+                            (io_bench_driver)trace.driver, trace.payload_size, false, backend.kind,
+                            &traced);
+      io_bench_trace_enabled = false;
+      check_equal(status, SALTS_OK);
+      return;
     }
 
-    check_equal(io_bench_print_latency("TCP", "p50", libuv_tcp, native_tcp, coroutine_tcp, cnet_tcp,
-                                       tcp_count, false),
+    enum { TCP_ROWS = sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0]),
+           UDP_ROWS = sizeof(IO_BENCH_UDP_PAYLOADS) / sizeof(IO_BENCH_UDP_PAYLOADS[0]) };
+    /* Retain bounded raw samples until every timed run finishes; no file writes
+     * or per-exchange logging may perturb the next comparison run. */
+    static io_bench_series tcp[IO_BENCH_DRIVER_COUNT][TCP_ROWS];
+    static io_bench_series udp[IO_BENCH_DRIVER_COUNT][UDP_ROWS];
+    const io_bench_series *tcp_drivers[] = {tcp[0], tcp[1], tcp[2], tcp[3]};
+    const io_bench_series *udp_drivers[] = {udp[0], udp[1], udp[2], udp[3]};
+
+    printf("\nReference: libuv %s; NativeIO backend: %s; CNet: public byte API.\n",
+           uv_version_string(), backend.name);
+    status = io_bench_print_host();
+    check_equal(status, SALTS_OK);
+    if (status != SALTS_OK) return;
+    printf("Fresh client and blocking echo peer per run. All four drivers rotate within each "
+           "quartet. Every repeat sandwiches diagnostic quartets between uninstrumented A/B "
+           "quartets; A/B time order alternates. A/A is collected on every platform and driver.\n");
+    printf("CNet uses one bounded receive demand and borrowed callback views. Deadlines are "
+           "disabled; timeout behavior belongs to contract tests.\n");
+    printf("Workload: %d repeats; %d warmups and %d sequential persistent round trips per run. "
+           "RT/s is NOT concurrent saturation throughput.\n",
+           IO_BENCH_REPLICATES, IO_BENCH_WARMUP_EXCHANGES, IO_BENCH_EXCHANGES_PER_REPLICATE);
+    printf("Main p50/p95/rate use A runs and paired median/MAD. Diagnostic means are separate; "
+           "do not subtract them from main percentiles or claim probe drift is pure probe cost.\n");
+    printf("Raw sample storage is bounded to %zu bytes and written after all measurements.\n",
+           sizeof(tcp) + sizeof(udp));
+    printf("CPU uses uv_getrusage_thread at batch boundaries (never process-wide CPU). "
+           "Unsupported context-switch fields are blank in CSV, not zero.\n");
+
+    for (size_t row = 0u; row < TCP_ROWS; ++row) {
+      status = io_bench_run_row(IO_BENCH_TCP, IO_BENCH_TCP_PAYLOADS[row], row, &tcp[0][row],
+                                &tcp[1][row], &tcp[2][row], &tcp[3][row], backend.kind);
+      check_equal(status, SALTS_OK);
+      if (status != SALTS_OK) return;
+    }
+    for (size_t row = 0u; row < UDP_ROWS; ++row) {
+      status = io_bench_run_row(IO_BENCH_UDP, IO_BENCH_UDP_PAYLOADS[row], row, &udp[0][row],
+                                &udp[1][row], &udp[2][row], &udp[3][row], backend.kind);
+      check_equal(status, SALTS_OK);
+      if (status != SALTS_OK) return;
+    }
+
+    check_equal(io_bench_print_latency("TCP", "p50", tcp[0], tcp[1], tcp[2], tcp[3], TCP_ROWS, false),
                 SALTS_OK);
-    check_equal(io_bench_print_latency("TCP", "p95", libuv_tcp, native_tcp, coroutine_tcp, cnet_tcp,
-                                       tcp_count, true),
+    check_equal(io_bench_print_latency("TCP", "p95", tcp[0], tcp[1], tcp[2], tcp[3], TCP_ROWS, true),
                 SALTS_OK);
-    check_equal(
-        io_bench_print_rate("TCP", libuv_tcp, native_tcp, coroutine_tcp, cnet_tcp, tcp_count),
-        SALTS_OK);
-    io_bench_print_native_stages("TCP", native_tcp, coroutine_tcp, tcp_count);
-    io_bench_print_cnet_stages("TCP", cnet_tcp, tcp_count);
-    check_equal(io_bench_print_cnet_fixed_control("TCP", cnet_tcp, tcp_count), SALTS_OK);
-    check_equal(io_bench_print_latency("UDP", "p50", libuv_udp, native_udp, coroutine_udp, cnet_udp,
-                                       udp_count, false),
+    check_equal(io_bench_print_rate("TCP", tcp[0], tcp[1], tcp[2], tcp[3], TCP_ROWS), SALTS_OK);
+    check_equal(io_bench_print_diagnostics("TCP", tcp[0], tcp[1], tcp[2], tcp[3], TCP_ROWS), SALTS_OK);
+    check_equal(io_bench_print_latency("UDP", "p50", udp[0], udp[1], udp[2], udp[3], UDP_ROWS, false),
                 SALTS_OK);
-    check_equal(io_bench_print_latency("UDP", "p95", libuv_udp, native_udp, coroutine_udp, cnet_udp,
-                                       udp_count, true),
+    check_equal(io_bench_print_latency("UDP", "p95", udp[0], udp[1], udp[2], udp[3], UDP_ROWS, true),
                 SALTS_OK);
-    check_equal(
-        io_bench_print_rate("UDP", libuv_udp, native_udp, coroutine_udp, cnet_udp, udp_count),
-        SALTS_OK);
-    io_bench_print_native_stages("UDP", native_udp, coroutine_udp, udp_count);
-    io_bench_print_cnet_stages("UDP", cnet_udp, udp_count);
-    check_equal(io_bench_print_cnet_fixed_control("UDP", cnet_udp, udp_count), SALTS_OK);
+    check_equal(io_bench_print_rate("UDP", udp[0], udp[1], udp[2], udp[3], UDP_ROWS), SALTS_OK);
+    check_equal(io_bench_print_diagnostics("UDP", udp[0], udp[1], udp[2], udp[3], UDP_ROWS), SALTS_OK);
+    check_equal(io_bench_write_artifacts(output_prefix, backend.name, tcp_drivers, TCP_ROWS,
+                                          udp_drivers, UDP_ROWS), SALTS_OK);
+    printf("Raw artifacts: %s\n", output_prefix == NULL
+        ? "not requested; set CNET_IO_BENCHMARK_OUTPUT to a path prefix" : output_prefix);
   }
 }

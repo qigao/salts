@@ -133,6 +133,8 @@ int cnet_owner_test_observe_raw(cnet_owner *owner, native_io_completion *events,
 int cnet_owner_test_process_completion_batch(cnet_owner *owner,
                                              const native_io_completion *events,
                                              size_t count);
+/** Expires deadlines independently of routing a previously observed native completion. */
+int cnet_owner_test_process_deadlines(cnet_owner *owner);
 /** Makes the next successful/already-pending native cancellation report SALTS_EALREADY. */
 int cnet_owner_test_force_cancel_ealready_once(cnet_owner *owner);
 /** Caps each test-build stream-send submission without changing logical send ownership. */
