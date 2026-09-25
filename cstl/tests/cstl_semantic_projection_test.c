@@ -376,4 +376,43 @@ spec("CSTL semantic projection") {
                 CMETA_OK);
   }
 
+
+  it("projects Stack and Queue as ordered sequences") {
+    typed(Stack, reflected_stack, int);
+    typed(Queue, reflected_queue, int);
+    reflected_stack stack = {0};
+    reflected_queue queue = {0};
+    int stack_seen[2] = {0};
+    int queue_seen[2] = {0};
+    cstl_semantic_collect_ints stack_out = {stack_seen, 0u};
+    cstl_semantic_collect_ints queue_out = {queue_seen, 0u};
+
+    check_equal(reflected_stack_init(&stack, 8u), STL_OK);
+    check_equal(reflected_queue_init(&queue, 8u), STL_OK);
+    check_equal(reflected_stack_push(&stack, 3), STL_OK);
+    check_equal(reflected_stack_push(&stack, 5), STL_OK);
+    check_equal(reflected_queue_push(&queue, 3), STL_OK);
+    check_equal(reflected_queue_push(&queue, 5), STL_OK);
+
+    check_equal(reflected_stack_collection_data.kind, CMETA_DATA_SEQUENCE);
+    check_equal(reflected_queue_collection_data.kind, CMETA_DATA_SEQUENCE);
+    check_equal(cmeta_data_collection_foreach(
+                    &reflected_stack_collection_data, &stack,
+                    cstl_semantic_collect_int, &stack_out, 2u),
+                CMETA_OK);
+    check_equal(cmeta_data_collection_foreach(
+                    &reflected_queue_collection_data, &queue,
+                    cstl_semantic_collect_int, &queue_out, 2u),
+                CMETA_OK);
+    /* Stack sequence order is declaration/storage order: bottom -> top.
+     * Queue sequence order is front -> back. */
+    check_equal(stack_seen[0], 3);
+    check_equal(stack_seen[1], 5);
+    check_equal(queue_seen[0], 3);
+    check_equal(queue_seen[1], 5);
+
+    reflected_stack_destroy(&stack);
+    reflected_queue_destroy(&queue);
+  }
+
 }
