@@ -515,8 +515,10 @@ static void native_io_test_wake_owner_run(void *user) {
       native_io_backend_observe(&owner->backend, &event, 1u, UINT32_MAX, &owner->second_count);
 
   owner->close_status = native_io_backend_close(&owner->backend);
-  owner->destroy_status = native_io_backend_destroy(&owner->backend);
   atomic_store_explicit(&owner->stage, 3, memory_order_release);
+  while (atomic_load_explicit(&owner->stage, memory_order_acquire) == 3) salts_thread_yield();
+  owner->destroy_status = native_io_backend_destroy(&owner->backend);
+  atomic_store_explicit(&owner->stage, 5, memory_order_release);
 }
 
 static void native_io_test_wake_coalesces(native_io_backend_kind kind) {
@@ -547,6 +549,12 @@ static void native_io_test_wake_coalesces(native_io_backend_kind kind) {
   if (atomic_load_explicit(&owner.stage, memory_order_acquire) == 2) {
     salts_sleep_ms(10u);
     check_equal(native_io_backend_wake(&owner.backend), SALTS_OK);
+    while (atomic_load_explicit(&owner.stage, memory_order_acquire) == 2) salts_thread_yield();
+  }
+
+  if (atomic_load_explicit(&owner.stage, memory_order_acquire) == 3) {
+    check_equal(native_io_backend_wake(&owner.backend), SALTS_ESHUTDOWN);
+    atomic_store_explicit(&owner.stage, 4, memory_order_release);
   }
 
   check_equal(salts_thread_join(&thread), SALTS_OK);
