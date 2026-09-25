@@ -19,6 +19,11 @@
 #undef cmeta_data_buffer_restore_zero
 #undef cmeta_data_buffer_read
 
+#include <stdlib.h>
+#if defined(_MSC_VER)
+#include <malloc.h>
+#endif
+
 #define CMETA_BUFFER_V2_FIELD_END(type, member) \
     (offsetof(type, member) + sizeof(((type *)0)->member))
 #define CMETA_BUFFER_V2_DESC_OPS_SIZE \
@@ -838,20 +843,26 @@ cmeta_status cmeta_data_temp_open(
                                   : CMETA_INVALID_ARGUMENT;
     if ((alignment & (alignment - 1u)) != 0u)
         return CMETA_INVALID_ARGUMENT;
-    if (extent > SIZE_MAX - (alignment - 1u))
-        return CMETA_CAPACITY_EXCEEDED;
-    padded = (extent + alignment - 1u) & ~(alignment - 1u);
+    if (alignment <= _Alignof(max_align_t)) {
+        padded = extent;
+        storage = malloc(padded);
+    } else {
+        if (extent > SIZE_MAX - (alignment - 1u))
+            return CMETA_CAPACITY_EXCEEDED;
+        padded = (extent + alignment - 1u) & ~(alignment - 1u);
 #if defined(_MSC_VER)
-    storage = _aligned_malloc(padded, alignment);
+        storage = _aligned_malloc(padded, alignment);
 #else
-    storage = aligned_alloc(alignment, padded);
+        storage = aligned_alloc(alignment, padded);
 #endif
+    }
     if (storage == NULL) return CMETA_OUT_OF_MEMORY;
     memset(storage, 0, padded);
     status = cmeta_data_temp_init(desc, storage, &lifecycle);
     if (status != CMETA_OK) {
 #if defined(_MSC_VER)
-        _aligned_free(storage);
+        if (alignment > _Alignof(max_align_t)) _aligned_free(storage);
+        else free(storage);
 #else
         free(storage);
 #endif
@@ -870,7 +881,8 @@ void cmeta_data_temp_close(cmeta_data_temp *temp) {
     if (temp->data != NULL)
         (void)cmeta_data_value_restore_zero(temp->data, temp->storage);
 #if defined(_MSC_VER)
-    _aligned_free(temp->storage);
+    if (temp->alignment > _Alignof(max_align_t)) _aligned_free(temp->storage);
+    else free(temp->storage);
 #else
     free(temp->storage);
 #endif
