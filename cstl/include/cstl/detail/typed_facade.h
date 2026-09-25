@@ -31,7 +31,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE const cmeta_data_desc *name##_collection_element(const void *object){(void)object;return CMETA_DATAOF(type);} \
  CMETA_INLINE cmeta_status name##_collection_foreach(const void *object,cmeta_data_collection_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;size_t i,count;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;count=name##_size(self);if(count>max_items)return CMETA_CAPACITY_EXCEEDED;for(i=0u;i<count;++i){cmeta_status status=visit(context,name##_at_const(self,i));if(status!=CMETA_OK)return status;}return CMETA_OK;} \
  CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF(name),name##_collection_element,NULL,name##_collection_foreach}; \
- CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops}
+ CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops}
 
 
 
@@ -39,47 +39,47 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE const cmeta_data_desc *name##_collection_element(const void *object){(void)object;return CMETA_DATAOF(type);} \
  CMETA_INLINE cmeta_status name##_collection_foreach(const void *object,cmeta_data_collection_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;cmeta_range_cursor cursor={0};const void *value=NULL;size_t count=0u;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;while(salts_stl_typed_list_range_next(&self->raw,&cursor,&value)){cmeta_status status;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
  CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF(name),name##_collection_element,NULL,name##_collection_foreach}; \
- CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_SEQUENCE,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops}
+ CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_SEQUENCE,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops}
 
 #define SALTS_META_SET_COLLECTION_DATA(name,type,prefix,semantic_kind) \
  CMETA_INLINE const cmeta_data_desc *name##_collection_element(const void *object){(void)object;return CMETA_DATAOF(type);} \
  CMETA_INLINE cmeta_status name##_collection_foreach(const void *object,cmeta_data_collection_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;cmeta_range_cursor cursor={0};const void *value=NULL;size_t count=0u;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;while(prefix##_range_next(&self->raw,&cursor,&value)){cmeta_status status;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
  CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF(name),name##_collection_element,NULL,name##_collection_foreach}; \
- CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops}
+ CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops}
 
 #define SALTS_META_SLOT_SET_COLLECTION_DATA(name,type,prefix,semantic_kind) \
  CMETA_INLINE const cmeta_data_desc *name##_collection_element(const void *object){(void)object;return CMETA_DATAOF(type);} \
  CMETA_INLINE cmeta_status name##_collection_foreach(const void *object,cmeta_data_collection_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;size_t slot,count=0u,capacity;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;capacity=prefix##_capacity(&self->raw);for(slot=0u;slot<capacity;++slot){const void *value=prefix##_key_at(&self->raw,slot);cmeta_status status;if(value==NULL)continue;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
  CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF(name),name##_collection_element,NULL,name##_collection_foreach}; \
- CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops}
+ CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops}
 
 #define SALTS_META_MAP_DATA(name,key_type,value_type) \
  CMETA_INLINE const cmeta_data_desc *name##_map_key(const void *object){(void)object;return CMETA_DATAOF(key_type);} \
  CMETA_INLINE const cmeta_data_desc *name##_map_value(const void *object){(void)object;return CMETA_DATAOF(value_type);} \
  CMETA_INLINE cmeta_status name##_map_foreach(const void *object,cmeta_data_map_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;cmeta_range_cursor cursor={0};const void *key=NULL,*value=NULL;size_t count=0u;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;while(salts_stl_typed_map_range_next(&self->raw,&cursor,&key,&value)){cmeta_status status;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,key,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
  CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF(name),CMETA_DATA_MAP_UNIQUE_KEYS|CMETA_DATA_MAP_ORDERED|CMETA_DATA_MAP_SORTED,name##_map_key,name##_map_value,name##_map_foreach}; \
- CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops}
+ CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops}
 
 #define SALTS_META_HASH_MAP_DATA(name,key_type,value_type) \
  CMETA_INLINE const cmeta_data_desc *name##_map_key(const void *object){(void)object;return CMETA_DATAOF(key_type);} \
  CMETA_INLINE const cmeta_data_desc *name##_map_value(const void *object){(void)object;return CMETA_DATAOF(value_type);} \
  CMETA_INLINE cmeta_status name##_map_foreach(const void *object,cmeta_data_map_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;size_t slot,count=0u,capacity;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;capacity=hash_map_capacity(&self->raw);for(slot=0u;slot<capacity;++slot){const void *key=hash_map_key_at_const(&self->raw,slot);const void *value;cmeta_status status;if(key==NULL)continue;value=hash_map_value_at_const(&self->raw,slot);if(value==NULL)return CMETA_CALLBACK_ERROR;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,key,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
  CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF(name),CMETA_DATA_MAP_UNIQUE_KEYS,name##_map_key,name##_map_value,name##_map_foreach}; \
- CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops}
+ CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops}
 
 #define SALTS_META_TREE_MAP_DATA(name,key_type,value_type,prefix) \
  CMETA_INLINE const cmeta_data_desc *name##_map_key(const void *object){(void)object;return CMETA_DATAOF(key_type);} \
  CMETA_INLINE const cmeta_data_desc *name##_map_value(const void *object){(void)object;return CMETA_DATAOF(value_type);} \
  CMETA_INLINE cmeta_status name##_map_foreach(const void *object,cmeta_data_map_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;cmeta_range_cursor cursor={0};const void *key=NULL,*value=NULL;size_t count=0u;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;while(prefix##_range_next(&self->raw,&cursor,&key,&value)){cmeta_status status;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,key,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
  CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF(name),CMETA_DATA_MAP_UNIQUE_KEYS|CMETA_DATA_MAP_ORDERED|CMETA_DATA_MAP_SORTED,name##_map_key,name##_map_value,name##_map_foreach}; \
- CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops}
+ CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops}
 
 #define SALTS_META_MULTIMAP_DATA(name,key_type,value_type) \
  CMETA_INLINE const cmeta_data_desc *name##_map_key(const void *object){(void)object;return CMETA_DATAOF(key_type);} \
  CMETA_INLINE const cmeta_data_desc *name##_map_value(const void *object){(void)object;return CMETA_DATAOF(value_type);} \
  CMETA_INLINE cmeta_status name##_map_foreach(const void *object,cmeta_data_map_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;cmeta_range_cursor cursor={0};const void *key=NULL,*value=NULL;size_t count=0u;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;while(multimap_range_next(&self->raw,&cursor,&key,&value)){cmeta_status status;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,key,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
  CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF(name),CMETA_DATA_MAP_REPEATED_KEYS|CMETA_DATA_MAP_ORDERED|CMETA_DATA_MAP_SORTED,name##_map_key,name##_map_value,name##_map_foreach}; \
- CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops}
+ CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops,&name##_construct_ops}
 
 #define SALTS_META_C1_CONSTRUCT(name,init_expr,destroy_expr) \
  CMETA_INLINE cmeta_status name##_construct_init_zero(void *object){name *self=(name*)object;if(self==NULL)return CMETA_INVALID_ARGUMENT;*self=(name)init_expr;return CMETA_OK;} \
@@ -385,13 +385,13 @@ CMETA_INLINE bool salts_stl_typed_map_range_next(
  CMETA_CONTAINER2_DEFINE(name,k,v,raw,prefix,STL_OK,_,methods) SALTS_META_C2_GENERATION(name,prefix) SALTS_META_C2_COLLECTOR(name) CMETA_CONTAINER2_LINK_RANGES_DEFINE(name,k,v,prefix,key_flags,value_flags,entry_flags,name##_cmeta_generation,name##_collector_erased)
 
 #define SALTS_VEC_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Vec,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_VEC_INITIALIZER(type),name##_destroy(self)) SALTS_META_VEC_COLLECTION_DATA(name,type)
-#define SALTS_DEQUE_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Deque,name,type) SALTS_META_INDEX_SEQUENCE_DATA(name,type,CMETA_DATA_SEQUENCE)
-#define SALTS_LIST_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_List,name,type) SALTS_META_LIST_COLLECTION_DATA(name,type)
+#define SALTS_DEQUE_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Deque,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_DEQUE_INITIALIZER(type),name##_destroy(self)) SALTS_META_INDEX_SEQUENCE_DATA(name,type,CMETA_DATA_SEQUENCE)
+#define SALTS_LIST_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_List,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_LIST_INITIALIZER(type),name##_destroy(self)) SALTS_META_LIST_COLLECTION_DATA(name,type)
 #define SALTS_STACK_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Stack,name,type)
 #define SALTS_QUEUE_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Queue,name,type)
 #define SALTS_HEAP_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Heap,name,type)
-#define SALTS_SET_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Set,name,type) SALTS_META_SET_COLLECTION_DATA(name,type,set,CMETA_DATA_SET)
-#define SALTS_HASH_SET_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_HashSet,name,type) SALTS_META_SLOT_SET_COLLECTION_DATA(name,type,hash_set,CMETA_DATA_SET)
+#define SALTS_SET_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Set,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_SET_INITIALIZER(type),name##_destroy(self)) SALTS_META_SET_COLLECTION_DATA(name,type,set,CMETA_DATA_SET)
+#define SALTS_HASH_SET_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_HashSet,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_HASH_SET_INITIALIZER(type),name##_destroy(self)) SALTS_META_SLOT_SET_COLLECTION_DATA(name,type,hash_set,CMETA_DATA_SET)
 #define SALTS_HASH_MAP_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_HashMap,name,k,v) SALTS_META_HASH_MAP_DATA(name,k,v)
 #define SALTS_MAP_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Map,name,k,v) SALTS_META_MAP_DATA(name,k,v)
 #define SALTS_MULTI_MAP_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_MultiMap,name,k,v) SALTS_META_MULTIMAP_DATA(name,k,v)
