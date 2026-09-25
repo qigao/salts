@@ -350,7 +350,7 @@ cmeta_status cmeta_data_collection_foreach(
 #define CMETA_MAP_FIELD_END(type, member) \
     (offsetof(type, member) + sizeof(((type *)0)->member))
 #define CMETA_MAP_DESC_OPS_SIZE CMETA_MAP_FIELD_END(cmeta_data_desc, map_ops)
-#define CMETA_MAP_OPS_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, foreach)
+#define CMETA_MAP_OPS_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, collector)
 
 static cmeta_status cmeta_data_map_ops_status(
     const cmeta_data_desc *desc, const cmeta_data_map_ops **out) {
@@ -513,6 +513,27 @@ cmeta_status cmeta_data_collection_collector(
     cmeta_status status;
     if (zero_output == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
     status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    if (ops->collector == NULL) return CMETA_TRAIT_MISSING;
+    collector = ops->collector(zero_output, limit);
+    if (!cmeta_collector_ops_valid(collector.ops) ||
+        collector.zero_output != zero_output ||
+        collector.limit != limit ||
+        collector.input_type == NULL)
+        return CMETA_CALLBACK_ERROR;
+    *out = collector;
+    return CMETA_OK;
+}
+
+
+cmeta_status cmeta_data_map_collector(
+    const cmeta_data_desc *desc, void *zero_output, size_t limit,
+    cmeta_collector *out) {
+    const cmeta_data_map_ops *ops = NULL;
+    cmeta_collector collector;
+    cmeta_status status;
+    if (zero_output == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_map_ops_status(desc, &ops);
     if (status != CMETA_OK) return status;
     if (ops->collector == NULL) return CMETA_TRAIT_MISSING;
     collector = ops->collector(zero_output, limit);
