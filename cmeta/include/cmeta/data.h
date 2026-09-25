@@ -391,6 +391,17 @@ typedef struct cmeta_data_collection_ops {
 
 enum { CMETA_DATA_MAP_OPS_ABI_VERSION = 1u };
 
+typedef uint32_t cmeta_data_map_flags;
+enum {
+    CMETA_DATA_MAP_UNIQUE_KEYS = 1u << 0,
+    CMETA_DATA_MAP_REPEATED_KEYS = 1u << 1,
+    CMETA_DATA_MAP_ORDERED = 1u << 2,
+    CMETA_DATA_MAP_SORTED = 1u << 3,
+    CMETA_DATA_MAP_FLAGS_MASK =
+        CMETA_DATA_MAP_UNIQUE_KEYS | CMETA_DATA_MAP_REPEATED_KEYS |
+        CMETA_DATA_MAP_ORDERED | CMETA_DATA_MAP_SORTED
+};
+
 typedef const cmeta_data_desc *(*cmeta_data_map_member_fn)(
     const void *object);
 typedef cmeta_status (*cmeta_data_map_visit_fn)(
@@ -403,6 +414,7 @@ typedef struct cmeta_data_map_ops {
     size_t struct_size;
     uint32_t abi_version;
     const cmeta_type_desc *storage_type;
+    cmeta_data_map_flags flags;
     cmeta_data_map_member_fn key;
     cmeta_data_map_member_fn value;
     cmeta_data_map_foreach_fn foreach;
