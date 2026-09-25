@@ -1437,6 +1437,54 @@ spec("CMeta semantic data descriptors") {
     check_equal(destination.count, 0);
   }
 
+  it("copies owned Struct values without consuming the source") {
+    cmeta_data_test_owned_record source = {0, 0};
+    cmeta_data_test_owned_record destination = {0, 0};
+    static const unsigned char bytes[] = {'a', 'b', 'c'};
+
+    check_true(cmeta_data_value_copy_supported(&cmeta_data_test_owned_desc));
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_owned_desc, &source), CMETA_OK);
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_owned_desc, &destination), CMETA_OK);
+    check_equal(cmeta_data_buffer_assign(
+                    &cmeta_data_test_buffer_desc, &source.payload,
+                    bytes, sizeof(bytes), sizeof(bytes)), CMETA_OK);
+    source.count = 5;
+
+    check_equal(cmeta_data_value_copy(
+                    &cmeta_data_test_owned_desc, &destination, &source),
+                CMETA_OK);
+    check_equal(destination.payload, 3);
+    check_equal(destination.count, 5);
+    check_equal(source.payload, 3);
+    check_equal(source.count, 5);
+
+    check_equal(cmeta_data_value_restore_zero(
+                    &cmeta_data_test_owned_desc, &destination), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &cmeta_data_test_owned_desc, &source), CMETA_OK);
+  }
+
+  it("rolls back earlier Struct fields when a later copy fails") {
+    cmeta_data_test_move_rollback_record source = {7, 13};
+    cmeta_data_test_move_rollback_record destination = {0, 0};
+
+    check_true(cmeta_data_value_copy_supported(
+        &cmeta_data_test_move_rollback_desc));
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_move_rollback_desc, &destination),
+                CMETA_OK);
+    check_equal(cmeta_data_value_copy(
+                    &cmeta_data_test_move_rollback_desc,
+                    &destination, &source),
+                CMETA_CALLBACK_ERROR);
+    check_equal(destination.count, 0);
+    check_equal(destination.payload, 0);
+    check_equal(source.count, 7);
+    check_equal(source.payload, 13);
+  }
+
   it("derives lifecycle recursively through nested structs") {
     cmeta_data_test_outer_record source = {{3, 4}, 5};
     cmeta_data_test_outer_record destination = {{0, 0}, 0};
