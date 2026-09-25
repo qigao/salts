@@ -1485,6 +1485,47 @@ cmeta_status cmeta_data_value_copy(
     }
 }
 
+bool cmeta_data_value_traits_supported(const cmeta_data_desc *desc) {
+    return cmeta_data_value_copy_supported(desc) &&
+           cmeta_data_value_move_supported(desc);
+}
+
+bool cmeta_data_trait_copy_construct(
+    const cmeta_data_desc *desc, void *destination, const void *source) {
+    cmeta_status status;
+    if (!cmeta_data_value_traits_supported(desc) ||
+        destination == NULL || source == NULL || destination == source)
+        return false;
+    status = cmeta_data_value_init_zero(desc, destination);
+    if (status != CMETA_OK) return false;
+    status = cmeta_data_value_copy(desc, destination, source);
+    if (status == CMETA_OK) return true;
+    (void)cmeta_data_value_restore_zero(desc, destination);
+    return false;
+}
+
+void cmeta_data_trait_move_construct(
+    const cmeta_data_desc *desc, void *destination, void *source) {
+    cmeta_status status;
+    if (!cmeta_data_value_traits_supported(desc) ||
+        destination == NULL || source == NULL || destination == source)
+        abort();
+    status = cmeta_data_value_init_zero(desc, destination);
+    if (status != CMETA_OK) abort();
+    status = cmeta_data_value_move(desc, destination, source);
+    if (status != CMETA_OK) {
+        (void)cmeta_data_value_restore_zero(desc, destination);
+        abort();
+    }
+}
+
+void cmeta_data_trait_destroy(
+    const cmeta_data_desc *desc, void *object) {
+    if (!cmeta_data_value_traits_supported(desc) || object == NULL ||
+        cmeta_data_value_restore_zero(desc, object) != CMETA_OK)
+        abort();
+}
+
 bool cmeta_data_value_move_supported(const cmeta_data_desc *desc) {
     return cmeta_data_value_move_supported_depth(desc, 0u);
 }

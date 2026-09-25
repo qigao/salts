@@ -661,6 +661,44 @@ bool cmeta_data_value_copy_supported(const cmeta_data_desc *desc);
 cmeta_status cmeta_data_value_copy(
     const cmeta_data_desc *desc, void *destination, const void *source);
 
+bool cmeta_data_value_traits_supported(const cmeta_data_desc *desc);
+
+/**
+ * cmeta_type_traits bridge over canonical data lifecycle.
+ *
+ * copy_construct returns false on ordinary construction/copy failure.
+ * move_construct and destroy cannot report errors in cmeta_type_traits; they
+ * terminate the process if a descriptor that declared support violates its
+ * no-fail move/restore contract.
+ */
+bool cmeta_data_trait_copy_construct(
+    const cmeta_data_desc *desc, void *destination, const void *source);
+void cmeta_data_trait_move_construct(
+    const cmeta_data_desc *desc, void *destination, void *source);
+void cmeta_data_trait_destroy(
+    const cmeta_data_desc *desc, void *object);
+
+#define CMETA_DEFINE_DATA_TRAITS(name_, data_expr_)                           \
+    CMETA_INLINE bool name_##_cmeta_data_copy_construct(                      \
+        void *destination_, const void *source_) {                            \
+        return cmeta_data_trait_copy_construct(                               \
+            (data_expr_), destination_, source_);                             \
+    }                                                                         \
+    CMETA_INLINE void name_##_cmeta_data_move_construct(                      \
+        void *destination_, void *source_) {                                  \
+        cmeta_data_trait_move_construct(                                      \
+            (data_expr_), destination_, source_);                             \
+    }                                                                         \
+    CMETA_INLINE void name_##_cmeta_data_destroy(void *object_) {             \
+        cmeta_data_trait_destroy((data_expr_), object_);                       \
+    }                                                                         \
+    CMETA_LOCAL const cmeta_type_traits cmeta_traits_##name_ = {              \
+        .flags = CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,  \
+        .copy_construct = name_##_cmeta_data_copy_construct,                  \
+        .move_construct = name_##_cmeta_data_move_construct,                  \
+        .destroy = name_##_cmeta_data_destroy                                 \
+    }
+
 bool cmeta_data_value_move_supported(const cmeta_data_desc *desc);
 cmeta_status cmeta_data_value_move(
     const cmeta_data_desc *desc, void *destination, void *source);
