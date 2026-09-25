@@ -28,6 +28,13 @@ enum {
                             CMETA_PARAM_OWNERSHIP_MASK
 };
 
+/* All descriptor views are borrowed. Names, arrays, types, traits and their
+ * callbacks must remain alive until the last consumer is finished. Copying a
+ * descriptor does not retain its provider. A plugin owner must keep its module
+ * loaded through all descriptor, interface and callable uses (including copies
+ * in graphs/plans), and drain them before unloading. Validators require live,
+ * ABI-compatible storage; they cannot validate expired or foreign-ABI pointers.
+ * See CMETA_REFLECTION_ABI_VERSION before exchanging descriptors across DSOs. */
 typedef struct cmeta_param_desc {
     size_t size;
     const char *name;
@@ -174,7 +181,8 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
  *   (type, name, flags, descriptor)
  *   (type, name, flags, descriptor, abi_carrier)
  *
- * The three-field form uses CMETA_TYPEOF(type) and carries scalar ABI metadata.
+ * The three-field form requires a registered scalar type and carries scalar
+ * ABI metadata. Non-scalar or unregistered types require an explicit descriptor.
  * The four-field form remains the compatibility escape hatch for an explicit
  * descriptor and leaves ABI carrier unspecified.
  * The five-field form adds explicit ABI/FFI carrier metadata without changing
@@ -185,6 +193,30 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
     _Generic((type *)0, \
         void *: &cmeta_type_void, \
         default: CMETA_TYPEOF(type))
+
+/* Use the registered kind, not sizeof or spelling: an object can have the
+ * same size as a scalar, and typedefs must retain their underlying contract. */
+#define CMETA_FUNCTION_SCALAR_ASSOC(row, ignored) \
+    CMETA_TYPE_CTYPE(row) *: (CMETA_TYPE_KIND(row) == CMETA_T_BOOL || \
+                            CMETA_TYPE_KIND(row) == CMETA_T_INTEGER || \
+                            CMETA_TYPE_KIND(row) == CMETA_T_FLOAT),
+#define CMETA_FUNCTION_PARAM_ADMIT_3(type, name, flags) \
+    _Static_assert(_Generic((type *)0, \
+        CMETA_PP_FOR_EACH_B(CMETA_FUNCTION_SCALAR_ASSOC, ~, CMETA_KNOWN_TYPE_LIST) \
+        default: 0), \
+        "CMeta three-field parameter " #name \
+        " requires a registered scalar; use an explicit descriptor and ABI carrier");
+#define CMETA_FUNCTION_PARAM_ADMIT_4(type, name, flags, descriptor)
+#define CMETA_FUNCTION_PARAM_ADMIT_5(type, name, flags, descriptor, carrier)
+#define CMETA_FUNCTION_PARAM_ADMIT_I(...) \
+    CMETA_PP_CAT(CMETA_FUNCTION_PARAM_ADMIT_, CMETA_PP_NARG(__VA_ARGS__))(__VA_ARGS__)
+#define CMETA_FUNCTION_PARAM_ADMIT(row, ignored) CMETA_FUNCTION_PARAM_ADMIT_I row
+#define CMETA_FUNCTION_RETURN_ADMIT(type) \
+    _Static_assert(_Generic((type *)0, \
+        void *: CMETA_FUNCTION_RETURN_IS_VOID_(type), \
+        CMETA_PP_FOR_EACH_B(CMETA_FUNCTION_SCALAR_ASSOC, ~, CMETA_KNOWN_TYPE_LIST) \
+        default: 0), \
+        "CMeta inferred return requires literal void or a registered scalar; use FunctionDeclAsAbi or Function0DeclAsAbi");
 
 #define CMETA_FUNCTION_ABI_SECOND_(a, b, ...) b
 #define CMETA_FUNCTION_ABI_PROBE_() ~, 1
@@ -258,6 +290,7 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
 
 #define CMETA_FUNCTION_DECL_AS_ABI( \
     contract, return_type, return_desc, return_abi_carrier, name, ...) \
+    CMETA_PP_FOR_EACH_A(CMETA_FUNCTION_PARAM_ADMIT, ~, __VA_ARGS__) \
     return_type name( \
         CMETA_PP_FOR_EACH_I(CMETA_FUNCTION_PARAM_DECL, ~, __VA_ARGS__)); \
     CMETA_FUNCTION_METADATA_AS_ABI( \
@@ -280,6 +313,7 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
         name, __VA_ARGS__)
 
 #define CMETA_FUNCTION_DECL(contract, return_type, name, ...) \
+    CMETA_FUNCTION_RETURN_ADMIT(return_type) \
     CMETA_FUNCTION_DECL_AS_ABI( \
         contract, return_type, CMETA_FUNCTION_RETURN_TYPEOF(return_type), \
         CMETA_FUNCTION_RETURN_ABI(return_type), name, __VA_ARGS__)
@@ -305,6 +339,7 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
         contract, return_type, return_desc, CMETA_ABI_UNSPECIFIED, name)
 
 #define CMETA_FUNCTION0_DECL(contract, return_type, name) \
+    CMETA_FUNCTION_RETURN_ADMIT(return_type) \
     CMETA_FUNCTION0_DECL_AS_ABI( \
         contract, return_type, CMETA_FUNCTION_RETURN_TYPEOF(return_type), \
         CMETA_FUNCTION_RETURN_ABI(return_type), name)

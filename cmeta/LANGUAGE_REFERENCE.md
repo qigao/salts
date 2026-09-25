@@ -238,8 +238,13 @@ General parameter rows are:
 (type, name, flags, explicit_descriptor, abi_carrier)
 ```
 
-The three-field form resolves `type` with `CMETA_TYPEOF(type)` and records a
-scalar ABI carrier. The four-field form remains the compatibility form for a
+The three-field form requires a registered scalar type, resolves `type` with
+`CMETA_TYPEOF(type)`, and records a scalar ABI carrier. Non-scalar and unregistered
+types are rejected at declaration time; use the five-field form for pointer,
+aggregate, or callback parameters. Likewise, inferred returns require a registered
+scalar or literal `void`; a typedef of `void` requires an explicit return descriptor
+and carrier. Use `FunctionDeclAsAbi` / `Function0DeclAsAbi` for other return types.
+The four-field form remains the compatibility form for a
 provider-owned semantic descriptor and leaves ABI carrier unspecified. Consumers
 that generate exact C call boundaries (TinyMock, FFI, plugin bridges) should use
 the five-field form to state an explicit ABI carrier such as
@@ -285,6 +290,46 @@ separate concern: an exact-ABI generated adapter, `cmeta_callable`, CFlow, or
 another consumer-specific mechanism must perform the actual call. CMeta does not
 parse arbitrary C prototypes at runtime and does not provide libffi-style
 universal invocation.
+
+### Reflection across native modules
+
+Function, parameter, interface and type descriptors are borrowed views. Their
+names, arrays, nested descriptors, traits, callbacks and generated wrappers remain
+owned by the provider. Copying a descriptor, interface, `cmeta_callable`, or CFlow
+projection does not retain the module containing its data or executable code.
+The host must hold a module reference until all consumers finish, including copied
+Graph/Plan callables, active runs and values requiring provider trait callbacks.
+Unload order is: stop new admissions, drain calls/runs, destroy dependent values
+and consumers while their callbacks are live, then release the final module
+reference. Validators require live storage and cannot detect an unloaded pointer.
+
+`CMETA_REFLECTION_ABI_VERSION` is the reflection layout epoch. A provider bootstrap
+must accept a fixed-width requested epoch and reject a mismatch **before publishing
+descriptor pointers**. The provider compares against its own header constant;
+`cmeta_reflection_abi_version()` returns the linked CMeta library's epoch and checks
+header/library agreement, but a host-resolved query cannot identify a plugin's
+compile-time ABI. Providers predating this handshake require an explicit legacy
+adapter or rejection; a matching `sizeof` is not proof of compatibility.
+
+Within an epoch, existing descriptor layouts, field meanings, enum values and
+array element strides are frozen, including reachable type/identity/trait layouts.
+Add metadata through separate sidecars; incompatible changes require a new epoch.
+The `size` fields are validation guards, not permission to append fields to array
+elements or to reinterpret another epoch. Host and provider must also agree on
+native architecture, calling convention, packing and enum representation.
+
+This epoch covers reflection only. Application interface/vtable versions and the
+finite callable type/signature configuration require separate agreement before
+dispatch; equal reflection epochs do not authorize exchanging arbitrary
+`cmeta_callable` builds. CMeta owns neither the platform loader nor its references.
+
+The complete [provider bootstrap](tests/cmeta_reflection_plugin.c) and
+[dynamic host regression](tests/cmeta_reflection_plugin_test.c) demonstrate mismatch
+rejection and borrowed metadata remaining valid while a consumer holds a module
+reference. The test does not dereference pointers after the last reference closes.
+Build `cmeta_reflection_plugin_test` and run
+`ctest --preset win-dev-user -R "^cmeta_reflection_plugin_test$"`
+from the VS developer environment (or use the matching Linux user preset).
 
 ### `interface(...)`
 

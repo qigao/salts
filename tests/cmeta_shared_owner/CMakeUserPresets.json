@@ -1,0 +1,48 @@
+{
+  "version": 6,
+  "include": ["CMakePresets.json"],
+  "configurePresets": [
+    {
+      "name": "owner-paths",
+      "hidden": true,
+      "environment": {
+        "VCPKG_ROOT": "$penv{VCPKG_ROOT}",
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/../../vcpkg_installed"
+      }
+    },
+    {
+      "name": "win-release-user",
+      "inherits": ["owner-windows", "owner-paths"],
+      "binaryDir": "${sourceDir}/../../build/cmeta-owner-windows",
+      "environment": {
+        "PATH": "${sourceDir}/../../build/cmeta-owner-windows/bin${pathListSep}$env{VCPKG_INSTALLED_DIR}/x64-windows/bin${pathListSep}$penv{PATH}"
+      }
+    },
+    {
+      "name": "linux-sanitizers-user",
+      "inherits": ["owner-linux", "owner-paths"],
+      "binaryDir": "${sourceDir}/../../build/cmeta-owner-linux",
+      "environment": {
+        "LD_LIBRARY_PATH": "$env{VCPKG_INSTALLED_DIR}/x64-linux/lib${pathListSep}$penv{LD_LIBRARY_PATH}"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "win-release-user", "configurePreset": "win-release-user" },
+    { "name": "linux-sanitizers-user", "configurePreset": "linux-sanitizers-user" }
+  ],
+  "testPresets": [
+    {
+      "name": "win-release-user",
+      "configurePreset": "win-release-user",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "linux-sanitizers-user",
+      "configurePreset": "linux-sanitizers-user",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    }
+  ]
+}

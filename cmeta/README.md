@@ -244,6 +244,15 @@ Generated wrapper functions are TU-local `static inline`, and generated
 metadata may also be translation-unit local. Consumers must compare descriptors
 semantically rather than requiring pointer equality across translation units.
 
+These views and all reachable callbacks are borrowed from their provider. A
+dynamic module must remain loaded until every descriptor/interface/callable
+consumer finishes, including copies retained by CFlow graphs/plans. Before
+exchanging native descriptors, negotiate `CMETA_REFLECTION_ABI_VERSION`; the
+runtime query `cmeta_reflection_abi_version()` checks linked-library agreement.
+Reflection epochs do not version callable configurations or application vtables.
+See [native module lifetime and ABI rules](LANGUAGE_REFERENCE.md#reflection-across-native-modules)
+for the bootstrap and unload contract and its dynamic-library regression test.
+
 ## Range metadata
 
 CMeta provides an allocation-free borrowed `cmeta_range` protocol with traits

@@ -23,6 +23,10 @@ static const cmeta_type_desc cmeta_abi_test_enum_type = {
 };
 
 suite("CMeta ABI carriers") {
+  it("matches the linked library reflection epoch") {
+    check_equal(cmeta_reflection_abi_version(), CMETA_REFLECTION_ABI_VERSION);
+  }
+
   it("exposes explicit enum carrier semantics") {
     check_true(cmeta_abi_carrier_valid(CMETA_ABI_ENUM));
     check_equal(cmeta_abi_carrier_name(CMETA_ABI_ENUM), "enum");

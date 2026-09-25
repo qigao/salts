@@ -29,6 +29,11 @@ typedef enum cflow_function_projection_status {
  * The reflected descriptors remain available for semantic identity and
  * diagnostics, but Graph/Plan execution copies only the already-bound callable
  * and concrete value types. Runtime evaluation performs no reflection lookup.
+ * All descriptor pointers, adapter code and borrowed captures remain borrowed;
+ * copying a callable does not retain its code module. The caller must keep
+ * their providers loaded until this projection and every derived Graph/Plan,
+ * active run and value needing provider-owned trait callbacks are finished.
+ * Destroying the projection alone does not make a plugin safe to unload.
  */
 typedef struct cflow_function_projection {
     size_t size;

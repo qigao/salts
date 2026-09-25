@@ -1,5 +1,53 @@
 # CMeta public API regression tests.
 
+add_executable(cmeta_function_admission_test cmeta_function_admission_test.c)
+target_link_libraries(cmeta_function_admission_test PRIVATE Salts::CMeta Salts::TinyTest)
+set_target_properties(cmeta_function_admission_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "cmeta/tests")
+add_test(NAME cmeta_function_admission_test COMMAND cmeta_function_admission_test)
+
+foreach(admission_case IN ITEMS POINTER_PARAM OBJECT_PARAM POINTER_RETURN OBJECT_RETURN VOID_ALIAS_RETURN)
+  string(TOLOWER "${admission_case}" admission_name)
+  set(admission_target "cmeta_function_${admission_name}_compile_fail")
+  add_executable(${admission_target} EXCLUDE_FROM_ALL compile_fail/cmeta_function_inferred.c)
+  target_link_libraries(${admission_target} PRIVATE Salts::CMeta)
+  target_compile_definitions(${admission_target} PRIVATE "CMETA_TEST_${admission_case}=1")
+  set_target_properties(${admission_target} PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "cmeta/tests/compile_fail")
+  if(admission_case MATCHES "PARAM$")
+    set(admission_diagnostic "CMeta three-field parameter input requires a registered scalar")
+  else()
+    set(admission_diagnostic "CMeta inferred return requires literal void or a registered scalar")
+  endif()
+  add_test(NAME ${admission_target}
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+            --config $<CONFIG> --target ${admission_target})
+  set_tests_properties(${admission_target} PROPERTIES
+    PASS_REGULAR_EXPRESSION "${admission_diagnostic}" RUN_SERIAL TRUE)
+endforeach()
+
+# libuv is already a manifest dependency. It is used only by the test host;
+# CMeta and the provider remain independent of the platform loader.
+find_package(libuv CONFIG REQUIRED)
+add_library(cmeta_reflection_plugin MODULE cmeta_reflection_plugin.c)
+target_link_libraries(cmeta_reflection_plugin PRIVATE Salts::CMeta)
+set_target_properties(cmeta_reflection_plugin PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "cmeta/tests")
+add_executable(cmeta_reflection_plugin_test cmeta_reflection_plugin_test.c)
+target_link_libraries(cmeta_reflection_plugin_test PRIVATE
+  Salts::CMeta Salts::TinyTest
+  $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
+target_compile_definitions(cmeta_reflection_plugin_test PRIVATE
+  CMETA_TEST_PLUGIN_PATH="$<TARGET_FILE:cmeta_reflection_plugin>")
+# uv.h exposes pthread_rwlock_t even when only its loader API is used.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(cmeta_reflection_plugin_test PRIVATE _POSIX_C_SOURCE=200809L)
+endif()
+add_dependencies(cmeta_reflection_plugin_test cmeta_reflection_plugin)
+set_target_properties(cmeta_reflection_plugin_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "cmeta/tests")
+add_test(NAME cmeta_reflection_plugin_test COMMAND cmeta_reflection_plugin_test)
+
 cmake_add_test(cmeta_enum_bits_test
   SOURCES cmeta_enum_bits_test.c
   LIBS Salts::CMeta

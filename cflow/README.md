@@ -278,8 +278,12 @@ the configured CMeta callable signature universe. CFlow does not use libffi or
 parse C prototypes at runtime.
 
 The reflected descriptors are control-plane truth. Once a projection is added
-to a Graph, Graph/Plan execution owns a copied bound callable plus concrete
-input/output descriptors and performs no reflection lookup per value.
+to a Graph, Graph/Plan execution stores a copied bound callable and borrowed
+input/output descriptor pointers, and performs no reflection lookup per value.
+Copying the callable does not retain its executable code module or borrowed
+captures. The host must keep providers loaded until projections, derived
+Graphs/Plans, active runs and values using provider trait callbacks are finished.
+See the [CMeta module lifetime and ABI contract](../cmeta/LANGUAGE_REFERENCE.md#reflection-across-native-modules).
 
 Transport and host context remain outside CFlow. HTTP/RPC routes, DataBind wire
 fields, principals, deadlines, tracing, cancellation policy, and backend

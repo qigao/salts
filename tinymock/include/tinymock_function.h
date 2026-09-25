@@ -275,6 +275,7 @@
   } while (0)
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_AGGREGATE(name, type, result) \
   do { \
+    (void)(result); \
     type typed_result__ = {0}; \
     bool typed_ok__ = tinymock_cmeta_return_write( \
         TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
@@ -286,6 +287,7 @@
   } while (0)
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_FUNCTION_POINTER(name, type, result) \
   do { \
+    (void)(result); \
     type typed_result__ = (type)0; \
     bool typed_ok__ = tinymock_cmeta_return_write( \
         TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
@@ -297,6 +299,7 @@
   } while (0)
 #define TINYMOCk_FUNCTION_RETURN_CMETA_ABI_ENUM(name, type, result) \
   do { \
+    (void)(result); \
     type typed_result__ = (type)0; \
     bool typed_ok__ = tinymock_cmeta_return_write( \
         TINYMOCk_FUNCTION_RETURN_STATE(name), FunctionMeta(name), \
