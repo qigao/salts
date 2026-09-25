@@ -55,7 +55,6 @@ typedef struct cmeta_data_variant_ops cmeta_data_variant_ops;
 typedef struct cmeta_data_fixed_ops cmeta_data_fixed_ops;
 typedef struct cmeta_data_collection_ops cmeta_data_collection_ops;
 typedef struct cmeta_data_map_ops cmeta_data_map_ops;
-typedef struct cmeta_data_construct_ops cmeta_data_construct_ops;
 
 typedef struct cmeta_data_desc {
     size_t struct_size;
