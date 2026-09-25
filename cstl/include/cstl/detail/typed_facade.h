@@ -57,7 +57,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE const cmeta_data_desc *name##_map_key(const void *object){(void)object;return CMETA_DATAOF(key_type);} \
  CMETA_INLINE const cmeta_data_desc *name##_map_value(const void *object){(void)object;return CMETA_DATAOF(value_type);} \
  CMETA_INLINE cmeta_status name##_map_foreach(const void *object,cmeta_data_map_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;cmeta_range_cursor cursor={0};const void *key=NULL,*value=NULL;size_t count=0u;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;while(salts_stl_typed_map_range_next(&self->raw,&cursor,&key,&value)){cmeta_status status;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,key,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
- CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF(name),CMETA_DATA_MAP_UNIQUE_KEYS,name##_map_key,name##_map_value,name##_map_foreach}; \
+ CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF(name),CMETA_DATA_MAP_UNIQUE_KEYS|CMETA_DATA_MAP_ORDERED|CMETA_DATA_MAP_SORTED,name##_map_key,name##_map_value,name##_map_foreach}; \
  CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops}
 
 #define SALTS_META_HASH_MAP_DATA(name,key_type,value_type) \
@@ -71,14 +71,14 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE const cmeta_data_desc *name##_map_key(const void *object){(void)object;return CMETA_DATAOF(key_type);} \
  CMETA_INLINE const cmeta_data_desc *name##_map_value(const void *object){(void)object;return CMETA_DATAOF(value_type);} \
  CMETA_INLINE cmeta_status name##_map_foreach(const void *object,cmeta_data_map_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;cmeta_range_cursor cursor={0};const void *key=NULL,*value=NULL;size_t count=0u;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;while(prefix##_range_next(&self->raw,&cursor,&key,&value)){cmeta_status status;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,key,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
- CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF(name),CMETA_DATA_MAP_UNIQUE_KEYS,name##_map_key,name##_map_value,name##_map_foreach}; \
+ CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF(name),CMETA_DATA_MAP_UNIQUE_KEYS|CMETA_DATA_MAP_ORDERED|CMETA_DATA_MAP_SORTED,name##_map_key,name##_map_value,name##_map_foreach}; \
  CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops}
 
 #define SALTS_META_MULTIMAP_DATA(name,key_type,value_type) \
  CMETA_INLINE const cmeta_data_desc *name##_map_key(const void *object){(void)object;return CMETA_DATAOF(key_type);} \
  CMETA_INLINE const cmeta_data_desc *name##_map_value(const void *object){(void)object;return CMETA_DATAOF(value_type);} \
  CMETA_INLINE cmeta_status name##_map_foreach(const void *object,cmeta_data_map_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;cmeta_range_cursor cursor={0};const void *key=NULL,*value=NULL;size_t count=0u;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;while(multimap_range_next(&self->raw,&cursor,&key,&value)){cmeta_status status;if(count>=max_items)return CMETA_CAPACITY_EXCEEDED;status=visit(context,key,value);if(status!=CMETA_OK)return status;++count;}return CMETA_OK;} \
- CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF(name),CMETA_DATA_MAP_REPEATED_KEYS,name##_map_key,name##_map_value,name##_map_foreach}; \
+ CMETA_LOCAL const cmeta_data_map_ops name##_map_ops={sizeof(cmeta_data_map_ops),CMETA_DATA_MAP_OPS_ABI_VERSION,CMETA_TYPEOF(name),CMETA_DATA_MAP_REPEATED_KEYS|CMETA_DATA_MAP_ORDERED|CMETA_DATA_MAP_SORTED,name##_map_key,name##_map_value,name##_map_foreach}; \
  CMETA_LOCAL const cmeta_data_desc name##_map_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_MAP,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,NULL,&name##_map_ops}
 
 #define SALTS_META_C1_COLLECTOR(name,type,accept_method) \
