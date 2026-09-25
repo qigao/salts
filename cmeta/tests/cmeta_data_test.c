@@ -282,6 +282,13 @@ static void cmeta_data_test_buffer_move(void *destination, void *source) {
     *(int *)source = 0;
 }
 
+static void cmeta_data_test_broken_buffer_move(
+    void *destination, void *source) {
+    if (destination == NULL || source == NULL) return;
+    *(int *)destination = *(int *)source;
+    /* Contract violation: source deliberately remains non-zero. */
+}
+
 static const cmeta_data_buffer_shape cmeta_data_test_owned_buffer_shape = {
     .ownership = CMETA_DATA_BUFFER_OWNED
 };
@@ -297,6 +304,78 @@ static const cmeta_data_buffer_ops cmeta_data_test_buffer_ops = {
     .read = cmeta_data_test_buffer_read,
     .init_zero = cmeta_data_test_buffer_init_zero,
     .move = cmeta_data_test_buffer_move
+};
+
+static const cmeta_data_buffer_ops cmeta_data_test_broken_buffer_ops = {
+    .struct_size = sizeof(cmeta_data_buffer_ops),
+    .abi_version = CMETA_DATA_BUFFER_OPS_ABI_VERSION,
+    .storage_type = &cmeta_type_int,
+    .ownership = CMETA_DATA_BUFFER_OWNED,
+    .is_zero = cmeta_data_test_buffer_is_zero,
+    .assign = cmeta_data_test_buffer_assign,
+    .restore_zero = cmeta_data_test_buffer_restore_zero,
+    .read = cmeta_data_test_buffer_read,
+    .init_zero = cmeta_data_test_buffer_init_zero,
+    .move = cmeta_data_test_broken_buffer_move
+};
+
+static const cmeta_data_desc cmeta_data_test_broken_buffer_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.BrokenBuffer.data",
+    .display_name = "BrokenBuffer",
+    .kind = CMETA_DATA_BYTES,
+    .storage_type = &cmeta_type_int,
+    .shape = &cmeta_data_test_owned_buffer_shape,
+    .buffer_ops = &cmeta_data_test_broken_buffer_ops
+};
+
+typedef struct cmeta_data_test_move_rollback_record {
+    int count;
+    int payload;
+} cmeta_data_test_move_rollback_record;
+
+static const cmeta_type_identity cmeta_data_test_move_rollback_identity =
+    CMETA_TYPE_ID_ATOM_INIT("test.MoveRollback");
+static const cmeta_type_desc cmeta_data_test_move_rollback_type = {
+    .name = "cmeta_data_test_move_rollback_record",
+    .size = sizeof(cmeta_data_test_move_rollback_record),
+    .align = _Alignof(cmeta_data_test_move_rollback_record),
+    .kind = CMETA_T_OBJECT,
+    .identity = &cmeta_data_test_move_rollback_identity
+};
+static const cmeta_field_desc cmeta_data_test_move_rollback_layout_fields[] = {
+    { "count", "int", offsetof(cmeta_data_test_move_rollback_record, count),
+      sizeof(int), _Alignof(int), &cmeta_type_int, NULL },
+    { "payload", "int", offsetof(cmeta_data_test_move_rollback_record, payload),
+      sizeof(int), _Alignof(int), &cmeta_type_int, NULL }
+};
+static const cmeta_struct_desc cmeta_data_test_move_rollback_layout = {
+    "cmeta_data_test_move_rollback_record",
+    sizeof(cmeta_data_test_move_rollback_record),
+    _Alignof(cmeta_data_test_move_rollback_record),
+    cmeta_data_test_move_rollback_layout_fields, 2u
+};
+static const cmeta_data_field_desc cmeta_data_test_move_rollback_fields[] = {
+    { "test.MoveRollback.count", "count",
+      offsetof(cmeta_data_test_move_rollback_record, count),
+      &cmeta_data_int },
+    { "test.MoveRollback.payload", "payload",
+      offsetof(cmeta_data_test_move_rollback_record, payload),
+      &cmeta_data_test_broken_buffer_desc }
+};
+static const cmeta_data_struct_shape cmeta_data_test_move_rollback_shape = {
+    &cmeta_data_test_move_rollback_layout,
+    cmeta_data_test_move_rollback_fields, 2u
+};
+static const cmeta_data_desc cmeta_data_test_move_rollback_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.MoveRollback.data",
+    .display_name = "MoveRollback",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &cmeta_data_test_move_rollback_type,
+    .shape = &cmeta_data_test_move_rollback_shape
 };
 
 static const cmeta_data_desc cmeta_data_test_buffer_desc = {
@@ -1232,6 +1311,25 @@ spec("CMeta semantic data descriptors") {
                 CMETA_CALLBACK_ERROR);
     check_equal(value.payload, 0);
     check_equal(value.count, 0);
+  }
+
+  it("restores destination zero when a later field move provider fails") {
+    cmeta_data_test_move_rollback_record source = {7, 3};
+    cmeta_data_test_move_rollback_record destination = {0, 0};
+
+    check_true(cmeta_data_struct_constructible(
+        &cmeta_data_test_move_rollback_desc));
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_move_rollback_desc, &destination),
+                CMETA_OK);
+    check_equal(cmeta_data_value_move(
+                    &cmeta_data_test_move_rollback_desc,
+                    &destination, &source),
+                CMETA_CALLBACK_ERROR);
+    check_equal(destination.count, 0);
+    check_equal(destination.payload, 0);
+    check_equal(source.count, 7);
+    check_equal(source.payload, 0);
   }
 
   it("keeps container categories free of T K V") {
