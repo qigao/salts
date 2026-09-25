@@ -11,6 +11,8 @@
 extern "C" {
 #endif
 
+typedef struct cmeta_interface_method_desc cmeta_interface_method_desc;
+
 typedef struct cmeta_function_data_desc {
     size_t size;
     const cmeta_function_desc *function;
@@ -46,6 +48,16 @@ cmeta_status cmeta_invokable_bind(
 cmeta_status cmeta_invokable_bind_data(
     const cmeta_function_data_desc *data, cmeta_callable callable,
     cmeta_invokable *out);
+
+/**
+ * Join one fully reflected interface method to the same canonical invokable
+ * contract. The callable provider owns self/capture binding; no vtable ABI is
+ * interpreted by language bindings.
+ */
+cmeta_status cmeta_interface_method_invokable_bind(
+    const cmeta_interface_method_desc *method,
+    const cmeta_function_data_desc *data,
+    cmeta_callable callable, cmeta_invokable *out);
 
 bool cmeta_invokable_valid(const cmeta_invokable *invokable);
 
