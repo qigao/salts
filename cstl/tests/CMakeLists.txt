@@ -13,6 +13,11 @@ cmake_add_test(cstl_header_typed_test
   LIBS Salts::CSTL Salts::TinyTest
   FOLDER "cstl/tests")
 
+cmake_add_test(cstl_imported_metadata_test
+  SOURCES cstl_imported_metadata_test.c
+  LIBS Salts::Core Salts::CSTL Salts::TinyTest
+  FOLDER "cstl/tests")
+
 cmake_add_test(cstl_tinytest_test
   SOURCES cstl_tinytest_test.c
   LIBS Salts::CSTL Salts::TinyTest
@@ -137,6 +142,7 @@ set_target_properties(
 
 set_target_properties(
   cstl_header_typed_test
+  cstl_imported_metadata_test
   PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
