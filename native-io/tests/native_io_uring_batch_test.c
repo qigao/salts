@@ -208,40 +208,42 @@ spec("io_uring explicit batch submission") {
     } else {
       /* Exclude the one-time internal wake-poll arm from the operation wait count. */
       enter_calls = 0u;
-    memset(enter_sizes, 0, sizeof(enter_sizes));
-    poll_calls = 0u;
-    check_equal(pipe(descriptors), 0);
-    check_equal(native_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0],
-                                              NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
-                SALTS_OK);
-    check_equal(write(descriptors[1], &sent, 1u), (ssize_t)1);
-    const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_PIPE_READ,
-                                           .endpoint = endpoint, .buffer = &received,
-                                           .length = 1u, .user_data = 17u};
-    check_equal(native_io_backend_prepare(&backend, &operation, &request), SALTS_OK);
-    check_equal(native_io_backend_observe(&backend, &event, 1u, BATCH_TEST_TIMEOUT_MS, &count),
-                SALTS_OK);
-    check_equal(count, 1u);
-    check_equal(event.kind, NATIVE_IO_COMPLETION_OK);
-    check_equal(event.bytes, 1u);
-    check_equal(event.user_data, (uintptr_t)17u);
-    check_equal(received, sent);
-    check_equal(enter_calls, 1u);
-    check_equal(enter_sizes[0], 1u);
-    check_equal(poll_calls, 0u);
+      memset(enter_sizes, 0, sizeof(enter_sizes));
+      poll_calls = 0u;
+      check_equal(pipe(descriptors), 0);
+      check_equal(native_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0],
+                                                NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
+                  SALTS_OK);
+      check_equal(write(descriptors[1], &sent, 1u), (ssize_t)1);
+      const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_PIPE_READ,
+                                             .endpoint = endpoint,
+                                             .buffer = &received,
+                                             .length = 1u,
+                                             .user_data = 17u};
+      check_equal(native_io_backend_prepare(&backend, &operation, &request), SALTS_OK);
+      check_equal(native_io_backend_observe(&backend, &event, 1u, BATCH_TEST_TIMEOUT_MS, &count),
+                  SALTS_OK);
+      check_equal(count, 1u);
+      check_equal(event.kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(event.bytes, 1u);
+      check_equal(event.user_data, (uintptr_t)17u);
+      check_equal(received, sent);
+      check_equal(enter_calls, 1u);
+      check_equal(enter_sizes[0], 1u);
+      check_equal(poll_calls, 0u);
 
-    enter_calls = 0u;
-    poll_calls = 0u;
-    count = SIZE_MAX;
-    check_equal(native_io_backend_observe(&backend, &event, 1u, 10u, &count), SALTS_ETIMEDOUT);
-    check_equal(count, 0u);
-    check_equal(enter_calls, 1u);
-    check_equal(enter_sizes[0], 0u);
-    check_equal(poll_calls, 0u);
+      enter_calls = 0u;
+      poll_calls = 0u;
+      count = SIZE_MAX;
+      check_equal(native_io_backend_observe(&backend, &event, 1u, 10u, &count), SALTS_ETIMEDOUT);
+      check_equal(count, 0u);
+      check_equal(enter_calls, 1u);
+      check_equal(enter_sizes[0], 0u);
+      check_equal(poll_calls, 0u);
 
-    check_equal(close(descriptors[0]), 0);
-    check_equal(close(descriptors[1]), 0);
-    check_equal(native_io_backend_release_pipe(&backend, endpoint), SALTS_OK);
+      check_equal(close(descriptors[0]), 0);
+      check_equal(close(descriptors[1]), 0);
+      check_equal(native_io_backend_release_pipe(&backend, endpoint), SALTS_OK);
       check_equal(native_io_backend_close(&backend), SALTS_OK);
       check_equal(native_io_backend_destroy(&backend), SALTS_OK);
     }
