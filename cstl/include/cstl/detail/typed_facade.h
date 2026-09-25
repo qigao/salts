@@ -85,7 +85,9 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_status name##_construct_init_zero(void *object){name *self=(name*)object;if(self==NULL)return CMETA_INVALID_ARGUMENT;*self=(name)init_expr;return CMETA_OK;} \
  CMETA_INLINE void name##_construct_restore_zero(void *object){name *self=(name*)object;if(self==NULL)return;destroy_expr;*self=(name)init_expr;} \
  CMETA_INLINE void name##_construct_move(void *destination,void *source){name *dst=(name*)destination;name *src=(name*)source;if(dst==NULL||src==NULL)return;*dst=*src;*src=(name)init_expr;} \
- CMETA_LOCAL const cmeta_data_construct_ops name##_construct_ops={sizeof(cmeta_data_construct_ops),CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,CMETA_TYPEOF(name),name##_construct_init_zero,name##_construct_restore_zero,name##_construct_move}
+ CMETA_LOCAL const cmeta_data_construct_ops name##_construct_ops={sizeof(cmeta_data_construct_ops),CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,CMETA_TYPEOF(name),name##_construct_init_zero,name##_construct_restore_zero,name##_construct_move}#define SALTS_META_C2_CONSTRUCT(name,init_expr,destroy_expr) SALTS_META_C1_CONSTRUCT(name,init_expr,destroy_expr)
+
+
 
 #define SALTS_META_C1_COLLECTOR(name,type,accept_method) \
  CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,CMETA_TYPEOF(type)))return CMETA_TYPE_MISMATCH;return salts_stl_cmeta_status((stl_status)name##_init((name*)context,limit));} \
@@ -392,10 +394,10 @@ CMETA_INLINE bool salts_stl_typed_map_range_next(
 #define SALTS_HEAP_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Heap,name,type)
 #define SALTS_SET_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Set,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_SET_INITIALIZER(type),name##_destroy(self)) SALTS_META_SET_COLLECTION_DATA(name,type,set,CMETA_DATA_SET)
 #define SALTS_HASH_SET_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_HashSet,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_HASH_SET_INITIALIZER(type),name##_destroy(self)) SALTS_META_SLOT_SET_COLLECTION_DATA(name,type,hash_set,CMETA_DATA_SET)
-#define SALTS_HASH_MAP_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_HashMap,name,k,v) SALTS_META_HASH_MAP_DATA(name,k,v)
-#define SALTS_MAP_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Map,name,k,v) SALTS_META_MAP_DATA(name,k,v)
-#define SALTS_MULTI_MAP_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_MultiMap,name,k,v) SALTS_META_MULTIMAP_DATA(name,k,v)
-#define SALTS_BTREE_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_BTree,name,k,v) SALTS_META_TREE_MAP_DATA(name,k,v,btree)
-#define SALTS_BPLUS_TREE_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_BPlusTree,name,k,v) SALTS_META_TREE_MAP_DATA(name,k,v,bplus_tree)
+#define SALTS_HASH_MAP_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_HashMap,name,k,v) SALTS_META_C2_CONSTRUCT(name,SALTS_STL_HASH_MAP_INITIALIZER(k,v),name##_destroy(self)) SALTS_META_HASH_MAP_DATA(name,k,v)
+#define SALTS_MAP_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Map,name,k,v) SALTS_META_C2_CONSTRUCT(name,SALTS_STL_MAP_INITIALIZER(k,v),name##_destroy(self)) SALTS_META_MAP_DATA(name,k,v)
+#define SALTS_MULTI_MAP_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_MultiMap,name,k,v) SALTS_META_C2_CONSTRUCT(name,SALTS_STL_MULTIMAP_INITIALIZER(k,v),name##_destroy(self)) SALTS_META_MULTIMAP_DATA(name,k,v)
+#define SALTS_BTREE_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_BTree,name,k,v) SALTS_META_C2_CONSTRUCT(name,SALTS_STL_BTREE_INITIALIZER(k,v),name##_destroy(self)) SALTS_META_TREE_MAP_DATA(name,k,v,btree)
+#define SALTS_BPLUS_TREE_DEFINE(name,k,v) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_BPlusTree,name,k,v) SALTS_META_C2_CONSTRUCT(name,SALTS_STL_BPLUS_TREE_INITIALIZER(k,v),name##_destroy(self)) SALTS_META_TREE_MAP_DATA(name,k,v,bplus_tree)
 
 #endif /* CSTL_DETAIL_TYPED_FACADE_H */
