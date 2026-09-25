@@ -400,6 +400,11 @@ static const cmeta_type_desc cmeta_data_test_int_sequence_type = {
     CMETA_ALIGNOF(cmeta_data_test_int_sequence), CMETA_T_OBJECT,
     NULL, NULL, &cmeta_data_test_int_sequence_id};
 
+static const cmeta_data_desc *cmeta_data_test_int_sequence_element(
+    const void *object) {
+  return object != NULL ? &cmeta_data_int : NULL;
+}
+
 static cmeta_status cmeta_data_test_int_sequence_read(
     const void *object, cmeta_data_collection_view *out) {
   const cmeta_data_test_int_sequence *sequence =
@@ -414,6 +419,7 @@ static const cmeta_data_collection_ops cmeta_data_test_int_sequence_ops = {
     sizeof(cmeta_data_collection_ops),
     CMETA_DATA_COLLECTION_OPS_ABI_VERSION,
     &cmeta_data_test_int_sequence_type,
+    cmeta_data_test_int_sequence_element,
     cmeta_data_test_int_sequence_read};
 
 static const cmeta_data_desc cmeta_data_test_int_sequence_data = {
