@@ -1,34 +1,9 @@
 name: Salts native NuGet release
 
 on:
-  pull_request:
-    paths:
-      - "CMakeLists.txt"
-      - "vcpkg.json"
-      - "vcpkg-configuration.json"
-      - "packaging/nuget/**"
-      - "tinymock/**"
-      - "cmeta/**"
-      - "cflow/**"
-      - "tests/cflow_installed_consumer/**"
-      - "cmake/**"
-      - ".github/workflows/native-nuget-release.yml"
-      - ".github/actions/setup-re2c-tools/**"
   push:
-    branches: [master]
-    paths:
-      - "CMakeLists.txt"
-      - "vcpkg.json"
-      - "vcpkg-configuration.json"
-      - "packaging/nuget/**"
-      - "tinymock/**"
-      - "cmeta/**"
-      - "cflow/**"
-      - "tests/cflow_installed_consumer/**"
-      - "cmake/**"
-      - ".github/workflows/native-nuget-release.yml"
-      - ".github/actions/setup-re2c-tools/**"
-  workflow_dispatch:
+    tags:
+      - "v*"
 
 permissions:
   contents: read
@@ -55,8 +30,13 @@ jobs:
             echo "release version mismatch: CMake=$version vcpkg=$vcpkg_version" >&2
             exit 1
           fi
+          expected_tag="v$version"
+          if [ "$GITHUB_REF_NAME" != "$expected_tag" ]; then
+            echo "release tag mismatch: pushed=$GITHUB_REF_NAME expected=$expected_tag" >&2
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$expected_tag" >> "$GITHUB_OUTPUT"
 
   linux:
     name: Linux x64 SDK
@@ -472,7 +452,7 @@ jobs:
 
   publish:
     name: Publish package and GitHub Release
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: [metadata, pack]
     runs-on: ubuntu-latest
     permissions:
@@ -516,7 +496,7 @@ jobs:
           set -euo pipefail
           dotnet nuget add source --username qigao --password "$GITHUB_TOKEN" --store-password-in-clear-text --name github https://nuget.pkg.github.com/qigao/index.json
           dotnet nuget push "dist/Salts.Native.${{ needs.metadata.outputs.version }}.nupkg" --api-key "$GITHUB_TOKEN" --source github --skip-duplicate
-      - name: Create tag and GitHub Release
+      - name: Create GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -528,4 +508,4 @@ jobs:
             echo "release $TAG already exists; package publish was idempotent"
             exit 0
           fi
-          gh release create "$TAG" dist/*.nupkg --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Salts $VERSION" --generate-notes
+          gh release create "$TAG" dist/*.nupkg --repo "$GITHUB_REPOSITORY" --verify-tag --title "Salts $VERSION" --generate-notes
