@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <linux/io_uring.h>
+#include <linux/time_types.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -112,11 +113,17 @@ typedef struct salts_io_uring_impl {
   unsigned *cq_mask;
   struct io_uring_cqe *cqes;
   bool single_mmap;
+  bool ext_arg_wait;
+  bool wake_armed;
   bool admission_open;
   atomic_bool wake_pending;
 } salts_io_uring_impl;
 
-enum { SALTS_IO_URING_CANCEL_TOKEN = 0u, SALTS_IO_URING_INDEX_NONE = UINT32_MAX };
+enum {
+  SALTS_IO_URING_CANCEL_TOKEN = 0u,
+  SALTS_IO_URING_WAKE_TOKEN = 1u,
+  SALTS_IO_URING_INDEX_NONE = UINT32_MAX
+};
 
 typedef struct salts_io_uring_sigpipe_guard {
   sigset_t blocked;
@@ -228,13 +235,21 @@ static void uring_lane_remove(salts_io_uring_impl *impl, salts_io_uring_endpoint
   request->next = SALTS_IO_URING_INDEX_NONE;
 }
 
+static int uring_enter_arg_once(salts_io_uring_impl *impl, unsigned submit, unsigned minimum,
+                                unsigned flags, void *argument, size_t argument_size) {
+  const int status =
+      (int)syscall(__NR_io_uring_enter, impl->ring_fd, submit, minimum, flags, argument,
+                   argument_size);
+  return status < 0 ? -errno : status;
+}
+
 static int uring_enter(salts_io_uring_impl *impl, unsigned submit, unsigned minimum,
                        unsigned flags) {
   int status;
   do {
-    status = (int)syscall(__NR_io_uring_enter, impl->ring_fd, submit, minimum, flags, NULL, 0u);
-  } while (status < 0 && errno == EINTR);
-  return status < 0 ? -errno : status;
+    status = uring_enter_arg_once(impl, submit, minimum, flags, NULL, 0u);
+  } while (status == -EINTR);
+  return status;
 }
 
 /* Scheduling links live in the request record: no second payload/owner queue,
@@ -277,6 +292,20 @@ static int uring_publish_sqe(salts_io_uring_impl *impl, const struct io_uring_sq
   if (submitted == 1) return SALTS_OK;
   atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail, memory_order_release);
   return submitted < 0 ? submitted : SALTS_EIO;
+}
+
+static int uring_arm_wake(salts_io_uring_impl *impl) {
+  struct io_uring_sqe sqe;
+  int status;
+  if (impl->wake_armed) return SALTS_OK;
+  memset(&sqe, 0, sizeof(sqe));
+  sqe.opcode = IORING_OP_POLL_ADD;
+  sqe.fd = impl->wake_fd;
+  sqe.poll32_events = POLLIN;
+  sqe.user_data = SALTS_IO_URING_WAKE_TOKEN;
+  status = uring_publish_sqe(impl, &sqe);
+  if (status == SALTS_OK) impl->wake_armed = true;
+  return status;
 }
 
 static void uring_prepare_operation(salts_io_uring_request_record *record, struct io_uring_sqe *sqe,
@@ -701,7 +730,7 @@ static int uring_cancel(salts_io_impl *base, native_io_request request_handle) {
   return SALTS_OK;
 }
 
-static void uring_process_cq(salts_io_uring_impl *impl) {
+static int uring_process_cq(salts_io_uring_impl *impl, bool *out_saw_wake) {
   unsigned head = atomic_load_explicit((_Atomic unsigned *)impl->cq_head, memory_order_relaxed);
   const unsigned tail =
       atomic_load_explicit((_Atomic unsigned *)impl->cq_tail, memory_order_acquire);
@@ -713,6 +742,31 @@ static void uring_process_cq(salts_io_uring_impl *impl) {
     if (token == SALTS_IO_URING_CANCEL_TOKEN) {
       if (result < 0 && result != -ENOENT && result != -EALREADY)
         uring_counter_increment(&impl->native_cancel_errors);
+      continue;
+    }
+    if (token == SALTS_IO_URING_WAKE_TOKEN) {
+      uint64_t wake_count;
+      ssize_t read_status;
+      int arm_status;
+      impl->wake_armed = false;
+      if (result < 0) {
+        atomic_store_explicit((_Atomic unsigned *)impl->cq_head, head, memory_order_release);
+        return result;
+      }
+      do {
+        read_status = read(impl->wake_fd, &wake_count, sizeof(wake_count));
+      } while (read_status < 0 && errno == EINTR);
+      if (read_status < 0 && errno != EAGAIN) {
+        atomic_store_explicit((_Atomic unsigned *)impl->cq_head, head, memory_order_release);
+        return -errno;
+      }
+      atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
+      arm_status = uring_arm_wake(impl);
+      if (arm_status != SALTS_OK) {
+        atomic_store_explicit((_Atomic unsigned *)impl->cq_head, head, memory_order_release);
+        return arm_status;
+      }
+      if (out_saw_wake != NULL) *out_saw_wake = true;
       continue;
     }
     {
@@ -731,6 +785,7 @@ static void uring_process_cq(salts_io_uring_impl *impl) {
     }
   }
   atomic_store_explicit((_Atomic unsigned *)impl->cq_head, head, memory_order_release);
+  return SALTS_OK;
 }
 
 static void uring_drain_terminals(salts_io_uring_impl *impl, native_io_completion *events,
@@ -746,15 +801,112 @@ static void uring_drain_terminals(salts_io_uring_impl *impl, native_io_completio
   }
 }
 
-static int uring_progress(salts_io_uring_impl *impl) {
-  uring_process_cq(impl);
+static int uring_progress(salts_io_uring_impl *impl, bool *out_saw_wake) {
+  int status = uring_process_cq(impl, out_saw_wake);
+  if (status != SALTS_OK) return status;
   while (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
-    const int status = uring_flush(&impl->base);
+    status = uring_flush(&impl->base);
     if (status != SALTS_OK) return status;
-    /* enter can complete a send synchronously. Inspect its CQE before poll;
+    /* enter can complete a send synchronously. Inspect its CQE before returning;
      * promoted lane heads still join the next bounded submission batch. */
-    uring_process_cq(impl);
+    status = uring_process_cq(impl, out_saw_wake);
+    if (status != SALTS_OK) return status;
   }
+  return SALTS_OK;
+}
+
+static int uring_enter_wait(salts_io_uring_impl *impl, unsigned submit, uint32_t timeout_ms) {
+  if (timeout_ms == UINT32_MAX)
+    return uring_enter(impl, submit, 1u, IORING_ENTER_GETEVENTS);
+#if defined(IORING_ENTER_EXT_ARG) && defined(IORING_FEAT_EXT_ARG)
+  if (impl->ext_arg_wait) {
+    struct __kernel_timespec timeout = {
+        .tv_sec = (long long)(timeout_ms / 1000u),
+        .tv_nsec = (long long)(timeout_ms % 1000u) * 1000000ll};
+    struct io_uring_getevents_arg argument;
+    memset(&argument, 0, sizeof(argument));
+    argument.ts = (uint64_t)(uintptr_t)&timeout;
+    return uring_enter_arg_once(impl, submit, 1u,
+                                IORING_ENTER_GETEVENTS | IORING_ENTER_EXT_ARG,
+                                &argument, sizeof(argument));
+  }
+#else
+  (void)impl;
+  (void)submit;
+#endif
+  return SALTS_ENOTSUP;
+}
+
+/* Common modern-kernel path: publish every eligible lane head and combine
+ * submission with the completion wait in one io_uring_enter call. The ring is
+ * sized above request_capacity, so all staged user heads normally fit at once.
+ * A short/error enter commits only the kernel-consumed prefix and rolls the
+ * userspace SQ tail back over the unconsumed suffix. */
+static int uring_submit_staged_and_wait(salts_io_uring_impl *impl, uint32_t timeout_ms) {
+  const unsigned head =
+      atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
+  const unsigned tail =
+      atomic_load_explicit((_Atomic unsigned *)impl->sq_tail, memory_order_relaxed);
+  const unsigned available = *impl->sq_entries - (tail - head);
+  uint32_t index = impl->staged_head;
+  unsigned count = 0u;
+  bool pipe_write = false;
+  salts_io_uring_sigpipe_guard guard = {0};
+  int status;
+
+  while (index != SALTS_IO_URING_INDEX_NONE) {
+    salts_io_uring_request_record *request;
+    unsigned slot;
+    if (count == available) return SALTS_EBUSY;
+    request = &impl->requests[index];
+    slot = (tail + count) & *impl->sq_mask;
+    uring_prepare_operation(request, &impl->sqes[slot],
+                            impl->endpoints[request->endpoint.slot - 1u].fd);
+    impl->sq_array[slot] = slot;
+    pipe_write |= request->operation.kind == NATIVE_IO_OPERATION_PIPE_WRITE;
+    index = request->staged_next;
+    ++count;
+  }
+
+  status = pipe_write ? uring_sigpipe_guard_begin(&guard) : SALTS_OK;
+  if (status != SALTS_OK) return status;
+  if (count != 0u)
+    atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail + count, memory_order_release);
+
+  status = uring_enter_wait(impl, count, timeout_ms);
+  {
+    const unsigned next_head =
+        atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
+    const unsigned consumed = next_head - head;
+    if (consumed > count) {
+      uring_sigpipe_guard_end(&guard);
+      return SALTS_EPROTO;
+    }
+    for (unsigned cursor = 0u; cursor < consumed; ++cursor) {
+      const uint32_t accepted = impl->staged_head;
+      uring_unstage(impl, accepted);
+      impl->requests[accepted].in_flight = true;
+    }
+    if (consumed != count)
+      atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, next_head, memory_order_release);
+  }
+  uring_sigpipe_guard_end(&guard);
+
+  if (status == -EINTR || status == -ETIME) return status;
+  if (status < 0) {
+    if (impl->staged_head != SALTS_IO_URING_INDEX_NONE) uring_fail_staged(impl, status);
+    return status;
+  }
+  return SALTS_OK;
+}
+
+static int uring_poll_ring_fallback(salts_io_uring_impl *impl, uint32_t timeout_ms) {
+  struct pollfd descriptor = {impl->ring_fd, POLLIN, 0};
+  const int native_timeout = timeout_ms > (uint32_t)INT_MAX ? INT_MAX : (int)timeout_ms;
+  const int status = poll(&descriptor, 1u, native_timeout);
+  if (status == 0) return SALTS_ETIMEDOUT;
+  if (status < 0) return errno == EINTR ? -EINTR : -errno;
+  if ((descriptor.revents & (POLLERR | POLLNVAL)) != 0) return SALTS_EIO;
   return SALTS_OK;
 }
 
@@ -765,43 +917,69 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
                            ? event_capacity
                            : impl->completion_batch_capacity;
   const uint64_t started_ms = salts_monotonic_ms();
-  uint32_t wait_timeout = timeout_ms;
-  int flush_status = uring_progress(impl);
-  if (flush_status != SALTS_OK) return flush_status;
-  uring_drain_terminals(impl, events, limit, out_count);
-  if (*out_count != 0u) return SALTS_OK;
-  for (;;) {
-    struct pollfd descriptors[2] = {{impl->ring_fd, POLLIN, 0}, {impl->wake_fd, POLLIN, 0}};
-    const int native_timeout = wait_timeout == UINT32_MAX         ? -1
-                               : wait_timeout > (uint32_t)INT_MAX ? INT_MAX
-                                                                  : (int)wait_timeout;
-    int status;
-    status = poll(descriptors, 2u, native_timeout);
-    if ((status < 0 && errno == EINTR) || status == 0) {
-      wait_timeout = native_io_remaining_timeout(started_ms, timeout_ms);
-      if (wait_timeout == 0u) return SALTS_ETIMEDOUT;
-      continue;
+  bool saw_wake = false;
+  int status = uring_process_cq(impl, &saw_wake);
+  if (status != SALTS_OK) return status;
+
+  if (impl->terminal_count != 0u || saw_wake) {
+    if (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
+      status = uring_progress(impl, &saw_wake);
+      if (status != SALTS_OK) return status;
     }
-    if (status < 0) return -errno;
-    if ((descriptors[0].revents & (POLLERR | POLLNVAL)) != 0 ||
-        (descriptors[1].revents & (POLLERR | POLLNVAL)) != 0)
-      return SALTS_EIO;
-    flush_status = uring_progress(impl);
-    if (flush_status != SALTS_OK) return flush_status;
     uring_drain_terminals(impl, events, limit, out_count);
-    if (*out_count != 0u) return SALTS_OK;
-    if ((descriptors[1].revents & POLLIN) != 0) {
-      uint64_t wake_count;
-      ssize_t read_status;
-      do {
-        read_status = read(impl->wake_fd, &wake_count, sizeof(wake_count));
-      } while (read_status < 0 && errno == EINTR);
-      if (read_status < 0 && errno != EAGAIN) return -errno;
-      atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
-      return SALTS_OK;
-    }
-    wait_timeout = native_io_remaining_timeout(started_ms, timeout_ms);
+    if (*out_count != 0u || saw_wake) return SALTS_OK;
+  }
+  if (timeout_ms == 0u) return SALTS_ETIMEDOUT;
+
+  for (;;) {
+    uint32_t wait_timeout = native_io_remaining_timeout(started_ms, timeout_ms);
+    if (timeout_ms == UINT32_MAX) wait_timeout = UINT32_MAX;
     if (wait_timeout == 0u) return SALTS_ETIMEDOUT;
+    saw_wake = false;
+
+    if (wait_timeout != UINT32_MAX && !impl->ext_arg_wait) {
+      status = uring_progress(impl, &saw_wake);
+      if (status != SALTS_OK) return status;
+      uring_drain_terminals(impl, events, limit, out_count);
+      if (*out_count != 0u || saw_wake) return SALTS_OK;
+      status = uring_poll_ring_fallback(impl, wait_timeout);
+      if (status == SALTS_ETIMEDOUT) return SALTS_ETIMEDOUT;
+      if (status == -EINTR) continue;
+      if (status != SALTS_OK) return status;
+    } else {
+      status = uring_submit_staged_and_wait(impl, wait_timeout);
+#if defined(IORING_ENTER_EXT_ARG) && defined(IORING_FEAT_EXT_ARG)
+      if (status == -EINVAL && wait_timeout != UINT32_MAX && impl->ext_arg_wait) {
+        impl->ext_arg_wait = false;
+        continue;
+      }
+#endif
+      if (status != SALTS_OK && status != -EINTR && status != -ETIME) return status;
+    }
+
+    {
+      int cq_status = uring_process_cq(impl, &saw_wake);
+      if (cq_status != SALTS_OK) return cq_status;
+    }
+
+    if (impl->terminal_count != 0u || saw_wake) {
+      if (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
+        const int progress_status = uring_progress(impl, &saw_wake);
+        if (progress_status != SALTS_OK) return progress_status;
+      }
+      uring_drain_terminals(impl, events, limit, out_count);
+      if (*out_count != 0u || saw_wake) return SALTS_OK;
+    }
+
+    if (status == -ETIME) return SALTS_ETIMEDOUT;
+    if (status == -EINTR) continue;
+    if (native_io_remaining_timeout(started_ms, timeout_ms) == 0u) {
+      if (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
+        const int flush_status = uring_flush(&impl->base);
+        if (flush_status != SALTS_OK) return flush_status;
+      }
+      return SALTS_ETIMEDOUT;
+    }
   }
 }
 
@@ -1009,7 +1187,17 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
     uring_free_partial(impl);
     return status;
   }
+#if defined(IORING_FEAT_EXT_ARG)
+  impl->ext_arg_wait = (params.features & IORING_FEAT_EXT_ARG) != 0u;
+#else
+  impl->ext_arg_wait = false;
+#endif
   status = uring_map(impl, &params);
+  if (status != SALTS_OK) {
+    uring_free_partial(impl);
+    return status;
+  }
+  status = uring_arm_wake(impl);
   if (status != SALTS_OK) {
     uring_free_partial(impl);
     return status;
