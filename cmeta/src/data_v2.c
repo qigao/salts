@@ -213,7 +213,7 @@ cmeta_status cmeta_data_buffer_read(
 #define CMETA_COLLECTION_DESC_OPS_SIZE \
     CMETA_COLLECTION_FIELD_END(cmeta_data_desc, collection_ops)
 #define CMETA_COLLECTION_OPS_SIZE \
-    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, foreach)
+    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, collector)
 
 static cmeta_status cmeta_data_collection_ops_status(
     const cmeta_data_desc *desc, const cmeta_data_collection_ops **out) {
@@ -503,3 +503,24 @@ cmeta_status cmeta_data_construct_move(
 #undef CMETA_CONSTRUCT_OPS_SIZE
 #undef CMETA_CONSTRUCT_DESC_SIZE
 #undef CMETA_CONSTRUCT_FIELD_END
+
+
+cmeta_status cmeta_data_collection_collector(
+    const cmeta_data_desc *desc, void *zero_output, size_t limit,
+    cmeta_collector *out) {
+    const cmeta_data_collection_ops *ops = NULL;
+    cmeta_collector collector;
+    cmeta_status status;
+    if (zero_output == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    if (ops->collector == NULL) return CMETA_TRAIT_MISSING;
+    collector = ops->collector(zero_output, limit);
+    if (!cmeta_collector_ops_valid(collector.ops) ||
+        collector.zero_output != zero_output ||
+        collector.limit != limit ||
+        collector.input_type == NULL)
+        return CMETA_CALLBACK_ERROR;
+    *out = collector;
+    return CMETA_OK;
+}
