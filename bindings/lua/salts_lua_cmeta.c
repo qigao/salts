@@ -195,6 +195,73 @@ fail:
   return status;
 }
 
+typedef struct salts_lua_map_context {
+  salts_lua_push_context *push;
+  const cmeta_data_desc *key_data;
+  const cmeta_data_desc *value_data;
+  cmeta_data_map_flags flags;
+  size_t index;
+} salts_lua_map_context;
+
+static cmeta_status salts_lua_map_visit(
+    void *opaque, const void *key, const void *value) {
+  salts_lua_map_context *visit = (salts_lua_map_context *)opaque;
+  cmeta_status status;
+  if (visit == NULL || visit->push == NULL || visit->key_data == NULL ||
+      visit->value_data == NULL)
+    return CMETA_INVALID_ARGUMENT;
+
+  if ((visit->flags & CMETA_DATA_MAP_REPEATED_KEYS) != 0u) {
+    lua_createtable(visit->push->state, 0, 2);
+    status = salts_lua_push_value(visit->push, visit->key_data, key);
+    if (status != CMETA_OK) { lua_pop(visit->push->state, 1); return status; }
+    lua_setfield(visit->push->state, -2, "key");
+    status = salts_lua_push_value(visit->push, visit->value_data, value);
+    if (status != CMETA_OK) { lua_pop(visit->push->state, 1); return status; }
+    lua_setfield(visit->push->state, -2, "value");
+    lua_rawseti(visit->push->state, -2, (lua_Integer)(++visit->index));
+    return CMETA_OK;
+  }
+
+  status = salts_lua_push_value(visit->push, visit->key_data, key);
+  if (status != CMETA_OK) return status;
+  status = salts_lua_push_value(visit->push, visit->value_data, value);
+  if (status != CMETA_OK) { lua_pop(visit->push->state, 1); return status; }
+  lua_settable(visit->push->state, -3);
+  ++visit->index;
+  return CMETA_OK;
+}
+
+static cmeta_status salts_lua_push_map(
+    salts_lua_push_context *context, const cmeta_data_desc *data,
+    const void *object) {
+  const cmeta_data_map_ops *ops = cmeta_data_map_ops_of(data);
+  salts_lua_map_context visit;
+  int top;
+  cmeta_status status;
+  if (ops == NULL) return CMETA_TRAIT_MISSING;
+  visit.key_data = ops->key(object);
+  visit.value_data = ops->value(object);
+  if (visit.key_data == NULL || visit.value_data == NULL ||
+      !cmeta_data_desc_valid(visit.key_data) ||
+      !cmeta_data_desc_valid(visit.value_data))
+    return CMETA_TRAIT_MISSING;
+  if (context->depth >= context->limits.max_depth)
+    return CMETA_CAPACITY_EXCEEDED;
+
+  top = lua_gettop(context->state);
+  lua_createtable(context->state, 0, 0);
+  ++context->depth;
+  visit.push = context;
+  visit.flags = ops->flags;
+  visit.index = 0u;
+  status = cmeta_data_map_foreach(
+      data, object, salts_lua_map_visit, &visit, context->limits.max_items);
+  --context->depth;
+  if (status != CMETA_OK) lua_settop(context->state, top);
+  return status;
+}
+
 static cmeta_status salts_lua_push_value(
     salts_lua_push_context *context, const cmeta_data_desc *data,
     const void *object) {
@@ -220,6 +287,8 @@ static cmeta_status salts_lua_push_value(
     case CMETA_DATA_SEQUENCE:
     case CMETA_DATA_SET:
       return salts_lua_push_collection(context, data, object);
+    case CMETA_DATA_MAP:
+      return salts_lua_push_map(context, data, object);
     default:
       return CMETA_TRAIT_MISSING;
   }
