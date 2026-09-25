@@ -1162,7 +1162,10 @@ cmeta_status cmeta_data_map_accept(
     if (!cmeta_data_desc_equal(expected_key, key_data) ||
         !cmeta_data_desc_equal(expected_value, value_data))
         return CMETA_TYPE_MISMATCH;
-    if (ops->struct_size < CMETA_MAP_OPS_ACCEPT_SIZE || ops->accept == NULL)
+    if (ops->struct_size <
+            offsetof(cmeta_data_map_ops, accept) +
+                sizeof(((cmeta_data_map_ops *)0)->accept) ||
+        ops->accept == NULL)
         return CMETA_TRAIT_MISSING;
     return ops->accept(collector, key_data, key, value_data, value);
 }
