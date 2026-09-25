@@ -128,6 +128,7 @@ static cmeta_status salts_lua_push_enum(
 
 typedef struct salts_lua_collection_context {
   salts_lua_push_context *push;
+  const cmeta_data_desc *element_data;
   size_t index;
 } salts_lua_collection_context;
 
@@ -136,11 +137,12 @@ static cmeta_status salts_lua_collection_visit(
   salts_lua_collection_context *visit =
       (salts_lua_collection_context *)opaque;
   cmeta_status status;
-  const cmeta_data_desc *element_data;
-  if (visit == NULL || visit->push == NULL) return CMETA_INVALID_ARGUMENT;
-  element_data = NULL; /* supplied by caller through active collection data */
-  (void)element_data;
-  return CMETA_TRAIT_MISSING;
+  if (visit == NULL || visit->push == NULL || visit->element_data == NULL)
+    return CMETA_INVALID_ARGUMENT;
+  status = salts_lua_push_value(visit->push, visit->element_data, element);
+  if (status != CMETA_OK) return status;
+  lua_rawseti(visit->push->state, -2, (lua_Integer)(++visit->index));
+  return CMETA_OK;
 }
 
 static cmeta_status salts_lua_push_collection(
@@ -177,9 +179,16 @@ static cmeta_status salts_lua_push_collection(
     --context->depth;
     return CMETA_OK;
   }
-  /* Non-contiguous providers are wired in the next slice; do not infer native
-   * iterator representation here. */
-  status = CMETA_TRAIT_MISSING;
+  {
+    salts_lua_collection_context visit = {context, element_data, 0u};
+    status = cmeta_data_collection_foreach(
+        data, object, salts_lua_collection_visit, &visit,
+        context->limits.max_items);
+    if (status == CMETA_OK) {
+      --context->depth;
+      return CMETA_OK;
+    }
+  }
 fail:
   --context->depth;
   lua_settop(context->state, top);
