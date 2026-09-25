@@ -25,7 +25,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
 #define SALTS_META_VEC_COLLECTION_DATA(name,type) \
  CMETA_INLINE const cmeta_data_desc *name##_collection_element(const void *object){(void)object;return CMETA_DATAOF(type);} \
  CMETA_INLINE cmeta_status name##_collection_read(const void *object,cmeta_data_collection_view *out){const name *self=(const name*)object;const cmeta_data_desc *element;if(self==NULL||out==NULL)return CMETA_INVALID_ARGUMENT;element=CMETA_DATAOF(type);if(element==NULL)return CMETA_TRAIT_MISSING;out->data=name##_data_const(self);out->count=name##_size(self);out->stride=sizeof(type);out->element=element;return CMETA_OK;} \
- CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF(name),name##_collection_element,name##_collection_read}; \
+ CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF(name),name##_collection_element,name##_collection_read,NULL}; \
  CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_SEQUENCE,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops}
 
 #define SALTS_META_C1_COLLECTOR(name,type,accept_method) \
