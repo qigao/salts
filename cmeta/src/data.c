@@ -864,85 +864,68 @@ static const cmeta_data_float_shape cmeta_data_double_shape = {
     (uint8_t)(sizeof(double) * CHAR_BIT)
 };
 
-const cmeta_data_desc cmeta_data_int8 = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+#define CMETA_BUILTIN_DATA_DESC(stable_id_, display_name_, kind_, storage_, shape_) \
+    {                                                                              \
+        .struct_size = CMETA_DATA_DESC_PREFIX_SIZE,                                \
+        .abi_version = CMETA_DATA_DESC_ABI_VERSION,                                \
+        .stable_id = (stable_id_),                                                  \
+        .display_name = (display_name_),                                            \
+        .kind = (kind_),                                                            \
+        .storage_type = (storage_),                                                 \
+        .shape = (shape_)                                                           \
+    }
+
+const cmeta_data_desc cmeta_data_int8 = CMETA_BUILTIN_DATA_DESC(
     "cmeta.int8.data", "int8", CMETA_DATA_SINT, &cmeta_type_int8,
-    &cmeta_data_int8_shape, NULL, NULL, NULL, NULL, NULL};
-const cmeta_data_desc cmeta_data_uint8 = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    &cmeta_data_int8_shape);
+const cmeta_data_desc cmeta_data_uint8 = CMETA_BUILTIN_DATA_DESC(
     "cmeta.uint8.data", "uint8", CMETA_DATA_UINT, &cmeta_type_uint8,
-    &cmeta_data_uint8_shape, NULL, NULL, NULL, NULL, NULL};
-const cmeta_data_desc cmeta_data_int16 = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    &cmeta_data_uint8_shape);
+const cmeta_data_desc cmeta_data_int16 = CMETA_BUILTIN_DATA_DESC(
     "cmeta.int16.data", "int16", CMETA_DATA_SINT, &cmeta_type_int16,
-    &cmeta_data_int16_shape, NULL, NULL, NULL, NULL, NULL};
-const cmeta_data_desc cmeta_data_uint16 = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    &cmeta_data_int16_shape);
+const cmeta_data_desc cmeta_data_uint16 = CMETA_BUILTIN_DATA_DESC(
     "cmeta.uint16.data", "uint16", CMETA_DATA_UINT, &cmeta_type_uint16,
-    &cmeta_data_uint16_shape, NULL, NULL, NULL, NULL, NULL};
-const cmeta_data_desc cmeta_data_int32 = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    &cmeta_data_uint16_shape);
+const cmeta_data_desc cmeta_data_int32 = CMETA_BUILTIN_DATA_DESC(
     "cmeta.int32.data", "int32", CMETA_DATA_SINT, &cmeta_type_int32,
-    &cmeta_data_int32_shape, NULL, NULL, NULL, NULL, NULL};
-const cmeta_data_desc cmeta_data_uint32 = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    &cmeta_data_int32_shape);
+const cmeta_data_desc cmeta_data_uint32 = CMETA_BUILTIN_DATA_DESC(
     "cmeta.uint32.data", "uint32", CMETA_DATA_UINT, &cmeta_type_uint32,
-    &cmeta_data_uint32_shape, NULL, NULL, NULL, NULL, NULL};
-const cmeta_data_desc cmeta_data_int64 = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    &cmeta_data_uint32_shape);
+const cmeta_data_desc cmeta_data_int64 = CMETA_BUILTIN_DATA_DESC(
     "cmeta.int64.data", "int64", CMETA_DATA_SINT, &cmeta_type_int64,
-    &cmeta_data_int64_shape, NULL, NULL, NULL, NULL, NULL};
-const cmeta_data_desc cmeta_data_uint64 = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    &cmeta_data_int64_shape);
+const cmeta_data_desc cmeta_data_uint64 = CMETA_BUILTIN_DATA_DESC(
     "cmeta.uint64.data", "uint64", CMETA_DATA_UINT, &cmeta_type_uint64,
-    &cmeta_data_uint64_shape, NULL, NULL, NULL, NULL, NULL};
+    &cmeta_data_uint64_shape);
 
-const cmeta_data_desc cmeta_data_bool = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
-    "cmeta.bool.data", "bool", CMETA_DATA_BOOL, &cmeta_type_bool, NULL,
-    NULL, NULL, NULL, NULL, NULL
-};
-const cmeta_data_desc cmeta_data_int = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+const cmeta_data_desc cmeta_data_bool = CMETA_BUILTIN_DATA_DESC(
+    "cmeta.bool.data", "bool", CMETA_DATA_BOOL, &cmeta_type_bool, NULL);
+const cmeta_data_desc cmeta_data_int = CMETA_BUILTIN_DATA_DESC(
     "cmeta.int.data", "int", CMETA_DATA_SINT, &cmeta_type_int,
-    &cmeta_data_int_shape, NULL, NULL, NULL, NULL, NULL
-};
-const cmeta_data_desc cmeta_data_long = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    &cmeta_data_int_shape);
+const cmeta_data_desc cmeta_data_long = CMETA_BUILTIN_DATA_DESC(
     "cmeta.long.data", "long", CMETA_DATA_SINT, &cmeta_type_long,
-    &cmeta_data_long_shape, NULL, NULL, NULL, NULL, NULL
-};
-const cmeta_data_desc cmeta_data_size = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    &cmeta_data_long_shape);
+const cmeta_data_desc cmeta_data_size = CMETA_BUILTIN_DATA_DESC(
     "cmeta.size.data", "size_t", CMETA_DATA_UINT, &cmeta_type_size,
-    &cmeta_data_size_shape, NULL, NULL, NULL, NULL, NULL
-};
-const cmeta_data_desc cmeta_data_float = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    &cmeta_data_size_shape);
+const cmeta_data_desc cmeta_data_float = CMETA_BUILTIN_DATA_DESC(
     "cmeta.float.data", "float", CMETA_DATA_FLOAT, &cmeta_type_float,
-    &cmeta_data_float_shape_value, NULL, NULL, NULL, NULL, NULL
-};
-const cmeta_data_desc cmeta_data_double = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    &cmeta_data_float_shape_value);
+const cmeta_data_desc cmeta_data_double = CMETA_BUILTIN_DATA_DESC(
     "cmeta.double.data", "double", CMETA_DATA_FLOAT, &cmeta_type_double,
-    &cmeta_data_double_shape, NULL, NULL, NULL, NULL, NULL
-};
+    &cmeta_data_double_shape);
 
-const cmeta_data_desc cmeta_data_sequence = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
-    "cmeta.data.sequence", "sequence", CMETA_DATA_SEQUENCE, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL
-};
-const cmeta_data_desc cmeta_data_set = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
-    "cmeta.data.set", "set", CMETA_DATA_SET, NULL, NULL, NULL, NULL, NULL,
-    NULL, NULL
-};
-const cmeta_data_desc cmeta_data_map = {
-    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
-    "cmeta.data.map", "map", CMETA_DATA_MAP, NULL, NULL, NULL, NULL, NULL,
-    NULL, NULL
-};
+const cmeta_data_desc cmeta_data_sequence = CMETA_BUILTIN_DATA_DESC(
+    "cmeta.data.sequence", "sequence", CMETA_DATA_SEQUENCE, NULL, NULL);
+const cmeta_data_desc cmeta_data_set = CMETA_BUILTIN_DATA_DESC(
+    "cmeta.data.set", "set", CMETA_DATA_SET, NULL, NULL);
+const cmeta_data_desc cmeta_data_map = CMETA_BUILTIN_DATA_DESC(
+    "cmeta.data.map", "map", CMETA_DATA_MAP, NULL, NULL);
+
+#undef CMETA_BUILTIN_DATA_DESC
 
 #undef CMETA_DATA_VARIANT_OPS_PREFIX_SIZE
 #undef CMETA_DATA_FIXED_OPS_PREFIX_SIZE

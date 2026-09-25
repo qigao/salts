@@ -1198,7 +1198,7 @@ cmeta_status cmeta_data_temp_open(
                                   : CMETA_INVALID_ARGUMENT;
     if ((alignment & (alignment - 1u)) != 0u)
         return CMETA_INVALID_ARGUMENT;
-    if (alignment <= _Alignof(max_align_t)) {
+    if (alignment <= CMETA_ALIGNOF(cmeta_capture_storage)) {
         padded = extent;
         storage = malloc(padded);
     } else {
@@ -1216,7 +1216,7 @@ cmeta_status cmeta_data_temp_open(
     status = cmeta_data_temp_init(desc, storage, &lifecycle);
     if (status != CMETA_OK) {
 #if defined(_MSC_VER)
-        if (alignment > _Alignof(max_align_t)) _aligned_free(storage);
+        if (alignment > CMETA_ALIGNOF(cmeta_capture_storage)) _aligned_free(storage);
         else free(storage);
 #else
         free(storage);
@@ -1236,7 +1236,7 @@ void cmeta_data_temp_close(cmeta_data_temp *temp) {
     if (temp->data != NULL)
         (void)cmeta_data_value_restore_zero(temp->data, temp->storage);
 #if defined(_MSC_VER)
-    if (temp->alignment > _Alignof(max_align_t)) _aligned_free(temp->storage);
+    if (temp->alignment > CMETA_ALIGNOF(cmeta_capture_storage)) _aligned_free(temp->storage);
     else free(temp->storage);
 #else
     free(temp->storage);

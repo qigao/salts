@@ -245,10 +245,21 @@ struct cmeta_data_fixed_ops {
         &name_##_cmeta_type, (extent_), name_##_cmeta_is_zero,               \
         name_##_cmeta_copy, name_##_cmeta_restore_zero};                     \
     static const cmeta_data_desc name_##_cmeta_data = {                      \
-        sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,                \
-        stable_id_ ".data", display_name_, CMETA_DATA_BYTES,               \
-        &name_##_cmeta_type, &name_##_cmeta_shape, NULL, NULL, NULL,         \
-        &name_##_cmeta_fixed_ops, NULL}
+        .struct_size = sizeof(cmeta_data_desc),                              \
+        .abi_version = CMETA_DATA_DESC_ABI_VERSION,                          \
+        .stable_id = stable_id_ ".data",                                    \
+        .display_name = display_name_,                                       \
+        .kind = CMETA_DATA_BYTES,                                            \
+        .storage_type = &name_##_cmeta_type,                                 \
+        .shape = &name_##_cmeta_shape,                                       \
+        .buffer_ops = NULL,                                                  \
+        .enum_ops = NULL,                                                    \
+        .variant_ops = NULL,                                                 \
+        .fixed_ops = &name_##_cmeta_fixed_ops,                               \
+        .enum_bits_ops = NULL,                                               \
+        .collection_ops = NULL,                                              \
+        .map_ops = NULL,                                                     \
+        .construct_ops = NULL}
 
 enum {
     CMETA_DATA_ENUM_OPS_ABI_VERSION = 1u
@@ -547,6 +558,9 @@ bool cmeta_data_desc_valid(const cmeta_data_desc *desc);
  * identity; descriptor addresses are never semantic identity. */
 bool cmeta_data_desc_equal(
     const cmeta_data_desc *left, const cmeta_data_desc *right);
+
+/** Return the canonical exact-width integer descriptor, or NULL. */
+const cmeta_data_desc *cmeta_data_integer_width(bool is_signed, uint8_t bits);
 
 /**
  * Return a validated STRING/BYTES adapter, or NULL when the descriptor does

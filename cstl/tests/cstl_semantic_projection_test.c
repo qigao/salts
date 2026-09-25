@@ -100,9 +100,13 @@ static const cmeta_data_field_desc cstl_struct_with_vec_fields[] = {
 static const cmeta_data_struct_shape cstl_struct_with_vec_shape = {
     &cstl_struct_with_vec_layout, cstl_struct_with_vec_fields, 2u};
 static const cmeta_data_desc cstl_struct_with_vec_data = {
-    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
-    "test.cstl.StructWithVec.data", "StructWithVec", CMETA_DATA_STRUCT,
-    &cstl_struct_with_vec_type, &cstl_struct_with_vec_shape};
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.cstl.StructWithVec.data",
+    .display_name = "StructWithVec",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &cstl_struct_with_vec_type,
+    .shape = &cstl_struct_with_vec_shape};
 
 
 spec("CSTL semantic projection") {
