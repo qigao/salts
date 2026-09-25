@@ -117,16 +117,45 @@ static inline void salts_tstr_header_cmeta_move(
     *from = NULL;
 }
 
-static const cmeta_data_desc salts_tstr_header_cmeta_data;
-CMETA_DEFINE_DATA_TRAITS(
-    salts_tstr_header, &salts_tstr_header_cmeta_data);
+static inline bool salts_tstr_header_cmeta_copy_construct(
+    void *destination, const void *source) {
+    const tstr value = source != NULL ? *(const tstr *)source : NULL;
+    tstr copy;
+    if (destination == NULL || source == NULL)
+        return false;
+    copy = tstr_clone(value);
+    if (value != NULL && copy == NULL)
+        return false;
+    *(tstr *)destination = copy;
+    return true;
+}
+
+static inline void salts_tstr_header_cmeta_move_construct(
+    void *destination, void *source) {
+    if (destination == NULL || source == NULL || destination == source)
+        return;
+    *(tstr *)destination = tstr_move((tstr *)source);
+}
+
+static inline void salts_tstr_header_cmeta_destroy(void *object) {
+    if (object != NULL)
+        tstr_freep((tstr *)object);
+}
+
+static const cmeta_type_traits salts_tstr_header_cmeta_traits = {
+    CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
+    NULL, NULL, NULL,
+    salts_tstr_header_cmeta_copy_construct,
+    salts_tstr_header_cmeta_move_construct,
+    salts_tstr_header_cmeta_destroy
+};
 
 static const cmeta_type_identity salts_tstr_header_cmeta_identity =
     CMETA_TYPE_ID_ATOM_INIT("salts.tstr");
 
 static const cmeta_type_desc salts_tstr_header_cmeta_type = {
     "tstr", sizeof(tstr), CMETA_ALIGNOF(tstr), CMETA_T_OBJECT,
-    NULL, &cmeta_traits_salts_tstr_header,
+    NULL, &salts_tstr_header_cmeta_traits,
     &salts_tstr_header_cmeta_identity
 };
 
@@ -143,14 +172,11 @@ static const cmeta_data_buffer_ops salts_tstr_header_cmeta_buffer_ops = {
 };
 
 static const cmeta_data_desc salts_tstr_header_cmeta_data = {
-    .struct_size = sizeof(cmeta_data_desc),
-    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
-    .stable_id = "salts.tstr.data",
-    .display_name = "tstr",
-    .kind = CMETA_DATA_STRING,
-    .storage_type = &salts_tstr_header_cmeta_type,
-    .shape = &salts_tstr_header_cmeta_shape,
-    .buffer_ops = &salts_tstr_header_cmeta_buffer_ops
+    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
+    "salts.tstr.data", "tstr", CMETA_DATA_STRING,
+    &salts_tstr_header_cmeta_type, &salts_tstr_header_cmeta_shape,
+    &salts_tstr_header_cmeta_buffer_ops,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 
 #define SALTS_TSTR_CMETA_TYPE_REF (&salts_tstr_header_cmeta_type)
