@@ -138,7 +138,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){name *output=(name*)context;if(output==NULL)return CMETA_INVALID_ARGUMENT;if(!cmeta_type_equal(input,CMETA_TYPEOF(type)))return CMETA_TYPE_MISMATCH;name##_destroy(output);return salts_stl_cmeta_status((stl_status)name##_init(output,limit));} \
  CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){return salts_stl_cmeta_status((stl_status)name##_##accept_method((name*)context,*(const type*)value));} \
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
- CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output)name##_destroy(output);} \
+ CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \
  CMETA_INLINE cmeta_collector name##_collector(name *zero_output,size_t limit){cmeta_collector result={&name##_collector_ops,zero_output,zero_output,CMETA_TYPEOF(type),limit,0u,CMETA_COLLECTOR_ZERO,CMETA_OK};return result;} \
  CMETA_INLINE cmeta_collector name##_collector_erased(void *zero_output,size_t limit){return name##_collector((name*)zero_output,limit);}
@@ -148,7 +148,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){name *output=(name*)context;if(output==NULL)return CMETA_INVALID_ARGUMENT;if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;name##_destroy(output);return salts_stl_cmeta_status((stl_status)name##_init(output,limit));} \
  CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return salts_stl_cmeta_status((stl_status)name##_put((name*)context,entry->key,entry->value));} \
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
- CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output)name##_destroy(output);} \
+ CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \
  CMETA_INLINE cmeta_collector name##_collector(name *zero_output,size_t limit){cmeta_collector result={&name##_collector_ops,zero_output,zero_output,&name##_entry_cmeta_type,limit,0u,CMETA_COLLECTOR_ZERO,CMETA_OK};return result;} \
  CMETA_INLINE cmeta_collector name##_collector_erased(void *zero_output,size_t limit){return name##_collector((name*)zero_output,limit);}
@@ -159,7 +159,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){name *output=(name*)context;if(output==NULL)return CMETA_INVALID_ARGUMENT;if(!cmeta_type_equal(input,&name##_entry_cmeta_type))return CMETA_TYPE_MISMATCH;if(cmeta_type_require_traits(input,CMETA_TRAIT_COPY|CMETA_TRAIT_MOVE|CMETA_TRAIT_DESTROY)!=CMETA_OK)return CMETA_TRAIT_MISSING;name##_destroy(output);return salts_stl_cmeta_status((stl_status)name##_init(output,limit));} \
  CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){const name##_entry *entry=(const name##_entry*)value;return salts_stl_cmeta_status((stl_status)name##_put((name*)context,entry->key,entry->value));} \
  CMETA_INLINE cmeta_status name##_collector_finish_cb(void *context){(void)context;return CMETA_OK;} \
- CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output)name##_destroy(output);} \
+ CMETA_INLINE void name##_collector_abort_cb(void *context){name *output=(name*)context;if(output){name##_destroy(output);memset(output,0,sizeof(*output));}} \
  CMETA_LOCAL const cmeta_collector_ops name##_collector_ops={name##_collector_begin_cb,name##_collector_accept_cb,name##_collector_finish_cb,name##_collector_abort_cb}; \
  CMETA_INLINE cmeta_collector name##_collector(name *zero_output,size_t limit){cmeta_collector result={&name##_collector_ops,zero_output,zero_output,&name##_entry_cmeta_type,limit,0u,CMETA_COLLECTOR_ZERO,CMETA_OK};return result;} \
  CMETA_INLINE cmeta_collector name##_collector_erased(void *zero_output,size_t limit){return name##_collector((name*)zero_output,limit);}
