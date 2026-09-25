@@ -237,6 +237,7 @@ static cmeta_status cmeta_data_collection_ops_status(
     if (ops->struct_size < CMETA_COLLECTION_OPS_BASE_SIZE ||
         ops->abi_version != CMETA_DATA_COLLECTION_OPS_ABI_VERSION ||
         ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
+        (ops->flags & ~CMETA_DATA_COLLECTION_FLAGS_MASK) != 0u ||
         ops->element == NULL || (ops->read == NULL && ops->foreach == NULL))
         return CMETA_INVALID_ARGUMENT;
 
