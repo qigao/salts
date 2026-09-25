@@ -300,18 +300,13 @@ static bool uring_wake_can_fallback(int status) {
          status == -EOPNOTSUPP;
 }
 
-static int uring_arm_wake(salts_io_uring_impl *impl) {
-  struct io_uring_sqe sqe;
-  int status;
-  if (!impl->ring_wake || impl->wake_armed) return SALTS_OK;
-  memset(&sqe, 0, sizeof(sqe));
-  sqe.opcode = IORING_OP_POLL_ADD;
-  sqe.fd = impl->wake_fd;
-  sqe.poll32_events = POLLIN;
-  sqe.user_data = SALTS_IO_URING_WAKE_TOKEN;
-  status = uring_publish_sqe(impl, &sqe);
-  if (status == SALTS_OK) impl->wake_armed = true;
-  return status;
+static void uring_prepare_wake_sqe(const salts_io_uring_impl *impl,
+                                   struct io_uring_sqe *sqe) {
+  memset(sqe, 0, sizeof(*sqe));
+  sqe->opcode = IORING_OP_POLL_ADD;
+  sqe->fd = impl->wake_fd;
+  sqe->poll32_events = POLLIN;
+  sqe->user_data = SALTS_IO_URING_WAKE_TOKEN;
 }
 
 static void uring_prepare_operation(salts_io_uring_request_record *record, struct io_uring_sqe *sqe,
@@ -753,12 +748,11 @@ static int uring_process_cq(salts_io_uring_impl *impl, bool *out_saw_wake) {
     if (token == SALTS_IO_URING_WAKE_TOKEN) {
       uint64_t wake_count;
       ssize_t read_status;
-      int arm_status;
       impl->wake_armed = false;
       if (result < 0) {
-        /* An internal poll can be cancelled when the task that re-armed it
-         * exits. This is a control-path capability loss, not a user I/O
-         * failure. Preserve wake semantics with the outer poll fallback. */
+        /* The internal poll is tied to the task that submitted it and may be
+         * cancelled if ownership moves after an observe call. Treat that as
+         * wait-policy degradation, never as a user I/O terminal. */
         if (uring_wake_can_fallback(result)) {
           impl->ring_wake = false;
           continue;
@@ -774,15 +768,9 @@ static int uring_process_cq(salts_io_uring_impl *impl, bool *out_saw_wake) {
         return -errno;
       }
       atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
-      arm_status = uring_arm_wake(impl);
-      if (arm_status != SALTS_OK) {
-        if (uring_wake_can_fallback(arm_status)) {
-          impl->ring_wake = false;
-        } else {
-          atomic_store_explicit((_Atomic unsigned *)impl->cq_head, head, memory_order_release);
-          return arm_status;
-        }
-      }
+      /* Do not re-arm here. The next blocking observe folds the new control
+       * poll into the same SQ batch as user work, avoiding a control-only
+       * io_uring_enter and avoiding a poll owned by a thread that is exiting. */
       if (out_saw_wake != NULL) *out_saw_wake = true;
       continue;
     }
@@ -866,7 +854,9 @@ static int uring_submit_staged_and_wait(salts_io_uring_impl *impl, uint32_t time
       atomic_load_explicit((_Atomic unsigned *)impl->sq_tail, memory_order_relaxed);
   const unsigned available = *impl->sq_entries - (tail - head);
   uint32_t index = impl->staged_head;
-  unsigned count = 0u;
+  unsigned user_count = 0u;
+  unsigned submit_count;
+  bool add_wake;
   bool pipe_write = false;
   salts_io_uring_sigpipe_guard guard = {0};
   int status;
@@ -874,37 +864,49 @@ static int uring_submit_staged_and_wait(salts_io_uring_impl *impl, uint32_t time
   while (index != SALTS_IO_URING_INDEX_NONE) {
     salts_io_uring_request_record *request;
     unsigned slot;
-    if (count == available) return SALTS_EBUSY;
+    if (user_count == available) return SALTS_EBUSY;
     request = &impl->requests[index];
-    slot = (tail + count) & *impl->sq_mask;
+    slot = (tail + user_count) & *impl->sq_mask;
     uring_prepare_operation(request, &impl->sqes[slot],
                             impl->endpoints[request->endpoint.slot - 1u].fd);
     impl->sq_array[slot] = slot;
     pipe_write |= request->operation.kind == NATIVE_IO_OPERATION_PIPE_WRITE;
     index = request->staged_next;
-    ++count;
+    ++user_count;
   }
+
+  add_wake = impl->ring_wake && !impl->wake_armed;
+  if (add_wake) {
+    const unsigned slot = (tail + user_count) & *impl->sq_mask;
+    if (user_count == available) return SALTS_EBUSY;
+    uring_prepare_wake_sqe(impl, &impl->sqes[slot]);
+    impl->sq_array[slot] = slot;
+  }
+  submit_count = user_count + (add_wake ? 1u : 0u);
 
   status = pipe_write ? uring_sigpipe_guard_begin(&guard) : SALTS_OK;
   if (status != SALTS_OK) return status;
-  if (count != 0u)
-    atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail + count, memory_order_release);
+  if (submit_count != 0u)
+    atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail + submit_count,
+                          memory_order_release);
 
-  status = uring_enter_wait(impl, count, timeout_ms);
+  status = uring_enter_wait(impl, submit_count, timeout_ms);
   {
     const unsigned next_head =
         atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
     const unsigned consumed = next_head - head;
-    if (consumed > count) {
+    const unsigned consumed_users = consumed < user_count ? consumed : user_count;
+    if (consumed > submit_count) {
       uring_sigpipe_guard_end(&guard);
       return SALTS_EPROTO;
     }
-    for (unsigned cursor = 0u; cursor < consumed; ++cursor) {
+    for (unsigned cursor = 0u; cursor < consumed_users; ++cursor) {
       const uint32_t accepted = impl->staged_head;
       uring_unstage(impl, accepted);
       impl->requests[accepted].in_flight = true;
     }
-    if (consumed != count)
+    if (add_wake && consumed > user_count) impl->wake_armed = true;
+    if (consumed != submit_count)
       atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, next_head, memory_order_release);
   }
   uring_sigpipe_guard_end(&guard);
@@ -1231,15 +1233,6 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
   if (status != SALTS_OK) {
     uring_free_partial(impl);
     return status;
-  }
-  status = uring_arm_wake(impl);
-  if (status != SALTS_OK) {
-    if (uring_wake_can_fallback(status)) {
-      impl->ring_wake = false;
-    } else {
-      uring_free_partial(impl);
-      return status;
-    }
   }
   backend->impl = impl;
   return SALTS_OK;
