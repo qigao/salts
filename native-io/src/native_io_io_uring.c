@@ -296,8 +296,7 @@ static int uring_publish_sqe(salts_io_uring_impl *impl, const struct io_uring_sq
 }
 
 static bool uring_wake_can_fallback(int status) {
-  return status == SALTS_EBUSY || status == -ECANCELED || status == -EINVAL ||
-         status == -EOPNOTSUPP;
+  return status == -ECANCELED || status == -EINVAL || status == -EOPNOTSUPP;
 }
 
 static void uring_prepare_wake_sqe(const salts_io_uring_impl *impl,
