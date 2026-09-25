@@ -350,7 +350,7 @@ cmeta_status cmeta_data_collection_foreach(
 #define CMETA_MAP_FIELD_END(type, member) \
     (offsetof(type, member) + sizeof(((type *)0)->member))
 #define CMETA_MAP_DESC_OPS_SIZE CMETA_MAP_FIELD_END(cmeta_data_desc, map_ops)
-#define CMETA_MAP_OPS_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, collector)
+#define CMETA_MAP_OPS_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, accept)
 
 static cmeta_status cmeta_data_map_ops_status(
     const cmeta_data_desc *desc, const cmeta_data_map_ops **out) {
@@ -368,7 +368,8 @@ static cmeta_status cmeta_data_map_ops_status(
          (ops->flags & CMETA_DATA_MAP_REPEATED_KEYS) != 0u) ||
         ((ops->flags & (CMETA_DATA_MAP_UNIQUE_KEYS |
                         CMETA_DATA_MAP_REPEATED_KEYS)) == 0u) ||
-        ops->key == NULL || ops->value == NULL || ops->foreach == NULL)
+        ops->key == NULL || ops->value == NULL || ops->foreach == NULL ||
+        ops->accept == NULL)
         return CMETA_INVALID_ARGUMENT;
     if (desc->storage_type == NULL ||
         !cmeta_type_equal(desc->storage_type, ops->storage_type) ||
@@ -701,4 +702,29 @@ void cmeta_data_temp_close(cmeta_data_temp *temp) {
     free(temp->storage);
 #endif
     *temp = (cmeta_data_temp){0};
+}
+
+
+cmeta_status cmeta_data_map_accept(
+    const cmeta_data_desc *desc, cmeta_collector *collector,
+    const cmeta_data_desc *key_data, const void *key,
+    const cmeta_data_desc *value_data, const void *value) {
+    const cmeta_data_map_ops *ops = NULL;
+    const cmeta_data_desc *expected_key;
+    const cmeta_data_desc *expected_value;
+    cmeta_status status;
+    if (collector == NULL || key_data == NULL || key == NULL ||
+        value_data == NULL || value == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_map_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    expected_key = ops->key(collector->zero_output);
+    expected_value = ops->value(collector->zero_output);
+    if (expected_key == NULL || expected_value == NULL ||
+        !cmeta_data_desc_valid(expected_key) ||
+        !cmeta_data_desc_valid(expected_value))
+        return CMETA_TRAIT_MISSING;
+    if (expected_key != key_data || expected_value != value_data)
+        return CMETA_TYPE_MISMATCH;
+    return ops->accept(collector, key_data, key, value_data, value);
 }
