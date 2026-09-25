@@ -78,6 +78,14 @@ Enum(cmeta_gen_status,
 
 #include <cmeta/signatures.h>
 
+extern const cmeta_type_desc cmeta_type_int8;
+extern const cmeta_type_desc cmeta_type_uint8;
+extern const cmeta_type_desc cmeta_type_int16;
+extern const cmeta_type_desc cmeta_type_uint16;
+extern const cmeta_type_desc cmeta_type_int32;
+extern const cmeta_type_desc cmeta_type_uint32;
+extern const cmeta_type_desc cmeta_type_int64;
+extern const cmeta_type_desc cmeta_type_uint64;
 extern const cmeta_type_desc cmeta_type_void;
 extern const cmeta_type_desc cmeta_type_size;
 extern const cmeta_type_desc cmeta_type_size_ptr;
