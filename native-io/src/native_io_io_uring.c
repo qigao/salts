@@ -295,6 +295,11 @@ static int uring_publish_sqe(salts_io_uring_impl *impl, const struct io_uring_sq
   return submitted < 0 ? submitted : SALTS_EIO;
 }
 
+static bool uring_wake_can_fallback(int status) {
+  return status == SALTS_EBUSY || status == -ECANCELED || status == -EINVAL ||
+         status == -EOPNOTSUPP;
+}
+
 static int uring_arm_wake(salts_io_uring_impl *impl) {
   struct io_uring_sqe sqe;
   int status;
@@ -754,7 +759,7 @@ static int uring_process_cq(salts_io_uring_impl *impl, bool *out_saw_wake) {
         /* An internal poll can be cancelled when the task that re-armed it
          * exits. This is a control-path capability loss, not a user I/O
          * failure. Preserve wake semantics with the outer poll fallback. */
-        if (result == -ECANCELED || result == -EINVAL || result == -EOPNOTSUPP) {
+        if (uring_wake_can_fallback(result)) {
           impl->ring_wake = false;
           continue;
         }
@@ -771,7 +776,7 @@ static int uring_process_cq(salts_io_uring_impl *impl, bool *out_saw_wake) {
       atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
       arm_status = uring_arm_wake(impl);
       if (arm_status != SALTS_OK) {
-        if (arm_status == -ECANCELED || arm_status == -EINVAL || arm_status == -EOPNOTSUPP) {
+        if (uring_wake_can_fallback(arm_status)) {
           impl->ring_wake = false;
         } else {
           atomic_store_explicit((_Atomic unsigned *)impl->cq_head, head, memory_order_release);
@@ -1229,8 +1234,12 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
   }
   status = uring_arm_wake(impl);
   if (status != SALTS_OK) {
-    uring_free_partial(impl);
-    return status;
+    if (uring_wake_can_fallback(status)) {
+      impl->ring_wake = false;
+    } else {
+      uring_free_partial(impl);
+      return status;
+    }
   }
   backend->impl = impl;
   return SALTS_OK;
