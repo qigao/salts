@@ -148,7 +148,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes nasm ninja-build
+          sudo apt-get install --yes nasm ninja-build strace
           echo "PROJECT_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
           test -n "${VCPKG_ROOT:-}"
           test -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
@@ -335,6 +335,7 @@ jobs:
         run: |
           ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --timeout 60 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./cnet/tests/cnet_io_trace_test.ps1
 
       - name: Build PR-base CNet comparison DSO
         if: matrix.family == 'windows' && steps.scope.outputs.adapted == 'true' && github.event_name == 'pull_request'
@@ -352,11 +353,11 @@ jobs:
           if errorlevel 1 exit /b 1
           cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF
           if errorlevel 1 exit /b 1
-          cmake --build --preset win-release-user --target salts_cnet
+          cmake --build --preset win-release-user --target cnet
           if errorlevel 1 exit /b 1
-          if not exist "build\Msvc-Release\bin\salts_cnet.dll" exit /b 1
-          echo CNET_COMPARE_BASELINE_DSO=%BASELINE_SOURCE%\build\Msvc-Release\bin\salts_cnet.dll>>"%GITHUB_ENV%"
-          echo CNET_COMPARE_CANDIDATE_DSO=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\salts_cnet.dll>>"%GITHUB_ENV%"
+          if not exist "build\Msvc-Release\bin\cnet.dll" exit /b 1
+          echo CNET_COMPARE_BASELINE_DSO=%BASELINE_SOURCE%\build\Msvc-Release\bin\cnet.dll>>"%GITHUB_ENV%"
+          echo CNET_COMPARE_CANDIDATE_DSO=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet.dll>>"%GITHUB_ENV%"
           echo CNET_COMPARE_EXECUTABLE=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet_owner_lifecycle_compare.exe>>"%GITHUB_ENV%"
 
       - name: Compare PR-base and candidate CNet owner
@@ -411,9 +412,12 @@ jobs:
           if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
             throw "I/O benchmark executable not found: $benchmark"
           }
+          $env:CNET_IO_BENCHMARK_OUTPUT = Join-Path $resultDir "io"
           $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "libuv-native-io-cnet-benchmark.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./cnet/benchmarks/verify_io_benchmark.ps1 -Prefix $env:CNET_IO_BENCHMARK_OUTPUT
           @(
+            "report_schema=2"
             "host=$env:BENCHMARK_HOST"
             "commit=$env:BENCHMARK_COMMIT"
             "workflow_sha=$env:GITHUB_SHA"
@@ -427,6 +431,46 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## libuv versus NativeIO direct/coroutine versus CNet: $env:BENCHMARK_HOST"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Collect isolated Linux syscall evidence
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: bash
+        env:
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
+        run: |
+          set -euo pipefail
+          # Traced timings are never scores. Each file is one thread; stderr
+          # markers delimit the 512 measured RTTs after setup and warmup.
+          mkdir -p native-io-results/syscalls
+          strace --version > native-io-results/syscalls/tool-version.txt
+          for workload in tcp:1024 tcp:32768 tcp:65536 udp:8192; do
+            for driver in libuv native coroutine cnet; do
+              export CNET_IO_BENCHMARK_TRACE="$driver:$workload"
+              label="${CNET_IO_BENCHMARK_TRACE//:/-}"
+              strace -ff -ttt -T -s 128 \
+                -e trace=%network,read,readv,write,writev,epoll_ctl,epoll_wait,epoll_pwait,epoll_pwait2,io_uring_setup,io_uring_register,io_uring_enter,futex \
+                -o "native-io-results/syscalls/$label.trace" \
+                "$IO_BENCHMARK_EXECUTABLE" --no-color \
+                > "native-io-results/syscalls/$label.log" 2>&1
+            done
+          done
+          printf '%s\n' \
+            'Traces are independent reruns, not explanations of individual untraced outliers.' \
+            'Only count the client thread between IO_BENCH_MEASURE_BEGIN/END markers.' \
+            'Other thread files contain the echo peer; syscall elapsed includes scheduling.' \
+            'io_uring_enter counts are NOT SQE counts. API call counts are NOT syscall counts.' \
+            'libuv can submit epoll control via io_uring; zero direct epoll_ctl calls do not mean zero registration work.' \
+            'CPU stacks and runnable/blocked split are not collected by strace; use perf on a profiling host.' \
+            > native-io-results/syscalls/README.txt
+
+      - name: Summarize measured client syscall counts
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        run: |
+          ./cnet/benchmarks/summarize_io_trace.ps1 -Directory native-io-results/syscalls |
+            Tee-Object -FilePath native-io-results/syscalls/summary.txt |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Upload I/O benchmark evidence
         if: always() && steps.scope.outputs.adapted == 'true'

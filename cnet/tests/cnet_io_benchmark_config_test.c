@@ -58,15 +58,34 @@ spec("CNet I/O benchmark backend selection") {
 #endif
   }
 
-  it("enables the identical-path NativeIO direct A/A control only on IOCP") {
-    cnet_io_benchmark_protocol protocol = {0};
+  it("selects one bounded trace workload without changing the comparison defaults") {
+    cnet_io_benchmark_trace trace = {0};
+    check_equal(cnet_io_benchmark_select_trace(NULL, &trace), SALTS_OK);
+    check_false(trace.enabled);
+    check_equal(cnet_io_benchmark_select_trace("libuv:tcp:32768", &trace), SALTS_OK);
+    check_true(trace.enabled);
+    check_false(trace.udp);
+    check_equal(trace.driver, 0u);
+    check_equal(trace.payload_size, (size_t)32768u);
+    check_equal(cnet_io_benchmark_select_trace("native:tcp:1024", &trace), SALTS_OK);
+    check_equal(trace.driver, 1u);
+    check_equal(cnet_io_benchmark_select_trace("coroutine:udp:8192", &trace), SALTS_OK);
+    check_equal(trace.driver, 2u);
+    check_true(trace.udp);
+    check_equal(cnet_io_benchmark_select_trace("cnet:tcp:65536", &trace), SALTS_OK);
+    check_equal(trace.driver, 3u);
+  }
 
-    check_equal(cnet_io_benchmark_protocol_default(&protocol), SALTS_OK);
-#ifdef _WIN32
-    check_true(protocol.native_direct_aa_control);
-#else
-    check_false(protocol.native_direct_aa_control);
-#endif
-    check_equal(cnet_io_benchmark_protocol_default(NULL), SALTS_EINVAL);
+  it("rejects malformed and oversized trace requests without selecting another workload") {
+    const char *invalid[] = {"", "unknown:tcp:1024", "native:pipe:1024", "native:tcp:-1",
+                            "native:tcp:+1", "native:tcp: 1", "native:tcp:0",
+                            "native:tcp:65537", "libuv:udp:8193", "cnet:tcp:12junk",
+                            "cnet:tcp:999999999999999999999999999999"};
+    cnet_io_benchmark_trace trace = {.payload_size = 42u};
+    for (size_t i = 0u; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+      check_not_equal(cnet_io_benchmark_select_trace(invalid[i], &trace), SALTS_OK);
+      check_equal(trace.payload_size, (size_t)42u);
+    }
+    check_equal(cnet_io_benchmark_select_trace(NULL, NULL), SALTS_EINVAL);
   }
 }

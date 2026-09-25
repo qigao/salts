@@ -9,32 +9,24 @@ typedef struct cnet_benchmark_summary {
   double mad;
 } cnet_benchmark_summary;
 
-typedef enum cnet_benchmark_run_quality_state {
-  CNET_BENCHMARK_RUN_QUALIFIED = 0,
-  CNET_BENCHMARK_RUN_NOISE_LIMITED
-} cnet_benchmark_run_quality_state;
+/* Non-overlapping outer benchmark spans, not CPU-only or causal attribution. */
+typedef struct cnet_benchmark_phase_sample {
+  uint64_t wall_ns;
+  uint64_t start_ns;
+  uint64_t drive_ns;
+  uint64_t check_ns;
+} cnet_benchmark_phase_sample;
 
-typedef struct cnet_benchmark_run_quality {
-  cnet_benchmark_run_quality_state state;
-  double noise_envelope_pp;
-  double baseline_lower_bound_pp;
-} cnet_benchmark_run_quality;
+typedef struct cnet_benchmark_phase_budget {
+  double wall_ns;
+  double start_ns;
+  double drive_ns;
+  double check_ns;
+  double remainder_ns;
+} cnet_benchmark_phase_budget;
 
-/**
- * Per-call producer-side send admission attribution. `queue_publish_ns` is
- * inclusive and equals queue staging/control plus payload copy. The exclusive
- * decomposition is:
- *
- *   send_admit = public_control + queue_publish
- *   queue_publish = queue_staging_control + payload_copy
- */
-typedef struct cnet_benchmark_send_attribution {
-  double send_admit_ns;
-  double public_control_ns;
-  double queue_publish_ns;
-  double queue_staging_control_ns;
-  double payload_copy_ns;
-} cnet_benchmark_send_attribution;
+int cnet_benchmark_phase_decompose(const cnet_benchmark_phase_sample *sample, size_t round_trips,
+                                  cnet_benchmark_phase_budget *out_budget);
 
 /** Totals collected during one diagnostic repeat. */
 typedef struct cnet_benchmark_fixed_control_sample {
@@ -91,20 +83,8 @@ typedef struct cnet_benchmark_fixed_control_attribution {
 
 int cnet_benchmark_summarize(const double *values, size_t count,
                              cnet_benchmark_summary *out_summary);
-int cnet_benchmark_summarize_nonnegative(const double *values, size_t count,
-                                         cnet_benchmark_summary *out_summary);
 int cnet_benchmark_summarize_paired_delta(const double *baseline, const double *candidate,
                                           size_t count, cnet_benchmark_summary *out_summary);
-
-int cnet_benchmark_assess_run_quality(const cnet_benchmark_summary *null_p50,
-                                      const cnet_benchmark_summary *baseline_p50,
-                                      cnet_benchmark_run_quality *out_quality);
-const char *cnet_benchmark_run_quality_label(cnet_benchmark_run_quality_state state);
-
-int cnet_benchmark_attribute_send(uint64_t send_admit_ns, uint64_t send_admit_calls,
-                                  uint64_t queue_publish_ns, uint64_t queue_publish_calls,
-                                  uint64_t payload_copy_ns, uint64_t payload_copy_calls,
-                                  cnet_benchmark_send_attribution *out_attribution);
 
 int cnet_benchmark_attribute_fixed_control(
     const cnet_benchmark_fixed_control_sample *sample,
