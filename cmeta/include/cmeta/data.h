@@ -523,6 +523,7 @@ cmeta_status cmeta_data_construct_move(
  * Generic semantic lifecycle dispatch used by derived aggregate providers.
  * These operations select the canonical authority for the data kind.
  */
+bool cmeta_data_struct_constructible(const cmeta_data_desc *desc);
 cmeta_status cmeta_data_value_init_zero(
     const cmeta_data_desc *desc, void *object);
 cmeta_status cmeta_data_value_restore_zero(
