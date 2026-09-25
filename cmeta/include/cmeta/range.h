@@ -30,13 +30,8 @@ enum {
 };
 
 typedef size_t (*cmeta_range_size_fn)(const void *object);
-/* A cursor is caller-owned, zero-initialized opaque traversal state. Array and
- * sparse ranges use index; linked and tree ranges use state. It may only be
- * passed back to the Range that initialized it and never owns its pointers. */
-typedef struct cmeta_range_cursor {
-    size_t index;
-    void *state[2];
-} cmeta_range_cursor;
+/* cmeta_range_cursor is declared by <cmeta/cmeta.h> and is shared with
+ * read-only reflection cursors. */
 typedef cmeta_gen_status (*cmeta_range_next_fn)(const void *object,
                                                  cmeta_range_cursor *cursor,
                                                  void *out_value);
