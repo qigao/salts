@@ -2,6 +2,7 @@
 #define CMETA_ABI_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -9,6 +10,21 @@ extern "C" {
 
 struct cmeta_type_desc;
 typedef struct cmeta_type_desc cmeta_type_desc;
+
+/* Reflection layout epoch, independent of package and callable-signature
+ * versions. Freeze the function/parameter/interface/type descriptor layouts
+ * (including array strides and reachable identity/trait layouts) within an
+ * epoch; incompatible changes require a new epoch. Native target ABI, packing
+ * and enum representation must also agree. This is not a callable ABI ID.
+ *
+ * A provider's bootstrap entry must compare the requested epoch with THIS
+ * header constant before returning any descriptor pointers. Do not use a
+ * host-resolved runtime query to advertise the provider's build epoch. */
+#define CMETA_REFLECTION_ABI_VERSION UINT32_C(1)
+
+/* Returns the linked CMeta library's reflection epoch, for checking it against
+ * the caller's headers. Plugin bootstrap must separately check its own epoch. */
+uint32_t cmeta_reflection_abi_version(void);
 
 /*
  * ABI carrier describes how a declaration crosses a C call boundary.
@@ -23,13 +39,13 @@ typedef struct cmeta_type_desc cmeta_type_desc;
  */
 typedef enum cmeta_abi_carrier {
     CMETA_ABI_UNSPECIFIED = 0,
-    CMETA_ABI_VOID,
-    CMETA_ABI_SCALAR,
-    CMETA_ABI_OBJECT_POINTER,
-    CMETA_ABI_AGGREGATE,
-    CMETA_ABI_FUNCTION_POINTER,
-    CMETA_ABI_OPAQUE,
-    CMETA_ABI_ENUM
+    CMETA_ABI_VOID = 1,
+    CMETA_ABI_SCALAR = 2,
+    CMETA_ABI_OBJECT_POINTER = 3,
+    CMETA_ABI_AGGREGATE = 4,
+    CMETA_ABI_FUNCTION_POINTER = 5,
+    CMETA_ABI_OPAQUE = 6,
+    CMETA_ABI_ENUM = 7
 } cmeta_abi_carrier;
 
 bool cmeta_abi_carrier_valid(cmeta_abi_carrier carrier);

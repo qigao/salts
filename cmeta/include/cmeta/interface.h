@@ -23,6 +23,11 @@
  *
  * A method schema is a single X-list replayed by interface() for the vtable,
  * inline wrappers, and translation-unit-local reflection metadata.
+ * Reflection, vtables and self are borrowed from their providers. Keep those
+ * providers alive through every use; an owning destructor releases self, not
+ * the code module. Module owners must drain all handles/callbacks before unload.
+ * Negotiate CMETA_REFLECTION_ABI_VERSION before reading foreign descriptors;
+ * interface dispatch schemas need a separate application protocol agreement.
  *
  * Legacy ABI-only rows:
  *

@@ -1,6 +1,10 @@
 #include <cmeta/abi.h>
 #include <cmeta/cmeta.h>
 
+uint32_t cmeta_reflection_abi_version(void) {
+    return CMETA_REFLECTION_ABI_VERSION;
+}
+
 bool cmeta_abi_carrier_valid(cmeta_abi_carrier carrier) {
     return carrier >= CMETA_ABI_UNSPECIFIED &&
            carrier <= CMETA_ABI_ENUM;
