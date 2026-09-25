@@ -545,3 +545,29 @@ cmeta_status cmeta_data_map_collector(
     *out = collector;
     return CMETA_OK;
 }
+
+
+cmeta_status cmeta_data_collection_accept(
+    const cmeta_data_desc *desc, cmeta_collector *collector,
+    const cmeta_data_desc *element_data, const void *element) {
+    const cmeta_data_collection_ops *ops = NULL;
+    const cmeta_data_desc *expected;
+    cmeta_status status;
+    if (collector == NULL || element_data == NULL || element == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    expected = ops->element(collector->zero_output);
+    if (expected == NULL || !cmeta_data_desc_valid(expected) ||
+        !cmeta_data_desc_valid(element_data))
+        return CMETA_TRAIT_MISSING;
+    if (expected != element_data &&
+        (expected->stable_id == NULL || element_data->stable_id == NULL ||
+         strcmp(expected->stable_id, element_data->stable_id) != 0))
+        return CMETA_TYPE_MISMATCH;
+    if (element_data->storage_type == NULL ||
+        !cmeta_type_equal(element_data->storage_type, collector->input_type))
+        return CMETA_TYPE_MISMATCH;
+    return cmeta_collector_accept(
+        collector, element_data->storage_type, element);
+}
