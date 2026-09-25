@@ -711,6 +711,25 @@ static int uring_release_pipe(salts_io_impl *base, native_io_endpoint endpoint_h
   return uring_release_endpoint((salts_io_uring_impl *)base, endpoint_handle, false);
 }
 
+static int uring_try_prepared_stream(salts_io_uring_endpoint *endpoint,
+                                     salts_io_uring_request_record *request) {
+  const native_io_operation_kind kind = request->operation.kind;
+  const int flags = kind == NATIVE_IO_OPERATION_STREAM_SEND
+                        ? MSG_DONTWAIT | MSG_NOSIGNAL
+                        : MSG_DONTWAIT;
+  ssize_t result;
+  if ((kind != NATIVE_IO_OPERATION_STREAM_RECV &&
+       kind != NATIVE_IO_OPERATION_STREAM_SEND) ||
+      request->operation.length > (size_t)INT_MAX)
+    return -EAGAIN;
+  do {
+    result = kind == NATIVE_IO_OPERATION_STREAM_SEND
+                 ? send(endpoint->fd, request->operation.buffer, request->operation.length, flags)
+                 : recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
+  } while (result < 0 && errno == EINTR);
+  return result < 0 ? -errno : (int)result;
+}
+
 static int uring_admit(salts_io_impl *base, const native_io_operation *operation,
                        native_io_request *out_request, bool prepared) {
   salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
@@ -755,6 +774,24 @@ static int uring_admit(salts_io_impl *base, const native_io_operation *operation
   ++impl->active_requests;
   if (operation->kind == NATIVE_IO_OPERATION_STREAM_CONNECT) endpoint->connect_active = true;
   lane = uring_lane(endpoint, request->write_lane);
+
+  /* Match the Asio-style optimistic fast path without changing FIFO semantics:
+   * only an idle stream lane may attempt direct nonblocking I/O. Pipes stay
+   * ring-only because the io_uring backend intentionally accepts blocking FIFO
+   * descriptors. Errors after prepare admission are terminal I/O results. */
+  if (prepared && lane->head == SALTS_IO_URING_INDEX_NONE &&
+      (operation->kind == NATIVE_IO_OPERATION_STREAM_RECV ||
+       operation->kind == NATIVE_IO_OPERATION_STREAM_SEND) &&
+      operation->length <= (size_t)INT_MAX) {
+    status = uring_try_prepared_stream(endpoint, request);
+    if (status != -EAGAIN && status != -EWOULDBLOCK) {
+      uring_queue_terminal(impl, request, index, status);
+      uring_counter_increment(&impl->submitted);
+      *out_request = request->request;
+      return SALTS_OK;
+    }
+  }
+
   uring_lane_push(impl, endpoint, index);
   if (lane->head == index) {
     if (prepared) {
