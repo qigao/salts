@@ -22,9 +22,8 @@ spec("CSTL imported semantic metadata") {
                    &ImportSafeTstrVec_collection_data) ==
                SALTS_TSTR_CMETA_DATA_REF);
     check_true(cmeta_type_equal(
-        ImportSafeTstrVec_collection_data.collection_ops->storage_type,
-        CMETA_TYPEOF_OR(ImportSafeTstrVec,
-                       &ImportSafeTstrVec_cmeta_type)));
+        ImportSafeTstrVec_collection_data.storage_type,
+        ImportSafeTstrVec_collection_data.collection_ops->storage_type));
 
     check_equal(ImportSafeTstrVec_init(&values, 8u), STL_OK);
     check_equal(ImportSafeTstrVec_push(&values, source), STL_OK);
