@@ -252,4 +252,40 @@ spec("CSTL semantic projection") {
     reflected_bplus_destroy(&bplus);
   }
 
+
+  it("preserves map ordering and repeated-key capabilities") {
+    typed(Map, capability_map, int, long);
+    typed(HashMap, capability_hash_map, int, long);
+    typed(BTree, capability_btree, int, long);
+    typed(BPlusTree, capability_bplus, int, long);
+    typed(MultiMap, capability_multimap, int, long);
+    capability_multimap multi = {0};
+    cstl_semantic_map_capture captured = {{0}, {0}, 0u};
+
+    check_true((capability_map_map_ops.flags & CMETA_DATA_MAP_UNIQUE_KEYS) != 0u);
+    check_true((capability_map_map_ops.flags & CMETA_DATA_MAP_ORDERED) != 0u);
+    check_true((capability_map_map_ops.flags & CMETA_DATA_MAP_SORTED) != 0u);
+    check_equal(capability_hash_map_map_ops.flags, CMETA_DATA_MAP_UNIQUE_KEYS);
+    check_true((capability_btree_map_ops.flags & CMETA_DATA_MAP_SORTED) != 0u);
+    check_true((capability_bplus_map_ops.flags & CMETA_DATA_MAP_SORTED) != 0u);
+    check_true((capability_multimap_map_ops.flags &
+                CMETA_DATA_MAP_REPEATED_KEYS) != 0u);
+    check_true((capability_multimap_map_ops.flags &
+                CMETA_DATA_MAP_UNIQUE_KEYS) == 0u);
+
+    check_equal(capability_multimap_init(&multi, 8u), STL_OK);
+    check_equal(capability_multimap_put(&multi, 3, 30L), STL_OK);
+    check_equal(capability_multimap_put(&multi, 3, 31L), STL_OK);
+    check_equal(cmeta_data_map_foreach(
+                    &capability_multimap_map_data, &multi,
+                    cstl_semantic_collect_map, &captured, 2u),
+                CMETA_OK);
+    check_equal(captured.count, 2u);
+    check_equal(captured.keys[0], 3);
+    check_equal(captured.keys[1], 3);
+    check_equal(captured.values[0], 30L);
+    check_equal(captured.values[1], 31L);
+    capability_multimap_destroy(&multi);
+  }
+
 }
