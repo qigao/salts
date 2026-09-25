@@ -52,4 +52,24 @@ spec("CSTL semantic projection") {
     check_true(cmeta_container_type_application_valid(&heap));
     check_true(cmeta_container_type_application_valid(&multimap));
   }
+
+  it("projects typed Vec through canonical CMeta collection reflection") {
+    typed(Vec, reflected_ints, int);
+    reflected_ints values = {0};
+    cmeta_data_collection_view view = {0};
+    check_equal(reflected_ints_init(&values, 8u), STL_OK);
+    check_equal(reflected_ints_push(&values, 3), STL_OK);
+    check_equal(reflected_ints_push(&values, 5), STL_OK);
+    check_true(reflected_ints_collection_data.collection_ops ==
+               &reflected_ints_collection_ops);
+    check_equal(cmeta_data_collection_read(
+                    &reflected_ints_collection_data, &values, &view),
+                CMETA_OK);
+    check_true(view.element == &cmeta_data_int);
+    check_equal(view.count, 2u);
+    check_equal(view.stride, sizeof(int));
+    check_equal(*(const int *)view.data, 3);
+    reflected_ints_destroy(&values);
+  }
+
 }
