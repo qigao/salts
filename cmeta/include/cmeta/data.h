@@ -497,6 +497,15 @@ cmeta_status cmeta_data_collection_collector(
     const cmeta_data_desc *desc, void *zero_output, size_t limit,
     cmeta_collector *out);
 
+/**
+ * Accept one already-constructed canonical semantic element. The facade checks
+ * that the semantic descriptor's native storage type matches the collector's
+ * declared input type before borrowing the value for the callback.
+ */
+cmeta_status cmeta_data_collection_accept(
+    const cmeta_data_desc *desc, cmeta_collector *collector,
+    const cmeta_data_desc *element_data, const void *element);
+
 const cmeta_data_construct_ops *cmeta_data_construct_ops_of(
     const cmeta_data_desc *desc);
 cmeta_status cmeta_data_construct_init_zero(
