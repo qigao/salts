@@ -383,9 +383,13 @@ static const cmeta_data_struct_shape cmeta_data_test_owned_shape = {
     &cmeta_data_test_owned_layout, cmeta_data_test_owned_fields, 2u
 };
 static const cmeta_data_desc cmeta_data_test_owned_desc = {
-    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
-    "test.OwnedRecord.data", "OwnedRecord", CMETA_DATA_STRUCT,
-    &cmeta_data_test_owned_record_type, &cmeta_data_test_owned_shape
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.OwnedRecord.data",
+    .display_name = "OwnedRecord",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &cmeta_data_test_owned_record_type,
+    .shape = &cmeta_data_test_owned_shape
 };
 
 typedef struct cmeta_data_test_outer_record {
@@ -429,9 +433,13 @@ static const cmeta_data_struct_shape cmeta_data_test_outer_shape = {
     &cmeta_data_test_outer_layout, cmeta_data_test_outer_fields, 2u
 };
 static const cmeta_data_desc cmeta_data_test_outer_desc = {
-    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
-    "test.OuterRecord.data", "OuterRecord", CMETA_DATA_STRUCT,
-    &cmeta_data_test_outer_type, &cmeta_data_test_outer_shape
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.OuterRecord.data",
+    .display_name = "OuterRecord",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &cmeta_data_test_outer_type,
+    .shape = &cmeta_data_test_outer_shape
 };
 
 static const int cmeta_data_test_failing_shape = 1;
@@ -455,10 +463,14 @@ static const cmeta_data_construct_ops cmeta_data_test_failing_construct = {
     cmeta_data_test_failing_restore, cmeta_data_test_failing_move
 };
 static const cmeta_data_desc cmeta_data_test_failing_data = {
-    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
-    "test.Failing.data", "Failing", CMETA_DATA_CUSTOM,
-    &cmeta_type_int, &cmeta_data_test_failing_shape,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, &cmeta_data_test_failing_construct
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.Failing.data",
+    .display_name = "Failing",
+    .kind = CMETA_DATA_CUSTOM,
+    .storage_type = &cmeta_type_int,
+    .shape = &cmeta_data_test_failing_shape,
+    .construct_ops = &cmeta_data_test_failing_construct
 };
 static const cmeta_data_field_desc cmeta_data_test_rollback_fields[] = {
     { "test.Rollback.payload", "payload",
@@ -472,9 +484,13 @@ static const cmeta_data_struct_shape cmeta_data_test_rollback_shape = {
     &cmeta_data_test_owned_layout, cmeta_data_test_rollback_fields, 2u
 };
 static const cmeta_data_desc cmeta_data_test_rollback_desc = {
-    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
-    "test.Rollback.data", "Rollback", CMETA_DATA_STRUCT,
-    &cmeta_data_test_owned_record_type, &cmeta_data_test_rollback_shape
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.Rollback.data",
+    .display_name = "Rollback",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &cmeta_data_test_owned_record_type,
+    .shape = &cmeta_data_test_rollback_shape
 };
 
 static const cmeta_data_variant_case cmeta_data_test_variant_cases[] = {
@@ -561,10 +577,14 @@ static const cmeta_data_collection_ops cmeta_data_test_int_sequence_ops = {
     NULL};
 
 static const cmeta_data_desc cmeta_data_test_int_sequence_data = {
-    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
-    "test.IntSequence.data", "IntSequence", CMETA_DATA_SEQUENCE,
-    &cmeta_data_test_int_sequence_type, NULL, NULL, NULL, NULL, NULL, NULL,
-    &cmeta_data_test_int_sequence_ops};
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.IntSequence.data",
+    .display_name = "IntSequence",
+    .kind = CMETA_DATA_SEQUENCE,
+    .storage_type = &cmeta_data_test_int_sequence_type,
+    .collection_ops = &cmeta_data_test_int_sequence_ops
+};
 
 spec("CMeta semantic data descriptors") {
   it("declares bounded fixed bytes as canonical provider metadata") {
