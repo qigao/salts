@@ -564,6 +564,19 @@ cmeta_status cmeta_data_map_collector(
 }
 
 
+static bool cmeta_data_semantic_equal(
+    const cmeta_data_desc *left, const cmeta_data_desc *right) {
+    if (left == right) return left != NULL && cmeta_data_desc_valid(left);
+    if (!cmeta_data_desc_valid(left) || !cmeta_data_desc_valid(right) ||
+        left->kind != right->kind || left->stable_id == NULL ||
+        right->stable_id == NULL ||
+        strcmp(left->stable_id, right->stable_id) != 0)
+        return false;
+    if (left->storage_type == NULL || right->storage_type == NULL)
+        return left->storage_type == right->storage_type;
+    return cmeta_type_equal(left->storage_type, right->storage_type);
+}
+
 cmeta_status cmeta_data_collection_accept(
     const cmeta_data_desc *desc, cmeta_collector *collector,
     const cmeta_data_desc *element_data, const void *element) {
@@ -578,9 +591,7 @@ cmeta_status cmeta_data_collection_accept(
     if (expected == NULL || !cmeta_data_desc_valid(expected) ||
         !cmeta_data_desc_valid(element_data))
         return CMETA_TRAIT_MISSING;
-    if (expected != element_data &&
-        (expected->stable_id == NULL || element_data->stable_id == NULL ||
-         strcmp(expected->stable_id, element_data->stable_id) != 0))
+    if (!cmeta_data_semantic_equal(expected, element_data))
         return CMETA_TYPE_MISMATCH;
     if (element_data->storage_type == NULL ||
         !cmeta_type_equal(element_data->storage_type, collector->input_type))
@@ -919,7 +930,8 @@ cmeta_status cmeta_data_map_accept(
         !cmeta_data_desc_valid(expected_key) ||
         !cmeta_data_desc_valid(expected_value))
         return CMETA_TRAIT_MISSING;
-    if (expected_key != key_data || expected_value != value_data)
+    if (!cmeta_data_semantic_equal(expected_key, key_data) ||
+        !cmeta_data_semantic_equal(expected_value, value_data))
         return CMETA_TYPE_MISMATCH;
     if (ops->struct_size < CMETA_MAP_OPS_ACCEPT_SIZE || ops->accept == NULL)
         return CMETA_TRAIT_MISSING;
