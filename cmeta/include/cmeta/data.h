@@ -433,6 +433,9 @@ typedef cmeta_status (*cmeta_data_map_foreach_fn)(
     const void *object, cmeta_data_map_visit_fn visit, void *context,
     size_t max_items);
 
+typedef cmeta_collector (*cmeta_data_map_collector_fn)(
+    void *zero_output, size_t limit);
+
 typedef struct cmeta_data_map_ops {
     size_t struct_size;
     uint32_t abi_version;
@@ -441,6 +444,7 @@ typedef struct cmeta_data_map_ops {
     cmeta_data_map_member_fn key;
     cmeta_data_map_member_fn value;
     cmeta_data_map_foreach_fn foreach;
+    cmeta_data_map_collector_fn collector;
 } cmeta_data_map_ops;
 
 typedef struct cmeta_data_variant_case {
@@ -507,6 +511,10 @@ const cmeta_data_map_ops *cmeta_data_map_ops_of(
 cmeta_status cmeta_data_map_foreach(
     const cmeta_data_desc *desc, const void *object,
     cmeta_data_map_visit_fn visit, void *context, size_t max_items);
+
+cmeta_status cmeta_data_map_collector(
+    const cmeta_data_desc *desc, void *zero_output, size_t limit,
+    cmeta_collector *out);
 
 /** Initialize one raw storage slot to provider semantic zero. */
 cmeta_status cmeta_data_buffer_init_zero(
