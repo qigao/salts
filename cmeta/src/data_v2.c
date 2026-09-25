@@ -571,3 +571,61 @@ cmeta_status cmeta_data_collection_accept(
     return cmeta_collector_accept(
         collector, element_data->storage_type, element);
 }
+
+
+cmeta_status cmeta_data_temp_open(
+    const cmeta_data_desc *desc, size_t max_bytes, cmeta_data_temp *out) {
+    void *storage;
+    size_t extent;
+    size_t alignment;
+    size_t padded;
+    cmeta_status status;
+
+    if (out == NULL || !cmeta_data_desc_valid(desc) ||
+        desc->storage_type == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    *out = (cmeta_data_temp){0};
+    extent = desc->storage_type->size;
+    alignment = desc->storage_type->align;
+    if (extent == 0u || alignment == 0u || extent > max_bytes)
+        return extent > max_bytes ? CMETA_CAPACITY_EXCEEDED
+                                  : CMETA_INVALID_ARGUMENT;
+    if ((alignment & (alignment - 1u)) != 0u)
+        return CMETA_INVALID_ARGUMENT;
+    if (extent > SIZE_MAX - (alignment - 1u))
+        return CMETA_CAPACITY_EXCEEDED;
+    padded = (extent + alignment - 1u) & ~(alignment - 1u);
+#if defined(_MSC_VER)
+    storage = _aligned_malloc(padded, alignment);
+#else
+    storage = aligned_alloc(alignment, padded);
+#endif
+    if (storage == NULL) return CMETA_OUT_OF_MEMORY;
+    memset(storage, 0, padded);
+    status = cmeta_data_construct_init_zero(desc, storage);
+    if (status != CMETA_OK) {
+#if defined(_MSC_VER)
+        _aligned_free(storage);
+#else
+        free(storage);
+#endif
+        return status;
+    }
+    out->data = desc;
+    out->storage = storage;
+    out->extent = extent;
+    out->alignment = alignment;
+    return CMETA_OK;
+}
+
+void cmeta_data_temp_close(cmeta_data_temp *temp) {
+    if (temp == NULL || temp->storage == NULL) return;
+    if (temp->data != NULL)
+        (void)cmeta_data_construct_restore_zero(temp->data, temp->storage);
+#if defined(_MSC_VER)
+    _aligned_free(temp->storage);
+#else
+    free(temp->storage);
+#endif
+    *temp = (cmeta_data_temp){0};
+}
