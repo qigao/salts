@@ -1214,8 +1214,14 @@ static bool cmeta_data_value_copy_supported_depth(
                 cmeta_data_collection_ops_of(desc);
             const cmeta_data_desc *element =
                 cmeta_data_collection_element_data(desc);
-            return ops != NULL && ops->collector != NULL &&
-                   ops->borrow != NULL &&
+            return ops != NULL &&
+                   ops->struct_size >=
+                       offsetof(cmeta_data_collection_ops, borrow) +
+                           sizeof(((cmeta_data_collection_ops *)0)->borrow) &&
+                   ops->collector != NULL && ops->borrow != NULL &&
+                   ops->borrow->struct_size >=
+                       offsetof(cmeta_data_collection_borrow_ops, next) +
+                           sizeof(((cmeta_data_collection_borrow_ops *)0)->next) &&
                    ops->borrow->abi_version ==
                        CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION &&
                    ops->borrow->next != NULL &&
@@ -1229,8 +1235,15 @@ static bool cmeta_data_value_copy_supported_depth(
             const cmeta_data_map_ops *ops = cmeta_data_map_ops_of(desc);
             const cmeta_data_desc *key = cmeta_data_map_key_data(desc);
             const cmeta_data_desc *value = cmeta_data_map_value_data(desc);
-            return ops != NULL && ops->collector != NULL &&
-                   ops->accept != NULL && ops->borrow != NULL &&
+            return ops != NULL &&
+                   ops->struct_size >=
+                       offsetof(cmeta_data_map_ops, borrow) +
+                           sizeof(((cmeta_data_map_ops *)0)->borrow) &&
+                   ops->collector != NULL && ops->accept != NULL &&
+                   ops->borrow != NULL &&
+                   ops->borrow->struct_size >=
+                       offsetof(cmeta_data_map_borrow_ops, next) +
+                           sizeof(((cmeta_data_map_borrow_ops *)0)->next) &&
                    ops->borrow->abi_version ==
                        CMETA_DATA_MAP_BORROW_OPS_ABI_VERSION &&
                    ops->borrow->next != NULL &&
