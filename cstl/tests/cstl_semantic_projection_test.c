@@ -32,6 +32,41 @@ static cmeta_status cstl_semantic_collect_map(
   return CMETA_OK;
 }
 
+typed(Vec, cstl_struct_vec, int);
+
+typedef struct cstl_struct_with_vec {
+  cstl_struct_vec values;
+  int tag;
+} cstl_struct_with_vec;
+
+static const cmeta_type_identity cstl_struct_with_vec_id =
+    CMETA_TYPE_ID_ATOM_INIT("test.cstl.StructWithVec");
+static const cmeta_type_desc cstl_struct_with_vec_type = {
+    "cstl_struct_with_vec", sizeof(cstl_struct_with_vec),
+    CMETA_ALIGNOF(cstl_struct_with_vec), CMETA_T_OBJECT,
+    NULL, NULL, &cstl_struct_with_vec_id};
+static const cmeta_field_desc cstl_struct_with_vec_layout_fields[] = {
+    {"values", "cstl_struct_vec", offsetof(cstl_struct_with_vec, values),
+     sizeof(cstl_struct_vec), CMETA_ALIGNOF(cstl_struct_vec),
+     CMETA_TYPEOF(cstl_struct_vec), NULL},
+    {"tag", "int", offsetof(cstl_struct_with_vec, tag),
+     sizeof(int), CMETA_ALIGNOF(int), &cmeta_type_int, NULL}};
+static const cmeta_struct_desc cstl_struct_with_vec_layout = {
+    "cstl_struct_with_vec", sizeof(cstl_struct_with_vec),
+    CMETA_ALIGNOF(cstl_struct_with_vec), cstl_struct_with_vec_layout_fields, 2u};
+static const cmeta_data_field_desc cstl_struct_with_vec_fields[] = {
+    {"test.cstl.StructWithVec.values", "values",
+     offsetof(cstl_struct_with_vec, values), &cstl_struct_vec_collection_data},
+    {"test.cstl.StructWithVec.tag", "tag",
+     offsetof(cstl_struct_with_vec, tag), &cmeta_data_int}};
+static const cmeta_data_struct_shape cstl_struct_with_vec_shape = {
+    &cstl_struct_with_vec_layout, cstl_struct_with_vec_fields, 2u};
+static const cmeta_data_desc cstl_struct_with_vec_data = {
+    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
+    "test.cstl.StructWithVec.data", "StructWithVec", CMETA_DATA_STRUCT,
+    &cstl_struct_with_vec_type, &cstl_struct_with_vec_shape};
+
+
 spec("CSTL semantic projection") {
   it("projects sequence-like containers without duplicating element type") {
     Vec(int, vec);
@@ -312,6 +347,32 @@ spec("CSTL semantic projection") {
     check_equal(transactional_vec_size(&source), 0u);
     check_equal(cmeta_data_construct_restore_zero(
                     &transactional_vec_collection_data, &destination),
+                CMETA_OK);
+  }
+
+
+  it("derives struct lifecycle through a typed CSTL collection field") {
+    cstl_struct_with_vec source = {0};
+    cstl_struct_with_vec destination = {0};
+
+    check_true(cmeta_data_struct_constructible(&cstl_struct_with_vec_data));
+    check_equal(cmeta_data_value_init_zero(&cstl_struct_with_vec_data, &source),
+                CMETA_OK);
+    check_equal(cmeta_data_value_init_zero(
+                    &cstl_struct_with_vec_data, &destination),
+                CMETA_OK);
+    check_equal(cstl_struct_vec_push(&source.values, 23), STL_OK);
+    source.tag = 4;
+    check_equal(cmeta_data_value_move(
+                    &cstl_struct_with_vec_data, &destination, &source),
+                CMETA_OK);
+    check_equal(cstl_struct_vec_size(&destination.values), 1u);
+    check_equal(*cstl_struct_vec_at_const(&destination.values, 0u), 23);
+    check_equal(destination.tag, 4);
+    check_equal(cstl_struct_vec_size(&source.values), 0u);
+    check_equal(source.tag, 0);
+    check_equal(cmeta_data_value_restore_zero(
+                    &cstl_struct_with_vec_data, &destination),
                 CMETA_OK);
   }
 
