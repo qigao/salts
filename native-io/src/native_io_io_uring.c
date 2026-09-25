@@ -810,6 +810,16 @@ static int uring_progress_cq(salts_io_uring_impl *impl, bool *saw_wake) {
   return uring_process_cq(impl, saw_wake);
 }
 
+static int uring_flush_promoted(salts_io_uring_impl *impl, bool *saw_wake) {
+  while (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
+    int status = uring_flush(&impl->base);
+    if (status != SALTS_OK) return status;
+    status = uring_progress_cq(impl, saw_wake);
+    if (status != SALTS_OK) return status;
+  }
+  return SALTS_OK;
+}
+
 static int uring_submit_staged_and_wait(salts_io_uring_impl *impl, uint32_t timeout_ms,
                                         bool *timed_out) {
 #if SALTS_IO_URING_HAS_EXT_ARG_WAIT
@@ -970,9 +980,12 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
   bool saw_wake = false;
   int status = uring_progress_cq(impl, &saw_wake);
   if (status != SALTS_OK) return status;
-  uring_drain_terminals(impl, events, limit, out_count);
-  if (*out_count != 0u) return SALTS_OK;
-  if (saw_wake) return SALTS_OK;
+  if (impl->terminal_count != 0u || saw_wake) {
+    status = uring_flush_promoted(impl, &saw_wake);
+    if (status != SALTS_OK) return status;
+    uring_drain_terminals(impl, events, limit, out_count);
+    if (*out_count != 0u || saw_wake) return SALTS_OK;
+  }
 
   if (!impl->ring_native_wait) {
     while (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
@@ -1011,9 +1024,13 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
       const int progress_status = uring_progress_cq(impl, &saw_wake);
       if (progress_status != SALTS_OK) return progress_status;
     }
-    uring_drain_terminals(impl, events, limit, out_count);
-    if (*out_count != 0u) return SALTS_OK;
-    if (saw_wake) return SALTS_OK;
+    if (impl->terminal_count != 0u || saw_wake) {
+      const int flush_status = uring_flush_promoted(impl, &saw_wake);
+      if (flush_status != SALTS_OK) return flush_status;
+      uring_drain_terminals(impl, events, limit, out_count);
+      if (*out_count != 0u) return SALTS_OK;
+      if (saw_wake) return SALTS_OK;
+    }
     if (timed_out) return SALTS_ETIMEDOUT;
     if (status == -EINTR) continue;
   }
