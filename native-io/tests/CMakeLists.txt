@@ -7,6 +7,15 @@ set_target_properties(native_io_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(native_io_uring_batch_test native_io_uring_batch_test.c)
+  target_link_libraries(native_io_uring_batch_test PRIVATE Salts::NativeIO Salts::TinyTest)
+  set_target_properties(native_io_uring_batch_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "native-io/tests")
+  add_test(NAME native_io_uring_batch_test COMMAND native_io_uring_batch_test)
+  add_dependencies(native_io_test native_io_uring_batch_test)
+endif()
+
 if(WIN32)
   target_link_libraries(native_io_test PRIVATE ws2_32)
 endif()

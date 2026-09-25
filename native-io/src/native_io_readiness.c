@@ -174,7 +174,9 @@ static uint32_t readiness_derived_interests(const salts_io_readiness_endpoint *e
 static int readiness_update_interests(salts_io_readiness_impl *impl,
                                       native_io_endpoint endpoint_handle,
                                       salts_io_readiness_endpoint *endpoint) {
-  const uint32_t next = readiness_derived_interests(endpoint);
+  const uint32_t requested = readiness_derived_interests(endpoint);
+  const uint32_t next = impl->driver_ops->persistent_interests
+                            ? endpoint->interests | requested : requested;
   int status;
   if (next == endpoint->interests) return SALTS_OK;
   status = impl->driver_ops->update(
@@ -474,7 +476,15 @@ static int readiness_release_endpoint(salts_io_readiness_impl *impl,
   if (socket_endpoint ? !native_io_resource_kind_is_socket(endpoint->resource_kind)
                       : endpoint->resource_kind != SALTS_IO_RESOURCE_BYTE_PIPE)
     return SALTS_EINVAL;
-  if (endpoint->active_requests != 0u || endpoint->interests != 0u) return SALTS_EBUSY;
+  if (endpoint->active_requests != 0u) return SALTS_EBUSY;
+  if (endpoint->interests != 0u) {
+    if (!impl->driver_ops->persistent_interests) return SALTS_EBUSY;
+    const int status = impl->driver_ops->update(impl->driver_state, endpoint->fd,
+        readiness_endpoint_token(endpoint_handle.slot - 1u, endpoint->generation),
+        endpoint->interests, 0u);
+    if (status != SALTS_OK) return status;
+    endpoint->interests = 0u;
+  }
   index = endpoint_handle.slot - 1u;
   endpoint->active = false;
   endpoint->fd = -1;
@@ -539,6 +549,13 @@ static int readiness_submit(salts_io_impl *base, const native_io_operation *oper
   ++endpoint->active_requests;
   ++impl->active_requests;
   if (operation->kind == NATIVE_IO_OPERATION_STREAM_CONNECT) endpoint->connect_active = true;
+  /* A newer operation must not consume bytes ahead of a queued lane head. */
+  if (readiness_lane(endpoint, request->write_lane)->head != SALTS_IO_INDEX_NONE) {
+    readiness_lane_push(impl, endpoint, index);
+    readiness_counter_increment(&impl->submitted);
+    *out_request = request->request;
+    return SALTS_OK;
+  }
   status = readiness_try_operation(endpoint, request, &bytes, &address_length);
   if (readiness_would_block(status)) {
     readiness_lane_push(impl, endpoint, index);
@@ -716,7 +733,8 @@ static bool readiness_get_stats(const salts_io_impl *base, native_io_backend_sta
 static const salts_io_impl_ops readiness_ops = {
     readiness_attach_socket, readiness_release_socket, readiness_submit,  readiness_cancel,
     readiness_observe,       readiness_wake,            readiness_close,  readiness_destroy,
-    readiness_get_stats,     readiness_attach_pipe,     readiness_release_pipe};
+    readiness_get_stats,     readiness_attach_pipe,     readiness_release_pipe,
+    readiness_submit,        NULL};
 
 static bool readiness_array_fits(size_t count, size_t element_size) {
   return element_size != 0u && count <= SIZE_MAX / element_size;

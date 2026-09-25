@@ -52,6 +52,10 @@ typedef struct salts_io_impl_ops {
   int (*attach_pipe)(salts_io_impl *impl, uintptr_t native_handle, uint32_t flags,
                      native_io_endpoint *out_endpoint);
   int (*release_pipe)(salts_io_impl *impl, native_io_endpoint endpoint);
+  int (*prepare)(salts_io_impl *impl, const native_io_operation *operation,
+                 native_io_request *out_request);
+  /* NULL means this driver starts work immediately and has no staged SQ. */
+  int (*flush)(salts_io_impl *impl);
 } salts_io_impl_ops;
 
 struct salts_io_impl {

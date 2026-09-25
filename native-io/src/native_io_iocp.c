@@ -639,7 +639,7 @@ static bool iocp_get_stats(const salts_io_impl *base, native_io_backend_stats *o
 static const salts_io_impl_ops iocp_ops = {
     iocp_attach_socket, iocp_release_socket, iocp_submit,    iocp_cancel,      iocp_observe,
     iocp_wake,          iocp_close,           iocp_destroy,  iocp_get_stats,   iocp_attach_pipe,
-    iocp_release_pipe};
+    iocp_release_pipe,  iocp_submit,          NULL};
 
 bool native_io_platform_backend_supported(native_io_backend_kind kind) {
   return kind == NATIVE_IO_BACKEND_IOCP;

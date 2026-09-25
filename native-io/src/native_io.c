@@ -305,6 +305,22 @@ int native_io_backend_submit(native_io_backend *backend, const native_io_operati
   return impl->ops->submit(impl, operation, out_request);
 }
 
+int native_io_backend_prepare(native_io_backend *backend, const native_io_operation *operation,
+                              native_io_request *out_request) {
+  salts_io_impl *impl = native_io_impl(backend);
+  if (out_request != NULL) *out_request = (native_io_request){0};
+  if (impl == NULL || impl->ops == NULL || impl->ops->prepare == NULL ||
+      !native_io_operation_valid(operation) || out_request == NULL)
+    return SALTS_EINVAL;
+  return impl->ops->prepare(impl, operation, out_request);
+}
+
+int native_io_backend_flush(native_io_backend *backend) {
+  salts_io_impl *impl = native_io_impl(backend);
+  if (impl == NULL || impl->ops == NULL) return SALTS_EINVAL;
+  return impl->ops->flush != NULL ? impl->ops->flush(impl) : SALTS_OK;
+}
+
 int native_io_backend_spawn_coroutine(native_io_backend *backend,
                                       native_io_coroutine_entry_fn entry, void *user_data,
                                       native_io_coroutine_task *out_task) {
@@ -352,8 +368,9 @@ int native_io_backend_spawn_coroutine(native_io_backend *backend,
   return status;
 }
 
-int native_io_coroutine_await(native_io_coroutine *coroutine, const native_io_operation *operation,
-                              native_io_completion *out_completion) {
+static int native_io_coroutine_await_impl(native_io_coroutine *coroutine,
+                                         const native_io_operation *operation,
+                                         native_io_completion *out_completion, bool prepared) {
   native_io_coroutine_owner *owner;
   native_io_coroutine_request_owner *request_owner;
   native_io_request request = {0};
@@ -365,7 +382,8 @@ int native_io_coroutine_await(native_io_coroutine *coroutine, const native_io_op
       !native_io_operation_valid(operation) || out_completion == NULL || coroutine->waiting)
     return SALTS_EINVAL;
   owner = coroutine->owner;
-  status = owner->impl->ops->submit(owner->impl, operation, &request);
+  status = prepared ? owner->impl->ops->prepare(owner->impl, operation, &request)
+                    : owner->impl->ops->submit(owner->impl, operation, &request);
   if (status != SALTS_OK) return status;
   if (request.slot > owner->task_capacity) {
     (void)owner->impl->ops->cancel(owner->impl, request);
@@ -386,6 +404,17 @@ int native_io_coroutine_await(native_io_coroutine *coroutine, const native_io_op
   coroutine->completion = (native_io_completion){0};
   coroutine->completion_ready = false;
   return SALTS_OK;
+}
+
+int native_io_coroutine_await(native_io_coroutine *coroutine, const native_io_operation *operation,
+                              native_io_completion *out_completion) {
+  return native_io_coroutine_await_impl(coroutine, operation, out_completion, false);
+}
+
+int native_io_coroutine_await_prepared(native_io_coroutine *coroutine,
+                                       const native_io_operation *operation,
+                                       native_io_completion *out_completion) {
+  return native_io_coroutine_await_impl(coroutine, operation, out_completion, true);
 }
 
 int native_io_backend_cancel_coroutine(native_io_backend *backend, native_io_coroutine_task task) {

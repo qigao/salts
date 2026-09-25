@@ -592,7 +592,7 @@ static int cnet_owner_submit_request(cnet_owner_impl *impl, cnet_owner_request *
 #if defined(CNET_INTERNAL_PROFILING)
   {
     const uint64_t profile_started = cnet_owner_profile_start(impl);
-    status = native_io_backend_submit(&impl->backend, &submitted, &native_request);
+    status = native_io_backend_prepare(&impl->backend, &submitted, &native_request);
     if (first_submit)
       cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_start_ns,
                                 &impl->profile.request_start_calls);
@@ -601,7 +601,7 @@ static int cnet_owner_submit_request(cnet_owner_impl *impl, cnet_owner_request *
                                 &impl->profile.request_resubmit_calls);
   }
 #else
-  status = native_io_backend_submit(&impl->backend, &submitted, &native_request);
+  status = native_io_backend_prepare(&impl->backend, &submitted, &native_request);
   (void)first_submit;
 #endif
   if (status == SALTS_OK) request->native_request = native_request;

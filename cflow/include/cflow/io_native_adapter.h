@@ -42,6 +42,9 @@ int cflow_io_native_adapter_init(
  * Use the adapter as backend_user. The first valid submit attempt binds one
  * Actor for the adapter lifetime, even if NativeIO rejects that operation; a
  * different Actor fails fast.
+ * Accepted operations use NativeIO prepare: io_uring starts them in a batch at
+ * adapter observe; other backends may start immediately. Submission errors found
+ * after admission are offered as terminal completions, not retroactive rejection.
  */
 cflow_io_backend_ops cflow_io_native_adapter_actor_ops(void);
 

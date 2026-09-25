@@ -159,7 +159,7 @@ static int native_adapter_actor_submit(
 
     submitted = *operation;
     submitted.user_data = (uintptr_t)(index + 1u);
-    status = native_io_backend_submit(&impl->backend, &submitted,
+    status = native_io_backend_prepare(&impl->backend, &submitted,
                                      &bridge->native_request);
     if (status != SALTS_OK) {
         native_adapter_release_bridge(impl, index);

@@ -11,6 +11,9 @@ int main() {
   const auto attach_pipe = &native_io_backend_attach_pipe;
   const auto release_pipe = &native_io_backend_release_pipe;
   const auto wake_backend = &native_io_backend_wake;
+  const auto prepare = &native_io_backend_prepare;
+  const auto flush = &native_io_backend_flush;
+  const auto await_prepared = &native_io_coroutine_await_prepared;
   static_assert(std::is_standard_layout_v<native_io_endpoint>);
   static_assert(sizeof(native_io_endpoint) == sizeof(std::uint32_t) * 2u);
   static_assert(offsetof(native_io_endpoint, slot) == 0u);
@@ -18,6 +21,9 @@ int main() {
   (void)attach_pipe;
   (void)release_pipe;
   (void)wake_backend;
+  (void)prepare;
+  (void)flush;
+  (void)await_prepared;
   return native_io_endpoint_valid(endpoint) && native_io_request_valid(request) &&
                  pipe_read == NATIVE_IO_OPERATION_PIPE_READ &&
                  NATIVE_IO_OPERATION_PIPE_WRITE == 6 &&

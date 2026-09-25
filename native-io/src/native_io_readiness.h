@@ -24,6 +24,9 @@ typedef struct salts_io_readiness_driver_ops {
               size_t *out_count);
   int (*wake)(void *state);
   void (*destroy)(void *state);
+  /* ET registrations may outlive the current request lane. New requests must
+   * still try I/O before waiting: retained readiness is not a promise of data. */
+  bool persistent_interests;
 } salts_io_readiness_driver_ops;
 
 int salts_io_readiness_backend_init(native_io_backend *backend,
