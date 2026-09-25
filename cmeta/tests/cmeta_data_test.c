@@ -987,6 +987,20 @@ spec("CMeta semantic data descriptors") {
     check_false(cmeta_data_desc_valid(&desc));
   }
 
+  it("owns exact-width integer semantic identity in CMeta core") {
+    check_true(cmeta_data_integer_width(true, 8u) == &cmeta_data_int8);
+    check_true(cmeta_data_integer_width(false, 8u) == &cmeta_data_uint8);
+    check_true(cmeta_data_integer_width(true, 16u) == &cmeta_data_int16);
+    check_true(cmeta_data_integer_width(false, 16u) == &cmeta_data_uint16);
+    check_true(cmeta_data_integer_width(true, 32u) == &cmeta_data_int32);
+    check_true(cmeta_data_integer_width(false, 32u) == &cmeta_data_uint32);
+    check_true(cmeta_data_integer_width(true, 64u) == &cmeta_data_int64);
+    check_true(cmeta_data_integer_width(false, 64u) == &cmeta_data_uint64);
+    check_null(cmeta_data_integer_width(true, 7u));
+    check_true(cmeta_data_int8.storage_type == &cmeta_type_int8);
+    check_true(cmeta_data_uint64.storage_type == &cmeta_type_uint64);
+  }
+
   it("keeps container categories free of T K V") {
     check_equal(cmeta_data_sequence.kind, CMETA_DATA_SEQUENCE);
     check_equal(cmeta_data_set.kind, CMETA_DATA_SET);
