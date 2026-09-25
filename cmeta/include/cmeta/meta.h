@@ -2,6 +2,7 @@
 #define CMETA_META_H
 #include <cmeta/cmeta.h>
 #include <cmeta/data.h>
+#include <cmeta/data_select.h>
 #include <cmeta/declared_type.h>
 #include <cmeta/entry.h>
 #include <cmeta/function.h>
