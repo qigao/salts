@@ -1,5 +1,6 @@
 #include <salts/bindings/lua/cmeta.h>
 
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -306,9 +307,111 @@ cmeta_status salts_lua_push_cmeta(
   return salts_lua_push_value(&context, data, object);
 }
 
+static cmeta_status salts_lua_read_integer(
+    lua_State *state, int index, const cmeta_data_desc *data, void *object) {
+  const cmeta_data_integer_shape *shape =
+      (const cmeta_data_integer_shape *)data->shape;
+  lua_Integer raw;
+  if (shape == NULL || !lua_isinteger(state, index))
+    return CMETA_TYPE_MISMATCH;
+  raw = lua_tointeger(state, index);
+  if (data->kind == CMETA_DATA_SINT) {
+    switch (shape->bits) {
+      case 8u: if (raw < INT8_MIN || raw > INT8_MAX) return CMETA_TYPE_MISMATCH;
+                *(int8_t *)object = (int8_t)raw; return CMETA_OK;
+      case 16u: if (raw < INT16_MIN || raw > INT16_MAX) return CMETA_TYPE_MISMATCH;
+                 *(int16_t *)object = (int16_t)raw; return CMETA_OK;
+      case 32u: if (raw < INT32_MIN || raw > INT32_MAX) return CMETA_TYPE_MISMATCH;
+                 *(int32_t *)object = (int32_t)raw; return CMETA_OK;
+      case 64u: *(int64_t *)object = (int64_t)raw; return CMETA_OK;
+      default: return CMETA_TRAIT_MISSING;
+    }
+  }
+  if (raw < 0) return CMETA_TYPE_MISMATCH;
+  switch (shape->bits) {
+    case 8u: if ((uint64_t)raw > UINT8_MAX) return CMETA_TYPE_MISMATCH;
+              *(uint8_t *)object = (uint8_t)raw; return CMETA_OK;
+    case 16u: if ((uint64_t)raw > UINT16_MAX) return CMETA_TYPE_MISMATCH;
+               *(uint16_t *)object = (uint16_t)raw; return CMETA_OK;
+    case 32u: if ((uint64_t)raw > UINT32_MAX) return CMETA_TYPE_MISMATCH;
+               *(uint32_t *)object = (uint32_t)raw; return CMETA_OK;
+    case 64u: *(uint64_t *)object = (uint64_t)raw; return CMETA_OK;
+    default: return CMETA_TRAIT_MISSING;
+  }
+}
+
+static cmeta_status salts_lua_read_float(
+    lua_State *state, int index, const cmeta_data_desc *data, void *object) {
+  const cmeta_data_float_shape *shape =
+      (const cmeta_data_float_shape *)data->shape;
+  lua_Number raw;
+  if (shape == NULL || !lua_isnumber(state, index))
+    return CMETA_TYPE_MISMATCH;
+  raw = lua_tonumber(state, index);
+  if (!isfinite((double)raw)) return CMETA_TYPE_MISMATCH;
+  if (shape->bits == 32u) {
+    if (raw < -(lua_Number)FLT_MAX || raw > (lua_Number)FLT_MAX)
+      return CMETA_TYPE_MISMATCH;
+    *(float *)object = (float)raw;
+    return CMETA_OK;
+  }
+  if (shape->bits == 64u) {
+    *(double *)object = (double)raw;
+    return CMETA_OK;
+  }
+  return CMETA_TRAIT_MISSING;
+}
+
+static cmeta_status salts_lua_read_buffer(
+    lua_State *state, int index, const cmeta_data_desc *data, void *object,
+    size_t max_bytes) {
+  const char *bytes;
+  size_t size;
+  if (lua_type(state, index) != LUA_TSTRING) return CMETA_TYPE_MISMATCH;
+  bytes = lua_tolstring(state, index, &size);
+  if (size > max_bytes) return CMETA_CAPACITY_EXCEEDED;
+  return cmeta_data_buffer_assign(
+      data, object, (const unsigned char *)bytes, size, max_bytes);
+}
+
+static cmeta_status salts_lua_read_enum(
+    lua_State *state, int index, const cmeta_data_desc *data, void *object) {
+  const cmeta_data_enum_shape *shape =
+      (const cmeta_data_enum_shape *)data->shape;
+  int64_t value;
+  if (shape == NULL || shape->meta == NULL) return CMETA_INVALID_ARGUMENT;
+  if (lua_type(state, index) == LUA_TSTRING) {
+    if (!cmeta_enum_from_string(shape->meta, lua_tostring(state, index), &value))
+      return CMETA_TYPE_MISMATCH;
+  } else if (lua_isinteger(state, index)) {
+    value = (int64_t)lua_tointeger(state, index);
+  } else {
+    return CMETA_TYPE_MISMATCH;
+  }
+  return cmeta_data_enum_assign(data, object, value);
+}
+
 cmeta_status salts_lua_read_cmeta(
     lua_State *state, int index, const cmeta_data_desc *data, void *object,
     salts_lua_limits limits) {
-  (void)state; (void)index; (void)data; (void)object; (void)limits;
-  return CMETA_TRAIT_MISSING;
+  if (state == NULL || object == NULL || !cmeta_data_desc_valid(data))
+    return CMETA_INVALID_ARGUMENT;
+  switch (data->kind) {
+    case CMETA_DATA_BOOL:
+      if (!lua_isboolean(state, index)) return CMETA_TYPE_MISMATCH;
+      *(_Bool *)object = lua_toboolean(state, index) != 0;
+      return CMETA_OK;
+    case CMETA_DATA_SINT:
+    case CMETA_DATA_UINT:
+      return salts_lua_read_integer(state, index, data, object);
+    case CMETA_DATA_FLOAT:
+      return salts_lua_read_float(state, index, data, object);
+    case CMETA_DATA_STRING:
+    case CMETA_DATA_BYTES:
+      return salts_lua_read_buffer(state, index, data, object, limits.max_bytes);
+    case CMETA_DATA_ENUM:
+      return salts_lua_read_enum(state, index, data, object);
+    default:
+      return CMETA_TRAIT_MISSING;
+  }
 }
