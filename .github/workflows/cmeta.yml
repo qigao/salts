@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "cmeta/**"
+      - "bindings/**"
       - "cserde/**"
       - "cbind/**"
       - "cflow/**"
@@ -31,6 +32,7 @@ on:
     branches: [master]
     paths:
       - "cmeta/**"
+      - "bindings/**"
       - "cserde/**"
       - "cbind/**"
       - "cflow/**"
@@ -166,18 +168,21 @@ jobs:
       - name: Test full Linux suite
         run: ctest --preset linux-release-user --output-on-failure
 
-      - name: Verify CMeta Lua binding
+      - name: Verify CMeta runtime bindings
         shell: bash
         run: |
           set -euxo pipefail
           cmake --preset linux-dev-user \
             -DBUILD_BENCHMARKS=OFF \
             -DSALTS_BINDINGS_LUA=ON \
-            -DVCPKG_MANIFEST_FEATURES=lua-bindings
-          cmake --build --preset linux-dev-user \
-            --target salts_lua_invokable_test salts_lua_conversion_test
+            -DSALTS_BINDINGS_QUICKJS=ON \
+            "-DVCPKG_MANIFEST_FEATURES=lua-bindings;quickjs-bindings"
+          cmake --build --preset linux-dev-user --target \
+            salts_lua_invokable_test salts_lua_conversion_test \
+            salts_quickjs_cmeta_test
           ctest --preset linux-dev-user \
-            -R "^salts_lua_(invokable|conversion)_test$" --output-on-failure
+            -R "^salts_(lua_(invokable|conversion)|quickjs_cmeta)_test$" \
+            --output-on-failure
 
       - name: Verify CFlow lifecycle paths with AddressSanitizer
         run: |

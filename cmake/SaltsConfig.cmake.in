@@ -14,6 +14,10 @@ if("@SALTS_BINDINGS_LUA@" STREQUAL "ON")
   endif()
 endif()
 
+if("@SALTS_BINDINGS_QUICKJS@" STREQUAL "ON")
+  find_dependency(qjs CONFIG)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/SaltsTargets.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/SaltsTinyMock.cmake")
 

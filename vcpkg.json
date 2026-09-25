@@ -35,6 +35,12 @@
       "dependencies": [
         "lua"
       ]
+    },
+    "quickjs-bindings": {
+      "description": "Build and test the optional Salts CMeta QuickJS binding",
+      "dependencies": [
+        "quickjs-ng"
+      ]
     }
   }
 }
