@@ -127,4 +127,42 @@ spec("CSTL semantic projection") {
     reflected_list_destroy(&values);
   }
 
+
+  it("projects typed Set and HashSet with SET semantics") {
+    typed(Set, reflected_set, int);
+    typed(HashSet, reflected_hash_set, int);
+    reflected_set ordered = {0};
+    reflected_hash_set hashed = {0};
+    int ordered_seen[2] = {0};
+    int hashed_seen[2] = {0};
+    cstl_semantic_collect_ints ordered_out = {ordered_seen, 0u};
+    cstl_semantic_collect_ints hashed_out = {hashed_seen, 0u};
+
+    check_equal(reflected_set_init(&ordered, 8u), STL_OK);
+    check_equal(reflected_set_add(&ordered, 5), STL_OK);
+    check_equal(reflected_set_add(&ordered, 3), STL_OK);
+    check_equal(reflected_hash_set_init(&hashed, 8u), STL_OK);
+    check_equal(reflected_hash_set_add(&hashed, 5), STL_OK);
+    check_equal(reflected_hash_set_add(&hashed, 3), STL_OK);
+
+    check_equal(reflected_set_collection_data.kind, CMETA_DATA_SET);
+    check_equal(reflected_hash_set_collection_data.kind, CMETA_DATA_SET);
+    check_true(reflected_set_collection_element(&ordered) == &cmeta_data_int);
+    check_true(reflected_hash_set_collection_element(&hashed) == &cmeta_data_int);
+
+    check_equal(cmeta_data_collection_foreach(
+                    &reflected_set_collection_data, &ordered,
+                    cstl_semantic_collect_int, &ordered_out, 2u),
+                CMETA_OK);
+    check_equal(cmeta_data_collection_foreach(
+                    &reflected_hash_set_collection_data, &hashed,
+                    cstl_semantic_collect_int, &hashed_out, 2u),
+                CMETA_OK);
+    check_equal(ordered_out.count, 2u);
+    check_equal(hashed_out.count, 2u);
+
+    reflected_set_destroy(&ordered);
+    reflected_hash_set_destroy(&hashed);
+  }
+
 }
