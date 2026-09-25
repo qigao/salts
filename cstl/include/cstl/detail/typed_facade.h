@@ -29,8 +29,8 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
  CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_SEQUENCE,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops}
 #define SALTS_META_INDEX_SEQUENCE_DATA(name,type,semantic_kind) \
  CMETA_INLINE const cmeta_data_desc *name##_collection_element(const void *object){(void)object;return CMETA_DATAOF(type);} \
- CMETA_INLINE cmeta_status name##_collection_read(const void *object,cmeta_data_collection_view *out){const name *self=(const name*)object;const cmeta_data_desc *element;size_t count;if(self==NULL||out==NULL)return CMETA_INVALID_ARGUMENT;element=CMETA_DATAOF(type);if(element==NULL)return CMETA_TRAIT_MISSING;count=name##_size(self);out->data=count==0u?NULL:name##_at_const(self,0u);out->count=count;out->stride=sizeof(type);out->element=element;return CMETA_OK;} \
- CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF(name),name##_collection_element,name##_collection_read,NULL}; \
+ CMETA_INLINE cmeta_status name##_collection_foreach(const void *object,cmeta_data_collection_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;size_t i,count;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;count=name##_size(self);if(count>max_items)return CMETA_CAPACITY_EXCEEDED;for(i=0u;i<count;++i){cmeta_status status=visit(context,name##_at_const(self,i));if(status!=CMETA_OK)return status;}return CMETA_OK;} \
+ CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF(name),name##_collection_element,NULL,name##_collection_foreach}; \
  CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops}
 
 
