@@ -2,6 +2,19 @@
 #include <cmeta/data.h>
 #include "tinytest.h"
 
+typedef struct cstl_semantic_collect_ints {
+  int *values;
+  size_t count;
+} cstl_semantic_collect_ints;
+
+static cmeta_status cstl_semantic_collect_int(
+    void *context, const void *element) {
+  cstl_semantic_collect_ints *out = (cstl_semantic_collect_ints *)context;
+  if (out == NULL || element == NULL) return CMETA_INVALID_ARGUMENT;
+  out->values[out->count++] = *(const int *)element;
+  return CMETA_OK;
+}
+
 spec("CSTL semantic projection") {
   it("projects sequence-like containers without duplicating element type") {
     Vec(int, vec);
@@ -77,12 +90,7 @@ spec("CSTL semantic projection") {
     typed(Deque, reflected_deque, int);
     reflected_deque values = {0};
     int seen[2] = {0};
-    size_t count = 0u;
-    cmeta_status collect(void *context, const void *element) {
-      int *output = (int *)context;
-      output[count++] = *(const int *)element;
-      return CMETA_OK;
-    }
+    cstl_semantic_collect_ints collected = {seen, 0u};
     check_equal(reflected_deque_init(&values, 8u), STL_OK);
     check_equal(reflected_deque_push_back(&values, 3), STL_OK);
     check_equal(reflected_deque_push_back(&values, 5), STL_OK);
@@ -90,9 +98,9 @@ spec("CSTL semantic projection") {
     check_true(reflected_deque_collection_ops.foreach != NULL);
     check_equal(cmeta_data_collection_foreach(
                     &reflected_deque_collection_data, &values,
-                    collect, seen, 2u),
+                    cstl_semantic_collect_int, &collected, 2u),
                 CMETA_OK);
-    check_equal(count, 2u);
+    check_equal(collected.count, 2u);
     check_equal(seen[0], 3);
     check_equal(seen[1], 5);
     reflected_deque_destroy(&values);
