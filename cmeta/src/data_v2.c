@@ -262,6 +262,7 @@ cmeta_status cmeta_data_collection_read(
     const cmeta_data_desc *desc, const void *object,
     cmeta_data_collection_view *out) {
     const cmeta_data_collection_ops *ops = NULL;
+    const cmeta_data_desc *expected;
     cmeta_data_collection_view view = {0};
     cmeta_status status;
 
@@ -269,18 +270,27 @@ cmeta_status cmeta_data_collection_read(
     status = cmeta_data_collection_ops_status(desc, &ops);
     if (status != CMETA_OK) return status;
 
-    view.element = ops->element(object);
-    if (view.element == NULL || !cmeta_data_desc_valid(view.element))
+    expected = ops->element(object);
+    if (expected != NULL && !cmeta_data_desc_valid(expected))
         return CMETA_TRAIT_MISSING;
     status = ops->read(object, &view);
     if (status != CMETA_OK) return status;
-    if (view.element == NULL || !cmeta_data_desc_valid(view.element))
-        return CMETA_CALLBACK_ERROR;
-    if (view.count != 0u &&
-        (view.data == NULL || view.stride == 0u))
-        return CMETA_CALLBACK_ERROR;
-    if (view.count == 0u && view.data != NULL && view.stride == 0u)
-        return CMETA_CALLBACK_ERROR;
+
+    if (view.count != 0u) {
+        if (view.data == NULL || view.stride == 0u)
+            return CMETA_CALLBACK_ERROR;
+        if (view.element == NULL) view.element = expected;
+        if (view.element == NULL || !cmeta_data_desc_valid(view.element))
+            return CMETA_TRAIT_MISSING;
+        if (expected != NULL && !cmeta_data_desc_equal(expected, view.element))
+            return CMETA_CALLBACK_ERROR;
+    } else {
+        if (view.data != NULL && view.stride == 0u)
+            return CMETA_CALLBACK_ERROR;
+        if (view.element == NULL) view.element = expected;
+        if (view.element != NULL && !cmeta_data_desc_valid(view.element))
+            return CMETA_CALLBACK_ERROR;
+    }
 
     *out = view;
     return CMETA_OK;
