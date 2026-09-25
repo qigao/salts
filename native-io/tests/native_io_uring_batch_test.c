@@ -174,6 +174,202 @@ spec("io_uring explicit batch submission") {
     batch_test_requests(true, 0u, SALTS_EIO);
     check_equal(enter_calls, 1u);
   }
+  it("completes a ready prepared stream send without entering the ring") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 2u, 2u};
+    int sockets[2];
+    native_io_endpoint endpoint = {0};
+    native_io_request request = {0};
+    native_io_completion event = {0};
+    const unsigned char sent[] = {0x31u, 0x32u, 0x33u};
+    unsigned char received[sizeof(sent)] = {0};
+    size_t count = 0u;
+    check_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[0], &endpoint),
+                SALTS_OK);
+    {
+      const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_STREAM_SEND,
+                                             .endpoint = endpoint,
+                                             .buffer = (void *)sent,
+                                             .length = sizeof(sent)};
+      check_equal(native_io_backend_prepare(&backend, &operation, &request), SALTS_OK);
+    }
+    check_equal(enter_calls, 0u);
+    check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count), SALTS_OK);
+    check_equal(count, 1u);
+    check_equal(event.kind, NATIVE_IO_COMPLETION_OK);
+    check_equal(event.bytes, sizeof(sent));
+    check_equal(recv(sockets[1], received, sizeof(received), 0), (ssize_t)sizeof(received));
+    check_equal(memcmp(received, sent, sizeof(sent)), 0);
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    check_equal(close(sockets[0]), 0);
+    check_equal(close(sockets[1]), 0);
+    check_equal(native_io_backend_release_socket(&backend, endpoint), SALTS_OK);
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+  }
+
+  it("completes a ready prepared stream receive without entering the ring") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 2u, 2u};
+    int sockets[2];
+    native_io_endpoint endpoint = {0};
+    native_io_request request = {0};
+    native_io_completion event = {0};
+    const unsigned char sent = 0x41u;
+    unsigned char received = 0u;
+    size_t count = 0u;
+    check_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[0], &endpoint),
+                SALTS_OK);
+    check_equal(send(sockets[1], &sent, 1u, 0), (ssize_t)1);
+    {
+      const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_STREAM_RECV,
+                                             .endpoint = endpoint,
+                                             .buffer = &received,
+                                             .length = 1u};
+      check_equal(native_io_backend_prepare(&backend, &operation, &request), SALTS_OK);
+    }
+    check_equal(enter_calls, 0u);
+    check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count), SALTS_OK);
+    check_equal(count, 1u);
+    check_equal(event.kind, NATIVE_IO_COMPLETION_OK);
+    check_equal(event.bytes, 1u);
+    check_equal(received, sent);
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    check_equal(close(sockets[0]), 0);
+    check_equal(close(sockets[1]), 0);
+    check_equal(native_io_backend_release_socket(&backend, endpoint), SALTS_OK);
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+  }
+
+  it("stages a prepared stream receive only after direct EAGAIN") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 2u, 2u};
+    int sockets[2];
+    native_io_endpoint endpoint = {0};
+    native_io_request request = {0};
+    native_io_completion event = {0};
+    const unsigned char sent = 0x51u;
+    unsigned char received = 0u;
+    size_t count = 0u;
+    check_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[0], &endpoint),
+                SALTS_OK);
+    {
+      const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_STREAM_RECV,
+                                             .endpoint = endpoint,
+                                             .buffer = &received,
+                                             .length = 1u};
+      check_equal(native_io_backend_prepare(&backend, &operation, &request), SALTS_OK);
+    }
+    check_equal(enter_calls, 0u);
+    check_not_equal(((salts_io_uring_impl *)backend.impl)->staged_head,
+                    SALTS_IO_URING_INDEX_NONE);
+    check_equal(send(sockets[1], &sent, 1u, 0), (ssize_t)1);
+    check_equal(native_io_backend_observe(&backend, &event, 1u, BATCH_TEST_TIMEOUT_MS, &count),
+                SALTS_OK);
+    check_equal(count, 1u);
+    check_equal(event.kind, NATIVE_IO_COMPLETION_OK);
+    check_equal(received, sent);
+    check_equal(enter_calls, 1u);
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    check_equal(close(sockets[0]), 0);
+    check_equal(close(sockets[1]), 0);
+    check_equal(native_io_backend_release_socket(&backend, endpoint), SALTS_OK);
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+  }
+
+  it("does not speculate a newer stream receive ahead of a queued lane head") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 3u, 3u};
+    int sockets[2];
+    native_io_endpoint endpoint = {0};
+    native_io_request requests[2] = {0};
+    native_io_completion events[2] = {0};
+    unsigned char received[2] = {0};
+    const unsigned char first = 0x61u;
+    const unsigned char second = 0x62u;
+    size_t count = 0u;
+    check_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[0], &endpoint),
+                SALTS_OK);
+    {
+      const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_STREAM_RECV,
+                                             .endpoint = endpoint,
+                                             .buffer = &received[0],
+                                             .length = 1u,
+                                             .user_data = 0u};
+      check_equal(native_io_backend_prepare(&backend, &operation, &requests[0]), SALTS_OK);
+    }
+    check_equal(send(sockets[1], &first, 1u, 0), (ssize_t)1);
+    {
+      const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_STREAM_RECV,
+                                             .endpoint = endpoint,
+                                             .buffer = &received[1],
+                                             .length = 1u,
+                                             .user_data = 1u};
+      check_equal(native_io_backend_prepare(&backend, &operation, &requests[1]), SALTS_OK);
+    }
+    check_equal(received[0], 0u);
+    check_equal(received[1], 0u);
+    check_equal(enter_calls, 0u);
+    check_equal(native_io_backend_observe(&backend, events, 2u, BATCH_TEST_TIMEOUT_MS, &count),
+                SALTS_OK);
+    check_equal(count, 1u);
+    check_equal(events[0].user_data, (uintptr_t)0u);
+    check_equal(received[0], first);
+    check_equal(received[1], 0u);
+    check_equal(send(sockets[1], &second, 1u, 0), (ssize_t)1);
+    count = 0u;
+    check_equal(native_io_backend_observe(&backend, events + 1u, 1u, BATCH_TEST_TIMEOUT_MS, &count),
+                SALTS_OK);
+    check_equal(count, 1u);
+    check_equal(events[1].user_data, (uintptr_t)1u);
+    check_equal(received[1], second);
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    check_equal(close(sockets[0]), 0);
+    check_equal(close(sockets[1]), 0);
+    check_equal(native_io_backend_release_socket(&backend, endpoint), SALTS_OK);
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+  }
+
+  it("publishes a speculative stream send error as a terminal completion") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 2u, 2u};
+    int sockets[2];
+    native_io_endpoint endpoint = {0};
+    native_io_request request = {0};
+    native_io_completion event = {0};
+    unsigned char sent = 0x71u;
+    size_t count = 0u;
+    check_equal(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[0], &endpoint),
+                SALTS_OK);
+    check_equal(close(sockets[1]), 0);
+    {
+      const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_STREAM_SEND,
+                                             .endpoint = endpoint,
+                                             .buffer = &sent,
+                                             .length = 1u};
+      check_equal(native_io_backend_prepare(&backend, &operation, &request), SALTS_OK);
+    }
+    check_equal(enter_calls, 0u);
+    check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count), SALTS_OK);
+    check_equal(count, 1u);
+    check_equal(event.kind, NATIVE_IO_COMPLETION_FAILED);
+    check_not_equal(event.status, SALTS_OK);
+    check_equal(native_io_backend_cancel(&backend, request), SALTS_ENOENT);
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    check_equal(close(sockets[0]), 0);
+    check_equal(native_io_backend_release_socket(&backend, endpoint), SALTS_OK);
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+  }
+
   it("submits prepared work and the wake poll in one wait enter") {
     native_io_backend backend = {0};
     const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
