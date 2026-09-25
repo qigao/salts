@@ -213,6 +213,59 @@ cmeta_status cmeta_data_buffer_read(
 #undef CMETA_BUFFER_V2_FIELD_END
 
 
+static const cmeta_type_identity cmeta_collection_view_identity =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.collection_view");
+
+const cmeta_type_desc cmeta_type_collection_view = {
+    .name = "cmeta_data_collection_view",
+    .size = sizeof(cmeta_data_collection_view),
+    .align = _Alignof(cmeta_data_collection_view),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = NULL,
+    .identity = &cmeta_collection_view_identity
+};
+
+static const cmeta_data_desc *cmeta_sequence_view_element(
+    const void *object) {
+    const cmeta_data_collection_view *view =
+        (const cmeta_data_collection_view *)object;
+    return view != NULL ? view->element : NULL;
+}
+
+static cmeta_status cmeta_sequence_view_read(
+    const void *object, cmeta_data_collection_view *out) {
+    const cmeta_data_collection_view *view =
+        (const cmeta_data_collection_view *)object;
+    if (view == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    *out = *view;
+    return CMETA_OK;
+}
+
+static const cmeta_data_collection_ops cmeta_sequence_view_ops = {
+    .struct_size = sizeof(cmeta_data_collection_ops),
+    .abi_version = CMETA_DATA_COLLECTION_OPS_ABI_VERSION,
+    .storage_type = &cmeta_type_collection_view,
+    .flags = CMETA_DATA_COLLECTION_CONTIGUOUS |
+             CMETA_DATA_COLLECTION_ORDERED |
+             CMETA_DATA_COLLECTION_RANDOM_ACCESS,
+    .element = cmeta_sequence_view_element,
+    .read = cmeta_sequence_view_read,
+    .foreach = NULL,
+    .collector = NULL
+};
+
+const cmeta_data_desc cmeta_data_sequence_view = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "cmeta.data.sequence_view",
+    .display_name = "borrowed sequence view",
+    .kind = CMETA_DATA_SEQUENCE,
+    .storage_type = &cmeta_type_collection_view,
+    .shape = NULL,
+    .collection_ops = &cmeta_sequence_view_ops
+};
+
 #define CMETA_COLLECTION_FIELD_END(type, member) \
     (offsetof(type, member) + sizeof(((type *)0)->member))
 #define CMETA_COLLECTION_DESC_OPS_SIZE \
