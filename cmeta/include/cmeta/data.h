@@ -598,6 +598,14 @@ const cmeta_data_field_desc *cmeta_data_struct_find_field(
 const cmeta_data_variant_case *cmeta_data_variant_case_by_tag(
     const cmeta_data_variant_shape *shape, int64_t tag);
 
+extern const cmeta_data_desc cmeta_data_int8;
+extern const cmeta_data_desc cmeta_data_uint8;
+extern const cmeta_data_desc cmeta_data_int16;
+extern const cmeta_data_desc cmeta_data_uint16;
+extern const cmeta_data_desc cmeta_data_int32;
+extern const cmeta_data_desc cmeta_data_uint32;
+extern const cmeta_data_desc cmeta_data_int64;
+extern const cmeta_data_desc cmeta_data_uint64;
 extern const cmeta_data_desc cmeta_data_bool;
 extern const cmeta_data_desc cmeta_data_int;
 extern const cmeta_data_desc cmeta_data_long;
