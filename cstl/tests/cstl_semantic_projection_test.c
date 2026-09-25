@@ -106,4 +106,25 @@ spec("CSTL semantic projection") {
     reflected_deque_destroy(&values);
   }
 
+
+  it("projects typed List through linked iteration only") {
+    typed(List, reflected_list, int);
+    reflected_list values = {0};
+    int seen[2] = {0};
+    cstl_semantic_collect_ints collected = {seen, 0u};
+    check_equal(reflected_list_init(&values, 8u), STL_OK);
+    check_equal(reflected_list_push_back(&values, 7, NULL), STL_OK);
+    check_equal(reflected_list_push_back(&values, 11, NULL), STL_OK);
+    check_null(reflected_list_collection_ops.read);
+    check_true(reflected_list_collection_ops.foreach != NULL);
+    check_equal(cmeta_data_collection_foreach(
+                    &reflected_list_collection_data, &values,
+                    cstl_semantic_collect_int, &collected, 2u),
+                CMETA_OK);
+    check_equal(collected.count, 2u);
+    check_equal(seen[0], 7);
+    check_equal(seen[1], 11);
+    reflected_list_destroy(&values);
+  }
+
 }
