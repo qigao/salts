@@ -307,6 +307,10 @@ cmeta_status salts_lua_push_cmeta(
   return salts_lua_push_value(&context, data, object);
 }
 
+static cmeta_status salts_lua_read_value(
+    lua_State *state, int index, const cmeta_data_desc *data, void *object,
+    salts_lua_limits limits, size_t depth);
+
 static cmeta_status salts_lua_read_integer(
     lua_State *state, int index, const cmeta_data_desc *data, void *object) {
   const cmeta_data_integer_shape *shape =
@@ -395,7 +399,7 @@ static cmeta_status salts_lua_read_map_pair(
     lua_State *state, int key_index, int value_index,
     const cmeta_data_desc *data, cmeta_collector *collector,
     const cmeta_data_desc *key_data, const cmeta_data_desc *value_data,
-    salts_lua_limits limits) {
+    salts_lua_limits limits, size_t depth) {
   cmeta_data_temp key = {0};
   cmeta_data_temp value = {0};
   cmeta_status status;
@@ -404,11 +408,11 @@ static cmeta_status salts_lua_read_map_pair(
   if (status != CMETA_OK) goto done;
   status = cmeta_data_temp_open(value_data, limits.max_bytes, &value);
   if (status != CMETA_OK) goto done;
-  status = salts_lua_read_cmeta(
-      state, key_index, key_data, key.storage, limits);
+  status = salts_lua_read_value(
+      state, key_index, key_data, key.storage, limits, depth + 1u);
   if (status != CMETA_OK) goto done;
-  status = salts_lua_read_cmeta(
-      state, value_index, value_data, value.storage, limits);
+  status = salts_lua_read_value(
+      state, value_index, value_data, value.storage, limits, depth + 1u);
   if (status != CMETA_OK) goto done;
   status = cmeta_data_map_accept(
       data, collector, key_data, key.storage, value_data, value.storage);
@@ -421,7 +425,7 @@ done:
 
 static cmeta_status salts_lua_read_map(
     lua_State *state, int index, const cmeta_data_desc *data, void *object,
-    salts_lua_limits limits) {
+    salts_lua_limits limits, size_t depth) {
   const cmeta_data_map_ops *ops = cmeta_data_map_ops_of(data);
   const cmeta_data_desc *key_data;
   const cmeta_data_desc *value_data;
@@ -432,6 +436,7 @@ static cmeta_status salts_lua_read_map(
   int table_index;
 
   if (ops == NULL || !lua_istable(state, index)) return CMETA_TYPE_MISMATCH;
+  if (depth >= limits.max_depth) return CMETA_CAPACITY_EXCEEDED;
   key_data = ops->key(object);
   value_data = ops->value(object);
   if (key_data == NULL || value_data == NULL ||
@@ -460,7 +465,7 @@ static cmeta_status salts_lua_read_map(
       lua_getfield(state, -1, "key");
       lua_getfield(state, -2, "value");
       status = salts_lua_read_map_pair(
-          state, -2, -1, data, &collector, key_data, value_data, limits);
+          state, -2, -1, data, &collector, key_data, value_data, limits, depth);
       lua_pop(state, 3);
       if (status != CMETA_OK) goto abort;
     }
@@ -471,7 +476,7 @@ static cmeta_status salts_lua_read_map(
         lua_pop(state, 2); status = CMETA_CAPACITY_EXCEEDED; goto abort;
       }
       status = salts_lua_read_map_pair(
-          state, -2, -1, data, &collector, key_data, value_data, limits);
+          state, -2, -1, data, &collector, key_data, value_data, limits, depth);
       lua_pop(state, 1);
       if (status != CMETA_OK) { lua_pop(state, 1); goto abort; }
       ++count;
@@ -490,9 +495,48 @@ done:
   return status;
 }
 
+static cmeta_status salts_lua_read_struct(
+    lua_State *state, int index, const cmeta_data_desc *data, void *object,
+    salts_lua_limits limits, size_t depth) {
+  const cmeta_data_struct_shape *shape =
+      (const cmeta_data_struct_shape *)data->shape;
+  cmeta_data_temp temp = {0};
+  int table_index;
+  size_t i;
+  cmeta_status status;
+
+  if (!lua_istable(state, index)) return CMETA_TYPE_MISMATCH;
+  if (!cmeta_data_struct_constructible(data)) return CMETA_TRAIT_MISSING;
+  if (depth >= limits.max_depth) return CMETA_CAPACITY_EXCEEDED;
+  status = cmeta_data_temp_open(data, limits.max_bytes, &temp);
+  if (status != CMETA_OK) return status;
+
+  table_index = lua_absindex(state, index);
+  for (i = 0u; i < shape->field_count; ++i) {
+    const cmeta_data_field_desc *field = &shape->fields[i];
+    lua_getfield(state, table_index, field->name);
+    if (lua_isnil(state, -1)) {
+      lua_pop(state, 1);
+      status = CMETA_TYPE_MISMATCH;
+      goto done;
+    }
+    status = salts_lua_read_value(
+        state, -1, field->value,
+        (unsigned char *)temp.storage + field->offset,
+        limits, depth + 1u);
+    lua_pop(state, 1);
+    if (status != CMETA_OK) goto done;
+  }
+  status = cmeta_data_value_move(data, object, temp.storage);
+
+done:
+  cmeta_data_temp_close(&temp);
+  return status;
+}
+
 static cmeta_status salts_lua_read_collection(
     lua_State *state, int index, const cmeta_data_desc *data, void *object,
-    salts_lua_limits limits) {
+    salts_lua_limits limits, size_t depth) {
   const cmeta_data_collection_ops *ops = cmeta_data_collection_ops_of(data);
   const cmeta_data_desc *element_data;
   cmeta_data_temp container = {0};
@@ -502,6 +546,7 @@ static cmeta_status salts_lua_read_collection(
   cmeta_status status;
 
   if (ops == NULL || !lua_istable(state, index)) return CMETA_TYPE_MISMATCH;
+  if (depth >= limits.max_depth) return CMETA_CAPACITY_EXCEEDED;
   element_data = ops->element(object);
   if (element_data == NULL || !cmeta_data_desc_valid(element_data))
     return CMETA_TRAIT_MISSING;
@@ -522,8 +567,8 @@ static cmeta_status salts_lua_read_collection(
     lua_rawgeti(state, table_index, (lua_Integer)(i + 1u));
     status = cmeta_data_temp_open(element_data, limits.max_bytes, &element);
     if (status == CMETA_OK)
-      status = salts_lua_read_cmeta(
-          state, -1, element_data, element.storage, limits);
+      status = salts_lua_read_value(
+          state, -1, element_data, element.storage, limits, depth + 1u);
     if (status == CMETA_OK)
       status = cmeta_data_collection_accept(
           data, &collector, element_data, element.storage);
@@ -543,9 +588,9 @@ done:
   return status;
 }
 
-cmeta_status salts_lua_read_cmeta(
+static cmeta_status salts_lua_read_value(
     lua_State *state, int index, const cmeta_data_desc *data, void *object,
-    salts_lua_limits limits) {
+    salts_lua_limits limits, size_t depth) {
   if (state == NULL || object == NULL || !cmeta_data_desc_valid(data))
     return CMETA_INVALID_ARGUMENT;
   switch (data->kind) {
@@ -563,12 +608,20 @@ cmeta_status salts_lua_read_cmeta(
       return salts_lua_read_buffer(state, index, data, object, limits.max_bytes);
     case CMETA_DATA_ENUM:
       return salts_lua_read_enum(state, index, data, object);
+    case CMETA_DATA_STRUCT:
+      return salts_lua_read_struct(state, index, data, object, limits, depth);
     case CMETA_DATA_SEQUENCE:
     case CMETA_DATA_SET:
-      return salts_lua_read_collection(state, index, data, object, limits);
+      return salts_lua_read_collection(state, index, data, object, limits, depth);
     case CMETA_DATA_MAP:
-      return salts_lua_read_map(state, index, data, object, limits);
+      return salts_lua_read_map(state, index, data, object, limits, depth);
     default:
       return CMETA_TRAIT_MISSING;
   }
+}
+
+cmeta_status salts_lua_read_cmeta(
+    lua_State *state, int index, const cmeta_data_desc *data, void *object,
+    salts_lua_limits limits) {
+  return salts_lua_read_value(state, index, data, object, limits, 0u);
 }
