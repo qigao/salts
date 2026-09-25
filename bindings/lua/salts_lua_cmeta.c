@@ -391,6 +391,105 @@ static cmeta_status salts_lua_read_enum(
   return cmeta_data_enum_assign(data, object, value);
 }
 
+static cmeta_status salts_lua_read_map_pair(
+    lua_State *state, int key_index, int value_index,
+    const cmeta_data_desc *data, cmeta_collector *collector,
+    const cmeta_data_desc *key_data, const cmeta_data_desc *value_data,
+    salts_lua_limits limits) {
+  cmeta_data_temp key = {0};
+  cmeta_data_temp value = {0};
+  cmeta_status status;
+
+  status = cmeta_data_temp_open(key_data, limits.max_bytes, &key);
+  if (status != CMETA_OK) goto done;
+  status = cmeta_data_temp_open(value_data, limits.max_bytes, &value);
+  if (status != CMETA_OK) goto done;
+  status = salts_lua_read_cmeta(
+      state, key_index, key_data, key.storage, limits);
+  if (status != CMETA_OK) goto done;
+  status = salts_lua_read_cmeta(
+      state, value_index, value_data, value.storage, limits);
+  if (status != CMETA_OK) goto done;
+  status = cmeta_data_map_accept(
+      data, collector, key_data, key.storage, value_data, value.storage);
+
+done:
+  cmeta_data_temp_close(&value);
+  cmeta_data_temp_close(&key);
+  return status;
+}
+
+static cmeta_status salts_lua_read_map(
+    lua_State *state, int index, const cmeta_data_desc *data, void *object,
+    salts_lua_limits limits) {
+  const cmeta_data_map_ops *ops = cmeta_data_map_ops_of(data);
+  const cmeta_data_desc *key_data;
+  const cmeta_data_desc *value_data;
+  cmeta_data_temp map = {0};
+  cmeta_collector collector = {0};
+  cmeta_status status;
+  size_t count = 0u;
+  int table_index;
+
+  if (ops == NULL || !lua_istable(state, index)) return CMETA_TYPE_MISMATCH;
+  key_data = ops->key(object);
+  value_data = ops->value(object);
+  if (key_data == NULL || value_data == NULL ||
+      !cmeta_data_desc_valid(key_data) || !cmeta_data_desc_valid(value_data))
+    return CMETA_TRAIT_MISSING;
+
+  status = cmeta_data_temp_open(data, limits.max_bytes, &map);
+  if (status != CMETA_OK) return status;
+  status = cmeta_data_map_collector(
+      data, map.storage, limits.max_items, &collector);
+  if (status != CMETA_OK) goto done;
+  status = cmeta_collector_begin(&collector);
+  if (status != CMETA_OK) goto done;
+  table_index = lua_absindex(state, index);
+
+  if ((ops->flags & CMETA_DATA_MAP_REPEATED_KEYS) != 0u) {
+    size_t i, length = (size_t)lua_rawlen(state, table_index);
+    if (length > limits.max_items) {
+      status = CMETA_CAPACITY_EXCEEDED; goto abort;
+    }
+    for (i = 0u; i < length; ++i) {
+      lua_rawgeti(state, table_index, (lua_Integer)(i + 1u));
+      if (!lua_istable(state, -1)) {
+        lua_pop(state, 1); status = CMETA_TYPE_MISMATCH; goto abort;
+      }
+      lua_getfield(state, -1, "key");
+      lua_getfield(state, -2, "value");
+      status = salts_lua_read_map_pair(
+          state, -2, -1, data, &collector, key_data, value_data, limits);
+      lua_pop(state, 3);
+      if (status != CMETA_OK) goto abort;
+    }
+  } else {
+    lua_pushnil(state);
+    while (lua_next(state, table_index) != 0) {
+      if (count >= limits.max_items) {
+        lua_pop(state, 2); status = CMETA_CAPACITY_EXCEEDED; goto abort;
+      }
+      status = salts_lua_read_map_pair(
+          state, -2, -1, data, &collector, key_data, value_data, limits);
+      lua_pop(state, 1);
+      if (status != CMETA_OK) { lua_pop(state, 1); goto abort; }
+      ++count;
+    }
+  }
+
+  status = cmeta_collector_finish(&collector);
+  if (status != CMETA_OK) goto done;
+  status = cmeta_data_construct_move(data, object, map.storage);
+  goto done;
+
+abort:
+  cmeta_collector_abort(&collector);
+done:
+  cmeta_data_temp_close(&map);
+  return status;
+}
+
 static cmeta_status salts_lua_read_collection(
     lua_State *state, int index, const cmeta_data_desc *data, void *object,
     salts_lua_limits limits) {
@@ -467,6 +566,8 @@ cmeta_status salts_lua_read_cmeta(
     case CMETA_DATA_SEQUENCE:
     case CMETA_DATA_SET:
       return salts_lua_read_collection(state, index, data, object, limits);
+    case CMETA_DATA_MAP:
+      return salts_lua_read_map(state, index, data, object, limits);
     default:
       return CMETA_TRAIT_MISSING;
   }
