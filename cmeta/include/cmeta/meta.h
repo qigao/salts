@@ -20,6 +20,7 @@
   #include <cmeta/contract.h>
   #include <cmeta/generic.h>
   #include <cmeta/interface.h>
+#include <cmeta/invokable.h>
   #include <cmeta/range.h>
   #include <cmeta/value.h>
 #endif
