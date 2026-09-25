@@ -434,6 +434,49 @@ static const cmeta_data_desc cmeta_data_test_outer_desc = {
     &cmeta_data_test_outer_type, &cmeta_data_test_outer_shape
 };
 
+static const int cmeta_data_test_failing_shape = 1;
+
+static cmeta_status cmeta_data_test_failing_init(void *object) {
+    if (object == NULL) return CMETA_INVALID_ARGUMENT;
+    *(int *)object = 99;
+    return CMETA_CALLBACK_ERROR;
+}
+static void cmeta_data_test_failing_restore(void *object) {
+    if (object != NULL) *(int *)object = 0;
+}
+static void cmeta_data_test_failing_move(void *destination, void *source) {
+    if (destination == NULL || source == NULL) return;
+    *(int *)destination = *(int *)source;
+    *(int *)source = 0;
+}
+static const cmeta_data_construct_ops cmeta_data_test_failing_construct = {
+    sizeof(cmeta_data_construct_ops), CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,
+    &cmeta_type_int, cmeta_data_test_failing_init,
+    cmeta_data_test_failing_restore, cmeta_data_test_failing_move
+};
+static const cmeta_data_desc cmeta_data_test_failing_data = {
+    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
+    "test.Failing.data", "Failing", CMETA_DATA_CUSTOM,
+    &cmeta_type_int, &cmeta_data_test_failing_shape,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, &cmeta_data_test_failing_construct
+};
+static const cmeta_data_field_desc cmeta_data_test_rollback_fields[] = {
+    { "test.Rollback.payload", "payload",
+      offsetof(cmeta_data_test_owned_record, payload),
+      &cmeta_data_test_buffer_desc },
+    { "test.Rollback.count", "count",
+      offsetof(cmeta_data_test_owned_record, count),
+      &cmeta_data_test_failing_data }
+};
+static const cmeta_data_struct_shape cmeta_data_test_rollback_shape = {
+    &cmeta_data_test_owned_layout, cmeta_data_test_rollback_fields, 2u
+};
+static const cmeta_data_desc cmeta_data_test_rollback_desc = {
+    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
+    "test.Rollback.data", "Rollback", CMETA_DATA_STRUCT,
+    &cmeta_data_test_owned_record_type, &cmeta_data_test_rollback_shape
+};
+
 static const cmeta_data_variant_case cmeta_data_test_variant_cases[] = {
     {
         .tag = 1,
@@ -1154,6 +1197,17 @@ spec("CMeta semantic data descriptors") {
     check_equal(source.inner.id, 0);
     check_equal(source.inner.score, 0);
     check_equal(source.tail, 0);
+  }
+
+  it("rolls back earlier owned fields when a later field init fails") {
+    cmeta_data_test_owned_record value = {42, 77};
+
+    check_true(cmeta_data_struct_constructible(&cmeta_data_test_rollback_desc));
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_rollback_desc, &value),
+                CMETA_CALLBACK_ERROR);
+    check_equal(value.payload, 0);
+    check_equal(value.count, 0);
   }
 
   it("keeps container categories free of T K V") {
