@@ -668,46 +668,29 @@ static cmeta_status cmeta_data_temp_init(
     cmeta_status status;
     if (desc == NULL || storage == NULL || lifecycle == NULL)
         return CMETA_INVALID_ARGUMENT;
-
+    status = cmeta_data_value_init_zero(desc, storage);
+    if (status != CMETA_OK) return status;
     switch (desc->kind) {
         case CMETA_DATA_BOOL:
         case CMETA_DATA_SINT:
         case CMETA_DATA_UINT:
         case CMETA_DATA_FLOAT:
-            memset(storage, 0, desc->storage_type->size);
-            *lifecycle = CMETA_DATA_TEMP_TRIVIAL;
-            return CMETA_OK;
+            *lifecycle = CMETA_DATA_TEMP_TRIVIAL; break;
         case CMETA_DATA_STRING:
         case CMETA_DATA_BYTES:
-            status = cmeta_data_buffer_init_zero(desc, storage);
-            if (status == CMETA_OK) *lifecycle = CMETA_DATA_TEMP_BUFFER;
-            return status;
+            *lifecycle = CMETA_DATA_TEMP_BUFFER; break;
         case CMETA_DATA_ENUM:
-            if (desc->enum_bits_ops != NULL) {
-                memset(storage, 0, desc->storage_type->size);
-                *lifecycle = CMETA_DATA_TEMP_ENUM_BITS;
-                return CMETA_OK;
-            }
-            memset(storage, 0, desc->storage_type->size);
-            *lifecycle = CMETA_DATA_TEMP_ENUM;
-            return CMETA_OK;
+            *lifecycle = desc->enum_bits_ops != NULL
+                             ? CMETA_DATA_TEMP_ENUM_BITS
+                             : CMETA_DATA_TEMP_ENUM;
+            break;
         default:
+            if (desc->fixed_ops != NULL) *lifecycle = CMETA_DATA_TEMP_FIXED;
+            else if (desc->variant_ops != NULL) *lifecycle = CMETA_DATA_TEMP_VARIANT;
+            else *lifecycle = CMETA_DATA_TEMP_CONSTRUCT;
             break;
     }
-
-    if (desc->fixed_ops != NULL) {
-        memset(storage, 0, desc->storage_type->size);
-        *lifecycle = CMETA_DATA_TEMP_FIXED;
-        return CMETA_OK;
-    }
-    if (desc->variant_ops != NULL) {
-        memset(storage, 0, desc->storage_type->size);
-        *lifecycle = CMETA_DATA_TEMP_VARIANT;
-        return CMETA_OK;
-    }
-    status = cmeta_data_construct_init_zero(desc, storage);
-    if (status == CMETA_OK) *lifecycle = CMETA_DATA_TEMP_CONSTRUCT;
-    return status;
+    return CMETA_OK;
 }
 
 cmeta_status cmeta_data_temp_open(
