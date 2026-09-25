@@ -52,6 +52,136 @@ SALTS_API extern const cmeta_data_buffer_shape salts_tstr_cmeta_shape;
 SALTS_API extern const cmeta_data_buffer_ops salts_tstr_cmeta_buffer_ops;
 SALTS_API extern const cmeta_data_desc salts_tstr_cmeta_data;
 
+/*
+ * Import-safe semantic mirror for header-local static generic metadata.
+ *
+ * On Windows, addresses of __declspec(dllimport) data objects are not C static
+ * initializer constants. These header-local descriptors preserve the same
+ * stable type/data identities and lifecycle semantics while giving typed(...)
+ * an address-constant reference. The process-wide exported objects above remain
+ * the ABI and are semantically equal to these mirrors; descriptor address is
+ * never semantic identity.
+ */
+static inline bool salts_tstr_header_cmeta_is_zero(const void *object) {
+    return object != NULL && *(const tstr *)object == NULL;
+}
+
+static inline cmeta_status salts_tstr_header_cmeta_init_zero(void *object) {
+    if (object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    *(tstr *)object = NULL;
+    return CMETA_OK;
+}
+
+static inline cmeta_status salts_tstr_header_cmeta_read(
+    const void *object, const unsigned char **out_data, size_t *out_size) {
+    tstr value;
+    if (object == NULL || out_data == NULL || out_size == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    value = *(const tstr *)object;
+    *out_data = (const unsigned char *)value;
+    *out_size = tstr_len(value);
+    return CMETA_OK;
+}
+
+static inline cmeta_status salts_tstr_header_cmeta_assign(
+    void *object, const unsigned char *data, size_t size, size_t max_bytes) {
+    tstr value;
+    if (object == NULL || (size != 0u && data == NULL))
+        return CMETA_INVALID_ARGUMENT;
+    if (size > max_bytes)
+        return CMETA_CAPACITY_EXCEEDED;
+    if (*(tstr *)object != NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (size == 0u)
+        return CMETA_OK;
+    value = tstr_new_len(data, size);
+    if (value == NULL)
+        return CMETA_OUT_OF_MEMORY;
+    *(tstr *)object = value;
+    return CMETA_OK;
+}
+
+static inline void salts_tstr_header_cmeta_restore_zero(void *object) {
+    if (object != NULL)
+        tstr_freep((tstr *)object);
+}
+
+static inline void salts_tstr_header_cmeta_move(
+    void *destination, void *source) {
+    tstr *to = (tstr *)destination;
+    tstr *from = (tstr *)source;
+    if (to == NULL || from == NULL || to == from)
+        return;
+    *to = *from;
+    *from = NULL;
+}
+
+static inline bool salts_tstr_header_cmeta_copy_construct(
+    void *destination, const void *source) {
+    const tstr value = source != NULL ? *(const tstr *)source : NULL;
+    tstr copy;
+    if (destination == NULL || source == NULL)
+        return false;
+    copy = tstr_clone(value);
+    if (value != NULL && copy == NULL)
+        return false;
+    *(tstr *)destination = copy;
+    return true;
+}
+
+static inline void salts_tstr_header_cmeta_move_construct(
+    void *destination, void *source) {
+    if (destination == NULL || source == NULL || destination == source)
+        return;
+    *(tstr *)destination = tstr_move((tstr *)source);
+}
+
+static inline void salts_tstr_header_cmeta_destroy(void *object) {
+    if (object != NULL)
+        tstr_freep((tstr *)object);
+}
+
+static const cmeta_type_traits salts_tstr_header_cmeta_traits = {
+    CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY,
+    NULL, NULL, NULL,
+    salts_tstr_header_cmeta_copy_construct,
+    salts_tstr_header_cmeta_move_construct,
+    salts_tstr_header_cmeta_destroy
+};
+
+static const cmeta_type_identity salts_tstr_header_cmeta_identity =
+    CMETA_TYPE_ID_ATOM_INIT("salts.tstr");
+
+static const cmeta_type_desc salts_tstr_header_cmeta_type = {
+    "tstr", sizeof(tstr), CMETA_ALIGNOF(tstr), CMETA_T_OBJECT,
+    NULL, &salts_tstr_header_cmeta_traits,
+    &salts_tstr_header_cmeta_identity
+};
+
+static const cmeta_data_buffer_shape salts_tstr_header_cmeta_shape = {
+    CMETA_DATA_BUFFER_OWNED
+};
+
+static const cmeta_data_buffer_ops salts_tstr_header_cmeta_buffer_ops = {
+    sizeof(cmeta_data_buffer_ops), CMETA_DATA_BUFFER_OPS_ABI_VERSION,
+    &salts_tstr_header_cmeta_type, CMETA_DATA_BUFFER_OWNED,
+    salts_tstr_header_cmeta_is_zero, salts_tstr_header_cmeta_assign,
+    salts_tstr_header_cmeta_restore_zero, salts_tstr_header_cmeta_read,
+    salts_tstr_header_cmeta_init_zero, salts_tstr_header_cmeta_move
+};
+
+static const cmeta_data_desc salts_tstr_header_cmeta_data = {
+    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
+    "salts.tstr.data", "tstr", CMETA_DATA_STRING,
+    &salts_tstr_header_cmeta_type, &salts_tstr_header_cmeta_shape,
+    &salts_tstr_header_cmeta_buffer_ops,
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL
+};
+
+#define SALTS_TSTR_CMETA_TYPE_REF (&salts_tstr_header_cmeta_type)
+#define SALTS_TSTR_CMETA_DATA_REF (&salts_tstr_header_cmeta_data)
+
 static const cmeta_type_identity salts_vstr_cmeta_identity =
     CMETA_TYPE_ID_ATOM_INIT("salts.vstr");
 
