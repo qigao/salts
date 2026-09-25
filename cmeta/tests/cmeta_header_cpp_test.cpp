@@ -162,6 +162,12 @@ static_assert(std::is_standard_layout_v<cmeta_data_desc>,
               "semantic data descriptors must remain C-compatible standard-layout types");
 static_assert(std::is_standard_layout_v<cmeta_data_buffer_ops>,
               "semantic buffer ops must remain C-compatible standard-layout types");
+static_assert(CMETA_DATA_COLLECTION_OPS_ABI_VERSION == 1u,
+              "collection provider ABI starts at version 1");
+static_assert(std::is_standard_layout_v<cmeta_data_collection_view>,
+              "collection views must remain C-compatible standard-layout types");
+static_assert(std::is_standard_layout_v<cmeta_data_collection_ops>,
+              "collection ops must remain C-compatible standard-layout types");
 static_assert(std::is_standard_layout_v<cmeta_data_fixed_ops>,
               "semantic fixed-value ops must remain a C-compatible standard-layout type");
 static_assert(sizeof(cmeta_fixed_bytes_fixture) == 6u,
