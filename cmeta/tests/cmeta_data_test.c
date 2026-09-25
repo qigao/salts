@@ -1271,6 +1271,31 @@ spec("CMeta semantic data descriptors") {
     check_false(cmeta_data_desc_valid(&custom));
   }
 
+  it("exposes a canonical borrowed sequence view provider") {
+    const int values[] = {3, 5};
+    cmeta_data_collection_view source = {
+        values, 2u, sizeof(values[0]), &cmeta_data_int};
+    cmeta_data_collection_view empty = {NULL, 0u, 0u, NULL};
+    cmeta_data_collection_view out = {0};
+
+    check_true(cmeta_data_desc_valid(&cmeta_data_sequence_view));
+    check_equal(cmeta_data_collection_read(
+                    &cmeta_data_sequence_view, &source, &out),
+                CMETA_OK);
+    check_equal(out.count, 2u);
+    check_equal(out.stride, sizeof(int));
+    check_true(out.element == &cmeta_data_int);
+    check_equal(*(const int *)out.data, 3);
+
+    out = (cmeta_data_collection_view){0};
+    check_equal(cmeta_data_collection_read(
+                    &cmeta_data_sequence_view, &empty, &out),
+                CMETA_OK);
+    check_equal(out.count, 0u);
+    check_null(out.data);
+    check_null(out.element);
+  }
+
   it("validates provider-neutral collection read views") {
     cmeta_data_test_int_sequence value = {{3, 5}};
     cmeta_data_collection_view view = {0};
