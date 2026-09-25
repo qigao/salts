@@ -6,79 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(_MSC_VER)
-#include <malloc.h>
-#endif
-
 typedef struct salts_quickjs_push_context {
   JSContext *context;
   salts_quickjs_limits limits;
   size_t depth;
 } salts_quickjs_push_context;
-
-/* Collector factories own initialization of their zero output.  This is
- * deliberately distinct from cmeta_data_temp_open(), whose contract returns
- * an already initialized semantic-zero value. */
-typedef struct salts_quickjs_collector_temp {
-  const cmeta_data_desc *data;
-  void *storage;
-  size_t alignment;
-} salts_quickjs_collector_temp;
-
-static cmeta_status salts_quickjs_collector_temp_open(
-    const cmeta_data_desc *data, size_t max_bytes,
-    salts_quickjs_collector_temp *out) {
-  size_t extent;
-  size_t alignment;
-  size_t padded;
-  void *storage;
-  if (out == NULL || !cmeta_data_desc_valid(data) ||
-      data->storage_type == NULL)
-    return CMETA_INVALID_ARGUMENT;
-  *out = (salts_quickjs_collector_temp){0};
-  extent = data->storage_type->size;
-  alignment = data->storage_type->align;
-  if (extent == 0u || alignment == 0u ||
-      (alignment & (alignment - 1u)) != 0u)
-    return CMETA_INVALID_ARGUMENT;
-  if (extent > max_bytes) return CMETA_CAPACITY_EXCEEDED;
-  if (extent > SIZE_MAX - (alignment - 1u))
-    return CMETA_CAPACITY_EXCEEDED;
-  padded = (extent + alignment - 1u) & ~(alignment - 1u);
-  if (alignment <= _Alignof(max_align_t)) {
-    storage = malloc(extent);
-  } else {
-#if defined(_MSC_VER)
-    storage = _aligned_malloc(padded, alignment);
-#else
-    storage = aligned_alloc(alignment, padded);
-#endif
-  }
-  if (storage == NULL) return CMETA_OUT_OF_MEMORY;
-  memset(storage, 0, extent);
-  out->data = data;
-  out->storage = storage;
-  out->alignment = alignment;
-  return CMETA_OK;
-}
-
-static cmeta_status salts_quickjs_collector_temp_close(
-    salts_quickjs_collector_temp *temp, bool constructed) {
-  cmeta_status status = CMETA_OK;
-  if (temp == NULL || temp->storage == NULL) return CMETA_OK;
-  if (constructed)
-    status = cmeta_data_value_restore_zero(temp->data, temp->storage);
-#if defined(_MSC_VER)
-  if (temp->alignment > _Alignof(max_align_t))
-    _aligned_free(temp->storage);
-  else
-    free(temp->storage);
-#else
-  free(temp->storage);
-#endif
-  *temp = (salts_quickjs_collector_temp){0};
-  return status;
-}
 
 static cmeta_status salts_quickjs_push_value(
     salts_quickjs_push_context *push, const cmeta_data_desc *data,
@@ -682,12 +614,10 @@ static cmeta_status salts_quickjs_read_collection(
   const cmeta_data_collection_ops *ops =
       cmeta_data_collection_ops_of(data);
   const cmeta_data_desc *element_data;
-  salts_quickjs_collector_temp container = {0};
   cmeta_collector collector = {0};
   int64_t length = 0;
   int64_t i;
   cmeta_status status;
-  cmeta_status cleanup_status;
   bool begun = false;
   if (ops == NULL || !JS_IsArray(value)) return CMETA_TYPE_MISMATCH;
   if (depth >= limits.max_depth) return CMETA_CAPACITY_EXCEEDED;
@@ -698,11 +628,8 @@ static cmeta_status salts_quickjs_read_collection(
   element_data = ops->element(object);
   if (element_data == NULL || !cmeta_data_desc_valid(element_data))
     return CMETA_TRAIT_MISSING;
-  status = salts_quickjs_collector_temp_open(
-      data, limits.max_bytes, &container);
-  if (status != CMETA_OK) return status;
   status = cmeta_data_collection_collector(
-      data, container.storage, limits.max_items, &collector);
+      data, object, limits.max_items, &collector);
   if (status != CMETA_OK) goto done;
   status = cmeta_collector_begin(&collector);
   if (status != CMETA_OK) goto done;
@@ -730,14 +657,9 @@ static cmeta_status salts_quickjs_read_collection(
   status = cmeta_collector_finish(&collector);
   begun = false;
   if (status != CMETA_OK) goto done;
-  status = cmeta_data_construct_move(data, object, container.storage);
 
 done:
   if (begun) cmeta_collector_abort(&collector);
-  cleanup_status = salts_quickjs_collector_temp_close(
-      &container, collector.state == CMETA_COLLECTOR_COMMITTED);
-  if (status == CMETA_OK && cleanup_status != CMETA_OK)
-    status = cleanup_status;
   return status;
 }
 
@@ -747,12 +669,10 @@ static cmeta_status salts_quickjs_read_map(
   const cmeta_data_map_ops *ops = cmeta_data_map_ops_of(data);
   const cmeta_data_desc *key_data;
   const cmeta_data_desc *value_data;
-  salts_quickjs_collector_temp map = {0};
   cmeta_collector collector = {0};
   int64_t length = 0;
   int64_t i;
   cmeta_status status;
-  cmeta_status cleanup_status;
   bool begun = false;
   if (ops == NULL || !JS_IsArray(value)) return CMETA_TYPE_MISMATCH;
   if (depth >= limits.max_depth) return CMETA_CAPACITY_EXCEEDED;
@@ -766,11 +686,8 @@ static cmeta_status salts_quickjs_read_map(
       !cmeta_data_desc_valid(key_data) ||
       !cmeta_data_desc_valid(value_data))
     return CMETA_TRAIT_MISSING;
-  status = salts_quickjs_collector_temp_open(
-      data, limits.max_bytes, &map);
-  if (status != CMETA_OK) return status;
   status = cmeta_data_map_collector(
-      data, map.storage, limits.max_items, &collector);
+      data, object, limits.max_items, &collector);
   if (status != CMETA_OK) goto done;
   status = cmeta_collector_begin(&collector);
   if (status != CMETA_OK) goto done;
@@ -826,14 +743,9 @@ entry_done:
   status = cmeta_collector_finish(&collector);
   begun = false;
   if (status != CMETA_OK) goto done;
-  status = cmeta_data_construct_move(data, object, map.storage);
 
 done:
   if (begun) cmeta_collector_abort(&collector);
-  cleanup_status = salts_quickjs_collector_temp_close(
-      &map, collector.state == CMETA_COLLECTOR_COMMITTED);
-  if (status == CMETA_OK && cleanup_status != CMETA_OK)
-    status = cleanup_status;
   return status;
 }
 
