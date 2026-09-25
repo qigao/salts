@@ -561,6 +561,9 @@ cmeta_status cmeta_data_collection_foreach(
 #define CMETA_MAP_OPS_BASE_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, foreach)
 #define CMETA_MAP_OPS_COLLECTOR_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, collector)
 #define CMETA_MAP_OPS_ACCEPT_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, accept)
+#define CMETA_MAP_OPS_BORROW_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, borrow)
+#define CMETA_MAP_BORROW_OPS_SIZE \
+    CMETA_MAP_FIELD_END(cmeta_data_map_borrow_ops, current_version)
 
 static cmeta_status cmeta_data_map_ops_status(
     const cmeta_data_desc *desc, const cmeta_data_map_ops **out) {
@@ -634,6 +637,108 @@ cmeta_status cmeta_data_map_foreach(
     return ops->foreach(object, cmeta_data_map_bounded_visit, &bounded, max_items);
 }
 
+static cmeta_status cmeta_data_map_borrow_ops_status(
+    const cmeta_data_desc *desc, const cmeta_data_map_borrow_ops **out) {
+    const cmeta_data_map_ops *ops = NULL;
+    const cmeta_data_map_borrow_ops *borrow;
+    cmeta_status status;
+
+    if (out != NULL) *out = NULL;
+    status = cmeta_data_map_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    if (ops->struct_size < CMETA_MAP_OPS_BORROW_SIZE || ops->borrow == NULL)
+        return CMETA_TRAIT_MISSING;
+    borrow = ops->borrow;
+    if (borrow->struct_size < CMETA_MAP_BORROW_OPS_SIZE ||
+        borrow->abi_version != CMETA_DATA_MAP_BORROW_OPS_ABI_VERSION ||
+        borrow->next == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (out != NULL) *out = borrow;
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_map_borrow_begin(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_map_borrow_cursor *out) {
+    const cmeta_data_map_ops *ops = NULL;
+    const cmeta_data_map_borrow_ops *borrow = NULL;
+    const cmeta_data_desc *key;
+    const cmeta_data_desc *value;
+    cmeta_status status;
+
+    if (object == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    *out = (cmeta_data_map_borrow_cursor){0};
+    status = cmeta_data_map_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    status = cmeta_data_map_borrow_ops_status(desc, &borrow);
+    if (status != CMETA_OK) return status;
+    key = ops->key(object);
+    value = ops->value(object);
+    if (key == NULL || value == NULL || !cmeta_data_desc_valid(key) ||
+        !cmeta_data_desc_valid(value))
+        return CMETA_TRAIT_MISSING;
+
+    out->data = desc;
+    out->key = key;
+    out->value = value;
+    out->object = object;
+    out->ops = borrow;
+    out->version = borrow->current_version != NULL
+                       ? borrow->current_version(object)
+                       : UINT64_C(0);
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_map_borrow_size(
+    const cmeta_data_map_borrow_cursor *cursor, size_t *out_size) {
+    if (cursor == NULL || out_size == NULL || cursor->ops == NULL ||
+        cursor->object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (cursor->ops->size == NULL) return CMETA_TRAIT_MISSING;
+    if (cursor->ops->current_version != NULL &&
+        cursor->ops->current_version(cursor->object) != cursor->version)
+        return CMETA_CALLBACK_ERROR;
+    *out_size = cursor->ops->size(cursor->object);
+    return CMETA_OK;
+}
+
+cmeta_gen_status cmeta_data_map_borrow_next(
+    cmeta_data_map_borrow_cursor *cursor,
+    const void **out_key, const void **out_value) {
+    cmeta_gen_status status;
+    if (cursor == NULL || out_key == NULL || out_value == NULL ||
+        cursor->ops == NULL || cursor->object == NULL ||
+        cursor->key == NULL || cursor->value == NULL)
+        return CMETA_GEN_ERROR;
+    *out_key = NULL;
+    *out_value = NULL;
+    if (cursor->ops->current_version != NULL &&
+        cursor->ops->current_version(cursor->object) != cursor->version)
+        return CMETA_GEN_MUTATED;
+
+    status = cursor->ops->next(
+        cursor->object, &cursor->cursor, out_key, out_value);
+    switch (status) {
+        case CMETA_GEN_VALUE:
+        case CMETA_GEN_VALUE_AND_DONE:
+            if (*out_key != NULL && *out_value != NULL) return status;
+            break;
+        case CMETA_GEN_DONE:
+        case CMETA_GEN_ERROR:
+        case CMETA_GEN_MUTATED:
+            *out_key = NULL;
+            *out_value = NULL;
+            return status;
+        default:
+            break;
+    }
+    *out_key = NULL;
+    *out_value = NULL;
+    return CMETA_GEN_ERROR;
+}
+
+#undef CMETA_MAP_BORROW_OPS_SIZE
+#undef CMETA_MAP_OPS_BORROW_SIZE
 #undef CMETA_MAP_OPS_ACCEPT_SIZE
 #undef CMETA_MAP_OPS_COLLECTOR_SIZE
 #undef CMETA_MAP_OPS_BASE_SIZE

@@ -480,6 +480,32 @@ typedef cmeta_status (*cmeta_data_map_foreach_fn)(
     const void *object, cmeta_data_map_visit_fn visit, void *context,
     size_t max_items);
 
+enum { CMETA_DATA_MAP_BORROW_OPS_ABI_VERSION = 1u };
+
+typedef size_t (*cmeta_data_map_borrow_size_fn)(const void *object);
+typedef cmeta_gen_status (*cmeta_data_map_borrow_next_fn)(
+    const void *object, cmeta_range_cursor *cursor,
+    const void **out_key, const void **out_value);
+typedef uint64_t (*cmeta_data_map_borrow_version_fn)(const void *object);
+
+typedef struct cmeta_data_map_borrow_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    cmeta_data_map_borrow_size_fn size;
+    cmeta_data_map_borrow_next_fn next;
+    cmeta_data_map_borrow_version_fn current_version;
+} cmeta_data_map_borrow_ops;
+
+typedef struct cmeta_data_map_borrow_cursor {
+    const cmeta_data_desc *data;
+    const cmeta_data_desc *key;
+    const cmeta_data_desc *value;
+    const void *object;
+    const cmeta_data_map_borrow_ops *ops;
+    cmeta_range_cursor cursor;
+    uint64_t version;
+} cmeta_data_map_borrow_cursor;
+
 typedef cmeta_collector (*cmeta_data_map_collector_fn)(
     void *zero_output, size_t limit);
 typedef cmeta_status (*cmeta_data_map_accept_fn)(
@@ -496,6 +522,7 @@ typedef struct cmeta_data_map_ops {
     cmeta_data_map_foreach_fn foreach;
     cmeta_data_map_collector_fn collector;
     cmeta_data_map_accept_fn accept;
+    const cmeta_data_map_borrow_ops *borrow;
 } cmeta_data_map_ops;
 
 typedef struct cmeta_data_variant_case {
@@ -626,6 +653,14 @@ const cmeta_data_map_ops *cmeta_data_map_ops_of(
 cmeta_status cmeta_data_map_foreach(
     const cmeta_data_desc *desc, const void *object,
     cmeta_data_map_visit_fn visit, void *context, size_t max_items);
+cmeta_status cmeta_data_map_borrow_begin(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_map_borrow_cursor *out);
+cmeta_status cmeta_data_map_borrow_size(
+    const cmeta_data_map_borrow_cursor *cursor, size_t *out_size);
+cmeta_gen_status cmeta_data_map_borrow_next(
+    cmeta_data_map_borrow_cursor *cursor,
+    const void **out_key, const void **out_value);
 
 cmeta_status cmeta_data_map_collector(
     const cmeta_data_desc *desc, void *zero_output, size_t limit,

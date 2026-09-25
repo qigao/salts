@@ -23,6 +23,7 @@ schema-driven, and intentionally compositional rather than a universal language.
 - known-type and callable-type universe separation;
 - semantic type identity for atoms, pointers, const forms, and generic applications;
 - allocation-free `cmeta_range` runtime protocol;
+- provider-neutral borrowed collection and map cursors for read-only reflection;
 - transactional bounded `cmeta_collector` runtime protocol;
 - type/signature registry, callable substrate, effect/property metadata, and
   inline captures.

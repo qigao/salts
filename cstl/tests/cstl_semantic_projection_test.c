@@ -33,6 +33,44 @@ static cmeta_status cstl_semantic_collect_map(
 }
 
 typed(Vec, cstl_struct_vec, int);
+typed(Vec, reflected_ints, int);
+typed(Deque, reflected_deque, int);
+typed(List, reflected_list, int);
+typed(Set, reflected_set, int);
+typed(HashSet, reflected_hash_set, int);
+typed(Map, reflected_map, int, long);
+typed(HashMap, reflected_hash_map, int, long);
+typed(BTree, reflected_btree, int, long);
+typed(BPlusTree, reflected_bplus, int, long);
+typed(Map, capability_map, int, long);
+typed(HashMap, capability_hash_map, int, long);
+typed(BTree, capability_btree, int, long);
+typed(BPlusTree, capability_bplus, int, long);
+typed(MultiMap, capability_multimap, int, long);
+typed(Vec, transactional_vec, int);
+typed(Stack, reflected_stack, int);
+typed(Queue, reflected_queue, int);
+typed(Vec, meta_vec, int);
+typed(Deque, meta_deque, int);
+typed(List, meta_list, int);
+typed(Stack, meta_stack, int);
+typed(Queue, meta_queue, int);
+typed(Heap, meta_heap, int);
+typed(Set, meta_set, int);
+typed(HashSet, meta_hash_set, int);
+typed(HashMap, meta_hash_map, int, long);
+typed(Map, meta_map, int, long);
+typed(MultiMap, meta_multimap, int, long);
+typed(BTree, meta_btree, int, long);
+typed(BPlusTree, meta_bplus, int, long);
+typed(Vec, borrow_vec, int);
+typed(List, borrow_list, int);
+typed(HashSet, borrow_hash_set, int);
+typed(HashMap, borrow_hash_map, int, long);
+typed(Map, borrow_map, int, long);
+typed(MultiMap, borrow_multimap, int, long);
+typed(BTree, borrow_btree, int, long);
+typed(BPlusTree, borrow_bplus, int, long);
 
 typedef struct cstl_struct_with_vec {
   cstl_struct_vec values;
@@ -119,7 +157,6 @@ spec("CSTL semantic projection") {
   }
 
   it("projects typed Vec through canonical CMeta collection reflection") {
-    typed(Vec, reflected_ints, int);
     reflected_ints values = {0};
     cmeta_data_collection_view view = {0};
     check_equal(reflected_ints_init(&values, 8u), STL_OK);
@@ -139,7 +176,6 @@ spec("CSTL semantic projection") {
 
 
   it("projects typed Deque without claiming contiguous storage") {
-    typed(Deque, reflected_deque, int);
     reflected_deque values = {0};
     int seen[2] = {0};
     cstl_semantic_collect_ints collected = {seen, 0u};
@@ -160,13 +196,12 @@ spec("CSTL semantic projection") {
 
 
   it("projects typed List through linked iteration only") {
-    typed(List, reflected_list, int);
     reflected_list values = {0};
     int seen[2] = {0};
     cstl_semantic_collect_ints collected = {seen, 0u};
     check_equal(reflected_list_init(&values, 8u), STL_OK);
-    check_equal(reflected_list_push_back(&values, 7, NULL), STL_OK);
-    check_equal(reflected_list_push_back(&values, 11, NULL), STL_OK);
+    check_equal(reflected_list_push_back(&values, 7), STL_OK);
+    check_equal(reflected_list_push_back(&values, 11), STL_OK);
     check_null(reflected_list_collection_ops.read);
     check_true(reflected_list_collection_ops.foreach != NULL);
     check_equal(cmeta_data_collection_foreach(
@@ -181,8 +216,6 @@ spec("CSTL semantic projection") {
 
 
   it("projects typed Set and HashSet with SET semantics") {
-    typed(Set, reflected_set, int);
-    typed(HashSet, reflected_hash_set, int);
     reflected_set ordered = {0};
     reflected_hash_set hashed = {0};
     int ordered_seen[2] = {0};
@@ -228,7 +261,6 @@ spec("CSTL semantic projection") {
 
 
   it("projects typed Map as key-value reflection, never pair sequence") {
-    typed(Map, reflected_map, int, long);
     reflected_map values = {0};
     cstl_semantic_map_capture captured = {{0}, {0}, 0u};
 
@@ -257,9 +289,6 @@ spec("CSTL semantic projection") {
 
 
   it("projects HashMap and tree maps through one CMeta map contract") {
-    typed(HashMap, reflected_hash_map, int, long);
-    typed(BTree, reflected_btree, int, long);
-    typed(BPlusTree, reflected_bplus, int, long);
     reflected_hash_map hashed = {0};
     reflected_btree btree = {0};
     reflected_bplus bplus = {0};
@@ -298,11 +327,6 @@ spec("CSTL semantic projection") {
 
 
   it("preserves map ordering and repeated-key capabilities") {
-    typed(Map, capability_map, int, long);
-    typed(HashMap, capability_hash_map, int, long);
-    typed(BTree, capability_btree, int, long);
-    typed(BPlusTree, capability_bplus, int, long);
-    typed(MultiMap, capability_multimap, int, long);
     capability_multimap multi = {0};
     cstl_semantic_map_capture captured = {{0}, {0}, 0u};
 
@@ -334,7 +358,6 @@ spec("CSTL semantic projection") {
 
 
   it("gives typed Vec an explicit transactional construction lifecycle") {
-    typed(Vec, transactional_vec, int);
     transactional_vec source = {0};
     transactional_vec destination = {0};
 
@@ -387,8 +410,6 @@ spec("CSTL semantic projection") {
 
 
   it("projects Stack and Queue as ordered sequences") {
-    typed(Stack, reflected_stack, int);
-    typed(Queue, reflected_queue, int);
     reflected_stack stack = {0};
     reflected_queue queue = {0};
     int stack_seen[2] = {0};
@@ -426,33 +447,20 @@ spec("CSTL semantic projection") {
 
 
   it("gates CMeta type coverage across every typed CSTL family") {
-    typed(Vec, meta_vec, int);
-    typed(Deque, meta_deque, int);
-    typed(List, meta_list, int);
-    typed(Stack, meta_stack, int);
-    typed(Queue, meta_queue, int);
-    typed(Heap, meta_heap, int);
-    typed(Set, meta_set, int);
-    typed(HashSet, meta_hash_set, int);
-    typed(HashMap, meta_hash_map, int, long);
-    typed(Map, meta_map, int, long);
-    typed(MultiMap, meta_multimap, int, long);
-    typed(BTree, meta_btree, int, long);
-    typed(BPlusTree, meta_bplus, int, long);
 
-    check_not_null(CMETA_TYPEOF(meta_vec));
-    check_not_null(CMETA_TYPEOF(meta_deque));
-    check_not_null(CMETA_TYPEOF(meta_list));
-    check_not_null(CMETA_TYPEOF(meta_stack));
-    check_not_null(CMETA_TYPEOF(meta_queue));
-    check_not_null(CMETA_TYPEOF(meta_heap));
-    check_not_null(CMETA_TYPEOF(meta_set));
-    check_not_null(CMETA_TYPEOF(meta_hash_set));
-    check_not_null(CMETA_TYPEOF(meta_hash_map));
-    check_not_null(CMETA_TYPEOF(meta_map));
-    check_not_null(CMETA_TYPEOF(meta_multimap));
-    check_not_null(CMETA_TYPEOF(meta_btree));
-    check_not_null(CMETA_TYPEOF(meta_bplus));
+    check_not_null(CMETA_TYPEOF_OR(meta_vec, &meta_vec_cmeta_type));
+    check_not_null(CMETA_TYPEOF_OR(meta_deque, &meta_deque_cmeta_type));
+    check_not_null(CMETA_TYPEOF_OR(meta_list, &meta_list_cmeta_type));
+    check_not_null(CMETA_TYPEOF_OR(meta_stack, &meta_stack_cmeta_type));
+    check_not_null(CMETA_TYPEOF_OR(meta_queue, &meta_queue_cmeta_type));
+    check_not_null(CMETA_TYPEOF_OR(meta_heap, &meta_heap_cmeta_type));
+    check_not_null(CMETA_TYPEOF_OR(meta_set, &meta_set_cmeta_type));
+    check_not_null(CMETA_TYPEOF_OR(meta_hash_set, &meta_hash_set_cmeta_type));
+    check_not_null(CMETA_TYPEOF_OR(meta_hash_map, &meta_hash_map_cmeta_type));
+    check_not_null(CMETA_TYPEOF_OR(meta_map, &meta_map_cmeta_type));
+    check_not_null(CMETA_TYPEOF_OR(meta_multimap, &meta_multimap_cmeta_type));
+    check_not_null(CMETA_TYPEOF_OR(meta_btree, &meta_btree_cmeta_type));
+    check_not_null(CMETA_TYPEOF_OR(meta_bplus, &meta_bplus_cmeta_type));
 
     check_equal(meta_vec_collection_data.kind, CMETA_DATA_SEQUENCE);
     check_equal(meta_deque_collection_data.kind, CMETA_DATA_SEQUENCE);
@@ -475,9 +483,6 @@ spec("CSTL semantic projection") {
 
 
   it("borrows collection elements without copying and detects mutation") {
-    typed(Vec, borrow_vec, int);
-    typed(List, borrow_list, int);
-    typed(HashSet, borrow_hash_set, int);
     borrow_vec vec = {0};
     borrow_list list = {0};
     borrow_hash_set set = {0};
@@ -502,8 +507,8 @@ spec("CSTL semantic projection") {
     borrow_vec_destroy(&vec);
 
     check_equal(borrow_list_init(&list, 8u), STL_OK);
-    check_equal(borrow_list_push_back(&list, 7, NULL), STL_OK);
-    check_equal(borrow_list_push_back(&list, 11, NULL), STL_OK);
+    check_equal(borrow_list_push_back(&list, 7), STL_OK);
+    check_equal(borrow_list_push_back(&list, 11), STL_OK);
     cursor = (cmeta_data_collection_borrow_cursor){0};
     check_equal(cmeta_data_collection_borrow_begin(
                     &borrow_list_collection_data, &list, &cursor),
@@ -528,6 +533,93 @@ spec("CSTL semantic projection") {
                 CMETA_GEN_VALUE);
     check_equal(*(const int *)element, 13);
     borrow_hash_set_destroy(&set);
+  }
+
+  it("borrows map entries across every typed topology and detects mutation") {
+    borrow_hash_map hash_map = {0};
+    borrow_map map = {0};
+    borrow_multimap multimap = {0};
+    borrow_btree btree = {0};
+    borrow_bplus bplus = {0};
+    cmeta_data_map_borrow_cursor cursor = {0};
+    const void *key = NULL;
+    const void *value = NULL;
+    size_t size = 0u;
+
+    check_equal(borrow_hash_map_init(&hash_map, 8u), STL_OK);
+    check_equal(borrow_map_init(&map, 8u), STL_OK);
+    check_equal(borrow_multimap_init(&multimap, 8u), STL_OK);
+    check_equal(borrow_btree_init(&btree, 8u), STL_OK);
+    check_equal(borrow_bplus_init(&bplus, 8u), STL_OK);
+    check_equal(borrow_hash_map_put(&hash_map, 1, 10L), STL_OK);
+    check_equal(borrow_map_put(&map, 2, 20L), STL_OK);
+    check_equal(borrow_multimap_put(&multimap, 3, 30L), STL_OK);
+    check_equal(borrow_multimap_put(&multimap, 3, 31L), STL_OK);
+    check_equal(borrow_btree_put(&btree, 4, 40L), STL_OK);
+    check_equal(borrow_bplus_put(&bplus, 5, 50L), STL_OK);
+
+    check_equal(cmeta_data_map_borrow_begin(
+                    &borrow_hash_map_map_data, &hash_map, &cursor),
+                CMETA_OK);
+    check_true(cursor.key == &cmeta_data_int);
+    check_true(cursor.value == &cmeta_data_long);
+    check_equal(cmeta_data_map_borrow_size(&cursor, &size), CMETA_OK);
+    check_equal(size, 1u);
+    check_equal(cmeta_data_map_borrow_next(&cursor, &key, &value),
+                CMETA_GEN_VALUE);
+    check_equal(*(const int *)key, 1);
+    check_equal(*(const long *)value, 10L);
+
+    cursor = (cmeta_data_map_borrow_cursor){0};
+    check_equal(cmeta_data_map_borrow_begin(
+                    &borrow_map_map_data, &map, &cursor),
+                CMETA_OK);
+    check_equal(cmeta_data_map_borrow_next(&cursor, &key, &value),
+                CMETA_GEN_VALUE);
+    check_equal(*(const int *)key, 2);
+    check_equal(*(const long *)value, 20L);
+    check_equal(borrow_map_put(&map, 6, 60L), STL_OK);
+    check_equal(cmeta_data_map_borrow_next(&cursor, &key, &value),
+                CMETA_GEN_MUTATED);
+
+    cursor = (cmeta_data_map_borrow_cursor){0};
+    check_equal(cmeta_data_map_borrow_begin(
+                    &borrow_multimap_map_data, &multimap, &cursor),
+                CMETA_OK);
+    check_equal(cmeta_data_map_borrow_size(&cursor, &size), CMETA_OK);
+    check_equal(size, 2u);
+    check_equal(cmeta_data_map_borrow_next(&cursor, &key, &value),
+                CMETA_GEN_VALUE);
+    check_equal(*(const int *)key, 3);
+    check_equal(*(const long *)value, 30L);
+    check_equal(cmeta_data_map_borrow_next(&cursor, &key, &value),
+                CMETA_GEN_VALUE);
+    check_equal(*(const int *)key, 3);
+    check_equal(*(const long *)value, 31L);
+
+    cursor = (cmeta_data_map_borrow_cursor){0};
+    check_equal(cmeta_data_map_borrow_begin(
+                    &borrow_btree_map_data, &btree, &cursor),
+                CMETA_OK);
+    check_equal(cmeta_data_map_borrow_next(&cursor, &key, &value),
+                CMETA_GEN_VALUE);
+    check_equal(*(const int *)key, 4);
+    check_equal(*(const long *)value, 40L);
+
+    cursor = (cmeta_data_map_borrow_cursor){0};
+    check_equal(cmeta_data_map_borrow_begin(
+                    &borrow_bplus_map_data, &bplus, &cursor),
+                CMETA_OK);
+    check_equal(cmeta_data_map_borrow_next(&cursor, &key, &value),
+                CMETA_GEN_VALUE);
+    check_equal(*(const int *)key, 5);
+    check_equal(*(const long *)value, 50L);
+
+    borrow_hash_map_destroy(&hash_map);
+    borrow_map_destroy(&map);
+    borrow_multimap_destroy(&multimap);
+    borrow_btree_destroy(&btree);
+    borrow_bplus_destroy(&bplus);
   }
 
 }
