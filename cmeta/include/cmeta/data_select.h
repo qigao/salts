@@ -3,6 +3,14 @@
 
 #include <cmeta/data.h>
 #include <cmeta/type_select.h>
+#include <stdint.h>
+
+/*
+ * Fixed-width typedefs may be aliases of int/long and therefore cannot be
+ * portably added as duplicate _Generic/template specializations. Resolve them
+ * by signedness + exact width through this canonical facade instead.
+ */
+const cmeta_data_desc *cmeta_data_integer_width(bool is_signed, uint8_t bits);
 
 #ifdef __cplusplus
 extern "C++" {
