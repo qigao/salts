@@ -479,6 +479,8 @@ typedef struct cmeta_data_collection_ops {
     cmeta_data_collection_foreach_fn foreach;
     cmeta_data_collection_collector_fn collector;
     const cmeta_data_collection_borrow_ops *borrow;
+    /** Optional descriptor-only element semantics; no object callback required. */
+    const cmeta_data_desc *element_data;
 } cmeta_data_collection_ops;
 
 enum { CMETA_DATA_MAP_OPS_ABI_VERSION = 1u };
@@ -545,6 +547,9 @@ typedef struct cmeta_data_map_ops {
     cmeta_data_map_collector_fn collector;
     cmeta_data_map_accept_fn accept;
     const cmeta_data_map_borrow_ops *borrow;
+    /** Optional descriptor-only key/value semantics; no object callback required. */
+    const cmeta_data_desc *key_data;
+    const cmeta_data_desc *value_data;
 } cmeta_data_map_ops;
 
 typedef struct cmeta_data_variant_case {
@@ -585,6 +590,13 @@ const cmeta_data_buffer_ops *cmeta_data_buffer_ops_of(
 
 /** Return a validated SEQUENCE/SET collection adapter, or NULL. */
 const cmeta_data_collection_ops *cmeta_data_collection_ops_of(
+    const cmeta_data_desc *desc);
+
+/**
+ * Return provider-declared static element data without invoking an object
+ * callback. Providers compiled without the optional tail return NULL.
+ */
+const cmeta_data_desc *cmeta_data_collection_element_data(
     const cmeta_data_desc *desc);
 
 /** Borrow one immutable collection view for the provider callback lifetime. */
@@ -674,6 +686,12 @@ void cmeta_data_temp_close(cmeta_data_temp *temp);
 
 
 const cmeta_data_map_ops *cmeta_data_map_ops_of(
+    const cmeta_data_desc *desc);
+
+/** Descriptor-only static map member metadata; never calls key/value callbacks. */
+const cmeta_data_desc *cmeta_data_map_key_data(
+    const cmeta_data_desc *desc);
+const cmeta_data_desc *cmeta_data_map_value_data(
     const cmeta_data_desc *desc);
 cmeta_status cmeta_data_map_foreach(
     const cmeta_data_desc *desc, const void *object,
