@@ -317,6 +317,62 @@ spec("CSTL semantic projection") {
     check_equal(explicit_owned_live, (size_t)0u);
   }
 
+  it("keeps typed tree container semantic zero resource-free") {
+    meta_set set = {0};
+    meta_map source = {0};
+    meta_map destination = {0};
+    const long *value;
+
+    check_equal(cmeta_data_value_init_zero(
+                    &meta_set_collection_data, &set), CMETA_OK);
+    check_null(set.raw.map.impl);
+    check_equal(meta_set_size(&set), (size_t)0u);
+
+    check_equal(meta_set_init(&set, 8u), STL_OK);
+    check_not_null(set.raw.map.impl);
+    check_equal(meta_set_add(&set, 3), STL_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_set_collection_data, &set), CMETA_OK);
+    check_null(set.raw.map.impl);
+    check_equal(meta_set_size(&set), (size_t)0u);
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_set_collection_data, &set), CMETA_OK);
+    check_null(set.raw.map.impl);
+
+    check_equal(cmeta_data_value_init_zero(
+                    &meta_map_map_data, &source), CMETA_OK);
+    check_equal(cmeta_data_value_init_zero(
+                    &meta_map_map_data, &destination), CMETA_OK);
+    check_null(source.raw.impl);
+    check_null(destination.raw.impl);
+
+    check_equal(meta_map_init(&source, 8u), STL_OK);
+    check_equal(meta_map_init(&destination, 8u), STL_OK);
+    check_not_null(source.raw.impl);
+    check_not_null(destination.raw.impl);
+    check_true(source.raw.impl != destination.raw.impl);
+    check_equal(meta_map_size(&destination), (size_t)0u);
+    check_equal(meta_map_put(&source, 7, 70L), STL_OK);
+    {
+      void *source_impl = source.raw.impl;
+      check_equal(cmeta_data_value_move(
+                      &meta_map_map_data, &destination, &source), CMETA_OK);
+      check_true(destination.raw.impl == source_impl);
+    }
+    check_null(source.raw.impl);
+    check_not_null(destination.raw.impl);
+    check_equal(meta_map_size(&source), (size_t)0u);
+    check_equal(meta_map_size(&destination), (size_t)1u);
+    value = meta_map_get_const(&destination, 7);
+    check_not_null(value);
+    check_equal(*value, 70L);
+
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_map_map_data, &destination), CMETA_OK);
+    check_null(destination.raw.impl);
+    check_equal(meta_map_size(&destination), (size_t)0u);
+  }
+
   it("copies typed collection and map values through canonical CMeta") {
     borrow_vec source_vec = {0};
     borrow_vec copied_vec = {0};
@@ -334,6 +390,7 @@ spec("CSTL semantic projection") {
                     &borrow_vec_collection_data, &source_vec), CMETA_OK);
     check_equal(cmeta_data_value_init_zero(
                     &borrow_vec_collection_data, &copied_vec), CMETA_OK);
+    check_equal(borrow_vec_init(&source_vec, 8u), STL_OK);
     check_equal(borrow_vec_push(&source_vec, 3), STL_OK);
     check_equal(borrow_vec_push(&source_vec, 5), STL_OK);
     check_equal(cmeta_data_value_copy(
@@ -349,6 +406,7 @@ spec("CSTL semantic projection") {
                     &borrow_map_map_data, &source_map), CMETA_OK);
     check_equal(cmeta_data_value_init_zero(
                     &borrow_map_map_data, &copied_map), CMETA_OK);
+    check_equal(borrow_map_init(&source_map, 8u), STL_OK);
     check_equal(borrow_map_put(&source_map, 2, 20L), STL_OK);
     check_equal(cmeta_data_value_copy(
                     &borrow_map_map_data, &copied_map, &source_map),
@@ -635,6 +693,7 @@ spec("CSTL semantic projection") {
     check_equal(cmeta_data_construct_init_zero(
                     &transactional_vec_collection_data, &source),
                 CMETA_OK);
+    check_equal(transactional_vec_init(&source, 8u), STL_OK);
     check_equal(transactional_vec_push(&source, 17), STL_OK);
     check_equal(cmeta_data_construct_init_zero(
                     &transactional_vec_collection_data, &destination),
@@ -662,6 +721,7 @@ spec("CSTL semantic projection") {
     check_equal(cmeta_data_value_init_zero(
                     &cstl_struct_with_vec_data, &destination),
                 CMETA_OK);
+    check_equal(cstl_struct_vec_init(&source.values, 8u), STL_OK);
     check_equal(cstl_struct_vec_push(&source.values, 23), STL_OK);
     source.tag = 4;
     check_equal(cmeta_data_value_move(
