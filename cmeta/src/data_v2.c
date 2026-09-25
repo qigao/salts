@@ -206,3 +206,74 @@ cmeta_status cmeta_data_buffer_read(
 #undef CMETA_BUFFER_V2_OPS_SIZE
 #undef CMETA_BUFFER_V2_DESC_OPS_SIZE
 #undef CMETA_BUFFER_V2_FIELD_END
+
+
+#define CMETA_COLLECTION_FIELD_END(type, member) \
+    (offsetof(type, member) + sizeof(((type *)0)->member))
+#define CMETA_COLLECTION_DESC_OPS_SIZE \
+    CMETA_COLLECTION_FIELD_END(cmeta_data_desc, collection_ops)
+#define CMETA_COLLECTION_OPS_SIZE \
+    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, read)
+
+static cmeta_status cmeta_data_collection_ops_status(
+    const cmeta_data_desc *desc, const cmeta_data_collection_ops **out) {
+    const cmeta_data_collection_ops *ops;
+
+    if (out != NULL) *out = NULL;
+    if (!cmeta_data_desc_valid(desc) ||
+        (desc->kind != CMETA_DATA_SEQUENCE && desc->kind != CMETA_DATA_SET) ||
+        desc->struct_size < CMETA_COLLECTION_DESC_OPS_SIZE ||
+        desc->collection_ops == NULL)
+        return CMETA_INVALID_ARGUMENT;
+
+    ops = desc->collection_ops;
+    if (ops->struct_size < CMETA_COLLECTION_OPS_SIZE ||
+        ops->abi_version != CMETA_DATA_COLLECTION_OPS_ABI_VERSION ||
+        ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
+        ops->read == NULL)
+        return CMETA_INVALID_ARGUMENT;
+
+    if (desc->storage_type == NULL ||
+        !cmeta_type_equal(desc->storage_type, ops->storage_type) ||
+        desc->storage_type->kind != ops->storage_type->kind ||
+        desc->storage_type->size != ops->storage_type->size ||
+        desc->storage_type->align != ops->storage_type->align)
+        return CMETA_TYPE_MISMATCH;
+
+    if (out != NULL) *out = ops;
+    return CMETA_OK;
+}
+
+const cmeta_data_collection_ops *cmeta_data_collection_ops_of(
+    const cmeta_data_desc *desc) {
+    const cmeta_data_collection_ops *ops = NULL;
+    return cmeta_data_collection_ops_status(desc, &ops) == CMETA_OK ? ops : NULL;
+}
+
+cmeta_status cmeta_data_collection_read(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_collection_view *out) {
+    const cmeta_data_collection_ops *ops = NULL;
+    cmeta_data_collection_view view = {0};
+    cmeta_status status;
+
+    if (object == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+
+    status = ops->read(object, &view);
+    if (status != CMETA_OK) return status;
+    if (view.count != 0u &&
+        (view.data == NULL || view.stride == 0u ||
+         view.element == NULL || !cmeta_data_desc_valid(view.element)))
+        return CMETA_CALLBACK_ERROR;
+    if (view.count == 0u && view.data != NULL && view.stride == 0u)
+        return CMETA_CALLBACK_ERROR;
+
+    *out = view;
+    return CMETA_OK;
+}
+
+#undef CMETA_COLLECTION_OPS_SIZE
+#undef CMETA_COLLECTION_DESC_OPS_SIZE
+#undef CMETA_COLLECTION_FIELD_END
