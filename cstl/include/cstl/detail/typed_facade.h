@@ -90,7 +90,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
 
 
 #define SALTS_META_MAP_ACCEPT(name,key_type,value_type) \
- CMETA_INLINE cmeta_status name##_map_accept(cmeta_collector *collector,const cmeta_data_desc *key_data,const void *key,const cmeta_data_desc *value_data,const void *value){name##_entry entry;if(collector==NULL||key_data==NULL||value_data==NULL||key==NULL||value==NULL)return CMETA_INVALID_ARGUMENT;if(key_data!=CMETA_DATAOF(key_type)||value_data!=CMETA_DATAOF(value_type))return CMETA_TYPE_MISMATCH;entry.key=(key_type*)key;entry.value=(value_type*)value;return cmeta_collector_accept(collector,&name##_entry_cmeta_type,&entry);}
+ CMETA_INLINE cmeta_status name##_map_accept(cmeta_collector *collector,const cmeta_data_desc *key_data,const void *key,const cmeta_data_desc *value_data,const void *value){name##_entry entry;if(collector==NULL||key_data==NULL||value_data==NULL||key==NULL||value==NULL)return CMETA_INVALID_ARGUMENT;entry.key=(key_type*)key;entry.value=(value_type*)value;return cmeta_collector_accept(collector,&name##_entry_cmeta_type,&entry);}
 
 #define SALTS_META_C1_COLLECTOR(name,type,accept_method) \
  CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,CMETA_TYPEOF(type)))return CMETA_TYPE_MISMATCH;return salts_stl_cmeta_status((stl_status)name##_init((name*)context,limit));} \
