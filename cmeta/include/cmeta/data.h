@@ -435,6 +435,9 @@ typedef cmeta_status (*cmeta_data_map_foreach_fn)(
 
 typedef cmeta_collector (*cmeta_data_map_collector_fn)(
     void *zero_output, size_t limit);
+typedef cmeta_status (*cmeta_data_map_accept_fn)(
+    cmeta_collector *collector, const cmeta_data_desc *key_data,
+    const void *key, const cmeta_data_desc *value_data, const void *value);
 
 typedef struct cmeta_data_map_ops {
     size_t struct_size;
@@ -445,6 +448,7 @@ typedef struct cmeta_data_map_ops {
     cmeta_data_map_member_fn value;
     cmeta_data_map_foreach_fn foreach;
     cmeta_data_map_collector_fn collector;
+    cmeta_data_map_accept_fn accept;
 } cmeta_data_map_ops;
 
 typedef struct cmeta_data_variant_case {
@@ -554,6 +558,11 @@ cmeta_status cmeta_data_map_foreach(
 cmeta_status cmeta_data_map_collector(
     const cmeta_data_desc *desc, void *zero_output, size_t limit,
     cmeta_collector *out);
+
+cmeta_status cmeta_data_map_accept(
+    const cmeta_data_desc *desc, cmeta_collector *collector,
+    const cmeta_data_desc *key_data, const void *key,
+    const cmeta_data_desc *value_data, const void *value);
 
 /** Initialize one raw storage slot to provider semantic zero. */
 cmeta_status cmeta_data_buffer_init_zero(
