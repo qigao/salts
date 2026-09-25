@@ -388,6 +388,52 @@ static const cmeta_data_desc cmeta_data_test_owned_desc = {
     &cmeta_data_test_owned_record_type, &cmeta_data_test_owned_shape
 };
 
+typedef struct cmeta_data_test_outer_record {
+    cmeta_data_test_record inner;
+    int tail;
+} cmeta_data_test_outer_record;
+
+static const cmeta_type_identity cmeta_data_test_outer_identity =
+    CMETA_TYPE_ID_ATOM_INIT("test.OuterRecord");
+static const cmeta_type_desc cmeta_data_test_outer_type = {
+    .name = "cmeta_data_test_outer_record",
+    .size = sizeof(cmeta_data_test_outer_record),
+    .align = _Alignof(cmeta_data_test_outer_record),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = NULL,
+    .identity = &cmeta_data_test_outer_identity
+};
+static const cmeta_field_desc cmeta_data_test_outer_layout_fields[] = {
+    { "inner", "cmeta_data_test_record",
+      offsetof(cmeta_data_test_outer_record, inner),
+      sizeof(cmeta_data_test_record), _Alignof(cmeta_data_test_record),
+      &cmeta_data_test_record_type, NULL },
+    { "tail", "int", offsetof(cmeta_data_test_outer_record, tail),
+      sizeof(int), _Alignof(int), &cmeta_type_int, NULL }
+};
+static const cmeta_struct_desc cmeta_data_test_outer_layout = {
+    "cmeta_data_test_outer_record", sizeof(cmeta_data_test_outer_record),
+    _Alignof(cmeta_data_test_outer_record),
+    cmeta_data_test_outer_layout_fields, 2u
+};
+static const cmeta_data_field_desc cmeta_data_test_outer_fields[] = {
+    { "test.OuterRecord.inner", "inner",
+      offsetof(cmeta_data_test_outer_record, inner),
+      &cmeta_data_test_record_desc },
+    { "test.OuterRecord.tail", "tail",
+      offsetof(cmeta_data_test_outer_record, tail),
+      &cmeta_data_int }
+};
+static const cmeta_data_struct_shape cmeta_data_test_outer_shape = {
+    &cmeta_data_test_outer_layout, cmeta_data_test_outer_fields, 2u
+};
+static const cmeta_data_desc cmeta_data_test_outer_desc = {
+    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
+    "test.OuterRecord.data", "OuterRecord", CMETA_DATA_STRUCT,
+    &cmeta_data_test_outer_type, &cmeta_data_test_outer_shape
+};
+
 static const cmeta_data_variant_case cmeta_data_test_variant_cases[] = {
     {
         .tag = 1,
@@ -1089,6 +1135,25 @@ spec("CMeta semantic data descriptors") {
                     &cmeta_data_test_owned_desc, &destination), CMETA_OK);
     check_equal(destination.payload, 0);
     check_equal(destination.count, 0);
+  }
+
+  it("derives lifecycle recursively through nested structs") {
+    cmeta_data_test_outer_record source = {{3, 4}, 5};
+    cmeta_data_test_outer_record destination = {{0, 0}, 0};
+
+    check_true(cmeta_data_struct_constructible(&cmeta_data_test_outer_desc));
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_outer_desc, &destination),
+                CMETA_OK);
+    check_equal(cmeta_data_value_move(
+                    &cmeta_data_test_outer_desc, &destination, &source),
+                CMETA_OK);
+    check_equal(destination.inner.id, 3);
+    check_equal(destination.inner.score, 4);
+    check_equal(destination.tail, 5);
+    check_equal(source.inner.id, 0);
+    check_equal(source.inner.score, 0);
+    check_equal(source.tail, 0);
   }
 
   it("keeps container categories free of T K V") {
