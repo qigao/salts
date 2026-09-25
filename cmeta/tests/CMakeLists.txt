@@ -39,6 +39,10 @@ target_link_libraries(cmeta_reflection_plugin_test PRIVATE
   $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>)
 target_compile_definitions(cmeta_reflection_plugin_test PRIVATE
   CMETA_TEST_PLUGIN_PATH="$<TARGET_FILE:cmeta_reflection_plugin>")
+# uv.h exposes pthread_rwlock_t even when only its loader API is used.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(cmeta_reflection_plugin_test PRIVATE _POSIX_C_SOURCE=200809L)
+endif()
 add_dependencies(cmeta_reflection_plugin_test cmeta_reflection_plugin)
 set_target_properties(cmeta_reflection_plugin_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF FOLDER "cmeta/tests")
