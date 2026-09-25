@@ -473,4 +473,61 @@ spec("CSTL semantic projection") {
     check_null(cmeta_container_data(&raw_heap));
   }
 
+
+  it("borrows collection elements without copying and detects mutation") {
+    typed(Vec, borrow_vec, int);
+    typed(List, borrow_list, int);
+    typed(HashSet, borrow_hash_set, int);
+    borrow_vec vec = {0};
+    borrow_list list = {0};
+    borrow_hash_set set = {0};
+    cmeta_data_collection_borrow_cursor cursor = {0};
+    const void *element = NULL;
+    size_t size = 0u;
+
+    check_equal(borrow_vec_init(&vec, 8u), STL_OK);
+    check_equal(borrow_vec_push(&vec, 3), STL_OK);
+    check_equal(borrow_vec_push(&vec, 5), STL_OK);
+    check_equal(cmeta_data_collection_borrow_begin(
+                    &borrow_vec_collection_data, &vec, &cursor),
+                CMETA_OK);
+    check_equal(cmeta_data_collection_borrow_size(&cursor, &size), CMETA_OK);
+    check_equal(size, 2u);
+    check_equal(cmeta_data_collection_borrow_next(&cursor, &element),
+                CMETA_GEN_VALUE);
+    check_equal(*(const int *)element, 3);
+    check_equal(borrow_vec_push(&vec, 7), STL_OK);
+    check_equal(cmeta_data_collection_borrow_next(&cursor, &element),
+                CMETA_GEN_MUTATED);
+    borrow_vec_destroy(&vec);
+
+    check_equal(borrow_list_init(&list, 8u), STL_OK);
+    check_equal(borrow_list_push_back(&list, 7, NULL), STL_OK);
+    check_equal(borrow_list_push_back(&list, 11, NULL), STL_OK);
+    cursor = (cmeta_data_collection_borrow_cursor){0};
+    check_equal(cmeta_data_collection_borrow_begin(
+                    &borrow_list_collection_data, &list, &cursor),
+                CMETA_OK);
+    check_equal(cmeta_data_collection_borrow_next(&cursor, &element),
+                CMETA_GEN_VALUE);
+    check_equal(*(const int *)element, 7);
+    check_equal(cmeta_data_collection_borrow_next(&cursor, &element),
+                CMETA_GEN_VALUE);
+    check_equal(*(const int *)element, 11);
+    check_equal(cmeta_data_collection_borrow_next(&cursor, &element),
+                CMETA_GEN_DONE);
+    borrow_list_destroy(&list);
+
+    check_equal(borrow_hash_set_init(&set, 8u), STL_OK);
+    check_equal(borrow_hash_set_add(&set, 13), STL_OK);
+    cursor = (cmeta_data_collection_borrow_cursor){0};
+    check_equal(cmeta_data_collection_borrow_begin(
+                    &borrow_hash_set_collection_data, &set, &cursor),
+                CMETA_OK);
+    check_equal(cmeta_data_collection_borrow_next(&cursor, &element),
+                CMETA_GEN_VALUE);
+    check_equal(*(const int *)element, 13);
+    borrow_hash_set_destroy(&set);
+  }
+
 }
