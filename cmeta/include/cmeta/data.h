@@ -38,6 +38,7 @@ typedef struct cmeta_data_enum_bits_ops cmeta_data_enum_bits_ops;
 typedef struct cmeta_data_variant_ops cmeta_data_variant_ops;
 typedef struct cmeta_data_fixed_ops cmeta_data_fixed_ops;
 typedef struct cmeta_data_collection_ops cmeta_data_collection_ops;
+typedef struct cmeta_data_map_ops cmeta_data_map_ops;
 
 typedef struct cmeta_data_desc {
     size_t struct_size;
@@ -56,6 +57,8 @@ typedef struct cmeta_data_desc {
     const cmeta_data_enum_bits_ops *enum_bits_ops;
     /** Optional provider-neutral collection read adapter. */
     const cmeta_data_collection_ops *collection_ops;
+    /** Optional provider-neutral map key/value adapter. */
+    const cmeta_data_map_ops *map_ops;
 } cmeta_data_desc;
 
 typedef struct cmeta_data_integer_shape {
@@ -386,6 +389,25 @@ typedef struct cmeta_data_collection_ops {
     cmeta_data_collection_foreach_fn foreach;
 } cmeta_data_collection_ops;
 
+enum { CMETA_DATA_MAP_OPS_ABI_VERSION = 1u };
+
+typedef const cmeta_data_desc *(*cmeta_data_map_member_fn)(
+    const void *object);
+typedef cmeta_status (*cmeta_data_map_visit_fn)(
+    void *context, const void *key, const void *value);
+typedef cmeta_status (*cmeta_data_map_foreach_fn)(
+    const void *object, cmeta_data_map_visit_fn visit, void *context,
+    size_t max_items);
+
+typedef struct cmeta_data_map_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_type_desc *storage_type;
+    cmeta_data_map_member_fn key;
+    cmeta_data_map_member_fn value;
+    cmeta_data_map_foreach_fn foreach;
+} cmeta_data_map_ops;
+
 typedef struct cmeta_data_variant_case {
     int64_t tag;
     const char *stable_id;
@@ -431,6 +453,12 @@ cmeta_status cmeta_data_collection_read(
 cmeta_status cmeta_data_collection_foreach(
     const cmeta_data_desc *desc, const void *object,
     cmeta_data_collection_visit_fn visit, void *context, size_t max_items);
+
+const cmeta_data_map_ops *cmeta_data_map_ops_of(
+    const cmeta_data_desc *desc);
+cmeta_status cmeta_data_map_foreach(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_map_visit_fn visit, void *context, size_t max_items);
 
 /** Initialize one raw storage slot to provider semantic zero. */
 cmeta_status cmeta_data_buffer_init_zero(
