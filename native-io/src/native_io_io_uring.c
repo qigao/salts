@@ -60,6 +60,9 @@ typedef struct salts_io_uring_request_record {
   uint64_t native_token;
   uint32_t previous;
   uint32_t next;
+  uint32_t staged_previous;
+  uint32_t staged_next;
+  bool staged;
   bool write_lane;
   bool in_flight;
   bool cancel_requested;
@@ -83,6 +86,8 @@ typedef struct salts_io_uring_impl {
   size_t endpoint_count;
   size_t active_requests;
   uint64_t submitted;
+  uint32_t staged_head;
+  uint32_t staged_tail;
   uint64_t completed;
   uint64_t cancelled;
   uint64_t failed;
@@ -232,6 +237,30 @@ static int uring_enter(salts_io_uring_impl *impl, unsigned submit, unsigned mini
   return status < 0 ? -errno : status;
 }
 
+/* Scheduling links live in the request record: no second payload/owner queue,
+ * allocation, or scan over unused endpoint capacity. Admission/removal is O(1). */
+static void uring_stage(salts_io_uring_impl *impl, uint32_t index) {
+  salts_io_uring_request_record *request = &impl->requests[index];
+  request->staged_previous = impl->staged_tail;
+  request->staged_next = SALTS_IO_URING_INDEX_NONE;
+  if (impl->staged_tail == SALTS_IO_URING_INDEX_NONE) impl->staged_head = index;
+  else impl->requests[impl->staged_tail].staged_next = index;
+  impl->staged_tail = index;
+  request->staged = true;
+}
+
+static void uring_unstage(salts_io_uring_impl *impl, uint32_t index) {
+  salts_io_uring_request_record *request = &impl->requests[index];
+  if (!request->staged) return;
+  if (request->staged_previous == SALTS_IO_URING_INDEX_NONE)
+    impl->staged_head = request->staged_next;
+  else impl->requests[request->staged_previous].staged_next = request->staged_next;
+  if (request->staged_next == SALTS_IO_URING_INDEX_NONE)
+    impl->staged_tail = request->staged_previous;
+  else impl->requests[request->staged_next].staged_previous = request->staged_previous;
+  request->staged = false;
+}
+
 static int uring_publish_sqe(salts_io_uring_impl *impl, const struct io_uring_sqe *prepared) {
   const unsigned head =
       atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
@@ -379,17 +408,87 @@ static void uring_queue_terminal(salts_io_uring_impl *impl, salts_io_uring_reque
   ++impl->terminal_count;
 }
 
-static void uring_start_lane(salts_io_uring_impl *impl, salts_io_uring_endpoint *endpoint,
-                             salts_io_uring_lane *lane) {
-  while (lane->head != SALTS_IO_URING_INDEX_NONE) {
-    const uint32_t index = lane->head;
-    salts_io_uring_request_record *request = &impl->requests[index];
-    const int status = uring_start_request(impl, request, endpoint->fd);
-    if (status == SALTS_OK) return;
-    uring_lane_remove(impl, endpoint, index);
-    uring_counter_increment(&impl->native_submit_errors);
-    uring_queue_terminal(impl, request, index, status);
+static void uring_start_lane(salts_io_uring_impl *impl, salts_io_uring_lane *lane) {
+  if (lane->head != SALTS_IO_URING_INDEX_NONE) {
+    salts_io_uring_request_record *request = &impl->requests[lane->head];
+    if (!request->in_flight && !request->staged) uring_stage(impl, lane->head);
   }
+}
+
+static void uring_fail_staged(salts_io_uring_impl *impl, int status) {
+  while (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
+    const uint32_t index = impl->staged_head;
+    salts_io_uring_request_record *request = &impl->requests[index];
+    salts_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
+    salts_io_uring_lane *lane = uring_lane(endpoint, request->write_lane);
+    uring_unstage(impl, index);
+    uring_lane_remove(impl, endpoint, index);
+    uring_queue_terminal(impl, request, index, status);
+    uring_counter_increment(&impl->native_submit_errors);
+    uring_start_lane(impl, lane);
+  }
+}
+
+/* O(eligible requests), including short enters: keep the prepared suffix in SQ
+ * instead of rebuilding it on every retry. With no SQPOLL, an error can withdraw
+ * only that unconsumed suffix without releasing any kernel-owned storage. */
+static int uring_flush(salts_io_impl *base) {
+  salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
+  while (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
+    const unsigned head = atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
+    const unsigned tail = atomic_load_explicit((_Atomic unsigned *)impl->sq_tail, memory_order_relaxed);
+    const unsigned available = *impl->sq_entries - (tail - head);
+    unsigned count = 0u;
+    uint32_t index = impl->staged_head;
+    bool pipe_write = false;
+    salts_io_uring_sigpipe_guard guard = {0};
+    int status;
+    while (index != SALTS_IO_URING_INDEX_NONE && count < available) {
+      salts_io_uring_request_record *request = &impl->requests[index];
+      const unsigned slot = (tail + count) & *impl->sq_mask;
+      uring_prepare_operation(request, &impl->sqes[slot],
+                              impl->endpoints[request->endpoint.slot - 1u].fd);
+      impl->sq_array[slot] = slot;
+      pipe_write |= request->operation.kind == NATIVE_IO_OPERATION_PIPE_WRITE;
+      index = request->staged_next;
+      ++count;
+    }
+    status = count == 0u ? SALTS_EBUSY
+                        : pipe_write ? uring_sigpipe_guard_begin(&guard) : SALTS_OK;
+    if (status == SALTS_OK) {
+      unsigned remaining = count;
+      unsigned consumed_head = head;
+      atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail + count, memory_order_release);
+      do {
+        status = uring_enter(impl, remaining, 0u, 0u);
+        const unsigned next_head = atomic_load_explicit((_Atomic unsigned *)impl->sq_head,
+                                                         memory_order_acquire);
+        const unsigned consumed = next_head - consumed_head;
+        if (consumed > remaining) {
+          uring_sigpipe_guard_end(&guard);
+          return SALTS_EPROTO;
+        }
+        for (unsigned i = 0u; i < consumed; ++i) {
+          const uint32_t accepted = impl->staged_head;
+          uring_unstage(impl, accepted);
+          impl->requests[accepted].in_flight = true;
+        }
+        remaining -= consumed;
+        consumed_head = next_head;
+        if (status >= 0) status = consumed == 0u ? SALTS_EIO : SALTS_OK;
+        if (status != SALTS_OK) {
+          atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, next_head, memory_order_release);
+          break;
+        }
+      } while (remaining != 0u);
+    }
+    uring_sigpipe_guard_end(&guard);
+    if (status != SALTS_OK) {
+      uring_fail_staged(impl, status);
+      return status;
+    }
+  }
+  return SALTS_OK;
 }
 
 static int uring_attach_endpoint(salts_io_uring_impl *impl, int fd,
@@ -493,8 +592,8 @@ static int uring_release_pipe(salts_io_impl *base, native_io_endpoint endpoint_h
   return uring_release_endpoint((salts_io_uring_impl *)base, endpoint_handle, false);
 }
 
-static int uring_submit(salts_io_impl *base, const native_io_operation *operation,
-                        native_io_request *out_request) {
+static int uring_admit(salts_io_impl *base, const native_io_operation *operation,
+                       native_io_request *out_request, bool prepared) {
   salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
   salts_io_uring_endpoint *endpoint;
   salts_io_uring_request_record *request;
@@ -533,12 +632,16 @@ static int uring_submit(salts_io_impl *base, const native_io_operation *operatio
   request->in_flight = false;
   request->cancel_requested = false;
   ++endpoint->active_requests;
+  request->staged = false;
   ++impl->active_requests;
   if (operation->kind == NATIVE_IO_OPERATION_STREAM_CONNECT) endpoint->connect_active = true;
   lane = uring_lane(endpoint, request->write_lane);
   uring_lane_push(impl, endpoint, index);
   if (lane->head == index) {
-    status = uring_start_request(impl, request, endpoint->fd);
+    if (prepared) {
+      uring_stage(impl, index);
+      status = SALTS_OK;
+    } else status = uring_start_request(impl, request, endpoint->fd);
     if (status != SALTS_OK) {
       uring_lane_remove(impl, endpoint, index);
       endpoint->connect_active = false;
@@ -550,6 +653,16 @@ static int uring_submit(salts_io_impl *base, const native_io_operation *operatio
   uring_counter_increment(&impl->submitted);
   *out_request = request->request;
   return SALTS_OK;
+}
+
+static int uring_submit(salts_io_impl *base, const native_io_operation *operation,
+                        native_io_request *out_request) {
+  return uring_admit(base, operation, out_request, false);
+}
+
+static int uring_prepare(salts_io_impl *base, const native_io_operation *operation,
+                         native_io_request *out_request) {
+  return uring_admit(base, operation, out_request, true);
 }
 
 static int uring_cancel(salts_io_impl *base, native_io_request request_handle) {
@@ -567,8 +680,11 @@ static int uring_cancel(salts_io_impl *base, native_io_request request_handle) {
     endpoint = uring_endpoint(impl, request->endpoint);
     if (endpoint == NULL) return SALTS_ENOENT;
     index = request->request.slot - 1u;
+    salts_io_uring_lane *lane = uring_lane(endpoint, request->write_lane);
+    uring_unstage(impl, index);
     uring_lane_remove(impl, endpoint, index);
     uring_queue_terminal(impl, request, index, -ECANCELED);
+    uring_start_lane(impl, lane);
     return SALTS_OK;
   }
   memset(&sqe, 0, sizeof(sqe));
@@ -610,7 +726,7 @@ static void uring_process_cq(salts_io_uring_impl *impl) {
         request->in_flight = false;
         uring_lane_remove(impl, endpoint, index);
         uring_queue_terminal(impl, request, index, result);
-        uring_start_lane(impl, endpoint, lane);
+        uring_start_lane(impl, lane);
       }
     }
   }
@@ -630,6 +746,18 @@ static void uring_drain_terminals(salts_io_uring_impl *impl, native_io_completio
   }
 }
 
+static int uring_progress(salts_io_uring_impl *impl) {
+  uring_process_cq(impl);
+  while (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
+    const int status = uring_flush(&impl->base);
+    if (status != SALTS_OK) return status;
+    /* enter can complete a send synchronously. Inspect its CQE before poll;
+     * promoted lane heads still join the next bounded submission batch. */
+    uring_process_cq(impl);
+  }
+  return SALTS_OK;
+}
+
 static int uring_observe(salts_io_impl *base, native_io_completion *events, size_t event_capacity,
                          uint32_t timeout_ms, size_t *out_count) {
   salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
@@ -638,7 +766,8 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
                            : impl->completion_batch_capacity;
   const uint64_t started_ms = salts_monotonic_ms();
   uint32_t wait_timeout = timeout_ms;
-  uring_process_cq(impl);
+  int flush_status = uring_progress(impl);
+  if (flush_status != SALTS_OK) return flush_status;
   uring_drain_terminals(impl, events, limit, out_count);
   if (*out_count != 0u) return SALTS_OK;
   for (;;) {
@@ -657,7 +786,8 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
     if ((descriptors[0].revents & (POLLERR | POLLNVAL)) != 0 ||
         (descriptors[1].revents & (POLLERR | POLLNVAL)) != 0)
       return SALTS_EIO;
-    uring_process_cq(impl);
+    flush_status = uring_progress(impl);
+    if (flush_status != SALTS_OK) return flush_status;
     uring_drain_terminals(impl, events, limit, out_count);
     if (*out_count != 0u) return SALTS_OK;
     if ((descriptors[1].revents & POLLIN) != 0) {
@@ -743,7 +873,8 @@ static bool uring_get_stats(const salts_io_impl *base, native_io_backend_stats *
 static const salts_io_impl_ops uring_ops = {
     uring_attach_socket, uring_release_socket, uring_submit,      uring_cancel,
     uring_observe,       uring_wake,           uring_close,       uring_destroy,
-    uring_get_stats,     uring_attach_pipe,    uring_release_pipe};
+    uring_get_stats,     uring_attach_pipe,    uring_release_pipe,
+    uring_prepare,       uring_flush};
 
 static bool uring_mapped_extent(size_t offset, size_t count, size_t element_size, size_t *out) {
   if (element_size == 0u || count > (SIZE_MAX - offset) / element_size) return false;
@@ -834,6 +965,7 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
   if (impl == NULL) return SALTS_ENOMEM;
   impl->ring_fd = -1;
   impl->wake_fd = -1;
+  impl->staged_head = impl->staged_tail = SALTS_IO_URING_INDEX_NONE;
   impl->sq_ring = MAP_FAILED;
   impl->cq_ring = MAP_FAILED;
   impl->sqes = MAP_FAILED;

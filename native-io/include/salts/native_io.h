@@ -248,6 +248,29 @@ SALTS_NATIVE_IO_C_API int native_io_backend_submit(native_io_backend *backend,
                                                    native_io_request *out_request);
 
 /**
+ * Admits one operation for backend-native batching. Validation, capacity, FIFO,
+ * handle and payload-borrow rules match submit. SALTS_OK transfers the descriptor
+ * to the backend, not necessarily the kernel. io_uring stages eligible lane heads;
+ * readiness/IOCP may start immediately. Do not rely on absence of side effects.
+ * Call flush or observe to progress prepared operations. Errors discovered after
+ * admission are terminal completions, including a later native submission error.
+ * Failure clears out_request and retains no borrow. Owner thread only.
+ */
+SALTS_NATIVE_IO_C_API int native_io_backend_prepare(native_io_backend *backend,
+                                                    const native_io_operation *operation,
+                                                    native_io_request *out_request);
+
+/**
+ * Starts eligible prepared operations without waiting for their completion.
+ * Already-started lane heads retain FIFO precedence. Empty flush succeeds, even
+ * after close, so accepted work can drain. A native flush failure is returned
+ * immediately; affected unsubmitted requests also receive FAILED completions.
+ * Submitted requests are never rolled back. All admitted handles/payloads remain
+ * retained until their terminal completions are observed, including on failure.
+ */
+SALTS_NATIVE_IO_C_API int native_io_backend_flush(native_io_backend *backend);
+
+/**
  * Starts one bounded coroutine on the backend owner thread.
  *
  * The entry runs immediately until it returns or calls
@@ -274,6 +297,12 @@ SALTS_NATIVE_IO_C_API int native_io_coroutine_await(native_io_coroutine *corouti
                                                     const native_io_operation *operation,
                                                     native_io_completion *out_completion);
 
+/** Like await, but admits through prepare so separate coroutine entries can
+ * share a backend submission batch. Owner observe flushes before waiting. */
+SALTS_NATIVE_IO_C_API int native_io_coroutine_await_prepared(native_io_coroutine *coroutine,
+                                                            const native_io_operation *operation,
+                                                            native_io_completion *out_completion);
+
 /** Requests cancellation of the operation currently awaited by task. */
 SALTS_NATIVE_IO_C_API int native_io_backend_cancel_coroutine(native_io_backend *backend,
                                                              native_io_coroutine_task task);
@@ -288,7 +317,8 @@ SALTS_NATIVE_IO_C_API int native_io_backend_cancel(native_io_backend *backend,
                                                    native_io_request request);
 
 /**
- * Directly dequeues up to min(event_capacity, configured batch capacity)
+ * Flushes eligible prepared operations, then directly dequeues up to
+ * min(event_capacity, configured batch capacity)
  * completion packets on the owner thread. Completions owned by a coroutine
  * await resume that coroutine and are not copied to events; processing only
  * such completions returns SALTS_OK with out_count == 0. NativeIO resolves
