@@ -111,6 +111,81 @@ static cmeta_status salts_lua_push_struct(
   return CMETA_OK;
 }
 
+static cmeta_status salts_lua_push_enum(
+    lua_State *state, const cmeta_data_desc *data, const void *object) {
+  const cmeta_data_enum_shape *shape =
+      (const cmeta_data_enum_shape *)data->shape;
+  int64_t value;
+  const char *text;
+  if (shape == NULL || shape->meta == NULL) return CMETA_INVALID_ARGUMENT;
+  if (cmeta_data_enum_read(data, object, &value) != CMETA_OK)
+    return CMETA_TYPE_MISMATCH;
+  text = cmeta_enum_to_string(shape->meta, value);
+  if (text == NULL) return CMETA_TYPE_MISMATCH;
+  lua_pushstring(state, text);
+  return CMETA_OK;
+}
+
+typedef struct salts_lua_collection_context {
+  salts_lua_push_context *push;
+  size_t index;
+} salts_lua_collection_context;
+
+static cmeta_status salts_lua_collection_visit(
+    void *opaque, const void *element) {
+  salts_lua_collection_context *visit =
+      (salts_lua_collection_context *)opaque;
+  cmeta_status status;
+  const cmeta_data_desc *element_data;
+  if (visit == NULL || visit->push == NULL) return CMETA_INVALID_ARGUMENT;
+  element_data = NULL; /* supplied by caller through active collection data */
+  (void)element_data;
+  return CMETA_TRAIT_MISSING;
+}
+
+static cmeta_status salts_lua_push_collection(
+    salts_lua_push_context *context, const cmeta_data_desc *data,
+    const void *object) {
+  const cmeta_data_collection_ops *ops = cmeta_data_collection_ops_of(data);
+  const cmeta_data_desc *element_data;
+  cmeta_data_collection_view view = {0};
+  size_t i;
+  int top;
+  cmeta_status status;
+  if (ops == NULL) return CMETA_TRAIT_MISSING;
+  element_data = ops->element(object);
+  if (element_data == NULL || !cmeta_data_desc_valid(element_data))
+    return CMETA_TRAIT_MISSING;
+  if (context->depth >= context->limits.max_depth)
+    return CMETA_CAPACITY_EXCEEDED;
+  top = lua_gettop(context->state);
+  lua_createtable(context->state, 0, 0);
+  ++context->depth;
+  if (ops->read != NULL) {
+    status = cmeta_data_collection_read(data, object, &view);
+    if (status != CMETA_OK) goto fail;
+    if (view.count > context->limits.max_items) {
+      status = CMETA_CAPACITY_EXCEEDED; goto fail;
+    }
+    for (i = 0u; i < view.count; ++i) {
+      status = salts_lua_push_value(
+          context, element_data,
+          (const unsigned char *)view.data + i * view.stride);
+      if (status != CMETA_OK) goto fail;
+      lua_rawseti(context->state, -2, (lua_Integer)(i + 1u));
+    }
+    --context->depth;
+    return CMETA_OK;
+  }
+  /* Non-contiguous providers are wired in the next slice; do not infer native
+   * iterator representation here. */
+  status = CMETA_TRAIT_MISSING;
+fail:
+  --context->depth;
+  lua_settop(context->state, top);
+  return status;
+}
+
 static cmeta_status salts_lua_push_value(
     salts_lua_push_context *context, const cmeta_data_desc *data,
     const void *object) {
@@ -129,8 +204,13 @@ static cmeta_status salts_lua_push_value(
     case CMETA_DATA_STRING:
     case CMETA_DATA_BYTES:
       return salts_lua_push_buffer(context, data, object);
+    case CMETA_DATA_ENUM:
+      return salts_lua_push_enum(context->state, data, object);
     case CMETA_DATA_STRUCT:
       return salts_lua_push_struct(context, data, object);
+    case CMETA_DATA_SEQUENCE:
+    case CMETA_DATA_SET:
+      return salts_lua_push_collection(context, data, object);
     default:
       return CMETA_TRAIT_MISSING;
   }
