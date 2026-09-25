@@ -1,4 +1,5 @@
 #include <cmeta/invokable.h>
+#include <cmeta/interface.h>
 
 bool cmeta_function_data_desc_valid(
     const cmeta_function_data_desc *desc) {
@@ -101,6 +102,19 @@ cmeta_status cmeta_invokable_bind_data(
     if (status != CMETA_OK) return status;
     out->data = data;
     return CMETA_OK;
+}
+
+cmeta_status cmeta_interface_method_invokable_bind(
+    const cmeta_interface_method_desc *method,
+    const cmeta_function_data_desc *data,
+    cmeta_callable callable, cmeta_invokable *out) {
+    if (method == NULL || data == NULL || out == NULL ||
+        !cmeta_interface_method_reflection_valid(method) ||
+        !cmeta_function_data_desc_valid(data))
+        return CMETA_INVALID_ARGUMENT;
+    if (!cmeta_function_desc_equal(method->function, data->function))
+        return CMETA_TYPE_MISMATCH;
+    return cmeta_invokable_bind_data(data, callable, out);
 }
 
 bool cmeta_invokable_valid(const cmeta_invokable *invokable) {
