@@ -327,7 +327,8 @@ jobs:
       - name: Run NativeIO and NativeIPC contract tests
         shell: pwsh
         run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(native_(io|ipc)_(test|header_cpp_test)|native_io_uring_batch_test)          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(native_(io|ipc)_(test|header_cpp_test)|native_io_uring_batch_test)$' --timeout 30 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run CNet contract tests
         shell: pwsh
