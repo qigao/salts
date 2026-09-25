@@ -926,6 +926,10 @@ cmeta_status cmeta_data_value_init_zero(
     if (!cmeta_data_desc_valid(desc) || object == NULL ||
         desc->storage_type == NULL)
         return CMETA_INVALID_ARGUMENT;
+    if (desc->fixed_ops != NULL)
+        return cmeta_data_fixed_restore_zero(desc, object);
+    if (desc->variant_ops != NULL)
+        return cmeta_data_variant_restore_zero(desc, object);
     switch (desc->kind) {
         case CMETA_DATA_BOOL:
         case CMETA_DATA_SINT:
@@ -945,10 +949,6 @@ cmeta_status cmeta_data_value_init_zero(
         default:
             break;
     }
-    if (desc->fixed_ops != NULL)
-        return cmeta_data_fixed_restore_zero(desc, object);
-    if (desc->variant_ops != NULL)
-        return cmeta_data_variant_restore_zero(desc, object);
     return cmeta_data_construct_init_zero(desc, object);
 }
 
@@ -957,6 +957,10 @@ cmeta_status cmeta_data_value_restore_zero(
     if (!cmeta_data_desc_valid(desc) || object == NULL ||
         desc->storage_type == NULL)
         return CMETA_INVALID_ARGUMENT;
+    if (desc->fixed_ops != NULL)
+        return cmeta_data_fixed_restore_zero(desc, object);
+    if (desc->variant_ops != NULL)
+        return cmeta_data_variant_restore_zero(desc, object);
     switch (desc->kind) {
         case CMETA_DATA_BOOL:
         case CMETA_DATA_SINT:
@@ -976,10 +980,6 @@ cmeta_status cmeta_data_value_restore_zero(
         default:
             break;
     }
-    if (desc->fixed_ops != NULL)
-        return cmeta_data_fixed_restore_zero(desc, object);
-    if (desc->variant_ops != NULL)
-        return cmeta_data_variant_restore_zero(desc, object);
     return cmeta_data_construct_restore_zero(desc, object);
 }
 
@@ -1159,6 +1159,14 @@ static cmeta_status cmeta_data_temp_init(
         return CMETA_INVALID_ARGUMENT;
     status = cmeta_data_value_init_zero(desc, storage);
     if (status != CMETA_OK) return status;
+    if (desc->fixed_ops != NULL) {
+        *lifecycle = CMETA_DATA_TEMP_FIXED;
+        return CMETA_OK;
+    }
+    if (desc->variant_ops != NULL) {
+        *lifecycle = CMETA_DATA_TEMP_VARIANT;
+        return CMETA_OK;
+    }
     switch (desc->kind) {
         case CMETA_DATA_BOOL:
         case CMETA_DATA_SINT:
@@ -1174,9 +1182,7 @@ static cmeta_status cmeta_data_temp_init(
                              : CMETA_DATA_TEMP_ENUM;
             break;
         default:
-            if (desc->fixed_ops != NULL) *lifecycle = CMETA_DATA_TEMP_FIXED;
-            else if (desc->variant_ops != NULL) *lifecycle = CMETA_DATA_TEMP_VARIANT;
-            else *lifecycle = CMETA_DATA_TEMP_CONSTRUCT;
+            *lifecycle = CMETA_DATA_TEMP_CONSTRUCT;
             break;
     }
     return CMETA_OK;

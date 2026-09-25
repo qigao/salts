@@ -522,6 +522,7 @@ static const cmeta_data_desc cmeta_data_test_outer_desc = {
 };
 
 static const int cmeta_data_test_failing_shape = 1;
+static size_t cmeta_data_test_failing_restore_calls;
 
 static cmeta_status cmeta_data_test_failing_init(void *object) {
     if (object == NULL) return CMETA_INVALID_ARGUMENT;
@@ -529,7 +530,10 @@ static cmeta_status cmeta_data_test_failing_init(void *object) {
     return CMETA_CALLBACK_ERROR;
 }
 static void cmeta_data_test_failing_restore(void *object) {
-    if (object != NULL) *(int *)object = 0;
+    if (object != NULL) {
+        *(int *)object = 0;
+        ++cmeta_data_test_failing_restore_calls;
+    }
 }
 static void cmeta_data_test_failing_move(void *destination, void *source) {
     if (destination == NULL || source == NULL) return;
@@ -570,6 +574,60 @@ static const cmeta_data_desc cmeta_data_test_rollback_desc = {
     .kind = CMETA_DATA_STRUCT,
     .storage_type = &cmeta_data_test_owned_record_type,
     .shape = &cmeta_data_test_rollback_shape
+};
+
+typedef struct cmeta_data_test_over_aligned_storage {
+    _Alignas(64) unsigned char bytes[64];
+} cmeta_data_test_over_aligned_storage;
+
+static size_t cmeta_data_test_over_aligned_restore_calls;
+
+static cmeta_status cmeta_data_test_over_aligned_init(void *object) {
+    if (object == NULL) return CMETA_INVALID_ARGUMENT;
+    memset(object, 0, sizeof(cmeta_data_test_over_aligned_storage));
+    return CMETA_OK;
+}
+
+static void cmeta_data_test_over_aligned_restore(void *object) {
+    if (object == NULL) return;
+    memset(object, 0, sizeof(cmeta_data_test_over_aligned_storage));
+    ++cmeta_data_test_over_aligned_restore_calls;
+}
+
+static void cmeta_data_test_over_aligned_move(
+    void *destination, void *source) {
+    if (destination == NULL || source == NULL) return;
+    memcpy(destination, source, sizeof(cmeta_data_test_over_aligned_storage));
+    memset(source, 0, sizeof(cmeta_data_test_over_aligned_storage));
+}
+
+static const cmeta_type_identity cmeta_data_test_over_aligned_identity =
+    CMETA_TYPE_ID_ATOM_INIT("test.OverAligned");
+static const cmeta_type_desc cmeta_data_test_over_aligned_type = {
+    .name = "cmeta_data_test_over_aligned_storage",
+    .size = sizeof(cmeta_data_test_over_aligned_storage),
+    .align = _Alignof(cmeta_data_test_over_aligned_storage),
+    .kind = CMETA_T_OBJECT,
+    .identity = &cmeta_data_test_over_aligned_identity
+};
+static const cmeta_data_construct_ops cmeta_data_test_over_aligned_construct = {
+    .struct_size = sizeof(cmeta_data_construct_ops),
+    .abi_version = CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,
+    .storage_type = &cmeta_data_test_over_aligned_type,
+    .init_zero = cmeta_data_test_over_aligned_init,
+    .restore_zero = cmeta_data_test_over_aligned_restore,
+    .move = cmeta_data_test_over_aligned_move
+};
+static const int cmeta_data_test_over_aligned_shape = 1;
+static const cmeta_data_desc cmeta_data_test_over_aligned_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.OverAligned.data",
+    .display_name = "OverAligned",
+    .kind = CMETA_DATA_CUSTOM,
+    .storage_type = &cmeta_data_test_over_aligned_type,
+    .shape = &cmeta_data_test_over_aligned_shape,
+    .construct_ops = &cmeta_data_test_over_aligned_construct
 };
 
 static const cmeta_data_variant_case cmeta_data_test_variant_cases[] = {
@@ -1254,6 +1312,83 @@ spec("CMeta semantic data descriptors") {
     check_null(cmeta_data_integer_width(true, 7u));
     check_true(cmeta_data_int8.storage_type == &cmeta_type_int8);
     check_true(cmeta_data_uint64.storage_type == &cmeta_type_uint64);
+  }
+
+  it("dispatches temporary storage through every canonical lifecycle") {
+    const cmeta_data_desc *const descriptors[] = {
+        &cmeta_data_int,
+        &cmeta_data_test_buffer_desc,
+        &cmeta_data_test_enum_desc,
+        &cmeta_data_test_fixed_desc,
+        &cmeta_data_test_variant_desc,
+        &cmeta_data_test_record_desc
+    };
+    const cmeta_data_temp_lifecycle lifecycles[] = {
+        CMETA_DATA_TEMP_TRIVIAL,
+        CMETA_DATA_TEMP_BUFFER,
+        CMETA_DATA_TEMP_ENUM,
+        CMETA_DATA_TEMP_FIXED,
+        CMETA_DATA_TEMP_VARIANT,
+        CMETA_DATA_TEMP_CONSTRUCT
+    };
+    size_t i;
+
+    for (i = 0u; i < sizeof(descriptors) / sizeof(descriptors[0]); ++i) {
+      cmeta_data_temp temp = {0};
+      check_equal(cmeta_data_temp_open(descriptors[i], 4096u, &temp),
+                  CMETA_OK);
+      check_true(temp.data == descriptors[i]);
+      check_not_null(temp.storage);
+      check_equal(temp.extent, descriptors[i]->storage_type->size);
+      check_equal(temp.alignment, descriptors[i]->storage_type->align);
+      check_equal(temp.lifecycle, lifecycles[i]);
+      cmeta_data_temp_close(&temp);
+      check_null(temp.data);
+      check_null(temp.storage);
+      check_equal(temp.lifecycle, CMETA_DATA_TEMP_NONE);
+    }
+  }
+
+  it("bounds and aligns temporary storage and rolls failed init back") {
+    cmeta_data_temp temp = {0};
+    cmeta_data_desc missing_lifecycle = cmeta_data_test_failing_data;
+    cmeta_data_test_over_aligned_storage *value;
+
+    check_true(_Alignof(cmeta_data_test_over_aligned_storage) >= 64u);
+    check_equal(cmeta_data_temp_open(
+                    &cmeta_data_test_over_aligned_desc,
+                    sizeof(cmeta_data_test_over_aligned_storage) - 1u,
+                    &temp),
+                CMETA_CAPACITY_EXCEEDED);
+    check_null(temp.storage);
+
+    cmeta_data_test_over_aligned_restore_calls = 0u;
+    check_equal(cmeta_data_temp_open(
+                    &cmeta_data_test_over_aligned_desc,
+                    sizeof(cmeta_data_test_over_aligned_storage), &temp),
+                CMETA_OK);
+    check_equal((uintptr_t)temp.storage % temp.alignment, (uintptr_t)0u);
+    value = (cmeta_data_test_over_aligned_storage *)temp.storage;
+    check_equal(value->bytes[0], (unsigned char)0u);
+    value->bytes[0] = 17u;
+    cmeta_data_temp_close(&temp);
+    check_equal(cmeta_data_test_over_aligned_restore_calls, (size_t)1u);
+
+    cmeta_data_test_failing_restore_calls = 0u;
+    check_equal(cmeta_data_temp_open(
+                    &cmeta_data_test_failing_data, sizeof(int), &temp),
+                CMETA_CALLBACK_ERROR);
+    check_null(temp.storage);
+    check_equal(cmeta_data_test_failing_restore_calls, (size_t)1u);
+
+    missing_lifecycle.construct_ops = NULL;
+    check_true(cmeta_data_desc_valid(&missing_lifecycle));
+    check_equal(cmeta_data_temp_open(
+                    &missing_lifecycle, sizeof(int), &temp),
+                CMETA_TRAIT_MISSING);
+    check_null(temp.data);
+    check_null(temp.storage);
+    check_equal(temp.lifecycle, CMETA_DATA_TEMP_NONE);
   }
 
   it("derives transactional lifecycle for trivial reflected structs") {

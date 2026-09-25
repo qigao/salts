@@ -174,8 +174,10 @@ jobs:
             -DBUILD_BENCHMARKS=OFF \
             -DSALTS_BINDINGS_LUA=ON \
             -DVCPKG_MANIFEST_FEATURES=lua-bindings
-          cmake --build --preset linux-dev-user --target salts_lua_invokable_test
-          ctest --preset linux-dev-user -R "^salts_lua_invokable_test$" --output-on-failure
+          cmake --build --preset linux-dev-user \
+            --target salts_lua_invokable_test salts_lua_conversion_test
+          ctest --preset linux-dev-user \
+            -R "^salts_lua_(invokable|conversion)_test$" --output-on-failure
 
       - name: Verify CFlow lifecycle paths with AddressSanitizer
         run: |
