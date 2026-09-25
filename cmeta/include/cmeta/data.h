@@ -515,6 +515,24 @@ cmeta_status cmeta_data_construct_restore_zero(
 cmeta_status cmeta_data_construct_move(
     const cmeta_data_desc *desc, void *destination, void *source);
 
+typedef struct cmeta_data_temp {
+    const cmeta_data_desc *data;
+    void *storage;
+    size_t extent;
+    size_t alignment;
+} cmeta_data_temp;
+
+/**
+ * Allocate correctly aligned temporary native storage and initialize it to the
+ * descriptor's semantic zero. The descriptor must expose a safe lifecycle.
+ */
+cmeta_status cmeta_data_temp_open(
+    const cmeta_data_desc *desc, size_t max_bytes, cmeta_data_temp *out);
+
+/** Restore semantic zero, release temporary storage, and clear the handle. */
+void cmeta_data_temp_close(cmeta_data_temp *temp);
+
+
 const cmeta_data_map_ops *cmeta_data_map_ops_of(
     const cmeta_data_desc *desc);
 cmeta_status cmeta_data_map_foreach(
