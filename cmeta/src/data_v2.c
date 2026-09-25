@@ -440,8 +440,9 @@ static cmeta_status cmeta_data_construct_ops_status(
     const cmeta_data_desc *desc, const cmeta_data_construct_ops **out) {
     const cmeta_data_construct_ops *ops;
     if (out != NULL) *out = NULL;
-    if (!cmeta_data_desc_valid(desc) ||
-        desc->struct_size < CMETA_CONSTRUCT_DESC_SIZE ||
+    if (!cmeta_data_desc_valid(desc))
+        return CMETA_INVALID_ARGUMENT;
+    if (desc->struct_size < CMETA_CONSTRUCT_DESC_SIZE ||
         desc->construct_ops == NULL)
         return CMETA_TRAIT_MISSING;
     ops = desc->construct_ops;
