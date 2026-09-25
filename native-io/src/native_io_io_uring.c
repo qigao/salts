@@ -237,7 +237,7 @@ static void uring_lane_remove(salts_io_uring_impl *impl, salts_io_uring_endpoint
 }
 
 static int uring_enter_arg_once(salts_io_uring_impl *impl, unsigned submit, unsigned minimum,
-                                unsigned flags, void *argument, size_t argument_size) {
+                                unsigned flags, void *argument, unsigned argument_size) {
   const int status =
       (int)syscall(__NR_io_uring_enter, impl->ring_fd, submit, minimum, flags, argument,
                    argument_size);
