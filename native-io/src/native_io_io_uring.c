@@ -921,14 +921,14 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
   int status = uring_process_cq(impl, &saw_wake);
   if (status != SALTS_OK) return status;
 
-  if (impl->terminal_count != 0u || saw_wake) {
-    if (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
-      status = uring_progress(impl, &saw_wake);
-      if (status != SALTS_OK) return status;
-    }
-    uring_drain_terminals(impl, events, limit, out_count);
-    if (*out_count != 0u || saw_wake) return SALTS_OK;
+  /* Polling observe is still a progress boundary: prepared operations must be
+   * submitted even when the caller does not want to block. */
+  if (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
+    status = uring_progress(impl, &saw_wake);
+    if (status != SALTS_OK) return status;
   }
+  uring_drain_terminals(impl, events, limit, out_count);
+  if (*out_count != 0u || saw_wake) return SALTS_OK;
   if (timeout_ms == 0u) return SALTS_ETIMEDOUT;
 
   for (;;) {
