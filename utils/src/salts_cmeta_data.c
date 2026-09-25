@@ -190,9 +190,11 @@ static void salts_tstr_cmeta_move(void *destination, void *source) {
 static const cmeta_type_identity salts_tstr_cmeta_identity =
     CMETA_TYPE_ID_ATOM_INIT("salts.tstr");
 
+CMETA_DEFINE_DATA_TRAITS(salts_tstr, &salts_tstr_cmeta_data);
+
 SALTS_API const cmeta_type_desc salts_tstr_cmeta_type = {
     "tstr", sizeof(tstr), CMETA_ALIGNOF(tstr), CMETA_T_OBJECT,
-    NULL, NULL, &salts_tstr_cmeta_identity
+    NULL, &cmeta_traits_salts_tstr, &salts_tstr_cmeta_identity
 };
 
 SALTS_API const cmeta_data_buffer_shape salts_tstr_cmeta_shape = {
