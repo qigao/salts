@@ -732,6 +732,25 @@ static void native_io_test_uring_wake_with_pending_receive(void) {
   check_equal(native_io_backend_destroy(&backend), SALTS_OK);
 }
 
+static void native_io_test_uring_poll_observe_consumes_queued_wake(void) {
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+  native_io_completion event = {0};
+  size_t count = SIZE_MAX;
+
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+  check_equal(native_io_backend_wake(&backend), SALTS_OK);
+  check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count), SALTS_OK);
+  check_equal(count, 0u);
+
+  count = SIZE_MAX;
+  check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count), SALTS_ETIMEDOUT);
+  check_equal(count, 0u);
+
+  check_equal(native_io_backend_close(&backend), SALTS_OK);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+}
+
 static void native_io_test_uring_poll_observe_flushes_prepared(void) {
   native_io_backend backend = {0};
   const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
@@ -2220,6 +2239,9 @@ spec("NativeIO direct backend") {
   }
   it("uses a control wake without completing a pending io_uring receive") {
     native_io_test_uring_wake_with_pending_receive();
+  }
+  it("consumes a queued io_uring wake from a nonblocking observe") {
+    native_io_test_uring_poll_observe_consumes_queued_wake();
   }
   it("flushes prepared io_uring work from a nonblocking observe") {
     native_io_test_uring_poll_observe_flushes_prepared();
