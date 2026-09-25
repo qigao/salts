@@ -2,6 +2,7 @@
 #define SALTS_BINDINGS_LUA_CMETA_H
 
 #include <cmeta/data.h>
+#include <cmeta/invokable.h>
 #include <lua.h>
 
 #include <stddef.h>
@@ -29,6 +30,16 @@ cmeta_status salts_lua_push_cmeta(
 cmeta_status salts_lua_read_cmeta(
     lua_State *state, int index, const cmeta_data_desc *data, void *object,
     salts_lua_limits limits);
+
+/**
+ * Convert Lua arguments through an invokable's explicit FunctionData contract,
+ * invoke only through CMeta's validated erased callable, and push zero or one
+ * reflected return value. Only input parameters are admitted in this slice.
+ */
+cmeta_status salts_lua_call_invokable(
+    lua_State *state, const cmeta_invokable *invokable,
+    int first_argument, size_t argument_count, salts_lua_limits limits,
+    int *out_result_count);
 
 #ifdef __cplusplus
 }
