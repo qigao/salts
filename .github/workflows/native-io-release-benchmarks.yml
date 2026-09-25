@@ -327,7 +327,181 @@ jobs:
       - name: Run NativeIO and NativeIPC contract tests
         shell: pwsh
         run: |
-          ctest --test-dir "${{ matrix.build_dir }}" -R '^(native_(io|ipc)_(test|header_cpp_test)|native_io_uring_batch_test)$' --output-on-failure
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(native_(io|ipc)_(test|header_cpp_test)|native_io_uring_batch_test)          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run CNet contract tests
+        shell: pwsh
+        run: |
+          ctest --test-dir "${{ matrix.build_dir }}" -R '^(cnet_.*_test|concurrency_deadline_queue_test)$' --timeout 60 --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./cnet/tests/cnet_io_trace_test.ps1
+
+      - name: Build PR-base CNet comparison DSO
+        if: matrix.family == 'windows' && steps.scope.outputs.adapted == 'true' && github.event_name == 'pull_request'
+        shell: cmd
+        env:
+          CNET_COMPARE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set "BASELINE_SOURCE=%RUNNER_TEMP%\salts-cnet-baseline"
+          if exist "%BASELINE_SOURCE%" rmdir /s /q "%BASELINE_SOURCE%"
+          git worktree add --detach "%BASELINE_SOURCE%" "%CNET_COMPARE_BASE_SHA%"
+          if errorlevel 1 exit /b 1
+          cd /d "%BASELINE_SOURCE%"
+          set "PROJECT_ROOT=%BASELINE_SOURCE%"
+          call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+          if errorlevel 1 exit /b 1
+          cmake --preset win-release-user -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF
+          if errorlevel 1 exit /b 1
+          cmake --build --preset win-release-user --target cnet
+          if errorlevel 1 exit /b 1
+          if not exist "build\Msvc-Release\bin\cnet.dll" exit /b 1
+          echo CNET_COMPARE_BASELINE_DSO=%BASELINE_SOURCE%\build\Msvc-Release\bin\cnet.dll>>"%GITHUB_ENV%"
+          echo CNET_COMPARE_CANDIDATE_DSO=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet.dll>>"%GITHUB_ENV%"
+          echo CNET_COMPARE_EXECUTABLE=%GITHUB_WORKSPACE%\${{ matrix.build_dir }}\bin\cnet_owner_lifecycle_compare.exe>>"%GITHUB_ENV%"
+
+      - name: Compare PR-base and candidate CNet owner
+        if: matrix.family == 'windows' && steps.scope.outputs.adapted == 'true' && github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          CNET_IO_BENCHMARK_BACKEND: iocp
+          CNET_COMPARE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CNET_COMPARE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          foreach ($path in @($env:CNET_COMPARE_BASELINE_DSO,
+                              $env:CNET_COMPARE_CANDIDATE_DSO,
+                              $env:CNET_COMPARE_EXECUTABLE)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "CNet owner comparison input not found: $path"
+            }
+          }
+          $report = Join-Path $resultDir "cnet-owner-base-vs-direct.md"
+          & $env:CNET_COMPARE_EXECUTABLE `
+            $env:CNET_COMPARE_BASELINE_DSO `
+            $env:CNET_COMPARE_CANDIDATE_DSO `
+            $report
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @(
+            "base_sha=$env:CNET_COMPARE_BASE_SHA"
+            "candidate_sha=$env:CNET_COMPARE_HEAD_SHA"
+            "baseline_dso=$env:CNET_COMPARE_BASELINE_DSO"
+            "candidate_dso=$env:CNET_COMPARE_CANDIDATE_DSO"
+          ) | Set-Content -LiteralPath (Join-Path $resultDir "cnet-owner-compare-metadata.txt")
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet owner PR-base versus candidate: IOCP"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Get-Content -LiteralPath $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run libuv versus NativeIO direct/coroutine versus CNet benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+          BENCHMARK_HOST: ${{ matrix.host }}
+          BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:IO_BENCHMARK_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "I/O benchmark executable not found: $benchmark"
+          }
+          $env:CNET_IO_BENCHMARK_OUTPUT = Join-Path $resultDir "io"
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "libuv-native-io-cnet-benchmark.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./cnet/benchmarks/verify_io_benchmark.ps1 -Prefix $env:CNET_IO_BENCHMARK_OUTPUT
+          @(
+            "report_schema=2"
+            "host=$env:BENCHMARK_HOST"
+            "commit=$env:BENCHMARK_COMMIT"
+            "workflow_sha=$env:GITHUB_SHA"
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+            "native_io_backend=$env:CNET_IO_BENCHMARK_BACKEND"
+            "image_os=$env:ImageOS"
+            "image_version=$env:ImageVersion"
+          ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## libuv versus NativeIO direct/coroutine versus CNet: $env:BENCHMARK_HOST"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Compare CNet copy and retained sends independently
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+          CNET_IO_BENCHMARK_SEND_COMPARE: '1'
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:IO_BENCHMARK_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          $env:CNET_IO_BENCHMARK_OUTPUT = Join-Path $resultDir "send"
+          $output = & $benchmark --no-color 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "cnet-send-comparison.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./cnet/benchmarks/verify_io_benchmark.ps1 -Prefix $env:CNET_IO_BENCHMARK_OUTPUT -SendComparison
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet retained-send experiment: $env:CNET_IO_BENCHMARK_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Collect isolated Linux syscall evidence
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: bash
+        env:
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
+        run: |
+          set -euo pipefail
+          # Traced timings are never scores. Each file is one thread; stderr
+          # markers delimit the 512 measured RTTs after setup and warmup.
+          mkdir -p native-io-results/syscalls
+          strace --version > native-io-results/syscalls/tool-version.txt
+          for workload in tcp:1024 tcp:32768 tcp:65536 udp:8192; do
+            for driver in libuv native coroutine cnet; do
+              export CNET_IO_BENCHMARK_TRACE="$driver:$workload"
+              label="${CNET_IO_BENCHMARK_TRACE//:/-}"
+              strace -ff -ttt -T -s 128 \
+                -e trace=%network,read,readv,write,writev,poll,ppoll,epoll_ctl,epoll_wait,epoll_pwait,epoll_pwait2,io_uring_setup,io_uring_register,io_uring_enter,futex \
+                -o "native-io-results/syscalls/$label.trace" \
+                "$IO_BENCHMARK_EXECUTABLE" --no-color \
+                > "native-io-results/syscalls/$label.log" 2>&1
+            done
+          done
+          printf '%s\n' \
+            'Traces are independent reruns, not explanations of individual untraced outliers.' \
+            'Only count the client thread between IO_BENCH_MEASURE_BEGIN/END markers.' \
+            'Other thread files contain the echo peer; syscall elapsed includes scheduling.' \
+            'io_uring_enter counts are NOT SQE counts. API call counts are NOT syscall counts.' \
+            'poll/ppoll include io_uring ring/wake-fd waits; they are separate from epoll waits and io_uring_enter.' \
+            'libuv can submit epoll control via io_uring; zero direct epoll_ctl calls do not mean zero registration work.' \
+            'CPU stacks and runnable/blocked split are not collected by strace; use perf on a profiling host.' \
+            > native-io-results/syscalls/README.txt
+
+      - name: Summarize measured client syscall counts
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        run: |
+          ./cnet/benchmarks/summarize_io_trace.ps1 -Directory native-io-results/syscalls |
+            Tee-Object -FilePath native-io-results/syscalls/summary.txt |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload I/O benchmark evidence
+        if: always() && steps.scope.outputs.adapted == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: io-benchmark-${{ matrix.artifact }}
+          path: native-io-results
+          if-no-files-found: error
+          retention-days: 30
+ --timeout 30 --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run CNet contract tests
