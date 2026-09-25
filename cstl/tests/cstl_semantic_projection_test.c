@@ -415,4 +415,53 @@ spec("CSTL semantic projection") {
     reflected_queue_destroy(&queue);
   }
 
+
+  it("gates CMeta type coverage across every typed CSTL family") {
+    typed(Vec, meta_vec, int);
+    typed(Deque, meta_deque, int);
+    typed(List, meta_list, int);
+    typed(Stack, meta_stack, int);
+    typed(Queue, meta_queue, int);
+    typed(Heap, meta_heap, int);
+    typed(Set, meta_set, int);
+    typed(HashSet, meta_hash_set, int);
+    typed(HashMap, meta_hash_map, int, long);
+    typed(Map, meta_map, int, long);
+    typed(MultiMap, meta_multimap, int, long);
+    typed(BTree, meta_btree, int, long);
+    typed(BPlusTree, meta_bplus, int, long);
+
+    check_not_null(CMETA_TYPEOF(meta_vec));
+    check_not_null(CMETA_TYPEOF(meta_deque));
+    check_not_null(CMETA_TYPEOF(meta_list));
+    check_not_null(CMETA_TYPEOF(meta_stack));
+    check_not_null(CMETA_TYPEOF(meta_queue));
+    check_not_null(CMETA_TYPEOF(meta_heap));
+    check_not_null(CMETA_TYPEOF(meta_set));
+    check_not_null(CMETA_TYPEOF(meta_hash_set));
+    check_not_null(CMETA_TYPEOF(meta_hash_map));
+    check_not_null(CMETA_TYPEOF(meta_map));
+    check_not_null(CMETA_TYPEOF(meta_multimap));
+    check_not_null(CMETA_TYPEOF(meta_btree));
+    check_not_null(CMETA_TYPEOF(meta_bplus));
+
+    check_equal(meta_vec_collection_data.kind, CMETA_DATA_SEQUENCE);
+    check_equal(meta_deque_collection_data.kind, CMETA_DATA_SEQUENCE);
+    check_equal(meta_list_collection_data.kind, CMETA_DATA_SEQUENCE);
+    check_equal(meta_stack_collection_data.kind, CMETA_DATA_SEQUENCE);
+    check_equal(meta_queue_collection_data.kind, CMETA_DATA_SEQUENCE);
+    check_equal(meta_set_collection_data.kind, CMETA_DATA_SET);
+    check_equal(meta_hash_set_collection_data.kind, CMETA_DATA_SET);
+    check_equal(meta_hash_map_map_data.kind, CMETA_DATA_MAP);
+    check_equal(meta_map_map_data.kind, CMETA_DATA_MAP);
+    check_equal(meta_multimap_map_data.kind, CMETA_DATA_MAP);
+    check_equal(meta_btree_map_data.kind, CMETA_DATA_MAP);
+    check_equal(meta_bplus_map_data.kind, CMETA_DATA_MAP);
+
+    /* Heap is intentionally type-only until CMeta has a semantic kind that
+     * preserves priority-queue / heap invariants without exposing storage. */
+    Heap(int, raw_heap);
+    check_null(cmeta_container_data(&raw_heap));
+  }
+
 }
