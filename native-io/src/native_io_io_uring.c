@@ -731,6 +731,22 @@ static int uring_cancel(salts_io_impl *base, native_io_request request_handle) {
   return SALTS_OK;
 }
 
+static int uring_consume_wake(salts_io_uring_impl *impl, bool *out_consumed) {
+  uint64_t wake_count;
+  ssize_t read_status;
+  *out_consumed = false;
+  do {
+    read_status = read(impl->wake_fd, &wake_count, sizeof(wake_count));
+  } while (read_status < 0 && errno == EINTR);
+  if (read_status == (ssize_t)sizeof(wake_count)) {
+    atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
+    *out_consumed = true;
+    return SALTS_OK;
+  }
+  if (read_status < 0 && errno == EAGAIN) return SALTS_OK;
+  return read_status < 0 ? -errno : SALTS_EIO;
+}
+
 static int uring_process_cq(salts_io_uring_impl *impl, bool *out_saw_wake) {
   unsigned head = atomic_load_explicit((_Atomic unsigned *)impl->cq_head, memory_order_relaxed);
   const unsigned tail =
@@ -746,8 +762,8 @@ static int uring_process_cq(salts_io_uring_impl *impl, bool *out_saw_wake) {
       continue;
     }
     if (token == SALTS_IO_URING_WAKE_TOKEN) {
-      uint64_t wake_count;
-      ssize_t read_status;
+      bool consumed = false;
+      int wake_status;
       impl->wake_armed = false;
       if (result < 0) {
         /* The internal poll is tied to the task that submitted it and may be
@@ -760,18 +776,15 @@ static int uring_process_cq(salts_io_uring_impl *impl, bool *out_saw_wake) {
         atomic_store_explicit((_Atomic unsigned *)impl->cq_head, head, memory_order_release);
         return result;
       }
-      do {
-        read_status = read(impl->wake_fd, &wake_count, sizeof(wake_count));
-      } while (read_status < 0 && errno == EINTR);
-      if (read_status < 0 && errno != EAGAIN) {
+      wake_status = uring_consume_wake(impl, &consumed);
+      if (wake_status != SALTS_OK) {
         atomic_store_explicit((_Atomic unsigned *)impl->cq_head, head, memory_order_release);
-        return -errno;
+        return wake_status;
       }
-      atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
       /* Do not re-arm here. The next blocking observe folds the new control
-       * poll into the same SQ batch as user work, avoiding a control-only
-       * io_uring_enter and avoiding a poll owned by a thread that is exiting. */
-      if (out_saw_wake != NULL) *out_saw_wake = true;
+       * poll into the same SQ batch as user work. If another path already
+       * drained eventfd, this CQE only retires the internal poll. */
+      if (consumed && out_saw_wake != NULL) *out_saw_wake = true;
       continue;
     }
     {
@@ -934,14 +947,10 @@ static int uring_poll_fallback(salts_io_uring_impl *impl, uint32_t timeout_ms,
       (descriptors[1].revents & (POLLERR | POLLNVAL)) != 0)
     return SALTS_EIO;
   if ((descriptors[1].revents & POLLIN) != 0) {
-    uint64_t wake_count;
-    ssize_t read_status;
-    do {
-      read_status = read(impl->wake_fd, &wake_count, sizeof(wake_count));
-    } while (read_status < 0 && errno == EINTR);
-    if (read_status < 0 && errno != EAGAIN) return -errno;
-    atomic_store_explicit(&impl->wake_pending, false, memory_order_release);
-    if (out_saw_wake != NULL) *out_saw_wake = true;
+    bool consumed = false;
+    const int wake_status = uring_consume_wake(impl, &consumed);
+    if (wake_status != SALTS_OK) return wake_status;
+    if (consumed && out_saw_wake != NULL) *out_saw_wake = true;
   }
   return SALTS_OK;
 }
@@ -962,6 +971,12 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
   if (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
     status = uring_progress(impl, &saw_wake);
     if (status != SALTS_OK) return status;
+  }
+  if (!saw_wake && atomic_load_explicit(&impl->wake_pending, memory_order_acquire)) {
+    bool consumed = false;
+    status = uring_consume_wake(impl, &consumed);
+    if (status != SALTS_OK) return status;
+    saw_wake = consumed;
   }
   uring_drain_terminals(impl, events, limit, out_count);
   if (*out_count != 0u || saw_wake) return SALTS_OK;
