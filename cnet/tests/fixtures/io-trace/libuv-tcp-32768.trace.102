@@ -1,0 +1,2 @@
+1000.000030 recvfrom(5, "payload", 7, 0, NULL, NULL) = 7 <0.000007>
+1000.000040 sendto(5, "payload", 7, 0, NULL, 0) = 7 <0.000004>

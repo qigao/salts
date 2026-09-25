@@ -382,17 +382,83 @@ records, handshake timeout/cancel, accepted sockets, and clean close.
 
 ## Benchmark
 
-`cnet_io_benchmark` compares libuv, direct NativeIO, NativeIO coroutines, and
-the CNet public byte API against matched dedicated blocking loopback echo
-peers. Every payload uses five independent repeats. Each repeat recreates its
-client and peer, runs the same warmup and measured round trips, and rotates the
-four driver orders. The report aggregates per-repeat metrics by median and
-reports paired deltas with median absolute deviation (MAD); it never pools
-independent runs into one latency distribution.
+`cnet_io_benchmark` 比较 libuv、NativeIO direct、NativeIO coroutine 和 CNet
+public byte API。每个客户端使用独立 blocking loopback echo peer；每个 payload
+运行 5 轮，每轮各有 32 次预热和 512 次串行 RTT。RT/s 是往返次数，**不是并发饱和吞吐**。
+不测每次 I/O 的 deadline；超时语义由 contract tests 验证。
 
-CNet progress is driven by the benchmark caller, so its timed path contains no
-owner-thread scheduling or wake handoff. CNet-only stage clocks run in separate
-diagnostic passes and therefore do not bias the direct latency/rate comparison.
-Output separates TCP and UDP p50/p95 latency and throughput by payload size,
-then reports CNet send admission, poll, callback, and public
-polls-per-round-trip medians and MAD.
+### 成绩、噪声与诊断分离
+
+每轮以未插桩 A/B 四驱动组夹住诊断组，四驱动顺序轮换，A/B 的前后顺序逐轮交换。
+所有平台、所有驱动都收集 A/A 对照；主成绩只使用 A 组，以逐轮配对的 median/MAD
+报告相对 **libuv** 的 p50、p95、RT/s 差值。MAD 不是置信区间，不自动把大于 5% 的
+单次结果判为回归。A/A 与插桩扰动和差距相当时，应在受控宿主复测。
+
+诊断报告替代旧的重复 inclusive 宽表和逐轮闭合明细：
+
+- 线程 CPU、wall-CPU 估计、A/A 波动、插桩组相对周围 A/B 的均值偏移。
+  CPU 来自已有 libuv 的 [`uv_getrusage_thread`](https://docs.libuv.org/en/v1.x/misc.html#c.uv_getrusage_thread)，
+  在整个测量 batch 两端读取，不包含 echo 线程。Windows CPU 时间记账较粗，摘要改用
+  [`QueryThreadCycleTime`](https://learn.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-querythreadcycletime)
+  的线程 cycles/RT，不把 cycles 换算成时间；粗粒度 CPU ns 仍保留在 CSV，wall-CPU 标为
+  unresolved，不把量化误差解释成等待。调用不支持或失败时报错。
+- 四驱动采用同一外层边界：start API、drive API、payload 校验、剩余 harness 时间。
+  CNet 的校验嵌套于 poll，从 drive 中扣除；其他驱动的校验在 drive 之后。
+  CNet start 是发送入队，NativeIO start 是提交，libuv start 是接收启用和发送，
+  coroutine start 是任务启动；**这些边界职责不同，不是同语义内部阶段**。
+  CNet 的实际提交在 drive 内，drive 仍混合等待和分发，不能直接归因为 CPU 成本。
+- 阶段差值是逐轮配对后的**算术均值差**，可加和到同批诊断均值差。
+  不拿诊断均值解释另一批未插桩 p50/p95；剩余时间保留，不用代数闭合宣称根因已解释。
+- CNet 内部只保留一张紧凑证据表：固定控制、发送复制、NativeIO 提交/重提交、observe、
+  请求/完成数。这是自身成本，不是相对 libuv 的因果结论。
+
+计时区间没有文件写入或逐事件日志。固定大小的样本数组在 benchmark 中保留全部数据，
+空间为 O(payload 数 × 4 驱动 × 3 组 × 5 轮 × 512 样本)，实际字节数在报告开头打印。
+不修改生产 CNet/NativeIO ABI、队列、生命周期或调度；仍使用既有私有 profiling target。
+
+### 原始证据与复算
+
+设置 `CNET_IO_BENCHMARK_OUTPUT` 为输出路径前缀（父目录必须已存在），全部计时结束后写：
+
+- `<prefix>.runs.csv`：backend/protocol/payload/driver/pass/repeat 标识、RT 数、batch wall、
+  客户线程 CPU、Windows 线程 cycles、p50/p95、上下文切换和外层 API 调用次数。
+- `<prefix>.samples.csv`：相同标识加原始 sample 编号，每次 RTT 的 wall 和诊断阶段数据。
+  未插桩阶段、Windows/macOS 不支持的上下文切换字段留空，不能视为零。
+
+前缀指定的两个文件会覆盖；写入/关闭失败使测试失败。未设置前缀时仅输出摘要。
+CI 保存 CSV，不把所有样本灌入 step summary，并运行
+`pwsh -File cnet/benchmarks/verify_io_benchmark.ps1 -Prefix <prefix>`，核对 540 轮、
+276480 个样本、逐样本非重叠阶段、计数以及从样本重算的 p50/p95。
+慢样本的阶段只能与**同一诊断轮次、同一 sample 编号**关联。
+
+### Linux 系统调用证据
+
+`CNET_IO_BENCHMARK_TRACE=<driver>:<protocol>:<bytes>` 单独运行一个未插桩 workload，
+只输出 trace 身份与测量区间标记，**不输出性能成绩**。driver 为
+`libuv|native|coroutine|cnet`，protocol 为 `tcp|udp`，bytes 为 TCP 1–65536 或
+UDP 1–8192。非法配置报错，不降级到默认 workload。
+
+CI 在成绩完成后使用 [`strace`](https://strace.io/) 收集 TCP 1/32/64 KiB、UDP 8 KiB
+各驱动独立 trace，按线程分文件。`summarize_io_trace.ps1` 只统计客户端
+`IO_BENCH_MEASURE_BEGIN/END` 之间的系统调用，排除 setup、warmup、cleanup 和 echo 线程；
+生成 `syscalls.csv`、`summary.csv`，分别输出每 RTT 的数据调用、epoll poll、io_uring_enter、直接 epoll_ctl、
+EAGAIN 和空 epoll 返回次数。解析失败、缺少区间、缺少客户端文件均报错。
+
+用它检查“是否多做了注册/提交/空等待”，不要把 ptrace 下的调用耗时当作未插桩成本。
+`io_uring_enter` 次数也不是 SQE 数。libuv 可能通过 io_uring 提交 epoll 控制操作，
+不能把“直接 epoll_ctl 为零”解释为“没有注册成本”（参见
+[libuv 1.51 Linux 实现](https://github.com/libuv/libuv/blob/v1.51.0/src/unix/linux.c)）。
+trace 是独立复跑，不能关联先前未插桩的单个慢样本。
+CPU 函数栈以及 blocked/runnable 等待分离仍需具备权限的 profiling host 上采集
+[`perf record`](https://man7.org/linux/man-pages/man1/perf-record.1.html) /
+[`perf sched`](https://man7.org/linux/man-pages/man1/perf-sched.1.html)；普通 CI 明确不宣称已采集。
+例如在已用 `linux-release-user` 构建且已配置运行库路径的宿主执行：
+
+```sh
+CNET_IO_BENCHMARK_BACKEND=epoll CNET_IO_BENCHMARK_TRACE=native:tcp:32768 \
+  strace -ff -ttt -T -s 128 -o native-tcp-32768.trace \
+  build/linux-gcc-release/bin/cnet_io_benchmark --no-color
+```
+
+更换驱动重复同一 workload。只有 syscall 次数、CPU/调度证据与未插桩复测相互印证后，
+才把候选原因升级为根因；否则报告保留“未解释”，不凭阶段表直接优化生产路径。

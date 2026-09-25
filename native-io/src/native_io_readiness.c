@@ -17,6 +17,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 enum { SALTS_IO_INDEX_NONE = UINT32_MAX };
@@ -300,17 +301,21 @@ static int readiness_try_socket(salts_io_readiness_endpoint *endpoint,
       result = recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
     else if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_SEND)
       result = send(endpoint->fd, request->operation.buffer, request->operation.length, flags);
-    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM &&
-             request->operation.address != NULL)
-      result = recvfrom(endpoint->fd, request->operation.buffer, request->operation.length, flags,
-                        (struct sockaddr *)request->operation.address, &address_length);
-    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_SEND_TO &&
+    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM) {
+      struct iovec vector = {request->operation.buffer, request->operation.length};
+      struct msghdr message = {0};
+      message.msg_name = request->operation.address;
+      message.msg_namelen = address_length;
+      message.msg_iov = &vector;
+      message.msg_iovlen = 1u;
+      result = recvmsg(endpoint->fd, &message, flags);
+      if (result >= 0 && (message.msg_flags & MSG_TRUNC) != 0) return -EMSGSIZE;
+      address_length = message.msg_namelen;
+    } else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_SEND_TO &&
              request->operation.address != NULL)
       result = sendto(endpoint->fd, request->operation.buffer, request->operation.length, flags,
                       (const struct sockaddr *)request->operation.address,
                       (socklen_t)request->operation.address_length);
-    else if (request->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM)
-      result = recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
     else
       result = send(endpoint->fd, request->operation.buffer, request->operation.length, flags);
   } while (result < 0 && errno == EINTR);
@@ -608,13 +613,6 @@ static void readiness_drain_terminals(salts_io_readiness_impl *impl, native_io_c
   }
 }
 
-static uint32_t readiness_remaining_timeout(uint64_t started_ms, uint32_t timeout_ms) {
-  uint64_t elapsed;
-  if (timeout_ms == UINT32_MAX) return UINT32_MAX;
-  elapsed = salts_monotonic_ms() - started_ms;
-  return elapsed >= timeout_ms ? 0u : timeout_ms - (uint32_t)elapsed;
-}
-
 static int readiness_observe(salts_io_impl *base, native_io_completion *events,
                              size_t event_capacity, uint32_t timeout_ms, size_t *out_count) {
   salts_io_readiness_impl *impl = (salts_io_readiness_impl *)base;
@@ -656,7 +654,7 @@ static int readiness_observe(salts_io_impl *base, native_io_completion *events,
     readiness_drain_terminals(impl, events, limit, out_count);
     if (*out_count != 0u) return SALTS_OK;
     if (saw_wake) return SALTS_OK;
-    wait_timeout = readiness_remaining_timeout(started_ms, timeout_ms);
+    wait_timeout = native_io_remaining_timeout(started_ms, timeout_ms);
     if (wait_timeout == 0u) return SALTS_ETIMEDOUT;
   }
 }
