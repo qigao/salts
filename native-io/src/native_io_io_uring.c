@@ -1234,7 +1234,16 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
     return status;
   }
   memset(&params, 0, sizeof(params));
+#if defined(IORING_SETUP_SINGLE_ISSUER)
+  params.flags = IORING_SETUP_SINGLE_ISSUER;
   impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+  if (impl->ring_fd < 0 && errno == EINVAL) {
+    memset(&params, 0, sizeof(params));
+    impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+  }
+#else
+  impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+#endif
   if (impl->ring_fd < 0) {
     status = -errno;
     uring_free_partial(impl);
