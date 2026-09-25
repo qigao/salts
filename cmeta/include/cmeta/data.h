@@ -515,11 +515,23 @@ cmeta_status cmeta_data_construct_restore_zero(
 cmeta_status cmeta_data_construct_move(
     const cmeta_data_desc *desc, void *destination, void *source);
 
+typedef enum cmeta_data_temp_lifecycle {
+    CMETA_DATA_TEMP_NONE = 0,
+    CMETA_DATA_TEMP_TRIVIAL,
+    CMETA_DATA_TEMP_BUFFER,
+    CMETA_DATA_TEMP_ENUM,
+    CMETA_DATA_TEMP_ENUM_BITS,
+    CMETA_DATA_TEMP_FIXED,
+    CMETA_DATA_TEMP_VARIANT,
+    CMETA_DATA_TEMP_CONSTRUCT
+} cmeta_data_temp_lifecycle;
+
 typedef struct cmeta_data_temp {
     const cmeta_data_desc *data;
     void *storage;
     size_t extent;
     size_t alignment;
+    cmeta_data_temp_lifecycle lifecycle;
 } cmeta_data_temp;
 
 /**
