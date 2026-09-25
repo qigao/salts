@@ -713,7 +713,8 @@ static const cmeta_data_collection_ops cmeta_data_test_int_sequence_ops = {
     .read = cmeta_data_test_int_sequence_read,
     .foreach = NULL,
     .collector = NULL,
-    .borrow = NULL
+    .borrow = NULL,
+    .element_data = &cmeta_data_int
 };
 
 static const cmeta_data_desc cmeta_data_test_int_sequence_data = {
@@ -1586,6 +1587,8 @@ spec("CMeta semantic data descriptors") {
     check_true(cmeta_data_collection_ops_of(
                    &cmeta_data_test_int_sequence_data) ==
                &cmeta_data_test_int_sequence_ops);
+    check_true(cmeta_data_collection_element_data(
+                   &cmeta_data_test_int_sequence_data) == &cmeta_data_int);
     check_equal(cmeta_data_collection_read(
                     &cmeta_data_test_int_sequence_data, &value, &view),
                 CMETA_OK);
@@ -1593,5 +1596,18 @@ spec("CMeta semantic data descriptors") {
     check_equal(view.stride, sizeof(int));
     check_true(view.element == &cmeta_data_int);
     check_equal(*(const int *)view.data, 3);
+
+    {
+      cmeta_data_collection_ops short_ops = cmeta_data_test_int_sequence_ops;
+      cmeta_data_desc short_data = cmeta_data_test_int_sequence_data;
+      short_ops.struct_size = offsetof(cmeta_data_collection_ops, element_data);
+      short_data.collection_ops = &short_ops;
+      check_true(cmeta_data_collection_ops_of(&short_data) == &short_ops);
+      check_null(cmeta_data_collection_element_data(&short_data));
+      view = (cmeta_data_collection_view){0};
+      check_equal(cmeta_data_collection_read(&short_data, &value, &view),
+                  CMETA_OK);
+      check_equal(view.count, 2u);
+    }
   }
 }
