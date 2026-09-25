@@ -371,6 +371,11 @@ typedef const cmeta_data_desc *(*cmeta_data_collection_element_fn)(
     const void *object);
 typedef cmeta_status (*cmeta_data_collection_read_fn)(
     const void *object, cmeta_data_collection_view *out);
+typedef cmeta_status (*cmeta_data_collection_visit_fn)(
+    void *context, const void *element);
+typedef cmeta_status (*cmeta_data_collection_foreach_fn)(
+    const void *object, cmeta_data_collection_visit_fn visit, void *context,
+    size_t max_items);
 
 typedef struct cmeta_data_collection_ops {
     size_t struct_size;
@@ -378,6 +383,7 @@ typedef struct cmeta_data_collection_ops {
     const cmeta_type_desc *storage_type;
     cmeta_data_collection_element_fn element;
     cmeta_data_collection_read_fn read;
+    cmeta_data_collection_foreach_fn foreach;
 } cmeta_data_collection_ops;
 
 typedef struct cmeta_data_variant_case {
@@ -417,6 +423,14 @@ const cmeta_data_collection_ops *cmeta_data_collection_ops_of(
 cmeta_status cmeta_data_collection_read(
     const cmeta_data_desc *desc, const void *object,
     cmeta_data_collection_view *out);
+
+/**
+ * Visit collection elements without exposing native iterator representation.
+ * The facade enforces max_items before invoking a visitor beyond the bound.
+ */
+cmeta_status cmeta_data_collection_foreach(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_collection_visit_fn visit, void *context, size_t max_items);
 
 /** Initialize one raw storage slot to provider semantic zero. */
 cmeta_status cmeta_data_buffer_init_zero(
