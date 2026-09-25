@@ -553,8 +553,12 @@ static const cmeta_data_collection_ops cmeta_data_test_int_sequence_ops = {
     sizeof(cmeta_data_collection_ops),
     CMETA_DATA_COLLECTION_OPS_ABI_VERSION,
     &cmeta_data_test_int_sequence_type,
+    CMETA_DATA_COLLECTION_CONTIGUOUS | CMETA_DATA_COLLECTION_ORDERED |
+        CMETA_DATA_COLLECTION_RANDOM_ACCESS,
     cmeta_data_test_int_sequence_element,
-    cmeta_data_test_int_sequence_read};
+    cmeta_data_test_int_sequence_read,
+    NULL,
+    NULL};
 
 static const cmeta_data_desc cmeta_data_test_int_sequence_data = {
     sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
