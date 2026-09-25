@@ -343,6 +343,51 @@ static const cmeta_data_desc cmeta_data_test_record_desc = {
     .shape = &cmeta_data_test_record_shape
 };
 
+typedef struct cmeta_data_test_owned_record {
+    int payload;
+    int count;
+} cmeta_data_test_owned_record;
+
+static const cmeta_type_identity cmeta_data_test_owned_record_identity =
+    CMETA_TYPE_ID_ATOM_INIT("test.OwnedRecord");
+static const cmeta_type_desc cmeta_data_test_owned_record_type = {
+    .name = "cmeta_data_test_owned_record",
+    .size = sizeof(cmeta_data_test_owned_record),
+    .align = _Alignof(cmeta_data_test_owned_record),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = NULL,
+    .identity = &cmeta_data_test_owned_record_identity
+};
+
+static const cmeta_field_desc cmeta_data_test_owned_layout_fields[] = {
+    { "payload", "int", offsetof(cmeta_data_test_owned_record, payload),
+      sizeof(int), _Alignof(int), &cmeta_type_int, NULL },
+    { "count", "int", offsetof(cmeta_data_test_owned_record, count),
+      sizeof(int), _Alignof(int), &cmeta_type_int, NULL }
+};
+static const cmeta_struct_desc cmeta_data_test_owned_layout = {
+    "cmeta_data_test_owned_record", sizeof(cmeta_data_test_owned_record),
+    _Alignof(cmeta_data_test_owned_record),
+    cmeta_data_test_owned_layout_fields, 2u
+};
+static const cmeta_data_field_desc cmeta_data_test_owned_fields[] = {
+    { "test.OwnedRecord.payload", "payload",
+      offsetof(cmeta_data_test_owned_record, payload),
+      &cmeta_data_test_buffer_desc },
+    { "test.OwnedRecord.count", "count",
+      offsetof(cmeta_data_test_owned_record, count),
+      &cmeta_data_int }
+};
+static const cmeta_data_struct_shape cmeta_data_test_owned_shape = {
+    &cmeta_data_test_owned_layout, cmeta_data_test_owned_fields, 2u
+};
+static const cmeta_data_desc cmeta_data_test_owned_desc = {
+    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
+    "test.OwnedRecord.data", "OwnedRecord", CMETA_DATA_STRUCT,
+    &cmeta_data_test_owned_record_type, &cmeta_data_test_owned_shape
+};
+
 static const cmeta_data_variant_case cmeta_data_test_variant_cases[] = {
     {
         .tag = 1,
@@ -999,6 +1044,51 @@ spec("CMeta semantic data descriptors") {
     check_null(cmeta_data_integer_width(true, 7u));
     check_true(cmeta_data_int8.storage_type == &cmeta_type_int8);
     check_true(cmeta_data_uint64.storage_type == &cmeta_type_uint64);
+  }
+
+  it("derives transactional lifecycle for trivial reflected structs") {
+    cmeta_data_test_record source = {7, 9};
+    cmeta_data_test_record destination = {0, 0};
+
+    check_true(cmeta_data_struct_constructible(&cmeta_data_test_record_desc));
+    check_true(cmeta_data_value_move_supported(&cmeta_data_test_record_desc));
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_record_desc, &destination),
+                CMETA_OK);
+    check_equal(cmeta_data_value_move(
+                    &cmeta_data_test_record_desc, &destination, &source),
+                CMETA_OK);
+    check_equal(destination.id, 7);
+    check_equal(destination.score, 9);
+    check_equal(source.id, 0);
+    check_equal(source.score, 0);
+  }
+
+  it("derives transactional lifecycle for structs with owned fields") {
+    cmeta_data_test_owned_record source = {0, 0};
+    cmeta_data_test_owned_record destination = {0, 0};
+    static const unsigned char bytes[] = {'a', 'b', 'c'};
+
+    check_true(cmeta_data_struct_constructible(&cmeta_data_test_owned_desc));
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_owned_desc, &source), CMETA_OK);
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_owned_desc, &destination), CMETA_OK);
+    check_equal(cmeta_data_buffer_assign(
+                    &cmeta_data_test_buffer_desc, &source.payload,
+                    bytes, sizeof(bytes), sizeof(bytes)), CMETA_OK);
+    source.count = 5;
+    check_equal(cmeta_data_value_move(
+                    &cmeta_data_test_owned_desc, &destination, &source),
+                CMETA_OK);
+    check_equal(destination.payload, 3);
+    check_equal(destination.count, 5);
+    check_equal(source.payload, 0);
+    check_equal(source.count, 0);
+    check_equal(cmeta_data_value_restore_zero(
+                    &cmeta_data_test_owned_desc, &destination), CMETA_OK);
+    check_equal(destination.payload, 0);
+    check_equal(destination.count, 0);
   }
 
   it("keeps container categories free of T K V") {
