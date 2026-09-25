@@ -197,8 +197,20 @@ bool cmeta_data_desc_valid(const cmeta_data_desc *desc) {
         !cmeta_data_kind_valid(desc->kind))
         return false;
 
-    if (cmeta_data_kind_is_container(desc->kind))
-        return desc->storage_type == NULL && desc->shape == NULL;
+    if (cmeta_data_kind_is_container(desc->kind)) {
+        if (desc->shape != NULL) return false;
+        /* Kind-only semantic descriptors remain valid. A concrete native
+         * provider may additionally select storage and collection_ops. */
+        if (desc->storage_type == NULL)
+            return desc->struct_size < offsetof(cmeta_data_desc, collection_ops) +
+                                        sizeof(desc->collection_ops) ||
+                   desc->collection_ops == NULL;
+        return cmeta_type_desc_valid(desc->storage_type) &&
+               desc->kind != CMETA_DATA_MAP &&
+               desc->struct_size >= offsetof(cmeta_data_desc, collection_ops) +
+                                    sizeof(desc->collection_ops) &&
+               desc->collection_ops != NULL;
+    }
 
     if (desc->storage_type == NULL || !cmeta_type_desc_valid(desc->storage_type))
         return false;
