@@ -1,5 +1,7 @@
 #include <salts/bindings/lua/cmeta.h>
 
+#include <lua.h>
+
 #include <float.h>
 #include <math.h>
 #include <stdint.h>
