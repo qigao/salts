@@ -2,6 +2,9 @@
 #include <cmeta/data.h>
 #include "tinytest.h"
 
+#include <stdlib.h>
+#include <string.h>
+
 typedef struct cstl_semantic_collect_ints {
   int *values;
   size_t count;
@@ -72,6 +75,143 @@ typed(MultiMap, borrow_multimap, int, long);
 typed(BTree, borrow_btree, int, long);
 typed(BPlusTree, borrow_bplus, int, long);
 
+typedef struct explicit_owned_buffer {
+  unsigned char *data;
+  size_t size;
+} explicit_owned_buffer;
+
+static size_t explicit_owned_live;
+
+static bool explicit_owned_buffer_is_zero(const void *object) {
+  const explicit_owned_buffer *value = (const explicit_owned_buffer *)object;
+  return value != NULL && value->data == NULL && value->size == 0u;
+}
+static cmeta_status explicit_owned_buffer_init_zero(void *object) {
+  explicit_owned_buffer *value = (explicit_owned_buffer *)object;
+  if (value == NULL) return CMETA_INVALID_ARGUMENT;
+  value->data = NULL;
+  value->size = 0u;
+  return CMETA_OK;
+}
+static cmeta_status explicit_owned_buffer_read(
+    const void *object, const unsigned char **out_data, size_t *out_size) {
+  const explicit_owned_buffer *value = (const explicit_owned_buffer *)object;
+  if (value == NULL || out_data == NULL || out_size == NULL)
+    return CMETA_INVALID_ARGUMENT;
+  *out_data = value->data;
+  *out_size = value->size;
+  return value->size == 0u || value->data != NULL
+             ? CMETA_OK
+             : CMETA_CALLBACK_ERROR;
+}
+static cmeta_status explicit_owned_buffer_assign(
+    void *object, const unsigned char *data, size_t size, size_t max_bytes) {
+  explicit_owned_buffer *value = (explicit_owned_buffer *)object;
+  unsigned char *copy;
+  if (value == NULL || (size != 0u && data == NULL))
+    return CMETA_INVALID_ARGUMENT;
+  if (size > max_bytes) return CMETA_CAPACITY_EXCEEDED;
+  if (!explicit_owned_buffer_is_zero(value))
+    return CMETA_INVALID_ARGUMENT;
+  if (size == 0u) return CMETA_OK;
+  copy = (unsigned char *)malloc(size);
+  if (copy == NULL) return CMETA_OUT_OF_MEMORY;
+  memcpy(copy, data, size);
+  value->data = copy;
+  value->size = size;
+  ++explicit_owned_live;
+  return CMETA_OK;
+}
+static void explicit_owned_buffer_restore_zero(void *object) {
+  explicit_owned_buffer *value = (explicit_owned_buffer *)object;
+  if (value == NULL) return;
+  if (value->data != NULL) {
+    free(value->data);
+    if (explicit_owned_live != 0u) --explicit_owned_live;
+  }
+  value->data = NULL;
+  value->size = 0u;
+}
+static void explicit_owned_buffer_move(void *destination, void *source) {
+  explicit_owned_buffer *to = (explicit_owned_buffer *)destination;
+  explicit_owned_buffer *from = (explicit_owned_buffer *)source;
+  if (to == NULL || from == NULL || to == from) return;
+  *to = *from;
+  from->data = NULL;
+  from->size = 0u;
+}
+
+static const cmeta_type_identity explicit_owned_buffer_id =
+    CMETA_TYPE_ID_ATOM_INIT("test.cstl.ExplicitOwnedBuffer");
+static const cmeta_type_desc explicit_owned_buffer_type = {
+    "explicit_owned_buffer", sizeof(explicit_owned_buffer),
+    _Alignof(explicit_owned_buffer), CMETA_T_OBJECT,
+    NULL, NULL, &explicit_owned_buffer_id};
+static const cmeta_data_buffer_shape explicit_owned_buffer_shape = {
+    CMETA_DATA_BUFFER_OWNED};
+static const cmeta_data_buffer_ops explicit_owned_buffer_ops = {
+    sizeof(cmeta_data_buffer_ops), CMETA_DATA_BUFFER_OPS_ABI_VERSION,
+    &explicit_owned_buffer_type, CMETA_DATA_BUFFER_OWNED,
+    explicit_owned_buffer_is_zero, explicit_owned_buffer_assign,
+    explicit_owned_buffer_restore_zero, explicit_owned_buffer_read,
+    explicit_owned_buffer_init_zero, explicit_owned_buffer_move};
+static const cmeta_data_desc explicit_owned_buffer_data = {
+    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
+    "test.cstl.ExplicitOwnedBuffer.data", "ExplicitOwnedBuffer",
+    CMETA_DATA_BYTES, &explicit_owned_buffer_type,
+    &explicit_owned_buffer_shape, &explicit_owned_buffer_ops,
+    NULL, NULL, NULL, NULL};
+
+typedef struct explicit_owned_record {
+  explicit_owned_buffer payload;
+  int tag;
+} explicit_owned_record;
+
+static const cmeta_data_desc explicit_owned_record_data;
+CMETA_DEFINE_DATA_TRAITS(
+    explicit_owned_record, &explicit_owned_record_data);
+
+static const cmeta_type_identity explicit_owned_record_id =
+    CMETA_TYPE_ID_ATOM_INIT("test.cstl.ExplicitOwnedRecord");
+static const cmeta_type_desc explicit_owned_record_type = {
+    "explicit_owned_record", sizeof(explicit_owned_record),
+    _Alignof(explicit_owned_record), CMETA_T_OBJECT,
+    NULL, &cmeta_traits_explicit_owned_record, &explicit_owned_record_id};
+static const cmeta_field_desc explicit_owned_record_layout_fields[] = {
+    {"payload", "explicit_owned_buffer",
+     offsetof(explicit_owned_record, payload),
+     sizeof(explicit_owned_buffer), _Alignof(explicit_owned_buffer),
+     &explicit_owned_buffer_type, NULL},
+    {"tag", "int", offsetof(explicit_owned_record, tag),
+     sizeof(int), _Alignof(int), &cmeta_type_int, NULL}};
+static const cmeta_struct_desc explicit_owned_record_layout = {
+    "explicit_owned_record", sizeof(explicit_owned_record),
+    _Alignof(explicit_owned_record),
+    explicit_owned_record_layout_fields, 2u};
+static const cmeta_data_field_desc explicit_owned_record_fields[] = {
+    {"test.cstl.ExplicitOwnedRecord.payload", "payload",
+     offsetof(explicit_owned_record, payload),
+     &explicit_owned_buffer_data},
+    {"test.cstl.ExplicitOwnedRecord.tag", "tag",
+     offsetof(explicit_owned_record, tag), &cmeta_data_int}};
+static const cmeta_data_struct_shape explicit_owned_record_shape = {
+    &explicit_owned_record_layout, explicit_owned_record_fields, 2u};
+static const cmeta_data_desc explicit_owned_record_data = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.cstl.ExplicitOwnedRecord.data",
+    .display_name = "ExplicitOwnedRecord",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &explicit_owned_record_type,
+    .shape = &explicit_owned_record_shape};
+
+typed(Vec, explicit_owned_vec, explicit_owned_record,
+      &explicit_owned_record_type, &explicit_owned_record_data);
+typed(Map, explicit_owned_map, int, explicit_owned_record,
+      &cmeta_type_int, &cmeta_data_int,
+      &explicit_owned_record_type, &explicit_owned_record_data);
+
+
 typedef struct cstl_struct_with_vec {
   cstl_struct_vec values;
   int tag;
@@ -110,6 +250,73 @@ static const cmeta_data_desc cstl_struct_with_vec_data = {
 
 
 spec("CSTL semantic projection") {
+  it("uses explicit canonical type and data for owning custom values") {
+    static const unsigned char bytes[] = {'o', 'w', 'n'};
+    explicit_owned_record source = {0};
+    explicit_owned_vec values = {0};
+    explicit_owned_map mapped = {0};
+    cmeta_range range;
+    cmeta_data_collection_borrow_cursor cursor = {0};
+    const explicit_owned_record *stored;
+    const explicit_owned_record *mapped_value;
+    const void *borrowed = NULL;
+
+    explicit_owned_live = 0u;
+    check_true(cmeta_data_value_traits_supported(
+        &explicit_owned_record_data));
+    check_equal(cmeta_data_value_init_zero(
+                    &explicit_owned_record_data, &source), CMETA_OK);
+    check_equal(cmeta_data_buffer_assign(
+                    &explicit_owned_buffer_data, &source.payload,
+                    bytes, sizeof(bytes), sizeof(bytes)), CMETA_OK);
+    source.tag = 7;
+    check_equal(explicit_owned_live, (size_t)1u);
+
+    check_equal(explicit_owned_vec_init(&values, 8u), STL_OK);
+    check_equal(explicit_owned_vec_push(&values, source), STL_OK);
+    check_equal(explicit_owned_live, (size_t)2u);
+    stored = explicit_owned_vec_at_const(&values, 0u);
+    check_not_null(stored);
+    check_true(stored->payload.data != source.payload.data);
+    check_equal(stored->payload.size, sizeof(bytes));
+    check_equal(memcmp(stored->payload.data, bytes, sizeof(bytes)), 0);
+    check_equal(stored->tag, 7);
+
+    check_true(cmeta_data_collection_element_data(
+                   &explicit_owned_vec_collection_data) ==
+               &explicit_owned_record_data);
+    check_equal(cmeta_data_collection_borrow_begin(
+                    &explicit_owned_vec_collection_data, &values, &cursor),
+                CMETA_OK);
+    check_true(cursor.element == &explicit_owned_record_data);
+    check_equal(cmeta_data_collection_borrow_next(&cursor, &borrowed),
+                CMETA_GEN_VALUE_AND_DONE);
+    check_true(borrowed == stored);
+
+    range = explicit_owned_vec_range(&values);
+    check_true(range.element_type == &explicit_owned_record_type);
+
+    check_equal(explicit_owned_map_init(&mapped, 8u), STL_OK);
+    check_equal(explicit_owned_map_put(&mapped, 1, source), STL_OK);
+    check_equal(explicit_owned_live, (size_t)3u);
+    mapped_value = explicit_owned_map_get_const(&mapped, 1);
+    check_not_null(mapped_value);
+    check_true(mapped_value->payload.data != source.payload.data);
+    check_equal(mapped_value->tag, 7);
+    check_true(cmeta_data_map_key_data(&explicit_owned_map_map_data) ==
+               &cmeta_data_int);
+    check_true(cmeta_data_map_value_data(&explicit_owned_map_map_data) ==
+               &explicit_owned_record_data);
+    range = explicit_owned_map_values_range(&mapped);
+    check_true(range.element_type == &explicit_owned_record_type);
+
+    explicit_owned_map_destroy(&mapped);
+    explicit_owned_vec_destroy(&values);
+    check_equal(cmeta_data_value_restore_zero(
+                    &explicit_owned_record_data, &source), CMETA_OK);
+    check_equal(explicit_owned_live, (size_t)0u);
+  }
+
   it("copies typed collection and map values through canonical CMeta") {
     borrow_vec source_vec = {0};
     borrow_vec copied_vec = {0};

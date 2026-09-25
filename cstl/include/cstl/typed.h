@@ -111,37 +111,87 @@
 #define CMETA_GENERIC_KIND_BTree CMETA_GENERIC_PROBE()
 #define CMETA_GENERIC_KIND_BPlusTree CMETA_GENERIC_PROBE()
 
-#define CMETA_TYPED_Vec(name, type) \
+#define CMETA_TYPED_UNARY_DISPATCH(kind, ...) \
+  CMETA_PP_CAT(CMETA_PP_CAT(CMETA_TYPED_, kind), \
+               CMETA_PP_CAT(_, CMETA_PP_NARG(__VA_ARGS__)))(__VA_ARGS__)
+#define CMETA_TYPED_BINARY_DISPATCH(kind, ...) \
+  CMETA_PP_CAT(CMETA_PP_CAT(CMETA_TYPED_, kind), \
+               CMETA_PP_CAT(_, CMETA_PP_NARG(__VA_ARGS__)))(__VA_ARGS__)
+
+#define CMETA_TYPED_Vec(...) CMETA_TYPED_UNARY_DISPATCH(Vec, __VA_ARGS__)
+#define CMETA_TYPED_Vec_2(name, type) \
   SALTS_VEC_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-#define CMETA_TYPED_Deque(name, type) \
+#define CMETA_TYPED_Vec_4(name, type, type_desc, data_desc) \
+  SALTS_VEC_DEFINE_EXPLICIT(name, type, type_desc, data_desc) enum { name##_cmeta_typed = 1 }
+
+#define CMETA_TYPED_Deque(...) CMETA_TYPED_UNARY_DISPATCH(Deque, __VA_ARGS__)
+#define CMETA_TYPED_Deque_2(name, type) \
   SALTS_DEQUE_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-#define CMETA_TYPED_List(name, type) \
+#define CMETA_TYPED_Deque_4(name, type, type_desc, data_desc) \
+  SALTS_DEQUE_DEFINE_EXPLICIT(name, type, type_desc, data_desc) enum { name##_cmeta_typed = 1 }
+
+#define CMETA_TYPED_List(...) CMETA_TYPED_UNARY_DISPATCH(List, __VA_ARGS__)
+#define CMETA_TYPED_List_2(name, type) \
   SALTS_LIST_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-#define CMETA_TYPED_Stack(name, type) \
+#define CMETA_TYPED_List_4(name, type, type_desc, data_desc) \
+  SALTS_LIST_DEFINE_EXPLICIT(name, type, type_desc, data_desc) enum { name##_cmeta_typed = 1 }
+
+#define CMETA_TYPED_Stack(...) CMETA_TYPED_UNARY_DISPATCH(Stack, __VA_ARGS__)
+#define CMETA_TYPED_Stack_2(name, type) \
   SALTS_STACK_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-#define CMETA_TYPED_Queue(name, type) \
+#define CMETA_TYPED_Stack_4(name, type, type_desc, data_desc) \
+  SALTS_STACK_DEFINE_EXPLICIT(name, type, type_desc, data_desc) enum { name##_cmeta_typed = 1 }
+
+#define CMETA_TYPED_Queue(...) CMETA_TYPED_UNARY_DISPATCH(Queue, __VA_ARGS__)
+#define CMETA_TYPED_Queue_2(name, type) \
   SALTS_QUEUE_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_Queue_4(name, type, type_desc, data_desc) \
+  SALTS_QUEUE_DEFINE_EXPLICIT(name, type, type_desc, data_desc) enum { name##_cmeta_typed = 1 }
+
 #define CMETA_TYPED_Heap(name, type) \
   SALTS_HEAP_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-#define CMETA_TYPED_Set(name, type) \
+
+#define CMETA_TYPED_Set(...) CMETA_TYPED_UNARY_DISPATCH(Set, __VA_ARGS__)
+#define CMETA_TYPED_Set_2(name, type) \
   SALTS_SET_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-#define CMETA_TYPED_HashSet(name, type) \
+#define CMETA_TYPED_Set_4(name, type, type_desc, data_desc) \
+  SALTS_SET_DEFINE_EXPLICIT(name, type, type_desc, data_desc) enum { name##_cmeta_typed = 1 }
+
+#define CMETA_TYPED_HashSet(...) CMETA_TYPED_UNARY_DISPATCH(HashSet, __VA_ARGS__)
+#define CMETA_TYPED_HashSet_2(name, type) \
   SALTS_HASH_SET_DEFINE(name, type) enum { name##_cmeta_typed = 1 }
-#define CMETA_TYPED_HashMap(name, key_type, value_type) \
-  SALTS_HASH_MAP_DEFINE(name, key_type, value_type) \
-  enum { name##_cmeta_typed = 1 }
-#define CMETA_TYPED_Map(name, key_type, value_type) \
-  SALTS_MAP_DEFINE(name, key_type, value_type) \
-  enum { name##_cmeta_typed = 1 }
-#define CMETA_TYPED_MultiMap(name, key_type, value_type) \
-  SALTS_MULTI_MAP_DEFINE(name, key_type, value_type) \
-  enum { name##_cmeta_typed = 1 }
-#define CMETA_TYPED_BTree(name, key_type, value_type) \
-  SALTS_BTREE_DEFINE(name, key_type, value_type) \
-  enum { name##_cmeta_typed = 1 }
-#define CMETA_TYPED_BPlusTree(name, key_type, value_type) \
-  SALTS_BPLUS_TREE_DEFINE(name, key_type, value_type) \
-  enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_HashSet_4(name, type, type_desc, data_desc) \
+  SALTS_HASH_SET_DEFINE_EXPLICIT(name, type, type_desc, data_desc) enum { name##_cmeta_typed = 1 }
+
+#define CMETA_TYPED_HashMap(...) CMETA_TYPED_BINARY_DISPATCH(HashMap, __VA_ARGS__)
+#define CMETA_TYPED_HashMap_3(name, key_type, value_type) \
+  SALTS_HASH_MAP_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_HashMap_7(name, key_type, value_type, key_desc, key_data, value_desc, value_data) \
+  SALTS_HASH_MAP_DEFINE_EXPLICIT(name, key_type, value_type, key_desc, key_data, value_desc, value_data) enum { name##_cmeta_typed = 1 }
+
+#define CMETA_TYPED_Map(...) CMETA_TYPED_BINARY_DISPATCH(Map, __VA_ARGS__)
+#define CMETA_TYPED_Map_3(name, key_type, value_type) \
+  SALTS_MAP_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_Map_7(name, key_type, value_type, key_desc, key_data, value_desc, value_data) \
+  SALTS_MAP_DEFINE_EXPLICIT(name, key_type, value_type, key_desc, key_data, value_desc, value_data) enum { name##_cmeta_typed = 1 }
+
+#define CMETA_TYPED_MultiMap(...) CMETA_TYPED_BINARY_DISPATCH(MultiMap, __VA_ARGS__)
+#define CMETA_TYPED_MultiMap_3(name, key_type, value_type) \
+  SALTS_MULTI_MAP_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_MultiMap_7(name, key_type, value_type, key_desc, key_data, value_desc, value_data) \
+  SALTS_MULTI_MAP_DEFINE_EXPLICIT(name, key_type, value_type, key_desc, key_data, value_desc, value_data) enum { name##_cmeta_typed = 1 }
+
+#define CMETA_TYPED_BTree(...) CMETA_TYPED_BINARY_DISPATCH(BTree, __VA_ARGS__)
+#define CMETA_TYPED_BTree_3(name, key_type, value_type) \
+  SALTS_BTREE_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_BTree_7(name, key_type, value_type, key_desc, key_data, value_desc, value_data) \
+  SALTS_BTREE_DEFINE_EXPLICIT(name, key_type, value_type, key_desc, key_data, value_desc, value_data) enum { name##_cmeta_typed = 1 }
+
+#define CMETA_TYPED_BPlusTree(...) CMETA_TYPED_BINARY_DISPATCH(BPlusTree, __VA_ARGS__)
+#define CMETA_TYPED_BPlusTree_3(name, key_type, value_type) \
+  SALTS_BPLUS_TREE_DEFINE(name, key_type, value_type) enum { name##_cmeta_typed = 1 }
+#define CMETA_TYPED_BPlusTree_7(name, key_type, value_type, key_desc, key_data, value_desc, value_data) \
+  SALTS_BPLUS_TREE_DEFINE_EXPLICIT(name, key_type, value_type, key_desc, key_data, value_desc, value_data) enum { name##_cmeta_typed = 1 }
 
 /* Generated Type_method functions are the typed calling convention. Raw
  * list_* and map_* names remain ordinary functions so every valid C argument
