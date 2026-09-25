@@ -391,6 +391,59 @@ static cmeta_status salts_lua_read_enum(
   return cmeta_data_enum_assign(data, object, value);
 }
 
+static cmeta_status salts_lua_read_collection(
+    lua_State *state, int index, const cmeta_data_desc *data, void *object,
+    salts_lua_limits limits) {
+  const cmeta_data_collection_ops *ops = cmeta_data_collection_ops_of(data);
+  const cmeta_data_desc *element_data;
+  cmeta_data_temp container = {0};
+  cmeta_collector collector = {0};
+  size_t count, i;
+  int table_index;
+  cmeta_status status;
+
+  if (ops == NULL || !lua_istable(state, index)) return CMETA_TYPE_MISMATCH;
+  element_data = ops->element(object);
+  if (element_data == NULL || !cmeta_data_desc_valid(element_data))
+    return CMETA_TRAIT_MISSING;
+  count = (size_t)lua_rawlen(state, index);
+  if (count > limits.max_items) return CMETA_CAPACITY_EXCEEDED;
+
+  status = cmeta_data_temp_open(data, limits.max_bytes, &container);
+  if (status != CMETA_OK) return status;
+  status = cmeta_data_collection_collector(
+      data, container.storage, limits.max_items, &collector);
+  if (status != CMETA_OK) goto done;
+  status = cmeta_collector_begin(&collector);
+  if (status != CMETA_OK) goto done;
+
+  table_index = lua_absindex(state, index);
+  for (i = 0u; i < count; ++i) {
+    cmeta_data_temp element = {0};
+    lua_rawgeti(state, table_index, (lua_Integer)(i + 1u));
+    status = cmeta_data_temp_open(element_data, limits.max_bytes, &element);
+    if (status == CMETA_OK)
+      status = salts_lua_read_cmeta(
+          state, -1, element_data, element.storage, limits);
+    if (status == CMETA_OK)
+      status = cmeta_data_collection_accept(
+          data, &collector, element_data, element.storage);
+    cmeta_data_temp_close(&element);
+    lua_pop(state, 1);
+    if (status != CMETA_OK) {
+      cmeta_collector_abort(&collector);
+      goto done;
+    }
+  }
+  status = cmeta_collector_finish(&collector);
+  if (status != CMETA_OK) goto done;
+  status = cmeta_data_construct_move(data, object, container.storage);
+
+done:
+  cmeta_data_temp_close(&container);
+  return status;
+}
+
 cmeta_status salts_lua_read_cmeta(
     lua_State *state, int index, const cmeta_data_desc *data, void *object,
     salts_lua_limits limits) {
@@ -411,6 +464,9 @@ cmeta_status salts_lua_read_cmeta(
       return salts_lua_read_buffer(state, index, data, object, limits.max_bytes);
     case CMETA_DATA_ENUM:
       return salts_lua_read_enum(state, index, data, object);
+    case CMETA_DATA_SEQUENCE:
+    case CMETA_DATA_SET:
+      return salts_lua_read_collection(state, index, data, object, limits);
     default:
       return CMETA_TRAIT_MISSING;
   }
