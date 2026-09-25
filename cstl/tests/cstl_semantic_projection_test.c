@@ -110,6 +110,58 @@ static const cmeta_data_desc cstl_struct_with_vec_data = {
 
 
 spec("CSTL semantic projection") {
+  it("copies typed collection and map values through canonical CMeta") {
+    borrow_vec source_vec = {0};
+    borrow_vec copied_vec = {0};
+    borrow_map source_map = {0};
+    borrow_map copied_map = {0};
+    const int *vec_value;
+    const long *map_value;
+
+    check_true(cmeta_data_value_copy_supported(
+        &borrow_vec_collection_data));
+    check_true(cmeta_data_value_copy_supported(
+        &borrow_map_map_data));
+
+    check_equal(cmeta_data_value_init_zero(
+                    &borrow_vec_collection_data, &source_vec), CMETA_OK);
+    check_equal(cmeta_data_value_init_zero(
+                    &borrow_vec_collection_data, &copied_vec), CMETA_OK);
+    check_equal(borrow_vec_push(&source_vec, 3), STL_OK);
+    check_equal(borrow_vec_push(&source_vec, 5), STL_OK);
+    check_equal(cmeta_data_value_copy(
+                    &borrow_vec_collection_data, &copied_vec, &source_vec),
+                CMETA_OK);
+    check_equal(borrow_vec_size(&source_vec), 2u);
+    check_equal(borrow_vec_size(&copied_vec), 2u);
+    vec_value = borrow_vec_at_const(&copied_vec, 1u);
+    check_not_null(vec_value);
+    check_equal(*vec_value, 5);
+
+    check_equal(cmeta_data_value_init_zero(
+                    &borrow_map_map_data, &source_map), CMETA_OK);
+    check_equal(cmeta_data_value_init_zero(
+                    &borrow_map_map_data, &copied_map), CMETA_OK);
+    check_equal(borrow_map_put(&source_map, 2, 20L), STL_OK);
+    check_equal(cmeta_data_value_copy(
+                    &borrow_map_map_data, &copied_map, &source_map),
+                CMETA_OK);
+    check_equal(borrow_map_size(&source_map), 1u);
+    check_equal(borrow_map_size(&copied_map), 1u);
+    map_value = borrow_map_get_const(&copied_map, 2);
+    check_not_null(map_value);
+    check_equal(*map_value, 20L);
+
+    check_equal(cmeta_data_value_restore_zero(
+                    &borrow_map_map_data, &copied_map), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &borrow_map_map_data, &source_map), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &borrow_vec_collection_data, &copied_vec), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &borrow_vec_collection_data, &source_vec), CMETA_OK);
+  }
+
   it("projects sequence-like containers without duplicating element type") {
     Vec(int, vec);
     Deque(int, deque);
