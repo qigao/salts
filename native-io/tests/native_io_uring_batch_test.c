@@ -37,7 +37,7 @@ static long batch_test_syscall(long number, ...) {
     const unsigned minimum = va_arg(arguments, unsigned);
     const unsigned flags = va_arg(arguments, unsigned);
     void *mask = va_arg(arguments, void *);
-    const unsigned mask_size = va_arg(arguments, unsigned);
+    const size_t mask_size = va_arg(arguments, size_t);
     if (enter_calls < BATCH_TEST_CALLS) enter_sizes[enter_calls] = submit;
     ++enter_calls;
     if (enter_error != 0) {
