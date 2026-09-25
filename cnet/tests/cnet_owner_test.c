@@ -500,6 +500,89 @@ cleanup:
 }
 
 #if defined(CNET_INTERNAL_TESTING)
+static void cnet_owner_test_expired_partial_send(native_io_backend_kind backend_kind) {
+  enum { PAYLOAD_BYTES = 8, WRITE_TIMEOUT_MS = 10 };
+  cnet_session_table sessions = {0};
+  cnet_command_queue commands = {0};
+  cnet_event_queue events = {0};
+  cnet_owner owner = {0};
+  cnet_owner_test_clock clock = {.now_ms = 100u, .next_ms = 100u};
+  const cnet_command_queue_config command_config = {8u, sizeof(cnet_owner_connect_payload)};
+  const cnet_event_queue_config event_config = {8u, 2u, 64u};
+  const cnet_owner_config config = {.backend_kind = backend_kind,
+                                   .connection_capacity = 1u, .request_capacity = 2u,
+                                   .completion_batch_capacity = 2u, .receive_buffer_bytes = 64u,
+                                   .receive_buffer_count = 1u, .sessions = &sessions,
+                                   .commands = &commands, .events = &events,
+                                   .now_ms = cnet_owner_test_now, .clock_context = &clock};
+  cnet_owner_test_socket listener = CNET_OWNER_TEST_INVALID_SOCKET;
+  cnet_owner_test_socket accepted = CNET_OWNER_TEST_INVALID_SOCKET;
+  struct sockaddr_in address;
+  cnet_session_handle session = {0};
+  cnet_owner_connect_payload connect_payload = {.scheme = CNET_URI_TCP,
+                                               .write_timeout_ms = WRITE_TIMEOUT_MS};
+  unsigned char payload[PAYLOAD_BYTES] = {0};
+  cnet_command command;
+  cnet_event_view event = {0};
+  cnet_session_terminal terminal = {0};
+  native_io_completion completion = {0};
+  native_io_backend_stats before = {0}, after = {0};
+  native_io_coroutine_stats coroutine = NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
+  size_t count = 0u;
+
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+  check_equal(cnet_owner_init(&owner, &config), SALTS_OK);
+  check_equal(cnet_owner_test_listener(&listener, &address), SALTS_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
+  connect_payload.address_length = sizeof(address);
+  memcpy(connect_payload.address, &address, sizeof(address));
+  command = (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN), SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  accepted = accept(listener, NULL, NULL);
+  check_true(accepted != CNET_OWNER_TEST_INVALID_SOCKET);
+  check_equal(cnet_owner_test_set_send_chunk_bytes(&owner, 1u), SALTS_OK);
+  command = (cnet_command){CNET_COMMAND_SEND, session, payload, sizeof(payload), 0u};
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  check_equal(cnet_owner_drive(&owner, 0u), SALTS_OK);
+  check_equal(cnet_owner_test_observe_raw(&owner, &completion, 1u,
+                                         CNET_OWNER_TEST_TIMEOUT_MS, &count), SALTS_OK);
+  check_equal(count, 1u);
+  check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
+  check_equal(completion.bytes, 1u);
+  check_true(cnet_owner_test_backend_stats(&owner, &before, &coroutine));
+  clock.now_ms += WRITE_TIMEOUT_MS + 1u;
+  clock.next_ms = clock.now_ms;
+  /* NativeIO has released the observed handle, but CNet still owns its payload.
+     Expire the owner deadline before routing that successful partial completion. */
+  check_equal(cnet_owner_test_process_deadlines(&owner), SALTS_ENOENT);
+  check_equal(cnet_owner_test_process_completion_batch(&owner, &completion, count), SALTS_OK);
+  check_true(cnet_owner_test_backend_stats(&owner, &after, &coroutine));
+  check_equal(after.submitted, before.submitted);
+  check_equal(after.active_requests, 0u);
+  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
+  check_equal(terminal.status, SALTS_ETIMEDOUT);
+  check_equal(terminal.stage, CNET_SESSION_STAGE_WRITE);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.state, CNET_EVENT_STATE_FAILED);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+  check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
+  cnet_owner_test_close_socket(accepted);
+  cnet_owner_test_close_socket(listener);
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_owner_close(&owner), SALTS_OK);
+  check_equal(cnet_owner_destroy(&owner), SALTS_OK);
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
+}
+
 static void cnet_owner_test_cancel_ealready(native_io_backend_kind backend_kind) {
   cnet_session_table sessions = {0};
   cnet_command_queue commands = {0};
@@ -1080,6 +1163,15 @@ spec("CNet owner shard") {
   }
 
 #if defined(CNET_INTERNAL_TESTING)
+  it("does not resubmit a partial success after the write deadline expired") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    check_equal(cnet_module_init(), SALTS_OK);
+    for (size_t index = 0u; index < count; ++index)
+      cnet_owner_test_expired_partial_send(backends[index]);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
+  }
+
   it("keeps a direct request owned when cancellation reports already terminal") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
     const size_t count = cnet_owner_test_backends(backends);

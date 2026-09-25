@@ -91,15 +91,19 @@ static int epoll_driver_wait(void *driver_state, salts_io_ready_event *events,
   salts_io_epoll_state *state = (salts_io_epoll_state *)driver_state;
   const size_t limit =
       event_capacity < state->event_capacity ? event_capacity : state->event_capacity;
-  const int native_timeout = timeout_ms == UINT32_MAX         ? -1
-                             : timeout_ms > (uint32_t)INT_MAX ? INT_MAX
-                                                              : (int)timeout_ms;
+  const uint64_t started_ms = salts_monotonic_ms();
+  uint32_t remaining_ms = timeout_ms;
   int count;
-  do {
+  for (;;) {
+    const int native_timeout = remaining_ms == UINT32_MAX         ? -1
+                               : remaining_ms > (uint32_t)INT_MAX ? INT_MAX
+                                                                   : (int)remaining_ms;
     count = epoll_wait(state->epoll_fd, state->events, (int)limit, native_timeout);
-  } while (count < 0 && errno == EINTR);
+    if (count > 0 || (count < 0 && errno != EINTR)) break;
+    remaining_ms = native_io_remaining_timeout(started_ms, timeout_ms);
+    if (remaining_ms == 0u) return SALTS_ETIMEDOUT;
+  }
   if (count < 0) return -errno;
-  if (count == 0) return SALTS_ETIMEDOUT;
   for (int index = 0; index < count; ++index) {
     const uint32_t native = state->events[index].events;
     uint32_t interests = 0u;

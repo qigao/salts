@@ -1512,9 +1512,14 @@ static int cnet_owner_route_completion(cnet_owner_impl *impl,
   if ((request->role == CNET_OWNER_REQUEST_SEND ||
        request->role == CNET_OWNER_REQUEST_TLS_WRITE) &&
       completion->kind == NATIVE_IO_COMPLETION_OK) {
+    cnet_owner_session *session = cnet_owner_find_session(impl, request->session);
     native_io_completion terminal = *completion;
     int status;
 
+    if (session == NULL) return SALTS_EPROTO;
+    /* Cancellation may lose to a partial success already queued by the OS. */
+    if (session->pending_status != SALTS_OK)
+      return cnet_owner_finish_direct_completion(impl, request, completion);
     if (completion->bytes == 0u || completion->bytes > request->submitted_size)
       return cnet_owner_fail_direct_request(impl, request, SALTS_EIO);
     request->completed_size += completion->bytes;
@@ -1837,6 +1842,7 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
       return cnet_owner_process_deadlines(impl);
     }
     if (status != SALTS_OK) return status;
+    if (completion_count == 0u) return SALTS_OK;
     status = cnet_owner_process_completion_batch(impl, impl->completions, completion_count);
     if (status != SALTS_OK) return status;
     if (impl->published_event_count != published_before) return SALTS_OK;
@@ -1913,6 +1919,11 @@ int cnet_owner_test_force_cancel_ealready_once(cnet_owner *owner) {
   if (impl->test_force_cancel_ealready_once) return SALTS_EALREADY;
   impl->test_force_cancel_ealready_once = true;
   return SALTS_OK;
+}
+
+int cnet_owner_test_process_deadlines(cnet_owner *owner) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  return impl != NULL ? cnet_owner_process_deadlines(impl) : SALTS_EINVAL;
 }
 
 int cnet_owner_test_set_send_chunk_bytes(cnet_owner *owner, size_t bytes) {

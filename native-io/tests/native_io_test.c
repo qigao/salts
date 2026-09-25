@@ -5,6 +5,7 @@
 #include <salts/error_codes.h>
 #include <salts/native_io.h>
 #include <salts/thread.h>
+#include <salts/clock.h>
 #include <salts_coro.h>
 
 #include "tinytest.h"
@@ -26,6 +27,7 @@ typedef int native_io_test_socklen;
   #include <errno.h>
   #include <fcntl.h>
   #include <netinet/in.h>
+  #include <pthread.h>
   #include <signal.h>
   #include <sys/socket.h>
   #include <unistd.h>
@@ -866,6 +868,117 @@ static void native_io_test_round_trip_udp(native_io_backend_kind kind) {
   check_equal(native_io_backend_close(&backend), SALTS_OK);
   check_equal(native_io_backend_destroy(&backend), SALTS_OK);
 }
+
+static void native_io_test_udp_truncation(native_io_backend_kind kind, bool connected) {
+  enum { RECEIVE_BYTES = 8 };
+  unsigned char payload[RECEIVE_BYTES + 1] = {0};
+  unsigned char received[RECEIVE_BYTES] = {0};
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {kind, 1u, 1u, 1u};
+  native_io_test_socket sockets[2];
+  struct sockaddr_in addresses[2];
+  struct sockaddr_storage peer = {0};
+  native_io_endpoint endpoint = {0};
+  native_io_operation operation = {0};
+  native_io_request request = {0};
+  native_io_completion event = {0};
+  size_t count = 0u;
+
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+  check_equal(native_io_test_make_udp_pair(sockets, addresses), SALTS_OK);
+  if (connected)
+    check_equal(connect(sockets[1], (struct sockaddr *)&addresses[0], sizeof(addresses[0])), 0);
+  check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint), SALTS_OK);
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_UDP_RECV_FROM,
+                                    .endpoint = endpoint, .buffer = received,
+                                    .length = sizeof(received),
+                                    .address = connected ? NULL : &peer,
+                                    .address_capacity = connected ? 0u : sizeof(peer)};
+  for (size_t bytes = RECEIVE_BYTES; bytes <= sizeof(payload); ++bytes) {
+    check_equal(native_io_backend_submit(&backend, &operation, &request), SALTS_OK);
+    check_equal(sendto(sockets[0], (const char *)payload, (int)bytes, 0,
+                       (struct sockaddr *)&addresses[1], sizeof(addresses[1])), (int)bytes);
+    check_equal(native_io_backend_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS, &count),
+                SALTS_OK);
+    check_equal(count, 1u);
+    if (bytes == RECEIVE_BYTES) {
+      check_equal(event.kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(event.bytes, sizeof(received));
+    } else {
+      check_equal(event.kind, NATIVE_IO_COMPLETION_FAILED);
+#if defined(_WIN32)
+      check_true(event.status == -(int)WSAEMSGSIZE || event.status == -(int)ERROR_MORE_DATA);
+#else
+      check_equal(event.status, -EMSGSIZE);
+#endif
+    }
+  }
+  native_io_test_close_socket(sockets[0]);
+  native_io_test_close_endpoint(&backend, endpoint, sockets[1]);
+  check_equal(native_io_backend_close(&backend), SALTS_OK);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+}
+
+#if !defined(_WIN32)
+enum { NATIVE_IO_TEST_SIGNAL_INTERVAL_MS = 10, NATIVE_IO_TEST_SIGNAL_DURATION_MS = 600,
+       NATIVE_IO_TEST_INTERRUPTED_TIMEOUT_MS = 100, NATIVE_IO_TEST_TIMEOUT_TOLERANCE_MS = 400 };
+static volatile sig_atomic_t native_io_test_signal_count;
+typedef struct native_io_test_interrupts {
+  pthread_t owner;
+  int status;
+} native_io_test_interrupts;
+
+static void native_io_test_count_signal(int signal_number) {
+  (void)signal_number;
+  ++native_io_test_signal_count;
+}
+
+static void native_io_test_interrupt_owner(void *user) {
+  native_io_test_interrupts *probe = (native_io_test_interrupts *)user;
+  const uint64_t started_ms = salts_monotonic_ms();
+  do {
+    salts_sleep_ms(NATIVE_IO_TEST_SIGNAL_INTERVAL_MS);
+    probe->status = pthread_kill(probe->owner, SIGUSR1);
+    if (probe->status != 0) return;
+  } while (salts_monotonic_ms() - started_ms < NATIVE_IO_TEST_SIGNAL_DURATION_MS);
+}
+
+static void native_io_test_interrupted_timeout(native_io_backend_kind kind) {
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {kind, 1u, 1u, 1u};
+  native_io_completion event = {0};
+  native_io_test_interrupts probe = {.owner = pthread_self()};
+  struct sigaction action = {0}, previous = {0};
+  sigset_t signals, previous_mask;
+  salts_thread_t thread;
+  size_t count = SIZE_MAX;
+  uint64_t started_ms, elapsed_ms;
+
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+  action.sa_handler = native_io_test_count_signal;
+  sigemptyset(&action.sa_mask);
+  sigemptyset(&signals);
+  sigaddset(&signals, SIGUSR1);
+  native_io_test_signal_count = 0;
+  check_equal(sigaction(SIGUSR1, &action, &previous), 0);
+  check_equal(pthread_sigmask(SIG_UNBLOCK, &signals, &previous_mask), 0);
+  check_equal(salts_thread_create(&thread, native_io_test_interrupt_owner, &probe), SALTS_OK);
+  started_ms = salts_monotonic_ms();
+  check_equal(native_io_backend_observe(&backend, &event, 1u,
+                                       NATIVE_IO_TEST_INTERRUPTED_TIMEOUT_MS, &count), SALTS_ETIMEDOUT);
+  elapsed_ms = salts_monotonic_ms() - started_ms;
+  check_equal(salts_thread_join(&thread), SALTS_OK);
+  check_equal(pthread_sigmask(SIG_SETMASK, &previous_mask, NULL), 0);
+  check_equal(sigaction(SIGUSR1, &previous, NULL), 0);
+  check_equal(probe.status, 0);
+  check_greater(native_io_test_signal_count, 1);
+  check_equal(count, 0u);
+  check_greater_equal(elapsed_ms, (uint64_t)NATIVE_IO_TEST_INTERRUPTED_TIMEOUT_MS);
+  check_less(elapsed_ms, (uint64_t)NATIVE_IO_TEST_TIMEOUT_TOLERANCE_MS);
+  check_equal(native_io_backend_close(&backend), SALTS_OK);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+}
+#endif
 
 static void native_io_test_capacity_and_close(native_io_backend_kind kind) {
   native_io_backend backend = {0};
@@ -1810,6 +1923,24 @@ spec("NativeIO direct backend") {
     for (size_t index = 0u; index < count; ++index)
       native_io_test_round_trip_udp(backends[index]);
   }
+
+  it("rejects truncated UDP receives for addressed and connected sockets") {
+    native_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
+    const size_t count = native_io_test_backends(backends);
+    for (size_t index = 0u; index < count; ++index) {
+      native_io_test_udp_truncation(backends[index], false);
+      native_io_test_udp_truncation(backends[index], true);
+    }
+  }
+
+#if !defined(_WIN32)
+  it("preserves the observe deadline across repeated signal interruptions") {
+    native_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
+    const size_t count = native_io_test_backends(backends);
+    for (size_t index = 0u; index < count; ++index)
+      native_io_test_interrupted_timeout(backends[index]);
+  }
+#endif
 
   it("enforces capacity stale-handle and close boundaries") {
     native_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];

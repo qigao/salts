@@ -201,6 +201,45 @@ spec("CNet bound UDP datagram") {
     check_equal(cnet_datagram_destroy(&datagram), SALTS_OK);
   }
 
+  it("rejects oversized UDP without publishing a truncated receive callback") {
+    cnet_datagram datagram = {0};
+    cnet_datagram_test_probe probe = {0};
+    cnet_datagram_config config = cnet_datagram_test_config(&probe);
+    unsigned char payload[sizeof(probe.received) + 1u] = {0};
+    struct sockaddr_in peer_address, server_address = {0};
+    cnet_datagram_test_socket peer_socket;
+    uint16_t port = 0u;
+    size_t events = 0u;
+
+    config.max_datagram_bytes = sizeof(probe.received);
+    config.receive_buffer_bytes = sizeof(probe.received);
+    check_equal(cnet_datagram_init(&datagram, &config), SALTS_OK);
+    check_equal(cnet_datagram_port(&datagram, &port), SALTS_OK);
+    peer_socket = cnet_datagram_test_peer(&peer_address);
+    check_true(peer_socket != CNET_DATAGRAM_TEST_INVALID_SOCKET);
+    server_address.sin_family = AF_INET;
+    server_address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    server_address.sin_port = htons(port);
+    check_equal(cnet_datagram_receive(&datagram, 1u), SALTS_OK);
+    check_equal(sendto(peer_socket, (const char *)payload, (int)sizeof(payload), 0,
+                       (const struct sockaddr *)&server_address, (int)sizeof(server_address)),
+                (int)sizeof(payload));
+    check_not_equal(cnet_datagram_poll(&datagram, CNET_DATAGRAM_TEST_TIMEOUT_MS, &events), SALTS_OK);
+    check_equal(events, 0u);
+    check_equal(probe.receive_count, 0);
+    /* Explicit receive admission rearms after a reported receive error. */
+    check_equal(cnet_datagram_receive(&datagram, 1u), SALTS_OK);
+    check_equal(sendto(peer_socket, (const char *)payload, (int)sizeof(probe.received), 0,
+                       (const struct sockaddr *)&server_address, (int)sizeof(server_address)),
+                (int)sizeof(probe.received));
+    check_equal(cnet_datagram_poll(&datagram, CNET_DATAGRAM_TEST_TIMEOUT_MS, &events), SALTS_OK);
+    check_equal(probe.receive_count, 1);
+    check_equal(probe.received_size, sizeof(probe.received));
+    cnet_datagram_test_close(peer_socket);
+    check_equal(cnet_datagram_stop(&datagram, CNET_DATAGRAM_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_datagram_destroy(&datagram), SALTS_OK);
+  }
+
   it("cancels an active receive before destruction") {
     cnet_datagram datagram = {0};
     cnet_datagram_test_probe probe = {0};

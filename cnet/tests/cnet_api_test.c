@@ -877,6 +877,49 @@ spec("CNet public client API") {
     check_equal(cnet_client_destroy(&client), SALTS_OK);
   }
 
+  it("wakes a poll with an outstanding receive without publishing a callback") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_api_test_probe state = {.client = &client};
+    cnet_api_test_wake_probe probe = {.client = &client};
+    cnet_api_test_socket listener = CNET_API_TEST_INVALID_SOCKET;
+    cnet_api_test_socket accepted = CNET_API_TEST_INVALID_SOCKET;
+    cnet_connection connection = {0};
+    cnet_connect_options options = {0};
+    salts_thread_t poller;
+    char uri[64];
+    uint16_t port = 0u;
+    size_t events = 0u;
+
+    atomic_init(&probe.started, 0);
+    atomic_init(&probe.finished, 0);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_api_test_listener(&listener, &port), SALTS_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned)port), 0);
+    options.uri = uri;
+    options.observer = (cnet_observer){.on_state = cnet_api_test_state,
+                                     .on_receive = cnet_api_test_receive, .user = &state};
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &state.connected, 1), SALTS_OK);
+    accepted = accept(listener, NULL, NULL);
+    check_true(accepted != CNET_API_TEST_INVALID_SOCKET);
+    check_equal(atomic_load(&state.callback_operation_status), SALTS_OK);
+    check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
+    check_equal(salts_thread_create(&poller, cnet_api_test_blocking_poll, &probe), SALTS_OK);
+    while (atomic_load_explicit(&probe.started, memory_order_acquire) == 0)
+      salts_thread_yield();
+    salts_sleep_ms(20u);
+    check_equal(cnet_client_wake(&client), SALTS_OK);
+    check_equal(salts_thread_join(&poller), SALTS_OK);
+    check_equal(probe.status, SALTS_OK);
+    check_equal(probe.events, 0u);
+    check_less(probe.elapsed_ms, (uint64_t)900u);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    cnet_api_test_close_socket(accepted);
+    cnet_api_test_close_socket(listener);
+  }
+
   it("invokes connection callbacks on the polling thread") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
