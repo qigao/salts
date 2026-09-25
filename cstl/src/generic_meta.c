@@ -1,5 +1,31 @@
 #include <cstl/typed.h>
 
+static cmeta_status stl_vec_collection_read(
+    const void *object, cmeta_data_collection_view *out) {
+    const vec_t *vec = (const vec_t *)object;
+    if (vec == NULL || out == NULL || !vec->initialized ||
+        vec->element_type == NULL || vec->elem_stride == 0u)
+        return CMETA_INVALID_ARGUMENT;
+
+    /*
+     * CSTL knows the native element type here, but CMeta collection consumers
+     * require a semantic data descriptor. The provider is therefore admitted
+     * only when a canonical semantic descriptor is selected by the typed
+     * binding layer; raw vec_t cannot manufacture one from a C type.
+     */
+    return CMETA_TRAIT_MISSING;
+}
+
+/* vec_t storage provider shell. The semantic element descriptor is deliberately
+ * not inferred from vec_t; concrete typed projections attach it separately. */
+static const cmeta_data_collection_ops stl_vec_collection_ops = {
+    sizeof(cmeta_data_collection_ops),
+    CMETA_DATA_COLLECTION_OPS_ABI_VERSION,
+    &stl_vec_storage_type,
+    stl_vec_collection_read
+};
+
+
 #define STL_CONTAINER_EXT_PREFIX_SIZE \
     (offsetof(cmeta_container_ext, construction) + \
      sizeof(((cmeta_container_ext *)0)->construction))
