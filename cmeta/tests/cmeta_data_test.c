@@ -645,15 +645,18 @@ static cmeta_status cmeta_data_test_int_sequence_read(
 }
 
 static const cmeta_data_collection_ops cmeta_data_test_int_sequence_ops = {
-    sizeof(cmeta_data_collection_ops),
-    CMETA_DATA_COLLECTION_OPS_ABI_VERSION,
-    &cmeta_data_test_int_sequence_type,
-    CMETA_DATA_COLLECTION_CONTIGUOUS | CMETA_DATA_COLLECTION_ORDERED |
-        CMETA_DATA_COLLECTION_RANDOM_ACCESS,
-    cmeta_data_test_int_sequence_element,
-    cmeta_data_test_int_sequence_read,
-    NULL,
-    NULL};
+    .struct_size = sizeof(cmeta_data_collection_ops),
+    .abi_version = CMETA_DATA_COLLECTION_OPS_ABI_VERSION,
+    .storage_type = &cmeta_data_test_int_sequence_type,
+    .flags = CMETA_DATA_COLLECTION_CONTIGUOUS |
+             CMETA_DATA_COLLECTION_ORDERED |
+             CMETA_DATA_COLLECTION_RANDOM_ACCESS,
+    .element = cmeta_data_test_int_sequence_element,
+    .read = cmeta_data_test_int_sequence_read,
+    .foreach = NULL,
+    .collector = NULL,
+    .borrow = NULL
+};
 
 static const cmeta_data_desc cmeta_data_test_int_sequence_data = {
     .struct_size = sizeof(cmeta_data_desc),
