@@ -108,12 +108,12 @@ spec("CSTL semantic projection") {
                                 &cmeta_type_long));
   }
 
-  it("leaves Heap and MultiMap semantically unresolved") {
+  it("keeps Heap type-reflectable while MultiMap has map semantics") {
     Heap(int, heap);
     MultiMap(int, long, multimap);
 
     check_null(cmeta_container_data(&heap));
-    check_null(cmeta_container_data(&multimap));
+    check_true(cmeta_container_data(&multimap) == &cmeta_data_map);
     check_true(cmeta_container_type_application_valid(&heap));
     check_true(cmeta_container_type_application_valid(&multimap));
   }
