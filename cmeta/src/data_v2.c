@@ -1159,6 +1159,311 @@ static cmeta_status cmeta_data_struct_move(
     return CMETA_OK;
 }
 
+
+static bool cmeta_data_value_copy_supported_depth(
+    const cmeta_data_desc *desc, unsigned depth) {
+    const cmeta_data_struct_shape *shape;
+    size_t i;
+    if (depth > 64u || !cmeta_data_desc_valid(desc) ||
+        desc->storage_type == NULL)
+        return false;
+    if (cmeta_data_fixed_ops_of(desc) != NULL)
+        return true;
+    switch (desc->kind) {
+        case CMETA_DATA_BOOL:
+        case CMETA_DATA_SINT:
+        case CMETA_DATA_UINT:
+        case CMETA_DATA_FLOAT:
+            return true;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES: {
+            const cmeta_data_buffer_ops *ops = cmeta_data_buffer_ops_of(desc);
+            return ops != NULL &&
+                   ops->struct_size >= CMETA_BUFFER_V2_READ_SIZE &&
+                   ops->read != NULL;
+        }
+        case CMETA_DATA_ENUM:
+            return cmeta_data_enum_bits_ops_of(desc) != NULL ||
+                   cmeta_data_enum_ops_of(desc) != NULL;
+        case CMETA_DATA_STRUCT:
+            shape = (const cmeta_data_struct_shape *)desc->shape;
+            if (shape == NULL) return false;
+            for (i = 0u; i < shape->field_count; ++i) {
+                const cmeta_data_field_desc *field = &shape->fields[i];
+                if (!cmeta_data_struct_field_bounds_valid(desc, field) ||
+                    !cmeta_data_value_copy_supported_depth(
+                        field->value, depth + 1u))
+                    return false;
+            }
+            return true;
+        case CMETA_DATA_VARIANT: {
+            const cmeta_data_variant_shape *variant =
+                (const cmeta_data_variant_shape *)desc->shape;
+            if (cmeta_data_variant_ops_of(desc) == NULL ||
+                variant == NULL || variant->cases == NULL)
+                return false;
+            for (i = 0u; i < variant->case_count; ++i)
+                if (!cmeta_data_value_copy_supported_depth(
+                        variant->cases[i].value, depth + 1u))
+                    return false;
+            return true;
+        }
+        case CMETA_DATA_SEQUENCE:
+        case CMETA_DATA_SET: {
+            const cmeta_data_collection_ops *ops =
+                cmeta_data_collection_ops_of(desc);
+            const cmeta_data_desc *element =
+                cmeta_data_collection_element_data(desc);
+            return ops != NULL && ops->collector != NULL &&
+                   ops->borrow != NULL &&
+                   ops->borrow->abi_version ==
+                       CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION &&
+                   ops->borrow->next != NULL &&
+                   element != NULL && element->storage_type != NULL &&
+                   cmeta_type_require_traits(
+                       element->storage_type,
+                       CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
+                           CMETA_TRAIT_DESTROY) == CMETA_OK;
+        }
+        case CMETA_DATA_MAP: {
+            const cmeta_data_map_ops *ops = cmeta_data_map_ops_of(desc);
+            const cmeta_data_desc *key = cmeta_data_map_key_data(desc);
+            const cmeta_data_desc *value = cmeta_data_map_value_data(desc);
+            return ops != NULL && ops->collector != NULL &&
+                   ops->accept != NULL && ops->borrow != NULL &&
+                   ops->borrow->abi_version ==
+                       CMETA_DATA_MAP_BORROW_OPS_ABI_VERSION &&
+                   ops->borrow->next != NULL &&
+                   key != NULL && value != NULL &&
+                   key->storage_type != NULL && value->storage_type != NULL &&
+                   cmeta_type_require_traits(
+                       key->storage_type,
+                       CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
+                           CMETA_TRAIT_DESTROY) == CMETA_OK &&
+                   cmeta_type_require_traits(
+                       value->storage_type,
+                       CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
+                           CMETA_TRAIT_DESTROY) == CMETA_OK;
+        }
+        default:
+            return false;
+    }
+}
+
+bool cmeta_data_value_copy_supported(const cmeta_data_desc *desc) {
+    return cmeta_data_value_copy_supported_depth(desc, 0u);
+}
+
+static cmeta_status cmeta_data_struct_copy(
+    const cmeta_data_desc *desc, void *destination, const void *source) {
+    const cmeta_data_struct_shape *shape =
+        (const cmeta_data_struct_shape *)desc->shape;
+    size_t i;
+    for (i = 0u; i < shape->field_count; ++i) {
+        const cmeta_data_field_desc *field = &shape->fields[i];
+        cmeta_status status = cmeta_data_value_copy(
+            field->value,
+            (unsigned char *)destination + field->offset,
+            (const unsigned char *)source + field->offset);
+        if (status != CMETA_OK) {
+            while (i != 0u) {
+                const cmeta_data_field_desc *copied = &shape->fields[--i];
+                (void)cmeta_data_value_restore_zero(
+                    copied->value,
+                    (unsigned char *)destination + copied->offset);
+            }
+            return status;
+        }
+    }
+    return CMETA_OK;
+}
+
+static cmeta_status cmeta_data_variant_copy(
+    const cmeta_data_desc *desc, void *destination, const void *source) {
+    const cmeta_data_variant_shape *shape =
+        (const cmeta_data_variant_shape *)desc->shape;
+    const cmeta_data_variant_case *active_case;
+    bool source_zero = false;
+    int64_t tag = 0;
+    cmeta_status status =
+        cmeta_data_variant_is_zero(desc, source, &source_zero);
+    if (status != CMETA_OK) return status;
+    if (source_zero) return CMETA_OK;
+    status = cmeta_data_variant_active_tag(desc, source, &tag);
+    if (status != CMETA_OK) return status;
+    active_case = cmeta_data_variant_case_by_tag(shape, tag);
+    if (active_case == NULL) return CMETA_CALLBACK_ERROR;
+    status = cmeta_data_variant_select(desc, destination, tag);
+    if (status != CMETA_OK) return status;
+    status = cmeta_data_value_copy(
+        active_case->value,
+        (unsigned char *)destination + active_case->offset,
+        (const unsigned char *)source + active_case->offset);
+    if (status != CMETA_OK)
+        (void)cmeta_data_variant_restore_zero(desc, destination);
+    return status;
+}
+
+static cmeta_status cmeta_data_collection_copy(
+    const cmeta_data_desc *desc, void *destination, const void *source) {
+    const cmeta_data_desc *static_element =
+        cmeta_data_collection_element_data(desc);
+    cmeta_data_collection_borrow_cursor cursor = {0};
+    cmeta_collector collector = {0};
+    cmeta_status status;
+    bool begun = false;
+
+    status = cmeta_data_collection_borrow_begin(desc, source, &cursor);
+    if (status != CMETA_OK) return status;
+    if (static_element == NULL ||
+        !cmeta_data_desc_equal(static_element, cursor.element))
+        return CMETA_CALLBACK_ERROR;
+
+    status = cmeta_data_collection_collector(
+        desc, destination, SIZE_MAX, &collector);
+    if (status != CMETA_OK) return status;
+    status = cmeta_collector_begin(&collector);
+    if (status != CMETA_OK) return status;
+    begun = true;
+
+    for (;;) {
+        const void *element = NULL;
+        cmeta_gen_status generated =
+            cmeta_data_collection_borrow_next(&cursor, &element);
+        if (generated == CMETA_GEN_DONE) break;
+        if (generated != CMETA_GEN_VALUE &&
+            generated != CMETA_GEN_VALUE_AND_DONE) {
+            status = CMETA_CALLBACK_ERROR;
+            goto done;
+        }
+        status = cmeta_data_collection_accept(
+            desc, &collector, cursor.element, element);
+        if (status != CMETA_OK) goto done;
+        if (generated == CMETA_GEN_VALUE_AND_DONE) break;
+    }
+
+    status = cmeta_collector_finish(&collector);
+    begun = false;
+
+done:
+    if (begun) cmeta_collector_abort(&collector);
+    return status;
+}
+
+static cmeta_status cmeta_data_map_copy(
+    const cmeta_data_desc *desc, void *destination, const void *source) {
+    const cmeta_data_desc *static_key = cmeta_data_map_key_data(desc);
+    const cmeta_data_desc *static_value = cmeta_data_map_value_data(desc);
+    cmeta_data_map_borrow_cursor cursor = {0};
+    cmeta_collector collector = {0};
+    cmeta_status status;
+    bool begun = false;
+
+    status = cmeta_data_map_borrow_begin(desc, source, &cursor);
+    if (status != CMETA_OK) return status;
+    if (static_key == NULL || static_value == NULL ||
+        !cmeta_data_desc_equal(static_key, cursor.key) ||
+        !cmeta_data_desc_equal(static_value, cursor.value))
+        return CMETA_CALLBACK_ERROR;
+
+    status = cmeta_data_map_collector(desc, destination, SIZE_MAX, &collector);
+    if (status != CMETA_OK) return status;
+    status = cmeta_collector_begin(&collector);
+    if (status != CMETA_OK) return status;
+    begun = true;
+
+    for (;;) {
+        const void *key = NULL;
+        const void *value = NULL;
+        cmeta_gen_status generated =
+            cmeta_data_map_borrow_next(&cursor, &key, &value);
+        if (generated == CMETA_GEN_DONE) break;
+        if (generated != CMETA_GEN_VALUE &&
+            generated != CMETA_GEN_VALUE_AND_DONE) {
+            status = CMETA_CALLBACK_ERROR;
+            goto done;
+        }
+        status = cmeta_data_map_accept(
+            desc, &collector, cursor.key, key, cursor.value, value);
+        if (status != CMETA_OK) goto done;
+        if (generated == CMETA_GEN_VALUE_AND_DONE) break;
+    }
+
+    status = cmeta_collector_finish(&collector);
+    begun = false;
+
+done:
+    if (begun) cmeta_collector_abort(&collector);
+    return status;
+}
+
+cmeta_status cmeta_data_value_copy(
+    const cmeta_data_desc *desc, void *destination, const void *source) {
+    if (!cmeta_data_desc_valid(desc) || destination == NULL || source == NULL ||
+        destination == source || desc->storage_type == NULL)
+        return CMETA_INVALID_ARGUMENT;
+
+    if (cmeta_data_fixed_ops_of(desc) != NULL)
+        return cmeta_data_fixed_copy(
+            desc, destination, source, desc->storage_type->size);
+
+    switch (desc->kind) {
+        case CMETA_DATA_BOOL:
+        case CMETA_DATA_SINT:
+        case CMETA_DATA_UINT:
+        case CMETA_DATA_FLOAT:
+            memcpy(destination, source, desc->storage_type->size);
+            return CMETA_OK;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES: {
+            const unsigned char *bytes = NULL;
+            size_t size = 0u;
+            cmeta_status status =
+                cmeta_data_buffer_read(desc, source, SIZE_MAX, &bytes, &size);
+            if (status != CMETA_OK) return status;
+            return cmeta_data_buffer_assign(
+                desc, destination, bytes, size, SIZE_MAX);
+        }
+        case CMETA_DATA_ENUM:
+            if (cmeta_data_enum_bits_ops_of(desc) != NULL) {
+                uint64_t bits = 0u;
+                cmeta_status status =
+                    cmeta_data_enum_read_bits(desc, source, &bits);
+                return status == CMETA_OK
+                           ? cmeta_data_enum_assign_bits(
+                                 desc, destination, bits)
+                           : status;
+            } else {
+                int64_t value = 0;
+                cmeta_status status =
+                    cmeta_data_enum_read(desc, source, &value);
+                return status == CMETA_OK
+                           ? cmeta_data_enum_assign(
+                                 desc, destination, value)
+                           : status;
+            }
+        case CMETA_DATA_STRUCT:
+            if (!cmeta_data_value_copy_supported(desc))
+                return CMETA_TRAIT_MISSING;
+            return cmeta_data_struct_copy(desc, destination, source);
+        case CMETA_DATA_VARIANT:
+            if (!cmeta_data_value_copy_supported(desc))
+                return CMETA_TRAIT_MISSING;
+            return cmeta_data_variant_copy(desc, destination, source);
+        case CMETA_DATA_SEQUENCE:
+        case CMETA_DATA_SET:
+            if (!cmeta_data_value_copy_supported(desc))
+                return CMETA_TRAIT_MISSING;
+            return cmeta_data_collection_copy(desc, destination, source);
+        case CMETA_DATA_MAP:
+            if (!cmeta_data_value_copy_supported(desc))
+                return CMETA_TRAIT_MISSING;
+            return cmeta_data_map_copy(desc, destination, source);
+        default:
+            return CMETA_TRAIT_MISSING;
+    }
+}
+
 bool cmeta_data_value_move_supported(const cmeta_data_desc *desc) {
     return cmeta_data_value_move_supported_depth(desc, 0u);
 }
