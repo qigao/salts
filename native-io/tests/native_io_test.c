@@ -477,59 +477,97 @@ static int native_io_test_observe_all(native_io_backend *backend, native_io_comp
   return SALTS_OK;
 }
 
-typedef struct native_io_test_wake_observer {
-  native_io_backend *backend;
-  atomic_bool entered;
-  int status;
-  size_t count;
-} native_io_test_wake_observer;
+typedef struct native_io_test_wake_owner {
+  native_io_backend backend;
+  native_io_backend_kind kind;
+  atomic_int stage;
+  int init_status;
+  int first_status;
+  size_t first_count;
+  int zero_status;
+  size_t zero_count;
+  int second_status;
+  size_t second_count;
+  int close_status;
+  int destroy_status;
+} native_io_test_wake_owner;
 
-static void native_io_test_observe_until_woken(void *user) {
-  native_io_test_wake_observer *observer = (native_io_test_wake_observer *)user;
+static void native_io_test_wake_owner_run(void *user) {
+  native_io_test_wake_owner *owner = (native_io_test_wake_owner *)user;
+  const native_io_backend_config config = {owner->kind, 1u, 1u, 1u};
   native_io_completion event = {0};
-  atomic_store_explicit(&observer->entered, true, memory_order_release);
-  observer->status = native_io_backend_observe(observer->backend, &event, 1u, UINT32_MAX,
-                                               &observer->count);
+
+  owner->init_status = native_io_backend_init(&owner->backend, &config);
+  if (owner->init_status != SALTS_OK) {
+    atomic_store_explicit(&owner->stage, 3, memory_order_release);
+    return;
+  }
+
+  atomic_store_explicit(&owner->stage, 1, memory_order_release);
+  owner->first_status =
+      native_io_backend_observe(&owner->backend, &event, 1u, UINT32_MAX, &owner->first_count);
+  owner->zero_count = SIZE_MAX;
+  owner->zero_status =
+      native_io_backend_observe(&owner->backend, &event, 1u, 0u, &owner->zero_count);
+
+  atomic_store_explicit(&owner->stage, 2, memory_order_release);
+  owner->second_status =
+      native_io_backend_observe(&owner->backend, &event, 1u, UINT32_MAX, &owner->second_count);
+
+  owner->close_status = native_io_backend_close(&owner->backend);
+  atomic_store_explicit(&owner->stage, 3, memory_order_release);
+  while (atomic_load_explicit(&owner->stage, memory_order_acquire) == 3) salts_thread_yield();
+  owner->destroy_status = native_io_backend_destroy(&owner->backend);
+  atomic_store_explicit(&owner->stage, 5, memory_order_release);
 }
 
 static void native_io_test_wake_coalesces(native_io_backend_kind kind) {
-  native_io_backend backend = {0};
-  const native_io_backend_config config = {kind, 1u, 1u, 1u};
-  native_io_test_wake_observer observer = {
-      .backend = &backend, .status = SALTS_EIO, .count = SIZE_MAX};
+  native_io_test_wake_owner owner = {
+      .kind = kind,
+      .init_status = SALTS_EIO,
+      .first_status = SALTS_EIO,
+      .first_count = SIZE_MAX,
+      .zero_status = SALTS_EIO,
+      .zero_count = SIZE_MAX,
+      .second_status = SALTS_EIO,
+      .second_count = SIZE_MAX,
+      .close_status = SALTS_EIO,
+      .destroy_status = SALTS_EIO};
   salts_thread_t thread = NULL;
-  native_io_completion event = {0};
-  size_t count = SIZE_MAX;
 
-  atomic_init(&observer.entered, false);
-  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
-  check_equal(native_io_backend_wake(&backend), SALTS_OK);
-  check_equal(native_io_backend_wake(&backend), SALTS_OK);
-  check_equal(native_io_backend_wake(&backend), SALTS_OK);
-  check_equal(salts_thread_create(&thread, native_io_test_observe_until_woken, &observer),
-              SALTS_OK);
+  atomic_init(&owner.stage, 0);
+  check_equal(salts_thread_create(&thread, native_io_test_wake_owner_run, &owner), SALTS_OK);
+  while (atomic_load_explicit(&owner.stage, memory_order_acquire) == 0) salts_thread_yield();
+
+  if (atomic_load_explicit(&owner.stage, memory_order_acquire) == 1) {
+    check_equal(native_io_backend_wake(&owner.backend), SALTS_OK);
+    check_equal(native_io_backend_wake(&owner.backend), SALTS_OK);
+    check_equal(native_io_backend_wake(&owner.backend), SALTS_OK);
+    while (atomic_load_explicit(&owner.stage, memory_order_acquire) == 1) salts_thread_yield();
+  }
+
+  if (atomic_load_explicit(&owner.stage, memory_order_acquire) == 2) {
+    salts_sleep_ms(10u);
+    check_equal(native_io_backend_wake(&owner.backend), SALTS_OK);
+    while (atomic_load_explicit(&owner.stage, memory_order_acquire) == 2) salts_thread_yield();
+  }
+
+  if (atomic_load_explicit(&owner.stage, memory_order_acquire) == 3) {
+    check_equal(native_io_backend_wake(&owner.backend), SALTS_ESHUTDOWN);
+    atomic_store_explicit(&owner.stage, 4, memory_order_release);
+  }
+
   check_equal(salts_thread_join(&thread), SALTS_OK);
-  check_equal(observer.status, SALTS_OK);
-  check_equal(observer.count, 0u);
-
-  check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count), SALTS_ETIMEDOUT);
-  check_equal(count, 0u);
-
-  atomic_store(&observer.entered, false);
-  observer.status = SALTS_EIO;
-  observer.count = SIZE_MAX;
-  check_equal(salts_thread_create(&thread, native_io_test_observe_until_woken, &observer),
-              SALTS_OK);
-  while (!atomic_load_explicit(&observer.entered, memory_order_acquire)) salts_thread_yield();
-  salts_sleep_ms(10u);
-  check_equal(native_io_backend_wake(&backend), SALTS_OK);
-  check_equal(salts_thread_join(&thread), SALTS_OK);
-  check_equal(observer.status, SALTS_OK);
-  check_equal(observer.count, 0u);
-
-  check_equal(native_io_backend_close(&backend), SALTS_OK);
-  check_equal(native_io_backend_wake(&backend), SALTS_ESHUTDOWN);
-  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+  check_equal(owner.init_status, SALTS_OK);
+  check_equal(owner.first_status, SALTS_OK);
+  check_equal(owner.first_count, 0u);
+  check_equal(owner.zero_status, SALTS_ETIMEDOUT);
+  check_equal(owner.zero_count, 0u);
+  check_equal(owner.second_status, SALTS_OK);
+  check_equal(owner.second_count, 0u);
+  check_equal(owner.close_status, SALTS_OK);
+  check_equal(owner.destroy_status, SALTS_OK);
+  check_equal(native_io_backend_wake(&owner.backend), SALTS_EINVAL);
 }
 
 static void native_io_test_close_endpoint(native_io_backend *backend, native_io_endpoint endpoint,

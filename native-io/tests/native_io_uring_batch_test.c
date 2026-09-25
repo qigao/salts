@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <linux/io_uring.h>
+#include <poll.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <sys/syscall.h>
@@ -16,6 +17,13 @@ static unsigned consume_limit;
 static unsigned consume_before_error;
 static int enter_error;
 static bool no_progress;
+static bool enable_ring_wait;
+static unsigned poll_calls;
+
+static int batch_test_poll(struct pollfd *fds, nfds_t count, int timeout) {
+  ++poll_calls;
+  return poll(fds, count, timeout);
+}
 
 /* Compile a private copy of the driver. Faults never enter the production ABI,
  * and short submissions still consume real SQEs through the kernel. */
@@ -29,7 +37,7 @@ static long batch_test_syscall(long number, ...) {
     const unsigned minimum = va_arg(arguments, unsigned);
     const unsigned flags = va_arg(arguments, unsigned);
     void *mask = va_arg(arguments, void *);
-    const unsigned mask_size = va_arg(arguments, unsigned);
+    const size_t mask_size = va_arg(arguments, size_t);
     if (enter_calls < BATCH_TEST_CALLS) enter_sizes[enter_calls] = submit;
     ++enter_calls;
     if (enter_error != 0) {
@@ -53,6 +61,9 @@ static long batch_test_syscall(long number, ...) {
     const unsigned entries = va_arg(arguments, unsigned);
     struct io_uring_params *parameters = va_arg(arguments, struct io_uring_params *);
     result = syscall(number, entries, parameters);
+#if defined(IORING_FEAT_EXT_ARG)
+    if (result >= 0 && !enable_ring_wait) parameters->features &= ~IORING_FEAT_EXT_ARG;
+#endif
   } else {
     errno = ENOSYS;
     result = -1;
@@ -62,9 +73,11 @@ static long batch_test_syscall(long number, ...) {
 }
 
 #define syscall batch_test_syscall
+#define poll batch_test_poll
 #define salts_io_uring_backend_init batch_test_backend_init
 #include "../src/native_io_io_uring.c"
 #undef salts_io_uring_backend_init
+#undef poll
 #undef syscall
 
 #include "tinytest.h"
@@ -135,6 +148,8 @@ spec("io_uring explicit batch submission") {
     consume_before_error = 0u;
     enter_error = 0;
     no_progress = false;
+    enable_ring_wait = false;
+    poll_calls = 0u;
   }
   it("preserves immediate submit without observe or flush") {
     batch_test_requests(false, BATCH_TEST_COUNT, SALTS_OK);
@@ -174,6 +189,66 @@ spec("io_uring explicit batch submission") {
     batch_test_requests(true, 0u, SALTS_EIO);
     check_equal(enter_calls, 1u);
   }
+  it("uses one ring enter and no outer poll for a finite prepared wait") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+    int descriptors[2] = {-1, -1};
+    native_io_endpoint endpoint = {0};
+    native_io_request request = {0};
+    native_io_completion event = {0};
+    unsigned char received = 0u;
+    const unsigned char sent = 0x6du;
+    size_t count = 0u;
+    enable_ring_wait = true;
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    salts_io_uring_impl *impl = backend.impl;
+    if (!impl->ring_native_wait) {
+      check_equal(native_io_backend_close(&backend), SALTS_OK);
+      check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+    } else {
+      /* Exclude the one-time internal wake-poll arm from the operation wait count. */
+      enter_calls = 0u;
+      memset(enter_sizes, 0, sizeof(enter_sizes));
+      poll_calls = 0u;
+      check_equal(pipe(descriptors), 0);
+      check_equal(native_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0],
+                                                NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
+                  SALTS_OK);
+      check_equal(write(descriptors[1], &sent, 1u), (ssize_t)1);
+      const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_PIPE_READ,
+                                             .endpoint = endpoint,
+                                             .buffer = &received,
+                                             .length = 1u,
+                                             .user_data = 17u};
+      check_equal(native_io_backend_prepare(&backend, &operation, &request), SALTS_OK);
+      check_equal(native_io_backend_observe(&backend, &event, 1u, BATCH_TEST_TIMEOUT_MS, &count),
+                  SALTS_OK);
+      check_equal(count, 1u);
+      check_equal(event.kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(event.bytes, 1u);
+      check_equal(event.user_data, (uintptr_t)17u);
+      check_equal(received, sent);
+      check_equal(enter_calls, 1u);
+      check_equal(enter_sizes[0], 1u);
+      check_equal(poll_calls, 0u);
+
+      enter_calls = 0u;
+      poll_calls = 0u;
+      count = SIZE_MAX;
+      check_equal(native_io_backend_observe(&backend, &event, 1u, 10u, &count), SALTS_ETIMEDOUT);
+      check_equal(count, 0u);
+      check_equal(enter_calls, 1u);
+      check_equal(enter_sizes[0], 0u);
+      check_equal(poll_calls, 0u);
+
+      check_equal(close(descriptors[0]), 0);
+      check_equal(close(descriptors[1]), 0);
+      check_equal(native_io_backend_release_pipe(&backend, endpoint), SALTS_OK);
+      check_equal(native_io_backend_close(&backend), SALTS_OK);
+      check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+    }
+  }
+
   it("retains queued followers and failure terminals after observe reports a flush error") {
     native_io_backend backend = {0};
     const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 2u, 2u};
