@@ -10,11 +10,16 @@ try {
     $summary = @(Import-Csv -LiteralPath (Join-Path $testDir 'summary.csv'))
     if ($summary.Count -ne 1 -or $summary[0].data_calls_per_rt -ne '1.500' -or
         $summary[0].epoll_poll_per_rt -ne '0.500' -or $summary[0].uring_enter_per_rt -ne '0.500' -or
-        $summary[0].eagain_per_rt -ne '0.500' -or $summary[0].empty_epoll_per_rt -ne '0.500') {
+        $summary[0].eagain_per_rt -ne '0.500' -or $summary[0].empty_epoll_per_rt -ne '0.500' -or
+        $summary[0].poll_wait_per_rt -ne '1.000' -or $summary[0].empty_poll_per_rt -ne '0.500') {
         throw 'Trace parser included setup/peer/cleanup calls or lost resumed calls'
     }
     $details = @(Import-Csv -LiteralPath (Join-Path $testDir 'syscalls.csv'))
-    if ($details.Count -ne 5) { throw 'Unexpected syscall count' }
+    if ($details.Count -ne 7) { throw 'Unexpected syscall count' }
+    $poll = @($details | Where-Object syscall -eq 'poll')[0]
+    $ppoll = @($details | Where-Object syscall -eq 'ppoll')[0]
+    if ($poll.calls -ne '1' -or $poll.zero_returns -ne '0' -or
+        $ppoll.calls -ne '1' -or $ppoll.zero_returns -ne '1') { throw 'Lost poll/ppoll detail' }
 
     $client = Join-Path $testDir 'libuv-tcp-32768.trace.101'
     $original = [IO.File]::ReadAllText($client)

@@ -432,6 +432,27 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
+      - name: Compare CNet copy and retained sends independently
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+          CNET_IO_BENCHMARK_SEND_COMPARE: '1'
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:IO_BENCHMARK_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          $env:CNET_IO_BENCHMARK_OUTPUT = Join-Path $resultDir "send"
+          $output = & $benchmark --no-color 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "cnet-send-comparison.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./cnet/benchmarks/verify_io_benchmark.ps1 -Prefix $env:CNET_IO_BENCHMARK_OUTPUT -SendComparison
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet retained-send experiment: $env:CNET_IO_BENCHMARK_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
       - name: Collect isolated Linux syscall evidence
         if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
         shell: bash
@@ -449,7 +470,7 @@ jobs:
               export CNET_IO_BENCHMARK_TRACE="$driver:$workload"
               label="${CNET_IO_BENCHMARK_TRACE//:/-}"
               strace -ff -ttt -T -s 128 \
-                -e trace=%network,read,readv,write,writev,epoll_ctl,epoll_wait,epoll_pwait,epoll_pwait2,io_uring_setup,io_uring_register,io_uring_enter,futex \
+                -e trace=%network,read,readv,write,writev,poll,ppoll,epoll_ctl,epoll_wait,epoll_pwait,epoll_pwait2,io_uring_setup,io_uring_register,io_uring_enter,futex \
                 -o "native-io-results/syscalls/$label.trace" \
                 "$IO_BENCHMARK_EXECUTABLE" --no-color \
                 > "native-io-results/syscalls/$label.log" 2>&1
@@ -460,6 +481,7 @@ jobs:
             'Only count the client thread between IO_BENCH_MEASURE_BEGIN/END markers.' \
             'Other thread files contain the echo peer; syscall elapsed includes scheduling.' \
             'io_uring_enter counts are NOT SQE counts. API call counts are NOT syscall counts.' \
+            'poll/ppoll include io_uring ring/wake-fd waits; they are separate from epoll waits and io_uring_enter.' \
             'libuv can submit epoll control via io_uring; zero direct epoll_ctl calls do not mean zero registration work.' \
             'CPU stacks and runnable/blocked split are not collected by strace; use perf on a profiling host.' \
             > native-io-results/syscalls/README.txt

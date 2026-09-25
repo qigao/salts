@@ -5,6 +5,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+int cnet_io_benchmark_select_send_comparison(const char *requested, bool trace_enabled,
+                                             bool *selected) {
+  if (selected == NULL) return SALTS_EINVAL;
+  if (requested != NULL && (strcmp(requested, "1") != 0 || trace_enabled)) return SALTS_EINVAL;
+  *selected = requested != NULL;
+  return SALTS_OK;
+}
+
 static int cnet_io_benchmark_backend_from_name(const char *name,
                                                cnet_io_benchmark_backend *selected) {
   if (strcmp(name, "iocp") == 0) {

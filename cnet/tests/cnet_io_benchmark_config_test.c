@@ -5,6 +5,23 @@
 #include <string.h>
 
 spec("CNet I/O benchmark backend selection") {
+  it("keeps the retained-send experiment separate from baseline and trace modes") {
+    bool selected = true;
+    check_equal(cnet_io_benchmark_select_send_comparison(NULL, false, &selected), SALTS_OK);
+    check_false(selected);
+    check_equal(cnet_io_benchmark_select_send_comparison(NULL, true, &selected), SALTS_OK);
+    check_false(selected);
+    check_equal(cnet_io_benchmark_select_send_comparison("1", false, &selected), SALTS_OK);
+    check_true(selected);
+    const char *invalid[] = {"", "0", "true", "2", " 1", "1 "};
+    for (size_t i = 0u; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+      check_equal(cnet_io_benchmark_select_send_comparison(invalid[i], false, &selected), SALTS_EINVAL);
+      check_true(selected);
+    }
+    check_equal(cnet_io_benchmark_select_send_comparison("1", true, &selected), SALTS_EINVAL);
+    check_equal(cnet_io_benchmark_select_send_comparison(NULL, false, NULL), SALTS_EINVAL);
+  }
+
   it("uses the platform backend only when no override is requested") {
     cnet_io_benchmark_backend selected = {0};
 
