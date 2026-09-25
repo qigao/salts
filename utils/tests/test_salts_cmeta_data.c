@@ -87,6 +87,39 @@ spec("Salts CMeta buffer adapters") {
     bind_tstr_bytes();
   }
 
+  it("publishes data-backed COPY MOVE DESTROY traits for tstr") {
+    tstr source = tstr_dup("managed");
+    tstr copied;
+    tstr moved;
+    const cmeta_type_traits *traits = salts_tstr_cmeta_type.traits;
+
+    check_not_null(source);
+    check_true(cmeta_data_value_traits_supported(&salts_tstr_cmeta_data));
+    check_not_null(traits);
+    check_true((traits->flags &
+                (CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY)) ==
+               (CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY));
+    check_not_null(traits->copy_construct);
+    check_not_null(traits->move_construct);
+    check_not_null(traits->destroy);
+
+    check_true(traits->copy_construct(&copied, &source));
+    check_not_null(copied);
+    check_true(copied != source);
+    check_equal(tstr_len(copied), tstr_len(source));
+    check_equal(memcmp(copied, source, tstr_len(source)), 0);
+
+    traits->move_construct(&moved, &copied);
+    check_null(copied);
+    check_not_null(moved);
+    check_equal(memcmp(moved, source, tstr_len(source)), 0);
+
+    traits->destroy(&moved);
+    check_null(moved);
+    traits->destroy(&source);
+    check_null(source);
+  }
+
   it("copies exact owned tstr bytes including embedded NUL") {
     static const unsigned char input[] = {'a', 0, 'b'};
     const unsigned char *view = NULL;
