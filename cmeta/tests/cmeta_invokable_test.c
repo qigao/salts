@@ -1,4 +1,5 @@
 #include <cmeta/invokable.h>
+#include <cmeta/interface.h>
 #include "tinytest.h"
 
 typed_any(value, int, cmeta_invokable_increment, (int value)) {
@@ -45,6 +46,27 @@ static const cmeta_param_desc add_params[] = {
 
 static const cmeta_data_desc *const increment_data_params[] = {
     &cmeta_data_int
+};
+
+static const cmeta_abi_carrier increment_abi_params[] = {
+    CMETA_ABI_SCALAR
+};
+
+static const cmeta_function_abi_desc increment_abi = {
+    .size = sizeof(cmeta_function_abi_desc),
+    .function = &increment_function,
+    .return_carrier = CMETA_ABI_SCALAR,
+    .param_carriers = increment_abi_params,
+    .param_count = 1u
+};
+
+static const cmeta_interface_method_desc increment_method = {
+    .size = sizeof(cmeta_interface_method_desc),
+    .name = "increment",
+    .dispatch_arity = 1u,
+    .flags = CMETA_INTERFACE_METHOD_NONE,
+    .function = &increment_function,
+    .abi = &increment_abi
 };
 
 static const cmeta_function_data_desc increment_data = {
@@ -162,4 +184,20 @@ spec("CMeta invokable bridge") {
                     &wrong, cmeta_invokable_increment, &invokable),
                 CMETA_TYPE_MISMATCH);
   }
+
+  it("joins a fully reflected interface method to the same invokable") {
+    cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+    int input = 9;
+    int output = 0;
+    const void *args[] = {&input};
+
+    check_true(cmeta_interface_method_reflection_valid(&increment_method));
+    check_equal(cmeta_interface_method_invokable_bind(
+                    &increment_method, &increment_data,
+                    cmeta_invokable_increment, &invokable),
+                CMETA_OK);
+    check_equal(cmeta_invokable_invoke(&invokable, &output, args), CMETA_OK);
+    check_equal(output, 10);
+  }
+
 }
