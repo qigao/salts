@@ -205,9 +205,12 @@ bool cmeta_data_desc_valid(const cmeta_data_desc *desc) {
             return desc->struct_size < offsetof(cmeta_data_desc, collection_ops) +
                                         sizeof(desc->collection_ops) ||
                    desc->collection_ops == NULL;
-        return cmeta_type_desc_valid(desc->storage_type) &&
-               desc->kind != CMETA_DATA_MAP &&
-               desc->struct_size >= offsetof(cmeta_data_desc, collection_ops) +
+        if (!cmeta_type_desc_valid(desc->storage_type)) return false;
+        if (desc->kind == CMETA_DATA_MAP)
+            return desc->struct_size >= offsetof(cmeta_data_desc, map_ops) +
+                                        sizeof(desc->map_ops) &&
+                   desc->map_ops != NULL;
+        return desc->struct_size >= offsetof(cmeta_data_desc, collection_ops) +
                                     sizeof(desc->collection_ops) &&
                desc->collection_ops != NULL;
     }
