@@ -315,6 +315,8 @@ const cmeta_data_desc cmeta_data_sequence_view = {
     CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, foreach)
 #define CMETA_COLLECTION_OPS_COLLECTOR_SIZE \
     CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, collector)
+#define CMETA_COLLECTION_OPS_ELEMENT_DATA_SIZE \
+    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, element_data)
 
 static cmeta_status cmeta_data_collection_ops_status(
     const cmeta_data_desc *desc, const cmeta_data_collection_ops **out) {
@@ -350,6 +352,17 @@ const cmeta_data_collection_ops *cmeta_data_collection_ops_of(
     const cmeta_data_desc *desc) {
     const cmeta_data_collection_ops *ops = NULL;
     return cmeta_data_collection_ops_status(desc, &ops) == CMETA_OK ? ops : NULL;
+}
+
+const cmeta_data_desc *cmeta_data_collection_element_data(
+    const cmeta_data_desc *desc) {
+    const cmeta_data_collection_ops *ops = NULL;
+    if (cmeta_data_collection_ops_status(desc, &ops) != CMETA_OK ||
+        ops->struct_size < CMETA_COLLECTION_OPS_ELEMENT_DATA_SIZE ||
+        ops->element_data == NULL ||
+        !cmeta_data_desc_valid(ops->element_data))
+        return NULL;
+    return ops->element_data;
 }
 
 cmeta_status cmeta_data_collection_read(
@@ -489,6 +502,7 @@ cmeta_gen_status cmeta_data_collection_borrow_next(
 
 #undef CMETA_COLLECTION_BORROW_OPS_SIZE
 #undef CMETA_COLLECTION_OPS_BORROW_SIZE
+#undef CMETA_COLLECTION_OPS_ELEMENT_DATA_SIZE
 #undef CMETA_COLLECTION_OPS_COLLECTOR_SIZE
 #undef CMETA_COLLECTION_OPS_BASE_SIZE
 #undef CMETA_COLLECTION_DESC_OPS_SIZE
@@ -566,6 +580,8 @@ cmeta_status cmeta_data_collection_foreach(
 #define CMETA_MAP_OPS_COLLECTOR_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, collector)
 #define CMETA_MAP_OPS_ACCEPT_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, accept)
 #define CMETA_MAP_OPS_BORROW_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, borrow)
+#define CMETA_MAP_OPS_KEY_DATA_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, key_data)
+#define CMETA_MAP_OPS_VALUE_DATA_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, value_data)
 #define CMETA_MAP_BORROW_OPS_SIZE \
     CMETA_MAP_FIELD_END(cmeta_data_map_borrow_ops, current_version)
 
@@ -600,6 +616,26 @@ const cmeta_data_map_ops *cmeta_data_map_ops_of(
     const cmeta_data_desc *desc) {
     const cmeta_data_map_ops *ops = NULL;
     return cmeta_data_map_ops_status(desc, &ops) == CMETA_OK ? ops : NULL;
+}
+
+const cmeta_data_desc *cmeta_data_map_key_data(
+    const cmeta_data_desc *desc) {
+    const cmeta_data_map_ops *ops = NULL;
+    if (cmeta_data_map_ops_status(desc, &ops) != CMETA_OK ||
+        ops->struct_size < CMETA_MAP_OPS_KEY_DATA_SIZE ||
+        ops->key_data == NULL || !cmeta_data_desc_valid(ops->key_data))
+        return NULL;
+    return ops->key_data;
+}
+
+const cmeta_data_desc *cmeta_data_map_value_data(
+    const cmeta_data_desc *desc) {
+    const cmeta_data_map_ops *ops = NULL;
+    if (cmeta_data_map_ops_status(desc, &ops) != CMETA_OK ||
+        ops->struct_size < CMETA_MAP_OPS_VALUE_DATA_SIZE ||
+        ops->value_data == NULL || !cmeta_data_desc_valid(ops->value_data))
+        return NULL;
+    return ops->value_data;
 }
 
 typedef struct cmeta_data_map_bounded_context {
@@ -742,6 +778,8 @@ cmeta_gen_status cmeta_data_map_borrow_next(
 }
 
 #undef CMETA_MAP_BORROW_OPS_SIZE
+#undef CMETA_MAP_OPS_VALUE_DATA_SIZE
+#undef CMETA_MAP_OPS_KEY_DATA_SIZE
 #undef CMETA_MAP_OPS_BORROW_SIZE
 #undef CMETA_MAP_OPS_ACCEPT_SIZE
 #undef CMETA_MAP_OPS_COLLECTOR_SIZE
