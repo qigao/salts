@@ -837,6 +837,14 @@ const cmeta_data_variant_case *cmeta_data_variant_case_by_tag(
     return NULL;
 }
 
+static const cmeta_data_integer_shape cmeta_data_int8_shape = {8u};
+static const cmeta_data_integer_shape cmeta_data_uint8_shape = {8u};
+static const cmeta_data_integer_shape cmeta_data_int16_shape = {16u};
+static const cmeta_data_integer_shape cmeta_data_uint16_shape = {16u};
+static const cmeta_data_integer_shape cmeta_data_int32_shape = {32u};
+static const cmeta_data_integer_shape cmeta_data_uint32_shape = {32u};
+static const cmeta_data_integer_shape cmeta_data_int64_shape = {64u};
+static const cmeta_data_integer_shape cmeta_data_uint64_shape = {64u};
 static const cmeta_data_integer_shape cmeta_data_int_shape = {
     (uint8_t)(sizeof(int) * CHAR_BIT)
 };
@@ -852,6 +860,39 @@ static const cmeta_data_float_shape cmeta_data_float_shape_value = {
 static const cmeta_data_float_shape cmeta_data_double_shape = {
     (uint8_t)(sizeof(double) * CHAR_BIT)
 };
+
+const cmeta_data_desc cmeta_data_int8 = {
+    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    "cmeta.int8.data", "int8", CMETA_DATA_SINT, &cmeta_type_int,
+    &cmeta_data_int8_shape, NULL, NULL, NULL, NULL, NULL};
+const cmeta_data_desc cmeta_data_uint8 = {
+    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    "cmeta.uint8.data", "uint8", CMETA_DATA_UINT, &cmeta_type_int,
+    &cmeta_data_uint8_shape, NULL, NULL, NULL, NULL, NULL};
+const cmeta_data_desc cmeta_data_int16 = {
+    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    "cmeta.int16.data", "int16", CMETA_DATA_SINT, &cmeta_type_int,
+    &cmeta_data_int16_shape, NULL, NULL, NULL, NULL, NULL};
+const cmeta_data_desc cmeta_data_uint16 = {
+    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    "cmeta.uint16.data", "uint16", CMETA_DATA_UINT, &cmeta_type_int,
+    &cmeta_data_uint16_shape, NULL, NULL, NULL, NULL, NULL};
+const cmeta_data_desc cmeta_data_int32 = {
+    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    "cmeta.int32.data", "int32", CMETA_DATA_SINT, &cmeta_type_int,
+    &cmeta_data_int32_shape, NULL, NULL, NULL, NULL, NULL};
+const cmeta_data_desc cmeta_data_uint32 = {
+    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    "cmeta.uint32.data", "uint32", CMETA_DATA_UINT, &cmeta_type_int,
+    &cmeta_data_uint32_shape, NULL, NULL, NULL, NULL, NULL};
+const cmeta_data_desc cmeta_data_int64 = {
+    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    "cmeta.int64.data", "int64", CMETA_DATA_SINT, &cmeta_type_long,
+    &cmeta_data_int64_shape, NULL, NULL, NULL, NULL, NULL};
+const cmeta_data_desc cmeta_data_uint64 = {
+    CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
+    "cmeta.uint64.data", "uint64", CMETA_DATA_UINT, &cmeta_type_long,
+    &cmeta_data_uint64_shape, NULL, NULL, NULL, NULL, NULL};
 
 const cmeta_data_desc cmeta_data_bool = {
     CMETA_DATA_DESC_PREFIX_SIZE, CMETA_DATA_DESC_ABI_VERSION,
