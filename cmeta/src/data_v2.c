@@ -379,6 +379,7 @@ cmeta_status cmeta_data_collection_read(
     if (object == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
     status = cmeta_data_collection_ops_status(desc, &ops);
     if (status != CMETA_OK) return status;
+    if (ops->read == NULL) return CMETA_TRAIT_MISSING;
 
     expected = ops->element(object);
     if (expected != NULL && !cmeta_data_desc_valid(expected))
