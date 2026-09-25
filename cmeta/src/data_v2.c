@@ -213,7 +213,7 @@ cmeta_status cmeta_data_buffer_read(
 #define CMETA_COLLECTION_DESC_OPS_SIZE \
     CMETA_COLLECTION_FIELD_END(cmeta_data_desc, collection_ops)
 #define CMETA_COLLECTION_OPS_SIZE \
-    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, read)
+    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, foreach)
 
 static cmeta_status cmeta_data_collection_ops_status(
     const cmeta_data_desc *desc, const cmeta_data_collection_ops **out) {
@@ -230,7 +230,7 @@ static cmeta_status cmeta_data_collection_ops_status(
     if (ops->struct_size < CMETA_COLLECTION_OPS_SIZE ||
         ops->abi_version != CMETA_DATA_COLLECTION_OPS_ABI_VERSION ||
         ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
-        ops->element == NULL || ops->read == NULL)
+        ops->element == NULL || (ops->read == NULL && ops->foreach == NULL))
         return CMETA_INVALID_ARGUMENT;
 
     if (desc->storage_type == NULL ||
@@ -291,4 +291,57 @@ const cmeta_data_desc *cmeta_data_integer_width(bool is_signed, uint8_t bits) {
         case 64u: return is_signed ? &cmeta_data_int64 : &cmeta_data_uint64;
         default: return NULL;
     }
+}
+
+
+typedef struct cmeta_data_collection_foreach_context {
+    cmeta_data_collection_visit_fn visit;
+    void *context;
+    size_t remaining;
+} cmeta_data_collection_foreach_context;
+
+static cmeta_status cmeta_data_collection_bounded_visit(
+    void *context, const void *element) {
+    cmeta_data_collection_foreach_context *bounded =
+        (cmeta_data_collection_foreach_context *)context;
+    if (bounded == NULL || bounded->visit == NULL || element == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (bounded->remaining == 0u) return CMETA_CAPACITY_EXCEEDED;
+    --bounded->remaining;
+    return bounded->visit(bounded->context, element);
+}
+
+cmeta_status cmeta_data_collection_foreach(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_collection_visit_fn visit, void *context, size_t max_items) {
+    const cmeta_data_collection_ops *ops = NULL;
+    cmeta_data_collection_foreach_context bounded;
+    cmeta_status status;
+    size_t i;
+
+    if (object == NULL || visit == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+
+    if (ops->foreach != NULL) {
+        bounded.visit = visit;
+        bounded.context = context;
+        bounded.remaining = max_items;
+        return ops->foreach(
+            object, cmeta_data_collection_bounded_visit, &bounded, max_items);
+    }
+
+    if (ops->read != NULL) {
+        cmeta_data_collection_view view = {0};
+        status = cmeta_data_collection_read(desc, object, &view);
+        if (status != CMETA_OK) return status;
+        if (view.count > max_items) return CMETA_CAPACITY_EXCEEDED;
+        for (i = 0u; i < view.count; ++i) {
+            status = visit(context,
+                           (const unsigned char *)view.data + i * view.stride);
+            if (status != CMETA_OK) return status;
+        }
+        return CMETA_OK;
+    }
+    return CMETA_TRAIT_MISSING;
 }
