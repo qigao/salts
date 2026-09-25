@@ -503,17 +503,29 @@ static void native_io_test_wake_coalesces(native_io_backend_kind kind) {
 
   atomic_init(&observer.entered, false);
   check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+#if defined(__linux__)
+  if (kind == NATIVE_IO_BACKEND_IO_URING) fprintf(stderr, "uring wake stage: init\n");
+#endif
   check_equal(native_io_backend_wake(&backend), SALTS_OK);
   check_equal(native_io_backend_wake(&backend), SALTS_OK);
   check_equal(native_io_backend_wake(&backend), SALTS_OK);
+#if defined(__linux__)
+  if (kind == NATIVE_IO_BACKEND_IO_URING) fprintf(stderr, "uring wake stage: prewake\n");
+#endif
   check_equal(salts_thread_create(&thread, native_io_test_observe_until_woken, &observer),
               SALTS_OK);
   check_equal(salts_thread_join(&thread), SALTS_OK);
+#if defined(__linux__)
+  if (kind == NATIVE_IO_BACKEND_IO_URING) fprintf(stderr, "uring wake stage: first-join\n");
+#endif
   check_equal(observer.status, SALTS_OK);
   check_equal(observer.count, 0u);
 
   check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count), SALTS_ETIMEDOUT);
   check_equal(count, 0u);
+#if defined(__linux__)
+  if (kind == NATIVE_IO_BACKEND_IO_URING) fprintf(stderr, "uring wake stage: zero-poll\n");
+#endif
 
   atomic_store(&observer.entered, false);
   observer.status = SALTS_EIO;
@@ -521,15 +533,27 @@ static void native_io_test_wake_coalesces(native_io_backend_kind kind) {
   check_equal(salts_thread_create(&thread, native_io_test_observe_until_woken, &observer),
               SALTS_OK);
   while (!atomic_load_explicit(&observer.entered, memory_order_acquire)) salts_thread_yield();
+#if defined(__linux__)
+  if (kind == NATIVE_IO_BACKEND_IO_URING) fprintf(stderr, "uring wake stage: second-entered\n");
+#endif
   salts_sleep_ms(10u);
   check_equal(native_io_backend_wake(&backend), SALTS_OK);
+#if defined(__linux__)
+  if (kind == NATIVE_IO_BACKEND_IO_URING) fprintf(stderr, "uring wake stage: second-wake\n");
+#endif
   check_equal(salts_thread_join(&thread), SALTS_OK);
+#if defined(__linux__)
+  if (kind == NATIVE_IO_BACKEND_IO_URING) fprintf(stderr, "uring wake stage: second-join\n");
+#endif
   check_equal(observer.status, SALTS_OK);
   check_equal(observer.count, 0u);
 
   check_equal(native_io_backend_close(&backend), SALTS_OK);
   check_equal(native_io_backend_wake(&backend), SALTS_ESHUTDOWN);
   check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+#if defined(__linux__)
+  if (kind == NATIVE_IO_BACKEND_IO_URING) fprintf(stderr, "uring wake stage: destroyed\n");
+#endif
 }
 
 static void native_io_test_close_endpoint(native_io_backend *backend, native_io_endpoint endpoint,
