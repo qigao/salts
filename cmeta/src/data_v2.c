@@ -1228,6 +1228,8 @@ static bool cmeta_data_value_copy_supported_depth(
                        CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION &&
                    ops->borrow->next != NULL &&
                    element != NULL && element->storage_type != NULL &&
+                   cmeta_data_value_copy_supported_depth(
+                       element, depth + 1u) &&
                    cmeta_type_require_traits(
                        element->storage_type,
                        CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
@@ -1251,6 +1253,10 @@ static bool cmeta_data_value_copy_supported_depth(
                    ops->borrow->next != NULL &&
                    key != NULL && value != NULL &&
                    key->storage_type != NULL && value->storage_type != NULL &&
+                   cmeta_data_value_copy_supported_depth(
+                       key, depth + 1u) &&
+                   cmeta_data_value_copy_supported_depth(
+                       value, depth + 1u) &&
                    cmeta_type_require_traits(
                        key->storage_type,
                        CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE |
