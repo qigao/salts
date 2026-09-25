@@ -575,6 +575,93 @@ cmeta_status cmeta_data_collection_accept(
 }
 
 
+cmeta_status cmeta_data_value_init_zero(
+    const cmeta_data_desc *desc, void *object) {
+    if (!cmeta_data_desc_valid(desc) || object == NULL ||
+        desc->storage_type == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    switch (desc->kind) {
+        case CMETA_DATA_BOOL:
+        case CMETA_DATA_SINT:
+        case CMETA_DATA_UINT:
+        case CMETA_DATA_FLOAT:
+            memset(object, 0, desc->storage_type->size);
+            return CMETA_OK;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES:
+            return cmeta_data_buffer_init_zero(desc, object);
+        case CMETA_DATA_ENUM:
+            memset(object, 0, desc->storage_type->size);
+            return CMETA_OK;
+        default:
+            break;
+    }
+    if (desc->fixed_ops != NULL) {
+        memset(object, 0, desc->storage_type->size);
+        return CMETA_OK;
+    }
+    if (desc->variant_ops != NULL) {
+        memset(object, 0, desc->storage_type->size);
+        return CMETA_OK;
+    }
+    return cmeta_data_construct_init_zero(desc, object);
+}
+
+cmeta_status cmeta_data_value_restore_zero(
+    const cmeta_data_desc *desc, void *object) {
+    if (!cmeta_data_desc_valid(desc) || object == NULL ||
+        desc->storage_type == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    switch (desc->kind) {
+        case CMETA_DATA_BOOL:
+        case CMETA_DATA_SINT:
+        case CMETA_DATA_UINT:
+        case CMETA_DATA_FLOAT:
+            memset(object, 0, desc->storage_type->size);
+            return CMETA_OK;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES:
+            return cmeta_data_buffer_restore_zero(desc, object);
+        case CMETA_DATA_ENUM:
+            if (desc->enum_bits_ops != NULL)
+                return cmeta_data_enum_bits_restore_zero(desc, object);
+            return cmeta_data_enum_restore_zero(desc, object);
+        default:
+            break;
+    }
+    if (desc->fixed_ops != NULL)
+        return cmeta_data_fixed_restore_zero(desc, object);
+    if (desc->variant_ops != NULL)
+        return cmeta_data_variant_restore_zero(desc, object);
+    return cmeta_data_construct_restore_zero(desc, object);
+}
+
+cmeta_status cmeta_data_value_move(
+    const cmeta_data_desc *desc, void *destination, void *source) {
+    cmeta_status status;
+    if (!cmeta_data_desc_valid(desc) || destination == NULL || source == NULL ||
+        destination == source || desc->storage_type == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    switch (desc->kind) {
+        case CMETA_DATA_BOOL:
+        case CMETA_DATA_SINT:
+        case CMETA_DATA_UINT:
+        case CMETA_DATA_FLOAT:
+            memcpy(destination, source, desc->storage_type->size);
+            memset(source, 0, desc->storage_type->size);
+            return CMETA_OK;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES:
+            return cmeta_data_buffer_move(desc, destination, source);
+        default:
+            break;
+    }
+    /* Non-buffer provider families do not all expose no-fail move today.
+     * Aggregate derivation must fail closed rather than copy owned state. */
+    status = cmeta_data_construct_move(desc, destination, source);
+    return status;
+}
+
 static cmeta_status cmeta_data_temp_init(
     const cmeta_data_desc *desc, void *storage,
     cmeta_data_temp_lifecycle *lifecycle) {
