@@ -591,19 +591,18 @@ cmeta_status cmeta_data_value_init_zero(
         case CMETA_DATA_BYTES:
             return cmeta_data_buffer_init_zero(desc, object);
         case CMETA_DATA_ENUM:
-            memset(object, 0, desc->storage_type->size);
-            return CMETA_OK;
+            if (desc->enum_bits_ops != NULL)
+                return cmeta_data_enum_bits_restore_zero(desc, object);
+            return cmeta_data_enum_restore_zero(desc, object);
+        case CMETA_DATA_STRUCT:
+            return cmeta_data_struct_init_zero(desc, object);
         default:
             break;
     }
-    if (desc->fixed_ops != NULL) {
-        memset(object, 0, desc->storage_type->size);
-        return CMETA_OK;
-    }
-    if (desc->variant_ops != NULL) {
-        memset(object, 0, desc->storage_type->size);
-        return CMETA_OK;
-    }
+    if (desc->fixed_ops != NULL)
+        return cmeta_data_fixed_restore_zero(desc, object);
+    if (desc->variant_ops != NULL)
+        return cmeta_data_variant_restore_zero(desc, object);
     return cmeta_data_construct_init_zero(desc, object);
 }
 
@@ -626,6 +625,8 @@ cmeta_status cmeta_data_value_restore_zero(
             if (desc->enum_bits_ops != NULL)
                 return cmeta_data_enum_bits_restore_zero(desc, object);
             return cmeta_data_enum_restore_zero(desc, object);
+        case CMETA_DATA_STRUCT:
+            return cmeta_data_struct_restore_zero(desc, object);
         default:
             break;
     }
@@ -636,8 +637,32 @@ cmeta_status cmeta_data_value_restore_zero(
     return cmeta_data_construct_restore_zero(desc, object);
 }
 
-bool cmeta_data_value_move_supported(const cmeta_data_desc *desc) {
-    if (!cmeta_data_desc_valid(desc) || desc->storage_type == NULL)
+static bool cmeta_data_struct_field_bounds_valid(
+    const cmeta_data_desc *owner, const cmeta_data_field_desc *field) {
+    const cmeta_data_desc *value;
+    size_t owner_size;
+    if (owner == NULL || field == NULL || field->value == NULL ||
+        owner->storage_type == NULL)
+        return false;
+    value = field->value;
+    if (!cmeta_data_desc_valid(value) || value->storage_type == NULL)
+        return false;
+    owner_size = owner->storage_type->size;
+    if (field->offset > owner_size ||
+        value->storage_type->size > owner_size - field->offset)
+        return false;
+    if (value->storage_type->align != 0u &&
+        (field->offset % value->storage_type->align) != 0u)
+        return false;
+    return true;
+}
+
+static bool cmeta_data_value_move_supported_depth(
+    const cmeta_data_desc *desc, unsigned depth) {
+    const cmeta_data_struct_shape *shape;
+    size_t i;
+    if (depth > 64u || !cmeta_data_desc_valid(desc) ||
+        desc->storage_type == NULL)
         return false;
     switch (desc->kind) {
         case CMETA_DATA_BOOL:
@@ -648,9 +673,92 @@ bool cmeta_data_value_move_supported(const cmeta_data_desc *desc) {
         case CMETA_DATA_STRING:
         case CMETA_DATA_BYTES:
             return cmeta_data_buffer_ops_of(desc) != NULL;
+        case CMETA_DATA_STRUCT:
+            shape = (const cmeta_data_struct_shape *)desc->shape;
+            if (shape == NULL) return false;
+            for (i = 0u; i < shape->field_count; ++i) {
+                const cmeta_data_field_desc *field = &shape->fields[i];
+                if (!cmeta_data_struct_field_bounds_valid(desc, field) ||
+                    !cmeta_data_value_move_supported_depth(
+                        field->value, depth + 1u))
+                    return false;
+            }
+            return true;
         default:
             return cmeta_data_construct_ops_of(desc) != NULL;
     }
+}
+
+bool cmeta_data_struct_constructible(const cmeta_data_desc *desc) {
+    return desc != NULL && desc->kind == CMETA_DATA_STRUCT &&
+           cmeta_data_value_move_supported_depth(desc, 0u);
+}
+
+static cmeta_status cmeta_data_struct_init_zero(
+    const cmeta_data_desc *desc, void *object) {
+    const cmeta_data_struct_shape *shape;
+    size_t i;
+    if (!cmeta_data_struct_constructible(desc) || object == NULL)
+        return CMETA_TRAIT_MISSING;
+    shape = (const cmeta_data_struct_shape *)desc->shape;
+    for (i = 0u; i < shape->field_count; ++i) {
+        const cmeta_data_field_desc *field = &shape->fields[i];
+        cmeta_status status = cmeta_data_value_init_zero(
+            field->value, (unsigned char *)object + field->offset);
+        if (status != CMETA_OK) {
+            while (i != 0u) {
+                --i;
+                field = &shape->fields[i];
+                (void)cmeta_data_value_restore_zero(
+                    field->value, (unsigned char *)object + field->offset);
+            }
+            return status;
+        }
+    }
+    return CMETA_OK;
+}
+
+static cmeta_status cmeta_data_struct_restore_zero(
+    const cmeta_data_desc *desc, void *object) {
+    const cmeta_data_struct_shape *shape;
+    size_t i;
+    cmeta_status result = CMETA_OK;
+    if (!cmeta_data_struct_constructible(desc) || object == NULL)
+        return CMETA_TRAIT_MISSING;
+    shape = (const cmeta_data_struct_shape *)desc->shape;
+    i = shape->field_count;
+    while (i != 0u) {
+        const cmeta_data_field_desc *field = &shape->fields[--i];
+        cmeta_status status = cmeta_data_value_restore_zero(
+            field->value, (unsigned char *)object + field->offset);
+        if (result == CMETA_OK && status != CMETA_OK)
+            result = status;
+    }
+    return result;
+}
+
+static cmeta_status cmeta_data_struct_move(
+    const cmeta_data_desc *desc, void *destination, void *source) {
+    const cmeta_data_struct_shape *shape;
+    size_t i;
+    if (!cmeta_data_struct_constructible(desc) ||
+        destination == NULL || source == NULL || destination == source)
+        return CMETA_TRAIT_MISSING;
+    shape = (const cmeta_data_struct_shape *)desc->shape;
+    for (i = 0u; i < shape->field_count; ++i) {
+        const cmeta_data_field_desc *field = &shape->fields[i];
+        cmeta_status status = cmeta_data_value_move(
+            field->value,
+            (unsigned char *)destination + field->offset,
+            (unsigned char *)source + field->offset);
+        if (status != CMETA_OK)
+            return status; /* capability preflight makes this path no-fail */
+    }
+    return CMETA_OK;
+}
+
+bool cmeta_data_value_move_supported(const cmeta_data_desc *desc) {
+    return cmeta_data_value_move_supported_depth(desc, 0u);
 }
 
 cmeta_status cmeta_data_value_move(
@@ -670,11 +778,11 @@ cmeta_status cmeta_data_value_move(
         case CMETA_DATA_STRING:
         case CMETA_DATA_BYTES:
             return cmeta_data_buffer_move(desc, destination, source);
+        case CMETA_DATA_STRUCT:
+            return cmeta_data_struct_move(desc, destination, source);
         default:
             break;
     }
-    /* Non-buffer provider families do not all expose no-fail move today.
-     * Aggregate derivation must fail closed rather than copy owned state. */
     status = cmeta_data_construct_move(desc, destination, source);
     return status;
 }
