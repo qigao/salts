@@ -15,6 +15,23 @@ static cmeta_status cstl_semantic_collect_int(
   return CMETA_OK;
 }
 
+typedef struct cstl_semantic_map_capture {
+  int keys[2];
+  long values[2];
+  size_t count;
+} cstl_semantic_map_capture;
+
+static cmeta_status cstl_semantic_collect_map(
+    void *context, const void *key, const void *value) {
+  cstl_semantic_map_capture *out = (cstl_semantic_map_capture *)context;
+  if (out == NULL || key == NULL || value == NULL)
+    return CMETA_INVALID_ARGUMENT;
+  out->keys[out->count] = *(const int *)key;
+  out->values[out->count] = *(const long *)value;
+  ++out->count;
+  return CMETA_OK;
+}
+
 spec("CSTL semantic projection") {
   it("projects sequence-like containers without duplicating element type") {
     Vec(int, vec);
@@ -163,6 +180,35 @@ spec("CSTL semantic projection") {
 
     reflected_set_destroy(&ordered);
     reflected_hash_set_destroy(&hashed);
+  }
+
+
+  it("projects typed Map as key-value reflection, never pair sequence") {
+    typed(Map, reflected_map, int, long);
+    reflected_map values = {0};
+    cstl_semantic_map_capture captured = {{0}, {0}, 0u};
+
+    check_equal(reflected_map_init(&values, 8u), STL_OK);
+    check_equal(reflected_map_put(&values, 5, 50L), STL_OK);
+    check_equal(reflected_map_put(&values, 3, 30L), STL_OK);
+
+    check_equal(reflected_map_map_data.kind, CMETA_DATA_MAP);
+    check_true(reflected_map_map_data.collection_ops == NULL);
+    check_true(reflected_map_map_data.map_ops == &reflected_map_map_ops);
+    check_true(reflected_map_map_key(&values) == &cmeta_data_int);
+    check_true(reflected_map_map_value(&values) == &cmeta_data_long);
+
+    check_equal(cmeta_data_map_foreach(
+                    &reflected_map_map_data, &values,
+                    cstl_semantic_collect_map, &captured, 2u),
+                CMETA_OK);
+    check_equal(captured.count, 2u);
+    check_equal(captured.keys[0], 3);
+    check_equal(captured.values[0], 30L);
+    check_equal(captured.keys[1], 5);
+    check_equal(captured.values[1], 50L);
+
+    reflected_map_destroy(&values);
   }
 
 }
