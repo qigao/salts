@@ -196,6 +196,31 @@ struct cmeta_data_fixed_ops {
 #define CMETA_DATA_BYTES_CONST(object_) ((const unsigned char *)(object_))
 #endif
 
+#ifdef __cplusplus
+#define CMETA_DATA_FIXED_DESC_INIT_(name_, stable_id_, display_name_)         \
+    {sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,                   \
+     stable_id_ ".data", display_name_, CMETA_DATA_BYTES,                   \
+     &name_##_cmeta_type, &name_##_cmeta_shape, NULL, NULL, NULL,            \
+     &name_##_cmeta_fixed_ops, NULL, NULL, NULL, NULL}
+#else
+#define CMETA_DATA_FIXED_DESC_INIT_(name_, stable_id_, display_name_)         \
+    {.struct_size = sizeof(cmeta_data_desc),                                 \
+     .abi_version = CMETA_DATA_DESC_ABI_VERSION,                             \
+     .stable_id = stable_id_ ".data",                                       \
+     .display_name = display_name_,                                          \
+     .kind = CMETA_DATA_BYTES,                                               \
+     .storage_type = &name_##_cmeta_type,                                    \
+     .shape = &name_##_cmeta_shape,                                          \
+     .buffer_ops = NULL,                                                     \
+     .enum_ops = NULL,                                                       \
+     .variant_ops = NULL,                                                    \
+     .fixed_ops = &name_##_cmeta_fixed_ops,                                  \
+     .enum_bits_ops = NULL,                                                  \
+     .collection_ops = NULL,                                                 \
+     .map_ops = NULL,                                                        \
+     .construct_ops = NULL}
+#endif
+
 #define CMETA_DEFINE_FIXED_BYTES(name_, storage_type_, extent_, stable_id_,  \
                                  display_name_)                              \
     typedef char name_##_cmeta_extent_must_match_storage[                    \
@@ -244,22 +269,8 @@ struct cmeta_data_fixed_ops {
         sizeof(cmeta_data_fixed_ops), CMETA_DATA_FIXED_OPS_ABI_VERSION,      \
         &name_##_cmeta_type, (extent_), name_##_cmeta_is_zero,               \
         name_##_cmeta_copy, name_##_cmeta_restore_zero};                     \
-    static const cmeta_data_desc name_##_cmeta_data = {                      \
-        .struct_size = sizeof(cmeta_data_desc),                              \
-        .abi_version = CMETA_DATA_DESC_ABI_VERSION,                          \
-        .stable_id = stable_id_ ".data",                                    \
-        .display_name = display_name_,                                       \
-        .kind = CMETA_DATA_BYTES,                                            \
-        .storage_type = &name_##_cmeta_type,                                 \
-        .shape = &name_##_cmeta_shape,                                       \
-        .buffer_ops = NULL,                                                  \
-        .enum_ops = NULL,                                                    \
-        .variant_ops = NULL,                                                 \
-        .fixed_ops = &name_##_cmeta_fixed_ops,                               \
-        .enum_bits_ops = NULL,                                               \
-        .collection_ops = NULL,                                              \
-        .map_ops = NULL,                                                     \
-        .construct_ops = NULL}
+    static const cmeta_data_desc name_##_cmeta_data =                        \
+        CMETA_DATA_FIXED_DESC_INIT_(name_, stable_id_, display_name_)
 
 enum {
     CMETA_DATA_ENUM_OPS_ABI_VERSION = 1u

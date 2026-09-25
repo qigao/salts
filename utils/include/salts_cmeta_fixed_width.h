@@ -74,7 +74,7 @@ static const cmeta_data_desc salts_bool8_cmeta_data = {
     sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
     "salts.bool8.data", "uint8_t Bool", CMETA_DATA_BOOL,
     &salts_bool8_cmeta_type, NULL, NULL, NULL, NULL,
-    &salts_bool8_cmeta_fixed_ops
+    &salts_bool8_cmeta_fixed_ops, NULL, NULL, NULL, NULL
 };
 
 /*

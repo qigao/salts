@@ -255,13 +255,13 @@ spec("Salts fixed-width CMeta descriptors") {
   }
 
   it("uses stable semantic identities rather than descriptor addresses") {
-    cmeta_type_desc equivalent = salts_int32_cmeta_type;
+    cmeta_type_desc equivalent = cmeta_type_int32;
 
-    check_true(cmeta_type_equal(&salts_int32_cmeta_type, &equivalent));
-    check_false(cmeta_type_equal(&salts_int32_cmeta_type,
-                                 &salts_uint32_cmeta_type));
-    check_false(cmeta_type_equal(&salts_int32_cmeta_type,
-                                 &salts_int64_cmeta_type));
+    check_true(cmeta_type_equal(&cmeta_type_int32, &equivalent));
+    check_false(cmeta_type_equal(&cmeta_type_int32,
+                                 &cmeta_type_uint32));
+    check_false(cmeta_type_equal(&cmeta_type_int32,
+                                 &cmeta_type_int64));
   }
 }
 

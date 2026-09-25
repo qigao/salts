@@ -1,3 +1,7 @@
+#if !defined(_MSC_VER) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200112L
+#endif
+
 /*
  * Strict buffer lifecycle facade.
  *
@@ -1208,7 +1212,9 @@ cmeta_status cmeta_data_temp_open(
 #if defined(_MSC_VER)
         storage = _aligned_malloc(padded, alignment);
 #else
-        storage = aligned_alloc(alignment, padded);
+        storage = NULL;
+        if (posix_memalign(&storage, alignment, padded) != 0)
+            storage = NULL;
 #endif
     }
     if (storage == NULL) return CMETA_OUT_OF_MEMORY;
