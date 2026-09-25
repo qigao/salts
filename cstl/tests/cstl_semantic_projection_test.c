@@ -347,10 +347,18 @@ spec("CSTL semantic projection") {
     check_null(destination.raw.impl);
 
     check_equal(meta_map_init(&source, 8u), STL_OK);
+    check_equal(meta_map_init(&destination, 8u), STL_OK);
     check_not_null(source.raw.impl);
+    check_not_null(destination.raw.impl);
+    check_true(source.raw.impl != destination.raw.impl);
+    check_equal(meta_map_size(&destination), (size_t)0u);
     check_equal(meta_map_put(&source, 7, 70L), STL_OK);
-    check_equal(cmeta_data_value_move(
-                    &meta_map_map_data, &destination, &source), CMETA_OK);
+    {
+      void *source_impl = source.raw.impl;
+      check_equal(cmeta_data_value_move(
+                      &meta_map_map_data, &destination, &source), CMETA_OK);
+      check_true(destination.raw.impl == source_impl);
+    }
     check_null(source.raw.impl);
     check_not_null(destination.raw.impl);
     check_equal(meta_map_size(&source), (size_t)0u);
