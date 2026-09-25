@@ -382,6 +382,21 @@ typedef struct cmeta_data_struct_shape {
  */
 enum { CMETA_DATA_COLLECTION_OPS_ABI_VERSION = 1u };
 
+typedef uint32_t cmeta_data_collection_flags;
+enum {
+    CMETA_DATA_COLLECTION_CONTIGUOUS = 1u << 0,
+    CMETA_DATA_COLLECTION_ORDERED = 1u << 1,
+    CMETA_DATA_COLLECTION_SORTED = 1u << 2,
+    CMETA_DATA_COLLECTION_UNIQUE = 1u << 3,
+    CMETA_DATA_COLLECTION_RANDOM_ACCESS = 1u << 4,
+    CMETA_DATA_COLLECTION_FLAGS_MASK =
+        CMETA_DATA_COLLECTION_CONTIGUOUS |
+        CMETA_DATA_COLLECTION_ORDERED |
+        CMETA_DATA_COLLECTION_SORTED |
+        CMETA_DATA_COLLECTION_UNIQUE |
+        CMETA_DATA_COLLECTION_RANDOM_ACCESS
+};
+
 typedef struct cmeta_data_collection_view {
     const void *data;
     size_t count;
@@ -406,6 +421,7 @@ typedef struct cmeta_data_collection_ops {
     size_t struct_size;
     uint32_t abi_version;
     const cmeta_type_desc *storage_type;
+    cmeta_data_collection_flags flags;
     cmeta_data_collection_element_fn element;
     cmeta_data_collection_read_fn read;
     cmeta_data_collection_foreach_fn foreach;
