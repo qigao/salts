@@ -211,4 +211,45 @@ spec("CSTL semantic projection") {
     reflected_map_destroy(&values);
   }
 
+
+  it("projects HashMap and tree maps through one CMeta map contract") {
+    typed(HashMap, reflected_hash_map, int, long);
+    typed(BTree, reflected_btree, int, long);
+    typed(BPlusTree, reflected_bplus, int, long);
+    reflected_hash_map hashed = {0};
+    reflected_btree btree = {0};
+    reflected_bplus bplus = {0};
+    cstl_semantic_map_capture hc = {{0}, {0}, 0u};
+    cstl_semantic_map_capture tc = {{0}, {0}, 0u};
+    cstl_semantic_map_capture pc = {{0}, {0}, 0u};
+
+    check_equal(reflected_hash_map_init(&hashed, 8u), STL_OK);
+    check_equal(reflected_btree_init(&btree, 8u), STL_OK);
+    check_equal(reflected_bplus_init(&bplus, 8u), STL_OK);
+    check_equal(reflected_hash_map_put(&hashed, 5, 50L), STL_OK);
+    check_equal(reflected_hash_map_put(&hashed, 3, 30L), STL_OK);
+    check_equal(reflected_btree_put(&btree, 5, 50L), STL_OK);
+    check_equal(reflected_btree_put(&btree, 3, 30L), STL_OK);
+    check_equal(reflected_bplus_put(&bplus, 5, 50L), STL_OK);
+    check_equal(reflected_bplus_put(&bplus, 3, 30L), STL_OK);
+
+    check_equal(cmeta_data_map_foreach(&reflected_hash_map_map_data, &hashed,
+                    cstl_semantic_collect_map, &hc, 2u), CMETA_OK);
+    check_equal(cmeta_data_map_foreach(&reflected_btree_map_data, &btree,
+                    cstl_semantic_collect_map, &tc, 2u), CMETA_OK);
+    check_equal(cmeta_data_map_foreach(&reflected_bplus_map_data, &bplus,
+                    cstl_semantic_collect_map, &pc, 2u), CMETA_OK);
+    check_equal(hc.count, 2u);
+    check_equal(tc.count, 2u);
+    check_equal(pc.count, 2u);
+    check_equal(tc.keys[0], 3);
+    check_equal(tc.keys[1], 5);
+    check_equal(pc.keys[0], 3);
+    check_equal(pc.keys[1], 5);
+
+    reflected_hash_map_destroy(&hashed);
+    reflected_btree_destroy(&btree);
+    reflected_bplus_destroy(&bplus);
+  }
+
 }
