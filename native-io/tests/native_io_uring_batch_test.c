@@ -12,6 +12,8 @@
 enum { BATCH_TEST_COUNT = 4, BATCH_TEST_CALLS = 16, BATCH_TEST_TIMEOUT_MS = 5000 };
 static unsigned enter_calls;
 static unsigned enter_sizes[BATCH_TEST_CALLS];
+static unsigned flush_enter_calls;
+static unsigned flush_enter_sizes[BATCH_TEST_CALLS];
 static unsigned consume_limit;
 static unsigned consume_before_error;
 static int enter_error;
@@ -97,6 +99,8 @@ static void batch_test_requests(bool prepared, unsigned accepted, int expected_s
   check_equal(enter_calls, prepared ? 0u : (unsigned)BATCH_TEST_COUNT);
   check_equal(native_io_backend_close(&backend), SALTS_OK);
   check_equal(native_io_backend_flush(&backend), expected_status);
+  flush_enter_calls = enter_calls;
+  memcpy(flush_enter_sizes, enter_sizes, sizeof(flush_enter_sizes));
   check_equal(native_io_backend_release_pipe(&backend, endpoints[0]), SALTS_EBUSY);
   salts_io_uring_impl *impl = backend.impl;
   check_equal(*impl->sq_head, *impl->sq_tail);
@@ -131,6 +135,8 @@ spec("io_uring explicit batch submission") {
   before_each() {
     enter_calls = 0u;
     memset(enter_sizes, 0, sizeof(enter_sizes));
+    flush_enter_calls = 0u;
+    memset(flush_enter_sizes, 0, sizeof(flush_enter_sizes));
     consume_limit = 0u;
     consume_before_error = 0u;
     enter_error = 0;
@@ -138,41 +144,41 @@ spec("io_uring explicit batch submission") {
   }
   it("preserves immediate submit without observe or flush") {
     batch_test_requests(false, BATCH_TEST_COUNT, SALTS_OK);
-    check_equal(enter_calls, (unsigned)BATCH_TEST_COUNT);
+    check_equal(flush_enter_calls, (unsigned)BATCH_TEST_COUNT);
   }
   it("flushes independent endpoints in one enter after close") {
     batch_test_requests(true, BATCH_TEST_COUNT, SALTS_OK);
-    check_equal(enter_calls, 1u);
-    check_equal(enter_sizes[0], (unsigned)BATCH_TEST_COUNT);
+    check_equal(flush_enter_calls, 1u);
+    check_equal(flush_enter_sizes[0], (unsigned)BATCH_TEST_COUNT);
   }
   it("continues only the unconsumed suffix after short submission") {
     consume_limit = 1u;
     batch_test_requests(true, BATCH_TEST_COUNT, SALTS_OK);
-    check_equal(enter_calls, (unsigned)BATCH_TEST_COUNT);
+    check_equal(flush_enter_calls, (unsigned)BATCH_TEST_COUNT);
     for (unsigned i = 0u; i < BATCH_TEST_COUNT; ++i)
-      check_equal(enter_sizes[i], (unsigned)BATCH_TEST_COUNT - i);
+      check_equal(flush_enter_sizes[i], (unsigned)BATCH_TEST_COUNT - i);
   }
   it("publishes one failure per unsubmitted request on enter error") {
     enter_error = EIO;
     batch_test_requests(true, 0u, -EIO);
-    check_equal(enter_calls, 1u);
+    check_equal(flush_enter_calls, 1u);
   }
   it("retains the consumed prefix when an enter error follows consumption") {
     enter_error = EIO;
     consume_before_error = 1u;
     batch_test_requests(true, 1u, -EIO);
-    check_equal(enter_calls, 1u);
+    check_equal(flush_enter_calls, 1u);
   }
   it("does not replay consumed entries when an interrupted enter is retried") {
     enter_error = EINTR;
     consume_before_error = 1u;
     batch_test_requests(true, BATCH_TEST_COUNT, SALTS_OK);
-    check_equal(enter_calls, 2u);
+    check_equal(flush_enter_calls, 2u);
   }
   it("does not spin or release borrowed requests on zero progress") {
     no_progress = true;
     batch_test_requests(true, 0u, SALTS_EIO);
-    check_equal(enter_calls, 1u);
+    check_equal(flush_enter_calls, 1u);
   }
   it("retains queued followers and failure terminals after observe reports a flush error") {
     native_io_backend backend = {0};
