@@ -37,6 +37,7 @@ typedef struct cmeta_data_enum_ops cmeta_data_enum_ops;
 typedef struct cmeta_data_enum_bits_ops cmeta_data_enum_bits_ops;
 typedef struct cmeta_data_variant_ops cmeta_data_variant_ops;
 typedef struct cmeta_data_fixed_ops cmeta_data_fixed_ops;
+typedef struct cmeta_data_collection_ops cmeta_data_collection_ops;
 
 typedef struct cmeta_data_desc {
     size_t struct_size;
@@ -53,6 +54,8 @@ typedef struct cmeta_data_desc {
     const cmeta_data_fixed_ops *fixed_ops;
     /** Canonical enum domain provider; mutually exclusive with shape/enum_ops. */
     const cmeta_data_enum_bits_ops *enum_bits_ops;
+    /** Optional provider-neutral collection read adapter. */
+    const cmeta_data_collection_ops *collection_ops;
 } cmeta_data_desc;
 
 typedef struct cmeta_data_integer_shape {
@@ -348,6 +351,32 @@ typedef struct cmeta_data_struct_shape {
     size_t field_count;
 } cmeta_data_struct_shape;
 
+/*
+ * Provider-neutral collection reflection.
+ *
+ * A view borrows immutable element/key/value storage for the duration of one
+ * consumer operation. It does not imply ownership, mutability, contiguity of
+ * the provider's native container, or any CSTL/VM-specific representation.
+ */
+enum { CMETA_DATA_COLLECTION_OPS_ABI_VERSION = 1u };
+
+typedef struct cmeta_data_collection_view {
+    const void *data;
+    size_t count;
+    size_t stride;
+    const cmeta_data_desc *element;
+} cmeta_data_collection_view;
+
+typedef cmeta_status (*cmeta_data_collection_read_fn)(
+    const void *object, cmeta_data_collection_view *out);
+
+typedef struct cmeta_data_collection_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_type_desc *storage_type;
+    cmeta_data_collection_read_fn read;
+} cmeta_data_collection_ops;
+
 typedef struct cmeta_data_variant_case {
     int64_t tag;
     const char *stable_id;
@@ -376,6 +405,15 @@ bool cmeta_data_desc_valid(const cmeta_data_desc *desc);
  */
 const cmeta_data_buffer_ops *cmeta_data_buffer_ops_of(
     const cmeta_data_desc *desc);
+
+/** Return a validated SEQUENCE/SET collection adapter, or NULL. */
+const cmeta_data_collection_ops *cmeta_data_collection_ops_of(
+    const cmeta_data_desc *desc);
+
+/** Borrow one immutable collection view for the provider callback lifetime. */
+cmeta_status cmeta_data_collection_read(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_collection_view *out);
 
 /** Initialize one raw storage slot to provider semantic zero. */
 cmeta_status cmeta_data_buffer_init_zero(
