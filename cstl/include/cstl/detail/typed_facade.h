@@ -92,6 +92,12 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
 #define SALTS_META_MAP_ACCEPT(name,key_type,value_type) \
  CMETA_INLINE cmeta_status name##_map_accept(cmeta_collector *collector,const cmeta_data_desc *key_data,const void *key,const cmeta_data_desc *value_data,const void *value){name##_entry entry;if(collector==NULL||key_data==NULL||value_data==NULL||key==NULL||value==NULL)return CMETA_INVALID_ARGUMENT;entry.key=(key_type*)key;entry.value=(value_type*)value;return cmeta_collector_accept(collector,&name##_entry_cmeta_type,&entry);}
 
+#define SALTS_META_ADAPTER_SEQUENCE_DATA(name,type,prefix,semantic_kind) \
+ CMETA_INLINE const cmeta_data_desc *name##_collection_element(const void *object){(void)object;return CMETA_DATAOF(type);} \
+ CMETA_INLINE cmeta_status name##_collection_foreach(const void *object,cmeta_data_collection_visit_fn visit,void *context,size_t max_items){const name *self=(const name*)object;size_t i,count;if(self==NULL||visit==NULL)return CMETA_INVALID_ARGUMENT;count=prefix##_size(&self->raw);if(count>max_items)return CMETA_CAPACITY_EXCEEDED;for(i=0u;i<count;++i){const void *value=prefix##_at_const(&self->raw,i);cmeta_status status;if(value==NULL)return CMETA_CALLBACK_ERROR;status=visit(context,value);if(status!=CMETA_OK)return status;}return CMETA_OK;} \
+ CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF(name),name##_collection_element,NULL,name##_collection_foreach,name##_collector_erased}; \
+ CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,semantic_kind,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops,NULL,&name##_construct_ops}
+
 #define SALTS_META_C1_COLLECTOR(name,type,accept_method) \
  CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,CMETA_TYPEOF(type)))return CMETA_TYPE_MISMATCH;return salts_stl_cmeta_status((stl_status)name##_init((name*)context,limit));} \
  CMETA_INLINE cmeta_status name##_collector_accept_cb(void *context,const void *value){return salts_stl_cmeta_status((stl_status)name##_##accept_method((name*)context,*(const type*)value));} \
@@ -392,8 +398,8 @@ CMETA_INLINE bool salts_stl_typed_map_range_next(
 #define SALTS_VEC_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Vec,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_VEC_INITIALIZER(type),name##_destroy(self)) SALTS_META_VEC_COLLECTION_DATA(name,type)
 #define SALTS_DEQUE_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Deque,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_DEQUE_INITIALIZER(type),name##_destroy(self)) SALTS_META_INDEX_SEQUENCE_DATA(name,type,CMETA_DATA_SEQUENCE)
 #define SALTS_LIST_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_List,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_LIST_INITIALIZER(type),name##_destroy(self)) SALTS_META_LIST_COLLECTION_DATA(name,type)
-#define SALTS_STACK_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Stack,name,type)
-#define SALTS_QUEUE_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Queue,name,type)
+#define SALTS_STACK_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Stack,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_STACK_INITIALIZER(type),name##_destroy(self)) SALTS_META_ADAPTER_SEQUENCE_DATA(name,type,stack,CMETA_DATA_SEQUENCE)
+#define SALTS_QUEUE_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Queue,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_QUEUE_INITIALIZER(type),name##_destroy(self)) SALTS_META_ADAPTER_SEQUENCE_DATA(name,type,queue,CMETA_DATA_SEQUENCE)
 #define SALTS_HEAP_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Heap,name,type)
 #define SALTS_SET_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Set,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_SET_INITIALIZER(type),name##_destroy(self)) SALTS_META_SET_COLLECTION_DATA(name,type,set,CMETA_DATA_SET)
 #define SALTS_HASH_SET_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_HashSet,name,type) SALTS_META_C1_CONSTRUCT(name,SALTS_STL_HASH_SET_INITIALIZER(type),name##_destroy(self)) SALTS_META_SLOT_SET_COLLECTION_DATA(name,type,hash_set,CMETA_DATA_SET)
