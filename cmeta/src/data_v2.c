@@ -574,6 +574,54 @@ cmeta_status cmeta_data_collection_accept(
 }
 
 
+static cmeta_status cmeta_data_temp_init(
+    const cmeta_data_desc *desc, void *storage,
+    cmeta_data_temp_lifecycle *lifecycle) {
+    cmeta_status status;
+    if (desc == NULL || storage == NULL || lifecycle == NULL)
+        return CMETA_INVALID_ARGUMENT;
+
+    switch (desc->kind) {
+        case CMETA_DATA_BOOL:
+        case CMETA_DATA_SINT:
+        case CMETA_DATA_UINT:
+        case CMETA_DATA_FLOAT:
+            memset(storage, 0, desc->storage_type->size);
+            *lifecycle = CMETA_DATA_TEMP_TRIVIAL;
+            return CMETA_OK;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES:
+            status = cmeta_data_buffer_init_zero(desc, storage);
+            if (status == CMETA_OK) *lifecycle = CMETA_DATA_TEMP_BUFFER;
+            return status;
+        case CMETA_DATA_ENUM:
+            if (desc->enum_bits_ops != NULL) {
+                memset(storage, 0, desc->storage_type->size);
+                *lifecycle = CMETA_DATA_TEMP_ENUM_BITS;
+                return CMETA_OK;
+            }
+            memset(storage, 0, desc->storage_type->size);
+            *lifecycle = CMETA_DATA_TEMP_ENUM;
+            return CMETA_OK;
+        default:
+            break;
+    }
+
+    if (desc->fixed_ops != NULL) {
+        memset(storage, 0, desc->storage_type->size);
+        *lifecycle = CMETA_DATA_TEMP_FIXED;
+        return CMETA_OK;
+    }
+    if (desc->variant_ops != NULL) {
+        memset(storage, 0, desc->storage_type->size);
+        *lifecycle = CMETA_DATA_TEMP_VARIANT;
+        return CMETA_OK;
+    }
+    status = cmeta_data_construct_init_zero(desc, storage);
+    if (status == CMETA_OK) *lifecycle = CMETA_DATA_TEMP_CONSTRUCT;
+    return status;
+}
+
 cmeta_status cmeta_data_temp_open(
     const cmeta_data_desc *desc, size_t max_bytes, cmeta_data_temp *out) {
     void *storage;
@@ -581,6 +629,7 @@ cmeta_status cmeta_data_temp_open(
     size_t alignment;
     size_t padded;
     cmeta_status status;
+    cmeta_data_temp_lifecycle lifecycle = CMETA_DATA_TEMP_NONE;
 
     if (out == NULL || !cmeta_data_desc_valid(desc) ||
         desc->storage_type == NULL)
@@ -603,7 +652,7 @@ cmeta_status cmeta_data_temp_open(
 #endif
     if (storage == NULL) return CMETA_OUT_OF_MEMORY;
     memset(storage, 0, padded);
-    status = cmeta_data_construct_init_zero(desc, storage);
+    status = cmeta_data_temp_init(desc, storage, &lifecycle);
     if (status != CMETA_OK) {
 #if defined(_MSC_VER)
         _aligned_free(storage);
@@ -616,13 +665,36 @@ cmeta_status cmeta_data_temp_open(
     out->storage = storage;
     out->extent = extent;
     out->alignment = alignment;
+    out->lifecycle = lifecycle;
     return CMETA_OK;
 }
 
 void cmeta_data_temp_close(cmeta_data_temp *temp) {
     if (temp == NULL || temp->storage == NULL) return;
-    if (temp->data != NULL)
-        (void)cmeta_data_construct_restore_zero(temp->data, temp->storage);
+    switch (temp->lifecycle) {
+        case CMETA_DATA_TEMP_BUFFER:
+            (void)cmeta_data_buffer_restore_zero(temp->data, temp->storage);
+            break;
+        case CMETA_DATA_TEMP_ENUM:
+            (void)cmeta_data_enum_restore_zero(temp->data, temp->storage);
+            break;
+        case CMETA_DATA_TEMP_ENUM_BITS:
+            (void)cmeta_data_enum_bits_restore_zero(temp->data, temp->storage);
+            break;
+        case CMETA_DATA_TEMP_FIXED:
+            (void)cmeta_data_fixed_restore_zero(temp->data, temp->storage);
+            break;
+        case CMETA_DATA_TEMP_VARIANT:
+            (void)cmeta_data_variant_restore_zero(temp->data, temp->storage);
+            break;
+        case CMETA_DATA_TEMP_CONSTRUCT:
+            (void)cmeta_data_construct_restore_zero(temp->data, temp->storage);
+            break;
+        case CMETA_DATA_TEMP_TRIVIAL:
+        case CMETA_DATA_TEMP_NONE:
+        default:
+            break;
+    }
 #if defined(_MSC_VER)
     _aligned_free(temp->storage);
 #else
