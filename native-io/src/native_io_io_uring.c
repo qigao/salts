@@ -537,7 +537,7 @@ static int uring_submit_pending(salts_io_uring_impl *impl, bool include_wake,
       unsigned remaining = total;
       unsigned user_remaining = user_count;
       unsigned consumed_head = head;
-      const bool wait_now = wait_for_completion && final_batch && !waited;
+      const bool wait_now = wait_for_completion && final_batch && !waited && !pipe_write;
 
       if (total == 0u) return SALTS_EBUSY;
       status = pipe_write ? uring_sigpipe_guard_begin(&guard) : SALTS_OK;
