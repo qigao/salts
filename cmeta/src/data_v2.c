@@ -242,6 +242,42 @@ static cmeta_status cmeta_sequence_view_read(
     return CMETA_OK;
 }
 
+static size_t cmeta_sequence_view_borrow_size(const void *object) {
+    const cmeta_data_collection_view *view =
+        (const cmeta_data_collection_view *)object;
+    return view != NULL ? view->count : 0u;
+}
+
+static cmeta_gen_status cmeta_sequence_view_borrow_next(
+    const void *object, cmeta_range_cursor *cursor,
+    const void **out_element) {
+    const cmeta_data_collection_view *view =
+        (const cmeta_data_collection_view *)object;
+    size_t offset;
+    if (view == NULL || cursor == NULL || out_element == NULL ||
+        view->element == NULL || !cmeta_data_desc_valid(view->element))
+        return CMETA_GEN_ERROR;
+    *out_element = NULL;
+    if (cursor->index >= view->count) return CMETA_GEN_DONE;
+    if (view->data == NULL || view->stride == 0u ||
+        cursor->index > SIZE_MAX / view->stride)
+        return CMETA_GEN_ERROR;
+    offset = cursor->index * view->stride;
+    *out_element = (const unsigned char *)view->data + offset;
+    ++cursor->index;
+    return cursor->index == view->count
+               ? CMETA_GEN_VALUE_AND_DONE
+               : CMETA_GEN_VALUE;
+}
+
+static const cmeta_data_collection_borrow_ops cmeta_sequence_view_borrow_ops = {
+    .struct_size = sizeof(cmeta_data_collection_borrow_ops),
+    .abi_version = CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION,
+    .size = cmeta_sequence_view_borrow_size,
+    .next = cmeta_sequence_view_borrow_next,
+    .current_version = NULL
+};
+
 static const cmeta_data_collection_ops cmeta_sequence_view_ops = {
     .struct_size = sizeof(cmeta_data_collection_ops),
     .abi_version = CMETA_DATA_COLLECTION_OPS_ABI_VERSION,
@@ -252,7 +288,8 @@ static const cmeta_data_collection_ops cmeta_sequence_view_ops = {
     .element = cmeta_sequence_view_element,
     .read = cmeta_sequence_view_read,
     .foreach = NULL,
-    .collector = NULL
+    .collector = NULL,
+    .borrow = &cmeta_sequence_view_borrow_ops
 };
 
 const cmeta_data_desc cmeta_data_sequence_view = {
@@ -407,6 +444,104 @@ cmeta_status cmeta_data_collection_read(
     return CMETA_OK;
 }
 
+#define CMETA_COLLECTION_OPS_BORROW_SIZE \
+    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, borrow)
+#define CMETA_COLLECTION_BORROW_OPS_SIZE \
+    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_borrow_ops, current_version)
+
+static cmeta_status cmeta_data_collection_borrow_ops_status(
+    const cmeta_data_desc *desc,
+    const cmeta_data_collection_borrow_ops **out) {
+    const cmeta_data_collection_ops *ops = NULL;
+    const cmeta_data_collection_borrow_ops *borrow;
+    cmeta_status status;
+
+    if (out != NULL) *out = NULL;
+    status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    if (ops->struct_size < CMETA_COLLECTION_OPS_BORROW_SIZE ||
+        ops->borrow == NULL)
+        return CMETA_TRAIT_MISSING;
+    borrow = ops->borrow;
+    if (borrow->struct_size < CMETA_COLLECTION_BORROW_OPS_SIZE ||
+        borrow->abi_version != CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION ||
+        borrow->next == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (out != NULL) *out = borrow;
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_collection_borrow_begin(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_collection_borrow_cursor *out) {
+    const cmeta_data_collection_ops *ops = NULL;
+    const cmeta_data_collection_borrow_ops *borrow = NULL;
+    const cmeta_data_desc *element;
+    cmeta_status status;
+
+    if (object == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    *out = (cmeta_data_collection_borrow_cursor){0};
+    status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    status = cmeta_data_collection_borrow_ops_status(desc, &borrow);
+    if (status != CMETA_OK) return status;
+    element = ops->element(object);
+    if (element == NULL || !cmeta_data_desc_valid(element))
+        return CMETA_TRAIT_MISSING;
+
+    out->data = desc;
+    out->element = element;
+    out->object = object;
+    out->ops = borrow;
+    out->version = borrow->current_version != NULL
+                       ? borrow->current_version(object)
+                       : UINT64_C(0);
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_collection_borrow_size(
+    const cmeta_data_collection_borrow_cursor *cursor, size_t *out_size) {
+    if (cursor == NULL || out_size == NULL || cursor->ops == NULL ||
+        cursor->object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (cursor->ops->size == NULL) return CMETA_TRAIT_MISSING;
+    if (cursor->ops->current_version != NULL &&
+        cursor->ops->current_version(cursor->object) != cursor->version)
+        return CMETA_CALLBACK_ERROR;
+    *out_size = cursor->ops->size(cursor->object);
+    return CMETA_OK;
+}
+
+cmeta_gen_status cmeta_data_collection_borrow_next(
+    cmeta_data_collection_borrow_cursor *cursor, const void **out_element) {
+    cmeta_gen_status status;
+    if (cursor == NULL || out_element == NULL || cursor->ops == NULL ||
+        cursor->object == NULL || cursor->element == NULL)
+        return CMETA_GEN_ERROR;
+    *out_element = NULL;
+    if (cursor->ops->current_version != NULL &&
+        cursor->ops->current_version(cursor->object) != cursor->version)
+        return CMETA_GEN_MUTATED;
+
+    status = cursor->ops->next(
+        cursor->object, &cursor->cursor, out_element);
+    switch (status) {
+        case CMETA_GEN_VALUE:
+        case CMETA_GEN_VALUE_AND_DONE:
+            return *out_element != NULL ? status : CMETA_GEN_ERROR;
+        case CMETA_GEN_DONE:
+        case CMETA_GEN_ERROR:
+        case CMETA_GEN_MUTATED:
+            *out_element = NULL;
+            return status;
+        default:
+            *out_element = NULL;
+            return CMETA_GEN_ERROR;
+    }
+}
+
+#undef CMETA_COLLECTION_BORROW_OPS_SIZE
+#undef CMETA_COLLECTION_OPS_BORROW_SIZE
 #undef CMETA_COLLECTION_OPS_COLLECTOR_SIZE
 #undef CMETA_COLLECTION_OPS_BASE_SIZE
 #undef CMETA_COLLECTION_DESC_OPS_SIZE
