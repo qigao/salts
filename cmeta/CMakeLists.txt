@@ -10,6 +10,7 @@ add_library(${TARGET_NAME}
   src/function.c
   src/interface.c
   src/infer.c
+  src/invokable.c
   src/type_identity.c
   src/vector.c)
 
