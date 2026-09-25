@@ -636,6 +636,23 @@ cmeta_status cmeta_data_value_restore_zero(
     return cmeta_data_construct_restore_zero(desc, object);
 }
 
+bool cmeta_data_value_move_supported(const cmeta_data_desc *desc) {
+    if (!cmeta_data_desc_valid(desc) || desc->storage_type == NULL)
+        return false;
+    switch (desc->kind) {
+        case CMETA_DATA_BOOL:
+        case CMETA_DATA_SINT:
+        case CMETA_DATA_UINT:
+        case CMETA_DATA_FLOAT:
+            return true;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES:
+            return cmeta_data_buffer_ops_of(desc) != NULL;
+        default:
+            return cmeta_data_construct_ops_of(desc) != NULL;
+    }
+}
+
 cmeta_status cmeta_data_value_move(
     const cmeta_data_desc *desc, void *destination, void *source) {
     cmeta_status status;
