@@ -403,6 +403,12 @@ typedef struct cmeta_data_collection_view {
     const cmeta_data_desc *element;
 } cmeta_data_collection_view;
 
+/* Canonical native storage descriptor for a borrowed contiguous sequence view.
+ * The view owns nothing and remains valid only while its data/element provider
+ * remain alive and immutable. */
+extern const cmeta_type_desc cmeta_type_collection_view;
+extern const cmeta_data_desc cmeta_data_sequence_view;
+
 typedef const cmeta_data_desc *(*cmeta_data_collection_element_fn)(
     const void *object);
 typedef cmeta_status (*cmeta_data_collection_read_fn)(
