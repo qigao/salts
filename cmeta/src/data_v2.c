@@ -867,30 +867,8 @@ cmeta_status cmeta_data_temp_open(
 
 void cmeta_data_temp_close(cmeta_data_temp *temp) {
     if (temp == NULL || temp->storage == NULL) return;
-    switch (temp->lifecycle) {
-        case CMETA_DATA_TEMP_BUFFER:
-            (void)cmeta_data_buffer_restore_zero(temp->data, temp->storage);
-            break;
-        case CMETA_DATA_TEMP_ENUM:
-            (void)cmeta_data_enum_restore_zero(temp->data, temp->storage);
-            break;
-        case CMETA_DATA_TEMP_ENUM_BITS:
-            (void)cmeta_data_enum_bits_restore_zero(temp->data, temp->storage);
-            break;
-        case CMETA_DATA_TEMP_FIXED:
-            (void)cmeta_data_fixed_restore_zero(temp->data, temp->storage);
-            break;
-        case CMETA_DATA_TEMP_VARIANT:
-            (void)cmeta_data_variant_restore_zero(temp->data, temp->storage);
-            break;
-        case CMETA_DATA_TEMP_CONSTRUCT:
-            (void)cmeta_data_construct_restore_zero(temp->data, temp->storage);
-            break;
-        case CMETA_DATA_TEMP_TRIVIAL:
-        case CMETA_DATA_TEMP_NONE:
-        default:
-            break;
-    }
+    if (temp->data != NULL)
+        (void)cmeta_data_value_restore_zero(temp->data, temp->storage);
 #if defined(_MSC_VER)
     _aligned_free(temp->storage);
 #else
