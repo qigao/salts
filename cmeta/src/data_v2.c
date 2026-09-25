@@ -230,7 +230,7 @@ static cmeta_status cmeta_data_collection_ops_status(
     if (ops->struct_size < CMETA_COLLECTION_OPS_SIZE ||
         ops->abi_version != CMETA_DATA_COLLECTION_OPS_ABI_VERSION ||
         ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
-        ops->read == NULL)
+        ops->element == NULL || ops->read == NULL)
         return CMETA_INVALID_ARGUMENT;
 
     if (desc->storage_type == NULL ||
@@ -261,11 +261,15 @@ cmeta_status cmeta_data_collection_read(
     status = cmeta_data_collection_ops_status(desc, &ops);
     if (status != CMETA_OK) return status;
 
+    view.element = ops->element(object);
+    if (view.element == NULL || !cmeta_data_desc_valid(view.element))
+        return CMETA_TRAIT_MISSING;
     status = ops->read(object, &view);
     if (status != CMETA_OK) return status;
+    if (view.element == NULL || !cmeta_data_desc_valid(view.element))
+        return CMETA_CALLBACK_ERROR;
     if (view.count != 0u &&
-        (view.data == NULL || view.stride == 0u ||
-         view.element == NULL || !cmeta_data_desc_valid(view.element)))
+        (view.data == NULL || view.stride == 0u))
         return CMETA_CALLBACK_ERROR;
     if (view.count == 0u && view.data != NULL && view.stride == 0u)
         return CMETA_CALLBACK_ERROR;
