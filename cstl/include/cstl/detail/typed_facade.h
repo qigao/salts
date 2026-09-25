@@ -3,6 +3,7 @@
 
 /* Internal typed-facade generation. Raw public headers never include this. */
 #include <cmeta/container.h>
+#include <cmeta/data_select.h>
 #include <cstl/status.h>
 
 #include <string.h>
@@ -20,6 +21,12 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
   default: return CMETA_CALLBACK_ERROR;
  }
 }
+
+#define SALTS_META_VEC_COLLECTION_DATA(name,type) \
+ CMETA_INLINE const cmeta_data_desc *name##_collection_element(const void *object){(void)object;return CMETA_DATAOF(type);} \
+ CMETA_INLINE cmeta_status name##_collection_read(const void *object,cmeta_data_collection_view *out){const name *self=(const name*)object;const cmeta_data_desc *element;if(self==NULL||out==NULL)return CMETA_INVALID_ARGUMENT;element=CMETA_DATAOF(type);if(element==NULL)return CMETA_TRAIT_MISSING;out->data=name##_data_const(self);out->count=name##_size(self);out->stride=sizeof(type);out->element=element;return CMETA_OK;} \
+ CMETA_LOCAL const cmeta_data_collection_ops name##_collection_ops={sizeof(cmeta_data_collection_ops),CMETA_DATA_COLLECTION_OPS_ABI_VERSION,CMETA_TYPEOF(name),name##_collection_element,name##_collection_read}; \
+ CMETA_LOCAL const cmeta_data_desc name##_collection_data={sizeof(cmeta_data_desc),CMETA_DATA_DESC_ABI_VERSION,#name ".data",#name,CMETA_DATA_SEQUENCE,CMETA_TYPEOF(name),NULL,NULL,NULL,NULL,NULL,NULL,&name##_collection_ops}
 
 #define SALTS_META_C1_COLLECTOR(name,type,accept_method) \
  CMETA_INLINE cmeta_status name##_collector_begin_cb(void *context,const cmeta_type_desc *input,size_t limit){if(!cmeta_type_equal(input,CMETA_TYPEOF(type)))return CMETA_TYPE_MISMATCH;return salts_stl_cmeta_status((stl_status)name##_init((name*)context,limit));} \
@@ -318,7 +325,7 @@ CMETA_INLINE bool salts_stl_typed_map_range_next(
 #define SALTS_STL_KIND_DEFINE_C2_LINK(name,k,v,raw,prefix,methods,accept,key_at_op,value_at_op,range_flags,key_flags,value_flags,entry_flags) \
  CMETA_CONTAINER2_DEFINE(name,k,v,raw,prefix,STL_OK,_,methods) SALTS_META_C2_GENERATION(name,prefix) SALTS_META_C2_COLLECTOR(name) CMETA_CONTAINER2_LINK_RANGES_DEFINE(name,k,v,prefix,key_flags,value_flags,entry_flags,name##_cmeta_generation,name##_collector_erased)
 
-#define SALTS_VEC_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Vec,name,type)
+#define SALTS_VEC_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Vec,name,type) SALTS_META_VEC_COLLECTION_DATA(name,type)
 #define SALTS_DEQUE_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Deque,name,type)
 #define SALTS_LIST_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_List,name,type)
 #define SALTS_STACK_DEFINE(name,type) SALTS_STL_KIND_APPLY(SALTS_STL_KIND_ROW_Stack,name,type)
