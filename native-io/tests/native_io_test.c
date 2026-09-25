@@ -685,6 +685,52 @@ static void native_io_test_uring_cancel_prepared_head(void) {
   native_io_test_close_socket(sockets[1]);
   check_equal(native_io_backend_destroy(&backend), SALTS_OK);
 }
+
+static void native_io_test_uring_wake_with_pending_receive(void) {
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+  native_io_test_socket sockets[2];
+  native_io_endpoint endpoint = {0};
+  native_io_request request = {0};
+  native_io_completion event = {0};
+  unsigned char received = 0u;
+  const unsigned char payload = 0x5au;
+  size_t count = SIZE_MAX;
+  native_io_operation operation;
+
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+  check_equal(native_io_test_make_tcp_pair(sockets), SALTS_OK);
+  check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint), SALTS_OK);
+  operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_TCP_RECV,
+                                    .endpoint = endpoint,
+                                    .buffer = &received,
+                                    .length = 1u,
+                                    .user_data = 91u};
+  check_equal(native_io_backend_submit(&backend, &operation, &request), SALTS_OK);
+
+  /* Control wake must return without fabricating or cancelling the pending receive. */
+  check_equal(native_io_backend_wake(&backend), SALTS_OK);
+  check_equal(native_io_backend_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS, &count),
+              SALTS_OK);
+  check_equal(count, 0u);
+
+  check_equal(send(sockets[0], &payload, 1u, 0), 1);
+  count = 0u;
+  check_equal(native_io_backend_observe(&backend, &event, 1u, NATIVE_IO_TEST_TIMEOUT_MS, &count),
+              SALTS_OK);
+  check_equal(count, 1u);
+  check_equal(event.request.slot, request.slot);
+  check_equal(event.request.generation, request.generation);
+  check_equal(event.kind, NATIVE_IO_COMPLETION_OK);
+  check_equal(event.bytes, 1u);
+  check_equal(event.user_data, 91u);
+  check_equal(received, payload);
+
+  native_io_test_close_endpoint(&backend, endpoint, sockets[1]);
+  native_io_test_close_socket(sockets[0]);
+  check_equal(native_io_backend_close(&backend), SALTS_OK);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+}
 #endif
 
 static void native_io_test_round_trip_tcp(native_io_backend_kind kind) {
@@ -2116,6 +2162,9 @@ spec("NativeIO direct backend") {
   }
   it("cancels an io_uring staged head without sending its bytes") {
     native_io_test_uring_cancel_prepared_head();
+  }
+  it("uses a control wake without completing a pending io_uring receive") {
+    native_io_test_uring_wake_with_pending_receive();
   }
 #endif
 }
