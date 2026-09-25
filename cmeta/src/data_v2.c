@@ -345,3 +345,80 @@ cmeta_status cmeta_data_collection_foreach(
     }
     return CMETA_TRAIT_MISSING;
 }
+
+
+#define CMETA_MAP_FIELD_END(type, member) \
+    (offsetof(type, member) + sizeof(((type *)0)->member))
+#define CMETA_MAP_DESC_OPS_SIZE CMETA_MAP_FIELD_END(cmeta_data_desc, map_ops)
+#define CMETA_MAP_OPS_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, foreach)
+
+static cmeta_status cmeta_data_map_ops_status(
+    const cmeta_data_desc *desc, const cmeta_data_map_ops **out) {
+    const cmeta_data_map_ops *ops;
+    if (out != NULL) *out = NULL;
+    if (!cmeta_data_desc_valid(desc) || desc->kind != CMETA_DATA_MAP ||
+        desc->struct_size < CMETA_MAP_DESC_OPS_SIZE || desc->map_ops == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    ops = desc->map_ops;
+    if (ops->struct_size < CMETA_MAP_OPS_SIZE ||
+        ops->abi_version != CMETA_DATA_MAP_OPS_ABI_VERSION ||
+        ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
+        ops->key == NULL || ops->value == NULL || ops->foreach == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (desc->storage_type == NULL ||
+        !cmeta_type_equal(desc->storage_type, ops->storage_type) ||
+        desc->storage_type->size != ops->storage_type->size ||
+        desc->storage_type->align != ops->storage_type->align)
+        return CMETA_TYPE_MISMATCH;
+    if (out != NULL) *out = ops;
+    return CMETA_OK;
+}
+
+const cmeta_data_map_ops *cmeta_data_map_ops_of(
+    const cmeta_data_desc *desc) {
+    const cmeta_data_map_ops *ops = NULL;
+    return cmeta_data_map_ops_status(desc, &ops) == CMETA_OK ? ops : NULL;
+}
+
+typedef struct cmeta_data_map_bounded_context {
+    cmeta_data_map_visit_fn visit;
+    void *context;
+    size_t remaining;
+} cmeta_data_map_bounded_context;
+
+static cmeta_status cmeta_data_map_bounded_visit(
+    void *context, const void *key, const void *value) {
+    cmeta_data_map_bounded_context *bounded =
+        (cmeta_data_map_bounded_context *)context;
+    if (bounded == NULL || bounded->visit == NULL || key == NULL || value == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (bounded->remaining == 0u) return CMETA_CAPACITY_EXCEEDED;
+    --bounded->remaining;
+    return bounded->visit(bounded->context, key, value);
+}
+
+cmeta_status cmeta_data_map_foreach(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_map_visit_fn visit, void *context, size_t max_items) {
+    const cmeta_data_map_ops *ops = NULL;
+    const cmeta_data_desc *key_data;
+    const cmeta_data_desc *value_data;
+    cmeta_data_map_bounded_context bounded;
+    cmeta_status status;
+    if (object == NULL || visit == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_map_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    key_data = ops->key(object);
+    value_data = ops->value(object);
+    if (key_data == NULL || value_data == NULL ||
+        !cmeta_data_desc_valid(key_data) || !cmeta_data_desc_valid(value_data))
+        return CMETA_TRAIT_MISSING;
+    bounded.visit = visit;
+    bounded.context = context;
+    bounded.remaining = max_items;
+    return ops->foreach(object, cmeta_data_map_bounded_visit, &bounded, max_items);
+}
+
+#undef CMETA_MAP_OPS_SIZE
+#undef CMETA_MAP_DESC_OPS_SIZE
+#undef CMETA_MAP_FIELD_END
