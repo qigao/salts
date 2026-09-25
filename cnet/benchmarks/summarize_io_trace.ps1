@@ -60,7 +60,7 @@ foreach ($file in Get-ChildItem -LiteralPath $Directory -File -Filter '*.trace.*
         $call.Elapsed += $elapsed
         if ($result -match '^-1 ') { $call.Errors++ }
         if ($result -match '^-1 EAGAIN\b') { $call.Again++ }
-        if ($result -eq '0') { $call.Zero++ }
+        if ($result -match '^0(?:\s|$)') { $call.Zero++ }
       }
     } finally {
         $reader.Dispose()
@@ -75,6 +75,7 @@ foreach ($file in Get-ChildItem -LiteralPath $Directory -File -Filter '*.trace.*
     if ($clients.ContainsKey($case)) { throw "Duplicate client trace: $case" }
     $clients[$case] = $true
     $dataCalls = 0; $pollCalls = 0; $uringCalls = 0; $registrationCalls = 0; $again = 0; $emptyPolls = 0
+    $fdPollCalls = 0; $emptyFdPolls = 0
     foreach ($name in ($calls.Keys | Sort-Object)) {
         $call = $calls[$name]
         $details.Add([pscustomobject]@{
@@ -89,6 +90,7 @@ foreach ($file in Get-ChildItem -LiteralPath $Directory -File -Filter '*.trace.*
         if ($name -eq 'io_uring_enter') { $uringCalls += $call.Count }
         if ($name -eq 'epoll_ctl') { $registrationCalls += $call.Count }
         if ($name -match '^epoll_(wait|pwait|pwait2)$') { $emptyPolls += $call.Zero }
+        if ($name -in @('poll', 'ppoll')) { $fdPollCalls += $call.Count; $emptyFdPolls += $call.Zero }
         $again += $call.Again
     }
     $summary.Add([pscustomobject]@{
@@ -98,6 +100,8 @@ foreach ($file in Get-ChildItem -LiteralPath $Directory -File -Filter '*.trace.*
         epoll_ctl_syscalls_per_rt = ($registrationCalls / $rounds).ToString('F3', $culture)
         eagain_per_rt = ($again / $rounds).ToString('F3', $culture)
         empty_epoll_per_rt = ($emptyPolls / $rounds).ToString('F3', $culture)
+        poll_wait_per_rt = ($fdPollCalls / $rounds).ToString('F3', $culture)
+        empty_poll_per_rt = ($emptyFdPolls / $rounds).ToString('F3', $culture)
     })
 }
 if ($clients.Count -eq 0) { throw 'No complete client measurement windows found' }
@@ -110,10 +114,11 @@ Write-Output 'Trace evidence only: syscall durations include ptrace/scheduling o
 Write-Output 'Data calls include client read/write syscalls; io_uring SQEs are NOT syscall-count equivalents.'
 Write-Output 'Zero direct epoll_ctl calls do NOT mean no registration: libuv can submit epoll control through io_uring.'
 Write-Output ''
-Write-Output '| case | data/RT | epoll poll/RT | uring enter/RT | direct ctl/RT | EAGAIN/RT | empty epoll/RT |'
-Write-Output '| --- | ---: | ---: | ---: | ---: | ---: | ---: |'
+Write-Output '| case | data/RT | epoll poll/RT | uring enter/RT | direct ctl/RT | EAGAIN/RT | empty epoll/RT | poll+ppoll/RT | empty poll+ppoll/RT |'
+Write-Output '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |'
 foreach ($row in ($summary | Sort-Object case)) {
-    Write-Output ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f
+    Write-Output ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} |' -f
         $row.case, $row.data_calls_per_rt, $row.epoll_poll_per_rt, $row.uring_enter_per_rt,
-        $row.epoll_ctl_syscalls_per_rt, $row.eagain_per_rt, $row.empty_epoll_per_rt)
+        $row.epoll_ctl_syscalls_per_rt, $row.eagain_per_rt, $row.empty_epoll_per_rt,
+        $row.poll_wait_per_rt, $row.empty_poll_per_rt)
 }

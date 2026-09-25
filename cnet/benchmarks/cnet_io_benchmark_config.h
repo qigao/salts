@@ -31,5 +31,9 @@ int cnet_io_benchmark_select_backend(const char *requested, cnet_io_benchmark_ba
 /* NULL disables tracing; otherwise libuv|native|coroutine|cnet:tcp|udp:bytes.
  * Invalid input leaves the output unchanged. Trace results are not scores. */
 int cnet_io_benchmark_select_trace(const char *requested, cnet_io_benchmark_trace *selected);
+/* NULL keeps the baseline; "1" selects the separate retained-send experiment.
+ * Trace and send-comparison modes are mutually exclusive. */
+int cnet_io_benchmark_select_send_comparison(const char *requested, bool trace_enabled,
+                                             bool *selected);
 
 #endif

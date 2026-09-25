@@ -49,6 +49,11 @@ typedef socklen_t io_bench_socklen;
 #endif
 
 typedef enum io_bench_protocol { IO_BENCH_TCP = 0, IO_BENCH_UDP } io_bench_protocol;
+typedef enum io_bench_send_mode {
+  IO_BENCH_SEND_BASELINE = 0,
+  IO_BENCH_SEND_COPY,
+  IO_BENCH_SEND_RETAINED
+} io_bench_send_mode;
 enum { IO_BENCH_PASS_A = 0, IO_BENCH_PASS_DIAGNOSTIC, IO_BENCH_PASS_B, IO_BENCH_PASS_COUNT };
 
 enum {
@@ -182,6 +187,10 @@ typedef struct io_bench_cnet {
   size_t poll_calls;
   size_t callback_calls;
   bool measuring;
+  io_bench_send_mode send_mode;
+  mem_buffer_t *send_buffer;
+  int send_done;
+  size_t send_completions;
 } io_bench_cnet;
 
 typedef struct io_bench_fixture {
@@ -1031,9 +1040,17 @@ static int io_bench_cnet_begin_measurement(io_bench_cnet *fixture) {
   return SALTS_OK;
 }
 
+static void io_bench_cnet_sent(void *user, cnet_connection connection, size_t size) {
+  io_bench_cnet *fixture = (io_bench_cnet *)user;
+  (void)connection;
+  if (fixture->send_done || size != fixture->payload_size) fixture->status = SALTS_EIO;
+  fixture->send_done = 1;
+  ++fixture->send_completions;
+}
+
 static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol,
                               const struct sockaddr_in *address,
-                              native_io_backend_kind backend_kind) {
+                              native_io_backend_kind backend_kind, io_bench_send_mode send_mode) {
   const cnet_client_config config = {.backend = backend_kind,
                                      .connection_capacity = 1u,
                                      .command_capacity = 8u,
@@ -1050,6 +1067,7 @@ static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol
   int status;
   memset(fixture, 0, sizeof(*fixture));
   fixture->protocol = protocol;
+  fixture->send_mode = send_mode;
   fixture->status = SALTS_OK;
   status = cnet_client_init(&fixture->client, &config);
   if (status != SALTS_OK) return status;
@@ -1058,6 +1076,8 @@ static int io_bench_cnet_init(io_bench_cnet *fixture, io_bench_protocol protocol
   options = (cnet_connect_options){.uri = uri,
                                    .observer = {.on_state = io_bench_cnet_state,
                                                 .on_receive = io_bench_cnet_receive,
+                                                .on_send = send_mode == IO_BENCH_SEND_BASELINE
+                                                               ? NULL : io_bench_cnet_sent,
                                                 .user = fixture}};
   return cnet_connect(&fixture->client, &options, &fixture->connection);
 }
@@ -1085,17 +1105,24 @@ static int io_bench_cnet_exchange(io_bench_cnet *fixture, const unsigned char *s
   fixture->payload_size = length;
   fixture->received = 0u;
   fixture->done = 0;
+  fixture->send_done = 0;
   fixture->status = SALTS_OK;
   status = SALTS_OK;
   if (status == SALTS_OK) {
     const uint64_t started = fixture->measuring ? salts_hrtime() : 0u;
-    status = cnet_send(&fixture->client, fixture->connection, sent, length);
+    status = fixture->send_mode == IO_BENCH_SEND_RETAINED
+                 ? cnet_send_buffer(&fixture->client, fixture->connection, fixture->send_buffer)
+                 : cnet_send(&fixture->client, fixture->connection, sent, length);
     if (fixture->measuring) {
       fixture->send_admission_ns += salts_hrtime() - started;
       ++fixture->send_admission_calls;
     }
   }
   if (status == SALTS_OK) status = io_bench_wait_cnet(fixture, &fixture->done, 1);
+  if (status == SALTS_OK && fixture->send_mode != IO_BENCH_SEND_BASELINE)
+    status = io_bench_wait_cnet(fixture, &fixture->send_done, 1);
+  if (status == SALTS_OK && fixture->send_mode != IO_BENCH_SEND_BASELINE &&
+      fixture->received != length) status = SALTS_EIO;
   if (status == SALTS_OK) status = fixture->status;
   return status;
 }
@@ -1114,7 +1141,7 @@ static int io_bench_cnet_destroy(io_bench_cnet *fixture) {
 
 static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol protocol,
                                  io_bench_driver driver, size_t payload_size,
-                                 native_io_backend_kind backend_kind) {
+                                 native_io_backend_kind backend_kind, io_bench_send_mode send_mode) {
   int status;
   memset(fixture, 0, sizeof(*fixture));
   fixture->driver = driver;
@@ -1131,7 +1158,7 @@ static int io_bench_fixture_init(io_bench_fixture *fixture, io_bench_protocol pr
       status =
           io_bench_native_init(&fixture->native, protocol, &fixture->server.address, backend_kind);
     else
-      status = io_bench_cnet_init(&fixture->cnet, protocol, &fixture->server.address, backend_kind);
+      status = io_bench_cnet_init(&fixture->cnet, protocol, &fixture->server.address, backend_kind, send_mode);
   }
   if (status == SALTS_OK && driver == IO_BENCH_CNET)
     status = io_bench_cnet_ready(&fixture->cnet, payload_size);
@@ -1229,13 +1256,19 @@ static int io_bench_print_host(void) {
   return status;
 }
 
+static void io_bench_free_payload(void *data, void *user) {
+  (void)user;
+  free(data);
+}
+
 static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size_t payload_size,
                         bool profile_stages, native_io_backend_kind backend_kind,
-                        io_bench_result *result) {
+                        io_bench_send_mode send_mode, io_bench_result *result) {
   io_bench_fixture fixture;
   unsigned char *sent = NULL;
   unsigned char *received = NULL;
   uint64_t *latencies = NULL;
+  mem_buffer_t *send_buffer = NULL;
   uint64_t wall_started = 0u;
   size_t latency_count = 0u;
   uv_rusage_t usage_before = {0};
@@ -1246,7 +1279,7 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   const char *phase = "init";
   int status;
   memset(result, 0, sizeof(*result));
-  status = io_bench_fixture_init(&fixture, protocol, driver, payload_size, backend_kind);
+  status = io_bench_fixture_init(&fixture, protocol, driver, payload_size, backend_kind, send_mode);
   if (status != SALTS_OK) goto cleanup;
   phase = "allocate";
   sent = (unsigned char *)malloc(payload_size);
@@ -1257,6 +1290,14 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     goto cleanup;
   }
   memset(sent, 0x5a, payload_size);
+  if (send_mode != IO_BENCH_SEND_BASELINE) {
+    /* One immutable external payload and one caller-owned reference per run,
+     * identically allocated for both methods before warmup. No pool lifetime
+     * can end underneath a retained send, including failed cleanup. */
+    send_buffer = mem_wrap_external(sent, payload_size, io_bench_free_payload, NULL);
+    if (send_buffer == NULL) { status = SALTS_ENOMEM; goto cleanup; }
+    fixture.cnet.send_buffer = send_buffer;
+  }
   phase = "warmup";
   for (size_t index = 0u; index < IO_BENCH_WARMUP_EXCHANGES; ++index) {
     status = io_bench_exchange(&fixture, sent, received, payload_size);
@@ -1328,6 +1369,11 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
   result->cpu_ns = io_bench_cpu_ns(&usage_after) - io_bench_cpu_ns(&usage_before);
   result->voluntary_switches = usage_after.ru_nvcsw - usage_before.ru_nvcsw;
   result->involuntary_switches = usage_after.ru_nivcsw - usage_before.ru_nivcsw;
+  if (send_mode != IO_BENCH_SEND_BASELINE &&
+      fixture.cnet.send_completions != IO_BENCH_ALL_EXCHANGES) {
+    status = SALTS_EIO;
+    goto cleanup;
+  }
   qsort(latencies, latency_count, sizeof(latencies[0]), io_bench_u64_compare);
   result->p50_ns = latencies[(latency_count - 1u) * 50u / 100u];
   result->p95_ns = latencies[(latency_count - 1u) * 95u / 100u];
@@ -1350,15 +1396,18 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
 cleanup:
   free(latencies);
   free(received);
-  free(sent);
   {
     const int cleanup_status = io_bench_fixture_destroy(&fixture, status != SALTS_OK);
     if (status == SALTS_OK) status = cleanup_status;
   }
+  if (send_buffer != NULL) {
+    if (status == SALTS_OK && mem_buffer_ref_count(send_buffer) != 1u) status = SALTS_EIO;
+    mem_buffer_release(send_buffer);
+  } else free(sent);
   if (status != SALTS_OK)
-    fprintf(stderr, "benchmark driver=%s protocol=%s payload=%zu phase=%s status=%d\n",
+    fprintf(stderr, "benchmark driver=%s protocol=%s payload=%zu send_mode=%d phase=%s status=%d\n",
             io_bench_driver_name(driver), protocol == IO_BENCH_TCP ? "TCP" : "UDP", payload_size,
-            phase, status);
+            (int)send_mode, phase, status);
   return status;
 }
 
@@ -1673,10 +1722,12 @@ static int io_bench_csv_line(salts_file_t file, const char *format, ...) {
 
 static int io_bench_write_series(salts_file_t runs, salts_file_t samples,
                                   const char *backend, const char *protocol,
-                                  io_bench_driver driver, const io_bench_series *series) {
+                                  const char *driver, const io_bench_series *series,
+                                  bool include_diagnostic) {
   const io_bench_result *passes[] = {series->runs, series->stage_profile_runs, series->control_runs};
   static const char *const names[] = {"A", "diagnostic", "B"};
   for (unsigned pass = 0u; pass < IO_BENCH_PASS_COUNT; ++pass) {
+    if (pass == IO_BENCH_PASS_DIAGNOSTIC && !include_diagnostic) continue;
     for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
       const io_bench_result *result = &passes[pass][repeat];
       size_t start_calls = 0u, drive_calls = 0u;
@@ -1691,14 +1742,14 @@ static int io_bench_write_series(salts_file_t runs, salts_file_t samples,
         drive_calls += sample->drive_calls;
         if (pass == IO_BENCH_PASS_DIAGNOSTIC)
           status = io_bench_csv_line(samples, "%s,%s,%zu,%s,%s,%zu,%zu,%llu,%llu,%llu,%llu,%.0f,%zu,%zu\n",
-              backend, protocol, result->payload_size, io_bench_driver_name(driver), names[pass],
+              backend, protocol, result->payload_size, driver, names[pass],
               repeat + 1u, i + 1u, (unsigned long long)sample->wall_ns,
               (unsigned long long)sample->start_ns, (unsigned long long)sample->drive_ns,
               (unsigned long long)sample->check_ns, budget.remainder_ns,
               sample->start_calls, sample->drive_calls);
         else
           status = io_bench_csv_line(samples, "%s,%s,%zu,%s,%s,%zu,%zu,%llu,,,,,,\n",
-              backend, protocol, result->payload_size, io_bench_driver_name(driver), names[pass],
+              backend, protocol, result->payload_size, driver, names[pass],
               repeat + 1u, i + 1u, (unsigned long long)sample->wall_ns);
         if (status != SALTS_OK) return status;
       }
@@ -1712,7 +1763,7 @@ static int io_bench_write_series(salts_file_t runs, salts_file_t samples,
       (void)snprintf(switches, sizeof(switches), ",");
 #endif
       int status = io_bench_csv_line(runs, "%s,%s,%zu,%s,%s,%zu,%zu,%llu,%llu,%llu,%llu,%s,",
-          backend, protocol, result->payload_size, io_bench_driver_name(driver), names[pass],
+          backend, protocol, result->payload_size, driver, names[pass],
           repeat + 1u, result->round_trips, (unsigned long long)result->wall_ns,
           (unsigned long long)result->cpu_ns, (unsigned long long)result->p50_ns,
           (unsigned long long)result->p95_ns, switches);
@@ -1731,9 +1782,16 @@ static int io_bench_write_series(salts_file_t runs, salts_file_t samples,
   return SALTS_OK;
 }
 
+typedef struct io_bench_dataset {
+  const char *protocol;
+  const char *driver;
+  const io_bench_series *rows;
+  size_t count;
+  bool include_diagnostic;
+} io_bench_dataset;
+
 static int io_bench_write_artifacts(const char *prefix, const char *backend,
-                                     const io_bench_series *tcp[IO_BENCH_DRIVER_COUNT], size_t tcp_count,
-                                     const io_bench_series *udp[IO_BENCH_DRIVER_COUNT], size_t udp_count) {
+                                     const io_bench_dataset *datasets, size_t count) {
   char path[IO_BENCH_CSV_LINE_CAPACITY];
   salts_file_t runs = SALTS_INVALID_FILE, samples = SALTS_INVALID_FILE;
   int status = SALTS_OK;
@@ -1754,13 +1812,11 @@ static int io_bench_write_artifacts(const char *prefix, const char *backend,
   if (status == SALTS_OK)
     status = io_bench_csv_line(samples, "backend,protocol,payload_bytes,driver,pass,repeat,sample,"
         "wall_ns,start_ns,drive_ns,check_ns,remainder_ns,start_calls,drive_calls\n");
-  for (unsigned driver = 0u; status == SALTS_OK && driver < IO_BENCH_DRIVER_COUNT; ++driver) {
-    for (size_t row = 0u; status == SALTS_OK && row < tcp_count; ++row)
-      status = io_bench_write_series(runs, samples, backend, "TCP", (io_bench_driver)driver,
-                                     &tcp[driver][row]);
-    for (size_t row = 0u; status == SALTS_OK && row < udp_count; ++row)
-      status = io_bench_write_series(runs, samples, backend, "UDP", (io_bench_driver)driver,
-                                     &udp[driver][row]);
+  for (size_t dataset = 0u; status == SALTS_OK && dataset < count; ++dataset) {
+    const io_bench_dataset *data = &datasets[dataset];
+    for (size_t row = 0u; status == SALTS_OK && row < data->count; ++row)
+      status = io_bench_write_series(runs, samples, backend, data->protocol, data->driver,
+                                     &data->rows[row], data->include_diagnostic);
   }
 cleanup:
   if (samples != SALTS_INVALID_FILE) {
@@ -1790,7 +1846,8 @@ static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t r
         io_bench_result *result = pass == IO_BENCH_PASS_DIAGNOSTIC ? &series[driver]->stage_profile_runs[repeat]
             : ((pass == IO_BENCH_PASS_A) == ((repeat & 1u) == 0u)) ? &series[driver]->runs[repeat]
                                                      : &series[driver]->control_runs[repeat];
-        const int status = io_bench_run(protocol, driver, payload, pass == IO_BENCH_PASS_DIAGNOSTIC, backend_kind, result);
+        const int status = io_bench_run(protocol, driver, payload, pass == IO_BENCH_PASS_DIAGNOSTIC,
+                                         backend_kind, IO_BENCH_SEND_BASELINE, result);
         if (status != SALTS_OK) return status;
       }
     }
@@ -1802,6 +1859,58 @@ static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t r
   return SALTS_OK;
 }
 
+static int io_bench_compare_sends(const cnet_io_benchmark_backend *backend, const char *prefix) {
+  enum { SEND_METHODS = 2, CONTROL_PASSES = 2,
+         TCP_ROWS = sizeof(IO_BENCH_TCP_PAYLOADS) / sizeof(IO_BENCH_TCP_PAYLOADS[0]) };
+  static io_bench_series series[SEND_METHODS][TCP_ROWS];
+  const io_bench_send_mode modes[SEND_METHODS] = {IO_BENCH_SEND_COPY, IO_BENCH_SEND_RETAINED};
+  const io_bench_dataset datasets[SEND_METHODS] = {
+      {"TCP", "CNet copy control", series[0], TCP_ROWS, false},
+      {"TCP", "CNet retained", series[1], TCP_ROWS, false}};
+  int status = io_bench_print_host();
+  if (status != SALTS_OK) return status;
+  printf("\nSeparate CNet send comparison: backend=%s, %d repeats, %d warmups, %d RTTs/run.\n",
+         backend->name, IO_BENCH_REPLICATES, IO_BENCH_WARMUP_EXCHANGES, IO_BENCH_TOTAL_EXCHANGES);
+  printf("Both methods reuse an immutable externally wrapped payload and wait for send completion "
+         "plus checked echo. Only cnet_send versus cnet_send_buffer changes. "
+         "A/B have no stage probes; pair order reverses between A/B and rotates by row/repeat. "
+         "This measures the full admission/ownership path difference, NOT isolated memcpy cost.\n");
+  for (size_t row = 0u; row < TCP_ROWS; ++row) {
+    for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
+      for (unsigned pass = 0u; pass < CONTROL_PASSES; ++pass) {
+        const bool pass_a = (pass == 0u) == ((repeat & 1u) == 0u);
+        for (unsigned index = 0u; index < SEND_METHODS; ++index) {
+          const size_t method = (row + repeat + (pass_a ? 0u : 1u) + index) % SEND_METHODS;
+          io_bench_result *result = pass_a
+              ? &series[method][row].runs[repeat] : &series[method][row].control_runs[repeat];
+          status = io_bench_run(IO_BENCH_TCP, IO_BENCH_CNET, IO_BENCH_TCP_PAYLOADS[row],
+                                 false, backend->kind, modes[method], result);
+          if (status != SALTS_OK) return status;
+        }
+      }
+    }
+  }
+  printf("\nPaired retained minus copy p50 delta; negative means retained is faster.\n");
+  printf("| payload | pass | median delta | MAD |\n| ---: | --- | ---: | ---: |\n");
+  for (size_t row = 0u; row < TCP_ROWS; ++row) {
+    for (unsigned pass = 0u; pass < CONTROL_PASSES; ++pass) {
+      double copy[IO_BENCH_REPLICATES], retained[IO_BENCH_REPLICATES];
+      cnet_benchmark_summary delta;
+      for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
+        copy[repeat] = (double)(pass == 0u ? series[0][row].runs[repeat].p50_ns
+                                          : series[0][row].control_runs[repeat].p50_ns);
+        retained[repeat] = (double)(pass == 0u ? series[1][row].runs[repeat].p50_ns
+                                              : series[1][row].control_runs[repeat].p50_ns);
+      }
+      status = cnet_benchmark_summarize_paired_delta(copy, retained, IO_BENCH_REPLICATES, &delta);
+      if (status != SALTS_OK) return status;
+      printf("| %zu KiB | %s | %+.2f%% | %.2fpp |\n", IO_BENCH_TCP_PAYLOADS[row] / 1024u,
+             pass == 0u ? "A" : "B", delta.median, delta.mad);
+    }
+  }
+  return io_bench_write_artifacts(prefix, backend->name, datasets, SEND_METHODS);
+}
+
 spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchmark") {
   it("compares persistent TCP and UDP clients against one common echo peer") {
     cnet_io_benchmark_backend backend = {0};
@@ -1809,6 +1918,8 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
     const char *requested_backend = getenv("CNET_IO_BENCHMARK_BACKEND");
     const char *requested_trace = getenv("CNET_IO_BENCHMARK_TRACE");
     const char *output_prefix = getenv("CNET_IO_BENCHMARK_OUTPUT");
+    const char *requested_send_comparison = getenv("CNET_IO_BENCHMARK_SEND_COMPARE");
+    bool send_comparison = false;
     int status = cnet_io_benchmark_select_backend(requested_backend, &backend);
     if (status != SALTS_OK)
       fprintf(stderr, "CNET_IO_BENCHMARK_BACKEND selection failed: value='%s', status=%d\n",
@@ -1821,6 +1932,16 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
               requested_trace == NULL ? "<unset>" : requested_trace, status);
     check_equal(status, SALTS_OK);
     if (status != SALTS_OK) return;
+    status = cnet_io_benchmark_select_send_comparison(requested_send_comparison, trace.enabled,
+                                                       &send_comparison);
+    if (status != SALTS_OK)
+      fprintf(stderr, "CNET_IO_BENCHMARK_SEND_COMPARE must be unset or 1, and cannot combine with TRACE\n");
+    check_equal(status, SALTS_OK);
+    if (status != SALTS_OK) return;
+    if (send_comparison) {
+      check_equal(io_bench_compare_sends(&backend, output_prefix), SALTS_OK);
+      return;
+    }
     if (trace.enabled) {
       static io_bench_result traced;
       printf("TRACE ONLY: %s backend=%s libuv=%s; not a performance score.\n",
@@ -1828,7 +1949,7 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
       io_bench_trace_enabled = true;
       status = io_bench_run(trace.udp ? IO_BENCH_UDP : IO_BENCH_TCP,
                             (io_bench_driver)trace.driver, trace.payload_size, false, backend.kind,
-                            &traced);
+                            IO_BENCH_SEND_BASELINE, &traced);
       io_bench_trace_enabled = false;
       check_equal(status, SALTS_OK);
       return;
@@ -1840,8 +1961,13 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
      * or per-exchange logging may perturb the next comparison run. */
     static io_bench_series tcp[IO_BENCH_DRIVER_COUNT][TCP_ROWS];
     static io_bench_series udp[IO_BENCH_DRIVER_COUNT][UDP_ROWS];
-    const io_bench_series *tcp_drivers[] = {tcp[0], tcp[1], tcp[2], tcp[3]};
-    const io_bench_series *udp_drivers[] = {udp[0], udp[1], udp[2], udp[3]};
+    io_bench_dataset datasets[IO_BENCH_DRIVER_COUNT * 2u];
+    for (unsigned driver = 0u; driver < IO_BENCH_DRIVER_COUNT; ++driver) {
+      datasets[driver * 2u] = (io_bench_dataset){"TCP", io_bench_driver_name((io_bench_driver)driver),
+                                                tcp[driver], TCP_ROWS, true};
+      datasets[driver * 2u + 1u] = (io_bench_dataset){"UDP", io_bench_driver_name((io_bench_driver)driver),
+                                                     udp[driver], UDP_ROWS, true};
+    }
 
     printf("\nReference: libuv %s; NativeIO backend: %s; CNet: public byte API.\n",
            uv_version_string(), backend.name);
@@ -1888,8 +2014,8 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
                 SALTS_OK);
     check_equal(io_bench_print_rate("UDP", udp[0], udp[1], udp[2], udp[3], UDP_ROWS), SALTS_OK);
     check_equal(io_bench_print_diagnostics("UDP", udp[0], udp[1], udp[2], udp[3], UDP_ROWS), SALTS_OK);
-    check_equal(io_bench_write_artifacts(output_prefix, backend.name, tcp_drivers, TCP_ROWS,
-                                          udp_drivers, UDP_ROWS), SALTS_OK);
+    check_equal(io_bench_write_artifacts(output_prefix, backend.name, datasets,
+                                          sizeof(datasets) / sizeof(datasets[0])), SALTS_OK);
     printf("Raw artifacts: %s\n", output_prefix == NULL
         ? "not requested; set CNET_IO_BENCHMARK_OUTPUT to a path prefix" : output_prefix);
   }
