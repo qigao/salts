@@ -665,6 +665,21 @@ static const cmeta_data_desc cmeta_data_test_int_sequence_data = {
     .collection_ops = &cmeta_data_test_int_sequence_ops
 };
 
+typedef struct cmeta_data_test_collect_ints {
+  int values[3];
+  size_t count;
+} cmeta_data_test_collect_ints;
+
+static cmeta_status cmeta_data_test_collect_int(
+    void *context, const void *element) {
+  cmeta_data_test_collect_ints *out =
+      (cmeta_data_test_collect_ints *)context;
+  if (out == NULL || element == NULL || out->count >= 3u)
+    return CMETA_INVALID_ARGUMENT;
+  out->values[out->count++] = *(const int *)element;
+  return CMETA_OK;
+}
+
 spec("CMeta semantic data descriptors") {
   it("declares bounded fixed bytes as canonical provider metadata") {
     const cmeta_fixed_bytes_fixture source = {1u, 2u, 3u, 4u, 5u, 6u};
@@ -1392,6 +1407,38 @@ spec("CMeta semantic data descriptors") {
     check_equal(out.count, 0u);
     check_null(out.data);
     check_null(out.element);
+  }
+
+  it("uses the canonical borrowed sequence view across consumers") {
+    const int values[] = {2, 4, 6};
+    cmeta_data_collection_view input = {
+        values, 3u, sizeof(values[0]), &cmeta_data_int};
+    cmeta_data_collection_view view = {0};
+    cmeta_data_test_collect_ints collected = {{0}, 0u};
+    const cmeta_data_collection_ops *ops =
+        cmeta_data_collection_ops_of(&cmeta_data_sequence_view);
+
+    check_true(cmeta_data_desc_valid(&cmeta_data_sequence_view));
+    check_not_null(ops);
+    check_true((ops->flags & CMETA_DATA_COLLECTION_CONTIGUOUS) != 0u);
+    check_true((ops->flags & CMETA_DATA_COLLECTION_ORDERED) != 0u);
+    check_true((ops->flags & CMETA_DATA_COLLECTION_RANDOM_ACCESS) != 0u);
+    check_null(ops->collector);
+    check_equal(cmeta_data_collection_read(
+                    &cmeta_data_sequence_view, &input, &view),
+                CMETA_OK);
+    check_true(view.data == values);
+    check_equal(view.count, 3u);
+    check_equal(view.stride, sizeof(int));
+    check_true(view.element == &cmeta_data_int);
+    check_equal(cmeta_data_collection_foreach(
+                    &cmeta_data_sequence_view, &input,
+                    cmeta_data_test_collect_int, &collected, 3u),
+                CMETA_OK);
+    check_equal(collected.count, 3u);
+    check_equal(collected.values[0], 2);
+    check_equal(collected.values[1], 4);
+    check_equal(collected.values[2], 6);
   }
 
   it("validates provider-neutral collection read views") {
