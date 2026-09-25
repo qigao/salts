@@ -848,6 +848,7 @@ static int uring_submit_staged_and_wait(salts_io_uring_impl *impl, uint32_t time
     timeout.tv_sec = (int64_t)(timeout_ms / 1000u);
     timeout.tv_nsec = (int64_t)(timeout_ms % 1000u) * 1000000ll;
     memset(&argument, 0, sizeof(argument));
+    argument.sigmask_sz = (uint32_t)(_NSIG / 8u);
     argument.ts = (uint64_t)(uintptr_t)&timeout;
     enter_flags |= IORING_ENTER_EXT_ARG;
     enter_argument = &argument;
