@@ -841,8 +841,26 @@ static cmeta_status cmeta_data_struct_move(
             field->value,
             (unsigned char *)destination + field->offset,
             (unsigned char *)source + field->offset);
-        if (status != CMETA_OK)
-            return status; /* capability preflight makes this path no-fail */
+        if (status != CMETA_OK) {
+            cmeta_status rollback_status = CMETA_OK;
+            (void)cmeta_data_value_restore_zero(
+                field->value,
+                (unsigned char *)destination + field->offset);
+            while (i != 0u) {
+                const cmeta_data_field_desc *moved = &shape->fields[--i];
+                cmeta_status rollback = cmeta_data_value_move(
+                    moved->value,
+                    (unsigned char *)source + moved->offset,
+                    (unsigned char *)destination + moved->offset);
+                if (rollback != CMETA_OK) {
+                    (void)cmeta_data_value_restore_zero(
+                        moved->value,
+                        (unsigned char *)destination + moved->offset);
+                    rollback_status = CMETA_CALLBACK_ERROR;
+                }
+            }
+            return rollback_status == CMETA_OK ? status : rollback_status;
+        }
     }
     return CMETA_OK;
 }
