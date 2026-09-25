@@ -527,6 +527,7 @@ cmeta_status cmeta_data_value_init_zero(
     const cmeta_data_desc *desc, void *object);
 cmeta_status cmeta_data_value_restore_zero(
     const cmeta_data_desc *desc, void *object);
+bool cmeta_data_value_move_supported(const cmeta_data_desc *desc);
 cmeta_status cmeta_data_value_move(
     const cmeta_data_desc *desc, void *destination, void *source);
 
