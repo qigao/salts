@@ -281,3 +281,14 @@ cmeta_status cmeta_data_collection_read(
 #undef CMETA_COLLECTION_OPS_SIZE
 #undef CMETA_COLLECTION_DESC_OPS_SIZE
 #undef CMETA_COLLECTION_FIELD_END
+
+
+const cmeta_data_desc *cmeta_data_integer_width(bool is_signed, uint8_t bits) {
+    switch (bits) {
+        case 8u: return is_signed ? &cmeta_data_int8 : &cmeta_data_uint8;
+        case 16u: return is_signed ? &cmeta_data_int16 : &cmeta_data_uint16;
+        case 32u: return is_signed ? &cmeta_data_int32 : &cmeta_data_uint32;
+        case 64u: return is_signed ? &cmeta_data_int64 : &cmeta_data_uint64;
+        default: return NULL;
+    }
+}
