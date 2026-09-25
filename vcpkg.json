@@ -28,5 +28,13 @@
       "name": "boringssl"
     }
   ],
-  "builtin-baseline": "b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01"
+  "builtin-baseline": "b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01",
+  "features": {
+    "lua-bindings": {
+      "description": "Build and test the optional Salts CMeta Lua binding",
+      "dependencies": [
+        "lua"
+      ]
+    }
+  }
 }
