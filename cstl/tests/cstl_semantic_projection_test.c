@@ -168,6 +168,8 @@ spec("CSTL semantic projection") {
     check_equal(reflected_ints_push(&values, 5), STL_OK);
     check_true(reflected_ints_collection_data.collection_ops ==
                &reflected_ints_collection_ops);
+    check_true(cmeta_data_collection_element_data(
+                   &reflected_ints_collection_data) == &cmeta_data_int);
     check_equal(cmeta_data_collection_read(
                     &reflected_ints_collection_data, &values, &view),
                 CMETA_OK);
@@ -275,6 +277,10 @@ spec("CSTL semantic projection") {
     check_equal(reflected_map_map_data.kind, CMETA_DATA_MAP);
     check_true(reflected_map_map_data.collection_ops == NULL);
     check_true(reflected_map_map_data.map_ops == &reflected_map_map_ops);
+    check_true(cmeta_data_map_key_data(&reflected_map_map_data) ==
+               &cmeta_data_int);
+    check_true(cmeta_data_map_value_data(&reflected_map_map_data) ==
+               &cmeta_data_long);
     check_true(reflected_map_map_key(&values) == &cmeta_data_int);
     check_true(reflected_map_map_value(&values) == &cmeta_data_long);
 
