@@ -484,6 +484,10 @@ typedef struct cmeta_data_variant_shape {
 bool cmeta_data_kind_valid(cmeta_data_kind kind);
 bool cmeta_data_kind_is_container(cmeta_data_kind kind);
 bool cmeta_data_desc_valid(const cmeta_data_desc *desc);
+/** Semantic equality uses stable data identity plus canonical native type
+ * identity; descriptor addresses are never semantic identity. */
+bool cmeta_data_desc_equal(
+    const cmeta_data_desc *left, const cmeta_data_desc *right);
 
 /**
  * Return a validated STRING/BYTES adapter, or NULL when the descriptor does
