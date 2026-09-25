@@ -363,6 +363,11 @@ static cmeta_status cmeta_data_map_ops_status(
     if (ops->struct_size < CMETA_MAP_OPS_SIZE ||
         ops->abi_version != CMETA_DATA_MAP_OPS_ABI_VERSION ||
         ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
+        (ops->flags & ~CMETA_DATA_MAP_FLAGS_MASK) != 0u ||
+        ((ops->flags & CMETA_DATA_MAP_UNIQUE_KEYS) != 0u &&
+         (ops->flags & CMETA_DATA_MAP_REPEATED_KEYS) != 0u) ||
+        ((ops->flags & (CMETA_DATA_MAP_UNIQUE_KEYS |
+                        CMETA_DATA_MAP_REPEATED_KEYS)) == 0u) ||
         ops->key == NULL || ops->value == NULL || ops->foreach == NULL)
         return CMETA_INVALID_ARGUMENT;
     if (desc->storage_type == NULL ||
