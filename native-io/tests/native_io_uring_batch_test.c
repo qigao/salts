@@ -205,11 +205,9 @@ spec("io_uring explicit batch submission") {
     if (!impl->ring_native_wait) {
       check_equal(native_io_backend_close(&backend), SALTS_OK);
       check_equal(native_io_backend_destroy(&backend), SALTS_OK);
-      return;
-    }
-
-    /* Exclude the one-time internal wake-poll arm from the operation wait count. */
-    enter_calls = 0u;
+    } else {
+      /* Exclude the one-time internal wake-poll arm from the operation wait count. */
+      enter_calls = 0u;
     memset(enter_sizes, 0, sizeof(enter_sizes));
     poll_calls = 0u;
     check_equal(pipe(descriptors), 0);
@@ -244,8 +242,9 @@ spec("io_uring explicit batch submission") {
     check_equal(close(descriptors[0]), 0);
     check_equal(close(descriptors[1]), 0);
     check_equal(native_io_backend_release_pipe(&backend, endpoint), SALTS_OK);
-    check_equal(native_io_backend_close(&backend), SALTS_OK);
-    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+      check_equal(native_io_backend_close(&backend), SALTS_OK);
+      check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+    }
   }
 
   it("retains queued followers and failure terminals after observe reports a flush error") {
