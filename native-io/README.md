@@ -112,7 +112,9 @@ io_uring 每个 SQE 单独 enter。公共 operation/completion 契约不要求�
   在同一 owner 轮次合并。普通 submit 的空闲 lane 仍立即提交。Linux 5.11+ 若 ring 报告
   `IORING_FEAT_EXT_ARG`，observe 使用一次 `io_uring_enter` 同时提交 staged SQE 并等待 CQ；
   wake eventfd 由内部 `IORING_OP_POLL_ADD` 驱动，其 CQE 只作为控制唤醒，不暴露用户 completion。
-  更老 kernel 的有限 timeout 保留 `poll(ring_fd)` 兼容路径，不回退到 epoll。
+  若内部 control poll 因 owner task handoff 或内核能力被取消/拒绝，只把等待策略降级为
+  `poll(ring_fd, wake_fd)`，不把控制 CQE 当成用户 I/O 失败，也不切换 backend。更老 kernel
+  缺少 EXT_ARG 时有限 timeout 使用同一兼容等待路径。
 - **IOCP**：prepare 使用既有 overlapped submit；没有待提交 SQ，flush 无额外工作。
   不把 readiness/io_uring 的“取消一个本地排队请求后继续使用 socket”保证扩展到 Winsock。
   Microsoft 明确说明取消未完成 overlapped I/O 后继续使用 socket 的行为未定义，
