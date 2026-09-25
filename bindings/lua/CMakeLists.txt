@@ -1,0 +1,19 @@
+find_package(Lua REQUIRED)
+
+add_library(salts_lua_binding STATIC salts_lua_cmeta.c)
+add_library(Salts::Lua ALIAS salts_lua_binding)
+
+target_include_directories(salts_lua_binding
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>)
+
+target_link_libraries(salts_lua_binding
+  PUBLIC Salts::CMeta
+  PRIVATE Lua::Lua)
+
+target_compile_features(salts_lua_binding PUBLIC c_std_11)
+set_target_properties(salts_lua_binding PROPERTIES FOLDER "bindings")
+
+install(TARGETS salts_lua_binding EXPORT SaltsTargets)
+install(DIRECTORY include/ DESTINATION include)
