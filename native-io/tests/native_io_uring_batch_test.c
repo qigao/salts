@@ -174,6 +174,44 @@ spec("io_uring explicit batch submission") {
     batch_test_requests(true, 0u, SALTS_EIO);
     check_equal(enter_calls, 1u);
   }
+  it("submits prepared work and the wake poll in one wait enter") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+    int descriptors[2];
+    native_io_endpoint endpoint = {0};
+    native_io_request request = {0};
+    native_io_completion event = {0};
+    unsigned char byte = 0u;
+    const unsigned char sent = 0x6bu;
+    size_t count = 0u;
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    check_equal(pipe(descriptors), 0);
+    check_equal(native_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0],
+                                              NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
+                SALTS_OK);
+    check_equal(write(descriptors[1], &sent, 1u), (ssize_t)1);
+    {
+      const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_PIPE_READ,
+                                             .endpoint = endpoint,
+                                             .buffer = &byte,
+                                             .length = 1u};
+      check_equal(native_io_backend_prepare(&backend, &operation, &request), SALTS_OK);
+    }
+    check_equal(enter_calls, 0u);
+    check_equal(native_io_backend_observe(&backend, &event, 1u, BATCH_TEST_TIMEOUT_MS, &count),
+                SALTS_OK);
+    check_equal(count, 1u);
+    check_equal(event.kind, NATIVE_IO_COMPLETION_OK);
+    check_equal(event.bytes, 1u);
+    check_equal(byte, sent);
+    check_equal(enter_calls, 1u);
+    check_equal(enter_sizes[0], 2u);
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    check_equal(close(descriptors[0]), 0);
+    check_equal(close(descriptors[1]), 0);
+    check_equal(native_io_backend_release_pipe(&backend, endpoint), SALTS_OK);
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+  }
   it("retains queued followers and failure terminals after observe reports a flush error") {
     native_io_backend backend = {0};
     const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 2u, 2u};
