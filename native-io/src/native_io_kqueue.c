@@ -163,7 +163,7 @@ static void kqueue_driver_destroy(void *driver_state) {
 
 static const salts_io_readiness_driver_ops kqueue_driver_ops = {
     kqueue_driver_init, kqueue_driver_update, kqueue_driver_wait, kqueue_driver_wake,
-    kqueue_driver_destroy};
+    kqueue_driver_destroy, false};
 
 int salts_io_kqueue_backend_init(native_io_backend *backend, const native_io_backend_config *config) {
   if (config->kind != NATIVE_IO_BACKEND_KQUEUE) return SALTS_ENOTSUP;

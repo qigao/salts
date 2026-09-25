@@ -484,7 +484,7 @@ static int io_bench_native_exchange(io_bench_native *fixture, const unsigned cha
                                        .length = length - received_offset,
                                        .user_data = 1u};
       native_io_request request;
-      status = native_io_backend_submit(&fixture->backend, &operation, &request);
+      status = native_io_backend_prepare(&fixture->backend, &operation, &request);
       if (status != SALTS_OK) return status;
       receive_pending = true;
     }
@@ -497,7 +497,7 @@ static int io_bench_native_exchange(io_bench_native *fixture, const unsigned cha
                                        .length = length - sent_offset,
                                        .user_data = 2u};
       native_io_request request;
-      status = native_io_backend_submit(&fixture->backend, &operation, &request);
+      status = native_io_backend_prepare(&fixture->backend, &operation, &request);
       if (status != SALTS_OK) return status;
       send_pending = true;
     }
@@ -554,7 +554,7 @@ static int io_bench_native_exchange_profiled(io_bench_native *fixture, const uns
                                        .user_data = 1u};
       native_io_request request;
       const uint64_t started = salts_hrtime();
-      status = native_io_backend_submit(&fixture->backend, &operation, &request);
+      status = native_io_backend_prepare(&fixture->backend, &operation, &request);
       io_bench_record_stage(started, &result->native_start_ns, &result->native_start_calls);
       if (status != SALTS_OK) return status;
       receive_pending = true;
@@ -569,7 +569,7 @@ static int io_bench_native_exchange_profiled(io_bench_native *fixture, const uns
                                        .user_data = 2u};
       native_io_request request;
       const uint64_t started = salts_hrtime();
-      status = native_io_backend_submit(&fixture->backend, &operation, &request);
+      status = native_io_backend_prepare(&fixture->backend, &operation, &request);
       io_bench_record_stage(started, &result->native_start_ns, &result->native_start_calls);
       if (status != SALTS_OK) return status;
       send_pending = true;
@@ -609,7 +609,7 @@ static void io_bench_native_coroutine_operation_entry(native_io_coroutine *corou
         .endpoint = state->fixture->endpoint,
         .buffer = state->buffer + state->offset,
         .length = state->length - state->offset};
-    state->status = native_io_coroutine_await(coroutine, &operation, &completion);
+    state->status = native_io_coroutine_await_prepared(coroutine, &operation, &completion);
     if (state->status != SALTS_OK) break;
     if (completion.kind != NATIVE_IO_COMPLETION_OK || completion.bytes == 0u ||
         completion.bytes > state->length - state->offset) {
@@ -1642,9 +1642,10 @@ static int io_bench_print_diagnostics(const char *protocol, const io_bench_serie
   printf("\n%s diagnostic boundary deltas versus libuv (us/RT)\n", protocol);
   printf("Arithmetic mean of paired per-repeat differences, NOT differences of p50/p95. "
          "Start + drive + check + remainder = diagnostic mean gap only. "
-         "Start: uv read-arm/write, NativeIO submit, coroutine spawn, or CNet send admission. "
+         "Start: uv read-arm/write, NativeIO prepare, coroutine spawn, or CNet send admission. "
          "Drive: uv_run, backend observe, or CNet poll, excluding payload verification. "
-         "CNet executes queued submits inside drive. These different API boundaries locate work "
+         "NativeIO observe includes flush; CNet executes queued preparation inside drive. "
+         "These different API boundaries locate work "
          "but do NOT prove a CPU or syscall cause. Drive still mixes wait and dispatch. "
          "Remainder includes harness and probe bookkeeping; unresolved causes require a trace.\n");
   printf("| payload | driver | mean gap | start delta | drive delta | check delta | remainder delta |\n");
@@ -1675,7 +1676,7 @@ static int io_bench_print_diagnostics(const char *protocol, const io_bench_serie
   printf("\n%s CNet diagnostic internal evidence (mean us/RT)\n", protocol);
   printf("Within CNet only, not an explanation of the libuv gap. "
          "Observe still includes waiting. Payload copy is the admitted send copy only.\n");
-  printf("| payload | fixed control | send copy | NativeIO submit/resubmit | observe | starts/RT | completions/RT |\n");
+  printf("| payload | fixed control | send copy | NativeIO prepare/reprepare | observe + flush | starts/RT | completions/RT |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
     double fixed = 0.0, copy = 0.0, submit = 0.0, observe = 0.0, starts = 0.0, completions = 0.0;
@@ -1979,6 +1980,8 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
            "quartets; A/B time order alternates. A/A is collected on every platform and driver.\n");
     printf("CNet uses one bounded receive demand and borrowed callback views. Deadlines are "
            "disabled; timeout behavior belongs to contract tests.\n");
+    printf("NativeIO direct/coroutine and CNet opt into prepare/observe batching; "
+           "io_uring flushes eligible lane heads together, readiness/IOCP start immediately.\n");
     printf("Workload: %d repeats; %d warmups and %d sequential persistent round trips per run. "
            "RT/s is NOT concurrent saturation throughput.\n",
            IO_BENCH_REPLICATES, IO_BENCH_WARMUP_EXCHANGES, IO_BENCH_EXCHANGES_PER_REPLICATE);

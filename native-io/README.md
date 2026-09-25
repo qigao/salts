@@ -94,6 +94,58 @@ FREE --submit accepted--> PENDING --observe terminal--> FREE(next generation)
 
 ## 性能边界
 
+### 后端原生推进与显式批处理
+
+决策背景：串行 echo 的 Linux trace 显示 epoll 每 RTT 重复注册/移除读监听，
+io_uring 每个 SQE 单独 enter。公共 operation/completion 契约不要求相同的内部推进算法。
+这里保留旧 `submit` 的立即启动/错误返回行为，新增 `prepare`、`flush` 和
+`native_io_coroutine_await_prepared`。不把旧 submit 隐式改成延迟接收，不添加后台线程或新依赖。
+
+- **epoll**：非阻塞 I/O 快路径不变；第一次 would-block 时注册对应方向的 ET 监听，
+  监听保留到 endpoint release，新增方向才 MOD。没有请求时不读取 payload；新请求先尝试
+  syscall，已有 FIFO lane 则排队，避免越过旧请求读取。处理完现有请求后即停止，不为 drain
+  到 EAGAIN 而越过调用方的 buffer/demand。即使边沿已被消费，后续请求仍先尝试 I/O，
+  不依赖“再来一个边沿”。kqueue 保持既有注册策略，不强行继承 epoll ET 规则。
+- **io_uring**：prepare 将有界描述符放入原 request 槽位；只有每个 read/write lane 的 head
+  进入待提交链，flush 批量发布 SQE。observe 在等待或交回 completion 前提交 eligible heads。
+  enter 后立即检查 CQ，避免为了已完成的 send 再调用 poll；CQ 推进后的新 lane head
+  在同一 owner 轮次合并。普通 submit 的空闲 lane 仍立即提交。
+- **IOCP**：prepare 使用既有 overlapped submit；没有待提交 SQ，flush 无额外工作。
+  不把 readiness/io_uring 的“取消一个本地排队请求后继续使用 socket”保证扩展到 Winsock。
+  Microsoft 明确说明取消未完成 overlapped I/O 后继续使用 socket 的行为未定义，
+  应关闭 socket，见 [Winsock overlapped I/O](https://learn.microsoft.com/en-us/windows/win32/winsock/overlapped-i-o-and-event-objects-2)。
+
+状态协议：`FREE -> admitted/queued -> staged -> in-flight -> terminal -> FREE`。
+request 槽位是唯一所有权事实源，staged 链只是槽位内的调度索引，没有独立 payload 副本。
+单 owner 修改所有阶段，wake 仍是唯一跨线程入口；read/write lane 内 FIFO、lane 间不排序。
+prepare 成功即开始 borrow，直到 observe 对应终态才结束；取消 staged 请求不进入内核，
+取消 in-flight 请求仍等待内核终态。close 只停止 admission，已接收请求仍可 flush/drain。
+所有阶段合计不超过 request_capacity；满额拒绝，不扩容，不分配新的热路径存储。
+
+flush 对部分 enter 使用实际 SQ head 的消费前缀确认所有权，已消费项绝不重放。
+无 SQPOLL/第二 submitter 时，未消费后缀可重新准备；flush 原生失败立即返回错误，并为
+尚未提交的受影响请求发布 FAILED 终态。调用方仍须观察全部已接收请求，不能因 flush
+失败提前释放 buffer。每个请求恰好一个终态，generation 防止旧 completion 关联新槽位。
+调度索引增删 O(1)，flush O(本批 eligible 请求数)，不扫描全部 endpoint。
+
+迁移范围：CNet owner、CFlow NativeIO adapter 和网络 benchmark 显式采用 prepare/observe；
+coroutine 通过新 await 入口选择批处理，旧 await 不变。公开结构体布局与枚举值不变，
+但新调用方需要包含新增符号的 NativeIO 库。不同后端不保证 prepare 后尚无外部副作用。
+回滚可将上述调用点改回 submit/旧 await；epoll 注册策略可独立回退，不改变数据格式。
+
+验证范围包括 staged/内核取消、FIFO、容量、环绕复用、部分提交错误、close/drain、
+ET 无 pending 时到达数据及后续读、wake 和 coroutine completion 路由；收益需要同时看
+串行 RTT、多连接并发、饱和吞吐和 CPU，不能仅凭 syscall 减少宣称最优。
+
+内核语义参考：[epoll ET](https://man7.org/linux/man-pages/man7/epoll.7.html)、
+[io_uring_enter](https://man7.org/linux/man-pages/man2/io_uring_enter.2.html)。
+
+完整批处理用例见 `tests/native_io_test.c` 的 `native_io_test_prepared_fifo`：
+同一 owner prepare 多个请求，再显式 flush 或通过 observe 隐式 flush。
+无论 flush/observe 是否返回错误，已接收请求都必须观察终态后才能释放 buffer。
+benchmark 中 prepare 计入 admission 阶段，真正 SQ 提交计入 observe/flush 阶段；
+阶段耗时不能与重构前的 submit/observe 分界直接对比，总 RTT 仍可比较。
+
 若 byte pipe 的首要目标是最低框架延迟或最高吞吐，并且调用方能够自行管理
 operation、completion、容量与关闭顺序，应直接使用 NativeIO Pipe 接口。
 Actor 与 CFlow Reactive 适用于需要状态隔离、确认协议、demand 或 Graph 操作的
@@ -106,7 +158,8 @@ direct backend 初始化时预分配 endpoint/request/native event storage，之
 - epoll/kqueue：connect 使用 nonblocking `connect` 与 `SO_ERROR`；其余 submit 先以单次非阻塞 syscall 尝试，仅在 would-block 时进入每 endpoint 的 FIFO lane，并由 owner 在 observe 中直接等待 readiness 和继续 syscall。
 - io_uring：connect 使用 `IORING_OP_CONNECT`，pipe/FIFO read/write 使用 `IORING_OP_READ`/`IORING_OP_WRITE`。每个 endpoint 的 read/write lane 各保持至多一个内核 in-flight SQE，其余已接受描述符保留在固定 request 槽位中；observe drain CQ 后推进 lane。ring 由模块映射，但没有 worker、mutex、callback、payload copy 或跨线程 mailbox。
 
-readiness 的 kernel interest 是请求 lane 推导出的镜像，不是第二份业务状态。endpoint/request/terminal storage 和 native event batch 均有固定上限。
+readiness 的 kernel interest 是监听策略的镜像，不是请求事实源；epoll ET 允许它跨空 lane
+保留，kqueue 按 pending lane 更新。endpoint/request/terminal storage 和 native event batch 均有固定上限。
 
 从未 spawn coroutine 或当前没有活动 coroutine 时，`native_io_backend_observe()` 直接进入所选 OS driver，不经过 completion 路由缓冲或 coroutine context switch。纯 direct 使用也不会创建 coroutine owner/pool。因此 direct benchmark 仍测量原生 NativeIO 路径；只有显式 spawn coroutine 的调用方承担 owner storage 与 suspend/resume 成本。
 

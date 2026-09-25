@@ -21,7 +21,7 @@ typedef struct salts_io_epoll_state {
 } salts_io_epoll_state;
 
 static uint32_t epoll_native_interests(uint32_t interests) {
-  uint32_t native = EPOLLERR | EPOLLHUP;
+  uint32_t native = EPOLLERR | EPOLLHUP | EPOLLET;
   if ((interests & SALTS_IO_READY_READ) != 0u) native |= EPOLLIN | EPOLLPRI | EPOLLRDHUP;
   if ((interests & SALTS_IO_READY_WRITE) != 0u) native |= EPOLLOUT;
   return native;
@@ -82,7 +82,10 @@ static int epoll_driver_update(void *driver_state, int fd, uint64_t token, uint3
     status = epoll_ctl(state->epoll_fd, operation, fd, operation == EPOLL_CTL_DEL ? NULL : &event);
   } while (status < 0 && errno == EINTR);
   if (status == 0) return SALTS_OK;
-  if (operation == EPOLL_CTL_DEL && errno == ENOENT) return SALTS_OK;
+  /* release follows caller close. The fd number may already be reused by a
+   * non-pollable resource (EPERM); it cannot name this registration anymore. */
+  if (operation == EPOLL_CTL_DEL && (errno == ENOENT || errno == EBADF || errno == EPERM))
+    return SALTS_OK;
   return -errno;
 }
 
@@ -149,7 +152,7 @@ static void epoll_driver_destroy(void *driver_state) {
 
 static const salts_io_readiness_driver_ops epoll_driver_ops = {
     epoll_driver_init, epoll_driver_update, epoll_driver_wait, epoll_driver_wake,
-    epoll_driver_destroy};
+    epoll_driver_destroy, true};
 
 int salts_io_epoll_backend_init(native_io_backend *backend, const native_io_backend_config *config) {
   if (config->kind != NATIVE_IO_BACKEND_EPOLL) return SALTS_ENOTSUP;

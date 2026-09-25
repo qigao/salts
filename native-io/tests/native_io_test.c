@@ -538,6 +538,155 @@ static void native_io_test_close_endpoint(native_io_backend *backend, native_io_
   check_equal(native_io_backend_release_socket(backend, endpoint), SALTS_OK);
 }
 
+static void native_io_test_prepared_fifo(native_io_backend_kind kind) {
+  enum { batch_capacity = 4, reuse_rounds = 32 };
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {kind, 2u, batch_capacity, batch_capacity};
+  native_io_test_socket sockets[2];
+  native_io_endpoint endpoints[2] = {0};
+  const unsigned char payload[] = {0x41u, 0x42u, 0x43u};
+  /* Readiness/uring queue later lane entries locally. IOCP posts every receive
+   * to Winsock; its native cancellation isolation is not a staged-lane contract. */
+  const bool cancel_middle = kind != NATIVE_IO_BACKEND_IOCP;
+  const size_t send_size = cancel_middle ? sizeof(payload) - 1u : sizeof(payload);
+
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+  check_equal(native_io_test_make_tcp_pair(sockets), SALTS_OK);
+  for (size_t i = 0u; i < 2u; ++i)
+    check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[i], &endpoints[i]),
+                SALTS_OK);
+  for (size_t round = 0u; round < reuse_rounds; ++round) {
+    unsigned char received[3] = {0};
+    native_io_request requests[batch_capacity] = {0};
+    native_io_request rejected = {0};
+    native_io_completion events[batch_capacity] = {0};
+    unsigned seen = 0u;
+    native_io_operation operation = {.kind = NATIVE_IO_OPERATION_TCP_RECV,
+                                     .endpoint = endpoints[1], .length = 1u};
+    for (size_t i = 0u; i < 3u; ++i) {
+      operation.buffer = &received[i];
+      operation.user_data = i;
+      check_equal(native_io_backend_prepare(&backend, &operation, &requests[i]), SALTS_OK);
+    }
+    /* A queued cancellation must neither consume bytes nor free its borrow early. */
+    if (cancel_middle) check_equal(native_io_backend_cancel(&backend, requests[1]), SALTS_OK);
+    operation = (native_io_operation){.kind = NATIVE_IO_OPERATION_TCP_SEND,
+                                      .endpoint = endpoints[0], .buffer = (void *)payload,
+                                      .length = send_size, .user_data = 3u};
+    check_equal(native_io_backend_prepare(&backend, &operation, &requests[3]), SALTS_OK);
+    check_equal(native_io_backend_prepare(&backend, &operation, &rejected), SALTS_ENOBUFS);
+    check_false(native_io_request_valid(rejected));
+    check_equal(native_io_backend_release_socket(&backend, endpoints[1]), SALTS_EBUSY);
+    if (round + 1u == reuse_rounds) {
+      check_equal(native_io_backend_close(&backend), SALTS_OK);
+      check_equal(native_io_backend_prepare(&backend, &operation, &rejected), SALTS_ESHUTDOWN);
+    }
+    if (round % 2u == 0u) check_equal(native_io_backend_flush(&backend), SALTS_OK);
+    check_equal(native_io_test_observe_all(&backend, events, batch_capacity), SALTS_OK);
+    for (size_t i = 0u; i < batch_capacity; ++i) {
+      const size_t tag = events[i].user_data;
+      check_less(tag, (size_t)batch_capacity);
+      check_equal(seen & (1u << tag), 0u);
+      seen |= 1u << tag;
+      check_equal(events[i].request.slot, requests[tag].slot);
+      check_equal(events[i].request.generation, requests[tag].generation);
+      check_equal(events[i].kind, cancel_middle && tag == 1u ? NATIVE_IO_COMPLETION_CANCELLED
+                                          : NATIVE_IO_COMPLETION_OK);
+      check_equal(events[i].bytes, cancel_middle && tag == 1u ? 0u : tag == 3u ? send_size : 1u);
+      check_equal(native_io_backend_cancel(&backend, requests[tag]), SALTS_ENOENT);
+    }
+    check_equal(seen, (1u << batch_capacity) - 1u);
+    check_equal(received[0], payload[0]);
+    check_equal(received[1], cancel_middle ? 0u : payload[1]);
+    check_equal(received[2], payload[cancel_middle ? 1u : 2u]);
+    check_equal(native_io_backend_flush(&backend), SALTS_OK);
+  }
+  for (size_t i = 0u; i < 2u; ++i)
+    native_io_test_close_endpoint(&backend, endpoints[i], sockets[i]);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+}
+
+#if defined(__linux__)
+static void native_io_test_epoll_pending_fifo(void) {
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {NATIVE_IO_BACKEND_EPOLL, 1u, 2u, 2u};
+  native_io_test_socket sockets[2];
+  native_io_endpoint endpoint = {0};
+  native_io_request requests[2] = {0};
+  native_io_completion events[2] = {0};
+  unsigned char received[2] = {0};
+  const unsigned char payload[] = {0x41u, 0x42u};
+  size_t count = 0u;
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+  check_equal(native_io_test_make_tcp_pair(sockets), SALTS_OK);
+  check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoint), SALTS_OK);
+  native_io_operation operation = {.kind = NATIVE_IO_OPERATION_TCP_RECV, .endpoint = endpoint,
+                                   .buffer = &received[0], .length = 1u};
+  check_equal(native_io_backend_prepare(&backend, &operation, &requests[0]), SALTS_OK);
+  check_equal(send(sockets[0], payload, sizeof(payload), 0), (int)sizeof(payload));
+  operation.buffer = &received[1];
+  check_equal(native_io_backend_prepare(&backend, &operation, &requests[1]), SALTS_OK);
+  check_equal(native_io_test_observe_all(&backend, events, 2u), SALTS_OK);
+  check_equal(memcmp(received, payload, sizeof(payload)), 0);
+  /* Consume an edge while no request exists, then read across request boundaries.
+   * New heads must try I/O even though the persistent registration has no new edge. */
+  check_equal(send(sockets[0], payload, sizeof(payload), 0), (int)sizeof(payload));
+  check_equal(native_io_backend_observe(&backend, events, 2u, 0u, &count), SALTS_ETIMEDOUT);
+  for (size_t i = 0u; i < 2u; ++i) {
+    operation.buffer = &received[i];
+    check_equal(native_io_backend_prepare(&backend, &operation, &requests[i]), SALTS_OK);
+    check_equal(native_io_test_observe_all(&backend, events, 1u), SALTS_OK);
+    check_equal(events[0].kind, NATIVE_IO_COMPLETION_OK);
+    check_equal(received[i], payload[i]);
+  }
+  native_io_test_close_socket(sockets[0]);
+  native_io_test_close_socket(sockets[1]);
+  const int replacement = open("/dev/null", O_RDONLY);
+  check_greater_equal(replacement, 0);
+  if (replacement != sockets[1]) check_equal(dup2(replacement, sockets[1]), sockets[1]);
+  check_equal(native_io_backend_release_socket(&backend, endpoint), SALTS_OK);
+  check_equal(close(sockets[1]), 0);
+  if (replacement != sockets[1]) check_equal(close(replacement), 0);
+  check_equal(native_io_backend_close(&backend), SALTS_OK);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+}
+
+static void native_io_test_uring_cancel_prepared_head(void) {
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 2u, 2u};
+  native_io_test_socket sockets[2];
+  native_io_endpoint endpoint = {0};
+  native_io_request requests[2] = {0};
+  native_io_completion events[2] = {0};
+  const unsigned char payload[] = {0x41u, 0x42u};
+  unsigned char received[2] = {0};
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+  check_equal(native_io_test_make_tcp_pair(sockets), SALTS_OK);
+  check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[0], &endpoint), SALTS_OK);
+  native_io_operation operation = {.kind = NATIVE_IO_OPERATION_TCP_SEND, .endpoint = endpoint,
+                                   .length = 1u};
+  for (size_t i = 0u; i < 2u; ++i) {
+    operation.buffer = (void *)&payload[i];
+    operation.user_data = i;
+    check_equal(native_io_backend_prepare(&backend, &operation, &requests[i]), SALTS_OK);
+  }
+  check_equal(recv(sockets[1], received, sizeof(received), MSG_DONTWAIT), -1);
+  check_true(errno == EAGAIN || errno == EWOULDBLOCK);
+  check_equal(native_io_backend_cancel(&backend, requests[0]), SALTS_OK);
+  check_equal(native_io_backend_close(&backend), SALTS_OK);
+  check_equal(native_io_backend_flush(&backend), SALTS_OK);
+  check_equal(native_io_test_observe_all(&backend, events, 2u), SALTS_OK);
+  for (size_t i = 0u; i < 2u; ++i)
+    check_equal(events[i].kind, events[i].user_data == 0u ? NATIVE_IO_COMPLETION_CANCELLED
+                                                       : NATIVE_IO_COMPLETION_OK);
+  check_equal(recv(sockets[1], received, sizeof(received), 0), 1);
+  check_equal(received[0], payload[1]);
+  native_io_test_close_endpoint(&backend, endpoint, sockets[0]);
+  native_io_test_close_socket(sockets[1]);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+}
+#endif
+
 static void native_io_test_round_trip_tcp(native_io_backend_kind kind) {
   static const unsigned char payload[] = {0x31u, 0x32u, 0x33u, 0x34u};
   native_io_backend backend = {0};
@@ -1040,6 +1189,7 @@ typedef struct native_io_test_coroutine_receive_state {
   int await_status;
   size_t entered;
   size_t resumed;
+  bool prepared;
 } native_io_test_coroutine_receive_state;
 
 static void native_io_test_coroutine_receive(native_io_coroutine *coroutine, void *user_data) {
@@ -1051,11 +1201,13 @@ static void native_io_test_coroutine_receive(native_io_coroutine *coroutine, voi
                                          .length = sizeof(state->received),
                                          .user_data = 81u};
   ++state->entered;
-  state->await_status = native_io_coroutine_await(coroutine, &operation, &state->completion);
+  state->await_status = state->prepared
+      ? native_io_coroutine_await_prepared(coroutine, &operation, &state->completion)
+      : native_io_coroutine_await(coroutine, &operation, &state->completion);
   ++state->resumed;
 }
 
-static void native_io_test_coroutine_completion_resume(native_io_backend_kind kind) {
+static void native_io_test_coroutine_completion_resume(native_io_backend_kind kind, bool prepared) {
   native_io_backend backend = {0};
   const native_io_backend_config config = {kind, 2u, 2u, 2u};
   native_io_test_socket sockets[2];
@@ -1078,6 +1230,7 @@ static void native_io_test_coroutine_completion_resume(native_io_backend_kind ki
   check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[1], &endpoints[1]),
               SALTS_OK);
   state.endpoint = endpoints[1];
+  state.prepared = prepared;
   check_equal(
       native_io_backend_spawn_coroutine(&backend, native_io_test_coroutine_receive, &state, &task),
       SALTS_OK);
@@ -1583,8 +1736,10 @@ spec("NativeIO direct backend") {
   it("resumes coroutine awaits from native terminal completions") {
     native_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
     const size_t count = native_io_test_backends(backends);
-    for (size_t index = 0u; index < count; ++index)
-      native_io_test_coroutine_completion_resume(backends[index]);
+    for (size_t index = 0u; index < count; ++index) {
+      native_io_test_coroutine_completion_resume(backends[index], false);
+      native_io_test_coroutine_completion_resume(backends[index], true);
+    }
   }
 
   it("routes a completion batch before looped coroutines reawait reused request slots") {
@@ -1948,4 +2103,19 @@ spec("NativeIO direct backend") {
     for (size_t index = 0u; index < count; ++index)
       native_io_test_capacity_and_close(backends[index]);
   }
+
+  it("batches prepared requests with FIFO cancellation close and bounded slot reuse") {
+    native_io_backend_kind backends[NATIVE_IO_TEST_MAX_BACKENDS];
+    const size_t count = native_io_test_backends(backends);
+    for (size_t index = 0u; index < count; ++index)
+      native_io_test_prepared_fifo(backends[index]);
+  }
+#if defined(__linux__)
+  it("keeps epoll FIFO and progress after an idle edge has been consumed") {
+    native_io_test_epoll_pending_fifo();
+  }
+  it("cancels an io_uring staged head without sending its bytes") {
+    native_io_test_uring_cancel_prepared_head();
+  }
+#endif
 }
