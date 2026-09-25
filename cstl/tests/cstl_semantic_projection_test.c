@@ -288,4 +288,31 @@ spec("CSTL semantic projection") {
     capability_multimap_destroy(&multi);
   }
 
+
+  it("gives typed Vec an explicit transactional construction lifecycle") {
+    typed(Vec, transactional_vec, int);
+    transactional_vec source = {0};
+    transactional_vec destination = {0};
+
+    check_true(transactional_vec_collection_data.construct_ops ==
+               &transactional_vec_construct_ops);
+    check_equal(cmeta_data_construct_init_zero(
+                    &transactional_vec_collection_data, &source),
+                CMETA_OK);
+    check_equal(transactional_vec_push(&source, 17), STL_OK);
+    check_equal(cmeta_data_construct_init_zero(
+                    &transactional_vec_collection_data, &destination),
+                CMETA_OK);
+    check_equal(cmeta_data_construct_move(
+                    &transactional_vec_collection_data,
+                    &destination, &source),
+                CMETA_OK);
+    check_equal(transactional_vec_size(&destination), 1u);
+    check_equal(*transactional_vec_at_const(&destination, 0u), 17);
+    check_equal(transactional_vec_size(&source), 0u);
+    check_equal(cmeta_data_construct_restore_zero(
+                    &transactional_vec_collection_data, &destination),
+                CMETA_OK);
+  }
+
 }
