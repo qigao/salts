@@ -217,7 +217,9 @@ cmeta_status cmeta_data_buffer_read(
     (offsetof(type, member) + sizeof(((type *)0)->member))
 #define CMETA_COLLECTION_DESC_OPS_SIZE \
     CMETA_COLLECTION_FIELD_END(cmeta_data_desc, collection_ops)
-#define CMETA_COLLECTION_OPS_SIZE \
+#define CMETA_COLLECTION_OPS_BASE_SIZE \
+    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, foreach)
+#define CMETA_COLLECTION_OPS_COLLECTOR_SIZE \
     CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, collector)
 
 static cmeta_status cmeta_data_collection_ops_status(
@@ -232,7 +234,7 @@ static cmeta_status cmeta_data_collection_ops_status(
         return CMETA_INVALID_ARGUMENT;
 
     ops = desc->collection_ops;
-    if (ops->struct_size < CMETA_COLLECTION_OPS_SIZE ||
+    if (ops->struct_size < CMETA_COLLECTION_OPS_BASE_SIZE ||
         ops->abi_version != CMETA_DATA_COLLECTION_OPS_ABI_VERSION ||
         ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
         ops->element == NULL || (ops->read == NULL && ops->foreach == NULL))
@@ -283,7 +285,8 @@ cmeta_status cmeta_data_collection_read(
     return CMETA_OK;
 }
 
-#undef CMETA_COLLECTION_OPS_SIZE
+#undef CMETA_COLLECTION_OPS_COLLECTOR_SIZE
+#undef CMETA_COLLECTION_OPS_BASE_SIZE
 #undef CMETA_COLLECTION_DESC_OPS_SIZE
 #undef CMETA_COLLECTION_FIELD_END
 
@@ -355,7 +358,9 @@ cmeta_status cmeta_data_collection_foreach(
 #define CMETA_MAP_FIELD_END(type, member) \
     (offsetof(type, member) + sizeof(((type *)0)->member))
 #define CMETA_MAP_DESC_OPS_SIZE CMETA_MAP_FIELD_END(cmeta_data_desc, map_ops)
-#define CMETA_MAP_OPS_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, accept)
+#define CMETA_MAP_OPS_BASE_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, foreach)
+#define CMETA_MAP_OPS_COLLECTOR_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, collector)
+#define CMETA_MAP_OPS_ACCEPT_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, accept)
 
 static cmeta_status cmeta_data_map_ops_status(
     const cmeta_data_desc *desc, const cmeta_data_map_ops **out) {
@@ -365,7 +370,7 @@ static cmeta_status cmeta_data_map_ops_status(
         desc->struct_size < CMETA_MAP_DESC_OPS_SIZE || desc->map_ops == NULL)
         return CMETA_INVALID_ARGUMENT;
     ops = desc->map_ops;
-    if (ops->struct_size < CMETA_MAP_OPS_SIZE ||
+    if (ops->struct_size < CMETA_MAP_OPS_BASE_SIZE ||
         ops->abi_version != CMETA_DATA_MAP_OPS_ABI_VERSION ||
         ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
         (ops->flags & ~CMETA_DATA_MAP_FLAGS_MASK) != 0u ||
@@ -373,8 +378,7 @@ static cmeta_status cmeta_data_map_ops_status(
          (ops->flags & CMETA_DATA_MAP_REPEATED_KEYS) != 0u) ||
         ((ops->flags & (CMETA_DATA_MAP_UNIQUE_KEYS |
                         CMETA_DATA_MAP_REPEATED_KEYS)) == 0u) ||
-        ops->key == NULL || ops->value == NULL || ops->foreach == NULL ||
-        ops->accept == NULL)
+        ops->key == NULL || ops->value == NULL || ops->foreach == NULL)
         return CMETA_INVALID_ARGUMENT;
     if (desc->storage_type == NULL ||
         !cmeta_type_equal(desc->storage_type, ops->storage_type) ||
@@ -430,7 +434,9 @@ cmeta_status cmeta_data_map_foreach(
     return ops->foreach(object, cmeta_data_map_bounded_visit, &bounded, max_items);
 }
 
-#undef CMETA_MAP_OPS_SIZE
+#undef CMETA_MAP_OPS_ACCEPT_SIZE
+#undef CMETA_MAP_OPS_COLLECTOR_SIZE
+#undef CMETA_MAP_OPS_BASE_SIZE
 #undef CMETA_MAP_DESC_OPS_SIZE
 #undef CMETA_MAP_FIELD_END
 
@@ -521,7 +527,9 @@ cmeta_status cmeta_data_collection_collector(
     if (zero_output == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
     status = cmeta_data_collection_ops_status(desc, &ops);
     if (status != CMETA_OK) return status;
-    if (ops->collector == NULL) return CMETA_TRAIT_MISSING;
+    if (ops->struct_size < CMETA_COLLECTION_OPS_COLLECTOR_SIZE ||
+        ops->collector == NULL)
+        return CMETA_TRAIT_MISSING;
     collector = ops->collector(zero_output, limit);
     if (!cmeta_collector_ops_valid(collector.ops) ||
         collector.zero_output != zero_output ||
@@ -542,7 +550,9 @@ cmeta_status cmeta_data_map_collector(
     if (zero_output == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
     status = cmeta_data_map_ops_status(desc, &ops);
     if (status != CMETA_OK) return status;
-    if (ops->collector == NULL) return CMETA_TRAIT_MISSING;
+    if (ops->struct_size < CMETA_MAP_OPS_COLLECTOR_SIZE ||
+        ops->collector == NULL)
+        return CMETA_TRAIT_MISSING;
     collector = ops->collector(zero_output, limit);
     if (!cmeta_collector_ops_valid(collector.ops) ||
         collector.zero_output != zero_output ||
@@ -911,5 +921,7 @@ cmeta_status cmeta_data_map_accept(
         return CMETA_TRAIT_MISSING;
     if (expected_key != key_data || expected_value != value_data)
         return CMETA_TYPE_MISMATCH;
+    if (ops->struct_size < CMETA_MAP_OPS_ACCEPT_SIZE || ops->accept == NULL)
+        return CMETA_TRAIT_MISSING;
     return ops->accept(collector, key_data, key, value_data, value);
 }
