@@ -129,7 +129,7 @@ cmake_add_test(cmeta_function_reflection_test
   FOLDER "cmeta/tests")
 
 cmake_add_test(cmeta_invokable_test
-  SOURCES cmeta_invokable_test.c
+  SOURCES cmeta_invokable_test.c cmeta_invokable_peer.c
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
