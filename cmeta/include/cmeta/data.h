@@ -367,6 +367,8 @@ typedef struct cmeta_data_collection_view {
     const cmeta_data_desc *element;
 } cmeta_data_collection_view;
 
+typedef const cmeta_data_desc *(*cmeta_data_collection_element_fn)(
+    const void *object);
 typedef cmeta_status (*cmeta_data_collection_read_fn)(
     const void *object, cmeta_data_collection_view *out);
 
@@ -374,6 +376,7 @@ typedef struct cmeta_data_collection_ops {
     size_t struct_size;
     uint32_t abi_version;
     const cmeta_type_desc *storage_type;
+    cmeta_data_collection_element_fn element;
     cmeta_data_collection_read_fn read;
 } cmeta_data_collection_ops;
 
