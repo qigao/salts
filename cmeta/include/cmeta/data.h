@@ -2,6 +2,7 @@
 #define CMETA_DATA_H
 
 #include <cmeta/cmeta.h>
+#include <cmeta/collector.h>
 #include <cmeta/struct.h>
 
 #include <stdbool.h>
@@ -398,6 +399,9 @@ typedef cmeta_status (*cmeta_data_collection_foreach_fn)(
     const void *object, cmeta_data_collection_visit_fn visit, void *context,
     size_t max_items);
 
+typedef cmeta_collector (*cmeta_data_collection_collector_fn)(
+    void *zero_output, size_t limit);
+
 typedef struct cmeta_data_collection_ops {
     size_t struct_size;
     uint32_t abi_version;
@@ -405,6 +409,7 @@ typedef struct cmeta_data_collection_ops {
     cmeta_data_collection_element_fn element;
     cmeta_data_collection_read_fn read;
     cmeta_data_collection_foreach_fn foreach;
+    cmeta_data_collection_collector_fn collector;
 } cmeta_data_collection_ops;
 
 enum { CMETA_DATA_MAP_OPS_ABI_VERSION = 1u };
@@ -483,6 +488,10 @@ cmeta_status cmeta_data_collection_read(
 cmeta_status cmeta_data_collection_foreach(
     const cmeta_data_desc *desc, const void *object,
     cmeta_data_collection_visit_fn visit, void *context, size_t max_items);
+
+cmeta_status cmeta_data_collection_collector(
+    const cmeta_data_desc *desc, void *zero_output, size_t limit,
+    cmeta_collector *out);
 
 const cmeta_data_construct_ops *cmeta_data_construct_ops_of(
     const cmeta_data_desc *desc);
