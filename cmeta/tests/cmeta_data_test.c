@@ -389,6 +389,39 @@ static const cmeta_data_desc cmeta_data_test_variant_desc = {
     .variant_ops = &cmeta_data_test_variant_ops
 };
 
+typedef struct cmeta_data_test_int_sequence {
+  int values[2];
+} cmeta_data_test_int_sequence;
+
+static const cmeta_type_identity cmeta_data_test_int_sequence_id =
+    CMETA_TYPE_ID_ATOM_INIT("test.IntSequence");
+static const cmeta_type_desc cmeta_data_test_int_sequence_type = {
+    "IntSequence", sizeof(cmeta_data_test_int_sequence),
+    CMETA_ALIGNOF(cmeta_data_test_int_sequence), CMETA_T_OBJECT,
+    NULL, NULL, &cmeta_data_test_int_sequence_id};
+
+static cmeta_status cmeta_data_test_int_sequence_read(
+    const void *object, cmeta_data_collection_view *out) {
+  const cmeta_data_test_int_sequence *sequence =
+      (const cmeta_data_test_int_sequence *)object;
+  if (sequence == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+  *out = (cmeta_data_collection_view){
+      sequence->values, 2u, sizeof(sequence->values[0]), &cmeta_data_int};
+  return CMETA_OK;
+}
+
+static const cmeta_data_collection_ops cmeta_data_test_int_sequence_ops = {
+    sizeof(cmeta_data_collection_ops),
+    CMETA_DATA_COLLECTION_OPS_ABI_VERSION,
+    &cmeta_data_test_int_sequence_type,
+    cmeta_data_test_int_sequence_read};
+
+static const cmeta_data_desc cmeta_data_test_int_sequence_data = {
+    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
+    "test.IntSequence.data", "IntSequence", CMETA_DATA_SEQUENCE,
+    &cmeta_data_test_int_sequence_type, NULL, NULL, NULL, NULL, NULL, NULL,
+    &cmeta_data_test_int_sequence_ops};
+
 spec("CMeta semantic data descriptors") {
   it("declares bounded fixed bytes as canonical provider metadata") {
     const cmeta_fixed_bytes_fixture source = {1u, 2u, 3u, 4u, 5u, 6u};
@@ -986,38 +1019,18 @@ spec("CMeta semantic data descriptors") {
   }
 
   it("validates provider-neutral collection read views") {
-    typedef struct IntSequence { int values[2]; } IntSequence;
-    static const cmeta_type_identity sequence_id =
-        CMETA_TYPE_ID_ATOM_INIT("test.IntSequence");
-    static const cmeta_type_desc sequence_type = {
-        "IntSequence", sizeof(IntSequence), CMETA_ALIGNOF(IntSequence),
-        CMETA_T_OBJECT, NULL, NULL, &sequence_id};
-    static cmeta_status read_sequence(
-        const void *object, cmeta_data_collection_view *out) {
-      const IntSequence *sequence = (const IntSequence *)object;
-      if (sequence == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
-      *out = (cmeta_data_collection_view){
-          sequence->values, 2u, sizeof(sequence->values[0]), &cmeta_data_int};
-      return CMETA_OK;
-    }
-    static const cmeta_data_collection_ops ops = {
-        sizeof(cmeta_data_collection_ops),
-        CMETA_DATA_COLLECTION_OPS_ABI_VERSION,
-        &sequence_type,
-        read_sequence};
-    static const cmeta_data_desc sequence = {
-        sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
-        "test.IntSequence.data", "IntSequence", CMETA_DATA_SEQUENCE,
-        &sequence_type, NULL, NULL, NULL, NULL, NULL, NULL, &ops};
-    IntSequence value = {{3, 5}};
+    cmeta_data_test_int_sequence value = {{3, 5}};
     cmeta_data_collection_view view = {0};
 
-    check_true(cmeta_data_collection_ops_of(&sequence) == &ops);
-    check_equal(cmeta_data_collection_read(&sequence, &value, &view), CMETA_OK);
+    check_true(cmeta_data_collection_ops_of(
+                   &cmeta_data_test_int_sequence_data) ==
+               &cmeta_data_test_int_sequence_ops);
+    check_equal(cmeta_data_collection_read(
+                    &cmeta_data_test_int_sequence_data, &value, &view),
+                CMETA_OK);
     check_equal(view.count, 2u);
     check_equal(view.stride, sizeof(int));
     check_true(view.element == &cmeta_data_int);
     check_equal(*(const int *)view.data, 3);
   }
-
 }
