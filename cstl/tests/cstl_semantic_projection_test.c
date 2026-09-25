@@ -199,6 +199,15 @@ spec("CSTL semantic projection") {
 
     check_equal(reflected_set_collection_data.kind, CMETA_DATA_SET);
     check_equal(reflected_hash_set_collection_data.kind, CMETA_DATA_SET);
+    check_true((reflected_set_collection_ops.flags &
+                (CMETA_DATA_COLLECTION_ORDERED |
+                 CMETA_DATA_COLLECTION_SORTED |
+                 CMETA_DATA_COLLECTION_UNIQUE)) ==
+               (CMETA_DATA_COLLECTION_ORDERED |
+                CMETA_DATA_COLLECTION_SORTED |
+                CMETA_DATA_COLLECTION_UNIQUE));
+    check_equal(reflected_hash_set_collection_ops.flags,
+                CMETA_DATA_COLLECTION_UNIQUE);
     check_true(reflected_set_collection_element(&ordered) == &cmeta_data_int);
     check_true(reflected_hash_set_collection_element(&hashed) == &cmeta_data_int);
 
