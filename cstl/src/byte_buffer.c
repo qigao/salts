@@ -195,8 +195,12 @@ const cmeta_data_buffer_ops stl_byte_buffer_cmeta_buffer_ops = {
 };
 
 const cmeta_data_desc stl_byte_buffer_cmeta_data = {
-    sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,
-    "cstl.byte_buffer.data", "stl_byte_buffer", CMETA_DATA_BYTES,
-    &stl_byte_buffer_cmeta_type, &stl_byte_buffer_cmeta_shape,
-    &stl_byte_buffer_cmeta_buffer_ops, NULL, NULL, NULL, NULL
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "cstl.byte_buffer.data",
+    .display_name = "stl_byte_buffer",
+    .kind = CMETA_DATA_BYTES,
+    .storage_type = &stl_byte_buffer_cmeta_type,
+    .shape = &stl_byte_buffer_cmeta_shape,
+    .buffer_ops = &stl_byte_buffer_cmeta_buffer_ops
 };

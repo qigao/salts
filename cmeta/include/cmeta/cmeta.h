@@ -76,8 +76,24 @@ Enum(cmeta_gen_status,
     (CMETA_GEN_MUTATED,        5, "mutated")
 );
 
+/* Caller-owned opaque traversal state shared by value-producing Range and
+ * borrowed reflection cursors. Providers may use index and/or state slots;
+ * cursor storage itself owns nothing. */
+typedef struct cmeta_range_cursor {
+    size_t index;
+    void *state[2];
+} cmeta_range_cursor;
+
 #include <cmeta/signatures.h>
 
+extern const cmeta_type_desc cmeta_type_int8;
+extern const cmeta_type_desc cmeta_type_uint8;
+extern const cmeta_type_desc cmeta_type_int16;
+extern const cmeta_type_desc cmeta_type_uint16;
+extern const cmeta_type_desc cmeta_type_int32;
+extern const cmeta_type_desc cmeta_type_uint32;
+extern const cmeta_type_desc cmeta_type_int64;
+extern const cmeta_type_desc cmeta_type_uint64;
 extern const cmeta_type_desc cmeta_type_void;
 extern const cmeta_type_desc cmeta_type_size;
 extern const cmeta_type_desc cmeta_type_size_ptr;

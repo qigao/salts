@@ -282,6 +282,13 @@ static void cmeta_data_test_buffer_move(void *destination, void *source) {
     *(int *)source = 0;
 }
 
+static void cmeta_data_test_broken_buffer_move(
+    void *destination, void *source) {
+    if (destination == NULL || source == NULL) return;
+    *(int *)destination = *(int *)source;
+    /* Contract violation: source deliberately remains non-zero. */
+}
+
 static const cmeta_data_buffer_shape cmeta_data_test_owned_buffer_shape = {
     .ownership = CMETA_DATA_BUFFER_OWNED
 };
@@ -297,6 +304,78 @@ static const cmeta_data_buffer_ops cmeta_data_test_buffer_ops = {
     .read = cmeta_data_test_buffer_read,
     .init_zero = cmeta_data_test_buffer_init_zero,
     .move = cmeta_data_test_buffer_move
+};
+
+static const cmeta_data_buffer_ops cmeta_data_test_broken_buffer_ops = {
+    .struct_size = sizeof(cmeta_data_buffer_ops),
+    .abi_version = CMETA_DATA_BUFFER_OPS_ABI_VERSION,
+    .storage_type = &cmeta_type_int,
+    .ownership = CMETA_DATA_BUFFER_OWNED,
+    .is_zero = cmeta_data_test_buffer_is_zero,
+    .assign = cmeta_data_test_buffer_assign,
+    .restore_zero = cmeta_data_test_buffer_restore_zero,
+    .read = cmeta_data_test_buffer_read,
+    .init_zero = cmeta_data_test_buffer_init_zero,
+    .move = cmeta_data_test_broken_buffer_move
+};
+
+static const cmeta_data_desc cmeta_data_test_broken_buffer_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.BrokenBuffer.data",
+    .display_name = "BrokenBuffer",
+    .kind = CMETA_DATA_BYTES,
+    .storage_type = &cmeta_type_int,
+    .shape = &cmeta_data_test_owned_buffer_shape,
+    .buffer_ops = &cmeta_data_test_broken_buffer_ops
+};
+
+typedef struct cmeta_data_test_move_rollback_record {
+    int count;
+    int payload;
+} cmeta_data_test_move_rollback_record;
+
+static const cmeta_type_identity cmeta_data_test_move_rollback_identity =
+    CMETA_TYPE_ID_ATOM_INIT("test.MoveRollback");
+static const cmeta_type_desc cmeta_data_test_move_rollback_type = {
+    .name = "cmeta_data_test_move_rollback_record",
+    .size = sizeof(cmeta_data_test_move_rollback_record),
+    .align = _Alignof(cmeta_data_test_move_rollback_record),
+    .kind = CMETA_T_OBJECT,
+    .identity = &cmeta_data_test_move_rollback_identity
+};
+static const cmeta_field_desc cmeta_data_test_move_rollback_layout_fields[] = {
+    { "count", "int", offsetof(cmeta_data_test_move_rollback_record, count),
+      sizeof(int), _Alignof(int), &cmeta_type_int, NULL },
+    { "payload", "int", offsetof(cmeta_data_test_move_rollback_record, payload),
+      sizeof(int), _Alignof(int), &cmeta_type_int, NULL }
+};
+static const cmeta_struct_desc cmeta_data_test_move_rollback_layout = {
+    "cmeta_data_test_move_rollback_record",
+    sizeof(cmeta_data_test_move_rollback_record),
+    _Alignof(cmeta_data_test_move_rollback_record),
+    cmeta_data_test_move_rollback_layout_fields, 2u
+};
+static const cmeta_data_field_desc cmeta_data_test_move_rollback_fields[] = {
+    { "test.MoveRollback.count", "count",
+      offsetof(cmeta_data_test_move_rollback_record, count),
+      &cmeta_data_int },
+    { "test.MoveRollback.payload", "payload",
+      offsetof(cmeta_data_test_move_rollback_record, payload),
+      &cmeta_data_test_broken_buffer_desc }
+};
+static const cmeta_data_struct_shape cmeta_data_test_move_rollback_shape = {
+    &cmeta_data_test_move_rollback_layout,
+    cmeta_data_test_move_rollback_fields, 2u
+};
+static const cmeta_data_desc cmeta_data_test_move_rollback_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.MoveRollback.data",
+    .display_name = "MoveRollback",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &cmeta_data_test_move_rollback_type,
+    .shape = &cmeta_data_test_move_rollback_shape
 };
 
 static const cmeta_data_desc cmeta_data_test_buffer_desc = {
@@ -341,6 +420,156 @@ static const cmeta_data_desc cmeta_data_test_record_desc = {
     .kind = CMETA_DATA_STRUCT,
     .storage_type = &cmeta_data_test_record_type,
     .shape = &cmeta_data_test_record_shape
+};
+
+typedef struct cmeta_data_test_owned_record {
+    int payload;
+    int count;
+} cmeta_data_test_owned_record;
+
+static const cmeta_type_identity cmeta_data_test_owned_record_identity =
+    CMETA_TYPE_ID_ATOM_INIT("test.OwnedRecord");
+static const cmeta_type_desc cmeta_data_test_owned_record_type = {
+    .name = "cmeta_data_test_owned_record",
+    .size = sizeof(cmeta_data_test_owned_record),
+    .align = _Alignof(cmeta_data_test_owned_record),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = NULL,
+    .identity = &cmeta_data_test_owned_record_identity
+};
+
+static const cmeta_field_desc cmeta_data_test_owned_layout_fields[] = {
+    { "payload", "int", offsetof(cmeta_data_test_owned_record, payload),
+      sizeof(int), _Alignof(int), &cmeta_type_int, NULL },
+    { "count", "int", offsetof(cmeta_data_test_owned_record, count),
+      sizeof(int), _Alignof(int), &cmeta_type_int, NULL }
+};
+static const cmeta_struct_desc cmeta_data_test_owned_layout = {
+    "cmeta_data_test_owned_record", sizeof(cmeta_data_test_owned_record),
+    _Alignof(cmeta_data_test_owned_record),
+    cmeta_data_test_owned_layout_fields, 2u
+};
+static const cmeta_data_field_desc cmeta_data_test_owned_fields[] = {
+    { "test.OwnedRecord.payload", "payload",
+      offsetof(cmeta_data_test_owned_record, payload),
+      &cmeta_data_test_buffer_desc },
+    { "test.OwnedRecord.count", "count",
+      offsetof(cmeta_data_test_owned_record, count),
+      &cmeta_data_int }
+};
+static const cmeta_data_struct_shape cmeta_data_test_owned_shape = {
+    &cmeta_data_test_owned_layout, cmeta_data_test_owned_fields, 2u
+};
+static const cmeta_data_desc cmeta_data_test_owned_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.OwnedRecord.data",
+    .display_name = "OwnedRecord",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &cmeta_data_test_owned_record_type,
+    .shape = &cmeta_data_test_owned_shape
+};
+
+typedef struct cmeta_data_test_outer_record {
+    cmeta_data_test_record inner;
+    int tail;
+} cmeta_data_test_outer_record;
+
+static const cmeta_type_identity cmeta_data_test_outer_identity =
+    CMETA_TYPE_ID_ATOM_INIT("test.OuterRecord");
+static const cmeta_type_desc cmeta_data_test_outer_type = {
+    .name = "cmeta_data_test_outer_record",
+    .size = sizeof(cmeta_data_test_outer_record),
+    .align = _Alignof(cmeta_data_test_outer_record),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = NULL,
+    .identity = &cmeta_data_test_outer_identity
+};
+static const cmeta_field_desc cmeta_data_test_outer_layout_fields[] = {
+    { "inner", "cmeta_data_test_record",
+      offsetof(cmeta_data_test_outer_record, inner),
+      sizeof(cmeta_data_test_record), _Alignof(cmeta_data_test_record),
+      &cmeta_data_test_record_type, NULL },
+    { "tail", "int", offsetof(cmeta_data_test_outer_record, tail),
+      sizeof(int), _Alignof(int), &cmeta_type_int, NULL }
+};
+static const cmeta_struct_desc cmeta_data_test_outer_layout = {
+    "cmeta_data_test_outer_record", sizeof(cmeta_data_test_outer_record),
+    _Alignof(cmeta_data_test_outer_record),
+    cmeta_data_test_outer_layout_fields, 2u
+};
+static const cmeta_data_field_desc cmeta_data_test_outer_fields[] = {
+    { "test.OuterRecord.inner", "inner",
+      offsetof(cmeta_data_test_outer_record, inner),
+      &cmeta_data_test_record_desc },
+    { "test.OuterRecord.tail", "tail",
+      offsetof(cmeta_data_test_outer_record, tail),
+      &cmeta_data_int }
+};
+static const cmeta_data_struct_shape cmeta_data_test_outer_shape = {
+    &cmeta_data_test_outer_layout, cmeta_data_test_outer_fields, 2u
+};
+static const cmeta_data_desc cmeta_data_test_outer_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.OuterRecord.data",
+    .display_name = "OuterRecord",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &cmeta_data_test_outer_type,
+    .shape = &cmeta_data_test_outer_shape
+};
+
+static const int cmeta_data_test_failing_shape = 1;
+
+static cmeta_status cmeta_data_test_failing_init(void *object) {
+    if (object == NULL) return CMETA_INVALID_ARGUMENT;
+    *(int *)object = 99;
+    return CMETA_CALLBACK_ERROR;
+}
+static void cmeta_data_test_failing_restore(void *object) {
+    if (object != NULL) *(int *)object = 0;
+}
+static void cmeta_data_test_failing_move(void *destination, void *source) {
+    if (destination == NULL || source == NULL) return;
+    *(int *)destination = *(int *)source;
+    *(int *)source = 0;
+}
+static const cmeta_data_construct_ops cmeta_data_test_failing_construct = {
+    sizeof(cmeta_data_construct_ops), CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION,
+    &cmeta_type_int, cmeta_data_test_failing_init,
+    cmeta_data_test_failing_restore, cmeta_data_test_failing_move
+};
+static const cmeta_data_desc cmeta_data_test_failing_data = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.Failing.data",
+    .display_name = "Failing",
+    .kind = CMETA_DATA_CUSTOM,
+    .storage_type = &cmeta_type_int,
+    .shape = &cmeta_data_test_failing_shape,
+    .construct_ops = &cmeta_data_test_failing_construct
+};
+static const cmeta_data_field_desc cmeta_data_test_rollback_fields[] = {
+    { "test.Rollback.payload", "payload",
+      offsetof(cmeta_data_test_owned_record, payload),
+      &cmeta_data_test_buffer_desc },
+    { "test.Rollback.count", "count",
+      offsetof(cmeta_data_test_owned_record, count),
+      &cmeta_data_test_failing_data }
+};
+static const cmeta_data_struct_shape cmeta_data_test_rollback_shape = {
+    &cmeta_data_test_owned_layout, cmeta_data_test_rollback_fields, 2u
+};
+static const cmeta_data_desc cmeta_data_test_rollback_desc = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.Rollback.data",
+    .display_name = "Rollback",
+    .kind = CMETA_DATA_STRUCT,
+    .storage_type = &cmeta_data_test_owned_record_type,
+    .shape = &cmeta_data_test_rollback_shape
 };
 
 static const cmeta_data_variant_case cmeta_data_test_variant_cases[] = {
@@ -388,6 +617,71 @@ static const cmeta_data_desc cmeta_data_test_variant_desc = {
     .shape = &cmeta_data_test_variant_shape,
     .variant_ops = &cmeta_data_test_variant_ops
 };
+
+typedef struct cmeta_data_test_int_sequence {
+  int values[2];
+} cmeta_data_test_int_sequence;
+
+static const cmeta_type_identity cmeta_data_test_int_sequence_id =
+    CMETA_TYPE_ID_ATOM_INIT("test.IntSequence");
+static const cmeta_type_desc cmeta_data_test_int_sequence_type = {
+    "IntSequence", sizeof(cmeta_data_test_int_sequence),
+    CMETA_ALIGNOF(cmeta_data_test_int_sequence), CMETA_T_OBJECT,
+    NULL, NULL, &cmeta_data_test_int_sequence_id};
+
+static const cmeta_data_desc *cmeta_data_test_int_sequence_element(
+    const void *object) {
+  return object != NULL ? &cmeta_data_int : NULL;
+}
+
+static cmeta_status cmeta_data_test_int_sequence_read(
+    const void *object, cmeta_data_collection_view *out) {
+  const cmeta_data_test_int_sequence *sequence =
+      (const cmeta_data_test_int_sequence *)object;
+  if (sequence == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+  *out = (cmeta_data_collection_view){
+      sequence->values, 2u, sizeof(sequence->values[0]), &cmeta_data_int};
+  return CMETA_OK;
+}
+
+static const cmeta_data_collection_ops cmeta_data_test_int_sequence_ops = {
+    .struct_size = sizeof(cmeta_data_collection_ops),
+    .abi_version = CMETA_DATA_COLLECTION_OPS_ABI_VERSION,
+    .storage_type = &cmeta_data_test_int_sequence_type,
+    .flags = CMETA_DATA_COLLECTION_CONTIGUOUS |
+             CMETA_DATA_COLLECTION_ORDERED |
+             CMETA_DATA_COLLECTION_RANDOM_ACCESS,
+    .element = cmeta_data_test_int_sequence_element,
+    .read = cmeta_data_test_int_sequence_read,
+    .foreach = NULL,
+    .collector = NULL,
+    .borrow = NULL
+};
+
+static const cmeta_data_desc cmeta_data_test_int_sequence_data = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "test.IntSequence.data",
+    .display_name = "IntSequence",
+    .kind = CMETA_DATA_SEQUENCE,
+    .storage_type = &cmeta_data_test_int_sequence_type,
+    .collection_ops = &cmeta_data_test_int_sequence_ops
+};
+
+typedef struct cmeta_data_test_collect_ints {
+  int values[3];
+  size_t count;
+} cmeta_data_test_collect_ints;
+
+static cmeta_status cmeta_data_test_collect_int(
+    void *context, const void *element) {
+  cmeta_data_test_collect_ints *out =
+      (cmeta_data_test_collect_ints *)context;
+  if (out == NULL || element == NULL || out->count >= 3u)
+    return CMETA_INVALID_ARGUMENT;
+  out->values[out->count++] = *(const int *)element;
+  return CMETA_OK;
+}
 
 spec("CMeta semantic data descriptors") {
   it("declares bounded fixed bytes as canonical provider metadata") {
@@ -948,6 +1242,114 @@ spec("CMeta semantic data descriptors") {
     check_false(cmeta_data_desc_valid(&desc));
   }
 
+  it("owns exact-width integer semantic identity in CMeta core") {
+    check_true(cmeta_data_integer_width(true, 8u) == &cmeta_data_int8);
+    check_true(cmeta_data_integer_width(false, 8u) == &cmeta_data_uint8);
+    check_true(cmeta_data_integer_width(true, 16u) == &cmeta_data_int16);
+    check_true(cmeta_data_integer_width(false, 16u) == &cmeta_data_uint16);
+    check_true(cmeta_data_integer_width(true, 32u) == &cmeta_data_int32);
+    check_true(cmeta_data_integer_width(false, 32u) == &cmeta_data_uint32);
+    check_true(cmeta_data_integer_width(true, 64u) == &cmeta_data_int64);
+    check_true(cmeta_data_integer_width(false, 64u) == &cmeta_data_uint64);
+    check_null(cmeta_data_integer_width(true, 7u));
+    check_true(cmeta_data_int8.storage_type == &cmeta_type_int8);
+    check_true(cmeta_data_uint64.storage_type == &cmeta_type_uint64);
+  }
+
+  it("derives transactional lifecycle for trivial reflected structs") {
+    cmeta_data_test_record source = {7, 9};
+    cmeta_data_test_record destination = {0, 0};
+
+    check_true(cmeta_data_struct_constructible(&cmeta_data_test_record_desc));
+    check_true(cmeta_data_value_move_supported(&cmeta_data_test_record_desc));
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_record_desc, &destination),
+                CMETA_OK);
+    check_equal(cmeta_data_value_move(
+                    &cmeta_data_test_record_desc, &destination, &source),
+                CMETA_OK);
+    check_equal(destination.id, 7);
+    check_equal(destination.score, 9);
+    check_equal(source.id, 0);
+    check_equal(source.score, 0);
+  }
+
+  it("derives transactional lifecycle for structs with owned fields") {
+    cmeta_data_test_owned_record source = {0, 0};
+    cmeta_data_test_owned_record destination = {0, 0};
+    static const unsigned char bytes[] = {'a', 'b', 'c'};
+
+    check_true(cmeta_data_struct_constructible(&cmeta_data_test_owned_desc));
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_owned_desc, &source), CMETA_OK);
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_owned_desc, &destination), CMETA_OK);
+    check_equal(cmeta_data_buffer_assign(
+                    &cmeta_data_test_buffer_desc, &source.payload,
+                    bytes, sizeof(bytes), sizeof(bytes)), CMETA_OK);
+    source.count = 5;
+    check_equal(cmeta_data_value_move(
+                    &cmeta_data_test_owned_desc, &destination, &source),
+                CMETA_OK);
+    check_equal(destination.payload, 3);
+    check_equal(destination.count, 5);
+    check_equal(source.payload, 0);
+    check_equal(source.count, 0);
+    check_equal(cmeta_data_value_restore_zero(
+                    &cmeta_data_test_owned_desc, &destination), CMETA_OK);
+    check_equal(destination.payload, 0);
+    check_equal(destination.count, 0);
+  }
+
+  it("derives lifecycle recursively through nested structs") {
+    cmeta_data_test_outer_record source = {{3, 4}, 5};
+    cmeta_data_test_outer_record destination = {{0, 0}, 0};
+
+    check_true(cmeta_data_struct_constructible(&cmeta_data_test_outer_desc));
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_outer_desc, &destination),
+                CMETA_OK);
+    check_equal(cmeta_data_value_move(
+                    &cmeta_data_test_outer_desc, &destination, &source),
+                CMETA_OK);
+    check_equal(destination.inner.id, 3);
+    check_equal(destination.inner.score, 4);
+    check_equal(destination.tail, 5);
+    check_equal(source.inner.id, 0);
+    check_equal(source.inner.score, 0);
+    check_equal(source.tail, 0);
+  }
+
+  it("rolls back earlier owned fields when a later field init fails") {
+    cmeta_data_test_owned_record value = {42, 77};
+
+    check_true(cmeta_data_struct_constructible(&cmeta_data_test_rollback_desc));
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_rollback_desc, &value),
+                CMETA_CALLBACK_ERROR);
+    check_equal(value.payload, 0);
+    check_equal(value.count, 0);
+  }
+
+  it("restores destination zero when a later field move provider fails") {
+    cmeta_data_test_move_rollback_record source = {7, 3};
+    cmeta_data_test_move_rollback_record destination = {0, 0};
+
+    check_true(cmeta_data_struct_constructible(
+        &cmeta_data_test_move_rollback_desc));
+    check_equal(cmeta_data_value_init_zero(
+                    &cmeta_data_test_move_rollback_desc, &destination),
+                CMETA_OK);
+    check_equal(cmeta_data_value_move(
+                    &cmeta_data_test_move_rollback_desc,
+                    &destination, &source),
+                CMETA_CALLBACK_ERROR);
+    check_equal(destination.count, 0);
+    check_equal(destination.payload, 0);
+    check_equal(source.count, 7);
+    check_equal(source.payload, 0);
+  }
+
   it("keeps container categories free of T K V") {
     check_equal(cmeta_data_sequence.kind, CMETA_DATA_SEQUENCE);
     check_equal(cmeta_data_set.kind, CMETA_DATA_SET);
@@ -983,5 +1385,78 @@ spec("CMeta semantic data descriptors") {
 
     custom.shape = NULL;
     check_false(cmeta_data_desc_valid(&custom));
+  }
+
+  it("exposes a canonical borrowed sequence view provider") {
+    const int values[] = {3, 5};
+    cmeta_data_collection_view source = {
+        values, 2u, sizeof(values[0]), &cmeta_data_int};
+    cmeta_data_collection_view empty = {NULL, 0u, 0u, NULL};
+    cmeta_data_collection_view out = {0};
+
+    check_true(cmeta_data_desc_valid(&cmeta_data_sequence_view));
+    check_equal(cmeta_data_collection_read(
+                    &cmeta_data_sequence_view, &source, &out),
+                CMETA_OK);
+    check_equal(out.count, 2u);
+    check_equal(out.stride, sizeof(int));
+    check_true(out.element == &cmeta_data_int);
+    check_equal(*(const int *)out.data, 3);
+
+    out = (cmeta_data_collection_view){0};
+    check_equal(cmeta_data_collection_read(
+                    &cmeta_data_sequence_view, &empty, &out),
+                CMETA_OK);
+    check_equal(out.count, 0u);
+    check_null(out.data);
+    check_null(out.element);
+  }
+
+  it("uses the canonical borrowed sequence view across consumers") {
+    const int values[] = {2, 4, 6};
+    cmeta_data_collection_view input = {
+        values, 3u, sizeof(values[0]), &cmeta_data_int};
+    cmeta_data_collection_view view = {0};
+    cmeta_data_test_collect_ints collected = {{0}, 0u};
+    const cmeta_data_collection_ops *ops =
+        cmeta_data_collection_ops_of(&cmeta_data_sequence_view);
+
+    check_true(cmeta_data_desc_valid(&cmeta_data_sequence_view));
+    check_not_null(ops);
+    check_true((ops->flags & CMETA_DATA_COLLECTION_CONTIGUOUS) != 0u);
+    check_true((ops->flags & CMETA_DATA_COLLECTION_ORDERED) != 0u);
+    check_true((ops->flags & CMETA_DATA_COLLECTION_RANDOM_ACCESS) != 0u);
+    check_null(ops->collector);
+    check_equal(cmeta_data_collection_read(
+                    &cmeta_data_sequence_view, &input, &view),
+                CMETA_OK);
+    check_true(view.data == values);
+    check_equal(view.count, 3u);
+    check_equal(view.stride, sizeof(int));
+    check_true(view.element == &cmeta_data_int);
+    check_equal(cmeta_data_collection_foreach(
+                    &cmeta_data_sequence_view, &input,
+                    cmeta_data_test_collect_int, &collected, 3u),
+                CMETA_OK);
+    check_equal(collected.count, 3u);
+    check_equal(collected.values[0], 2);
+    check_equal(collected.values[1], 4);
+    check_equal(collected.values[2], 6);
+  }
+
+  it("validates provider-neutral collection read views") {
+    cmeta_data_test_int_sequence value = {{3, 5}};
+    cmeta_data_collection_view view = {0};
+
+    check_true(cmeta_data_collection_ops_of(
+                   &cmeta_data_test_int_sequence_data) ==
+               &cmeta_data_test_int_sequence_ops);
+    check_equal(cmeta_data_collection_read(
+                    &cmeta_data_test_int_sequence_data, &value, &view),
+                CMETA_OK);
+    check_equal(view.count, 2u);
+    check_equal(view.stride, sizeof(int));
+    check_true(view.element == &cmeta_data_int);
+    check_equal(*(const int *)view.data, 3);
   }
 }

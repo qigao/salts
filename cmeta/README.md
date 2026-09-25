@@ -271,6 +271,13 @@ REUSABLE
 Concrete libraries such as `container` may expose Range views through their own
 typed adapters and descriptors.
 
+Read-only reflection uses the narrower CMeta Data borrowed cursors. Collection
+cursors return one source-owned element pointer; map cursors return source-owned
+key/value pointers without allocating, copying, or exposing a native iterator.
+When a provider supplies a generation callback, any mutation after `begin`
+terminates traversal with `CMETA_GEN_MUTATED`. Pointers remain valid only while
+the source remains alive and unmodified.
+
 ## Transactional collectors
 
 `cmeta_collector` is the bounded, single-threaded collection protocol for an

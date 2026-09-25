@@ -4,6 +4,16 @@ include(CMakeFindDependencyMacro)
 
 find_dependency(Threads)
 
+if("@SALTS_BINDINGS_LUA@" STREQUAL "ON")
+  find_dependency(Lua)
+  if(NOT TARGET Lua::Lua)
+    add_library(Lua::Lua INTERFACE IMPORTED)
+    set_target_properties(Lua::Lua PROPERTIES
+      INTERFACE_INCLUDE_DIRECTORIES "${LUA_INCLUDE_DIR}"
+      INTERFACE_LINK_LIBRARIES "${LUA_LIBRARIES}")
+  endif()
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/SaltsTargets.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/SaltsTinyMock.cmake")
 

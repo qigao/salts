@@ -1,3 +1,7 @@
+#if !defined(_MSC_VER) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200112L
+#endif
+
 /*
  * Strict buffer lifecycle facade.
  *
@@ -18,6 +22,11 @@
 #undef cmeta_data_buffer_assign
 #undef cmeta_data_buffer_restore_zero
 #undef cmeta_data_buffer_read
+
+#include <stdlib.h>
+#if defined(_MSC_VER)
+#include <malloc.h>
+#endif
 
 #define CMETA_BUFFER_V2_FIELD_END(type, member) \
     (offsetof(type, member) + sizeof(((type *)0)->member))
@@ -206,3 +215,1068 @@ cmeta_status cmeta_data_buffer_read(
 #undef CMETA_BUFFER_V2_OPS_SIZE
 #undef CMETA_BUFFER_V2_DESC_OPS_SIZE
 #undef CMETA_BUFFER_V2_FIELD_END
+
+
+static const cmeta_type_identity cmeta_collection_view_identity =
+    CMETA_TYPE_ID_ATOM_INIT("cmeta.collection_view");
+
+const cmeta_type_desc cmeta_type_collection_view = {
+    .name = "cmeta_data_collection_view",
+    .size = sizeof(cmeta_data_collection_view),
+    .align = _Alignof(cmeta_data_collection_view),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = NULL,
+    .identity = &cmeta_collection_view_identity
+};
+
+static const cmeta_data_desc *cmeta_sequence_view_element(
+    const void *object) {
+    const cmeta_data_collection_view *view =
+        (const cmeta_data_collection_view *)object;
+    return view != NULL ? view->element : NULL;
+}
+
+static cmeta_status cmeta_sequence_view_read(
+    const void *object, cmeta_data_collection_view *out) {
+    const cmeta_data_collection_view *view =
+        (const cmeta_data_collection_view *)object;
+    if (view == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    *out = *view;
+    return CMETA_OK;
+}
+
+static size_t cmeta_sequence_view_borrow_size(const void *object) {
+    const cmeta_data_collection_view *view =
+        (const cmeta_data_collection_view *)object;
+    return view != NULL ? view->count : 0u;
+}
+
+static cmeta_gen_status cmeta_sequence_view_borrow_next(
+    const void *object, cmeta_range_cursor *cursor,
+    const void **out_element) {
+    const cmeta_data_collection_view *view =
+        (const cmeta_data_collection_view *)object;
+    size_t offset;
+    if (view == NULL || cursor == NULL || out_element == NULL ||
+        view->element == NULL || !cmeta_data_desc_valid(view->element))
+        return CMETA_GEN_ERROR;
+    *out_element = NULL;
+    if (cursor->index >= view->count) return CMETA_GEN_DONE;
+    if (view->data == NULL || view->stride == 0u ||
+        cursor->index > SIZE_MAX / view->stride)
+        return CMETA_GEN_ERROR;
+    offset = cursor->index * view->stride;
+    *out_element = (const unsigned char *)view->data + offset;
+    ++cursor->index;
+    return cursor->index == view->count
+               ? CMETA_GEN_VALUE_AND_DONE
+               : CMETA_GEN_VALUE;
+}
+
+static const cmeta_data_collection_borrow_ops cmeta_sequence_view_borrow_ops = {
+    .struct_size = sizeof(cmeta_data_collection_borrow_ops),
+    .abi_version = CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION,
+    .size = cmeta_sequence_view_borrow_size,
+    .next = cmeta_sequence_view_borrow_next,
+    .current_version = NULL
+};
+
+static const cmeta_data_collection_ops cmeta_sequence_view_ops = {
+    .struct_size = sizeof(cmeta_data_collection_ops),
+    .abi_version = CMETA_DATA_COLLECTION_OPS_ABI_VERSION,
+    .storage_type = &cmeta_type_collection_view,
+    .flags = CMETA_DATA_COLLECTION_CONTIGUOUS |
+             CMETA_DATA_COLLECTION_ORDERED |
+             CMETA_DATA_COLLECTION_RANDOM_ACCESS,
+    .element = cmeta_sequence_view_element,
+    .read = cmeta_sequence_view_read,
+    .foreach = NULL,
+    .collector = NULL,
+    .borrow = &cmeta_sequence_view_borrow_ops
+};
+
+const cmeta_data_desc cmeta_data_sequence_view = {
+    .struct_size = sizeof(cmeta_data_desc),
+    .abi_version = CMETA_DATA_DESC_ABI_VERSION,
+    .stable_id = "cmeta.data.sequence_view",
+    .display_name = "borrowed sequence view",
+    .kind = CMETA_DATA_SEQUENCE,
+    .storage_type = &cmeta_type_collection_view,
+    .shape = NULL,
+    .collection_ops = &cmeta_sequence_view_ops
+};
+
+#define CMETA_COLLECTION_FIELD_END(type, member) \
+    (offsetof(type, member) + sizeof(((type *)0)->member))
+#define CMETA_COLLECTION_DESC_OPS_SIZE \
+    CMETA_COLLECTION_FIELD_END(cmeta_data_desc, collection_ops)
+#define CMETA_COLLECTION_OPS_BASE_SIZE \
+    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, foreach)
+#define CMETA_COLLECTION_OPS_COLLECTOR_SIZE \
+    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, collector)
+
+static cmeta_status cmeta_data_collection_ops_status(
+    const cmeta_data_desc *desc, const cmeta_data_collection_ops **out) {
+    const cmeta_data_collection_ops *ops;
+
+    if (out != NULL) *out = NULL;
+    if (!cmeta_data_desc_valid(desc) ||
+        (desc->kind != CMETA_DATA_SEQUENCE && desc->kind != CMETA_DATA_SET) ||
+        desc->struct_size < CMETA_COLLECTION_DESC_OPS_SIZE ||
+        desc->collection_ops == NULL)
+        return CMETA_INVALID_ARGUMENT;
+
+    ops = desc->collection_ops;
+    if (ops->struct_size < CMETA_COLLECTION_OPS_BASE_SIZE ||
+        ops->abi_version != CMETA_DATA_COLLECTION_OPS_ABI_VERSION ||
+        ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
+        (ops->flags & ~CMETA_DATA_COLLECTION_FLAGS_MASK) != 0u ||
+        ops->element == NULL || (ops->read == NULL && ops->foreach == NULL))
+        return CMETA_INVALID_ARGUMENT;
+
+    if (desc->storage_type == NULL ||
+        !cmeta_type_equal(desc->storage_type, ops->storage_type) ||
+        desc->storage_type->kind != ops->storage_type->kind ||
+        desc->storage_type->size != ops->storage_type->size ||
+        desc->storage_type->align != ops->storage_type->align)
+        return CMETA_TYPE_MISMATCH;
+
+    if (out != NULL) *out = ops;
+    return CMETA_OK;
+}
+
+const cmeta_data_collection_ops *cmeta_data_collection_ops_of(
+    const cmeta_data_desc *desc) {
+    const cmeta_data_collection_ops *ops = NULL;
+    return cmeta_data_collection_ops_status(desc, &ops) == CMETA_OK ? ops : NULL;
+}
+
+cmeta_status cmeta_data_collection_read(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_collection_view *out) {
+    const cmeta_data_collection_ops *ops = NULL;
+    const cmeta_data_desc *expected;
+    cmeta_data_collection_view view = {0};
+    cmeta_status status;
+
+    if (object == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    if (ops->read == NULL) return CMETA_TRAIT_MISSING;
+
+    expected = ops->element(object);
+    if (expected != NULL && !cmeta_data_desc_valid(expected))
+        return CMETA_TRAIT_MISSING;
+    status = ops->read(object, &view);
+    if (status != CMETA_OK) return status;
+
+    if (view.count != 0u) {
+        if (view.data == NULL || view.stride == 0u)
+            return CMETA_CALLBACK_ERROR;
+        if (view.element == NULL) view.element = expected;
+        if (view.element == NULL || !cmeta_data_desc_valid(view.element))
+            return CMETA_TRAIT_MISSING;
+        if (expected != NULL && !cmeta_data_desc_equal(expected, view.element))
+            return CMETA_CALLBACK_ERROR;
+    } else {
+        if (view.data != NULL && view.stride == 0u)
+            return CMETA_CALLBACK_ERROR;
+        if (view.element == NULL) view.element = expected;
+        if (view.element != NULL && !cmeta_data_desc_valid(view.element))
+            return CMETA_CALLBACK_ERROR;
+    }
+
+    *out = view;
+    return CMETA_OK;
+}
+
+#define CMETA_COLLECTION_OPS_BORROW_SIZE \
+    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_ops, borrow)
+#define CMETA_COLLECTION_BORROW_OPS_SIZE \
+    CMETA_COLLECTION_FIELD_END(cmeta_data_collection_borrow_ops, current_version)
+
+static cmeta_status cmeta_data_collection_borrow_ops_status(
+    const cmeta_data_desc *desc,
+    const cmeta_data_collection_borrow_ops **out) {
+    const cmeta_data_collection_ops *ops = NULL;
+    const cmeta_data_collection_borrow_ops *borrow;
+    cmeta_status status;
+
+    if (out != NULL) *out = NULL;
+    status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    if (ops->struct_size < CMETA_COLLECTION_OPS_BORROW_SIZE ||
+        ops->borrow == NULL)
+        return CMETA_TRAIT_MISSING;
+    borrow = ops->borrow;
+    if (borrow->struct_size < CMETA_COLLECTION_BORROW_OPS_SIZE ||
+        borrow->abi_version != CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION ||
+        borrow->next == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (out != NULL) *out = borrow;
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_collection_borrow_begin(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_collection_borrow_cursor *out) {
+    const cmeta_data_collection_ops *ops = NULL;
+    const cmeta_data_collection_borrow_ops *borrow = NULL;
+    const cmeta_data_desc *element;
+    cmeta_status status;
+
+    if (object == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    *out = (cmeta_data_collection_borrow_cursor){0};
+    status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    status = cmeta_data_collection_borrow_ops_status(desc, &borrow);
+    if (status != CMETA_OK) return status;
+    element = ops->element(object);
+    if (element == NULL || !cmeta_data_desc_valid(element))
+        return CMETA_TRAIT_MISSING;
+
+    out->data = desc;
+    out->element = element;
+    out->object = object;
+    out->ops = borrow;
+    out->version = borrow->current_version != NULL
+                       ? borrow->current_version(object)
+                       : UINT64_C(0);
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_collection_borrow_size(
+    const cmeta_data_collection_borrow_cursor *cursor, size_t *out_size) {
+    if (cursor == NULL || out_size == NULL || cursor->ops == NULL ||
+        cursor->object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (cursor->ops->size == NULL) return CMETA_TRAIT_MISSING;
+    if (cursor->ops->current_version != NULL &&
+        cursor->ops->current_version(cursor->object) != cursor->version)
+        return CMETA_CALLBACK_ERROR;
+    *out_size = cursor->ops->size(cursor->object);
+    return CMETA_OK;
+}
+
+cmeta_gen_status cmeta_data_collection_borrow_next(
+    cmeta_data_collection_borrow_cursor *cursor, const void **out_element) {
+    cmeta_gen_status status;
+    if (cursor == NULL || out_element == NULL || cursor->ops == NULL ||
+        cursor->object == NULL || cursor->element == NULL)
+        return CMETA_GEN_ERROR;
+    *out_element = NULL;
+    if (cursor->ops->current_version != NULL &&
+        cursor->ops->current_version(cursor->object) != cursor->version)
+        return CMETA_GEN_MUTATED;
+
+    status = cursor->ops->next(
+        cursor->object, &cursor->cursor, out_element);
+    switch (status) {
+        case CMETA_GEN_VALUE:
+        case CMETA_GEN_VALUE_AND_DONE:
+            return *out_element != NULL ? status : CMETA_GEN_ERROR;
+        case CMETA_GEN_DONE:
+        case CMETA_GEN_ERROR:
+        case CMETA_GEN_MUTATED:
+            *out_element = NULL;
+            return status;
+        default:
+            *out_element = NULL;
+            return CMETA_GEN_ERROR;
+    }
+}
+
+#undef CMETA_COLLECTION_BORROW_OPS_SIZE
+#undef CMETA_COLLECTION_OPS_BORROW_SIZE
+#undef CMETA_COLLECTION_OPS_COLLECTOR_SIZE
+#undef CMETA_COLLECTION_OPS_BASE_SIZE
+#undef CMETA_COLLECTION_DESC_OPS_SIZE
+#undef CMETA_COLLECTION_FIELD_END
+
+
+const cmeta_data_desc *cmeta_data_integer_width(bool is_signed, uint8_t bits) {
+    switch (bits) {
+        case 8u: return is_signed ? &cmeta_data_int8 : &cmeta_data_uint8;
+        case 16u: return is_signed ? &cmeta_data_int16 : &cmeta_data_uint16;
+        case 32u: return is_signed ? &cmeta_data_int32 : &cmeta_data_uint32;
+        case 64u: return is_signed ? &cmeta_data_int64 : &cmeta_data_uint64;
+        default: return NULL;
+    }
+}
+
+
+typedef struct cmeta_data_collection_foreach_context {
+    cmeta_data_collection_visit_fn visit;
+    void *context;
+    size_t remaining;
+} cmeta_data_collection_foreach_context;
+
+static cmeta_status cmeta_data_collection_bounded_visit(
+    void *context, const void *element) {
+    cmeta_data_collection_foreach_context *bounded =
+        (cmeta_data_collection_foreach_context *)context;
+    if (bounded == NULL || bounded->visit == NULL || element == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (bounded->remaining == 0u) return CMETA_CAPACITY_EXCEEDED;
+    --bounded->remaining;
+    return bounded->visit(bounded->context, element);
+}
+
+cmeta_status cmeta_data_collection_foreach(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_collection_visit_fn visit, void *context, size_t max_items) {
+    const cmeta_data_collection_ops *ops = NULL;
+    cmeta_data_collection_foreach_context bounded;
+    cmeta_status status;
+    size_t i;
+
+    if (object == NULL || visit == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+
+    if (ops->foreach != NULL) {
+        bounded.visit = visit;
+        bounded.context = context;
+        bounded.remaining = max_items;
+        return ops->foreach(
+            object, cmeta_data_collection_bounded_visit, &bounded, max_items);
+    }
+
+    if (ops->read != NULL) {
+        cmeta_data_collection_view view = {0};
+        status = cmeta_data_collection_read(desc, object, &view);
+        if (status != CMETA_OK) return status;
+        if (view.count > max_items) return CMETA_CAPACITY_EXCEEDED;
+        for (i = 0u; i < view.count; ++i) {
+            status = visit(context,
+                           (const unsigned char *)view.data + i * view.stride);
+            if (status != CMETA_OK) return status;
+        }
+        return CMETA_OK;
+    }
+    return CMETA_TRAIT_MISSING;
+}
+
+
+#define CMETA_MAP_FIELD_END(type, member) \
+    (offsetof(type, member) + sizeof(((type *)0)->member))
+#define CMETA_MAP_DESC_OPS_SIZE CMETA_MAP_FIELD_END(cmeta_data_desc, map_ops)
+#define CMETA_MAP_OPS_BASE_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, foreach)
+#define CMETA_MAP_OPS_COLLECTOR_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, collector)
+#define CMETA_MAP_OPS_ACCEPT_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, accept)
+#define CMETA_MAP_OPS_BORROW_SIZE CMETA_MAP_FIELD_END(cmeta_data_map_ops, borrow)
+#define CMETA_MAP_BORROW_OPS_SIZE \
+    CMETA_MAP_FIELD_END(cmeta_data_map_borrow_ops, current_version)
+
+static cmeta_status cmeta_data_map_ops_status(
+    const cmeta_data_desc *desc, const cmeta_data_map_ops **out) {
+    const cmeta_data_map_ops *ops;
+    if (out != NULL) *out = NULL;
+    if (!cmeta_data_desc_valid(desc) || desc->kind != CMETA_DATA_MAP ||
+        desc->struct_size < CMETA_MAP_DESC_OPS_SIZE || desc->map_ops == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    ops = desc->map_ops;
+    if (ops->struct_size < CMETA_MAP_OPS_BASE_SIZE ||
+        ops->abi_version != CMETA_DATA_MAP_OPS_ABI_VERSION ||
+        ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
+        (ops->flags & ~CMETA_DATA_MAP_FLAGS_MASK) != 0u ||
+        ((ops->flags & CMETA_DATA_MAP_UNIQUE_KEYS) != 0u &&
+         (ops->flags & CMETA_DATA_MAP_REPEATED_KEYS) != 0u) ||
+        ((ops->flags & (CMETA_DATA_MAP_UNIQUE_KEYS |
+                        CMETA_DATA_MAP_REPEATED_KEYS)) == 0u) ||
+        ops->key == NULL || ops->value == NULL || ops->foreach == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (desc->storage_type == NULL ||
+        !cmeta_type_equal(desc->storage_type, ops->storage_type) ||
+        desc->storage_type->size != ops->storage_type->size ||
+        desc->storage_type->align != ops->storage_type->align)
+        return CMETA_TYPE_MISMATCH;
+    if (out != NULL) *out = ops;
+    return CMETA_OK;
+}
+
+const cmeta_data_map_ops *cmeta_data_map_ops_of(
+    const cmeta_data_desc *desc) {
+    const cmeta_data_map_ops *ops = NULL;
+    return cmeta_data_map_ops_status(desc, &ops) == CMETA_OK ? ops : NULL;
+}
+
+typedef struct cmeta_data_map_bounded_context {
+    cmeta_data_map_visit_fn visit;
+    void *context;
+    size_t remaining;
+} cmeta_data_map_bounded_context;
+
+static cmeta_status cmeta_data_map_bounded_visit(
+    void *context, const void *key, const void *value) {
+    cmeta_data_map_bounded_context *bounded =
+        (cmeta_data_map_bounded_context *)context;
+    if (bounded == NULL || bounded->visit == NULL || key == NULL || value == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (bounded->remaining == 0u) return CMETA_CAPACITY_EXCEEDED;
+    --bounded->remaining;
+    return bounded->visit(bounded->context, key, value);
+}
+
+cmeta_status cmeta_data_map_foreach(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_map_visit_fn visit, void *context, size_t max_items) {
+    const cmeta_data_map_ops *ops = NULL;
+    const cmeta_data_desc *key_data;
+    const cmeta_data_desc *value_data;
+    cmeta_data_map_bounded_context bounded;
+    cmeta_status status;
+    if (object == NULL || visit == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_map_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    key_data = ops->key(object);
+    value_data = ops->value(object);
+    if (key_data == NULL || value_data == NULL ||
+        !cmeta_data_desc_valid(key_data) || !cmeta_data_desc_valid(value_data))
+        return CMETA_TRAIT_MISSING;
+    bounded.visit = visit;
+    bounded.context = context;
+    bounded.remaining = max_items;
+    return ops->foreach(object, cmeta_data_map_bounded_visit, &bounded, max_items);
+}
+
+static cmeta_status cmeta_data_map_borrow_ops_status(
+    const cmeta_data_desc *desc, const cmeta_data_map_borrow_ops **out) {
+    const cmeta_data_map_ops *ops = NULL;
+    const cmeta_data_map_borrow_ops *borrow;
+    cmeta_status status;
+
+    if (out != NULL) *out = NULL;
+    status = cmeta_data_map_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    if (ops->struct_size < CMETA_MAP_OPS_BORROW_SIZE || ops->borrow == NULL)
+        return CMETA_TRAIT_MISSING;
+    borrow = ops->borrow;
+    if (borrow->struct_size < CMETA_MAP_BORROW_OPS_SIZE ||
+        borrow->abi_version != CMETA_DATA_MAP_BORROW_OPS_ABI_VERSION ||
+        borrow->next == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (out != NULL) *out = borrow;
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_map_borrow_begin(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_map_borrow_cursor *out) {
+    const cmeta_data_map_ops *ops = NULL;
+    const cmeta_data_map_borrow_ops *borrow = NULL;
+    const cmeta_data_desc *key;
+    const cmeta_data_desc *value;
+    cmeta_status status;
+
+    if (object == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    *out = (cmeta_data_map_borrow_cursor){0};
+    status = cmeta_data_map_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    status = cmeta_data_map_borrow_ops_status(desc, &borrow);
+    if (status != CMETA_OK) return status;
+    key = ops->key(object);
+    value = ops->value(object);
+    if (key == NULL || value == NULL || !cmeta_data_desc_valid(key) ||
+        !cmeta_data_desc_valid(value))
+        return CMETA_TRAIT_MISSING;
+
+    out->data = desc;
+    out->key = key;
+    out->value = value;
+    out->object = object;
+    out->ops = borrow;
+    out->version = borrow->current_version != NULL
+                       ? borrow->current_version(object)
+                       : UINT64_C(0);
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_map_borrow_size(
+    const cmeta_data_map_borrow_cursor *cursor, size_t *out_size) {
+    if (cursor == NULL || out_size == NULL || cursor->ops == NULL ||
+        cursor->object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (cursor->ops->size == NULL) return CMETA_TRAIT_MISSING;
+    if (cursor->ops->current_version != NULL &&
+        cursor->ops->current_version(cursor->object) != cursor->version)
+        return CMETA_CALLBACK_ERROR;
+    *out_size = cursor->ops->size(cursor->object);
+    return CMETA_OK;
+}
+
+cmeta_gen_status cmeta_data_map_borrow_next(
+    cmeta_data_map_borrow_cursor *cursor,
+    const void **out_key, const void **out_value) {
+    cmeta_gen_status status;
+    if (cursor == NULL || out_key == NULL || out_value == NULL ||
+        cursor->ops == NULL || cursor->object == NULL ||
+        cursor->key == NULL || cursor->value == NULL)
+        return CMETA_GEN_ERROR;
+    *out_key = NULL;
+    *out_value = NULL;
+    if (cursor->ops->current_version != NULL &&
+        cursor->ops->current_version(cursor->object) != cursor->version)
+        return CMETA_GEN_MUTATED;
+
+    status = cursor->ops->next(
+        cursor->object, &cursor->cursor, out_key, out_value);
+    switch (status) {
+        case CMETA_GEN_VALUE:
+        case CMETA_GEN_VALUE_AND_DONE:
+            if (*out_key != NULL && *out_value != NULL) return status;
+            break;
+        case CMETA_GEN_DONE:
+        case CMETA_GEN_ERROR:
+        case CMETA_GEN_MUTATED:
+            *out_key = NULL;
+            *out_value = NULL;
+            return status;
+        default:
+            break;
+    }
+    *out_key = NULL;
+    *out_value = NULL;
+    return CMETA_GEN_ERROR;
+}
+
+#undef CMETA_MAP_BORROW_OPS_SIZE
+#undef CMETA_MAP_OPS_BORROW_SIZE
+#undef CMETA_MAP_OPS_ACCEPT_SIZE
+#undef CMETA_MAP_OPS_COLLECTOR_SIZE
+#undef CMETA_MAP_OPS_BASE_SIZE
+#undef CMETA_MAP_DESC_OPS_SIZE
+#undef CMETA_MAP_FIELD_END
+
+
+#define CMETA_CONSTRUCT_FIELD_END(type, member) \
+    (offsetof(type, member) + sizeof(((type *)0)->member))
+#define CMETA_CONSTRUCT_DESC_SIZE \
+    CMETA_CONSTRUCT_FIELD_END(cmeta_data_desc, construct_ops)
+#define CMETA_CONSTRUCT_OPS_SIZE \
+    CMETA_CONSTRUCT_FIELD_END(cmeta_data_construct_ops, move)
+
+static cmeta_status cmeta_data_construct_ops_status(
+    const cmeta_data_desc *desc, const cmeta_data_construct_ops **out) {
+    const cmeta_data_construct_ops *ops;
+    if (out != NULL) *out = NULL;
+    if (!cmeta_data_desc_valid(desc))
+        return CMETA_INVALID_ARGUMENT;
+    if (desc->struct_size < CMETA_CONSTRUCT_DESC_SIZE ||
+        desc->construct_ops == NULL)
+        return CMETA_TRAIT_MISSING;
+    ops = desc->construct_ops;
+    if (ops->struct_size < CMETA_CONSTRUCT_OPS_SIZE ||
+        ops->abi_version != CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION ||
+        ops->storage_type == NULL || !cmeta_type_desc_valid(ops->storage_type) ||
+        ops->init_zero == NULL || ops->restore_zero == NULL || ops->move == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (desc->storage_type == NULL ||
+        !cmeta_type_equal(desc->storage_type, ops->storage_type) ||
+        desc->storage_type->size != ops->storage_type->size ||
+        desc->storage_type->align != ops->storage_type->align)
+        return CMETA_TYPE_MISMATCH;
+    if (out != NULL) *out = ops;
+    return CMETA_OK;
+}
+
+const cmeta_data_construct_ops *cmeta_data_construct_ops_of(
+    const cmeta_data_desc *desc) {
+    const cmeta_data_construct_ops *ops = NULL;
+    return cmeta_data_construct_ops_status(desc, &ops) == CMETA_OK ? ops : NULL;
+}
+
+cmeta_status cmeta_data_construct_init_zero(
+    const cmeta_data_desc *desc, void *object) {
+    const cmeta_data_construct_ops *ops = NULL;
+    cmeta_status status;
+    if (object == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_construct_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    status = ops->init_zero(object);
+    if (status != CMETA_OK) ops->restore_zero(object);
+    return status;
+}
+
+cmeta_status cmeta_data_construct_restore_zero(
+    const cmeta_data_desc *desc, void *object) {
+    const cmeta_data_construct_ops *ops = NULL;
+    cmeta_status status;
+    if (object == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_construct_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    ops->restore_zero(object);
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_construct_move(
+    const cmeta_data_desc *desc, void *destination, void *source) {
+    const cmeta_data_construct_ops *ops = NULL;
+    cmeta_status status;
+    if (destination == NULL || source == NULL || destination == source)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_construct_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    ops->move(destination, source);
+    return CMETA_OK;
+}
+
+#undef CMETA_CONSTRUCT_OPS_SIZE
+#undef CMETA_CONSTRUCT_DESC_SIZE
+#undef CMETA_CONSTRUCT_FIELD_END
+
+
+cmeta_status cmeta_data_collection_collector(
+    const cmeta_data_desc *desc, void *zero_output, size_t limit,
+    cmeta_collector *out) {
+    const cmeta_data_collection_ops *ops = NULL;
+    cmeta_collector collector;
+    cmeta_status status;
+    if (zero_output == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    if (ops->struct_size <
+            offsetof(cmeta_data_collection_ops, collector) +
+                sizeof(((cmeta_data_collection_ops *)0)->collector) ||
+        ops->collector == NULL)
+        return CMETA_TRAIT_MISSING;
+    collector = ops->collector(zero_output, limit);
+    if (!cmeta_collector_ops_valid(collector.ops) ||
+        collector.zero_output != zero_output ||
+        collector.limit != limit ||
+        collector.input_type == NULL)
+        return CMETA_CALLBACK_ERROR;
+    *out = collector;
+    return CMETA_OK;
+}
+
+
+cmeta_status cmeta_data_map_collector(
+    const cmeta_data_desc *desc, void *zero_output, size_t limit,
+    cmeta_collector *out) {
+    const cmeta_data_map_ops *ops = NULL;
+    cmeta_collector collector;
+    cmeta_status status;
+    if (zero_output == NULL || out == NULL) return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_map_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    if (ops->struct_size <
+            offsetof(cmeta_data_map_ops, collector) +
+                sizeof(((cmeta_data_map_ops *)0)->collector) ||
+        ops->collector == NULL)
+        return CMETA_TRAIT_MISSING;
+    collector = ops->collector(zero_output, limit);
+    if (!cmeta_collector_ops_valid(collector.ops) ||
+        collector.zero_output != zero_output ||
+        collector.limit != limit ||
+        collector.input_type == NULL)
+        return CMETA_CALLBACK_ERROR;
+    *out = collector;
+    return CMETA_OK;
+}
+
+
+bool cmeta_data_desc_equal(
+    const cmeta_data_desc *left, const cmeta_data_desc *right) {
+    if (left == right) return left != NULL && cmeta_data_desc_valid(left);
+    if (!cmeta_data_desc_valid(left) || !cmeta_data_desc_valid(right) ||
+        left->kind != right->kind || left->stable_id == NULL ||
+        right->stable_id == NULL ||
+        strcmp(left->stable_id, right->stable_id) != 0)
+        return false;
+    if (left->storage_type == NULL || right->storage_type == NULL)
+        return left->storage_type == right->storage_type;
+    return cmeta_type_equal(left->storage_type, right->storage_type);
+}
+
+cmeta_status cmeta_data_collection_accept(
+    const cmeta_data_desc *desc, cmeta_collector *collector,
+    const cmeta_data_desc *element_data, const void *element) {
+    const cmeta_data_collection_ops *ops = NULL;
+    const cmeta_data_desc *expected;
+    cmeta_status status;
+    if (collector == NULL || element_data == NULL || element == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_collection_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    expected = ops->element(collector->zero_output);
+    if (expected == NULL || !cmeta_data_desc_valid(expected) ||
+        !cmeta_data_desc_valid(element_data))
+        return CMETA_TRAIT_MISSING;
+    if (!cmeta_data_desc_equal(expected, element_data))
+        return CMETA_TYPE_MISMATCH;
+    if (element_data->storage_type == NULL ||
+        !cmeta_type_equal(element_data->storage_type, collector->input_type))
+        return CMETA_TYPE_MISMATCH;
+    return cmeta_collector_accept(
+        collector, element_data->storage_type, element);
+}
+
+
+static cmeta_status cmeta_data_struct_init_zero(
+    const cmeta_data_desc *desc, void *object);
+static cmeta_status cmeta_data_struct_restore_zero(
+    const cmeta_data_desc *desc, void *object);
+static cmeta_status cmeta_data_struct_move(
+    const cmeta_data_desc *desc, void *destination, void *source);
+
+cmeta_status cmeta_data_value_init_zero(
+    const cmeta_data_desc *desc, void *object) {
+    if (!cmeta_data_desc_valid(desc) || object == NULL ||
+        desc->storage_type == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    switch (desc->kind) {
+        case CMETA_DATA_BOOL:
+        case CMETA_DATA_SINT:
+        case CMETA_DATA_UINT:
+        case CMETA_DATA_FLOAT:
+            memset(object, 0, desc->storage_type->size);
+            return CMETA_OK;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES:
+            return cmeta_data_buffer_init_zero(desc, object);
+        case CMETA_DATA_ENUM:
+            if (desc->enum_bits_ops != NULL)
+                return cmeta_data_enum_bits_restore_zero(desc, object);
+            return cmeta_data_enum_restore_zero(desc, object);
+        case CMETA_DATA_STRUCT:
+            return cmeta_data_struct_init_zero(desc, object);
+        default:
+            break;
+    }
+    if (desc->fixed_ops != NULL)
+        return cmeta_data_fixed_restore_zero(desc, object);
+    if (desc->variant_ops != NULL)
+        return cmeta_data_variant_restore_zero(desc, object);
+    return cmeta_data_construct_init_zero(desc, object);
+}
+
+cmeta_status cmeta_data_value_restore_zero(
+    const cmeta_data_desc *desc, void *object) {
+    if (!cmeta_data_desc_valid(desc) || object == NULL ||
+        desc->storage_type == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    switch (desc->kind) {
+        case CMETA_DATA_BOOL:
+        case CMETA_DATA_SINT:
+        case CMETA_DATA_UINT:
+        case CMETA_DATA_FLOAT:
+            memset(object, 0, desc->storage_type->size);
+            return CMETA_OK;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES:
+            return cmeta_data_buffer_restore_zero(desc, object);
+        case CMETA_DATA_ENUM:
+            if (desc->enum_bits_ops != NULL)
+                return cmeta_data_enum_bits_restore_zero(desc, object);
+            return cmeta_data_enum_restore_zero(desc, object);
+        case CMETA_DATA_STRUCT:
+            return cmeta_data_struct_restore_zero(desc, object);
+        default:
+            break;
+    }
+    if (desc->fixed_ops != NULL)
+        return cmeta_data_fixed_restore_zero(desc, object);
+    if (desc->variant_ops != NULL)
+        return cmeta_data_variant_restore_zero(desc, object);
+    return cmeta_data_construct_restore_zero(desc, object);
+}
+
+static bool cmeta_data_struct_field_bounds_valid(
+    const cmeta_data_desc *owner, const cmeta_data_field_desc *field) {
+    const cmeta_data_desc *value;
+    size_t owner_size;
+    if (owner == NULL || field == NULL || field->value == NULL ||
+        owner->storage_type == NULL)
+        return false;
+    value = field->value;
+    if (!cmeta_data_desc_valid(value) || value->storage_type == NULL)
+        return false;
+    owner_size = owner->storage_type->size;
+    if (field->offset > owner_size ||
+        value->storage_type->size > owner_size - field->offset)
+        return false;
+    if (value->storage_type->align != 0u &&
+        (field->offset % value->storage_type->align) != 0u)
+        return false;
+    return true;
+}
+
+static bool cmeta_data_value_move_supported_depth(
+    const cmeta_data_desc *desc, unsigned depth) {
+    const cmeta_data_struct_shape *shape;
+    size_t i;
+    if (depth > 64u || !cmeta_data_desc_valid(desc) ||
+        desc->storage_type == NULL)
+        return false;
+    switch (desc->kind) {
+        case CMETA_DATA_BOOL:
+        case CMETA_DATA_SINT:
+        case CMETA_DATA_UINT:
+        case CMETA_DATA_FLOAT:
+            return true;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES:
+            return cmeta_data_buffer_ops_of(desc) != NULL;
+        case CMETA_DATA_STRUCT:
+            shape = (const cmeta_data_struct_shape *)desc->shape;
+            if (shape == NULL) return false;
+            for (i = 0u; i < shape->field_count; ++i) {
+                const cmeta_data_field_desc *field = &shape->fields[i];
+                if (!cmeta_data_struct_field_bounds_valid(desc, field) ||
+                    !cmeta_data_value_move_supported_depth(
+                        field->value, depth + 1u))
+                    return false;
+            }
+            return true;
+        default:
+            return cmeta_data_construct_ops_of(desc) != NULL;
+    }
+}
+
+bool cmeta_data_struct_constructible(const cmeta_data_desc *desc) {
+    return desc != NULL && desc->kind == CMETA_DATA_STRUCT &&
+           cmeta_data_value_move_supported_depth(desc, 0u);
+}
+
+static cmeta_status cmeta_data_struct_init_zero(
+    const cmeta_data_desc *desc, void *object) {
+    const cmeta_data_struct_shape *shape;
+    size_t i;
+    if (!cmeta_data_struct_constructible(desc) || object == NULL)
+        return CMETA_TRAIT_MISSING;
+    shape = (const cmeta_data_struct_shape *)desc->shape;
+    for (i = 0u; i < shape->field_count; ++i) {
+        const cmeta_data_field_desc *field = &shape->fields[i];
+        cmeta_status status = cmeta_data_value_init_zero(
+            field->value, (unsigned char *)object + field->offset);
+        if (status != CMETA_OK) {
+            while (i != 0u) {
+                --i;
+                field = &shape->fields[i];
+                (void)cmeta_data_value_restore_zero(
+                    field->value, (unsigned char *)object + field->offset);
+            }
+            return status;
+        }
+    }
+    return CMETA_OK;
+}
+
+static cmeta_status cmeta_data_struct_restore_zero(
+    const cmeta_data_desc *desc, void *object) {
+    const cmeta_data_struct_shape *shape;
+    size_t i;
+    cmeta_status result = CMETA_OK;
+    if (!cmeta_data_struct_constructible(desc) || object == NULL)
+        return CMETA_TRAIT_MISSING;
+    shape = (const cmeta_data_struct_shape *)desc->shape;
+    i = shape->field_count;
+    while (i != 0u) {
+        const cmeta_data_field_desc *field = &shape->fields[--i];
+        cmeta_status status = cmeta_data_value_restore_zero(
+            field->value, (unsigned char *)object + field->offset);
+        if (result == CMETA_OK && status != CMETA_OK)
+            result = status;
+    }
+    return result;
+}
+
+static cmeta_status cmeta_data_struct_move(
+    const cmeta_data_desc *desc, void *destination, void *source) {
+    const cmeta_data_struct_shape *shape;
+    size_t i;
+    if (!cmeta_data_struct_constructible(desc) ||
+        destination == NULL || source == NULL || destination == source)
+        return CMETA_TRAIT_MISSING;
+    shape = (const cmeta_data_struct_shape *)desc->shape;
+    for (i = 0u; i < shape->field_count; ++i) {
+        const cmeta_data_field_desc *field = &shape->fields[i];
+        cmeta_status status = cmeta_data_value_move(
+            field->value,
+            (unsigned char *)destination + field->offset,
+            (unsigned char *)source + field->offset);
+        if (status != CMETA_OK) {
+            cmeta_status rollback_status = CMETA_OK;
+            (void)cmeta_data_value_restore_zero(
+                field->value,
+                (unsigned char *)destination + field->offset);
+            while (i != 0u) {
+                const cmeta_data_field_desc *moved = &shape->fields[--i];
+                cmeta_status rollback = cmeta_data_value_move(
+                    moved->value,
+                    (unsigned char *)source + moved->offset,
+                    (unsigned char *)destination + moved->offset);
+                if (rollback != CMETA_OK) {
+                    (void)cmeta_data_value_restore_zero(
+                        moved->value,
+                        (unsigned char *)destination + moved->offset);
+                    rollback_status = CMETA_CALLBACK_ERROR;
+                }
+            }
+            return rollback_status == CMETA_OK ? status : rollback_status;
+        }
+    }
+    return CMETA_OK;
+}
+
+bool cmeta_data_value_move_supported(const cmeta_data_desc *desc) {
+    return cmeta_data_value_move_supported_depth(desc, 0u);
+}
+
+cmeta_status cmeta_data_value_move(
+    const cmeta_data_desc *desc, void *destination, void *source) {
+    cmeta_status status;
+    if (!cmeta_data_desc_valid(desc) || destination == NULL || source == NULL ||
+        destination == source || desc->storage_type == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    switch (desc->kind) {
+        case CMETA_DATA_BOOL:
+        case CMETA_DATA_SINT:
+        case CMETA_DATA_UINT:
+        case CMETA_DATA_FLOAT:
+            memcpy(destination, source, desc->storage_type->size);
+            memset(source, 0, desc->storage_type->size);
+            return CMETA_OK;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES:
+            return cmeta_data_buffer_move(desc, destination, source);
+        case CMETA_DATA_STRUCT:
+            return cmeta_data_struct_move(desc, destination, source);
+        default:
+            break;
+    }
+    status = cmeta_data_construct_move(desc, destination, source);
+    return status;
+}
+
+static cmeta_status cmeta_data_temp_init(
+    const cmeta_data_desc *desc, void *storage,
+    cmeta_data_temp_lifecycle *lifecycle) {
+    cmeta_status status;
+    if (desc == NULL || storage == NULL || lifecycle == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_value_init_zero(desc, storage);
+    if (status != CMETA_OK) return status;
+    switch (desc->kind) {
+        case CMETA_DATA_BOOL:
+        case CMETA_DATA_SINT:
+        case CMETA_DATA_UINT:
+        case CMETA_DATA_FLOAT:
+            *lifecycle = CMETA_DATA_TEMP_TRIVIAL; break;
+        case CMETA_DATA_STRING:
+        case CMETA_DATA_BYTES:
+            *lifecycle = CMETA_DATA_TEMP_BUFFER; break;
+        case CMETA_DATA_ENUM:
+            *lifecycle = desc->enum_bits_ops != NULL
+                             ? CMETA_DATA_TEMP_ENUM_BITS
+                             : CMETA_DATA_TEMP_ENUM;
+            break;
+        default:
+            if (desc->fixed_ops != NULL) *lifecycle = CMETA_DATA_TEMP_FIXED;
+            else if (desc->variant_ops != NULL) *lifecycle = CMETA_DATA_TEMP_VARIANT;
+            else *lifecycle = CMETA_DATA_TEMP_CONSTRUCT;
+            break;
+    }
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_data_temp_open(
+    const cmeta_data_desc *desc, size_t max_bytes, cmeta_data_temp *out) {
+    void *storage;
+    size_t extent;
+    size_t alignment;
+    size_t padded;
+    cmeta_status status;
+    cmeta_data_temp_lifecycle lifecycle = CMETA_DATA_TEMP_NONE;
+
+    if (out == NULL || !cmeta_data_desc_valid(desc) ||
+        desc->storage_type == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    *out = (cmeta_data_temp){0};
+    extent = desc->storage_type->size;
+    alignment = desc->storage_type->align;
+    if (extent == 0u || alignment == 0u || extent > max_bytes)
+        return extent > max_bytes ? CMETA_CAPACITY_EXCEEDED
+                                  : CMETA_INVALID_ARGUMENT;
+    if ((alignment & (alignment - 1u)) != 0u)
+        return CMETA_INVALID_ARGUMENT;
+    if (alignment <= CMETA_ALIGNOF(cmeta_capture_storage)) {
+        padded = extent;
+        storage = malloc(padded);
+    } else {
+        if (extent > SIZE_MAX - (alignment - 1u))
+            return CMETA_CAPACITY_EXCEEDED;
+        padded = (extent + alignment - 1u) & ~(alignment - 1u);
+#if defined(_MSC_VER)
+        storage = _aligned_malloc(padded, alignment);
+#else
+        storage = NULL;
+        if (posix_memalign(&storage, alignment, padded) != 0)
+            storage = NULL;
+#endif
+    }
+    if (storage == NULL) return CMETA_OUT_OF_MEMORY;
+    memset(storage, 0, padded);
+    status = cmeta_data_temp_init(desc, storage, &lifecycle);
+    if (status != CMETA_OK) {
+#if defined(_MSC_VER)
+        if (alignment > CMETA_ALIGNOF(cmeta_capture_storage)) _aligned_free(storage);
+        else free(storage);
+#else
+        free(storage);
+#endif
+        return status;
+    }
+    out->data = desc;
+    out->storage = storage;
+    out->extent = extent;
+    out->alignment = alignment;
+    out->lifecycle = lifecycle;
+    return CMETA_OK;
+}
+
+void cmeta_data_temp_close(cmeta_data_temp *temp) {
+    if (temp == NULL || temp->storage == NULL) return;
+    if (temp->data != NULL)
+        (void)cmeta_data_value_restore_zero(temp->data, temp->storage);
+#if defined(_MSC_VER)
+    if (temp->alignment > CMETA_ALIGNOF(cmeta_capture_storage)) _aligned_free(temp->storage);
+    else free(temp->storage);
+#else
+    free(temp->storage);
+#endif
+    *temp = (cmeta_data_temp){0};
+}
+
+
+cmeta_status cmeta_data_map_accept(
+    const cmeta_data_desc *desc, cmeta_collector *collector,
+    const cmeta_data_desc *key_data, const void *key,
+    const cmeta_data_desc *value_data, const void *value) {
+    const cmeta_data_map_ops *ops = NULL;
+    const cmeta_data_desc *expected_key;
+    const cmeta_data_desc *expected_value;
+    cmeta_status status;
+    if (collector == NULL || key_data == NULL || key == NULL ||
+        value_data == NULL || value == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    status = cmeta_data_map_ops_status(desc, &ops);
+    if (status != CMETA_OK) return status;
+    expected_key = ops->key(collector->zero_output);
+    expected_value = ops->value(collector->zero_output);
+    if (expected_key == NULL || expected_value == NULL ||
+        !cmeta_data_desc_valid(expected_key) ||
+        !cmeta_data_desc_valid(expected_value))
+        return CMETA_TRAIT_MISSING;
+    if (!cmeta_data_desc_equal(expected_key, key_data) ||
+        !cmeta_data_desc_equal(expected_value, value_data))
+        return CMETA_TYPE_MISMATCH;
+    if (ops->struct_size <
+            offsetof(cmeta_data_map_ops, accept) +
+                sizeof(((cmeta_data_map_ops *)0)->accept) ||
+        ops->accept == NULL)
+        return CMETA_TRAIT_MISSING;
+    return ops->accept(collector, key_data, key, value_data, value);
+}

@@ -166,6 +166,17 @@ jobs:
       - name: Test full Linux suite
         run: ctest --preset linux-release-user --output-on-failure
 
+      - name: Verify CMeta Lua binding
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake --preset linux-dev-user \
+            -DBUILD_BENCHMARKS=OFF \
+            -DSALTS_BINDINGS_LUA=ON \
+            -DVCPKG_MANIFEST_FEATURES=lua-bindings
+          cmake --build --preset linux-dev-user --target salts_lua_invokable_test
+          ctest --preset linux-dev-user -R "^salts_lua_invokable_test$" --output-on-failure
+
       - name: Verify CFlow lifecycle paths with AddressSanitizer
         run: |
           cmake --preset linux-dev-user -DBUILD_BENCHMARKS=OFF

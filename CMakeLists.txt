@@ -8,7 +8,7 @@ endif()
 
 project(
   Salts
-  VERSION 1.6.1
+  VERSION 1.7.0
   LANGUAGES C CXX)
 
 # Project configuration - output directories
@@ -60,6 +60,7 @@ add_subdirectory(coroutine)
 add_subdirectory(native-io)
 add_subdirectory(uri)
 add_subdirectory(cmeta)
+add_subdirectory(bindings)
 add_subdirectory(simd)
 add_subdirectory(tinymock)
 add_subdirectory(cflow)

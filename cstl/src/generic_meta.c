@@ -86,7 +86,7 @@ STL_DEFINE_BINARY_GENERIC_META(
     self->key_type, self->value_type, &cmeta_data_map)
 STL_DEFINE_BINARY_GENERIC_META(
     multimap, "MultiMap", "cstl.MultiMap", multimap_t,
-    self->key_type, self->value_type, NULL)
+    self->key_type, self->value_type, &cmeta_data_map)
 STL_DEFINE_BINARY_GENERIC_META(
     btree, "BTree", "cstl.BTree", btree_t,
     self->key_type, self->value_type, &cmeta_data_map)

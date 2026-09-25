@@ -11,10 +11,10 @@ static_assert(std::is_same_v<decltype(salts_tstr_cmeta_type),
 static_assert(std::is_same_v<decltype(salts_vstr_cmeta_buffer_ops),
                              const cmeta_data_buffer_ops>,
               "vstr adapter is immutable");
-static_assert(std::is_same_v<decltype(salts_int8_cmeta_type),
+static_assert(std::is_same_v<decltype(cmeta_type_int8),
                              const cmeta_type_desc>,
               "fixed-width metadata is immutable");
-static_assert(std::is_same_v<decltype(salts_uint64_cmeta_data),
+static_assert(std::is_same_v<decltype(cmeta_data_uint64),
                              const cmeta_data_desc>,
               "fixed-width data metadata is immutable");
 static_assert(std::is_same_v<decltype(salts_bool8_cmeta_fixed_ops),
@@ -65,11 +65,11 @@ spec("Salts CMeta buffer adapter C++ surface") {
 
 spec("Salts fixed-width and UUID CMeta C++ surface") {
   it("compares header-local descriptors semantically") {
-    cmeta_type_desc equivalent = salts_int64_cmeta_type;
+    cmeta_type_desc equivalent = cmeta_type_int64;
 
-    check_true(cmeta_type_equal(&salts_int64_cmeta_type, &equivalent));
-    check_false(cmeta_type_equal(&salts_int64_cmeta_type,
-                                 &salts_uint64_cmeta_type));
+    check_true(cmeta_type_equal(&cmeta_type_int64, &equivalent));
+    check_false(cmeta_type_equal(&cmeta_type_int64,
+                                 &cmeta_type_uint64));
     check_equal(salts_uuid_cmeta_buffer_ops.ownership,
                 CMETA_DATA_BUFFER_OWNED);
     check_equal(salts_uuid_cmeta_data.storage_type->size,

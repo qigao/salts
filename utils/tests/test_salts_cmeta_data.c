@@ -202,8 +202,8 @@ spec("Salts fixed-width CMeta descriptors") {
 
   it("describes every signed width with exact storage ABI") {
     const cmeta_data_desc *const values[] = {
-        &salts_int8_cmeta_data, &salts_int16_cmeta_data,
-        &salts_int32_cmeta_data, &salts_int64_cmeta_data
+        &cmeta_data_int8, &cmeta_data_int16,
+        &cmeta_data_int32, &cmeta_data_int64
     };
     const size_t sizes[] = {
         sizeof(int8_t), sizeof(int16_t), sizeof(int32_t), sizeof(int64_t)
@@ -229,8 +229,8 @@ spec("Salts fixed-width CMeta descriptors") {
 
   it("describes every unsigned width with exact storage ABI") {
     const cmeta_data_desc *const values[] = {
-        &salts_uint8_cmeta_data, &salts_uint16_cmeta_data,
-        &salts_uint32_cmeta_data, &salts_uint64_cmeta_data
+        &cmeta_data_uint8, &cmeta_data_uint16,
+        &cmeta_data_uint32, &cmeta_data_uint64
     };
     const size_t sizes[] = {
         sizeof(uint8_t), sizeof(uint16_t), sizeof(uint32_t), sizeof(uint64_t)
@@ -255,13 +255,13 @@ spec("Salts fixed-width CMeta descriptors") {
   }
 
   it("uses stable semantic identities rather than descriptor addresses") {
-    cmeta_type_desc equivalent = salts_int32_cmeta_type;
+    cmeta_type_desc equivalent = cmeta_type_int32;
 
-    check_true(cmeta_type_equal(&salts_int32_cmeta_type, &equivalent));
-    check_false(cmeta_type_equal(&salts_int32_cmeta_type,
-                                 &salts_uint32_cmeta_type));
-    check_false(cmeta_type_equal(&salts_int32_cmeta_type,
-                                 &salts_int64_cmeta_type));
+    check_true(cmeta_type_equal(&cmeta_type_int32, &equivalent));
+    check_false(cmeta_type_equal(&cmeta_type_int32,
+                                 &cmeta_type_uint32));
+    check_false(cmeta_type_equal(&cmeta_type_int32,
+                                 &cmeta_type_int64));
   }
 }
 

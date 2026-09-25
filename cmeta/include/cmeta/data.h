@@ -2,6 +2,7 @@
 #define CMETA_DATA_H
 
 #include <cmeta/cmeta.h>
+#include <cmeta/collector.h>
 #include <cmeta/struct.h>
 
 #include <stdbool.h>
@@ -32,11 +33,28 @@ enum {
     CMETA_DATA_DESC_ABI_VERSION = 1u
 };
 
+enum { CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION = 1u };
+
+typedef cmeta_status (*cmeta_data_construct_init_zero_fn)(void *object);
+typedef void (*cmeta_data_construct_restore_zero_fn)(void *object);
+typedef void (*cmeta_data_construct_move_fn)(void *destination, void *source);
+
+typedef struct cmeta_data_construct_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_type_desc *storage_type;
+    cmeta_data_construct_init_zero_fn init_zero;
+    cmeta_data_construct_restore_zero_fn restore_zero;
+    cmeta_data_construct_move_fn move;
+} cmeta_data_construct_ops;
+
 typedef struct cmeta_data_buffer_ops cmeta_data_buffer_ops;
 typedef struct cmeta_data_enum_ops cmeta_data_enum_ops;
 typedef struct cmeta_data_enum_bits_ops cmeta_data_enum_bits_ops;
 typedef struct cmeta_data_variant_ops cmeta_data_variant_ops;
 typedef struct cmeta_data_fixed_ops cmeta_data_fixed_ops;
+typedef struct cmeta_data_collection_ops cmeta_data_collection_ops;
+typedef struct cmeta_data_map_ops cmeta_data_map_ops;
 
 typedef struct cmeta_data_desc {
     size_t struct_size;
@@ -53,6 +71,12 @@ typedef struct cmeta_data_desc {
     const cmeta_data_fixed_ops *fixed_ops;
     /** Canonical enum domain provider; mutually exclusive with shape/enum_ops. */
     const cmeta_data_enum_bits_ops *enum_bits_ops;
+    /** Optional provider-neutral collection read adapter. */
+    const cmeta_data_collection_ops *collection_ops;
+    /** Optional provider-neutral map key/value adapter. */
+    const cmeta_data_map_ops *map_ops;
+    /** Optional transactional construction lifecycle. */
+    const cmeta_data_construct_ops *construct_ops;
 } cmeta_data_desc;
 
 typedef struct cmeta_data_integer_shape {
@@ -172,6 +196,31 @@ struct cmeta_data_fixed_ops {
 #define CMETA_DATA_BYTES_CONST(object_) ((const unsigned char *)(object_))
 #endif
 
+#ifdef __cplusplus
+#define CMETA_DATA_FIXED_DESC_INIT_(name_, stable_id_, display_name_)         \
+    {sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,                   \
+     stable_id_ ".data", display_name_, CMETA_DATA_BYTES,                   \
+     &name_##_cmeta_type, &name_##_cmeta_shape, NULL, NULL, NULL,            \
+     &name_##_cmeta_fixed_ops, NULL, NULL, NULL, NULL}
+#else
+#define CMETA_DATA_FIXED_DESC_INIT_(name_, stable_id_, display_name_)         \
+    {.struct_size = sizeof(cmeta_data_desc),                                 \
+     .abi_version = CMETA_DATA_DESC_ABI_VERSION,                             \
+     .stable_id = stable_id_ ".data",                                       \
+     .display_name = display_name_,                                          \
+     .kind = CMETA_DATA_BYTES,                                               \
+     .storage_type = &name_##_cmeta_type,                                    \
+     .shape = &name_##_cmeta_shape,                                          \
+     .buffer_ops = NULL,                                                     \
+     .enum_ops = NULL,                                                       \
+     .variant_ops = NULL,                                                    \
+     .fixed_ops = &name_##_cmeta_fixed_ops,                                  \
+     .enum_bits_ops = NULL,                                                  \
+     .collection_ops = NULL,                                                 \
+     .map_ops = NULL,                                                        \
+     .construct_ops = NULL}
+#endif
+
 #define CMETA_DEFINE_FIXED_BYTES(name_, storage_type_, extent_, stable_id_,  \
                                  display_name_)                              \
     typedef char name_##_cmeta_extent_must_match_storage[                    \
@@ -220,11 +269,8 @@ struct cmeta_data_fixed_ops {
         sizeof(cmeta_data_fixed_ops), CMETA_DATA_FIXED_OPS_ABI_VERSION,      \
         &name_##_cmeta_type, (extent_), name_##_cmeta_is_zero,               \
         name_##_cmeta_copy, name_##_cmeta_restore_zero};                     \
-    static const cmeta_data_desc name_##_cmeta_data = {                      \
-        sizeof(cmeta_data_desc), CMETA_DATA_DESC_ABI_VERSION,                \
-        stable_id_ ".data", display_name_, CMETA_DATA_BYTES,               \
-        &name_##_cmeta_type, &name_##_cmeta_shape, NULL, NULL, NULL,         \
-        &name_##_cmeta_fixed_ops, NULL}
+    static const cmeta_data_desc name_##_cmeta_data =                        \
+        CMETA_DATA_FIXED_DESC_INIT_(name_, stable_id_, display_name_)
 
 enum {
     CMETA_DATA_ENUM_OPS_ABI_VERSION = 1u
@@ -348,6 +394,159 @@ typedef struct cmeta_data_struct_shape {
     size_t field_count;
 } cmeta_data_struct_shape;
 
+/*
+ * Provider-neutral collection reflection.
+ *
+ * A view borrows immutable element/key/value storage for the duration of one
+ * consumer operation. It does not imply ownership, mutability, contiguity of
+ * the provider's native container, or any CSTL/VM-specific representation.
+ */
+enum { CMETA_DATA_COLLECTION_OPS_ABI_VERSION = 1u };
+
+typedef uint32_t cmeta_data_collection_flags;
+enum {
+    CMETA_DATA_COLLECTION_CONTIGUOUS = 1u << 0,
+    CMETA_DATA_COLLECTION_ORDERED = 1u << 1,
+    CMETA_DATA_COLLECTION_SORTED = 1u << 2,
+    CMETA_DATA_COLLECTION_UNIQUE = 1u << 3,
+    CMETA_DATA_COLLECTION_RANDOM_ACCESS = 1u << 4,
+    CMETA_DATA_COLLECTION_FLAGS_MASK =
+        CMETA_DATA_COLLECTION_CONTIGUOUS |
+        CMETA_DATA_COLLECTION_ORDERED |
+        CMETA_DATA_COLLECTION_SORTED |
+        CMETA_DATA_COLLECTION_UNIQUE |
+        CMETA_DATA_COLLECTION_RANDOM_ACCESS
+};
+
+typedef struct cmeta_data_collection_view {
+    const void *data;
+    size_t count;
+    size_t stride;
+    const cmeta_data_desc *element;
+} cmeta_data_collection_view;
+
+/* Canonical native storage descriptor for a borrowed contiguous sequence view.
+ * The view owns nothing and remains valid only while its data/element provider
+ * remain alive and immutable. */
+extern const cmeta_type_desc cmeta_type_collection_view;
+extern const cmeta_data_desc cmeta_data_sequence_view;
+
+typedef const cmeta_data_desc *(*cmeta_data_collection_element_fn)(
+    const void *object);
+typedef cmeta_status (*cmeta_data_collection_read_fn)(
+    const void *object, cmeta_data_collection_view *out);
+typedef cmeta_status (*cmeta_data_collection_visit_fn)(
+    void *context, const void *element);
+typedef cmeta_status (*cmeta_data_collection_foreach_fn)(
+    const void *object, cmeta_data_collection_visit_fn visit, void *context,
+    size_t max_items);
+
+enum { CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION = 1u };
+
+typedef size_t (*cmeta_data_collection_borrow_size_fn)(const void *object);
+typedef cmeta_gen_status (*cmeta_data_collection_borrow_next_fn)(
+    const void *object, cmeta_range_cursor *cursor, const void **out_element);
+typedef uint64_t (*cmeta_data_collection_borrow_version_fn)(
+    const void *object);
+
+typedef struct cmeta_data_collection_borrow_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    cmeta_data_collection_borrow_size_fn size;
+    cmeta_data_collection_borrow_next_fn next;
+    cmeta_data_collection_borrow_version_fn current_version;
+} cmeta_data_collection_borrow_ops;
+
+typedef struct cmeta_data_collection_borrow_cursor {
+    const cmeta_data_desc *data;
+    const cmeta_data_desc *element;
+    const void *object;
+    const cmeta_data_collection_borrow_ops *ops;
+    cmeta_range_cursor cursor;
+    uint64_t version;
+} cmeta_data_collection_borrow_cursor;
+
+typedef cmeta_collector (*cmeta_data_collection_collector_fn)(
+    void *zero_output, size_t limit);
+
+typedef struct cmeta_data_collection_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_type_desc *storage_type;
+    cmeta_data_collection_flags flags;
+    cmeta_data_collection_element_fn element;
+    cmeta_data_collection_read_fn read;
+    cmeta_data_collection_foreach_fn foreach;
+    cmeta_data_collection_collector_fn collector;
+    const cmeta_data_collection_borrow_ops *borrow;
+} cmeta_data_collection_ops;
+
+enum { CMETA_DATA_MAP_OPS_ABI_VERSION = 1u };
+
+typedef uint32_t cmeta_data_map_flags;
+enum {
+    CMETA_DATA_MAP_UNIQUE_KEYS = 1u << 0,
+    CMETA_DATA_MAP_REPEATED_KEYS = 1u << 1,
+    CMETA_DATA_MAP_ORDERED = 1u << 2,
+    CMETA_DATA_MAP_SORTED = 1u << 3,
+    CMETA_DATA_MAP_FLAGS_MASK =
+        CMETA_DATA_MAP_UNIQUE_KEYS | CMETA_DATA_MAP_REPEATED_KEYS |
+        CMETA_DATA_MAP_ORDERED | CMETA_DATA_MAP_SORTED
+};
+
+typedef const cmeta_data_desc *(*cmeta_data_map_member_fn)(
+    const void *object);
+typedef cmeta_status (*cmeta_data_map_visit_fn)(
+    void *context, const void *key, const void *value);
+typedef cmeta_status (*cmeta_data_map_foreach_fn)(
+    const void *object, cmeta_data_map_visit_fn visit, void *context,
+    size_t max_items);
+
+enum { CMETA_DATA_MAP_BORROW_OPS_ABI_VERSION = 1u };
+
+typedef size_t (*cmeta_data_map_borrow_size_fn)(const void *object);
+typedef cmeta_gen_status (*cmeta_data_map_borrow_next_fn)(
+    const void *object, cmeta_range_cursor *cursor,
+    const void **out_key, const void **out_value);
+typedef uint64_t (*cmeta_data_map_borrow_version_fn)(const void *object);
+
+typedef struct cmeta_data_map_borrow_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    cmeta_data_map_borrow_size_fn size;
+    cmeta_data_map_borrow_next_fn next;
+    cmeta_data_map_borrow_version_fn current_version;
+} cmeta_data_map_borrow_ops;
+
+typedef struct cmeta_data_map_borrow_cursor {
+    const cmeta_data_desc *data;
+    const cmeta_data_desc *key;
+    const cmeta_data_desc *value;
+    const void *object;
+    const cmeta_data_map_borrow_ops *ops;
+    cmeta_range_cursor cursor;
+    uint64_t version;
+} cmeta_data_map_borrow_cursor;
+
+typedef cmeta_collector (*cmeta_data_map_collector_fn)(
+    void *zero_output, size_t limit);
+typedef cmeta_status (*cmeta_data_map_accept_fn)(
+    cmeta_collector *collector, const cmeta_data_desc *key_data,
+    const void *key, const cmeta_data_desc *value_data, const void *value);
+
+typedef struct cmeta_data_map_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_type_desc *storage_type;
+    cmeta_data_map_flags flags;
+    cmeta_data_map_member_fn key;
+    cmeta_data_map_member_fn value;
+    cmeta_data_map_foreach_fn foreach;
+    cmeta_data_map_collector_fn collector;
+    cmeta_data_map_accept_fn accept;
+    const cmeta_data_map_borrow_ops *borrow;
+} cmeta_data_map_ops;
+
 typedef struct cmeta_data_variant_case {
     int64_t tag;
     const char *stable_id;
@@ -366,6 +565,13 @@ typedef struct cmeta_data_variant_shape {
 bool cmeta_data_kind_valid(cmeta_data_kind kind);
 bool cmeta_data_kind_is_container(cmeta_data_kind kind);
 bool cmeta_data_desc_valid(const cmeta_data_desc *desc);
+/** Semantic equality uses stable data identity plus canonical native type
+ * identity; descriptor addresses are never semantic identity. */
+bool cmeta_data_desc_equal(
+    const cmeta_data_desc *left, const cmeta_data_desc *right);
+
+/** Return the canonical exact-width integer descriptor, or NULL. */
+const cmeta_data_desc *cmeta_data_integer_width(bool is_signed, uint8_t bits);
 
 /**
  * Return a validated STRING/BYTES adapter, or NULL when the descriptor does
@@ -376,6 +582,119 @@ bool cmeta_data_desc_valid(const cmeta_data_desc *desc);
  */
 const cmeta_data_buffer_ops *cmeta_data_buffer_ops_of(
     const cmeta_data_desc *desc);
+
+/** Return a validated SEQUENCE/SET collection adapter, or NULL. */
+const cmeta_data_collection_ops *cmeta_data_collection_ops_of(
+    const cmeta_data_desc *desc);
+
+/** Borrow one immutable collection view for the provider callback lifetime. */
+cmeta_status cmeta_data_collection_read(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_collection_view *out);
+
+/**
+ * Visit collection elements without exposing native iterator representation.
+ * The facade enforces max_items before invoking a visitor beyond the bound.
+ */
+cmeta_status cmeta_data_collection_foreach(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_collection_visit_fn visit, void *context, size_t max_items);
+
+cmeta_status cmeta_data_collection_collector(
+    const cmeta_data_desc *desc, void *zero_output, size_t limit,
+    cmeta_collector *out);
+
+cmeta_status cmeta_data_collection_borrow_begin(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_collection_borrow_cursor *out);
+cmeta_status cmeta_data_collection_borrow_size(
+    const cmeta_data_collection_borrow_cursor *cursor, size_t *out_size);
+cmeta_gen_status cmeta_data_collection_borrow_next(
+    cmeta_data_collection_borrow_cursor *cursor, const void **out_element);
+
+/**
+ * Accept one already-constructed canonical semantic element. The facade checks
+ * that the semantic descriptor's native storage type matches the collector's
+ * declared input type before borrowing the value for the callback.
+ */
+cmeta_status cmeta_data_collection_accept(
+    const cmeta_data_desc *desc, cmeta_collector *collector,
+    const cmeta_data_desc *element_data, const void *element);
+
+const cmeta_data_construct_ops *cmeta_data_construct_ops_of(
+    const cmeta_data_desc *desc);
+cmeta_status cmeta_data_construct_init_zero(
+    const cmeta_data_desc *desc, void *object);
+cmeta_status cmeta_data_construct_restore_zero(
+    const cmeta_data_desc *desc, void *object);
+cmeta_status cmeta_data_construct_move(
+    const cmeta_data_desc *desc, void *destination, void *source);
+
+/**
+ * Generic semantic lifecycle dispatch used by derived aggregate providers.
+ * These operations select the canonical authority for the data kind.
+ */
+bool cmeta_data_struct_constructible(const cmeta_data_desc *desc);
+cmeta_status cmeta_data_value_init_zero(
+    const cmeta_data_desc *desc, void *object);
+cmeta_status cmeta_data_value_restore_zero(
+    const cmeta_data_desc *desc, void *object);
+bool cmeta_data_value_move_supported(const cmeta_data_desc *desc);
+cmeta_status cmeta_data_value_move(
+    const cmeta_data_desc *desc, void *destination, void *source);
+
+typedef enum cmeta_data_temp_lifecycle {
+    CMETA_DATA_TEMP_NONE = 0,
+    CMETA_DATA_TEMP_TRIVIAL,
+    CMETA_DATA_TEMP_BUFFER,
+    CMETA_DATA_TEMP_ENUM,
+    CMETA_DATA_TEMP_ENUM_BITS,
+    CMETA_DATA_TEMP_FIXED,
+    CMETA_DATA_TEMP_VARIANT,
+    CMETA_DATA_TEMP_CONSTRUCT
+} cmeta_data_temp_lifecycle;
+
+typedef struct cmeta_data_temp {
+    const cmeta_data_desc *data;
+    void *storage;
+    size_t extent;
+    size_t alignment;
+    cmeta_data_temp_lifecycle lifecycle;
+} cmeta_data_temp;
+
+/**
+ * Allocate correctly aligned temporary native storage and initialize it to the
+ * descriptor's semantic zero. The descriptor must expose a safe lifecycle.
+ */
+cmeta_status cmeta_data_temp_open(
+    const cmeta_data_desc *desc, size_t max_bytes, cmeta_data_temp *out);
+
+/** Restore semantic zero, release temporary storage, and clear the handle. */
+void cmeta_data_temp_close(cmeta_data_temp *temp);
+
+
+const cmeta_data_map_ops *cmeta_data_map_ops_of(
+    const cmeta_data_desc *desc);
+cmeta_status cmeta_data_map_foreach(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_map_visit_fn visit, void *context, size_t max_items);
+cmeta_status cmeta_data_map_borrow_begin(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_map_borrow_cursor *out);
+cmeta_status cmeta_data_map_borrow_size(
+    const cmeta_data_map_borrow_cursor *cursor, size_t *out_size);
+cmeta_gen_status cmeta_data_map_borrow_next(
+    cmeta_data_map_borrow_cursor *cursor,
+    const void **out_key, const void **out_value);
+
+cmeta_status cmeta_data_map_collector(
+    const cmeta_data_desc *desc, void *zero_output, size_t limit,
+    cmeta_collector *out);
+
+cmeta_status cmeta_data_map_accept(
+    const cmeta_data_desc *desc, cmeta_collector *collector,
+    const cmeta_data_desc *key_data, const void *key,
+    const cmeta_data_desc *value_data, const void *value);
 
 /** Initialize one raw storage slot to provider semantic zero. */
 cmeta_status cmeta_data_buffer_init_zero(
@@ -557,6 +876,14 @@ const cmeta_data_field_desc *cmeta_data_struct_find_field(
 const cmeta_data_variant_case *cmeta_data_variant_case_by_tag(
     const cmeta_data_variant_shape *shape, int64_t tag);
 
+extern const cmeta_data_desc cmeta_data_int8;
+extern const cmeta_data_desc cmeta_data_uint8;
+extern const cmeta_data_desc cmeta_data_int16;
+extern const cmeta_data_desc cmeta_data_uint16;
+extern const cmeta_data_desc cmeta_data_int32;
+extern const cmeta_data_desc cmeta_data_uint32;
+extern const cmeta_data_desc cmeta_data_int64;
+extern const cmeta_data_desc cmeta_data_uint64;
 extern const cmeta_data_desc cmeta_data_bool;
 extern const cmeta_data_desc cmeta_data_int;
 extern const cmeta_data_desc cmeta_data_long;

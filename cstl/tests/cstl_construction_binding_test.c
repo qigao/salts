@@ -162,6 +162,7 @@ spec("CSTL construction binding") {
 
   it("binds every canonical CSTL generic kind without semantic duplication") {
     construction_matrix matrix = {0};
+    const cmeta_data_desc *multimap_data;
 
     CHECK_UNARY_BIND(matrix, vec, stl_vec_generic_desc);
     CHECK_UNARY_BIND(matrix, deque, stl_deque_generic_desc);
@@ -181,7 +182,11 @@ spec("CSTL construction binding") {
     check_null(cmeta_container_data(&matrix.heap));
     check_true(cmeta_container_construction(&matrix.heap) ==
                &stl_heap_construct_ops);
-    check_null(cmeta_container_data(&matrix.multimap));
+    multimap_data = cmeta_container_data(&matrix.multimap);
+    check_true(multimap_data != NULL);
+    check_equal(multimap_data->kind, CMETA_DATA_MAP);
+    check_true(multimap_data->collection_ops == NULL);
+    check_true(multimap_data->map_ops == NULL);
     check_true(cmeta_container_construction(&matrix.multimap) ==
                &stl_multimap_construct_ops);
   }
