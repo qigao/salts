@@ -22,8 +22,10 @@ cmeta_status salts_lua_push_cmeta(
     lua_State *state, const cmeta_data_desc *data, const void *object,
     salts_lua_limits limits);
 
-/* Read into caller-provided canonical storage. Provider lifecycle/rollback is
- * defined by CMeta; this binding does not invent a Lua-private ownership model. */
+/* Read into caller-provided canonical semantic-zero storage. On success the
+ * value is populated; on failure aggregate/container/map readers leave the
+ * destination unchanged. Provider lifecycle/rollback is defined by CMeta; this
+ * binding does not invent a Lua-private ownership model. */
 cmeta_status salts_lua_read_cmeta(
     lua_State *state, int index, const cmeta_data_desc *data, void *object,
     salts_lua_limits limits);
