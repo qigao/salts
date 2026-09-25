@@ -3,6 +3,7 @@
 #include <float.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct salts_lua_push_context {
@@ -624,4 +625,91 @@ cmeta_status salts_lua_read_cmeta(
     lua_State *state, int index, const cmeta_data_desc *data, void *object,
     salts_lua_limits limits) {
   return salts_lua_read_value(state, index, data, object, limits, 0u);
+}
+
+
+cmeta_status salts_lua_call_invokable(
+    lua_State *state, const cmeta_invokable *invokable,
+    int first_argument, size_t argument_count, salts_lua_limits limits,
+    int *out_result_count) {
+  const cmeta_function_data_desc *data;
+  const cmeta_function_desc *function;
+  cmeta_data_temp *temporaries = NULL;
+  const void **arguments = NULL;
+  cmeta_data_temp result = {0};
+  void *result_storage = NULL;
+  size_t i;
+  int first;
+  cmeta_status status = CMETA_OK;
+
+  if (out_result_count != NULL) *out_result_count = 0;
+  if (state == NULL || invokable == NULL || !cmeta_invokable_valid(invokable))
+    return CMETA_INVALID_ARGUMENT;
+  data = invokable->data;
+  if (!cmeta_function_data_desc_valid(data))
+    return CMETA_TRAIT_MISSING;
+  function = data->function;
+  if (argument_count != function->param_count)
+    return CMETA_INVALID_ARGUMENT;
+  if (argument_count > limits.max_items)
+    return CMETA_CAPACITY_EXCEEDED;
+
+  for (i = 0u; i < function->param_count; ++i) {
+    const cmeta_param_desc *param = cmeta_function_param(function, i);
+    cmeta_param_flags direction;
+    if (param == NULL) return CMETA_INVALID_ARGUMENT;
+    direction = param->flags & CMETA_PARAM_DIRECTION_MASK;
+    if (direction != CMETA_PARAM_IN ||
+        (param->flags & CMETA_PARAM_OWNED) != 0u)
+      return CMETA_TRAIT_MISSING;
+  }
+
+  if (argument_count != 0u) {
+    temporaries = (cmeta_data_temp *)calloc(
+        argument_count, sizeof(cmeta_data_temp));
+    arguments = (const void **)calloc(argument_count, sizeof(void *));
+    if (temporaries == NULL || arguments == NULL) {
+      status = CMETA_OUT_OF_MEMORY;
+      goto done;
+    }
+  }
+
+  first = lua_absindex(state, first_argument);
+  for (i = 0u; i < argument_count; ++i) {
+    status = cmeta_data_temp_open(
+        data->params[i], limits.max_bytes, &temporaries[i]);
+    if (status != CMETA_OK) goto done;
+    status = salts_lua_read_cmeta(
+        state, first + (int)i, data->params[i],
+        temporaries[i].storage, limits);
+    if (status != CMETA_OK) goto done;
+    arguments[i] = temporaries[i].storage;
+  }
+
+  if (data->return_data != NULL) {
+    status = cmeta_data_temp_open(
+        data->return_data, limits.max_bytes, &result);
+    if (status != CMETA_OK) goto done;
+    result_storage = result.storage;
+  }
+
+  status = cmeta_invokable_invoke(invokable, result_storage, arguments);
+  if (status != CMETA_OK) goto done;
+
+  if (data->return_data != NULL) {
+    status = salts_lua_push_cmeta(
+        state, data->return_data, result.storage, limits);
+    if (status != CMETA_OK) goto done;
+    if (out_result_count != NULL) *out_result_count = 1;
+  }
+
+done:
+  cmeta_data_temp_close(&result);
+  if (temporaries != NULL) {
+    i = argument_count;
+    while (i != 0u) cmeta_data_temp_close(&temporaries[--i]);
+  }
+  free(arguments);
+  free(temporaries);
+  return status;
 }
