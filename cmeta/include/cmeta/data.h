@@ -32,6 +32,21 @@ enum {
     CMETA_DATA_DESC_ABI_VERSION = 1u
 };
 
+enum { CMETA_DATA_CONSTRUCT_OPS_ABI_VERSION = 1u };
+
+typedef cmeta_status (*cmeta_data_construct_init_zero_fn)(void *object);
+typedef void (*cmeta_data_construct_restore_zero_fn)(void *object);
+typedef void (*cmeta_data_construct_move_fn)(void *destination, void *source);
+
+typedef struct cmeta_data_construct_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    const cmeta_type_desc *storage_type;
+    cmeta_data_construct_init_zero_fn init_zero;
+    cmeta_data_construct_restore_zero_fn restore_zero;
+    cmeta_data_construct_move_fn move;
+} cmeta_data_construct_ops;
+
 typedef struct cmeta_data_buffer_ops cmeta_data_buffer_ops;
 typedef struct cmeta_data_enum_ops cmeta_data_enum_ops;
 typedef struct cmeta_data_enum_bits_ops cmeta_data_enum_bits_ops;
@@ -39,6 +54,7 @@ typedef struct cmeta_data_variant_ops cmeta_data_variant_ops;
 typedef struct cmeta_data_fixed_ops cmeta_data_fixed_ops;
 typedef struct cmeta_data_collection_ops cmeta_data_collection_ops;
 typedef struct cmeta_data_map_ops cmeta_data_map_ops;
+typedef struct cmeta_data_construct_ops cmeta_data_construct_ops;
 
 typedef struct cmeta_data_desc {
     size_t struct_size;
@@ -59,6 +75,8 @@ typedef struct cmeta_data_desc {
     const cmeta_data_collection_ops *collection_ops;
     /** Optional provider-neutral map key/value adapter. */
     const cmeta_data_map_ops *map_ops;
+    /** Optional transactional construction lifecycle. */
+    const cmeta_data_construct_ops *construct_ops;
 } cmeta_data_desc;
 
 typedef struct cmeta_data_integer_shape {
@@ -465,6 +483,15 @@ cmeta_status cmeta_data_collection_read(
 cmeta_status cmeta_data_collection_foreach(
     const cmeta_data_desc *desc, const void *object,
     cmeta_data_collection_visit_fn visit, void *context, size_t max_items);
+
+const cmeta_data_construct_ops *cmeta_data_construct_ops_of(
+    const cmeta_data_desc *desc);
+cmeta_status cmeta_data_construct_init_zero(
+    const cmeta_data_desc *desc, void *object);
+cmeta_status cmeta_data_construct_restore_zero(
+    const cmeta_data_desc *desc, void *object);
+cmeta_status cmeta_data_construct_move(
+    const cmeta_data_desc *desc, void *destination, void *source);
 
 const cmeta_data_map_ops *cmeta_data_map_ops_of(
     const cmeta_data_desc *desc);
