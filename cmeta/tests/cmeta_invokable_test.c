@@ -43,6 +43,20 @@ static const cmeta_param_desc add_params[] = {
     }
 };
 
+static const cmeta_data_desc *const increment_data_params[] = {
+    &cmeta_data_int
+};
+
+static const cmeta_function_data_desc increment_data = {
+    .size = sizeof(cmeta_function_data_desc),
+    .function = &increment_function,
+    .return_data = &cmeta_data_int,
+    .params = increment_data_params,
+    .param_count = 1u
+};
+
+const cmeta_data_desc *cmeta_invokable_peer_int_data(void);
+
 static const cmeta_function_desc add_function = {
     .size = sizeof(cmeta_function_desc),
     .name = "add",
@@ -54,6 +68,50 @@ static const cmeta_function_desc add_function = {
 };
 
 spec("CMeta invokable bridge") {
+  it("validates semantic function data and binds it to execution") {
+    cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+    int input = 41;
+    int output = 0;
+    const void *args[] = {&input};
+
+    check_true(cmeta_function_data_desc_valid(&increment_data));
+    check_equal(cmeta_invokable_bind_data(
+                    &increment_data, cmeta_invokable_increment, &invokable),
+                CMETA_OK);
+    check_true(invokable.data == &increment_data);
+    check_equal(cmeta_invokable_invoke(&invokable, &output, args), CMETA_OK);
+    check_equal(output, 42);
+  }
+
+  it("rejects semantic parameter/native type mismatch") {
+    const cmeta_data_desc *wrong_params[] = {&cmeta_data_long};
+    cmeta_function_data_desc wrong = increment_data;
+    wrong.params = wrong_params;
+
+    check_false(cmeta_function_data_desc_valid(&wrong));
+  }
+
+  it("rejects semantic return/native type mismatch") {
+    cmeta_function_data_desc wrong = increment_data;
+    wrong.return_data = &cmeta_data_long;
+
+    check_false(cmeta_function_data_desc_valid(&wrong));
+  }
+
+  it("accepts equivalent semantic descriptor copies from another TU") {
+    const cmeta_data_desc *peer = cmeta_invokable_peer_int_data();
+    const cmeta_data_desc *params[] = {peer};
+    cmeta_function_data_desc data = increment_data;
+
+    check_not_null(peer);
+    check_true(peer != &cmeta_data_int);
+    check_true(cmeta_data_desc_equal(peer, &cmeta_data_int));
+    data.return_data = peer;
+    data.params = params;
+    check_true(cmeta_function_data_desc_valid(&data));
+  }
+
+
   it("binds and invokes a reflected unary callable") {
     cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
     int input = 41;
