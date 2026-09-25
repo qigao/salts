@@ -3,9 +3,10 @@
 
 #include <cmeta/data.h>
 #include <cmeta/invokable.h>
-#include <lua.h>
-
 #include <stddef.h>
+
+struct lua_State;
+typedef struct lua_State lua_State;
 
 #ifdef __cplusplus
 extern "C" {
