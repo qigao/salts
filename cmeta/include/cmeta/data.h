@@ -419,6 +419,31 @@ typedef cmeta_status (*cmeta_data_collection_foreach_fn)(
     const void *object, cmeta_data_collection_visit_fn visit, void *context,
     size_t max_items);
 
+enum { CMETA_DATA_COLLECTION_BORROW_OPS_ABI_VERSION = 1u };
+
+typedef size_t (*cmeta_data_collection_borrow_size_fn)(const void *object);
+typedef cmeta_gen_status (*cmeta_data_collection_borrow_next_fn)(
+    const void *object, cmeta_range_cursor *cursor, const void **out_element);
+typedef uint64_t (*cmeta_data_collection_borrow_version_fn)(
+    const void *object);
+
+typedef struct cmeta_data_collection_borrow_ops {
+    size_t struct_size;
+    uint32_t abi_version;
+    cmeta_data_collection_borrow_size_fn size;
+    cmeta_data_collection_borrow_next_fn next;
+    cmeta_data_collection_borrow_version_fn current_version;
+} cmeta_data_collection_borrow_ops;
+
+typedef struct cmeta_data_collection_borrow_cursor {
+    const cmeta_data_desc *data;
+    const cmeta_data_desc *element;
+    const void *object;
+    const cmeta_data_collection_borrow_ops *ops;
+    cmeta_range_cursor cursor;
+    uint64_t version;
+} cmeta_data_collection_borrow_cursor;
+
 typedef cmeta_collector (*cmeta_data_collection_collector_fn)(
     void *zero_output, size_t limit);
 
@@ -431,6 +456,7 @@ typedef struct cmeta_data_collection_ops {
     cmeta_data_collection_read_fn read;
     cmeta_data_collection_foreach_fn foreach;
     cmeta_data_collection_collector_fn collector;
+    const cmeta_data_collection_borrow_ops *borrow;
 } cmeta_data_collection_ops;
 
 enum { CMETA_DATA_MAP_OPS_ABI_VERSION = 1u };
@@ -525,6 +551,14 @@ cmeta_status cmeta_data_collection_foreach(
 cmeta_status cmeta_data_collection_collector(
     const cmeta_data_desc *desc, void *zero_output, size_t limit,
     cmeta_collector *out);
+
+cmeta_status cmeta_data_collection_borrow_begin(
+    const cmeta_data_desc *desc, const void *object,
+    cmeta_data_collection_borrow_cursor *out);
+cmeta_status cmeta_data_collection_borrow_size(
+    const cmeta_data_collection_borrow_cursor *cursor, size_t *out_size);
+cmeta_gen_status cmeta_data_collection_borrow_next(
+    cmeta_data_collection_borrow_cursor *cursor, const void **out_element);
 
 /**
  * Accept one already-constructed canonical semantic element. The facade checks
