@@ -117,6 +117,16 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms);
  */
 int cnet_owner_receive_direct(cnet_owner *owner, cnet_session_handle session, size_t demand);
 
+/**
+ * Owner-thread quiescent close admission.
+ *
+ * Commits the canonical session to DRAINING and schedules owner-local close
+ * progress for the next drive. It publishes no callback synchronously.
+ * Non-quiescent sessions return SALTS_EBUSY so the caller can preserve FIFO
+ * ordering through the deferred command path.
+ */
+int cnet_owner_close_direct(cnet_owner *owner, cnet_session_handle session);
+
 /** Thread-safe advisory wake for an owner blocked in drive. */
 int cnet_owner_wake(cnet_owner *owner);
 

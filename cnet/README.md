@@ -350,8 +350,13 @@ locks and command queue: it is recorded directly in the canonical owner and
 placed on the bounded owner-local rearm queue for the next poll. Callback-issued
 receive remains deferred through the command queue because the owner may still
 be routing later completions in the current NativeIO batch; this prevents a
-callback from reusing a CNet request slot still named by that batch. No path
-requires an operating-system wake or owner-thread handoff.
+callback from reusing a CNet request slot still named by that batch. A
+quiescent owner-issued close likewise bypasses the generic command queue: it
+commits DRAINING immediately and schedules bounded owner-local close work, but
+CLOSING/CLOSED callbacks are still emitted only from the next poll. A close
+with earlier send/receive/TLS/connect work remains on the FIFO command path so
+ordering is preserved. No path requires an operating-system wake or owner-thread
+handoff.
 
 Cancellation is a request, not terminal evidence. CNet retains the request and
 any owned payload until the matching terminal NativeIO completion is observed;

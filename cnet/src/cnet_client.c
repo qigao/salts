@@ -944,19 +944,38 @@ int cnet_close(cnet_client *client, cnet_connection connection) {
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
   int status;
+
   if (impl == NULL) return SALTS_EINVAL;
-  salts_mutex_lock(&impl->lock);
-  if (!impl->admission_open) status = SALTS_ESHUTDOWN;
-  else {
-    record = cnet_client_find_record(impl, connection, &internal);
-    if (record == NULL) status = SALTS_ENOENT;
-    else if (record->close_command_pending) status = SALTS_EALREADY;
+
+  if (cnet_active_callback_client == impl) {
+    salts_mutex_lock(&impl->lock);
+    if (!impl->admission_open) status = SALTS_ESHUTDOWN;
     else {
-      status = cnet_shards_close(&impl->shards, internal);
-      if (status == SALTS_OK) record->close_command_pending = true;
+      record = cnet_client_find_record(impl, connection, &internal);
+      if (record == NULL) status = SALTS_ENOENT;
+      else if (record->close_command_pending) status = SALTS_EALREADY;
+      else {
+        status = cnet_shards_close(&impl->shards, internal);
+        if (status == SALTS_OK) record->close_command_pending = true;
+      }
     }
+    salts_mutex_unlock(&impl->lock);
+    return status;
   }
-  salts_mutex_unlock(&impl->lock);
+
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->close_command_pending) return SALTS_EALREADY;
+
+  if (!record->write_pending && record->receive_pending == 0u && !record->tls_command_pending) {
+    status = cnet_shards_close_direct(&impl->shards, internal);
+    if (status == SALTS_OK || status == SALTS_EALREADY) return status;
+    if (status != SALTS_EBUSY && status != SALTS_ENOBUFS) return status;
+  }
+
+  status = cnet_shards_close(&impl->shards, internal);
+  if (status == SALTS_OK) record->close_command_pending = true;
   return status;
 }
 
