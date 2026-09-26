@@ -210,6 +210,7 @@ CMETA_INLINE cmeta_status salts_stl_cmeta_status(stl_status status) {
 #define SALTS_META_LIST_METHODS(M,C) \
  M(INIT_SIZE,init,raw_init,_,C) M(FROM_ARRAY_SIZE,from,raw_from_array,_,C) \
  M(DESTROY,destroy,raw_destroy_storage,_,C) M(CLEAR,clear,clear,_,C) \
+ M(PUSH_VALUE_ITER,add,push_back,_,C) \
  M(PUSH_VALUE_ITER,push_back,push_back,_,C) \
  M(PUSH_VALUE_ITER,push_front,push_front,_,C) \
  M(POP_BOOL,pop_back,pop_back,_,C) M(POP_BOOL,pop_front,pop_front,_,C) \
