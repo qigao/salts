@@ -144,6 +144,21 @@ foreach ($row in $rows) {
         if ($benchmarkCallback -lt $payloadCheck) {
             throw "payload check exceeds benchmark callback for $key"
         }
+        if ($driver -eq "CNet retained" -and $connectionCount -eq 16 -and
+            $payload -in @(32768, 65536)) {
+            $ownerResidualUs = ($ownerDrive - $ownerNested) / $operations / 1000.0
+            $observerFrameworkUs = ($dispatcherObserver - $benchmarkCallback) / $operations / 1000.0
+            $clientPollWrapperUs = ($clientPoll - $ownerDrive) / $operations / 1000.0
+            if ($ownerResidualUs -gt 2.0) {
+                throw "stable retained owner residual regression for $($key): $ownerResidualUs us/op"
+            }
+            if ($observerFrameworkUs -gt 1.0) {
+                throw "stable retained observer framework regression for $($key): $observerFrameworkUs us/op"
+            }
+            if ($clientPollWrapperUs -gt 1.0) {
+                throw "stable retained client poll wrapper regression for $($key): $clientPollWrapperUs us/op"
+            }
+        }
     } else {
         foreach ($value in @(
             $ownerDrive, $ownerObserve, $clientPoll, $requestLifecycle, $requestStart,
@@ -201,6 +216,43 @@ foreach ($row in $pairedRows) {
     Assert-Near ([double]$row.p50_delta_mad_pp) $p50.Mad "$pairKey p50 MAD"
     Assert-Near ([double]$row.p95_delta_median_percent) $p95.Median "$pairKey p95 median"
     Assert-Near ([double]$row.p95_delta_mad_pp) $p95.Mad "$pairKey p95 MAD"
+
+    $stableLargePayload = $connectionCount -eq 16 -and $payload -in @(32768, 65536)
+    if ($stableLargePayload -and $pair -eq "NativeIO direct|CNet retained") {
+        if ($rate.Median -lt -5.0) {
+            throw "retained throughput fell outside NativeIO performance class for $($pairKey): $($rate.Median)%"
+        }
+        if ($p50.Median -gt 10.0) {
+            throw "retained p50 regression for $($pairKey): $($p50.Median)%"
+        }
+        if ($p95.Median -gt 15.0) {
+            throw "retained p95 regression for $($pairKey): $($p95.Median)%"
+        }
+        foreach ($entry in @(
+            [pscustomobject]@{ Name = "rate"; Mad = $rate.Mad },
+            [pscustomobject]@{ Name = "p50"; Mad = $p50.Mad },
+            [pscustomobject]@{ Name = "p95"; Mad = $p95.Mad }
+        )) {
+            if ($entry.Mad -gt 5.0) {
+                throw "retained $($entry.Name) paired noise exceeded gate for $($pairKey): $($entry.Mad)pp"
+            }
+        }
+    }
+
+    if ($stableLargePayload -and $pair -eq "CNet copy|CNet retained") {
+        if ($rate.Median -lt 3.0) {
+            throw "retained-send throughput benefit disappeared for $($pairKey): $($rate.Median)%"
+        }
+        if ($p50.Median -gt -2.0) {
+            throw "retained-send p50 benefit disappeared for $($pairKey): $($p50.Median)%"
+        }
+        if ($p95.Median -gt 2.0) {
+            throw "retained-send p95 regressed for $($pairKey): $($p95.Median)%"
+        }
+        if ($rate.Mad -gt 5.0 -or $p50.Mad -gt 5.0 -or $p95.Mad -gt 5.0) {
+            throw "copy-vs-retained paired noise exceeded gate for $pairKey"
+        }
+    }
 }
 
 Write-Host "CNet scaling benchmark verified: $($rows.Count) raw rows, $($pairedRows.Count) paired rows"
