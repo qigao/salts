@@ -267,7 +267,7 @@ jobs:
               cnet_vsock_integration_test \
               cnet_benchmark_stats_test cnet_io_benchmark_config_test \
               concurrency_deadline_queue_test native_io_queue_depth_benchmark \
-              native_io_idle_observe_benchmark native_io_sharded_routing_benchmark \
+              native_io_idle_observe_benchmark native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark \
               cnet_scaling_benchmark
 
       - name: Configure Windows Release
@@ -286,7 +286,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_sharded_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_owner_profile_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_stop_contract_test cnet_benchmark_stats_test cnet_io_benchmark_config_test concurrency_deadline_queue_test native_io_sharded_routing_benchmark
+          cmake --build --preset "${{ matrix.build_preset }}" --target native_io_test native_io_sharded_test native_io_header_cpp_test native_ipc_test native_ipc_header_cpp_test cnet_io_benchmark cnet_websocket_parser_test cnet_websocket_test cnet_session_test cnet_command_test cnet_uri_test cnet_transport_test cnet_owner_test cnet_owner_profile_test cnet_event_test cnet_resolver_test cnet_shards_test cnet_dispatcher_test cnet_api_test cnet_api_profile_test cnet_header_cpp_test cnet_tls_test cnet_datagram_test cnet_kcp_test cnet_secure_kcp_test cnet_packet_endpoint_test cnet_stop_contract_test cnet_benchmark_stats_test cnet_io_benchmark_config_test concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark
 
       - name: Configure and build macOS Release
         if: matrix.family == 'mac'
@@ -308,7 +308,7 @@ jobs:
               cnet_packet_endpoint_test cnet_stop_contract_test \
               cnet_benchmark_stats_test \
               cnet_io_benchmark_config_test \
-              concurrency_deadline_queue_test native_io_sharded_routing_benchmark
+              concurrency_deadline_queue_test native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark
 
       - name: Run NativeIO and NativeIPC contract tests
         shell: pwsh
@@ -407,6 +407,34 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO Sharded routing: $env:NATIVE_IO_SHARDED_BENCH_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO PIPE execution-style benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_PIPE_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_pipe_styles_benchmark
+          NATIVE_IO_PIPE_STYLE_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_PIPE_STYLE_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "NativeIO PIPE style benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_PIPE_STYLE_OUTPUT = Join-Path $resultDir "native-io-pipe-styles"
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "native-io-pipe-styles.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./native-io/benchmarks/verify_pipe_styles_benchmark.ps1 `
+            -Path "$env:NATIVE_IO_PIPE_STYLE_OUTPUT.csv" `
+            -Backend $env:NATIVE_IO_PIPE_STYLE_BACKEND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO PIPE execution styles: $env:NATIVE_IO_PIPE_STYLE_BACKEND"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
