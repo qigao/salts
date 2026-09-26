@@ -284,7 +284,8 @@ jobs:
               cnet_packet_endpoint_test cnet_stop_contract_test \
               cnet_vsock_integration_test \
               cnet_benchmark_stats_test cnet_io_benchmark_config_test \
-              concurrency_deadline_queue_test native_io_queue_depth_benchmark
+              concurrency_deadline_queue_test native_io_queue_depth_benchmark \
+              native_io_idle_observe_benchmark
 
       - name: Configure Windows Release
         if: matrix.family == 'windows'
@@ -431,6 +432,91 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## libuv versus NativeIO direct/coroutine versus CNet: $env:BENCHMARK_HOST"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Build PR-base idle-observe benchmark for TASKRUN_FLAG A/B
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && github.event_name == 'pull_request'
+        shell: bash
+        env:
+          TASKRUN_AB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          base_source="$RUNNER_TEMP/salts-native-io-taskrun-base"
+          rm -rf "$base_source"
+          git worktree add --detach "$base_source" "$TASKRUN_AB_BASE_SHA"
+          cp "$GITHUB_WORKSPACE/native-io/benchmarks/native_io_idle_observe_benchmark.c"              "$base_source/native-io/benchmarks/native_io_idle_observe_benchmark.c"
+          cat >> "$base_source/native-io/benchmarks/CMakeLists.txt" <<'EOF'
+          if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            cmake_add_benchmark(native_io_idle_observe_benchmark
+              SOURCES native_io_idle_observe_benchmark.c
+              LIBS Salts::NativeIO Salts::Platform
+              FOLDER "native-io/benchmarks")
+            set_target_properties(native_io_idle_observe_benchmark PROPERTIES
+              C_STANDARD 11
+              C_STANDARD_REQUIRED ON
+              C_EXTENSIONS OFF)
+          endif()
+          EOF
+          cd "$base_source"
+          cmake --preset linux-release-user -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
+          cmake --build --preset linux-release-user --target native_io_idle_observe_benchmark
+          echo "NATIVE_IO_IDLE_BASE_EXECUTABLE=$base_source/build/linux-gcc-release/bin/native_io_idle_observe_benchmark" >> "$GITHUB_ENV"
+
+      - name: Run NativeIO io_uring idle observe benchmark
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_IDLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_idle_observe_benchmark
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_IDLE_EXECUTABLE
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "idle observe benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_IDLE_OBSERVE_OUTPUT = Join-Path $resultDir "native-io-idle-observe"
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "native-io-idle-observe.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./native-io/benchmarks/verify_idle_observe_benchmark.ps1 -Path "$env:NATIVE_IO_IDLE_OBSERVE_OUTPUT.csv"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO io_uring idle observe(0)"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run same-run TASKRUN_FLAG idle-observe A/B
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          NATIVE_IO_IDLE_CANDIDATE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_idle_observe_benchmark
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results/taskrun-ab"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $candidate = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_IDLE_CANDIDATE_EXECUTABLE
+          $base = $env:NATIVE_IO_IDLE_BASE_EXECUTABLE
+          foreach ($path in @($base, $candidate)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "TASKRUN_FLAG A/B executable not found: $path"
+            }
+          }
+          $runs = @(
+            @{ Name = "base-a"; Exe = $base },
+            @{ Name = "candidate-a"; Exe = $candidate },
+            @{ Name = "candidate-b"; Exe = $candidate },
+            @{ Name = "base-b"; Exe = $base }
+          )
+          foreach ($run in $runs) {
+            $prefix = Join-Path $resultDir $run.Name
+            $env:NATIVE_IO_IDLE_OBSERVE_OUTPUT = $prefix
+            & $run.Exe *> "$prefix.md"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & ./native-io/benchmarks/verify_idle_observe_benchmark.ps1 -Path "$prefix.csv"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          ./native-io/benchmarks/summarize_idle_observe_ab.ps1 -Directory $resultDir |
+            Tee-Object -FilePath (Join-Path $resultDir "summary.md") |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO io_uring queue-depth benchmark
         if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
