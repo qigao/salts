@@ -267,6 +267,14 @@ static int qd_fixture_destroy(qd_fixture *fixture) {
   int status = SALTS_OK;
   int peer_status = SALTS_OK;
 
+  /* Unblock a peer that may be waiting in read() after a failed sample. On the
+   * success path all NativeIO requests are already terminal before cleanup. */
+  for (size_t index = 0u; index < fixture->qd; ++index) {
+    if (fixture->local[index] >= 0) (void)shutdown(fixture->local[index], SHUT_RDWR);
+    if (fixture->peer.descriptors[index] >= 0)
+      (void)shutdown(fixture->peer.descriptors[index], SHUT_RDWR);
+  }
+
   if (fixture->peer_thread != NULL) {
     int join_status = salts_thread_join(&fixture->peer_thread);
     if (join_status != SALTS_OK && status == SALTS_OK) status = join_status;
