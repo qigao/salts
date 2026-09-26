@@ -379,7 +379,7 @@ spec("CMeta canonical borrowed object") {
         check_true(cmeta_receiver_method_reflection_valid(&copied));
         check_equal(cmeta_object_method_invokable_bind(
                         &object, &copied, &invokable),
-                    CMETA_TRAIT_MISSING);
+                    CMETA_INVALID_ARGUMENT);
         check_equal(box.value, 1);
     }
 
