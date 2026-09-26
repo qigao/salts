@@ -7,6 +7,7 @@
 #include <cmeta/entry.h>
 #include <cmeta/function.h>
 #include <cmeta/method.h>
+#include <cmeta/object.h>
 #include <cmeta/infer.h>
 #include <cmeta/collector.h>
 #include <cmeta/compute.h>
