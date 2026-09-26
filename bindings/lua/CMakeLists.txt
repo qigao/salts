@@ -12,6 +12,7 @@ endif()
 
 add_library(salts_lua_binding STATIC salts_lua_cmeta.c)
 add_library(Salts::Lua ALIAS salts_lua_binding)
+set_target_properties(salts_lua_binding PROPERTIES EXPORT_NAME Lua)
 
 target_include_directories(salts_lua_binding
   PUBLIC
