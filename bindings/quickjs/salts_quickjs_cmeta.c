@@ -1076,11 +1076,19 @@ static cmeta_status salts_quickjs_object_surface_validate(
   shape = (const cmeta_data_struct_shape *)object->data->shape;
   for (i = 0u; i < shape->field_count; ++i) {
     const cmeta_data_field_desc *field = &shape->fields[i];
+    if (field->name != NULL &&
+        strcmp(field->name, SALTS_QUICKJS_OBJECT_HOLDER_PROPERTY) == 0)
+      return CMETA_TYPE_MISMATCH;
     for (j = 0u; j < object->methods->method_count; ++j)
       if (field->name != NULL && object->methods->methods[j].name != NULL &&
           strcmp(field->name, object->methods->methods[j].name) == 0)
         return CMETA_TYPE_MISMATCH;
   }
+  for (j = 0u; j < object->methods->method_count; ++j)
+    if (object->methods->methods[j].name != NULL &&
+        strcmp(object->methods->methods[j].name,
+               SALTS_QUICKJS_OBJECT_HOLDER_PROPERTY) == 0)
+      return CMETA_TYPE_MISMATCH;
   return CMETA_OK;
 }
 
@@ -1192,6 +1200,11 @@ cmeta_status salts_quickjs_push_object(
         return CMETA_CALLBACK_ERROR;
       }
     }
+  }
+
+  if (JS_PreventExtensions(context, result) < 0) {
+    JS_FreeValue(context, result);
+    return CMETA_CALLBACK_ERROR;
   }
 
   holder->armed = true;
