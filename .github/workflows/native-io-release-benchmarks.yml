@@ -458,8 +458,9 @@ jobs:
           EOF
           cd "$base_source"
           cmake --preset linux-release-user -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
-          cmake --build --preset linux-release-user --target native_io_idle_observe_benchmark
+          cmake --build --preset linux-release-user --target native_io_idle_observe_benchmark native_io_queue_depth_benchmark
           echo "NATIVE_IO_IDLE_BASE_EXECUTABLE=$base_source/build/linux-gcc-release/bin/native_io_idle_observe_benchmark" >> "$GITHUB_ENV"
+          echo "NATIVE_IO_QD_TASKRUN_BASE_EXECUTABLE=$base_source/build/linux-gcc-release/bin/native_io_queue_depth_benchmark" >> "$GITHUB_ENV"
 
       - name: Run NativeIO io_uring idle observe benchmark
         if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
@@ -605,6 +606,37 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO io_uring queue-depth benchmark"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run same-run TASKRUN_FLAG queue-depth guard A/B
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          NATIVE_IO_QD_TASKRUN_CANDIDATE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_queue_depth_benchmark
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results/taskrun-qd-ab"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $candidate = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_QD_TASKRUN_CANDIDATE_EXECUTABLE
+          $base = $env:NATIVE_IO_QD_TASKRUN_BASE_EXECUTABLE
+          foreach ($path in @($base, $candidate)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "TASKRUN_FLAG QD A/B executable not found: $path"
+            }
+          }
+          $runs = @(
+            @{ Name = "base-a"; Exe = $base },
+            @{ Name = "candidate-a"; Exe = $candidate },
+            @{ Name = "candidate-b"; Exe = $candidate },
+            @{ Name = "base-b"; Exe = $base }
+          )
+          foreach ($run in $runs) {
+            $prefix = Join-Path $resultDir $run.Name
+            $env:NATIVE_IO_QD_BENCHMARK_OUTPUT = $prefix
+            & $run.Exe --no-color *> "$prefix.md"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & ./native-io/benchmarks/verify_queue_depth_benchmark.ps1 -Path "$prefix.csv"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: Compare CNet copy and retained sends independently
         if: steps.scope.outputs.adapted == 'true'
