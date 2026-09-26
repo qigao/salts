@@ -35,14 +35,20 @@ static native_io_backend_kind native_io_sharded_test_backend(void) {
 #endif
 }
 
-static int native_io_sharded_test_create(size_t shards, size_t queue_capacity,
-                                         native_io_sharded **out_runtime) {
-  const native_io_backend_kind kind = native_io_sharded_test_backend();
+static int native_io_sharded_test_create_kind(native_io_backend_kind kind,
+                                              size_t shards, size_t queue_capacity,
+                                              native_io_sharded **out_runtime) {
   native_io_sharded_config config = {
       shards, queue_capacity, {kind, 2u, 2u, 2u}};
   if (kind == (native_io_backend_kind)0 || !native_io_backend_kind_supported(kind))
     return SALTS_ENOTSUP;
   return native_io_sharded_create(&config, out_runtime);
+}
+
+static int native_io_sharded_test_create(size_t shards, size_t queue_capacity,
+                                         native_io_sharded **out_runtime) {
+  return native_io_sharded_test_create_kind(
+      native_io_sharded_test_backend(), shards, queue_capacity, out_runtime);
 }
 
 static int native_io_sharded_wait_atomic(atomic_int *value, int expected) {
@@ -1046,7 +1052,12 @@ spec("NativeIO bounded sharded routing") {
         native_io_sharded_owned_prepare_only, NULL, NULL, &state};
     native_io_sharded_task release_task = {
         native_io_sharded_owned_release, NULL, NULL, &state};
-    int status = native_io_sharded_test_create(2u, 2u, &runtime);
+#if defined(__linux__)
+    const native_io_backend_kind kind = NATIVE_IO_BACKEND_IO_URING;
+#else
+    const native_io_backend_kind kind = native_io_sharded_test_backend();
+#endif
+    int status = native_io_sharded_test_create_kind(kind, 2u, 2u, &runtime);
 
     if (status == SALTS_ENOTSUP) {
       check_equal(status, SALTS_ENOTSUP);
