@@ -55,6 +55,14 @@ _Static_assert(DBL_MANT_DIG == 53 && DBL_MIN_EXP == -1021 && DBL_MAX_EXP == 1024
 CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_bool, _Bool)
 CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_int, int)
 CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_long, long)
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_int8, int8_t)
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_uint8, uint8_t)
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_int16, int16_t)
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_uint16, uint16_t)
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_int32, int32_t)
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_uint32, uint32_t)
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_int64, int64_t)
+CMETA_DEFINE_TRIVIAL_TRAITS(cmeta_uint64, uint64_t)
 
 const cmeta_type_traits cmeta_traits_bool = { CMETA_TRIVIAL_TRAIT_FLAGS,
     cmeta_bool_equal, cmeta_bool_hash, cmeta_bool_compare,
@@ -65,6 +73,24 @@ const cmeta_type_traits cmeta_traits_int = { CMETA_TRIVIAL_TRAIT_FLAGS,
 const cmeta_type_traits cmeta_traits_long = { CMETA_TRIVIAL_TRAIT_FLAGS,
     cmeta_long_equal, cmeta_long_hash, cmeta_long_compare,
     cmeta_long_copy_construct, cmeta_long_move_construct, cmeta_long_destroy };
+
+#define CMETA_EXACT_INTEGER_TRAITS(name_) \
+    static const cmeta_type_traits cmeta_traits_##name_ = { \
+        CMETA_TRIVIAL_TRAIT_FLAGS, \
+        cmeta_##name_##_equal, cmeta_##name_##_hash, cmeta_##name_##_compare, \
+        cmeta_##name_##_copy_construct, cmeta_##name_##_move_construct, \
+        cmeta_##name_##_destroy \
+    }
+CMETA_EXACT_INTEGER_TRAITS(int8);
+CMETA_EXACT_INTEGER_TRAITS(uint8);
+CMETA_EXACT_INTEGER_TRAITS(int16);
+CMETA_EXACT_INTEGER_TRAITS(uint16);
+CMETA_EXACT_INTEGER_TRAITS(int32);
+CMETA_EXACT_INTEGER_TRAITS(uint32);
+CMETA_EXACT_INTEGER_TRAITS(int64);
+CMETA_EXACT_INTEGER_TRAITS(uint64);
+#undef CMETA_EXACT_INTEGER_TRAITS
+
 static const cmeta_type_traits cmeta_traits_size_storage = {
     .flags = CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY
 };
@@ -190,20 +216,20 @@ static const cmeta_type_identity cmeta_id_uint32 = CMETA_TYPE_ID_ATOM_INIT("cmet
 static const cmeta_type_identity cmeta_id_int64 = CMETA_TYPE_ID_ATOM_INIT("cmeta.int64");
 static const cmeta_type_identity cmeta_id_uint64 = CMETA_TYPE_ID_ATOM_INIT("cmeta.uint64");
 
-#define CMETA_EXACT_INTEGER_TYPE(name_, ctype_, identity_) \
+#define CMETA_EXACT_INTEGER_TYPE(name_, ctype_, identity_, traits_) \
 const cmeta_type_desc name_ = { \
     .name = #ctype_, .size = sizeof(ctype_), .align = _Alignof(ctype_), \
-    .kind = CMETA_T_INTEGER, .pointee = NULL, .traits = NULL, \
+    .kind = CMETA_T_INTEGER, .pointee = NULL, .traits = &(traits_), \
     .identity = &(identity_) \
 }
-CMETA_EXACT_INTEGER_TYPE(cmeta_type_int8, int8_t, cmeta_id_int8);
-CMETA_EXACT_INTEGER_TYPE(cmeta_type_uint8, uint8_t, cmeta_id_uint8);
-CMETA_EXACT_INTEGER_TYPE(cmeta_type_int16, int16_t, cmeta_id_int16);
-CMETA_EXACT_INTEGER_TYPE(cmeta_type_uint16, uint16_t, cmeta_id_uint16);
-CMETA_EXACT_INTEGER_TYPE(cmeta_type_int32, int32_t, cmeta_id_int32);
-CMETA_EXACT_INTEGER_TYPE(cmeta_type_uint32, uint32_t, cmeta_id_uint32);
-CMETA_EXACT_INTEGER_TYPE(cmeta_type_int64, int64_t, cmeta_id_int64);
-CMETA_EXACT_INTEGER_TYPE(cmeta_type_uint64, uint64_t, cmeta_id_uint64);
+CMETA_EXACT_INTEGER_TYPE(cmeta_type_int8, int8_t, cmeta_id_int8, cmeta_traits_int8);
+CMETA_EXACT_INTEGER_TYPE(cmeta_type_uint8, uint8_t, cmeta_id_uint8, cmeta_traits_uint8);
+CMETA_EXACT_INTEGER_TYPE(cmeta_type_int16, int16_t, cmeta_id_int16, cmeta_traits_int16);
+CMETA_EXACT_INTEGER_TYPE(cmeta_type_uint16, uint16_t, cmeta_id_uint16, cmeta_traits_uint16);
+CMETA_EXACT_INTEGER_TYPE(cmeta_type_int32, int32_t, cmeta_id_int32, cmeta_traits_int32);
+CMETA_EXACT_INTEGER_TYPE(cmeta_type_uint32, uint32_t, cmeta_id_uint32, cmeta_traits_uint32);
+CMETA_EXACT_INTEGER_TYPE(cmeta_type_int64, int64_t, cmeta_id_int64, cmeta_traits_int64);
+CMETA_EXACT_INTEGER_TYPE(cmeta_type_uint64, uint64_t, cmeta_id_uint64, cmeta_traits_uint64);
 #undef CMETA_EXACT_INTEGER_TYPE
 
 const cmeta_type_desc cmeta_type_void = {
