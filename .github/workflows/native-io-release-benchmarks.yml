@@ -286,7 +286,7 @@ jobs:
               cnet_vsock_integration_test \
               cnet_benchmark_stats_test cnet_io_benchmark_config_test \
               concurrency_deadline_queue_test native_io_queue_depth_benchmark \
-              native_io_idle_observe_benchmark
+              native_io_idle_observe_benchmark cnet_scaling_benchmark
 
       - name: Configure Windows Release
         if: matrix.family == 'windows'
@@ -434,6 +434,30 @@ jobs:
           ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## libuv versus NativeIO direct/coroutine versus CNet: $env:BENCHMARK_HOST"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO direct versus CNet connection-scaling benchmark
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          CNET_SCALING_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_scaling_benchmark
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:CNET_SCALING_EXECUTABLE
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "CNet scaling benchmark executable not found: $benchmark"
+          }
+          $env:CNET_SCALING_BENCHMARK_OUTPUT = Join-Path $resultDir "cnet-scaling"
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "nativeio-cnet-scaling.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./cnet/benchmarks/verify_scaling_benchmark.ps1 -Path "$env:CNET_SCALING_BENCHMARK_OUTPUT.csv"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO direct versus CNet connection scaling: $env:CNET_IO_BENCHMARK_BACKEND"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
