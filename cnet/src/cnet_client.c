@@ -40,7 +40,8 @@ struct cnet_client_impl {
   cnet_shards shards;
   cnet_dispatcher dispatcher;
   cnet_client_record *records;
-  salts_mutex_t lock;
+  /** Synchronizes only poll/profile/wake/stop/destroy control-plane overlap. */
+  salts_mutex_t control_lock;
   size_t shard_count;
   size_t capacity_per_shard;
   size_t record_count;
@@ -174,13 +175,11 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
 
   cnet_active_callback_client = impl;
   if (view->kind == CNET_EVENT_RECEIVE) {
-    salts_mutex_lock(&impl->lock);
     if (record->active && record->internal.session.slot == view->session.slot &&
         record->internal.session.generation == view->session.generation) {
       if (record->receive_pending == 0u) cnet_client_record_error(impl, SALTS_EPROTO);
       else --record->receive_pending;
     }
-    salts_mutex_unlock(&impl->lock);
     if (record->observer.on_receive != NULL) {
       const cnet_receive_view public_view = {view->data, view->size,
                                              record->scheme == CNET_URI_UDP ? CNET_MESSAGE_DATAGRAM
@@ -189,11 +188,9 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
       ++impl->poll_callback_count;
     }
   } else if (view->kind == CNET_EVENT_SEND) {
-    salts_mutex_lock(&impl->lock);
     if (record->active && record->internal.session.slot == view->session.slot &&
         record->internal.session.generation == view->session.generation)
       record->write_pending = false;
-    salts_mutex_unlock(&impl->lock);
     if (record->observer.on_send != NULL) {
       record->observer.on_send(record->observer.user, record->public_handle, view->argument);
       ++impl->poll_callback_count;
@@ -202,14 +199,12 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
     cnet_error error;
     const cnet_error *error_view = NULL;
     if (view->state == CNET_EVENT_STATE_CONNECTED) {
-      salts_mutex_lock(&impl->lock);
       record->tls_command_pending = false;
       record->negotiated_alpn_size = view->size;
       if (view->size != 0u && view->size <= CNET_TLS_ALPN_NAME_MAX_BYTES) {
         memcpy(record->negotiated_alpn, view->data, view->size);
         record->negotiated_alpn[view->size] = '\0';
       }
-      salts_mutex_unlock(&impl->lock);
     }
     if (view->state == CNET_EVENT_STATE_FAILED) {
       error.status = cnet_client_salts_status(view->status) ? view->status : SALTS_EIO;
@@ -224,7 +219,6 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
   cnet_active_callback_client = previous;
 
   if (view->kind == CNET_EVENT_STATE && cnet_client_terminal(view->state)) {
-    salts_mutex_lock(&impl->lock);
     if (record->active && record->internal.session.slot == view->session.slot &&
         record->internal.session.generation == view->session.generation) {
       record->active = false;
@@ -238,7 +232,6 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
       if (impl->active_count == 0u) cnet_client_record_error(impl, SALTS_EPROTO);
       else --impl->active_count;
     }
-    salts_mutex_unlock(&impl->lock);
   }
 }
 
@@ -250,7 +243,7 @@ static void cnet_client_cleanup_init(cnet_client_impl *impl) {
     (void)cnet_dispatcher_destroy(&impl->dispatcher);
   }
   if (impl->shards.impl != NULL) (void)cnet_shards_destroy(&impl->shards);
-  salts_mutex_destroy(&impl->lock);
+  salts_mutex_destroy(&impl->control_lock);
   free(impl->records);
   free(impl);
   (void)cnet_module_shutdown();
@@ -292,7 +285,7 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   impl->admission_open = true;
   atomic_init(&impl->callback_error, SALTS_OK);
   atomic_init(&impl->external_wake_pending, 0);
-  salts_mutex_init(&impl->lock);
+  salts_mutex_init(&impl->control_lock);
   impl->records = (cnet_client_record *)calloc(impl->record_count, sizeof(*impl->records));
   if (impl->records == NULL) {
     cnet_client_cleanup_init(impl);
@@ -370,11 +363,9 @@ int cnet_client_set_stream_socket_options(cnet_client *client,
   int status = cnet_stream_socket_options_validate(options);
   if (status != SALTS_OK) return status;
   if (impl == NULL) return SALTS_EINVAL;
-  salts_mutex_lock(&impl->lock);
   if (!impl->admission_open || impl->stopped) status = SALTS_ESHUTDOWN;
   else if (impl->active_count != 0u || impl->poll_active || impl->stop_active) status = SALTS_EBUSY;
   else impl->socket_options = *options;
-  salts_mutex_unlock(&impl->lock);
   return status;
 }
 
@@ -411,22 +402,12 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
   int status;
 
   if (out_transferred != NULL) *out_transferred = false;
-  salts_mutex_lock(&impl->lock);
-  if (!impl->admission_open) {
-    salts_mutex_unlock(&impl->lock);
-    return SALTS_ESHUTDOWN;
-  }
-  if (impl->active_count >= impl->connection_capacity) {
-    salts_mutex_unlock(&impl->lock);
-    return SALTS_ENOBUFS;
-  }
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  if (impl->active_count >= impl->connection_capacity) return SALTS_ENOBUFS;
   admitted_payload = *payload;
   admitted_payload.socket_options = impl->socket_options;
   status = cnet_shards_connect(&impl->shards, &admitted_payload, &internal);
-  if (status != SALTS_OK) {
-    salts_mutex_unlock(&impl->lock);
-    return status;
-  }
+  if (status != SALTS_OK) return status;
   if (out_transferred != NULL) *out_transferred = true;
   index = (size_t)internal.shard * impl->capacity_per_shard + (size_t)internal.session.slot - 1u;
   record = &impl->records[index];
@@ -449,7 +430,6 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
     --impl->active_count;
     (void)cnet_shards_close(&impl->shards, internal);
   }
-  salts_mutex_unlock(&impl->lock);
   return status;
 }
 
@@ -530,7 +510,6 @@ static int cnet_client_start_tls_ready(cnet_client_impl *impl, cnet_connection c
   cnet_client_record *record;
   cnet_session_state session_state = CNET_SESSION_FREE;
   int status = SALTS_OK;
-  salts_mutex_lock(&impl->lock);
   if (!impl->admission_open) status = SALTS_ESHUTDOWN;
   else if (impl->tls_io_buffer_bytes == 0u) status = SALTS_ENOTSUP;
   else {
@@ -546,7 +525,6 @@ static int cnet_client_start_tls_ready(cnet_client_impl *impl, cnet_connection c
         status = SALTS_EBUSY;
     }
   }
-  salts_mutex_unlock(&impl->lock);
   return status;
 }
 
@@ -555,7 +533,6 @@ static int cnet_client_admit_start_tls(cnet_client_impl *impl, cnet_connection c
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
   int status;
-  salts_mutex_lock(&impl->lock);
   if (!impl->admission_open) status = SALTS_ESHUTDOWN;
   else if (impl->tls_io_buffer_bytes == 0u) status = SALTS_ENOTSUP;
   else {
@@ -576,7 +553,6 @@ static int cnet_client_admit_start_tls(cnet_client_impl *impl, cnet_connection c
       }
     }
   }
-  salts_mutex_unlock(&impl->lock);
   return status;
 }
 
@@ -744,7 +720,6 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
   *out_size = 0u;
   if (impl == NULL || buffer == NULL || capacity == 0u) return SALTS_EINVAL;
 
-  salts_mutex_lock(&impl->lock);
   record = cnet_client_find_record(impl, connection, NULL);
   if (record == NULL) status = SALTS_ENOENT;
   else if (record->scheme != CNET_URI_TLS) status = SALTS_ENOTSUP;
@@ -757,7 +732,6 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
     memcpy(buffer, record->negotiated_alpn, record->negotiated_alpn_size + 1u);
     *out_size = record->negotiated_alpn_size;
   }
-  salts_mutex_unlock(&impl->lock);
   return status;
 }
 
@@ -770,7 +744,6 @@ int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connec
   int status;
   if (impl == NULL || buffer == NULL) return SALTS_EINVAL;
   buffer[0] = '\0';
-  salts_mutex_lock(&impl->lock);
   record = cnet_client_find_record(impl, connection, &internal);
   if (record == NULL) status = SALTS_ENOENT;
   else if (record->scheme != CNET_URI_TLS) status = SALTS_ENOTSUP;
@@ -778,7 +751,6 @@ int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connec
            session_state != CNET_SESSION_OPEN)
     status = SALTS_ENOTCONN;
   else status = cnet_shards_tls_peer_certificate_sha256(&impl->shards, internal, buffer);
-  salts_mutex_unlock(&impl->lock);
   return status;
 }
 
@@ -791,7 +763,6 @@ int cnet_tls_export_channel_binding(cnet_client *client, cnet_connection connect
   int status;
   if (impl == NULL || output == NULL) return SALTS_EINVAL;
   memset(output, 0, CNET_TLS_CHANNEL_BINDING_BYTES);
-  salts_mutex_lock(&impl->lock);
   record = cnet_client_find_record(impl, connection, &internal);
   if (record == NULL) status = SALTS_ENOENT;
   else if (record->scheme != CNET_URI_TLS) status = SALTS_ENOTSUP;
@@ -799,7 +770,6 @@ int cnet_tls_export_channel_binding(cnet_client *client, cnet_connection connect
            session_state != CNET_SESSION_OPEN)
     status = SALTS_ENOTCONN;
   else status = cnet_shards_tls_export_channel_binding(&impl->shards, internal, output);
-  salts_mutex_unlock(&impl->lock);
   return status;
 }
 
@@ -817,7 +787,6 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
   int status;
-  salts_mutex_lock(&impl->lock);
   if (!impl->admission_open) status = SALTS_ESHUTDOWN;
   else {
     record = cnet_client_find_record(impl, connection, &internal);
@@ -839,7 +808,6 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
       }
     }
   }
-  salts_mutex_unlock(&impl->lock);
   return status;
 }
 
@@ -900,7 +868,6 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
    * not cause CNet to reuse. Ordinary owner calls have no in-batch hazard.
    */
   if (cnet_active_callback_client == impl) {
-    salts_mutex_lock(&impl->lock);
     if (!impl->admission_open) status = SALTS_ESHUTDOWN;
     else {
       record = cnet_client_find_record(impl, connection, &internal);
@@ -918,7 +885,6 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
         if (status == SALTS_OK) record->receive_pending += demand;
       }
     }
-    salts_mutex_unlock(&impl->lock);
     return status;
   }
 
@@ -948,8 +914,7 @@ int cnet_close(cnet_client *client, cnet_connection connection) {
   if (impl == NULL) return SALTS_EINVAL;
 
   if (cnet_active_callback_client == impl) {
-    salts_mutex_lock(&impl->lock);
-    if (!impl->admission_open) status = SALTS_ESHUTDOWN;
+      if (!impl->admission_open) status = SALTS_ESHUTDOWN;
     else {
       record = cnet_client_find_record(impl, connection, &internal);
       if (record == NULL) status = SALTS_ENOENT;
@@ -959,8 +924,7 @@ int cnet_close(cnet_client *client, cnet_connection connection) {
         if (status == SALTS_OK) record->close_command_pending = true;
       }
     }
-    salts_mutex_unlock(&impl->lock);
-    return status;
+      return status;
   }
 
   if (!impl->admission_open) return SALTS_ESHUTDOWN;
@@ -998,7 +962,7 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
   *out_events = 0u;
   if (impl == NULL) return SALTS_EINVAL;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
-  salts_mutex_lock(&impl->lock);
+  salts_mutex_lock(&impl->control_lock);
   if (!impl->admission_open || impl->stopped) status = SALTS_ESHUTDOWN;
   else if (impl->poll_active || impl->stop_active) status = SALTS_EBUSY;
   else {
@@ -1006,7 +970,7 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
     impl->poll_callback_count = 0u;
     status = SALTS_OK;
   }
-  salts_mutex_unlock(&impl->lock);
+  salts_mutex_unlock(&impl->control_lock);
   if (status != SALTS_OK) return status;
 #if defined(CNET_INTERNAL_PROFILING)
   if (impl->profile_active) profile_started = salts_hrtime();
@@ -1034,7 +998,7 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
     }
   }
 
-  salts_mutex_lock(&impl->lock);
+  salts_mutex_lock(&impl->control_lock);
   *out_events = impl->poll_callback_count;
 #if defined(CNET_INTERNAL_PROFILING)
   if (profile_started != 0u) {
@@ -1043,7 +1007,7 @@ int cnet_client_poll(cnet_client *client, uint32_t timeout_ms, size_t *out_event
   }
 #endif
   impl->poll_active = false;
-  salts_mutex_unlock(&impl->lock);
+  salts_mutex_unlock(&impl->control_lock);
   return status;
 }
 
@@ -1055,7 +1019,7 @@ int cnet_client_profile_begin(cnet_client *client) {
   int status;
   if (impl == NULL) return SALTS_EINVAL;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
-  salts_mutex_lock(&impl->lock);
+  salts_mutex_lock(&impl->control_lock);
   if (!impl->admission_open || impl->stopped) status = SALTS_ESHUTDOWN;
   else if (impl->poll_active || impl->stop_active || impl->profile_active) status = SALTS_EBUSY;
   else {
@@ -1072,7 +1036,7 @@ int cnet_client_profile_begin(cnet_client *client) {
       (void)cnet_shards_profile_take(&impl->shards, &ignored_owner);
     }
   }
-  salts_mutex_unlock(&impl->lock);
+  salts_mutex_unlock(&impl->control_lock);
   return status;
 }
 
@@ -1082,7 +1046,7 @@ int cnet_client_profile_take(cnet_client *client, cnet_client_poll_profile *out_
   int status;
   if (impl == NULL || out_profile == NULL) return SALTS_EINVAL;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
-  salts_mutex_lock(&impl->lock);
+  salts_mutex_lock(&impl->control_lock);
   if (impl->poll_active || impl->stop_active || !impl->profile_active) status = SALTS_EBUSY;
   else {
     memset(out_profile, 0, sizeof(*out_profile));
@@ -1103,7 +1067,7 @@ int cnet_client_profile_take(cnet_client *client, cnet_client_poll_profile *out_
       impl->profile_active = false;
     }
   }
-  salts_mutex_unlock(&impl->lock);
+  salts_mutex_unlock(&impl->control_lock);
   return status;
 }
 #endif
@@ -1112,9 +1076,9 @@ int cnet_client_wake(cnet_client *client) {
   cnet_client_impl *impl = cnet_client_get(client);
   bool admission_open;
   if (impl == NULL) return SALTS_EINVAL;
-  salts_mutex_lock(&impl->lock);
+  salts_mutex_lock(&impl->control_lock);
   admission_open = impl->admission_open && !impl->stopped;
-  salts_mutex_unlock(&impl->lock);
+  salts_mutex_unlock(&impl->control_lock);
   if (!admission_open) return SALTS_ESHUTDOWN;
   atomic_store_explicit(&impl->external_wake_pending, 1, memory_order_release);
   return cnet_shards_wake(&impl->shards);
@@ -1128,18 +1092,18 @@ int cnet_client_stop(cnet_client *client, uint32_t timeout_ms) {
   int status;
   if (impl == NULL) return SALTS_EINVAL;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
-  salts_mutex_lock(&impl->lock);
+  salts_mutex_lock(&impl->control_lock);
   if (impl->stopped) {
-    salts_mutex_unlock(&impl->lock);
+    salts_mutex_unlock(&impl->control_lock);
     return SALTS_EALREADY;
   }
   if (impl->stop_active) {
-    salts_mutex_unlock(&impl->lock);
+    salts_mutex_unlock(&impl->control_lock);
     return SALTS_EBUSY;
   }
   impl->stop_active = true;
   impl->admission_open = false;
-  salts_mutex_unlock(&impl->lock);
+  salts_mutex_unlock(&impl->control_lock);
 
   status =
       cnet_dispatcher_drain(&impl->dispatcher, cnet_client_remaining_ms(started_ms, timeout_ms));
@@ -1154,10 +1118,10 @@ int cnet_client_stop(cnet_client *client, uint32_t timeout_ms) {
   }
 
   fully_stopped = cnet_dispatcher_drained(&impl->dispatcher) && cnet_shards_stopped(&impl->shards);
-  salts_mutex_lock(&impl->lock);
+  salts_mutex_lock(&impl->control_lock);
   impl->stop_active = false;
   if (fully_stopped) impl->stopped = true;
-  salts_mutex_unlock(&impl->lock);
+  salts_mutex_unlock(&impl->control_lock);
   return first_status;
 }
 
@@ -1167,18 +1131,18 @@ int cnet_client_destroy(cnet_client *client) {
   if (client == NULL) return SALTS_EINVAL;
   if (impl == NULL) return SALTS_OK;
   if (cnet_active_callback_client == impl) return SALTS_EBUSY;
-  salts_mutex_lock(&impl->lock);
+  salts_mutex_lock(&impl->control_lock);
   if (!impl->stopped || impl->stop_active) {
-    salts_mutex_unlock(&impl->lock);
+    salts_mutex_unlock(&impl->control_lock);
     return SALTS_EBUSY;
   }
-  salts_mutex_unlock(&impl->lock);
+  salts_mutex_unlock(&impl->control_lock);
 
   status = cnet_dispatcher_destroy(&impl->dispatcher);
   if (status != SALTS_OK) return status;
   status = cnet_shards_destroy(&impl->shards);
   if (status != SALTS_OK) return status;
-  salts_mutex_destroy(&impl->lock);
+  salts_mutex_destroy(&impl->control_lock);
   free(impl->records);
   free(impl);
   client->impl = NULL;

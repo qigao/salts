@@ -387,6 +387,19 @@ While at least one hostname query is active, a NativeIO wait is capped to a
 progress. Numeric TCP/UDP addresses, VSOCK endpoints, and Pipe endpoints do not
 enter this path.
 
+### Client data-path ownership
+
+Connection records and ordinary client admission are owned by the same CNet
+progress thread. Receive/send callbacks, connection mapping, connect admission,
+TLS admission/inspection and callback-issued send/receive/close therefore do
+not acquire the client control mutex. That mutex is reserved for
+poll/profile/wake/stop/destroy overlap handling, where `cnet_client_wake()`
+is the only operation permitted from a non-owner thread.
+
+This does not make command publication multi-threaded: cross-thread application
+admission still requires an external mailbox, and callback-issued operations
+retain their explicit deferred paths when completion-batch safety requires it.
+
 ### Dispatcher ownership
 
 The client dispatcher is a same-owner callback bridge, not a synchronization
