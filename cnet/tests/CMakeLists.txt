@@ -296,6 +296,26 @@ set_target_properties(
              C_EXTENSIONS OFF)
 
 cmake_add_test(
+  cnet_native_io_sharded_ownership_test
+  SOURCES
+  cnet_native_io_sharded_ownership_test.c
+  LIBS
+  cnet
+  Salts::Core
+  Salts::NativeIO
+  Salts::TinyTest
+  FOLDER
+  "cnet/tests")
+set_target_properties(
+  cnet_native_io_sharded_ownership_test
+  PROPERTIES C_STANDARD 11
+             C_STANDARD_REQUIRED ON
+             C_EXTENSIONS OFF)
+# The release workflow explicitly builds cnet_api_test. Keep the upper-layer
+# NativeIO sharded ownership conformance in the same build closure.
+add_dependencies(cnet_api_test cnet_native_io_sharded_ownership_test)
+
+cmake_add_test(
   cnet_api_profile_test
   SOURCES
   cnet_api_test.c
