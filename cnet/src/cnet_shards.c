@@ -103,9 +103,6 @@ bool cnet_shard_connection_valid(cnet_shard_connection connection) {
 int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
   cnet_shards_impl *impl;
   size_t initialized = 0u;
-  size_t write_capacity;
-  size_t max_write_payload_bytes;
-  size_t write_buffer_bytes;
   size_t index;
   int status = SALTS_OK;
 
@@ -116,22 +113,13 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
       config->completion_batch_capacity == 0u || config->event_capacity_per_shard < 2u ||
       config->receive_buffer_bytes == 0u ||
       config->max_command_payload_bytes < sizeof(cnet_owner_connect_payload) ||
+      config->write_capacity_per_shard == 0u ||
+      config->write_capacity_per_connection == 0u ||
+      config->write_capacity_per_connection > config->write_capacity_per_shard ||
+      config->max_write_payload_bytes == 0u ||
+      config->write_buffer_bytes < config->max_write_payload_bytes ||
       config->shard_count > SIZE_MAX / sizeof(cnet_shard_record))
     return SALTS_EINVAL;
-
-  write_capacity = config->write_capacity_per_shard != 0u
-                       ? config->write_capacity_per_shard
-                       : config->command_capacity_per_shard;
-  max_write_payload_bytes = config->max_write_payload_bytes != 0u
-                                ? config->max_write_payload_bytes
-                                : config->max_command_payload_bytes;
-  if (config->write_buffer_bytes != 0u) {
-    write_buffer_bytes = config->write_buffer_bytes;
-  } else {
-    if (write_capacity > SIZE_MAX / max_write_payload_bytes) return SALTS_ERANGE;
-    write_buffer_bytes = write_capacity * max_write_payload_bytes;
-  }
-  if (write_buffer_bytes < max_write_payload_bytes) return SALTS_EINVAL;
 
   impl = (cnet_shards_impl *)calloc(1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
@@ -146,7 +134,7 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
                                       ? config->receive_buffer_bytes
                                       : config->max_state_payload_bytes;
   impl->max_command_payload_bytes = config->max_command_payload_bytes;
-  impl->max_write_payload_bytes = max_write_payload_bytes;
+  impl->max_write_payload_bytes = config->max_write_payload_bytes;
   impl->admission_open = true;
   atomic_init(&impl->event_sink, NULL);
   atomic_init(&impl->event_sink_context, NULL);
@@ -168,9 +156,10 @@ int cnet_shards_init(cnet_shards *shards, const cnet_shards_config *config) {
         .completion_batch_capacity = config->completion_batch_capacity,
         .receive_buffer_bytes = config->receive_buffer_bytes,
         .receive_buffer_count = config->connection_capacity_per_shard,
-        .write_capacity = write_capacity,
-        .max_write_bytes = max_write_payload_bytes,
-        .write_buffer_bytes = write_buffer_bytes,
+        .write_capacity = config->write_capacity_per_shard,
+        .write_capacity_per_connection = config->write_capacity_per_connection,
+        .max_write_bytes = config->max_write_payload_bytes,
+        .write_buffer_bytes = config->write_buffer_bytes,
         .sessions = &record->sessions,
         .commands = &record->commands,
         .events = &record->events,
