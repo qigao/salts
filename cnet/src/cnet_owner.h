@@ -123,6 +123,18 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms);
 int cnet_owner_receive_direct(cnet_owner *owner, cnet_session_handle session, size_t demand);
 
 /**
+ * Owner-thread send ownership admission. These copy/retain into the bounded
+ * write queue and schedule owner-local work; they never publish a callback
+ * synchronously. TLS remains on the existing command/TLS path in W2.
+ */
+int cnet_owner_send_copy_direct(cnet_owner *owner, cnet_session_handle session,
+                                const void *data, size_t size);
+int cnet_owner_send_buffer_direct(cnet_owner *owner, cnet_session_handle session,
+                                  mem_buffer_t *buffer);
+int cnet_owner_sendv_direct(cnet_owner *owner, cnet_session_handle session,
+                            const cnet_const_buffer *segments, size_t segment_count);
+
+/**
  * Owner-thread quiescent close admission.
  *
  * Commits the canonical session to DRAINING and schedules owner-local close

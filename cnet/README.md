@@ -78,9 +78,12 @@ global slot bound plus per-connection FIFO chains. Copied payloads consume an
 explicit aggregate byte budget; retained `mem_buffer_t` payloads consume one
 retained reference but no copied-byte budget.
 
-W1 installs and tests this ownership substrate without changing public send
-admission yet. W2/W3 will move owner/callback send admission onto these slots
-and then enable bounded multiple-write FIFO admission. Until NativeIO gains an
+W1 installs and tests this ownership substrate. W2 routes ordinary non-TLS
+`send`, retained-buffer send, and vector-copy send directly into these
+owner-local slots, bypassing the generic command mailbox while preserving the
+existing one-write public admission rule. TLS and `send_and_close` keep their
+current command/TLS ownership until W3 migrates their ordering semantics.
+W3 then enables bounded multiple-write FIFO admission. Until NativeIO gains an
 explicit scatter/gather operation contract, `cnet_sendv()` remains a checked
 copy into one owned write slot rather than claiming native vectored zero-copy.
 
