@@ -36,7 +36,8 @@ cmeta_status make_object_ref(
     cmeta_object_ref *out) noexcept {
   if (out == nullptr || data == nullptr || data->storage_type == nullptr)
     return CMETA_INVALID_ARGUMENT;
-  if (data->storage_type->size != sizeof(T) ||
+  if (data->storage_type->kind != CMETA_T_OBJECT ||
+      data->storage_type->size != sizeof(T) ||
       data->storage_type->align != alignof(T))
     return CMETA_TYPE_MISMATCH;
 
