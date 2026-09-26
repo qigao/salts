@@ -466,6 +466,30 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
+      - name: Run NativeIO Direct/Coroutine bounded vector-write benchmark
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_STREAM_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_stream_styles_benchmark
+          NATIVE_IO_STREAM_STYLE_BACKEND: ${{ matrix.backend }}
+          NATIVE_IO_STREAM_VECTOR_BENCHMARK: "1"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_STREAM_STYLE_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "NativeIO vector-write benchmark executable not found: $benchmark"
+          }
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "native-io-vector-writes.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO Direct/Coroutine vector writes: $env:NATIVE_IO_STREAM_STYLE_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
       - name: Trace NativeIO STREAM execution-style mechanisms
         if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
         shell: bash
