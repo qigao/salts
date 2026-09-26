@@ -62,3 +62,54 @@ cmeta_receiver_method_find(const cmeta_receiver_method_set *set,
 
     return NULL;
 }
+
+cmeta_receiver_resolve_status
+cmeta_receiver_method_resolve(
+    const cmeta_receiver_method_set *set,
+    const cmeta_type_desc *receiver_type,
+    const char *method_name,
+    const cmeta_type_desc *const *argument_types,
+    size_t argument_count,
+    cmeta_receiver_resolution *out) {
+    const cmeta_receiver_method *method;
+    size_t i;
+
+    if (out == NULL || out->size < sizeof(*out))
+        return CMETA_RECEIVER_RESOLVE_INVALID_ARGUMENT;
+
+    out->method = NULL;
+    out->argument_index = CMETA_RECEIVER_ARGUMENT_NONE;
+
+    if (receiver_type == NULL || !cmeta_type_desc_valid(receiver_type) ||
+        method_name == NULL || method_name[0] == '\0' ||
+        (argument_count != 0u && argument_types == NULL))
+        return CMETA_RECEIVER_RESOLVE_INVALID_ARGUMENT;
+
+    if (!cmeta_receiver_method_set_valid(set))
+        return CMETA_RECEIVER_RESOLVE_INVALID_METHOD_SET;
+
+    if (!cmeta_type_equal(set->receiver_type, receiver_type))
+        return CMETA_RECEIVER_RESOLVE_RECEIVER_TYPE_MISMATCH;
+
+    method = cmeta_receiver_method_find(set, method_name);
+    if (method == NULL)
+        return CMETA_RECEIVER_RESOLVE_METHOD_NOT_FOUND;
+
+    if (method->function->param_count != argument_count + 1u)
+        return CMETA_RECEIVER_RESOLVE_ARITY_MISMATCH;
+
+    for (i = 0u; i < argument_count; ++i) {
+        if (argument_types[i] == NULL ||
+            !cmeta_type_desc_valid(argument_types[i]))
+            return CMETA_RECEIVER_RESOLVE_INVALID_ARGUMENT;
+        if (!cmeta_type_equal(
+                method->function->params[i + 1u].type,
+                argument_types[i])) {
+            out->argument_index = i;
+            return CMETA_RECEIVER_RESOLVE_ARGUMENT_TYPE_MISMATCH;
+        }
+    }
+
+    out->method = method;
+    return CMETA_RECEIVER_RESOLVE_OK;
+}

@@ -62,6 +62,76 @@ spec("CMeta receiver method set") {
         check_null(cmeta_receiver_method_find(&method_set, "missing"));
     }
 
+    it("resolves receiver call semantics with precise diagnostics") {
+        cmeta_receiver_resolution resolution = CMETA_RECEIVER_RESOLUTION_INIT;
+        const cmeta_type_desc *one_int[] = {&cmeta_type_int};
+        const cmeta_type_desc *one_long[] = {&cmeta_type_long};
+        cmeta_type_desc other_type = method_box_type;
+        cmeta_receiver_resolve_status status;
+
+        status = cmeta_receiver_method_resolve(
+            &method_set, &method_box_type, "add",
+            one_int, 1u, &resolution);
+        check_equal(status, CMETA_RECEIVER_RESOLVE_OK);
+        check_true(resolution.method == &method_entries[0]);
+        check_equal(resolution.argument_index, CMETA_RECEIVER_ARGUMENT_NONE);
+
+        resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
+        status = cmeta_receiver_method_resolve(
+            &method_set, &method_box_type, "missing",
+            one_int, 1u, &resolution);
+        check_equal(status, CMETA_RECEIVER_RESOLVE_METHOD_NOT_FOUND);
+        check_null(resolution.method);
+
+        resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
+        status = cmeta_receiver_method_resolve(
+            &method_set, &method_box_type, "add",
+            NULL, 0u, &resolution);
+        check_equal(status, CMETA_RECEIVER_RESOLVE_ARITY_MISMATCH);
+
+        resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
+        status = cmeta_receiver_method_resolve(
+            &method_set, &method_box_type, "add",
+            one_long, 1u, &resolution);
+        check_equal(status, CMETA_RECEIVER_RESOLVE_ARGUMENT_TYPE_MISMATCH);
+        check_equal(resolution.argument_index, (size_t)0u);
+        check_null(resolution.method);
+
+        other_type.name = "other_method_box";
+        resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
+        status = cmeta_receiver_method_resolve(
+            &method_set, &other_type, "add",
+            one_int, 1u, &resolution);
+        check_equal(status, CMETA_RECEIVER_RESOLVE_RECEIVER_TYPE_MISMATCH);
+    }
+
+    it("rejects malformed semantic resolution inputs") {
+        cmeta_receiver_resolution resolution = CMETA_RECEIVER_RESOLUTION_INIT;
+        cmeta_receiver_method_set invalid_set = method_set;
+        const cmeta_type_desc *bad_args[] = {NULL};
+
+        invalid_set.size = 0u;
+        check_equal(
+            cmeta_receiver_method_resolve(
+                &invalid_set, &method_box_type, "add",
+                NULL, 0u, &resolution),
+            CMETA_RECEIVER_RESOLVE_INVALID_METHOD_SET);
+
+        resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
+        check_equal(
+            cmeta_receiver_method_resolve(
+                &method_set, &method_box_type, "add",
+                bad_args, 1u, &resolution),
+            CMETA_RECEIVER_RESOLVE_INVALID_ARGUMENT);
+
+        resolution.size = 0u;
+        check_equal(
+            cmeta_receiver_method_resolve(
+                &method_set, &method_box_type, "add",
+                NULL, 0u, &resolution),
+            CMETA_RECEIVER_RESOLVE_INVALID_ARGUMENT);
+    }
+
     it("rejects duplicate names and receiver mismatches") {
         cmeta_receiver_method duplicates[] = {
             {"add", &method_add_function, &method_add_abi},

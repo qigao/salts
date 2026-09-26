@@ -150,11 +150,11 @@ cstl_add_method_rejection_test(
 cstl_add_method_rejection_test(
   cstl_method_lower_wrong_argument_test
   wrong_argument.cmeta
-  "list.add arguments do not match reflected signature")
+  "list.add argument 0 type does not match reflected signature")
 cstl_add_method_rejection_test(
   cstl_method_lower_wrong_arity_test
   wrong_arity.cmeta
-  "map.put arguments do not match reflected signature")
+  "map.put arity does not match reflected signature")
 endif()
 
 
