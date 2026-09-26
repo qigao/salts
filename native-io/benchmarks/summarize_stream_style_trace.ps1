@@ -57,38 +57,11 @@ function Parse-Trace([string]$Label, [string]$Style) {
   }
 
   foreach ($file in $files) {
-    $pending = $null
-    foreach ($rawLine in [IO.File]::ReadLines($file.FullName)) {
-      $line = $rawLine
-      $timestamp = $null
-
-      if ($line -match '^(\d+\.\d+)\s+(.*)<unfinished \.\.\.>$') {
-        if ($null -ne $pending) { throw "nested unfinished syscall in $($file.Name)" }
-        $pending = @{
-          timestamp = [double]::Parse($Matches[1], $Invariant)
-          prefix = $Matches[2]
-        }
-        continue
-      }
-
-      if ($line -match '^\d+\.\d+\s+<\.\.\. (\w+) resumed>(.*)$') {
-        if ($null -eq $pending -or $pending.prefix -notmatch "\\s+$($Matches[1])\\(") {
-          throw "unmatched resumed syscall in $($file.Name): $line"
-        }
-        $timestamp = [double]$pending.timestamp
-        $line = $pending.prefix + $Matches[2]
-        $pending = $null
-      } elseif ($line -match '^(\d+\.\d+)\s+') {
-        $timestamp = [double]::Parse($Matches[1], $Invariant)
-        $line = $line.Substring($Matches[0].Length)
-      } else {
-        continue
-      }
-
+    foreach ($line in [IO.File]::ReadLines($file.FullName)) {
+      if ($line -notmatch '^(\d+\.\d+)\s+(\w+)\(') { continue }
+      $timestamp = [double]::Parse($Matches[1], $Invariant)
+      $name = $Matches[2]
       if ($timestamp -lt $begin -or $timestamp -gt $finish) { continue }
-      if ($line -match '^--- ') { continue }
-      if ($line -notmatch '^(\w+)\(.*\)\s+=\s+.+?\s+<([\d.]+)>$') { continue }
-      $name = $Matches[1]
 
       if ($name -match '^(send|sendto|sendmsg|sendmmsg|recv|recvfrom|recvmsg|recvmmsg)$') {
         $counts.network++
@@ -100,13 +73,9 @@ function Parse-Trace([string]$Label, [string]$Style) {
         $counts.poll_wait++
       } elseif ($name -eq 'futex') {
         $counts.futex++
-      } elseif ($name -eq 'write') {
-        if ($line -notmatch '^write\(2,') { $counts.control_write++ }
+      } elseif ($name -eq 'write' -and $line -notmatch '^\d+\.\d+\s+write\(2,') {
+        $counts.control_write++
       }
-    }
-    if ($null -ne $pending -and
-        $pending.timestamp -ge $begin -and $pending.timestamp -le $finish) {
-      throw "unfinished syscall inside measurement window in $($file.Name)"
     }
   }
 
