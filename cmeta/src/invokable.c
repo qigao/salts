@@ -151,13 +151,17 @@ cmeta_status cmeta_object_method_invokable_bind(
     cmeta_object_method_binding binding = CMETA_OBJECT_METHOD_BINDING_INIT;
     cmeta_status status;
 
-    if (!cmeta_object_ref_valid(object) || method == NULL || out == NULL)
+    if (out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    *out = (cmeta_invokable)CMETA_INVOKABLE_INIT;
+    if (!cmeta_object_ref_valid(object) || method == NULL)
         return CMETA_INVALID_ARGUMENT;
     provider = object->method_provider;
-    if (!cmeta_object_method_provider_valid(provider) ||
-        provider->methods != object->methods ||
-        !cmeta_object_method_member(object->methods, method))
+    if (!cmeta_object_method_provider_valid(provider))
         return CMETA_TRAIT_MISSING;
+    if (provider->methods != object->methods ||
+        !cmeta_object_method_member(object->methods, method))
+        return CMETA_INVALID_ARGUMENT;
 
     status = provider->bind(
         provider->context, object->object, method, &binding);
