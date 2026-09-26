@@ -1,0 +1,95 @@
+name: CMeta object binding
+
+on:
+  pull_request:
+    paths:
+      - "cmeta/include/cmeta/object.h"
+      - "cmeta/include/cmeta/method.h"
+      - "cmeta/include/cmeta/invokable.h"
+      - "cmeta/include/cmeta/meta.h"
+      - "cmeta/src/object.c"
+      - "cmeta/src/method.c"
+      - "cmeta/src/invokable.c"
+      - "cmeta/tests/cmeta_object_test.c"
+      - "cmeta/tests/cmeta_method_test.c"
+      - "cmeta/tests/cmeta_invokable_test.c"
+      - "cmeta/tests/cmeta_header_cpp_test.cpp"
+      - "cmeta/tests/CMakeLists.txt"
+      - "bindings/CMakeLists.txt"
+      - "bindings/lua/**"
+      - "bindings/quickjs/**"
+      - "bindings/tests/**"
+      - ".github/workflows/cmeta-object-binding.yml"
+  push:
+    paths:
+      - "cmeta/include/cmeta/object.h"
+      - "cmeta/include/cmeta/method.h"
+      - "cmeta/include/cmeta/invokable.h"
+      - "cmeta/src/object.c"
+      - "cmeta/src/method.c"
+      - "cmeta/src/invokable.c"
+      - "bindings/lua/**"
+      - "bindings/quickjs/**"
+      - "bindings/tests/**"
+      - ".github/workflows/cmeta-object-binding.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Linux C object + Lua + QuickJS
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up shared build dependencies
+        uses: ./.github/actions/setup-re2c-tools
+
+      - name: Install native build prerequisite
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y nasm
+
+      - name: Configure focused native build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset linux-release-user \
+            -DENABLE_TESTS=ON \
+            -DBUILD_TESTS=ON \
+            -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DSALTS_BINDINGS_LUA=ON \
+            -DSALTS_BINDINGS_QUICKJS=ON \
+            '-DVCPKG_MANIFEST_FEATURES=lua-bindings;quickjs-bindings'
+
+      - name: Build object-binding targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build --preset linux-release-user --parallel 2 --target \
+            cmeta_object_test \
+            cmeta_method_test \
+            cmeta_invokable_test \
+            cmeta_header_cpp_test \
+            salts_lua_invokable_test \
+            salts_lua_object_test \
+            salts_quickjs_cmeta_test \
+            salts_quickjs_object_test \
+            salts_object_cross_runtime_test
+
+      - name: Run focused object-binding tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir build/linux-gcc-release \
+            --output-on-failure \
+            -R '^(cmeta_object_test|cmeta_method_test|cmeta_invokable_test|cmeta_header_cpp_test|salts_lua_invokable_test|salts_lua_object_test|salts_quickjs_cmeta_test|salts_quickjs_object_test|salts_object_cross_runtime_test)$'
+
+      - name: Source hygiene
+        shell: bash
+        run: git diff --check
