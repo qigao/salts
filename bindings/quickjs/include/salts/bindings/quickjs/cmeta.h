@@ -3,7 +3,14 @@
 
 #include <cmeta/data.h>
 #include <cmeta/invokable.h>
+#include <cmeta/object.h>
 #include <quickjs.h>
+
+#if !defined(QJS_VERSION_MAJOR) || !defined(QJS_VERSION_MINOR) || \
+    !defined(QJS_VERSION_PATCH) || QJS_VERSION_MAJOR != 0 || \
+    QJS_VERSION_MINOR != 16 || QJS_VERSION_PATCH != 2
+#error "Salts QuickJS binding requires quickjs-ng 0.16.2 from qigao/vcpkg-cache"
+#endif
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -48,6 +55,25 @@ cmeta_status salts_quickjs_call_invokable(
     JSContext *context, const cmeta_invokable *invokable,
     int argument_count, JSValueConst *arguments, salts_quickjs_limits limits,
     JSValue *out_result, bool *out_has_result);
+
+/**
+ * Move one canonical native object handle into a live QuickJS proxy.
+ *
+ * The returned JS object reads reflected fields from the current native
+ * instance and invokes receiver methods only through the canonical CMeta
+ * object-method provider/invokable path. The VM owns the moved object-handle
+ * lifetime and releases it exactly once when the last native closure retained
+ * by the proxy becomes unreachable.
+ *
+ * Reflected fields are writable only when the object carries explicit
+ * cmeta_object_field_provider authority; writes route through canonical
+ * semantic temporaries and cmeta_object_field_assign(). Reflection alone never
+ * grants writability. No QuickJS-private semantic type/method registry is
+ * created.
+ */
+cmeta_status salts_quickjs_push_object(
+    JSContext *context, cmeta_object_ref *object,
+    salts_quickjs_limits limits, JSValue *out_value);
 
 #ifdef __cplusplus
 }
