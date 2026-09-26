@@ -53,11 +53,18 @@ foreach(marker
     "native_io_sharded_context_release_socket"
     "native_io_sharded_context_release_pipe"
     "native_io_sharded_context_submit"
+    "native_io_sharded_context_submit_owned"
+    "native_io_sharded_context_prepare_owned"
+    "native_io_sharded_ownership"
     "owner_identity")
   require_marker("${native_io_sharded}" "${marker}" "NativeIO sharded routing contract")
 endforeach()
 require_marker("${native_io_sharded_impl}" "salts_coro_executor_try_submit_to"
                "NativeIO sharded executor reuse")
+require_marker("${native_io_sharded_impl}" "request_ownerships"
+               "NativeIO sharded request ownership storage")
+require_marker("${native_io_sharded_impl}" "ownership.finalize"
+               "NativeIO sharded request ownership settlement")
 forbid_marker("${native_io}" "owner_shard" "raw NativeIO endpoint ABI")
 forbid_marker("${native_io_sharded_impl}" "mem_buffer_t"
               "NativeIO sharded ownership boundary")
