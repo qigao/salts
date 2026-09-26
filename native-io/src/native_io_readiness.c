@@ -51,9 +51,12 @@ typedef struct salts_io_readiness_request {
   native_io_request request;
   native_io_endpoint endpoint;
   native_io_operation operation;
+  struct iovec vectors[NATIVE_IO_VECTOR_MAX];
+  size_t vector_count;
   native_io_completion completion;
   uint32_t previous;
   uint32_t next;
+  bool vector_write;
   bool write_lane;
   bool connect_started;
 } salts_io_readiness_request;
@@ -216,6 +219,8 @@ static void readiness_release_request(salts_io_readiness_impl *impl,
   if (endpoint != NULL && endpoint->active_requests != 0u) --endpoint->active_requests;
   request->phase = SALTS_IO_READINESS_FREE;
   request->operation = (native_io_operation){0};
+  request->vector_count = 0u;
+  request->vector_write = false;
   request->completion = (native_io_completion){0};
   impl->free_requests[impl->free_request_count++] = index;
   --impl->active_requests;
@@ -299,7 +304,12 @@ static int readiness_try_socket(salts_io_readiness_endpoint *endpoint,
   (void)guard_status;
 #endif
   do {
-    if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_RECV)
+    if (request->vector_write) {
+      struct msghdr message = {0};
+      message.msg_iov = request->vectors;
+      message.msg_iovlen = request->vector_count;
+      result = sendmsg(endpoint->fd, &message, flags);
+    } else if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_RECV)
       result = recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
     else if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_SEND)
       result = send(endpoint->fd, request->operation.buffer, request->operation.length, flags);
@@ -346,9 +356,12 @@ static int readiness_try_pipe(salts_io_readiness_endpoint *endpoint,
     if (guard_status != SALTS_OK) return guard_status;
   }
   do {
-    result = request->write_lane
-                 ? write(endpoint->fd, request->operation.buffer, request->operation.length)
-                 : read(endpoint->fd, request->operation.buffer, request->operation.length);
+    if (request->vector_write)
+      result = writev(endpoint->fd, request->vectors, (int)request->vector_count);
+    else
+      result = request->write_lane
+                   ? write(endpoint->fd, request->operation.buffer, request->operation.length)
+                   : read(endpoint->fd, request->operation.buffer, request->operation.length);
   } while (result < 0 && errno == EINTR);
   if (result < 0) saved_error = errno;
   if (request->write_lane) readiness_sigpipe_end(&guard);
@@ -542,6 +555,8 @@ static int readiness_submit(salts_io_impl *base, const native_io_operation *oper
       (native_io_request){index + 1u, readiness_next_generation(request->request.generation)};
   request->endpoint = operation->endpoint;
   request->operation = *operation;
+  request->vector_count = 0u;
+  request->vector_write = false;
   request->previous = SALTS_IO_INDEX_NONE;
   request->next = SALTS_IO_INDEX_NONE;
   request->write_lane = readiness_is_write(operation->kind);
@@ -577,6 +592,96 @@ static int readiness_submit(salts_io_impl *base, const native_io_operation *oper
   readiness_counter_increment(&impl->submitted);
   *out_request = request->request;
   return SALTS_OK;
+}
+
+static int readiness_submit_vector(salts_io_impl *base,
+                                   const native_io_vector_operation *operation,
+                                   native_io_request *out_request) {
+  salts_io_readiness_impl *impl = (salts_io_readiness_impl *)base;
+  salts_io_readiness_endpoint *endpoint;
+  salts_io_readiness_request *request;
+  uint32_t index;
+  size_t bytes = 0u;
+  size_t address_length = 0u;
+  int status;
+
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  endpoint = readiness_endpoint(impl, operation->endpoint);
+  if (endpoint == NULL) return SALTS_ENOENT;
+  if (operation->kind == NATIVE_IO_OPERATION_STREAM_SEND) {
+    if (endpoint->resource_kind != SALTS_IO_RESOURCE_STREAM_SOCKET) return SALTS_EINVAL;
+    if (endpoint->connect_active) return SALTS_EBUSY;
+    if (!endpoint->connected) return SALTS_EINVAL;
+  } else if (operation->kind == NATIVE_IO_OPERATION_PIPE_WRITE) {
+    if (endpoint->resource_kind != SALTS_IO_RESOURCE_BYTE_PIPE) return SALTS_EINVAL;
+  } else {
+    return SALTS_EINVAL;
+  }
+  if (impl->free_request_count == 0u) {
+    readiness_counter_increment(&impl->rejected_full);
+    return SALTS_ENOBUFS;
+  }
+
+  index = impl->free_requests[--impl->free_request_count];
+  request = &impl->requests[index];
+  request->phase = SALTS_IO_READINESS_PENDING;
+  request->request =
+      (native_io_request){index + 1u, readiness_next_generation(request->request.generation)};
+  request->endpoint = operation->endpoint;
+  request->operation = (native_io_operation){
+      .kind = operation->kind, .endpoint = operation->endpoint, .user_data = operation->user_data};
+  request->vector_count = operation->span_count;
+  for (size_t cursor = 0u; cursor < operation->span_count; ++cursor) {
+    request->vectors[cursor].iov_base = operation->spans[cursor].data;
+    request->vectors[cursor].iov_len = operation->spans[cursor].length;
+  }
+  request->vector_write = true;
+  request->previous = SALTS_IO_INDEX_NONE;
+  request->next = SALTS_IO_INDEX_NONE;
+  request->write_lane = true;
+  request->connect_started = false;
+  ++endpoint->active_requests;
+  ++impl->active_requests;
+
+  if (readiness_lane(endpoint, true)->head != SALTS_IO_INDEX_NONE) {
+    readiness_lane_push(impl, endpoint, index);
+    readiness_counter_increment(&impl->submitted);
+    *out_request = request->request;
+    return SALTS_OK;
+  }
+  status = readiness_try_operation(endpoint, request, &bytes, &address_length);
+  if (readiness_would_block(status)) {
+    readiness_lane_push(impl, endpoint, index);
+    status = readiness_update_interests(impl, operation->endpoint, endpoint);
+    if (status != SALTS_OK) {
+      readiness_lane_remove(impl, endpoint, index);
+      readiness_release_request(impl, request, index);
+      readiness_counter_increment(&impl->native_submit_errors);
+      return status;
+    }
+  } else if (status < 0) {
+    readiness_release_request(impl, request, index);
+    readiness_counter_increment(&impl->native_submit_errors);
+    return status;
+  } else {
+    readiness_finish_attempt(impl, request, index, status, bytes, address_length);
+  }
+  readiness_counter_increment(&impl->submitted);
+  *out_request = request->request;
+  return SALTS_OK;
+}
+
+static bool readiness_supports_vector_write(const salts_io_impl *base,
+                                            native_io_endpoint endpoint_handle) {
+  const salts_io_readiness_impl *impl = (const salts_io_readiness_impl *)base;
+  const salts_io_readiness_endpoint *endpoint;
+  if (!native_io_endpoint_valid(endpoint_handle) ||
+      endpoint_handle.slot > impl->endpoint_capacity)
+    return false;
+  endpoint = &impl->endpoints[endpoint_handle.slot - 1u];
+  return endpoint->active && endpoint->generation == endpoint_handle.generation &&
+         (endpoint->resource_kind == SALTS_IO_RESOURCE_STREAM_SOCKET ||
+          endpoint->resource_kind == SALTS_IO_RESOURCE_BYTE_PIPE);
 }
 
 static int readiness_cancel(salts_io_impl *base, native_io_request request_handle) {
@@ -734,7 +839,8 @@ static const salts_io_impl_ops readiness_ops = {
     readiness_attach_socket, readiness_release_socket, readiness_submit,  readiness_cancel,
     readiness_observe,       readiness_wake,            readiness_close,  readiness_destroy,
     readiness_get_stats,     readiness_attach_pipe,     readiness_release_pipe,
-    readiness_submit,        NULL};
+    readiness_submit,        NULL,                  readiness_submit_vector,
+    readiness_supports_vector_write};
 
 static bool readiness_array_fits(size_t count, size_t element_size) {
   return element_size != 0u && count <= SIZE_MAX / element_size;
