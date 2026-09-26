@@ -71,7 +71,7 @@ cmake_add_test(cstl_typed_test
 # Minimal CMeta receiver-method lowering POC. The lowerer runs at build time;
 # the generated executable contains only the direct typed CSTL call.
 add_executable(cstl_method_lower_poc cstl_method_lower_poc.c)
-target_link_libraries(cstl_method_lower_poc PRIVATE Salts::CMeta)
+target_link_libraries(cstl_method_lower_poc PRIVATE Salts::CSTL)
 set_target_properties(cstl_method_lower_poc PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
