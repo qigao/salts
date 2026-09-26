@@ -40,6 +40,70 @@ typedef struct native_io_sharded_task {
   void *arg;
 } native_io_sharded_task;
 
+/**
+ * Runtime- and shard-bound endpoint identity.
+ *
+ * Raw NativeIO endpoint ABI remains unchanged. The wrapper adds immutable
+ * runtime/shard affinity only in the Sharded adapter. There is no rebind or
+ * migration API for a live endpoint.
+ */
+typedef struct native_io_sharded_endpoint {
+  uint64_t owner_identity;
+  uint32_t owner_shard;
+  uint32_t reserved;
+  native_io_endpoint native_endpoint;
+} native_io_sharded_endpoint;
+
+/** Runtime- and shard-bound request identity. */
+typedef struct native_io_sharded_request {
+  uint64_t owner_identity;
+  uint32_t owner_shard;
+  uint32_t reserved;
+  native_io_request native_request;
+} native_io_sharded_request;
+
+/**
+ * Owner-local I/O descriptor.
+ *
+ * buffer/address ownership is exactly the raw NativeIO borrow contract and is
+ * valid only when this descriptor is submitted from its endpoint owner shard.
+ * This type is not a cross-shard borrowed-payload transport.
+ */
+typedef struct native_io_sharded_operation {
+  native_io_operation_kind kind;
+  native_io_sharded_endpoint endpoint;
+  void *buffer;
+  size_t length;
+  uintptr_t user_data;
+  void *address;
+  size_t address_capacity;
+  size_t address_length;
+} native_io_sharded_operation;
+
+typedef struct native_io_sharded_completion {
+  native_io_sharded_request request;
+  native_io_sharded_endpoint endpoint;
+  native_io_completion_kind kind;
+  size_t bytes;
+  int status;
+  uint32_t native_status;
+  uintptr_t user_data;
+  size_t address_length;
+} native_io_sharded_completion;
+
+SALTS_NATIVE_IO_C_API bool native_io_sharded_endpoint_valid(native_io_sharded_endpoint endpoint);
+SALTS_NATIVE_IO_C_API bool native_io_sharded_request_valid(native_io_sharded_request request);
+SALTS_NATIVE_IO_C_API bool
+native_io_sharded_operation_valid(const native_io_sharded_operation *operation);
+
+/** Returns SIZE_MAX for an invalid endpoint wrapper. */
+SALTS_NATIVE_IO_C_API size_t
+native_io_sharded_endpoint_owner_shard(native_io_sharded_endpoint endpoint);
+
+/** Returns SIZE_MAX for an invalid request wrapper. */
+SALTS_NATIVE_IO_C_API size_t
+native_io_sharded_request_owner_shard(native_io_sharded_request request);
+
 typedef struct native_io_sharded_config {
   /** Fixed number of owner shards. Must be nonzero. */
   size_t shard_count;
@@ -147,6 +211,75 @@ SALTS_NATIVE_IO_C_API size_t native_io_sharded_current_shard(const native_io_sha
 /** Returns the shard named by a callback context, or SIZE_MAX for NULL. */
 SALTS_NATIVE_IO_C_API size_t
 native_io_sharded_context_shard(const native_io_sharded_context *context);
+
+/**
+ * Attaches a socket to the callback's owner backend and returns an affinity
+ * wrapper. Must run from the live callback context. out_endpoint is cleared on
+ * failure.
+ */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_context_attach_socket(native_io_sharded_context *context,
+                                        uintptr_t native_socket,
+                                        native_io_sharded_endpoint *out_endpoint);
+
+/** Owner-local counterpart of native_io_backend_attach_pipe. */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_context_attach_pipe(native_io_sharded_context *context,
+                                      uintptr_t native_handle, uint32_t flags,
+                                      native_io_sharded_endpoint *out_endpoint);
+
+/**
+ * Releases a drained socket endpoint on its fixed owner shard.
+ *
+ * Returns SALTS_EPERM when the wrapper belongs to another shard of the same
+ * runtime and SALTS_ENOENT when it belongs to another runtime or is stale.
+ */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_context_release_socket(native_io_sharded_context *context,
+                                         native_io_sharded_endpoint endpoint);
+
+/** Owner-local counterpart of native_io_backend_release_pipe. */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_context_release_pipe(native_io_sharded_context *context,
+                                       native_io_sharded_endpoint endpoint);
+
+/**
+ * Starts one owner-local operation using raw NativeIO borrow semantics.
+ *
+ * Cross-shard callers must first route execution to endpoint.owner_shard and
+ * keep payload/address storage alive through the routed task/finalizer. This
+ * function never silently forwards or migrates a wrong-shard operation.
+ */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_context_submit(native_io_sharded_context *context,
+                                 const native_io_sharded_operation *operation,
+                                 native_io_sharded_request *out_request);
+
+/** Owner-local batched admission counterpart of native_io_backend_prepare. */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_context_prepare(native_io_sharded_context *context,
+                                  const native_io_sharded_operation *operation,
+                                  native_io_sharded_request *out_request);
+
+/** Flushes the callback's owner backend. */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_context_flush(native_io_sharded_context *context);
+
+/** Requests cancellation only on the request's fixed owner shard. */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_context_cancel(native_io_sharded_context *context,
+                                 native_io_sharded_request request);
+
+/**
+ * Observes owner-local terminal completions and restores runtime/shard affinity
+ * on each returned endpoint/request wrapper. Uses runtime-preallocated scratch
+ * storage; no steady-state allocation is introduced.
+ */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_context_observe(native_io_sharded_context *context,
+                                  native_io_sharded_completion *events,
+                                  size_t event_capacity, uint32_t timeout_ms,
+                                  size_t *out_count);
 
 /** Copies a versioned concurrent statistics snapshot. */
 SALTS_NATIVE_IO_C_API bool native_io_sharded_get_stats(const native_io_sharded *runtime,

@@ -47,7 +47,13 @@ endforeach()
 foreach(marker
     "native_io_sharded_submit_to"
     "native_io_sharded_try_submit_to"
-    "native_io_sharded_current_shard")
+    "native_io_sharded_current_shard"
+    "native_io_sharded_context_attach_socket"
+    "native_io_sharded_context_attach_pipe"
+    "native_io_sharded_context_release_socket"
+    "native_io_sharded_context_release_pipe"
+    "native_io_sharded_context_submit"
+    "owner_identity")
   require_marker("${native_io_sharded}" "${marker}" "NativeIO sharded routing contract")
 endforeach()
 require_marker("${native_io_sharded_impl}" "salts_coro_executor_try_submit_to"

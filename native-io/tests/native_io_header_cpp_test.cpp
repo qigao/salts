@@ -19,8 +19,14 @@ int main() {
   const auto sharded_submit = &native_io_sharded_submit_to;
   const auto sharded_try_submit = &native_io_sharded_try_submit_to;
   const auto sharded_shutdown = &native_io_sharded_shutdown;
+  const auto sharded_attach_pipe = &native_io_sharded_context_attach_pipe;
+  const auto sharded_release_pipe = &native_io_sharded_context_release_pipe;
+  const auto sharded_owner_submit = &native_io_sharded_context_submit;
   static_assert(std::is_standard_layout_v<native_io_endpoint>);
   static_assert(std::is_standard_layout_v<native_io_sharded_config>);
+  static_assert(std::is_standard_layout_v<native_io_sharded_endpoint>);
+  static_assert(std::is_standard_layout_v<native_io_sharded_request>);
+  static_assert(std::is_standard_layout_v<native_io_sharded_operation>);
   static_assert(sizeof(native_io_endpoint) == sizeof(std::uint32_t) * 2u);
   static_assert(offsetof(native_io_endpoint, slot) == 0u);
   static_assert(offsetof(native_io_endpoint, generation) == sizeof(std::uint32_t));
@@ -34,6 +40,9 @@ int main() {
   (void)sharded_submit;
   (void)sharded_try_submit;
   (void)sharded_shutdown;
+  (void)sharded_attach_pipe;
+  (void)sharded_release_pipe;
+  (void)sharded_owner_submit;
   return native_io_endpoint_valid(endpoint) && native_io_request_valid(request) &&
                  pipe_read == NATIVE_IO_OPERATION_PIPE_READ &&
                  NATIVE_IO_OPERATION_PIPE_WRITE == 6 &&
