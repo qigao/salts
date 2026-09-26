@@ -12,7 +12,7 @@ if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
 $rows = @(Import-Csv -LiteralPath $Path)
 $connections = @(1, 4, 16, 64)
 $payloads = @(1024, 8192, 32768, 65536)
-$drivers = @("NativeIO direct", "CNet")
+$drivers = @("NativeIO direct", "CNet copy", "CNet retained")
 $expected = $connections.Count * $payloads.Count * $drivers.Count
 
 if ($rows.Count -ne $expected) {
@@ -58,7 +58,7 @@ foreach ($row in $rows) {
     $ownerDrive = [double]$row.owner_drive_ns
     $ownerObserve = [double]$row.owner_observe_ns
     $clientPoll = [double]$row.client_poll_ns
-    if ($driver -eq "CNet") {
+    if ($driver -eq "CNet copy" -or $driver -eq "CNet retained") {
         if ($ownerDrive -le 0 -or $ownerObserve -le 0 -or $clientPoll -le 0) {
             throw "missing CNet owner/poll attribution for $connectionCount/$payload"
         }
