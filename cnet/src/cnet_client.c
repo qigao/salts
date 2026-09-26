@@ -787,6 +787,7 @@ typedef struct cnet_client_send_input {
   const cnet_const_buffer *segments;
   mem_buffer_t *retained_buffer;
   const mem_slice_t *retained_slice;
+  const mem_slice_t *retained_slices;
   size_t size;
   size_t segment_count;
   bool close_after_send;
@@ -808,6 +809,9 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
     else {
       if (input->close_after_send) {
         status = cnet_shards_send_close_direct(&impl->shards, internal, input->data, input->size);
+      } else if (input->retained_slices != NULL) {
+        status = cnet_shards_send_slicev_direct(&impl->shards, internal, input->retained_slices,
+                                                input->segment_count);
       } else if (input->retained_slice != NULL) {
         status = cnet_shards_send_slice_direct(&impl->shards, internal, input->retained_slice);
       } else if (input->retained_buffer != NULL) {
@@ -875,6 +879,22 @@ int cnet_send_slice(cnet_client *client, cnet_connection connection,
   if (impl == NULL || !cnet_client_slice_canonical(slice)) return SALTS_EINVAL;
   if (slice->length > impl->max_send_bytes) return SALTS_EMSGSIZE;
   input = (cnet_client_send_input){.retained_slice = slice, .size = slice->length};
+  return cnet_client_send_admit(impl, connection, &input);
+}
+
+int cnet_send_slicev(cnet_client *client, cnet_connection connection,
+                     const mem_slice_t *segments, size_t segment_count) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_client_send_input input = {
+      .retained_slices = segments, .segment_count = segment_count};
+  if (impl == NULL || segments == NULL || segment_count == 0u ||
+      segment_count > NATIVE_IO_VECTOR_MAX)
+    return SALTS_EINVAL;
+  for (size_t index = 0u; index < segment_count; ++index) {
+    if (!cnet_client_slice_canonical(&segments[index])) return SALTS_EINVAL;
+    if (segments[index].length > impl->max_send_bytes - input.size) return SALTS_EMSGSIZE;
+    input.size += segments[index].length;
+  }
   return cnet_client_send_admit(impl, connection, &input);
 }
 
