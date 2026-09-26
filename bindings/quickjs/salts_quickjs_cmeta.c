@@ -401,7 +401,7 @@ static cmeta_status salts_quickjs_read_integer(
   double number;
   if (shape == NULL) return CMETA_INVALID_ARGUMENT;
   if (shape->bits == 64u) {
-    if (!JS_IsBigInt(context, value)) return CMETA_TYPE_MISMATCH;
+    if (!JS_IsBigInt(value)) return CMETA_TYPE_MISMATCH;
     if (data->kind == CMETA_DATA_SINT) {
       int64_t raw;
       if (JS_ToBigInt64(context, &raw, value) < 0)
@@ -529,7 +529,7 @@ static cmeta_status salts_quickjs_read_enum(
           number > UINT32_MAX)
         return CMETA_TYPE_MISMATCH;
       bits = (uint64_t)number;
-    } else if (domain->bits == 64u && JS_IsBigInt(context, value)) {
+    } else if (domain->bits == 64u && JS_IsBigInt(value)) {
       if (JS_ToBigUint64(context, &bits, value) < 0)
         return CMETA_TYPE_MISMATCH;
     } else {
@@ -558,7 +558,7 @@ static cmeta_status salts_quickjs_read_enum(
           number >= 9223372036854775808.0)
         return CMETA_TYPE_MISMATCH;
       raw = (int64_t)number;
-    } else if (JS_IsBigInt(context, value)) {
+    } else if (JS_IsBigInt(value)) {
       if (JS_ToBigInt64(context, &raw, value) < 0)
         return CMETA_TYPE_MISMATCH;
     } else {
