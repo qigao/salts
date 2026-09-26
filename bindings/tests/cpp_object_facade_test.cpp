@@ -9,6 +9,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
+#include <utility>
+
+static_assert(!std::is_copy_constructible_v<Salts::Lua::StackGuard>);
+static_assert(std::is_move_constructible_v<Salts::Lua::StackGuard>);
+static_assert(!std::is_copy_constructible_v<Salts::QuickJS::Value>);
+static_assert(std::is_move_constructible_v<Salts::QuickJS::Value>);
 
 struct cpp_object_box {
   int value;
@@ -121,6 +128,24 @@ spec("C++ canonical object binding facade") {
 
     Salts::Lua::Context lua{lua_state, lua_limits};
     Salts::QuickJS::Context js{js_context, js_limits};
+
+    check_equal(lua_gettop(lua_state), 0);
+    {
+      auto stack = lua.stack_guard();
+      lua_pushinteger(lua_state, 123);
+      check_equal(lua_gettop(lua_state), stack.top() + 1);
+    }
+    check_equal(lua_gettop(lua_state), 0);
+
+    {
+      Salts::QuickJS::Value first{
+          js_context, JS_NewInt32(js_context, 42)};
+      Salts::QuickJS::Value second{std::move(first)};
+      check_true(JS_IsNumber(second.get()));
+      JSValue raw = second.release();
+      check_true(JS_IsNumber(raw));
+      JS_FreeValue(js_context, raw);
+    }
 
     check_equal(
         lua.bind_global(
