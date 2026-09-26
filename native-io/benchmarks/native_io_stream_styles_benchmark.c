@@ -89,6 +89,7 @@ typedef struct stream_style_coroutine_operation {
   size_t offset;
   int status;
   bool write;
+  bool vector_write;
   bool done;
 } stream_style_coroutine_operation;
 
@@ -493,7 +494,8 @@ static int stream_style_backend_fixture_destroy(stream_style_backend_fixture *fi
   return status;
 }
 
-static int stream_style_direct_transfer(stream_style_backend_fixture *fixture) {
+static int stream_style_direct_transfer(stream_style_backend_fixture *fixture,
+                                        bool vector_write) {
   size_t sent_offset = 0u;
   size_t received_offset = 0u;
   bool read_pending = false;
@@ -519,14 +521,26 @@ static int stream_style_direct_transfer(stream_style_backend_fixture *fixture) {
     }
 
     if (!write_pending && sent_offset < fixture->payload_size) {
-      const native_io_operation operation = {
-          .kind = NATIVE_IO_OPERATION_STREAM_SEND,
-          .endpoint = fixture->endpoints[1],
-          .buffer = fixture->sent + sent_offset,
-          .length = fixture->payload_size - sent_offset,
-          .user_data = 2u};
+      const size_t remaining = fixture->payload_size - sent_offset;
       native_io_request request = {0};
-      status = native_io_backend_submit(&fixture->backend, &operation, &request);
+      if (vector_write) {
+        const size_t first_length = remaining > 1u ? remaining / 2u : remaining;
+        native_io_buffer_span spans[2] = {
+            {fixture->sent + sent_offset, first_length},
+            {fixture->sent + sent_offset + first_length, remaining - first_length}};
+        const size_t span_count = spans[1].length == 0u ? 1u : 2u;
+        const native_io_vector_operation operation = {
+            NATIVE_IO_OPERATION_STREAM_SEND, fixture->endpoints[1], spans, span_count, 2u};
+        status = native_io_backend_submit_vector(&fixture->backend, &operation, &request);
+      } else {
+        const native_io_operation operation = {
+            .kind = NATIVE_IO_OPERATION_STREAM_SEND,
+            .endpoint = fixture->endpoints[1],
+            .buffer = fixture->sent + sent_offset,
+            .length = remaining,
+            .user_data = 2u};
+        status = native_io_backend_submit(&fixture->backend, &operation, &request);
+      }
       if (status != SALTS_OK) return status;
       write_pending = true;
     }
@@ -570,15 +584,29 @@ static void stream_style_coroutine_entry(native_io_coroutine *coroutine, void *a
   state->status = SALTS_OK;
   while (state->offset < state->length) {
     native_io_completion completion = {0};
-    const native_io_operation operation = {
-        .kind = state->write ? NATIVE_IO_OPERATION_STREAM_SEND
-                             : NATIVE_IO_OPERATION_STREAM_RECV,
-        .endpoint = state->fixture->endpoints[state->write ? 1u : 0u],
-        .buffer = state->buffer + state->offset,
-        .length = state->length - state->offset,
-        .user_data = state->write ? 2u : 1u};
-    state->status =
-        native_io_coroutine_await(coroutine, &operation, &completion);
+    if (state->write && state->vector_write) {
+      const size_t remaining = state->length - state->offset;
+      const size_t first_length = remaining > 1u ? remaining / 2u : remaining;
+      native_io_buffer_span spans[2] = {
+          {state->buffer + state->offset, first_length},
+          {state->buffer + state->offset + first_length, remaining - first_length}};
+      const size_t span_count = spans[1].length == 0u ? 1u : 2u;
+      const native_io_vector_operation operation = {
+          NATIVE_IO_OPERATION_STREAM_SEND, state->fixture->endpoints[1],
+          spans, span_count, 2u};
+      state->status =
+          native_io_coroutine_await_vector(coroutine, &operation, &completion);
+    } else {
+      const native_io_operation operation = {
+          .kind = state->write ? NATIVE_IO_OPERATION_STREAM_SEND
+                               : NATIVE_IO_OPERATION_STREAM_RECV,
+          .endpoint = state->fixture->endpoints[state->write ? 1u : 0u],
+          .buffer = state->buffer + state->offset,
+          .length = state->length - state->offset,
+          .user_data = state->write ? 2u : 1u};
+      state->status =
+          native_io_coroutine_await(coroutine, &operation, &completion);
+    }
     if (state->status != SALTS_OK) break;
     if (completion.kind != NATIVE_IO_COMPLETION_OK || completion.bytes == 0u ||
         completion.bytes > state->length - state->offset) {
@@ -611,11 +639,12 @@ static int stream_style_coroutine_cancel_and_drain(
   return SALTS_OK;
 }
 
-static int stream_style_coroutine_transfer(stream_style_backend_fixture *fixture) {
+static int stream_style_coroutine_transfer(stream_style_backend_fixture *fixture,
+                                           bool vector_write) {
   stream_style_coroutine_operation read_state = {
-      fixture, fixture->received, fixture->payload_size, 0u, SALTS_OK, false, false};
+      fixture, fixture->received, fixture->payload_size, 0u, SALTS_OK, false, false, false};
   stream_style_coroutine_operation write_state = {
-      fixture, fixture->sent, fixture->payload_size, 0u, SALTS_OK, true, false};
+      fixture, fixture->sent, fixture->payload_size, 0u, SALTS_OK, true, vector_write, false};
   native_io_coroutine_task read_task = {0};
   native_io_coroutine_task write_task = {0};
   native_io_completion events[STREAM_STYLE_COMPLETION_CAPACITY];
@@ -668,7 +697,7 @@ static int stream_style_coroutine_transfer(stream_style_backend_fixture *fixture
 
 static int stream_style_measure_backend(native_io_backend_kind kind, stream_style_kind style,
                                       size_t payload_size, stream_style_result *out,
-                                      bool trace) {
+                                      bool trace, bool vector_write) {
   stream_style_backend_fixture fixture;
   uint64_t *latencies =
       (uint64_t *)calloc(STREAM_STYLE_MEASURED_TRANSFERS, sizeof(*latencies));
@@ -679,8 +708,9 @@ static int stream_style_measure_backend(native_io_backend_kind kind, stream_styl
   if (status != SALTS_OK) goto cleanup;
 
   for (size_t index = 0u; index < STREAM_STYLE_WARMUP_TRANSFERS; ++index) {
-    status = style == STREAM_STYLE_DIRECT ? stream_style_direct_transfer(&fixture)
-                                        : stream_style_coroutine_transfer(&fixture);
+    status = style == STREAM_STYLE_DIRECT
+                 ? stream_style_direct_transfer(&fixture, vector_write)
+                 : stream_style_coroutine_transfer(&fixture, vector_write);
     if (status != SALTS_OK) goto cleanup;
   }
 
@@ -693,8 +723,9 @@ static int stream_style_measure_backend(native_io_backend_kind kind, stream_styl
   out->transfers = STREAM_STYLE_MEASURED_TRANSFERS;
   for (size_t index = 0u; index < STREAM_STYLE_MEASURED_TRANSFERS; ++index) {
     const uint64_t started = salts_hrtime();
-    status = style == STREAM_STYLE_DIRECT ? stream_style_direct_transfer(&fixture)
-                                        : stream_style_coroutine_transfer(&fixture);
+    status = style == STREAM_STYLE_DIRECT
+                 ? stream_style_direct_transfer(&fixture, vector_write)
+                 : stream_style_coroutine_transfer(&fixture, vector_write);
     latencies[index] = salts_hrtime() - started;
     if (status != SALTS_OK) goto cleanup;
     out->wall_ns += latencies[index];
@@ -1115,6 +1146,44 @@ static void stream_style_print_csv_row(FILE *stream, const char *backend,
           result->max_completion_batch);
 }
 
+static bool stream_style_vector_benchmark_enabled(void) {
+  const char *value = getenv("NATIVE_IO_STREAM_VECTOR_BENCHMARK");
+  return value != NULL && *value != '\0';
+}
+
+static int stream_style_run_vector_benchmark(native_io_backend_kind kind,
+                                             const char *backend) {
+  const stream_style_kind styles[] = {STREAM_STYLE_DIRECT, STREAM_STYLE_COROUTINE};
+  const char *names[] = {"direct_vector", "coroutine_vector"};
+  const size_t payload_count =
+      sizeof(STREAM_STYLE_PAYLOADS) / sizeof(STREAM_STYLE_PAYLOADS[0]);
+
+  printf("# NativeIO bounded vector-write benchmark\n\n");
+  printf("Backend: %s\n\n", backend);
+  printf("| style | payload | p50 us | p95 us | MiB/s | observe calls | completions | max batch |\n");
+  printf("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  for (size_t style_index = 0u; style_index < 2u; ++style_index) {
+    for (size_t payload_index = 0u; payload_index < payload_count; ++payload_index) {
+      stream_style_result result = {0};
+      const int status =
+          stream_style_measure_backend(kind, styles[style_index],
+                                       STREAM_STYLE_PAYLOADS[payload_index],
+                                       &result, false, true);
+      if (status != SALTS_OK) return status;
+      printf("| %s | %zu | %.3f | %.3f | %.2f | %" PRIu64 " | %" PRIu64
+             " | %" PRIu64 " |\n",
+             names[style_index], result.payload_size,
+             (double)result.p50_ns / 1000.0,
+             (double)result.p95_ns / 1000.0,
+             result.mib_per_second,
+             result.observe_calls,
+             result.completion_count,
+             result.max_completion_batch);
+    }
+  }
+  return SALTS_OK;
+}
+
 int main(void) {
   const native_io_backend_kind kind = stream_style_backend();
   const char *backend = stream_style_backend_name(kind);
@@ -1145,6 +1214,12 @@ int main(void) {
     }
   }
 
+  if (stream_style_vector_benchmark_enabled()) {
+    const int status = stream_style_run_vector_benchmark(kind, backend);
+    stream_style_network_stop();
+    return status == SALTS_OK ? 0 : 1;
+  }
+
   trace_status = stream_style_parse_trace(&trace);
   if (trace_status != SALTS_OK) {
     fprintf(stderr, "invalid NATIVE_IO_STREAM_STYLE_TRACE: %d\n", trace_status);
@@ -1166,7 +1241,7 @@ int main(void) {
     status = trace.style == STREAM_STYLE_DIRECT ||
                      trace.style == STREAM_STYLE_COROUTINE
                  ? stream_style_measure_backend(kind, trace.style,
-                                                trace.payload_size, &result, true)
+                                                trace.payload_size, &result, true, false)
                  : stream_style_measure_sharded(kind, trace.style,
                                                 trace.payload_size, &result, true);
     stream_style_network_stop();
@@ -1181,7 +1256,7 @@ int main(void) {
       if (style == STREAM_STYLE_DIRECT || style == STREAM_STYLE_COROUTINE)
         status = stream_style_measure_backend(kind, style,
                                             STREAM_STYLE_PAYLOADS[payload_index],
-                                            &results[style_index][payload_index], false);
+                                            &results[style_index][payload_index], false, false);
       else
         status = stream_style_measure_sharded(kind, style,
                                             STREAM_STYLE_PAYLOADS[payload_index],
