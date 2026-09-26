@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstring>
 #include <type_traits>
+#include <utility>
 
 struct cpp_object_box {
   int value;
