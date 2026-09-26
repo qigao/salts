@@ -599,6 +599,34 @@ jobs:
             $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
           }
 
+      - name: Run flatten versus NativeIO SG merge-gate comparison
+        if: steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
+          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
+          CNET_IO_BENCHMARK_SG_COMPARE: "1"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:IO_BENCHMARK_EXECUTABLE
+          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "SG comparison benchmark executable not found: $benchmark"
+          }
+          $env:CNET_IO_BENCHMARK_OUTPUT = Join-Path $resultDir "sg-compare"
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "sg-compare.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path -LiteralPath "$env:CNET_IO_BENCHMARK_OUTPUT.sg.csv" -PathType Leaf)) {
+            throw "SG comparison CSV was not produced"
+          }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Flatten versus NativeIO SG: $env:CNET_IO_BENCHMARK_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
       - name: Run libuv versus NativeIO direct/coroutine versus CNet retained benchmark
         if: steps.scope.outputs.adapted == 'true'
         shell: pwsh
