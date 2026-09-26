@@ -1,4 +1,6 @@
+#include <cmeta/invokable.h>
 #include <cmeta/object.h>
+#include <string.h>
 #include "tinytest.h"
 
 typedef struct object_box {
@@ -132,10 +134,92 @@ static const cmeta_receiver_method_set object_method_set = {
     .owner_name = "ObjectBox"
 };
 
+static const cmeta_param_desc object_add_projected_params[] = {
+    {
+        .size = sizeof(cmeta_param_desc),
+        .name = "delta",
+        .type = &cmeta_type_int,
+        .flags = CMETA_PARAM_IN
+    }
+};
+
+static const cmeta_function_desc object_add_projected_function = {
+    .size = sizeof(cmeta_function_desc),
+    .name = "ObjectBox.bound_add",
+    .return_type = &cmeta_type_int,
+    .params = object_add_projected_params,
+    .param_count = 1u,
+    .effects = CMETA_EFFECT_STATEFUL,
+    .properties = CMETA_PROP_NONE
+};
+
+static const cmeta_data_desc *const object_add_projected_data_params[] = {
+    &cmeta_data_int
+};
+
+static const cmeta_function_data_desc object_add_projected_data = {
+    .size = sizeof(cmeta_function_data_desc),
+    .function = &object_add_projected_function,
+    .return_data = &cmeta_data_int,
+    .params = object_add_projected_data_params,
+    .param_count = 1u
+};
+
+typed_any(value, int, object_add_callable_shape, (int delta)) {
+    return delta;
+}
+
 static int object_box_add(object_box *self, int delta) {
     self->value += delta;
     return self->value;
 }
+
+static bool object_box_bound_add_invoke(
+    const cmeta_callable *self, void *out, const void *const *args) {
+    object_box *receiver = NULL;
+    int delta;
+    int result;
+
+    if (self == NULL || out == NULL || args == NULL || args[0] == NULL ||
+        self->capture_size != sizeof(receiver))
+        return false;
+    memcpy(&receiver, self->capture.bytes, sizeof(receiver));
+    if (receiver == NULL)
+        return false;
+    memcpy(&delta, args[0], sizeof(delta));
+    result = object_box_add(receiver, delta);
+    memcpy(out, &result, sizeof(result));
+    return true;
+}
+
+static cmeta_status object_box_method_bind(
+    void *context, void *object, const cmeta_receiver_method *method,
+    cmeta_object_method_binding *out) {
+    object_box *receiver = (object_box *)object;
+    cmeta_callable callable = object_add_callable_shape;
+
+    (void)context;
+    if (receiver == NULL || method != &object_methods[0] || out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+
+    *out = (cmeta_object_method_binding)CMETA_OBJECT_METHOD_BINDING_INIT;
+    callable.invoke = object_box_bound_add_invoke;
+    callable.capture_size = sizeof(receiver);
+    memcpy(callable.capture.bytes, &receiver, sizeof(receiver));
+    callable.meta.effects = object_add_projected_function.effects;
+    callable.meta.properties = object_add_projected_function.properties;
+
+    out->data = &object_add_projected_data;
+    out->callable = callable;
+    return CMETA_OK;
+}
+
+static const cmeta_object_method_provider object_method_provider = {
+    .size = sizeof(cmeta_object_method_provider),
+    .methods = &object_method_set,
+    .context = NULL,
+    .bind = object_box_method_bind
+};
 
 spec("CMeta canonical borrowed object") {
     it("preserves one native identity without taking ownership") {
@@ -149,6 +233,7 @@ spec("CMeta canonical borrowed object") {
         check_true(object.object == &box);
         check_true(object.data == &object_box_data);
         check_true(object.methods == &object_method_set);
+        check_null(object.method_provider);
         check_equal(object.lifetime, CMETA_OBJECT_LIFETIME_BORROWED);
 
         ((object_box *)object.object)->value = 11;
@@ -162,6 +247,7 @@ spec("CMeta canonical borrowed object") {
         check_null(object.object);
         check_null(object.data);
         check_null(object.methods);
+        check_null(object.method_provider);
         check_equal(object.lifetime, CMETA_OBJECT_LIFETIME_NONE);
         check_equal(box.value, 16);
     }
@@ -216,6 +302,53 @@ spec("CMeta canonical borrowed object") {
                         arguments, 1u, &resolution),
                     CMETA_RECEIVER_RESOLVE_METHOD_NOT_FOUND);
         check_null(resolution.method);
+    }
+
+    it("binds and invokes a resolved method on the same native instance") {
+        object_box box = {10};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        cmeta_receiver_resolution resolution = CMETA_RECEIVER_RESOLUTION_INIT;
+        cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+        const cmeta_type_desc *arguments[] = {&cmeta_type_int};
+        const void *invoke_args[1];
+        const cmeta_data_desc *field_data = NULL;
+        const void *field_value = NULL;
+        int delta = 7;
+        int result = 0;
+
+        invoke_args[0] = &delta;
+        check_true(cmeta_object_method_provider_valid(&object_method_provider));
+        check_equal(cmeta_object_borrow_with_provider(
+                        &object, &box, &object_box_data,
+                        &object_method_provider),
+                    CMETA_OK);
+        check_true(object.methods == &object_method_set);
+        check_true(object.method_provider == &object_method_provider);
+
+        check_equal(cmeta_object_method_resolve(
+                        &object, "ObjectBox", "add",
+                        arguments, 1u, &resolution),
+                    CMETA_RECEIVER_RESOLVE_OK);
+        check_true(resolution.method == &object_methods[0]);
+
+        check_equal(cmeta_object_method_invokable_bind(
+                        &object, resolution.method, &invokable),
+                    CMETA_OK);
+        check_equal(cmeta_invokable_invoke(
+                        &invokable, &result, invoke_args),
+                    CMETA_OK);
+        check_equal(result, 17);
+        check_equal(box.value, 17);
+
+        check_equal(cmeta_object_field_read(
+                        &object, "value", &field_data, &field_value),
+                    CMETA_OK);
+        check_true(field_data == &cmeta_data_int);
+        check_true(field_value == &box.value);
+        check_equal(*(const int *)field_value, 17);
+
+        cmeta_object_release(&object);
+        check_equal(box.value, 17);
     }
 
     it("allows data-only borrowed objects") {
