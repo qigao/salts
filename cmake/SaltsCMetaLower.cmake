@@ -30,11 +30,32 @@ function(salts_cmeta_lower_source)
     set(lower_depends cmeta_lower)
   else()
     if(NOT SALTS_CMETA_LOWER_EXECUTABLE)
-      find_program(SALTS_CMETA_LOWER_EXECUTABLE
-        NAMES cmeta-lower
-        HINTS
+      set(_salts_cmeta_lower_hints
           "${PACKAGE_PREFIX_DIR}/bin"
           "${CMAKE_CURRENT_LIST_DIR}/../../../bin")
+
+      # Salts.Native keeps target SDKs as siblings. When an Android target
+      # package is selected, resolve the lowerer from the matching host SDK.
+      if(PACKAGE_PREFIX_DIR)
+        get_filename_component(_salts_sdk_root "${PACKAGE_PREFIX_DIR}" DIRECTORY)
+        if(CMAKE_HOST_WIN32)
+          list(APPEND _salts_cmeta_lower_hints
+               "${_salts_sdk_root}/windows-x64/bin")
+        elseif(CMAKE_HOST_APPLE)
+          list(APPEND _salts_cmeta_lower_hints
+               "${_salts_sdk_root}/macos-arm64/bin"
+               "${_salts_sdk_root}/macos-x64/bin")
+        else()
+          list(APPEND _salts_cmeta_lower_hints
+               "${_salts_sdk_root}/linux-x64/bin")
+        endif()
+      endif()
+
+      find_program(SALTS_CMETA_LOWER_EXECUTABLE
+        NAMES cmeta-lower
+        HINTS ${_salts_cmeta_lower_hints})
+      unset(_salts_cmeta_lower_hints)
+      unset(_salts_sdk_root)
     endif()
     if(NOT SALTS_CMETA_LOWER_EXECUTABLE)
       message(FATAL_ERROR
