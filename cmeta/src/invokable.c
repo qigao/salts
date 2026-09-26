@@ -1,5 +1,6 @@
 #include <cmeta/invokable.h>
 #include <cmeta/interface.h>
+#include <cmeta/method.h>
 
 bool cmeta_function_data_desc_valid(
     const cmeta_function_data_desc *desc) {
@@ -115,6 +116,62 @@ cmeta_status cmeta_interface_method_invokable_bind(
     if (!cmeta_function_desc_equal(method->function, data->function))
         return CMETA_TYPE_MISMATCH;
     return cmeta_invokable_bind_data(data, callable, out);
+}
+
+cmeta_status cmeta_receiver_method_invokable_bind(
+    const cmeta_receiver_method *method,
+    const cmeta_function_data_desc *data,
+    cmeta_callable callable, cmeta_invokable *out) {
+    if (method == NULL || data == NULL || out == NULL ||
+        !cmeta_receiver_method_reflection_valid(method) ||
+        !cmeta_function_data_desc_valid(data))
+        return CMETA_INVALID_ARGUMENT;
+    if (!cmeta_receiver_method_projection_valid(method, data->function))
+        return CMETA_TYPE_MISMATCH;
+    return cmeta_invokable_bind_data(data, callable, out);
+}
+
+static bool cmeta_object_method_member(
+    const cmeta_receiver_method_set *set,
+    const cmeta_receiver_method *method) {
+    size_t i;
+    if (!cmeta_receiver_method_set_valid(set) || method == NULL)
+        return false;
+    for (i = 0u; i < set->method_count; ++i)
+        if (&set->methods[i] == method)
+            return true;
+    return false;
+}
+
+cmeta_status cmeta_object_method_invokable_bind(
+    const cmeta_object_ref *object,
+    const cmeta_receiver_method *method,
+    cmeta_invokable *out) {
+    const cmeta_object_method_provider *provider;
+    cmeta_object_method_binding binding = CMETA_OBJECT_METHOD_BINDING_INIT;
+    cmeta_status status;
+
+    if (out == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    *out = (cmeta_invokable)CMETA_INVOKABLE_INIT;
+    if (!cmeta_object_ref_valid(object) || method == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    provider = object->method_provider;
+    if (!cmeta_object_method_provider_valid(provider))
+        return CMETA_TRAIT_MISSING;
+    if (provider->methods != object->methods ||
+        !cmeta_object_method_member(object->methods, method))
+        return CMETA_INVALID_ARGUMENT;
+
+    status = provider->bind(
+        provider->context, object->object, method, &binding);
+    if (status != CMETA_OK)
+        return status;
+    if (binding.size < sizeof(binding) || binding.data == NULL)
+        return CMETA_INVALID_ARGUMENT;
+
+    return cmeta_receiver_method_invokable_bind(
+        method, binding.data, binding.callable, out);
 }
 
 bool cmeta_invokable_valid(const cmeta_invokable *invokable) {

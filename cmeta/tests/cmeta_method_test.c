@@ -53,6 +53,7 @@ spec("CMeta receiver method set") {
     it("validates and finds a canonical receiver method") {
         const cmeta_receiver_method *method;
 
+        check_true(cmeta_receiver_method_reflection_valid(&method_entries[0]));
         check_true(cmeta_receiver_method_set_valid(&method_set));
         check_equal(method_set.owner_name, "Box");
         method = cmeta_receiver_method_find(&method_set, "add");
@@ -182,6 +183,7 @@ spec("CMeta receiver method set") {
 
         bad_abi.param_count = 1u;
         bad_method.abi = &bad_abi;
+        check_false(cmeta_receiver_method_reflection_valid(&bad_method));
         invalid = method_set;
         invalid.methods = &bad_method;
         check_false(cmeta_receiver_method_set_valid(&invalid));
