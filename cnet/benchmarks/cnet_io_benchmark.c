@@ -54,6 +54,7 @@ typedef enum io_bench_send_mode {
   IO_BENCH_SEND_COPY,
   IO_BENCH_SEND_RETAINED,
   IO_BENCH_SEND_VECTOR_COPY,
+  IO_BENCH_SEND_RETAINED_VECTOR,
   IO_BENCH_SEND_NATIVE_VECTOR,
   IO_BENCH_SEND_NATIVE_FLATTEN
 } io_bench_send_mode;
@@ -193,6 +194,10 @@ typedef struct io_bench_cnet {
   io_bench_send_mode send_mode;
   size_t segment_count;
   mem_buffer_t *send_buffer;
+  cnet_const_buffer send_segments[NATIVE_IO_VECTOR_MAX];
+  size_t send_segment_count;
+  mem_slice_t send_slices[NATIVE_IO_VECTOR_MAX];
+  size_t send_slice_count;
   int send_done;
   size_t send_completions;
 } io_bench_cnet;
@@ -1236,13 +1241,16 @@ static int io_bench_cnet_exchange(io_bench_cnet *fixture, const unsigned char *s
     const uint64_t started = fixture->measuring ? salts_hrtime() : 0u;
     if (fixture->send_mode == IO_BENCH_SEND_RETAINED) {
       status = cnet_send_buffer(&fixture->client, fixture->connection, fixture->send_buffer);
-    } else if (fixture->send_mode == IO_BENCH_SEND_VECTOR_COPY) {
-      cnet_const_buffer segments[NATIVE_IO_VECTOR_MAX];
-      const size_t count =
-          io_bench_cnet_segments(sent, length, fixture->segment_count, segments);
-      status = count == 0u
+    } else if (fixture->send_mode == IO_BENCH_SEND_RETAINED_VECTOR) {
+      status = fixture->send_slice_count == 0u
                    ? SALTS_EINVAL
-                   : cnet_sendv(&fixture->client, fixture->connection, segments, count);
+                   : cnet_send_slicev(&fixture->client, fixture->connection,
+                                      fixture->send_slices, fixture->send_slice_count);
+    } else if (fixture->send_mode == IO_BENCH_SEND_VECTOR_COPY) {
+      status = fixture->send_segment_count == 0u
+                   ? SALTS_EINVAL
+                   : cnet_sendv(&fixture->client, fixture->connection,
+                                fixture->send_segments, fixture->send_segment_count);
     } else {
       status = cnet_send(&fixture->client, fixture->connection, sent, length);
     }
@@ -1450,6 +1458,36 @@ static int io_bench_run(io_bench_protocol protocol, io_bench_driver driver, size
     send_buffer = mem_wrap_external(sent, payload_size, io_bench_free_payload, NULL);
     if (send_buffer == NULL) { status = SALTS_ENOMEM; goto cleanup; }
     fixture.cnet.send_buffer = send_buffer;
+    if (send_mode == IO_BENCH_SEND_VECTOR_COPY) {
+      fixture.cnet.send_segment_count =
+          io_bench_cnet_segments(sent, payload_size, segment_count,
+                                 fixture.cnet.send_segments);
+      if (fixture.cnet.send_segment_count != segment_count) {
+        status = SALTS_EINVAL;
+        goto cleanup;
+      }
+    }
+    if (send_mode == IO_BENCH_SEND_RETAINED_VECTOR) {
+      size_t offset = 0u;
+      if (segment_count == 0u || segment_count > NATIVE_IO_VECTOR_MAX ||
+          payload_size < segment_count) {
+        status = SALTS_EINVAL;
+        goto cleanup;
+      }
+      for (size_t index = 0u; index < segment_count; ++index) {
+        const size_t base = payload_size / segment_count;
+        const size_t extra = index < payload_size % segment_count ? 1u : 0u;
+        const size_t length = base + extra;
+        fixture.cnet.send_slices[index] = mem_slice(send_buffer, offset, length);
+        if (fixture.cnet.send_slices[index].buffer == NULL ||
+            fixture.cnet.send_slices[index].length != length) {
+          status = SALTS_EIO;
+          goto cleanup;
+        }
+        offset += length;
+      }
+      fixture.cnet.send_slice_count = segment_count;
+    }
   }
   phase = "warmup";
   for (size_t index = 0u; index < IO_BENCH_WARMUP_EXCHANGES; ++index) {
@@ -1556,6 +1594,9 @@ cleanup:
     if (status == SALTS_OK) status = cleanup_status;
   }
   if (send_buffer != NULL) {
+    for (size_t index = 0u; index < fixture.cnet.send_slice_count; ++index)
+      mem_slice_release(&fixture.cnet.send_slices[index]);
+    fixture.cnet.send_slice_count = 0u;
     if (status == SALTS_OK && mem_buffer_ref_count(send_buffer) != 1u) status = SALTS_EIO;
     mem_buffer_release(send_buffer);
   } else free(sent);
@@ -2125,7 +2166,7 @@ static int io_bench_sg_write_csv(const char *prefix, const char *backend,
 }
 
 static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const char *prefix) {
-  enum { SG_METHODS = 5, SG_PAYLOADS = 4, SG_SEGMENTS = 4 };
+  enum { SG_METHODS = 6, SG_PAYLOADS = 4, SG_SEGMENTS = 4 };
   static const size_t payloads[SG_PAYLOADS] = {1024u, 8192u, 32768u, 65536u};
   static const size_t segments[SG_SEGMENTS] = {2u, 4u, 8u, 16u};
   static const io_bench_sg_method methods[SG_METHODS] = {
@@ -2133,6 +2174,7 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
       {"native_flatten_copy", IO_BENCH_NATIVE_IO, IO_BENCH_SEND_NATIVE_FLATTEN, true, false},
       {"native_sg", IO_BENCH_NATIVE_IO, IO_BENCH_SEND_NATIVE_VECTOR, false, false},
       {"cnet_sendv_flatten", IO_BENCH_CNET, IO_BENCH_SEND_VECTOR_COPY, true, true},
+      {"cnet_retained_sg", IO_BENCH_CNET, IO_BENCH_SEND_RETAINED_VECTOR, false, false},
       {"cnet_retained", IO_BENCH_CNET, IO_BENCH_SEND_RETAINED, false, false}};
   io_bench_sg_summary summaries[SG_METHODS * SG_PAYLOADS * SG_SEGMENTS];
   size_t summary_count = 0u;
@@ -2146,8 +2188,9 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
   printf("native_flatten_copy uses one preallocated staging buffer so its delta versus "
          "native_sg isolates payload memcpy plus scalar-submit cost. cnet_sendv_flatten uses the "
          "current production cnet_sendv() path and therefore includes its real write-queue "
-         "buffer acquisition/copy and CNet ownership/control path. cnet_retained is the current "
-         "no-payload-copy CNet control. Heap allocation count is not exposed by the recycled "
+         "buffer acquisition/copy and CNet ownership/control path. cnet_retained_sg is the "
+         "candidate retained vector path under test; cnet_retained is the contiguous no-copy "
+         "CNet control. Heap allocation count is not exposed by the recycled "
          "buffer pool; payload_buffer_acquires_per_op reports the explicit mem_get_buffer-style "
          "ownership acquisition instead.\n");
 
@@ -2217,21 +2260,25 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
       {
         double flatten_p50[IO_BENCH_REPLICATES], sg_p50[IO_BENCH_REPLICATES];
         double flatten_rate[IO_BENCH_REPLICATES], sg_rate[IO_BENCH_REPLICATES];
-        double cnet_flatten_p50[IO_BENCH_REPLICATES], retained_p50[IO_BENCH_REPLICATES];
+        double cnet_flatten_p50[IO_BENCH_REPLICATES], retained_sg_p50[IO_BENCH_REPLICATES];
+        double cnet_flatten_rate[IO_BENCH_REPLICATES], retained_sg_rate[IO_BENCH_REPLICATES];
         cnet_benchmark_summary native_p50_delta = {0};
         cnet_benchmark_summary native_rate_delta = {0};
         cnet_benchmark_summary cnet_p50_delta = {0};
+        cnet_benchmark_summary cnet_rate_delta = {0};
         for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
           const io_bench_result *flatten = &runs[1u * IO_BENCH_REPLICATES + repeat];
           const io_bench_result *sg = &runs[2u * IO_BENCH_REPLICATES + repeat];
           const io_bench_result *cnet_flatten = &runs[3u * IO_BENCH_REPLICATES + repeat];
-          const io_bench_result *retained = &runs[4u * IO_BENCH_REPLICATES + repeat];
+          const io_bench_result *retained_sg = &runs[4u * IO_BENCH_REPLICATES + repeat];
           flatten_p50[repeat] = (double)flatten->p50_ns;
           sg_p50[repeat] = (double)sg->p50_ns;
           flatten_rate[repeat] = io_bench_rate(flatten);
           sg_rate[repeat] = io_bench_rate(sg);
           cnet_flatten_p50[repeat] = (double)cnet_flatten->p50_ns;
-          retained_p50[repeat] = (double)retained->p50_ns;
+          retained_sg_p50[repeat] = (double)retained_sg->p50_ns;
+          cnet_flatten_rate[repeat] = io_bench_rate(cnet_flatten);
+          retained_sg_rate[repeat] = io_bench_rate(retained_sg);
         }
         status = cnet_benchmark_summarize_paired_delta(
             flatten_p50, sg_p50, IO_BENCH_REPLICATES, &native_p50_delta);
@@ -2240,17 +2287,22 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
               flatten_rate, sg_rate, IO_BENCH_REPLICATES, &native_rate_delta);
         if (status == SALTS_OK)
           status = cnet_benchmark_summarize_paired_delta(
-              cnet_flatten_p50, retained_p50, IO_BENCH_REPLICATES, &cnet_p50_delta);
+              cnet_flatten_p50, retained_sg_p50, IO_BENCH_REPLICATES, &cnet_p50_delta);
+        if (status == SALTS_OK)
+          status = cnet_benchmark_summarize_paired_delta(
+              cnet_flatten_rate, retained_sg_rate, IO_BENCH_REPLICATES, &cnet_rate_delta);
         if (status != SALTS_OK) {
           free(runs);
           return status;
         }
         printf("SG delta payload=%zu segments=%zu: native SG vs flatten p50=%+.2f%% +/- %.2fpp, "
-               "rate=%+.2f%% +/- %.2fpp; CNet retained vs sendv-flatten p50=%+.2f%% +/- %.2fpp\n",
+               "rate=%+.2f%% +/- %.2fpp; CNet retained-SG vs sendv-flatten "
+               "p50=%+.2f%% +/- %.2fpp, rate=%+.2f%% +/- %.2fpp\n",
                payloads[payload_index], segments[segment_index],
                native_p50_delta.median, native_p50_delta.mad,
                native_rate_delta.median, native_rate_delta.mad,
-               cnet_p50_delta.median, cnet_p50_delta.mad);
+               cnet_p50_delta.median, cnet_p50_delta.mad,
+               cnet_rate_delta.median, cnet_rate_delta.mad);
       }
       free(runs);
     }
