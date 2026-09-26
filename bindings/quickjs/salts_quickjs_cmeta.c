@@ -875,3 +875,327 @@ done:
   free(temporaries);
   return status;
 }
+
+
+#define SALTS_QUICKJS_OBJECT_HOLDER_PROPERTY "__salts_cmeta_object_holder__"
+
+typedef struct salts_quickjs_object_holder {
+  cmeta_object_ref object;
+  salts_quickjs_limits limits;
+  size_t references;
+  bool armed;
+} salts_quickjs_object_holder;
+
+typedef enum salts_quickjs_object_closure_kind {
+  SALTS_QUICKJS_OBJECT_ROOT = 0,
+  SALTS_QUICKJS_OBJECT_FIELD = 1,
+  SALTS_QUICKJS_OBJECT_METHOD = 2
+} salts_quickjs_object_closure_kind;
+
+typedef struct salts_quickjs_object_closure {
+  salts_quickjs_object_holder *holder;
+  salts_quickjs_object_closure_kind kind;
+  size_t index;
+} salts_quickjs_object_closure;
+
+static void salts_quickjs_object_holder_release(
+    salts_quickjs_object_holder *holder) {
+  if (holder == NULL || holder->references == 0u)
+    return;
+  --holder->references;
+  if (holder->references == 0u) {
+    if (holder->armed)
+      cmeta_object_release(&holder->object);
+    free(holder);
+  }
+}
+
+static void salts_quickjs_object_closure_finalize(void *opaque) {
+  salts_quickjs_object_closure *closure =
+      (salts_quickjs_object_closure *)opaque;
+  if (closure == NULL)
+    return;
+  salts_quickjs_object_holder_release(closure->holder);
+  free(closure);
+}
+
+static JSValue salts_quickjs_object_root_call(
+    JSContext *context, JSValueConst this_value,
+    int argument_count, JSValueConst *arguments, int magic, void *opaque) {
+  (void)context;
+  (void)this_value;
+  (void)argument_count;
+  (void)arguments;
+  (void)magic;
+  (void)opaque;
+  return JS_UNDEFINED;
+}
+
+static JSValue salts_quickjs_object_field_get(
+    JSContext *context, JSValueConst this_value,
+    int argument_count, JSValueConst *arguments, int magic, void *opaque) {
+  salts_quickjs_object_closure *closure =
+      (salts_quickjs_object_closure *)opaque;
+  salts_quickjs_object_holder *holder;
+  const cmeta_data_struct_shape *shape;
+  const cmeta_data_field_desc *field;
+  const cmeta_data_desc *field_data = NULL;
+  const void *field_value = NULL;
+  JSValue result = JS_UNDEFINED;
+  cmeta_status status;
+
+  (void)this_value;
+  (void)argument_count;
+  (void)arguments;
+  (void)magic;
+
+  if (closure == NULL ||
+      closure->kind != SALTS_QUICKJS_OBJECT_FIELD ||
+      closure->holder == NULL)
+    return JS_ThrowTypeError(context, "invalid CMeta object field closure");
+  holder = closure->holder;
+  if (!cmeta_object_ref_valid(&holder->object) ||
+      holder->object.data->kind != CMETA_DATA_STRUCT ||
+      holder->object.data->shape == NULL)
+    return JS_ThrowTypeError(context, "invalid CMeta object field proxy");
+
+  shape = (const cmeta_data_struct_shape *)holder->object.data->shape;
+  if (closure->index >= shape->field_count)
+    return JS_ThrowTypeError(context, "invalid CMeta object field index");
+  field = &shape->fields[closure->index];
+
+  status = cmeta_object_field_read(
+      &holder->object, field->name, &field_data, &field_value);
+  if (status != CMETA_OK)
+    return JS_ThrowTypeError(
+        context, "CMeta object field read failed (%d)", (int)status);
+  status = salts_quickjs_push_cmeta(
+      context, field_data, field_value, holder->limits, &result);
+  if (status != CMETA_OK)
+    return JS_ThrowTypeError(
+        context, "CMeta object field projection failed (%d)", (int)status);
+  return result;
+}
+
+static JSValue salts_quickjs_object_field_set(
+    JSContext *context, JSValueConst this_value,
+    int argument_count, JSValueConst *arguments) {
+  (void)this_value;
+  (void)argument_count;
+  (void)arguments;
+  return JS_ThrowTypeError(
+      context,
+      "CMeta object fields are read-only until an explicit mutability contract is provided");
+}
+
+static JSValue salts_quickjs_object_method_call(
+    JSContext *context, JSValueConst this_value,
+    int argument_count, JSValueConst *arguments, int magic, void *opaque) {
+  salts_quickjs_object_closure *closure =
+      (salts_quickjs_object_closure *)opaque;
+  salts_quickjs_object_holder *holder;
+  const cmeta_receiver_method *method;
+  cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+  JSValue result = JS_UNDEFINED;
+  bool has_result = false;
+  cmeta_status status;
+
+  (void)this_value;
+  (void)magic;
+
+  if (closure == NULL ||
+      closure->kind != SALTS_QUICKJS_OBJECT_METHOD ||
+      closure->holder == NULL)
+    return JS_ThrowTypeError(context, "invalid CMeta object method closure");
+  holder = closure->holder;
+  if (!cmeta_object_ref_valid(&holder->object) ||
+      holder->object.methods == NULL ||
+      closure->index >= holder->object.methods->method_count)
+    return JS_ThrowTypeError(context, "invalid CMeta object method proxy");
+
+  method = &holder->object.methods->methods[closure->index];
+  status = cmeta_object_method_invokable_bind(
+      &holder->object, method, &invokable);
+  if (status != CMETA_OK)
+    return JS_ThrowTypeError(
+        context, "CMeta object method binding failed (%d)", (int)status);
+
+  status = salts_quickjs_call_invokable(
+      context, &invokable, argument_count, arguments,
+      holder->limits, &result, &has_result);
+  if (status != CMETA_OK)
+    return JS_ThrowTypeError(
+        context, "CMeta object method invocation failed (%d)", (int)status);
+  return has_result ? result : JS_UNDEFINED;
+}
+
+static JSValue salts_quickjs_object_closure_new(
+    JSContext *context, salts_quickjs_object_holder *holder,
+    salts_quickjs_object_closure_kind kind, size_t index,
+    JSCClosure *function, int length) {
+  salts_quickjs_object_closure *closure;
+  JSValue value;
+
+  if (context == NULL || holder == NULL || function == NULL)
+    return JS_EXCEPTION;
+  closure = (salts_quickjs_object_closure *)calloc(1u, sizeof(*closure));
+  if (closure == NULL)
+    return JS_ThrowOutOfMemory(context);
+
+  closure->holder = holder;
+  closure->kind = kind;
+  closure->index = index;
+  ++holder->references;
+
+  value = JS_NewCClosure(
+      context, function, NULL, salts_quickjs_object_closure_finalize,
+      length, 0, closure);
+  if (JS_IsException(value)) {
+    --holder->references;
+    free(closure);
+  }
+  return value;
+}
+
+static cmeta_status salts_quickjs_object_surface_validate(
+    const cmeta_object_ref *object) {
+  const cmeta_data_struct_shape *shape;
+  size_t i;
+  size_t j;
+
+  if (!cmeta_object_ref_valid(object))
+    return CMETA_INVALID_ARGUMENT;
+  if (object->data->kind != CMETA_DATA_STRUCT ||
+      object->data->shape == NULL ||
+      object->method_provider == NULL ||
+      object->methods == NULL)
+    return CMETA_OK;
+  if (!cmeta_object_method_provider_valid(object->method_provider))
+    return CMETA_INVALID_ARGUMENT;
+
+  shape = (const cmeta_data_struct_shape *)object->data->shape;
+  for (i = 0u; i < shape->field_count; ++i) {
+    const cmeta_data_field_desc *field = &shape->fields[i];
+    for (j = 0u; j < object->methods->method_count; ++j)
+      if (field->name != NULL && object->methods->methods[j].name != NULL &&
+          strcmp(field->name, object->methods->methods[j].name) == 0)
+        return CMETA_TYPE_MISMATCH;
+  }
+  return CMETA_OK;
+}
+
+cmeta_status salts_quickjs_push_object(
+    JSContext *context, cmeta_object_ref *object,
+    salts_quickjs_limits limits, JSValue *out_value) {
+  salts_quickjs_object_holder *holder;
+  const cmeta_data_struct_shape *shape;
+  JSValue result = JS_UNDEFINED;
+  JSValue root = JS_UNDEFINED;
+  cmeta_status status;
+  size_t i;
+
+  if (out_value != NULL)
+    *out_value = JS_UNDEFINED;
+  if (context == NULL || object == NULL || out_value == NULL)
+    return CMETA_INVALID_ARGUMENT;
+  status = salts_quickjs_object_surface_validate(object);
+  if (status != CMETA_OK)
+    return status;
+
+  holder = (salts_quickjs_object_holder *)calloc(1u, sizeof(*holder));
+  if (holder == NULL)
+    return CMETA_OUT_OF_MEMORY;
+  holder->object = *object;
+  holder->limits = limits;
+  holder->references = 0u;
+  holder->armed = false;
+
+  result = JS_NewObject(context);
+  if (JS_IsException(result)) {
+    free(holder);
+    return CMETA_OUT_OF_MEMORY;
+  }
+
+  root = salts_quickjs_object_closure_new(
+      context, holder, SALTS_QUICKJS_OBJECT_ROOT, 0u,
+      salts_quickjs_object_root_call, 0);
+  if (JS_IsException(root)) {
+    JS_FreeValue(context, result);
+    free(holder);
+    return CMETA_OUT_OF_MEMORY;
+  }
+  if (JS_DefinePropertyValueStr(
+          context, result, SALTS_QUICKJS_OBJECT_HOLDER_PROPERTY,
+          root, 0) < 0) {
+    JS_FreeValue(context, result);
+    return CMETA_CALLBACK_ERROR;
+  }
+
+  if (object->data->kind == CMETA_DATA_STRUCT &&
+      object->data->shape != NULL) {
+    shape = (const cmeta_data_struct_shape *)object->data->shape;
+    for (i = 0u; i < shape->field_count; ++i) {
+      const cmeta_data_field_desc *field = &shape->fields[i];
+      JSValue getter = salts_quickjs_object_closure_new(
+          context, holder, SALTS_QUICKJS_OBJECT_FIELD, i,
+          salts_quickjs_object_field_get, 0);
+      JSValue setter;
+      JSAtom atom;
+
+      if (JS_IsException(getter)) {
+        JS_FreeValue(context, result);
+        return CMETA_OUT_OF_MEMORY;
+      }
+      setter = JS_NewCFunction(
+          context, salts_quickjs_object_field_set, NULL, 1);
+      if (JS_IsException(setter)) {
+        JS_FreeValue(context, getter);
+        JS_FreeValue(context, result);
+        return CMETA_OUT_OF_MEMORY;
+      }
+      atom = JS_NewAtom(context, field->name);
+      if (atom == JS_ATOM_NULL) {
+        JS_FreeValue(context, setter);
+        JS_FreeValue(context, getter);
+        JS_FreeValue(context, result);
+        return CMETA_OUT_OF_MEMORY;
+      }
+      if (JS_DefinePropertyGetSet(
+              context, result, atom, getter, setter,
+              JS_PROP_ENUMERABLE) < 0) {
+        JS_FreeAtom(context, atom);
+        JS_FreeValue(context, result);
+        return CMETA_CALLBACK_ERROR;
+      }
+      JS_FreeAtom(context, atom);
+    }
+  }
+
+  if (object->method_provider != NULL && object->methods != NULL) {
+    for (i = 0u; i < object->methods->method_count; ++i) {
+      const cmeta_receiver_method *method = &object->methods->methods[i];
+      int length = method->function != NULL &&
+                   method->function->param_count != 0u
+                       ? (int)(method->function->param_count - 1u)
+                       : 0;
+      JSValue function = salts_quickjs_object_closure_new(
+          context, holder, SALTS_QUICKJS_OBJECT_METHOD, i,
+          salts_quickjs_object_method_call, length);
+      if (JS_IsException(function)) {
+        JS_FreeValue(context, result);
+        return CMETA_OUT_OF_MEMORY;
+      }
+      if (JS_DefinePropertyValueStr(
+              context, result, method->name, function,
+              JS_PROP_ENUMERABLE) < 0) {
+        JS_FreeValue(context, result);
+        return CMETA_CALLBACK_ERROR;
+      }
+    }
+  }
+
+  holder->armed = true;
+  *object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
+  *out_value = result;
+  return CMETA_OK;
+}
