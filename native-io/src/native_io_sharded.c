@@ -40,6 +40,7 @@ struct native_io_sharded_shard {
   size_t completion_capacity;
   native_io_sharded_request_ownership *request_ownerships;
   size_t request_ownership_capacity;
+  int observe_active;
 
   native_io_sharded_slot *slots;
   size_t *free_slots;
@@ -781,10 +782,15 @@ int native_io_sharded_context_observe(native_io_sharded_context *context,
   if (shard == NULL || events == NULL || event_capacity == 0u || out_count == NULL ||
       shard->completion_scratch == NULL || shard->completion_capacity == 0u)
     return SALTS_EINVAL;
+  if (shard->observe_active) return SALTS_EBUSY;
+  shard->observe_active = 1;
   limit = event_capacity < shard->completion_capacity ? event_capacity : shard->completion_capacity;
   status = native_io_backend_observe(&shard->backend, shard->completion_scratch, limit,
                                      timeout_ms, &count);
-  if (status != SALTS_OK) return status;
+  if (status != SALTS_OK) {
+    shard->observe_active = 0;
+    return status;
+  }
   for (size_t index = 0u; index < count; ++index) {
     const native_io_completion *native_event = &shard->completion_scratch[index];
     native_io_sharded_completion *event = &events[index];
@@ -814,6 +820,7 @@ int native_io_sharded_context_observe(native_io_sharded_context *context,
       }
     }
   }
+  shard->observe_active = 0;
   *out_count = count;
   return SALTS_OK;
 }
