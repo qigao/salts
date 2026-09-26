@@ -475,6 +475,35 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
+      - name: Trace NativeIO io_uring queue-depth control path
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
+        shell: bash
+        env:
+          NATIVE_IO_QD_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_queue_depth_benchmark
+        run: |
+          set -euo pipefail
+          trace_dir="native-io-results/queue-depth-syscalls"
+          mkdir -p "$trace_dir"
+          benchmark="$GITHUB_WORKSPACE/$NATIVE_IO_QD_EXECUTABLE"
+          for qd in 1 8 32 64; do
+            export NATIVE_IO_QD_TRACE="$qd:32768"
+            label="qd-$qd-payload-32768"
+            strace -ff -ttt -T -s 128 \
+              -e trace=io_uring_enter,poll,ppoll,write \
+              -o "$trace_dir/$label.trace" \
+              "$benchmark" \
+              > "$trace_dir/$label.log" 2>&1
+          done
+          unset NATIVE_IO_QD_TRACE
+
+      - name: Summarize NativeIO queue-depth syscall evidence
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        run: |
+          ./native-io/benchmarks/summarize_queue_depth_trace.ps1 -Directory native-io-results/queue-depth-syscalls |
+            Tee-Object -FilePath native-io-results/queue-depth-syscalls/summary.txt |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
       - name: Collect isolated Linux syscall evidence
         if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
         shell: bash
