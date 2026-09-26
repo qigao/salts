@@ -2,6 +2,8 @@
 
 NativeIO 是 Salts 根目录下的原生 I/O 操作层。它只负责把有界操作提交给明确选择的 OS backend，并把终态完成批量交还给调用者；它不拥有 Actor、Reactor、CFlow Graph 或用户 socket。
 
+> Canonical execution-style, endpoint and ownership contract: [ARCHITECTURE.md](ARCHITECTURE.md). Direct and Coroutine are current execution styles; Sharded/SMP is the frozen target contract tracked by #474/#475.
+
 ## 架构决策
 
 原生 backend 留在 CFlow 会让 OS 完成状态依赖 Actor mailbox 和 acknowledge，无法单独测量或复用。放入 Platform 则会把现有 readiness 原语与网络操作、payload 生命周期混成一个职责。独立根模块保持以下单向依赖：

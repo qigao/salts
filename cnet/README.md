@@ -6,6 +6,8 @@ progress polling, and ordered state notifications. NativeIO remains the raw,
 threadless operating-system I/O backend; CFlow Actor and Reactive code continue
 to depend on NativeIO directly.
 
+The canonical lower-layer contract is [NativeIO execution and endpoint architecture](../native-io/ARCHITECTURE.md). CNet is an optional network/session semantic consumer: raw TCP/UDP/VSOCK/PIPE data paths do not require CNet, and CNet does not own NativeIO execution-style or terminal-completion truth.
+
 CNet is built unconditionally. Its source-tree target is `salts_cnet`; installed
 consumers link `Salts::CNet` and include `<cnet/cnet.h>`. The independent
 WebSocket session API is declared by `<cnet/websocket.h>`.
