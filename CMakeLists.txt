@@ -90,6 +90,9 @@ install(FILES "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"
               "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
         DESTINATION "lib/cmake/Salts")
 
+install(FILES "${CMAKE_SOURCE_DIR}/cmake/SaltsCMetaLower.cmake"
+        DESTINATION "lib/cmake/Salts")
+
 # Install the export set
 export(
   EXPORT SaltsTargets
