@@ -98,6 +98,8 @@ typedef struct native_io_sharded_completion {
  * terminal, when non-NULL, runs on the endpoint owner shard after the matching
  * terminal completion has been copied to the caller-visible sharded completion
  * and while storage reachable through arg is still owned by this token.
+ * It may submit new owner-local work, but recursive observe on the same shard
+ * returns SALTS_EBUSY so the bounded completion scratch cannot be reentered.
  * finalize then runs exactly once.
  *
  * A failed submit/prepare transfers no ownership and invokes neither callback.
