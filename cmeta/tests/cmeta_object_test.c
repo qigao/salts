@@ -351,6 +351,37 @@ spec("CMeta canonical borrowed object") {
         check_equal(box.value, 17);
     }
 
+    it("does not execute reflected methods without an executable provider") {
+        object_box box = {1};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+
+        check_equal(cmeta_object_borrow(
+                        &object, &box, &object_box_data, &object_method_set),
+                    CMETA_OK);
+        check_equal(cmeta_object_method_invokable_bind(
+                        &object, &object_methods[0], &invokable),
+                    CMETA_TRAIT_MISSING);
+        check_equal(box.value, 1);
+    }
+
+    it("rejects method entries that are not provider capability tokens") {
+        object_box box = {1};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        cmeta_receiver_method copied = object_methods[0];
+        cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+
+        check_equal(cmeta_object_borrow_with_provider(
+                        &object, &box, &object_box_data,
+                        &object_method_provider),
+                    CMETA_OK);
+        check_true(cmeta_receiver_method_reflection_valid(&copied));
+        check_equal(cmeta_object_method_invokable_bind(
+                        &object, &copied, &invokable),
+                    CMETA_TRAIT_MISSING);
+        check_equal(box.value, 1);
+    }
+
     it("allows data-only borrowed objects") {
         object_box box = {3};
         cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
