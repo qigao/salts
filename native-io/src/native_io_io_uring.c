@@ -44,6 +44,12 @@
   #define SALTS_IO_URING_HAS_DEFER_TASKRUN 0
 #endif
 
+#if defined(IORING_SETUP_NO_SQARRAY)
+  #define SALTS_IO_URING_HAS_NO_SQARRAY 1
+#else
+  #define SALTS_IO_URING_HAS_NO_SQARRAY 0
+#endif
+
 typedef enum salts_io_uring_phase {
   SALTS_IO_URING_FREE = 0,
   SALTS_IO_URING_PENDING,
@@ -302,7 +308,7 @@ static int uring_publish_sqe(salts_io_uring_impl *impl, const struct io_uring_sq
   if (tail - head >= *impl->sq_entries) return SALTS_EBUSY;
   index = tail & *impl->sq_mask;
   impl->sqes[index] = *prepared;
-  impl->sq_array[index] = index;
+  if (impl->sq_array != NULL) impl->sq_array[index] = index;
   atomic_store_explicit((_Atomic unsigned *)impl->sq_tail, tail + 1u, memory_order_release);
   submitted = uring_enter(impl, 1u, 0u, 0u);
   if (submitted == 1) return SALTS_OK;
@@ -493,7 +499,7 @@ static int uring_flush(salts_io_impl *base) {
       const unsigned slot = (tail + count) & *impl->sq_mask;
       uring_prepare_operation(request, &impl->sqes[slot],
                               impl->endpoints[request->endpoint.slot - 1u].fd);
-      impl->sq_array[slot] = slot;
+      if (impl->sq_array != NULL) impl->sq_array[slot] = slot;
       pipe_write |= request->operation.kind == NATIVE_IO_OPERATION_PIPE_WRITE;
       index = request->staged_next;
       ++count;
@@ -1154,18 +1160,33 @@ static void *uring_field(void *mapping, unsigned offset) {
 }
 
 static int uring_map(salts_io_uring_impl *impl, const struct io_uring_params *params) {
+  const bool no_sqarray =
+#if SALTS_IO_URING_HAS_NO_SQARRAY
+      (params->flags & IORING_SETUP_NO_SQARRAY) != 0u;
+#else
+      false;
+#endif
   size_t shared_size;
   if (params->sq_entries == 0u || params->cq_entries == 0u ||
-      !uring_mapped_extent(params->sq_off.array, params->sq_entries, sizeof(unsigned),
-                           &impl->sq_ring_size) ||
       !uring_mapped_extent(params->cq_off.cqes, params->cq_entries, sizeof(struct io_uring_cqe),
                            &impl->cq_ring_size) ||
-      !uring_mapped_extent(0u, params->sq_entries, sizeof(struct io_uring_sqe), &impl->sqes_size) ||
-      !uring_field_fits(params->sq_off.head, sizeof(unsigned), impl->sq_ring_size) ||
+      !uring_mapped_extent(0u, params->sq_entries, sizeof(struct io_uring_sqe), &impl->sqes_size))
+    return SALTS_ERANGE;
+  if (no_sqarray) {
+    /* Linux's in-tree mini-liburing uses the CQE end as the SQ_RING extent
+     * when the SQ index array is omitted. Follow the kernel ABI rather than
+     * relying on sq_off.array in this mode. */
+    impl->sq_ring_size = impl->cq_ring_size;
+  } else if (!uring_mapped_extent(params->sq_off.array, params->sq_entries, sizeof(unsigned),
+                                  &impl->sq_ring_size)) {
+    return SALTS_ERANGE;
+  }
+  if (!uring_field_fits(params->sq_off.head, sizeof(unsigned), impl->sq_ring_size) ||
       !uring_field_fits(params->sq_off.tail, sizeof(unsigned), impl->sq_ring_size) ||
       !uring_field_fits(params->sq_off.ring_mask, sizeof(unsigned), impl->sq_ring_size) ||
       !uring_field_fits(params->sq_off.ring_entries, sizeof(unsigned), impl->sq_ring_size) ||
-      !uring_field_fits(params->sq_off.array, sizeof(unsigned), impl->sq_ring_size) ||
+      (!no_sqarray &&
+       !uring_field_fits(params->sq_off.array, sizeof(unsigned), impl->sq_ring_size)) ||
       !uring_field_fits(params->cq_off.head, sizeof(unsigned), impl->cq_ring_size) ||
       !uring_field_fits(params->cq_off.tail, sizeof(unsigned), impl->cq_ring_size) ||
       !uring_field_fits(params->cq_off.ring_mask, sizeof(unsigned), impl->cq_ring_size) ||
@@ -1191,7 +1212,7 @@ static int uring_map(salts_io_uring_impl *impl, const struct io_uring_params *pa
   impl->sq_tail = uring_field(impl->sq_ring, params->sq_off.tail);
   impl->sq_mask = uring_field(impl->sq_ring, params->sq_off.ring_mask);
   impl->sq_entries = uring_field(impl->sq_ring, params->sq_off.ring_entries);
-  impl->sq_array = uring_field(impl->sq_ring, params->sq_off.array);
+  impl->sq_array = no_sqarray ? NULL : uring_field(impl->sq_ring, params->sq_off.array);
   impl->cq_head = uring_field(impl->cq_ring, params->cq_off.head);
   impl->cq_tail = uring_field(impl->cq_ring, params->cq_off.tail);
   impl->cq_mask = uring_field(impl->cq_ring, params->cq_off.ring_mask);
@@ -1272,7 +1293,24 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
 #if SALTS_IO_URING_HAS_DEFER_TASKRUN
   params.flags |= IORING_SETUP_DEFER_TASKRUN;
 #endif
+#if SALTS_IO_URING_HAS_NO_SQARRAY
+  params.flags |= IORING_SETUP_NO_SQARRAY;
+#endif
   impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+#if SALTS_IO_URING_HAS_NO_SQARRAY
+  if (impl->ring_fd < 0 && errno == EINVAL) {
+    /* NO_SQARRAY arrived in Linux 6.6. Retry the already accepted owner policy
+     * without it before considering older single-issuer fallbacks. */
+    memset(&params, 0, sizeof(params));
+#if SALTS_IO_URING_HAS_SINGLE_ISSUER
+    params.flags = IORING_SETUP_SINGLE_ISSUER;
+#endif
+#if SALTS_IO_URING_HAS_DEFER_TASKRUN
+    params.flags |= IORING_SETUP_DEFER_TASKRUN;
+#endif
+    impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+  }
+#endif
 #if SALTS_IO_URING_HAS_DEFER_TASKRUN
   if (impl->ring_fd < 0 && errno == EINVAL) {
     /* Linux 6.0 supports SINGLE_ISSUER before DEFER_TASKRUN (6.1). */
