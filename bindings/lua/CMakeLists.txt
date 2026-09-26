@@ -21,8 +21,7 @@ target_include_directories(salts_lua_binding
     ${LUA_INCLUDE_DIR})
 
 target_link_libraries(salts_lua_binding
-  PUBLIC Salts::CMeta
-  PRIVATE Lua::Lua)
+  PUBLIC Salts::CMeta Lua::Lua)
 
 target_compile_features(salts_lua_binding PUBLIC c_std_11)
 set_target_properties(salts_lua_binding PROPERTIES FOLDER "bindings")
