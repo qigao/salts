@@ -689,6 +689,116 @@ static void native_io_test_epoll_pending_fifo(void) {
   check_equal(native_io_backend_destroy(&backend), SALTS_OK);
 }
 
+static void native_io_test_uring_speculative_stream_at_progress(void) {
+  native_io_backend backend = {0};
+  const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 2u, 2u};
+  native_io_test_socket sockets[2];
+  native_io_endpoint endpoint = {0};
+  native_io_completion events[2] = {0};
+  native_io_request requests[2] = {0};
+  unsigned char received[2] = {0};
+  const unsigned char payload[2] = {0x51u, 0x52u};
+  size_t count = 0u;
+
+  check_equal(native_io_backend_init(&backend, &config), SALTS_OK);
+  check_equal(native_io_test_make_tcp_pair(sockets), SALTS_OK);
+  check_equal(native_io_backend_attach_socket(&backend, (uintptr_t)sockets[0], &endpoint), SALTS_OK);
+
+  /* prepare remains side-effect free for the io_uring staged path until a
+   * progress boundary. flush may complete a writable send directly. */
+  {
+    native_io_operation send_operation = {.kind = NATIVE_IO_OPERATION_STREAM_SEND,
+                                          .endpoint = endpoint,
+                                          .buffer = (void *)&payload[0],
+                                          .length = 1u,
+                                          .user_data = 41u};
+    check_equal(native_io_backend_prepare(&backend, &send_operation, &requests[0]), SALTS_OK);
+    check_equal(recv(sockets[1], &received[0], 1u, MSG_DONTWAIT), -1);
+    check_true(errno == EAGAIN || errno == EWOULDBLOCK);
+    check_equal(native_io_backend_flush(&backend), SALTS_OK);
+    check_equal(recv(sockets[1], &received[0], 1u, MSG_DONTWAIT), 1);
+    check_equal(received[0], payload[0]);
+    check_equal(native_io_backend_cancel(&backend, requests[0]), SALTS_EALREADY);
+    check_equal(native_io_backend_observe(&backend, events, 2u, 0u, &count), SALTS_OK);
+    check_equal(count, 1u);
+    check_equal(events[0].kind, NATIVE_IO_COMPLETION_OK);
+    check_equal(events[0].bytes, 1u);
+    check_equal(events[0].user_data, (uintptr_t)41u);
+  }
+
+  /* Already-readable recv stays untouched by prepare and is consumed at flush. */
+  received[0] = 0u;
+  count = 0u;
+  check_equal(send(sockets[1], &payload[0], 1u, 0), 1);
+  {
+    native_io_operation recv_operation = {.kind = NATIVE_IO_OPERATION_STREAM_RECV,
+                                          .endpoint = endpoint,
+                                          .buffer = &received[0],
+                                          .length = 1u,
+                                          .user_data = 42u};
+    check_equal(native_io_backend_prepare(&backend, &recv_operation, &requests[0]), SALTS_OK);
+    check_equal(received[0], 0u);
+    check_equal(native_io_backend_flush(&backend), SALTS_OK);
+    check_equal(received[0], payload[0]);
+    check_equal(native_io_backend_cancel(&backend, requests[0]), SALTS_EALREADY);
+    check_equal(native_io_backend_observe(&backend, events, 2u, 0u, &count), SALTS_OK);
+    check_equal(count, 1u);
+    check_equal(events[0].kind, NATIVE_IO_COMPLETION_OK);
+    check_equal(events[0].bytes, 1u);
+    check_equal(events[0].user_data, (uintptr_t)42u);
+  }
+
+  /* EAGAIN leaves the first recv on the ring path. A follower remains behind
+   * that lane head and may only speculate after the first terminal advances FIFO. */
+  memset(received, 0, sizeof(received));
+  {
+    native_io_operation recv_operation = {.kind = NATIVE_IO_OPERATION_STREAM_RECV,
+                                          .endpoint = endpoint,
+                                          .buffer = &received[0],
+                                          .length = 1u,
+                                          .user_data = 43u};
+    check_equal(native_io_backend_prepare(&backend, &recv_operation, &requests[0]), SALTS_OK);
+    check_equal(native_io_backend_flush(&backend), SALTS_OK);
+    check_equal(send(sockets[1], payload, sizeof(payload), 0), (int)sizeof(payload));
+    recv_operation.buffer = &received[1];
+    recv_operation.user_data = 44u;
+    check_equal(native_io_backend_prepare(&backend, &recv_operation, &requests[1]), SALTS_OK);
+    check_equal(received[0], 0u);
+    check_equal(received[1], 0u);
+    check_equal(native_io_test_observe_all(&backend, events, 2u), SALTS_OK);
+    check_equal(received[0], payload[0]);
+    check_equal(received[1], payload[1]);
+    check_equal(events[0].user_data, (uintptr_t)43u);
+    check_equal(events[1].user_data, (uintptr_t)44u);
+  }
+
+  /* Native error discovered at flush is a terminal I/O result, not a flush
+   * submission error and not a retroactive prepare rejection. */
+  count = 0u;
+  check_equal(shutdown(sockets[0], SHUT_WR), 0);
+  {
+    native_io_operation send_operation = {.kind = NATIVE_IO_OPERATION_STREAM_SEND,
+                                          .endpoint = endpoint,
+                                          .buffer = (void *)&payload[0],
+                                          .length = 1u,
+                                          .user_data = 45u};
+    check_equal(native_io_backend_prepare(&backend, &send_operation, &requests[0]), SALTS_OK);
+    check_equal(native_io_backend_flush(&backend), SALTS_OK);
+    check_equal(native_io_backend_cancel(&backend, requests[0]), SALTS_EALREADY);
+    check_equal(native_io_backend_observe(&backend, events, 2u, 0u, &count), SALTS_OK);
+    check_equal(count, 1u);
+    check_equal(events[0].kind, NATIVE_IO_COMPLETION_FAILED);
+    check_equal(events[0].status, -EPIPE);
+    check_equal(events[0].native_status, (uint32_t)EPIPE);
+    check_equal(events[0].user_data, (uintptr_t)45u);
+  }
+
+  native_io_test_close_endpoint(&backend, endpoint, sockets[0]);
+  native_io_test_close_socket(sockets[1]);
+  check_equal(native_io_backend_close(&backend), SALTS_OK);
+  check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+}
+
 static void native_io_test_uring_cancel_prepared_head(void) {
   native_io_backend backend = {0};
   const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 2u, 2u};
@@ -2151,6 +2261,9 @@ spec("NativeIO direct backend") {
 #if defined(__linux__)
   it("keeps epoll FIFO and progress after an idle edge has been consumed") {
     native_io_test_epoll_pending_fifo();
+  }
+  it("speculates prepared stream I/O only at owner progress boundaries") {
+    native_io_test_uring_speculative_stream_at_progress();
   }
   it("cancels an io_uring staged head without sending its bytes") {
     native_io_test_uring_cancel_prepared_head();

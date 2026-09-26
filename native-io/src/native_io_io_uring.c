@@ -474,12 +474,63 @@ static void uring_fail_staged(salts_io_uring_impl *impl, int status) {
   }
 }
 
+static bool uring_would_block(int status) {
+  return status == -EAGAIN || status == -EWOULDBLOCK;
+}
+
+static int uring_try_staged_stream(salts_io_uring_endpoint *endpoint,
+                                   salts_io_uring_request_record *request,
+                                   size_t *out_bytes) {
+  ssize_t result;
+  int flags = MSG_DONTWAIT;
+  if (endpoint == NULL || endpoint->resource_kind != SALTS_IO_RESOURCE_STREAM_SOCKET ||
+      request->operation.length > (size_t)INT_MAX)
+    return -EAGAIN;
+  if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_SEND)
+    flags |= MSG_NOSIGNAL;
+  else if (request->operation.kind != NATIVE_IO_OPERATION_STREAM_RECV)
+    return -EAGAIN;
+  do {
+    result = request->operation.kind == NATIVE_IO_OPERATION_STREAM_SEND
+                 ? send(endpoint->fd, request->operation.buffer, request->operation.length, flags)
+                 : recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
+  } while (result < 0 && errno == EINTR);
+  if (result < 0) return -errno;
+  *out_bytes = (size_t)result;
+  return SALTS_OK;
+}
+
+/* Speculate only at a progress boundary. prepare() remains cancelable before
+ * flush/observe, while an eligible staged stream head may avoid SQ/CQ machinery
+ * when the nonblocking operation is already ready. Each staged head is tried at
+ * most once per progress pass; EAGAIN remains staged for the normal ring batch. */
+static void uring_speculate_staged_streams(salts_io_uring_impl *impl) {
+  uint32_t index = impl->staged_head;
+  while (index != SALTS_IO_URING_INDEX_NONE) {
+    salts_io_uring_request_record *request = &impl->requests[index];
+    const uint32_t next = request->staged_next;
+    salts_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
+    size_t direct_bytes = 0u;
+    const int status = uring_try_staged_stream(endpoint, request, &direct_bytes);
+    if (!uring_would_block(status)) {
+      salts_io_uring_lane *lane = uring_lane(endpoint, request->write_lane);
+      uring_unstage(impl, index);
+      uring_lane_remove(impl, endpoint, index);
+      uring_queue_terminal(impl, request, index, status == SALTS_OK ? (int)direct_bytes : status);
+      uring_start_lane(impl, lane);
+    }
+    index = next;
+  }
+}
+
 /* O(eligible requests), including short enters: keep the prepared suffix in SQ
  * instead of rebuilding it on every retry. With no SQPOLL, an error can withdraw
  * only that unconsumed suffix without releasing any kernel-owned storage. */
 static int uring_flush(salts_io_impl *base) {
   salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
   while (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
+    uring_speculate_staged_streams(impl);
+    if (impl->staged_head == SALTS_IO_URING_INDEX_NONE) break;
     const unsigned head = atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
     const unsigned tail = atomic_load_explicit((_Atomic unsigned *)impl->sq_tail, memory_order_relaxed);
     const unsigned available = *impl->sq_entries - (tail - head);
@@ -994,6 +1045,7 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
   bool saw_wake = false;
   int status = uring_progress_cq(impl, &saw_wake);
   if (status != SALTS_OK) return status;
+  uring_speculate_staged_streams(impl);
   if (impl->terminal_count != 0u || saw_wake) {
     status = uring_flush_promoted(impl, &saw_wake);
     if (status != SALTS_OK) return status;
