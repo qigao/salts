@@ -1,4 +1,5 @@
 #include <cmeta/function.h>
+#include <cstl/typed.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -7,18 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct poc_list_type {
-    int unused;
-} poc_list_type;
-
-static const cmeta_type_desc poc_list_type_desc = {
-    "IntList", sizeof(poc_list_type), _Alignof(poc_list_type),
-    CMETA_T_OBJECT, NULL, NULL, NULL
-};
+typed(List, IntList, int);
 
 static const cmeta_type_desc poc_list_ptr_type_desc = {
-    "IntList *", sizeof(void *), _Alignof(void *),
-    CMETA_T_POINTER, &poc_list_type_desc, NULL, NULL
+    "IntList *", sizeof(IntList *), _Alignof(IntList *),
+    CMETA_T_POINTER, &IntList_cmeta_type, NULL, NULL
 };
 
 static const cmeta_param_desc poc_list_add_params[] = {
@@ -131,7 +125,7 @@ static int lower(const char *source, const char *output_path) {
     receiver = cmeta_function_receiver(&poc_list_add);
     if (receiver == NULL || receiver->type == NULL ||
         receiver->type->kind != CMETA_T_POINTER ||
-        !cmeta_type_equal(receiver->type->pointee, &poc_list_type_desc)) {
+        !cmeta_type_equal(receiver->type->pointee, &IntList_cmeta_type)) {
         fprintf(stderr, "method receiver metadata does not match IntList\n");
         return 0;
     }
