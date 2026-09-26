@@ -8,6 +8,9 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(CNET_INTERNAL_TESTING)
+#include <stdio.h>
+#endif
 
 #if defined(_WIN32)
   #include <winsock2.h>
@@ -1991,7 +1994,12 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
   started_ms = salts_monotonic_ms();
   published_before = impl->published_event_count;
   status = cnet_owner_flush_state_events(impl, &event_blocked);
-  if (status != SALTS_OK) return status;
+  if (status != SALTS_OK) {
+#if defined(CNET_INTERNAL_TESTING)
+    fprintf(stderr, "cnet_owner_drive first-error stage=flush_state_events status=%d\n", status);
+#endif
+    return status;
+  }
   if (event_blocked || impl->published_event_count != published_before) return SALTS_OK;
 #if defined(CNET_INTERNAL_PROFILING)
   {
@@ -2012,7 +2020,12 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
 #else
   status = cnet_owner_process_session_work(impl);
 #endif
-  if (status != SALTS_OK) return status;
+  if (status != SALTS_OK) {
+#if defined(CNET_INTERNAL_TESTING)
+    fprintf(stderr, "cnet_owner_drive first-error stage=session_work status=%d\n", status);
+#endif
+    return status;
+  }
 #if defined(CNET_INTERNAL_PROFILING)
   {
     const bool profile_active = impl->profile_active;
@@ -2032,11 +2045,21 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
 #else
   status = cnet_owner_process_commands(impl, &processed);
 #endif
-  if (status != SALTS_OK) return status;
+  if (status != SALTS_OK) {
+#if defined(CNET_INTERNAL_TESTING)
+    fprintf(stderr, "cnet_owner_drive first-error stage=commands status=%d\n", status);
+#endif
+    return status;
+  }
   if (impl->pending_event_count != 0u || impl->published_event_count != published_before)
     return SALTS_OK;
   status = cnet_owner_process_deadlines(impl);
-  if (status != SALTS_OK) return status;
+  if (status != SALTS_OK) {
+#if defined(CNET_INTERNAL_TESTING)
+    fprintf(stderr, "cnet_owner_drive first-error stage=deadlines status=%d\n", status);
+#endif
+    return status;
+  }
   if (impl->pending_event_count != 0u || impl->published_event_count != published_before)
     return SALTS_OK;
   if (cnet_resolver_has_pending(&impl->resolver)) {
@@ -2078,10 +2101,20 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
       }
       return cnet_owner_process_deadlines(impl);
     }
-    if (status != SALTS_OK) return status;
+    if (status != SALTS_OK) {
+#if defined(CNET_INTERNAL_TESTING)
+      fprintf(stderr, "cnet_owner_drive first-error stage=observe status=%d\n", status);
+#endif
+      return status;
+    }
     if (completion_count == 0u) return SALTS_OK;
     status = cnet_owner_process_completion_batch(impl, impl->completions, completion_count);
-    if (status != SALTS_OK) return status;
+    if (status != SALTS_OK) {
+#if defined(CNET_INTERNAL_TESTING)
+      fprintf(stderr, "cnet_owner_drive first-error stage=completion_batch status=%d\n", status);
+#endif
+      return status;
+    }
     if (impl->published_event_count != published_before) return SALTS_OK;
     status = cnet_owner_process_deadlines(impl);
     if (status != SALTS_OK) return status;
