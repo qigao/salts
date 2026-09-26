@@ -15,6 +15,42 @@ static const rbtree_t *map_tree_const(const map_t *map) {
   return map == NULL ? NULL : (const rbtree_t *)map->impl;
 }
 
+static bool map_is_typed_semantic_zero(const map_t *map) {
+  return map != NULL && map->impl == NULL &&
+         map->cmeta.descriptor == &stl_map_container_desc &&
+         map->key_type != NULL && map->value_type != NULL &&
+         cmeta_type_desc_valid(map->key_type) &&
+         cmeta_type_desc_valid(map->value_type);
+}
+
+static stl_status map_materialize_for_mutation(
+    map_t *map, map_t *zero_snapshot, bool *materialized) {
+  stl_status status;
+  if (zero_snapshot == NULL || materialized == NULL)
+    return STL_INVALID_ARGUMENT;
+  *materialized = false;
+  if (map_tree(map) != NULL) return STL_OK;
+  if (!map_is_typed_semantic_zero(map)) return STL_INVALID_ARGUMENT;
+
+  *zero_snapshot = *map;
+  status = map_raw_init(
+      map, zero_snapshot->key_type, zero_snapshot->value_type, SIZE_MAX);
+  if (status != STL_OK) {
+    *map = *zero_snapshot;
+    return status;
+  }
+  map->generation = zero_snapshot->generation;
+  *materialized = true;
+  return STL_OK;
+}
+
+static void map_rollback_materialization(
+    map_t *map, const map_t *zero_snapshot, bool materialized) {
+  if (!materialized) return;
+  map_raw_destroy_storage(map);
+  *map = *zero_snapshot;
+}
+
 static stl_status map_initialize(
     map_t *map, const cmeta_type_desc *key_type,
     const cmeta_type_desc *value_type, size_t key_size, size_t key_align,
@@ -131,13 +167,23 @@ void map_clear(map_t *map) {
 
 stl_status map_put(map_t *map, const void *key,
                    const void *value) {
-  rbtree_t *tree = map_tree(map);
+  map_t zero_snapshot = {0};
+  rbtree_t *tree;
   rbtree_put_result result;
+  bool materialized = false;
   stl_status status;
-  if (tree == NULL) return STL_INVALID_ARGUMENT;
+  if (key == NULL || value == NULL) return STL_INVALID_ARGUMENT;
+  status = map_materialize_for_mutation(
+      map, &zero_snapshot, &materialized);
+  if (status != STL_OK) return status;
+  tree = map_tree(map);
   status = rbtree_put(tree, key, value, &result);
   (void)result;
-  if (status == STL_OK) ++map->generation;
+  if (status == STL_OK) {
+    ++map->generation;
+    return STL_OK;
+  }
+  map_rollback_materialization(map, &zero_snapshot, materialized);
   return status;
 }
 
