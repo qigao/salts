@@ -443,7 +443,7 @@ jobs:
           rm -rf "$base_source"
           git worktree add --detach "$base_source" "$COOP_AB_BASE_SHA"
           cd "$base_source"
-          cmake --preset linux-release-user -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF
+          cmake --preset linux-release-user -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=ON
           cmake --build --preset linux-release-user --target native_io_queue_depth_benchmark
           echo "NATIVE_IO_QD_BASE_EXECUTABLE=$base_source/build/linux-gcc-release/bin/native_io_queue_depth_benchmark" >> "$GITHUB_ENV"
 
