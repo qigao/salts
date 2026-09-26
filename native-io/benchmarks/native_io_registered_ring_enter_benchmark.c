@@ -61,7 +61,7 @@ static int measure_mode(const char *name, int fd, unsigned flags, size_t iterati
 
   for (size_t i = 0u; i < warmup; ++i) {
     status = enter_once(fd, flags);
-    if (status != 0) return status == 0 ? -EIO : status;
+    if (status != 0) return status;
   }
 
   fprintf(stderr, "NATIVE_IO_REGISTERED_ENTER_BEGIN mode=%s iterations=%zu\n", name, iterations);
