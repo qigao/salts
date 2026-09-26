@@ -11,6 +11,7 @@
 typedef struct native_io_sharded_shard native_io_sharded_shard;
 typedef struct native_io_sharded_slot native_io_sharded_slot;
 typedef struct native_io_sharded_request_ownership native_io_sharded_request_ownership;
+typedef struct native_io_sharded_ownership_settlement native_io_sharded_ownership_settlement;
 
 struct native_io_sharded_context {
   native_io_sharded *runtime;
@@ -31,12 +32,18 @@ struct native_io_sharded_request_ownership {
   int active;
 };
 
+struct native_io_sharded_ownership_settlement {
+  native_io_sharded_ownership ownership;
+  int active;
+};
+
 struct native_io_sharded_shard {
   native_io_sharded *runtime;
   size_t index;
   native_io_backend backend;
   native_io_sharded_context context;
   native_io_completion *completion_scratch;
+  native_io_sharded_ownership_settlement *ownership_settlements;
   size_t completion_capacity;
   native_io_sharded_request_ownership *request_ownerships;
   size_t request_ownership_capacity;
@@ -302,6 +309,7 @@ static void native_io_sharded_destroy_storage(native_io_sharded *runtime) {
     for (size_t index = 0u; index < runtime->shard_count; ++index) {
       native_io_sharded_shard *shard = &runtime->shards[index];
       free(shard->request_ownerships);
+      free(shard->ownership_settlements);
       free(shard->completion_scratch);
       free(shard->free_slots);
       free(shard->slots);
@@ -357,7 +365,9 @@ int native_io_sharded_create(const native_io_sharded_config *config,
   if (slot_capacity > SIZE_MAX / sizeof(native_io_sharded_slot) ||
       slot_capacity > SIZE_MAX / sizeof(size_t) ||
       (config->backend.completion_batch_capacity != 0u &&
-       config->backend.completion_batch_capacity > SIZE_MAX / sizeof(native_io_completion)) ||
+       (config->backend.completion_batch_capacity > SIZE_MAX / sizeof(native_io_completion) ||
+        config->backend.completion_batch_capacity >
+            SIZE_MAX / sizeof(native_io_sharded_ownership_settlement))) ||
       (config->backend.request_capacity != 0u &&
        config->backend.request_capacity >
            SIZE_MAX / sizeof(native_io_sharded_request_ownership)))
@@ -398,15 +408,19 @@ int native_io_sharded_create(const native_io_sharded_config *config,
     salts_cond_init(&shard->slot_space);
     shard->slots = (native_io_sharded_slot *)calloc(slot_capacity, sizeof(*shard->slots));
     shard->free_slots = (size_t *)calloc(slot_capacity, sizeof(*shard->free_slots));
-    if (shard->completion_capacity != 0u)
+    if (shard->completion_capacity != 0u) {
       shard->completion_scratch = (native_io_completion *)calloc(
           shard->completion_capacity, sizeof(*shard->completion_scratch));
+      shard->ownership_settlements = (native_io_sharded_ownership_settlement *)calloc(
+          shard->completion_capacity, sizeof(*shard->ownership_settlements));
+    }
     if (shard->request_ownership_capacity != 0u)
       shard->request_ownerships = (native_io_sharded_request_ownership *)calloc(
           shard->request_ownership_capacity, sizeof(*shard->request_ownerships));
     if (shard->slot_lock == NULL || shard->slot_space == NULL || shard->slots == NULL ||
         shard->free_slots == NULL ||
-        (shard->completion_capacity != 0u && shard->completion_scratch == NULL) ||
+        (shard->completion_capacity != 0u &&
+         (shard->completion_scratch == NULL || shard->ownership_settlements == NULL)) ||
         (shard->request_ownership_capacity != 0u && shard->request_ownerships == NULL)) {
       native_io_sharded_cleanup_failed_create(runtime);
       return SALTS_ENOMEM;
@@ -791,10 +805,20 @@ int native_io_sharded_context_observe(native_io_sharded_context *context,
     shard->observe_active = 0;
     return status;
   }
+  /*
+   * Detach ownership for the complete dequeued batch before running any
+   * terminal callback. Raw NativeIO may make every slot in this batch reusable
+   * before observe returns, so a callback that immediately submits new work
+   * must not overwrite an ownership record belonging to a later completion in
+   * the same batch.
+   */
   for (size_t index = 0u; index < count; ++index) {
     const native_io_completion *native_event = &shard->completion_scratch[index];
     native_io_sharded_completion *event = &events[index];
+    native_io_sharded_ownership_settlement *settlement =
+        &shard->ownership_settlements[index];
     memset(event, 0, sizeof(*event));
+    memset(settlement, 0, sizeof(*settlement));
     event->request.owner_identity = shard->runtime->identity;
     event->request.owner_shard = (uint32_t)shard->index;
     event->request.native_request = native_event->request;
@@ -813,11 +837,21 @@ int native_io_sharded_context_observe(native_io_sharded_context *context,
       native_io_sharded_request_ownership *record =
           &shard->request_ownerships[native_event->request.slot - 1u];
       if (record->active && record->generation == native_event->request.generation) {
-        native_io_sharded_ownership ownership = record->ownership;
+        settlement->ownership = record->ownership;
+        settlement->active = 1;
         memset(record, 0, sizeof(*record));
-        if (ownership.terminal != NULL) ownership.terminal(context, event, ownership.arg);
-        ownership.finalize(ownership.arg);
       }
+    }
+  }
+
+  for (size_t index = 0u; index < count; ++index) {
+    native_io_sharded_ownership_settlement *settlement =
+        &shard->ownership_settlements[index];
+    if (settlement->active) {
+      native_io_sharded_ownership ownership = settlement->ownership;
+      memset(settlement, 0, sizeof(*settlement));
+      if (ownership.terminal != NULL) ownership.terminal(context, &events[index], ownership.arg);
+      ownership.finalize(ownership.arg);
     }
   }
   shard->observe_active = 0;
