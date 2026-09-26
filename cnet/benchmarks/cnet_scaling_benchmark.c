@@ -90,6 +90,8 @@ typedef struct scale_result {
   uint64_t dispatcher_invoke_ns;
   uint64_t dispatcher_observer_ns;
   uint64_t dispatcher_release_ns;
+  uint64_t benchmark_callback_ns;
+  uint64_t benchmark_payload_check_ns;
   uint64_t client_poll_ns;
   uint64_t owner_drive_calls;
   uint64_t owner_observe_calls;
@@ -131,8 +133,11 @@ typedef struct scale_cnet {
   size_t cycle_received;
   size_t cycle_sent;
   size_t poll_calls;
+  uint64_t callback_ns;
+  uint64_t payload_check_ns;
   int status;
   bool retained;
+  bool measuring;
 } scale_cnet;
 
 static int scale_socket_error(void) {
@@ -552,18 +557,23 @@ static void scale_cnet_receive(void *user, cnet_connection connection,
                                const cnet_receive_view *view) {
   scale_cnet_connection *entry = (scale_cnet_connection *)user;
   scale_cnet *fixture = entry->owner;
-  const unsigned char *data = (const unsigned char *)view->data;
+  const uint64_t callback_started = fixture->measuring ? salts_hrtime() : 0u;
   (void)connection;
 
   if (view->kind != CNET_MESSAGE_BYTES || view->size == 0u ||
       view->size > fixture->payload_size - entry->received) {
     fixture->status = SALTS_EIO;
-    return;
+    goto finish;
   }
-  for (size_t index = 0u; index < view->size; ++index) {
-    if (data[index] != 0x5au) {
+  {
+    const uint64_t check_started = fixture->measuring ? salts_hrtime() : 0u;
+    const int payload_matches =
+        memcmp(fixture->sent + entry->received, view->data, view->size) == 0;
+    if (fixture->measuring)
+      fixture->payload_check_ns += salts_hrtime() - check_started;
+    if (!payload_matches) {
       fixture->status = SALTS_EIO;
-      return;
+      goto finish;
     }
   }
   entry->received += view->size;
@@ -572,17 +582,21 @@ static void scale_cnet_receive(void *user, cnet_connection connection,
     entry->received = 0u;
     ++fixture->cycle_received;
   }
+
+finish:
+  if (fixture->measuring)
+    fixture->callback_ns += salts_hrtime() - callback_started;
 }
 
 static void scale_cnet_sent(void *user, cnet_connection connection, size_t size) {
   scale_cnet_connection *entry = (scale_cnet_connection *)user;
   scale_cnet *fixture = entry->owner;
+  const uint64_t callback_started = fixture->measuring ? salts_hrtime() : 0u;
   (void)connection;
-  if (size != fixture->payload_size) {
-    fixture->status = SALTS_EIO;
-    return;
-  }
-  ++fixture->cycle_sent;
+  if (size != fixture->payload_size) fixture->status = SALTS_EIO;
+  else ++fixture->cycle_sent;
+  if (fixture->measuring)
+    fixture->callback_ns += salts_hrtime() - callback_started;
 }
 
 static int scale_cnet_wait_connected(scale_cnet *fixture) {
@@ -745,16 +759,21 @@ static int scale_run_cnet(size_t connections, size_t payload_size,
   }
 
   fixture.poll_calls = 0u;
+  fixture.callback_ns = 0u;
+  fixture.payload_check_ns = 0u;
   status = cnet_client_profile_begin(&fixture.client);
   if (status != SALTS_OK) goto cleanup;
+  fixture.measuring = true;
   wall_started = salts_hrtime();
   cpu_started = scale_thread_cpu_ns();
   for (size_t sample = 0u; sample < SCALE_SAMPLES; ++sample) {
     status = scale_cnet_cycle(&fixture, latencies, sample * connections);
-    if (status != SALTS_OK) goto cleanup;
+    if (status != SALTS_OK) break;
   }
   out->cpu_ns = scale_thread_cpu_ns() - cpu_started;
   out->wall_ns = salts_hrtime() - wall_started;
+  fixture.measuring = false;
+  if (status != SALTS_OK) goto cleanup;
   status = cnet_client_profile_take(&fixture.client, &profile);
   if (status != SALTS_OK) goto cleanup;
 
@@ -776,6 +795,8 @@ static int scale_run_cnet(size_t connections, size_t payload_size,
   out->dispatcher_invoke_ns = profile.dispatcher_invoke_ns;
   out->dispatcher_observer_ns = profile.dispatcher_observer_ns;
   out->dispatcher_release_ns = profile.dispatcher_release_ns;
+  out->benchmark_callback_ns = fixture.callback_ns;
+  out->benchmark_payload_check_ns = fixture.payload_check_ns;
   out->client_poll_ns = profile.client_poll_ns;
   out->owner_drive_calls = profile.owner.owner_drive_calls;
   out->owner_observe_calls = profile.owner.observe_calls;
@@ -830,6 +851,9 @@ static void scale_print_result(const scale_result *result) {
           : (double)result->owner_observe_ns / 1000.0 / (double)result->logical_operations;
   uint64_t nested_ns = 0u;
   double owner_residual_us = 0.0;
+  double callback_us = 0.0;
+  double payload_check_us = 0.0;
+  double observer_framework_us = 0.0;
   if (result->driver[0] == 'C') {
     nested_ns = result->owner_request_lifecycle_ns + result->owner_request_resubmit_ns +
                 result->owner_observe_ns + result->owner_request_completion_ns;
@@ -837,14 +861,24 @@ static void scale_print_result(const scale_result *result) {
       owner_residual_us =
           (double)(result->owner_drive_ns - nested_ns) / 1000.0 /
           (double)result->logical_operations;
+    if (result->logical_operations != 0u) {
+      callback_us = (double)result->benchmark_callback_ns / 1000.0 /
+                    (double)result->logical_operations;
+      payload_check_us = (double)result->benchmark_payload_check_ns / 1000.0 /
+                         (double)result->logical_operations;
+      if (result->dispatcher_observer_ns >= result->benchmark_callback_ns)
+        observer_framework_us =
+            (double)(result->dispatcher_observer_ns - result->benchmark_callback_ns) /
+            1000.0 / (double)result->logical_operations;
+    }
   }
 
-  printf("| %s | %zu | %zu | %.0f | %.2f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f |\n",
+  printf("| %s | %zu | %zu | %.0f | %.2f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f |\n",
          result->driver, result->connections, result->payload_size,
          result->operations_per_second, result->mib_per_second,
          (double)result->p50_ns / 1000.0, (double)result->p95_ns / 1000.0,
          (double)result->p99_ns / 1000.0, cpu_us, owner_drive_us, observe_us,
-         owner_residual_us);
+         owner_residual_us, callback_us, payload_check_us, observer_framework_us);
 }
 
 static int scale_write_csv(FILE *csv, const scale_result *result,
@@ -856,7 +890,8 @@ static int scale_write_csv(FILE *csv, const scale_result *result,
               ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
               ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
               ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
-              ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+              ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
+              ",%" PRIu64 "\n",
               backend_name, result->driver, result->connections, result->payload_size,
               (unsigned)SCALE_SAMPLES, result->logical_operations, result->peak_active,
               result->progress_calls, result->wall_ns, result->cpu_ns, result->p50_ns,
@@ -869,7 +904,8 @@ static int scale_write_csv(FILE *csv, const scale_result *result,
               result->owner_queue_publish_ns, result->owner_queue_payload_publish_ns,
               result->owner_queue_payload_copy_ns, result->dispatcher_prepare_ns,
               result->dispatcher_invoke_ns, result->dispatcher_observer_ns,
-              result->dispatcher_release_ns, result->client_poll_ns,
+              result->dispatcher_release_ns, result->benchmark_callback_ns,
+              result->benchmark_payload_check_ns, result->client_poll_ns,
               result->owner_drive_calls, result->owner_observe_calls,
               result->client_poll_calls) < 0)
     return SALTS_EIO;
@@ -901,8 +937,8 @@ int main(void) {
             "owner_observe_ns,owner_request_completion_ns,owner_event_publish_ns,"
             "owner_queue_publish_ns,owner_queue_payload_publish_ns,owner_queue_payload_copy_ns,"
             "dispatcher_prepare_ns,dispatcher_invoke_ns,dispatcher_observer_ns,"
-            "dispatcher_release_ns,client_poll_ns,owner_drive_calls,owner_observe_calls,"
-            "client_poll_calls\n");
+            "dispatcher_release_ns,benchmark_callback_ns,benchmark_payload_check_ns,"
+            "client_poll_ns,owner_drive_calls,owner_observe_calls,client_poll_calls\n");
   }
 
   printf("# NativeIO direct versus CNet copy/retained TCP scaling benchmark\n\n");
@@ -912,8 +948,9 @@ int main(void) {
          "Logical concurrency is connection count; stream lane heads remain serialized per endpoint. "
          "CNet copy and retained differ only in payload ownership admission.\n\n");
   printf("| driver | connections | payload | ops/s | MiB/s | p50 us | p95 us | p99 us | "
-         "CPU us/op | CNet owner drive us/op | CNet observe us/op | owner residual us/op |\n");
-  printf("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+         "CPU us/op | CNet owner drive us/op | CNet observe us/op | owner residual us/op | "
+         "callback us/op | payload check us/op | observer framework us/op |\n");
+  printf("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
 
   for (size_t p = 0u; p < sizeof(SCALE_PAYLOADS) / sizeof(SCALE_PAYLOADS[0]); ++p) {
     for (size_t d = 0u; d < sizeof(SCALE_CONNECTIONS) / sizeof(SCALE_CONNECTIONS[0]); ++d) {
