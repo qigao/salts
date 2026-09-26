@@ -31,6 +31,12 @@
   #define SALTS_IO_URING_HAS_EXT_ARG_WAIT 0
 #endif
 
+#if defined(IORING_SETUP_SINGLE_ISSUER)
+  #define SALTS_IO_URING_HAS_SINGLE_ISSUER 1
+#else
+  #define SALTS_IO_URING_HAS_SINGLE_ISSUER 0
+#endif
+
 typedef enum salts_io_uring_phase {
   SALTS_IO_URING_FREE = 0,
   SALTS_IO_URING_PENDING,
@@ -1234,7 +1240,19 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
     return status;
   }
   memset(&params, 0, sizeof(params));
+#if SALTS_IO_URING_HAS_SINGLE_ISSUER
+  params.flags = IORING_SETUP_SINGLE_ISSUER;
+#endif
   impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+#if SALTS_IO_URING_HAS_SINGLE_ISSUER
+  if (impl->ring_fd < 0 && errno == EINVAL) {
+    /* Older kernels reject unknown setup flags with EINVAL. Retry the same
+     * explicitly selected io_uring backend conservatively; never fall back
+     * to a readiness backend. */
+    memset(&params, 0, sizeof(params));
+    impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+  }
+#endif
   if (impl->ring_fd < 0) {
     status = -errno;
     uring_free_partial(impl);
