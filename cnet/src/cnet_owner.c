@@ -1847,7 +1847,9 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
       config->request_capacity == 0u || config->completion_batch_capacity == 0u ||
       config->receive_buffer_bytes == 0u ||
       config->receive_buffer_count != config->connection_capacity ||
-      config->write_capacity == 0u || config->max_write_bytes == 0u ||
+      config->write_capacity == 0u || config->write_capacity_per_connection == 0u ||
+      config->write_capacity_per_connection > config->write_capacity ||
+      config->max_write_bytes == 0u ||
       config->write_buffer_bytes < config->max_write_bytes ||
       config->completion_batch_capacity > config->request_capacity ||
       config->connection_capacity > UINT32_MAX / 2u || config->request_capacity > UINT32_MAX)
@@ -1937,6 +1939,7 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     const cnet_write_queue_config write_config = {
         .connection_capacity = config->connection_capacity,
         .capacity = config->write_capacity,
+        .per_connection_capacity = config->write_capacity_per_connection,
         .max_payload_bytes = config->max_write_bytes,
         .payload_capacity_bytes = config->write_buffer_bytes};
     status = cnet_write_queue_init(&impl->writes, &write_config);
