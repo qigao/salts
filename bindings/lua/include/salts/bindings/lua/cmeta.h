@@ -51,10 +51,12 @@ cmeta_status salts_lua_call_invokable(
  * __gc path calls cmeta_object_release() exactly once. BORROWED/SHARED/OWNED
  * semantics therefore remain defined only by CMeta.
  *
- * Reflected fields are readable through cmeta_object_field_read(). Executable
- * receiver methods are exposed only through cmeta_object_method_provider and
- * cmeta_object_method_invokable_bind(). Field writes are rejected until CMeta
- * publishes an explicit mutability contract.
+ * Reflected fields are readable through cmeta_object_field_read(). When the
+ * object carries an explicit cmeta_object_field_provider, writes convert into
+ * canonical semantic temporaries and route only through
+ * cmeta_object_field_assign(). Reflection alone never grants writability.
+ * Executable receiver methods are exposed only through
+ * cmeta_object_method_provider and cmeta_object_method_invokable_bind().
  */
 cmeta_status salts_lua_push_object(
     lua_State *state, cmeta_object_ref *object, salts_lua_limits limits);
