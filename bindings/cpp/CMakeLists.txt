@@ -14,3 +14,8 @@ target_compile_features(salts_bindings_cpp INTERFACE cxx_std_17)
 
 install(TARGETS salts_bindings_cpp EXPORT SaltsTargets)
 install(DIRECTORY include/ DESTINATION include)
+
+
+if(BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
