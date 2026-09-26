@@ -770,10 +770,43 @@ static int salts_lua_object_gc(lua_State *state) {
 }
 
 static int salts_lua_object_newindex(lua_State *state) {
-  (void)state;
-  return luaL_error(
-      state,
-      "CMeta object fields are read-only until an explicit mutability contract is provided");
+  salts_lua_object_proxy *proxy =
+      salts_lua_object_proxy_from(state, 1);
+  const char *name;
+  const cmeta_data_desc *field_data = NULL;
+  const void *field_value = NULL;
+  cmeta_data_temp value = {0};
+  cmeta_status status;
+
+  if (proxy == NULL || !cmeta_object_ref_valid(&proxy->object))
+    return luaL_error(state, "invalid CMeta object proxy");
+  if (lua_type(state, 2) != LUA_TSTRING)
+    return luaL_error(state, "CMeta object field name must be a string");
+  name = lua_tostring(state, 2);
+  if (name == NULL)
+    return luaL_error(state, "invalid CMeta object field name");
+
+  status = cmeta_object_field_read(
+      &proxy->object, name, &field_data, &field_value);
+  if (status != CMETA_OK)
+    return luaL_error(
+        state, "unknown CMeta object field '%s' (%d)", name, (int)status);
+  (void)field_value;
+
+  status = cmeta_data_temp_open(
+      field_data, proxy->limits.max_bytes, &value);
+  if (status == CMETA_OK)
+    status = salts_lua_read_cmeta(
+        state, 3, field_data, value.storage, proxy->limits);
+  if (status == CMETA_OK)
+    status = cmeta_object_field_assign(
+        &proxy->object, name, field_data, value.storage);
+  cmeta_data_temp_close(&value);
+
+  if (status != CMETA_OK)
+    return luaL_error(
+        state, "CMeta object field assignment failed (%d)", (int)status);
+  return 0;
 }
 
 static int salts_lua_object_method_call(lua_State *state) {
