@@ -14,7 +14,7 @@
 
 enum {
   IDLE_OBSERVE_DEFAULT_ITERATIONS = 2000000,
-  IDLE_OBSERVE_WARMUP_ITERATIONS = 10000
+  IDLE_OBSERVE_DEFAULT_WARMUP_ITERATIONS = 10000
 };
 
 static uint64_t idle_observe_thread_cpu_ns(void) {
@@ -23,14 +23,14 @@ static uint64_t idle_observe_thread_cpu_ns(void) {
   return (uint64_t)value.tv_sec * UINT64_C(1000000000) + (uint64_t)value.tv_nsec;
 }
 
-static size_t idle_observe_iterations(void) {
-  const char *value = getenv("NATIVE_IO_IDLE_OBSERVE_ITERATIONS");
+static size_t idle_observe_count(const char *name, size_t fallback) {
+  const char *value = getenv(name);
   char *end = NULL;
   unsigned long long parsed;
-  if (value == NULL || *value == '\0') return IDLE_OBSERVE_DEFAULT_ITERATIONS;
+  if (value == NULL || *value == '\0') return fallback;
   parsed = strtoull(value, &end, 10);
   if (end == value || *end != '\0' || parsed == 0u || parsed > 100000000ull)
-    return IDLE_OBSERVE_DEFAULT_ITERATIONS;
+    return fallback;
   return (size_t)parsed;
 }
 
@@ -46,7 +46,12 @@ int main(void) {
   native_io_backend backend = {0};
   const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
   native_io_completion event = {0};
-  const size_t iterations = idle_observe_iterations();
+  const size_t iterations =
+      idle_observe_count("NATIVE_IO_IDLE_OBSERVE_ITERATIONS",
+                         IDLE_OBSERVE_DEFAULT_ITERATIONS);
+  const size_t warmup =
+      idle_observe_count("NATIVE_IO_IDLE_OBSERVE_WARMUP",
+                         IDLE_OBSERVE_DEFAULT_WARMUP_ITERATIONS);
   uint64_t wall_started;
   uint64_t cpu_started;
   uint64_t wall_ns;
@@ -65,7 +70,7 @@ int main(void) {
     return 1;
   }
 
-  for (size_t i = 0u; i < IDLE_OBSERVE_WARMUP_ITERATIONS; ++i) {
+  for (size_t i = 0u; i < warmup; ++i) {
     size_t count = SIZE_MAX;
     status = native_io_backend_observe(&backend, &event, 1u, 0u, &count);
     if (status != SALTS_ETIMEDOUT || count != 0u) {
