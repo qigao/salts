@@ -136,30 +136,40 @@ spec("CSTL typed schema") {
             cmeta_function_param(map_put, 2u)->type, &cmeta_type_long));
     }
 
-    it("resolves reflected receiver methods from the typed method schema") {
-        const cmeta_function_desc *function = (const cmeta_function_desc *)1;
-        const cmeta_function_abi_desc *abi =
-            (const cmeta_function_abi_desc *)1;
+    it("resolves reflected receiver methods through generic method sets") {
+        const cmeta_receiver_method_set *set;
+        const cmeta_receiver_method *method;
 
-        check_true(IntVec_receiver_method("push", &function, &abi));
-        check_true(function == IntVec_push_function());
-        check_true(abi == IntVec_push_function_abi());
+        set = IntVec_receiver_method_set();
+        check_true(cmeta_receiver_method_set_valid(set));
+        method = cmeta_receiver_method_find(set, "push");
+        check_not_null(method);
+        check_true(method->function == IntVec_push_function());
+        check_true(method->abi == IntVec_push_function_abi());
 
-        check_true(IntList_receiver_method("add", &function, &abi));
-        check_true(function == IntList_add_function());
-        check_true(abi == IntList_add_function_abi());
+        set = IntList_receiver_method_set();
+        check_true(cmeta_receiver_method_set_valid(set));
+        method = cmeta_receiver_method_find(set, "add");
+        check_not_null(method);
+        check_true(method->function == IntList_add_function());
+        check_true(method->abi == IntList_add_function_abi());
 
-        check_true(IntSet_receiver_method("add", &function, &abi));
-        check_true(function == IntSet_add_function());
-        check_true(abi == IntSet_add_function_abi());
+        set = IntSet_receiver_method_set();
+        check_true(cmeta_receiver_method_set_valid(set));
+        method = cmeta_receiver_method_find(set, "add");
+        check_not_null(method);
+        check_true(method->function == IntSet_add_function());
+        check_true(method->abi == IntSet_add_function_abi());
 
-        check_true(IntLongMap_receiver_method("put", &function, &abi));
-        check_true(function == IntLongMap_put_function());
-        check_true(abi == IntLongMap_put_function_abi());
+        set = IntLongMap_receiver_method_set();
+        check_true(cmeta_receiver_method_set_valid(set));
+        method = cmeta_receiver_method_find(set, "put");
+        check_not_null(method);
+        check_true(method->function == IntLongMap_put_function());
+        check_true(method->abi == IntLongMap_put_function_abi());
 
-        check_false(IntList_receiver_method("missing", &function, &abi));
-        check_null(function);
-        check_null(abi);
+        check_null(cmeta_receiver_method_find(IntList_receiver_method_set(),
+                                              "missing"));
     }
 
     it("exposes List add as the typed append semantic") {
