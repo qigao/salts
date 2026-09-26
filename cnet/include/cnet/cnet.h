@@ -674,18 +674,21 @@ int cnet_start_tls_server(cnet_client *client, cnet_connection connection,
                           const cnet_tls_server *server);
 
 /**
- * Copies `size` bytes into bounded command storage before returning success.
- * If `observer.on_send` is present it runs once after the full write completes.
+ * Copies `size` bytes into bounded owner write storage before returning success.
+ * Multiple non-TLS writes may be admitted up to the fixed write-slot/byte bound
+ * and settle in FIFO order. If `observer.on_send` is present it runs once per
+ * full logical write, in admission order.
  * @return `SALTS_OK`, `SALTS_EMSGSIZE`, `SALTS_ENOENT` for a stale handle,
- * `SALTS_EBUSY` before connected, while another write is pending, or while
- * closing, plus a bounded queue error.
+ * `SALTS_ENOBUFS` at the bounded write-slot/byte limit, or `SALTS_EBUSY`
+ * before connected, during TLS/control transitions, or while closing.
  */
 int cnet_send(cnet_client *client, cnet_connection connection, const void *data, size_t size);
 
 /**
  * Retains one non-empty immutable buffer on successful admission and sends the
- * first mem_buffer_used(buffer) bytes without copying them into CNet command
- * storage. The caller may release its reference immediately after SALTS_OK,
+ * first mem_buffer_used(buffer) bytes without copying them into CNet write
+ * storage. Multiple non-TLS retained writes share the same bounded FIFO. The
+ * caller may release its reference immediately after SALTS_OK,
  * but must not mutate data/used/capacity while the logical send is in flight.
  * Rejection retains no lasting reference.
  */
@@ -693,9 +696,9 @@ int cnet_send_buffer(cnet_client *client, cnet_connection connection, mem_buffer
 
 /**
  * Copies the ordered concatenation of immutable, non-empty `segments` into
- * one bounded command slot before returning success. The descriptor array and
+ * one bounded write slot before returning success. The descriptor array and
  * its backing ranges are borrowed only for this call. Completion, ordering,
- * busy-state, and queue errors are identical to `cnet_send`; `on_send` reports
+ * capacity, and state errors are identical to `cnet_send`; `on_send` reports
  * the checked total byte count once. NULL data, empty segments, or zero count
  * return `SALTS_EINVAL`; an overflowing or oversized total returns
  * `SALTS_EMSGSIZE` without admitting a write.
