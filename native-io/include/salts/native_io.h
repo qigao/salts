@@ -63,6 +63,13 @@ typedef enum native_io_pipe_endpoint_flags {
   NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE = 1u << 0
 } native_io_pipe_endpoint_flags;
 
+enum { NATIVE_IO_VECTOR_MAX = 16u };
+
+typedef struct native_io_buffer_span {
+  void *data;
+  size_t length;
+} native_io_buffer_span;
+
 /**
  * One caller-owned operation descriptor copied by submit.
  *
@@ -91,6 +98,29 @@ typedef struct native_io_operation {
   size_t address_capacity;
   size_t address_length;
 } native_io_operation;
+
+/**
+ * One bounded caller-owned vectored write descriptor copied by submit_vector.
+ *
+ * spans contains 1..NATIVE_IO_VECTOR_MAX non-empty immutable payload ranges.
+ * NativeIO copies the span descriptors into fixed request storage; payload
+ * bytes remain borrowed until observe returns the matching terminal completion.
+ * One completion byte count denotes the transferred prefix across the logical
+ * concatenation of all spans. NativeIO does not mutate caller descriptors and
+ * does not resubmit a partial write internally.
+ *
+ * STREAM_SEND is supported when the attached stream endpoint/backend reports
+ * vector-write capability. PIPE_WRITE may be supported independently; an
+ * unsupported backend/resource combination returns SALTS_ENOTSUP and never
+ * flattens the spans into a contiguous copy.
+ */
+typedef struct native_io_vector_operation {
+  native_io_operation_kind kind;
+  native_io_endpoint endpoint;
+  const native_io_buffer_span *spans;
+  size_t span_count;
+  uintptr_t user_data;
+} native_io_vector_operation;
 
 typedef enum native_io_completion_kind {
   NATIVE_IO_COMPLETION_OK = 1,
@@ -164,6 +194,8 @@ SALTS_NATIVE_IO_C_API bool native_io_endpoint_valid(native_io_endpoint endpoint)
 SALTS_NATIVE_IO_C_API bool native_io_request_valid(native_io_request request);
 SALTS_NATIVE_IO_C_API bool native_io_coroutine_task_valid(native_io_coroutine_task task);
 SALTS_NATIVE_IO_C_API bool native_io_operation_valid(const native_io_operation *operation);
+SALTS_NATIVE_IO_C_API bool
+native_io_vector_operation_valid(const native_io_vector_operation *operation);
 
 /**
  * Initializes a fixed-capacity backend selected by config.kind.
@@ -228,6 +260,11 @@ SALTS_NATIVE_IO_C_API int native_io_backend_attach_pipe(native_io_backend *backe
 SALTS_NATIVE_IO_C_API int native_io_backend_release_pipe(native_io_backend *backend,
                                                          native_io_endpoint endpoint);
 
+/** Returns whether this live endpoint can preserve a bounded vector write without copying. */
+SALTS_NATIVE_IO_C_API bool
+native_io_backend_endpoint_supports_vector_write(const native_io_backend *backend,
+                                                 native_io_endpoint endpoint);
+
 /**
  * Starts one operation without allocating or copying payload messages. For one
  * endpoint, read operations and write operations are admitted in independent
@@ -246,6 +283,17 @@ SALTS_NATIVE_IO_C_API int native_io_backend_release_pipe(native_io_backend *back
 SALTS_NATIVE_IO_C_API int native_io_backend_submit(native_io_backend *backend,
                                                    const native_io_operation *operation,
                                                    native_io_request *out_request);
+
+/**
+ * Starts one bounded vectored write without flattening payload bytes.
+ * Descriptor spans are copied into fixed backend request storage while payload
+ * ranges remain borrowed until the matching terminal completion is observed.
+ * Unsupported endpoint/backend combinations return SALTS_ENOTSUP.
+ */
+SALTS_NATIVE_IO_C_API int
+native_io_backend_submit_vector(native_io_backend *backend,
+                                const native_io_vector_operation *operation,
+                                native_io_request *out_request);
 
 /**
  * Admits one operation for backend-native batching. Validation, capacity, FIFO,
@@ -296,6 +344,12 @@ SALTS_NATIVE_IO_C_API int native_io_backend_spawn_coroutine(native_io_backend *b
 SALTS_NATIVE_IO_C_API int native_io_coroutine_await(native_io_coroutine *coroutine,
                                                     const native_io_operation *operation,
                                                     native_io_completion *out_completion);
+
+/** Like await, but submits one bounded vectored write through the same request/completion owner. */
+SALTS_NATIVE_IO_C_API int
+native_io_coroutine_await_vector(native_io_coroutine *coroutine,
+                                 const native_io_vector_operation *operation,
+                                 native_io_completion *out_completion);
 
 /** Like await, but admits through prepare so separate coroutine entries can
  * share a backend submission batch. Owner observe flushes before waiting. */
