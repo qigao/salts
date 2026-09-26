@@ -518,6 +518,72 @@ jobs:
             Tee-Object -FilePath (Join-Path $resultDir "summary.md") |
             Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
+      - name: Prove TASKRUN_FLAG idle enter elimination
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && github.event_name == 'pull_request'
+        shell: bash
+        env:
+          NATIVE_IO_IDLE_CANDIDATE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_idle_observe_benchmark
+        run: |
+          set -euo pipefail
+          trace_dir="native-io-results/taskrun-syscalls"
+          mkdir -p "$trace_dir"
+          candidate="$GITHUB_WORKSPACE/$NATIVE_IO_IDLE_CANDIDATE_EXECUTABLE"
+          base="$NATIVE_IO_IDLE_BASE_EXECUTABLE"
+          iterations=256
+          export NATIVE_IO_IDLE_OBSERVE_ITERATIONS="$iterations"
+          export NATIVE_IO_IDLE_OBSERVE_WARMUP=128
+
+          for variant in base candidate; do
+            if [[ "$variant" == "base" ]]; then
+              executable="$base"
+            else
+              executable="$candidate"
+            fi
+            strace -ttt -T -s 256 \
+              -e trace=io_uring_enter,write \
+              -o "$trace_dir/$variant.trace" \
+              "$executable" \
+              > "$trace_dir/$variant.log" 2>&1
+          done
+
+          count_window_enters() {
+            awk '
+              /write\(2, "NATIVE_IO_IDLE_OBSERVE_BEGIN/ { inside=1; next }
+              /write\(2, "NATIVE_IO_IDLE_OBSERVE_END/   { inside=0 }
+              inside && /io_uring_enter\(/ { count++ }
+              END { print count + 0 }
+            ' "$1"
+          }
+
+          base_enters="$(count_window_enters "$trace_dir/base.trace")"
+          candidate_enters="$(count_window_enters "$trace_dir/candidate.trace")"
+          {
+            echo "iterations=$iterations"
+            echo "base_io_uring_enter=$base_enters"
+            echo "candidate_io_uring_enter=$candidate_enters"
+            echo "base_enter_per_call=$(awk -v n="$base_enters" -v i="$iterations" 'BEGIN { printf "%.6f", n/i }')"
+            echo "candidate_enter_per_call=$(awk -v n="$candidate_enters" -v i="$iterations" 'BEGIN { printf "%.6f", n/i }')"
+          } | tee "$trace_dir/summary.txt"
+
+          if [[ "$base_enters" -ne "$iterations" ]]; then
+            echo "expected base idle observe to enter once per call" >&2
+            exit 1
+          fi
+          if [[ "$candidate_enters" -ne 0 ]]; then
+            echo "TASKRUN_FLAG candidate still entered the kernel while idle" >&2
+            exit 1
+          fi
+
+          {
+            echo ""
+            echo "## TASKRUN_FLAG idle syscall shape"
+            echo ""
+            echo "| variant | io_uring_enter / call |"
+            echo "| --- | ---: |"
+            echo "| base | $(awk -v n="$base_enters" -v i="$iterations" 'BEGIN { printf "%.6f", n/i }') |"
+            echo "| candidate | $(awk -v n="$candidate_enters" -v i="$iterations" 'BEGIN { printf "%.6f", n/i }') |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run NativeIO io_uring queue-depth benchmark
         if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
         shell: pwsh
