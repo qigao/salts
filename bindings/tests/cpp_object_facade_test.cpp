@@ -1,8 +1,10 @@
 #include <salts/bindings/lua.hpp>
 #include <salts/bindings/quickjs.hpp>
 
+extern "C" {
 #include <lauxlib.h>
 #include <lua.h>
+}
 #include <quickjs.h>
 #include "tinytest.hpp"
 
