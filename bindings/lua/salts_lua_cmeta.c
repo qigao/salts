@@ -754,7 +754,8 @@ static int salts_lua_object_method_call(lua_State *state) {
   int result_count = 0;
   int top;
 
-  proxy = salts_lua_object_proxy_at(state, lua_upvalueindex(1));
+  proxy = (salts_lua_object_proxy *)lua_touserdata(
+      state, lua_upvalueindex(1));
   method = (const cmeta_receiver_method *)lua_touserdata(
       state, lua_upvalueindex(2));
   if (proxy == NULL || method == NULL ||
@@ -806,7 +807,8 @@ static int salts_lua_object_index(lua_State *state) {
     return 1;
   }
 
-  if (proxy->object.methods != NULL)
+  if (proxy->object.method_provider != NULL &&
+      proxy->object.methods != NULL)
     method = cmeta_receiver_method_find(proxy->object.methods, name);
   if (method != NULL) {
     lua_pushvalue(state, 1);
