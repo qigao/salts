@@ -271,6 +271,26 @@ spec("Red-black-tree ordered Map") {
         map_raw_destroy_storage(&map);
     }
 
+    it("rolls lazy materialization back when an owning first put fails") {
+        map_t map =
+            SALTS_STL_MAP_INITIALIZER_WITH_TYPES(
+                map_owned_value, map_owned_value,
+                &map_owned_type, &map_owned_type);
+        map_t before = map;
+        map_owned_value key = map_owned_make(1);
+        map_owned_value value = map_owned_make(10);
+
+        map_owned_fail_copy = true;
+        check_equal(map_put(&map, &key, &value), STL_OUT_OF_MEMORY);
+        check_equal(memcmp(&map, &before, sizeof(map)), 0);
+        check_equal(map_owned_live, (size_t)2u);
+
+        map_owned_fail_copy = false;
+        map_owned_destroy(&value);
+        map_owned_destroy(&key);
+        check_equal(map_owned_live, (size_t)0u);
+    }
+
     it("keeps owning replacement limit and removal transactional") {
         map_t map = {0};
         map_owned_value key = map_owned_make(1);
