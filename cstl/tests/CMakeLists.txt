@@ -68,6 +68,45 @@ cmake_add_test(cstl_typed_test
   LIBS Salts::CSTL Salts::TinyTest
   FOLDER "cstl/tests")
 
+# Minimal CMeta receiver-method lowering POC. The lowerer runs at build time;
+# the generated executable contains only the direct typed CSTL call.
+add_executable(cstl_method_lower_poc cstl_method_lower_poc.c)
+target_link_libraries(cstl_method_lower_poc PRIVATE Salts::CMeta)
+set_target_properties(cstl_method_lower_poc PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+  FOLDER "cstl/tests/poc")
+
+set(CSTL_METHOD_LOWER_DIR "${CMAKE_CURRENT_BINARY_DIR}/method_lower")
+set(CSTL_METHOD_LOWER_SOURCE "${CSTL_METHOD_LOWER_DIR}/list_add_lowered.c")
+set(CSTL_METHOD_LOWER_FIXTURE
+    "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/method_lower/list_add.cmeta")
+
+add_custom_command(
+  OUTPUT "${CSTL_METHOD_LOWER_SOURCE}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CSTL_METHOD_LOWER_DIR}"
+  COMMAND $<TARGET_FILE:cstl_method_lower_poc>
+          "${CSTL_METHOD_LOWER_FIXTURE}" "${CSTL_METHOD_LOWER_SOURCE}"
+  DEPENDS cstl_method_lower_poc "${CSTL_METHOD_LOWER_FIXTURE}"
+  COMMENT "Lowering list.add(10) to a direct typed CSTL call"
+  VERBATIM)
+
+add_executable(cstl_method_lowered_test "${CSTL_METHOD_LOWER_SOURCE}")
+target_link_libraries(cstl_method_lowered_test PRIVATE Salts::CSTL)
+set_target_properties(cstl_method_lowered_test PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF
+  FOLDER "cstl/tests/poc")
+add_test(NAME cstl_method_lowered_test COMMAND cstl_method_lowered_test)
+
+add_test(
+  NAME cstl_method_lower_shape_test
+  COMMAND ${CMAKE_COMMAND}
+          -DGENERATED=${CSTL_METHOD_LOWER_SOURCE}
+          -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_method_lowering.cmake")
+
 cmake_add_test(cstl_tree_test
   SOURCES cstl_tree_test.c
   LIBS Salts::CSTL Salts::TinyTest
