@@ -118,8 +118,38 @@ independent node-based doubly-linked list with stable iterators across insertion
 
 ## Typed operations
 
-Generated operations keep the concrete Generic type visible in the function
-name:
+A `typed(...)` declaration creates a concrete static type, but the concrete
+type is not the semantic operation namespace:
+
+```c
+typed(List, IntList, int);
+
+IntList list = {0};
+```
+
+The CMeta lowering layer treats these source spellings as the same operation:
+
+```c
+list.add(10);         /* receiver / C++-style spelling */
+List_add(&list, 10);  /* generic / STL-style spelling */
+```
+
+Both normalize to `List_add(&list, 10)`: `List` owns the operation,
+`IntList` supplies the receiver's static element type. The current native C
+backend then materializes that canonical operation as the existing direct
+static-inline typed helper, for example `IntList_add(&list, 10)`. No runtime
+lookup or dispatch remains in generated C.
+
+The same split applies to other kinds:
+
+```text
+vec.push(10)       == Vec_push(&vec, 10)
+set.add(10)        == Set_add(&set, 10)
+map.put(1, 20)     == Map_put(&map, 1, 20)
+```
+
+Concrete `Type_method` names remain the native typed ABI and are still valid
+ordinary C calls:
 
 ```c
 IntList values = {0};
@@ -136,10 +166,10 @@ IntLongMap_destroy(&index);
 IntList_destroy(&values);
 ```
 
-These generated `Type_method` names are the complete typed ABI. Raw names such
-as `map_init(&scores, 100u)`, `map_put(&scores, &key, &value)`, and
-`map_destroy(&scores)` remain ordinary functions; typed declarations never
-intercept or reinterpret their C expressions.
+Raw names such as `map_init(&scores, 100u)`,
+`map_put(&scores, &key, &value)`, and `map_destroy(&scores)` remain ordinary
+functions; typed declarations never intercept or reinterpret their C
+expressions.
 
 ## TinyTest equality bridge
 
