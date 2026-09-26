@@ -982,6 +982,80 @@ spec("NativeIO bounded sharded routing") {
   }
 
 
+  it("orders shutdown probe behind an already accepted queued owned route") {
+    native_io_sharded *runtime = NULL;
+    native_io_sharded_test_pipe pipe_endpoint = {0};
+    native_io_sharded_route_state state = {0};
+    native_io_sharded_gate_state gate = {0};
+    native_io_sharded_shutdown_state shutdown = {0};
+    native_io_sharded_task attach_task = {
+        native_io_sharded_route_attach, NULL, NULL, &state};
+    native_io_sharded_task gate_task = {
+        native_io_sharded_gate_run, native_io_sharded_gate_cancel,
+        native_io_sharded_gate_finalize, &gate};
+    native_io_sharded_task release_task = {
+        native_io_sharded_route_release, NULL, NULL, &state};
+    native_io_sharded_ownership ownership = {
+        native_io_sharded_route_terminal, native_io_sharded_route_finalize, &state};
+    salts_thread_t shutdown_thread = {0};
+    int status = native_io_sharded_test_create(1u, 2u, &runtime);
+
+    if (status == SALTS_ENOTSUP) {
+      check_equal(status, SALTS_ENOTSUP);
+    } else {
+      native_io_sharded_operation operation;
+      check_equal(status, SALTS_OK);
+      check_equal(native_io_sharded_test_pipe_create(&pipe_endpoint), SALTS_OK);
+      state.native_handle = pipe_endpoint.handle;
+      state.peer = pipe_endpoint.peer;
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 0u, &attach_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.attach_status, SALTS_OK);
+      operation = native_io_sharded_route_read_operation(&state);
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 0u, &gate_task), SALTS_OK);
+      check_true(native_io_sharded_wait_atomic(&gate.started, 1));
+      check_equal(native_io_sharded_try_submit_owned(
+                      runtime, &operation, &ownership,
+                      native_io_sharded_route_admission, &state),
+                  SALTS_OK);
+      check_equal(atomic_load(&state.admissions), 0);
+      check_equal(atomic_load(&state.finalizes), 0);
+
+      shutdown.runtime = runtime;
+      check_equal(
+          salts_thread_create(&shutdown_thread, native_io_sharded_shutdown_thread, &shutdown),
+          SALTS_OK);
+      check_true(native_io_sharded_wait_atomic(&shutdown.entered, 1));
+      salts_sleep_ms(10u);
+      check_equal(atomic_load_explicit(&shutdown.returned, memory_order_acquire), 0);
+
+      atomic_store_explicit(&gate.gate, 1, memory_order_release);
+      check_equal(salts_thread_join(&shutdown_thread), SALTS_OK);
+      check_equal(shutdown.status, SALTS_EBUSY);
+      check_equal(atomic_load(&gate.runs), 1);
+      check_equal(atomic_load(&gate.finalizes), 1);
+      check_equal(atomic_load(&state.admissions), 1);
+      check_equal(state.admission_status, SALTS_OK);
+      check_equal(state.admission_shard, (size_t)0);
+      check_equal(atomic_load(&state.terminals), 1);
+      check_equal(atomic_load(&state.finalizes), 1);
+      check_equal(state.terminal_kind, NATIVE_IO_COMPLETION_CANCELLED);
+      check_equal(state.terminal_shard, (size_t)0);
+
+      native_io_sharded_test_pipe_close_handle(&pipe_endpoint.handle);
+      check_equal(native_io_sharded_try_submit_to(runtime, 0u, &release_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.release_status, SALTS_OK);
+      check_equal(native_io_sharded_shutdown(runtime), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+
+      native_io_sharded_test_pipe_close(&pipe_endpoint);
+      check_equal(native_io_sharded_destroy(runtime), SALTS_OK);
+    }
+  }
+
   it("drains routed owned requests to terminal cancellation before recoverable endpoint busy") {
     native_io_sharded *runtime = NULL;
     native_io_sharded_test_pipe pipe_endpoint = {0};
