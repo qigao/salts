@@ -215,6 +215,7 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   cnet_command_queue commands = {0};
   cnet_event_queue events = {0};
   cnet_owner owner = {0};
+  mem_pool_t vector_pool;
   const cnet_command_queue_config command_config = {8u, sizeof(cnet_owner_connect_payload)};
   const cnet_event_queue_config event_config = {8u, 2u, 64u};
   cnet_owner_test_clock clock = {.now_ms = 100u,
@@ -925,12 +926,15 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   cnet_command command = {0};
   cnet_event_view event = {0};
   cnet_session_terminal terminal = {0};
+  mem_buffer_t *unsupported_buffer = NULL;
+  mem_slice_t unsupported_slices[2] = {{0}};
   int echo_start_status;
 
   check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
   check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
   check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
   check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
+  check_equal(mem_init(&vector_pool, 0u), 0);
   check_equal(cnet_owner_test_udp_peer(&peer, &peer_address), SALTS_OK);
   check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
 
@@ -948,6 +952,24 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   check_equal(event.session.slot, session.slot);
   check_equal(event.session.generation, session.generation);
   check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+
+  unsupported_buffer = mem_get_buffer(&vector_pool, 4u);
+  check_true(unsupported_buffer != NULL);
+  if (unsupported_buffer != NULL) {
+    memset(mem_buffer_data(unsupported_buffer), 0x5au, 4u);
+    mem_set_used(unsupported_buffer, 4u);
+    unsupported_slices[0] = mem_slice(unsupported_buffer, 0u, 2u);
+    unsupported_slices[1] = mem_slice(unsupported_buffer, 2u, 2u);
+    check_equal(mem_buffer_ref_count(unsupported_buffer), UINT32_C(3));
+    check_equal(cnet_owner_send_slicev_direct(&owner, session, unsupported_slices, 2u),
+                SALTS_ENOTSUP);
+    check_equal(mem_buffer_ref_count(unsupported_buffer), UINT32_C(3));
+    mem_slice_release(&unsupported_slices[0]);
+    mem_slice_release(&unsupported_slices[1]);
+    check_equal(mem_buffer_ref_count(unsupported_buffer), UINT32_C(1));
+    mem_buffer_release(unsupported_buffer);
+    unsupported_buffer = NULL;
+  }
 
   echo = (cnet_owner_test_udp_echo){peer,    outbound,        sizeof(outbound),
                                     inbound, sizeof(inbound), SALTS_EIO};
@@ -1004,6 +1026,7 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
   check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
   check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
+  mem_destroy(&vector_pool);
 }
 
 static void cnet_owner_test_resolve_failure(native_io_backend_kind backend_kind) {
