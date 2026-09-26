@@ -21,7 +21,8 @@ static bool enable_ring_wait;
 static unsigned poll_calls;
 static unsigned setup_calls;
 static unsigned setup_flags[BATCH_TEST_CALLS];
-static bool reject_single_issuer_once;
+static bool reject_defer_taskrun_once;
+static unsigned reject_nonzero_setups;
 
 static int batch_test_poll(struct pollfd *fds, nfds_t count, int timeout) {
   ++poll_calls;
@@ -65,15 +66,19 @@ static long batch_test_syscall(long number, ...) {
     struct io_uring_params *parameters = va_arg(arguments, struct io_uring_params *);
     if (setup_calls < BATCH_TEST_CALLS) setup_flags[setup_calls] = parameters->flags;
     ++setup_calls;
-#if defined(IORING_SETUP_SINGLE_ISSUER)
-    if (reject_single_issuer_once &&
-        (parameters->flags & IORING_SETUP_SINGLE_ISSUER) != 0u) {
-      reject_single_issuer_once = false;
+#if defined(IORING_SETUP_DEFER_TASKRUN)
+    if (reject_defer_taskrun_once &&
+        (parameters->flags & IORING_SETUP_DEFER_TASKRUN) != 0u) {
+      reject_defer_taskrun_once = false;
       errno = EINVAL;
       result = -1;
     } else
 #endif
-    {
+    if (reject_nonzero_setups != 0u && parameters->flags != 0u) {
+      --reject_nonzero_setups;
+      errno = EINVAL;
+      result = -1;
+    } else {
       result = syscall(number, entries, parameters);
     }
 #if defined(IORING_FEAT_EXT_ARG)
@@ -167,30 +172,69 @@ spec("io_uring explicit batch submission") {
     poll_calls = 0u;
     setup_calls = 0u;
     memset(setup_flags, 0, sizeof(setup_flags));
-    reject_single_issuer_once = false;
+    reject_defer_taskrun_once = false;
+    reject_nonzero_setups = 0u;
   }
 #if defined(IORING_SETUP_SINGLE_ISSUER)
-  it("requests single-issuer setup and keeps a conservative fallback") {
+  it("requests the strongest single-owner setup supported by the build") {
     native_io_backend backend = {0};
     const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
 
+    enable_ring_wait = true;
     check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
     check_greater_equal(setup_calls, 1u);
     check_true((setup_flags[0] & IORING_SETUP_SINGLE_ISSUER) != 0u);
-    if (setup_calls > 1u) check_equal(setup_flags[1], 0u);
+#if defined(IORING_SETUP_DEFER_TASKRUN) && defined(IORING_FEAT_EXT_ARG) && \
+    defined(IORING_ENTER_EXT_ARG)
+    check_true((setup_flags[0] & IORING_SETUP_DEFER_TASKRUN) != 0u);
+#endif
     check_equal(native_io_backend_close(&backend), SALTS_OK);
     check_equal(native_io_backend_destroy(&backend), SALTS_OK);
   }
 
-  it("retries conservative io_uring setup after unsupported single issuer") {
+#if defined(IORING_SETUP_DEFER_TASKRUN) && defined(IORING_FEAT_EXT_ARG) && \
+    defined(IORING_ENTER_EXT_ARG)
+  it("falls back from unsupported defer-taskrun to single issuer") {
     native_io_backend backend = {0};
     const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
 
-    reject_single_issuer_once = true;
+    enable_ring_wait = true;
+    reject_defer_taskrun_once = true;
     check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
     check_equal(setup_calls, 2u);
     check_true((setup_flags[0] & IORING_SETUP_SINGLE_ISSUER) != 0u);
+    check_true((setup_flags[0] & IORING_SETUP_DEFER_TASKRUN) != 0u);
+    check_equal(setup_flags[1], (unsigned)IORING_SETUP_SINGLE_ISSUER);
+    salts_io_uring_impl *impl = backend.impl;
+    check_false(impl->defer_taskrun);
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+  }
+#endif
+
+  it("falls back from unsupported single-owner flags to conservative io_uring") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+
+    enable_ring_wait = true;
+#if defined(IORING_SETUP_DEFER_TASKRUN) && defined(IORING_FEAT_EXT_ARG) && \
+    defined(IORING_ENTER_EXT_ARG)
+    reject_nonzero_setups = 2u;
+#else
+    reject_nonzero_setups = 1u;
+#endif
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+#if defined(IORING_SETUP_DEFER_TASKRUN) && defined(IORING_FEAT_EXT_ARG) && \
+    defined(IORING_ENTER_EXT_ARG)
+    check_equal(setup_calls, 3u);
+    check_true((setup_flags[0] & IORING_SETUP_DEFER_TASKRUN) != 0u);
+    check_equal(setup_flags[1], (unsigned)IORING_SETUP_SINGLE_ISSUER);
+    check_equal(setup_flags[2], 0u);
+#else
+    check_equal(setup_calls, 2u);
+    check_true((setup_flags[0] & IORING_SETUP_SINGLE_ISSUER) != 0u);
     check_equal(setup_flags[1], 0u);
+#endif
     check_equal(native_io_backend_close(&backend), SALTS_OK);
     check_equal(native_io_backend_destroy(&backend), SALTS_OK);
   }
@@ -234,6 +278,66 @@ spec("io_uring explicit batch submission") {
     batch_test_requests(true, 0u, SALTS_EIO);
     check_equal(enter_calls, 1u);
   }
+#if defined(IORING_SETUP_DEFER_TASKRUN) && defined(IORING_FEAT_EXT_ARG) && \
+    defined(IORING_ENTER_EXT_ARG)
+  it("runs deferred task work during zero-timeout observe") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+    int descriptors[2] = {-1, -1};
+    native_io_endpoint endpoint = {0};
+    native_io_request request = {0};
+    native_io_completion event = {0};
+    unsigned char received = 0u;
+    const unsigned char sent = 0x71u;
+    size_t count = 0u;
+
+    enable_ring_wait = true;
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    salts_io_uring_impl *impl = backend.impl;
+    if (!impl->defer_taskrun) {
+      check_equal(native_io_backend_close(&backend), SALTS_OK);
+      check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+    } else {
+      check_equal(pipe(descriptors), 0);
+      check_equal(native_io_backend_attach_pipe(&backend, (uintptr_t)descriptors[0],
+                                                NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &endpoint),
+                  SALTS_OK);
+      check_equal(write(descriptors[1], &sent, 1u), (ssize_t)1);
+      const native_io_operation operation = {.kind = NATIVE_IO_OPERATION_PIPE_READ,
+                                             .endpoint = endpoint,
+                                             .buffer = &received,
+                                             .length = 1u,
+                                             .user_data = 31u};
+      check_equal(native_io_backend_prepare(&backend, &operation, &request), SALTS_OK);
+      check_equal(native_io_backend_flush(&backend), SALTS_OK);
+
+      enter_calls = 0u;
+      poll_calls = 0u;
+      check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count), SALTS_OK);
+      check_equal(count, 1u);
+      check_equal(event.kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(event.user_data, (uintptr_t)31u);
+      check_equal(event.bytes, 1u);
+      check_equal(received, sent);
+      check_greater_equal(enter_calls, 1u);
+      check_equal(poll_calls, 0u);
+
+      count = SIZE_MAX;
+      enter_calls = 0u;
+      check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count), SALTS_ETIMEDOUT);
+      check_equal(count, 0u);
+      check_equal(enter_calls, 1u);
+      check_equal(poll_calls, 0u);
+
+      check_equal(close(descriptors[0]), 0);
+      check_equal(close(descriptors[1]), 0);
+      check_equal(native_io_backend_release_pipe(&backend, endpoint), SALTS_OK);
+      check_equal(native_io_backend_close(&backend), SALTS_OK);
+      check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+    }
+  }
+#endif
+
   it("uses one ring enter and no outer poll for a finite prepared wait") {
     native_io_backend backend = {0};
     const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
