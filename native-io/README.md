@@ -111,11 +111,14 @@ io_uring 每个 SQE 单独 enter。公共 operation/completion 契约不要求�
   wake eventfd 由 ring 内部的 `IORING_OP_POLL_ADD` 观察；支持 EXT_ARG 的内核直接用
   `io_uring_enter(GETEVENTS)` 完成等待，不再额外 `poll(ring_fd, wake_fd)`。CQ 推进后的新
   lane head 在同一 owner 轮次合并，普通 submit 的空闲 lane 仍立即提交。Linux 构建与内核
-  能力允许时，ring 以 `SINGLE_ISSUER | DEFER_TASKRUN` 表达既有单 owner 契约，并把 completion
-  task-work 收敛到 owner 的 GETEVENTS progress 边界；不支持 DEFER 时退到 SINGLE_ISSUER，
-  再不支持则退到无 setup flag 的同一 io_uring backend，绝不隐式切换 epoll。DEFER 模式下
-  `observe(0)` 使用非阻塞 `GETEVENTS(min_complete=0)` 推进 task-work，已有 CQE 则保持
-  零额外 enter 的直接返回 fast path。
+  能力允许时，ring 以 `SINGLE_ISSUER | DEFER_TASKRUN | TASKRUN_FLAG` 表达既有单 owner
+  契约，并把 completion task-work 收敛到 owner 的 GETEVENTS progress 边界。若内核不支持
+  TASKRUN_FLAG，则退到 `SINGLE_ISSUER | DEFER_TASKRUN`；不支持 DEFER 时再退到
+  SINGLE_ISSUER，最后才退到无 setup flag 的同一 io_uring backend，绝不隐式切换 epoll。
+  DEFER + TASKRUN_FLAG 模式下，`observe(0)` 先消费可见 CQE、提交 staged work 并再次检查
+  CQ；只有 SQ flags 出现 `IORING_SQ_TASKRUN` 或 `IORING_SQ_CQ_OVERFLOW` 时才执行
+  非阻塞 `GETEVENTS(min_complete=0)`。完全 idle 时直接返回 `SALTS_ETIMEDOUT`，不进入
+  内核；旧内核没有 TASKRUN_FLAG 时仍保留原来的保守 GETEVENTS 行为。
 - **IOCP**：prepare 使用既有 overlapped submit；没有待提交 SQ，flush 无额外工作。
   不把 readiness/io_uring 的“取消一个本地排队请求后继续使用 socket”保证扩展到 Winsock。
   Microsoft 明确说明取消未完成 overlapped I/O 后继续使用 socket 的行为未定义，
