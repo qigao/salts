@@ -2,6 +2,8 @@
 #include <salts/error_codes.h>
 #include <salts/native_io_sharded.h>
 
+#include <inttypes.h>
+#include <stdbool.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
