@@ -11,6 +11,13 @@
 #include <unistd.h>
 
 enum { BATCH_TEST_COUNT = 4, BATCH_TEST_CALLS = 16, BATCH_TEST_TIMEOUT_MS = 5000 };
+
+#if defined(__NR_io_uring_register) && defined(IORING_FEAT_REG_REG_RING) && \
+    defined(IORING_ENTER_REGISTERED_RING)
+  #define BATCH_TEST_HAS_REGISTERED_RING_FD 1
+#else
+  #define BATCH_TEST_HAS_REGISTERED_RING_FD 0
+#endif
 static unsigned enter_calls;
 static unsigned enter_sizes[BATCH_TEST_CALLS];
 static int enter_fds[BATCH_TEST_CALLS];
@@ -102,13 +109,13 @@ static long batch_test_syscall(long number, ...) {
       register_fds[register_calls] = fd;
     }
     ++register_calls;
-#if defined(IORING_REGISTER_RING_FDS)
+#if BATCH_TEST_HAS_REGISTERED_RING_FD
     if (reject_ring_registration && opcode == IORING_REGISTER_RING_FDS) {
       errno = EINVAL;
       result = -1;
     } else
 #endif
-#if defined(IORING_UNREGISTER_RING_FDS)
+#if BATCH_TEST_HAS_REGISTERED_RING_FD
     if (reject_ring_unregistration && opcode == IORING_UNREGISTER_RING_FDS) {
       errno = EINVAL;
       result = -1;
@@ -216,8 +223,7 @@ spec("io_uring explicit batch submission") {
     reject_ring_registration = false;
     reject_ring_unregistration = false;
   }
-#if defined(__NR_io_uring_register) && defined(IORING_REGISTER_RING_FDS) && \
-    defined(IORING_UNREGISTER_RING_FDS) && defined(IORING_ENTER_REGISTERED_RING)
+#if BATCH_TEST_HAS_REGISTERED_RING_FD
   it("registers the ring fd and uses the returned index for enter") {
     native_io_backend backend = {0};
     const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
