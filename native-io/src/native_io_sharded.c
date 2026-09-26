@@ -82,7 +82,6 @@ struct native_io_sharded_shard {
   atomic_int draining;
   atomic_int shutdown_probe_done;
   atomic_int shutdown_probe_status;
-  atomic_size_t shutdown_probe_endpoint_count;
   atomic_int shutdown_drain_done;
   atomic_int shutdown_drain_status;
   atomic_size_t shutdown_drain_endpoint_count;
@@ -161,7 +160,7 @@ static size_t native_io_sharded_owned_request_count(const native_io_sharded_shar
   return count;
 }
 
-static void native_io_sharded_restore_after_shutdown_probe(native_io_sharded *runtime) {
+static void native_io_sharded_restore_after_shutdown_attempt(native_io_sharded *runtime) {
   if (runtime == NULL) return;
   for (size_t index = 0u; index < runtime->shard_count; ++index)
     atomic_store(&runtime->shards[index].draining, 0);
@@ -434,7 +433,6 @@ static void native_io_sharded_shutdown_probe(coro_t *coroutine, void *arg) {
   } else if (stats.active_requests > owned) {
     status = SALTS_EBUSY;
   }
-  atomic_store(&shard->shutdown_probe_endpoint_count, stats.endpoint_count);
   atomic_store(&shard->shutdown_probe_status, status);
   atomic_store(&shard->shutdown_probe_done, 1);
 }
@@ -883,7 +881,7 @@ int native_io_sharded_shutdown(native_io_sharded *runtime) {
     }
   }
   if (first_status != SALTS_OK) {
-    native_io_sharded_restore_after_shutdown_probe(runtime);
+    native_io_sharded_restore_after_shutdown_attempt(runtime);
     return first_status;
   }
 
@@ -929,7 +927,7 @@ int native_io_sharded_shutdown(native_io_sharded *runtime) {
     }
   }
   if (first_status != SALTS_OK) {
-    native_io_sharded_restore_after_shutdown_probe(runtime);
+    native_io_sharded_restore_after_shutdown_attempt(runtime);
     return first_status;
   }
 
