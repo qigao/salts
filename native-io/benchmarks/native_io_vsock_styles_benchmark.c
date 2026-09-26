@@ -89,6 +89,9 @@ typedef struct vsock_style_sharded_operation {
   int terminal_status;
   size_t bytes;
   uintptr_t user_data;
+  size_t expected_owner_shard;
+  size_t admission_shard;
+  size_t terminal_shard;
   unsigned terminal_count;
   unsigned finalize_count;
 } vsock_style_sharded_operation;
@@ -591,6 +594,10 @@ static int vsock_style_sharded_fixture_init(vsock_style_sharded_fixture *fixture
   status = native_io_sharded_submit_to(fixture->runtime, 1u, &attach_task);
   if (status == SALTS_OK) status = native_io_sharded_wait(fixture->runtime);
   if (status == SALTS_OK) status = fixture->attach_status;
+  if (status == SALTS_OK &&
+      (native_io_sharded_endpoint_owner_shard(fixture->endpoints[0]) != 1u ||
+       native_io_sharded_endpoint_owner_shard(fixture->endpoints[1]) != 1u))
+    status = SALTS_EPROTO;
   return status;
 }
 
@@ -629,18 +636,18 @@ static int vsock_style_sharded_fixture_destroy(vsock_style_sharded_fixture *fixt
 static void vsock_style_sharded_admission(native_io_sharded_context *context, int status,
                                          native_io_sharded_request request, void *arg) {
   vsock_style_sharded_operation *state = (vsock_style_sharded_operation *)arg;
-  (void)context;
   state->admission_status = status;
   state->request = request;
+  state->admission_shard = native_io_sharded_context_shard(context);
 }
 
 static void vsock_style_sharded_terminal(
     native_io_sharded_context *context,
     const native_io_sharded_completion *completion, void *arg) {
   vsock_style_sharded_operation *state = (vsock_style_sharded_operation *)arg;
-  (void)context;
   state->kind = completion->kind;
   state->terminal_status = completion->status;
+  state->terminal_shard = native_io_sharded_context_shard(context);
   state->bytes = completion->bytes;
   state->user_data = completion->user_data;
   ++state->terminal_count;
@@ -655,6 +662,9 @@ static void vsock_style_sharded_reset_operation(vsock_style_sharded_operation *s
   memset(state, 0, sizeof(*state));
   state->admission_status = SALTS_EIO;
   state->terminal_status = SALTS_EIO;
+  state->expected_owner_shard = SIZE_MAX;
+  state->admission_shard = SIZE_MAX;
+  state->terminal_shard = SIZE_MAX;
 }
 
 static int vsock_style_sharded_submit_operation(
@@ -670,6 +680,8 @@ static int vsock_style_sharded_submit_operation(
   const native_io_sharded_ownership ownership = {
       vsock_style_sharded_terminal, vsock_style_sharded_finalize, state};
   vsock_style_sharded_reset_operation(state);
+  state->expected_owner_shard =
+      native_io_sharded_endpoint_owner_shard(fixture->endpoints[endpoint_index]);
   return native_io_sharded_submit_owned(
       fixture->runtime, &operation, &ownership,
       vsock_style_sharded_admission, state);
@@ -679,6 +691,13 @@ static int vsock_style_sharded_consume_terminal(
     vsock_style_sharded_operation *state, size_t remaining, size_t *offset) {
   if (state->terminal_count == 0u) return SALTS_ETIMEDOUT;
   if (state->terminal_count != 1u || state->finalize_count != 1u)
+    return SALTS_EPROTO;
+  if (state->expected_owner_shard == SIZE_MAX ||
+      state->admission_shard != state->expected_owner_shard ||
+      state->terminal_shard != state->expected_owner_shard ||
+      !native_io_sharded_request_valid(state->request) ||
+      native_io_sharded_request_owner_shard(state->request) !=
+          state->expected_owner_shard)
     return SALTS_EPROTO;
   if (state->kind != NATIVE_IO_COMPLETION_OK || state->bytes == 0u ||
       state->bytes > remaining)
