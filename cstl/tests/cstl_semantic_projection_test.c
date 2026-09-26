@@ -2,6 +2,7 @@
 #include <cmeta/data.h>
 #include "tinytest.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -74,6 +75,10 @@ typed(Map, borrow_map, int, long);
 typed(MultiMap, borrow_multimap, int, long);
 typed(BTree, borrow_btree, int, long);
 typed(BPlusTree, borrow_bplus, int, long);
+typed(Vec, exact_i32_vec, int32_t,
+      &cmeta_type_int32, &cmeta_data_int32);
+typed(Set, exact_i32_set, int32_t,
+      &cmeta_type_int32, &cmeta_data_int32);
 
 typedef struct explicit_owned_buffer {
   unsigned char *data;
@@ -250,6 +255,67 @@ static const cmeta_data_desc cstl_struct_with_vec_data = {
 
 
 spec("CSTL semantic projection") {
+  it("uses exact-width canonical integer traits in typed Vec and Set") {
+    exact_i32_vec vec = {0};
+    exact_i32_set set = {0};
+    cmeta_collector vec_collector = {0};
+    cmeta_collector set_collector = {0};
+    int32_t low = INT32_MIN;
+    int32_t high = INT32_MAX;
+    const int32_t *stored;
+
+    check_true(cmeta_data_collection_element_data(
+                   &exact_i32_vec_collection_data) == &cmeta_data_int32);
+    check_true(cmeta_data_collection_element_data(
+                   &exact_i32_set_collection_data) == &cmeta_data_int32);
+    check_true(cmeta_type_equal(
+        exact_i32_vec_collection_data.storage_type,
+        &exact_i32_vec_cmeta_type));
+    check_true(cmeta_type_equal(
+        exact_i32_set_collection_data.storage_type,
+        &exact_i32_set_cmeta_type));
+
+    check_equal(cmeta_data_value_init_zero(
+                    &exact_i32_vec_collection_data, &vec), CMETA_OK);
+    check_equal(cmeta_data_collection_collector(
+                    &exact_i32_vec_collection_data, &vec, 2u,
+                    &vec_collector), CMETA_OK);
+    check_equal(cmeta_collector_begin(&vec_collector), CMETA_OK);
+    check_equal(cmeta_data_collection_accept(
+                    &exact_i32_vec_collection_data, &vec_collector,
+                    &cmeta_data_int32, &low), CMETA_OK);
+    check_equal(cmeta_data_collection_accept(
+                    &exact_i32_vec_collection_data, &vec_collector,
+                    &cmeta_data_int32, &high), CMETA_OK);
+    check_equal(cmeta_collector_finish(&vec_collector), CMETA_OK);
+    check_equal(exact_i32_vec_size(&vec), (size_t)2u);
+    stored = exact_i32_vec_at_const(&vec, 0u);
+    check_not_null(stored);
+    if (stored != NULL) check_true(*stored == low);
+
+    check_equal(cmeta_data_value_init_zero(
+                    &exact_i32_set_collection_data, &set), CMETA_OK);
+    check_equal(cmeta_data_collection_collector(
+                    &exact_i32_set_collection_data, &set, 2u,
+                    &set_collector), CMETA_OK);
+    check_equal(cmeta_collector_begin(&set_collector), CMETA_OK);
+    check_equal(cmeta_data_collection_accept(
+                    &exact_i32_set_collection_data, &set_collector,
+                    &cmeta_data_int32, &high), CMETA_OK);
+    check_equal(cmeta_data_collection_accept(
+                    &exact_i32_set_collection_data, &set_collector,
+                    &cmeta_data_int32, &low), CMETA_OK);
+    check_equal(cmeta_collector_finish(&set_collector), CMETA_OK);
+    check_equal(exact_i32_set_size(&set), (size_t)2u);
+    check_true(exact_i32_set_contains(&set, low));
+    check_true(exact_i32_set_contains(&set, high));
+
+    check_equal(cmeta_data_value_restore_zero(
+                    &exact_i32_set_collection_data, &set), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &exact_i32_vec_collection_data, &vec), CMETA_OK);
+  }
+
   it("uses explicit canonical type and data for owning custom values") {
     static const unsigned char bytes[] = {'o', 'w', 'n'};
     explicit_owned_record source = {0};
