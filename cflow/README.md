@@ -100,6 +100,8 @@ watches are drivers. They publish readiness or completion into Reactive, or
 deliver bounded messages to Actor; they do not own Graph state or Actor
 transition state.
 
+NativeIO execution style is an orthogonal mechanism dimension. Direct/Coroutine and the planned Sharded/SMP style share NativeIO request/completion truth; Reactive and Actor remain CFlow semantic models above thin adapters. See [NativeIO execution and endpoint architecture](../native-io/ARCHITECTURE.md).
+
 ### Public API layers
 
 Start with the narrowest layer that expresses the application contract. These

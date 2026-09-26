@@ -40,6 +40,8 @@ Salts owns the common systems semantics:
 - CSTL typed containers, algorithms, and ranges;
 - CSerde/CBind format-neutral token/native-binding primitives;
 - NativeIO, Coroutine, Concurrency, CNet, Platform, and Core;
+
+NativeIO execution topology is orthogonal to higher semantic models. Its canonical contract defines Direct and Coroutine as current styles and Sharded/SMP as the planned shared-nothing style; CNet, CFlow Reactive, and CFlow Actor remain optional semantic consumers rather than mandatory layers. See [native-io/ARCHITECTURE.md](native-io/ARCHITECTURE.md).
 - TinyTest as the lightweight testing component shipped with the foundation.
 
 ### salts-utils
