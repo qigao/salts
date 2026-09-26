@@ -39,7 +39,7 @@ add_dependencies(cnet_io_benchmark cnet_owner_lifecycle_compare)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   cmake_add_benchmark(cnet_scaling_benchmark
-    SOURCES cnet_scaling_benchmark.c cnet_io_benchmark_config.c
+    SOURCES cnet_scaling_benchmark.c cnet_io_benchmark_config.c cnet_benchmark_stats.c
     LIBS cnet_profile Salts::Platform Salts::NativeIO
     FOLDER "cnet/benchmarks")
   target_include_directories(cnet_scaling_benchmark PRIVATE ../src)
