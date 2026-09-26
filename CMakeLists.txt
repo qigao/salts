@@ -45,6 +45,7 @@ enable_testing()
 include(CMakeOptions.cmake)
 include(Sanitizers)
 include(CmakeUtils)
+include(SaltsCMetaLower)
 
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -88,6 +89,9 @@ write_basic_package_version_file(
 # Install the config files
 install(FILES "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"
               "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
+        DESTINATION "lib/cmake/Salts")
+
+install(FILES "${CMAKE_SOURCE_DIR}/cmake/SaltsCMetaLower.cmake"
         DESTINATION "lib/cmake/Salts")
 
 # Install the export set

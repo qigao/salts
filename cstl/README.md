@@ -135,10 +135,39 @@ List_add(&list, 10);  /* generic / STL-style spelling */
 ```
 
 Both normalize to `List_add(&list, 10)`: `List` owns the operation,
-`IntList` supplies the receiver's static element type. The current native C
-backend then materializes that canonical operation as the existing direct
-static-inline typed helper, for example `IntList_add(&list, 10)`. No runtime
-lookup or dispatch remains in generated C.
+`IntList` supplies the receiver's static element type. The native C backend
+then materializes that canonical operation as the existing direct static-inline
+typed helper, for example `IntList_add(&list, 10)`. No runtime lookup or
+dispatch remains in generated C.
+
+### CMeta source frontend
+
+`cmeta-lower` is the host source-to-source frontend for these enhanced C
+spellings. It reads a translation unit containing ordinary C plus `typed(...)`
+container declarations and emits ordinary C:
+
+```sh
+cmeta-lower app.cmeta.c app.c
+```
+
+For CMake consumers, the installed package exposes the same operation without
+hard-coding the executable path:
+
+```cmake
+salts_cmeta_lower_source(
+  INPUT  app.cmeta.c
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/app.c)
+
+add_executable(app ${CMAKE_CURRENT_BINARY_DIR}/app.c)
+target_link_libraries(app PRIVATE Salts::CSTL)
+```
+
+The first frontend slice deliberately recognizes direct typed object variables,
+receiver calls such as `list.add(...)`, and generic calls such as
+`List_add(&list, ...)`. Comments, strings, preprocessor directives, and
+unrelated C are passed through unchanged. Member receiver expressions
+(`obj.field.add(...)`) and pointer receiver syntax (`ptr->add(...)`) remain
+outside this slice.
 
 The same split applies to other kinds:
 
