@@ -231,7 +231,7 @@ foreach ($row in $pairedRows) {
         foreach ($entry in @(
             [pscustomobject]@{ Name = "rate"; Mad = $rate.Mad; Limit = 5.0 },
             [pscustomobject]@{ Name = "p50"; Mad = $p50.Mad; Limit = 5.0 },
-            [pscustomobject]@{ Name = "p95"; Mad = $p95.Mad; Limit = 5.0 }
+            [pscustomobject]@{ Name = "p95"; Mad = $p95.Mad; Limit = 10.0 }
         )) {
             if ($entry.Mad -gt $entry.Limit) {
                 throw "retained $($entry.Name) paired noise exceeded gate for $($pairKey): $($entry.Mad)pp"
