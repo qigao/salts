@@ -432,6 +432,21 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
+      - name: Build PR-base NativeIO queue-depth benchmark for COOP A/B
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && github.event_name == 'pull_request'
+        shell: bash
+        env:
+          COOP_AB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          base_source="$RUNNER_TEMP/salts-native-io-coop-base"
+          rm -rf "$base_source"
+          git worktree add --detach "$base_source" "$COOP_AB_BASE_SHA"
+          cd "$base_source"
+          cmake --preset linux-release-user -DBUILD_BENCHMARKS=ON -DBUILD_TESTS=OFF
+          cmake --build --preset linux-release-user --target native_io_queue_depth_benchmark
+          echo "NATIVE_IO_QD_BASE_EXECUTABLE=$base_source/build/linux-gcc-release/bin/native_io_queue_depth_benchmark" >> "$GITHUB_ENV"
+
       - name: Run NativeIO io_uring queue-depth benchmark
         if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
         shell: pwsh
@@ -453,6 +468,37 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO io_uring queue-depth benchmark"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run same-run COOP_TASKRUN queue-depth A/B
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          NATIVE_IO_QD_CANDIDATE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_queue_depth_benchmark
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results/coop-ab"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $candidate = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_QD_CANDIDATE_EXECUTABLE
+          $base = $env:NATIVE_IO_QD_BASE_EXECUTABLE
+          foreach ($path in @($base, $candidate)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "COOP A/B benchmark executable not found: $path"
+            }
+          }
+          $runs = @(
+            @{ Name = "base-a"; Exe = $base },
+            @{ Name = "candidate-a"; Exe = $candidate },
+            @{ Name = "candidate-b"; Exe = $candidate },
+            @{ Name = "base-b"; Exe = $base }
+          )
+          foreach ($run in $runs) {
+            $prefix = Join-Path $resultDir $run.Name
+            $env:NATIVE_IO_QD_BENCHMARK_OUTPUT = $prefix
+            & $run.Exe --no-color *> "$prefix.md"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & ./native-io/benchmarks/verify_queue_depth_benchmark.ps1 -Path "$prefix.csv"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: Compare CNet copy and retained sends independently
         if: steps.scope.outputs.adapted == 'true'
