@@ -887,6 +887,7 @@ static int uring_flush_promoted(salts_io_uring_impl *impl, bool *saw_wake) {
 
 static int uring_submit_staged_and_wait(salts_io_uring_impl *impl, uint32_t timeout_ms,
                                         bool *timed_out) {
+  bool terminal_ready;
 #if SALTS_IO_URING_HAS_EXT_ARG_WAIT
   struct {
     int64_t tv_sec;
@@ -907,6 +908,17 @@ static int uring_submit_staged_and_wait(salts_io_uring_impl *impl, uint32_t time
   int status;
 
   *timed_out = false;
+  uring_speculate_staged_streams(impl);
+  terminal_ready = impl->terminal_count != 0u;
+  head = atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
+  {
+    const unsigned refreshed_tail =
+        atomic_load_explicit((_Atomic unsigned *)impl->sq_tail, memory_order_relaxed);
+    /* No other thread mutates SQ ownership. Keep the original local tail value
+     * only when it still matches the ring after speculation. */
+    if (refreshed_tail != tail) return SALTS_EPROTO;
+  }
+  index = impl->staged_head;
   while (index != SALTS_IO_URING_INDEX_NONE && count < available) {
     salts_io_uring_request_record *request = &impl->requests[index];
     const unsigned slot = (tail + count) & *impl->sq_mask;
@@ -918,7 +930,9 @@ static int uring_submit_staged_and_wait(salts_io_uring_impl *impl, uint32_t time
     ++count;
   }
 
-  if (timeout_ms != UINT32_MAX) {
+  if (terminal_ready && count == 0u) return SALTS_OK;
+
+  if (!terminal_ready && timeout_ms != UINT32_MAX) {
 #if SALTS_IO_URING_HAS_EXT_ARG_WAIT
     timeout.tv_sec = (int64_t)(timeout_ms / 1000u);
     timeout.tv_nsec = (int64_t)(timeout_ms % 1000u) * 1000000ll;
@@ -943,10 +957,11 @@ static int uring_submit_staged_and_wait(salts_io_uring_impl *impl, uint32_t time
     unsigned consumed_head = head;
     bool waited = false;
     do {
-      status = uring_enter_once(impl, remaining, waited ? 0u : 1u,
-                                waited ? 0u : enter_flags,
-                                waited ? NULL : enter_argument,
-                                waited ? 0u : enter_argument_size);
+      status = uring_enter_once(impl, remaining,
+                                (waited || terminal_ready) ? 0u : 1u,
+                                (waited || terminal_ready) ? 0u : enter_flags,
+                                (waited || terminal_ready) ? NULL : enter_argument,
+                                (waited || terminal_ready) ? 0u : enter_argument_size);
       const unsigned next_head =
           atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
       const unsigned consumed = next_head - consumed_head;
@@ -1045,7 +1060,6 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
   bool saw_wake = false;
   int status = uring_progress_cq(impl, &saw_wake);
   if (status != SALTS_OK) return status;
-  uring_speculate_staged_streams(impl);
   if (impl->terminal_count != 0u || saw_wake) {
     status = uring_flush_promoted(impl, &saw_wake);
     if (status != SALTS_OK) return status;
