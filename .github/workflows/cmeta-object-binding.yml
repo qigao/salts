@@ -15,7 +15,9 @@ on:
       - "cmeta/tests/cmeta_invokable_test.c"
       - "cmeta/tests/cmeta_header_cpp_test.cpp"
       - "cmeta/tests/CMakeLists.txt"
+      - "vcpkg.json"
       - "bindings/CMakeLists.txt"
+      - "vcpkg.json"
       - "bindings/lua/**"
       - "bindings/quickjs/**"
       - "bindings/tests/**"
@@ -66,7 +68,25 @@ jobs:
             -DBUILD_EXAMPLES=OFF \
             -DSALTS_BINDINGS_LUA=ON \
             -DSALTS_BINDINGS_QUICKJS=ON \
-            '-DVCPKG_MANIFEST_FEATURES=lua-bindings;quickjs-bindings'
+            '-DVCPKG_MANIFEST_FEATURES=lua-bindings;quickjs-bindings' \
+            '-DVCPKG_INSTALL_OPTIONS=--only-binarycaching'
+
+      - name: Verify shared QuickJS dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$GITHUB_WORKSPACE/vcpkg_installed/x64-linux/vcpkg/status"
+          test -f "$status"
+          awk '
+            $0 == "Package: quickjs-ng" { found=1; next }
+            found && /^Version: / {
+              if ($2 != "0.16.2") exit 2
+              print "quickjs-ng=" $2
+              ok=1
+              exit
+            }
+            END { if (!ok) exit 1 }
+          ' "$status"
 
       - name: Build object-binding targets
         shell: bash
