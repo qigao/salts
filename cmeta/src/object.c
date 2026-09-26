@@ -7,12 +7,13 @@ static void cmeta_object_clear(cmeta_object_ref *ref) {
 
 bool cmeta_object_lifecycle_valid(
     const cmeta_object_lifecycle *lifecycle) {
-    const bool shared_pair =
-        lifecycle != NULL &&
-        ((lifecycle->retain == NULL) == (lifecycle->release == NULL));
+    bool shared_pair;
 
-    return lifecycle != NULL && lifecycle->size >= sizeof(*lifecycle) &&
-           shared_pair &&
+    if (lifecycle == NULL || lifecycle->size < sizeof(*lifecycle))
+        return false;
+    shared_pair =
+        (lifecycle->retain == NULL) == (lifecycle->release == NULL);
+    return shared_pair &&
            (lifecycle->retain != NULL || lifecycle->destroy != NULL);
 }
 
