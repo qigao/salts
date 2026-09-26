@@ -85,8 +85,11 @@ int cflow_io_cnet_session_adapter_init(
  * Returns the observer that must be installed on the CNet connection.
  *
  * The adapter owns on_receive so it can map one CNet receive credit to one
- * CFlow request. Optional user on_state/on_send hooks configured at init are
- * invoked after adapter state accounting.
+ * CFlow request. While this observer is installed on the bound connection, all
+ * receive demand for that connection must pass through this adapter; callers
+ * must not also call cnet_receive() directly. Send, close and cnet_client_poll()
+ * remain caller/CNet-owned. Optional user on_state/on_send hooks configured at
+ * init are invoked after adapter state accounting.
  */
 cnet_observer cflow_io_cnet_session_adapter_observer(
     cflow_io_cnet_session_adapter *adapter);
