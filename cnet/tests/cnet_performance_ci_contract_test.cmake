@@ -41,7 +41,7 @@ require_marker("${scaling_text}"
                "no performance verdict"
                "CNet unstable-cell neutral verdict")
 require_marker("${scaling_text}"
-               '$unstable = @($noiseChecks | Where-Object { $_.Mad -gt $_.Limit })'
+               "Where-Object { $_.Mad -gt $_.Limit }"
                "CNet noise gate before performance verdict")
 
 
