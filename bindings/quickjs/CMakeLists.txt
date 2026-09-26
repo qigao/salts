@@ -2,6 +2,7 @@ find_package(qjs CONFIG REQUIRED)
 
 add_library(salts_quickjs_binding STATIC salts_quickjs_cmeta.c)
 add_library(Salts::QuickJS ALIAS salts_quickjs_binding)
+set_target_properties(salts_quickjs_binding PROPERTIES EXPORT_NAME QuickJS)
 
 target_include_directories(salts_quickjs_binding
   PUBLIC
