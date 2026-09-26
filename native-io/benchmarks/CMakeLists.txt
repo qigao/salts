@@ -47,6 +47,19 @@ if(WIN32)
 endif()
 
 
+cmake_add_benchmark(native_io_udp_styles_benchmark
+  SOURCES native_io_udp_styles_benchmark.c
+  LIBS Salts::NativeIO Salts::Platform
+  FOLDER "native-io/benchmarks")
+set_target_properties(native_io_udp_styles_benchmark PROPERTIES
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+  C_EXTENSIONS OFF)
+if(WIN32)
+  target_link_libraries(native_io_udp_styles_benchmark PRIVATE ws2_32)
+endif()
+
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   cmake_add_benchmark(native_io_vsock_styles_benchmark
     SOURCES native_io_vsock_styles_benchmark.c
