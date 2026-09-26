@@ -27,11 +27,13 @@ typedef struct cnet_client_record {
   size_t negotiated_alpn_size;
   size_t receive_pending;
   char negotiated_alpn[CNET_TLS_ALPN_NAME_MAX_BYTES + 1u];
+  /* Public-handle/observer slot occupancy; not CNet session lifecycle truth. */
   bool active;
-  bool connected;
+  /* Admission bookkeeping until #479 replaces one-write-at-a-time with a bounded queue. */
   bool write_pending;
-  bool closing_pending;
-  bool tls_upgrade_pending;
+  /* Same-owner command reservations only; canonical lifecycle lives in cnet_session_table. */
+  bool close_command_pending;
+  bool tls_command_pending;
 } cnet_client_record;
 
 struct cnet_client_impl {
@@ -201,8 +203,7 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
     const cnet_error *error_view = NULL;
     if (view->state == CNET_EVENT_STATE_CONNECTED) {
       salts_mutex_lock(&impl->lock);
-      record->connected = true;
-      record->tls_upgrade_pending = false;
+      record->tls_command_pending = false;
       record->negotiated_alpn_size = view->size;
       if (view->size != 0u && view->size <= CNET_TLS_ALPN_NAME_MAX_BYTES) {
         memcpy(record->negotiated_alpn, view->data, view->size);
@@ -227,10 +228,9 @@ static void cnet_client_observe(void *context, const cnet_dispatch_view *view) {
     if (record->active && record->internal.session.slot == view->session.slot &&
         record->internal.session.generation == view->session.generation) {
       record->active = false;
-      record->connected = false;
       record->write_pending = false;
-      record->closing_pending = false;
-      record->tls_upgrade_pending = false;
+      record->close_command_pending = false;
+      record->tls_command_pending = false;
       record->receive_pending = 0u;
       record->observer = (cnet_observer){0};
       record->negotiated_alpn_size = 0u;
@@ -393,6 +393,14 @@ static cnet_client_record *cnet_client_find_record(cnet_client_impl *impl,
   return record;
 }
 
+static int cnet_client_record_session_state(cnet_client_impl *impl,
+                                            const cnet_client_record *record,
+                                            cnet_session_state *out_state) {
+  if (impl == NULL || record == NULL || out_state == NULL || !record->active)
+    return SALTS_ENOENT;
+  return cnet_shards_state(&impl->shards, record->internal, out_state);
+}
+
 static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_payload *payload,
                              cnet_uri_scheme scheme, const cnet_observer *observer,
                              cnet_connection *out_connection, bool *out_transferred) {
@@ -427,10 +435,9 @@ static int cnet_client_admit(cnet_client_impl *impl, const cnet_owner_connect_pa
   record->observer = *observer;
   record->scheme = scheme;
   record->active = true;
-  record->connected = false;
   record->write_pending = false;
-  record->closing_pending = false;
-  record->tls_upgrade_pending = false;
+  record->close_command_pending = false;
+  record->tls_command_pending = false;
   record->receive_pending = 0u;
   ++impl->active_count;
   status = cnet_dispatcher_register(&impl->dispatcher, internal, cnet_client_observe, record);
@@ -521,6 +528,7 @@ static bool cnet_client_tls_server_name_valid(const char *server_name) {
 static int cnet_client_start_tls_ready(cnet_client_impl *impl, cnet_connection connection,
                                        cnet_shard_connection *out_internal) {
   cnet_client_record *record;
+  cnet_session_state session_state = CNET_SESSION_FREE;
   int status = SALTS_OK;
   salts_mutex_lock(&impl->lock);
   if (!impl->admission_open) status = SALTS_ESHUTDOWN;
@@ -528,11 +536,15 @@ static int cnet_client_start_tls_ready(cnet_client_impl *impl, cnet_connection c
   else {
     record = cnet_client_find_record(impl, connection, out_internal);
     if (record == NULL) status = SALTS_ENOENT;
-    else if (record->tls_upgrade_pending) status = SALTS_EBUSY;
+    else if (record->tls_command_pending) status = SALTS_EBUSY;
     else if (record->scheme != CNET_URI_TCP) status = SALTS_ENOTSUP;
-    else if (!record->connected || record->write_pending || record->receive_pending != 0u ||
-             record->closing_pending)
-      status = SALTS_EBUSY;
+    else {
+      status = cnet_client_record_session_state(impl, record, &session_state);
+      if (status == SALTS_OK &&
+          (session_state != CNET_SESSION_OPEN || record->write_pending ||
+           record->receive_pending != 0u || record->close_command_pending))
+        status = SALTS_EBUSY;
+    }
   }
   salts_mutex_unlock(&impl->lock);
   return status;
@@ -549,17 +561,16 @@ static int cnet_client_admit_start_tls(cnet_client_impl *impl, cnet_connection c
   else {
     record = cnet_client_find_record(impl, connection, &internal);
     if (record == NULL) status = SALTS_ENOENT;
-    else if (record->tls_upgrade_pending) status = SALTS_EBUSY;
+    else if (record->tls_command_pending) status = SALTS_EBUSY;
     else if (record->scheme != CNET_URI_TCP) status = SALTS_ENOTSUP;
-    else if (!record->connected || record->write_pending || record->receive_pending != 0u ||
-             record->closing_pending)
+    else if (record->write_pending || record->receive_pending != 0u ||
+             record->close_command_pending)
       status = SALTS_EBUSY;
     else {
       status = cnet_shards_start_tls(&impl->shards, internal, payload);
       if (status == SALTS_OK) {
         record->scheme = CNET_URI_TLS;
-        record->connected = false;
-        record->tls_upgrade_pending = true;
+        record->tls_command_pending = true;
         record->negotiated_alpn_size = 0u;
         record->negotiated_alpn[0] = '\0';
       }
@@ -727,6 +738,7 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
                              size_t capacity, size_t *out_size) {
   cnet_client_impl *impl = cnet_client_get(client);
   cnet_client_record *record;
+  cnet_session_state session_state = CNET_SESSION_FREE;
   int status = SALTS_OK;
   if (out_size == NULL) return SALTS_EINVAL;
   *out_size = 0u;
@@ -736,7 +748,9 @@ int cnet_tls_negotiated_alpn(cnet_client *client, cnet_connection connection, ch
   record = cnet_client_find_record(impl, connection, NULL);
   if (record == NULL) status = SALTS_ENOENT;
   else if (record->scheme != CNET_URI_TLS) status = SALTS_ENOTSUP;
-  else if (!record->connected) status = SALTS_ENOTCONN;
+  else if (cnet_client_record_session_state(impl, record, &session_state) != SALTS_OK ||
+           session_state != CNET_SESSION_OPEN)
+    status = SALTS_ENOTCONN;
   else if (record->negotiated_alpn_size == 0u) status = SALTS_ENOENT;
   else if (capacity <= record->negotiated_alpn_size) status = SALTS_EMSGSIZE;
   else {
@@ -752,6 +766,7 @@ int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connec
   cnet_client_impl *impl = cnet_client_get(client);
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
+  cnet_session_state session_state = CNET_SESSION_FREE;
   int status;
   if (impl == NULL || buffer == NULL) return SALTS_EINVAL;
   buffer[0] = '\0';
@@ -759,7 +774,9 @@ int cnet_tls_peer_certificate_sha256(cnet_client *client, cnet_connection connec
   record = cnet_client_find_record(impl, connection, &internal);
   if (record == NULL) status = SALTS_ENOENT;
   else if (record->scheme != CNET_URI_TLS) status = SALTS_ENOTSUP;
-  else if (!record->connected) status = SALTS_ENOTCONN;
+  else if (cnet_client_record_session_state(impl, record, &session_state) != SALTS_OK ||
+           session_state != CNET_SESSION_OPEN)
+    status = SALTS_ENOTCONN;
   else status = cnet_shards_tls_peer_certificate_sha256(&impl->shards, internal, buffer);
   salts_mutex_unlock(&impl->lock);
   return status;
@@ -770,6 +787,7 @@ int cnet_tls_export_channel_binding(cnet_client *client, cnet_connection connect
   cnet_client_impl *impl = cnet_client_get(client);
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
+  cnet_session_state session_state = CNET_SESSION_FREE;
   int status;
   if (impl == NULL || output == NULL) return SALTS_EINVAL;
   memset(output, 0, CNET_TLS_CHANNEL_BINDING_BYTES);
@@ -777,7 +795,9 @@ int cnet_tls_export_channel_binding(cnet_client *client, cnet_connection connect
   record = cnet_client_find_record(impl, connection, &internal);
   if (record == NULL) status = SALTS_ENOENT;
   else if (record->scheme != CNET_URI_TLS) status = SALTS_ENOTSUP;
-  else if (!record->connected) status = SALTS_ENOTCONN;
+  else if (cnet_client_record_session_state(impl, record, &session_state) != SALTS_OK ||
+           session_state != CNET_SESSION_OPEN)
+    status = SALTS_ENOTCONN;
   else status = cnet_shards_tls_export_channel_binding(&impl->shards, internal, output);
   salts_mutex_unlock(&impl->lock);
   return status;
@@ -802,8 +822,7 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
   else {
     record = cnet_client_find_record(impl, connection, &internal);
     if (record == NULL) status = SALTS_ENOENT;
-    else if (!record->connected || record->write_pending || record->closing_pending ||
-             record->tls_upgrade_pending)
+    else if (record->write_pending || record->close_command_pending || record->tls_command_pending)
       status = SALTS_EBUSY;
     else {
       if (input->retained_buffer != NULL)
@@ -816,7 +835,7 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
       else status = cnet_shards_send(&impl->shards, internal, input->data, input->size);
       if (status == SALTS_OK) {
         record->write_pending = true;
-        record->closing_pending = input->close_after_send;
+        record->close_command_pending = input->close_after_send;
       }
     }
   }
@@ -879,10 +898,14 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
     record = cnet_client_find_record(impl, connection, &internal);
     if (record == NULL) status = SALTS_ENOENT;
     else if (record->observer.on_receive == NULL) status = SALTS_EINVAL;
-    else if (!record->connected || record->closing_pending || record->tls_upgrade_pending)
+    else if (record->close_command_pending || record->tls_command_pending)
       status = SALTS_EBUSY;
-    else if (demand > SIZE_MAX - record->receive_pending) status = SALTS_ERANGE;
-    else {
+    else if (demand > SIZE_MAX - record->receive_pending) {
+      cnet_session_state session_state = CNET_SESSION_FREE;
+      status = cnet_client_record_session_state(impl, record, &session_state);
+      if (status == SALTS_OK)
+        status = session_state == CNET_SESSION_OPEN ? SALTS_ERANGE : SALTS_EBUSY;
+    } else {
       status = cnet_shards_receive(&impl->shards, internal, demand);
       if (status == SALTS_OK) record->receive_pending += demand;
     }
@@ -902,10 +925,10 @@ int cnet_close(cnet_client *client, cnet_connection connection) {
   else {
     record = cnet_client_find_record(impl, connection, &internal);
     if (record == NULL) status = SALTS_ENOENT;
-    else if (record->closing_pending) status = SALTS_EALREADY;
+    else if (record->close_command_pending) status = SALTS_EALREADY;
     else {
       status = cnet_shards_close(&impl->shards, internal);
-      if (status == SALTS_OK) record->closing_pending = true;
+      if (status == SALTS_OK) record->close_command_pending = true;
     }
   }
   salts_mutex_unlock(&impl->lock);

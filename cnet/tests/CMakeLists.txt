@@ -451,3 +451,10 @@ set_target_properties(
   PROPERTIES CXX_STANDARD 11
              CXX_STANDARD_REQUIRED ON
              CXX_EXTENSIONS OFF)
+
+
+add_test(
+  NAME cnet_state_authority_contract_test
+  COMMAND ${CMAKE_COMMAND}
+          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cnet_state_authority_contract_test.cmake)

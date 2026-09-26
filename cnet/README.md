@@ -69,6 +69,27 @@ pointer is retained. Unsupported platform options return `SALTS_ENOTSUP` before
 the socket is published, and invalid sizes or combinations fail without a
 silent fallback.
 
+
+## Canonical session-state authority
+
+The generation-checked `cnet_session_table` is the sole CNet connection
+lifecycle authority. The client record does not mirror CONNECTED/OPEN as an
+independent boolean. Steady-state send/receive admission delegates lifecycle
+validation to `cnet_shards`, which checks the canonical session state.
+
+The remaining client booleans are deliberately narrower:
+
+- `active` owns the public-handle/observer slot mapping, not connection state;
+- `write_pending` is the temporary one-write admission reservation tracked
+  for #479;
+- receive demand is a bounded delivery counter, not lifecycle state;
+- close/TLS command-pending flags only reserve same-owner command admission
+  until #478 removes that mailbox hop.
+
+TLS inspection and upgrade readiness query the canonical session state instead
+of a duplicated client CONNECTED flag. Terminal NativeIO/session state remains
+authoritative throughout close, failure and TLS-handshake transitions.
+
 ## Linux VSOCK
 
 CNet supports plaintext Linux `AF_VSOCK` `SOCK_STREAM` over the epoll and
