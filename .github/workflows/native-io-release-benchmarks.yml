@@ -285,7 +285,7 @@ jobs:
               cnet_vsock_integration_test \
               cnet_benchmark_stats_test cnet_io_benchmark_config_test \
               concurrency_deadline_queue_test native_io_queue_depth_benchmark \
-              native_io_idle_observe_benchmark
+              native_io_idle_observe_benchmark native_io_registered_ring_enter_benchmark
 
       - name: Configure Windows Release
         if: matrix.family == 'windows'
@@ -470,6 +470,31 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO io_uring idle observe(0)"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Benchmark normal versus registered io_uring enter
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_REGISTERED_ENTER_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_registered_ring_enter_benchmark
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_REGISTERED_ENTER_EXECUTABLE
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "registered enter benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_REGISTERED_ENTER_OUTPUT = Join-Path $resultDir "native-io-registered-enter"
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "native-io-registered-enter.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $summary = & ./native-io/benchmarks/verify_registered_ring_enter_benchmark.ps1 -Path "$env:NATIVE_IO_REGISTERED_ENTER_OUTPUT.csv"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## io_uring registered-ring enter microbenchmark"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $summary | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO io_uring queue-depth benchmark
         if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
