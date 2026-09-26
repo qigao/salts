@@ -83,9 +83,11 @@ static bool cnet_client_config_valid(const cnet_client_config *config) {
       config->request_capacity == 0u || config->completion_batch_capacity == 0u ||
       config->completion_batch_capacity > config->request_capacity ||
       !cnet_power_of_two(config->event_capacity) || config->event_capacity < 2u ||
-      config->max_send_bytes == 0u || config->receive_buffer_bytes == 0u ||
-      (config->command_buffer_bytes != 0u &&
-       config->command_buffer_bytes < config->max_send_bytes) ||
+      config->max_send_bytes == 0u || config->write_capacity == 0u ||
+      config->write_capacity_per_connection == 0u ||
+      config->write_capacity_per_connection > config->write_capacity ||
+      config->write_buffer_bytes < config->max_send_bytes ||
+      config->receive_buffer_bytes == 0u ||
       (config->event_buffer_bytes != 0u &&
        config->event_buffer_bytes < config->receive_buffer_bytes) ||
       ((config->tls_io_buffer_bytes == 0u) != (config->tls_handshake_timeout_ms == 0u)) ||
@@ -256,7 +258,6 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   cnet_shards_config shards_config;
   size_t max_command_payload_bytes;
   size_t command_buffer_bytes;
-  size_t write_buffer_bytes;
   size_t max_event_payload_bytes;
   size_t event_buffer_bytes;
   size_t index;
@@ -297,9 +298,10 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   for (index = 0u; index < impl->record_count; ++index)
     impl->records[index].client = impl;
 
-  max_command_payload_bytes = config->max_send_bytes > sizeof(cnet_owner_connect_payload)
-                                  ? config->max_send_bytes
-                                  : sizeof(cnet_owner_connect_payload);
+  max_command_payload_bytes =
+      sizeof(cnet_owner_connect_payload) > sizeof(cnet_owner_start_tls_payload)
+          ? sizeof(cnet_owner_connect_payload)
+          : sizeof(cnet_owner_start_tls_payload);
   if (config->command_buffer_bytes != 0u &&
       config->command_buffer_bytes < max_command_payload_bytes) {
     cnet_client_cleanup_init(impl);
@@ -313,9 +315,6 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   command_buffer_bytes = config->command_buffer_bytes != 0u
                              ? config->command_buffer_bytes
                              : config->command_capacity * max_command_payload_bytes;
-  write_buffer_bytes = config->command_buffer_bytes != 0u
-                           ? config->command_buffer_bytes
-                           : config->command_capacity * config->max_send_bytes;
   max_event_payload_bytes = config->receive_buffer_bytes;
   if (config->tls_io_buffer_bytes != 0u &&
       max_event_payload_bytes < CNET_TLS_ALPN_NAME_MAX_BYTES)
@@ -346,9 +345,10 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
           config->tls_io_buffer_bytes != 0u ? CNET_TLS_ALPN_NAME_MAX_BYTES : 0u,
       .max_command_payload_bytes = max_command_payload_bytes,
       .command_buffer_bytes = command_buffer_bytes,
-      .write_capacity_per_shard = config->command_capacity,
+      .write_capacity_per_shard = config->write_capacity,
+      .write_capacity_per_connection = config->write_capacity_per_connection,
       .max_write_payload_bytes = config->max_send_bytes,
-      .write_buffer_bytes = write_buffer_bytes,
+      .write_buffer_bytes = config->write_buffer_bytes,
       .event_buffer_bytes = event_buffer_bytes};
   status = cnet_shards_init(&impl->shards, &shards_config);
   if (status != SALTS_OK) {
