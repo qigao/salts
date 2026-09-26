@@ -4,8 +4,9 @@
 #include "cnet_shards.h"
 
 /**
- * @internal Client-owned bridge from shard events to inline callbacks.
- * It runs on the NativeIO shard owner and never creates an execution thread.
+ * @internal Client-owned single-owner bridge from shard events to inline callbacks.
+ * Registration, publish, recycle, drain and profiling are serialized by the
+ * CNet owner contract; the dispatcher therefore owns no mutex or worker thread.
  */
 typedef struct cnet_dispatcher {
   void *impl;

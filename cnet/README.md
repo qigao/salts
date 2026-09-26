@@ -387,6 +387,15 @@ While at least one hostname query is active, a NativeIO wait is capped to a
 progress. Numeric TCP/UDP addresses, VSOCK endpoints, and Pipe endpoints do not
 enter this path.
 
+### Dispatcher ownership
+
+The client dispatcher is a same-owner callback bridge, not a synchronization
+boundary. Registration, direct event preparation, inline observer invocation,
+terminal recycle, drain and profiling all run on the CNet progress owner, so
+the dispatcher owns no mutex. Its fallback lane retains bounded atomic
+driving/pending guards, and first-error publication remains atomic; those
+mechanisms do not make the dispatcher a cross-thread execution runtime.
+
 ## Shutdown and errors
 
 `cnet_client_stop(client, timeout_ms)` closes admission and drives the same

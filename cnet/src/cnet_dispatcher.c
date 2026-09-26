@@ -40,7 +40,6 @@ struct cnet_dispatcher_impl {
   cnet_shards *shards;
   cnet_dispatch_entry *entries;
   cnet_dispatch_lane *lanes;
-  salts_mutex_t lock;
   size_t shard_count;
   size_t connection_capacity_per_shard;
   size_t active_count;
@@ -112,7 +111,6 @@ static int cnet_dispatcher_recycle(cnet_dispatch_entry *entry, const cnet_dispat
   }
 
   if (recycled) {
-    salts_mutex_lock(&impl->lock);
     if (entry->active && entry->connection.session.slot == view->session.slot &&
         entry->connection.session.generation == view->session.generation) {
       entry->active = false;
@@ -124,7 +122,6 @@ static int cnet_dispatcher_recycle(cnet_dispatch_entry *entry, const cnet_dispat
     } else if (status == SALTS_OK) {
       status = SALTS_EPROTO;
     }
-    salts_mutex_unlock(&impl->lock);
   }
   cnet_dispatcher_record_error(impl, status);
   return status;
@@ -170,7 +167,6 @@ static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
   const uint64_t profile_started = cnet_dispatcher_profile_start(impl);
 #endif
 
-  salts_mutex_lock(&impl->lock);
   entry = cnet_dispatcher_entry(impl, connection);
   if (entry == NULL || !entry->active ||
       entry->connection.session.generation != connection.session.generation) {
@@ -184,7 +180,6 @@ static int cnet_dispatcher_prepare(cnet_dispatcher_impl *impl, uint32_t shard,
                                    .release_context = entry,
                                    .release_token = release_token};
   }
-  salts_mutex_unlock(&impl->lock);
 #if defined(CNET_INTERNAL_PROFILING)
   cnet_dispatcher_profile_finish(impl, profile_started, &impl->profile.prepare_ns,
                                  &impl->profile.prepare_calls);
@@ -256,7 +251,6 @@ int cnet_dispatcher_init(cnet_dispatcher *dispatcher, cnet_shards *shards) {
   impl->connection_capacity_per_shard = layout.connection_capacity_per_shard;
   impl->admission_open = true;
   atomic_init(&impl->first_error, SALTS_OK);
-  salts_mutex_init(&impl->lock);
   for (index = 0u; index < entry_count; ++index)
     impl->entries[index].dispatcher = impl;
   for (index = 0u; index < impl->shard_count; ++index)
@@ -275,31 +269,20 @@ int cnet_dispatcher_register(cnet_dispatcher *dispatcher, cnet_shard_connection 
   int status;
 
   if (impl == NULL || observer == NULL) return SALTS_EINVAL;
-  salts_mutex_lock(&impl->lock);
-  if (!impl->admission_open) {
-    salts_mutex_unlock(&impl->lock);
-    return SALTS_ESHUTDOWN;
-  }
-  salts_mutex_unlock(&impl->lock);
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
   status = cnet_shards_state(impl->shards, connection, &state);
   if (status != SALTS_OK) return status;
   entry = cnet_dispatcher_entry(impl, connection);
   if (entry == NULL) return SALTS_ENOENT;
+  if (entry->active) return SALTS_EALREADY;
 
-  salts_mutex_lock(&impl->lock);
-  if (!impl->admission_open) status = SALTS_ESHUTDOWN;
-  else if (entry->active) status = SALTS_EALREADY;
-  else {
-    entry->connection = connection;
-    entry->observer = observer;
-    entry->observer_context = observer_context;
-    entry->active = true;
-    entry->close_requested = state == CNET_SESSION_DRAINING || state == CNET_SESSION_TERMINAL;
-    ++impl->active_count;
-    status = SALTS_OK;
-  }
-  salts_mutex_unlock(&impl->lock);
-  return status;
+  entry->connection = connection;
+  entry->observer = observer;
+  entry->observer_context = observer_context;
+  entry->active = true;
+  entry->close_requested = state == CNET_SESSION_DRAINING || state == CNET_SESSION_TERMINAL;
+  ++impl->active_count;
+  return SALTS_OK;
 }
 
 int cnet_dispatcher_publish(cnet_dispatcher *dispatcher, uint32_t shard, const cnet_event *event) {
@@ -354,11 +337,7 @@ int cnet_dispatcher_drive(cnet_dispatcher *dispatcher, uint32_t shard) {
 
 static bool cnet_dispatcher_is_idle(cnet_dispatcher_impl *impl) {
   size_t index;
-  bool idle;
-  salts_mutex_lock(&impl->lock);
-  idle = impl->active_count == 0u;
-  salts_mutex_unlock(&impl->lock);
-  if (!idle) return false;
+  if (impl->active_count != 0u) return false;
   for (index = 0u; index < impl->shard_count; ++index)
     if (atomic_load_explicit(&impl->lanes[index].pending, memory_order_acquire)) return false;
   return true;
@@ -404,25 +383,21 @@ static int cnet_dispatcher_request_closes(cnet_dispatcher_impl *impl) {
     bool claimed = false;
     int close_status;
 
-    salts_mutex_lock(&impl->lock);
     if (entry->active && !entry->close_requested) {
       connection = entry->connection;
       entry->close_requested = true;
       claimed = true;
     }
-    salts_mutex_unlock(&impl->lock);
     if (!claimed) continue;
 
     close_status = cnet_shards_close(impl->shards, connection);
     if (close_status == SALTS_OK || close_status == SALTS_EALREADY || close_status == SALTS_ENOENT)
       continue;
 
-    salts_mutex_lock(&impl->lock);
     if (entry->active && entry->connection.shard == connection.shard &&
         entry->connection.session.slot == connection.session.slot &&
         entry->connection.session.generation == connection.session.generation)
       entry->close_requested = false;
-    salts_mutex_unlock(&impl->lock);
     if (close_status != SALTS_ENOBUFS && status == SALTS_OK) {
       status = close_status;
     }
@@ -435,13 +410,8 @@ int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms) {
   const uint64_t started_ms = salts_monotonic_ms();
   int first_status;
   if (impl == NULL) return SALTS_EINVAL;
-  salts_mutex_lock(&impl->lock);
-  if (impl->drained) {
-    salts_mutex_unlock(&impl->lock);
-    return SALTS_EALREADY;
-  }
+  if (impl->drained) return SALTS_EALREADY;
   impl->admission_open = false;
-  salts_mutex_unlock(&impl->lock);
   first_status = atomic_load_explicit(&impl->first_error, memory_order_acquire);
 
   for (;;) {
@@ -459,51 +429,34 @@ int cnet_dispatcher_drain(cnet_dispatcher *dispatcher, uint32_t timeout_ms) {
     if (cnet_dispatcher_is_idle(impl)) break;
     if (salts_monotonic_ms() - started_ms >= timeout_ms) return SALTS_ETIMEDOUT;
   }
-  salts_mutex_lock(&impl->lock);
   impl->drained = true;
-  salts_mutex_unlock(&impl->lock);
   return first_status;
 }
 
 bool cnet_dispatcher_drained(const cnet_dispatcher *dispatcher) {
   const cnet_dispatcher_impl *impl =
       dispatcher != NULL ? (const cnet_dispatcher_impl *)dispatcher->impl : NULL;
-  bool drained;
-  if (impl == NULL) return false;
-  salts_mutex_lock((salts_mutex_t *)&impl->lock);
-  drained = impl->drained;
-  salts_mutex_unlock((salts_mutex_t *)&impl->lock);
-  return drained;
+  return impl != NULL && impl->drained;
 }
 
 #if defined(CNET_INTERNAL_PROFILING)
 int cnet_dispatcher_profile_begin(cnet_dispatcher *dispatcher) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
-  int status = SALTS_OK;
   if (impl == NULL) return SALTS_EINVAL;
-  salts_mutex_lock(&impl->lock);
-  if (impl->profile_active) status = SALTS_EBUSY;
-  else {
-    memset(&impl->profile, 0, sizeof(impl->profile));
-    impl->profile_active = true;
-  }
-  salts_mutex_unlock(&impl->lock);
-  return status;
+  if (impl->profile_active) return SALTS_EBUSY;
+  memset(&impl->profile, 0, sizeof(impl->profile));
+  impl->profile_active = true;
+  return SALTS_OK;
 }
 
 int cnet_dispatcher_profile_take(cnet_dispatcher *dispatcher,
                                  cnet_dispatcher_profile *out_profile) {
   cnet_dispatcher_impl *impl = cnet_dispatcher_get(dispatcher);
-  int status = SALTS_OK;
   if (impl == NULL || out_profile == NULL) return SALTS_EINVAL;
-  salts_mutex_lock(&impl->lock);
-  if (!impl->profile_active) status = SALTS_EBUSY;
-  else {
-    *out_profile = impl->profile;
-    impl->profile_active = false;
-  }
-  salts_mutex_unlock(&impl->lock);
-  return status;
+  if (!impl->profile_active) return SALTS_EBUSY;
+  *out_profile = impl->profile;
+  impl->profile_active = false;
+  return SALTS_OK;
 }
 #endif
 
@@ -522,7 +475,6 @@ int cnet_dispatcher_destroy(cnet_dispatcher *dispatcher) {
       return SALTS_EBUSY;
     }
   }
-  salts_mutex_destroy(&impl->lock);
   free(impl->lanes);
   free(impl->entries);
   free(impl);
