@@ -8,6 +8,33 @@
 
 namespace Salts::Lua {
 
+class StackGuard {
+ public:
+  explicit StackGuard(lua_State *state) noexcept
+      : state_(state), top_(state != nullptr ? lua_gettop(state) : 0) {}
+
+  ~StackGuard() {
+    if (state_ != nullptr)
+      lua_settop(state_, top_);
+  }
+
+  StackGuard(const StackGuard &) = delete;
+  StackGuard &operator=(const StackGuard &) = delete;
+
+  StackGuard(StackGuard &&other) noexcept
+      : state_(other.state_), top_(other.top_) {
+    other.state_ = nullptr;
+  }
+
+  StackGuard &operator=(StackGuard &&) = delete;
+
+  int top() const noexcept { return top_; }
+
+ private:
+  lua_State *state_;
+  int top_;
+};
+
 class Context {
  public:
   Context(lua_State *state, salts_lua_limits limits) noexcept
@@ -15,6 +42,7 @@ class Context {
 
   lua_State *native_handle() const noexcept { return state_; }
   salts_lua_limits limits() const noexcept { return limits_; }
+  StackGuard stack_guard() const noexcept { return StackGuard{state_}; }
 
   template <typename T>
   cmeta_status bind_global(
@@ -27,6 +55,8 @@ class Context {
 
     if (state_ == nullptr || name == nullptr || name[0] == '\0')
       return CMETA_INVALID_ARGUMENT;
+
+    StackGuard stack{state_};
 
     status = Salts::detail::bind_object_ref(
         &object, borrowed, data, field_provider, method_provider);
