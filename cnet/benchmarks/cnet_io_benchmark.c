@@ -2069,6 +2069,208 @@ static int io_bench_compare_sends(const cnet_io_benchmark_backend *backend, cons
   return io_bench_write_artifacts(prefix, backend->name, datasets, SEND_METHODS);
 }
 
+
+typedef struct io_bench_sg_method {
+  const char *name;
+  io_bench_driver driver;
+  io_bench_send_mode mode;
+  bool copies_payload;
+  bool acquires_payload_buffer;
+} io_bench_sg_method;
+
+typedef struct io_bench_sg_summary {
+  const char *method;
+  size_t payload_size;
+  size_t segment_count;
+  double p50_ns;
+  double p95_ns;
+  double rate_per_second;
+  double cpu_cost;
+  size_t copied_bytes_per_op;
+  double payload_buffer_acquires_per_op;
+} io_bench_sg_summary;
+
+static int io_bench_sg_write_csv(const char *prefix, const char *backend,
+                                 const io_bench_sg_summary *rows, size_t count) {
+  char path[IO_BENCH_CSV_LINE_CAPACITY];
+  salts_file_t file;
+  int length;
+  int status;
+  if (prefix == NULL || rows == NULL) return SALTS_OK;
+  if (*prefix == '\0') return SALTS_EINVAL;
+  length = snprintf(path, sizeof(path), "%s.sg.csv", prefix);
+  if (length < 0 || (size_t)length >= sizeof(path)) return SALTS_ERANGE;
+  file = salts_fs_open(path, SALTS_FS_O_WRONLY | SALTS_FS_O_CREAT | SALTS_FS_O_TRUNC,
+                       SALTS_FS_DEFAULT_MODE);
+  if (file == SALTS_INVALID_FILE) return SALTS_EIO;
+  status = io_bench_csv_line(
+      file,
+      "backend,method,payload_bytes,segments,p50_us,p95_us,mib_per_second,"
+      "cpu_cost_per_rtt,copied_bytes_per_op,payload_buffer_acquires_per_op\n");
+  for (size_t index = 0u; status == SALTS_OK && index < count; ++index) {
+    const io_bench_sg_summary *row = &rows[index];
+    const double mib_per_second =
+        row->rate_per_second * (double)row->payload_size / (1024.0 * 1024.0);
+    status = io_bench_csv_line(
+        file, "%s,%s,%zu,%zu,%.6f,%.6f,%.6f,%.3f,%zu,%.3f\n",
+        backend, row->method, row->payload_size, row->segment_count,
+        row->p50_ns / 1000.0, row->p95_ns / 1000.0, mib_per_second,
+        row->cpu_cost, row->copied_bytes_per_op, row->payload_buffer_acquires_per_op);
+  }
+  {
+    const int close_status = salts_fs_close(file);
+    if (status == SALTS_OK) status = close_status;
+  }
+  return status;
+}
+
+static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const char *prefix) {
+  enum { SG_METHODS = 5, SG_PAYLOADS = 4, SG_SEGMENTS = 4 };
+  static const size_t payloads[SG_PAYLOADS] = {1024u, 8192u, 32768u, 65536u};
+  static const size_t segments[SG_SEGMENTS] = {2u, 4u, 8u, 16u};
+  static const io_bench_sg_method methods[SG_METHODS] = {
+      {"native_scalar", IO_BENCH_NATIVE_IO, IO_BENCH_SEND_BASELINE, false, false},
+      {"native_flatten_copy", IO_BENCH_NATIVE_IO, IO_BENCH_SEND_NATIVE_FLATTEN, true, false},
+      {"native_sg", IO_BENCH_NATIVE_IO, IO_BENCH_SEND_NATIVE_VECTOR, false, false},
+      {"cnet_sendv_flatten", IO_BENCH_CNET, IO_BENCH_SEND_VECTOR_COPY, true, true},
+      {"cnet_retained", IO_BENCH_CNET, IO_BENCH_SEND_RETAINED, false, false}};
+  io_bench_sg_summary summaries[SG_METHODS * SG_PAYLOADS * SG_SEGMENTS];
+  size_t summary_count = 0u;
+  int status = io_bench_print_host();
+  if (status != SALTS_OK) return status;
+
+  printf("\nNativeIO SG merge-gate comparison: backend=%s; %d repeats, %d warmups, "
+         "%d persistent TCP RTTs/run.\n",
+         backend->name, IO_BENCH_REPLICATES, IO_BENCH_WARMUP_EXCHANGES,
+         IO_BENCH_TOTAL_EXCHANGES);
+  printf("native_flatten_copy uses one preallocated staging buffer so its delta versus "
+         "native_sg isolates payload memcpy plus scalar-submit cost. cnet_sendv_flatten uses the "
+         "current production cnet_sendv() path and therefore includes its real write-queue "
+         "buffer acquisition/copy and CNet ownership/control path. cnet_retained is the current "
+         "no-payload-copy CNet control. Heap allocation count is not exposed by the recycled "
+         "buffer pool; payload_buffer_acquires_per_op reports the explicit mem_get_buffer-style "
+         "ownership acquisition instead.\n");
+
+  for (size_t payload_index = 0u; payload_index < SG_PAYLOADS; ++payload_index) {
+    for (size_t segment_index = 0u; segment_index < SG_SEGMENTS; ++segment_index) {
+      io_bench_result *runs =
+          (io_bench_result *)calloc(SG_METHODS * IO_BENCH_REPLICATES, sizeof(*runs));
+      if (runs == NULL) return SALTS_ENOMEM;
+      for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
+        for (size_t order = 0u; order < SG_METHODS; ++order) {
+          const size_t method =
+              (payload_index + segment_index + repeat + order) % SG_METHODS;
+          io_bench_result *result = &runs[method * IO_BENCH_REPLICATES + repeat];
+          status = io_bench_run(IO_BENCH_TCP, methods[method].driver,
+                                payloads[payload_index], false, backend->kind,
+                                methods[method].mode, segments[segment_index], result);
+          if (status != SALTS_OK) {
+            free(runs);
+            return status;
+          }
+        }
+      }
+
+      for (size_t method = 0u; method < SG_METHODS; ++method) {
+        double p50[IO_BENCH_REPLICATES];
+        double p95[IO_BENCH_REPLICATES];
+        double rate[IO_BENCH_REPLICATES];
+        double cpu[IO_BENCH_REPLICATES];
+        cnet_benchmark_summary p50_summary = {0};
+        cnet_benchmark_summary p95_summary = {0};
+        cnet_benchmark_summary rate_summary = {0};
+        cnet_benchmark_summary cpu_summary = {0};
+        for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
+          const io_bench_result *result = &runs[method * IO_BENCH_REPLICATES + repeat];
+          p50[repeat] = (double)result->p50_ns;
+          p95[repeat] = (double)result->p95_ns;
+          rate[repeat] = io_bench_rate(result);
+#ifdef _WIN32
+          cpu[repeat] = io_bench_mean(result->cpu_cycles, result->round_trips);
+#else
+          cpu[repeat] = io_bench_mean(result->cpu_ns, result->round_trips);
+#endif
+        }
+        status = cnet_benchmark_summarize(p50, IO_BENCH_REPLICATES, &p50_summary);
+        if (status == SALTS_OK)
+          status = cnet_benchmark_summarize(p95, IO_BENCH_REPLICATES, &p95_summary);
+        if (status == SALTS_OK)
+          status = cnet_benchmark_summarize(rate, IO_BENCH_REPLICATES, &rate_summary);
+        if (status == SALTS_OK)
+          status = cnet_benchmark_summarize(cpu, IO_BENCH_REPLICATES, &cpu_summary);
+        if (status != SALTS_OK) {
+          free(runs);
+          return status;
+        }
+        summaries[summary_count++] = (io_bench_sg_summary){
+            methods[method].name,
+            payloads[payload_index],
+            segments[segment_index],
+            p50_summary.median,
+            p95_summary.median,
+            rate_summary.median,
+            cpu_summary.median,
+            methods[method].copies_payload ? payloads[payload_index] : 0u,
+            methods[method].acquires_payload_buffer ? 1.0 : 0.0};
+      }
+
+      {
+        double flatten_p50[IO_BENCH_REPLICATES], sg_p50[IO_BENCH_REPLICATES];
+        double flatten_rate[IO_BENCH_REPLICATES], sg_rate[IO_BENCH_REPLICATES];
+        double cnet_flatten_p50[IO_BENCH_REPLICATES], retained_p50[IO_BENCH_REPLICATES];
+        cnet_benchmark_summary native_p50_delta = {0};
+        cnet_benchmark_summary native_rate_delta = {0};
+        cnet_benchmark_summary cnet_p50_delta = {0};
+        for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
+          const io_bench_result *flatten = &runs[1u * IO_BENCH_REPLICATES + repeat];
+          const io_bench_result *sg = &runs[2u * IO_BENCH_REPLICATES + repeat];
+          const io_bench_result *cnet_flatten = &runs[3u * IO_BENCH_REPLICATES + repeat];
+          const io_bench_result *retained = &runs[4u * IO_BENCH_REPLICATES + repeat];
+          flatten_p50[repeat] = (double)flatten->p50_ns;
+          sg_p50[repeat] = (double)sg->p50_ns;
+          flatten_rate[repeat] = io_bench_rate(flatten);
+          sg_rate[repeat] = io_bench_rate(sg);
+          cnet_flatten_p50[repeat] = (double)cnet_flatten->p50_ns;
+          retained_p50[repeat] = (double)retained->p50_ns;
+        }
+        status = cnet_benchmark_summarize_paired_delta(
+            flatten_p50, sg_p50, IO_BENCH_REPLICATES, &native_p50_delta);
+        if (status == SALTS_OK)
+          status = cnet_benchmark_summarize_paired_delta(
+              flatten_rate, sg_rate, IO_BENCH_REPLICATES, &native_rate_delta);
+        if (status == SALTS_OK)
+          status = cnet_benchmark_summarize_paired_delta(
+              cnet_flatten_p50, retained_p50, IO_BENCH_REPLICATES, &cnet_p50_delta);
+        if (status != SALTS_OK) {
+          free(runs);
+          return status;
+        }
+        printf("SG delta payload=%zu segments=%zu: native SG vs flatten p50=%+.2f%% +/- %.2fpp, "
+               "rate=%+.2f%% +/- %.2fpp; CNet retained vs sendv-flatten p50=%+.2f%% +/- %.2fpp\n",
+               payloads[payload_index], segments[segment_index],
+               native_p50_delta.median, native_p50_delta.mad,
+               native_rate_delta.median, native_rate_delta.mad,
+               cnet_p50_delta.median, cnet_p50_delta.mad);
+      }
+      free(runs);
+    }
+  }
+
+  printf("\n| method | payload | segments | p50 us | p95 us | MiB/s | CPU cost/RT | "
+         "copied bytes/op | payload buffer acquires/op |\n");
+  printf("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  for (size_t index = 0u; index < summary_count; ++index) {
+    const io_bench_sg_summary *row = &summaries[index];
+    const double mib_per_second =
+        row->rate_per_second * (double)row->payload_size / (1024.0 * 1024.0);
+    printf("| %s | %zu | %zu | %.3f | %.3f | %.2f | %.3f | %zu | %.1f |\n",
+           row->method, row->payload_size, row->segment_count,
+           row->p50_ns / 1000.0, row->p95_ns / 1000.0, mib_per_second,
+           row->cpu_cost, row->copied_bytes_per_op, row->payload_buffer_acquires_per_op);
+  }
+  return io_bench_sg_write_csv(prefix, backend->name, summaries, summary_count);
+}
+
 spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchmark") {
   it("compares persistent TCP and UDP clients against one common echo peer") {
     cnet_io_benchmark_backend backend = {0};
@@ -2077,7 +2279,9 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
     const char *requested_trace = getenv("CNET_IO_BENCHMARK_TRACE");
     const char *output_prefix = getenv("CNET_IO_BENCHMARK_OUTPUT");
     const char *requested_send_comparison = getenv("CNET_IO_BENCHMARK_SEND_COMPARE");
+    const char *requested_sg_comparison = getenv("CNET_IO_BENCHMARK_SG_COMPARE");
     bool send_comparison = false;
+    bool sg_comparison = false;
     int status = cnet_io_benchmark_select_backend(requested_backend, &backend);
     if (status != SALTS_OK)
       fprintf(stderr, "CNET_IO_BENCHMARK_BACKEND selection failed: value='%s', status=%d\n",
@@ -2096,8 +2300,21 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
       fprintf(stderr, "CNET_IO_BENCHMARK_SEND_COMPARE must be unset or 1, and cannot combine with TRACE\n");
     check_equal(status, SALTS_OK);
     if (status != SALTS_OK) return;
+    if (requested_sg_comparison != NULL) {
+      if (strcmp(requested_sg_comparison, "1") != 0 || trace.enabled || send_comparison) {
+        fprintf(stderr, "CNET_IO_BENCHMARK_SG_COMPARE must be unset or 1, and cannot combine "
+                        "with TRACE or SEND_COMPARE\n");
+        check_equal(SALTS_EINVAL, SALTS_OK);
+        return;
+      }
+      sg_comparison = true;
+    }
     if (send_comparison) {
       check_equal(io_bench_compare_sends(&backend, output_prefix), SALTS_OK);
+      return;
+    }
+    if (sg_comparison) {
+      check_equal(io_bench_compare_sg(&backend, output_prefix), SALTS_OK);
       return;
     }
     if (trace.enabled) {
