@@ -3,6 +3,8 @@
 option(SALTS_BINDINGS_LUA "Build the Lua CMeta runtime binding" OFF)
 option(SALTS_BINDINGS_QUICKJS "Build the QuickJS CMeta runtime binding" OFF)
 
+add_subdirectory(cpp)
+
 if(SALTS_BINDINGS_LUA)
   add_subdirectory(lua)
 endif()
