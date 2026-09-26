@@ -6,8 +6,19 @@
 
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 
-enum { NATIVE_IO_SHARDED_TEST_WAIT_ROUNDS = 2000 };
+#if defined(_WIN32)
+  #include <windows.h>
+#else
+  #include <fcntl.h>
+  #include <unistd.h>
+#endif
+
+enum {
+  NATIVE_IO_SHARDED_TEST_WAIT_ROUNDS = 2000,
+  NATIVE_IO_SHARDED_TEST_PIPE_BUFFER_CAPACITY = 4096
+};
 
 static native_io_backend_kind native_io_sharded_test_backend(void) {
 #if defined(_WIN32)
@@ -39,6 +50,62 @@ static int native_io_sharded_wait_atomic(atomic_int *value, int expected) {
     salts_sleep_ms(1u);
   }
   return 0;
+}
+
+typedef struct native_io_sharded_test_pipe {
+  uintptr_t handle;
+  uintptr_t peer;
+} native_io_sharded_test_pipe;
+
+static int native_io_sharded_test_pipe_create(native_io_sharded_test_pipe *pipe_endpoint) {
+  if (pipe_endpoint == NULL) return SALTS_EINVAL;
+#if defined(_WIN32)
+  static LONG sequence = 0;
+  char name[128];
+  HANDLE handle;
+  const int length =
+      snprintf(name, sizeof(name), "\\\\.\\pipe\\native-io-sharded-%lu-%ld",
+               GetCurrentProcessId(), InterlockedIncrement(&sequence));
+  if (length < 0 || (size_t)length >= sizeof(name)) return SALTS_ERANGE;
+  handle = CreateNamedPipeA(name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+                            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u,
+                            NATIVE_IO_SHARDED_TEST_PIPE_BUFFER_CAPACITY,
+                            NATIVE_IO_SHARDED_TEST_PIPE_BUFFER_CAPACITY, 0u, NULL);
+  if (handle == INVALID_HANDLE_VALUE) return -(int)GetLastError();
+  pipe_endpoint->handle = (uintptr_t)handle;
+  pipe_endpoint->peer = 0u;
+  return SALTS_OK;
+#else
+  int descriptors[2] = {-1, -1};
+  int flags;
+  if (pipe(descriptors) != 0) return -errno;
+  flags = fcntl(descriptors[0], F_GETFL, 0);
+  if (flags < 0 || fcntl(descriptors[0], F_SETFL, flags | O_NONBLOCK) != 0) {
+    const int error = errno;
+    (void)close(descriptors[0]);
+    (void)close(descriptors[1]);
+    return -error;
+  }
+  pipe_endpoint->handle = (uintptr_t)descriptors[0];
+  pipe_endpoint->peer = (uintptr_t)descriptors[1];
+  return SALTS_OK;
+#endif
+}
+
+static void native_io_sharded_test_pipe_close_handle(uintptr_t *handle) {
+  if (handle == NULL || *handle == 0u) return;
+#if defined(_WIN32)
+  (void)CloseHandle((HANDLE)*handle);
+#else
+  (void)close((int)*handle);
+#endif
+  *handle = 0u;
+}
+
+static void native_io_sharded_test_pipe_close(native_io_sharded_test_pipe *pipe_endpoint) {
+  if (pipe_endpoint == NULL) return;
+  native_io_sharded_test_pipe_close_handle(&pipe_endpoint->handle);
+  native_io_sharded_test_pipe_close_handle(&pipe_endpoint->peer);
 }
 
 typedef struct native_io_sharded_direct_state {
@@ -110,6 +177,18 @@ typedef struct native_io_sharded_shutdown_state {
   int status;
 } native_io_sharded_shutdown_state;
 
+typedef struct native_io_sharded_affinity_state {
+  native_io_sharded_endpoint endpoint;
+  uintptr_t native_handle;
+  unsigned char byte;
+  int attach_status;
+  int wrong_submit_status;
+  int wrong_release_status;
+  int owner_release_status;
+  int stale_submit_status;
+  size_t observed_owner_shard;
+} native_io_sharded_affinity_state;
+
 static void native_io_sharded_gate_run(native_io_sharded_context *context, void *arg) {
   native_io_sharded_gate_state *state = (native_io_sharded_gate_state *)arg;
   (void)context;
@@ -151,7 +230,86 @@ static void native_io_sharded_shutdown_thread(void *arg) {
   atomic_store_explicit(&state->returned, 1, memory_order_release);
 }
 
+static native_io_sharded_operation
+native_io_sharded_affinity_read_operation(native_io_sharded_affinity_state *state) {
+  native_io_sharded_operation operation = {0};
+  operation.kind = NATIVE_IO_OPERATION_PIPE_READ;
+  operation.endpoint = state->endpoint;
+  operation.buffer = &state->byte;
+  operation.length = sizeof(state->byte);
+  operation.user_data = 0x475u;
+  return operation;
+}
+
+static void native_io_sharded_affinity_attach(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_affinity_state *state = (native_io_sharded_affinity_state *)arg;
+  state->attach_status = native_io_sharded_context_attach_pipe(
+      context, state->native_handle, NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &state->endpoint);
+  state->observed_owner_shard = native_io_sharded_endpoint_owner_shard(state->endpoint);
+}
+
+static void native_io_sharded_affinity_wrong_owner(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_affinity_state *state = (native_io_sharded_affinity_state *)arg;
+  native_io_sharded_operation operation = native_io_sharded_affinity_read_operation(state);
+  native_io_sharded_request request = {0};
+  state->wrong_submit_status =
+      native_io_sharded_context_submit(context, &operation, &request);
+  state->wrong_release_status =
+      native_io_sharded_context_release_pipe(context, state->endpoint);
+}
+
+static void native_io_sharded_affinity_release(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_affinity_state *state = (native_io_sharded_affinity_state *)arg;
+  native_io_sharded_operation operation = native_io_sharded_affinity_read_operation(state);
+  native_io_sharded_request request = {0};
+  state->owner_release_status =
+      native_io_sharded_context_release_pipe(context, state->endpoint);
+  state->stale_submit_status =
+      native_io_sharded_context_submit(context, &operation, &request);
+}
+
 spec("NativeIO bounded sharded routing") {
+  it("binds endpoint affinity outside the raw NativeIO handle and rejects wrong-shard use") {
+    native_io_sharded *runtime = NULL;
+    native_io_sharded_test_pipe pipe_endpoint = {0};
+    native_io_sharded_affinity_state state = {0};
+    native_io_sharded_task attach_task = {
+        native_io_sharded_affinity_attach, NULL, NULL, &state};
+    native_io_sharded_task wrong_task = {
+        native_io_sharded_affinity_wrong_owner, NULL, NULL, &state};
+    native_io_sharded_task release_task = {
+        native_io_sharded_affinity_release, NULL, NULL, &state};
+    int status = native_io_sharded_test_create(2u, 2u, &runtime);
+
+    if (status == SALTS_ENOTSUP) {
+      check_equal(status, SALTS_ENOTSUP);
+    } else {
+      check_equal(status, SALTS_OK);
+      check_equal(native_io_sharded_test_pipe_create(&pipe_endpoint), SALTS_OK);
+      state.native_handle = pipe_endpoint.handle;
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &attach_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.attach_status, SALTS_OK);
+      check_true(native_io_sharded_endpoint_valid(state.endpoint));
+      check_equal(state.observed_owner_shard, (size_t)1);
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 0u, &wrong_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.wrong_submit_status, SALTS_EPERM);
+      check_equal(state.wrong_release_status, SALTS_EPERM);
+
+      native_io_sharded_test_pipe_close_handle(&pipe_endpoint.handle);
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &release_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.owner_release_status, SALTS_OK);
+      check_equal(state.stale_submit_status, SALTS_ENOENT);
+
+      native_io_sharded_test_pipe_close(&pipe_endpoint);
+      check_equal(native_io_sharded_destroy(runtime), SALTS_OK);
+    }
+  }
+
   it("keeps fixed affinity and executes same-shard nested dispatch directly") {
     native_io_sharded *runtime = NULL;
     native_io_sharded_direct_state state = {0};
