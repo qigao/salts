@@ -87,6 +87,26 @@ W3 then enables bounded multiple-write FIFO admission. Until NativeIO gains an
 explicit scatter/gather operation contract, `cnet_sendv()` remains a checked
 copy into one owned write slot rather than claiming native vectored zero-copy.
 
+## Explicit write admission policy
+
+Steady-state write ownership has its own mandatory bounds and no longer derives
+capacity from the generic command mailbox:
+
+- `write_capacity` is the global logical-write slot bound for the client;
+- `write_capacity_per_connection` prevents one connection from consuming the
+  entire client write pool;
+- `write_buffer_bytes` is the aggregate copied-write byte budget;
+- `max_send_bytes` remains the per-logical-write byte bound.
+
+Retained `mem_buffer_t` sends consume write slots but not copied-byte budget.
+The global slot bound must be reachable under the configured connection and
+per-connection limits; overflow or impossible capacity relationships are
+rejected at initialization. Capacity exhaustion is `SALTS_ENOBUFS`.
+
+`command_capacity` remains a bound for real deferred control work. It is not a
+fallback or default for steady-state write capacity. The remaining legacy
+command-send internal surface is removed separately after this policy lands.
+
 ## Canonical session-state authority
 
 The generation-checked `cnet_session_table` is the sole CNet connection

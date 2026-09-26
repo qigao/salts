@@ -169,6 +169,9 @@ static cnet_client_config cnet_send_buffer_test_config(void) {
                                      .completion_batch_capacity = 4u,
                                      .event_capacity = 8u,
                                      .max_send_bytes = 256u,
+                                     .write_capacity = 1u,
+                                     .write_capacity_per_connection = 1u,
+                                     .write_buffer_bytes = 256u,
                                      .receive_buffer_bytes = 256u};
   return config;
 }

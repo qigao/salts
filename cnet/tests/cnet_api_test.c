@@ -324,11 +324,44 @@ static cnet_client_config cnet_api_test_config(void) {
                                      .completion_batch_capacity = 4u,
                                      .event_capacity = 8u,
                                      .max_send_bytes = 256u,
+                                     .write_capacity = 8u,
+                                     .write_capacity_per_connection = 4u,
+                                     .write_buffer_bytes = 2048u,
                                      .receive_buffer_bytes = 256u};
   return config;
 }
 
 spec("CNet public client API") {
+  it("requires an explicit bounded write admission policy") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+
+    config.write_capacity = 0u;
+    check_equal(cnet_client_init(&client, &config), SALTS_EINVAL);
+    check_null(client.impl);
+
+    config = cnet_api_test_config();
+    config.write_capacity_per_connection = 0u;
+    check_equal(cnet_client_init(&client, &config), SALTS_EINVAL);
+    check_null(client.impl);
+
+    config = cnet_api_test_config();
+    config.write_capacity_per_connection = config.write_capacity + 1u;
+    check_equal(cnet_client_init(&client, &config), SALTS_EINVAL);
+    check_null(client.impl);
+
+    config = cnet_api_test_config();
+    config.write_capacity =
+        config.connection_capacity * config.write_capacity_per_connection + 1u;
+    check_equal(cnet_client_init(&client, &config), SALTS_EINVAL);
+    check_null(client.impl);
+
+    config = cnet_api_test_config();
+    config.write_buffer_bytes = config.max_send_bytes - 1u;
+    check_equal(cnet_client_init(&client, &config), SALTS_EINVAL);
+    check_null(client.impl);
+  }
+
   it("validates typed stream socket tuning before admission") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
@@ -1172,12 +1205,15 @@ spec("CNet public client API") {
     check_equal(cnet_client_destroy(&client), SALTS_OK);
   }
 
-  it("does not reserve every command slot at the maximum send size") {
+  it("does not preallocate the full command or copied-write byte budgets") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
 
     config.command_capacity = 256u;
     config.max_send_bytes = 256u * 1024u * 1024u;
+    config.write_capacity = 1u;
+    config.write_capacity_per_connection = 1u;
+    config.write_buffer_bytes = config.max_send_bytes;
     check_equal(cnet_client_init(&client, &config), SALTS_OK);
     check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
     check_equal(cnet_client_destroy(&client), SALTS_OK);
@@ -1434,7 +1470,9 @@ spec("CNet public client API") {
     uint16_t port = 0u;
     size_t accepted_count = 0u;
 
-    config.command_capacity = 2u;
+    config.write_capacity = 2u;
+    config.write_capacity_per_connection = 2u;
+    config.write_buffer_bytes = 2u * config.max_send_bytes;
     atomic_init(&probe.connected, 0);
     atomic_init(&probe.received, 0);
     atomic_init(&probe.sent, 0);

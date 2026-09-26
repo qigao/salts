@@ -383,6 +383,7 @@ typedef struct cnet_client_config {
   size_t request_capacity;
   size_t completion_batch_capacity;
   size_t event_capacity;
+  /** Maximum bytes in one logical stream send. */
   size_t max_send_bytes;
   size_t receive_buffer_bytes;
   uint32_t connect_timeout_ms;
@@ -404,6 +405,21 @@ typedef struct cnet_client_config {
    * non-zero value must cover at least one maximum-sized event.
    */
   size_t event_buffer_bytes;
+  /**
+   * Explicit steady-state write policy. These fields are appended after the
+   * pre-existing client configuration prefix so A/B tooling can compare a
+   * candidate against a prior DSO without changing legacy field offsets.
+   * Candidate initialization still requires every bound to be non-zero.
+   */
+  /** Global hard bound for admitted logical writes across the client. */
+  size_t write_capacity;
+  /** Hard bound for admitted logical writes owned by one connection. */
+  size_t write_capacity_per_connection;
+  /**
+   * Aggregate bytes owned by copied logical writes. Retained mem_buffer_t sends
+   * consume write slots but do not consume this byte budget.
+   */
+  size_t write_buffer_bytes;
 } cnet_client_config;
 
 /**

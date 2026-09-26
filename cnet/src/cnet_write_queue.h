@@ -16,6 +16,7 @@ typedef struct cnet_write_queue {
 typedef struct cnet_write_queue_config {
   size_t connection_capacity;
   size_t capacity;
+  size_t per_connection_capacity;
   size_t max_payload_bytes;
   /** Aggregate live copied bytes. Retained buffers do not consume this budget. */
   size_t payload_capacity_bytes;

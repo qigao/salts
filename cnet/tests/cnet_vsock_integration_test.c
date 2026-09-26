@@ -63,6 +63,9 @@ int main(void) {
                                             .completion_batch_capacity = 4u,
                                             .event_capacity = 8u,
                                             .max_send_bytes = 64u,
+                                            .write_capacity = 8u,
+                                            .write_capacity_per_connection = 8u,
+                                            .write_buffer_bytes = 512u,
                                             .receive_buffer_bytes = 64u};
   cnet_vsock_listener_config listener_config = CNET_VSOCK_LISTENER_CONFIG_INIT;
   cnet_listener listener = {0};

@@ -43,6 +43,7 @@ typedef struct cnet_write_queue_impl {
   mem_pool_t payload_pool;
   size_t connection_capacity;
   size_t capacity;
+  size_t per_connection_capacity;
   size_t max_payload_bytes;
   size_t payload_capacity_bytes;
   size_t free_count;
@@ -85,9 +86,11 @@ static bool cnet_write_entry_matches(const cnet_write_entry *entry,
 
 static int cnet_write_validate_payload(cnet_write_queue_impl *impl, cnet_session_handle connection,
                                        size_t size) {
-  if (cnet_write_connection_index(impl, connection) == SIZE_MAX || size == 0u) return SALTS_EINVAL;
+  const size_t connection_index = cnet_write_connection_index(impl, connection);
+  if (connection_index == SIZE_MAX || size == 0u) return SALTS_EINVAL;
   if (size > impl->max_payload_bytes) return SALTS_EMSGSIZE;
   if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  if (impl->counts[connection_index] >= impl->per_connection_capacity) return SALTS_ENOBUFS;
   if (impl->free_count == 0u) return SALTS_ENOBUFS;
   return SALTS_OK;
 }
@@ -162,7 +165,13 @@ int cnet_write_queue_init(cnet_write_queue *queue, const cnet_write_queue_config
   if (queue == NULL || config == NULL) return SALTS_EINVAL;
   if (queue->impl != NULL) return SALTS_EALREADY;
   if (config->connection_capacity == 0u || config->capacity == 0u ||
-      config->max_payload_bytes == 0u || config->payload_capacity_bytes < config->max_payload_bytes)
+      config->per_connection_capacity == 0u ||
+      config->per_connection_capacity > config->capacity || config->max_payload_bytes == 0u ||
+      config->payload_capacity_bytes < config->max_payload_bytes)
+    return SALTS_EINVAL;
+  if (config->connection_capacity > SIZE_MAX / config->per_connection_capacity)
+    return SALTS_EINVAL;
+  if (config->capacity > config->connection_capacity * config->per_connection_capacity)
     return SALTS_EINVAL;
   if (config->connection_capacity > UINT32_MAX || config->capacity > UINT32_MAX ||
       config->capacity > SIZE_MAX / sizeof(cnet_write_entry) ||
@@ -191,6 +200,7 @@ int cnet_write_queue_init(cnet_write_queue *queue, const cnet_write_queue_config
 
   impl->connection_capacity = config->connection_capacity;
   impl->capacity = config->capacity;
+  impl->per_connection_capacity = config->per_connection_capacity;
   impl->max_payload_bytes = config->max_payload_bytes;
   impl->payload_capacity_bytes = config->payload_capacity_bytes;
   impl->free_count = config->capacity;

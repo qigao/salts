@@ -37,6 +37,7 @@ enum {
   SCALE_PAYLOAD_COUNT = 4,
   SCALE_TIMEOUT_MS = 5000,
   SCALE_COMMAND_CAPACITY = 128,
+  SCALE_WRITE_CAPACITY_PER_CONNECTION = 2,
   SCALE_EVENT_CAPACITY = 256,
   SCALE_REQUEST_CAPACITY = 256
 };
@@ -658,6 +659,11 @@ static int scale_cnet_init(scale_cnet *fixture, const struct sockaddr_in *addres
       .completion_batch_capacity = SCALE_REQUEST_CAPACITY,
       .event_capacity = SCALE_EVENT_CAPACITY,
       .max_send_bytes = SCALE_PAYLOADS[sizeof(SCALE_PAYLOADS) / sizeof(SCALE_PAYLOADS[0]) - 1u],
+      .write_capacity = connections * SCALE_WRITE_CAPACITY_PER_CONNECTION,
+      .write_capacity_per_connection = SCALE_WRITE_CAPACITY_PER_CONNECTION,
+      .write_buffer_bytes =
+          connections * SCALE_WRITE_CAPACITY_PER_CONNECTION *
+          SCALE_PAYLOADS[sizeof(SCALE_PAYLOADS) / sizeof(SCALE_PAYLOADS[0]) - 1u],
       .receive_buffer_bytes =
           SCALE_PAYLOADS[sizeof(SCALE_PAYLOADS) / sizeof(SCALE_PAYLOADS[0]) - 1u],
       .connect_timeout_ms = SCALE_TIMEOUT_MS,

@@ -26,6 +26,7 @@ typedef struct cnet_shards_config {
   size_t max_command_payload_bytes;
   size_t command_buffer_bytes;
   size_t write_capacity_per_shard;
+  size_t write_capacity_per_connection;
   size_t max_write_payload_bytes;
   size_t write_buffer_bytes;
   size_t event_buffer_bytes;

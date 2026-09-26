@@ -32,7 +32,11 @@ static mem_buffer_t *cnet_write_queue_external(size_t size, unsigned char value,
 spec("CNet bounded write ownership queue") {
   it("copies payloads and preserves independent per-connection FIFO order") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {2u, 4u, 16u, 32u};
+    const cnet_write_queue_config config = {.connection_capacity = 2u,
+                                            .capacity = 4u,
+                                            .per_connection_capacity = 2u,
+                                            .max_payload_bytes = 16u,
+                                            .payload_capacity_bytes = 32u};
     const cnet_session_handle first = {1u, 7u};
     const cnet_session_handle second = {2u, 3u};
     unsigned char a[] = {1u, 2u, 3u};
@@ -79,7 +83,11 @@ spec("CNet bounded write ownership queue") {
 
   it("retains external buffers only after successful bounded admission") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 1u, 8u, 8u};
+    const cnet_write_queue_config config = {.connection_capacity = 1u,
+                                            .capacity = 1u,
+                                            .per_connection_capacity = 1u,
+                                            .max_payload_bytes = 8u,
+                                            .payload_capacity_bytes = 8u};
     const cnet_session_handle connection = {1u, 1u};
     cnet_write_queue_free_probe first_free;
     cnet_write_queue_free_probe rejected_free;
@@ -118,7 +126,11 @@ spec("CNet bounded write ownership queue") {
 
   it("bounds copied bytes independently from retained payload ownership") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {2u, 2u, 8u, 8u};
+    const cnet_write_queue_config config = {.connection_capacity = 2u,
+                                            .capacity = 2u,
+                                            .per_connection_capacity = 1u,
+                                            .max_payload_bytes = 8u,
+                                            .payload_capacity_bytes = 8u};
     const cnet_session_handle first = {1u, 1u};
     const cnet_session_handle second = {2u, 1u};
     const unsigned char copied[8] = {0};
@@ -156,7 +168,11 @@ spec("CNet bounded write ownership queue") {
 
   it("discards queued tails while preserving an active FIFO head") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 4u, 8u, 32u};
+    const cnet_write_queue_config config = {.connection_capacity = 1u,
+                                            .capacity = 4u,
+                                            .per_connection_capacity = 4u,
+                                            .max_payload_bytes = 8u,
+                                            .payload_capacity_bytes = 32u};
     const cnet_session_handle connection = {1u, 9u};
     const unsigned char a = 1u;
     const unsigned char b = 2u;
@@ -197,9 +213,43 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
   }
 
+  it("enforces the per-connection cap without starving another connection") {
+    cnet_write_queue queue = {0};
+    const cnet_write_queue_config config = {.connection_capacity = 2u,
+                                            .capacity = 4u,
+                                            .per_connection_capacity = 2u,
+                                            .max_payload_bytes = 8u,
+                                            .payload_capacity_bytes = 32u};
+    const cnet_session_handle first = {1u, 1u};
+    const cnet_session_handle second = {2u, 1u};
+    const unsigned char value = 0x41u;
+    cnet_write_handle handle = {0};
+    cnet_write_view view = {0};
+
+    check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_copy(&queue, first, &value, 1u, false, &handle), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_copy(&queue, first, &value, 1u, false, &handle), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_copy(&queue, first, &value, 1u, false, &handle),
+                SALTS_ENOBUFS);
+    check_equal(cnet_write_queue_enqueue_copy(&queue, second, &value, 1u, false, &handle), SALTS_OK);
+
+    check_equal(cnet_write_queue_peek(&queue, first, &view), SALTS_OK);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+    check_equal(cnet_write_queue_peek(&queue, first, &view), SALTS_OK);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+    check_equal(cnet_write_queue_peek(&queue, second, &view), SALTS_OK);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+    check_equal(cnet_write_queue_close(&queue), SALTS_OK);
+    check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
+  }
+
   it("copies vectors today without claiming native scatter gather") {
     cnet_write_queue queue = {0};
-    const cnet_write_queue_config config = {1u, 2u, 16u, 16u};
+    const cnet_write_queue_config config = {.connection_capacity = 1u,
+                                            .capacity = 2u,
+                                            .per_connection_capacity = 2u,
+                                            .max_payload_bytes = 16u,
+                                            .payload_capacity_bytes = 16u};
     const cnet_session_handle connection = {1u, 4u};
     const unsigned char a[] = {1u, 2u};
     const unsigned char b[] = {3u, 4u, 5u};

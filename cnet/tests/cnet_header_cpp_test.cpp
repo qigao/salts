@@ -27,6 +27,9 @@ static_assert(std::is_standard_layout<cnet_tls_client>::value,
               "TLS client must be a C value wrapper");
 static_assert(std::is_standard_layout<cnet_const_buffer>::value,
               "send segments must remain C value descriptors");
+static_assert(offsetof(cnet_client_config, write_capacity) >
+                  offsetof(cnet_client_config, event_buffer_bytes),
+              "write policy must remain appended after the pre-existing client config prefix");
 static_assert(std::is_standard_layout<cnet_stream_socket_options>::value,
               "stream socket policy must remain C ABI data");
 static_assert(std::is_standard_layout<cnet_listener_options>::value,
