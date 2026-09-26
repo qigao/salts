@@ -1,8 +1,6 @@
 #include "cnet_command.h"
 #include "tinytest.h"
 
-#include <salts_buffer.h>
-
 #include <stdint.h>
 #include <string.h>
 
@@ -10,511 +8,183 @@ enum {
   TEST_COMMAND_CAPACITY = 2,
   TEST_COMMAND_SCALE = 4096,
   TEST_COMMAND_CYCLES = 2,
-  TEST_PAYLOAD_CAPACITY = 8
+  TEST_PAYLOAD_CAPACITY = 64
 };
 
 static cnet_command_queue queue;
 
-static cnet_command make_send(uint32_t slot, const void *data, size_t size) {
+static cnet_command make_receive(uint32_t slot, size_t demand) {
   cnet_command command = {0};
-  command.kind = CNET_COMMAND_SEND;
+  command.kind = CNET_COMMAND_RECEIVE;
   command.connection.slot = slot;
   command.connection.generation = 1u;
-  command.data = data;
-  command.size = size;
+  command.argument = demand;
   return command;
 }
 
-static cnet_command make_sendv(uint32_t slot, const cnet_const_buffer *segments,
-                               size_t segment_count, size_t size) {
+static cnet_command make_close(uint32_t slot) {
   cnet_command command = {0};
-  command.kind = CNET_COMMAND_SEND;
+  command.kind = CNET_COMMAND_CLOSE;
   command.connection.slot = slot;
   command.connection.generation = 1u;
-  command.size = size;
-  command.segments = segments;
-  command.segment_count = segment_count;
   return command;
 }
 
-static cnet_command make_retained_send(uint32_t slot, mem_buffer_t *buffer) {
-  cnet_command command = {0};
-  command.kind = CNET_COMMAND_SEND;
-  command.connection.slot = slot;
-  command.connection.generation = 1u;
-  command.size = mem_buffer_used(buffer);
-  command.retained_buffer = buffer;
-  return command;
-}
-
-spec("CNet bounded command queue") {
+spec("CNet bounded control command queue") {
   before_each() { memset(&queue, 0, sizeof(queue)); }
 
   after_each() {
     if (queue.impl != NULL) {
-      int status = cnet_command_queue_close(&queue);
+      const int status = cnet_command_queue_close(&queue);
       check_true(status == SALTS_OK || status == SALTS_EALREADY);
       check_equal(cnet_command_queue_destroy(&queue), SALTS_OK);
     }
   }
 
-  group("initialization") {
-    it("rejects non power of two command capacity") {
-      const cnet_command_queue_config config = {.capacity = 3u,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
+  it("rejects invalid and overflowing queue bounds") {
+    const cnet_command_queue_config non_power = {.capacity = 3u, .max_payload_bytes = 8u};
+    const cnet_command_queue_config overflow = {
+        .capacity = UINT64_C(1) << 63, .max_payload_bytes = SIZE_MAX};
+    check_equal(cnet_command_queue_init(&queue, &non_power), SALTS_EINVAL);
+    check_equal(cnet_command_queue_init(&queue, &overflow), SALTS_ERANGE);
+  }
 
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_EINVAL);
-      check_null(queue.impl);
-    }
+  it("copies one START_TLS control payload before returning") {
+    static const uint8_t expected[] = {1u, 2u, 3u, 4u};
+    uint8_t source[] = {1u, 2u, 3u, 4u};
+    const cnet_command_queue_config config = {
+        .capacity = TEST_COMMAND_CAPACITY, .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
+    cnet_command command = {.kind = CNET_COMMAND_START_TLS,
+                            .connection = {.slot = 1u, .generation = 1u},
+                            .data = source,
+                            .size = sizeof(source)};
+    cnet_command_view view = {0};
+    check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
+    memset(source, 0, sizeof(source));
+    check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+    check_equal(view.kind, CNET_COMMAND_START_TLS);
+    check_equal(view.data, expected, sizeof(expected));
+    check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+  }
 
-    it("rejects an overflowing resident payload budget") {
-      const cnet_command_queue_config config = {.capacity = UINT64_C(1) << 63,
-                                                .max_payload_bytes = SIZE_MAX};
+  it("bounds copied control payload bytes independently from command slots") {
+    static const uint8_t first[4] = {1u};
+    static const uint8_t second[4] = {2u};
+    const cnet_command_queue_config config = {
+        .capacity = 2u, .max_payload_bytes = 8u, .payload_capacity_bytes = 4u};
+    cnet_command a = {.kind = CNET_COMMAND_START_TLS,
+                      .connection = {.slot = 1u, .generation = 1u},
+                      .data = first,
+                      .size = sizeof(first)};
+    cnet_command b = {.kind = CNET_COMMAND_START_TLS,
+                      .connection = {.slot = 2u, .generation = 1u},
+                      .data = second,
+                      .size = sizeof(second)};
+    cnet_command_queue_stats stats = {0};
+    cnet_command_view view = {0};
+    check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &a), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &b), SALTS_ENOBUFS);
+    check_true(cnet_command_queue_get_stats(&queue, &stats));
+    check_equal(stats.live_commands, (size_t)1u);
+    check_equal(stats.queued_bytes, sizeof(first));
+    check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+    check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+  }
 
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_ERANGE);
-      check_null(queue.impl);
+  it("cycles a large fixed control FIFO without payload ownership") {
+    const cnet_command_queue_config config = {
+        .capacity = TEST_COMMAND_SCALE, .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
+    check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+    for (size_t cycle = 0u; cycle < TEST_COMMAND_CYCLES; ++cycle) {
+      for (size_t index = 0u; index < TEST_COMMAND_SCALE; ++index) {
+        const cnet_command command = make_receive((uint32_t)index + 1u, index + 1u);
+        check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
+      }
+      for (size_t index = 0u; index < TEST_COMMAND_SCALE; ++index) {
+        cnet_command_view view = {0};
+        check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+        check_equal(view.kind, CNET_COMMAND_RECEIVE);
+        check_equal(view.argument, index + 1u);
+        check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+      }
     }
   }
 
-  group("publication") {
-    it("copies one fixed TLS upgrade payload into queue-owned storage") {
-      static const uint8_t expected[] = {1u, 2u, 3u, 4u};
-      uint8_t source[] = {1u, 2u, 3u, 4u};
-      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
-      cnet_command command = {.kind = CNET_COMMAND_START_TLS,
-                              .connection = {.slot = 1u, .generation = 1u},
-                              .data = source,
-                              .size = sizeof(source)};
-      cnet_command_view view = {0};
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-      memset(source, 0, sizeof(source));
-      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-      check_equal(view.kind, CNET_COMMAND_START_TLS);
-      check_equal(view.data, expected, sizeof(expected));
-      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-    }
-
-    it("cycles every slot in a large bounded FIFO") {
-      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_SCALE,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
-      cnet_command_queue_stats stats = {0};
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      for (size_t cycle = 0u; cycle < TEST_COMMAND_CYCLES; ++cycle) {
-        for (size_t index = 0u; index < TEST_COMMAND_SCALE; ++index) {
-          const uint32_t payload = (uint32_t)(cycle * TEST_COMMAND_SCALE + index);
-          const cnet_command command = make_send((uint32_t)index + 1u, &payload, sizeof(payload));
-          check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-        }
-        {
-          const uint32_t payload = UINT32_MAX;
-          const cnet_command command =
-              make_send((uint32_t)TEST_COMMAND_SCALE + 1u, &payload, sizeof(payload));
-          check_equal(cnet_command_queue_publish(&queue, &command), SALTS_ENOBUFS);
-        }
-        for (size_t index = 0u; index < TEST_COMMAND_SCALE; ++index) {
-          const uint32_t expected_payload = (uint32_t)(cycle * TEST_COMMAND_SCALE + index);
-          cnet_command_view view = {0};
-          check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-          check_equal(view.kind, CNET_COMMAND_SEND);
-          check_equal(view.connection.slot, (uint32_t)index + 1u);
-          check_equal(view.connection.generation, UINT32_C(1));
-          check_equal(view.size, sizeof(expected_payload));
-          check_equal(view.data, &expected_payload, sizeof(expected_payload));
-          check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-        }
-      }
-      check_true(cnet_command_queue_get_stats(&queue, &stats));
-      check_equal(stats.live_commands, 0u);
-      check_equal(stats.peak_commands, (size_t)TEST_COMMAND_SCALE);
-      check_equal(stats.queued_bytes, 0u);
-      check_equal(stats.peak_queued_bytes, (size_t)TEST_COMMAND_SCALE * sizeof(uint32_t));
-      check_equal(stats.rejected_commands, (uint64_t)TEST_COMMAND_CYCLES);
-      check_equal(stats.rejected_bytes, (uint64_t)TEST_COMMAND_CYCLES * sizeof(uint32_t));
-      check_true(stats.admission_open);
-    }
-
-    it("reports bounded live peak byte and rejection counters") {
-      static const uint8_t first_payload[1] = {1u};
-      static const uint8_t second_payload[2] = {2u, 3u};
-      static const uint8_t full_payload[3] = {4u, 5u, 6u};
-      static const uint8_t oversize_payload[TEST_PAYLOAD_CAPACITY + 1u] = {0};
-      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
-      cnet_command_queue_stats stats = {0};
-      cnet_command_view view = {0};
-      cnet_command command;
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      command = make_send(1u, first_payload, sizeof(first_payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-      command = make_send(2u, second_payload, sizeof(second_payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-      command = make_send(3u, full_payload, sizeof(full_payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_ENOBUFS);
-      command = make_send(4u, oversize_payload, sizeof(oversize_payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EMSGSIZE);
-      check_true(cnet_command_queue_get_stats(&queue, &stats));
-      check_equal(stats.live_commands, 2u);
-      check_equal(stats.peak_commands, 2u);
-      check_equal(stats.queued_bytes, 3u);
-      check_equal(stats.peak_queued_bytes, 3u);
-      check_equal(stats.rejected_commands, 2u);
-      check_equal(stats.rejected_bytes, sizeof(full_payload) + sizeof(oversize_payload));
-
-      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-      check_true(cnet_command_queue_get_stats(&queue, &stats));
-      check_equal(stats.live_commands, 0u);
-      check_equal(stats.peak_commands, 2u);
-      check_equal(stats.queued_bytes, 0u);
-      check_equal(stats.peak_queued_bytes, 3u);
-    }
-
-    it("bounds aggregate payload bytes independently from command slots") {
-      static const uint8_t first_payload[6] = {1u};
-      static const uint8_t second_payload[5] = {2u};
-      static const uint8_t fitting_payload[4] = {3u};
-      const cnet_command_queue_config config = {.capacity = 4u,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY,
-                                                .payload_capacity_bytes = 10u};
-      cnet_command_queue_stats stats = {0};
-      cnet_command_view view = {0};
-      cnet_command command;
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      command = make_send(1u, first_payload, sizeof(first_payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-      command = make_send(2u, second_payload, sizeof(second_payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_ENOBUFS);
-      command = make_send(3u, fitting_payload, sizeof(fitting_payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-      check_true(cnet_command_queue_get_stats(&queue, &stats));
-      check_equal(stats.live_commands, 2u);
-      check_equal(stats.queued_bytes, 10u);
-      check_equal(stats.rejected_commands, (uint64_t)1u);
-      check_equal(stats.rejected_bytes, (uint64_t)sizeof(second_payload));
-      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-    }
-
-    it("copies payload into queue-owned storage") {
-      static const uint8_t expected[] = {1u, 2u, 3u, 4u};
-      uint8_t source[] = {1u, 2u, 3u, 4u};
-      cnet_command_view view = {0};
-      cnet_command command;
-      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      command = make_send(1u, source, sizeof(source));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-      memset(source, 0, sizeof(source));
-      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-      check_equal(view.kind, CNET_COMMAND_SEND);
-      check_equal(view.connection.slot, UINT32_C(1));
-      check_equal(view.size, sizeof(expected));
-      check_equal(view.data, expected, sizeof(expected));
-      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-    }
-
-    it("copies ordered vector segments into one queue-owned payload") {
-      static const uint8_t expected[] = {1u, 2u, 3u, 4u, 5u};
-      uint8_t first[] = {1u, 2u};
-      uint8_t second[] = {3u, 4u, 5u};
-      cnet_const_buffer segments[] = {{first, sizeof(first)}, {second, sizeof(second)}};
-      cnet_command_view view = {0};
-      cnet_command command;
-      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      command = make_sendv(1u, segments, 2u, sizeof(expected));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-      memset(first, 0, sizeof(first));
-      memset(second, 0, sizeof(second));
-      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-      check_equal(view.size, sizeof(expected));
-      check_equal(view.data, expected, sizeof(expected));
-      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-    }
-
-    it("rejects invalid vector segments before consuming a slot") {
-      static const uint8_t payload[] = {1u, 2u};
-      cnet_const_buffer valid = {payload, sizeof(payload)};
-      cnet_const_buffer null_data = {NULL, sizeof(payload)};
-      cnet_const_buffer empty = {payload, 0u};
-      cnet_command command;
-      cnet_command_queue_stats stats = {0};
-      const cnet_command_queue_config config = {.capacity = 1u,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      command = make_sendv(1u, NULL, 1u, sizeof(payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EINVAL);
-      command = make_sendv(1u, &valid, 0u, sizeof(payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EINVAL);
-      command = make_sendv(1u, &null_data, 1u, sizeof(payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EINVAL);
-      command = make_sendv(1u, &empty, 1u, sizeof(payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EINVAL);
-      command = make_sendv(1u, &valid, 1u, sizeof(payload) + 1u);
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EINVAL);
-      check_true(cnet_command_queue_get_stats(&queue, &stats));
-      check_equal(stats.live_commands, 0u);
-      command = make_sendv(1u, &valid, 1u, sizeof(payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-      {
-        cnet_command_view view = {0};
-        check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-        check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-      }
-    }
-
-    it("reports an oversized vector as one rejected command") {
-      static const uint8_t first[TEST_PAYLOAD_CAPACITY] = {0};
-      static const uint8_t second = 1u;
-      const cnet_const_buffer segments[] = {{first, sizeof(first)}, {&second, sizeof(second)}};
-      cnet_command_queue_stats stats = {0};
-      cnet_command command;
-      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      command = make_sendv(1u, segments, 2u, sizeof(first) + sizeof(second));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EMSGSIZE);
-      check_true(cnet_command_queue_get_stats(&queue, &stats));
-      check_equal(stats.live_commands, 0u);
-      check_equal(stats.rejected_commands, UINT64_C(1));
-      check_equal(stats.rejected_bytes, (uint64_t)(sizeof(first) + sizeof(second)));
-    }
-
-    it("rejects a payload larger than the configured slot") {
-      static const uint8_t payload[TEST_PAYLOAD_CAPACITY + 1u] = {0};
-      cnet_command command;
-      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      command = make_send(1u, payload, sizeof(payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EMSGSIZE);
-    }
-
-    it("rejects publication when every fixed slot is retained") {
-      static const uint8_t payload = 7u;
-      cnet_command command;
-      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      command = make_send(1u, &payload, sizeof(payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-      command.connection.slot = 2u;
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-      command.connection.slot = 3u;
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_ENOBUFS);
-      {
-        cnet_command_view view = {0};
-        check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-        check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-        check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-        check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-      }
-    }
-
-    it("retains multiple owner views until out of order completions release them") {
-      static const uint8_t first_payload = 3u;
-      static const uint8_t second_payload = 5u;
-      cnet_command first;
-      cnet_command second;
-      cnet_command_view first_view = {0};
-      cnet_command_view second_view = {0};
-      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      first = make_send(1u, &first_payload, sizeof(first_payload));
-      second = make_send(2u, &second_payload, sizeof(second_payload));
-      check_equal(cnet_command_queue_publish(&queue, &first), SALTS_OK);
-      check_equal(cnet_command_queue_publish(&queue, &second), SALTS_OK);
-      check_equal(cnet_command_queue_take(&queue, &first_view), SALTS_OK);
-      check_equal(cnet_command_queue_take(&queue, &second_view), SALTS_OK);
-      check_equal(*(const uint8_t *)first_view.data, first_payload);
-      check_equal(*(const uint8_t *)second_view.data, second_payload);
-      check_equal(cnet_command_queue_release(&queue, &second_view), SALTS_OK);
-      check_equal(cnet_command_queue_release(&queue, &first_view), SALTS_OK);
-    }
-
-    it("reuses a released slot while an older owner view remains borrowed") {
-      static const uint8_t first_payload = 3u;
-      static const uint8_t second_payload = 5u;
-      static const uint8_t third_payload = 7u;
-      cnet_command first;
-      cnet_command second;
-      cnet_command third;
-      cnet_command_view first_view = {0};
-      cnet_command_view second_view = {0};
-      cnet_command_view third_view = {0};
-      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      first = make_send(1u, &first_payload, sizeof(first_payload));
-      second = make_send(2u, &second_payload, sizeof(second_payload));
-      third = make_send(3u, &third_payload, sizeof(third_payload));
-      check_equal(cnet_command_queue_publish(&queue, &first), SALTS_OK);
-      check_equal(cnet_command_queue_publish(&queue, &second), SALTS_OK);
-      check_equal(cnet_command_queue_take(&queue, &first_view), SALTS_OK);
-      check_equal(cnet_command_queue_take(&queue, &second_view), SALTS_OK);
-      check_equal(cnet_command_queue_release(&queue, &second_view), SALTS_OK);
-      check_equal(cnet_command_queue_publish(&queue, &third), SALTS_OK);
-      check_equal(cnet_command_queue_take(&queue, &third_view), SALTS_OK);
-      check_equal(*(const uint8_t *)third_view.data, third_payload);
-      check_equal(cnet_command_queue_release(&queue, &third_view), SALTS_OK);
-      check_equal(cnet_command_queue_release(&queue, &first_view), SALTS_OK);
-    }
-
-    it("retains one payload reference and preserves pointer identity") {
-      mem_pool_t pool = {0};
-      mem_buffer_t *buffer;
-      cnet_command command;
-      cnet_command_view view = {0};
-      cnet_command_view stale = {0};
-      cnet_command_queue_stats stats = {0};
-      const cnet_command_queue_config config = {.capacity = 1u, .max_payload_bytes = 64u};
-      const void *original;
-      uint32_t initial_refs;
-
-      check_equal(mem_init(&pool, 0u), 0);
-      buffer = mem_get_buffer(&pool, 16u);
-      check_true(buffer != NULL);
-      memset(mem_buffer_data(buffer), 0x3c, 16u);
-      mem_set_used(buffer, 16u);
-      original = mem_buffer_const_data(buffer);
-      initial_refs = mem_buffer_ref_count(buffer);
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      command = make_retained_send(1u, buffer);
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-      check_equal(mem_buffer_ref_count(buffer), initial_refs + UINT32_C(1));
-      check_true(cnet_command_queue_get_stats(&queue, &stats));
-      check_equal(stats.queued_bytes, 0u);
-      check_equal(stats.peak_queued_bytes, 0u);
-
-      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-      check_true(view.data == original);
-      check_equal(view.size, 16u);
-      stale = view;
-      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-      check_equal(mem_buffer_ref_count(buffer), initial_refs);
-      check_equal(cnet_command_queue_release(&queue, &stale), SALTS_EINVAL);
-      check_equal(mem_buffer_ref_count(buffer), initial_refs);
-
-      mem_buffer_release(buffer);
-      mem_destroy(&pool);
-    }
-
-    it("does not retain a zero-copy buffer when the queue is full") {
-      mem_pool_t pool = {0};
-      mem_buffer_t *buffer;
-      cnet_command retained;
-      cnet_command blocker = {.kind = CNET_COMMAND_RECEIVE,
-                              .connection = {.slot = 1u, .generation = 1u},
-                              .argument = 1u};
-      cnet_command_view view = {0};
-      const cnet_command_queue_config config = {.capacity = 1u, .max_payload_bytes = 64u};
-      uint32_t initial_refs;
-
-      check_equal(mem_init(&pool, 0u), 0);
-      buffer = mem_get_buffer(&pool, 16u);
-      check_true(buffer != NULL);
-      mem_set_used(buffer, 16u);
-      initial_refs = mem_buffer_ref_count(buffer);
-      retained = make_retained_send(2u, buffer);
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      check_equal(cnet_command_queue_publish(&queue, &blocker), SALTS_OK);
-      check_equal(cnet_command_queue_publish(&queue, &retained), SALTS_ENOBUFS);
-      check_equal(mem_buffer_ref_count(buffer), initial_refs);
-      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-
-      mem_buffer_release(buffer);
-      mem_destroy(&pool);
-    }
-
-    it("does not retain a zero-copy buffer after admission closes") {
-      mem_pool_t pool = {0};
-      mem_buffer_t *buffer;
-      cnet_command retained;
-      const cnet_command_queue_config config = {.capacity = 1u, .max_payload_bytes = 64u};
-      uint32_t initial_refs;
-
-      check_equal(mem_init(&pool, 0u), 0);
-      buffer = mem_get_buffer(&pool, 16u);
-      check_true(buffer != NULL);
-      mem_set_used(buffer, 16u);
-      initial_refs = mem_buffer_ref_count(buffer);
-      retained = make_retained_send(1u, buffer);
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      check_equal(cnet_command_queue_close(&queue), SALTS_OK);
-      check_equal(cnet_command_queue_publish(&queue, &retained), SALTS_ESHUTDOWN);
-      check_equal(mem_buffer_ref_count(buffer), initial_refs);
-
-      mem_buffer_release(buffer);
-      mem_destroy(&pool);
-    }
-
-    it("rejects a stale release token after slot reuse") {
-      static const uint8_t first_payload = 3u;
-      static const uint8_t second_payload = 5u;
-      cnet_command first;
-      cnet_command second;
-      cnet_command_view first_view = {0};
-      cnet_command_view stale_view = {0};
-      cnet_command_view second_view = {0};
-      const cnet_command_queue_config config = {.capacity = 1u,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
-
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      first = make_send(1u, &first_payload, sizeof(first_payload));
-      second = make_send(2u, &second_payload, sizeof(second_payload));
-      check_equal(cnet_command_queue_publish(&queue, &first), SALTS_OK);
-      check_equal(cnet_command_queue_take(&queue, &first_view), SALTS_OK);
-      stale_view = first_view;
-      check_equal(cnet_command_queue_release(&queue, &first_view), SALTS_OK);
-      check_equal(cnet_command_queue_publish(&queue, &second), SALTS_OK);
-      check_equal(cnet_command_queue_take(&queue, &second_view), SALTS_OK);
-      check_equal(cnet_command_queue_release(&queue, &stale_view), SALTS_EINVAL);
-      check_equal(*(const uint8_t *)second_view.data, second_payload);
-      check_equal(cnet_command_queue_release(&queue, &second_view), SALTS_OK);
-    }
+  it("rejects malformed control descriptors without consuming capacity") {
+    const cnet_command_queue_config config = {.capacity = 2u, .max_payload_bytes = 8u};
+    cnet_command bad_receive = make_receive(1u, 0u);
+    cnet_command bad_close = make_close(1u);
+    cnet_command_queue_stats stats = {0};
+    bad_close.data = "x";
+    check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &bad_receive), SALTS_EINVAL);
+    check_equal(cnet_command_queue_publish(&queue, &bad_close), SALTS_EINVAL);
+    check_true(cnet_command_queue_get_stats(&queue, &stats));
+    check_equal(stats.live_commands, (size_t)0u);
   }
 
-  group("shutdown") {
-    it("closes admission and drains already published commands") {
-      static const uint8_t payload = 9u;
-      cnet_command command;
-      cnet_command_view view = {0};
-      const cnet_command_queue_config config = {.capacity = TEST_COMMAND_CAPACITY,
-                                                .max_payload_bytes = TEST_PAYLOAD_CAPACITY};
+  it("rejects an oversized copied control payload") {
+    static const uint8_t payload[9] = {0};
+    const cnet_command_queue_config config = {.capacity = 2u, .max_payload_bytes = 8u};
+    cnet_command command = {.kind = CNET_COMMAND_CONNECT,
+                            .connection = {.slot = 1u, .generation = 1u},
+                            .data = payload,
+                            .size = sizeof(payload)};
+    check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &command), SALTS_EMSGSIZE);
+  }
 
-      check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
-      command = make_send(1u, &payload, sizeof(payload));
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
-      check_equal(cnet_command_queue_close(&queue), SALTS_OK);
-      check_equal(cnet_command_queue_publish(&queue, &command), SALTS_ESHUTDOWN);
-      check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
-      check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
-      check_equal(cnet_command_queue_take(&queue, &view), SALTS_EOF);
-    }
+  it("rejects publication when every fixed command slot is occupied") {
+    const cnet_command_queue_config config = {.capacity = 2u, .max_payload_bytes = 8u};
+    cnet_command first = make_receive(1u, 1u);
+    cnet_command second = make_receive(2u, 1u);
+    cnet_command third = make_receive(3u, 1u);
+    cnet_command_view view = {0};
+    check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &first), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &second), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &third), SALTS_ENOBUFS);
+    check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+    check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+    check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+    check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+  }
+
+  it("keeps borrowed tokens generation checked across out-of-order release and reuse") {
+    const cnet_command_queue_config config = {.capacity = 2u, .max_payload_bytes = 8u};
+    cnet_command_view first_view = {0};
+    cnet_command_view second_view = {0};
+    cnet_command_view stale = {0};
+    cnet_command_view third_view = {0};
+    cnet_command first = make_receive(1u, 1u);
+    cnet_command second = make_close(2u);
+    cnet_command third = make_receive(3u, 2u);
+    check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &first), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &second), SALTS_OK);
+    check_equal(cnet_command_queue_take(&queue, &first_view), SALTS_OK);
+    check_equal(cnet_command_queue_take(&queue, &second_view), SALTS_OK);
+    stale = second_view;
+    check_equal(cnet_command_queue_release(&queue, &second_view), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &third), SALTS_OK);
+    check_equal(cnet_command_queue_take(&queue, &third_view), SALTS_OK);
+    check_equal(cnet_command_queue_release(&queue, &stale), SALTS_EINVAL);
+    check_equal(cnet_command_queue_release(&queue, &third_view), SALTS_OK);
+    check_equal(cnet_command_queue_release(&queue, &first_view), SALTS_OK);
+  }
+
+  it("closes admission and drains already published controls") {
+    const cnet_command_queue_config config = {.capacity = 2u, .max_payload_bytes = 8u};
+    cnet_command command = make_receive(1u, 1u);
+    cnet_command_view view = {0};
+    check_equal(cnet_command_queue_init(&queue, &config), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &command), SALTS_OK);
+    check_equal(cnet_command_queue_close(&queue), SALTS_OK);
+    check_equal(cnet_command_queue_publish(&queue, &command), SALTS_ESHUTDOWN);
+    check_equal(cnet_command_queue_take(&queue, &view), SALTS_OK);
+    check_equal(cnet_command_queue_release(&queue, &view), SALTS_OK);
+    check_equal(cnet_command_queue_take(&queue, &view), SALTS_EOF);
   }
 }
