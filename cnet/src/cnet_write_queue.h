@@ -33,6 +33,7 @@ typedef struct cnet_write_view {
   size_t size;
   size_t offset;
   size_t remaining;
+  bool vector_write;
   bool close_after_send;
   uint64_t _token;
 } cnet_write_view;
@@ -67,9 +68,23 @@ int cnet_write_queue_enqueue_slice(cnet_write_queue *queue, cnet_session_handle 
                                    const mem_slice_t *slice, bool close_after_send,
                                    cnet_write_handle *out_handle);
 
+int cnet_write_queue_enqueue_slicev(cnet_write_queue *queue, cnet_session_handle connection,
+                                    const mem_slice_t *segments, size_t segment_count,
+                                    bool close_after_send, cnet_write_handle *out_handle);
+
 /** Returns the current per-connection FIFO head. Empty-open returns SALTS_ETIMEDOUT. */
 int cnet_write_queue_peek(cnet_write_queue *queue, cnet_session_handle connection,
                           cnet_write_view *out_view);
+
+/**
+ * Rebuilds the current retained-vector suffix directly from stable write-slot
+ * ownership. max_bytes bounds this one native submission without mutating the
+ * logical cursor.
+ */
+int cnet_write_queue_build_vector(cnet_write_queue *queue, const cnet_write_view *view,
+                                  size_t max_bytes,
+                                  native_io_buffer_span out_spans[NATIVE_IO_VECTOR_MAX],
+                                  size_t *out_count, size_t *out_bytes);
 
 /** Advances the current FIFO head after one successful partial native write. */
 int cnet_write_queue_advance(cnet_write_queue *queue, cnet_write_view *view, size_t bytes);
