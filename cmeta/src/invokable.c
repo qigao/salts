@@ -123,6 +123,7 @@ cmeta_status cmeta_receiver_method_invokable_bind(
     const cmeta_function_data_desc *data,
     cmeta_callable callable, cmeta_invokable *out) {
     if (method == NULL || data == NULL || out == NULL ||
+        !cmeta_receiver_method_reflection_valid(method) ||
         !cmeta_function_data_desc_valid(data))
         return CMETA_INVALID_ARGUMENT;
     if (!cmeta_receiver_method_projection_valid(method, data->function))
