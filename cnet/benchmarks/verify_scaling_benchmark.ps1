@@ -67,6 +67,8 @@ foreach ($row in $rows) {
     $dispatcherInvoke = [double]$row.dispatcher_invoke_ns
     $dispatcherObserver = [double]$row.dispatcher_observer_ns
     $dispatcherRelease = [double]$row.dispatcher_release_ns
+    $benchmarkCallback = [double]$row.benchmark_callback_ns
+    $payloadCheck = [double]$row.benchmark_payload_check_ns
 
     if ($driver -eq "CNet copy" -or $driver -eq "CNet retained") {
         if ($ownerDrive -le 0 -or $ownerObserve -le 0 -or $clientPoll -le 0) {
@@ -88,11 +90,21 @@ foreach ($row in $rows) {
         if ($dispatcherInvoke -lt ($dispatcherObserver + $dispatcherRelease)) {
             throw "dispatcher observer/release exceed invoke for $driver/$connectionCount/$payload"
         }
+        if ($benchmarkCallback -le 0 -or $payloadCheck -le 0) {
+            throw "missing benchmark callback/check timing for $driver/$connectionCount/$payload"
+        }
+        if ($dispatcherObserver -lt $benchmarkCallback) {
+            throw "benchmark callback exceeds dispatcher observer for $driver/$connectionCount/$payload"
+        }
+        if ($benchmarkCallback -lt $payloadCheck) {
+            throw "payload check exceeds benchmark callback for $driver/$connectionCount/$payload"
+        }
     } else {
         foreach ($value in @(
             $ownerDrive, $ownerObserve, $clientPoll, $requestLifecycle, $requestStart,
             $requestResubmit, $requestCompletion, $eventPublish, $dispatcherPrepare,
-            $dispatcherInvoke, $dispatcherObserver, $dispatcherRelease
+            $dispatcherInvoke, $dispatcherObserver, $dispatcherRelease, $benchmarkCallback,
+            $payloadCheck
         )) {
             if ($value -ne 0) { throw "NativeIO row unexpectedly contains CNet attribution" }
         }
