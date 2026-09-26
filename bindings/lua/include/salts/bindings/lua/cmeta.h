@@ -42,6 +42,22 @@ cmeta_status salts_lua_call_invokable(
     int first_argument, size_t argument_count, salts_lua_limits limits,
     int *out_result_count);
 
+/**
+ * Move one canonical native object reference into a Lua userdata proxy.
+ *
+ * On success object is cleared without releasing the native instance; the
+ * userdata becomes the sole owner of that object-handle lifetime and its
+ * __gc path calls cmeta_object_release() exactly once. BORROWED/SHARED/OWNED
+ * semantics therefore remain defined only by CMeta.
+ *
+ * Reflected fields are readable through cmeta_object_field_read(). Executable
+ * receiver methods are exposed only through cmeta_object_method_provider and
+ * cmeta_object_method_invokable_bind(). Field writes are rejected until CMeta
+ * publishes an explicit mutability contract.
+ */
+cmeta_status salts_lua_push_object(
+    lua_State *state, cmeta_object_ref *object, salts_lua_limits limits);
+
 #ifdef __cplusplus
 }
 #endif
