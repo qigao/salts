@@ -496,6 +496,9 @@ jobs:
           "PROJECT_ROOT=$env:GITHUB_WORKSPACE" >> $env:GITHUB_ENV
           "VSINSTALL=$vsInstall" >> $env:GITHUB_ENV
           "VCPKG_BINARY_CACHE=$binaryCache" >> $env:GITHUB_ENV
+          # CMeta qualification disables vcpkg POST_BUILD applocal because hundreds
+          # of targets share one bin directory. Keep runtime DLLs on PATH instead.
+          (Join-Path $env:GITHUB_WORKSPACE "vcpkg_installed\x64-windows\bin") >> $env:GITHUB_PATH
           "image=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT
           "triplet=x64-windows" >> $env:GITHUB_OUTPUT
 
@@ -518,7 +521,7 @@ jobs:
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
           set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
-          cmake --preset win-release-user
+          cmake --preset win-release-user -DVCPKG_APPLOCAL_DEPS=OFF
 
       - name: Build
         shell: cmd
