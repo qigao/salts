@@ -305,9 +305,10 @@ int cnet_client_init(cnet_client *client, const cnet_client_config *config) {
   for (index = 0u; index < impl->record_count; ++index)
     impl->records[index].client = impl;
 
-  max_command_payload_bytes = config->max_send_bytes > sizeof(cnet_owner_connect_payload)
-                                  ? config->max_send_bytes
-                                  : sizeof(cnet_owner_connect_payload);
+  max_command_payload_bytes = sizeof(cnet_owner_connect_payload) >
+                                      sizeof(cnet_owner_start_tls_payload)
+                                  ? sizeof(cnet_owner_connect_payload)
+                                  : sizeof(cnet_owner_start_tls_payload);
   if (config->command_buffer_bytes != 0u &&
       config->command_buffer_bytes < max_command_payload_bytes) {
     cnet_client_cleanup_init(impl);
