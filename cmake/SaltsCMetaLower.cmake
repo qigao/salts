@@ -41,7 +41,7 @@ function(salts_cmeta_lower_source)
         if(CMAKE_HOST_WIN32)
           list(APPEND _salts_cmeta_lower_hints
                "${_salts_sdk_root}/windows-x64/bin")
-        elseif(CMAKE_HOST_APPLE)
+        elseif(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
           list(APPEND _salts_cmeta_lower_hints
                "${_salts_sdk_root}/macos-arm64/bin"
                "${_salts_sdk_root}/macos-x64/bin")
