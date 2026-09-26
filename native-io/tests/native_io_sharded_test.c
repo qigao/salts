@@ -260,6 +260,7 @@ typedef struct native_io_sharded_owned_state {
   atomic_int terminals;
   atomic_int finalizes;
   int terminal_finalizes_seen;
+  int nested_observe_status;
   native_io_completion_kind terminal_kind;
   size_t terminal_bytes;
   unsigned char terminal_byte;
@@ -388,7 +389,11 @@ static void native_io_sharded_owned_terminal(native_io_sharded_context *context,
                                              const native_io_sharded_completion *completion,
                                              void *arg) {
   native_io_sharded_owned_state *state = (native_io_sharded_owned_state *)arg;
+  native_io_sharded_completion nested_event = {0};
+  size_t nested_count = 0u;
   state->terminal_finalizes_seen = atomic_load(&state->finalizes);
+  state->nested_observe_status =
+      native_io_sharded_context_observe(context, &nested_event, 1u, 0u, &nested_count);
   state->terminal_kind = completion->kind;
   state->terminal_bytes = completion->bytes;
   state->terminal_byte = state->byte;
@@ -524,6 +529,7 @@ spec("NativeIO bounded sharded routing") {
       check_equal(atomic_load(&state.terminals), 1);
       check_equal(atomic_load(&state.finalizes), 1);
       check_equal(state.terminal_finalizes_seen, 0);
+      check_equal(state.nested_observe_status, SALTS_EBUSY);
       check_equal(state.terminal_kind, NATIVE_IO_COMPLETION_OK);
       check_equal(state.terminal_bytes, (size_t)1);
       check_equal(state.terminal_byte, (unsigned char)0x63u);
@@ -548,6 +554,7 @@ spec("NativeIO bounded sharded routing") {
       check_equal(atomic_load(&state.terminals), 2);
       check_equal(atomic_load(&state.finalizes), 2);
       check_equal(state.terminal_finalizes_seen, 1);
+      check_equal(state.nested_observe_status, SALTS_EBUSY);
       check_equal(state.terminal_kind, NATIVE_IO_COMPLETION_CANCELLED);
       check_equal(state.terminal_shard, (size_t)1);
 
@@ -573,6 +580,7 @@ spec("NativeIO bounded sharded routing") {
       check_equal(atomic_load(&state.terminals), 3);
       check_equal(atomic_load(&state.finalizes), 3);
       check_equal(state.terminal_finalizes_seen, 2);
+      check_equal(state.nested_observe_status, SALTS_EBUSY);
       check_equal(state.terminal_kind, NATIVE_IO_COMPLETION_OK);
       check_equal(state.terminal_bytes, (size_t)1);
       check_equal(state.terminal_byte, (unsigned char)0x7du);
