@@ -56,6 +56,24 @@ set_target_properties(
              C_EXTENSIONS OFF)
 
 cmake_add_test(
+  cnet_write_queue_test
+  SOURCES
+  cnet_write_queue_test.c
+  LIBS
+  cnet
+  Salts::Core
+  Salts::TinyTest
+  INCLUDES
+  ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER
+  "cnet/tests")
+set_target_properties(
+  cnet_write_queue_test
+  PROPERTIES C_STANDARD 11
+             C_STANDARD_REQUIRED ON
+             C_EXTENSIONS OFF)
+
+cmake_add_test(
   cnet_command_test
   SOURCES
   cnet_command_test.c

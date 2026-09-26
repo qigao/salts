@@ -79,6 +79,7 @@ struct cnet_owner_impl {
   native_io_backend backend;
   cnet_resolver resolver;
   salts_deadline_queue deadlines;
+  cnet_write_queue writes;
   native_io_backend_kind backend_kind;
   cnet_session_table *sessions;
   cnet_command_queue *commands;
@@ -1736,6 +1737,29 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config) {
     free(impl);
     return status;
   }
+  if (config->write_capacity != 0u) {
+    const cnet_write_queue_config write_config = {
+        .connection_capacity = config->connection_capacity,
+        .capacity = config->write_capacity,
+        .max_payload_bytes = config->max_write_bytes,
+        .payload_capacity_bytes = config->write_buffer_bytes};
+    status = cnet_write_queue_init(&impl->writes, &write_config);
+    if (status != SALTS_OK) {
+      (void)salts_deadline_queue_destroy(&impl->deadlines);
+      (void)cnet_resolver_close(&impl->resolver, 0u);
+      (void)cnet_resolver_destroy(&impl->resolver);
+      (void)native_io_backend_close(&impl->backend);
+      (void)native_io_backend_destroy(&impl->backend);
+      free(impl->completions);
+      free(impl->pending_events);
+      free(impl->session_work);
+      free(impl->free_requests);
+      free(impl->request_records);
+      free(impl->session_records);
+      free(impl);
+      return status;
+    }
+  }
   impl->backend_kind = config->backend_kind;
   impl->sessions = config->sessions;
   impl->commands = config->commands;
@@ -2079,6 +2103,13 @@ int cnet_owner_close(cnet_owner *owner) {
       impl->session_work_count != 0u || impl->pending_event_count != 0u ||
       salts_deadline_queue_size(&impl->deadlines) != 0u)
     return SALTS_EBUSY;
+  if (impl->writes.impl != NULL) {
+    cnet_write_queue_stats write_stats = {0};
+    if (!cnet_write_queue_get_stats(&impl->writes, &write_stats) || write_stats.live_writes != 0u)
+      return SALTS_EBUSY;
+    status = cnet_write_queue_close(&impl->writes);
+    if (status != SALTS_OK && status != SALTS_EALREADY) return status;
+  }
   if (!impl->resolver_closed) {
     status = cnet_resolver_close(&impl->resolver, 0u);
     if (status != SALTS_OK) return status;
@@ -2101,6 +2132,8 @@ int cnet_owner_destroy(cnet_owner *owner) {
   status = native_io_backend_destroy(&impl->backend);
   if (status != SALTS_OK) return status;
   status = salts_deadline_queue_destroy(&impl->deadlines);
+  if (status != SALTS_OK) return status;
+  status = cnet_write_queue_destroy(&impl->writes);
   if (status != SALTS_OK) return status;
   free(impl->completions);
   free(impl->pending_events);
