@@ -79,6 +79,92 @@ static const cmeta_function_data_desc increment_data = {
 
 const cmeta_data_desc *cmeta_invokable_peer_int_data(void);
 
+typedef struct invokable_box {
+    int bias;
+} invokable_box;
+
+static const cmeta_type_desc invokable_box_type = {
+    .name = "invokable_box",
+    .size = sizeof(invokable_box),
+    .align = _Alignof(invokable_box),
+    .kind = CMETA_T_OBJECT,
+    .pointee = NULL,
+    .traits = NULL,
+    .identity = NULL
+};
+
+static const cmeta_type_desc invokable_box_ptr_type = {
+    .name = "invokable_box *",
+    .size = sizeof(invokable_box *),
+    .align = _Alignof(invokable_box *),
+    .kind = CMETA_T_POINTER,
+    .pointee = &invokable_box_type,
+    .traits = NULL,
+    .identity = NULL
+};
+
+static const cmeta_param_desc receiver_increment_params[] = {
+    {
+        .size = sizeof(cmeta_param_desc),
+        .name = "self",
+        .type = &invokable_box_ptr_type,
+        .flags = CMETA_PARAM_INOUT | CMETA_PARAM_BORROWED |
+                 CMETA_PARAM_RECEIVER
+    },
+    {
+        .size = sizeof(cmeta_param_desc),
+        .name = "value",
+        .type = &cmeta_type_int,
+        .flags = CMETA_PARAM_IN
+    }
+};
+
+static const cmeta_function_desc receiver_increment_function = {
+    .size = sizeof(cmeta_function_desc),
+    .name = "invokable_box.increment",
+    .return_type = &cmeta_type_int,
+    .params = receiver_increment_params,
+    .param_count = 2u,
+    .effects = CMETA_CONTRACT_EFFECTS(value),
+    .properties = CMETA_CONTRACT_PROPERTIES(value)
+};
+
+static const cmeta_abi_carrier receiver_increment_param_abi[] = {
+    CMETA_ABI_OBJECT_POINTER, CMETA_ABI_SCALAR
+};
+
+static const cmeta_function_abi_desc receiver_increment_abi = {
+    .size = sizeof(cmeta_function_abi_desc),
+    .function = &receiver_increment_function,
+    .return_carrier = CMETA_ABI_SCALAR,
+    .param_carriers = receiver_increment_param_abi,
+    .param_count = 2u
+};
+
+static const cmeta_receiver_method receiver_increment_method = {
+    .name = "increment",
+    .function = &receiver_increment_function,
+    .abi = &receiver_increment_abi
+};
+
+static bool invokable_box_bound_increment(
+    const cmeta_callable *self, void *out, const void *const *args) {
+    const invokable_box *receiver = NULL;
+    int input;
+    int result;
+
+    if (self == NULL || out == NULL || args == NULL || args[0] == NULL ||
+        self->capture_size != sizeof(receiver))
+        return false;
+    memcpy(&receiver, self->capture.bytes, sizeof(receiver));
+    if (receiver == NULL)
+        return false;
+    memcpy(&input, args[0], sizeof(input));
+    result = receiver->bias + input;
+    memcpy(out, &result, sizeof(result));
+    return true;
+}
+
 static const cmeta_function_desc add_function = {
     .size = sizeof(cmeta_function_desc),
     .name = "add",
@@ -182,6 +268,46 @@ spec("CMeta invokable bridge") {
     wrong.effects = CMETA_EFFECT_IO;
     check_equal(cmeta_invokable_bind(
                     &wrong, cmeta_invokable_increment, &invokable),
+                CMETA_TYPE_MISMATCH);
+  }
+
+  it("joins a receiver-elided exact thunk to the canonical invokable") {
+    invokable_box box = {5};
+    const invokable_box *receiver = &box;
+    cmeta_callable bound = cmeta_invokable_increment;
+    cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+    int input = 7;
+    int output = 0;
+    const void *args[] = {&input};
+
+    check_true(cmeta_receiver_method_projection_valid(
+        &receiver_increment_method, &increment_function));
+
+    bound.invoke = invokable_box_bound_increment;
+    bound.capture_size = sizeof(receiver);
+    memcpy(bound.capture.bytes, &receiver, sizeof(receiver));
+
+    check_equal(cmeta_receiver_method_invokable_bind(
+                    &receiver_increment_method, &increment_data,
+                    bound, &invokable),
+                CMETA_OK);
+    check_equal(cmeta_invokable_invoke(&invokable, &output, args), CMETA_OK);
+    check_equal(output, 12);
+  }
+
+  it("rejects a receiver projection with changed semantics") {
+    cmeta_function_desc wrong_function = increment_function;
+    cmeta_function_data_desc wrong_data = increment_data;
+    cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+
+    wrong_function.effects = CMETA_EFFECT_IO;
+    wrong_data.function = &wrong_function;
+    check_true(cmeta_function_data_desc_valid(&wrong_data));
+    check_false(cmeta_receiver_method_projection_valid(
+        &receiver_increment_method, &wrong_function));
+    check_equal(cmeta_receiver_method_invokable_bind(
+                    &receiver_increment_method, &wrong_data,
+                    cmeta_invokable_increment, &invokable),
                 CMETA_TYPE_MISMATCH);
   }
 
