@@ -1278,64 +1278,6 @@ static int cnet_owner_process_resolver(cnet_owner_impl *impl, size_t *out_proces
   }
 }
 
-static int cnet_owner_send(cnet_owner_impl *impl, cnet_command_view *command,
-                           bool close_after_send) {
-  cnet_owner_session *session = cnet_owner_find_session(impl, command->connection);
-  native_io_operation operation;
-  native_io_operation_kind operation_kind;
-  cnet_session_state state = CNET_SESSION_FREE;
-  int status;
-
-  if (session == NULL) return cnet_command_queue_release(impl->commands, command);
-  status = cnet_session_table_state(impl->sessions, command->connection, &state);
-  if (status != SALTS_OK || state != CNET_SESSION_OPEN)
-    return cnet_command_queue_release(impl->commands, command);
-  if (session->peer.scheme != CNET_URI_TLS && session->write_active)
-    return cnet_owner_fail_accepted_command(impl, session, command, SALTS_EBUSY,
-                                            CNET_SESSION_STAGE_WRITE);
-  if (close_after_send && session->peer.scheme != CNET_URI_TLS) {
-    status = cnet_session_table_begin_close(impl->sessions, session->handle);
-    if (status != SALTS_OK)
-      return cnet_owner_fail_accepted_command(impl, session, command, status,
-                                              CNET_SESSION_STAGE_SHUTDOWN);
-    session->close_requested = true;
-    session->receive_demand = 0u;
-    status = cnet_owner_cancel_receive_requests(impl, session->handle);
-    if (status != SALTS_OK)
-      return cnet_owner_fail_accepted_command(impl, session, command, status,
-                                              CNET_SESSION_STAGE_SHUTDOWN);
-    status = cnet_owner_queue_state_event(impl, session->handle, CNET_EVENT_STATE_CLOSING, SALTS_OK,
-                                          CNET_SESSION_STAGE_NONE);
-    if (status != SALTS_OK)
-      return cnet_owner_fail_accepted_command(impl, session, command, status,
-                                              CNET_SESSION_STAGE_CALLBACK);
-  }
-  if (session->peer.scheme == CNET_URI_TLS) {
-    cnet_write_handle admitted = {0};
-    status = cnet_write_queue_enqueue_copy(&impl->writes, session->handle, command->data,
-                                           command->size, close_after_send, &admitted);
-    if (status != SALTS_OK)
-      return cnet_owner_fail_accepted_command(impl, session, command, status,
-                                              CNET_SESSION_STAGE_WRITE);
-    status = cnet_command_queue_release(impl->commands, command);
-    if (status != SALTS_OK) {
-      (void)cnet_write_queue_cancel_tail(&impl->writes, session->handle, admitted);
-      return status;
-    }
-    return cnet_owner_finish_write_admission(impl, session, admitted);
-  }
-  status = cnet_owner_send_operation_kind(session->peer.scheme, &operation_kind);
-  if (status != SALTS_OK)
-    return cnet_owner_fail_accepted_command(impl, session, command, status,
-                                            CNET_SESSION_STAGE_WRITE);
-  operation = (native_io_operation){.kind = operation_kind,
-                                    .endpoint = cnet_transport_write_endpoint(&session->transport),
-                                    .buffer = (void *)command->data,
-                                    .length = command->size};
-  return cnet_owner_start_request(impl, session, command, NULL, CNET_OWNER_REQUEST_SEND, &operation,
-                                  close_after_send);
-}
-
 static int cnet_owner_receive(cnet_owner_impl *impl, cnet_command_view *command) {
   cnet_owner_session *session = cnet_owner_find_session(impl, command->connection);
   cnet_session_state state = CNET_SESSION_FREE;
@@ -1475,9 +1417,6 @@ static int cnet_owner_process_commands(cnet_owner_impl *impl, size_t *out_proces
     if (status != SALTS_OK) return status;
     ++*out_processed;
     if (command.kind == CNET_COMMAND_CONNECT) status = cnet_owner_connect(impl, &command);
-    else if (command.kind == CNET_COMMAND_SEND) status = cnet_owner_send(impl, &command, false);
-    else if (command.kind == CNET_COMMAND_SEND_CLOSE)
-      status = cnet_owner_send(impl, &command, true);
     else if (command.kind == CNET_COMMAND_RECEIVE) status = cnet_owner_receive(impl, &command);
     else if (command.kind == CNET_COMMAND_START_TLS)
       status = cnet_owner_start_tls_command(impl, &command);
