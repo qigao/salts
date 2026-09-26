@@ -225,6 +225,27 @@ static const cmeta_object_method_provider quickjs_object_method_provider = {
     .bind = quickjs_object_method_bind
 };
 
+
+static cmeta_status quickjs_object_field_assign(
+    void *context, void *object, const cmeta_data_field_desc *field,
+    const void *value) {
+  quickjs_object_box *box = (quickjs_object_box *)object;
+  (void)context;
+  if (box == NULL || field == NULL || value == NULL)
+    return CMETA_INVALID_ARGUMENT;
+  if (field != &quickjs_object_data_fields[0])
+    return CMETA_TRAIT_MISSING;
+  box->value = *(const int *)value;
+  return CMETA_OK;
+}
+
+static const cmeta_object_field_provider quickjs_object_field_provider = {
+    .size = sizeof(cmeta_object_field_provider),
+    .data = &quickjs_object_data,
+    .context = NULL,
+    .assign = quickjs_object_field_assign
+};
+
 typedef struct quickjs_object_lifecycle_counts {
   int destroys;
 } quickjs_object_lifecycle_counts;
@@ -268,8 +289,9 @@ spec("Salts QuickJS canonical native object projection") {
 
     check_not_null(runtime);
     check_not_null(context);
-    check_equal(cmeta_object_borrow_with_provider(
+    check_equal(cmeta_object_borrow_with_providers(
                     &object, &box, &quickjs_object_data,
+                    &quickjs_object_field_provider,
                     &quickjs_object_method_provider),
                 CMETA_OK);
     check_equal(salts_quickjs_push_object(
@@ -300,10 +322,43 @@ spec("Salts QuickJS canonical native object projection") {
     check_equal(number, 20);
     JS_FreeValue(context, result);
 
-    result = quickjs_object_eval(context, "counter.value = 99");
+    result = quickjs_object_eval(
+        context, "counter.value = 99; counter.value");
+    check_false(JS_IsException(result));
+    check_equal(JS_ToInt32(context, &number, result), 0);
+    check_equal(number, 99);
+    JS_FreeValue(context, result);
+    check_equal(box.value, 99);
+
+    JS_FreeContext(context);
+    JS_FreeRuntime(runtime);
+  }
+
+  it("keeps reflected fields read-only without mutation authority") {
+    JSRuntime *runtime = JS_NewRuntime();
+    JSContext *context = runtime != NULL ? JS_NewContext(runtime) : NULL;
+    quickjs_object_box box = {7};
+    cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+    salts_quickjs_limits limits = {8u, 8u, 4096u};
+    JSValue proxy = JS_UNDEFINED;
+    JSValue result = JS_UNDEFINED;
+
+    check_not_null(runtime);
+    check_not_null(context);
+    check_equal(cmeta_object_borrow_with_provider(
+                    &object, &box, &quickjs_object_data,
+                    &quickjs_object_method_provider),
+                CMETA_OK);
+    check_equal(salts_quickjs_push_object(
+                    context, &object, limits, &proxy),
+                CMETA_OK);
+    check_true(quickjs_object_publish_global(context, "counter", proxy));
+    proxy = JS_UNDEFINED;
+
+    result = quickjs_object_eval(context, "counter.value = 88");
     check_true(JS_IsException(result));
     JS_FreeValue(context, result);
-    check_equal(box.value, 20);
+    check_equal(box.value, 7);
 
     JS_FreeContext(context);
     JS_FreeRuntime(runtime);
