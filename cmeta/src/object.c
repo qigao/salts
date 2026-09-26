@@ -5,6 +5,17 @@ static void cmeta_object_clear(cmeta_object_ref *ref) {
         *ref = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
 }
 
+bool cmeta_object_lifecycle_valid(
+    const cmeta_object_lifecycle *lifecycle) {
+    const bool shared_pair =
+        lifecycle != NULL &&
+        ((lifecycle->retain == NULL) == (lifecycle->release == NULL));
+
+    return lifecycle != NULL && lifecycle->size >= sizeof(*lifecycle) &&
+           shared_pair &&
+           (lifecycle->retain != NULL || lifecycle->destroy != NULL);
+}
+
 bool cmeta_object_method_provider_valid(
     const cmeta_object_method_provider *provider) {
     return provider != NULL && provider->size >= sizeof(*provider) &&
@@ -37,11 +48,24 @@ static cmeta_status cmeta_object_contract_status(
 
 bool cmeta_object_ref_valid(const cmeta_object_ref *ref) {
     if (ref == NULL || ref->size < sizeof(cmeta_object_ref) ||
-        ref->lifetime != CMETA_OBJECT_LIFETIME_BORROWED)
+        cmeta_object_contract_status(
+            ref->object, ref->data, ref->methods,
+            ref->method_provider) != CMETA_OK)
         return false;
-    return cmeta_object_contract_status(
-               ref->object, ref->data, ref->methods,
-               ref->method_provider) == CMETA_OK;
+
+    switch (ref->lifetime) {
+    case CMETA_OBJECT_LIFETIME_BORROWED:
+        return ref->lifecycle == NULL;
+    case CMETA_OBJECT_LIFETIME_SHARED:
+        return cmeta_object_lifecycle_valid(ref->lifecycle) &&
+               ref->lifecycle->retain != NULL &&
+               ref->lifecycle->release != NULL;
+    case CMETA_OBJECT_LIFETIME_OWNED:
+        return cmeta_object_lifecycle_valid(ref->lifecycle) &&
+               ref->lifecycle->destroy != NULL;
+    default:
+        return false;
+    }
 }
 
 cmeta_status cmeta_object_borrow(
@@ -62,6 +86,7 @@ cmeta_status cmeta_object_borrow(
     out->methods = methods;
     out->method_provider = NULL;
     out->lifetime = CMETA_OBJECT_LIFETIME_BORROWED;
+    out->lifecycle = NULL;
     return CMETA_OK;
 }
 
@@ -86,11 +111,63 @@ cmeta_status cmeta_object_borrow_with_provider(
     out->methods = provider->methods;
     out->method_provider = provider;
     out->lifetime = CMETA_OBJECT_LIFETIME_BORROWED;
+    out->lifecycle = NULL;
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_object_share(
+    cmeta_object_ref *ref, const cmeta_object_lifecycle *lifecycle) {
+    cmeta_status status;
+
+    if (!cmeta_object_ref_valid(ref) ||
+        ref->lifetime != CMETA_OBJECT_LIFETIME_BORROWED ||
+        !cmeta_object_lifecycle_valid(lifecycle) ||
+        lifecycle->retain == NULL || lifecycle->release == NULL)
+        return CMETA_INVALID_ARGUMENT;
+
+    status = lifecycle->retain(lifecycle->context, ref->object);
+    if (status != CMETA_OK)
+        return status;
+
+    ref->lifetime = CMETA_OBJECT_LIFETIME_SHARED;
+    ref->lifecycle = lifecycle;
+    return CMETA_OK;
+}
+
+cmeta_status cmeta_object_take(
+    cmeta_object_ref *ref, const cmeta_object_lifecycle *lifecycle) {
+    if (!cmeta_object_ref_valid(ref) ||
+        ref->lifetime != CMETA_OBJECT_LIFETIME_BORROWED ||
+        !cmeta_object_lifecycle_valid(lifecycle) ||
+        lifecycle->destroy == NULL)
+        return CMETA_INVALID_ARGUMENT;
+
+    ref->lifetime = CMETA_OBJECT_LIFETIME_OWNED;
+    ref->lifecycle = lifecycle;
     return CMETA_OK;
 }
 
 void cmeta_object_release(cmeta_object_ref *ref) {
+    cmeta_object_lifetime lifetime;
+    const cmeta_object_lifecycle *lifecycle;
+    void *object;
+
+    if (ref == NULL)
+        return;
+
+    lifetime = ref->lifetime;
+    lifecycle = ref->lifecycle;
+    object = ref->object;
     cmeta_object_clear(ref);
+
+    if (lifecycle == NULL || object == NULL)
+        return;
+    if (lifetime == CMETA_OBJECT_LIFETIME_SHARED &&
+        lifecycle->release != NULL)
+        lifecycle->release(lifecycle->context, object);
+    else if (lifetime == CMETA_OBJECT_LIFETIME_OWNED &&
+             lifecycle->destroy != NULL)
+        lifecycle->destroy(lifecycle->context, object);
 }
 
 
