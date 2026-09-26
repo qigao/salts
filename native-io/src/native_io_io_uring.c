@@ -51,8 +51,11 @@
   #define SALTS_IO_URING_HAS_TASKRUN_FLAG 0
 #endif
 
-#if defined(__NR_io_uring_register) && defined(IORING_REGISTER_RING_FDS) && \
-    defined(IORING_UNREGISTER_RING_FDS) && defined(IORING_ENTER_REGISTERED_RING)
+/* The register opcodes are enum constants, not preprocessor macros.
+ * IORING_FEAT_REG_REG_RING is the UAPI macro introduced with registered-ring
+ * support and is therefore the compile-time header capability proxy. */
+#if defined(__NR_io_uring_register) && defined(IORING_FEAT_REG_REG_RING) && \
+    defined(IORING_ENTER_REGISTERED_RING)
   #define SALTS_IO_URING_HAS_REGISTERED_RING_FD 1
 #else
   #define SALTS_IO_URING_HAS_REGISTERED_RING_FD 0
