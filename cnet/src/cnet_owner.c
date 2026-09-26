@@ -2159,6 +2159,18 @@ int cnet_owner_send_buffer_direct(cnet_owner *owner, cnet_session_handle session
   return cnet_owner_finish_write_admission(impl, session, handle);
 }
 
+int cnet_owner_send_slice_direct(cnet_owner *owner, cnet_session_handle session_handle,
+                                 const mem_slice_t *slice) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  cnet_write_handle handle = {0};
+  int status = cnet_owner_send_direct_ready(impl, session_handle, &session);
+  if (status != SALTS_OK) return status;
+  status = cnet_write_queue_enqueue_slice(&impl->writes, session_handle, slice, false, &handle);
+  if (status != SALTS_OK) return status;
+  return cnet_owner_finish_write_admission(impl, session, handle);
+}
+
 int cnet_owner_sendv_direct(cnet_owner *owner, cnet_session_handle session_handle,
                             const cnet_const_buffer *segments, size_t segment_count) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
