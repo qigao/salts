@@ -969,9 +969,16 @@ int cnet_close(cnet_client *client, cnet_connection connection) {
   if (record->close_command_pending) return SALTS_EALREADY;
 
   if (!record->write_pending && record->receive_pending == 0u && !record->tls_command_pending) {
-    status = cnet_shards_close_direct(&impl->shards, internal);
-    if (status == SALTS_OK || status == SALTS_EALREADY) return status;
-    if (status != SALTS_EBUSY && status != SALTS_ENOBUFS) return status;
+    cnet_session_state session_state = CNET_SESSION_FREE;
+    status = cnet_client_record_session_state(impl, record, &session_state);
+    if (status != SALTS_OK) return status;
+    if (session_state == CNET_SESSION_DRAINING || session_state == CNET_SESSION_TERMINAL)
+      return SALTS_EALREADY;
+    if (session_state == CNET_SESSION_OPEN) {
+      status = cnet_shards_close_direct(&impl->shards, internal);
+      if (status == SALTS_OK || status == SALTS_EALREADY) return status;
+      if (status != SALTS_EBUSY && status != SALTS_ENOBUFS) return status;
+    }
   }
 
   status = cnet_shards_close(&impl->shards, internal);
