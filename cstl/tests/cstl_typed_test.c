@@ -90,6 +90,52 @@ typed(BPlusTree, IntLongBPlusTree, int, long);
 } while (0)
 
 spec("CSTL typed schema") {
+    it("projects typed mutation methods into canonical receiver metadata") {
+        const cmeta_function_desc *vec_push = IntVec_push_function();
+        const cmeta_function_desc *list_add = IntList_add_function();
+        const cmeta_function_desc *set_add = IntSet_add_function();
+        const cmeta_function_desc *map_put = IntLongMap_put_function();
+        const cmeta_function_abi_desc *list_add_abi =
+            IntList_add_function_abi();
+        const cmeta_param_desc *receiver;
+
+        check_true(cmeta_function_desc_valid(vec_push));
+        check_true(cmeta_function_desc_valid(list_add));
+        check_true(cmeta_function_desc_valid(set_add));
+        check_true(cmeta_function_desc_valid(map_put));
+        check_true(cmeta_function_abi_desc_valid(list_add_abi));
+
+        check_equal(vec_push->name, "IntVec_push");
+        check_equal(list_add->name, "IntList_add");
+        check_equal(set_add->name, "IntSet_add");
+        check_equal(map_put->name, "IntLongMap_put");
+
+        check_equal(vec_push->param_count, (size_t)2u);
+        check_equal(list_add->param_count, (size_t)2u);
+        check_equal(set_add->param_count, (size_t)2u);
+        check_equal(map_put->param_count, (size_t)3u);
+
+        receiver = cmeta_function_receiver(list_add);
+        check_not_null(receiver);
+        check_true((receiver->flags & CMETA_PARAM_RECEIVER) != 0u);
+        check_true(receiver->type->kind == CMETA_T_POINTER);
+        check_true(cmeta_type_equal(receiver->type->pointee,
+                                    &IntList_cmeta_type));
+        check_true(cmeta_type_equal(
+            cmeta_function_param(list_add, 1u)->type, &cmeta_type_int));
+        check_equal(cmeta_function_param_abi(list_add_abi, 0u),
+                    (cmeta_abi_carrier)CMETA_ABI_OBJECT_POINTER);
+        check_equal(cmeta_function_param_abi(list_add_abi, 1u),
+                    (cmeta_abi_carrier)CMETA_ABI_UNSPECIFIED);
+        check_equal(list_add_abi->return_carrier,
+                    (cmeta_abi_carrier)CMETA_ABI_SCALAR);
+
+        check_true(cmeta_type_equal(
+            cmeta_function_param(map_put, 1u)->type, &cmeta_type_int));
+        check_true(cmeta_type_equal(
+            cmeta_function_param(map_put, 2u)->type, &cmeta_type_long));
+    }
+
     it("exposes List add as the typed append semantic") {
         IntList values = {0};
 
