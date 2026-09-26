@@ -36,8 +36,8 @@ static size_t bench_count(const char *name, size_t fallback) {
 }
 
 #if defined(__NR_io_uring_setup) && defined(__NR_io_uring_enter) && \
-    defined(__NR_io_uring_register) && defined(IORING_REGISTER_RING_FDS) && \
-    defined(IORING_UNREGISTER_RING_FDS) && defined(IORING_ENTER_REGISTERED_RING)
+    defined(__NR_io_uring_register) && defined(IORING_FEAT_REG_REG_RING) && \
+    defined(IORING_ENTER_REGISTERED_RING)
 
 typedef struct enter_measurement {
   const char *name;
