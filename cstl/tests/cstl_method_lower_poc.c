@@ -1,4 +1,5 @@
 #include <cmeta/function.h>
+#include <cmeta/method.h>
 #include <cstl/typed.h>
 
 #include <ctype.h>
@@ -32,9 +33,7 @@ static const cmeta_type_desc poc_string_literal_type = {
     CMETA_T_POINTER, &cmeta_type_int8, NULL, NULL
 };
 
-typedef bool (*receiver_method_fn)(
-    const char *, const cmeta_function_desc **,
-    const cmeta_function_abi_desc **);
+typedef const cmeta_receiver_method_set *(*receiver_method_set_fn)(void);
 
 typedef enum receiver_kind {
     RECEIVER_VEC,
@@ -47,15 +46,15 @@ typedef struct receiver_symbol {
     const char *name;
     const char *type_name;
     const cmeta_type_desc *type;
-    receiver_method_fn method;
+    receiver_method_set_fn method_set;
     receiver_kind kind;
 } receiver_symbol;
 
 static const receiver_symbol receiver_symbols[] = {
-    {"vec", "IntVec", &IntVec_cmeta_type, IntVec_receiver_method, RECEIVER_VEC},
-    {"list", "IntList", &IntList_cmeta_type, IntList_receiver_method, RECEIVER_LIST},
-    {"set", "IntSet", &IntSet_cmeta_type, IntSet_receiver_method, RECEIVER_SET},
-    {"map", "IntMap", &IntMap_cmeta_type, IntMap_receiver_method, RECEIVER_MAP}
+    {"vec", "IntVec", &IntVec_cmeta_type, IntVec_receiver_method_set, RECEIVER_VEC},
+    {"list", "IntList", &IntList_cmeta_type, IntList_receiver_method_set, RECEIVER_LIST},
+    {"set", "IntSet", &IntSet_cmeta_type, IntSet_receiver_method_set, RECEIVER_SET},
+    {"map", "IntMap", &IntMap_cmeta_type, IntMap_receiver_method_set, RECEIVER_MAP}
 };
 
 static void skip_space(poc_cursor *c) {
@@ -275,8 +274,10 @@ static int lower(const char *source, const char *output_path) {
     poc_arg args[2] = {{POC_ARG_INT, 0}, {POC_ARG_INT, 0}};
     size_t arg_count = 0u;
     const receiver_symbol *symbol;
-    const cmeta_function_desc *method = NULL;
-    const cmeta_function_abi_desc *method_abi = NULL;
+    const cmeta_receiver_method_set *method_set;
+    const cmeta_receiver_method *method_entry;
+    const cmeta_function_desc *method;
+    const cmeta_function_abi_desc *method_abi;
     FILE *out;
 
     if (!parse_call(source, receiver_name, sizeof(receiver_name),
@@ -291,11 +292,22 @@ static int lower(const char *source, const char *output_path) {
         return 0;
     }
 
-    if (!symbol->method(method_name, &method, &method_abi)) {
+    method_set = symbol->method_set();
+    if (!cmeta_receiver_method_set_valid(method_set) ||
+        !cmeta_type_equal(method_set->receiver_type, symbol->type)) {
+        fprintf(stderr, "%s has invalid receiver method metadata\n",
+                symbol->type_name);
+        return 0;
+    }
+
+    method_entry = cmeta_receiver_method_find(method_set, method_name);
+    if (method_entry == NULL) {
         fprintf(stderr, "%s has no receiver method '%s'\n",
                 symbol->type_name, method_name);
         return 0;
     }
+    method = method_entry->function;
+    method_abi = method_entry->abi;
 
     if (!method_signature_ok(symbol, method, method_abi, args, arg_count)) {
         fprintf(stderr, "%s.%s arguments do not match reflected signature\n",
