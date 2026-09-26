@@ -1,16 +1,26 @@
 if(NOT DEFINED GENERATED OR NOT EXISTS "${GENERATED}")
   message(FATAL_ERROR "generated method-lowering source is missing")
 endif()
+if(NOT DEFINED EXPECTED_CANONICAL)
+  message(FATAL_ERROR "expected canonical generic operation is missing")
+endif()
 if(NOT DEFINED EXPECTED_CALL)
-  message(FATAL_ERROR "expected direct typed call is missing")
+  message(FATAL_ERROR "expected native direct call is missing")
 endif()
 
 file(READ "${GENERATED}" source)
 
+set(canonical_marker "/* canonical operation: ${EXPECTED_CANONICAL} */")
+string(FIND "${source}" "${canonical_marker}" canonical_call)
+if(canonical_call EQUAL -1)
+  message(FATAL_ERROR
+          "source did not normalize to expected generic operation: ${EXPECTED_CANONICAL}")
+endif()
+
 string(FIND "${source}" "${EXPECTED_CALL}" direct_call)
 if(direct_call EQUAL -1)
   message(FATAL_ERROR
-          "dot-call did not lower to expected direct typed call: ${EXPECTED_CALL}")
+          "canonical operation did not materialize expected native call: ${EXPECTED_CALL}")
 endif()
 
 foreach(forbidden
@@ -19,6 +29,7 @@ foreach(forbidden
     "cmeta_callable"
     "cmeta_invokable"
     "cmeta_receiver_method"
+    "cmeta_receiver_method_resolve"
     "receiver_method("
     "ops->"
     "(*")
