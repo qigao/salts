@@ -629,12 +629,16 @@ jobs:
           $env:CNET_SCALING_BENCHMARK_OUTPUT = Join-Path $resultDir "cnet-scaling"
           $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "nativeio-cnet-scaling.md")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & ./cnet/benchmarks/verify_scaling_benchmark.ps1 -Path "$env:CNET_SCALING_BENCHMARK_OUTPUT.csv"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $verification = & ./cnet/benchmarks/verify_scaling_benchmark.ps1 `
+            -Path "$env:CNET_SCALING_BENCHMARK_OUTPUT.csv"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO direct versus CNet retained scaling: $env:CNET_IO_BENCHMARK_BACKEND"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "### Measurement validity"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $verification | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Run NativeIO io_uring idle observe benchmark
         if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
