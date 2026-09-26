@@ -3,6 +3,7 @@
 
 #include <cmeta/data.h>
 #include <cmeta/invokable.h>
+#include <cmeta/object.h>
 #include <stddef.h>
 
 struct lua_State;
