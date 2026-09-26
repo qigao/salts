@@ -27,11 +27,14 @@ typedef int cnet_send_buffer_test_socket;
 enum { CNET_SEND_BUFFER_TEST_TIMEOUT_MS = 5000, CNET_SEND_BUFFER_TEST_BYTES = 64 };
 
 typedef struct cnet_send_buffer_test_probe {
+  cnet_client *client;
   atomic_int connected;
   atomic_int sent;
   atomic_int terminal;
   atomic_int failed;
+  atomic_int receive_admit_status;
   size_t expected_send_size;
+  bool queue_receive_on_connect;
 } cnet_send_buffer_test_probe;
 
 typedef struct cnet_send_buffer_free_probe {
@@ -94,6 +97,11 @@ static void cnet_send_buffer_test_state(void *user, cnet_connection connection,
   cnet_send_buffer_test_probe *probe = (cnet_send_buffer_test_probe *)user;
   (void)connection;
   if (state == CNET_CONNECTION_CONNECTED) {
+    if (probe->queue_receive_on_connect) {
+      atomic_store_explicit(&probe->receive_admit_status,
+                            cnet_receive(probe->client, connection, 1u),
+                            memory_order_release);
+    }
     atomic_store_explicit(&probe->connected, 1, memory_order_release);
   } else if (state == CNET_CONNECTION_CLOSED || state == CNET_CONNECTION_FAILED) {
     if (state == CNET_CONNECTION_FAILED || error != NULL)
@@ -169,7 +177,9 @@ spec("CNet retained buffer public send API") {
   it("owns one reference only after admission and releases it at terminal send") {
     cnet_client client = {0};
     cnet_client_config config = cnet_send_buffer_test_config();
-    cnet_send_buffer_test_probe probe = {.expected_send_size = CNET_SEND_BUFFER_TEST_BYTES};
+    cnet_send_buffer_test_probe probe = {.client = &client,
+                                         .expected_send_size = CNET_SEND_BUFFER_TEST_BYTES,
+                                         .queue_receive_on_connect = true};
     cnet_send_buffer_test_socket listener = CNET_SEND_BUFFER_TEST_INVALID_SOCKET;
     cnet_send_buffer_test_socket accepted = CNET_SEND_BUFFER_TEST_INVALID_SOCKET;
     cnet_connection connection = {0};
@@ -202,6 +212,7 @@ spec("CNet retained buffer public send API") {
     atomic_init(&probe.sent, 0);
     atomic_init(&probe.terminal, 0);
     atomic_init(&probe.failed, 0);
+    atomic_init(&probe.receive_admit_status, SALTS_EIO);
     atomic_init(&success_free.freed, 0);
     atomic_init(&zero_free.freed, 0);
     atomic_init(&oversize_free.freed, 0);
@@ -219,6 +230,7 @@ spec("CNet retained buffer public send API") {
     options = (cnet_connect_options){.uri = uri, .observer = observer};
     check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
     check_equal(cnet_send_buffer_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+    check_equal(atomic_load_explicit(&probe.receive_admit_status, memory_order_acquire), SALTS_OK);
     accepted = accept(listener, NULL, NULL);
     check_true(accepted != CNET_SEND_BUFFER_TEST_INVALID_SOCKET);
     check_equal(cnet_send_buffer_test_set_receive_timeout(accepted), SALTS_OK);
@@ -240,7 +252,7 @@ spec("CNet retained buffer public send API") {
     mem_buffer_release(oversize_buffer);
     check_equal(atomic_load_explicit(&oversize_free.freed, memory_order_acquire), 1);
 
-    check_equal(cnet_receive(&client, connection, 1u), SALTS_OK);
+    /* The callback-issued receive intentionally occupies the single command slot. */
     full_buffer = cnet_send_buffer_test_external(1u, 0x33u, &full_free);
     check_true(full_buffer != NULL);
     check_equal(mem_buffer_ref_count(full_buffer), UINT32_C(1));
