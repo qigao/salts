@@ -252,16 +252,23 @@ spec("CNet retained buffer public send API") {
     mem_buffer_release(oversize_buffer);
     check_equal(atomic_load_explicit(&oversize_free.freed, memory_order_acquire), 1);
 
-    /* The callback-issued receive intentionally occupies the single command slot. */
+    /* A callback-issued receive occupies the single generic command slot, but ordinary
+       retained send ownership is independent after #479 W2. */
     full_buffer = cnet_send_buffer_test_external(1u, 0x33u, &full_free);
     check_true(full_buffer != NULL);
     check_equal(mem_buffer_ref_count(full_buffer), UINT32_C(1));
-    check_equal(cnet_send_buffer(&client, connection, full_buffer), SALTS_ENOBUFS);
-    check_equal(mem_buffer_ref_count(full_buffer), UINT32_C(1));
+    probe.expected_send_size = 1u;
+    check_equal(cnet_send_buffer(&client, connection, full_buffer), SALTS_OK);
+    check_equal(mem_buffer_ref_count(full_buffer), UINT32_C(2));
     mem_buffer_release(full_buffer);
+    check_equal(atomic_load_explicit(&full_free.freed, memory_order_acquire), 0);
+    check_equal(cnet_send_buffer_test_poll_until(&client, &probe.sent, 1), SALTS_OK);
     check_equal(atomic_load_explicit(&full_free.freed, memory_order_acquire), 1);
-    check_equal(cnet_client_poll(&client, 0u, &events), SALTS_OK);
+    check_equal(recv(accepted, (char *)received, 1, 0), 1);
+    check_equal(received[0], (unsigned char)0x33u);
 
+    probe.expected_send_size = CNET_SEND_BUFFER_TEST_BYTES;
+    memset(received, 0, sizeof(received));
     success_buffer = cnet_send_buffer_test_external(CNET_SEND_BUFFER_TEST_BYTES, 0x5au, &success_free);
     check_true(success_buffer != NULL);
     check_equal(mem_buffer_ref_count(success_buffer), UINT32_C(1));
@@ -278,7 +285,7 @@ spec("CNet retained buffer public send API") {
 
     mem_buffer_release(success_buffer);
     check_equal(atomic_load_explicit(&success_free.freed, memory_order_acquire), 0);
-    check_equal(cnet_send_buffer_test_poll_until(&client, &probe.sent, 1), SALTS_OK);
+    check_equal(cnet_send_buffer_test_poll_until(&client, &probe.sent, 2), SALTS_OK);
     check_equal(atomic_load_explicit(&success_free.freed, memory_order_acquire), 1);
     check_equal(recv(accepted, (char *)received, (int)sizeof(received), 0), (int)sizeof(received));
     check_equal(received, expected, sizeof(expected));

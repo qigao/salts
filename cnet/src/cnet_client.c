@@ -801,14 +801,25 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
     else if (record->write_pending || record->close_command_pending || record->tls_command_pending)
       status = SALTS_EBUSY;
     else {
-      if (input->retained_buffer != NULL)
-        status = cnet_shards_send_buffer(&impl->shards, internal, input->retained_buffer, input->size);
-      else if (input->segments != NULL)
-        status = cnet_shards_sendv(&impl->shards, internal, input->segments, input->segment_count,
-                                   input->size);
-      else if (input->close_after_send)
+      if (input->close_after_send) {
         status = cnet_shards_send_and_close(&impl->shards, internal, input->data, input->size);
-      else status = cnet_shards_send(&impl->shards, internal, input->data, input->size);
+      } else if (record->scheme == CNET_URI_TLS) {
+        if (input->retained_buffer != NULL)
+          status =
+              cnet_shards_send_buffer(&impl->shards, internal, input->retained_buffer, input->size);
+        else if (input->segments != NULL)
+          status = cnet_shards_sendv(&impl->shards, internal, input->segments, input->segment_count,
+                                     input->size);
+        else
+          status = cnet_shards_send(&impl->shards, internal, input->data, input->size);
+      } else if (input->retained_buffer != NULL) {
+        status = cnet_shards_send_buffer_direct(&impl->shards, internal, input->retained_buffer);
+      } else if (input->segments != NULL) {
+        status = cnet_shards_sendv_direct(&impl->shards, internal, input->segments,
+                                          input->segment_count);
+      } else {
+        status = cnet_shards_send_direct(&impl->shards, internal, input->data, input->size);
+      }
       if (status == SALTS_OK) {
         record->write_pending = true;
         record->close_command_pending = input->close_after_send;
