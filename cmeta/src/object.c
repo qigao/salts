@@ -1,7 +1,5 @@
 #include <cmeta/object.h>
 
-#include <string.h>
-
 static void cmeta_object_clear(cmeta_object_ref *ref) {
     if (ref != NULL)
         *ref = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
