@@ -263,7 +263,10 @@ native_io_sharded_try_submit_owned(native_io_sharded *runtime,
  * the caller can close/release native identity and retry.
  *
  * Only request=0 and endpoint=0 on every shard commits teardown and executor
- * shutdown. Repeated calls after committed shutdown are harmless.
+ * shutdown. Recoverable SALTS_EBUSY restores ordinary admission; fatal
+ * quiescence/progress errors keep new public and owner-local I/O closed while
+ * preserving the runtime for diagnosis or a later shutdown retry.
+ * Repeated calls after committed shutdown are harmless.
  * Calling from a callback owned by this runtime returns SALTS_EBUSY.
  */
 SALTS_NATIVE_IO_C_API int native_io_sharded_shutdown(native_io_sharded *runtime);
