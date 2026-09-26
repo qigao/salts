@@ -217,8 +217,9 @@ foreach ($row in $pairedRows) {
     Assert-Near ([double]$row.p95_delta_median_percent) $p95.Median "$pairKey p95 median"
     Assert-Near ([double]$row.p95_delta_mad_pp) $p95.Mad "$pairKey p95 MAD"
 
-    $stableLargePayload = $connectionCount -eq 16 -and $payload -in @(32768, 65536)
-    if ($stableLargePayload -and $pair -eq "NativeIO direct|CNet retained") {
+    $stableRatioCell = $connectionCount -eq 16 -and $payload -eq 65536
+    $stableRetainedBenefitCell = $connectionCount -eq 16 -and $payload -in @(32768, 65536)
+    if ($stableRatioCell -and $pair -eq "NativeIO direct|CNet retained") {
         if ($rate.Median -lt -5.0) {
             throw "retained throughput fell outside NativeIO performance class for $($pairKey): $($rate.Median)%"
         }
@@ -239,7 +240,7 @@ foreach ($row in $pairedRows) {
         }
     }
 
-    if ($stableLargePayload -and $pair -eq "CNet copy|CNet retained") {
+    if ($stableRetainedBenefitCell -and $pair -eq "CNet copy|CNet retained") {
         if ($rate.Median -lt 3.0) {
             throw "retained-send throughput benefit disappeared for $($pairKey): $($rate.Median)%"
         }
