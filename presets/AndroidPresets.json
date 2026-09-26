@@ -19,7 +19,7 @@
         {
             "name": "android-vcpkg-chainload",
             "hidden": true,
-            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "toolchainFile": "$env{QIGAO_VCPKG_TOOLCHAIN_FILE}",
             "cacheVariables": {
                 "VCPKG_MANIFEST_MODE": true,
                 "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "$env{ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake"
