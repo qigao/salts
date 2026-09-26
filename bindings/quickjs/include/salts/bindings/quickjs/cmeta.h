@@ -6,6 +6,12 @@
 #include <cmeta/object.h>
 #include <quickjs.h>
 
+#if !defined(QJS_VERSION_MAJOR) || !defined(QJS_VERSION_MINOR) || \
+    !defined(QJS_VERSION_PATCH) || QJS_VERSION_MAJOR != 0 || \
+    QJS_VERSION_MINOR != 16 || QJS_VERSION_PATCH != 2
+#error "Salts QuickJS binding requires quickjs-ng 0.16.2 from qigao/vcpkg-cache"
+#endif
+
 #include <stdbool.h>
 #include <stddef.h>
 
