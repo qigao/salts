@@ -38,8 +38,7 @@ enum {
   STREAM_STYLE_TIMEOUT_MS = 5000,
   STREAM_STYLE_REQUEST_CAPACITY = 4,
   STREAM_STYLE_COMPLETION_CAPACITY = 4,
-  STREAM_STYLE_SHARDED_QUEUE_CAPACITY = 64,
-  STREAM_STYLE_PIPE_BUFFER_CAPACITY = 65536
+  STREAM_STYLE_SHARDED_QUEUE_CAPACITY = 64
 };
 
 static const size_t STREAM_STYLE_PAYLOADS[] = {1024u, 8192u, 32768u, 65536u};
@@ -362,7 +361,7 @@ static int stream_style_backend_fixture_destroy(stream_style_backend_fixture *fi
 
   for (size_t index = 0u; index < 2u; ++index) {
     if (fixture->sockets[index] != STREAM_STYLE_INVALID_SOCKET) {
-      stream_style_close_handle(fixture->sockets[index]);
+      stream_style_close_socket(fixture->sockets[index]);
       fixture->sockets[index] = STREAM_STYLE_INVALID_SOCKET;
     }
   }
@@ -657,7 +656,7 @@ static int stream_style_sharded_fixture_destroy(stream_style_sharded_fixture *fi
 
   for (size_t index = 0u; index < 2u; ++index) {
     if (fixture->sockets[index] != STREAM_STYLE_INVALID_SOCKET) {
-      stream_style_close_handle(fixture->sockets[index]);
+      stream_style_close_socket(fixture->sockets[index]);
       fixture->sockets[index] = STREAM_STYLE_INVALID_SOCKET;
     }
   }
