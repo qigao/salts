@@ -383,7 +383,14 @@ typedef struct cnet_client_config {
   size_t request_capacity;
   size_t completion_batch_capacity;
   size_t event_capacity;
+  /** Maximum size of one logical stream write. */
   size_t max_send_bytes;
+  /** Client-wide hard bound for admitted logical stream writes. */
+  size_t write_capacity;
+  /** Per-connection hard bound; must not exceed write_capacity. */
+  size_t write_capacity_per_connection;
+  /** Aggregate copied-write byte budget; retained buffers do not consume it. */
+  size_t write_buffer_bytes;
   size_t receive_buffer_bytes;
   uint32_t connect_timeout_ms;
   uint32_t read_timeout_ms;
