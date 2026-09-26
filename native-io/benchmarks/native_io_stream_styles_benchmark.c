@@ -493,24 +493,6 @@ static int stream_style_backend_fixture_destroy(stream_style_backend_fixture *fi
   return status;
 }
 
-static int stream_style_backend_observe(
-    stream_style_backend_fixture *fixture, native_io_completion *events,
-    size_t capacity, uint32_t timeout_ms, size_t *count) {
-  native_io_backend_stats before = {0};
-  native_io_backend_stats after = {0};
-  const bool have_before = native_io_backend_get_stats(&fixture->backend, &before);
-  const int status =
-      native_io_backend_observe(&fixture->backend, events, capacity, timeout_ms, count);
-  const bool have_after = native_io_backend_get_stats(&fixture->backend, &after);
-  if (status == SALTS_OK && have_before && have_after && after.completed >= before.completed) {
-    stream_style_record_batch(
-        &fixture->observe_calls, &fixture->completion_count,
-        &fixture->completion_batches, &fixture->max_completion_batch,
-        after.completed - before.completed);
-  }
-  return status;
-}
-
 static int stream_style_direct_transfer(stream_style_backend_fixture *fixture) {
   size_t sent_offset = 0u;
   size_t received_offset = 0u;
@@ -549,10 +531,13 @@ static int stream_style_direct_transfer(stream_style_backend_fixture *fixture) {
       write_pending = true;
     }
 
-    status = stream_style_backend_observe(fixture, events,
+    status = native_io_backend_observe(&fixture->backend, events,
                                        STREAM_STYLE_COMPLETION_CAPACITY,
                                        STREAM_STYLE_TIMEOUT_MS, &count);
     if (status != SALTS_OK) return status;
+    stream_style_record_batch(
+        &fixture->observe_calls, &fixture->completion_count,
+        &fixture->completion_batches, &fixture->max_completion_batch, count);
     if (count == 0u) return SALTS_EIO;
 
     for (size_t index = 0u; index < count; ++index) {
@@ -617,7 +602,7 @@ static int stream_style_coroutine_cancel_and_drain(
   if (status != SALTS_OK && status != SALTS_EALREADY) return status;
   while (!state->done) {
     size_t count = 0u;
-    status = stream_style_backend_observe(fixture, events,
+    status = native_io_backend_observe(&fixture->backend, events,
                                        STREAM_STYLE_COMPLETION_CAPACITY,
                                        STREAM_STYLE_TIMEOUT_MS, &count);
     if (status != SALTS_OK) return status;
@@ -646,11 +631,22 @@ static int stream_style_coroutine_transfer(stream_style_backend_fixture *fixture
                                                &write_state, &write_task);
 
   while (status == SALTS_OK && (!read_state.done || !write_state.done)) {
+    const size_t read_before = read_state.offset;
+    const size_t write_before = write_state.offset;
     size_t count = 0u;
-    status = stream_style_backend_observe(fixture, events,
+    uint64_t completed = 0u;
+    status = native_io_backend_observe(&fixture->backend, events,
                                        STREAM_STYLE_COMPLETION_CAPACITY,
                                        STREAM_STYLE_TIMEOUT_MS, &count);
     if (status == SALTS_OK && count != 0u) status = SALTS_EPROTO;
+    if (status == SALTS_OK) {
+      if (read_state.offset != read_before) ++completed;
+      if (write_state.offset != write_before) ++completed;
+      stream_style_record_batch(
+          &fixture->observe_calls, &fixture->completion_count,
+          &fixture->completion_batches, &fixture->max_completion_batch,
+          completed);
+    }
   }
 
   if (status != SALTS_OK) {
