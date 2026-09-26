@@ -1,5 +1,6 @@
 #include <salts/bindings/lua/cmeta.h>
 
+#include <lauxlib.h>
 #include <lua.h>
 
 #include <float.h>
@@ -714,4 +715,154 @@ done:
   free(arguments);
   free(temporaries);
   return status;
+}
+
+
+#define SALTS_LUA_OBJECT_METATABLE "salts.cmeta.object"
+
+typedef struct salts_lua_object_proxy {
+  cmeta_object_ref object;
+  salts_lua_limits limits;
+} salts_lua_object_proxy;
+
+static salts_lua_object_proxy *salts_lua_object_proxy_at(
+    lua_State *state, int index) {
+  return (salts_lua_object_proxy *)luaL_testudata(
+      state, index, SALTS_LUA_OBJECT_METATABLE);
+}
+
+static int salts_lua_object_status_error(
+    lua_State *state, const char *operation, cmeta_status status) {
+  return luaL_error(
+      state, "CMeta object %s failed with status %d",
+      operation != NULL ? operation : "operation", (int)status);
+}
+
+static int salts_lua_object_gc(lua_State *state) {
+  salts_lua_object_proxy *proxy = salts_lua_object_proxy_at(state, 1);
+  if (proxy != NULL)
+    cmeta_object_release(&proxy->object);
+  return 0;
+}
+
+static int salts_lua_object_method_call(lua_State *state) {
+  salts_lua_object_proxy *proxy;
+  const cmeta_receiver_method *method;
+  cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+  cmeta_status status;
+  int first_argument = 1;
+  int result_count = 0;
+  int top;
+
+  proxy = salts_lua_object_proxy_at(state, lua_upvalueindex(1));
+  method = (const cmeta_receiver_method *)lua_touserdata(
+      state, lua_upvalueindex(2));
+  if (proxy == NULL || method == NULL ||
+      !cmeta_object_ref_valid(&proxy->object))
+    return luaL_error(state, "invalid CMeta object method proxy");
+
+  top = lua_gettop(state);
+  if (top >= 1 &&
+      salts_lua_object_proxy_at(state, 1) == proxy)
+    first_argument = 2;
+
+  status = cmeta_object_method_invokable_bind(
+      &proxy->object, method, &invokable);
+  if (status != CMETA_OK)
+    return salts_lua_object_status_error(state, "method bind", status);
+
+  status = salts_lua_call_invokable(
+      state, &invokable, first_argument,
+      (size_t)(top - first_argument + 1),
+      proxy->limits, &result_count);
+  if (status != CMETA_OK)
+    return salts_lua_object_status_error(state, "method call", status);
+  return result_count;
+}
+
+static int salts_lua_object_index(lua_State *state) {
+  salts_lua_object_proxy *proxy = salts_lua_object_proxy_at(state, 1);
+  const cmeta_data_desc *field_data = NULL;
+  const cmeta_receiver_method *method = NULL;
+  const void *field_value = NULL;
+  const char *name;
+  cmeta_status status;
+
+  if (proxy == NULL || !cmeta_object_ref_valid(&proxy->object))
+    return luaL_error(state, "invalid CMeta object proxy");
+  if (lua_type(state, 2) != LUA_TSTRING) {
+    lua_pushnil(state);
+    return 1;
+  }
+
+  name = lua_tostring(state, 2);
+  status = cmeta_object_field_read(
+      &proxy->object, name, &field_data, &field_value);
+  if (status == CMETA_OK) {
+    status = salts_lua_push_cmeta(
+        state, field_data, field_value, proxy->limits);
+    if (status != CMETA_OK)
+      return salts_lua_object_status_error(state, "field read", status);
+    return 1;
+  }
+
+  if (proxy->object.methods != NULL)
+    method = cmeta_receiver_method_find(proxy->object.methods, name);
+  if (method != NULL) {
+    lua_pushvalue(state, 1);
+    lua_pushlightuserdata(state, (void *)method);
+    lua_pushcclosure(state, salts_lua_object_method_call, 2);
+    return 1;
+  }
+
+  lua_pushnil(state);
+  return 1;
+}
+
+static int salts_lua_object_newindex(lua_State *state) {
+  salts_lua_object_proxy *proxy = salts_lua_object_proxy_at(state, 1);
+  const char *name;
+
+  if (proxy == NULL || !cmeta_object_ref_valid(&proxy->object))
+    return luaL_error(state, "invalid CMeta object proxy");
+  name = lua_type(state, 2) == LUA_TSTRING
+             ? lua_tostring(state, 2)
+             : "<non-string>";
+  return luaL_error(
+      state,
+      "CMeta object field '%s' is read-only: no explicit mutability contract",
+      name);
+}
+
+static void salts_lua_object_ensure_metatable(lua_State *state) {
+  if (luaL_newmetatable(state, SALTS_LUA_OBJECT_METATABLE)) {
+    lua_pushcfunction(state, salts_lua_object_index);
+    lua_setfield(state, -2, "__index");
+    lua_pushcfunction(state, salts_lua_object_newindex);
+    lua_setfield(state, -2, "__newindex");
+    lua_pushcfunction(state, salts_lua_object_gc);
+    lua_setfield(state, -2, "__gc");
+  }
+}
+
+cmeta_status salts_lua_push_object(
+    lua_State *state, cmeta_object_ref *object, salts_lua_limits limits) {
+  salts_lua_object_proxy *proxy;
+
+  if (state == NULL || !cmeta_object_ref_valid(object))
+    return CMETA_INVALID_ARGUMENT;
+
+  proxy = (salts_lua_object_proxy *)lua_newuserdata(
+      state, sizeof(salts_lua_object_proxy));
+  if (proxy == NULL)
+    return CMETA_OUT_OF_MEMORY;
+
+  proxy->object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
+  proxy->limits = limits;
+  salts_lua_object_ensure_metatable(state);
+  lua_setmetatable(state, -2);
+
+  proxy->object = *object;
+  *object = (cmeta_object_ref)CMETA_OBJECT_REF_INIT;
+  return CMETA_OK;
 }
