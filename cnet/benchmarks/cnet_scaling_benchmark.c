@@ -40,6 +40,13 @@ enum {
 static const size_t SCALE_CONNECTIONS[] = {1u, 4u, 16u, 64u};
 static const size_t SCALE_PAYLOADS[] = {1024u, 8192u, 32768u, 65536u};
 
+typedef enum scale_driver {
+  SCALE_DRIVER_NATIVE = 0,
+  SCALE_DRIVER_CNET_COPY,
+  SCALE_DRIVER_CNET_RETAINED,
+  SCALE_DRIVER_COUNT
+} scale_driver;
+
 typedef struct scale_peer {
   int listener;
   int accepted[SCALE_MAX_CONNECTIONS];
@@ -103,6 +110,7 @@ typedef struct scale_cnet {
   cnet_client client;
   scale_cnet_connection connections[SCALE_MAX_CONNECTIONS];
   unsigned char *sent;
+  mem_buffer_t *retained_buffer;
   size_t connection_count;
   size_t payload_size;
   size_t connected_count;
@@ -110,6 +118,7 @@ typedef struct scale_cnet {
   size_t cycle_sent;
   size_t poll_calls;
   int status;
+  bool retained;
 } scale_cnet;
 
 static int scale_socket_error(void) {
@@ -585,8 +594,10 @@ static int scale_cnet_cycle(scale_cnet *fixture, uint64_t *latencies, size_t lat
     entry->started_ns = salts_hrtime();
     entry->latency_out = latencies == NULL ? NULL : &latencies[latency_base + index];
     {
-      const int status = cnet_send(&fixture->client, entry->handle, fixture->sent,
-                                   fixture->payload_size);
+      const int status =
+          fixture->retained
+              ? cnet_send_buffer(&fixture->client, entry->handle, fixture->retained_buffer)
+              : cnet_send(&fixture->client, entry->handle, fixture->sent, fixture->payload_size);
       if (status != SALTS_OK) return status;
     }
   }
@@ -606,7 +617,7 @@ static int scale_cnet_cycle(scale_cnet *fixture, uint64_t *latencies, size_t lat
 
 static int scale_cnet_init(scale_cnet *fixture, const struct sockaddr_in *address,
                            size_t connections, size_t payload_size,
-                           native_io_backend_kind backend_kind, size_t cycles) {
+                           native_io_backend_kind backend_kind, size_t cycles, bool retained) {
   const cnet_client_config config = {
       .backend = backend_kind,
       .connection_capacity = connections,
@@ -627,9 +638,14 @@ static int scale_cnet_init(scale_cnet *fixture, const struct sockaddr_in *addres
   fixture->connection_count = connections;
   fixture->payload_size = payload_size;
   fixture->status = SALTS_OK;
+  fixture->retained = retained;
   fixture->sent = (unsigned char *)malloc(payload_size);
   if (fixture->sent == NULL) return SALTS_ENOMEM;
   memset(fixture->sent, 0x5a, payload_size);
+  if (retained) {
+    fixture->retained_buffer = mem_wrap_external(fixture->sent, payload_size, NULL, NULL);
+    if (fixture->retained_buffer == NULL) return SALTS_ENOMEM;
+  }
 
   status = cnet_client_init(&fixture->client, &config);
   if (status != SALTS_OK) return status;
@@ -672,13 +688,19 @@ static int scale_cnet_destroy(scale_cnet *fixture) {
       if (status == SALTS_OK && destroy_status != SALTS_OK) status = destroy_status;
     }
   }
+  if (fixture->retained_buffer != NULL) {
+    if (status == SALTS_OK && mem_buffer_ref_count(fixture->retained_buffer) != 1u)
+      status = SALTS_EIO;
+    mem_buffer_release(fixture->retained_buffer);
+    fixture->retained_buffer = NULL;
+  }
   free(fixture->sent);
   memset(fixture, 0, sizeof(*fixture));
   return status;
 }
 
 static int scale_run_cnet(size_t connections, size_t payload_size,
-                          native_io_backend_kind backend_kind, scale_result *out) {
+                          native_io_backend_kind backend_kind, bool retained, scale_result *out) {
   scale_peer peer;
   scale_cnet fixture;
   cnet_client_poll_profile profile = {0};
@@ -690,7 +712,7 @@ static int scale_run_cnet(size_t connections, size_t payload_size,
   int status;
 
   memset(out, 0, sizeof(*out));
-  out->driver = "CNet";
+  out->driver = retained ? "CNet retained" : "CNet copy";
   out->connections = connections;
   out->payload_size = payload_size;
   scale_peer_reset(&peer);
@@ -700,7 +722,7 @@ static int scale_run_cnet(size_t connections, size_t payload_size,
   status = scale_peer_init(&peer, connections, payload_size, cycles);
   if (status == SALTS_OK)
     status = scale_cnet_init(&fixture, &peer.address, connections, payload_size, backend_kind,
-                             cycles);
+                             cycles, retained);
   if (status != SALTS_OK) goto cleanup;
 
   for (size_t cycle = 0u; cycle < SCALE_WARMUPS; ++cycle) {
@@ -741,6 +763,20 @@ cleanup:
   }
   free(latencies);
   return status;
+}
+
+static int scale_run_driver(scale_driver driver, size_t connections, size_t payload_size,
+                            native_io_backend_kind backend_kind, scale_result *out) {
+  switch (driver) {
+  case SCALE_DRIVER_NATIVE:
+    return scale_run_native(connections, payload_size, backend_kind, out);
+  case SCALE_DRIVER_CNET_COPY:
+    return scale_run_cnet(connections, payload_size, backend_kind, false, out);
+  case SCALE_DRIVER_CNET_RETAINED:
+    return scale_run_cnet(connections, payload_size, backend_kind, true, out);
+  default:
+    return SALTS_EINVAL;
+  }
 }
 
 static FILE *scale_open_csv(void) {
@@ -814,30 +850,28 @@ int main(void) {
             "owner_observe_calls,client_poll_calls\n");
   }
 
-  printf("# NativeIO direct versus CNet TCP scaling benchmark\n\n");
+  printf("# NativeIO direct versus CNet copy/retained TCP scaling benchmark\n\n");
   printf("Backend: %s. One owner, independent persistent TCP loopback connections, "
          "one logical round trip outstanding per connection.\n", backend.name);
-  printf("The peer processes connections in stable index order for both drivers. "
-         "Logical concurrency is connection count; stream lane heads remain serialized per endpoint.\n\n");
+  printf("The peer processes connections in stable index order for every driver. "
+         "Logical concurrency is connection count; stream lane heads remain serialized per endpoint. "
+         "CNet copy and retained differ only in payload ownership admission.\n\n");
   printf("| driver | connections | payload | ops/s | MiB/s | p50 us | p95 us | p99 us | "
          "CPU us/op | CNet owner drive us/op | CNet observe us/op |\n");
   printf("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
 
   for (size_t p = 0u; p < sizeof(SCALE_PAYLOADS) / sizeof(SCALE_PAYLOADS[0]); ++p) {
     for (size_t d = 0u; d < sizeof(SCALE_CONNECTIONS) / sizeof(SCALE_CONNECTIONS[0]); ++d) {
-      scale_result native_result;
-      scale_result cnet_result;
+      scale_result results[SCALE_DRIVER_COUNT];
       const size_t connections = SCALE_CONNECTIONS[d];
       const size_t payload = SCALE_PAYLOADS[p];
 
-      if (((p + d) & 1u) == 0u) {
-        status = scale_run_native(connections, payload, backend.kind, &native_result);
-        if (status == SALTS_OK)
-          status = scale_run_cnet(connections, payload, backend.kind, &cnet_result);
-      } else {
-        status = scale_run_cnet(connections, payload, backend.kind, &cnet_result);
-        if (status == SALTS_OK)
-          status = scale_run_native(connections, payload, backend.kind, &native_result);
+      memset(results, 0, sizeof(results));
+      for (unsigned offset = 0u; offset < SCALE_DRIVER_COUNT; ++offset) {
+        const scale_driver driver =
+            (scale_driver)((p + d + offset) % (size_t)SCALE_DRIVER_COUNT);
+        status = scale_run_driver(driver, connections, payload, backend.kind, &results[driver]);
+        if (status != SALTS_OK) break;
       }
       if (status != SALTS_OK) {
         fprintf(stderr, "scaling cell failed backend=%s connections=%zu payload=%zu status=%d\n",
@@ -845,10 +879,11 @@ int main(void) {
         break;
       }
 
-      scale_print_result(&native_result);
-      scale_print_result(&cnet_result);
-      status = scale_write_csv(csv, &native_result, backend.name);
-      if (status == SALTS_OK) status = scale_write_csv(csv, &cnet_result, backend.name);
+      for (unsigned driver = 0u; driver < SCALE_DRIVER_COUNT; ++driver) {
+        scale_print_result(&results[driver]);
+        status = scale_write_csv(csv, &results[driver], backend.name);
+        if (status != SALTS_OK) break;
+      }
       if (status != SALTS_OK) break;
     }
     if (status != SALTS_OK) break;
