@@ -59,8 +59,11 @@ cmeta_status salts_quickjs_call_invokable(
  * lifetime and releases it exactly once when the last native closure retained
  * by the proxy becomes unreachable.
  *
- * Reflected fields are read-only until CMeta publishes explicit mutability
- * authority. No QuickJS-private semantic type/method registry is created.
+ * Reflected fields are writable only when the object carries explicit
+ * cmeta_object_field_provider authority; writes route through canonical
+ * semantic temporaries and cmeta_object_field_assign(). Reflection alone never
+ * grants writability. No QuickJS-private semantic type/method registry is
+ * created.
  */
 cmeta_status salts_quickjs_push_object(
     JSContext *context, cmeta_object_ref *object,
