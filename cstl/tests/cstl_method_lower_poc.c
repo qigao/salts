@@ -10,27 +10,6 @@
 
 typed(List, IntList, int);
 
-static const cmeta_type_desc poc_list_ptr_type_desc = {
-    "IntList *", sizeof(IntList *), _Alignof(IntList *),
-    CMETA_T_POINTER, &IntList_cmeta_type, NULL, NULL
-};
-
-static const cmeta_param_desc poc_list_add_params[] = {
-    {
-        sizeof(cmeta_param_desc), "self", &poc_list_ptr_type_desc,
-        CMETA_PARAM_INOUT | CMETA_PARAM_BORROWED | CMETA_PARAM_RECEIVER
-    },
-    {
-        sizeof(cmeta_param_desc), "value", &cmeta_type_int, CMETA_PARAM_IN
-    }
-};
-
-static const cmeta_function_desc poc_list_add = {
-    sizeof(cmeta_function_desc), "IntList_add", &cmeta_type_int,
-    poc_list_add_params, 2u,
-    CMETA_EFFECT_STATEFUL | CMETA_EFFECT_MAY_FAIL, CMETA_PROP_NONE
-};
-
 typedef struct poc_cursor {
     const char *p;
 } poc_cursor;
@@ -90,6 +69,8 @@ static int lower(const char *source, const char *output_path) {
     char method_name[64];
     int value;
     poc_cursor cursor = { source };
+    const cmeta_function_desc *method;
+    const cmeta_function_abi_desc *method_abi;
     const cmeta_param_desc *receiver;
     FILE *out;
 
@@ -117,12 +98,15 @@ static int lower(const char *source, const char *output_path) {
         fprintf(stderr, "IntList has no receiver method '%s'\n", method_name);
         return 0;
     }
-    if (!cmeta_function_desc_valid(&poc_list_add)) {
-        fprintf(stderr, "invalid CMeta method descriptor\n");
+    method = IntList_add_function();
+    method_abi = IntList_add_function_abi();
+    if (!cmeta_function_desc_valid(method) ||
+        !cmeta_function_abi_desc_valid(method_abi)) {
+        fprintf(stderr, "invalid generated CMeta method descriptor\n");
         return 0;
     }
 
-    receiver = cmeta_function_receiver(&poc_list_add);
+    receiver = cmeta_function_receiver(method);
     if (receiver == NULL || receiver->type == NULL ||
         receiver->type->kind != CMETA_T_POINTER ||
         !cmeta_type_equal(receiver->type->pointee, &IntList_cmeta_type)) {
@@ -156,7 +140,7 @@ static int lower(const char *source, const char *output_path) {
         "    IntList_destroy(&list);\n"
         "    return 0;\n"
         "}\n",
-        poc_list_add.name, value, value);
+        method->name, value, value);
 
     if (fclose(out) != 0) return 0;
     return 1;
