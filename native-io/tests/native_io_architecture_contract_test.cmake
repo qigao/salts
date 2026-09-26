@@ -66,6 +66,14 @@ require_marker("${native_io_sharded_impl}" "salts_coro_executor_try_submit_to"
                "NativeIO sharded executor reuse")
 require_marker("${native_io_sharded_impl}" "owned_routes"
                "NativeIO sharded bounded owned-route storage")
+require_marker("${native_io_sharded_impl}" "native_io_sharded_shutdown_probe"
+               "NativeIO sharded shutdown ownership probe")
+require_marker("${native_io_sharded_impl}" "native_io_sharded_shutdown_drain"
+               "NativeIO sharded terminal shutdown drain")
+require_marker("${native_io_sharded_impl}" "shutdown_drain_endpoint_count"
+               "NativeIO sharded recoverable endpoint quiescence")
+require_marker("${native_io_sharded_impl}" "native_io_sharded_finish_fatal_shutdown_attempt"
+               "NativeIO sharded fatal shutdown closure")
 require_marker("${native_io_sharded_impl}" "request_ownerships"
                "NativeIO sharded request ownership storage")
 require_marker("${native_io_sharded_impl}" "ownership_settlements"
