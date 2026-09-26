@@ -1,11 +1,25 @@
 name: Set up shared build dependencies
-description: Restore centralized re2c host binary and shared vcpkg binary cache.
+description: Prepare host build tools, restore the versioned re2c binary, and configure the canonical shared vcpkg cache.
 
 inputs:
   version:
     description: Qigao.Re2c.Binary package version
     required: false
     default: "4.6.3"
+
+outputs:
+  contract_version:
+    description: Shared vcpkg cache contract version.
+    value: ${{ steps.vcpkg_cache.outputs.contract_version }}
+  cache_revision:
+    description: Exact shared vcpkg cache contract revision.
+    value: ${{ steps.vcpkg_cache.outputs.cache_revision }}
+  tool_revision:
+    description: Canonical vcpkg executable identity.
+    value: ${{ steps.vcpkg_cache.outputs.tool_revision }}
+  scripts_revision:
+    description: Canonical vcpkg scripts identity.
+    value: ${{ steps.vcpkg_cache.outputs.scripts_revision }}
 
 runs:
   using: composite
@@ -37,6 +51,31 @@ runs:
         version: ${{ inputs.version }}
 
     - name: Configure shared vcpkg binary cache
+      id: vcpkg_cache
       uses: qigao/vcpkg-cache/.github/actions/setup-vcpkg-cache@master
       with:
         mode: read
+
+    - name: Verify shared vcpkg cache identity
+      shell: pwsh
+      env:
+        CONTRACT_VERSION: ${{ steps.vcpkg_cache.outputs.contract_version }}
+        CACHE_REVISION: ${{ steps.vcpkg_cache.outputs.cache_revision }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        if ([string]::IsNullOrWhiteSpace($env:CONTRACT_VERSION)) {
+          throw "shared vcpkg cache contract output is empty"
+        }
+        if ([string]::IsNullOrWhiteSpace($env:CACHE_REVISION)) {
+          throw "shared vcpkg cache revision output is empty"
+        }
+        if ($env:CONTRACT_VERSION -ne $env:VCPKG_CACHE_CONTRACT_VERSION) {
+          throw "shared vcpkg cache contract output/env mismatch"
+        }
+        if ($env:CACHE_REVISION -ne $env:VCPKG_CACHE_REVISION) {
+          throw "shared vcpkg cache revision output/env mismatch"
+        }
+        if ([string]::IsNullOrWhiteSpace($env:VCPKG_ROOT)) {
+          throw "canonical VCPKG_ROOT is unavailable"
+        }
+        "QIGAO_VCPKG_ROOT=$env:VCPKG_ROOT" >> $env:GITHUB_ENV

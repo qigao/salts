@@ -44,7 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Restore versioned re2c tools
+      - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
+        id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
       - name: Setup build environment
         id: env
@@ -63,9 +64,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
       - name: Configure minimal Release SDK
         run: cmake --preset linux-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
@@ -104,6 +105,8 @@ jobs:
           os=linux
           arch=x64
           profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
       - name: Verify installed TinyMock consumer
         shell: bash
@@ -142,7 +145,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Restore versioned re2c tools
+      - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
+        id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
       - name: Setup build environment
         id: env
@@ -160,9 +164,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
       - name: Configure minimal Release SDK
         run: cmake --preset release-mac-ninja -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
@@ -206,6 +210,8 @@ jobs:
           os=macos
           arch=$RUNNER_ARCH
           profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
       - uses: actions/upload-artifact@v4
         with:
@@ -220,7 +226,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Restore versioned re2c tools
+      - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
+        id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
       - name: Setup build environment
         id: env
@@ -241,20 +248,22 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
       - name: Configure minimal Release SDK
         shell: cmd
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
           cmake --preset win-release-user -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
         shell: cmd
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
           cmake --build --preset win-release-user --parallel 2
       - name: Install SDK
         shell: pwsh
@@ -313,6 +322,8 @@ jobs:
             "os=windows"
             "arch=x64"
             "profile=release"
+            "vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}"
+            "vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}"
           ) | Set-Content -LiteralPath (Join-Path $prefix "salts-sdk-manifest.txt")
       - uses: actions/upload-artifact@v4
         with:
@@ -327,7 +338,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Restore versioned re2c tools
+      - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
+        id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
       - name: Setup build environment
         id: env
@@ -349,9 +361,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-
+            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.env.outputs.image }}-${{ steps.env.outputs.triplet }}-ndk-${{ steps.env.outputs.ndk }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
       - name: Configure minimal Android Release SDK
         run: cmake --preset android-arm64-v8a-release -DENABLE_TESTS=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF -DBUILD_EXAMPLES=OFF
       - name: Build
@@ -391,6 +403,8 @@ jobs:
           abi=arm64-v8a
           api=android-24
           profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
       - uses: actions/upload-artifact@v4
         with:
@@ -455,6 +469,10 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$mac_interface"
           grep -F "cmeta_function_abi_desc" "$mac_header"
           test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 4
+          test "$(grep -h '^vcpkg_cache_contract=' package/sdk/*/salts-sdk-manifest.txt | sort -u | wc -l)" -eq 1
+          test "$(grep -h '^vcpkg_cache_revision=' package/sdk/*/salts-sdk-manifest.txt | sort -u | wc -l)" -eq 1
+          grep -h '^vcpkg_cache_contract=' package/sdk/*/salts-sdk-manifest.txt | sort -u
+          grep -h '^vcpkg_cache_revision=' package/sdk/*/salts-sdk-manifest.txt | sort -u
           find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print
           du -sh package/sdk
       - uses: actions/setup-dotnet@v4

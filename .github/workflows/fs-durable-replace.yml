@@ -38,7 +38,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Restore versioned re2c tools
+      - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
         uses: ./.github/actions/setup-re2c-tools
 
       - name: Set up Linux tools
@@ -89,6 +89,7 @@ jobs:
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
           cmake -S . -B build\fs-contract -G Ninja ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake" ^
