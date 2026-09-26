@@ -5,10 +5,14 @@ endif()
 set(native_io_header "${PROJECT_SOURCE_DIR}/native-io/include/salts/native_io.h")
 set(native_ipc_header "${PROJECT_SOURCE_DIR}/native-io/include/salts/native_ipc.h")
 set(native_io_cmake "${PROJECT_SOURCE_DIR}/native-io/CMakeLists.txt")
+set(native_io_sharded_header "${PROJECT_SOURCE_DIR}/native-io/include/salts/native_io_sharded.h")
+set(native_io_sharded_source "${PROJECT_SOURCE_DIR}/native-io/src/native_io_sharded.c")
 
 file(READ "${native_io_header}" native_io)
 file(READ "${native_ipc_header}" native_ipc)
 file(READ "${native_io_cmake}" native_io_build)
+file(READ "${native_io_sharded_header}" native_io_sharded)
+file(READ "${native_io_sharded_source}" native_io_sharded_impl)
 
 function(require_marker text marker label)
   string(FIND "${text}" "${marker}" position)
@@ -38,6 +42,22 @@ foreach(marker
   require_marker("${native_io}" "${marker}" "NativeIO contract")
 endforeach()
 
+# Sharded routing reuses the canonical Coroutine Executor lifecycle and keeps
+# raw NativeIO endpoint ABI independent of shard topology.
+foreach(marker
+    "native_io_sharded_submit_to"
+    "native_io_sharded_try_submit_to"
+    "native_io_sharded_current_shard")
+  require_marker("${native_io_sharded}" "${marker}" "NativeIO sharded routing contract")
+endforeach()
+require_marker("${native_io_sharded_impl}" "salts_coro_executor_try_submit_to"
+               "NativeIO sharded executor reuse")
+forbid_marker("${native_io}" "owner_shard" "raw NativeIO endpoint ABI")
+forbid_marker("${native_io_sharded_impl}" "mem_buffer_t"
+              "NativeIO sharded ownership boundary")
+forbid_marker("${native_io_sharded_impl}" "disruptor_"
+              "NativeIO sharded executor reuse")
+
 # VSOCK stays an upper-layer STREAM transport rather than a NativeIO kind.
 foreach(marker
     "NATIVE_IO_OPERATION_VSOCK"
@@ -55,6 +75,8 @@ foreach(marker
   forbid_marker("${native_io}" "${marker}" "NativeIO header dependency boundary")
   forbid_marker("${native_ipc}" "${marker}" "NativeIPC header dependency boundary")
   forbid_marker("${native_io_build}" "${marker}" "NativeIO build dependency boundary")
+  forbid_marker("${native_io_sharded}" "${marker}" "NativeIO sharded header dependency boundary")
+  forbid_marker("${native_io_sharded_impl}" "${marker}" "NativeIO sharded source dependency boundary")
 endforeach()
 
 # NativeIPC is rendezvous/control-plane only. Payload I/O belongs to NativeIO.

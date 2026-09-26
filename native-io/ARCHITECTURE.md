@@ -5,9 +5,10 @@
 **Related CNet work:** #472, #477–#480  
 **NativeIPC/Pipe migration:** #168
 
-This document freezes the ownership and layering contract for NativeIO before
-the sharded/SMP execution work begins. It defines architecture; it does not
-claim that the planned Sharded/SMP runtime in #474 is already implemented.
+This document freezes the ownership and layering contract for NativeIO.
+The first #474 Sharded/SMP routing slice is implemented as a bounded fixed-shard
+execution substrate; endpoint-bound sharded I/O routing and cross-shard
+completion work remain tracked by #474/#475.
 
 ## 1. Two independent dimensions
 
@@ -22,7 +23,7 @@ NativeIO execution style and application semantics are orthogonal.
           +--------------+---------------+
           |              |               |
        Direct         Coroutine       Sharded/SMP
-      current          current          planned
+      current          current       routing current
           |              |               |
           +--------------+---------------+
                          |
@@ -88,7 +89,9 @@ await must not imply one syscall.
 
 ### Sharded/SMP
 
-Sharded/SMP is the planned #474 shared-nothing topology.
+Sharded/SMP is delivered incrementally by #474. The first executable slice
+provides the bounded shared-nothing routing substrate; endpoint-bound I/O
+routing remains a later slice of #474/#475.
 
 ```text
 Shard 0                 Shard 1                 Shard N
@@ -110,6 +113,27 @@ Frozen contract:
 - existing Coroutine Executor / Concurrency / Disruptor primitives are reused
   where suitable instead of creating another generic executor;
 - routed message/reply state never becomes a second I/O terminal source.
+
+Current routing checkpoint:
+
+- `native_io_sharded` creates one fixed Coroutine Executor shard per NativeIO
+  owner and initializes/destroys that shard's NativeIO backend on the owner;
+- explicit `submit_to(shard,...)` routing copies one bounded task descriptor;
+- same-shard nested routing executes directly with zero message hop;
+- off-shard routing uses preallocated command slots plus the existing bounded
+  Coroutine Executor queue;
+- accepted task arguments remain borrowed through one exact finalizer edge, so
+  higher layers can attach retained/move-owned payload tokens without making
+  NativeIO depend on `Salts::Core`;
+- rejected admission invokes no run/cancel/finalize callback and transfers no
+  ownership;
+- initialized steady-state routing allocates no command storage.
+
+This checkpoint does **not** yet expose sharded endpoint attach, operation
+submission, cancellation or completion routing. The shard-bound endpoint
+wrapper and wrong-shard enforcement remain #475/#474 work, so Direct remains
+the only claimed raw mechanism baseline for those operations until that slice
+lands.
 
 ## 3. Endpoint/data-plane categories
 

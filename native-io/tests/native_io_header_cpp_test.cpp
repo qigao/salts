@@ -1,4 +1,5 @@
 #include <salts/native_io.h>
+#include <salts/native_io_sharded.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -14,7 +15,12 @@ int main() {
   const auto prepare = &native_io_backend_prepare;
   const auto flush = &native_io_backend_flush;
   const auto await_prepared = &native_io_coroutine_await_prepared;
+  const auto sharded_create = &native_io_sharded_create;
+  const auto sharded_submit = &native_io_sharded_submit_to;
+  const auto sharded_try_submit = &native_io_sharded_try_submit_to;
+  const auto sharded_shutdown = &native_io_sharded_shutdown;
   static_assert(std::is_standard_layout_v<native_io_endpoint>);
+  static_assert(std::is_standard_layout_v<native_io_sharded_config>);
   static_assert(sizeof(native_io_endpoint) == sizeof(std::uint32_t) * 2u);
   static_assert(offsetof(native_io_endpoint, slot) == 0u);
   static_assert(offsetof(native_io_endpoint, generation) == sizeof(std::uint32_t));
@@ -24,6 +30,10 @@ int main() {
   (void)prepare;
   (void)flush;
   (void)await_prepared;
+  (void)sharded_create;
+  (void)sharded_submit;
+  (void)sharded_try_submit;
+  (void)sharded_shutdown;
   return native_io_endpoint_valid(endpoint) && native_io_request_valid(request) &&
                  pipe_read == NATIVE_IO_OPERATION_PIPE_READ &&
                  NATIVE_IO_OPERATION_PIPE_WRITE == 6 &&
