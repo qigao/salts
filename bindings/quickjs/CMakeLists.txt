@@ -9,8 +9,7 @@ target_include_directories(salts_quickjs_binding
     $<INSTALL_INTERFACE:include>)
 
 target_link_libraries(salts_quickjs_binding
-  PUBLIC Salts::CMeta
-  PRIVATE qjs)
+  PUBLIC Salts::CMeta qjs)
 
 target_compile_features(salts_quickjs_binding PUBLIC c_std_11)
 set_target_properties(salts_quickjs_binding PROPERTIES FOLDER "bindings")
