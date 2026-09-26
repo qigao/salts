@@ -63,6 +63,10 @@ require_marker("${native_io_sharded_impl}" "salts_coro_executor_try_submit_to"
                "NativeIO sharded executor reuse")
 require_marker("${native_io_sharded_impl}" "request_ownerships"
                "NativeIO sharded request ownership storage")
+require_marker("${native_io_sharded_impl}" "ownership_settlements"
+               "NativeIO sharded batch ownership detachment")
+require_marker("${native_io_sharded_impl}" "observe_active"
+               "NativeIO sharded observe reentrancy boundary")
 require_marker("${native_io_sharded_impl}" "ownership.finalize"
                "NativeIO sharded request ownership settlement")
 forbid_marker("${native_io}" "owner_shard" "raw NativeIO endpoint ABI")
