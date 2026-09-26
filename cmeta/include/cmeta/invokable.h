@@ -59,6 +59,19 @@ cmeta_status cmeta_interface_method_invokable_bind(
     const cmeta_function_data_desc *data,
     cmeta_callable callable, cmeta_invokable *out);
 
+/**
+ * Join a reflected receiver method to an already receiver-bound exact callable.
+ *
+ * data->function must be the receiver-elided projection validated by
+ * cmeta_receiver_method_projection_valid(). The callable provider is
+ * responsible for binding the concrete receiver through a type-correct thunk
+ * or capture; CMeta never casts/interprets the original receiver ABI.
+ */
+cmeta_status cmeta_receiver_method_invokable_bind(
+    const struct cmeta_receiver_method *method,
+    const cmeta_function_data_desc *data,
+    cmeta_callable callable, cmeta_invokable *out);
+
 bool cmeta_invokable_valid(const cmeta_invokable *invokable);
 
 /**
