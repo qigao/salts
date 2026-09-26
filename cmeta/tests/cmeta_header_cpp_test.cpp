@@ -31,6 +31,8 @@ static_assert(std::is_standard_layout_v<cmeta_object_method_binding>,
               "object method bindings remain a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_object_method_provider>,
               "object method providers remain a C ABI");
+static_assert(std::is_standard_layout_v<cmeta_object_field_provider>,
+              "object field providers remain a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_object_ref>,
               "canonical native object references remain a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_interface_method_desc>,
