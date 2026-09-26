@@ -52,9 +52,6 @@ else()
     OUTPUT_NAME "cmeta-lower"
     FOLDER "tools/cmeta-lower")
 
-  install(TARGETS cmeta_lower
-    RUNTIME DESTINATION bin
-    COMPONENT tools)
 endif()
 
 add_executable(Salts::CMetaLower ALIAS cmeta_lower)

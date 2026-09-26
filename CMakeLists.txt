@@ -8,7 +8,7 @@ endif()
 
 project(
   Salts
-  VERSION 1.7.6
+  VERSION 1.7.7
   LANGUAGES C CXX)
 
 # Project configuration - output directories
@@ -89,9 +89,6 @@ write_basic_package_version_file(
 # Install the config files
 install(FILES "${CMAKE_BINARY_DIR}/SaltsConfig.cmake"
               "${CMAKE_BINARY_DIR}/SaltsConfigVersion.cmake"
-        DESTINATION "lib/cmake/Salts")
-
-install(FILES "${CMAKE_SOURCE_DIR}/cmake/SaltsCMetaLower.cmake"
         DESTINATION "lib/cmake/Salts")
 
 # Install the export set
