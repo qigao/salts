@@ -108,32 +108,29 @@ add_test(
           -DGENERATED=${CSTL_METHOD_LOWER_SOURCE}
           -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_method_lowering.cmake")
 
-add_test(
-  NAME cstl_method_lower_unknown_method_test
-  COMMAND $<TARGET_FILE:cstl_method_lower_poc>
-          "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/method_lower/unknown_method.cmeta"
-          "${CSTL_METHOD_LOWER_DIR}/unknown_method.c")
-set_tests_properties(cstl_method_lower_unknown_method_test PROPERTIES
-  WILL_FAIL TRUE
-  PASS_REGULAR_EXPRESSION "IntList has no receiver method 'unknown'")
+function(cstl_add_method_rejection_test name fixture diagnostic)
+  add_test(
+    NAME ${name}
+    COMMAND ${CMAKE_COMMAND}
+            -DTOOL=$<TARGET_FILE:cstl_method_lower_poc>
+            -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/method_lower/${fixture}
+            -DOUTPUT=${CSTL_METHOD_LOWER_DIR}/${name}.c
+            "-DEXPECTED=${diagnostic}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_method_rejection.cmake")
+endfunction()
 
-add_test(
-  NAME cstl_method_lower_wrong_receiver_test
-  COMMAND $<TARGET_FILE:cstl_method_lower_poc>
-          "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/method_lower/wrong_receiver.cmeta"
-          "${CSTL_METHOD_LOWER_DIR}/wrong_receiver.c")
-set_tests_properties(cstl_method_lower_wrong_receiver_test PROPERTIES
-  WILL_FAIL TRUE
-  PASS_REGULAR_EXPRESSION "unknown receiver 'map'")
-
-add_test(
-  NAME cstl_method_lower_wrong_argument_test
-  COMMAND $<TARGET_FILE:cstl_method_lower_poc>
-          "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/method_lower/wrong_argument.cmeta"
-          "${CSTL_METHOD_LOWER_DIR}/wrong_argument.c")
-set_tests_properties(cstl_method_lower_wrong_argument_test PROPERTIES
-  WILL_FAIL TRUE
-  PASS_REGULAR_EXPRESSION "unsupported method-call syntax")
+cstl_add_method_rejection_test(
+  cstl_method_lower_unknown_method_test
+  unknown_method.cmeta
+  "IntList has no receiver method 'unknown'")
+cstl_add_method_rejection_test(
+  cstl_method_lower_wrong_receiver_test
+  wrong_receiver.cmeta
+  "unknown receiver 'map'")
+cstl_add_method_rejection_test(
+  cstl_method_lower_wrong_argument_test
+  wrong_argument.cmeta
+  "unsupported method-call syntax")
 endif()
 
 cmake_add_test(cstl_tree_test
