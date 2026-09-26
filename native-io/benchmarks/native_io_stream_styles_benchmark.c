@@ -63,6 +63,10 @@ typedef struct stream_style_result {
   uint64_t queued_dispatches;
   uint64_t rejected_tasks;
   uint64_t peak_command_slots;
+  uint64_t observe_calls;
+  uint64_t completion_count;
+  uint64_t completion_batches;
+  uint64_t max_completion_batch;
 } stream_style_result;
 
 typedef struct stream_style_backend_fixture {
@@ -72,6 +76,10 @@ typedef struct stream_style_backend_fixture {
   unsigned char *sent;
   unsigned char *received;
   size_t payload_size;
+  uint64_t observe_calls;
+  uint64_t completion_count;
+  uint64_t completion_batches;
+  uint64_t max_completion_batch;
 } stream_style_backend_fixture;
 
 typedef struct stream_style_coroutine_operation {
@@ -93,6 +101,10 @@ typedef struct stream_style_sharded_fixture {
   size_t payload_size;
   int attach_status;
   int release_status;
+  uint64_t observe_calls;
+  uint64_t completion_count;
+  uint64_t completion_batches;
+  uint64_t max_completion_batch;
 } stream_style_sharded_fixture;
 
 typedef struct stream_style_sharded_operation {
@@ -107,6 +119,7 @@ typedef struct stream_style_sharded_operation {
 } stream_style_sharded_operation;
 
 typedef struct stream_style_sharded_observe {
+  stream_style_sharded_fixture *fixture;
   native_io_sharded_completion events[STREAM_STYLE_COMPLETION_CAPACITY];
   size_t count;
   int status;
@@ -117,6 +130,7 @@ typedef struct stream_style_same_driver {
   uint64_t *latencies;
   native_io_sharded_stats before;
   native_io_sharded_stats after;
+  bool trace;
   int status;
 } stream_style_same_driver;
 
@@ -160,6 +174,89 @@ static const char *stream_style_name(stream_style_kind style) {
     default: return "unknown";
   }
 }
+
+typedef struct stream_style_trace_selection {
+  bool enabled;
+  stream_style_kind style;
+  size_t payload_size;
+} stream_style_trace_selection;
+
+static int stream_style_parse_trace(stream_style_trace_selection *selection) {
+  const char *value = getenv("NATIVE_IO_STREAM_STYLE_TRACE");
+  const char *separator;
+  char style_name[64];
+  char *end = NULL;
+  unsigned long long payload;
+  size_t style_length;
+
+  if (selection == NULL) return SALTS_EINVAL;
+  *selection = (stream_style_trace_selection){0};
+  if (value == NULL || *value == '\0') return SALTS_OK;
+  separator = strchr(value, ':');
+  if (separator == NULL || separator == value || separator[1] == '\0') return SALTS_EINVAL;
+  style_length = (size_t)(separator - value);
+  if (style_length >= sizeof(style_name)) return SALTS_ERANGE;
+  memcpy(style_name, value, style_length);
+  style_name[style_length] = '\0';
+
+  if (strcmp(style_name, "direct") == 0)
+    selection->style = STREAM_STYLE_DIRECT;
+  else if (strcmp(style_name, "coroutine") == 0)
+    selection->style = STREAM_STYLE_COROUTINE;
+  else if (strcmp(style_name, "sharded_same_owner") == 0)
+    selection->style = STREAM_STYLE_SHARDED_SAME_OWNER;
+  else if (strcmp(style_name, "sharded_cross_owner") == 0)
+    selection->style = STREAM_STYLE_SHARDED_CROSS_OWNER;
+  else
+    return SALTS_EINVAL;
+
+  payload = strtoull(separator + 1, &end, 10);
+  if (end == separator + 1 || *end != '\0' || payload == 0u ||
+      payload > (unsigned long long)SIZE_MAX)
+    return SALTS_EINVAL;
+  selection->payload_size = (size_t)payload;
+  selection->enabled = true;
+  return SALTS_OK;
+}
+
+static void stream_style_trace_marker(bool begin, stream_style_kind style,
+                                      size_t payload_size) {
+  fprintf(stderr,
+          "NATIVE_IO_STYLE_MEASURE_%s style=%s payload=%zu transfers=%d\n",
+          begin ? "BEGIN" : "END", stream_style_name(style), payload_size,
+          STREAM_STYLE_MEASURED_TRANSFERS);
+  fflush(stderr);
+}
+
+static void stream_style_reset_backend_completion_stats(
+    stream_style_backend_fixture *fixture) {
+  fixture->observe_calls = 0u;
+  fixture->completion_count = 0u;
+  fixture->completion_batches = 0u;
+  fixture->max_completion_batch = 0u;
+}
+
+static void stream_style_reset_sharded_completion_stats(
+    stream_style_sharded_fixture *fixture) {
+  fixture->observe_calls = 0u;
+  fixture->completion_count = 0u;
+  fixture->completion_batches = 0u;
+  fixture->max_completion_batch = 0u;
+}
+
+static void stream_style_record_batch(uint64_t *observe_calls,
+                                      uint64_t *completion_count,
+                                      uint64_t *completion_batches,
+                                      uint64_t *max_completion_batch,
+                                      uint64_t count) {
+  ++*observe_calls;
+  *completion_count += count;
+  if (count != 0u) {
+    ++*completion_batches;
+    if (count > *max_completion_batch) *max_completion_batch = count;
+  }
+}
+
 
 static int stream_style_socket_error(void) {
 #if defined(_WIN32)
@@ -438,6 +535,9 @@ static int stream_style_direct_transfer(stream_style_backend_fixture *fixture) {
                                        STREAM_STYLE_COMPLETION_CAPACITY,
                                        STREAM_STYLE_TIMEOUT_MS, &count);
     if (status != SALTS_OK) return status;
+    stream_style_record_batch(
+        &fixture->observe_calls, &fixture->completion_count,
+        &fixture->completion_batches, &fixture->max_completion_batch, count);
     if (count == 0u) return SALTS_EIO;
 
     for (size_t index = 0u; index < count; ++index) {
@@ -531,11 +631,22 @@ static int stream_style_coroutine_transfer(stream_style_backend_fixture *fixture
                                                &write_state, &write_task);
 
   while (status == SALTS_OK && (!read_state.done || !write_state.done)) {
+    const size_t read_before = read_state.offset;
+    const size_t write_before = write_state.offset;
     size_t count = 0u;
+    uint64_t completed = 0u;
     status = native_io_backend_observe(&fixture->backend, events,
                                        STREAM_STYLE_COMPLETION_CAPACITY,
                                        STREAM_STYLE_TIMEOUT_MS, &count);
     if (status == SALTS_OK && count != 0u) status = SALTS_EPROTO;
+    if (status == SALTS_OK) {
+      if (read_state.offset != read_before) ++completed;
+      if (write_state.offset != write_before) ++completed;
+      stream_style_record_batch(
+          &fixture->observe_calls, &fixture->completion_count,
+          &fixture->completion_batches, &fixture->max_completion_batch,
+          completed);
+    }
   }
 
   if (status != SALTS_OK) {
@@ -556,7 +667,8 @@ static int stream_style_coroutine_transfer(stream_style_backend_fixture *fixture
 }
 
 static int stream_style_measure_backend(native_io_backend_kind kind, stream_style_kind style,
-                                      size_t payload_size, stream_style_result *out) {
+                                      size_t payload_size, stream_style_result *out,
+                                      bool trace) {
   stream_style_backend_fixture fixture;
   uint64_t *latencies =
       (uint64_t *)calloc(STREAM_STYLE_MEASURED_TRANSFERS, sizeof(*latencies));
@@ -572,6 +684,9 @@ static int stream_style_measure_backend(native_io_backend_kind kind, stream_styl
     if (status != SALTS_OK) goto cleanup;
   }
 
+  stream_style_reset_backend_completion_stats(&fixture);
+  if (trace) stream_style_trace_marker(true, style, payload_size);
+
   memset(out, 0, sizeof(*out));
   out->style = stream_style_name(style);
   out->payload_size = payload_size;
@@ -584,6 +699,11 @@ static int stream_style_measure_backend(native_io_backend_kind kind, stream_styl
     if (status != SALTS_OK) goto cleanup;
     out->wall_ns += latencies[index];
   }
+  if (trace) stream_style_trace_marker(false, style, payload_size);
+  out->observe_calls = fixture.observe_calls;
+  out->completion_count = fixture.completion_count;
+  out->completion_batches = fixture.completion_batches;
+  out->max_completion_batch = fixture.max_completion_batch;
   status = stream_style_finalize_result(out, latencies);
 
 cleanup:
@@ -750,6 +870,11 @@ static void stream_style_sharded_observe_task(native_io_sharded_context *context
   observe->status = native_io_sharded_context_observe(
       context, observe->events, STREAM_STYLE_COMPLETION_CAPACITY,
       STREAM_STYLE_TIMEOUT_MS, &observe->count);
+  if (observe->status == SALTS_OK && observe->fixture != NULL)
+    stream_style_record_batch(
+        &observe->fixture->observe_calls, &observe->fixture->completion_count,
+        &observe->fixture->completion_batches,
+        &observe->fixture->max_completion_batch, observe->count);
 }
 
 static int stream_style_sharded_transfer(
@@ -794,7 +919,7 @@ static int stream_style_sharded_transfer(
       return write_state.admission_status;
 
     while (read_pending || write_pending) {
-      stream_style_sharded_observe observe = {0};
+      stream_style_sharded_observe observe = {.fixture = fixture};
       if (same_owner_context != NULL) {
         stream_style_sharded_observe_task(same_owner_context, &observe);
       } else {
@@ -842,17 +967,24 @@ static void stream_style_same_driver_run(native_io_sharded_context *context, voi
     if (driver->status != SALTS_OK) return;
   }
 
+  stream_style_reset_sharded_completion_stats(fixture);
   if (!native_io_sharded_get_stats(fixture->runtime, &driver->before)) {
     driver->status = SALTS_EIO;
     return;
   }
 
+  if (driver->trace)
+    stream_style_trace_marker(true, STREAM_STYLE_SHARDED_SAME_OWNER,
+                              fixture->payload_size);
   for (size_t index = 0u; index < STREAM_STYLE_MEASURED_TRANSFERS; ++index) {
     const uint64_t started = salts_hrtime();
     driver->status = stream_style_sharded_transfer(fixture, context);
     driver->latencies[index] = salts_hrtime() - started;
     if (driver->status != SALTS_OK) return;
   }
+  if (driver->trace)
+    stream_style_trace_marker(false, STREAM_STYLE_SHARDED_SAME_OWNER,
+                              fixture->payload_size);
 
   if (!native_io_sharded_get_stats(fixture->runtime, &driver->after))
     driver->status = SALTS_EIO;
@@ -861,7 +993,8 @@ static void stream_style_same_driver_run(native_io_sharded_context *context, voi
 static int stream_style_measure_sharded(native_io_backend_kind kind,
                                       stream_style_kind style,
                                       size_t payload_size,
-                                      stream_style_result *out) {
+                                      stream_style_result *out,
+                                      bool trace) {
   stream_style_sharded_fixture fixture;
   uint64_t *latencies =
       (uint64_t *)calloc(STREAM_STYLE_MEASURED_TRANSFERS, sizeof(*latencies));
@@ -878,6 +1011,7 @@ static int stream_style_measure_sharded(native_io_backend_kind kind,
         &fixture, latencies,
         NATIVE_IO_SHARDED_STATS_V1_INITIALIZER,
         NATIVE_IO_SHARDED_STATS_V1_INITIALIZER,
+        trace,
         SALTS_OK};
     native_io_sharded_task task = {
         stream_style_same_driver_run, NULL, NULL, &driver};
@@ -891,16 +1025,23 @@ static int stream_style_measure_sharded(native_io_backend_kind kind,
       status = stream_style_sharded_transfer(&fixture, NULL);
       if (status != SALTS_OK) goto cleanup;
     }
+    stream_style_reset_sharded_completion_stats(&fixture);
     if (!native_io_sharded_get_stats(fixture.runtime, &before)) {
       status = SALTS_EIO;
       goto cleanup;
     }
+    if (trace)
+      stream_style_trace_marker(true, STREAM_STYLE_SHARDED_CROSS_OWNER,
+                                payload_size);
     for (size_t index = 0u; index < STREAM_STYLE_MEASURED_TRANSFERS; ++index) {
       const uint64_t started = salts_hrtime();
       status = stream_style_sharded_transfer(&fixture, NULL);
       latencies[index] = salts_hrtime() - started;
       if (status != SALTS_OK) goto cleanup;
     }
+    if (trace)
+      stream_style_trace_marker(false, STREAM_STYLE_SHARDED_CROSS_OWNER,
+                                payload_size);
     if (!native_io_sharded_get_stats(fixture.runtime, &after)) {
       status = SALTS_EIO;
       goto cleanup;
@@ -929,6 +1070,10 @@ static int stream_style_measure_sharded(native_io_backend_kind kind,
         (double)out->queued_dispatches /
         (double)STREAM_STYLE_MEASURED_TRANSFERS;
     out->peak_command_slots = after.peak_command_slots;
+    out->observe_calls = fixture.observe_calls;
+    out->completion_count = fixture.completion_count;
+    out->completion_batches = fixture.completion_batches;
+    out->max_completion_batch = fixture.max_completion_batch;
     status = stream_style_finalize_result(out, latencies);
   }
 
@@ -953,6 +1098,7 @@ static void stream_style_print_csv_row(FILE *stream, const char *backend,
                                      const stream_style_result *result) {
   fprintf(stream,
           "%s,%s,%zu,%zu,%.6f,%.6f,%.6f,%.6f,%.6f,%" PRIu64
+          ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
           ",%" PRIu64 ",%" PRIu64 "\n",
           backend, result->style, result->payload_size, result->transfers,
           (double)result->p50_ns / 1000.0,
@@ -962,7 +1108,11 @@ static void stream_style_print_csv_row(FILE *stream, const char *backend,
           result->same_owner_direct_tasks_per_transfer,
           result->queued_dispatches,
           result->rejected_tasks,
-          result->peak_command_slots);
+          result->peak_command_slots,
+          result->observe_calls,
+          result->completion_count,
+          result->completion_batches,
+          result->max_completion_batch);
 }
 
 int main(void) {
@@ -977,7 +1127,9 @@ int main(void) {
   const size_t payload_count =
       sizeof(STREAM_STYLE_PAYLOADS) / sizeof(STREAM_STYLE_PAYLOADS[0]);
   stream_style_result results[4][4];
+  stream_style_trace_selection trace = {0};
   FILE *csv = NULL;
+  int trace_status;
 
   if (kind == (native_io_backend_kind)0 ||
       !native_io_backend_kind_supported(kind)) {
@@ -993,6 +1145,34 @@ int main(void) {
     }
   }
 
+  trace_status = stream_style_parse_trace(&trace);
+  if (trace_status != SALTS_OK) {
+    fprintf(stderr, "invalid NATIVE_IO_STREAM_STYLE_TRACE: %d\n", trace_status);
+    stream_style_network_stop();
+    return 2;
+  }
+  if (trace.enabled) {
+    bool payload_supported = false;
+    stream_style_result result = {0};
+    int status;
+    for (size_t index = 0u; index < payload_count; ++index)
+      if (STREAM_STYLE_PAYLOADS[index] == trace.payload_size)
+        payload_supported = true;
+    if (!payload_supported) {
+      fprintf(stderr, "unsupported trace payload: %zu\n", trace.payload_size);
+      stream_style_network_stop();
+      return 2;
+    }
+    status = trace.style == STREAM_STYLE_DIRECT ||
+                     trace.style == STREAM_STYLE_COROUTINE
+                 ? stream_style_measure_backend(kind, trace.style,
+                                                trace.payload_size, &result, true)
+                 : stream_style_measure_sharded(kind, trace.style,
+                                                trace.payload_size, &result, true);
+    stream_style_network_stop();
+    return status == SALTS_OK ? 0 : 1;
+  }
+
   memset(results, 0, sizeof(results));
   for (size_t style_index = 0u; style_index < style_count; ++style_index) {
     for (size_t payload_index = 0u; payload_index < payload_count; ++payload_index) {
@@ -1001,11 +1181,11 @@ int main(void) {
       if (style == STREAM_STYLE_DIRECT || style == STREAM_STYLE_COROUTINE)
         status = stream_style_measure_backend(kind, style,
                                             STREAM_STYLE_PAYLOADS[payload_index],
-                                            &results[style_index][payload_index]);
+                                            &results[style_index][payload_index], false);
       else
         status = stream_style_measure_sharded(kind, style,
                                             STREAM_STYLE_PAYLOADS[payload_index],
-                                            &results[style_index][payload_index]);
+                                            &results[style_index][payload_index], false);
       if (status != SALTS_OK) {
         fprintf(stderr, "%s %s %zu-byte benchmark failed: %d\n",
                 backend, stream_style_name(style),
@@ -1022,12 +1202,15 @@ int main(void) {
          "Latency percentiles are individual complete-transfer latencies.\n\n",
          STREAM_STYLE_MEASURED_TRANSFERS, STREAM_STYLE_WARMUP_TRANSFERS);
   printf("| style | payload | p50 us | p95 us | MiB/s | message hops/transfer | "
-         "same-owner direct tasks/transfer | queued dispatches | rejected | peak command slots |\n");
-  printf("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+         "same-owner direct tasks/transfer | queued dispatches | rejected | peak command slots | "
+         "observe calls | completions | completion batches | max batch |\n");
+  printf("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
+         "---: | ---: | ---: | ---: |\n");
   for (size_t style_index = 0u; style_index < style_count; ++style_index) {
     for (size_t payload_index = 0u; payload_index < payload_count; ++payload_index) {
       const stream_style_result *result = &results[style_index][payload_index];
       printf("| %s | %zu | %.3f | %.3f | %.2f | %.3f | %.3f | %" PRIu64
+             " | %" PRIu64 " | %" PRIu64 " | %" PRIu64 " | %" PRIu64
              " | %" PRIu64 " | %" PRIu64 " |\n",
              result->style, result->payload_size,
              (double)result->p50_ns / 1000.0,
@@ -1037,7 +1220,11 @@ int main(void) {
              result->same_owner_direct_tasks_per_transfer,
              result->queued_dispatches,
              result->rejected_tasks,
-             result->peak_command_slots);
+             result->peak_command_slots,
+             result->observe_calls,
+             result->completion_count,
+             result->completion_batches,
+             result->max_completion_batch);
     }
   }
 
@@ -1046,7 +1233,8 @@ int main(void) {
     fprintf(csv,
             "backend,style,payload_bytes,transfers,p50_us,p95_us,mib_per_second,"
             "message_hops_per_transfer,same_owner_direct_tasks_per_transfer,"
-            "queued_dispatches,rejected_tasks,peak_command_slots\n");
+            "queued_dispatches,rejected_tasks,peak_command_slots,observe_calls,"
+            "completion_count,completion_batches,max_completion_batch\n");
     for (size_t style_index = 0u; style_index < style_count; ++style_index)
       for (size_t payload_index = 0u; payload_index < payload_count; ++payload_index)
         stream_style_print_csv_row(csv, backend,
