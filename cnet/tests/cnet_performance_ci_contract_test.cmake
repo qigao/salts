@@ -34,6 +34,19 @@ require_marker("${scaling_text}"
                "$drivers = @(\"NativeIO direct\", \"CNet retained\")"
                "CNet retained-only scaling verifier")
 
+require_marker("${scaling_text}"
+               "Get-SelfRepeatSummary"
+               "CNet scaling A/A validity control")
+require_marker("${scaling_text}"
+               "UNSTABLE"
+               "CNet scaling no-verdict state")
+require_marker("${scaling_text}"
+               ".validity.csv"
+               "CNet scaling validity artifact")
+require_marker("${workflow_text}"
+               "### Measurement validity"
+               "CNet scaling validity workflow summary")
+
 foreach(marker
     "CNet copy"
     "copy/retained"
