@@ -36,16 +36,16 @@ foreach ($row in $rows) {
 
   if ($depths -notcontains $qd) { throw "unexpected qd=$qd" }
   if ($payloads -notcontains $payload) { throw "unexpected payload=$payload" }
-  $key = "$qd:$payload"
+  $key = "${qd}:${payload}"
   if ($seen.ContainsKey($key)) { throw "duplicate cell $key" }
   $seen[$key] = $true
 
   if ($samples -le 0) { throw "invalid samples for $key" }
   if ($logical -ne $samples * $qd) {
-    throw "logical operation count mismatch for $key: $logical"
+    throw "logical operation count mismatch for ${key}: $logical"
   }
   if ($peak -lt 2 * $qd) {
-    throw "requested queue depth not reached for $key: peak_active=$peak"
+    throw "requested queue depth not reached for ${key}: peak_active=$peak"
   }
   if ($observes -le 0) { throw "no observe calls for $key" }
   if ($wall -eq 0 -or $cpu -eq 0) { throw "zero timing for $key" }
@@ -61,9 +61,8 @@ foreach ($row in $rows) {
 }
 
 foreach ($payload in $payloads) {
-  $previousRate = $null
   foreach ($qd in $depths) {
-    $key = "$qd:$payload"
+    $key = "${qd}:${payload}"
     if (-not $seen.ContainsKey($key)) { throw "missing cell $key" }
   }
 }
