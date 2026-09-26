@@ -25,6 +25,8 @@ static_assert(std::is_standard_layout_v<cmeta_receiver_method_set>,
               "receiver method sets remain a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_receiver_resolution>,
               "receiver call resolutions remain a C ABI");
+static_assert(std::is_standard_layout_v<cmeta_object_ref>,
+              "canonical native object references remain a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_interface_method_desc>,
               "interface method reflection remains a C ABI");
 static_assert(std::is_standard_layout_v<cmeta_interface_desc>,
