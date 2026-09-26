@@ -454,6 +454,20 @@ int cnet_shards_send_buffer_direct(cnet_shards *shards, cnet_shard_connection co
              : status;
 }
 
+int cnet_shards_send_slice_direct(cnet_shards *shards, cnet_shard_connection connection,
+                                  const mem_slice_t *slice) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  int status;
+  if (slice == NULL || slice->buffer == NULL || slice->data == NULL || slice->length == 0u)
+    return SALTS_EINVAL;
+  if (impl != NULL && slice->length > impl->max_write_payload_bytes) return SALTS_EMSGSIZE;
+  status = cnet_shards_direct_write_ready(impl, connection, &record);
+  return status == SALTS_OK
+             ? cnet_owner_send_slice_direct(&record->owner, connection.session, slice)
+             : status;
+}
+
 int cnet_shards_sendv_direct(cnet_shards *shards, cnet_shard_connection connection,
                              const cnet_const_buffer *segments, size_t segment_count) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
