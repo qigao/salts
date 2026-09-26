@@ -59,6 +59,8 @@ typedef struct cnet_owner_config {
   size_t receive_buffer_count;
   /** Mandatory bounded logical-write ownership capacity. */
   size_t write_capacity;
+  /** Per-connection logical-write cap; must not exceed write_capacity. */
+  size_t write_capacity_per_connection;
   size_t max_write_bytes;
   size_t write_buffer_bytes;
   cnet_session_table *sessions;
