@@ -3,6 +3,7 @@
 
 #include <cmeta/data.h>
 #include <cmeta/invokable.h>
+#include <cmeta/object.h>
 #include <quickjs.h>
 
 #include <stdbool.h>
