@@ -376,12 +376,13 @@ spec("io_uring explicit batch submission") {
 
 #if defined(IORING_SQ_TASKRUN) && defined(IORING_SQ_CQ_OVERFLOW)
       if (impl->taskrun_flag) {
-        unsigned synthetic_flags = IORING_SQ_TASKRUN;
+        _Atomic unsigned synthetic_flags;
         unsigned *const real_flags = impl->sq_flags;
+        atomic_init(&synthetic_flags, IORING_SQ_TASKRUN);
 
         /* Deterministically exercise the userspace progress decision without
          * mutating the kernel-owned SQ flag word. */
-        impl->sq_flags = &synthetic_flags;
+        impl->sq_flags = (unsigned *)&synthetic_flags;
         enter_calls = 0u;
         count = SIZE_MAX;
         check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count),
@@ -389,7 +390,8 @@ spec("io_uring explicit batch submission") {
         check_equal(count, 0u);
         check_equal(enter_calls, 1u);
 
-        synthetic_flags = IORING_SQ_CQ_OVERFLOW;
+        atomic_store_explicit(&synthetic_flags, IORING_SQ_CQ_OVERFLOW,
+                              memory_order_release);
         enter_calls = 0u;
         count = SIZE_MAX;
         check_equal(native_io_backend_observe(&backend, &event, 1u, 0u, &count),
