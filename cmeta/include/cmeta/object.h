@@ -71,6 +71,33 @@ cmeta_status cmeta_object_borrow(
  */
 void cmeta_object_release(cmeta_object_ref *ref);
 
+/**
+ * Resolve one reflected struct field and borrow its current native storage.
+ *
+ * No value copy or ownership transfer occurs. The returned pointer remains
+ * valid only while the native object remains alive and the field is not
+ * otherwise invalidated by caller-owned mutation.
+ *
+ * This phase is intentionally read-only. Reflected field presence alone does
+ * not imply write permission; a later mutation API must carry an explicit
+ * mutability contract instead of inferring writability from layout metadata.
+ */
+cmeta_status cmeta_object_field_read(
+    const cmeta_object_ref *ref, const char *name,
+    const cmeta_data_desc **out_data, const void **out_value);
+
+/**
+ * Resolve one receiver method in the context of this exact native object type.
+ *
+ * Resolution remains descriptive. Execution still requires the canonical
+ * receiver/callable -> cmeta_invokable join tracked by the next #526 slice.
+ */
+cmeta_receiver_resolve_status cmeta_object_method_resolve(
+    const cmeta_object_ref *ref, const char *owner_name,
+    const char *method_name,
+    const cmeta_type_desc *const *argument_types, size_t argument_count,
+    cmeta_receiver_resolution *out);
+
 #ifdef __cplusplus
 }
 #endif
