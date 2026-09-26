@@ -75,6 +75,13 @@ FunctionDeclAsAbi(value, int, &cmeta_type_int, CMETA_ABI_SCALAR,
      &cmeta_function_test_callback_type, CMETA_ABI_FUNCTION_POINTER),
     (int, value, CMETA_PARAM_IN));
 
+FunctionDeclAsAbi(fallible, int, &cmeta_type_int, CMETA_ABI_SCALAR,
+                  cmeta_function_test_box_add,
+    (cmeta_function_test_box *, self,
+     CMETA_PARAM_INOUT | CMETA_PARAM_BORROWED | CMETA_PARAM_RECEIVER,
+     &cmeta_function_test_box_ptr_type, CMETA_ABI_OBJECT_POINTER),
+    (int, value, CMETA_PARAM_IN));
+
 int cmeta_function_test_sum(int left, int right) {
     return left + right;
 }
@@ -114,6 +121,13 @@ int cmeta_function_test_box_write_abi(cmeta_function_test_box *output) {
 int cmeta_function_test_callback_apply(cmeta_function_test_callback callback,
                                        int value) {
     return callback ? callback(value) : -1;
+}
+
+int cmeta_function_test_box_add(cmeta_function_test_box *self, int value) {
+    if (self == NULL)
+        return -1;
+    self->value += value;
+    return 0;
 }
 
 suite("CMeta function reflection") {
@@ -161,6 +175,31 @@ suite("CMeta function reflection") {
                     (cmeta_abi_carrier)CMETA_ABI_UNSPECIFIED);
         check_equal(cmeta_function_param_abi(legacy_abi, 0u),
                     (cmeta_abi_carrier)CMETA_ABI_UNSPECIFIED);
+    }
+
+    it("marks an ordinary first pointer parameter as a compile-time receiver") {
+        const cmeta_function_desc *fn =
+            FunctionMeta(cmeta_function_test_box_add);
+        const cmeta_function_abi_desc *abi =
+            FunctionAbi(cmeta_function_test_box_add);
+        const cmeta_param_desc *receiver = cmeta_function_receiver(fn);
+        cmeta_function_test_box box = { .value = 3 };
+
+        check_true(cmeta_function_desc_valid(fn));
+        check_true(cmeta_function_abi_desc_valid(abi));
+        check_not_null(receiver);
+        check_true(receiver == cmeta_function_param(fn, 0u));
+        check_equal(receiver->name, "self");
+        check_true((receiver->flags & CMETA_PARAM_RECEIVER) != 0u);
+        check_true(cmeta_type_equal(receiver->type,
+                                    &cmeta_function_test_box_ptr_type));
+        check_equal(cmeta_function_param_abi(abi, 0u),
+                    (cmeta_abi_carrier)CMETA_ABI_OBJECT_POINTER);
+
+        /* This is the exact call shape a future obj.add(4) lowering emits.
+         * CMeta is not consulted on the runtime call path. */
+        check_equal(cmeta_function_test_box_add(&box, 4), 0);
+        check_equal(box.value, 7);
     }
 
     it("supports zero-parameter functions") {
@@ -297,6 +336,12 @@ suite("CMeta function reflection") {
                               CMETA_PARAM_OWNED;
         check_false(cmeta_param_desc_valid(&pointer_param));
 
+        pointer_param.flags = CMETA_PARAM_IN | CMETA_PARAM_RECEIVER;
+        check_true(cmeta_param_desc_valid(&pointer_param));
+
+        param.flags = CMETA_PARAM_IN | CMETA_PARAM_RECEIVER;
+        check_false(cmeta_param_desc_valid(&param));
+
         pointer_param.flags = CMETA_PARAM_IN |
                               ((cmeta_param_flags)1u << 31);
         check_false(cmeta_param_desc_valid(&pointer_param));
@@ -312,6 +357,13 @@ suite("CMeta function reflection") {
             { sizeof(cmeta_param_desc), "same", &cmeta_type_int,
               CMETA_PARAM_IN }
         };
+        cmeta_param_desc misplaced_receiver[2] = {
+            { sizeof(cmeta_param_desc), "first",
+              &cmeta_function_test_box_ptr_type, CMETA_PARAM_IN },
+            { sizeof(cmeta_param_desc), "self",
+              &cmeta_function_test_box_ptr_type,
+              CMETA_PARAM_IN | CMETA_PARAM_RECEIVER }
+        };
 
         check_true(cmeta_function_desc_valid(valid));
 
@@ -324,6 +376,10 @@ suite("CMeta function reflection") {
         fn = *valid;
 
         fn.params = duplicate;
+        check_false(cmeta_function_desc_valid(&fn));
+        fn = *valid;
+
+        fn.params = misplaced_receiver;
         check_false(cmeta_function_desc_valid(&fn));
         fn = *valid;
 
