@@ -41,7 +41,7 @@ function Parse-U64([object]$Value, [string]$Name) {
   if (-not [UInt64]::TryParse([string]$Value,
                               [System.Globalization.NumberStyles]::Integer,
                               $Invariant, [ref]$parsed)) {
-    throw "invalid unsigned integer for $Name: $Value"
+    throw "invalid unsigned integer for ${Name}: $Value"
   }
   return $parsed
 }
@@ -51,7 +51,7 @@ function Parse-Double([object]$Value, [string]$Name) {
   if (-not [double]::TryParse([string]$Value,
                               [System.Globalization.NumberStyles]::Float,
                               $Invariant, [ref]$parsed)) {
-    throw "invalid double for $Name: $Value"
+    throw "invalid double for ${Name}: $Value"
   }
   return $parsed
 }
