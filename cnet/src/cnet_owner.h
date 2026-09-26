@@ -133,6 +133,8 @@ int cnet_owner_send_buffer_direct(cnet_owner *owner, cnet_session_handle session
                                   mem_buffer_t *buffer);
 int cnet_owner_send_slice_direct(cnet_owner *owner, cnet_session_handle session,
                                  const mem_slice_t *slice);
+int cnet_owner_send_slicev_direct(cnet_owner *owner, cnet_session_handle session,
+                                  const mem_slice_t *segments, size_t segment_count);
 int cnet_owner_sendv_direct(cnet_owner *owner, cnet_session_handle session,
                             const cnet_const_buffer *segments, size_t segment_count);
 /** Admits one copied non-TLS final write behind already accepted write slots. */
@@ -177,6 +179,8 @@ int cnet_owner_test_process_completion_batch(cnet_owner *owner,
                                              size_t count);
 /** Expires deadlines independently of routing a previously observed native completion. */
 int cnet_owner_test_process_deadlines(cnet_owner *owner);
+/** Starts currently queued owner-local session work without observing NativeIO completions. */
+int cnet_owner_test_process_session_work(cnet_owner *owner);
 /** Makes the next successful/already-pending native cancellation report SALTS_EALREADY. */
 int cnet_owner_test_force_cancel_ealready_once(cnet_owner *owner);
 /** Caps each test-build stream-send submission without changing logical send ownership. */
