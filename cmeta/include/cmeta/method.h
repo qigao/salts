@@ -30,6 +30,18 @@ const cmeta_receiver_method *
 cmeta_receiver_method_find(const cmeta_receiver_method_set *set,
                            const char *name);
 
+/**
+ * Validate a receiver-elided function projection for one reflected method.
+ *
+ * The projected function preserves return type, effects/properties and every
+ * non-receiver parameter exactly, while removing parameter zero (the explicit
+ * receiver). This is the semantic surface used by an exact provider thunk that
+ * has already bound one concrete receiver instance.
+ */
+bool cmeta_receiver_method_projection_valid(
+    const cmeta_receiver_method *method,
+    const cmeta_function_desc *projected);
+
 typedef enum cmeta_receiver_resolve_status {
     CMETA_RECEIVER_RESOLVE_OK = 0,
     CMETA_RECEIVER_RESOLVE_INVALID_ARGUMENT = 1,
