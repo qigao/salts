@@ -56,6 +56,9 @@ typedef struct salts_io_impl_ops {
                  native_io_request *out_request);
   /* NULL means this driver starts work immediately and has no staged SQ. */
   int (*flush)(salts_io_impl *impl);
+  int (*submit_vector)(salts_io_impl *impl, const native_io_vector_operation *operation,
+                       native_io_request *out_request);
+  bool (*supports_vector_write)(const salts_io_impl *impl, native_io_endpoint endpoint);
 } salts_io_impl_ops;
 
 struct salts_io_impl {
