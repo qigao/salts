@@ -80,7 +80,8 @@ typedef struct salts_io_uring_request_record {
   native_io_request request;
   native_io_endpoint endpoint;
   native_io_operation operation;
-  struct iovec vector;
+  struct iovec vectors[NATIVE_IO_VECTOR_MAX];
+  size_t vector_count;
   struct msghdr message;
   native_io_completion completion;
   uint64_t native_token;
@@ -89,6 +90,7 @@ typedef struct salts_io_uring_request_record {
   uint32_t staged_previous;
   uint32_t staged_next;
   bool staged;
+  bool vector_write;
   bool write_lane;
   bool in_flight;
   bool cancel_requested;
@@ -338,6 +340,23 @@ static void uring_prepare_operation(salts_io_uring_request_record *record, struc
   memset(sqe, 0, sizeof(*sqe));
   sqe->fd = fd;
   sqe->user_data = record->native_token;
+  if (record->vector_write) {
+    if (record->operation.kind == NATIVE_IO_OPERATION_PIPE_WRITE) {
+      sqe->opcode = IORING_OP_WRITEV;
+      sqe->addr = (uint64_t)(uintptr_t)record->vectors;
+      sqe->len = (uint32_t)record->vector_count;
+      sqe->off = UINT64_MAX;
+    } else {
+      memset(&record->message, 0, sizeof(record->message));
+      record->message.msg_iov = record->vectors;
+      record->message.msg_iovlen = record->vector_count;
+      sqe->opcode = IORING_OP_SENDMSG;
+      sqe->addr = (uint64_t)(uintptr_t)&record->message;
+      sqe->len = 1u;
+      sqe->msg_flags = MSG_NOSIGNAL;
+    }
+    return;
+  }
   if (record->operation.kind == NATIVE_IO_OPERATION_PIPE_READ ||
       record->operation.kind == NATIVE_IO_OPERATION_PIPE_WRITE) {
     sqe->opcode =
@@ -359,14 +378,14 @@ static void uring_prepare_operation(salts_io_uring_request_record *record, struc
     sqe->addr = (uint64_t)(uintptr_t)record->operation.address;
     sqe->off = (uint64_t)record->operation.address_length;
   } else {
-    record->vector.iov_base = record->operation.buffer;
-    record->vector.iov_len = record->operation.length;
+    record->vectors[0].iov_base = record->operation.buffer;
+    record->vectors[0].iov_len = record->operation.length;
     memset(&record->message, 0, sizeof(record->message));
     record->message.msg_name = record->operation.address;
     record->message.msg_namelen = (socklen_t)(record->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM
                                                   ? record->operation.address_capacity
                                                   : record->operation.address_length);
-    record->message.msg_iov = &record->vector;
+    record->message.msg_iov = &record->vectors[0];
     record->message.msg_iovlen = 1u;
     sqe->opcode =
         record->operation.kind == NATIVE_IO_OPERATION_UDP_RECV_FROM ? IORING_OP_RECVMSG : IORING_OP_SENDMSG;
@@ -397,6 +416,8 @@ static void uring_release_request(salts_io_uring_impl *impl, salts_io_uring_requ
   request->phase = SALTS_IO_URING_FREE;
   request->native_token = 0u;
   request->operation = (native_io_operation){0};
+  request->vector_count = 0u;
+  request->vector_write = false;
   request->completion = (native_io_completion){0};
   request->previous = SALTS_IO_URING_INDEX_NONE;
   request->next = SALTS_IO_URING_INDEX_NONE;
@@ -647,6 +668,7 @@ static int uring_release_pipe(salts_io_impl *base, native_io_endpoint endpoint_h
 }
 
 static int uring_admit(salts_io_impl *base, const native_io_operation *operation,
+                       const native_io_vector_operation *vector_operation,
                        native_io_request *out_request, bool prepared) {
   salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
   salts_io_uring_endpoint *endpoint;
@@ -678,6 +700,14 @@ static int uring_admit(salts_io_impl *base, const native_io_operation *operation
       (native_io_request){index + 1u, uring_next_generation(request->request.generation)};
   request->endpoint = operation->endpoint;
   request->operation = *operation;
+  request->vector_count = vector_operation != NULL ? vector_operation->span_count : 0u;
+  request->vector_write = vector_operation != NULL;
+  if (vector_operation != NULL) {
+    for (size_t cursor = 0u; cursor < vector_operation->span_count; ++cursor) {
+      request->vectors[cursor].iov_base = vector_operation->spans[cursor].data;
+      request->vectors[cursor].iov_len = vector_operation->spans[cursor].length;
+    }
+  }
   request->native_token = uring_request_token(index, request->request.generation);
   request->completion = (native_io_completion){0};
   request->previous = SALTS_IO_URING_INDEX_NONE;
@@ -711,12 +741,37 @@ static int uring_admit(salts_io_impl *base, const native_io_operation *operation
 
 static int uring_submit(salts_io_impl *base, const native_io_operation *operation,
                         native_io_request *out_request) {
-  return uring_admit(base, operation, out_request, false);
+  return uring_admit(base, operation, NULL, out_request, false);
+}
+
+static int uring_submit_vector(salts_io_impl *base,
+                               const native_io_vector_operation *operation,
+                               native_io_request *out_request) {
+  native_io_operation scalar = {
+      .kind = operation->kind,
+      .endpoint = operation->endpoint,
+      .buffer = operation->spans[0].data,
+      .length = operation->spans[0].length,
+      .user_data = operation->user_data};
+  return uring_admit(base, &scalar, operation, out_request, false);
 }
 
 static int uring_prepare(salts_io_impl *base, const native_io_operation *operation,
                          native_io_request *out_request) {
-  return uring_admit(base, operation, out_request, true);
+  return uring_admit(base, operation, NULL, out_request, true);
+}
+
+static bool uring_supports_vector_write(const salts_io_impl *base,
+                                        native_io_endpoint endpoint_handle) {
+  const salts_io_uring_impl *impl = (const salts_io_uring_impl *)base;
+  const salts_io_uring_endpoint *endpoint;
+  if (!native_io_endpoint_valid(endpoint_handle) ||
+      endpoint_handle.slot > impl->endpoint_capacity)
+    return false;
+  endpoint = &impl->endpoints[endpoint_handle.slot - 1u];
+  return endpoint->active && endpoint->generation == endpoint_handle.generation &&
+         (endpoint->resource_kind == SALTS_IO_RESOURCE_STREAM_SOCKET ||
+          endpoint->resource_kind == SALTS_IO_RESOURCE_BYTE_PIPE);
 }
 
 static int uring_cancel(salts_io_impl *base, native_io_request request_handle) {
@@ -1176,7 +1231,8 @@ static const salts_io_impl_ops uring_ops = {
     uring_attach_socket, uring_release_socket, uring_submit,      uring_cancel,
     uring_observe,       uring_wake,           uring_close,       uring_destroy,
     uring_get_stats,     uring_attach_pipe,    uring_release_pipe,
-    uring_prepare,       uring_flush};
+    uring_prepare,       uring_flush,          uring_submit_vector,
+    uring_supports_vector_write};
 
 static bool uring_mapped_extent(size_t offset, size_t count, size_t element_size, size_t *out) {
   if (element_size == 0u || count > (SIZE_MAX - offset) / element_size) return false;
