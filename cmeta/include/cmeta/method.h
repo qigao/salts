@@ -21,6 +21,7 @@ typedef struct cmeta_receiver_method_set {
     const cmeta_type_desc *receiver_type;
     const cmeta_receiver_method *methods;
     size_t method_count;
+    const char *owner_name;
 } cmeta_receiver_method_set;
 
 bool cmeta_receiver_method_set_valid(const cmeta_receiver_method_set *set);
@@ -36,7 +37,8 @@ typedef enum cmeta_receiver_resolve_status {
     CMETA_RECEIVER_RESOLVE_RECEIVER_TYPE_MISMATCH = 3,
     CMETA_RECEIVER_RESOLVE_METHOD_NOT_FOUND = 4,
     CMETA_RECEIVER_RESOLVE_ARITY_MISMATCH = 5,
-    CMETA_RECEIVER_RESOLVE_ARGUMENT_TYPE_MISMATCH = 6
+    CMETA_RECEIVER_RESOLVE_ARGUMENT_TYPE_MISMATCH = 6,
+    CMETA_RECEIVER_RESOLVE_OWNER_MISMATCH = 7
 } cmeta_receiver_resolve_status;
 
 #define CMETA_RECEIVER_ARGUMENT_NONE ((size_t)-1)
@@ -54,6 +56,7 @@ cmeta_receiver_resolve_status
 cmeta_receiver_method_resolve(
     const cmeta_receiver_method_set *set,
     const cmeta_type_desc *receiver_type,
+    const char *owner_name,
     const char *method_name,
     const cmeta_type_desc *const *argument_types,
     size_t argument_count,
