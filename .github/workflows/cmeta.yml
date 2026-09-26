@@ -69,6 +69,8 @@ jobs:
     outputs:
       sdk-image: ${{ steps.linux-env.outputs.image }}
       sdk-triplet: ${{ steps.linux-env.outputs.triplet }}
+      cache_contract_version: ${{ steps.shared_deps.outputs.contract_version }}
+      cache_revision: ${{ steps.shared_deps.outputs.cache_revision }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,7 +85,8 @@ jobs:
           test: true
           lake-package-directory: formal/cmeta_cflow_calculus
 
-      - name: Restore versioned re2c tools
+      - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
+        id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
 
       - name: Setup vcpkg
@@ -106,12 +109,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
 
       - name: Report Linux vcpkg cache state
-        run: echo "vcpkg cache hit=${{ steps.linux-vcpkg-cache.outputs.cache-hit }}"
+        run: echo "vcpkg cache hit=${{ steps.linux-vcpkg-cache.outputs.cache-hit }} contract=${{ steps.shared_deps.outputs.contract_version }} revision=${{ steps.shared_deps.outputs.cache_revision }}"
 
       - name: Configure
         shell: bash
@@ -151,13 +154,15 @@ jobs:
           image=${{ steps.linux-env.outputs.image }}
           triplet=${{ steps.linux-env.outputs.triplet }}
           profile=release
+          vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
+          vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
 
       - name: Save Linux installed Salts SDK cache
         uses: actions/cache/save@v4
         with:
           path: build/ci-salts-sdk
-          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: salts-sdk-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-env.outputs.image }}-${{ steps.linux-env.outputs.triplet }}-release-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
 
       - name: Verify CMeta shared ownership with sanitizers
         shell: bash
@@ -243,7 +248,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/ci-salts-sdk
-          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ needs.linux.outputs.sdk-image }}-${{ needs.linux.outputs.sdk-triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: salts-sdk-v2-${{ runner.os }}-${{ runner.arch }}-${{ needs.linux.outputs.sdk-image }}-${{ needs.linux.outputs.sdk-triplet }}-release-${{ needs.linux.outputs.cache_contract_version }}-${{ needs.linux.outputs.cache_revision }}-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           fail-on-cache-miss: true
 
       - name: Verify cached SDK provenance
@@ -258,6 +263,8 @@ jobs:
           grep -Fx "image=${{ needs.linux.outputs.sdk-image }}" "$manifest"
           grep -Fx "triplet=${{ needs.linux.outputs.sdk-triplet }}" "$manifest"
           grep -Fx "profile=release" "$manifest"
+          grep -Fx "vcpkg_cache_contract=${{ needs.linux.outputs.cache_contract_version }}" "$manifest"
+          grep -Fx "vcpkg_cache_revision=${{ needs.linux.outputs.cache_revision }}" "$manifest"
           test -f build/ci-salts-sdk/lib/cmake/Salts/SaltsConfig.cmake
 
       - name: Check exact head and unchanged tracked source
@@ -277,7 +284,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Restore versioned re2c tools
+      - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
+        id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
 
       - name: Setup vcpkg
@@ -298,12 +306,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.macos-env.outputs.image }}-${{ steps.macos-env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
 
       - name: Report macOS vcpkg cache state
-        run: echo "vcpkg cache hit=${{ steps.macos-vcpkg-cache.outputs.cache-hit }}"
+        run: echo "vcpkg cache hit=${{ steps.macos-vcpkg-cache.outputs.cache-hit }} contract=${{ steps.shared_deps.outputs.contract_version }} revision=${{ steps.shared_deps.outputs.cache_revision }}"
 
       - name: Configure
         run: cmake --preset release-mac-ninja
@@ -344,7 +352,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Restore versioned re2c tools
+      - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
+        id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
 
       - name: Validate Android toolchains
@@ -377,12 +386,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-
+            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.android-env.outputs.image }}-${{ steps.android-env.outputs.triplet }}-ndk-${{ steps.android-env.outputs.ndk }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
 
       - name: Report Android vcpkg cache state
-        run: echo "vcpkg cache hit=${{ steps.android-vcpkg-cache.outputs.cache-hit }}"
+        run: echo "vcpkg cache hit=${{ steps.android-vcpkg-cache.outputs.cache-hit }} contract=${{ steps.shared_deps.outputs.contract_version }} revision=${{ steps.shared_deps.outputs.cache_revision }}"
 
       - name: Configure Android arm64 Release
         run: cmake --preset android-arm64-v8a-release
@@ -441,7 +450,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Restore versioned re2c tools
+      - name: Set up shared build dependencies (host tools, re2c, vcpkg cache)
+        id: shared_deps
         uses: ./.github/actions/setup-re2c-tools
 
       - name: Setup Windows build environment
@@ -494,19 +504,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/vcpkg-binary-cache
-          key: vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-binary-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-
+            vcpkg-binary-v3-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-
 
       - name: Report Windows vcpkg cache state
         shell: pwsh
-        run: Write-Host "vcpkg cache hit=${{ steps.windows-vcpkg-cache.outputs.cache-hit }}"
+        run: Write-Host "vcpkg cache hit=${{ steps.windows-vcpkg-cache.outputs.cache-hit }} contract=${{ steps.shared_deps.outputs.contract_version }} revision=${{ steps.shared_deps.outputs.cache_revision }}"
 
       - name: Configure
         shell: cmd
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
           cmake --preset win-release-user
 
       - name: Build
@@ -514,6 +525,7 @@ jobs:
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
           cmake --build --preset win-release-user
 
       - name: Test execution foundation and typed layers
@@ -521,6 +533,7 @@ jobs:
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
           ctest --preset win-release-user -R "^(platform_|concurrency_|thread_pool_test$|disruptor_test$|cmeta_|cserde_|cbind_|cflow_|cstl_|salts_simd_|test_execution_compat$|tinytest_equality_test$|test_salts_process$)" --output-on-failure
 
       - name: Install release profile
@@ -528,6 +541,7 @@ jobs:
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
           cmake --build --preset install-win-release-user
 
       - name: Verify CMeta shared ownership
@@ -536,6 +550,7 @@ jobs:
         run: |
           call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
           if errorlevel 1 exit /b 1
+          set "VCPKG_ROOT=%QIGAO_VCPKG_ROOT%"
           cmake --preset win-release-user
           if errorlevel 1 exit /b 1
           cmake --build --preset win-release-user -j2
@@ -574,13 +589,15 @@ jobs:
             "image=${{ steps.windows-env.outputs.image }}"
             "triplet=${{ steps.windows-env.outputs.triplet }}"
             "profile=release"
+            "vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}"
+            "vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}"
           ) | Set-Content -LiteralPath (Join-Path $sdk "salts-sdk-manifest.txt")
 
       - name: Save Windows installed Salts SDK cache
         uses: actions/cache/save@v4
         with:
           path: build/ci-salts-sdk
-          key: salts-sdk-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-release-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: salts-sdk-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.windows-env.outputs.image }}-${{ steps.windows-env.outputs.triplet }}-release-${{ steps.shared_deps.outputs.contract_version }}-${{ steps.shared_deps.outputs.cache_revision }}-${{ github.event.pull_request.head.sha || github.sha }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
 
       - name: Check exact head and unchanged tracked source
         if: always()
