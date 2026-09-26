@@ -2,6 +2,9 @@
 #include <cmeta/interface.h>
 #include <cmeta/method.h>
 
+#include <string.h>
+#include <cmeta/method.h>
+
 bool cmeta_function_data_desc_valid(
     const cmeta_function_data_desc *desc) {
     const cmeta_function_desc *function;
