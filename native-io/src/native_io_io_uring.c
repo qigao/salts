@@ -44,6 +44,13 @@
   #define SALTS_IO_URING_HAS_DEFER_TASKRUN 0
 #endif
 
+#if SALTS_IO_URING_HAS_DEFER_TASKRUN && defined(IORING_SETUP_TASKRUN_FLAG) && \
+    defined(IORING_SQ_TASKRUN) && defined(IORING_SQ_CQ_OVERFLOW)
+  #define SALTS_IO_URING_HAS_TASKRUN_FLAG 1
+#else
+  #define SALTS_IO_URING_HAS_TASKRUN_FLAG 0
+#endif
+
 typedef enum salts_io_uring_phase {
   SALTS_IO_URING_FREE = 0,
   SALTS_IO_URING_PENDING,
@@ -125,6 +132,7 @@ typedef struct salts_io_uring_impl {
   unsigned *sq_tail;
   unsigned *sq_mask;
   unsigned *sq_entries;
+  unsigned *sq_flags;
   unsigned *sq_array;
   unsigned *cq_head;
   unsigned *cq_tail;
@@ -133,6 +141,7 @@ typedef struct salts_io_uring_impl {
   bool single_mmap;
   bool ring_native_wait;
   bool defer_taskrun;
+  bool taskrun_flag;
   bool wake_poll_in_flight;
   bool admission_open;
   atomic_bool wake_pending;
@@ -984,6 +993,21 @@ static int uring_observe_poll_fallback(salts_io_uring_impl *impl,
   }
 }
 
+static bool uring_nonblocking_enter_required(const salts_io_uring_impl *impl) {
+#if SALTS_IO_URING_HAS_TASKRUN_FLAG
+  if (impl->taskrun_flag && impl->sq_flags != NULL) {
+    const unsigned flags =
+        atomic_load_explicit((const _Atomic unsigned *)impl->sq_flags, memory_order_acquire);
+    return (flags & (IORING_SQ_TASKRUN | IORING_SQ_CQ_OVERFLOW)) != 0u;
+  }
+#else
+  (void)impl;
+#endif
+  /* Without TASKRUN_FLAG the backend cannot distinguish idle from deferred
+   * task-work, so preserve the existing conservative GETEVENTS enter. */
+  return true;
+}
+
 static int uring_observe(salts_io_impl *base, native_io_completion *events, size_t event_capacity,
                          uint32_t timeout_ms, size_t *out_count) {
   salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
@@ -1018,7 +1042,22 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
       if (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
         status = uring_flush(&impl->base);
         if (status != SALTS_OK) return status;
+
+        /* A just-submitted request may already have a visible CQE. Return it
+         * before consulting SQ task-work hints or making another kernel entry. */
+        saw_wake = false;
+        status = uring_progress_cq(impl, &saw_wake);
+        if (status != SALTS_OK) return status;
+        if (impl->terminal_count != 0u || saw_wake) {
+          status = uring_flush_promoted(impl, &saw_wake);
+          if (status != SALTS_OK) return status;
+          uring_drain_terminals(impl, events, limit, out_count);
+          if (*out_count != 0u || saw_wake) return SALTS_OK;
+        }
       }
+
+      if (!uring_nonblocking_enter_required(impl)) return SALTS_ETIMEDOUT;
+
       status = uring_enter(impl, 0u, 0u, IORING_ENTER_GETEVENTS);
       if (status < 0) return status;
       saw_wake = false;
@@ -1165,6 +1204,7 @@ static int uring_map(salts_io_uring_impl *impl, const struct io_uring_params *pa
       !uring_field_fits(params->sq_off.tail, sizeof(unsigned), impl->sq_ring_size) ||
       !uring_field_fits(params->sq_off.ring_mask, sizeof(unsigned), impl->sq_ring_size) ||
       !uring_field_fits(params->sq_off.ring_entries, sizeof(unsigned), impl->sq_ring_size) ||
+      !uring_field_fits(params->sq_off.flags, sizeof(unsigned), impl->sq_ring_size) ||
       !uring_field_fits(params->sq_off.array, sizeof(unsigned), impl->sq_ring_size) ||
       !uring_field_fits(params->cq_off.head, sizeof(unsigned), impl->cq_ring_size) ||
       !uring_field_fits(params->cq_off.tail, sizeof(unsigned), impl->cq_ring_size) ||
@@ -1191,6 +1231,7 @@ static int uring_map(salts_io_uring_impl *impl, const struct io_uring_params *pa
   impl->sq_tail = uring_field(impl->sq_ring, params->sq_off.tail);
   impl->sq_mask = uring_field(impl->sq_ring, params->sq_off.ring_mask);
   impl->sq_entries = uring_field(impl->sq_ring, params->sq_off.ring_entries);
+  impl->sq_flags = uring_field(impl->sq_ring, params->sq_off.flags);
   impl->sq_array = uring_field(impl->sq_ring, params->sq_off.array);
   impl->cq_head = uring_field(impl->cq_ring, params->cq_off.head);
   impl->cq_tail = uring_field(impl->cq_ring, params->cq_off.tail);
@@ -1272,7 +1313,19 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
 #if SALTS_IO_URING_HAS_DEFER_TASKRUN
   params.flags |= IORING_SETUP_DEFER_TASKRUN;
 #endif
+#if SALTS_IO_URING_HAS_TASKRUN_FLAG
+  params.flags |= IORING_SETUP_TASKRUN_FLAG;
+#endif
   impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+#if SALTS_IO_URING_HAS_TASKRUN_FLAG
+  if (impl->ring_fd < 0 && errno == EINVAL) {
+    /* TASKRUN_FLAG is an optional userspace progress hint. Keep the accepted
+     * SINGLE_ISSUER | DEFER_TASKRUN owner policy when older kernels reject it. */
+    memset(&params, 0, sizeof(params));
+    params.flags = IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN;
+    impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+  }
+#endif
 #if SALTS_IO_URING_HAS_DEFER_TASKRUN
   if (impl->ring_fd < 0 && errno == EINVAL) {
     /* Linux 6.0 supports SINGLE_ISSUER before DEFER_TASKRUN (6.1). */
@@ -1320,6 +1373,11 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
   impl->defer_taskrun = (params.flags & IORING_SETUP_DEFER_TASKRUN) != 0u;
 #else
   impl->defer_taskrun = false;
+#endif
+#if SALTS_IO_URING_HAS_TASKRUN_FLAG
+  impl->taskrun_flag = (params.flags & IORING_SETUP_TASKRUN_FLAG) != 0u;
+#else
+  impl->taskrun_flag = false;
 #endif
   if (impl->ring_native_wait) {
     status = uring_arm_wake_poll(impl);

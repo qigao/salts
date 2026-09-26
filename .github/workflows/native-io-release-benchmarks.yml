@@ -284,7 +284,8 @@ jobs:
               cnet_packet_endpoint_test cnet_stop_contract_test \
               cnet_vsock_integration_test \
               cnet_benchmark_stats_test cnet_io_benchmark_config_test \
-              concurrency_deadline_queue_test native_io_queue_depth_benchmark
+              concurrency_deadline_queue_test native_io_queue_depth_benchmark \
+              native_io_idle_observe_benchmark
 
       - name: Configure Windows Release
         if: matrix.family == 'windows'
@@ -429,6 +430,29 @@ jobs:
           ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## libuv versus NativeIO direct/coroutine versus CNet: $env:BENCHMARK_HOST"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO io_uring idle observe benchmark
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_IDLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_idle_observe_benchmark
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_IDLE_EXECUTABLE
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "idle observe benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_IDLE_OBSERVE_OUTPUT = Join-Path $resultDir "native-io-idle-observe"
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "native-io-idle-observe.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./native-io/benchmarks/verify_idle_observe_benchmark.ps1 -Path "$env:NATIVE_IO_IDLE_OBSERVE_OUTPUT.csv"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO io_uring idle observe(0)"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
