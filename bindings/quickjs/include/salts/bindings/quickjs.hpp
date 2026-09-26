@@ -29,7 +29,7 @@ class Context {
     if (context_ == nullptr || name == nullptr || name[0] == '\0')
       return CMETA_INVALID_ARGUMENT;
 
-    status = detail::make_object_ref(
+    status = ::Salts::detail::make_object_ref(
         borrowed, data, provider, &object);
     if (status != CMETA_OK)
       return status;
