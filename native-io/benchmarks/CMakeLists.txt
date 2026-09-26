@@ -48,6 +48,18 @@ endif()
 
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  cmake_add_benchmark(native_io_vsock_styles_benchmark
+    SOURCES native_io_vsock_styles_benchmark.c
+    LIBS Salts::NativeIO Salts::Platform
+    FOLDER "native-io/benchmarks")
+  set_target_properties(native_io_vsock_styles_benchmark PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF)
+endif()
+
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   cmake_add_benchmark(native_io_queue_depth_benchmark
     SOURCES native_io_queue_depth_benchmark.c
     LIBS Salts::NativeIO Salts::Platform
