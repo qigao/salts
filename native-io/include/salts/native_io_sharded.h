@@ -116,6 +116,18 @@ typedef struct native_io_sharded_ownership {
   void *arg;
 } native_io_sharded_ownership;
 
+/**
+ * Reports owner-local raw NativeIO admission for one accepted routed operation.
+ *
+ * The callback runs on the endpoint owner shard. SALTS_OK carries a valid
+ * shard-bound request. Any other status carries an invalid request and means no
+ * raw NativeIO request was created. This is an admission/control result, not a
+ * synthesized I/O terminal completion.
+ */
+typedef void (*native_io_sharded_admission_fn)(
+    native_io_sharded_context *context, int status,
+    native_io_sharded_request request, void *arg);
+
 SALTS_NATIVE_IO_C_API bool native_io_sharded_endpoint_valid(native_io_sharded_endpoint endpoint);
 SALTS_NATIVE_IO_C_API bool native_io_sharded_request_valid(native_io_sharded_request request);
 SALTS_NATIVE_IO_C_API bool
@@ -204,6 +216,35 @@ SALTS_NATIVE_IO_C_API int native_io_sharded_submit_to(native_io_sharded *runtime
 SALTS_NATIVE_IO_C_API int native_io_sharded_try_submit_to(native_io_sharded *runtime,
                                                           size_t shard,
                                                           const native_io_sharded_task *task);
+
+/**
+ * Routes one explicitly owned operation to its endpoint's fixed owner shard.
+ *
+ * SALTS_OK means the bounded routing command was accepted, not that raw NativeIO
+ * admission succeeded. admission, when non-NULL, reports the owner-local raw
+ * admission result exactly once for every accepted route. On successful raw
+ * admission the ownership token transfers to the request and settles only at
+ * terminal observe. On owner-local admission failure or executor cancellation,
+ * admission runs first and ownership.finalize then runs exactly once.
+ *
+ * Rejected routing admission transfers no ownership and invokes no callback.
+ * The owner shard is taken only from operation->endpoint; there is no explicit
+ * alternate-shard parameter, silent forwarding, or live endpoint migration.
+ */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_submit_owned(native_io_sharded *runtime,
+                               const native_io_sharded_operation *operation,
+                               const native_io_sharded_ownership *ownership,
+                               native_io_sharded_admission_fn admission,
+                               void *admission_arg);
+
+/** Nonblocking counterpart of native_io_sharded_submit_owned. */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_try_submit_owned(native_io_sharded *runtime,
+                                   const native_io_sharded_operation *operation,
+                                   const native_io_sharded_ownership *ownership,
+                                   native_io_sharded_admission_fn admission,
+                                   void *admission_arg);
 
 /**
  * Closes public routing admission and queues owner-local backend teardown after

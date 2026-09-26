@@ -159,10 +159,19 @@ This ownership carrier is intentionally independent of `mem_buffer_t` and
 `Salts::Core`. CNet may retain a `mem_buffer_t` and use the generic finalizer
 to release that retain; another consumer may move-own storage instead.
 
-A later routing slice still supplies the one-call cross-shard operation facade.
-It must route only the bounded descriptor plus this explicit ownership token;
-it must never make an arbitrary raw borrowed pointer cross-shard-safe by
-implication.
+The current cross-shard admission slice adds a one-call owned-operation route.
+It copies only the bounded operation descriptor, explicit ownership token and
+optional admission callback into preallocated per-shard route storage, then
+dispatches only to `endpoint.owner_shard`. A rejected route transfers nothing.
+Once the route is accepted, owner-local raw admission either transfers the token
+again into the authoritative request slot or reports an admission/control error
+and finalizes the route-owned token. The admission callback is not an I/O
+completion and never becomes a second terminal truth source.
+
+This slice still relies on owner-side observe to progress and settle raw
+requests. Automatic owner progress, shutdown cancellation/drain and bounded
+reply routing remain later #474/#475 work. No arbitrary raw borrowed pointer is
+made cross-shard-safe by implication.
 
 ## 3. Endpoint/data-plane categories
 

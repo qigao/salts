@@ -24,6 +24,8 @@ int main() {
   const auto sharded_owner_submit = &native_io_sharded_context_submit;
   const auto sharded_owner_submit_owned = &native_io_sharded_context_submit_owned;
   const auto sharded_owner_prepare_owned = &native_io_sharded_context_prepare_owned;
+  const auto sharded_submit_owned = &native_io_sharded_submit_owned;
+  const auto sharded_try_submit_owned = &native_io_sharded_try_submit_owned;
   static_assert(std::is_standard_layout_v<native_io_endpoint>);
   static_assert(std::is_standard_layout_v<native_io_sharded_config>);
   static_assert(std::is_standard_layout_v<native_io_sharded_endpoint>);
@@ -48,6 +50,8 @@ int main() {
   (void)sharded_owner_submit;
   (void)sharded_owner_submit_owned;
   (void)sharded_owner_prepare_owned;
+  (void)sharded_submit_owned;
+  (void)sharded_try_submit_owned;
   return native_io_endpoint_valid(endpoint) && native_io_request_valid(request) &&
                  pipe_read == NATIVE_IO_OPERATION_PIPE_READ &&
                  NATIVE_IO_OPERATION_PIPE_WRITE == 6 &&
