@@ -207,6 +207,25 @@ bool native_io_coroutine_task_valid(native_io_coroutine_task task) {
   return task.slot != 0u && task.generation != 0u;
 }
 
+bool native_io_vector_operation_valid(const native_io_vector_operation *operation) {
+  size_t total = 0u;
+  if (operation == NULL || !native_io_endpoint_valid(operation->endpoint) ||
+      operation->spans == NULL || operation->span_count == 0u ||
+      operation->span_count > NATIVE_IO_VECTOR_MAX)
+    return false;
+  if (operation->kind != NATIVE_IO_OPERATION_STREAM_SEND &&
+      operation->kind != NATIVE_IO_OPERATION_PIPE_WRITE)
+    return false;
+  for (size_t index = 0u; index < operation->span_count; ++index) {
+    const native_io_buffer_span *span = &operation->spans[index];
+    if (span->data == NULL || span->length == 0u || span->length > (size_t)UINT32_MAX ||
+        span->length > (size_t)UINT32_MAX - total)
+      return false;
+    total += span->length;
+  }
+  return total != 0u;
+}
+
 bool native_io_operation_valid(const native_io_operation *operation) {
   if (operation == NULL || !native_io_endpoint_valid(operation->endpoint)) return false;
   if (operation->kind == NATIVE_IO_OPERATION_STREAM_CONNECT)
@@ -295,6 +314,15 @@ int native_io_backend_release_pipe(native_io_backend *backend, native_io_endpoin
   return impl->ops->release_pipe(impl, endpoint);
 }
 
+bool native_io_backend_endpoint_supports_vector_write(const native_io_backend *backend,
+                                                      native_io_endpoint endpoint) {
+  const salts_io_impl *impl = native_io_const_impl(backend);
+  if (impl == NULL || impl->ops == NULL || impl->ops->supports_vector_write == NULL ||
+      !native_io_endpoint_valid(endpoint))
+    return false;
+  return impl->ops->supports_vector_write(impl, endpoint);
+}
+
 int native_io_backend_submit(native_io_backend *backend, const native_io_operation *operation,
                              native_io_request *out_request) {
   salts_io_impl *impl = native_io_impl(backend);
@@ -303,6 +331,18 @@ int native_io_backend_submit(native_io_backend *backend, const native_io_operati
       !native_io_operation_valid(operation) || out_request == NULL)
     return SALTS_EINVAL;
   return impl->ops->submit(impl, operation, out_request);
+}
+
+int native_io_backend_submit_vector(native_io_backend *backend,
+                                    const native_io_vector_operation *operation,
+                                    native_io_request *out_request) {
+  salts_io_impl *impl = native_io_impl(backend);
+  if (out_request != NULL) *out_request = (native_io_request){0};
+  if (impl == NULL || impl->ops == NULL || !native_io_vector_operation_valid(operation) ||
+      out_request == NULL)
+    return SALTS_EINVAL;
+  if (impl->ops->submit_vector == NULL) return SALTS_ENOTSUP;
+  return impl->ops->submit_vector(impl, operation, out_request);
 }
 
 int native_io_backend_prepare(native_io_backend *backend, const native_io_operation *operation,
@@ -415,6 +455,45 @@ int native_io_coroutine_await_prepared(native_io_coroutine *coroutine,
                                        const native_io_operation *operation,
                                        native_io_completion *out_completion) {
   return native_io_coroutine_await_impl(coroutine, operation, out_completion, true);
+}
+
+int native_io_coroutine_await_vector(native_io_coroutine *coroutine,
+                                     const native_io_vector_operation *operation,
+                                     native_io_completion *out_completion) {
+  native_io_coroutine_owner *owner;
+  native_io_coroutine_request_owner *request_owner;
+  native_io_request request = {0};
+  int status;
+
+  if (out_completion != NULL) *out_completion = (native_io_completion){0};
+  if (coroutine == NULL || !coroutine->active || coroutine->owner == NULL ||
+      coroutine->frame == NULL || coro_running() != coroutine->frame ||
+      !native_io_vector_operation_valid(operation) || out_completion == NULL ||
+      coroutine->waiting)
+    return SALTS_EINVAL;
+  owner = coroutine->owner;
+  if (owner->impl->ops->submit_vector == NULL) return SALTS_ENOTSUP;
+  status = owner->impl->ops->submit_vector(owner->impl, operation, &request);
+  if (status != SALTS_OK) return status;
+  if (request.slot > owner->task_capacity) {
+    (void)owner->impl->ops->cancel(owner->impl, request);
+    return SALTS_EPROTO;
+  }
+  request_owner = &owner->request_owners[request.slot - 1u];
+  if (request_owner->coroutine != NULL) {
+    (void)owner->impl->ops->cancel(owner->impl, request);
+    return SALTS_EPROTO;
+  }
+  request_owner->coroutine = coroutine;
+  request_owner->generation = request.generation;
+  coroutine->request = request;
+  coroutine->waiting = true;
+  coroutine->completion_ready = false;
+  if (coro_yield() != 0 || !coroutine->completion_ready) return SALTS_EPROTO;
+  *out_completion = coroutine->completion;
+  coroutine->completion = (native_io_completion){0};
+  coroutine->completion_ready = false;
+  return SALTS_OK;
 }
 
 int native_io_backend_cancel_coroutine(native_io_backend *backend, native_io_coroutine_task task) {
