@@ -21,7 +21,7 @@ static bool enable_ring_wait;
 static unsigned poll_calls;
 static unsigned setup_calls;
 static unsigned setup_flags[BATCH_TEST_CALLS];
-static bool reject_defer_taskrun_once;
+static unsigned reject_setup_flags;
 static unsigned reject_nonzero_setups;
 
 static int batch_test_poll(struct pollfd *fds, nfds_t count, int timeout) {
@@ -66,15 +66,11 @@ static long batch_test_syscall(long number, ...) {
     struct io_uring_params *parameters = va_arg(arguments, struct io_uring_params *);
     if (setup_calls < BATCH_TEST_CALLS) setup_flags[setup_calls] = parameters->flags;
     ++setup_calls;
-#if defined(IORING_SETUP_DEFER_TASKRUN)
-    if (reject_defer_taskrun_once &&
-        (parameters->flags & IORING_SETUP_DEFER_TASKRUN) != 0u) {
-      reject_defer_taskrun_once = false;
+    if (reject_setup_flags != 0u &&
+        (parameters->flags & reject_setup_flags) != 0u) {
       errno = EINVAL;
       result = -1;
-    } else
-#endif
-    if (reject_nonzero_setups != 0u && parameters->flags != 0u) {
+    } else if (reject_nonzero_setups != 0u && parameters->flags != 0u) {
       --reject_nonzero_setups;
       errno = EINVAL;
       result = -1;
@@ -172,7 +168,7 @@ spec("io_uring explicit batch submission") {
     poll_calls = 0u;
     setup_calls = 0u;
     memset(setup_flags, 0, sizeof(setup_flags));
-    reject_defer_taskrun_once = false;
+    reject_setup_flags = 0u;
     reject_nonzero_setups = 0u;
   }
 #if defined(IORING_SETUP_SINGLE_ISSUER)
@@ -188,9 +184,34 @@ spec("io_uring explicit batch submission") {
     defined(IORING_ENTER_EXT_ARG)
     check_true((setup_flags[0] & IORING_SETUP_DEFER_TASKRUN) != 0u);
 #endif
+#if defined(IORING_SETUP_NO_SQARRAY)
+    check_true((setup_flags[0] & IORING_SETUP_NO_SQARRAY) != 0u);
+    if (setup_calls == 1u) {
+      salts_io_uring_impl *impl = backend.impl;
+      check_equal(impl->sq_array, NULL);
+    }
+#endif
     check_equal(native_io_backend_close(&backend), SALTS_OK);
     check_equal(native_io_backend_destroy(&backend), SALTS_OK);
   }
+
+#if defined(IORING_SETUP_NO_SQARRAY)
+  it("falls back from unsupported no-sqarray to the existing owner setup") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+
+    enable_ring_wait = true;
+    reject_setup_flags = IORING_SETUP_NO_SQARRAY;
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    check_greater_equal(setup_calls, 2u);
+    check_true((setup_flags[0] & IORING_SETUP_NO_SQARRAY) != 0u);
+    check_equal(setup_flags[1] & IORING_SETUP_NO_SQARRAY, 0u);
+    salts_io_uring_impl *impl = backend.impl;
+    check_true(impl->sq_array != NULL);
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+  }
+#endif
 
 #if defined(IORING_SETUP_DEFER_TASKRUN) && defined(IORING_FEAT_EXT_ARG) && \
     defined(IORING_ENTER_EXT_ARG)
@@ -199,12 +220,18 @@ spec("io_uring explicit batch submission") {
     const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
 
     enable_ring_wait = true;
-    reject_defer_taskrun_once = true;
+    reject_setup_flags = IORING_SETUP_DEFER_TASKRUN;
     check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+#if defined(IORING_SETUP_NO_SQARRAY)
+    check_equal(setup_calls, 3u);
+    check_true((setup_flags[0] & IORING_SETUP_NO_SQARRAY) != 0u);
+    check_true((setup_flags[1] & IORING_SETUP_DEFER_TASKRUN) != 0u);
+    check_equal(setup_flags[2], (unsigned)IORING_SETUP_SINGLE_ISSUER);
+#else
     check_equal(setup_calls, 2u);
-    check_true((setup_flags[0] & IORING_SETUP_SINGLE_ISSUER) != 0u);
     check_true((setup_flags[0] & IORING_SETUP_DEFER_TASKRUN) != 0u);
     check_equal(setup_flags[1], (unsigned)IORING_SETUP_SINGLE_ISSUER);
+#endif
     salts_io_uring_impl *impl = backend.impl;
     check_false(impl->defer_taskrun);
     check_equal(native_io_backend_close(&backend), SALTS_OK);
@@ -217,15 +244,26 @@ spec("io_uring explicit batch submission") {
     const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
 
     enable_ring_wait = true;
-#if defined(IORING_SETUP_DEFER_TASKRUN) && defined(IORING_FEAT_EXT_ARG) && \
-    defined(IORING_ENTER_EXT_ARG)
+#if defined(IORING_SETUP_NO_SQARRAY) && defined(IORING_SETUP_DEFER_TASKRUN) && \
+    defined(IORING_FEAT_EXT_ARG) && defined(IORING_ENTER_EXT_ARG)
+    reject_nonzero_setups = 3u;
+#elif defined(IORING_SETUP_DEFER_TASKRUN) && defined(IORING_FEAT_EXT_ARG) && \
+      defined(IORING_ENTER_EXT_ARG)
     reject_nonzero_setups = 2u;
 #else
     reject_nonzero_setups = 1u;
 #endif
     check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
-#if defined(IORING_SETUP_DEFER_TASKRUN) && defined(IORING_FEAT_EXT_ARG) && \
-    defined(IORING_ENTER_EXT_ARG)
+#if defined(IORING_SETUP_NO_SQARRAY) && defined(IORING_SETUP_DEFER_TASKRUN) && \
+    defined(IORING_FEAT_EXT_ARG) && defined(IORING_ENTER_EXT_ARG)
+    check_equal(setup_calls, 4u);
+    check_true((setup_flags[0] & IORING_SETUP_NO_SQARRAY) != 0u);
+    check_equal(setup_flags[1],
+                (unsigned)(IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN));
+    check_equal(setup_flags[2], (unsigned)IORING_SETUP_SINGLE_ISSUER);
+    check_equal(setup_flags[3], 0u);
+#elif defined(IORING_SETUP_DEFER_TASKRUN) && defined(IORING_FEAT_EXT_ARG) && \
+      defined(IORING_ENTER_EXT_ARG)
     check_equal(setup_calls, 3u);
     check_true((setup_flags[0] & IORING_SETUP_DEFER_TASKRUN) != 0u);
     check_equal(setup_flags[1], (unsigned)IORING_SETUP_SINGLE_ISSUER);
