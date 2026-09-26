@@ -466,6 +466,50 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
+      - name: Trace NativeIO STREAM execution-style mechanisms
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: bash
+        env:
+          NATIVE_IO_STREAM_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_stream_styles_benchmark
+          NATIVE_IO_STREAM_STYLE_BACKEND: ${{ matrix.backend }}
+        run: |
+          set -euo pipefail
+          trace_dir="native-io-results/stream-style-syscalls"
+          mkdir -p "$trace_dir"
+          benchmark="$GITHUB_WORKSPACE/$NATIVE_IO_STREAM_STYLE_EXECUTABLE"
+          test -x "$benchmark"
+          for style in direct coroutine sharded_same_owner sharded_cross_owner; do
+            export NATIVE_IO_STREAM_STYLE_TRACE="$style:32768"
+            label="stream-$style-32768"
+            strace -ff -ttt -T -s 256 \
+              -e trace=%network,read,readv,write,writev,poll,ppoll,epoll_ctl,epoll_wait,epoll_pwait,epoll_pwait2,io_uring_enter,futex \
+              -o "$trace_dir/$label.trace" \
+              "$benchmark" \
+              > "$trace_dir/$label.log" 2>&1
+          done
+          unset NATIVE_IO_STREAM_STYLE_TRACE
+
+      - name: Verify NativeIO STREAM mechanism evidence
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_STREAM_STYLE_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $traceDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results/stream-style-syscalls"
+          $styleCsv = Join-Path $env:GITHUB_WORKSPACE "native-io-results/native-io-stream-styles.csv"
+          $summary = & ./native-io/benchmarks/summarize_stream_style_trace.ps1 `
+            -Directory $traceDir `
+            -Backend $env:NATIVE_IO_STREAM_STYLE_BACKEND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $summary | Tee-Object -FilePath (Join-Path $traceDir "summary.md") |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          & ./native-io/benchmarks/verify_stream_mechanism_evidence.ps1 `
+            -StyleCsv $styleCsv `
+            -TraceCsv (Join-Path $traceDir "summary.csv") `
+            -Backend $env:NATIVE_IO_STREAM_STYLE_BACKEND
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run NativeIO UDP DATAGRAM execution-style benchmark
         if: steps.scope.outputs.adapted == 'true'
         shell: pwsh
