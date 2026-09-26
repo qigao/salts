@@ -313,7 +313,7 @@ spec("CNet retained buffer public send API") {
     check_equal(cnet_client_destroy(&client), SALTS_OK);
     cnet_send_buffer_test_close_socket(accepted);
     cnet_send_buffer_test_close_socket(listener);
-
+  }
 
   it("sends one retained middle slice and releases backing only after terminal") {
     cnet_client client = {0};
@@ -396,6 +396,5 @@ spec("CNet retained buffer public send API") {
     check_equal(cnet_client_destroy(&client), SALTS_OK);
     cnet_send_buffer_test_close_socket(accepted);
     cnet_send_buffer_test_close_socket(listener);
-  }
   }
 }
