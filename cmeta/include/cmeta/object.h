@@ -14,19 +14,41 @@ extern "C" {
 /**
  * Native object lifetime mode.
  *
- * Phase 1 intentionally admits only BORROWED. The caller owns the native
- * instance and every descriptor/provider referenced by the object handle and
- * must keep them alive for the complete handle lifetime. Releasing a borrowed
- * handle never destroys the native instance.
+ * Object ownership is separate from cmeta_data_desc value lifecycle and from
+ * any Plugin/module lease:
  *
- * Future shared/owned modes may extend this enum together with an explicit
- * object-lifetime provider. They are not inferred from cmeta_data_desc value
- * lifecycle and are not implemented by this contract.
+ * BORROWED: caller owns the object; release only clears the handle.
+ * SHARED:   lifecycle retain() succeeds once on admission; release() runs once.
+ * OWNED:    ownership is transferred; destroy() runs exactly once on release.
+ *
+ * Descriptor/provider/module lifetime is still externally borrowed. In
+ * particular a Plugin host must keep its DSO lease alive through object
+ * teardown; these callbacks do not retain a code module implicitly.
  */
 typedef enum cmeta_object_lifetime {
     CMETA_OBJECT_LIFETIME_NONE = 0,
-    CMETA_OBJECT_LIFETIME_BORROWED = 1
+    CMETA_OBJECT_LIFETIME_BORROWED = 1,
+    CMETA_OBJECT_LIFETIME_SHARED = 2,
+    CMETA_OBJECT_LIFETIME_OWNED = 3
 } cmeta_object_lifetime;
+
+typedef cmeta_status (*cmeta_object_retain_fn)(
+    void *context, void *object);
+typedef void (*cmeta_object_release_fn)(
+    void *context, void *object);
+typedef void (*cmeta_object_destroy_fn)(
+    void *context, void *object);
+
+typedef struct cmeta_object_lifecycle {
+    size_t size;
+    void *context;
+    cmeta_object_retain_fn retain;
+    cmeta_object_release_fn release;
+    cmeta_object_destroy_fn destroy;
+} cmeta_object_lifecycle;
+
+bool cmeta_object_lifecycle_valid(
+    const cmeta_object_lifecycle *lifecycle);
 
 /**
  * Provider-neutral reference to one native object instance.
@@ -70,11 +92,12 @@ typedef struct cmeta_object_ref {
     const cmeta_receiver_method_set *methods;
     const cmeta_object_method_provider *method_provider;
     cmeta_object_lifetime lifetime;
+    const cmeta_object_lifecycle *lifecycle;
 } cmeta_object_ref;
 
 #define CMETA_OBJECT_REF_INIT \
     { sizeof(cmeta_object_ref), NULL, NULL, NULL, NULL, \
-      CMETA_OBJECT_LIFETIME_NONE }
+      CMETA_OBJECT_LIFETIME_NONE, NULL }
 
 /** Validate one currently live canonical object reference. */
 bool cmeta_object_ref_valid(const cmeta_object_ref *ref);
@@ -102,10 +125,29 @@ cmeta_status cmeta_object_borrow_with_provider(
     const cmeta_object_method_provider *provider);
 
 /**
+ * Upgrade a BORROWED object handle to SHARED ownership.
+ *
+ * retain() is called exactly once. On failure the handle remains BORROWED.
+ * lifecycle must stay alive until cmeta_object_release().
+ */
+cmeta_status cmeta_object_share(
+    cmeta_object_ref *ref, const cmeta_object_lifecycle *lifecycle);
+
+/**
+ * Transfer ownership of a BORROWED object handle to CMeta.
+ *
+ * No callback runs at admission. destroy() runs exactly once on release.
+ * lifecycle must stay alive until cmeta_object_release().
+ */
+cmeta_status cmeta_object_take(
+    cmeta_object_ref *ref, const cmeta_object_lifecycle *lifecycle);
+
+/**
  * Clear one object reference.
  *
- * Phase-1 BORROWED release performs no native destruction and no provider or
- * module release. The referenced native object remains owned by its caller.
+ * BORROWED performs no object callback. SHARED calls lifecycle->release once.
+ * OWNED calls lifecycle->destroy once. No mode releases descriptor/provider/
+ * module leases; those remain an explicit outer-layer responsibility.
  */
 void cmeta_object_release(cmeta_object_ref *ref);
 
