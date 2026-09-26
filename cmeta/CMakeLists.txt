@@ -49,7 +49,9 @@ install(
 install(
   DIRECTORY include/cmeta
   DESTINATION include
-  FILES_MATCHING PATTERN "*.h")
+  FILES_MATCHING
+    PATTERN "*.h"
+    PATTERN "*.hpp")
 
 if(BUILD_TESTS)
   add_subdirectory(tests)
