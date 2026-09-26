@@ -867,7 +867,7 @@ static int uring_submit_staged_and_wait(salts_io_uring_impl *impl, uint32_t time
     const unsigned slot = (tail + count) & *impl->sq_mask;
     uring_prepare_operation(request, &impl->sqes[slot],
                             impl->endpoints[request->endpoint.slot - 1u].fd);
-    impl->sq_array[slot] = slot;
+    if (impl->sq_array != NULL) impl->sq_array[slot] = slot;
     pipe_write |= request->operation.kind == NATIVE_IO_OPERATION_PIPE_WRITE;
     index = request->staged_next;
     ++count;
