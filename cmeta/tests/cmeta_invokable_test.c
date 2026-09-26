@@ -285,6 +285,7 @@ spec("CMeta invokable bridge") {
         &receiver_increment_method, &increment_function));
 
     bound.invoke = invokable_box_bound_increment;
+    bound.dispatch = CMETA_CALLABLE_DISPATCH_ADAPTER;
     bound.capture_size = sizeof(receiver);
     memcpy(bound.capture.bytes, &receiver, sizeof(receiver));
 
