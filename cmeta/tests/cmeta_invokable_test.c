@@ -1,5 +1,6 @@
 #include <cmeta/invokable.h>
 #include <cmeta/interface.h>
+#include <string.h>
 #include "tinytest.h"
 
 typed_any(value, int, cmeta_invokable_increment, (int value)) {
@@ -293,6 +294,20 @@ spec("CMeta invokable bridge") {
                 CMETA_OK);
     check_equal(cmeta_invokable_invoke(&invokable, &output, args), CMETA_OK);
     check_equal(output, 12);
+  }
+
+  it("rejects malformed receiver metadata before projection matching") {
+    cmeta_receiver_method malformed = receiver_increment_method;
+    cmeta_function_abi_desc malformed_abi = receiver_increment_abi;
+    cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+
+    malformed_abi.param_count = 1u;
+    malformed.abi = &malformed_abi;
+    check_false(cmeta_receiver_method_reflection_valid(&malformed));
+    check_equal(cmeta_receiver_method_invokable_bind(
+                    &malformed, &increment_data,
+                    cmeta_invokable_increment, &invokable),
+                CMETA_INVALID_ARGUMENT);
   }
 
   it("rejects a receiver projection with changed semantics") {
