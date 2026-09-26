@@ -107,6 +107,16 @@ int cnet_owner_init(cnet_owner *owner, const cnet_owner_config *config);
 /** Processes bounded commands and directly settles one NativeIO completion batch. */
 int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms);
 
+/**
+ * Owner-thread direct receive admission.
+ *
+ * Adds bounded receive demand and schedules one owner-local rearm for the next
+ * drive when no read is active. It never publishes a callback synchronously.
+ * Callback reentrancy while a completion batch is being routed must stay on
+ * the deferred command path.
+ */
+int cnet_owner_receive_direct(cnet_owner *owner, cnet_session_handle session, size_t demand);
+
 /** Thread-safe advisory wake for an owner blocked in drive. */
 int cnet_owner_wake(cnet_owner *owner);
 

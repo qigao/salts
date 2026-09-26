@@ -891,26 +891,51 @@ int cnet_receive(cnet_client *client, cnet_connection connection, size_t demand)
   cnet_shard_connection internal = {0};
   cnet_client_record *record;
   int status;
+
   if (impl == NULL || demand == 0u) return SALTS_EINVAL;
-  salts_mutex_lock(&impl->lock);
-  if (!impl->admission_open) status = SALTS_ESHUTDOWN;
-  else {
-    record = cnet_client_find_record(impl, connection, &internal);
-    if (record == NULL) status = SALTS_ENOENT;
-    else if (record->observer.on_receive == NULL) status = SALTS_EINVAL;
-    else if (record->close_command_pending || record->tls_command_pending)
-      status = SALTS_EBUSY;
-    else if (demand > SIZE_MAX - record->receive_pending) {
-      cnet_session_state session_state = CNET_SESSION_FREE;
-      status = cnet_client_record_session_state(impl, record, &session_state);
-      if (status == SALTS_OK)
-        status = session_state == CNET_SESSION_OPEN ? SALTS_ERANGE : SALTS_EBUSY;
-    } else {
-      status = cnet_shards_receive(&impl->shards, internal, demand);
-      if (status == SALTS_OK) record->receive_pending += demand;
+
+  /*
+   * Callback-issued admission stays deferred: later entries in the NativeIO
+   * completion batch may still name request slots that an inline callback must
+   * not cause CNet to reuse. Ordinary owner calls have no in-batch hazard.
+   */
+  if (cnet_active_callback_client == impl) {
+    salts_mutex_lock(&impl->lock);
+    if (!impl->admission_open) status = SALTS_ESHUTDOWN;
+    else {
+      record = cnet_client_find_record(impl, connection, &internal);
+      if (record == NULL) status = SALTS_ENOENT;
+      else if (record->observer.on_receive == NULL) status = SALTS_EINVAL;
+      else if (record->close_command_pending || record->tls_command_pending)
+        status = SALTS_EBUSY;
+      else if (demand > SIZE_MAX - record->receive_pending) {
+        cnet_session_state session_state = CNET_SESSION_FREE;
+        status = cnet_client_record_session_state(impl, record, &session_state);
+        if (status == SALTS_OK)
+          status = session_state == CNET_SESSION_OPEN ? SALTS_ERANGE : SALTS_EBUSY;
+      } else {
+        status = cnet_shards_receive(&impl->shards, internal, demand);
+        if (status == SALTS_OK) record->receive_pending += demand;
+      }
     }
+    salts_mutex_unlock(&impl->lock);
+    return status;
   }
-  salts_mutex_unlock(&impl->lock);
+
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  record = cnet_client_find_record(impl, connection, &internal);
+  if (record == NULL) return SALTS_ENOENT;
+  if (record->observer.on_receive == NULL) return SALTS_EINVAL;
+  if (record->close_command_pending || record->tls_command_pending) return SALTS_EBUSY;
+  if (demand > SIZE_MAX - record->receive_pending) {
+    cnet_session_state session_state = CNET_SESSION_FREE;
+    status = cnet_client_record_session_state(impl, record, &session_state);
+    return status != SALTS_OK ? status
+                              : (session_state == CNET_SESSION_OPEN ? SALTS_ERANGE : SALTS_EBUSY);
+  }
+
+  status = cnet_shards_receive_direct(&impl->shards, internal, demand);
+  if (status == SALTS_OK) record->receive_pending += demand;
   return status;
 }
 

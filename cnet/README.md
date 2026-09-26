@@ -345,9 +345,13 @@ CNet's stream owner uses NativeIO direct completion ownership internally for
 TCP, VSOCK, and Pipe stream requests. A successful first submission stores the
 generation-checked NativeIO request in the bounded CNet request record; observed
 completions are routed back to that exact live record before CNet publishes the
-logical event. Callback-issued send/receive/close commands enter the same
-bounded local queue; they require no operating-system wake or owner-thread
-handoff.
+logical event. Owner-issued receive demand bypasses the client/shard admission
+locks and command queue: it is recorded directly in the canonical owner and
+placed on the bounded owner-local rearm queue for the next poll. Callback-issued
+receive remains deferred through the command queue because the owner may still
+be routing later completions in the current NativeIO batch; this prevents a
+callback from reusing a CNet request slot still named by that batch. No path
+requires an operating-system wake or owner-thread handoff.
 
 Cancellation is a request, not terminal evidence. CNet retains the request and
 any owned payload until the matching terminal NativeIO completion is observed;
