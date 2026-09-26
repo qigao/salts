@@ -12,6 +12,7 @@ typedef struct native_io_sharded_shard native_io_sharded_shard;
 typedef struct native_io_sharded_slot native_io_sharded_slot;
 typedef struct native_io_sharded_request_ownership native_io_sharded_request_ownership;
 typedef struct native_io_sharded_ownership_settlement native_io_sharded_ownership_settlement;
+typedef struct native_io_sharded_owned_route native_io_sharded_owned_route;
 
 struct native_io_sharded_context {
   native_io_sharded *runtime;
@@ -37,6 +38,20 @@ struct native_io_sharded_ownership_settlement {
   int active;
 };
 
+struct native_io_sharded_owned_route {
+  native_io_sharded *runtime;
+  native_io_sharded_shard *shard;
+  native_io_sharded_operation operation;
+  native_io_sharded_ownership ownership;
+  native_io_sharded_admission_fn admission;
+  void *admission_arg;
+  native_io_sharded_request request;
+  size_t index;
+  int admission_status;
+  int raw_owned;
+  int active;
+};
+
 struct native_io_sharded_shard {
   native_io_sharded *runtime;
   size_t index;
@@ -53,6 +68,10 @@ struct native_io_sharded_shard {
   size_t *free_slots;
   size_t slot_capacity;
   size_t free_count;
+  native_io_sharded_owned_route *owned_routes;
+  size_t *free_owned_routes;
+  size_t owned_route_capacity;
+  size_t free_owned_route_count;
   salts_mutex_t slot_lock;
   salts_cond_t slot_space;
 
@@ -242,6 +261,101 @@ static int native_io_sharded_claim_slot(native_io_sharded *runtime,
   return SALTS_OK;
 }
 
+static void native_io_sharded_release_owned_route(native_io_sharded_owned_route *route) {
+  native_io_sharded_shard *shard;
+  if (route == NULL || !route->active) return;
+  shard = route->shard;
+  salts_mutex_lock(&shard->slot_lock);
+  if (route->active) {
+    const size_t index = route->index;
+    native_io_sharded *runtime = route->runtime;
+    memset(route, 0, sizeof(*route));
+    route->runtime = runtime;
+    route->shard = shard;
+    route->index = index;
+    route->active = 0;
+    shard->free_owned_routes[shard->free_owned_route_count++] = index;
+    salts_cond_signal(&shard->slot_space);
+  }
+  salts_mutex_unlock(&shard->slot_lock);
+}
+
+static int native_io_sharded_claim_owned_route(
+    native_io_sharded *runtime, native_io_sharded_shard *shard,
+    const native_io_sharded_operation *operation,
+    const native_io_sharded_ownership *ownership,
+    native_io_sharded_admission_fn admission, void *admission_arg, int blocking,
+    native_io_sharded_owned_route **out_route) {
+  native_io_sharded_owned_route *route;
+  size_t index;
+
+  if (out_route != NULL) *out_route = NULL;
+  if (runtime == NULL || shard == NULL || operation == NULL || ownership == NULL ||
+      ownership->finalize == NULL || out_route == NULL)
+    return SALTS_EINVAL;
+
+  salts_mutex_lock(&shard->slot_lock);
+  for (;;) {
+    if (!atomic_load(&runtime->accepting)) {
+      salts_mutex_unlock(&shard->slot_lock);
+      return SALTS_ESHUTDOWN;
+    }
+    if (shard->free_owned_route_count != 0u) break;
+    if (!blocking) {
+      salts_mutex_unlock(&shard->slot_lock);
+      return SALTS_ENOBUFS;
+    }
+    if (native_io_sharded_in_callback(runtime)) {
+      salts_mutex_unlock(&shard->slot_lock);
+      return SALTS_EBUSY;
+    }
+    salts_cond_wait(&shard->slot_space, &shard->slot_lock);
+  }
+
+  index = shard->free_owned_routes[--shard->free_owned_route_count];
+  route = &shard->owned_routes[index];
+  route->operation = *operation;
+  route->ownership = *ownership;
+  route->admission = admission;
+  route->admission_arg = admission_arg;
+  route->request = (native_io_sharded_request){0};
+  route->admission_status = SALTS_EINVAL;
+  route->raw_owned = 0;
+  route->active = 1;
+  salts_mutex_unlock(&shard->slot_lock);
+
+  *out_route = route;
+  return SALTS_OK;
+}
+
+static void native_io_sharded_owned_route_run(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_owned_route *route = (native_io_sharded_owned_route *)arg;
+  route->admission_status = native_io_sharded_context_submit_owned(
+      context, &route->operation, &route->ownership, &route->request);
+  route->raw_owned = route->admission_status == SALTS_OK;
+  if (route->admission != NULL)
+    route->admission(context, route->admission_status, route->request, route->admission_arg);
+}
+
+static void native_io_sharded_owned_route_cancel(void *arg, int status) {
+  native_io_sharded_owned_route *route = (native_io_sharded_owned_route *)arg;
+  route->admission_status = status;
+  route->request = (native_io_sharded_request){0};
+  route->raw_owned = 0;
+  if (route->admission != NULL)
+    route->admission(&route->shard->context, status, route->request, route->admission_arg);
+}
+
+static void native_io_sharded_owned_route_finalize(void *arg) {
+  native_io_sharded_owned_route *route = (native_io_sharded_owned_route *)arg;
+  native_io_sharded_finalize_fn finalize = route->ownership.finalize;
+  void *ownership_arg = route->ownership.arg;
+  const int raw_owned = route->raw_owned;
+
+  if (!raw_owned && finalize != NULL) finalize(ownership_arg);
+  native_io_sharded_release_owned_route(route);
+}
+
 static void native_io_sharded_routed_run(coro_t *coroutine, void *arg) {
   native_io_sharded_slot *slot = (native_io_sharded_slot *)arg;
   native_io_sharded *runtime = slot->runtime;
@@ -311,6 +425,8 @@ static void native_io_sharded_destroy_storage(native_io_sharded *runtime) {
       free(shard->request_ownerships);
       free(shard->ownership_settlements);
       free(shard->completion_scratch);
+      free(shard->free_owned_routes);
+      free(shard->owned_routes);
       free(shard->free_slots);
       free(shard->slots);
       salts_mutex_destroy(&shard->slot_lock);
@@ -363,6 +479,7 @@ int native_io_sharded_create(const native_io_sharded_config *config,
 
   slot_capacity = config->queue_capacity_per_shard + 1u;
   if (slot_capacity > SIZE_MAX / sizeof(native_io_sharded_slot) ||
+      slot_capacity > SIZE_MAX / sizeof(native_io_sharded_owned_route) ||
       slot_capacity > SIZE_MAX / sizeof(size_t) ||
       (config->backend.completion_batch_capacity != 0u &&
        (config->backend.completion_batch_capacity > SIZE_MAX / sizeof(native_io_completion) ||
@@ -402,12 +519,18 @@ int native_io_sharded_create(const native_io_sharded_config *config,
     shard->context.shard = shard_index;
     shard->slot_capacity = slot_capacity;
     shard->free_count = slot_capacity;
+    shard->owned_route_capacity = slot_capacity;
+    shard->free_owned_route_count = slot_capacity;
     shard->completion_capacity = runtime->backend_config.completion_batch_capacity;
     shard->request_ownership_capacity = runtime->backend_config.request_capacity;
     salts_mutex_init(&shard->slot_lock);
     salts_cond_init(&shard->slot_space);
     shard->slots = (native_io_sharded_slot *)calloc(slot_capacity, sizeof(*shard->slots));
     shard->free_slots = (size_t *)calloc(slot_capacity, sizeof(*shard->free_slots));
+    shard->owned_routes =
+        (native_io_sharded_owned_route *)calloc(slot_capacity, sizeof(*shard->owned_routes));
+    shard->free_owned_routes =
+        (size_t *)calloc(slot_capacity, sizeof(*shard->free_owned_routes));
     if (shard->completion_capacity != 0u) {
       shard->completion_scratch = (native_io_completion *)calloc(
           shard->completion_capacity, sizeof(*shard->completion_scratch));
@@ -418,7 +541,8 @@ int native_io_sharded_create(const native_io_sharded_config *config,
       shard->request_ownerships = (native_io_sharded_request_ownership *)calloc(
           shard->request_ownership_capacity, sizeof(*shard->request_ownerships));
     if (shard->slot_lock == NULL || shard->slot_space == NULL || shard->slots == NULL ||
-        shard->free_slots == NULL ||
+        shard->free_slots == NULL || shard->owned_routes == NULL ||
+        shard->free_owned_routes == NULL ||
         (shard->completion_capacity != 0u &&
          (shard->completion_scratch == NULL || shard->ownership_settlements == NULL)) ||
         (shard->request_ownership_capacity != 0u && shard->request_ownerships == NULL)) {
@@ -430,6 +554,10 @@ int native_io_sharded_create(const native_io_sharded_config *config,
       shard->slots[slot].shard = shard;
       shard->slots[slot].index = slot;
       shard->free_slots[slot] = slot_capacity - slot - 1u;
+      shard->owned_routes[slot].runtime = runtime;
+      shard->owned_routes[slot].shard = shard;
+      shard->owned_routes[slot].index = slot;
+      shard->free_owned_routes[slot] = slot_capacity - slot - 1u;
     }
   }
 
@@ -544,6 +672,54 @@ int native_io_sharded_submit_to(native_io_sharded *runtime, size_t shard,
 int native_io_sharded_try_submit_to(native_io_sharded *runtime, size_t shard,
                                     const native_io_sharded_task *task) {
   return native_io_sharded_submit_internal(runtime, shard, task, 0);
+}
+
+static int native_io_sharded_submit_owned_internal(
+    native_io_sharded *runtime, const native_io_sharded_operation *operation,
+    const native_io_sharded_ownership *ownership,
+    native_io_sharded_admission_fn admission, void *admission_arg, int blocking) {
+  native_io_sharded_owned_route *route = NULL;
+  native_io_sharded_shard *shard;
+  native_io_sharded_task task;
+  size_t shard_index;
+  int status;
+
+  if (runtime == NULL || operation == NULL || ownership == NULL ||
+      ownership->finalize == NULL || !native_io_sharded_operation_valid(operation))
+    return SALTS_EINVAL;
+  if (operation->endpoint.owner_identity != runtime->identity) return SALTS_ENOENT;
+  shard_index = (size_t)operation->endpoint.owner_shard;
+  if (shard_index >= runtime->shard_count) return SALTS_ENOENT;
+  shard = &runtime->shards[shard_index];
+
+  status = native_io_sharded_claim_owned_route(
+      runtime, shard, operation, ownership, admission, admission_arg, blocking, &route);
+  if (status != SALTS_OK) return status;
+
+  task = (native_io_sharded_task){
+      native_io_sharded_owned_route_run, native_io_sharded_owned_route_cancel,
+      native_io_sharded_owned_route_finalize, route};
+  status = native_io_sharded_submit_internal(runtime, shard_index, &task, blocking);
+  if (status != SALTS_OK) native_io_sharded_release_owned_route(route);
+  return status;
+}
+
+int native_io_sharded_submit_owned(native_io_sharded *runtime,
+                                   const native_io_sharded_operation *operation,
+                                   const native_io_sharded_ownership *ownership,
+                                   native_io_sharded_admission_fn admission,
+                                   void *admission_arg) {
+  return native_io_sharded_submit_owned_internal(
+      runtime, operation, ownership, admission, admission_arg, 1);
+}
+
+int native_io_sharded_try_submit_owned(native_io_sharded *runtime,
+                                       const native_io_sharded_operation *operation,
+                                       const native_io_sharded_ownership *ownership,
+                                       native_io_sharded_admission_fn admission,
+                                       void *admission_arg) {
+  return native_io_sharded_submit_owned_internal(
+      runtime, operation, ownership, admission, admission_arg, 0);
 }
 
 int native_io_sharded_shutdown(native_io_sharded *runtime) {
