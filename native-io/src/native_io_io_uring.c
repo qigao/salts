@@ -1015,9 +1015,12 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
 
   if (timeout_ms == 0u) {
     if (impl->defer_taskrun) {
-      bool timed_out = false;
-      status = uring_submit_staged_and_wait(impl, 0u, &timed_out);
-      if (status != SALTS_OK && status != -EINTR && !timed_out) return status;
+      if (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
+        status = uring_flush(&impl->base);
+        if (status != SALTS_OK) return status;
+      }
+      status = uring_enter(impl, 0u, 0u, IORING_ENTER_GETEVENTS);
+      if (status < 0) return status;
       saw_wake = false;
       status = uring_progress_cq(impl, &saw_wake);
       if (status != SALTS_OK) return status;
