@@ -25,6 +25,7 @@ typedef struct cnet_write_entry {
   cnet_session_handle connection;
   mem_buffer_t *payload;
   size_t size;
+  size_t base_offset;
   size_t offset;
   size_t copied_bytes;
   uint32_t generation;
@@ -93,9 +94,9 @@ static int cnet_write_validate_payload(cnet_write_queue_impl *impl, cnet_session
 }
 
 static int cnet_write_enqueue_owned(cnet_write_queue_impl *impl, cnet_session_handle connection,
-                                    mem_buffer_t *payload, size_t size, size_t copied_bytes,
-                                    cnet_write_payload_kind payload_kind, bool close_after_send,
-                                    cnet_write_handle *out_handle) {
+                                    mem_buffer_t *payload, size_t size, size_t base_offset,
+                                    size_t copied_bytes, cnet_write_payload_kind payload_kind,
+                                    bool close_after_send, cnet_write_handle *out_handle) {
   const size_t connection_index = cnet_write_connection_index(impl, connection);
   cnet_write_entry *entry;
   uint32_t slot;
@@ -121,6 +122,7 @@ static int cnet_write_enqueue_owned(cnet_write_queue_impl *impl, cnet_session_ha
   entry->connection = connection;
   entry->payload = payload;
   entry->size = size;
+  entry->base_offset = base_offset;
   entry->offset = 0u;
   entry->copied_bytes = copied_bytes;
   entry->next = CNET_WRITE_SLOT_NONE;
@@ -225,7 +227,7 @@ int cnet_write_queue_enqueue_copy(cnet_write_queue *queue, cnet_session_handle c
   if (payload == NULL) return SALTS_ENOMEM;
   memcpy(mem_buffer_data(payload), data, size);
   mem_set_used(payload, size);
-  status = cnet_write_enqueue_owned(impl, connection, payload, size, size,
+  status = cnet_write_enqueue_owned(impl, connection, payload, size, 0u, size,
                                     CNET_WRITE_PAYLOAD_COPIED, close_after_send, out_handle);
   if (status != SALTS_OK) mem_buffer_release(payload);
   return status;
@@ -261,7 +263,7 @@ int cnet_write_queue_enqueuev_copy(cnet_write_queue *queue, cnet_session_handle 
     offset += segments[index].size;
   }
   mem_set_used(payload, total);
-  status = cnet_write_enqueue_owned(impl, connection, payload, total, total,
+  status = cnet_write_enqueue_owned(impl, connection, payload, total, 0u, total,
                                     CNET_WRITE_PAYLOAD_COPIED, close_after_send, out_handle);
   if (status != SALTS_OK) mem_buffer_release(payload);
   return status;
@@ -285,7 +287,55 @@ int cnet_write_queue_enqueue_buffer(cnet_write_queue *queue, cnet_session_handle
 
   payload = mem_buffer_retain(buffer);
   if (payload == NULL) return SALTS_EINVAL;
-  status = cnet_write_enqueue_owned(impl, connection, payload, size, 0u,
+  status = cnet_write_enqueue_owned(impl, connection, payload, size, 0u, 0u,
+                                    CNET_WRITE_PAYLOAD_RETAINED, close_after_send, out_handle);
+  if (status != SALTS_OK) mem_buffer_release(payload);
+  return status;
+}
+
+static int cnet_write_slice_canonical(const mem_slice_t *slice, size_t *out_offset) {
+  const char *backing;
+  size_t used;
+  uintptr_t base;
+  uintptr_t data;
+  uintptr_t delta;
+
+  if (out_offset == NULL) return SALTS_EINVAL;
+  *out_offset = 0u;
+  if (slice == NULL || slice->buffer == NULL || slice->data == NULL || slice->length == 0u)
+    return SALTS_EINVAL;
+  backing = mem_buffer_const_data(slice->buffer);
+  used = mem_buffer_used(slice->buffer);
+  if (backing == NULL || used == 0u) return SALTS_EINVAL;
+  base = (uintptr_t)(const void *)backing;
+  data = (uintptr_t)(const void *)slice->data;
+  if (data < base) return SALTS_EINVAL;
+  delta = data - base;
+  if (delta > (uintptr_t)SIZE_MAX) return SALTS_EINVAL;
+  *out_offset = (size_t)delta;
+  if (*out_offset >= used || slice->length > used - *out_offset) return SALTS_EINVAL;
+  return SALTS_OK;
+}
+
+int cnet_write_queue_enqueue_slice(cnet_write_queue *queue, cnet_session_handle connection,
+                                   const mem_slice_t *slice, bool close_after_send,
+                                   cnet_write_handle *out_handle) {
+  cnet_write_queue_impl *impl = cnet_write_impl(queue);
+  mem_buffer_t *payload;
+  size_t base_offset = 0u;
+  int status;
+
+  if (out_handle == NULL) return SALTS_EINVAL;
+  *out_handle = (cnet_write_handle){0};
+  if (impl == NULL) return SALTS_EINVAL;
+  status = cnet_write_slice_canonical(slice, &base_offset);
+  if (status != SALTS_OK) return status;
+  status = cnet_write_validate_payload(impl, connection, slice->length);
+  if (status != SALTS_OK) return status;
+
+  payload = mem_buffer_retain(slice->buffer);
+  if (payload == NULL) return SALTS_EINVAL;
+  status = cnet_write_enqueue_owned(impl, connection, payload, slice->length, base_offset, 0u,
                                     CNET_WRITE_PAYLOAD_RETAINED, close_after_send, out_handle);
   if (status != SALTS_OK) mem_buffer_release(payload);
   return status;
@@ -313,7 +363,8 @@ int cnet_write_queue_peek(cnet_write_queue *queue, cnet_session_handle connectio
   *out_view = (cnet_write_view){
       .handle = {slot + 1u, entry->generation},
       .connection = entry->connection,
-      .data = (const unsigned char *)mem_buffer_const_data(entry->payload) + entry->offset,
+      .data = (const unsigned char *)mem_buffer_const_data(entry->payload) +
+              entry->base_offset + entry->offset,
       .size = entry->size,
       .offset = entry->offset,
       .remaining = entry->size - entry->offset,
@@ -362,6 +413,7 @@ static int cnet_write_release_slot(cnet_write_queue_impl *impl, size_t connectio
   entry->connection = (cnet_session_handle){0};
   entry->payload = NULL;
   entry->size = 0u;
+  entry->base_offset = 0u;
   entry->offset = 0u;
   entry->copied_bytes = 0u;
   entry->next = CNET_WRITE_SLOT_NONE;
