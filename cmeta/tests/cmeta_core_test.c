@@ -4,6 +4,7 @@
 
 #include <math.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 _Static_assert(CMETA_FLOAT_TRAITS_OBJECT_HASH_WIDTHS,
@@ -586,6 +587,59 @@ suite("CMeta core") {
         check_null(cmeta_type_int_ptr.traits);
         check_true((cmeta_type_bool.traits->flags & required) == required);
         check_true((cmeta_type_long.traits->flags & required) == required);
+    }
+
+    it("publishes complete canonical traits for exact-width integers") {
+        const cmeta_trait_flags required =
+            CMETA_TRAIT_EQUAL | CMETA_TRAIT_HASH | CMETA_TRAIT_COMPARE |
+            CMETA_TRAIT_COPY | CMETA_TRAIT_MOVE | CMETA_TRAIT_DESTROY |
+            CMETA_TRAIT_TRIVIAL_COPY | CMETA_TRAIT_TRIVIAL_DESTROY;
+        const cmeta_type_desc *const types[] = {
+            &cmeta_type_int8, &cmeta_type_uint8,
+            &cmeta_type_int16, &cmeta_type_uint16,
+            &cmeta_type_int32, &cmeta_type_uint32,
+            &cmeta_type_int64, &cmeta_type_uint64
+        };
+        size_t index;
+
+        for (index = 0u; index < sizeof(types) / sizeof(types[0]); ++index) {
+            check_not_null(types[index]->traits);
+            check_true((types[index]->traits->flags & required) == required);
+            check_equal(cmeta_type_require_traits(types[index], required),
+                        CMETA_OK);
+        }
+
+#define CMETA_CHECK_EXACT_INTEGER(type_, desc_, low_, high_) do { \
+        type_ low = (type_)(low_); \
+        type_ high = (type_)(high_); \
+        type_ copied = (type_)0; \
+        type_ moved = (type_)0; \
+        const cmeta_type_traits *traits = (desc_)->traits; \
+        check_true(traits->equal(&low, &low)); \
+        check_false(traits->equal(&low, &high)); \
+        check_true(traits->compare(&low, &high) < 0); \
+        check_true(traits->compare(&high, &low) > 0); \
+        check_true(traits->hash(&low) == traits->hash(&low)); \
+        check_true(traits->copy_construct(&copied, &high)); \
+        check_true(copied == high); \
+        traits->move_construct(&moved, &copied); \
+        check_true(moved == high); \
+        traits->destroy(&moved); \
+    } while (0)
+
+        CMETA_CHECK_EXACT_INTEGER(int8_t, &cmeta_type_int8, INT8_MIN, INT8_MAX);
+        CMETA_CHECK_EXACT_INTEGER(uint8_t, &cmeta_type_uint8, 0u, UINT8_MAX);
+        CMETA_CHECK_EXACT_INTEGER(int16_t, &cmeta_type_int16, INT16_MIN, INT16_MAX);
+        CMETA_CHECK_EXACT_INTEGER(uint16_t, &cmeta_type_uint16, 0u, UINT16_MAX);
+        CMETA_CHECK_EXACT_INTEGER(int32_t, &cmeta_type_int32, INT32_MIN, INT32_MAX);
+        CMETA_CHECK_EXACT_INTEGER(uint32_t, &cmeta_type_uint32, 0u, UINT32_MAX);
+        CMETA_CHECK_EXACT_INTEGER(int64_t, &cmeta_type_int64, INT64_MIN, INT64_MAX);
+        CMETA_CHECK_EXACT_INTEGER(uint64_t, &cmeta_type_uint64, 0u, UINT64_MAX);
+#undef CMETA_CHECK_EXACT_INTEGER
+
+        check_false(cmeta_type_equal(&cmeta_type_int32, &cmeta_type_int));
+        check_false(cmeta_type_equal(&cmeta_type_int32, &cmeta_type_long));
+        check_false(cmeta_type_equal(&cmeta_type_int64, &cmeta_type_long));
     }
 
     it("normalizes floating keys for zero and NaN equivalence") {
