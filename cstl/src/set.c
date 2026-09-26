@@ -1,6 +1,43 @@
 #include <cstl/set.h>
+#include <cstl/detail/instance_meta.h>
 
 #include <stdint.h>
+
+static bool set_is_typed_semantic_zero(const set_t *set) {
+  return set != NULL &&
+         set->cmeta.descriptor == &stl_set_container_desc &&
+         set->element_type != NULL &&
+         cmeta_type_desc_valid(set->element_type) &&
+         set->map.impl == NULL && set->map.cmeta.descriptor == NULL &&
+         set->map.key_type == NULL && set->map.value_type == NULL;
+}
+
+static stl_status set_materialize_for_mutation(
+    set_t *set, set_t *zero_snapshot, bool *materialized) {
+  stl_status status;
+  if (zero_snapshot == NULL || materialized == NULL)
+    return STL_INVALID_ARGUMENT;
+  *materialized = false;
+  if (set != NULL && set->map.impl != NULL) return STL_OK;
+  if (!set_is_typed_semantic_zero(set)) return STL_INVALID_ARGUMENT;
+
+  *zero_snapshot = *set;
+  status = set_raw_init(set, zero_snapshot->element_type, SIZE_MAX);
+  if (status != STL_OK) {
+    *set = *zero_snapshot;
+    return status;
+  }
+  set->map.generation = zero_snapshot->map.generation;
+  *materialized = true;
+  return STL_OK;
+}
+
+static void set_rollback_materialization(
+    set_t *set, const set_t *zero_snapshot, bool materialized) {
+  if (!materialized) return;
+  set_raw_destroy_storage(set);
+  *set = *zero_snapshot;
+}
 
 stl_status set_raw_init(set_t *set,
                                 const cmeta_type_desc *key_type,
@@ -79,10 +116,19 @@ void set_clear(set_t *set) {
 }
 
 stl_status set_add(set_t *set, const void *key) {
+  set_t zero_snapshot = {0};
   uint8_t present = 1u;
-  if (set == NULL || key == NULL) return STL_INVALID_ARGUMENT;
+  bool materialized = false;
+  stl_status status;
+  if (key == NULL) return STL_INVALID_ARGUMENT;
+  status = set_materialize_for_mutation(
+      set, &zero_snapshot, &materialized);
+  if (status != STL_OK) return status;
   if (map_contains(&set->map, key)) return STL_OK;
-  return map_put(&set->map, key, &present);
+  status = map_put(&set->map, key, &present);
+  if (status != STL_OK)
+    set_rollback_materialization(set, &zero_snapshot, materialized);
+  return status;
 }
 
 bool set_contains(const set_t *set, const void *key) {
