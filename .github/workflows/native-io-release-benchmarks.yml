@@ -400,7 +400,7 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Get-Content -LiteralPath $report | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
-      - name: Run libuv versus NativeIO direct/coroutine versus CNet benchmark
+      - name: Run libuv versus NativeIO direct/coroutine versus CNet retained benchmark
         if: steps.scope.outputs.adapted == 'true'
         shell: pwsh
         env:
@@ -433,11 +433,11 @@ jobs:
             "image_version=$env:ImageVersion"
           ) | Set-Content -LiteralPath (Join-Path $resultDir "metadata.txt")
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## libuv versus NativeIO direct/coroutine versus CNet: $env:BENCHMARK_HOST"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## libuv versus NativeIO direct/coroutine versus CNet retained: $env:BENCHMARK_HOST"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
-      - name: Run NativeIO direct versus CNet copy/retained scaling benchmark
+      - name: Run NativeIO direct versus CNet retained scaling benchmark
         if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
         shell: pwsh
         env:
@@ -457,7 +457,7 @@ jobs:
           & ./cnet/benchmarks/verify_scaling_benchmark.ps1 -Path "$env:CNET_SCALING_BENCHMARK_OUTPUT.csv"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO direct versus CNet copy/retained scaling: $env:CNET_IO_BENCHMARK_BACKEND"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO direct versus CNet retained scaling: $env:CNET_IO_BENCHMARK_BACKEND"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
@@ -503,27 +503,6 @@ jobs:
           & ./native-io/benchmarks/verify_queue_depth_benchmark.ps1 -Path "$env:NATIVE_IO_QD_BENCHMARK_OUTPUT.csv"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO io_uring queue-depth benchmark"
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-
-      - name: Compare CNet copy and retained sends independently
-        if: steps.scope.outputs.adapted == 'true'
-        shell: pwsh
-        env:
-          IO_BENCHMARK_EXECUTABLE: ${{ matrix.build_dir }}/bin/cnet_io_benchmark
-          CNET_IO_BENCHMARK_BACKEND: ${{ matrix.backend }}
-          CNET_IO_BENCHMARK_SEND_COMPARE: '1'
-        run: |
-          $ErrorActionPreference = "Stop"
-          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
-          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:IO_BENCHMARK_EXECUTABLE
-          if ($env:RUNNER_OS -eq "Windows") { $benchmark += ".exe" }
-          $env:CNET_IO_BENCHMARK_OUTPUT = Join-Path $resultDir "send"
-          $output = & $benchmark --no-color 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "cnet-send-comparison.md")
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & ./cnet/benchmarks/verify_io_benchmark.ps1 -Prefix $env:CNET_IO_BENCHMARK_OUTPUT -SendComparison
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet retained-send experiment: $env:CNET_IO_BENCHMARK_BACKEND"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
