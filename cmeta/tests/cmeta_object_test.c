@@ -222,6 +222,37 @@ static const cmeta_object_method_provider object_method_provider = {
     .bind = object_box_method_bind
 };
 
+
+typedef struct object_field_assignments {
+    int count;
+} object_field_assignments;
+
+static object_field_assignments object_field_counts = {0};
+
+static cmeta_status object_box_field_assign(
+    void *context, void *object, const cmeta_data_field_desc *field,
+    const void *value) {
+    object_field_assignments *counts =
+        (object_field_assignments *)context;
+    object_box *box = (object_box *)object;
+
+    if (box == NULL || field == NULL || value == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    if (field != &object_box_data_fields[0])
+        return CMETA_TRAIT_MISSING;
+    if (counts != NULL)
+        ++counts->count;
+    box->value = *(const int *)value;
+    return CMETA_OK;
+}
+
+static const cmeta_object_field_provider object_field_provider = {
+    .size = sizeof(cmeta_object_field_provider),
+    .data = &object_box_data,
+    .context = &object_field_counts,
+    .assign = object_box_field_assign
+};
+
 typedef struct object_lifecycle_counts {
     int retains;
     int releases;
@@ -411,6 +442,66 @@ spec("CMeta canonical borrowed object") {
                     CMETA_INVALID_ARGUMENT);
         check_null(field_data);
         check_null(field_value);
+    }
+
+    it("assigns reflected fields only through explicit authority") {
+        object_box box = {4};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        int next = 21;
+        long wrong = 99;
+        int before;
+
+        object_field_counts.count = 0;
+        check_true(cmeta_object_field_provider_valid(&object_field_provider));
+        check_equal(cmeta_object_borrow_with_providers(
+                        &object, &box, &object_box_data,
+                        &object_field_provider, &object_method_provider),
+                    CMETA_OK);
+        check_true(object.field_provider == &object_field_provider);
+        check_true(object.method_provider == &object_method_provider);
+
+        check_equal(cmeta_object_field_assign(
+                        &object, "value", &cmeta_data_int, &next),
+                    CMETA_OK);
+        check_equal(box.value, 21);
+        check_equal(object_field_counts.count, 1);
+
+        before = object_field_counts.count;
+        check_equal(cmeta_object_field_assign(
+                        &object, "value", &cmeta_data_long, &wrong),
+                    CMETA_TYPE_MISMATCH);
+        check_equal(object_field_counts.count, before);
+        check_equal(box.value, 21);
+
+        cmeta_object_release(&object);
+    }
+
+    it("does not infer reflected field writability without a provider") {
+        object_box box = {8};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        int next = 42;
+
+        check_equal(cmeta_object_borrow(
+                        &object, &box, &object_box_data, NULL),
+                    CMETA_OK);
+        check_equal(cmeta_object_field_assign(
+                        &object, "value", &cmeta_data_int, &next),
+                    CMETA_TRAIT_MISSING);
+        check_equal(box.value, 8);
+        cmeta_object_release(&object);
+    }
+
+    it("does not lend field capability to a foreign data descriptor") {
+        object_box box = {1};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        cmeta_data_desc foreign = object_box_data;
+
+        check_true(cmeta_data_desc_equal(&foreign, &object_box_data));
+        check_equal(cmeta_object_borrow_with_providers(
+                        &object, &box, &foreign,
+                        &object_field_provider, NULL),
+                    CMETA_INVALID_ARGUMENT);
+        check_false(cmeta_object_ref_valid(&object));
     }
 
     it("resolves methods against the bound native receiver type") {
