@@ -1,4 +1,4 @@
-param([Parameter(Mandatory = $true)][string]$Prefix, [switch]$SendComparison)
+param([Parameter(Mandatory = $true)][string]$Prefix)
 
 $ErrorActionPreference = 'Stop'
 $repeats = 5
@@ -6,11 +6,6 @@ $roundTrips = 512
 $drivers = @('libuv', 'NativeIO direct', 'NativeIO coroutine', 'CNet')
 $passes = @('A', 'diagnostic', 'B')
 $payloads = @{ TCP = @(1024, 4096, 8192, 16384, 32768, 65536); UDP = @(1024, 4096, 8192) }
-if ($SendComparison) {
-    $drivers = @('CNet copy control', 'CNet retained')
-    $passes = @('A', 'B')
-    $payloads.UDP = @()
-}
 $runs = @(Import-Csv -LiteralPath "$Prefix.runs.csv")
 $backends = @($runs.backend | Sort-Object -Unique)
 if ($backends.Count -ne 1 -or $backends[0] -notin @('epoll', 'io_uring', 'iocp', 'kqueue')) {

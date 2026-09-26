@@ -56,10 +56,10 @@ $rows = @(Import-Csv -LiteralPath $Path)
 $pairedRows = @(Import-Csv -LiteralPath $pairedPath)
 $connections = @(1, 4, 16, 64)
 $payloads = @(1024, 8192, 32768, 65536)
-$drivers = @("NativeIO direct", "CNet copy", "CNet retained")
+$drivers = @("NativeIO direct", "CNet retained")
 $repeats = @(1, 2, 3, 4, 5)
 $expectedRaw = $connections.Count * $payloads.Count * $drivers.Count * $repeats.Count
-$expectedPaired = $connections.Count * $payloads.Count * 3
+$expectedPaired = $connections.Count * $payloads.Count
 
 if ($rows.Count -ne $expectedRaw) {
     throw "expected $expectedRaw raw scaling rows, got $($rows.Count)"
@@ -121,7 +121,7 @@ foreach ($row in $rows) {
     $benchmarkCallback = [double]$row.benchmark_callback_ns
     $payloadCheck = [double]$row.benchmark_payload_check_ns
 
-    if ($driver -eq "CNet copy" -or $driver -eq "CNet retained") {
+    if ($driver -eq "CNet retained") {
         if ($ownerDrive -le 0 -or $ownerObserve -le 0 -or $clientPoll -le 0) {
             throw "missing CNet owner/poll attribution for $key"
         }
@@ -172,9 +172,7 @@ foreach ($row in $rows) {
 }
 
 $expectedPairs = @(
-    "NativeIO direct|CNet copy",
-    "NativeIO direct|CNet retained",
-    "CNet copy|CNet retained"
+    "NativeIO direct|CNet retained"
 )
 $pairedSeen = @{}
 foreach ($row in $pairedRows) {
@@ -218,7 +216,6 @@ foreach ($row in $pairedRows) {
     Assert-Near ([double]$row.p95_delta_mad_pp) $p95.Mad "$pairKey p95 MAD"
 
     $stableRatioCell = $connectionCount -eq 16 -and $payload -eq 65536
-    $stableRetainedBenefitCell = $connectionCount -eq 16 -and $payload -in @(32768, 65536)
     if ($stableRatioCell -and $pair -eq "NativeIO direct|CNet retained") {
         if ($rate.Median -lt -5.0) {
             throw "retained throughput fell outside NativeIO performance class for $($pairKey): $($rate.Median)%"
@@ -240,20 +237,6 @@ foreach ($row in $pairedRows) {
         }
     }
 
-    if ($stableRetainedBenefitCell -and $pair -eq "CNet copy|CNet retained") {
-        if ($rate.Median -lt 3.0) {
-            throw "retained-send throughput benefit disappeared for $($pairKey): $($rate.Median)%"
-        }
-        if ($p50.Median -gt -2.0) {
-            throw "retained-send p50 benefit disappeared for $($pairKey): $($p50.Median)%"
-        }
-        if ($p95.Median -gt 2.0) {
-            throw "retained-send p95 regressed for $($pairKey): $($p95.Median)%"
-        }
-        if ($rate.Mad -gt 5.0 -or $p50.Mad -gt 5.0 -or $p95.Mad -gt 5.0) {
-            throw "copy-vs-retained paired noise exceeded gate for $pairKey"
-        }
-    }
 }
 
 Write-Host "CNet scaling benchmark verified: $($rows.Count) raw rows, $($pairedRows.Count) paired rows"

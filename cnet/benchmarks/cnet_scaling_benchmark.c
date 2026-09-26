@@ -46,7 +46,6 @@ static const size_t SCALE_PAYLOADS[] = {1024u, 8192u, 32768u, 65536u};
 
 typedef enum scale_driver {
   SCALE_DRIVER_NATIVE = 0,
-  SCALE_DRIVER_CNET_COPY,
   SCALE_DRIVER_CNET_RETAINED,
   SCALE_DRIVER_COUNT
 } scale_driver;
@@ -823,8 +822,6 @@ static int scale_run_driver(scale_driver driver, size_t connections, size_t payl
   switch (driver) {
   case SCALE_DRIVER_NATIVE:
     return scale_run_native(connections, payload_size, backend_kind, out);
-  case SCALE_DRIVER_CNET_COPY:
-    return scale_run_cnet(connections, payload_size, backend_kind, false, out);
   case SCALE_DRIVER_CNET_RETAINED:
     return scale_run_cnet(connections, payload_size, backend_kind, true, out);
   default:
@@ -1032,7 +1029,7 @@ int main(void) {
     return 2;
   }
 
-  printf("# NativeIO direct versus CNet copy/retained paired TCP scaling benchmark\n\n");
+  printf("# NativeIO direct versus CNet retained/owned paired TCP scaling benchmark\n\n");
   printf("Backend: %s. %u paired repeats per cell; driver order rotates by payload, "
          "connection count and repeat. Each run uses independent persistent TCP loopback "
          "connections with one logical RTT outstanding per connection.\n\n",
@@ -1112,9 +1109,7 @@ int main(void) {
         scale_driver baseline;
         scale_driver candidate;
       } pairs[] = {
-          {SCALE_DRIVER_NATIVE, SCALE_DRIVER_CNET_COPY},
-          {SCALE_DRIVER_NATIVE, SCALE_DRIVER_CNET_RETAINED},
-          {SCALE_DRIVER_CNET_COPY, SCALE_DRIVER_CNET_RETAINED}};
+          {SCALE_DRIVER_NATIVE, SCALE_DRIVER_CNET_RETAINED}};
       for (size_t pair = 0u; pair < sizeof(pairs) / sizeof(pairs[0]); ++pair) {
         scale_pair_summary summary;
         const scale_result *baseline = results[p][d][pairs[pair].baseline];

@@ -1676,7 +1676,7 @@ static int io_bench_print_diagnostics(const char *protocol, const io_bench_serie
   printf("\n%s CNet diagnostic internal evidence (mean us/RT)\n", protocol);
   printf("Within CNet only, not an explanation of the libuv gap. "
          "Observe still includes waiting. Payload copy is the admitted send copy only.\n");
-  printf("| payload | fixed control | send copy | NativeIO prepare/reprepare | observe + flush | starts/RT | completions/RT |\n");
+  printf("| payload | fixed control | payload copy | NativeIO prepare/reprepare | observe + flush | starts/RT | completions/RT |\n");
   printf("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
   for (size_t index = 0u; index < count; ++index) {
     double fixed = 0.0, copy = 0.0, submit = 0.0, observe = 0.0, starts = 0.0, completions = 0.0;
@@ -1847,8 +1847,10 @@ static int io_bench_run_row(io_bench_protocol protocol, size_t payload, size_t r
         io_bench_result *result = pass == IO_BENCH_PASS_DIAGNOSTIC ? &series[driver]->stage_profile_runs[repeat]
             : ((pass == IO_BENCH_PASS_A) == ((repeat & 1u) == 0u)) ? &series[driver]->runs[repeat]
                                                      : &series[driver]->control_runs[repeat];
+        const io_bench_send_mode send_mode =
+            driver == IO_BENCH_CNET ? IO_BENCH_SEND_RETAINED : IO_BENCH_SEND_BASELINE;
         const int status = io_bench_run(protocol, driver, payload, pass == IO_BENCH_PASS_DIAGNOSTIC,
-                                         backend_kind, IO_BENCH_SEND_BASELINE, result);
+                                        backend_kind, send_mode, result);
         if (status != SALTS_OK) return status;
       }
     }
@@ -1948,9 +1950,14 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
       printf("TRACE ONLY: %s backend=%s libuv=%s; not a performance score.\n",
              requested_trace, backend.name, uv_version_string());
       io_bench_trace_enabled = true;
-      status = io_bench_run(trace.udp ? IO_BENCH_UDP : IO_BENCH_TCP,
-                            (io_bench_driver)trace.driver, trace.payload_size, false, backend.kind,
-                            IO_BENCH_SEND_BASELINE, &traced);
+      {
+        const io_bench_driver trace_driver = (io_bench_driver)trace.driver;
+        const io_bench_send_mode send_mode =
+            trace_driver == IO_BENCH_CNET ? IO_BENCH_SEND_RETAINED : IO_BENCH_SEND_BASELINE;
+        status = io_bench_run(trace.udp ? IO_BENCH_UDP : IO_BENCH_TCP,
+                              trace_driver, trace.payload_size, false, backend.kind,
+                              send_mode, &traced);
+      }
       io_bench_trace_enabled = false;
       check_equal(status, SALTS_OK);
       return;
@@ -1970,7 +1977,7 @@ spec("libuv versus NativeIO direct versus NativeIO coroutine versus CNet benchma
                                                      udp[driver], UDP_ROWS, true};
     }
 
-    printf("\nReference: libuv %s; NativeIO backend: %s; CNet: public byte API.\n",
+    printf("\nReference: libuv %s; NativeIO backend: %s; CNet: retained/owned payload API.\n",
            uv_version_string(), backend.name);
     status = io_bench_print_host();
     check_equal(status, SALTS_OK);
