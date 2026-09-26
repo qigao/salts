@@ -386,7 +386,7 @@ jobs:
         if: steps.scope.outputs.adapted == 'true'
         shell: pwsh
         env:
-          NATIVE_IO_SHARDED_BENCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark
+          NATIVE_IO_SHARDED_BENCH_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_sharded_routing_benchmark
           NATIVE_IO_SHARDED_BENCH_BACKEND: ${{ matrix.backend }}
         run: |
           $ErrorActionPreference = "Stop"
