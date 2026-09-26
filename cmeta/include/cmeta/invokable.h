@@ -4,6 +4,7 @@
 #include <cmeta/cmeta.h>
 #include <cmeta/data.h>
 #include <cmeta/function.h>
+#include <cmeta/method.h>
 
 #include <stddef.h>
 
@@ -68,7 +69,7 @@ cmeta_status cmeta_interface_method_invokable_bind(
  * or capture; CMeta never casts/interprets the original receiver ABI.
  */
 cmeta_status cmeta_receiver_method_invokable_bind(
-    const struct cmeta_receiver_method *method,
+    const cmeta_receiver_method *method,
     const cmeta_function_data_desc *data,
     cmeta_callable callable, cmeta_invokable *out);
 
