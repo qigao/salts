@@ -575,11 +575,6 @@ static void native_io_sharded_route_release(native_io_sharded_context *context, 
   state->release_status = native_io_sharded_context_release_pipe(context, state->endpoint);
 }
 
-static void native_io_sharded_route_cancel(native_io_sharded_context *context, void *arg) {
-  native_io_sharded_route_state *state = (native_io_sharded_route_state *)arg;
-  state->observe_status = native_io_sharded_context_cancel(context, state->request);
-}
-
 spec("NativeIO bounded sharded routing") {
   it("routes explicit owned operations to endpoint owner without implicit transfer on rejection") {
     native_io_sharded *runtime = NULL;
