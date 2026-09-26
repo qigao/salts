@@ -24,6 +24,10 @@ typedef struct cmeta_receiver_method_set {
     const char *owner_name;
 } cmeta_receiver_method_set;
 
+/** Validate one reflected receiver method independent of any owning set. */
+bool cmeta_receiver_method_reflection_valid(
+    const cmeta_receiver_method *method);
+
 bool cmeta_receiver_method_set_valid(const cmeta_receiver_method_set *set);
 
 const cmeta_receiver_method *
