@@ -148,7 +148,12 @@ not release the token: only observation of the matching terminal completion
 settles it. An optional terminal callback runs first while payload storage is
 still valid, then one exact finalizer edge releases the token. The ownership
 record is removed before callbacks so a callback may immediately submit new
-work even when the raw request slot is reused.
+work even when the raw request slot is reused. For a multi-completion observe,
+ownership for the entire dequeued batch is detached into bounded preallocated
+settlement scratch before the first callback runs; this prevents an immediate
+reentrant submit from overwriting the ownership record of a later completion in
+that same batch. Recursive observe from a terminal callback is rejected with
+`SALTS_EBUSY`.
 
 This ownership carrier is intentionally independent of `mem_buffer_t` and
 `Salts::Core`. CNet may retain a `mem_buffer_t` and use the generic finalizer
