@@ -318,7 +318,7 @@ spec("Salts QuickJS canonical CMeta binding") {
     check_equal(salts_quickjs_push_cmeta(
                     context, &cmeta_data_uint64, &wide, limits, &value),
                 CMETA_OK);
-    check_true(JS_IsBigInt(context, value));
+    check_true(JS_IsBigInt(value));
     check_equal(salts_quickjs_read_cmeta(
                     context, value, &cmeta_data_uint64,
                     &wide_out, limits), CMETA_OK);
