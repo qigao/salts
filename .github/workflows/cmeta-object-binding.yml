@@ -117,6 +117,18 @@ jobs:
           fi
           cmake --build --preset linux-release-user --parallel 2 --target "${targets[@]}"
 
+      - name: Qualify exported C++ facade package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake \
+            -S bindings/tests/package_config/cpp_object_facade \
+            -B build/cpp-object-facade-consumer \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            "-DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/build/linux-gcc-release;$GITHUB_WORKSPACE/vcpkg_installed/x64-linux"
+          cmake --build build/cpp-object-facade-consumer --parallel 2
+
       - name: Run focused object-binding tests
         shell: bash
         run: |
