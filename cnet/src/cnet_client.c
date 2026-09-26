@@ -802,24 +802,11 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
     if (record == NULL) status = SALTS_ENOENT;
     else if (record->close_command_pending || record->tls_command_pending)
       status = SALTS_EBUSY;
-    else if (record->scheme == CNET_URI_TLS && record->pending_writes != 0u)
-      status = SALTS_EBUSY;
     else if (record->pending_writes == SIZE_MAX)
       status = SALTS_ERANGE;
     else {
-      if (input->close_after_send && record->scheme != CNET_URI_TLS) {
+      if (input->close_after_send) {
         status = cnet_shards_send_close_direct(&impl->shards, internal, input->data, input->size);
-      } else if (input->close_after_send) {
-        status = cnet_shards_send_and_close(&impl->shards, internal, input->data, input->size);
-      } else if (record->scheme == CNET_URI_TLS) {
-        if (input->retained_buffer != NULL)
-          status =
-              cnet_shards_send_buffer(&impl->shards, internal, input->retained_buffer, input->size);
-        else if (input->segments != NULL)
-          status = cnet_shards_sendv(&impl->shards, internal, input->segments, input->segment_count,
-                                     input->size);
-        else
-          status = cnet_shards_send(&impl->shards, internal, input->data, input->size);
       } else if (input->retained_buffer != NULL) {
         status = cnet_shards_send_buffer_direct(&impl->shards, internal, input->retained_buffer);
       } else if (input->segments != NULL) {

@@ -57,7 +57,7 @@ typedef struct cnet_owner_config {
   size_t completion_batch_capacity;
   size_t receive_buffer_bytes;
   size_t receive_buffer_count;
-  /** Optional W1 write ownership substrate; zero disables it for direct owner fixtures. */
+  /** Mandatory bounded logical-write ownership capacity. */
   size_t write_capacity;
   size_t max_write_bytes;
   size_t write_buffer_bytes;

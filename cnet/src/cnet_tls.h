@@ -45,6 +45,13 @@ int cnet_tls_take_cipher(cnet_tls_state *state, void *buffer, size_t capacity, s
 int cnet_tls_write(cnet_tls_state *state, const void *data, size_t size, bool *out_complete);
 int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity, size_t *out_size,
                   bool *out_peer_closed);
+/**
+ * Advances TLS control state without consuming application plaintext.
+ * out_plaintext_pending is true when SSL_peek observes application data that
+ * must remain buffered until receive demand exists.
+ */
+int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
+                              bool *out_plaintext_pending);
 int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated);
 int cnet_tls_get_negotiated_alpn(const cnet_tls_state *state, const unsigned char **out_data,
                                  size_t *out_size);

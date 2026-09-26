@@ -215,12 +215,13 @@ static void cnet_tls_network_receive(void *user, cnet_connection connection,
                                      const cnet_receive_view *view) {
   cnet_tls_network_probe *probe = (cnet_tls_network_probe *)user;
   (void)connection;
-  if (view == NULL || view->kind != CNET_MESSAGE_BYTES || view->size > sizeof(probe->received)) {
+  if (view == NULL || view->kind != CNET_MESSAGE_BYTES ||
+      view->size > sizeof(probe->received) - probe->received_size) {
     probe->failed = 1;
     return;
   }
-  memcpy(probe->received, view->data, view->size);
-  probe->received_size = view->size;
+  memcpy(probe->received + probe->received_size, view->data, view->size);
+  probe->received_size += view->size;
 }
 
 static void cnet_tls_network_send(void *user, cnet_connection connection, size_t size) {
@@ -279,6 +280,45 @@ static int cnet_tls_network_drive(cnet_client *client, cnet_client *server, cnet
 }
 
 spec("CNet bounded TLS engine") {
+
+  it("probes peer close without consuming pending application plaintext") {
+    cnet_tls_test_pair pair;
+    static const unsigned char payload = 0x5au;
+    unsigned char received = 0u;
+    size_t received_size = 0u;
+    bool complete = false;
+    bool peer_closed = false;
+    bool plaintext_pending = false;
+    bool notify_generated = false;
+
+    check_equal(cnet_tls_test_pair_init(&pair), SALTS_OK);
+    check_equal(cnet_tls_test_handshake(&pair), SALTS_OK);
+
+    check_equal(cnet_tls_write(&pair.client, &payload, sizeof(payload), &complete), SALTS_OK);
+    check_true(complete);
+    check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), SALTS_OK);
+    check_equal(cnet_tls_probe_peer_close(&pair.server, &peer_closed, &plaintext_pending), SALTS_OK);
+    check_false(peer_closed);
+    check_true(plaintext_pending);
+
+    check_equal(cnet_tls_read(&pair.server, &received, sizeof(received), &received_size,
+                              &peer_closed),
+                SALTS_OK);
+    check_equal(received_size, sizeof(received));
+    check_equal(received, payload);
+    check_false(peer_closed);
+
+    check_equal(cnet_tls_shutdown(&pair.client, &notify_generated), SALTS_OK);
+    check_true(notify_generated);
+    check_equal(cnet_tls_test_transfer(&pair.client, &pair.server), SALTS_OK);
+    plaintext_pending = false;
+    check_equal(cnet_tls_probe_peer_close(&pair.server, &peer_closed, &plaintext_pending), SALTS_OK);
+    check_true(peer_closed);
+    check_false(plaintext_pending);
+
+    cnet_tls_test_pair_destroy(&pair);
+  }
+
   it("verifies localhost negotiates server-preferred ALPN and carries bytes") {
     static const char request[] = "ping";
     cnet_tls_test_pair pair;
@@ -383,7 +423,10 @@ spec("CNet bounded TLS engine") {
 
   it("drives verified TLS and ALPN through the public listener and client APIs") {
     static const char request[] = "ping";
+    static const char second_request[] = "more";
+    static const char final_request[] = "done";
     static const char response[] = "pong";
+    static const char combined_requests[] = "pingmore";
     static const char *server_alpn[] = {"h2", "http/1.1"};
     static const char *client_alpn[] = {"http/1.1", "h2"};
     char request_first[] = "pi";
@@ -492,19 +535,21 @@ spec("CNet bounded TLS engine") {
                        CNET_TLS_CHANNEL_BINDING_BYTES),
                 0);
 
-    check_equal(cnet_receive(&server, server_probe.connection, 1u), SALTS_OK);
+    check_equal(cnet_receive(&server, server_probe.connection, 2u), SALTS_OK);
     check_equal(cnet_sendv(&client, client_connection, request_segments, 2u), SALTS_OK);
+    check_equal(cnet_send(&client, client_connection, second_request, sizeof(second_request) - 1u),
+                SALTS_OK);
     memset(request_first, 'x', sizeof(request_first) - 1u);
     memset(request_second, 'x', sizeof(request_second) - 1u);
     deadline = salts_monotonic_ms() + 5000u;
-    while ((server_probe.received_size == 0u || client_probe.sent == 0) &&
+    while ((server_probe.received_size < sizeof(combined_requests) - 1u || client_probe.sent < 2) &&
            salts_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
                   SALTS_OK);
-    check_equal(server_probe.received_size, sizeof(request) - 1u);
-    check_equal(memcmp(server_probe.received, request, sizeof(request) - 1u), 0);
-    check_equal(client_probe.sent, 1);
+    check_equal(server_probe.received_size, sizeof(combined_requests) - 1u);
+    check_equal(memcmp(server_probe.received, combined_requests, sizeof(combined_requests) - 1u), 0);
+    check_equal(client_probe.sent, 2);
 
     check_equal(cnet_receive(&client, client_connection, 1u), SALTS_OK);
     check_equal(cnet_send(&server, server_probe.connection, response, sizeof(response) - 1u),
@@ -519,13 +564,24 @@ spec("CNet bounded TLS engine") {
     check_equal(memcmp(client_probe.received, response, sizeof(response) - 1u), 0);
     check_equal(server_probe.sent, 1);
 
+    server_probe.received_size = 0u;
+    memset(server_probe.received, 0, sizeof(server_probe.received));
     check_equal(cnet_receive(&server, server_probe.connection, 1u), SALTS_OK);
-    check_equal(cnet_close(&client, client_connection), SALTS_OK);
+    check_equal(cnet_send_and_close(&client, client_connection, final_request,
+                                    sizeof(final_request) - 1u),
+                SALTS_OK);
+    check_equal(cnet_send(&client, client_connection, request, sizeof(request) - 1u), SALTS_EBUSY);
+    check_equal(cnet_receive(&client, client_connection, 1u), SALTS_EBUSY);
     deadline = salts_monotonic_ms() + 5000u;
-    while ((!client_probe.terminal || !server_probe.terminal) && salts_monotonic_ms() < deadline)
+    while ((!client_probe.terminal || !server_probe.terminal ||
+            server_probe.received_size < sizeof(final_request) - 1u) &&
+           salts_monotonic_ms() < deadline)
       check_equal(cnet_tls_network_drive(&client, &server, &listener, &tls_server, &server_probe,
                                          &accepted),
                   SALTS_OK);
+    check_equal(server_probe.received_size, sizeof(final_request) - 1u);
+    check_equal(memcmp(server_probe.received, final_request, sizeof(final_request) - 1u), 0);
+    check_equal(client_probe.sent, 3);
     check_true(client_probe.terminal);
     check_true(server_probe.terminal);
     check_false(client_probe.failed);

@@ -675,8 +675,9 @@ int cnet_start_tls_server(cnet_client *client, cnet_connection connection,
 
 /**
  * Copies `size` bytes into bounded owner write storage before returning success.
- * Multiple non-TLS writes may be admitted up to the fixed write-slot/byte bound
- * and settle in FIFO order. If `observer.on_send` is present it runs once per
+ * Multiple writes may be admitted up to the fixed write-slot/byte bound and
+ * settle in FIFO order for both plain and TLS streams. If `observer.on_send`
+ * is present it runs once per
  * full logical write, in admission order.
  * @return `SALTS_OK`, `SALTS_EMSGSIZE`, `SALTS_ENOENT` for a stale handle,
  * `SALTS_ENOBUFS` at the bounded write-slot/byte limit, or `SALTS_EBUSY`
@@ -709,9 +710,11 @@ int cnet_sendv(cnet_client *client, cnet_connection connection, const cnet_const
 /**
  * Copies one final byte message into the bounded write FIFO. For a non-TLS
  * stream it is ordered after every previously accepted logical write, and the
- * stream begins closing only after this final write reaches terminal success.
- * Once admitted, the connection immediately rejects further send/receive work.
- * TLS preserves its existing single-logical-write close path in this slice.
+ * stream begins closing only after this final logical write reaches terminal
+ * success. For TLS, the logical slot remains owned until every ciphertext write
+ * generated for that plaintext has reached terminal success; close_notify begins
+ * only afterward. Once admitted, the connection immediately rejects further
+ * send/receive work.
  */
 int cnet_send_and_close(cnet_client *client, cnet_connection connection, const void *data,
                         size_t size);

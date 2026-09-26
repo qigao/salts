@@ -586,6 +586,38 @@ int cnet_tls_read(cnet_tls_state *state, void *buffer, size_t capacity, size_t *
   return SALTS_EPROTO;
 }
 
+int cnet_tls_probe_peer_close(cnet_tls_state *state, bool *out_peer_closed,
+                              bool *out_plaintext_pending) {
+  unsigned char byte = 0u;
+  int result;
+  int error;
+
+  if (out_peer_closed == NULL || out_plaintext_pending == NULL) return SALTS_EINVAL;
+  *out_peer_closed = false;
+  *out_plaintext_pending = false;
+  if (state == NULL || state->ssl == NULL) return SALTS_EINVAL;
+  if (!state->handshake_complete) return SALTS_ENOTCONN;
+  if (state->peer_close_notify) {
+    *out_peer_closed = true;
+    return SALTS_OK;
+  }
+
+  ERR_clear_error();
+  result = SSL_peek(state->ssl, &byte, 1);
+  if (result > 0) {
+    *out_plaintext_pending = true;
+    return SALTS_OK;
+  }
+  error = SSL_get_error(state->ssl, result);
+  if (error == SSL_ERROR_ZERO_RETURN) {
+    state->peer_close_notify = true;
+    *out_peer_closed = true;
+    return SALTS_OK;
+  }
+  if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) return SALTS_OK;
+  return SALTS_EPROTO;
+}
+
 int cnet_tls_shutdown(cnet_tls_state *state, bool *out_notify_generated) {
   int result;
   int error;

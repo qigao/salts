@@ -574,3 +574,17 @@ CNET_IO_BENCHMARK_BACKEND=epoll CNET_IO_BENCHMARK_TRACE=native:tcp:32768 \
 
 更换驱动重复同一 workload。只有 syscall 次数、CPU/调度证据与未插桩复测相互印证后，
 才把候选原因升级为根因；否则报告保留“未解释”，不凭阶段表直接优化生产路径。
+
+
+### TLS logical write ownership
+
+Steady-state TLS payload ownership uses the same bounded write FIFO as plain
+streams. A plaintext write slot remains the logical owner while BoringSSL may
+generate one or more ciphertext NativeIO writes; ciphertext requests borrow
+only the TLS scratch buffer and never own application plaintext. The logical
+slot settles only after all ciphertext generated for that plaintext has reached
+terminal success. The next TLS logical head starts on a later owner drive.
+
+A final TLS write carries the same close-after-send marker. Further public
+admission closes immediately, while `close_notify` starts only after the final
+plaintext has been accepted and all of its ciphertext has flushed.
