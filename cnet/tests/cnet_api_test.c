@@ -1270,7 +1270,7 @@ spec("CNet public client API") {
                 SALTS_OK);
 
     check_equal(cnet_send(&client, connection, &send_value, sizeof(send_value)), SALTS_OK);
-    check_equal(cnet_send(&client, connection, &send_value, sizeof(send_value)), SALTS_EBUSY);
+    check_equal(cnet_send(&client, connection, &send_value, sizeof(send_value)), SALTS_OK);
     send_value = 99u;
     {
       size_t events = 0u;
@@ -1415,7 +1415,8 @@ spec("CNet public client API") {
     cnet_connect_options options;
     unsigned char first[] = {11u, 13u};
     unsigned char second[] = {17u, 19u, 23u};
-    unsigned char received[sizeof(expected)] = {0};
+    unsigned char received[sizeof(expected) * 2u] = {0};
+    unsigned char doubled_expected[sizeof(expected) * 2u] = {0};
     unsigned char oversized[257] = {0};
     cnet_const_buffer segments[] = {{first, sizeof(first)}, {second, sizeof(second)}};
     cnet_const_buffer null_data = {NULL, 1u};
@@ -1449,12 +1450,22 @@ spec("CNet public client API") {
     check_equal(cnet_sendv(&client, connection, &empty, 1u), SALTS_EINVAL);
     check_equal(cnet_sendv(&client, connection, &too_large, 1u), SALTS_EMSGSIZE);
     check_equal(cnet_sendv(&client, connection, segments, 2u), SALTS_OK);
-    check_equal(cnet_sendv(&client, connection, segments, 2u), SALTS_EBUSY);
+    check_equal(cnet_sendv(&client, connection, segments, 2u), SALTS_OK);
+    memcpy(doubled_expected, expected, sizeof(expected));
+    memcpy(doubled_expected + sizeof(expected), expected, sizeof(expected));
     memset(first, 0, sizeof(first));
     memset(second, 0, sizeof(second));
-    check_equal(cnet_api_test_poll_until(&client, &probe.sent, 1), SALTS_OK);
-    check_equal(recv(accepted, (char *)received, (int)sizeof(received), 0), (int)sizeof(received));
-    check_equal(received, expected, sizeof(expected));
+    check_equal(cnet_api_test_poll_until(&client, &probe.sent, 2), SALTS_OK);
+    {
+      size_t received_size = 0u;
+      while (received_size < sizeof(received)) {
+        const int got = recv(accepted, (char *)&received[received_size],
+                             (int)(sizeof(received) - received_size), 0);
+        check_greater(got, 0);
+        received_size += (size_t)got;
+      }
+    }
+    check_equal(received, doubled_expected, sizeof(doubled_expected));
     check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
 
     check_equal(cnet_close(&client, connection), SALTS_OK);
