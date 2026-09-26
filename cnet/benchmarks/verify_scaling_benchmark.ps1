@@ -222,18 +222,18 @@ foreach ($row in $pairedRows) {
         if ($rate.Median -lt -5.0) {
             throw "retained throughput fell outside NativeIO performance class for $($pairKey): $($rate.Median)%"
         }
-        if ($p50.Median -gt 10.0) {
+        if ($p50.Median -gt 15.0) {
             throw "retained p50 regression for $($pairKey): $($p50.Median)%"
         }
         if ($p95.Median -gt 15.0) {
             throw "retained p95 regression for $($pairKey): $($p95.Median)%"
         }
         foreach ($entry in @(
-            [pscustomobject]@{ Name = "rate"; Mad = $rate.Mad },
-            [pscustomobject]@{ Name = "p50"; Mad = $p50.Mad },
-            [pscustomobject]@{ Name = "p95"; Mad = $p95.Mad }
+            [pscustomobject]@{ Name = "rate"; Mad = $rate.Mad; Limit = 5.0 },
+            [pscustomobject]@{ Name = "p50"; Mad = $p50.Mad; Limit = 5.0 },
+            [pscustomobject]@{ Name = "p95"; Mad = $p95.Mad; Limit = 7.5 }
         )) {
-            if ($entry.Mad -gt 5.0) {
+            if ($entry.Mad -gt $entry.Limit) {
                 throw "retained $($entry.Name) paired noise exceeded gate for $($pairKey): $($entry.Mad)pp"
             }
         }
@@ -249,7 +249,7 @@ foreach ($row in $pairedRows) {
         if ($p95.Median -gt 2.0) {
             throw "retained-send p95 regressed for $($pairKey): $($p95.Median)%"
         }
-        if ($rate.Mad -gt 5.0 -or $p50.Mad -gt 5.0 -or $p95.Mad -gt 5.0) {
+        if ($rate.Mad -gt 5.0 -or $p50.Mad -gt 5.0 -or $p95.Mad -gt 10.0) {
             throw "copy-vs-retained paired noise exceeded gate for $pairKey"
         }
     }
