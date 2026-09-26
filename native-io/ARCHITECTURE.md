@@ -334,8 +334,14 @@ Shutdown never synthesizes a completion.
 Native endpoint identity remains caller-owned. If request drain finishes while
 live endpoints remain, shutdown again returns `SALTS_EBUSY`, clears the drain
 gate and restores public admission so the caller can close/release those
-endpoints before retrying. Backend teardown and executor shutdown happen only
-after every shard reports both zero active requests and zero endpoints.
+endpoints before retrying. The same recovery applies to the pre-drain
+`SALTS_EBUSY` caused by caller-managed raw requests.
+
+Fatal probe/drain errors such as `SALTS_EIO` or `SALTS_EPROTO` are different:
+they do not reopen public or owner-local new I/O because quiescence could not be
+proven. The runtime is preserved for diagnosis or a shutdown retry. Backend
+teardown and executor shutdown happen only after every shard reports both zero
+active requests and zero endpoints.
 
 Cancellation is a request, not a synthesized completion.
 
