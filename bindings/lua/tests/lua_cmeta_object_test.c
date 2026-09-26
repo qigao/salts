@@ -268,7 +268,9 @@ spec("Salts Lua canonical native object binding") {
 
     check_equal(luaL_dostring(
                     state,
-                    "return counter.value, counter:add(5), counter.value"),
+                    "local before = counter.value; "
+                    "local after = counter:add(5); "
+                    "return before, after, counter.value"),
                 LUA_OK);
     check_equal(lua_gettop(state), 3);
     check_equal(lua_tointeger(state, -3), 10);
