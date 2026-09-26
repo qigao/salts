@@ -75,7 +75,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          status="$GITHUB_WORKSPACE/vcpkg_installed/x64-linux/vcpkg/status"
+          status="$GITHUB_WORKSPACE/vcpkg_installed/vcpkg/status"
           test -f "$status"
           awk '
             $0 == "Package: quickjs-ng" { found=1; next }
