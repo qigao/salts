@@ -20,7 +20,8 @@ bool cmeta_param_desc_valid(const cmeta_param_desc *desc) {
         return false;
 
     if ((desc->flags & (CMETA_PARAM_OUT | CMETA_PARAM_NULLABLE |
-                        CMETA_PARAM_OWNERSHIP_MASK)) != 0u &&
+                        CMETA_PARAM_OWNERSHIP_MASK |
+                        CMETA_PARAM_RECEIVER)) != 0u &&
         desc->type->kind != CMETA_T_POINTER)
         return false;
 
@@ -42,6 +43,9 @@ bool cmeta_function_desc_valid(const cmeta_function_desc *desc) {
 
     for (i = 0u; i < desc->param_count; ++i) {
         if (!cmeta_param_desc_valid(&desc->params[i]))
+            return false;
+        if ((desc->params[i].flags & CMETA_PARAM_RECEIVER) != 0u &&
+            i != 0u)
             return false;
         for (j = 0u; j < i; ++j)
             if (strcmp(desc->params[i].name, desc->params[j].name) == 0)
@@ -146,4 +150,13 @@ cmeta_function_find_param(const cmeta_function_desc *desc, const char *name) {
             strcmp(desc->params[i].name, name) == 0)
             return &desc->params[i];
     return NULL;
+}
+
+const cmeta_param_desc *
+cmeta_function_receiver(const cmeta_function_desc *desc) {
+    if (!cmeta_function_desc_valid(desc) || desc->param_count == 0u)
+        return NULL;
+    return (desc->params[0].flags & CMETA_PARAM_RECEIVER) != 0u
+               ? &desc->params[0]
+               : NULL;
 }
