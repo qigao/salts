@@ -786,6 +786,7 @@ typedef struct cnet_client_send_input {
   const void *data;
   const cnet_const_buffer *segments;
   mem_buffer_t *retained_buffer;
+  const mem_slice_t *retained_slice;
   size_t size;
   size_t segment_count;
   bool close_after_send;
@@ -807,6 +808,8 @@ static int cnet_client_send_admit(cnet_client_impl *impl, cnet_connection connec
     else {
       if (input->close_after_send) {
         status = cnet_shards_send_close_direct(&impl->shards, internal, input->data, input->size);
+      } else if (input->retained_slice != NULL) {
+        status = cnet_shards_send_slice_direct(&impl->shards, internal, input->retained_slice);
       } else if (input->retained_buffer != NULL) {
         status = cnet_shards_send_buffer_direct(&impl->shards, internal, input->retained_buffer);
       } else if (input->segments != NULL) {
@@ -842,6 +845,36 @@ int cnet_send_buffer(cnet_client *client, cnet_connection connection, mem_buffer
   if (size == 0u || mem_buffer_const_data(buffer) == NULL) return SALTS_EINVAL;
   if (size > impl->max_send_bytes) return SALTS_EMSGSIZE;
   input = (cnet_client_send_input){.retained_buffer = buffer, .size = size};
+  return cnet_client_send_admit(impl, connection, &input);
+}
+
+static bool cnet_client_slice_canonical(const mem_slice_t *slice) {
+  const char *backing;
+  size_t used;
+  uintptr_t base;
+  uintptr_t data;
+  uintptr_t delta;
+
+  if (slice == NULL || slice->buffer == NULL || slice->data == NULL || slice->length == 0u)
+    return false;
+  backing = mem_buffer_const_data(slice->buffer);
+  used = mem_buffer_used(slice->buffer);
+  if (backing == NULL || used == 0u) return false;
+  base = (uintptr_t)(const void *)backing;
+  data = (uintptr_t)(const void *)slice->data;
+  if (data < base) return false;
+  delta = data - base;
+  if (delta > (uintptr_t)SIZE_MAX) return false;
+  return (size_t)delta < used && slice->length <= used - (size_t)delta;
+}
+
+int cnet_send_slice(cnet_client *client, cnet_connection connection,
+                    const mem_slice_t *slice) {
+  cnet_client_impl *impl = cnet_client_get(client);
+  cnet_client_send_input input;
+  if (impl == NULL || !cnet_client_slice_canonical(slice)) return SALTS_EINVAL;
+  if (slice->length > impl->max_send_bytes) return SALTS_EMSGSIZE;
+  input = (cnet_client_send_input){.retained_slice = slice, .size = slice->length};
   return cnet_client_send_admit(impl, connection, &input);
 }
 

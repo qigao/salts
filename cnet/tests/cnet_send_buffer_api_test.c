@@ -314,4 +314,87 @@ spec("CNet retained buffer public send API") {
     cnet_send_buffer_test_close_socket(accepted);
     cnet_send_buffer_test_close_socket(listener);
   }
+
+  it("sends one retained middle slice and releases backing only after terminal") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_send_buffer_test_config();
+    cnet_send_buffer_test_probe probe = {.client = &client, .expected_send_size = 4u};
+    cnet_send_buffer_test_socket listener = CNET_SEND_BUFFER_TEST_INVALID_SOCKET;
+    cnet_send_buffer_test_socket accepted = CNET_SEND_BUFFER_TEST_INVALID_SOCKET;
+    cnet_connection connection = {0};
+    cnet_connect_options options;
+    cnet_observer observer = {.on_state = cnet_send_buffer_test_state,
+                              .on_receive = cnet_send_buffer_test_receive,
+                              .on_send = cnet_send_buffer_test_sent,
+                              .user = &probe};
+    cnet_send_buffer_free_probe free_probe;
+    mem_buffer_t *buffer;
+    mem_slice_t slice;
+    mem_slice_t forged;
+    unsigned char received[4] = {0};
+    const unsigned char expected[4] = {0x12u, 0x13u, 0x14u, 0x15u};
+    char uri[64];
+    uint16_t port = 0u;
+    size_t received_size = 0u;
+
+    atomic_init(&probe.connected, 0);
+    atomic_init(&probe.sent, 0);
+    atomic_init(&probe.terminal, 0);
+    atomic_init(&probe.failed, 0);
+    atomic_init(&probe.receive_admit_status, SALTS_OK);
+    atomic_init(&free_probe.freed, 0);
+
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_send_slice(NULL, connection, NULL), SALTS_EINVAL);
+    check_equal(cnet_send_slice(&client, connection, NULL), SALTS_EINVAL);
+    check_equal(cnet_send_buffer_test_listener(&listener, &port), SALTS_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned int)port), 0);
+    options = (cnet_connect_options){.uri = uri, .observer = observer};
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+    check_equal(cnet_send_buffer_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+    accepted = accept(listener, NULL, NULL);
+    check_true(accepted != CNET_SEND_BUFFER_TEST_INVALID_SOCKET);
+    check_equal(cnet_send_buffer_test_set_receive_timeout(accepted), SALTS_OK);
+
+    buffer = cnet_send_buffer_test_external(8u, 0u, &free_probe);
+    check_true(buffer != NULL);
+    for (size_t index = 0u; index < 8u; ++index)
+      mem_buffer_data(buffer)[index] = (char)(0x10u + index);
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(1));
+
+    forged = (mem_slice_t){mem_buffer_data(buffer) + 8u, 1u, buffer};
+    check_equal(cnet_send_slice(&client, connection, &forged), SALTS_EINVAL);
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(1));
+
+    slice = mem_slice(buffer, 2u, 4u);
+    check_equal(slice.length, (size_t)4u);
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
+    check_equal(cnet_send_slice(&client, connection, &slice), SALTS_OK);
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(3));
+
+    mem_slice_release(&slice);
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
+    mem_buffer_release(buffer);
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 0);
+
+    check_equal(cnet_send_buffer_test_poll_until(&client, &probe.sent, 1), SALTS_OK);
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
+    while (received_size < sizeof(received)) {
+      const int got = recv(accepted, (char *)received + received_size,
+                           (int)(sizeof(received) - received_size), 0);
+      check_greater(got, 0);
+      if (got <= 0) break;
+      received_size += (size_t)got;
+    }
+    check_equal(received_size, sizeof(received));
+    check_equal(memcmp(received, expected, sizeof(expected)), 0);
+    check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
+
+    check_equal(cnet_close(&client, connection), SALTS_OK);
+    check_equal(cnet_send_buffer_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
+    check_equal(cnet_client_stop(&client, CNET_SEND_BUFFER_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    cnet_send_buffer_test_close_socket(accepted);
+    cnet_send_buffer_test_close_socket(listener);
+  }
 }

@@ -696,6 +696,17 @@ int cnet_send(cnet_client *client, cnet_connection connection, const void *data,
 int cnet_send_buffer(cnet_client *client, cnet_connection connection, mem_buffer_t *buffer);
 
 /**
+ * Retains exactly one backing-buffer reference for a canonical non-empty slice
+ * on successful admission and sends only that subrange without copying payload
+ * bytes into CNet write storage. The mem_slice_t descriptor itself is borrowed
+ * only for this call; the caller may immediately mem_slice_release(slice) after
+ * SALTS_OK. The admitted backing bytes and buffer data/used/capacity must remain
+ * immutable until the logical send terminal. Invalid, forged, stale or
+ * out-of-range slices return SALTS_EINVAL without retaining.
+ */
+int cnet_send_slice(cnet_client *client, cnet_connection connection, const mem_slice_t *slice);
+
+/**
  * Copies the ordered concatenation of immutable, non-empty `segments` into
  * one bounded write slot before returning success. The descriptor array and
  * its backing ranges are borrowed only for this call. Completion, ordering,

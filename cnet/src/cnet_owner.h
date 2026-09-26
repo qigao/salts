@@ -131,6 +131,8 @@ int cnet_owner_send_copy_direct(cnet_owner *owner, cnet_session_handle session,
                                 const void *data, size_t size);
 int cnet_owner_send_buffer_direct(cnet_owner *owner, cnet_session_handle session,
                                   mem_buffer_t *buffer);
+int cnet_owner_send_slice_direct(cnet_owner *owner, cnet_session_handle session,
+                                 const mem_slice_t *slice);
 int cnet_owner_sendv_direct(cnet_owner *owner, cnet_session_handle session,
                             const cnet_const_buffer *segments, size_t segment_count);
 /** Admits one copied non-TLS final write behind already accepted write slots. */
