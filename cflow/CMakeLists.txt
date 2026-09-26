@@ -67,6 +67,7 @@ add_library(${TARGET_NAME}
   src/interfaces.c
   src/io_actor.c
   src/io_native_adapter.c
+  src/io_native_sharded_adapter.c
   src/io_publisher.c
   src/io_file.c
   src/io_pipe.c

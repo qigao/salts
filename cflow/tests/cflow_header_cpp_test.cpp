@@ -82,6 +82,12 @@ static_assert(std::is_standard_layout<cflow_io_actor>::value,
               "IO Actor must remain a C-compatible handle");
 static_assert(std::is_standard_layout<cflow_io_operation>::value,
               "IO operation must remain a C-compatible move token");
+static_assert(std::is_standard_layout<cflow_io_native_sharded_adapter>::value,
+              "NativeIO Sharded adapter must remain a C-compatible handle");
+static_assert(std::is_standard_layout<cflow_io_native_sharded_adapter_config>::value,
+              "NativeIO Sharded adapter config must remain C-compatible");
+static_assert(std::is_standard_layout<cflow_io_native_sharded_adapter_stats>::value,
+              "NativeIO Sharded adapter stats must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_actor_config>::value,
               "IO Actor config must remain C-compatible");
 static_assert(std::is_standard_layout<cflow_io_native_backend>::value,
@@ -303,6 +309,9 @@ suite("CFlow C++ public header") {
     cflow_statechart_actor_stats statechart_actor_stats = {};
     cflow_io_actor io_actor = {};
     cflow_io_operation io_operation = {};
+    cflow_io_native_sharded_adapter sharded_adapter = {};
+    cflow_io_native_sharded_adapter_config sharded_adapter_config = {};
+    cflow_io_native_sharded_adapter_stats sharded_adapter_stats = {};
     cflow_io_native_backend native_backend = {};
     cflow_io_native_operation native_operation = {};
     cflow_io_native_buffer_span native_buffer_span = {};
@@ -385,6 +394,11 @@ suite("CFlow C++ public header") {
     check_true(statechart_actor_stats.state == CFLOW_ACTOR_STATE_START);
     check_null(io_actor.impl);
     check_null(io_operation.user);
+    check_null(sharded_adapter.impl);
+    check_null(sharded_adapter_config.runtime);
+    check_true(sharded_adapter_config.bridge_capacity == 0u);
+    check_true(sharded_adapter_stats.bridge_capacity == 0u);
+    check_not_null(cflow_io_native_sharded_adapter_actor_ops().submit);
     check_null(native_backend.impl);
     check_true(native_backend_kind == CFLOW_IO_NATIVE_POLL);
     check_true(native_operation.kind == CFLOW_IO_NATIVE_TCP_RECV);
