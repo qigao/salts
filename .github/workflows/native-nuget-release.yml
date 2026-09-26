@@ -77,6 +77,9 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/linux-x64"
           cmake --install build/linux-gcc-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/lib/cmake/Salts/SaltsCMetaLower.cmake"
+          test -x "$prefix/bin/cmeta-lower"
+          test "$("$prefix/bin/cmeta-lower" --version)" = "cmeta-lower 1"
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/cflow/function_projection.h"
           test -f "$prefix/include/cmeta/interface.h"
@@ -176,6 +179,9 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/$rid"
           cmake --install build/mac-clang-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/lib/cmake/Salts/SaltsCMetaLower.cmake"
+          test -x "$prefix/bin/cmeta-lower"
+          test "$("$prefix/bin/cmeta-lower" --version)" = "cmeta-lower 1"
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/cflow/function_projection.h"
           test -f "$prefix/include/cmeta/interface.h"
@@ -257,6 +263,8 @@ jobs:
           $prefix = Join-Path $env:GITHUB_WORKSPACE "stage\sdk\windows-x64"
           cmake --install build/Msvc-Release --prefix $prefix --config Release
           $config = Join-Path $prefix "lib\cmake\Salts\SaltsConfig.cmake"
+          $lowerHelper = Join-Path $prefix "lib\cmake\Salts\SaltsCMetaLower.cmake"
+          $lower = Join-Path $prefix "bin\cmeta-lower.exe"
           $targets = Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake"
           $functionHeader = Join-Path $prefix "include\cmeta\function.h"
           $projectionHeader = Join-Path $prefix "include\cflow\function_projection.h"
@@ -270,6 +278,10 @@ jobs:
           $tinymockReturnHeader = Join-Path $prefix "include\tinymock_return.h"
           $tinymockCMake = Join-Path $prefix "lib\cmake\Salts\SaltsTinyMock.cmake"
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
+          if (-not (Test-Path -LiteralPath $lowerHelper -PathType Leaf)) { throw "missing $lowerHelper" }
+          if (-not (Test-Path -LiteralPath $lower -PathType Leaf)) { throw "missing $lower" }
+          $lowerVersion = (& $lower --version).Trim()
+          if ($lowerVersion -ne "cmeta-lower 1") { throw "unexpected cmeta-lower version: $lowerVersion" }
           if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
           if (-not (Test-Path -LiteralPath $projectionHeader -PathType Leaf)) { throw "missing $projectionHeader" }
           if (-not (Test-Path -LiteralPath $interfaceHeader -PathType Leaf)) { throw "missing $interfaceHeader" }
@@ -351,6 +363,9 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
           cmake --install build/android-arm64-v8a-release --prefix "$prefix"
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$prefix/lib/cmake/Salts/SaltsCMetaLower.cmake"
+          test ! -e "$prefix/bin/cmeta-lower"
+          test ! -e "$prefix/bin/cmeta-lower.exe"
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/cflow/function_projection.h"
           test -f "$prefix/include/cmeta/interface.h"
@@ -400,6 +415,8 @@ jobs:
         run: |
           set -euo pipefail
           test -f package/sdk/linux-x64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/linux-x64/lib/cmake/Salts/SaltsCMetaLower.cmake
+          test -x package/sdk/linux-x64/bin/cmeta-lower
           test -f package/sdk/linux-x64/include/cmeta/function.h
           test -f package/sdk/linux-x64/include/cflow/function_projection.h
           grep -F "Salts::CFlow" package/sdk/linux-x64/lib/cmake/Salts/SaltsTargets.cmake
@@ -407,10 +424,15 @@ jobs:
           test -f package/sdk/linux-x64/include/tinymeta/equality.h
           test ! -e package/sdk/linux-x64/include/tinymeta/cmeta.h
           test -f package/sdk/windows-x64/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/windows-x64/lib/cmake/Salts/SaltsCMetaLower.cmake
+          test -f package/sdk/windows-x64/bin/cmeta-lower.exe
           test -f package/sdk/windows-x64/include/cmeta/function.h
           test -f package/sdk/windows-x64/include/cflow/function_projection.h
           test -f package/sdk/windows-x64/include/cmeta/interface.h
           test -f package/sdk/android-arm64-v8a/lib/cmake/Salts/SaltsConfig.cmake
+          test -f package/sdk/android-arm64-v8a/lib/cmake/Salts/SaltsCMetaLower.cmake
+          test ! -e package/sdk/android-arm64-v8a/bin/cmeta-lower
+          test ! -e package/sdk/android-arm64-v8a/bin/cmeta-lower.exe
           test -f package/sdk/android-arm64-v8a/include/cmeta/function.h
           test -f package/sdk/android-arm64-v8a/include/cflow/function_projection.h
           test -f package/sdk/android-arm64-v8a/include/cmeta/interface.h
