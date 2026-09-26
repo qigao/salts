@@ -90,6 +90,21 @@ typed(BPlusTree, IntLongBPlusTree, int, long);
 } while (0)
 
 spec("CSTL typed schema") {
+    it("exposes List add as the typed append semantic") {
+        IntList values = {0};
+
+        check_equal(IntList_init(&values, 2u), STL_OK);
+        check_equal(IntList_add(&values, 10), STL_OK);
+        check_equal(IntList_add(&values, 20), STL_OK);
+        check_equal(IntList_size(&values), (size_t)2u);
+        check_not_null(IntList_front_const(&values));
+        check_equal(*IntList_front_const(&values), 10);
+        check_not_null(IntList_back_const(&values));
+        check_equal(*IntList_back_const(&values), 20);
+
+        IntList_destroy(&values);
+    }
+
     it("generates a bounded sequence Range and transactional collector") {
         IntVec source = {0};
         IntVec output = {0};
