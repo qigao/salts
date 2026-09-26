@@ -68,8 +68,9 @@ cmake_add_test(cstl_typed_test
   LIBS Salts::CSTL Salts::TinyTest
   FOLDER "cstl/tests")
 
-# Minimal CMeta receiver-method lowering POC. The lowerer runs at build time;
-# the generated executable contains only the direct typed CSTL call.
+# Minimal CMeta receiver-method lowering POC. The lowerer is a host build-time
+# tool, so do not try to execute a target binary while cross-compiling.
+if(NOT CMAKE_CROSSCOMPILING)
 add_executable(cstl_method_lower_poc cstl_method_lower_poc.c)
 target_link_libraries(cstl_method_lower_poc PRIVATE Salts::CSTL)
 set_target_properties(cstl_method_lower_poc PROPERTIES
@@ -133,6 +134,7 @@ add_test(
 set_tests_properties(cstl_method_lower_wrong_argument_test PROPERTIES
   WILL_FAIL TRUE
   PASS_REGULAR_EXPRESSION "unsupported method-call syntax")
+endif()
 
 cmake_add_test(cstl_tree_test
   SOURCES cstl_tree_test.c
