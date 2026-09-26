@@ -2166,7 +2166,7 @@ static int io_bench_sg_write_csv(const char *prefix, const char *backend,
 }
 
 static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const char *prefix) {
-  enum { SG_METHODS = 6, SG_PAYLOADS = 4, SG_SEGMENTS = 4 };
+  enum { SG_METHODS = 6, SG_REPLICATES = 6, SG_PAYLOADS = 4, SG_SEGMENTS = 4 };
   static const size_t payloads[SG_PAYLOADS] = {1024u, 8192u, 32768u, 65536u};
   static const size_t segments[SG_SEGMENTS] = {2u, 4u, 8u, 16u};
   static const io_bench_sg_method methods[SG_METHODS] = {
@@ -2183,7 +2183,7 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
 
   printf("\nNativeIO SG merge-gate comparison: backend=%s; %d repeats, %d warmups, "
          "%d persistent TCP RTTs/run.\n",
-         backend->name, IO_BENCH_REPLICATES, IO_BENCH_WARMUP_EXCHANGES,
+         backend->name, SG_REPLICATES, IO_BENCH_WARMUP_EXCHANGES,
          IO_BENCH_TOTAL_EXCHANGES);
   printf("native_flatten_copy uses one preallocated staging buffer so its delta versus "
          "native_sg isolates payload memcpy plus scalar-submit cost. cnet_sendv_flatten uses the "
@@ -2196,14 +2196,15 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
 
   for (size_t payload_index = 0u; payload_index < SG_PAYLOADS; ++payload_index) {
     for (size_t segment_index = 0u; segment_index < SG_SEGMENTS; ++segment_index) {
+      static const size_t balanced_order[SG_METHODS] = {0u, 1u, 5u, 2u, 4u, 3u};
       io_bench_result *runs =
-          (io_bench_result *)calloc(SG_METHODS * IO_BENCH_REPLICATES, sizeof(*runs));
+          (io_bench_result *)calloc(SG_METHODS * SG_REPLICATES, sizeof(*runs));
       if (runs == NULL) return SALTS_ENOMEM;
-      for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
+      for (size_t repeat = 0u; repeat < SG_REPLICATES; ++repeat) {
         for (size_t order = 0u; order < SG_METHODS; ++order) {
-          const size_t method =
-              (payload_index + segment_index + repeat + order) % SG_METHODS;
-          io_bench_result *result = &runs[method * IO_BENCH_REPLICATES + repeat];
+          const size_t base = (payload_index + segment_index + repeat) % SG_METHODS;
+          const size_t method = (balanced_order[order] + base) % SG_METHODS;
+          io_bench_result *result = &runs[method * SG_REPLICATES + repeat];
           status = io_bench_run(IO_BENCH_TCP, methods[method].driver,
                                 payloads[payload_index], false, backend->kind,
                                 methods[method].mode, segments[segment_index], result);
@@ -2215,16 +2216,16 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
       }
 
       for (size_t method = 0u; method < SG_METHODS; ++method) {
-        double p50[IO_BENCH_REPLICATES];
-        double p95[IO_BENCH_REPLICATES];
-        double rate[IO_BENCH_REPLICATES];
-        double cpu[IO_BENCH_REPLICATES];
+        double p50[SG_REPLICATES];
+        double p95[SG_REPLICATES];
+        double rate[SG_REPLICATES];
+        double cpu[SG_REPLICATES];
         cnet_benchmark_summary p50_summary = {0};
         cnet_benchmark_summary p95_summary = {0};
         cnet_benchmark_summary rate_summary = {0};
         cnet_benchmark_summary cpu_summary = {0};
-        for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-          const io_bench_result *result = &runs[method * IO_BENCH_REPLICATES + repeat];
+        for (size_t repeat = 0u; repeat < SG_REPLICATES; ++repeat) {
+          const io_bench_result *result = &runs[method * SG_REPLICATES + repeat];
           p50[repeat] = (double)result->p50_ns;
           p95[repeat] = (double)result->p95_ns;
           rate[repeat] = io_bench_rate(result);
@@ -2234,13 +2235,13 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
           cpu[repeat] = io_bench_mean(result->cpu_ns, result->round_trips);
 #endif
         }
-        status = cnet_benchmark_summarize(p50, IO_BENCH_REPLICATES, &p50_summary);
+        status = cnet_benchmark_summarize(p50, SG_REPLICATES, &p50_summary);
         if (status == SALTS_OK)
-          status = cnet_benchmark_summarize(p95, IO_BENCH_REPLICATES, &p95_summary);
+          status = cnet_benchmark_summarize(p95, SG_REPLICATES, &p95_summary);
         if (status == SALTS_OK)
-          status = cnet_benchmark_summarize(rate, IO_BENCH_REPLICATES, &rate_summary);
+          status = cnet_benchmark_summarize(rate, SG_REPLICATES, &rate_summary);
         if (status == SALTS_OK)
-          status = cnet_benchmark_summarize(cpu, IO_BENCH_REPLICATES, &cpu_summary);
+          status = cnet_benchmark_summarize(cpu, SG_REPLICATES, &cpu_summary);
         if (status != SALTS_OK) {
           free(runs);
           return status;
@@ -2258,19 +2259,19 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
       }
 
       {
-        double flatten_p50[IO_BENCH_REPLICATES], sg_p50[IO_BENCH_REPLICATES];
-        double flatten_rate[IO_BENCH_REPLICATES], sg_rate[IO_BENCH_REPLICATES];
-        double cnet_flatten_p50[IO_BENCH_REPLICATES], retained_sg_p50[IO_BENCH_REPLICATES];
-        double cnet_flatten_rate[IO_BENCH_REPLICATES], retained_sg_rate[IO_BENCH_REPLICATES];
+        double flatten_p50[SG_REPLICATES], sg_p50[SG_REPLICATES];
+        double flatten_rate[SG_REPLICATES], sg_rate[SG_REPLICATES];
+        double cnet_flatten_p50[SG_REPLICATES], retained_sg_p50[SG_REPLICATES];
+        double cnet_flatten_rate[SG_REPLICATES], retained_sg_rate[SG_REPLICATES];
         cnet_benchmark_summary native_p50_delta = {0};
         cnet_benchmark_summary native_rate_delta = {0};
         cnet_benchmark_summary cnet_p50_delta = {0};
         cnet_benchmark_summary cnet_rate_delta = {0};
-        for (size_t repeat = 0u; repeat < IO_BENCH_REPLICATES; ++repeat) {
-          const io_bench_result *flatten = &runs[1u * IO_BENCH_REPLICATES + repeat];
-          const io_bench_result *sg = &runs[2u * IO_BENCH_REPLICATES + repeat];
-          const io_bench_result *cnet_flatten = &runs[3u * IO_BENCH_REPLICATES + repeat];
-          const io_bench_result *retained_sg = &runs[4u * IO_BENCH_REPLICATES + repeat];
+        for (size_t repeat = 0u; repeat < SG_REPLICATES; ++repeat) {
+          const io_bench_result *flatten = &runs[1u * SG_REPLICATES + repeat];
+          const io_bench_result *sg = &runs[2u * SG_REPLICATES + repeat];
+          const io_bench_result *cnet_flatten = &runs[3u * SG_REPLICATES + repeat];
+          const io_bench_result *retained_sg = &runs[4u * SG_REPLICATES + repeat];
           flatten_p50[repeat] = (double)flatten->p50_ns;
           sg_p50[repeat] = (double)sg->p50_ns;
           flatten_rate[repeat] = io_bench_rate(flatten);
@@ -2281,16 +2282,16 @@ static int io_bench_compare_sg(const cnet_io_benchmark_backend *backend, const c
           retained_sg_rate[repeat] = io_bench_rate(retained_sg);
         }
         status = cnet_benchmark_summarize_paired_delta(
-            flatten_p50, sg_p50, IO_BENCH_REPLICATES, &native_p50_delta);
+            flatten_p50, sg_p50, SG_REPLICATES, &native_p50_delta);
         if (status == SALTS_OK)
           status = cnet_benchmark_summarize_paired_delta(
-              flatten_rate, sg_rate, IO_BENCH_REPLICATES, &native_rate_delta);
+              flatten_rate, sg_rate, SG_REPLICATES, &native_rate_delta);
         if (status == SALTS_OK)
           status = cnet_benchmark_summarize_paired_delta(
-              cnet_flatten_p50, retained_sg_p50, IO_BENCH_REPLICATES, &cnet_p50_delta);
+              cnet_flatten_p50, retained_sg_p50, SG_REPLICATES, &cnet_p50_delta);
         if (status == SALTS_OK)
           status = cnet_benchmark_summarize_paired_delta(
-              cnet_flatten_rate, retained_sg_rate, IO_BENCH_REPLICATES, &cnet_rate_delta);
+              cnet_flatten_rate, retained_sg_rate, SG_REPLICATES, &cnet_rate_delta);
         if (status != SALTS_OK) {
           free(runs);
           return status;
