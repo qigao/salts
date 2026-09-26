@@ -85,10 +85,37 @@ typedef struct cmeta_object_method_provider {
 bool cmeta_object_method_provider_valid(
     const cmeta_object_method_provider *provider);
 
+/**
+ * Explicit reflected-field mutation authority.
+ *
+ * Reflection alone never implies writability. A provider names the exact
+ * cmeta_data_desc object surface it can mutate and receives only field entries
+ * from that descriptor's canonical struct shape. The incoming value is a
+ * fully constructed semantic value matching field->value; the provider owns
+ * the exact typed/native assignment policy.
+ *
+ * Providers may reject individual fields with CMETA_TRAIT_MISSING. CMeta does
+ * not raw-memcpy managed fields and does not infer mutability from offsets.
+ */
+typedef cmeta_status (*cmeta_object_field_assign_fn)(
+    void *context, void *object, const cmeta_data_field_desc *field,
+    const void *value);
+
+typedef struct cmeta_object_field_provider {
+    size_t size;
+    const cmeta_data_desc *data;
+    void *context;
+    cmeta_object_field_assign_fn assign;
+} cmeta_object_field_provider;
+
+bool cmeta_object_field_provider_valid(
+    const cmeta_object_field_provider *provider);
+
 typedef struct cmeta_object_ref {
     size_t size;
     void *object;
     const cmeta_data_desc *data;
+    const cmeta_object_field_provider *field_provider;
     const cmeta_receiver_method_set *methods;
     const cmeta_object_method_provider *method_provider;
     cmeta_object_lifetime lifetime;
@@ -125,6 +152,18 @@ cmeta_status cmeta_object_borrow_with_provider(
     const cmeta_object_method_provider *provider);
 
 /**
+ * Publish one borrowed object with explicit field and/or method providers.
+ *
+ * A field provider must name this exact data descriptor. A method provider
+ * carries its own exact method-set capability. Either provider may be NULL,
+ * but at least one must be present.
+ */
+cmeta_status cmeta_object_borrow_with_providers(
+    cmeta_object_ref *out, void *object, const cmeta_data_desc *data,
+    const cmeta_object_field_provider *field_provider,
+    const cmeta_object_method_provider *method_provider);
+
+/**
  * Upgrade a BORROWED object handle to SHARED ownership.
  *
  * retain() is called exactly once. On failure the handle remains BORROWED.
@@ -158,13 +197,25 @@ void cmeta_object_release(cmeta_object_ref *ref);
  * valid only while the native object remains alive and the field is not
  * otherwise invalidated by caller-owned mutation.
  *
- * This phase is intentionally read-only. Reflected field presence alone does
- * not imply write permission; a later mutation API must carry an explicit
- * mutability contract instead of inferring writability from layout metadata.
+ * Reflected field presence alone does not imply write permission.
+ * cmeta_object_field_assign() is admitted only when this object carries an
+ * explicit cmeta_object_field_provider.
  */
 cmeta_status cmeta_object_field_read(
     const cmeta_object_ref *ref, const char *name,
     const cmeta_data_desc **out_data, const void **out_value);
+
+/**
+ * Assign one already-constructed semantic value through explicit mutation
+ * authority.
+ *
+ * value_data must be semantically equal to the reflected field descriptor.
+ * No conversion, raw memcpy, or inferred writability occurs here. A missing
+ * provider returns CMETA_TRAIT_MISSING; provider rejection is propagated.
+ */
+cmeta_status cmeta_object_field_assign(
+    cmeta_object_ref *ref, const char *name,
+    const cmeta_data_desc *value_data, const void *value);
 
 /**
  * Resolve one receiver method in the context of this exact native object type.
