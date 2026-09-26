@@ -773,6 +773,7 @@ spec("CNet public client API") {
     check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned)port), 0);
     options = (cnet_connect_options){.uri = uri,
                                      .observer = {.on_state = cnet_api_test_listener_state,
+                                                  .on_receive = cnet_api_test_listener_receive,
                                                   .on_send = cnet_api_test_listener_send,
                                                   .user = &probe}};
     check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
