@@ -319,6 +319,24 @@ All styles preserve the same authoritative terminal rule:
 4. release/close native endpoint identity on its owner;
 5. destroy the backend/executor only after quiescence.
 
+For Sharded/SMP, shutdown is a recoverable quiescence attempt. An internal FIFO
+probe runs behind all previously accepted owner commands. It compares raw
+`active_requests` with the number of request-lifetime ownership records. Any
+extra raw request is caller-managed, so shutdown returns `SALTS_EBUSY` and
+reopens public routing without observing or cancelling that request.
+
+When every active request is sharded-owned, the owner enters a drain phase:
+new attach/submit/prepare/flush work is rejected, each owned request receives a
+real backend cancellation request, and the owner uses the existing observe path
+until every token reaches its authoritative terminal callback/finalizer.
+Shutdown never synthesizes a completion.
+
+Native endpoint identity remains caller-owned. If request drain finishes while
+live endpoints remain, shutdown again returns `SALTS_EBUSY`, clears the drain
+gate and restores public admission so the caller can close/release those
+endpoints before retrying. Backend teardown and executor shutdown happen only
+after every shard reports both zero active requests and zero endpoints.
+
 Cancellation is a request, not a synthesized completion.
 
 ## 11. Performance contract
