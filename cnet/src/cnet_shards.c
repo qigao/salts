@@ -466,6 +466,19 @@ int cnet_shards_sendv_direct(cnet_shards *shards, cnet_shard_connection connecti
              : status;
 }
 
+int cnet_shards_send_close_direct(cnet_shards *shards, cnet_shard_connection connection,
+                                  const void *data, size_t size) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  int status;
+  if (data == NULL || size == 0u) return SALTS_EINVAL;
+  if (impl != NULL && size > impl->max_write_payload_bytes) return SALTS_EMSGSIZE;
+  status = cnet_shards_direct_write_ready(impl, connection, &record);
+  return status == SALTS_OK
+             ? cnet_owner_send_close_direct(&record->owner, connection.session, data, size)
+             : status;
+}
+
 int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, size_t demand) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
   const cnet_command command = {

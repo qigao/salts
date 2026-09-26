@@ -81,6 +81,8 @@ int cnet_shards_send_buffer_direct(cnet_shards *shards, cnet_shard_connection co
                                    mem_buffer_t *buffer);
 int cnet_shards_sendv_direct(cnet_shards *shards, cnet_shard_connection connection,
                              const cnet_const_buffer *segments, size_t segment_count);
+int cnet_shards_send_close_direct(cnet_shards *shards, cnet_shard_connection connection,
+                                  const void *data, size_t size);
 int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, size_t demand);
 /**
  * Single-owner fast path used outside callbacks. Bypasses admission_lock and

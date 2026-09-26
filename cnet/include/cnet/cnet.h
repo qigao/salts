@@ -707,9 +707,11 @@ int cnet_sendv(cnet_client *client, cnet_connection connection, const cnet_const
                size_t segment_count);
 
 /**
- * Copies one final byte message and closes the stream only after that write
- * reaches its terminal completion. Once admitted, the connection immediately
- * rejects further send/receive work.
+ * Copies one final byte message into the bounded write FIFO. For a non-TLS
+ * stream it is ordered after every previously accepted logical write, and the
+ * stream begins closing only after this final write reaches terminal success.
+ * Once admitted, the connection immediately rejects further send/receive work.
+ * TLS preserves its existing single-logical-write close path in this slice.
  */
 int cnet_send_and_close(cnet_client *client, cnet_connection connection, const void *data,
                         size_t size);

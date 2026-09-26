@@ -747,6 +747,69 @@ spec("CNet public client API") {
     cnet_api_test_close_socket(peer);
   }
 
+  it("drains accepted non-TLS writes before the final send-and-close slot") {
+    cnet_client client = {0};
+    cnet_client_config config = cnet_api_test_config();
+    cnet_api_test_listener_probe probe = {.expected_send_size = 1u};
+    cnet_api_test_socket listener = CNET_API_TEST_INVALID_SOCKET;
+    cnet_api_test_socket accepted = CNET_API_TEST_INVALID_SOCKET;
+    cnet_connection connection = {0};
+    cnet_connect_options options = {0};
+    const unsigned char first = 0x21u;
+    const unsigned char second = 0x22u;
+    const unsigned char final_value = 0x23u;
+    unsigned char received[3] = {0};
+    size_t received_size = 0u;
+    char uri[64];
+    uint16_t port = 0u;
+
+    atomic_init(&probe.connected, 0);
+    atomic_init(&probe.received, 0);
+    atomic_init(&probe.sent, 0);
+    atomic_init(&probe.terminal, 0);
+    atomic_init(&probe.failed, 0);
+    check_equal(cnet_client_init(&client, &config), SALTS_OK);
+    check_equal(cnet_api_test_listener(&listener, &port), SALTS_OK);
+    check_greater(snprintf(uri, sizeof(uri), "tcp://127.0.0.1:%u", (unsigned)port), 0);
+    options = (cnet_connect_options){.uri = uri,
+                                     .observer = {.on_state = cnet_api_test_listener_state,
+                                                  .on_send = cnet_api_test_listener_send,
+                                                  .user = &probe}};
+    check_equal(cnet_connect(&client, &options, &connection), SALTS_OK);
+    check_equal(cnet_api_test_poll_until(&client, &probe.connected, 1), SALTS_OK);
+    accepted = accept(listener, NULL, NULL);
+    check_true(accepted != CNET_API_TEST_INVALID_SOCKET);
+    check_equal(cnet_api_test_set_receive_timeout(accepted), SALTS_OK);
+
+    check_equal(cnet_send(&client, connection, &first, sizeof(first)), SALTS_OK);
+    check_equal(cnet_send(&client, connection, &second, sizeof(second)), SALTS_OK);
+    check_equal(cnet_send_and_close(&client, connection, &final_value, sizeof(final_value)),
+                SALTS_OK);
+    check_equal(cnet_send(&client, connection, &first, sizeof(first)), SALTS_EBUSY);
+    check_equal(cnet_receive(&client, connection, 1u), SALTS_EBUSY);
+
+    check_equal(cnet_api_test_poll_until(&client, &probe.terminal, 1), SALTS_OK);
+    check_equal(atomic_load_explicit(&probe.sent, memory_order_acquire), 3);
+    while (received_size < sizeof(received)) {
+      const int got =
+          recv(accepted, (char *)&received[received_size], (int)(sizeof(received) - received_size), 0);
+      check_greater(got, 0);
+      received_size += (size_t)got;
+    }
+    check_equal(received[0], first);
+    check_equal(received[1], second);
+    check_equal(received[2], final_value);
+    {
+      unsigned char eof_byte = 0u;
+      check_equal(recv(accepted, (char *)&eof_byte, (int)sizeof(eof_byte), 0), 0);
+    }
+    check_equal(atomic_load_explicit(&probe.failed, memory_order_acquire), 0);
+    check_equal(cnet_client_stop(&client, CNET_API_TEST_TIMEOUT_MS), SALTS_OK);
+    check_equal(cnet_client_destroy(&client), SALTS_OK);
+    cnet_api_test_close_socket(accepted);
+    cnet_api_test_close_socket(listener);
+  }
+
   it("rejects new work as soon as close is admitted") {
     cnet_client client = {0};
     cnet_client_config config = cnet_api_test_config();
