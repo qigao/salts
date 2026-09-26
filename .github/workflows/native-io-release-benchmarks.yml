@@ -284,7 +284,7 @@ jobs:
               cnet_packet_endpoint_test cnet_stop_contract_test \
               cnet_vsock_integration_test \
               cnet_benchmark_stats_test cnet_io_benchmark_config_test \
-              concurrency_deadline_queue_test
+              concurrency_deadline_queue_test native_io_queue_depth_benchmark
 
       - name: Configure Windows Release
         if: matrix.family == 'windows'
@@ -432,6 +432,28 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
+      - name: Run NativeIO io_uring queue-depth benchmark
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_QD_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_queue_depth_benchmark
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_QD_EXECUTABLE
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "queue-depth benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_QD_BENCHMARK_OUTPUT = Join-Path $resultDir "native-io-queue-depth"
+          $output = & $benchmark 2>&1 | Tee-Object -FilePath (Join-Path $resultDir "native-io-queue-depth.md")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./native-io/benchmarks/verify_queue_depth_benchmark.ps1 -Path "$env:NATIVE_IO_QD_BENCHMARK_OUTPUT.csv"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO io_uring queue-depth benchmark"
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+          $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
       - name: Compare CNet copy and retained sends independently
         if: steps.scope.outputs.adapted == 'true'
         shell: pwsh
@@ -452,6 +474,35 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## CNet retained-send experiment: $env:CNET_IO_BENCHMARK_BACKEND"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Trace NativeIO io_uring queue-depth control path
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
+        shell: bash
+        env:
+          NATIVE_IO_QD_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_queue_depth_benchmark
+        run: |
+          set -euo pipefail
+          trace_dir="native-io-results/queue-depth-syscalls"
+          mkdir -p "$trace_dir"
+          benchmark="$GITHUB_WORKSPACE/$NATIVE_IO_QD_EXECUTABLE"
+          for qd in 1 8 32 64; do
+            export NATIVE_IO_QD_TRACE="$qd:32768"
+            label="qd-$qd-payload-32768"
+            strace -ff -ttt -T -s 128 \
+              -e trace=io_uring_enter,poll,ppoll,write \
+              -o "$trace_dir/$label.trace" \
+              "$benchmark" \
+              > "$trace_dir/$label.log" 2>&1
+          done
+          unset NATIVE_IO_QD_TRACE
+
+      - name: Summarize NativeIO queue-depth syscall evidence
+        if: matrix.family == 'linux' && matrix.backend == 'io_uring' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        run: |
+          ./native-io/benchmarks/summarize_queue_depth_trace.ps1 -Directory native-io-results/queue-depth-syscalls |
+            Tee-Object -FilePath native-io-results/queue-depth-syscalls/summary.txt |
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Collect isolated Linux syscall evidence
         if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
