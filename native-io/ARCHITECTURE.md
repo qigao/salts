@@ -6,9 +6,10 @@
 **NativeIPC/Pipe migration:** #168
 
 This document freezes the ownership and layering contract for NativeIO.
-The first #474 Sharded/SMP routing slice is implemented as a bounded fixed-shard
-execution substrate; endpoint-bound sharded I/O routing and cross-shard
-completion work remain tracked by #474/#475.
+The #474 Sharded/SMP runtime now provides a bounded fixed-shard execution
+substrate plus owner-local shard-bound endpoint/request wrappers. Cross-shard
+payload operation routing and reply/completion ownership remain tracked by
+#474/#475.
 
 ## 1. Two independent dimensions
 
@@ -129,11 +130,17 @@ Current routing checkpoint:
   ownership;
 - initialized steady-state routing allocates no command storage.
 
-This checkpoint does **not** yet expose sharded endpoint attach, operation
-submission, cancellation or completion routing. The shard-bound endpoint
-wrapper and wrong-shard enforcement remain #475/#474 work, so Direct remains
-the only claimed raw mechanism baseline for those operations until that slice
-lands.
+The current owner-local data plane adds runtime/shard-bound endpoint and request
+wrappers without changing `native_io_endpoint` or `native_io_request`.
+Attach, release, submit, prepare, cancel and observe must execute from the live
+owner callback context. A wrapper naming another shard of the same runtime is
+rejected with `SALTS_EPERM`; another runtime or stale raw generation is rejected
+rather than forwarded or migrated.
+
+Raw payload/address pointers still use the Direct borrow contract only after
+execution has reached the endpoint owner shard. Cross-shard payload routing is
+therefore **not** implied by these owner-local helpers: a future routing slice
+must carry an explicit retained/move-owned/finalized token before invoking them.
 
 ## 3. Endpoint/data-plane categories
 
