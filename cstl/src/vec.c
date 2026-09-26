@@ -1,4 +1,5 @@
 #include <cstl/vec_alloc.h>
+#include <cstl/detail/instance_meta.h>
 
 #include "vec_memory.h"
 
@@ -8,6 +9,45 @@
 
 static bool vec_valid(const vec_t *vec) {
     return vec != NULL && vec->initialized && vec->elem_size != 0u;
+}
+
+static bool vec_is_typed_semantic_zero(const vec_t *vec) {
+    return vec != NULL && !vec->initialized && vec->data == NULL &&
+           vec->size == 0u && vec->capacity == 0u && vec->elem_size == 0u &&
+           vec->elem_stride == 0u && vec->elem_align == 0u &&
+           vec->element_limit == 0u &&
+           vec->cmeta.descriptor == &stl_vec_container_desc &&
+           vec->element_type != NULL &&
+           cmeta_type_desc_valid(vec->element_type);
+}
+
+static stl_status vec_materialize_for_mutation(
+    vec_t *vec, vec_t *zero_snapshot, bool *materialized) {
+    stl_status status;
+    if (zero_snapshot == NULL || materialized == NULL)
+        return STL_INVALID_ARGUMENT;
+    *materialized = false;
+    if (vec_valid(vec)) return STL_OK;
+    if (!vec_is_typed_semantic_zero(vec)) return STL_INVALID_ARGUMENT;
+
+    *zero_snapshot = *vec;
+    status = vec_raw_init(vec, zero_snapshot->element_type, SIZE_MAX);
+    if (status != STL_OK) {
+        *vec = *zero_snapshot;
+        return status;
+    }
+    vec->cmeta.descriptor = zero_snapshot->cmeta.descriptor;
+    /* Materialization is not an observable value mutation by itself. */
+    vec->generation = zero_snapshot->generation;
+    *materialized = true;
+    return STL_OK;
+}
+
+static void vec_rollback_materialization(
+    vec_t *vec, const vec_t *zero_snapshot, bool materialized) {
+    if (!materialized) return;
+    vec_raw_destroy_storage(vec);
+    *vec = *zero_snapshot;
 }
 
 static unsigned char *vec_slot(vec_t *vec, size_t index) {
@@ -214,19 +254,43 @@ static stl_status vec_resize_using(vec_t *vec, size_t new_size,
 
 static stl_status vec_push_using(vec_t *vec, const void *elem,
                                   const stl_allocator *allocator) {
+    vec_t zero_snapshot = {0};
     void *prepared = NULL;
+    bool materialized = false;
     stl_status status;
-    if (!vec_valid(vec) || !elem) return STL_INVALID_ARGUMENT;
-    if (vec->size >= vec->element_limit) return STL_CAPACITY_EXCEEDED;
-    status = vec_prepare_copy(vec, elem, &prepared, allocator);
+    if (elem == NULL) return STL_INVALID_ARGUMENT;
+    /*
+     * vec_alloc owners are created initialized and have allocator-specific
+     * teardown. Lazy materialization is only a raw/typed-handle contract.
+     */
+    if (!vec_valid(vec) && allocator != NULL) return STL_INVALID_ARGUMENT;
+    status = vec_materialize_for_mutation(
+        vec, &zero_snapshot, &materialized);
     if (status != STL_OK) return status;
+    if (vec->size >= vec->element_limit) {
+        vec_rollback_materialization(vec, &zero_snapshot, materialized);
+        return STL_CAPACITY_EXCEEDED;
+    }
+    status = vec_prepare_copy(vec, elem, &prepared, allocator);
+    if (status != STL_OK) {
+        vec_rollback_materialization(vec, &zero_snapshot, materialized);
+        return status;
+    }
     status = vec_grow_to(vec, vec->size + 1u, NULL, allocator);
-    if (status != STL_OK) { vec_discard_prepared(vec, prepared, allocator); return status; }
+    if (status != STL_OK) {
+        vec_discard_prepared(vec, prepared, allocator);
+        vec_rollback_materialization(vec, &zero_snapshot, materialized);
+        return status;
+    }
     status = sequence_move_destroy(vec->element_type, vec->elem_size,
         vec_slot(vec, vec->size), prepared);
     vec_memory_deallocate(allocator, prepared);
-    if (status != STL_OK) return status;
-    ++vec->size; ++vec->generation;
+    if (status != STL_OK) {
+        vec_rollback_materialization(vec, &zero_snapshot, materialized);
+        return status;
+    }
+    ++vec->size;
+    ++vec->generation;
     return STL_OK;
 }
 
