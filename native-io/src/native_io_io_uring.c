@@ -51,6 +51,13 @@
   #define SALTS_IO_URING_HAS_TASKRUN_FLAG 0
 #endif
 
+#if defined(__NR_io_uring_register) && defined(IORING_REGISTER_RING_FDS) && \
+    defined(IORING_UNREGISTER_RING_FDS) && defined(IORING_ENTER_REGISTERED_RING)
+  #define SALTS_IO_URING_HAS_REGISTERED_RING_FD 1
+#else
+  #define SALTS_IO_URING_HAS_REGISTERED_RING_FD 0
+#endif
+
 typedef enum salts_io_uring_phase {
   SALTS_IO_URING_FREE = 0,
   SALTS_IO_URING_PENDING,
@@ -121,6 +128,7 @@ typedef struct salts_io_uring_impl {
   uint64_t native_submit_errors;
   uint64_t native_cancel_errors;
   int ring_fd;
+  int enter_ring_fd;
   int wake_fd;
   void *sq_ring;
   void *cq_ring;
@@ -142,6 +150,7 @@ typedef struct salts_io_uring_impl {
   bool ring_native_wait;
   bool defer_taskrun;
   bool taskrun_flag;
+  bool ring_fd_registered;
   bool wake_poll_in_flight;
   bool admission_open;
   atomic_bool wake_pending;
@@ -262,10 +271,19 @@ static void uring_lane_remove(salts_io_uring_impl *impl, salts_io_uring_endpoint
 
 static int uring_enter_once(salts_io_uring_impl *impl, unsigned submit, unsigned minimum,
                             unsigned flags, const void *argument, size_t argument_size) {
-  const int status =
-      (int)syscall(__NR_io_uring_enter, impl->ring_fd, submit, minimum, flags, argument,
-                   argument_size);
-  return status < 0 ? -errno : status;
+  int enter_fd = impl->ring_fd;
+#if SALTS_IO_URING_HAS_REGISTERED_RING_FD
+  if (impl->ring_fd_registered) {
+    enter_fd = impl->enter_ring_fd;
+    flags |= IORING_ENTER_REGISTERED_RING;
+  }
+#endif
+  {
+    const int status =
+        (int)syscall(__NR_io_uring_enter, enter_fd, submit, minimum, flags, argument,
+                     argument_size);
+    return status < 0 ? -errno : status;
+  }
 }
 
 static int uring_enter(salts_io_uring_impl *impl, unsigned submit, unsigned minimum,
@@ -1139,10 +1157,49 @@ static void uring_unmap(salts_io_uring_impl *impl) {
     (void)munmap(impl->sq_ring, impl->sq_ring_size);
 }
 
+static int uring_unregister_ring_fd(salts_io_uring_impl *impl) {
+#if SALTS_IO_URING_HAS_REGISTERED_RING_FD
+  struct io_uring_rsrc_update update;
+  int result;
+  if (!impl->ring_fd_registered) return SALTS_OK;
+  memset(&update, 0, sizeof(update));
+  update.offset = (unsigned)impl->enter_ring_fd;
+  result = (int)syscall(__NR_io_uring_register, impl->ring_fd,
+                        IORING_UNREGISTER_RING_FDS, &update, 1u);
+  if (result != 1) return result < 0 ? -errno : SALTS_EIO;
+  impl->ring_fd_registered = false;
+  impl->enter_ring_fd = impl->ring_fd;
+#else
+  (void)impl;
+#endif
+  return SALTS_OK;
+}
+
+static void uring_try_register_ring_fd(salts_io_uring_impl *impl) {
+#if SALTS_IO_URING_HAS_REGISTERED_RING_FD
+  struct io_uring_rsrc_update update;
+  int result;
+  memset(&update, 0, sizeof(update));
+  update.offset = UINT32_MAX;
+  update.data = (uint64_t)(unsigned)impl->ring_fd;
+  result = (int)syscall(__NR_io_uring_register, impl->ring_fd,
+                        IORING_REGISTER_RING_FDS, &update, 1u);
+  if (result == 1) {
+    impl->enter_ring_fd = (int)update.offset;
+    impl->ring_fd_registered = true;
+  }
+#else
+  (void)impl;
+#endif
+}
+
 static int uring_destroy(salts_io_impl *base) {
   salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
+  int status;
   if (impl->admission_open || impl->active_requests != 0u || impl->endpoint_count != 0u)
     return SALTS_EBUSY;
+  status = uring_unregister_ring_fd(impl);
+  if (status != SALTS_OK) return status;
   uring_unmap(impl);
   if (impl->ring_fd >= 0) (void)close(impl->ring_fd);
   if (impl->wake_fd >= 0) (void)close(impl->wake_fd);
@@ -1268,6 +1325,7 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
   impl = (salts_io_uring_impl *)calloc(1u, sizeof(*impl));
   if (impl == NULL) return SALTS_ENOMEM;
   impl->ring_fd = -1;
+  impl->enter_ring_fd = -1;
   impl->wake_fd = -1;
   impl->staged_head = impl->staged_tail = SALTS_IO_URING_INDEX_NONE;
   impl->sq_ring = MAP_FAILED;
@@ -1359,6 +1417,7 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
     uring_free_partial(impl);
     return status;
   }
+  impl->enter_ring_fd = impl->ring_fd;
   status = uring_map(impl, &params);
   if (status != SALTS_OK) {
     uring_free_partial(impl);
@@ -1386,6 +1445,10 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
       return status;
     }
   }
+
+  /* Registration is an optional, task-private enter optimization. Do it last
+   * so a successful registration cannot be stranded by later init failure. */
+  uring_try_register_ring_fd(impl);
   backend->impl = impl;
   return SALTS_OK;
 }
