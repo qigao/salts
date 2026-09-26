@@ -264,16 +264,17 @@ static int qd_fixture_init(qd_fixture *fixture, size_t qd, size_t payload_size, 
   return status;
 }
 
-static int qd_fixture_destroy(qd_fixture *fixture) {
+static int qd_fixture_destroy(qd_fixture *fixture, bool abort_peer) {
   int status = SALTS_OK;
   int peer_status = SALTS_OK;
 
-  /* Unblock a peer that may be waiting in read() after a failed sample. On the
-   * success path all NativeIO requests are already terminal before cleanup. */
-  for (size_t index = 0u; index < fixture->qd; ++index) {
-    if (fixture->local[index] >= 0) (void)shutdown(fixture->local[index], SHUT_RDWR);
-    if (fixture->peer.descriptors[index] >= 0)
-      (void)shutdown(fixture->peer.descriptors[index], SHUT_RDWR);
+  if (abort_peer) {
+    /* Unblock a peer that may be waiting in read() after a failed sample. */
+    for (size_t index = 0u; index < fixture->qd; ++index) {
+      if (fixture->local[index] >= 0) (void)shutdown(fixture->local[index], SHUT_RDWR);
+      if (fixture->peer.descriptors[index] >= 0)
+        (void)shutdown(fixture->peer.descriptors[index], SHUT_RDWR);
+    }
   }
 
   if (fixture->peer_thread != NULL) {
@@ -330,7 +331,7 @@ static int qd_run_cell(size_t qd, size_t payload_size, qd_result *out) {
                            QD_BENCH_WARMUPS + QD_BENCH_SAMPLES);
   if (status != SALTS_OK) {
     free(latencies);
-    (void)qd_fixture_destroy(&fixture);
+    (void)qd_fixture_destroy(&fixture, true);
     return status;
   }
 
@@ -379,7 +380,7 @@ static int qd_run_cell(size_t qd, size_t payload_size, qd_result *out) {
 
 cleanup:
   {
-    int destroy_status = qd_fixture_destroy(&fixture);
+    int destroy_status = qd_fixture_destroy(&fixture, status != SALTS_OK);
     if (status == SALTS_OK && destroy_status != SALTS_OK) status = destroy_status;
   }
   free(latencies);
