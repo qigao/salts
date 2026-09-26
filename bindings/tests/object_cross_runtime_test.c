@@ -228,6 +228,27 @@ static const cmeta_object_method_provider cross_runtime_method_provider = {
     .bind = cross_runtime_method_bind
 };
 
+
+static cmeta_status cross_runtime_field_assign(
+    void *context, void *object, const cmeta_data_field_desc *field,
+    const void *value) {
+  cross_runtime_box *box = (cross_runtime_box *)object;
+  (void)context;
+  if (box == NULL || field == NULL || value == NULL)
+    return CMETA_INVALID_ARGUMENT;
+  if (field != &cross_runtime_data_fields[0])
+    return CMETA_TRAIT_MISSING;
+  box->value = *(const int *)value;
+  return CMETA_OK;
+}
+
+static const cmeta_object_field_provider cross_runtime_field_provider = {
+    .size = sizeof(cmeta_object_field_provider),
+    .data = &cross_runtime_data,
+    .context = NULL,
+    .assign = cross_runtime_field_assign
+};
+
 typedef struct cross_runtime_lifetime_counts {
   int retains;
   int releases;
@@ -295,12 +316,14 @@ spec("CMeta native object cross-runtime identity") {
     check_not_null(runtime);
     check_not_null(js);
 
-    check_equal(cmeta_object_borrow_with_provider(
+    check_equal(cmeta_object_borrow_with_providers(
                     &lua_object, &box, &cross_runtime_data,
+                    &cross_runtime_field_provider,
                     &cross_runtime_method_provider),
                 CMETA_OK);
-    check_equal(cmeta_object_borrow_with_provider(
+    check_equal(cmeta_object_borrow_with_providers(
                     &js_object, &box, &cross_runtime_data,
+                    &cross_runtime_field_provider,
                     &cross_runtime_method_provider),
                 CMETA_OK);
     check_equal(cmeta_object_share(&lua_object, &lifecycle), CMETA_OK);
@@ -331,25 +354,48 @@ spec("CMeta native object cross-runtime identity") {
     check_equal(js_number, 10);
     JS_FreeValue(js, result);
 
-    result = cross_runtime_eval_js(js, "counter.add(5)");
-    check_false(JS_IsException(result));
-    check_equal(JS_ToInt32(js, &js_number, result), 0);
-    check_equal(js_number, 15);
-    check_equal(box.value, 15);
-    JS_FreeValue(js, result);
-
-    check_equal(luaL_dostring(lua, "return counter.value"), LUA_OK);
-    check_equal(lua_tointeger(lua, -1), 15);
-    lua_settop(lua, 0);
-
-    check_equal(cross_runtime_box_add(&box, 2), 17);
-    check_equal(luaL_dostring(lua, "return counter.value"), LUA_OK);
-    check_equal(lua_tointeger(lua, -1), 17);
+    check_equal(luaL_dostring(
+                    lua, "counter.value = 12; return counter.value"),
+                LUA_OK);
+    check_equal(lua_tointeger(lua, -1), 12);
+    check_equal(box.value, 12);
     lua_settop(lua, 0);
     result = cross_runtime_eval_js(js, "counter.value");
     check_false(JS_IsException(result));
     check_equal(JS_ToInt32(js, &js_number, result), 0);
+    check_equal(js_number, 12);
+    JS_FreeValue(js, result);
+
+    result = cross_runtime_eval_js(js, "counter.add(5)");
+    check_false(JS_IsException(result));
+    check_equal(JS_ToInt32(js, &js_number, result), 0);
     check_equal(js_number, 17);
+    check_equal(box.value, 17);
+    JS_FreeValue(js, result);
+
+    check_equal(luaL_dostring(lua, "return counter.value"), LUA_OK);
+    check_equal(lua_tointeger(lua, -1), 17);
+    lua_settop(lua, 0);
+
+    result = cross_runtime_eval_js(
+        js, "counter.value = 30; counter.value");
+    check_false(JS_IsException(result));
+    check_equal(JS_ToInt32(js, &js_number, result), 0);
+    check_equal(js_number, 30);
+    check_equal(box.value, 30);
+    JS_FreeValue(js, result);
+    check_equal(luaL_dostring(lua, "return counter.value"), LUA_OK);
+    check_equal(lua_tointeger(lua, -1), 30);
+    lua_settop(lua, 0);
+
+    check_equal(cross_runtime_box_add(&box, 2), 32);
+    check_equal(luaL_dostring(lua, "return counter.value"), LUA_OK);
+    check_equal(lua_tointeger(lua, -1), 32);
+    lua_settop(lua, 0);
+    result = cross_runtime_eval_js(js, "counter.value");
+    check_false(JS_IsException(result));
+    check_equal(JS_ToInt32(js, &js_number, result), 0);
+    check_equal(js_number, 32);
     JS_FreeValue(js, result);
 
     lua_close(lua);
@@ -359,8 +405,8 @@ spec("CMeta native object cross-runtime identity") {
     result = cross_runtime_eval_js(js, "counter.add(1)");
     check_false(JS_IsException(result));
     check_equal(JS_ToInt32(js, &js_number, result), 0);
-    check_equal(js_number, 18);
-    check_equal(box.value, 18);
+    check_equal(js_number, 33);
+    check_equal(box.value, 33);
     JS_FreeValue(js, result);
 
     JS_FreeContext(js);
