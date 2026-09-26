@@ -1094,36 +1094,41 @@ static JSValue salts_quickjs_object_closure_new(
 
 static cmeta_status salts_quickjs_object_surface_validate(
     const cmeta_object_ref *object) {
-  const cmeta_data_struct_shape *shape;
+  const cmeta_data_struct_shape *shape = NULL;
   size_t i;
   size_t j;
 
   if (!cmeta_object_ref_valid(object))
     return CMETA_INVALID_ARGUMENT;
-  if (object->data->kind != CMETA_DATA_STRUCT ||
-      object->data->shape == NULL ||
-      object->method_provider == NULL ||
-      object->methods == NULL)
-    return CMETA_OK;
-  if (!cmeta_object_method_provider_valid(object->method_provider))
+  if (object->method_provider != NULL &&
+      !cmeta_object_method_provider_valid(object->method_provider))
     return CMETA_INVALID_ARGUMENT;
 
-  shape = (const cmeta_data_struct_shape *)object->data->shape;
-  for (i = 0u; i < shape->field_count; ++i) {
-    const cmeta_data_field_desc *field = &shape->fields[i];
-    if (field->name != NULL &&
-        strcmp(field->name, SALTS_QUICKJS_OBJECT_HOLDER_PROPERTY) == 0)
-      return CMETA_TYPE_MISMATCH;
+  if (object->data->kind == CMETA_DATA_STRUCT &&
+      object->data->shape != NULL) {
+    shape = (const cmeta_data_struct_shape *)object->data->shape;
+    for (i = 0u; i < shape->field_count; ++i) {
+      const cmeta_data_field_desc *field = &shape->fields[i];
+      if (field->name != NULL &&
+          strcmp(field->name, SALTS_QUICKJS_OBJECT_HOLDER_PROPERTY) == 0)
+        return CMETA_TYPE_MISMATCH;
+      if (object->methods != NULL) {
+        for (j = 0u; j < object->methods->method_count; ++j)
+          if (field->name != NULL &&
+              object->methods->methods[j].name != NULL &&
+              strcmp(field->name, object->methods->methods[j].name) == 0)
+            return CMETA_TYPE_MISMATCH;
+      }
+    }
+  }
+
+  if (object->methods != NULL) {
     for (j = 0u; j < object->methods->method_count; ++j)
-      if (field->name != NULL && object->methods->methods[j].name != NULL &&
-          strcmp(field->name, object->methods->methods[j].name) == 0)
+      if (object->methods->methods[j].name != NULL &&
+          strcmp(object->methods->methods[j].name,
+                 SALTS_QUICKJS_OBJECT_HOLDER_PROPERTY) == 0)
         return CMETA_TYPE_MISMATCH;
   }
-  for (j = 0u; j < object->methods->method_count; ++j)
-    if (object->methods->methods[j].name != NULL &&
-        strcmp(object->methods->methods[j].name,
-               SALTS_QUICKJS_OBJECT_HOLDER_PROPERTY) == 0)
-      return CMETA_TYPE_MISMATCH;
   return CMETA_OK;
 }
 
