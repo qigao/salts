@@ -63,6 +63,10 @@ int cnet_write_queue_enqueue_buffer(cnet_write_queue *queue, cnet_session_handle
                                     mem_buffer_t *buffer, bool close_after_send,
                                     cnet_write_handle *out_handle);
 
+int cnet_write_queue_enqueue_slice(cnet_write_queue *queue, cnet_session_handle connection,
+                                   const mem_slice_t *slice, bool close_after_send,
+                                   cnet_write_handle *out_handle);
+
 /** Returns the current per-connection FIFO head. Empty-open returns SALTS_ETIMEDOUT. */
 int cnet_write_queue_peek(cnet_write_queue *queue, cnet_session_handle connection,
                           cnet_write_view *out_view);
