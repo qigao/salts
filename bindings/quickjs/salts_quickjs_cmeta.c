@@ -979,13 +979,48 @@ static JSValue salts_quickjs_object_field_get(
 
 static JSValue salts_quickjs_object_field_set(
     JSContext *context, JSValueConst this_value,
-    int argument_count, JSValueConst *arguments) {
+    int argument_count, JSValueConst *arguments, int magic, void *opaque) {
+  salts_quickjs_object_closure *closure =
+      (salts_quickjs_object_closure *)opaque;
+  salts_quickjs_object_holder *holder;
+  const cmeta_data_struct_shape *shape;
+  const cmeta_data_field_desc *field;
+  cmeta_data_temp value = {0};
+  cmeta_status status;
+
   (void)this_value;
-  (void)argument_count;
-  (void)arguments;
-  return JS_ThrowTypeError(
-      context,
-      "CMeta object fields are read-only until an explicit mutability contract is provided");
+  (void)magic;
+
+  if (closure == NULL ||
+      closure->kind != SALTS_QUICKJS_OBJECT_FIELD ||
+      closure->holder == NULL ||
+      argument_count != 1 || arguments == NULL)
+    return JS_ThrowTypeError(context, "invalid CMeta object field setter");
+  holder = closure->holder;
+  if (!cmeta_object_ref_valid(&holder->object) ||
+      holder->object.data->kind != CMETA_DATA_STRUCT ||
+      holder->object.data->shape == NULL)
+    return JS_ThrowTypeError(context, "invalid CMeta object field proxy");
+
+  shape = (const cmeta_data_struct_shape *)holder->object.data->shape;
+  if (closure->index >= shape->field_count)
+    return JS_ThrowTypeError(context, "invalid CMeta object field index");
+  field = &shape->fields[closure->index];
+
+  status = cmeta_data_temp_open(
+      field->value, holder->limits.max_bytes, &value);
+  if (status == CMETA_OK)
+    status = salts_quickjs_read_cmeta(
+        context, arguments[0], field->value, value.storage, holder->limits);
+  if (status == CMETA_OK)
+    status = cmeta_object_field_assign(
+        &holder->object, field->name, field->value, value.storage);
+  cmeta_data_temp_close(&value);
+
+  if (status != CMETA_OK)
+    return JS_ThrowTypeError(
+        context, "CMeta object field assignment failed (%d)", (int)status);
+  return JS_UNDEFINED;
 }
 
 static JSValue salts_quickjs_object_method_call(
@@ -1154,8 +1189,9 @@ cmeta_status salts_quickjs_push_object(
         JS_FreeValue(context, result);
         return CMETA_OUT_OF_MEMORY;
       }
-      setter = JS_NewCFunction(
-          context, salts_quickjs_object_field_set, NULL, 1);
+      setter = salts_quickjs_object_closure_new(
+          context, holder, SALTS_QUICKJS_OBJECT_FIELD, i,
+          salts_quickjs_object_field_set, 1);
       if (JS_IsException(setter)) {
         JS_FreeValue(context, getter);
         JS_FreeValue(context, result);
