@@ -1534,7 +1534,8 @@ static int cnet_owner_complete(cnet_owner_impl *impl, cnet_owner_request *reques
         return cnet_owner_fail_session(impl, session, SALTS_EIO, request_stage);
       status = cnet_tls_feed_cipher(&session->tls, session->tls.read_buffer, completion->bytes);
       if (status == SALTS_OK) status = cnet_owner_tls_pump(impl, session);
-      if (status == SALTS_OK && !session->close_requested && session->receive_demand == 0u)
+      if (status == SALTS_OK && session->occupied && !session->close_requested &&
+          session->receive_demand == 0u)
         status = cnet_owner_queue_session_work(impl, session->handle);
       return status == SALTS_OK ? SALTS_OK
                                 : cnet_owner_fail_session(impl, session, status, request_stage);
