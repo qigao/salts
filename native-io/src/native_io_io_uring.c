@@ -44,6 +44,12 @@
   #define SALTS_IO_URING_HAS_DEFER_TASKRUN 0
 #endif
 
+#if SALTS_IO_URING_HAS_DEFER_TASKRUN && defined(IORING_SETUP_COOP_TASKRUN)
+  #define SALTS_IO_URING_HAS_COOP_TASKRUN 1
+#else
+  #define SALTS_IO_URING_HAS_COOP_TASKRUN 0
+#endif
+
 typedef enum salts_io_uring_phase {
   SALTS_IO_URING_FREE = 0,
   SALTS_IO_URING_PENDING,
@@ -1272,7 +1278,19 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
 #if SALTS_IO_URING_HAS_DEFER_TASKRUN
   params.flags |= IORING_SETUP_DEFER_TASKRUN;
 #endif
+#if SALTS_IO_URING_HAS_COOP_TASKRUN
+  params.flags |= IORING_SETUP_COOP_TASKRUN;
+#endif
   impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+#if SALTS_IO_URING_HAS_COOP_TASKRUN
+  if (impl->ring_fd < 0 && errno == EINVAL) {
+    /* COOP_TASKRUN predates DEFER_TASKRUN, but a kernel may reject the
+     * combined policy. Keep the accepted owner-controlled DEFER baseline. */
+    memset(&params, 0, sizeof(params));
+    params.flags = IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN;
+    impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+  }
+#endif
 #if SALTS_IO_URING_HAS_DEFER_TASKRUN
   if (impl->ring_fd < 0 && errno == EINVAL) {
     /* Linux 6.0 supports SINGLE_ISSUER before DEFER_TASKRUN (6.1). */
