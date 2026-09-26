@@ -5,6 +5,7 @@
 #include <cmeta/data.h>
 #include <cmeta/function.h>
 #include <cmeta/method.h>
+#include <cmeta/object.h>
 
 #include <stddef.h>
 
@@ -72,6 +73,19 @@ cmeta_status cmeta_receiver_method_invokable_bind(
     const cmeta_receiver_method *method,
     const cmeta_function_data_desc *data,
     cmeta_callable callable, cmeta_invokable *out);
+
+/**
+ * Ask the bound object's canonical method provider for the exact
+ * receiver-bound callable/FunctionData pair, then validate that pair through
+ * cmeta_receiver_method_invokable_bind().
+ *
+ * method must be the exact entry resolved from object->methods. This pointer is
+ * a provider capability token, not a replacement for semantic type identity.
+ */
+cmeta_status cmeta_object_method_invokable_bind(
+    const cmeta_object_ref *object,
+    const cmeta_receiver_method *method,
+    cmeta_invokable *out);
 
 bool cmeta_invokable_valid(const cmeta_invokable *invokable);
 
