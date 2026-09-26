@@ -226,6 +226,27 @@ static const cmeta_object_method_provider lua_object_method_provider = {
     .bind = lua_object_method_bind
 };
 
+
+static cmeta_status lua_object_field_assign(
+    void *context, void *object, const cmeta_data_field_desc *field,
+    const void *value) {
+  lua_object_box *box = (lua_object_box *)object;
+  (void)context;
+  if (box == NULL || field == NULL || value == NULL)
+    return CMETA_INVALID_ARGUMENT;
+  if (field != &lua_object_data_fields[0])
+    return CMETA_TRAIT_MISSING;
+  box->value = *(const int *)value;
+  return CMETA_OK;
+}
+
+static const cmeta_object_field_provider lua_object_field_provider = {
+    .size = sizeof(cmeta_object_field_provider),
+    .data = &lua_object_data,
+    .context = NULL,
+    .assign = lua_object_field_assign
+};
+
 typedef struct lua_object_lifecycle_counts {
   int destroys;
 } lua_object_lifecycle_counts;
@@ -245,8 +266,9 @@ spec("Salts Lua canonical native object projection") {
     salts_lua_limits limits = {8u, 8u, 4096u};
 
     check_not_null(state);
-    check_equal(cmeta_object_borrow_with_provider(
+    check_equal(cmeta_object_borrow_with_providers(
                     &object, &box, &lua_object_data,
+                    &lua_object_field_provider,
                     &lua_object_method_provider),
                 CMETA_OK);
     check_equal(salts_lua_push_object(state, &object, limits), CMETA_OK);
@@ -265,12 +287,36 @@ spec("Salts Lua canonical native object projection") {
     check_equal(box.value, 17);
     lua_settop(state, 0);
 
-    check_true(luaL_dostring(state, "counter.value = 99") != LUA_OK);
+    check_equal(luaL_dostring(
+                    state, "counter.value = 99; return counter.value"),
+                LUA_OK);
+    check_equal(lua_tointeger(state, -1), 99);
     lua_pop(state, 1);
-    check_equal(box.value, 17);
+    check_equal(box.value, 99);
 
     lua_close(state);
-    check_equal(box.value, 17);
+    check_equal(box.value, 99);
+  }
+
+  it("keeps reflected fields read-only without mutation authority") {
+    lua_State *state = luaL_newstate();
+    lua_object_box box = {7};
+    cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+    salts_lua_limits limits = {8u, 8u, 4096u};
+
+    check_not_null(state);
+    check_equal(cmeta_object_borrow_with_provider(
+                    &object, &box, &lua_object_data,
+                    &lua_object_method_provider),
+                CMETA_OK);
+    check_equal(salts_lua_push_object(state, &object, limits), CMETA_OK);
+    lua_setglobal(state, "counter");
+
+    check_true(luaL_dostring(state, "counter.value = 88") != LUA_OK);
+    lua_pop(state, 1);
+    check_equal(box.value, 7);
+
+    lua_close(state);
   }
 
   it("releases owned object lifetime exactly once through userdata GC") {
