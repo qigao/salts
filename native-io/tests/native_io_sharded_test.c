@@ -436,6 +436,33 @@ typedef struct native_io_sharded_route_state {
   int release_status;
 } native_io_sharded_route_state;
 
+typedef struct native_io_sharded_order_state native_io_sharded_order_state;
+
+typedef struct native_io_sharded_order_token {
+  native_io_sharded_order_state *state;
+  size_t index;
+} native_io_sharded_order_token;
+
+struct native_io_sharded_order_state {
+  native_io_sharded_endpoint endpoint;
+  native_io_sharded_request requests[2];
+  native_io_sharded_completion events[2];
+  uintptr_t native_handle;
+  uintptr_t peer;
+  unsigned char received[2];
+  uintptr_t admission_order[2];
+  uintptr_t terminal_order[2];
+  size_t admission_count;
+  size_t terminal_count;
+  size_t observe_count;
+  atomic_int finalizes;
+  int admission_status[2];
+  int attach_status;
+  int observe_status;
+  int peer_write_status;
+  int release_status;
+};
+
 static void native_io_sharded_gate_run(native_io_sharded_context *context, void *arg) {
   native_io_sharded_gate_state *state = (native_io_sharded_gate_state *)arg;
   (void)context;
@@ -700,6 +727,60 @@ static void native_io_sharded_route_release(native_io_sharded_context *context, 
   state->release_status = native_io_sharded_context_release_pipe(context, state->endpoint);
 }
 
+static void native_io_sharded_order_attach(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_order_state *state = (native_io_sharded_order_state *)arg;
+  state->attach_status = native_io_sharded_context_attach_pipe(
+      context, state->native_handle, NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &state->endpoint);
+}
+
+static void native_io_sharded_order_admission(native_io_sharded_context *context, int status,
+                                              native_io_sharded_request request, void *arg) {
+  native_io_sharded_order_token *token = (native_io_sharded_order_token *)arg;
+  native_io_sharded_order_state *state = token->state;
+  const size_t index = token->index;
+  (void)context;
+  state->admission_status[index] = status;
+  state->requests[index] = request;
+  if (state->admission_count < 2u)
+    state->admission_order[state->admission_count++] = (uintptr_t)(index + 1u);
+}
+
+static void native_io_sharded_order_terminal(native_io_sharded_context *context,
+                                             const native_io_sharded_completion *completion,
+                                             void *arg) {
+  native_io_sharded_order_token *token = (native_io_sharded_order_token *)arg;
+  native_io_sharded_order_state *state = token->state;
+  (void)context;
+  if (state->terminal_count < 2u)
+    state->terminal_order[state->terminal_count++] = completion->user_data;
+}
+
+static void native_io_sharded_order_finalize(void *arg) {
+  native_io_sharded_order_token *token = (native_io_sharded_order_token *)arg;
+  atomic_fetch_add(&token->state->finalizes, 1);
+}
+
+static void native_io_sharded_order_observe(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_order_state *state = (native_io_sharded_order_state *)arg;
+  state->observe_count = 0u;
+  state->observe_status = SALTS_OK;
+  while (state->terminal_count < 2u) {
+    size_t count = 0u;
+    const int status = native_io_sharded_context_observe(
+        context, state->events, 2u, 5000u, &count);
+    if (status != SALTS_OK) {
+      state->observe_status = status;
+      return;
+    }
+    state->observe_count += count;
+  }
+}
+
+static void native_io_sharded_order_release(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_order_state *state = (native_io_sharded_order_state *)arg;
+  state->release_status = native_io_sharded_context_release_pipe(context, state->endpoint);
+}
+
 #if defined(__linux__)
 static native_io_sharded_operation
 native_io_sharded_vsock_operation(native_io_sharded_route_state *state,
@@ -726,6 +807,85 @@ static void native_io_sharded_vsock_release(native_io_sharded_context *context, 
 #endif
 
 spec("NativeIO bounded sharded routing") {
+  it("preserves cross-shard admission and terminal FIFO on one endpoint read lane") {
+    native_io_sharded *runtime = NULL;
+    native_io_sharded_test_pipe pipe_endpoint = {0};
+    native_io_sharded_order_state state = {0};
+    native_io_sharded_order_token tokens[2] = {{&state, 0u}, {&state, 1u}};
+    native_io_sharded_task attach_task = {
+        native_io_sharded_order_attach, NULL, NULL, &state};
+    native_io_sharded_task observe_task = {
+        native_io_sharded_order_observe, NULL, NULL, &state};
+    native_io_sharded_task release_task = {
+        native_io_sharded_order_release, NULL, NULL, &state};
+    native_io_sharded_ownership ownership[2] = {
+        {native_io_sharded_order_terminal, native_io_sharded_order_finalize, &tokens[0]},
+        {native_io_sharded_order_terminal, native_io_sharded_order_finalize, &tokens[1]}};
+    native_io_sharded_operation operations[2] = {0};
+    const unsigned char payload[2] = {0x41u, 0x42u};
+    int status = native_io_sharded_test_create(2u, 2u, &runtime);
+
+    if (status == SALTS_ENOTSUP) {
+      check_equal(status, SALTS_ENOTSUP);
+    } else {
+      check_equal(status, SALTS_OK);
+      check_equal(native_io_sharded_test_pipe_create(&pipe_endpoint), SALTS_OK);
+      state.native_handle = pipe_endpoint.handle;
+      state.peer = pipe_endpoint.peer;
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &attach_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.attach_status, SALTS_OK);
+      check_equal(native_io_sharded_endpoint_owner_shard(state.endpoint), (size_t)1);
+
+      for (size_t index = 0u; index < 2u; ++index) {
+        operations[index].kind = NATIVE_IO_OPERATION_PIPE_READ;
+        operations[index].endpoint = state.endpoint;
+        operations[index].buffer = &state.received[index];
+        operations[index].length = 1u;
+        operations[index].user_data = (uintptr_t)(index + 1u);
+        check_equal(native_io_sharded_try_submit_owned(
+                        runtime, &operations[index], &ownership[index],
+                        native_io_sharded_order_admission, &tokens[index]),
+                    SALTS_OK);
+      }
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+
+      check_equal(state.admission_count, (size_t)2);
+      check_equal(state.admission_order[0], (uintptr_t)1u);
+      check_equal(state.admission_order[1], (uintptr_t)2u);
+      check_equal(state.admission_status[0], SALTS_OK);
+      check_equal(state.admission_status[1], SALTS_OK);
+      check_true(native_io_sharded_request_valid(state.requests[0]));
+      check_true(native_io_sharded_request_valid(state.requests[1]));
+      check_equal(native_io_sharded_request_owner_shard(state.requests[0]), (size_t)1);
+      check_equal(native_io_sharded_request_owner_shard(state.requests[1]), (size_t)1);
+      check_equal(atomic_load(&state.finalizes), 0);
+
+      state.peer_write_status =
+          native_io_sharded_test_pipe_write(state.peer, payload, sizeof(payload));
+      check_equal(state.peer_write_status, SALTS_OK);
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &observe_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+
+      check_equal(state.observe_status, SALTS_OK);
+      check_equal(state.observe_count, (size_t)2);
+      check_equal(state.terminal_count, (size_t)2);
+      check_equal(state.terminal_order[0], (uintptr_t)1u);
+      check_equal(state.terminal_order[1], (uintptr_t)2u);
+      check_equal(state.received[0], payload[0]);
+      check_equal(state.received[1], payload[1]);
+      check_equal(atomic_load(&state.finalizes), 2);
+
+      native_io_sharded_test_pipe_close_handle(&pipe_endpoint.handle);
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &release_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.release_status, SALTS_OK);
+      native_io_sharded_test_pipe_close(&pipe_endpoint);
+      check_equal(native_io_sharded_destroy(runtime), SALTS_OK);
+    }
+  }
+
   it("keeps an accepted AF_VSOCK stream on one shard across owned recv and send") {
 #if defined(__linux__)
     native_io_sharded *runtime = NULL;
