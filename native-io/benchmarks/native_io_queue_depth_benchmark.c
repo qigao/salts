@@ -340,6 +340,11 @@ static int qd_run_cell(size_t qd, size_t payload_size, qd_result *out) {
     if (status != SALTS_OK) goto cleanup;
   }
 
+  /* Measurement counters exclude warmup. Reset peak too, so the CSV proves
+   * that the requested 2*QD active request depth was reached while timed. */
+  fixture.peak_active = 0u;
+  fixture.observe_calls = 0u;
+
   fprintf(stderr, "NATIVE_IO_QD_MEASURE_BEGIN qd=%zu payload=%zu samples=%u\n",
           qd, payload_size, (unsigned)QD_BENCH_SAMPLES);
   fflush(stderr);
