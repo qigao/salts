@@ -13,6 +13,8 @@
 enum { BATCH_TEST_COUNT = 4, BATCH_TEST_CALLS = 16, BATCH_TEST_TIMEOUT_MS = 5000 };
 static unsigned enter_calls;
 static unsigned enter_sizes[BATCH_TEST_CALLS];
+static int enter_fds[BATCH_TEST_CALLS];
+static unsigned enter_flags[BATCH_TEST_CALLS];
 static unsigned consume_limit;
 static unsigned consume_before_error;
 static int enter_error;
@@ -23,6 +25,11 @@ static unsigned setup_calls;
 static unsigned setup_flags[BATCH_TEST_CALLS];
 static unsigned reject_setup_flags;
 static unsigned reject_nonzero_setups;
+static unsigned register_calls;
+static unsigned register_opcodes[BATCH_TEST_CALLS];
+static int register_fds[BATCH_TEST_CALLS];
+static bool reject_ring_registration;
+static bool reject_ring_unregistration;
 
 static int batch_test_poll(struct pollfd *fds, nfds_t count, int timeout) {
   ++poll_calls;
@@ -42,7 +49,11 @@ static long batch_test_syscall(long number, ...) {
     const unsigned flags = va_arg(arguments, unsigned);
     void *mask = va_arg(arguments, void *);
     const size_t mask_size = va_arg(arguments, size_t);
-    if (enter_calls < BATCH_TEST_CALLS) enter_sizes[enter_calls] = submit;
+    if (enter_calls < BATCH_TEST_CALLS) {
+      enter_sizes[enter_calls] = submit;
+      enter_fds[enter_calls] = fd;
+      enter_flags[enter_calls] = flags;
+    }
     ++enter_calls;
     if (enter_error != 0) {
       if (consume_before_error != 0u) {
@@ -79,6 +90,33 @@ static long batch_test_syscall(long number, ...) {
     }
 #if defined(IORING_FEAT_EXT_ARG)
     if (result >= 0 && !enable_ring_wait) parameters->features &= ~IORING_FEAT_EXT_ARG;
+#endif
+#if defined(__NR_io_uring_register)
+  } else if (number == __NR_io_uring_register) {
+    const int fd = va_arg(arguments, int);
+    const unsigned opcode = va_arg(arguments, unsigned);
+    void *arg = va_arg(arguments, void *);
+    const unsigned nr_args = va_arg(arguments, unsigned);
+    if (register_calls < BATCH_TEST_CALLS) {
+      register_opcodes[register_calls] = opcode;
+      register_fds[register_calls] = fd;
+    }
+    ++register_calls;
+#if defined(IORING_REGISTER_RING_FDS)
+    if (reject_ring_registration && opcode == IORING_REGISTER_RING_FDS) {
+      errno = EINVAL;
+      result = -1;
+    } else
+#endif
+#if defined(IORING_UNREGISTER_RING_FDS)
+    if (reject_ring_unregistration && opcode == IORING_UNREGISTER_RING_FDS) {
+      errno = EINVAL;
+      result = -1;
+    } else
+#endif
+    {
+      result = syscall(number, fd, opcode, arg, nr_args);
+    }
 #endif
   } else {
     errno = ENOSYS;
@@ -160,6 +198,8 @@ spec("io_uring explicit batch submission") {
   before_each() {
     enter_calls = 0u;
     memset(enter_sizes, 0, sizeof(enter_sizes));
+    memset(enter_fds, 0, sizeof(enter_fds));
+    memset(enter_flags, 0, sizeof(enter_flags));
     consume_limit = 0u;
     consume_before_error = 0u;
     enter_error = 0;
@@ -170,7 +210,87 @@ spec("io_uring explicit batch submission") {
     memset(setup_flags, 0, sizeof(setup_flags));
     reject_setup_flags = 0u;
     reject_nonzero_setups = 0u;
+    register_calls = 0u;
+    memset(register_opcodes, 0, sizeof(register_opcodes));
+    memset(register_fds, 0, sizeof(register_fds));
+    reject_ring_registration = false;
+    reject_ring_unregistration = false;
   }
+#if defined(__NR_io_uring_register) && defined(IORING_REGISTER_RING_FDS) && \
+    defined(IORING_UNREGISTER_RING_FDS) && defined(IORING_ENTER_REGISTERED_RING)
+  it("registers the ring fd and uses the returned index for enter") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+
+    enable_ring_wait = true;
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    salts_io_uring_impl *impl = backend.impl;
+    check_true(impl->ring_fd_registered);
+    check_greater_equal(register_calls, 1u);
+    check_equal(register_opcodes[0], (unsigned)IORING_REGISTER_RING_FDS);
+    check_equal(register_fds[0], impl->ring_fd);
+
+    enter_calls = 0u;
+    memset(enter_fds, 0, sizeof(enter_fds));
+    memset(enter_flags, 0, sizeof(enter_flags));
+    check_equal(uring_enter(impl, 0u, 0u, 0u), 0);
+    check_equal(enter_calls, 1u);
+    check_equal(enter_fds[0], impl->enter_ring_fd);
+    check_true((enter_flags[0] & IORING_ENTER_REGISTERED_RING) != 0u);
+
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    const unsigned before_destroy = register_calls;
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+    check_equal(register_calls, before_destroy + 1u);
+    check_equal(register_opcodes[before_destroy], (unsigned)IORING_UNREGISTER_RING_FDS);
+  }
+
+  it("keeps normal ring enters when registration is unavailable") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+
+    enable_ring_wait = true;
+    reject_ring_registration = true;
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    salts_io_uring_impl *impl = backend.impl;
+    check_false(impl->ring_fd_registered);
+    check_equal(impl->enter_ring_fd, impl->ring_fd);
+
+    enter_calls = 0u;
+    memset(enter_fds, 0, sizeof(enter_fds));
+    memset(enter_flags, 0, sizeof(enter_flags));
+    check_equal(uring_enter(impl, 0u, 0u, 0u), 0);
+    check_equal(enter_calls, 1u);
+    check_equal(enter_fds[0], impl->ring_fd);
+    check_equal(enter_flags[0] & IORING_ENTER_REGISTERED_RING, 0u);
+
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    const unsigned before_destroy = register_calls;
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+    check_equal(register_calls, before_destroy);
+  }
+
+  it("retains destroy ownership when ring-fd unregister fails") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+
+    enable_ring_wait = true;
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    salts_io_uring_impl *impl = backend.impl;
+    check_true(impl->ring_fd_registered);
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+
+    reject_ring_unregistration = true;
+    check_equal(native_io_backend_destroy(&backend), -EINVAL);
+    check_true(backend.impl == (void *)impl);
+    check_true(impl->ring_fd_registered);
+
+    reject_ring_unregistration = false;
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+    check_equal(backend.impl, NULL);
+  }
+#endif
+
 #if defined(IORING_SETUP_SINGLE_ISSUER)
   it("requests the strongest single-owner setup supported by the build") {
     native_io_backend backend = {0};
