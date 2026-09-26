@@ -280,6 +280,22 @@ spec("CMeta canonical borrowed object") {
         check_equal(box.value, 16);
     }
 
+    it("rejects malformed object lifecycle metadata before callbacks") {
+        object_lifecycle_counts counts = {0};
+        cmeta_object_lifecycle lifecycle = {
+            .size = 0u,
+            .context = &counts,
+            .retain = object_test_retain,
+            .release = object_test_release,
+            .destroy = object_test_destroy
+        };
+
+        check_false(cmeta_object_lifecycle_valid(&lifecycle));
+        check_equal(counts.retains, 0);
+        check_equal(counts.releases, 0);
+        check_equal(counts.destroys, 0);
+    }
+
     it("retains and releases shared object ownership exactly once") {
         object_box box = {4};
         object_lifecycle_counts counts = {0};
