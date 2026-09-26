@@ -1866,6 +1866,32 @@ int cnet_owner_drive(cnet_owner *owner, uint32_t timeout_ms) {
 }
 #endif
 
+int cnet_owner_receive_direct(cnet_owner *owner, cnet_session_handle session_handle,
+                              size_t demand) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  cnet_session_state state = CNET_SESSION_FREE;
+  bool queue_rearm;
+  int status;
+
+  if (impl == NULL || demand == 0u) return SALTS_EINVAL;
+  if (impl->closed) return SALTS_ESHUTDOWN;
+  session = cnet_owner_find_session(impl, session_handle);
+  if (session == NULL) return SALTS_ENOENT;
+  status = cnet_session_table_state(impl->sessions, session_handle, &state);
+  if (status != SALTS_OK) return status;
+  if (state != CNET_SESSION_OPEN || session->close_requested) return SALTS_EBUSY;
+  if (demand > SIZE_MAX - session->receive_demand) return SALTS_ERANGE;
+
+  queue_rearm = !session->read_active && session->receive_demand == 0u;
+  session->receive_demand += demand;
+  if (!queue_rearm) return SALTS_OK;
+
+  status = cnet_owner_queue_receive_rearm(impl, session_handle);
+  if (status != SALTS_OK) session->receive_demand -= demand;
+  return status;
+}
+
 int cnet_owner_wake(cnet_owner *owner) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
   if (impl == NULL) return SALTS_EINVAL;

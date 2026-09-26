@@ -72,6 +72,12 @@ int cnet_shards_sendv(cnet_shards *shards, cnet_shard_connection connection,
 int cnet_shards_send_and_close(cnet_shards *shards, cnet_shard_connection connection,
                                const void *data, size_t size);
 int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, size_t demand);
+/**
+ * Single-owner fast path used outside callbacks. Bypasses admission_lock and
+ * the command queue; the owner starts I/O only from its next drive.
+ */
+int cnet_shards_receive_direct(cnet_shards *shards, cnet_shard_connection connection,
+                               size_t demand);
 int cnet_shards_start_tls(cnet_shards *shards, cnet_shard_connection connection,
                           const cnet_owner_start_tls_payload *payload);
 int cnet_shards_close(cnet_shards *shards, cnet_shard_connection connection);

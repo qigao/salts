@@ -389,6 +389,22 @@ int cnet_shards_receive(cnet_shards *shards, cnet_shard_connection connection, s
   return cnet_shards_publish(impl, connection, &command);
 }
 
+int cnet_shards_receive_direct(cnet_shards *shards, cnet_shard_connection connection,
+                               size_t demand) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  int status;
+
+  if (impl == NULL || demand == 0u) return SALTS_EINVAL;
+  if (!cnet_shard_connection_valid(connection)) return SALTS_ENOENT;
+  record = cnet_shards_get_record(impl, connection.shard);
+  if (record == NULL) return SALTS_ENOENT;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  status = cnet_shards_first_error(impl);
+  if (status != SALTS_OK) return status;
+  return cnet_owner_receive_direct(&record->owner, connection.session, demand);
+}
+
 int cnet_shards_start_tls(cnet_shards *shards, cnet_shard_connection connection,
                           const cnet_owner_start_tls_payload *payload) {
   cnet_shards_impl *impl = cnet_shards_get(shards);
