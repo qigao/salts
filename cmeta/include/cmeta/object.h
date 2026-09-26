@@ -89,8 +89,9 @@ cmeta_status cmeta_object_field_read(
 /**
  * Resolve one receiver method in the context of this exact native object type.
  *
- * Resolution remains descriptive. Execution still requires the canonical
- * receiver/callable -> cmeta_invokable join tracked by the next #526 slice.
+ * Resolution remains descriptive. Execution uses the canonical
+ * cmeta_receiver_method_invokable_bind() join only after a provider has
+ * produced an exact receiver-bound callable and receiver-elided FunctionData.
  */
 cmeta_receiver_resolve_status cmeta_object_method_resolve(
     const cmeta_object_ref *ref, const char *owner_name,
