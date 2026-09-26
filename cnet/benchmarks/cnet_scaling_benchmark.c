@@ -658,6 +658,11 @@ static int scale_cnet_init(scale_cnet *fixture, const struct sockaddr_in *addres
       .completion_batch_capacity = SCALE_REQUEST_CAPACITY,
       .event_capacity = SCALE_EVENT_CAPACITY,
       .max_send_bytes = SCALE_PAYLOADS[sizeof(SCALE_PAYLOADS) / sizeof(SCALE_PAYLOADS[0]) - 1u],
+      .write_capacity = SCALE_COMMAND_CAPACITY,
+      .write_capacity_per_connection = SCALE_COMMAND_CAPACITY,
+      .write_buffer_bytes =
+          SCALE_COMMAND_CAPACITY *
+          SCALE_PAYLOADS[sizeof(SCALE_PAYLOADS) / sizeof(SCALE_PAYLOADS[0]) - 1u],
       .receive_buffer_bytes =
           SCALE_PAYLOADS[sizeof(SCALE_PAYLOADS) / sizeof(SCALE_PAYLOADS[0]) - 1u],
       .connect_timeout_ms = SCALE_TIMEOUT_MS,
