@@ -316,7 +316,7 @@ jobs:
           if (-not (Select-String -LiteralPath $tinymockCMake -SimpleMatch "salts_tinymock_override_functions" -Quiet)) {
             throw "missing TinyMock CMake helper in $tinymockCMake"
           }
-          @(
+          $manifest = @(
             "version=${{ needs.metadata.outputs.version }}"
             "commit=$env:GITHUB_SHA"
             "os=windows"
@@ -324,7 +324,12 @@ jobs:
             "profile=release"
             "vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}"
             "vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}"
-          ) | Set-Content -LiteralPath (Join-Path $prefix "salts-sdk-manifest.txt")
+          ) -join "`n"
+          [System.IO.File]::WriteAllText(
+            (Join-Path $prefix "salts-sdk-manifest.txt"),
+            $manifest + "`n",
+            [System.Text.UTF8Encoding]::new($false)
+          )
       - uses: actions/upload-artifact@v4
         with:
           name: salts-sdk-windows-x64
@@ -469,10 +474,25 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$mac_interface"
           grep -F "cmeta_function_abi_desc" "$mac_header"
           test "$(find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt | wc -l)" -eq 4
-          test "$(grep -h '^vcpkg_cache_contract=' package/sdk/*/salts-sdk-manifest.txt | sort -u | wc -l)" -eq 1
-          test "$(grep -h '^vcpkg_cache_revision=' package/sdk/*/salts-sdk-manifest.txt | sort -u | wc -l)" -eq 1
-          grep -h '^vcpkg_cache_contract=' package/sdk/*/salts-sdk-manifest.txt | sort -u
-          grep -h '^vcpkg_cache_revision=' package/sdk/*/salts-sdk-manifest.txt | sort -u
+
+          mapfile -t cache_contracts < <(
+            grep -h '^vcpkg_cache_contract=' package/sdk/*/salts-sdk-manifest.txt |
+              tr -d '\r' |
+              sort -u
+          )
+          mapfile -t cache_revisions < <(
+            grep -h '^vcpkg_cache_revision=' package/sdk/*/salts-sdk-manifest.txt |
+              tr -d '\r' |
+              sort -u
+          )
+
+          printf 'vcpkg cache contracts (%d):\n' "${#cache_contracts[@]}"
+          printf '  %s\n' "${cache_contracts[@]}"
+          printf 'vcpkg cache revisions (%d):\n' "${#cache_revisions[@]}"
+          printf '  %s\n' "${cache_revisions[@]}"
+
+          test "${#cache_contracts[@]}" -eq 1
+          test "${#cache_revisions[@]}" -eq 1
           find package/sdk -maxdepth 2 -name salts-sdk-manifest.txt -print
           du -sh package/sdk
       - uses: actions/setup-dotnet@v4
