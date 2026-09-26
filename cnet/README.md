@@ -397,8 +397,11 @@ owner-local FIFO. Admission is bounded by write slots and copied-byte budget;
 capacity exhaustion returns `SALTS_ENOBUFS`. NativeIO still progresses one
 stream write head at a time where the transport requires serialization, and
 `on_send` callbacks remain FIFO. TLS remains one-logical-write-at-a-time in
-this slice, and `cnet_send_and_close()` still requires a quiescent write FIFO;
-its queued-drain semantics are completed in the following #479 slice.
+this slice. A non-TLS `cnet_send_and_close()` is admitted as the final FIFO
+write behind already accepted messages, immediately closes further public
+send/receive admission, and begins the transport close only after that final
+write succeeds. TLS final-write ownership is completed in the following #479
+slice.
 
 Hostname resolution uses c-ares' external-event-loop integration. The same
 poll owner checks its bounded DNS socket set without blocking and advances
