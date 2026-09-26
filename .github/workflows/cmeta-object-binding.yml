@@ -17,7 +17,7 @@ on:
       - "cmeta/tests/CMakeLists.txt"
       - "vcpkg.json"
       - "bindings/CMakeLists.txt"
-      - "vcpkg.json"
+      - "bindings/cpp/**"
       - "bindings/lua/**"
       - "bindings/quickjs/**"
       - "bindings/tests/**"
@@ -30,6 +30,9 @@ on:
       - "cmeta/src/object.c"
       - "cmeta/src/method.c"
       - "cmeta/src/invokable.c"
+      - "vcpkg.json"
+      - "bindings/CMakeLists.txt"
+      - "bindings/cpp/**"
       - "bindings/lua/**"
       - "bindings/quickjs/**"
       - "bindings/tests/**"
@@ -109,7 +112,22 @@ jobs:
           if [[ -f bindings/tests/object_cross_runtime_test.c ]]; then
             targets+=(salts_object_cross_runtime_test)
           fi
+          if [[ -f bindings/tests/cpp_object_facade_test.cpp ]]; then
+            targets+=(salts_cpp_object_facade_test)
+          fi
           cmake --build --preset linux-release-user --parallel 2 --target "${targets[@]}"
+
+      - name: Qualify exported C++ facade package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake \
+            -S bindings/tests/package_config/cpp_object_facade \
+            -B build/cpp-object-facade-consumer \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            "-DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/build/linux-gcc-release;$GITHUB_WORKSPACE/vcpkg_installed/x64-linux"
+          cmake --build build/cpp-object-facade-consumer --parallel 2
 
       - name: Run focused object-binding tests
         shell: bash
@@ -117,7 +135,7 @@ jobs:
           set -euo pipefail
           ctest --test-dir build/linux-gcc-release \
             --output-on-failure \
-            -R '^(cmeta_object_test|cmeta_method_test|cmeta_invokable_test|cmeta_header_cpp_test|salts_lua_invokable_test|salts_lua_object_test|salts_quickjs_cmeta_test|salts_quickjs_object_test|salts_object_cross_runtime_test)$'
+            -R '^(cmeta_object_test|cmeta_method_test|cmeta_invokable_test|cmeta_header_cpp_test|salts_lua_invokable_test|salts_lua_object_test|salts_quickjs_cmeta_test|salts_quickjs_object_test|salts_object_cross_runtime_test|salts_cpp_object_facade_test)$'
 
       - name: Source hygiene
         shell: bash

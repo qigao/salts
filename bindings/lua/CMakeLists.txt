@@ -12,6 +12,7 @@ endif()
 
 add_library(salts_lua_binding STATIC salts_lua_cmeta.c)
 add_library(Salts::Lua ALIAS salts_lua_binding)
+set_target_properties(salts_lua_binding PROPERTIES EXPORT_NAME Lua)
 
 target_include_directories(salts_lua_binding
   PUBLIC
@@ -21,8 +22,7 @@ target_include_directories(salts_lua_binding
     ${LUA_INCLUDE_DIR})
 
 target_link_libraries(salts_lua_binding
-  PUBLIC Salts::CMeta
-  PRIVATE Lua::Lua)
+  PUBLIC Salts::CMeta Lua::Lua)
 
 target_compile_features(salts_lua_binding PUBLIC c_std_11)
 set_target_properties(salts_lua_binding PROPERTIES FOLDER "bindings")
