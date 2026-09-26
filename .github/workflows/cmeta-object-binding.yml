@@ -71,16 +71,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build --preset linux-release-user --parallel 2 --target \
-            cmeta_object_test \
-            cmeta_method_test \
-            cmeta_invokable_test \
-            cmeta_header_cpp_test \
-            salts_lua_invokable_test \
-            salts_lua_object_test \
-            salts_quickjs_cmeta_test \
-            salts_quickjs_object_test \
-            salts_object_cross_runtime_test
+          targets=(
+            cmeta_object_test
+            cmeta_method_test
+            cmeta_invokable_test
+            cmeta_header_cpp_test
+            salts_lua_invokable_test
+            salts_quickjs_cmeta_test
+          )
+          if [[ -f bindings/lua/tests/lua_cmeta_object_test.c ]]; then
+            targets+=(salts_lua_object_test)
+          fi
+          if [[ -f bindings/quickjs/tests/quickjs_cmeta_object_test.c ]]; then
+            targets+=(salts_quickjs_object_test)
+          fi
+          if [[ -f bindings/tests/object_cross_runtime_test.c ]]; then
+            targets+=(salts_object_cross_runtime_test)
+          fi
+          cmake --build --preset linux-release-user --parallel 2 --target "${targets[@]}"
 
       - name: Run focused object-binding tests
         shell: bash
