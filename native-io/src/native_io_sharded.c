@@ -867,18 +867,22 @@ int native_io_sharded_shutdown(native_io_sharded *runtime) {
     if (first_status == SALTS_OK && status != SALTS_OK) first_status = status;
   }
   if (first_status == SALTS_OK) {
+    int probe_status = SALTS_OK;
     for (size_t shard_index = 0u; shard_index < runtime->shard_count; ++shard_index) {
       native_io_sharded_shard *shard = &runtime->shards[shard_index];
       const int status = atomic_load(&shard->shutdown_probe_status);
       if (!atomic_load(&shard->shutdown_probe_done)) {
-        first_status = SALTS_EIO;
+        probe_status = SALTS_EIO;
         break;
       }
-      if (status != SALTS_OK) {
-        first_status = status;
+      if (status == SALTS_OK) continue;
+      if (status != SALTS_EBUSY) {
+        probe_status = status;
         break;
       }
+      if (probe_status == SALTS_OK) probe_status = SALTS_EBUSY;
     }
+    first_status = probe_status;
   }
   if (first_status != SALTS_OK) {
     native_io_sharded_restore_after_shutdown_attempt(runtime);
@@ -909,22 +913,23 @@ int native_io_sharded_shutdown(native_io_sharded *runtime) {
     if (first_status == SALTS_OK && status != SALTS_OK) first_status = status;
   }
   if (first_status == SALTS_OK) {
+    int drain_status = SALTS_OK;
+    int endpoint_busy = 0;
     for (size_t shard_index = 0u; shard_index < runtime->shard_count; ++shard_index) {
       native_io_sharded_shard *shard = &runtime->shards[shard_index];
       const int status = atomic_load(&shard->shutdown_drain_status);
       if (!atomic_load(&shard->shutdown_drain_done)) {
-        first_status = SALTS_EIO;
+        drain_status = SALTS_EIO;
         break;
       }
       if (status != SALTS_OK) {
-        first_status = status;
+        drain_status = status;
         break;
       }
-      if (atomic_load(&shard->shutdown_drain_endpoint_count) != 0u) {
-        first_status = SALTS_EBUSY;
-        break;
-      }
+      if (atomic_load(&shard->shutdown_drain_endpoint_count) != 0u) endpoint_busy = 1;
     }
+    first_status = drain_status != SALTS_OK ? drain_status
+                                           : endpoint_busy ? SALTS_EBUSY : SALTS_OK;
   }
   if (first_status != SALTS_OK) {
     native_io_sharded_restore_after_shutdown_attempt(runtime);
