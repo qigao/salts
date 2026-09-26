@@ -500,7 +500,7 @@ static int stream_style_backend_observe(
   native_io_backend_stats after = {0};
   const bool have_before = native_io_backend_get_stats(&fixture->backend, &before);
   const int status =
-      stream_style_backend_observe(fixture, events, capacity, timeout_ms, count);
+      native_io_backend_observe(&fixture->backend, events, capacity, timeout_ms, count);
   const bool have_after = native_io_backend_get_stats(&fixture->backend, &after);
   if (status == SALTS_OK && have_before && have_after && after.completed >= before.completed) {
     stream_style_record_batch(
@@ -1189,7 +1189,7 @@ int main(void) {
       else
         status = stream_style_measure_sharded(kind, style,
                                             STREAM_STYLE_PAYLOADS[payload_index],
-                                            &results[style_index][payload_index]);
+                                            &results[style_index][payload_index], false);
       if (status != SALTS_OK) {
         fprintf(stderr, "%s %s %zu-byte benchmark failed: %d\n",
                 backend, stream_style_name(style),
