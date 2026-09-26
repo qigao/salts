@@ -34,6 +34,17 @@ require_marker("${scaling_text}"
                "$drivers = @(\"NativeIO direct\", \"CNet retained\")"
                "CNet retained-only scaling verifier")
 
+require_marker("${scaling_text}"
+               "UNSTABLE retained scaling cell"
+               "CNet scaling measurement-validity gate")
+require_marker("${scaling_text}"
+               "no performance verdict"
+               "CNet unstable-cell neutral verdict")
+require_marker("${scaling_text}"
+               '$unstable = @($noiseChecks | Where-Object { $_.Mad -gt $_.Limit })'
+               "CNet noise gate before performance verdict")
+
+
 foreach(marker
     "CNet copy"
     "copy/retained"
