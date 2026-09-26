@@ -337,6 +337,7 @@ int native_io_sharded_create(const native_io_sharded_config *config,
     return SALTS_EINVAL;
   if (config->queue_capacity_per_shard > (size_t)INT64_MAX ||
       config->queue_capacity_per_shard == SIZE_MAX ||
+      config->shard_count > (size_t)INT_MAX ||
       config->shard_count > SIZE_MAX / sizeof(native_io_sharded_shard))
     return SALTS_ERANGE;
   if (!native_io_backend_kind_supported(config->backend.kind)) return SALTS_ENOTSUP;
