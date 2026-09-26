@@ -63,19 +63,56 @@ static int native_io_sharded_test_pipe_create(native_io_sharded_test_pipe *pipe_
 #if defined(_WIN32)
   static LONG sequence = 0;
   char name[128];
-  HANDLE handle;
+  OVERLAPPED connected = {0};
+  HANDLE event = NULL;
+  HANDLE server = INVALID_HANDLE_VALUE;
+  HANDLE client = INVALID_HANDLE_VALUE;
+  DWORD error = ERROR_SUCCESS;
+  BOOL pending = FALSE;
   const int length =
       snprintf(name, sizeof(name), "\\\\.\\pipe\\native-io-sharded-%lu-%ld",
                GetCurrentProcessId(), InterlockedIncrement(&sequence));
   if (length < 0 || (size_t)length >= sizeof(name)) return SALTS_ERANGE;
-  handle = CreateNamedPipeA(name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+  server = CreateNamedPipeA(name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
                             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1u,
                             NATIVE_IO_SHARDED_TEST_PIPE_BUFFER_CAPACITY,
                             NATIVE_IO_SHARDED_TEST_PIPE_BUFFER_CAPACITY, 0u, NULL);
-  if (handle == INVALID_HANDLE_VALUE) return -(int)GetLastError();
-  pipe_endpoint->handle = (uintptr_t)handle;
-  pipe_endpoint->peer = 0u;
+  if (server == INVALID_HANDLE_VALUE) return -(int)GetLastError();
+  event = CreateEventA(NULL, TRUE, FALSE, NULL);
+  if (event == NULL) {
+    error = GetLastError();
+    goto failed;
+  }
+  connected.hEvent = event;
+  if (!ConnectNamedPipe(server, &connected)) {
+    error = GetLastError();
+    if (error == ERROR_IO_PENDING)
+      pending = TRUE;
+    else if (error != ERROR_PIPE_CONNECTED)
+      goto failed;
+  }
+  client = CreateFileA(name, GENERIC_READ | GENERIC_WRITE, 0u, NULL, OPEN_EXISTING, 0u, NULL);
+  if (client == INVALID_HANDLE_VALUE) {
+    error = GetLastError();
+    goto failed;
+  }
+  if (pending) {
+    DWORD transferred = 0u;
+    if (!GetOverlappedResult(server, &connected, &transferred, TRUE)) {
+      error = GetLastError();
+      goto failed;
+    }
+  }
+  (void)CloseHandle(event);
+  pipe_endpoint->handle = (uintptr_t)server;
+  pipe_endpoint->peer = (uintptr_t)client;
   return SALTS_OK;
+
+failed:
+  if (client != INVALID_HANDLE_VALUE) (void)CloseHandle(client);
+  if (server != INVALID_HANDLE_VALUE) (void)CloseHandle(server);
+  if (event != NULL) (void)CloseHandle(event);
+  return -(int)error;
 #else
   int descriptors[2] = {-1, -1};
   int flags;
@@ -107,6 +144,20 @@ static void native_io_sharded_test_pipe_close(native_io_sharded_test_pipe *pipe_
   if (pipe_endpoint == NULL) return;
   native_io_sharded_test_pipe_close_handle(&pipe_endpoint->handle);
   native_io_sharded_test_pipe_close_handle(&pipe_endpoint->peer);
+}
+
+static int native_io_sharded_test_pipe_write(uintptr_t peer,
+                                              const void *buffer, size_t length) {
+  if (peer == 0u || buffer == NULL || length == 0u) return SALTS_EINVAL;
+#if defined(_WIN32)
+  DWORD transferred = 0u;
+  if (!WriteFile((HANDLE)peer, buffer, (DWORD)length, &transferred, NULL))
+    return -(int)GetLastError();
+  return transferred == (DWORD)length ? SALTS_OK : SALTS_EIO;
+#else
+  const ssize_t transferred = write((int)peer, buffer, length);
+  return transferred == (ssize_t)length ? SALTS_OK : transferred < 0 ? -errno : SALTS_EIO;
+#endif
 }
 
 typedef struct native_io_sharded_direct_state {
@@ -180,14 +231,23 @@ typedef struct native_io_sharded_shutdown_state {
 
 typedef struct native_io_sharded_affinity_state {
   native_io_sharded_endpoint endpoint;
+  native_io_sharded_request request;
+  native_io_sharded_completion completion;
   uintptr_t native_handle;
+  uintptr_t peer;
   unsigned char byte;
   int attach_status;
+  int owner_submit_status;
+  int peer_write_status;
+  int owner_observe_status;
+  size_t owner_observe_count;
   int wrong_submit_status;
+  int wrong_cancel_status;
   int wrong_release_status;
   int owner_release_status;
   int stale_submit_status;
   size_t observed_owner_shard;
+  size_t observed_request_shard;
 } native_io_sharded_affinity_state;
 
 static void native_io_sharded_gate_run(native_io_sharded_context *context, void *arg) {
@@ -249,14 +309,31 @@ static void native_io_sharded_affinity_attach(native_io_sharded_context *context
   state->observed_owner_shard = native_io_sharded_endpoint_owner_shard(state->endpoint);
 }
 
+static void native_io_sharded_affinity_submit(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_affinity_state *state = (native_io_sharded_affinity_state *)arg;
+  native_io_sharded_operation operation = native_io_sharded_affinity_read_operation(state);
+  state->owner_submit_status =
+      native_io_sharded_context_submit(context, &operation, &state->request);
+  state->observed_request_shard = native_io_sharded_request_owner_shard(state->request);
+}
+
 static void native_io_sharded_affinity_wrong_owner(native_io_sharded_context *context, void *arg) {
   native_io_sharded_affinity_state *state = (native_io_sharded_affinity_state *)arg;
   native_io_sharded_operation operation = native_io_sharded_affinity_read_operation(state);
-  native_io_sharded_request request = {0};
+  native_io_sharded_request rejected = {0};
   state->wrong_submit_status =
-      native_io_sharded_context_submit(context, &operation, &request);
+      native_io_sharded_context_submit(context, &operation, &rejected);
+  state->wrong_cancel_status =
+      native_io_sharded_context_cancel(context, state->request);
   state->wrong_release_status =
       native_io_sharded_context_release_pipe(context, state->endpoint);
+}
+
+static void native_io_sharded_affinity_observe(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_affinity_state *state = (native_io_sharded_affinity_state *)arg;
+  state->owner_observe_status =
+      native_io_sharded_context_observe(context, &state->completion, 1u, 5000u,
+                                        &state->owner_observe_count);
 }
 
 static void native_io_sharded_affinity_release(native_io_sharded_context *context, void *arg) {
@@ -276,8 +353,12 @@ spec("NativeIO bounded sharded routing") {
     native_io_sharded_affinity_state state = {0};
     native_io_sharded_task attach_task = {
         native_io_sharded_affinity_attach, NULL, NULL, &state};
+    native_io_sharded_task submit_task = {
+        native_io_sharded_affinity_submit, NULL, NULL, &state};
     native_io_sharded_task wrong_task = {
         native_io_sharded_affinity_wrong_owner, NULL, NULL, &state};
+    native_io_sharded_task observe_task = {
+        native_io_sharded_affinity_observe, NULL, NULL, &state};
     native_io_sharded_task release_task = {
         native_io_sharded_affinity_release, NULL, NULL, &state};
     int status = native_io_sharded_test_create(2u, 2u, &runtime);
@@ -288,6 +369,7 @@ spec("NativeIO bounded sharded routing") {
       check_equal(status, SALTS_OK);
       check_equal(native_io_sharded_test_pipe_create(&pipe_endpoint), SALTS_OK);
       state.native_handle = pipe_endpoint.handle;
+      state.peer = pipe_endpoint.peer;
 
       check_equal(native_io_sharded_try_submit_to(runtime, 1u, &attach_task), SALTS_OK);
       check_equal(native_io_sharded_wait(runtime), SALTS_OK);
@@ -295,10 +377,39 @@ spec("NativeIO bounded sharded routing") {
       check_true(native_io_sharded_endpoint_valid(state.endpoint));
       check_equal(state.observed_owner_shard, (size_t)1);
 
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &submit_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.owner_submit_status, SALTS_OK);
+      check_true(native_io_sharded_request_valid(state.request));
+      check_equal(state.observed_request_shard, (size_t)1);
+
       check_equal(native_io_sharded_try_submit_to(runtime, 0u, &wrong_task), SALTS_OK);
       check_equal(native_io_sharded_wait(runtime), SALTS_OK);
       check_equal(state.wrong_submit_status, SALTS_EPERM);
+      check_equal(state.wrong_cancel_status, SALTS_EPERM);
       check_equal(state.wrong_release_status, SALTS_EPERM);
+
+      {
+        const unsigned char payload = 0x5au;
+        state.peer_write_status =
+            native_io_sharded_test_pipe_write(state.peer, &payload, sizeof(payload));
+      }
+      check_equal(state.peer_write_status, SALTS_OK);
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &observe_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.owner_observe_status, SALTS_OK);
+      check_equal(state.owner_observe_count, (size_t)1);
+      check_equal(state.completion.kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(state.completion.bytes, (size_t)1);
+      check_equal(state.completion.user_data, (uintptr_t)0x475u);
+      check_equal(state.completion.request.owner_identity, state.request.owner_identity);
+      check_equal(state.completion.request.owner_shard, state.request.owner_shard);
+      check_equal(state.completion.request.native_request.slot, state.request.native_request.slot);
+      check_equal(state.completion.request.native_request.generation,
+                  state.request.native_request.generation);
+      check_equal(state.completion.endpoint.owner_identity, state.endpoint.owner_identity);
+      check_equal(state.completion.endpoint.owner_shard, state.endpoint.owner_shard);
+      check_equal(state.byte, (unsigned char)0x5au);
 
       native_io_sharded_test_pipe_close_handle(&pipe_endpoint.handle);
       check_equal(native_io_sharded_try_submit_to(runtime, 1u, &release_task), SALTS_OK);
