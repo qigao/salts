@@ -79,6 +79,8 @@ int cnet_shards_send_direct(cnet_shards *shards, cnet_shard_connection connectio
                             const void *data, size_t size);
 int cnet_shards_send_buffer_direct(cnet_shards *shards, cnet_shard_connection connection,
                                    mem_buffer_t *buffer);
+int cnet_shards_send_slice_direct(cnet_shards *shards, cnet_shard_connection connection,
+                                  const mem_slice_t *slice);
 int cnet_shards_sendv_direct(cnet_shards *shards, cnet_shard_connection connection,
                              const cnet_const_buffer *segments, size_t segment_count);
 int cnet_shards_send_close_direct(cnet_shards *shards, cnet_shard_connection connection,
