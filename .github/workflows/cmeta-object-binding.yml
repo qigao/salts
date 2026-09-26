@@ -89,6 +89,9 @@ jobs:
           if [[ -f bindings/tests/object_cross_runtime_test.c ]]; then
             targets+=(salts_object_cross_runtime_test)
           fi
+          if [[ -f bindings/tests/cpp_object_facade_test.cpp ]]; then
+            targets+=(salts_cpp_object_facade_test)
+          fi
           cmake --build --preset linux-release-user --parallel 2 --target "${targets[@]}"
 
       - name: Run focused object-binding tests
@@ -97,7 +100,12 @@ jobs:
           set -euo pipefail
           ctest --test-dir build/linux-gcc-release \
             --output-on-failure \
-            -R '^(cmeta_object_test|cmeta_method_test|cmeta_invokable_test|cmeta_header_cpp_test|salts_lua_invokable_test|salts_lua_object_test|salts_quickjs_cmeta_test|salts_quickjs_object_test|salts_object_cross_runtime_test)$'
+            -R '^(cmeta_object_test|cmeta_method_test|cmeta_invokable_test|cmeta_header_cpp_test|salts_lua_invokable_test|salts_lua_object_test|salts_quickjs_cmeta_test|salts_quickjs_object_test|salts_object_cross_runtime_test|salts_cpp_object_facade_test)
+
+      - name: Source hygiene
+        shell: bash
+        run: git diff --check
+
 
       - name: Source hygiene
         shell: bash
