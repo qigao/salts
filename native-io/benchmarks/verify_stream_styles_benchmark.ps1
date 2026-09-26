@@ -31,7 +31,11 @@ $required = @(
   "same_owner_direct_tasks_per_transfer",
   "queued_dispatches",
   "rejected_tasks",
-  "peak_command_slots"
+  "peak_command_slots",
+  "observe_calls",
+  "completion_count",
+  "completion_batches",
+  "max_completion_batch"
 )
 foreach ($name in $required) {
   if (-not ($rows[0].PSObject.Properties.Name -contains $name)) {
@@ -87,6 +91,10 @@ foreach ($row in $rows) {
   $queued = Parse-U64 $row.queued_dispatches "queued_dispatches"
   $rejected = Parse-U64 $row.rejected_tasks "rejected_tasks"
   $peak = Parse-U64 $row.peak_command_slots "peak_command_slots"
+  $observeCalls = Parse-U64 $row.observe_calls "observe_calls"
+  $completionCount = Parse-U64 $row.completion_count "completion_count"
+  $completionBatches = Parse-U64 $row.completion_batches "completion_batches"
+  $maxCompletionBatch = Parse-U64 $row.max_completion_batch "max_completion_batch"
 
   if ($transfers -eq 0 -or $p50 -le 0.0 -or $p95 -le 0.0 -or $rate -le 0.0) {
     throw "non-positive timing/rate in cell $key"
@@ -96,6 +104,18 @@ foreach ($row in $rows) {
   }
   if ($rejected -ne 0) {
     throw "measured TCP STREAM style cell rejected accepted work: $key"
+  }
+  if ($observeCalls -eq 0 -or $completionBatches -eq 0 -or $completionCount -eq 0) {
+    throw "missing completion-batch evidence in cell $key"
+  }
+  if ($completionCount -lt $transfers * 2) {
+    throw "TCP STREAM cell completed fewer than read+write terminals per transfer: $key"
+  }
+  if ($completionBatches -gt $observeCalls) {
+    throw "completion batch count exceeds observe calls in cell $key"
+  }
+  if ($maxCompletionBatch -eq 0 -or $maxCompletionBatch -gt 4) {
+    throw "completion batch size is outside configured capacity in cell $key"
   }
 
   switch ($row.style) {
