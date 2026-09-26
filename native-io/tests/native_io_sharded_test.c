@@ -291,6 +291,8 @@ typedef struct native_io_sharded_route_state {
   atomic_int finalizes;
   int admission_status;
   int admission_finalizes_seen;
+  int terminal_resubmit_status;
+  int attempt_terminal_resubmit;
   size_t admission_shard;
   native_io_completion_kind terminal_kind;
   size_t terminal_bytes;
@@ -511,6 +513,12 @@ static void native_io_sharded_route_terminal(native_io_sharded_context *context,
                                              const native_io_sharded_completion *completion,
                                              void *arg) {
   native_io_sharded_route_state *state = (native_io_sharded_route_state *)arg;
+  if (state->attempt_terminal_resubmit) {
+    native_io_sharded_operation operation = native_io_sharded_route_read_operation(state);
+    native_io_sharded_request rejected = {0};
+    state->terminal_resubmit_status =
+        native_io_sharded_context_submit(context, &operation, &rejected);
+  }
   state->terminal_kind = completion->kind;
   state->terminal_bytes = completion->bytes;
   state->terminal_byte = state->byte;
@@ -993,6 +1001,7 @@ spec("NativeIO bounded sharded routing") {
       check_equal(native_io_sharded_wait(runtime), SALTS_OK);
       check_equal(state.admission_status, SALTS_OK);
       check_true(native_io_sharded_request_valid(state.request));
+      state.attempt_terminal_resubmit = 1;
       check_equal(atomic_load(&state.terminals), 0);
       check_equal(atomic_load(&state.finalizes), 0);
 
@@ -1001,6 +1010,7 @@ spec("NativeIO bounded sharded routing") {
       check_equal(atomic_load(&state.finalizes), 1);
       check_equal(state.terminal_kind, NATIVE_IO_COMPLETION_CANCELLED);
       check_equal(state.terminal_shard, (size_t)1);
+      check_equal(state.terminal_resubmit_status, SALTS_ESHUTDOWN);
       check_true(native_io_sharded_get_stats(runtime, &stats));
       check_true(stats.accepting);
 
