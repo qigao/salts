@@ -14,6 +14,11 @@
   #include <errno.h>
   #include <fcntl.h>
   #include <unistd.h>
+  #if defined(__linux__)
+    #include <linux/vm_sockets.h>
+    #include <string.h>
+    #include <sys/socket.h>
+  #endif
 #endif
 
 enum {
@@ -165,6 +170,126 @@ static int native_io_sharded_test_pipe_write(uintptr_t peer,
   return transferred == (ssize_t)length ? SALTS_OK : transferred < 0 ? -errno : SALTS_EIO;
 #endif
 }
+
+#if defined(__linux__)
+typedef struct native_io_sharded_test_vsock {
+  uintptr_t handle;
+  uintptr_t peer;
+} native_io_sharded_test_vsock;
+
+static int native_io_sharded_test_vsock_unavailable(int error) {
+  return error == EAFNOSUPPORT || error == EPROTONOSUPPORT || error == ESOCKTNOSUPPORT ||
+         error == ENODEV || error == EPERM || error == EADDRNOTAVAIL;
+}
+
+static int native_io_sharded_test_vsock_pair_create(native_io_sharded_test_vsock *pair) {
+  struct sockaddr_vm local;
+  struct sockaddr_vm target;
+  socklen_t local_length = (socklen_t)sizeof(local);
+  int listener = -1;
+  int peer = -1;
+  int accepted = -1;
+  int flags;
+  int error;
+
+  if (pair == NULL) return SALTS_EINVAL;
+  *pair = (native_io_sharded_test_vsock){0};
+
+  listener = socket(AF_VSOCK, SOCK_STREAM, 0);
+  if (listener < 0) {
+    error = errno;
+    return native_io_sharded_test_vsock_unavailable(error) ? SALTS_ENOTSUP : -error;
+  }
+
+  memset(&local, 0, sizeof(local));
+  local.svm_family = AF_VSOCK;
+  local.svm_cid = VMADDR_CID_ANY;
+  local.svm_port = VMADDR_PORT_ANY;
+  if (bind(listener, (const struct sockaddr *)&local, (socklen_t)sizeof(local)) != 0) {
+    error = errno;
+    (void)close(listener);
+    return native_io_sharded_test_vsock_unavailable(error) ? SALTS_ENOTSUP : -error;
+  }
+  if (listen(listener, 2) != 0) {
+    error = errno;
+    (void)close(listener);
+    return -error;
+  }
+  if (getsockname(listener, (struct sockaddr *)&local, &local_length) != 0 ||
+      local_length < sizeof(local) || local.svm_family != AF_VSOCK ||
+      local.svm_port == VMADDR_PORT_ANY) {
+    error = errno != 0 ? errno : EIO;
+    (void)close(listener);
+    return -error;
+  }
+
+  peer = socket(AF_VSOCK, SOCK_STREAM, 0);
+  if (peer < 0) {
+    error = errno;
+    (void)close(listener);
+    return native_io_sharded_test_vsock_unavailable(error) ? SALTS_ENOTSUP : -error;
+  }
+  memset(&target, 0, sizeof(target));
+  target.svm_family = AF_VSOCK;
+  target.svm_cid = VMADDR_CID_LOCAL;
+  target.svm_port = local.svm_port;
+  if (connect(peer, (const struct sockaddr *)&target, (socklen_t)sizeof(target)) != 0) {
+    error = errno;
+    (void)close(peer);
+    (void)close(listener);
+    return native_io_sharded_test_vsock_unavailable(error) ? SALTS_ENOTSUP : -error;
+  }
+
+  accepted = accept(listener, NULL, NULL);
+  if (accepted < 0) {
+    error = errno;
+    (void)close(peer);
+    (void)close(listener);
+    return -error;
+  }
+  (void)close(listener);
+
+  flags = fcntl(accepted, F_GETFL, 0);
+  if (flags < 0 || fcntl(accepted, F_SETFL, flags | O_NONBLOCK) != 0) {
+    error = errno;
+    (void)close(accepted);
+    (void)close(peer);
+    return -error;
+  }
+
+  pair->handle = (uintptr_t)accepted;
+  pair->peer = (uintptr_t)peer;
+  return SALTS_OK;
+}
+
+static void native_io_sharded_test_vsock_pair_close(native_io_sharded_test_vsock *pair) {
+  if (pair == NULL) return;
+  if (pair->handle != 0u) (void)close((int)pair->handle);
+  if (pair->peer != 0u) (void)close((int)pair->peer);
+  pair->handle = 0u;
+  pair->peer = 0u;
+}
+
+static int native_io_sharded_test_vsock_send(uintptr_t peer, unsigned char value) {
+  ssize_t transferred;
+  if (peer == 0u) return SALTS_EINVAL;
+  do {
+    transferred = send((int)peer, &value, sizeof(value), MSG_NOSIGNAL);
+  } while (transferred < 0 && errno == EINTR);
+  return transferred == (ssize_t)sizeof(value) ? SALTS_OK
+                                                : transferred < 0 ? -errno : SALTS_EIO;
+}
+
+static int native_io_sharded_test_vsock_recv(uintptr_t peer, unsigned char *value) {
+  ssize_t transferred;
+  if (peer == 0u || value == NULL) return SALTS_EINVAL;
+  do {
+    transferred = recv((int)peer, value, sizeof(*value), 0);
+  } while (transferred < 0 && errno == EINTR);
+  return transferred == (ssize_t)sizeof(*value) ? SALTS_OK
+                                                 : transferred < 0 ? -errno : SALTS_EIO;
+}
+#endif
 
 typedef struct native_io_sharded_direct_state {
   native_io_sharded *runtime;
@@ -575,7 +700,134 @@ static void native_io_sharded_route_release(native_io_sharded_context *context, 
   state->release_status = native_io_sharded_context_release_pipe(context, state->endpoint);
 }
 
+#if defined(__linux__)
+static native_io_sharded_operation
+native_io_sharded_vsock_operation(native_io_sharded_route_state *state,
+                                  native_io_operation_kind kind, uintptr_t user_data) {
+  native_io_sharded_operation operation = {0};
+  operation.kind = kind;
+  operation.endpoint = state->endpoint;
+  operation.buffer = &state->byte;
+  operation.length = sizeof(state->byte);
+  operation.user_data = user_data;
+  return operation;
+}
+
+static void native_io_sharded_vsock_attach(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_route_state *state = (native_io_sharded_route_state *)arg;
+  state->attach_status =
+      native_io_sharded_context_attach_socket(context, state->native_handle, &state->endpoint);
+}
+
+static void native_io_sharded_vsock_release(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_route_state *state = (native_io_sharded_route_state *)arg;
+  state->release_status = native_io_sharded_context_release_socket(context, state->endpoint);
+}
+#endif
+
 spec("NativeIO bounded sharded routing") {
+  it("keeps an accepted AF_VSOCK stream on one shard across owned recv and send") {
+#if defined(__linux__)
+    native_io_sharded *runtime = NULL;
+    native_io_sharded_test_vsock pair = {0};
+    native_io_sharded_route_state state = {0};
+    native_io_sharded_task attach_task = {
+        native_io_sharded_vsock_attach, NULL, NULL, &state};
+    native_io_sharded_task observe_task = {
+        native_io_sharded_route_observe, NULL, NULL, &state};
+    native_io_sharded_task release_task = {
+        native_io_sharded_vsock_release, NULL, NULL, &state};
+    native_io_sharded_ownership ownership = {
+        native_io_sharded_route_terminal, native_io_sharded_route_finalize, &state};
+    int status = native_io_sharded_test_vsock_pair_create(&pair);
+
+    if (status == SALTS_ENOTSUP) {
+      check_equal(status, SALTS_ENOTSUP);
+    } else {
+      native_io_sharded_operation operation;
+      unsigned char peer_value = 0u;
+
+      check_equal(status, SALTS_OK);
+      check_equal(native_io_sharded_test_create_kind(
+                      NATIVE_IO_BACKEND_EPOLL, 2u, 2u, &runtime),
+                  SALTS_OK);
+      state.native_handle = pair.handle;
+      state.peer = pair.peer;
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &attach_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.attach_status, SALTS_OK);
+      check_true(native_io_sharded_endpoint_valid(state.endpoint));
+      check_equal(native_io_sharded_endpoint_owner_shard(state.endpoint), (size_t)1);
+
+      state.byte = 0u;
+      operation = native_io_sharded_vsock_operation(
+          &state, NATIVE_IO_OPERATION_STREAM_RECV, (uintptr_t)0x47501u);
+      check_equal(native_io_sharded_try_submit_owned(
+                      runtime, &operation, &ownership,
+                      native_io_sharded_route_admission, &state),
+                  SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.admission_status, SALTS_OK);
+      check_equal(state.admission_shard, (size_t)1);
+      check_true(native_io_sharded_request_valid(state.request));
+      check_equal(native_io_sharded_request_owner_shard(state.request), (size_t)1);
+      check_equal(native_io_sharded_test_vsock_send(state.peer, (unsigned char)0x31u),
+                  SALTS_OK);
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &observe_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.observe_status, SALTS_OK);
+      check_equal(state.observe_count, (size_t)1);
+      check_equal(state.completion.kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(state.completion.user_data, (uintptr_t)0x47501u);
+      check_equal(state.byte, (unsigned char)0x31u);
+      check_equal(atomic_load(&state.admissions), 1);
+      check_equal(atomic_load(&state.terminals), 1);
+      check_equal(atomic_load(&state.finalizes), 1);
+      check_equal(state.terminal_shard, (size_t)1);
+
+      state.byte = (unsigned char)0x52u;
+      operation = native_io_sharded_vsock_operation(
+          &state, NATIVE_IO_OPERATION_STREAM_SEND, (uintptr_t)0x47502u);
+      check_equal(native_io_sharded_try_submit_owned(
+                      runtime, &operation, &ownership,
+                      native_io_sharded_route_admission, &state),
+                  SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.admission_status, SALTS_OK);
+      check_equal(state.admission_shard, (size_t)1);
+      check_true(native_io_sharded_request_valid(state.request));
+      check_equal(native_io_sharded_request_owner_shard(state.request), (size_t)1);
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &observe_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.observe_status, SALTS_OK);
+      check_equal(state.observe_count, (size_t)1);
+      check_equal(state.completion.kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(state.completion.user_data, (uintptr_t)0x47502u);
+      check_equal(atomic_load(&state.admissions), 2);
+      check_equal(atomic_load(&state.terminals), 2);
+      check_equal(atomic_load(&state.finalizes), 2);
+      check_equal(state.terminal_shard, (size_t)1);
+      check_equal(native_io_sharded_test_vsock_recv(state.peer, &peer_value), SALTS_OK);
+      check_equal(peer_value, (unsigned char)0x52u);
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &release_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.release_status, SALTS_OK);
+
+      (void)close((int)pair.handle);
+      pair.handle = 0u;
+      check_equal(native_io_sharded_destroy(runtime), SALTS_OK);
+      runtime = NULL;
+      native_io_sharded_test_vsock_pair_close(&pair);
+    }
+#else
+    check_true(true);
+#endif
+  }
+
   it("routes explicit owned operations to endpoint owner without implicit transfer on rejection") {
     native_io_sharded *runtime = NULL;
     native_io_sharded *other_runtime = NULL;
