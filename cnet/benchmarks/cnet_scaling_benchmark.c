@@ -891,7 +891,7 @@ static int scale_write_csv(FILE *csv, const scale_result *result,
               ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
               ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
               ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
-              ",%" PRIu64 "\n",
+              ",%" PRIu64 ",%" PRIu64 "\n",
               backend_name, result->driver, result->connections, result->payload_size,
               (unsigned)SCALE_SAMPLES, result->logical_operations, result->peak_active,
               result->progress_calls, result->wall_ns, result->cpu_ns, result->p50_ns,
