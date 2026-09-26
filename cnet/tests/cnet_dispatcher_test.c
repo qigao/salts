@@ -130,7 +130,11 @@ spec("CNet event dispatcher") {
                                               .event_capacity_per_shard = 8u,
                                               .receive_buffer_bytes = 64u,
                                               .max_command_payload_bytes =
-                                                  sizeof(cnet_owner_connect_payload)};
+                                                  sizeof(cnet_owner_connect_payload),
+                                              .write_capacity_per_shard = 8u,
+                                              .write_capacity_per_connection = 8u,
+                                              .max_write_payload_bytes = 256u,
+                                              .write_buffer_bytes = 2048u};
     cnet_dispatcher_test_socket listener = CNET_DISPATCHER_TEST_INVALID_SOCKET;
     cnet_dispatcher_test_socket accepted = CNET_DISPATCHER_TEST_INVALID_SOCKET;
     struct sockaddr_in address;
