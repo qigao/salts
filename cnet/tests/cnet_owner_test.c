@@ -215,7 +215,6 @@ static void cnet_owner_test_tcp(native_io_backend_kind backend_kind, bool resolv
   cnet_command_queue commands = {0};
   cnet_event_queue events = {0};
   cnet_owner owner = {0};
-  mem_pool_t vector_pool;
   const cnet_command_queue_config command_config = {8u, sizeof(cnet_owner_connect_payload)};
   const cnet_event_queue_config event_config = {8u, 2u, 64u};
   cnet_owner_test_clock clock = {.now_ms = 100u,
@@ -903,6 +902,7 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   cnet_command_queue commands = {0};
   cnet_event_queue events = {0};
   cnet_owner owner = {0};
+  mem_pool_t vector_pool;
   const cnet_command_queue_config command_config = {8u, sizeof(cnet_owner_connect_payload)};
   const cnet_event_queue_config event_config = {8u, 2u, 64u};
   const cnet_owner_config owner_config = {.backend_kind = backend_kind,
