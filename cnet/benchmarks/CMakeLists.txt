@@ -46,5 +46,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set_target_properties(cnet_scaling_benchmark PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
-    C_EXTENSIONS OFF)
+    C_EXTENSIONS OFF
+    LINKER_LANGUAGE CXX)
 endif()
