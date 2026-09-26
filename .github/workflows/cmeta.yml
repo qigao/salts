@@ -141,6 +141,9 @@ jobs:
           mkdir -p "$sdk"
           cp -a "$GITHUB_WORKSPACE/external/pkgs/salts/release/." "$sdk/"
           test -f "$sdk/lib/cmake/Salts/SaltsConfig.cmake"
+          test -f "$sdk/lib/cmake/Salts/SaltsCMetaLower.cmake"
+          test -x "$sdk/bin/cmeta-lower"
+          test "$("$sdk/bin/cmeta-lower" --version)" = "cmeta-lower 1"
           cat > "$sdk/salts-sdk-manifest.txt" <<EOF
           commit=${{ github.event.pull_request.head.sha || github.sha }}
           os=${{ runner.os }}
@@ -549,8 +552,20 @@ jobs:
           New-Item -ItemType Directory -Force -Path $sdk | Out-Null
           Copy-Item -Path (Join-Path $source '*') -Destination $sdk -Recurse -Force
           $config = Join-Path $sdk "lib\cmake\Salts\SaltsConfig.cmake"
+          $helper = Join-Path $sdk "lib\cmake\Salts\SaltsCMetaLower.cmake"
+          $lower = Join-Path $sdk "bin\cmeta-lower.exe"
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) {
             throw "installed SaltsConfig.cmake missing: $config"
+          }
+          if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+            throw "installed SaltsCMetaLower.cmake missing: $helper"
+          }
+          if (-not (Test-Path -LiteralPath $lower -PathType Leaf)) {
+            throw "installed cmeta-lower missing: $lower"
+          }
+          $lowerVersion = (& $lower --version).Trim()
+          if ($lowerVersion -ne "cmeta-lower 1") {
+            throw "unexpected cmeta-lower version: $lowerVersion"
           }
           @(
             "commit=${{ github.event.pull_request.head.sha || github.sha }}"
