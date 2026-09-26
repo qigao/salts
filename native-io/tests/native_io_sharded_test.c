@@ -250,6 +250,34 @@ typedef struct native_io_sharded_affinity_state {
   size_t observed_request_shard;
 } native_io_sharded_affinity_state;
 
+typedef struct native_io_sharded_owned_state {
+  native_io_sharded_endpoint endpoint;
+  native_io_sharded_request request;
+  native_io_sharded_completion completion;
+  uintptr_t native_handle;
+  uintptr_t peer;
+  unsigned char byte;
+  atomic_int terminals;
+  atomic_int finalizes;
+  int terminal_finalizes_seen;
+  int nested_observe_status;
+  native_io_completion_kind terminal_kind;
+  size_t terminal_bytes;
+  unsigned char terminal_byte;
+  size_t terminal_shard;
+  int attach_status;
+  int wrong_submit_status;
+  int invalid_owner_status;
+  int submit_status;
+  int prepare_status;
+  int flush_status;
+  int cancel_status;
+  int observe_status;
+  size_t observe_count;
+  int peer_write_status;
+  int release_status;
+} native_io_sharded_owned_state;
+
 static void native_io_sharded_gate_run(native_io_sharded_context *context, void *arg) {
   native_io_sharded_gate_state *state = (native_io_sharded_gate_state *)arg;
   (void)context;
@@ -346,7 +374,227 @@ static void native_io_sharded_affinity_release(native_io_sharded_context *contex
       native_io_sharded_context_submit(context, &operation, &request);
 }
 
+static native_io_sharded_operation
+native_io_sharded_owned_read_operation(native_io_sharded_owned_state *state) {
+  native_io_sharded_operation operation = {0};
+  operation.kind = NATIVE_IO_OPERATION_PIPE_READ;
+  operation.endpoint = state->endpoint;
+  operation.buffer = &state->byte;
+  operation.length = sizeof(state->byte);
+  operation.user_data = 0x4753u;
+  return operation;
+}
+
+static void native_io_sharded_owned_terminal(native_io_sharded_context *context,
+                                             const native_io_sharded_completion *completion,
+                                             void *arg) {
+  native_io_sharded_owned_state *state = (native_io_sharded_owned_state *)arg;
+  native_io_sharded_completion nested_event = {0};
+  size_t nested_count = 0u;
+  state->terminal_finalizes_seen = atomic_load(&state->finalizes);
+  state->nested_observe_status =
+      native_io_sharded_context_observe(context, &nested_event, 1u, 0u, &nested_count);
+  state->terminal_kind = completion->kind;
+  state->terminal_bytes = completion->bytes;
+  state->terminal_byte = state->byte;
+  state->terminal_shard = native_io_sharded_context_shard(context);
+  atomic_fetch_add(&state->terminals, 1);
+}
+
+static void native_io_sharded_owned_finalize(void *arg) {
+  native_io_sharded_owned_state *state = (native_io_sharded_owned_state *)arg;
+  atomic_fetch_add(&state->finalizes, 1);
+}
+
+static void native_io_sharded_owned_attach(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_owned_state *state = (native_io_sharded_owned_state *)arg;
+  state->attach_status = native_io_sharded_context_attach_pipe(
+      context, state->native_handle, NATIVE_IO_PIPE_ENDPOINT_ASYNC_CAPABLE, &state->endpoint);
+}
+
+static void native_io_sharded_owned_wrong_submit(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_owned_state *state = (native_io_sharded_owned_state *)arg;
+  native_io_sharded_operation operation = native_io_sharded_owned_read_operation(state);
+  native_io_sharded_ownership ownership = {
+      native_io_sharded_owned_terminal, native_io_sharded_owned_finalize, state};
+  native_io_sharded_request request = {0};
+  state->wrong_submit_status =
+      native_io_sharded_context_submit_owned(context, &operation, &ownership, &request);
+}
+
+static void native_io_sharded_owned_submit(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_owned_state *state = (native_io_sharded_owned_state *)arg;
+  native_io_sharded_operation operation = native_io_sharded_owned_read_operation(state);
+  native_io_sharded_ownership ownership = {
+      native_io_sharded_owned_terminal, native_io_sharded_owned_finalize, state};
+  native_io_sharded_ownership invalid = {
+      native_io_sharded_owned_terminal, NULL, state};
+  native_io_sharded_request invalid_request = {0};
+  state->invalid_owner_status =
+      native_io_sharded_context_submit_owned(context, &operation, &invalid, &invalid_request);
+  state->submit_status =
+      native_io_sharded_context_submit_owned(context, &operation, &ownership, &state->request);
+}
+
+static void native_io_sharded_owned_prepare(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_owned_state *state = (native_io_sharded_owned_state *)arg;
+  native_io_sharded_operation operation = native_io_sharded_owned_read_operation(state);
+  native_io_sharded_ownership ownership = {
+      native_io_sharded_owned_terminal, native_io_sharded_owned_finalize, state};
+  state->prepare_status =
+      native_io_sharded_context_prepare_owned(context, &operation, &ownership, &state->request);
+  state->flush_status = state->prepare_status == SALTS_OK
+                            ? native_io_sharded_context_flush(context)
+                            : state->prepare_status;
+}
+
+static void native_io_sharded_owned_cancel(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_owned_state *state = (native_io_sharded_owned_state *)arg;
+  state->cancel_status = native_io_sharded_context_cancel(context, state->request);
+}
+
+static void native_io_sharded_owned_observe(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_owned_state *state = (native_io_sharded_owned_state *)arg;
+  state->observe_count = 0u;
+  state->observe_status =
+      native_io_sharded_context_observe(context, &state->completion, 1u, 5000u,
+                                        &state->observe_count);
+}
+
+static void native_io_sharded_owned_release(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_owned_state *state = (native_io_sharded_owned_state *)arg;
+  state->release_status = native_io_sharded_context_release_pipe(context, state->endpoint);
+}
+
 spec("NativeIO bounded sharded routing") {
+  it("retains explicit request ownership through terminal observe and cancellation") {
+    native_io_sharded *runtime = NULL;
+    native_io_sharded_test_pipe pipe_endpoint = {0};
+    native_io_sharded_owned_state state = {0};
+    native_io_sharded_task attach_task = {
+        native_io_sharded_owned_attach, NULL, NULL, &state};
+    native_io_sharded_task wrong_task = {
+        native_io_sharded_owned_wrong_submit, NULL, NULL, &state};
+    native_io_sharded_task submit_task = {
+        native_io_sharded_owned_submit, NULL, NULL, &state};
+    native_io_sharded_task prepare_task = {
+        native_io_sharded_owned_prepare, NULL, NULL, &state};
+    native_io_sharded_task cancel_task = {
+        native_io_sharded_owned_cancel, NULL, NULL, &state};
+    native_io_sharded_task observe_task = {
+        native_io_sharded_owned_observe, NULL, NULL, &state};
+    native_io_sharded_task release_task = {
+        native_io_sharded_owned_release, NULL, NULL, &state};
+    int status = native_io_sharded_test_create(2u, 2u, &runtime);
+
+    if (status == SALTS_ENOTSUP) {
+      check_equal(status, SALTS_ENOTSUP);
+    } else {
+      check_equal(status, SALTS_OK);
+      check_equal(native_io_sharded_test_pipe_create(&pipe_endpoint), SALTS_OK);
+      state.native_handle = pipe_endpoint.handle;
+      state.peer = pipe_endpoint.peer;
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &attach_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.attach_status, SALTS_OK);
+      check_true(native_io_sharded_endpoint_valid(state.endpoint));
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 0u, &wrong_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.wrong_submit_status, SALTS_EPERM);
+      check_equal(atomic_load(&state.terminals), 0);
+      check_equal(atomic_load(&state.finalizes), 0);
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &submit_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.invalid_owner_status, SALTS_EINVAL);
+      check_equal(state.submit_status, SALTS_OK);
+      check_true(native_io_sharded_request_valid(state.request));
+      check_equal(atomic_load(&state.terminals), 0);
+      check_equal(atomic_load(&state.finalizes), 0);
+
+      {
+        const unsigned char payload = 0x63u;
+        state.peer_write_status =
+            native_io_sharded_test_pipe_write(state.peer, &payload, sizeof(payload));
+      }
+      check_equal(state.peer_write_status, SALTS_OK);
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &observe_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.observe_status, SALTS_OK);
+      check_equal(state.observe_count, (size_t)1);
+      check_equal(state.completion.kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(state.completion.user_data, (uintptr_t)0x4753u);
+      check_equal(atomic_load(&state.terminals), 1);
+      check_equal(atomic_load(&state.finalizes), 1);
+      check_equal(state.terminal_finalizes_seen, 0);
+      check_equal(state.nested_observe_status, SALTS_EBUSY);
+      check_equal(state.terminal_kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(state.terminal_bytes, (size_t)1);
+      check_equal(state.terminal_byte, (unsigned char)0x63u);
+      check_equal(state.terminal_shard, (size_t)1);
+
+      state.byte = 0u;
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &submit_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.submit_status, SALTS_OK);
+      check_equal(atomic_load(&state.finalizes), 1);
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &cancel_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.cancel_status, SALTS_OK);
+      check_equal(atomic_load(&state.finalizes), 1);
+
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &observe_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.observe_status, SALTS_OK);
+      check_equal(state.observe_count, (size_t)1);
+      check_equal(state.completion.kind, NATIVE_IO_COMPLETION_CANCELLED);
+      check_equal(atomic_load(&state.terminals), 2);
+      check_equal(atomic_load(&state.finalizes), 2);
+      check_equal(state.terminal_finalizes_seen, 1);
+      check_equal(state.nested_observe_status, SALTS_EBUSY);
+      check_equal(state.terminal_kind, NATIVE_IO_COMPLETION_CANCELLED);
+      check_equal(state.terminal_shard, (size_t)1);
+
+      state.byte = 0u;
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &prepare_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.prepare_status, SALTS_OK);
+      check_equal(state.flush_status, SALTS_OK);
+      check_true(native_io_sharded_request_valid(state.request));
+      check_equal(atomic_load(&state.finalizes), 2);
+
+      {
+        const unsigned char payload = 0x7du;
+        state.peer_write_status =
+            native_io_sharded_test_pipe_write(state.peer, &payload, sizeof(payload));
+      }
+      check_equal(state.peer_write_status, SALTS_OK);
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &observe_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.observe_status, SALTS_OK);
+      check_equal(state.observe_count, (size_t)1);
+      check_equal(state.completion.kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(atomic_load(&state.terminals), 3);
+      check_equal(atomic_load(&state.finalizes), 3);
+      check_equal(state.terminal_finalizes_seen, 2);
+      check_equal(state.nested_observe_status, SALTS_EBUSY);
+      check_equal(state.terminal_kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(state.terminal_bytes, (size_t)1);
+      check_equal(state.terminal_byte, (unsigned char)0x7du);
+      check_equal(state.terminal_shard, (size_t)1);
+
+      native_io_sharded_test_pipe_close_handle(&pipe_endpoint.handle);
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &release_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.release_status, SALTS_OK);
+      native_io_sharded_test_pipe_close(&pipe_endpoint);
+      check_equal(native_io_sharded_destroy(runtime), SALTS_OK);
+    }
+  }
+
   it("binds endpoint affinity outside the raw NativeIO handle and rejects wrong-shard use") {
     native_io_sharded *runtime = NULL;
     native_io_sharded_test_pipe pipe_endpoint = {0};
