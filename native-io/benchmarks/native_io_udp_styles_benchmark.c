@@ -254,7 +254,7 @@ static int udp_style_make_pair(udp_style_socket sockets[2],
   return status;
 }
 
-static int udp_style_compare_u64static int udp_style_compare_u64(const void *left, const void *right) {
+static int udp_style_compare_u64(const void *left, const void *right) {
   const uint64_t a = *(const uint64_t *)left;
   const uint64_t b = *(const uint64_t *)right;
   return a < b ? -1 : a > b ? 1 : 0;
@@ -305,7 +305,7 @@ static int udp_style_backend_fixture_init(udp_style_backend_fixture *fixture,
   return status;
 }
 
-static int udp_style_backend_fixture_destroystatic int udp_style_backend_fixture_destroy(udp_style_backend_fixture *fixture) {
+static int udp_style_backend_fixture_destroy(udp_style_backend_fixture *fixture) {
   int status = SALTS_OK;
 #if defined(_WIN32)
   int backend_close_status = SALTS_OK;
@@ -459,7 +459,7 @@ static void udp_style_coroutine_entry(native_io_coroutine *coroutine, void *arg)
   state->done = true;
 }
 
-static int udp_style_coroutine_cancel_and_drainstatic int udp_style_coroutine_cancel_and_drain(
+static int udp_style_coroutine_cancel_and_drain(
     udp_style_backend_fixture *fixture, native_io_coroutine_task task,
     udp_style_coroutine_operation *state) {
   native_io_completion events[UDP_STYLE_COMPLETION_CAPACITY];
@@ -537,7 +537,7 @@ static int udp_style_coroutine_transfer(udp_style_backend_fixture *fixture) {
              : SALTS_EIO;
 }
 
-static int udp_style_measure_backendstatic int udp_style_measure_backend(native_io_backend_kind kind, udp_style_kind style,
+static int udp_style_measure_backend(native_io_backend_kind kind, udp_style_kind style,
                                       size_t payload_size, udp_style_result *out) {
   udp_style_backend_fixture fixture;
   uint64_t *latencies =
@@ -829,7 +829,7 @@ static int udp_style_sharded_transfer(
              : SALTS_EIO;
 }
 
-static uint64_t udp_style_stats_deltastatic uint64_t udp_style_stats_delta(uint64_t after, uint64_t before) {
+static uint64_t udp_style_stats_delta(uint64_t after, uint64_t before) {
   return after >= before ? after - before : 0u;
 }
 
