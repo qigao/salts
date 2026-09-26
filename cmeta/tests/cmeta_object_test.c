@@ -5,8 +5,6 @@ typedef struct object_box {
     int value;
 } object_box;
 
-static int object_box_shape_marker = 0;
-
 static const cmeta_type_desc object_box_type = {
     .name = "object_box",
     .size = sizeof(object_box),
@@ -27,14 +25,49 @@ static const cmeta_type_desc object_box_ptr_type = {
     .identity = NULL
 };
 
+static const cmeta_field_desc object_box_layout_fields[] = {
+    {
+        .name = "value",
+        .type_name = "int",
+        .offset = offsetof(object_box, value),
+        .size = sizeof(int),
+        .align = _Alignof(int),
+        .type = &cmeta_type_int,
+        .declared_type = NULL
+    }
+};
+
+static const cmeta_struct_desc object_box_layout = {
+    .name = "object_box",
+    .size = sizeof(object_box),
+    .align = _Alignof(object_box),
+    .fields = object_box_layout_fields,
+    .field_count = 1u
+};
+
+static const cmeta_data_field_desc object_box_data_fields[] = {
+    {
+        .stable_id = "test.object_box.value",
+        .name = "value",
+        .offset = offsetof(object_box, value),
+        .value = &cmeta_data_int
+    }
+};
+
+static const cmeta_data_struct_shape object_box_shape = {
+    .layout = &object_box_layout,
+    .fields = object_box_data_fields,
+    .field_count = 1u
+};
+
 static const cmeta_data_desc object_box_data = {
     .struct_size = sizeof(cmeta_data_desc),
     .abi_version = CMETA_DATA_DESC_ABI_VERSION,
     .stable_id = "test.object_box.data",
     .display_name = "object_box",
-    .kind = CMETA_DATA_CUSTOM,
+    .kind = CMETA_DATA_STRUCT,
     .storage_type = &object_box_type,
-    .shape = &object_box_shape_marker,
+    .shape = &object_box_shape,
     .buffer_ops = NULL,
     .enum_ops = NULL,
     .variant_ops = NULL,
@@ -133,6 +166,58 @@ spec("CMeta canonical borrowed object") {
         check_equal(box.value, 16);
     }
 
+    it("reads reflected fields without copying native state") {
+        object_box box = {9};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        const cmeta_data_desc *field_data = NULL;
+        const void *field_value = NULL;
+
+        check_equal(cmeta_object_borrow(
+                        &object, &box, &object_box_data, &object_method_set),
+                    CMETA_OK);
+        check_equal(cmeta_object_field_read(
+                        &object, "value", &field_data, &field_value),
+                    CMETA_OK);
+        check_true(field_data == &cmeta_data_int);
+        check_true(field_value == &box.value);
+        check_equal(*(const int *)field_value, 9);
+
+        box.value = 12;
+        check_equal(*(const int *)field_value, 12);
+
+        field_data = &cmeta_data_long;
+        field_value = &box;
+        check_equal(cmeta_object_field_read(
+                        &object, "missing", &field_data, &field_value),
+                    CMETA_INVALID_ARGUMENT);
+        check_null(field_data);
+        check_null(field_value);
+    }
+
+    it("resolves methods against the bound native receiver type") {
+        object_box box = {0};
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+        cmeta_receiver_resolution resolution = CMETA_RECEIVER_RESOLUTION_INIT;
+        const cmeta_type_desc *arguments[] = {&cmeta_type_int};
+
+        check_equal(cmeta_object_borrow(
+                        &object, &box, &object_box_data, &object_method_set),
+                    CMETA_OK);
+        check_equal(cmeta_object_method_resolve(
+                        &object, "ObjectBox", "add",
+                        arguments, 1u, &resolution),
+                    CMETA_RECEIVER_RESOLVE_OK);
+        check_true(resolution.method == &object_methods[0]);
+        check_equal(resolution.argument_index, CMETA_RECEIVER_ARGUMENT_NONE);
+
+        resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
+        check_equal(cmeta_object_method_resolve(
+                        &object, NULL, "missing",
+                        arguments, 1u, &resolution),
+                    CMETA_RECEIVER_RESOLVE_METHOD_NOT_FOUND);
+        check_null(resolution.method);
+    }
+
     it("allows data-only borrowed objects") {
         object_box box = {3};
         cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
@@ -142,6 +227,13 @@ spec("CMeta canonical borrowed object") {
                     CMETA_OK);
         check_true(cmeta_object_ref_valid(&object));
         check_null(object.methods);
+        {
+            cmeta_receiver_resolution resolution =
+                CMETA_RECEIVER_RESOLUTION_INIT;
+            check_equal(cmeta_object_method_resolve(
+                            &object, NULL, "add", NULL, 0u, &resolution),
+                        CMETA_RECEIVER_RESOLVE_INVALID_METHOD_SET);
+        }
         cmeta_object_release(&object);
         check_equal(box.value, 3);
     }
