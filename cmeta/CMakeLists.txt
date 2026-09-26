@@ -9,6 +9,7 @@ add_library(${TARGET_NAME}
   src/entry.c
   src/function.c
   src/interface.c
+  src/method.c
   src/infer.c
   src/invokable.c
   src/type_identity.c

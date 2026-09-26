@@ -18,6 +18,7 @@ foreach(forbidden
     "cmeta_function_find_param("
     "cmeta_callable"
     "cmeta_invokable"
+    "cmeta_receiver_method"
     "receiver_method("
     "ops->"
     "(*")
