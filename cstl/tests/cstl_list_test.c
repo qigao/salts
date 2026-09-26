@@ -133,6 +133,30 @@ spec("Independent linked List") {
         check_equal(list_generation(&list), generation + 1u);
     }
 
+    it("rolls lazy materialization back when an owning first copy fails") {
+        list_t list =
+            SALTS_STL_LIST_INITIALIZER_WITH_TYPE(
+                list_owned_value, &list_owned_type);
+        list_t before = list;
+        list_owned_value value;
+
+        list_owned_live = 0u;
+        list_copy_count = 0u;
+        list_fail_copy_at = 0u;
+        value = list_owned_make(42);
+        check_equal(list_owned_live, (size_t)1u);
+
+        list_fail_copy_at = list_copy_count + 1u;
+        check_equal(list_push_back(&list, &value, NULL),
+                    STL_OUT_OF_MEMORY);
+        check_equal(memcmp(&list, &before, sizeof(list)), 0);
+        check_equal(list_owned_live, (size_t)1u);
+
+        list_fail_copy_at = 0u;
+        list_owned_destroy(&value);
+        check_equal(list_owned_live, (size_t)0u);
+    }
+
     it("rolls back owning copy and from failures and balances pool reuse") {
         list_t list = {0};
         list_t before;
