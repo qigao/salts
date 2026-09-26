@@ -122,9 +122,16 @@ typedef struct cmeta_object_ref {
     const cmeta_object_lifecycle *lifecycle;
 } cmeta_object_ref;
 
+#ifdef __cplusplus
 #define CMETA_OBJECT_REF_INIT \
-    { sizeof(cmeta_object_ref), NULL, NULL, NULL, NULL, \
-      CMETA_OBJECT_LIFETIME_NONE, NULL }
+    { sizeof(cmeta_object_ref), nullptr, nullptr, nullptr, nullptr, nullptr, \
+      CMETA_OBJECT_LIFETIME_NONE, nullptr }
+#else
+#define CMETA_OBJECT_REF_INIT \
+    { .size = sizeof(cmeta_object_ref), .object = NULL, .data = NULL, \
+      .field_provider = NULL, .methods = NULL, .method_provider = NULL, \
+      .lifetime = CMETA_OBJECT_LIFETIME_NONE, .lifecycle = NULL }
+#endif
 
 /** Validate one currently live canonical object reference. */
 bool cmeta_object_ref_valid(const cmeta_object_ref *ref);
