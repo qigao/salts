@@ -423,6 +423,17 @@ int cnet_shards_close(cnet_shards *shards, cnet_shard_connection connection) {
   return cnet_shards_publish(impl, connection, &command);
 }
 
+int cnet_shards_close_direct(cnet_shards *shards, cnet_shard_connection connection) {
+  cnet_shards_impl *impl = cnet_shards_get(shards);
+  cnet_shard_record *record;
+  if (impl == NULL) return SALTS_EINVAL;
+  if (!cnet_shard_connection_valid(connection)) return SALTS_ENOENT;
+  record = cnet_shards_get_record(impl, connection.shard);
+  if (record == NULL) return SALTS_ENOENT;
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  return cnet_owner_close_direct(&record->owner, connection.session);
+}
+
 int cnet_shards_state(cnet_shards *shards, cnet_shard_connection connection,
                       cnet_session_state *out_state) {
   cnet_shards_impl *impl = cnet_shards_get(shards);

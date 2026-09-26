@@ -81,6 +81,8 @@ int cnet_shards_receive_direct(cnet_shards *shards, cnet_shard_connection connec
 int cnet_shards_start_tls(cnet_shards *shards, cnet_shard_connection connection,
                           const cnet_owner_start_tls_payload *payload);
 int cnet_shards_close(cnet_shards *shards, cnet_shard_connection connection);
+/** Single-owner quiescent close fast path; callbacks remain deferred to poll. */
+int cnet_shards_close_direct(cnet_shards *shards, cnet_shard_connection connection);
 
 int cnet_shards_state(cnet_shards *shards, cnet_shard_connection connection,
                       cnet_session_state *out_state);
