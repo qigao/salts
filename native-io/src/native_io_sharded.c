@@ -692,15 +692,27 @@ static int native_io_sharded_submit_owned_internal(
   if (shard_index >= runtime->shard_count) return SALTS_ENOENT;
   shard = &runtime->shards[shard_index];
 
+  /*
+   * Keep the route-slot claim and the command admission inside one outer
+   * dispatch transaction. shutdown closes accepting first, then waits for this
+   * transaction to release either caller ownership or an accepted route.
+   */
+  status = native_io_sharded_dispatch_begin(runtime);
+  if (status != SALTS_OK) return status;
+
   status = native_io_sharded_claim_owned_route(
       runtime, shard, operation, ownership, admission, admission_arg, blocking, &route);
-  if (status != SALTS_OK) return status;
+  if (status != SALTS_OK) {
+    native_io_sharded_dispatch_end(runtime);
+    return status;
+  }
 
   task = (native_io_sharded_task){
       native_io_sharded_owned_route_run, native_io_sharded_owned_route_cancel,
       native_io_sharded_owned_route_finalize, route};
   status = native_io_sharded_submit_internal(runtime, shard_index, &task, blocking);
   if (status != SALTS_OK) native_io_sharded_release_owned_route(route);
+  native_io_sharded_dispatch_end(runtime);
   return status;
 }
 
