@@ -8,6 +8,7 @@
 #include <salts/native_io.h>
 #include <salts/thread.h>
 
+#include "cnet_benchmark_stats.h"
 #include "cnet_client_internal.h"
 #include "cnet_io_benchmark_config.h"
 
@@ -31,6 +32,9 @@ enum {
   SCALE_MAX_CONNECTIONS = 64,
   SCALE_WARMUPS = 8,
   SCALE_SAMPLES = 32,
+  SCALE_REPEATS = 5,
+  SCALE_CONNECTION_COUNT = 4,
+  SCALE_PAYLOAD_COUNT = 4,
   SCALE_TIMEOUT_MS = 5000,
   SCALE_COMMAND_CAPACITY = 128,
   SCALE_EVENT_CAPACITY = 256,
@@ -828,94 +832,194 @@ static int scale_run_driver(scale_driver driver, size_t connections, size_t payl
   }
 }
 
-static FILE *scale_open_csv(void) {
+static FILE *scale_open_csv(const char *suffix) {
   const char *prefix = getenv("CNET_SCALING_BENCHMARK_OUTPUT");
   char path[1024];
-  if (prefix == NULL || *prefix == '\0') return NULL;
-  if (snprintf(path, sizeof(path), "%s.csv", prefix) < 0) return NULL;
+  if (prefix == NULL || *prefix == '\0' || suffix == NULL) return NULL;
+  if (snprintf(path, sizeof(path), "%s%s", prefix, suffix) < 0) return NULL;
   return fopen(path, "w");
 }
 
-static void scale_print_result(const scale_result *result) {
-  const double cpu_us =
-      result->logical_operations == 0u
-          ? 0.0
-          : (double)result->cpu_ns / 1000.0 / (double)result->logical_operations;
-  const double owner_drive_us =
-      result->logical_operations == 0u
-          ? 0.0
-          : (double)result->owner_drive_ns / 1000.0 / (double)result->logical_operations;
-  const double observe_us =
-      result->logical_operations == 0u
-          ? 0.0
-          : (double)result->owner_observe_ns / 1000.0 / (double)result->logical_operations;
-  uint64_t nested_ns = 0u;
-  double owner_residual_us = 0.0;
-  double callback_us = 0.0;
-  double payload_check_us = 0.0;
-  double observer_framework_us = 0.0;
-  if (result->driver[0] == 'C') {
-    nested_ns = result->owner_request_lifecycle_ns + result->owner_request_resubmit_ns +
-                result->owner_observe_ns + result->owner_request_completion_ns;
-    if (result->owner_drive_ns >= nested_ns && result->logical_operations != 0u)
-      owner_residual_us =
-          (double)(result->owner_drive_ns - nested_ns) / 1000.0 /
-          (double)result->logical_operations;
-    if (result->logical_operations != 0u) {
-      callback_us = (double)result->benchmark_callback_ns / 1000.0 /
-                    (double)result->logical_operations;
-      payload_check_us = (double)result->benchmark_payload_check_ns / 1000.0 /
-                         (double)result->logical_operations;
-      if (result->dispatcher_observer_ns >= result->benchmark_callback_ns)
-        observer_framework_us =
-            (double)(result->dispatcher_observer_ns - result->benchmark_callback_ns) /
-            1000.0 / (double)result->logical_operations;
-    }
-  }
-
-  printf("| %s | %zu | %zu | %.0f | %.2f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f |\n",
-         result->driver, result->connections, result->payload_size,
-         result->operations_per_second, result->mib_per_second,
-         (double)result->p50_ns / 1000.0, (double)result->p95_ns / 1000.0,
-         (double)result->p99_ns / 1000.0, cpu_us, owner_drive_us, observe_us,
-         owner_residual_us, callback_us, payload_check_us, observer_framework_us);
+static double scale_cpu_us_per_op(const scale_result *result) {
+  return result->logical_operations == 0u
+             ? 0.0
+             : (double)result->cpu_ns / 1000.0 / (double)result->logical_operations;
 }
 
-static int scale_write_csv(FILE *csv, const scale_result *result,
-                           const char *backend_name) {
+static double scale_owner_residual_us_per_op(const scale_result *result) {
+  uint64_t nested_ns;
+  if (result->driver[0] != 'C' || result->logical_operations == 0u) return 0.0;
+  nested_ns = result->owner_request_lifecycle_ns + result->owner_request_resubmit_ns +
+              result->owner_observe_ns + result->owner_request_completion_ns;
+  if (result->owner_drive_ns < nested_ns) return 0.0;
+  return (double)(result->owner_drive_ns - nested_ns) / 1000.0 /
+         (double)result->logical_operations;
+}
+
+static double scale_observer_framework_us_per_op(const scale_result *result) {
+  if (result->driver[0] != 'C' || result->logical_operations == 0u ||
+      result->dispatcher_observer_ns < result->benchmark_callback_ns)
+    return 0.0;
+  return (double)(result->dispatcher_observer_ns - result->benchmark_callback_ns) /
+         1000.0 / (double)result->logical_operations;
+}
+
+static int scale_write_raw_csv(FILE *csv, const scale_result *result,
+                               const char *backend_name, size_t repeat) {
   if (csv == NULL) return SALTS_OK;
-  if (fprintf(csv,
-              "%s,%s,%zu,%zu,%u,%zu,%zu,%zu,%" PRIu64 ",%" PRIu64
-              ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.6f,%.6f"
-              ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
-              ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
-              ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
-              ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64
-              ",%" PRIu64 ",%" PRIu64 "\n",
+  if (fprintf(csv, "%s,%s,%zu,%zu,%zu,%u,%zu,%zu,%zu,%" PRIu64 ",%" PRIu64
+                   ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%.6f,%.6f",
               backend_name, result->driver, result->connections, result->payload_size,
-              (unsigned)SCALE_SAMPLES, result->logical_operations, result->peak_active,
-              result->progress_calls, result->wall_ns, result->cpu_ns, result->p50_ns,
-              result->p95_ns, result->p99_ns, result->operations_per_second,
-              result->mib_per_second, result->owner_drive_ns,
-              result->owner_session_work_ns, result->owner_command_stage_ns,
-              result->owner_request_lifecycle_ns, result->owner_request_start_ns,
-              result->owner_request_resubmit_ns, result->owner_observe_ns,
-              result->owner_request_completion_ns, result->owner_event_publish_ns,
-              result->owner_queue_publish_ns, result->owner_queue_payload_publish_ns,
-              result->owner_queue_payload_copy_ns, result->dispatcher_prepare_ns,
-              result->dispatcher_invoke_ns, result->dispatcher_observer_ns,
-              result->dispatcher_release_ns, result->benchmark_callback_ns,
-              result->benchmark_payload_check_ns, result->client_poll_ns,
-              result->owner_drive_calls, result->owner_observe_calls,
-              result->client_poll_calls) < 0)
+              repeat + 1u, (unsigned)SCALE_SAMPLES, result->logical_operations,
+              result->peak_active, result->progress_calls, result->wall_ns, result->cpu_ns,
+              result->p50_ns, result->p95_ns, result->p99_ns,
+              result->operations_per_second, result->mib_per_second) < 0)
     return SALTS_EIO;
-  return fflush(csv) == 0 ? SALTS_OK : SALTS_EIO;
+#define SCALE_CSV_U64(value)                                                                    \
+  do {                                                                                           \
+    if (fprintf(csv, ",%" PRIu64, (uint64_t)(value)) < 0) return SALTS_EIO;                    \
+  } while (0)
+  SCALE_CSV_U64(result->owner_drive_ns);
+  SCALE_CSV_U64(result->owner_session_work_ns);
+  SCALE_CSV_U64(result->owner_command_stage_ns);
+  SCALE_CSV_U64(result->owner_request_lifecycle_ns);
+  SCALE_CSV_U64(result->owner_request_start_ns);
+  SCALE_CSV_U64(result->owner_request_resubmit_ns);
+  SCALE_CSV_U64(result->owner_observe_ns);
+  SCALE_CSV_U64(result->owner_request_completion_ns);
+  SCALE_CSV_U64(result->owner_event_publish_ns);
+  SCALE_CSV_U64(result->owner_queue_publish_ns);
+  SCALE_CSV_U64(result->owner_queue_payload_publish_ns);
+  SCALE_CSV_U64(result->owner_queue_payload_copy_ns);
+  SCALE_CSV_U64(result->dispatcher_prepare_ns);
+  SCALE_CSV_U64(result->dispatcher_invoke_ns);
+  SCALE_CSV_U64(result->dispatcher_observer_ns);
+  SCALE_CSV_U64(result->dispatcher_release_ns);
+  SCALE_CSV_U64(result->benchmark_callback_ns);
+  SCALE_CSV_U64(result->benchmark_payload_check_ns);
+  SCALE_CSV_U64(result->client_poll_ns);
+  SCALE_CSV_U64(result->owner_drive_calls);
+  SCALE_CSV_U64(result->owner_observe_calls);
+  SCALE_CSV_U64(result->client_poll_calls);
+#undef SCALE_CSV_U64
+  return fputc('\n', csv) == EOF ? SALTS_EIO : SALTS_OK;
+}
+
+typedef struct scale_pair_summary {
+  cnet_benchmark_summary rate_delta;
+  cnet_benchmark_summary p50_delta;
+  cnet_benchmark_summary p95_delta;
+} scale_pair_summary;
+
+static int scale_compare_pair(const scale_result baseline[SCALE_REPEATS],
+                              const scale_result candidate[SCALE_REPEATS],
+                              scale_pair_summary *out) {
+  double baseline_rate[SCALE_REPEATS];
+  double candidate_rate[SCALE_REPEATS];
+  double baseline_p50[SCALE_REPEATS];
+  double candidate_p50[SCALE_REPEATS];
+  double baseline_p95[SCALE_REPEATS];
+  double candidate_p95[SCALE_REPEATS];
+  int status;
+
+  if (out == NULL) return SALTS_EINVAL;
+  for (size_t repeat = 0u; repeat < SCALE_REPEATS; ++repeat) {
+    baseline_rate[repeat] = baseline[repeat].operations_per_second;
+    candidate_rate[repeat] = candidate[repeat].operations_per_second;
+    baseline_p50[repeat] = (double)baseline[repeat].p50_ns;
+    candidate_p50[repeat] = (double)candidate[repeat].p50_ns;
+    baseline_p95[repeat] = (double)baseline[repeat].p95_ns;
+    candidate_p95[repeat] = (double)candidate[repeat].p95_ns;
+  }
+
+  status = cnet_benchmark_summarize_paired_delta(
+      baseline_rate, candidate_rate, SCALE_REPEATS, &out->rate_delta);
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize_paired_delta(
+        baseline_p50, candidate_p50, SCALE_REPEATS, &out->p50_delta);
+  if (status == SALTS_OK)
+    status = cnet_benchmark_summarize_paired_delta(
+        baseline_p95, candidate_p95, SCALE_REPEATS, &out->p95_delta);
+  return status;
+}
+
+static int scale_print_driver_summary(const scale_result runs[SCALE_REPEATS]) {
+  double rates[SCALE_REPEATS];
+  double p50[SCALE_REPEATS];
+  double p95[SCALE_REPEATS];
+  double cpu[SCALE_REPEATS];
+  double owner_residual[SCALE_REPEATS];
+  double observer_framework[SCALE_REPEATS];
+  cnet_benchmark_summary rate_summary;
+  cnet_benchmark_summary p50_summary;
+  cnet_benchmark_summary p95_summary;
+  cnet_benchmark_summary cpu_summary;
+  cnet_benchmark_summary owner_summary = {0};
+  cnet_benchmark_summary observer_summary = {0};
+  int status;
+
+  for (size_t repeat = 0u; repeat < SCALE_REPEATS; ++repeat) {
+    rates[repeat] = runs[repeat].operations_per_second;
+    p50[repeat] = (double)runs[repeat].p50_ns / 1000.0;
+    p95[repeat] = (double)runs[repeat].p95_ns / 1000.0;
+    cpu[repeat] = scale_cpu_us_per_op(&runs[repeat]);
+    owner_residual[repeat] = scale_owner_residual_us_per_op(&runs[repeat]);
+    observer_framework[repeat] = scale_observer_framework_us_per_op(&runs[repeat]);
+  }
+
+  status = cnet_benchmark_summarize(rates, SCALE_REPEATS, &rate_summary);
+  if (status == SALTS_OK) status = cnet_benchmark_summarize(p50, SCALE_REPEATS, &p50_summary);
+  if (status == SALTS_OK) status = cnet_benchmark_summarize(p95, SCALE_REPEATS, &p95_summary);
+  if (status == SALTS_OK) status = cnet_benchmark_summarize(cpu, SCALE_REPEATS, &cpu_summary);
+  if (status != SALTS_OK) return status;
+
+  if (runs[0].driver[0] == 'C') {
+    status = cnet_benchmark_summarize(owner_residual, SCALE_REPEATS, &owner_summary);
+    if (status == SALTS_OK)
+      status = cnet_benchmark_summarize(observer_framework, SCALE_REPEATS, &observer_summary);
+    if (status != SALTS_OK) return status;
+  }
+
+  printf("| %s | %zu | %zu | %.0f | %.0f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f |\n",
+         runs[0].driver, runs[0].connections, runs[0].payload_size,
+         rate_summary.median, rate_summary.mad, p50_summary.median, p50_summary.mad,
+         p95_summary.median, cpu_summary.median, owner_summary.median,
+         observer_summary.median);
+  return SALTS_OK;
+}
+
+static int scale_write_pair_csv(FILE *csv, const char *backend_name, size_t connections,
+                                size_t payload_size, const char *baseline,
+                                const char *candidate, const scale_pair_summary *summary) {
+  if (csv == NULL) return SALTS_OK;
+  return fprintf(csv,
+                 "%s,%zu,%zu,%u,%s,%s,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                 backend_name, connections, payload_size, (unsigned)SCALE_REPEATS,
+                 baseline, candidate,
+                 summary->rate_delta.median, summary->rate_delta.mad,
+                 summary->p50_delta.median, summary->p50_delta.mad,
+                 summary->p95_delta.median, summary->p95_delta.mad) < 0
+             ? SALTS_EIO
+             : SALTS_OK;
+}
+
+static void scale_print_pair(size_t connections, size_t payload_size,
+                             const char *baseline, const char *candidate,
+                             const scale_pair_summary *summary) {
+  printf("| %zu | %zu | %s -> %s | %+.2f%% | %.2fpp | %+.2f%% | %.2fpp | %+.2f%% | %.2fpp |\n",
+         connections, payload_size, baseline, candidate,
+         summary->rate_delta.median, summary->rate_delta.mad,
+         summary->p50_delta.median, summary->p50_delta.mad,
+         summary->p95_delta.median, summary->p95_delta.mad);
 }
 
 int main(void) {
   cnet_io_benchmark_backend backend = {0};
   const char *requested_backend = getenv("CNET_IO_BENCHMARK_BACKEND");
-  FILE *csv = scale_open_csv();
+  static scale_result results[SCALE_PAYLOAD_COUNT][SCALE_CONNECTION_COUNT]
+                             [SCALE_DRIVER_COUNT][SCALE_REPEATS];
+  FILE *raw_csv = NULL;
+  FILE *paired_csv = NULL;
   int status = cnet_io_benchmark_select_backend(requested_backend, &backend);
 
   if (status != SALTS_OK) {
@@ -928,59 +1032,107 @@ int main(void) {
     return 2;
   }
 
-  if (csv != NULL) {
-    fprintf(csv,
-            "backend,driver,connections,payload_bytes,samples,logical_operations,peak_active,"
-            "progress_calls,wall_ns,cpu_ns,p50_ns,p95_ns,p99_ns,operations_per_second,"
-            "mib_per_second,owner_drive_ns,owner_session_work_ns,owner_command_stage_ns,"
-            "owner_request_lifecycle_ns,owner_request_start_ns,owner_request_resubmit_ns,"
-            "owner_observe_ns,owner_request_completion_ns,owner_event_publish_ns,"
-            "owner_queue_publish_ns,owner_queue_payload_publish_ns,owner_queue_payload_copy_ns,"
-            "dispatcher_prepare_ns,dispatcher_invoke_ns,dispatcher_observer_ns,"
-            "dispatcher_release_ns,benchmark_callback_ns,benchmark_payload_check_ns,"
-            "client_poll_ns,owner_drive_calls,owner_observe_calls,client_poll_calls\n");
-  }
+  printf("# NativeIO direct versus CNet copy/retained paired TCP scaling benchmark\n\n");
+  printf("Backend: %s. %u paired repeats per cell; driver order rotates by payload, "
+         "connection count and repeat. Each run uses independent persistent TCP loopback "
+         "connections with one logical RTT outstanding per connection.\n\n",
+         backend.name, (unsigned)SCALE_REPEATS);
 
-  printf("# NativeIO direct versus CNet copy/retained TCP scaling benchmark\n\n");
-  printf("Backend: %s. One owner, independent persistent TCP loopback connections, "
-         "one logical round trip outstanding per connection.\n", backend.name);
-  printf("The peer processes connections in stable index order for every driver. "
-         "Logical concurrency is connection count; stream lane heads remain serialized per endpoint. "
-         "CNet copy and retained differ only in payload ownership admission.\n\n");
-  printf("| driver | connections | payload | ops/s | MiB/s | p50 us | p95 us | p99 us | "
-         "CPU us/op | CNet owner drive us/op | CNet observe us/op | owner residual us/op | "
-         "callback us/op | payload check us/op | observer framework us/op |\n");
-  printf("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-
-  for (size_t p = 0u; p < sizeof(SCALE_PAYLOADS) / sizeof(SCALE_PAYLOADS[0]); ++p) {
-    for (size_t d = 0u; d < sizeof(SCALE_CONNECTIONS) / sizeof(SCALE_CONNECTIONS[0]); ++d) {
-      scale_result results[SCALE_DRIVER_COUNT];
+  for (size_t p = 0u; p < SCALE_PAYLOAD_COUNT; ++p) {
+    for (size_t d = 0u; d < SCALE_CONNECTION_COUNT; ++d) {
       const size_t connections = SCALE_CONNECTIONS[d];
       const size_t payload = SCALE_PAYLOADS[p];
-
-      memset(results, 0, sizeof(results));
-      for (unsigned offset = 0u; offset < SCALE_DRIVER_COUNT; ++offset) {
-        const scale_driver driver =
-            (scale_driver)((p + d + offset) % (size_t)SCALE_DRIVER_COUNT);
-        status = scale_run_driver(driver, connections, payload, backend.kind, &results[driver]);
+      for (size_t repeat = 0u; repeat < SCALE_REPEATS; ++repeat) {
+        for (unsigned offset = 0u; offset < SCALE_DRIVER_COUNT; ++offset) {
+          const scale_driver driver =
+              (scale_driver)((p + d + repeat + offset) % (size_t)SCALE_DRIVER_COUNT);
+          status = scale_run_driver(driver, connections, payload, backend.kind,
+                                    &results[p][d][driver][repeat]);
+          if (status != SALTS_OK) break;
+        }
         if (status != SALTS_OK) break;
       }
       if (status != SALTS_OK) {
-        fprintf(stderr, "scaling cell failed backend=%s connections=%zu payload=%zu status=%d\n",
+        fprintf(stderr,
+                "paired scaling cell failed backend=%s connections=%zu payload=%zu status=%d\n",
                 backend.name, connections, payload, status);
         break;
       }
-
-      for (unsigned driver = 0u; driver < SCALE_DRIVER_COUNT; ++driver) {
-        scale_print_result(&results[driver]);
-        status = scale_write_csv(csv, &results[driver], backend.name);
-        if (status != SALTS_OK) break;
-      }
-      if (status != SALTS_OK) break;
     }
     if (status != SALTS_OK) break;
   }
+  if (status != SALTS_OK) return 1;
 
-  if (csv != NULL) fclose(csv);
+  raw_csv = scale_open_csv(".csv");
+  paired_csv = scale_open_csv(".paired.csv");
+  if (raw_csv != NULL) {
+    fprintf(raw_csv,
+            "backend,driver,connections,payload_bytes,repeat,samples,logical_operations,"
+            "peak_active,progress_calls,wall_ns,cpu_ns,p50_ns,p95_ns,p99_ns,"
+            "operations_per_second,mib_per_second,owner_drive_ns,owner_session_work_ns,"
+            "owner_command_stage_ns,owner_request_lifecycle_ns,owner_request_start_ns,"
+            "owner_request_resubmit_ns,owner_observe_ns,owner_request_completion_ns,"
+            "owner_event_publish_ns,owner_queue_publish_ns,owner_queue_payload_publish_ns,"
+            "owner_queue_payload_copy_ns,dispatcher_prepare_ns,dispatcher_invoke_ns,"
+            "dispatcher_observer_ns,dispatcher_release_ns,benchmark_callback_ns,"
+            "benchmark_payload_check_ns,client_poll_ns,owner_drive_calls,"
+            "owner_observe_calls,client_poll_calls\n");
+  }
+  if (paired_csv != NULL) {
+    fprintf(paired_csv,
+            "backend,connections,payload_bytes,repeats,baseline,candidate,"
+            "rate_delta_median_percent,rate_delta_mad_pp,"
+            "p50_delta_median_percent,p50_delta_mad_pp,"
+            "p95_delta_median_percent,p95_delta_mad_pp\n");
+  }
+
+  printf("Driver medians across paired repeats; MAD is absolute dispersion, not percent unless the metric is a delta.\n");
+  printf("| driver | connections | payload | ops/s median | ops/s MAD | p50 us | p50 MAD | p95 us | CPU us/op | owner residual us/op | observer framework us/op |\n");
+  printf("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  for (size_t p = 0u; p < SCALE_PAYLOAD_COUNT; ++p) {
+    for (size_t d = 0u; d < SCALE_CONNECTION_COUNT; ++d) {
+      for (unsigned driver = 0u; driver < SCALE_DRIVER_COUNT; ++driver) {
+        status = scale_print_driver_summary(results[p][d][driver]);
+        if (status != SALTS_OK) goto cleanup;
+        for (size_t repeat = 0u; repeat < SCALE_REPEATS; ++repeat) {
+          status = scale_write_raw_csv(raw_csv, &results[p][d][driver][repeat],
+                                       backend.name, repeat);
+          if (status != SALTS_OK) goto cleanup;
+        }
+      }
+    }
+  }
+
+  printf("\nPaired deltas: positive rate means candidate is faster; positive latency means candidate is slower.\n");
+  printf("| connections | payload | comparison | rate median | rate MAD | p50 median | p50 MAD | p95 median | p95 MAD |\n");
+  printf("| ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+  for (size_t p = 0u; p < SCALE_PAYLOAD_COUNT; ++p) {
+    for (size_t d = 0u; d < SCALE_CONNECTION_COUNT; ++d) {
+      const struct {
+        scale_driver baseline;
+        scale_driver candidate;
+      } pairs[] = {
+          {SCALE_DRIVER_NATIVE, SCALE_DRIVER_CNET_COPY},
+          {SCALE_DRIVER_NATIVE, SCALE_DRIVER_CNET_RETAINED},
+          {SCALE_DRIVER_CNET_COPY, SCALE_DRIVER_CNET_RETAINED}};
+      for (size_t pair = 0u; pair < sizeof(pairs) / sizeof(pairs[0]); ++pair) {
+        scale_pair_summary summary;
+        const scale_result *baseline = results[p][d][pairs[pair].baseline];
+        const scale_result *candidate = results[p][d][pairs[pair].candidate];
+        status = scale_compare_pair(baseline, candidate, &summary);
+        if (status != SALTS_OK) goto cleanup;
+        scale_print_pair(SCALE_CONNECTIONS[d], SCALE_PAYLOADS[p],
+                         baseline[0].driver, candidate[0].driver, &summary);
+        status = scale_write_pair_csv(paired_csv, backend.name, SCALE_CONNECTIONS[d],
+                                      SCALE_PAYLOADS[p], baseline[0].driver,
+                                      candidate[0].driver, &summary);
+        if (status != SALTS_OK) goto cleanup;
+      }
+    }
+  }
+
+cleanup:
+  if (raw_csv != NULL && fclose(raw_csv) != 0 && status == SALTS_OK) status = SALTS_EIO;
+  if (paired_csv != NULL && fclose(paired_csv) != 0 && status == SALTS_OK) status = SALTS_EIO;
   return status == SALTS_OK ? 0 : 1;
 }
