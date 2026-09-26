@@ -345,6 +345,32 @@ int cnet_write_queue_advance(cnet_write_queue *queue, cnet_write_view *view, siz
   return cnet_write_queue_peek(queue, view->connection, view);
 }
 
+static int cnet_write_release_slot(cnet_write_queue_impl *impl, size_t connection_index,
+                                   uint32_t slot) {
+  cnet_write_entry *entry;
+  if (impl == NULL || connection_index >= impl->connection_capacity ||
+      (size_t)slot >= impl->capacity)
+    return SALTS_EINVAL;
+  entry = &impl->entries[slot];
+  if (entry->state != CNET_WRITE_ENTRY_QUEUED || entry->copied_bytes > impl->copied_bytes ||
+      impl->live_writes == 0u || impl->free_count >= impl->capacity)
+    return SALTS_EPROTO;
+
+  impl->copied_bytes -= entry->copied_bytes;
+  --impl->live_writes;
+  mem_buffer_release(entry->payload);
+  entry->connection = (cnet_session_handle){0};
+  entry->payload = NULL;
+  entry->size = 0u;
+  entry->offset = 0u;
+  entry->copied_bytes = 0u;
+  entry->next = CNET_WRITE_SLOT_NONE;
+  entry->close_after_send = false;
+  entry->state = CNET_WRITE_ENTRY_FREE;
+  impl->free_slots[impl->free_count++] = slot;
+  return SALTS_OK;
+}
+
 int cnet_write_queue_settle(cnet_write_queue *queue, cnet_write_view *view) {
   cnet_write_queue_impl *impl = cnet_write_impl(queue);
   cnet_write_entry *entry;
@@ -364,27 +390,117 @@ int cnet_write_queue_settle(cnet_write_queue *queue, cnet_write_view *view) {
     return SALTS_ENOENT;
 
   next = entry->next;
-  if (entry->copied_bytes > impl->copied_bytes || impl->counts[connection_index] == 0u ||
-      impl->live_writes == 0u)
-    return SALTS_EPROTO;
+  if (impl->counts[connection_index] == 0u) return SALTS_EPROTO;
 
   impl->heads[connection_index] = next;
   --impl->counts[connection_index];
   if (next == CNET_WRITE_SLOT_NONE) impl->tails[connection_index] = CNET_WRITE_SLOT_NONE;
-  impl->copied_bytes -= entry->copied_bytes;
-  --impl->live_writes;
-
-  mem_buffer_release(entry->payload);
-  entry->connection = (cnet_session_handle){0};
-  entry->payload = NULL;
-  entry->size = 0u;
-  entry->offset = 0u;
-  entry->copied_bytes = 0u;
-  entry->next = CNET_WRITE_SLOT_NONE;
-  entry->close_after_send = false;
-  entry->state = CNET_WRITE_ENTRY_FREE;
-  impl->free_slots[impl->free_count++] = slot;
+  if (cnet_write_release_slot(impl, connection_index, slot) != SALTS_OK) return SALTS_EPROTO;
   *view = (cnet_write_view){0};
+  return SALTS_OK;
+}
+
+int cnet_write_queue_count(cnet_write_queue *queue, cnet_session_handle connection,
+                           size_t *out_count) {
+  cnet_write_queue_impl *impl = cnet_write_impl(queue);
+  size_t connection_index;
+  uint32_t head;
+  if (out_count == NULL) return SALTS_EINVAL;
+  *out_count = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+  connection_index = cnet_write_connection_index(impl, connection);
+  if (connection_index == SIZE_MAX) return SALTS_EINVAL;
+  head = impl->heads[connection_index];
+  if (head != CNET_WRITE_SLOT_NONE &&
+      ((size_t)head >= impl->capacity ||
+       !cnet_write_entry_matches(&impl->entries[head], connection)))
+    return SALTS_ENOENT;
+  *out_count = impl->counts[connection_index];
+  return SALTS_OK;
+}
+
+int cnet_write_queue_cancel_tail(cnet_write_queue *queue, cnet_session_handle connection,
+                                 cnet_write_handle handle) {
+  cnet_write_queue_impl *impl = cnet_write_impl(queue);
+  size_t connection_index;
+  uint32_t tail;
+  uint32_t previous = CNET_WRITE_SLOT_NONE;
+  uint32_t cursor;
+
+  if (impl == NULL || !cnet_write_handle_valid(handle)) return SALTS_EINVAL;
+  connection_index = cnet_write_connection_index(impl, connection);
+  if (connection_index == SIZE_MAX) return SALTS_EINVAL;
+  tail = impl->tails[connection_index];
+  if (tail == CNET_WRITE_SLOT_NONE || handle.slot == 0u ||
+      (size_t)(handle.slot - 1u) >= impl->capacity)
+    return SALTS_ENOENT;
+  tail = handle.slot - 1u;
+  if (impl->tails[connection_index] != tail ||
+      impl->entries[tail].generation != handle.generation ||
+      !cnet_write_entry_matches(&impl->entries[tail], connection))
+    return SALTS_ENOENT;
+
+  cursor = impl->heads[connection_index];
+  while (cursor != CNET_WRITE_SLOT_NONE && cursor != tail) {
+    if ((size_t)cursor >= impl->capacity) return SALTS_EPROTO;
+    previous = cursor;
+    cursor = impl->entries[cursor].next;
+  }
+  if (cursor != tail || impl->counts[connection_index] == 0u) return SALTS_EPROTO;
+
+  if (previous == CNET_WRITE_SLOT_NONE) {
+    impl->heads[connection_index] = CNET_WRITE_SLOT_NONE;
+    impl->tails[connection_index] = CNET_WRITE_SLOT_NONE;
+  } else {
+    impl->entries[previous].next = CNET_WRITE_SLOT_NONE;
+    impl->tails[connection_index] = previous;
+  }
+  --impl->counts[connection_index];
+  return cnet_write_release_slot(impl, connection_index, tail);
+}
+
+int cnet_write_queue_discard(cnet_write_queue *queue, cnet_session_handle connection,
+                             bool keep_head, size_t *out_discarded) {
+  cnet_write_queue_impl *impl = cnet_write_impl(queue);
+  size_t connection_index;
+  uint32_t cursor;
+  size_t discarded = 0u;
+
+  if (out_discarded != NULL) *out_discarded = 0u;
+  if (impl == NULL) return SALTS_EINVAL;
+  connection_index = cnet_write_connection_index(impl, connection);
+  if (connection_index == SIZE_MAX) return SALTS_EINVAL;
+  cursor = impl->heads[connection_index];
+  if (cursor == CNET_WRITE_SLOT_NONE) return SALTS_OK;
+  if ((size_t)cursor >= impl->capacity ||
+      !cnet_write_entry_matches(&impl->entries[cursor], connection))
+    return SALTS_ENOENT;
+
+  if (keep_head) {
+    cursor = impl->entries[cursor].next;
+    impl->entries[impl->heads[connection_index]].next = CNET_WRITE_SLOT_NONE;
+    impl->tails[connection_index] = impl->heads[connection_index];
+    if (impl->counts[connection_index] == 0u) return SALTS_EPROTO;
+    discarded = impl->counts[connection_index] - 1u;
+    impl->counts[connection_index] = 1u;
+  } else {
+    discarded = impl->counts[connection_index];
+    impl->heads[connection_index] = CNET_WRITE_SLOT_NONE;
+    impl->tails[connection_index] = CNET_WRITE_SLOT_NONE;
+    impl->counts[connection_index] = 0u;
+  }
+
+  while (cursor != CNET_WRITE_SLOT_NONE) {
+    cnet_write_entry *entry;
+    uint32_t next;
+    if ((size_t)cursor >= impl->capacity) return SALTS_EPROTO;
+    entry = &impl->entries[cursor];
+    if (!cnet_write_entry_matches(entry, connection)) return SALTS_EPROTO;
+    next = entry->next;
+    if (cnet_write_release_slot(impl, connection_index, cursor) != SALTS_OK) return SALTS_EPROTO;
+    cursor = next;
+  }
+  if (out_discarded != NULL) *out_discarded = discarded;
   return SALTS_OK;
 }
 

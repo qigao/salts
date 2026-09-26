@@ -278,7 +278,7 @@ spec("CNet retained buffer public send API") {
     busy_buffer = cnet_send_buffer_test_external(1u, 0x44u, &busy_free);
     check_true(busy_buffer != NULL);
     check_equal(mem_buffer_ref_count(busy_buffer), UINT32_C(1));
-    check_equal(cnet_send_buffer(&client, connection, busy_buffer), SALTS_EBUSY);
+    check_equal(cnet_send_buffer(&client, connection, busy_buffer), SALTS_ENOBUFS);
     check_equal(mem_buffer_ref_count(busy_buffer), UINT32_C(1));
     mem_buffer_release(busy_buffer);
     check_equal(atomic_load_explicit(&busy_free.freed, memory_order_acquire), 1);

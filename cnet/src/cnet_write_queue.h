@@ -76,6 +76,21 @@ int cnet_write_queue_advance(cnet_write_queue *queue, cnet_write_view *view, siz
  */
 int cnet_write_queue_settle(cnet_write_queue *queue, cnet_write_view *view);
 
+/** Returns the live logical-write count for one generation-checked connection. */
+int cnet_write_queue_count(cnet_write_queue *queue, cnet_session_handle connection,
+                           size_t *out_count);
+
+/** Removes exactly the matching per-connection FIFO tail; used for admission rollback. */
+int cnet_write_queue_cancel_tail(cnet_write_queue *queue, cnet_session_handle connection,
+                                 cnet_write_handle handle);
+
+/**
+ * Releases queued logical writes for one connection. keep_head preserves the
+ * current FIFO head when it is already owned by an active NativeIO request.
+ */
+int cnet_write_queue_discard(cnet_write_queue *queue, cnet_session_handle connection,
+                             bool keep_head, size_t *out_discarded);
+
 int cnet_write_queue_close(cnet_write_queue *queue);
 bool cnet_write_queue_get_stats(const cnet_write_queue *queue,
                                 cnet_write_queue_stats *out_stats);

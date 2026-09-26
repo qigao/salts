@@ -154,6 +154,49 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
   }
 
+  it("discards queued tails while preserving an active FIFO head") {
+    cnet_write_queue queue = {0};
+    const cnet_write_queue_config config = {1u, 4u, 8u, 32u};
+    const cnet_session_handle connection = {1u, 9u};
+    const unsigned char a = 1u;
+    const unsigned char b = 2u;
+    const unsigned char d = 3u;
+    cnet_write_handle first = {0};
+    cnet_write_handle second = {0};
+    cnet_write_handle third = {0};
+    cnet_write_view view = {0};
+    size_t count = 0u;
+    size_t discarded = 0u;
+
+    check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &a, 1u, false, &first), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &b, 1u, false, &second), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &d, 1u, false, &third), SALTS_OK);
+    check_equal(cnet_write_queue_count(&queue, connection, &count), SALTS_OK);
+    check_equal(count, (size_t)3u);
+
+    check_equal(cnet_write_queue_discard(&queue, connection, true, &discarded), SALTS_OK);
+    check_equal(discarded, (size_t)2u);
+    check_equal(cnet_write_queue_count(&queue, connection, &count), SALTS_OK);
+    check_equal(count, (size_t)1u);
+    check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
+    check_equal(view.handle.slot, first.slot);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+
+    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &a, 1u, false, &first), SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &b, 1u, false, &second), SALTS_OK);
+    check_equal(cnet_write_queue_cancel_tail(&queue, connection, second), SALTS_OK);
+    check_equal(cnet_write_queue_count(&queue, connection, &count), SALTS_OK);
+    check_equal(count, (size_t)1u);
+    check_equal(cnet_write_queue_discard(&queue, connection, false, &discarded), SALTS_OK);
+    check_equal(discarded, (size_t)1u);
+    check_equal(cnet_write_queue_count(&queue, connection, &count), SALTS_OK);
+    check_equal(count, (size_t)0u);
+
+    check_equal(cnet_write_queue_close(&queue), SALTS_OK);
+    check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
+  }
+
   it("copies vectors today without claiming native scatter gather") {
     cnet_write_queue queue = {0};
     const cnet_write_queue_config config = {1u, 2u, 16u, 16u};
