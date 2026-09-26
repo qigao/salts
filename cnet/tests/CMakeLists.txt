@@ -458,3 +458,10 @@ add_test(
   COMMAND ${CMAKE_COMMAND}
           -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
           -P ${CMAKE_CURRENT_SOURCE_DIR}/cnet_state_authority_contract_test.cmake)
+
+
+add_test(
+  NAME cnet_dispatcher_single_owner_contract_test
+  COMMAND ${CMAKE_COMMAND}
+          -DPROJECT_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cnet_dispatcher_single_owner_contract_test.cmake)
