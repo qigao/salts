@@ -70,6 +70,20 @@ the socket is published, and invalid sizes or combinations fail without a
 silent fallback.
 
 
+## Bounded write ownership
+
+CNet is migrating ordinary stream-send payload lifetime out of the generic
+command mailbox into a dedicated owner-local write queue. The queue has a fixed
+global slot bound plus per-connection FIFO chains. Copied payloads consume an
+explicit aggregate byte budget; retained `mem_buffer_t` payloads consume one
+retained reference but no copied-byte budget.
+
+W1 installs and tests this ownership substrate without changing public send
+admission yet. W2/W3 will move owner/callback send admission onto these slots
+and then enable bounded multiple-write FIFO admission. Until NativeIO gains an
+explicit scatter/gather operation contract, `cnet_sendv()` remains a checked
+copy into one owned write slot rather than claiming native vectored zero-copy.
+
 ## Canonical session-state authority
 
 The generation-checked `cnet_session_table` is the sole CNet connection

@@ -56,6 +56,24 @@ set_target_properties(
              C_EXTENSIONS OFF)
 
 cmake_add_test(
+  cnet_write_queue_test
+  SOURCES
+  cnet_write_queue_test.c
+  LIBS
+  cnet
+  Salts::Core
+  Salts::TinyTest
+  INCLUDES
+  ${CNET_TEST_PRIVATE_INCLUDE}
+  FOLDER
+  "cnet/tests")
+set_target_properties(
+  cnet_write_queue_test
+  PROPERTIES C_STANDARD 11
+             C_STANDARD_REQUIRED ON
+             C_EXTENSIONS OFF)
+
+cmake_add_test(
   cnet_command_test
   SOURCES
   cnet_command_test.c
@@ -92,8 +110,8 @@ set_target_properties(
              C_EXTENSIONS OFF
              LINKER_LANGUAGE CXX)
 # The release benchmark workflow explicitly builds cnet_command_test; keep its
-# diagnostic attribution contract in the same build closure.
-add_dependencies(cnet_command_test cnet_command_profile_test)
+# diagnostic attribution and write-ownership contracts in the same build closure.
+add_dependencies(cnet_command_test cnet_command_profile_test cnet_write_queue_test)
 
 cmake_add_test(
   cnet_uri_test

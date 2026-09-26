@@ -29,6 +29,7 @@ set(CNET_SOURCE_FILES
   src/cnet_transport_pipe.c
   src/cnet_transport_vsock.c
   src/cnet_uri.c
+  src/cnet_write_queue.c
   src/cnet_websocket.c
   $<TARGET_OBJECTS:salts_wsparser>)
 
