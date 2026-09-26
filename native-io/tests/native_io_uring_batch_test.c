@@ -19,6 +19,9 @@ static int enter_error;
 static bool no_progress;
 static bool enable_ring_wait;
 static unsigned poll_calls;
+static unsigned setup_calls;
+static unsigned setup_flags[BATCH_TEST_CALLS];
+static bool reject_single_issuer_once;
 
 static int batch_test_poll(struct pollfd *fds, nfds_t count, int timeout) {
   ++poll_calls;
@@ -60,7 +63,19 @@ static long batch_test_syscall(long number, ...) {
   } else if (number == __NR_io_uring_setup) {
     const unsigned entries = va_arg(arguments, unsigned);
     struct io_uring_params *parameters = va_arg(arguments, struct io_uring_params *);
-    result = syscall(number, entries, parameters);
+    if (setup_calls < BATCH_TEST_CALLS) setup_flags[setup_calls] = parameters->flags;
+    ++setup_calls;
+#if defined(IORING_SETUP_SINGLE_ISSUER)
+    if (reject_single_issuer_once &&
+        (parameters->flags & IORING_SETUP_SINGLE_ISSUER) != 0u) {
+      reject_single_issuer_once = false;
+      errno = EINVAL;
+      result = -1;
+    } else
+#endif
+    {
+      result = syscall(number, entries, parameters);
+    }
 #if defined(IORING_FEAT_EXT_ARG)
     if (result >= 0 && !enable_ring_wait) parameters->features &= ~IORING_FEAT_EXT_ARG;
 #endif
@@ -150,7 +165,37 @@ spec("io_uring explicit batch submission") {
     no_progress = false;
     enable_ring_wait = false;
     poll_calls = 0u;
+    setup_calls = 0u;
+    memset(setup_flags, 0, sizeof(setup_flags));
+    reject_single_issuer_once = false;
   }
+#if defined(IORING_SETUP_SINGLE_ISSUER)
+  it("requests single-issuer setup and keeps a conservative fallback") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    check_greater_equal(setup_calls, 1u);
+    check_true((setup_flags[0] & IORING_SETUP_SINGLE_ISSUER) != 0u);
+    if (setup_calls > 1u) check_equal(setup_flags[1], 0u);
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+  }
+
+  it("retries conservative io_uring setup after unsupported single issuer") {
+    native_io_backend backend = {0};
+    const native_io_backend_config config = {NATIVE_IO_BACKEND_IO_URING, 1u, 1u, 1u};
+
+    reject_single_issuer_once = true;
+    check_equal(batch_test_backend_init(&backend, &config), SALTS_OK);
+    check_equal(setup_calls, 2u);
+    check_true((setup_flags[0] & IORING_SETUP_SINGLE_ISSUER) != 0u);
+    check_equal(setup_flags[1], 0u);
+    check_equal(native_io_backend_close(&backend), SALTS_OK);
+    check_equal(native_io_backend_destroy(&backend), SALTS_OK);
+  }
+#endif
+
   it("preserves immediate submit without observe or flush") {
     batch_test_requests(false, BATCH_TEST_COUNT, SALTS_OK);
     check_equal(enter_calls, (unsigned)BATCH_TEST_COUNT);
