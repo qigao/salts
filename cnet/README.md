@@ -509,37 +509,24 @@ CI 保存 CSV，不把所有样本灌入 step summary，并运行
 276480 个样本、逐样本非重叠阶段、计数以及从样本重算的 p50/p95。
 慢样本的阶段只能与**同一诊断轮次、同一 sample 编号**关联。
 
-### 独立 retained-send 对照
+### retained/owned 基准与手工 copied-send 诊断
 
-设置 `CNET_IO_BENCHMARK_SEND_COMPARE=1` 单独比较 `cnet_send` 与
-`cnet_send_buffer`，不改变默认四驱动基线；其他值或同时设置 TRACE 均报错。
-TCP 1/4/8/16/32/64 KiB，每组 5 次重复、32 次预热、512 次顺序 RTT。
-两种方法使用相同的不可变 external `mem_buffer_t` 输入，分配和包装在预热之前完成，
-每次 RTT 都等待一次发送完成及完整回包校验。单客户端线程拥有缓冲区引用，
-CNet 只在 retained admission 后持有额外引用；输入不在运行中修改，排空销毁后检查
-只剩调用方引用并释放。仅一条在途发送，容量和失败语义沿用主 benchmark，任何失败终止实验。
+默认四驱动基线中的 CNet 已使用 `cnet_send_buffer`，CI 只把 retained/owned
+路径与 NativeIO direct 比较和设门禁。copied send 不再属于 CI 性能合同。
 
-每个 repeat 含 A/B 两对未插桩运行，A/B 时间顺序交替，两对内部方法顺序相反，
-同一 pass 的方法顺序按 payload/repeat 轮换。报告配对 p50 差的 median/MAD；
-原始 CSV 还保留 p95、batch wall、线程 CPU/cycles 和全部 RTT，可检验噪声。
-差值包含完整发送 admission、buffer 获取/引用计数和释放路径变化，**不等于 memcpy 独占成本**，
-也不能直接拿这一组替换原来的 libuv/CNet 成绩。
-
-CI 将这组结果独立保存为 `send.runs.csv`、`send.samples.csv` 和
-`cnet-send-comparison.md`。例如使用已经配置运行库路径的 Release 可执行文件：
+迁移期间仍可设置 `CNET_IO_BENCHMARK_SEND_COMPARE=1` 手工比较 `cnet_send` 与
+`cnet_send_buffer`，用于诊断旧 consumer 的 copy tax；其他值或同时设置 TRACE 均报错。
+这组结果不进入 CI verifier、step summary 或 hard gate，也不能替代 canonical retained
+结果。consumer 完成 #513 迁移后，该手工入口可随 copied API 一起删除。
 
 ```powershell
 $env:CNET_IO_BENCHMARK_SEND_COMPARE = '1'
 $env:CNET_IO_BENCHMARK_OUTPUT = 'build/send'
 ./build/Msvc-Release/bin/cnet_io_benchmark.exe --no-color
 if ($LASTEXITCODE -ne 0) { throw 'Send comparison failed' }
-pwsh -File cnet/benchmarks/verify_io_benchmark.ps1 -Prefix build/send -SendComparison
 Remove-Item Env:CNET_IO_BENCHMARK_SEND_COMPARE
 Remove-Item Env:CNET_IO_BENCHMARK_OUTPUT
 ```
-
-验证器必须使用 `-SendComparison`，严格检查 120 轮、61440 个样本及可复算分位数，
-不接受混入 baseline/diagnostic 的记录或缺失组合。
 
 ### Linux 系统调用证据
 
