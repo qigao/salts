@@ -52,7 +52,10 @@ typedef enum io_bench_protocol { IO_BENCH_TCP = 0, IO_BENCH_UDP } io_bench_proto
 typedef enum io_bench_send_mode {
   IO_BENCH_SEND_BASELINE = 0,
   IO_BENCH_SEND_COPY,
-  IO_BENCH_SEND_RETAINED
+  IO_BENCH_SEND_RETAINED,
+  IO_BENCH_SEND_VECTOR_COPY,
+  IO_BENCH_SEND_NATIVE_VECTOR,
+  IO_BENCH_SEND_NATIVE_FLATTEN
 } io_bench_send_mode;
 enum { IO_BENCH_PASS_A = 0, IO_BENCH_PASS_DIAGNOSTIC, IO_BENCH_PASS_B, IO_BENCH_PASS_COUNT };
 
@@ -188,6 +191,7 @@ typedef struct io_bench_cnet {
   size_t callback_calls;
   bool measuring;
   io_bench_send_mode send_mode;
+  size_t segment_count;
   mem_buffer_t *send_buffer;
   int send_done;
   size_t send_completions;
@@ -200,6 +204,9 @@ typedef struct io_bench_fixture {
   io_bench_native native;
   io_bench_libuv libuv;
   io_bench_cnet cnet;
+  io_bench_send_mode send_mode;
+  size_t segment_count;
+  unsigned char *flatten_buffer;
   bool network_started;
 } io_bench_fixture;
 
@@ -517,6 +524,121 @@ static int io_bench_native_exchange(io_bench_native *fixture, const unsigned cha
     }
   }
   return memcmp(sent, received, length) == 0 ? SALTS_OK : SALTS_EIO;
+}
+
+static size_t io_bench_native_segments(const unsigned char *data, size_t length,
+                                       size_t consumed, size_t segment_count,
+                                       native_io_buffer_span spans[NATIVE_IO_VECTOR_MAX]) {
+  size_t output = 0u;
+  size_t start = 0u;
+  if (data == NULL || segment_count == 0u || segment_count > NATIVE_IO_VECTOR_MAX ||
+      length < segment_count || consumed >= length)
+    return 0u;
+  for (size_t index = 0u; index < segment_count; ++index) {
+    const size_t base = length / segment_count;
+    const size_t extra = index < length % segment_count ? 1u : 0u;
+    const size_t span_length = base + extra;
+    const size_t end = start + span_length;
+    if (consumed < end) {
+      const size_t local = consumed > start ? consumed - start : 0u;
+      spans[output++] =
+          (native_io_buffer_span){(void *)(data + start + local), span_length - local};
+    }
+    start = end;
+  }
+  return output;
+}
+
+static size_t io_bench_cnet_segments(const unsigned char *data, size_t length,
+                                     size_t segment_count,
+                                     cnet_const_buffer segments[NATIVE_IO_VECTOR_MAX]) {
+  size_t start = 0u;
+  if (data == NULL || segment_count == 0u || segment_count > NATIVE_IO_VECTOR_MAX ||
+      length < segment_count)
+    return 0u;
+  for (size_t index = 0u; index < segment_count; ++index) {
+    const size_t base = length / segment_count;
+    const size_t extra = index < length % segment_count ? 1u : 0u;
+    const size_t span_length = base + extra;
+    segments[index] = (cnet_const_buffer){data + start, span_length};
+    start += span_length;
+  }
+  return segment_count;
+}
+
+static int io_bench_native_vector_exchange(io_bench_native *fixture,
+                                           const unsigned char *sent,
+                                           unsigned char *received, size_t length,
+                                           size_t segment_count) {
+  size_t sent_offset = 0u;
+  size_t received_offset = 0u;
+  bool send_pending = false;
+  bool receive_pending = false;
+  if (fixture->protocol != IO_BENCH_TCP) return SALTS_ENOTSUP;
+  while (sent_offset < length || received_offset < length) {
+    native_io_completion events[IO_BENCH_COMPLETION_CAPACITY];
+    size_t count = 0u;
+    int status;
+    if (!receive_pending && received_offset < length) {
+      native_io_operation operation = {.kind = NATIVE_IO_OPERATION_STREAM_RECV,
+                                       .endpoint = fixture->endpoint,
+                                       .buffer = received + received_offset,
+                                       .length = length - received_offset,
+                                       .user_data = 1u};
+      native_io_request request = {0};
+      status = native_io_backend_prepare(&fixture->backend, &operation, &request);
+      if (status != SALTS_OK) return status;
+      receive_pending = true;
+    }
+    if (!send_pending && sent_offset < length) {
+      native_io_buffer_span spans[NATIVE_IO_VECTOR_MAX];
+      const size_t count_spans =
+          io_bench_native_segments(sent, length, sent_offset, segment_count, spans);
+      native_io_vector_operation operation = {
+          NATIVE_IO_OPERATION_STREAM_SEND, fixture->endpoint, spans, count_spans, 2u};
+      native_io_request request = {0};
+      if (count_spans == 0u) return SALTS_EPROTO;
+      status = native_io_backend_submit_vector(&fixture->backend, &operation, &request);
+      if (status != SALTS_OK) return status;
+      send_pending = true;
+    }
+    status = native_io_backend_observe(&fixture->backend, events, IO_BENCH_COMPLETION_CAPACITY,
+                                       IO_BENCH_TIMEOUT_MS, &count);
+    if (status != SALTS_OK) return status;
+    for (size_t index = 0u; index < count; ++index) {
+      if (events[index].kind != NATIVE_IO_COMPLETION_OK || events[index].bytes == 0u)
+        return events[index].status == SALTS_OK ? SALTS_EIO : events[index].status;
+      if (events[index].user_data == 1u) {
+        if (events[index].bytes > length - received_offset) return SALTS_EPROTO;
+        received_offset += events[index].bytes;
+        receive_pending = false;
+      } else if (events[index].user_data == 2u) {
+        if (events[index].bytes > length - sent_offset) return SALTS_EPROTO;
+        sent_offset += events[index].bytes;
+        send_pending = false;
+      } else {
+        return SALTS_EPROTO;
+      }
+    }
+  }
+  return memcmp(sent, received, length) == 0 ? SALTS_OK : SALTS_EIO;
+}
+
+static int io_bench_native_flatten_exchange(io_bench_native *fixture,
+                                            const unsigned char *sent,
+                                            unsigned char *received, size_t length,
+                                            size_t segment_count,
+                                            unsigned char *flatten_buffer) {
+  cnet_const_buffer segments[NATIVE_IO_VECTOR_MAX];
+  size_t offset = 0u;
+  const size_t count = io_bench_cnet_segments(sent, length, segment_count, segments);
+  if (flatten_buffer == NULL || count == 0u) return SALTS_EINVAL;
+  for (size_t index = 0u; index < count; ++index) {
+    memcpy(flatten_buffer + offset, segments[index].data, segments[index].size);
+    offset += segments[index].size;
+  }
+  if (offset != length) return SALTS_EPROTO;
+  return io_bench_native_exchange(fixture, flatten_buffer, received, length);
 }
 
 static int io_bench_check_profiled(const unsigned char *sent, const unsigned char *received,
