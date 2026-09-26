@@ -247,9 +247,23 @@ native_io_sharded_try_submit_owned(native_io_sharded *runtime,
                                    void *admission_arg);
 
 /**
- * Closes public routing admission and queues owner-local backend teardown after
- * every previously accepted task on each shard. Repeated calls are harmless.
+ * Attempts deterministic owner-local shutdown without stealing caller-managed
+ * raw completions.
  *
+ * Public routing admission closes first and every previously accepted command
+ * reaches its fixed owner before shutdown probes raw state. If a backend has an
+ * active request without a matching sharded ownership token, shutdown returns
+ * SALTS_EBUSY and restores public admission without observing that request.
+ *
+ * When all active requests are sharded-owned, each owner rejects new
+ * attach/submit/prepare/flush work, requests cancellation for those requests,
+ * and observes authoritative terminal completions until every ownership token
+ * settles. Live endpoints still belong to the caller: if any remain after the
+ * request drain, shutdown returns SALTS_EBUSY and restores public admission so
+ * the caller can close/release native identity and retry.
+ *
+ * Only request=0 and endpoint=0 on every shard commits teardown and executor
+ * shutdown. Repeated calls after committed shutdown are harmless.
  * Calling from a callback owned by this runtime returns SALTS_EBUSY.
  */
 SALTS_NATIVE_IO_C_API int native_io_sharded_shutdown(native_io_sharded *runtime);
