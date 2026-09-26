@@ -415,6 +415,41 @@ spec("Salts QuickJS canonical native object projection") {
     check_equal(counts.destroys, 1);
   }
 
+  it("reserves the native holder name for data-only objects") {
+    JSRuntime *runtime = JS_NewRuntime();
+    JSContext *context = runtime != NULL ? JS_NewContext(runtime) : NULL;
+    quickjs_object_box box = {1};
+    cmeta_field_desc layout_field = quickjs_object_layout_fields[0];
+    cmeta_struct_desc layout = quickjs_object_layout;
+    cmeta_data_field_desc data_field = quickjs_object_data_fields[0];
+    cmeta_data_struct_shape shape = quickjs_object_shape;
+    cmeta_data_desc data = quickjs_object_data;
+    cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+    salts_quickjs_limits limits = {8u, 8u, 4096u};
+    JSValue proxy = JS_UNDEFINED;
+
+    check_not_null(runtime);
+    check_not_null(context);
+    layout_field.name = "__salts_cmeta_object_holder__";
+    layout.fields = &layout_field;
+    data_field.name = "__salts_cmeta_object_holder__";
+    shape.layout = &layout;
+    shape.fields = &data_field;
+    data.shape = &shape;
+    check_true(cmeta_data_desc_valid(&data));
+
+    check_equal(cmeta_object_borrow(&object, &box, &data, NULL), CMETA_OK);
+    check_equal(salts_quickjs_push_object(
+                    context, &object, limits, &proxy),
+                CMETA_TYPE_MISMATCH);
+    check_true(cmeta_object_ref_valid(&object));
+    check_true(JS_IsUndefined(proxy));
+
+    cmeta_object_release(&object);
+    JS_FreeContext(context);
+    JS_FreeRuntime(runtime);
+  }
+
   it("rejects field and method name collisions before handle transfer") {
     JSRuntime *runtime = JS_NewRuntime();
     JSContext *context = runtime != NULL ? JS_NewContext(runtime) : NULL;
