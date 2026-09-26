@@ -38,16 +38,43 @@ typedef enum cmeta_object_lifetime {
  * The size prefix reserves ABI growth for explicit lifetime/provider/module
  * lease state without placing any language-runtime handle in CMeta.
  */
+struct cmeta_function_data_desc;
+
+typedef struct cmeta_object_method_binding {
+    size_t size;
+    const struct cmeta_function_data_desc *data;
+    cmeta_callable callable;
+} cmeta_object_method_binding;
+
+#define CMETA_OBJECT_METHOD_BINDING_INIT \
+    { sizeof(cmeta_object_method_binding), NULL, {0} }
+
+typedef cmeta_status (*cmeta_object_method_bind_fn)(
+    void *context, void *object, const cmeta_receiver_method *method,
+    cmeta_object_method_binding *out);
+
+typedef struct cmeta_object_method_provider {
+    size_t size;
+    const cmeta_receiver_method_set *methods;
+    void *context;
+    cmeta_object_method_bind_fn bind;
+} cmeta_object_method_provider;
+
+bool cmeta_object_method_provider_valid(
+    const cmeta_object_method_provider *provider);
+
 typedef struct cmeta_object_ref {
     size_t size;
     void *object;
     const cmeta_data_desc *data;
     const cmeta_receiver_method_set *methods;
+    const cmeta_object_method_provider *method_provider;
     cmeta_object_lifetime lifetime;
 } cmeta_object_ref;
 
 #define CMETA_OBJECT_REF_INIT \
-    { sizeof(cmeta_object_ref), NULL, NULL, NULL, CMETA_OBJECT_LIFETIME_NONE }
+    { sizeof(cmeta_object_ref), NULL, NULL, NULL, NULL, \
+      CMETA_OBJECT_LIFETIME_NONE }
 
 /** Validate one currently live canonical object reference. */
 bool cmeta_object_ref_valid(const cmeta_object_ref *ref);
@@ -62,6 +89,17 @@ bool cmeta_object_ref_valid(const cmeta_object_ref *ref);
 cmeta_status cmeta_object_borrow(
     cmeta_object_ref *out, void *object, const cmeta_data_desc *data,
     const cmeta_receiver_method_set *methods);
+
+/**
+ * Publish a borrowed native object with canonical executable receiver methods.
+ *
+ * provider->methods is both the reflected method authority and the executable
+ * capability set. The provider is borrowed with the object and must remain
+ * alive, together with any module/code it references, through final release.
+ */
+cmeta_status cmeta_object_borrow_with_provider(
+    cmeta_object_ref *out, void *object, const cmeta_data_desc *data,
+    const cmeta_object_method_provider *provider);
 
 /**
  * Clear one object reference.
