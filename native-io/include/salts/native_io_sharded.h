@@ -91,6 +91,31 @@ typedef struct native_io_sharded_completion {
   size_t address_length;
 } native_io_sharded_completion;
 
+/**
+ * One explicit payload/storage ownership token transferred to an admitted
+ * NativeIO request.
+ *
+ * terminal, when non-NULL, runs on the endpoint owner shard after the matching
+ * terminal completion has been copied to the caller-visible sharded completion
+ * and while storage reachable through arg is still owned by this token.
+ * It may submit new owner-local work, but recursive observe on the same shard
+ * returns SALTS_EBUSY so the bounded completion scratch cannot be reentered.
+ * finalize then runs exactly once.
+ *
+ * A failed submit/prepare transfers no ownership and invokes neither callback.
+ * Cancellation does not release ownership by itself: the token remains owned
+ * by the request until its terminal completion is observed.
+ */
+typedef void (*native_io_sharded_terminal_fn)(
+    native_io_sharded_context *context,
+    const native_io_sharded_completion *completion, void *arg);
+
+typedef struct native_io_sharded_ownership {
+  native_io_sharded_terminal_fn terminal;
+  native_io_sharded_finalize_fn finalize;
+  void *arg;
+} native_io_sharded_ownership;
+
 SALTS_NATIVE_IO_C_API bool native_io_sharded_endpoint_valid(native_io_sharded_endpoint endpoint);
 SALTS_NATIVE_IO_C_API bool native_io_sharded_request_valid(native_io_sharded_request request);
 SALTS_NATIVE_IO_C_API bool
@@ -255,11 +280,37 @@ native_io_sharded_context_submit(native_io_sharded_context *context,
                                  const native_io_sharded_operation *operation,
                                  native_io_sharded_request *out_request);
 
+/**
+ * Starts one owner-local operation and transfers one explicit ownership token
+ * to the admitted raw request.
+ *
+ * ownership->finalize is required. SALTS_OK transfers the copied token to the
+ * request slot; any failure transfers nothing and invokes no ownership
+ * callback. The token settles only when the terminal completion is observed.
+ */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_context_submit_owned(native_io_sharded_context *context,
+                                       const native_io_sharded_operation *operation,
+                                       const native_io_sharded_ownership *ownership,
+                                       native_io_sharded_request *out_request);
+
 /** Owner-local batched admission counterpart of native_io_backend_prepare. */
 SALTS_NATIVE_IO_C_API int
 native_io_sharded_context_prepare(native_io_sharded_context *context,
                                   const native_io_sharded_operation *operation,
                                   native_io_sharded_request *out_request);
+
+/**
+ * Prepared counterpart of native_io_sharded_context_submit_owned.
+ *
+ * Successful prepare transfers ownership even before flush because the raw
+ * request already owns the borrowed descriptor/payload at that point.
+ */
+SALTS_NATIVE_IO_C_API int
+native_io_sharded_context_prepare_owned(native_io_sharded_context *context,
+                                        const native_io_sharded_operation *operation,
+                                        const native_io_sharded_ownership *ownership,
+                                        native_io_sharded_request *out_request);
 
 /** Flushes the callback's owner backend. */
 SALTS_NATIVE_IO_C_API int

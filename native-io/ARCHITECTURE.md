@@ -138,9 +138,31 @@ rejected with `SALTS_EPERM`; another runtime or stale raw generation is rejected
 rather than forwarded or migrated.
 
 Raw payload/address pointers still use the Direct borrow contract only after
-execution has reached the endpoint owner shard. Cross-shard payload routing is
-therefore **not** implied by these owner-local helpers: a future routing slice
-must carry an explicit retained/move-owned/finalized token before invoking them.
+execution has reached the endpoint owner shard.
+
+The request-lifetime ownership checkpoint adds an explicit generic ownership
+token to owner-local submit/prepare. Successful raw admission transfers that
+token into preallocated per-shard storage keyed by the authoritative NativeIO
+request slot/generation. Failed admission transfers nothing. Cancellation does
+not release the token: only observation of the matching terminal completion
+settles it. An optional terminal callback runs first while payload storage is
+still valid, then one exact finalizer edge releases the token. The ownership
+record is removed before callbacks so a callback may immediately submit new
+work even when the raw request slot is reused. For a multi-completion observe,
+ownership for the entire dequeued batch is detached into bounded preallocated
+settlement scratch before the first callback runs; this prevents an immediate
+reentrant submit from overwriting the ownership record of a later completion in
+that same batch. Recursive observe from a terminal callback is rejected with
+`SALTS_EBUSY`.
+
+This ownership carrier is intentionally independent of `mem_buffer_t` and
+`Salts::Core`. CNet may retain a `mem_buffer_t` and use the generic finalizer
+to release that retain; another consumer may move-own storage instead.
+
+A later routing slice still supplies the one-call cross-shard operation facade.
+It must route only the bounded descriptor plus this explicit ownership token;
+it must never make an arbitrary raw borrowed pointer cross-shard-safe by
+implication.
 
 ## 3. Endpoint/data-plane categories
 
