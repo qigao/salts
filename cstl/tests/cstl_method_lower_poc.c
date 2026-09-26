@@ -170,31 +170,6 @@ static int parse_call(
     return 1;
 }
 
-static int method_signature_ok(
-    const receiver_symbol *symbol, const cmeta_function_desc *method,
-    const cmeta_function_abi_desc *abi, const poc_arg args[2],
-    size_t arg_count) {
-    const cmeta_param_desc *receiver;
-    size_t i;
-
-    if (!cmeta_function_desc_valid(method) ||
-        !cmeta_function_abi_desc_valid(abi) ||
-        method->param_count != arg_count + 1u)
-        return 0;
-
-    receiver = cmeta_function_receiver(method);
-    if (receiver == NULL || receiver->type == NULL ||
-        receiver->type->kind != CMETA_T_POINTER ||
-        !cmeta_type_equal(receiver->type->pointee, symbol->type))
-        return 0;
-
-    for (i = 1u; i < method->param_count; ++i)
-        if (!cmeta_type_equal(method->params[i].type, argument_type(&args[i - 1u])))
-            return 0;
-
-    return 1;
-}
-
 static void write_prelude(FILE *out) {
     fputs(
         "#include <cstl/typed.h>\n"
@@ -275,9 +250,11 @@ static int lower(const char *source, const char *output_path) {
     size_t arg_count = 0u;
     const receiver_symbol *symbol;
     const cmeta_receiver_method_set *method_set;
-    const cmeta_receiver_method *method_entry;
+    const cmeta_type_desc *argument_types[2] = {NULL, NULL};
+    cmeta_receiver_resolution resolution = CMETA_RECEIVER_RESOLUTION_INIT;
+    cmeta_receiver_resolve_status resolve_status;
     const cmeta_function_desc *method;
-    const cmeta_function_abi_desc *method_abi;
+    size_t i;
     FILE *out;
 
     if (!parse_call(source, receiver_name, sizeof(receiver_name),
@@ -293,27 +270,43 @@ static int lower(const char *source, const char *output_path) {
     }
 
     method_set = symbol->method_set();
-    if (!cmeta_receiver_method_set_valid(method_set) ||
-        !cmeta_type_equal(method_set->receiver_type, symbol->type)) {
+    for (i = 0u; i < arg_count; ++i)
+        argument_types[i] = argument_type(&args[i]);
+
+    resolve_status = cmeta_receiver_method_resolve(
+        method_set, symbol->type, method_name,
+        argument_types, arg_count, &resolution);
+    switch (resolve_status) {
+    case CMETA_RECEIVER_RESOLVE_OK:
+        break;
+    case CMETA_RECEIVER_RESOLVE_INVALID_METHOD_SET:
         fprintf(stderr, "%s has invalid receiver method metadata\n",
                 symbol->type_name);
         return 0;
-    }
-
-    method_entry = cmeta_receiver_method_find(method_set, method_name);
-    if (method_entry == NULL) {
+    case CMETA_RECEIVER_RESOLVE_RECEIVER_TYPE_MISMATCH:
+        fprintf(stderr, "%s receiver type does not match method set\n",
+                symbol->type_name);
+        return 0;
+    case CMETA_RECEIVER_RESOLVE_METHOD_NOT_FOUND:
         fprintf(stderr, "%s has no receiver method '%s'\n",
                 symbol->type_name, method_name);
         return 0;
-    }
-    method = method_entry->function;
-    method_abi = method_entry->abi;
-
-    if (!method_signature_ok(symbol, method, method_abi, args, arg_count)) {
-        fprintf(stderr, "%s.%s arguments do not match reflected signature\n",
+    case CMETA_RECEIVER_RESOLVE_ARITY_MISMATCH:
+        fprintf(stderr, "%s.%s arity does not match reflected signature\n",
                 receiver_name, method_name);
         return 0;
+    case CMETA_RECEIVER_RESOLVE_ARGUMENT_TYPE_MISMATCH:
+        fprintf(stderr,
+                "%s.%s argument %zu type does not match reflected signature\n",
+                receiver_name, method_name, resolution.argument_index);
+        return 0;
+    case CMETA_RECEIVER_RESOLVE_INVALID_ARGUMENT:
+    default:
+        fprintf(stderr, "invalid receiver-call semantic input\n");
+        return 0;
     }
+
+    method = resolution.method->function;
 
     out = fopen(output_path, "wb");
     if (out == NULL) {
