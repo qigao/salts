@@ -20,5 +20,6 @@ endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/SaltsTargets.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/SaltsTinyMock.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/SaltsCMetaLower.cmake")
 
 check_required_components(Salts)
