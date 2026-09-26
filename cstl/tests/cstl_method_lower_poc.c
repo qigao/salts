@@ -8,11 +8,55 @@
 #include <stdlib.h>
 #include <string.h>
 
+typed(Vec, IntVec, int);
 typed(List, IntList, int);
+typed(Set, IntSet, int);
+typed(Map, IntMap, int, int);
 
 typedef struct poc_cursor {
     const char *p;
 } poc_cursor;
+
+typedef enum poc_arg_kind {
+    POC_ARG_INT,
+    POC_ARG_STRING
+} poc_arg_kind;
+
+typedef struct poc_arg {
+    poc_arg_kind kind;
+    int integer;
+} poc_arg;
+
+static const cmeta_type_desc poc_string_literal_type = {
+    "const char *", sizeof(const char *), _Alignof(const char *),
+    CMETA_T_POINTER, &cmeta_type_int8, NULL, NULL
+};
+
+typedef bool (*receiver_method_fn)(
+    const char *, const cmeta_function_desc **,
+    const cmeta_function_abi_desc **);
+
+typedef enum receiver_kind {
+    RECEIVER_VEC,
+    RECEIVER_LIST,
+    RECEIVER_SET,
+    RECEIVER_MAP
+} receiver_kind;
+
+typedef struct receiver_symbol {
+    const char *name;
+    const char *type_name;
+    const cmeta_type_desc *type;
+    receiver_method_fn method;
+    receiver_kind kind;
+} receiver_symbol;
+
+static const receiver_symbol receiver_symbols[] = {
+    {"vec", "IntVec", &IntVec_cmeta_type, IntVec_receiver_method, RECEIVER_VEC},
+    {"list", "IntList", &IntList_cmeta_type, IntList_receiver_method, RECEIVER_LIST},
+    {"set", "IntSet", &IntSet_cmeta_type, IntSet_receiver_method, RECEIVER_SET},
+    {"map", "IntMap", &IntMap_cmeta_type, IntMap_receiver_method, RECEIVER_MAP}
+};
 
 static void skip_space(poc_cursor *c) {
     while (isspace((unsigned char)*c->p)) ++c->p;
@@ -50,6 +94,29 @@ static int integer_literal(poc_cursor *c, int *out) {
     return 1;
 }
 
+static int argument(poc_cursor *c, poc_arg *out) {
+    skip_space(c);
+    if (*c->p == '"') {
+        ++c->p;
+        while (*c->p != '\0' && *c->p != '"') {
+            if (*c->p == '\\' && c->p[1] != '\0') ++c->p;
+            ++c->p;
+        }
+        if (*c->p != '"') return 0;
+        ++c->p;
+        out->kind = POC_ARG_STRING;
+        out->integer = 0;
+        return 1;
+    }
+    out->kind = POC_ARG_INT;
+    return integer_literal(c, &out->integer);
+}
+
+static const cmeta_type_desc *argument_type(const poc_arg *arg) {
+    return arg->kind == POC_ARG_INT ? &cmeta_type_int
+                                    : &poc_string_literal_type;
+}
+
 static int read_text(const char *path, char *out, size_t cap) {
     FILE *f = fopen(path, "rb");
     size_t n;
@@ -64,53 +131,175 @@ static int read_text(const char *path, char *out, size_t cap) {
     return 1;
 }
 
-static int lower(const char *source, const char *output_path) {
-    char receiver_name[64];
-    char method_name[64];
-    int value;
+static const receiver_symbol *find_receiver(const char *name) {
+    size_t i;
+    for (i = 0u; i < sizeof(receiver_symbols) / sizeof(receiver_symbols[0]); ++i)
+        if (strcmp(receiver_symbols[i].name, name) == 0)
+            return &receiver_symbols[i];
+    return NULL;
+}
+
+static int parse_call(
+    const char *source, char *receiver_name, size_t receiver_cap,
+    char *method_name, size_t method_cap, poc_arg args[2], size_t *arg_count) {
     poc_cursor cursor = { source };
-    const cmeta_function_desc *method;
-    const cmeta_function_abi_desc *method_abi;
-    const cmeta_param_desc *receiver;
-    FILE *out;
+    size_t count = 0u;
 
-    if (!identifier(&cursor, receiver_name, sizeof(receiver_name)) ||
+    if (!identifier(&cursor, receiver_name, receiver_cap) ||
         !punctuation(&cursor, '.') ||
-        !identifier(&cursor, method_name, sizeof(method_name)) ||
-        !punctuation(&cursor, '(') ||
-        !integer_literal(&cursor, &value) ||
-        !punctuation(&cursor, ')') ||
-        !punctuation(&cursor, ';')) {
-        fprintf(stderr, "unsupported method-call syntax\n");
+        !identifier(&cursor, method_name, method_cap) ||
+        !punctuation(&cursor, '('))
         return 0;
-    }
+
     skip_space(&cursor);
-    if (*cursor.p != '\0') {
-        fprintf(stderr, "trailing input after method call\n");
-        return 0;
+    if (*cursor.p != ')') {
+        if (!argument(&cursor, &args[count++])) return 0;
+        skip_space(&cursor);
+        if (*cursor.p == ',') {
+            ++cursor.p;
+            if (count == 2u || !argument(&cursor, &args[count++]))
+                return 0;
+        }
     }
 
-    if (strcmp(receiver_name, "list") != 0) {
-        fprintf(stderr, "unknown receiver '%s'\n", receiver_name);
+    if (!punctuation(&cursor, ')') || !punctuation(&cursor, ';'))
         return 0;
-    }
-    if (strcmp(method_name, "add") != 0) {
-        fprintf(stderr, "IntList has no receiver method '%s'\n", method_name);
-        return 0;
-    }
-    method = IntList_add_function();
-    method_abi = IntList_add_function_abi();
+    skip_space(&cursor);
+    if (*cursor.p != '\0') return 0;
+
+    *arg_count = count;
+    return 1;
+}
+
+static int method_signature_ok(
+    const receiver_symbol *symbol, const cmeta_function_desc *method,
+    const cmeta_function_abi_desc *abi, const poc_arg args[2],
+    size_t arg_count) {
+    const cmeta_param_desc *receiver;
+    size_t i;
+
     if (!cmeta_function_desc_valid(method) ||
-        !cmeta_function_abi_desc_valid(method_abi)) {
-        fprintf(stderr, "invalid generated CMeta method descriptor\n");
+        !cmeta_function_abi_desc_valid(abi) ||
+        method->param_count != arg_count + 1u)
         return 0;
-    }
 
     receiver = cmeta_function_receiver(method);
     if (receiver == NULL || receiver->type == NULL ||
         receiver->type->kind != CMETA_T_POINTER ||
-        !cmeta_type_equal(receiver->type->pointee, &IntList_cmeta_type)) {
-        fprintf(stderr, "method receiver metadata does not match IntList\n");
+        !cmeta_type_equal(receiver->type->pointee, symbol->type))
+        return 0;
+
+    for (i = 1u; i < method->param_count; ++i)
+        if (!cmeta_type_equal(method->params[i].type, argument_type(&args[i - 1u])))
+            return 0;
+
+    return 1;
+}
+
+static void write_prelude(FILE *out) {
+    fputs(
+        "#include <cstl/typed.h>\n"
+        "\n"
+        "typed(Vec, IntVec, int);\n"
+        "typed(List, IntList, int);\n"
+        "typed(Set, IntSet, int);\n"
+        "typed(Map, IntMap, int, int);\n"
+        "\n",
+        out);
+}
+
+static int emit_program(
+    FILE *out, const receiver_symbol *symbol,
+    const cmeta_function_desc *method, const poc_arg args[2],
+    size_t arg_count) {
+    write_prelude(out);
+    fputs("int main(void) {\n    int rc;\n", out);
+
+    switch (symbol->kind) {
+    case RECEIVER_VEC:
+        fprintf(out,
+            "    IntVec vec = {0};\n"
+            "    if (IntVec_init(&vec, 4u) != STL_OK) return 10;\n"
+            "    rc = %s(&vec, %d);\n"
+            "    if (rc != STL_OK) { IntVec_destroy(&vec); return 11; }\n"
+            "    if (IntVec_size(&vec) != 1u || IntVec_at_const(&vec, 0u) == NULL ||\n"
+            "        *IntVec_at_const(&vec, 0u) != %d) { IntVec_destroy(&vec); return 12; }\n"
+            "    IntVec_destroy(&vec);\n",
+            method->name, args[0].integer, args[0].integer);
+        break;
+    case RECEIVER_LIST:
+        fprintf(out,
+            "    IntList list = {0};\n"
+            "    if (IntList_init(&list, 4u) != STL_OK) return 20;\n"
+            "    rc = %s(&list, %d);\n"
+            "    if (rc != STL_OK) { IntList_destroy(&list); return 21; }\n"
+            "    if (IntList_size(&list) != 1u || IntList_front_const(&list) == NULL ||\n"
+            "        *IntList_front_const(&list) != %d) { IntList_destroy(&list); return 22; }\n"
+            "    IntList_destroy(&list);\n",
+            method->name, args[0].integer, args[0].integer);
+        break;
+    case RECEIVER_SET:
+        fprintf(out,
+            "    IntSet set = {0};\n"
+            "    if (IntSet_init(&set, 4u) != STL_OK) return 30;\n"
+            "    rc = %s(&set, %d);\n"
+            "    if (rc != STL_OK) { IntSet_destroy(&set); return 31; }\n"
+            "    if (IntSet_size(&set) != 1u || !IntSet_contains(&set, %d)) { IntSet_destroy(&set); return 32; }\n"
+            "    IntSet_destroy(&set);\n",
+            method->name, args[0].integer, args[0].integer);
+        break;
+    case RECEIVER_MAP:
+        if (arg_count != 2u) return 0;
+        fprintf(out,
+            "    IntMap map = {0};\n"
+            "    const int *stored;\n"
+            "    if (IntMap_init(&map, 4u) != STL_OK) return 40;\n"
+            "    rc = %s(&map, %d, %d);\n"
+            "    if (rc != STL_OK) { IntMap_destroy(&map); return 41; }\n"
+            "    stored = IntMap_get_const(&map, %d);\n"
+            "    if (IntMap_size(&map) != 1u || stored == NULL || *stored != %d) { IntMap_destroy(&map); return 42; }\n"
+            "    IntMap_destroy(&map);\n",
+            method->name, args[0].integer, args[1].integer, args[0].integer, args[1].integer);
+        break;
+    default:
+        return 0;
+    }
+
+    fputs("    return 0;\n}\n", out);
+    return 1;
+}
+
+static int lower(const char *source, const char *output_path) {
+    char receiver_name[64];
+    char method_name[64];
+    poc_arg args[2] = {{POC_ARG_INT, 0}, {POC_ARG_INT, 0}};
+    size_t arg_count = 0u;
+    const receiver_symbol *symbol;
+    const cmeta_function_desc *method = NULL;
+    const cmeta_function_abi_desc *method_abi = NULL;
+    FILE *out;
+
+    if (!parse_call(source, receiver_name, sizeof(receiver_name),
+                    method_name, sizeof(method_name), args, &arg_count)) {
+        fprintf(stderr, "unsupported method-call syntax\n");
+        return 0;
+    }
+
+    symbol = find_receiver(receiver_name);
+    if (symbol == NULL) {
+        fprintf(stderr, "unknown receiver '%s'\n", receiver_name);
+        return 0;
+    }
+
+    if (!symbol->method(method_name, &method, &method_abi)) {
+        fprintf(stderr, "%s has no receiver method '%s'\n",
+                symbol->type_name, method_name);
+        return 0;
+    }
+
+    if (!method_signature_ok(symbol, method, method_abi, args, arg_count)) {
+        fprintf(stderr, "%s.%s arguments do not match reflected signature\n",
+                receiver_name, method_name);
         return 0;
     }
 
@@ -119,29 +308,10 @@ static int lower(const char *source, const char *output_path) {
         perror("open generated output");
         return 0;
     }
-
-    fprintf(out,
-        "#include <cstl/typed.h>\n"
-        "\n"
-        "typed(List, IntList, int);\n"
-        "\n"
-        "int main(void) {\n"
-        "    IntList list = {0};\n"
-        "    int rc;\n"
-        "    if (IntList_init(&list, 4u) != STL_OK) return 10;\n"
-        "    rc = %s(&list, %d);\n"
-        "    if (rc != STL_OK) { IntList_destroy(&list); return 11; }\n"
-        "    if (IntList_size(&list) != 1u) { IntList_destroy(&list); return 12; }\n"
-        "    if (IntList_front_const(&list) == NULL ||\n"
-        "        *IntList_front_const(&list) != %d) {\n"
-        "        IntList_destroy(&list);\n"
-        "        return 13;\n"
-        "    }\n"
-        "    IntList_destroy(&list);\n"
-        "    return 0;\n"
-        "}\n",
-        method->name, value, value);
-
+    if (!emit_program(out, symbol, method, args, arg_count)) {
+        fclose(out);
+        return 0;
+    }
     if (fclose(out) != 0) return 0;
     return 1;
 }

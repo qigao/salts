@@ -136,6 +136,32 @@ spec("CSTL typed schema") {
             cmeta_function_param(map_put, 2u)->type, &cmeta_type_long));
     }
 
+    it("resolves reflected receiver methods from the typed method schema") {
+        const cmeta_function_desc *function = (const cmeta_function_desc *)1;
+        const cmeta_function_abi_desc *abi =
+            (const cmeta_function_abi_desc *)1;
+
+        check_true(IntVec_receiver_method("push", &function, &abi));
+        check_true(function == IntVec_push_function());
+        check_true(abi == IntVec_push_function_abi());
+
+        check_true(IntList_receiver_method("add", &function, &abi));
+        check_true(function == IntList_add_function());
+        check_true(abi == IntList_add_function_abi());
+
+        check_true(IntSet_receiver_method("add", &function, &abi));
+        check_true(function == IntSet_add_function());
+        check_true(abi == IntSet_add_function_abi());
+
+        check_true(IntLongMap_receiver_method("put", &function, &abi));
+        check_true(function == IntLongMap_put_function());
+        check_true(abi == IntLongMap_put_function_abi());
+
+        check_false(IntList_receiver_method("missing", &function, &abi));
+        check_null(function);
+        check_null(abi);
+    }
+
     it("exposes List add as the typed append semantic") {
         IntList values = {0};
 
