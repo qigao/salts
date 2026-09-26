@@ -128,6 +128,11 @@ cmake_add_test(cmeta_function_reflection_test
   LIBS Salts::CMeta Salts::TinyTest
   FOLDER "cmeta/tests")
 
+cmake_add_test(cmeta_method_test
+  SOURCES cmeta_method_test.c
+  LIBS Salts::CMeta Salts::TinyTest
+  FOLDER "cmeta/tests")
+
 cmake_add_test(cmeta_invokable_test
   SOURCES cmeta_invokable_test.c cmeta_invokable_peer.c
   LIBS Salts::CMeta Salts::TinyTest
@@ -234,7 +239,7 @@ set_target_properties(cmeta_data_test PROPERTIES
   C_EXTENSIONS OFF)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-  foreach(tgt cmeta_core_test cmeta_type_identity_test cmeta_declared_type_test cmeta_container_type_test cmeta_data_test cmeta_collector_test cmeta_function_reflection_test cmeta_function_header_test cmeta_interface_header_test cmeta_interface_function_test)
+  foreach(tgt cmeta_core_test cmeta_type_identity_test cmeta_declared_type_test cmeta_container_type_test cmeta_data_test cmeta_collector_test cmeta_function_reflection_test cmeta_method_test cmeta_function_header_test cmeta_interface_header_test cmeta_interface_function_test)
     target_compile_options(${tgt} PRIVATE -Werror=missing-field-initializers)
   endforeach()
 endif()
@@ -264,7 +269,7 @@ set_target_properties(cmeta_infer_test PROPERTIES
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
 
-set_target_properties(cmeta_function_reflection_test PROPERTIES
+set_target_properties(cmeta_function_reflection_test cmeta_method_test PROPERTIES
   C_STANDARD 11
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
