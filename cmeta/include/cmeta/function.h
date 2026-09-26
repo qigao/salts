@@ -22,10 +22,13 @@ enum {
     CMETA_PARAM_NULLABLE = 1u << 2,
     CMETA_PARAM_BORROWED = 1u << 3,
     CMETA_PARAM_OWNED = 1u << 4,
+    /* Compile/generation-time receiver identity. This does not change the C ABI
+     * or imply runtime dispatch; the receiver remains an ordinary parameter. */
+    CMETA_PARAM_RECEIVER = 1u << 5,
     CMETA_PARAM_DIRECTION_MASK = CMETA_PARAM_IN | CMETA_PARAM_OUT,
     CMETA_PARAM_OWNERSHIP_MASK = CMETA_PARAM_BORROWED | CMETA_PARAM_OWNED,
     CMETA_PARAM_FLAG_MASK = CMETA_PARAM_DIRECTION_MASK | CMETA_PARAM_NULLABLE |
-                            CMETA_PARAM_OWNERSHIP_MASK
+                            CMETA_PARAM_OWNERSHIP_MASK | CMETA_PARAM_RECEIVER
 };
 
 /* All descriptor views are borrowed. Names, arrays, types, traits and their
@@ -82,6 +85,12 @@ cmeta_function_param(const cmeta_function_desc *desc, size_t index);
 
 const cmeta_param_desc *
 cmeta_function_find_param(const cmeta_function_desc *desc, const char *name);
+
+/* Returns parameter zero when it is explicitly marked as the receiver.
+ * Receiver metadata is descriptive only and is intended for compile/generation
+ * lowering such as obj.method(x) -> C_symbol(&obj, x). */
+const cmeta_param_desc *
+cmeta_function_receiver(const cmeta_function_desc *desc);
 
 #ifdef __cplusplus
 }
