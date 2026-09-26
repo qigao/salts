@@ -77,6 +77,10 @@ using cnet_send_slice_function =
     int (*)(cnet_client *, cnet_connection, const mem_slice_t *);
 static_assert(std::is_same<decltype(&cnet_send_slice), cnet_send_slice_function>::value,
               "retained-slice send must keep its C linkage signature");
+using cnet_send_slicev_function =
+    int (*)(cnet_client *, cnet_connection, const mem_slice_t *, std::size_t);
+static_assert(std::is_same<decltype(&cnet_send_slicev), cnet_send_slicev_function>::value,
+              "retained-vector send must keep its C linkage signature");
 using cnet_packet_poll_function = int (*)(cnet_packet_endpoint *, std::uint32_t, std::size_t *);
 static_assert(std::is_same<decltype(&cnet_packet_poll), cnet_packet_poll_function>::value,
               "packet poll must keep its C linkage signature");

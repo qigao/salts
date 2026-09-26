@@ -68,6 +68,7 @@ typedef struct cnet_owner_request {
   cnet_session_stage stage;
   bool active;
   bool close_after_send;
+  bool vector_write;
   salts_deadline_id deadline;
 } cnet_owner_request;
 
@@ -262,7 +263,8 @@ static int cnet_owner_queue_connected_event(cnet_owner_impl *impl, cnet_owner_se
 static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *session,
                                     cnet_command_view *command, cnet_write_view *write,
                                     cnet_owner_request_role role,
-                                    const native_io_operation *operation, bool close_after_send);
+                                    const native_io_operation *operation, bool close_after_send,
+                                    bool vector_write);
 static int cnet_owner_start_queued_write(cnet_owner_impl *impl, cnet_owner_session *session);
 static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *session);
 static int cnet_owner_tls_pump(cnet_owner_impl *impl, cnet_owner_session *session);
@@ -578,7 +580,8 @@ static int cnet_owner_start_queued_write(cnet_owner_impl *impl, cnet_owner_sessi
                                     .buffer = (void *)write.data,
                                     .length = write.remaining};
   return cnet_owner_start_request(impl, session, NULL, &write, CNET_OWNER_REQUEST_SEND,
-                                  &operation, write.close_after_send);
+                                  &operation, write.close_after_send,
+                                  write.vector_write);
 }
 
 static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *session) {
@@ -596,7 +599,8 @@ static int cnet_owner_arm_receive(cnet_owner_impl *impl, cnet_owner_session *ses
                                     .buffer = session->receive_buffer,
                                     .length = impl->receive_buffer_bytes};
   status =
-      cnet_owner_start_request(impl, session, NULL, NULL, CNET_OWNER_REQUEST_RECEIVE, &operation, false);
+      cnet_owner_start_request(impl, session, NULL, NULL, CNET_OWNER_REQUEST_RECEIVE, &operation,
+                               false, false);
   if (status != SALTS_OK) return status;
   if (session->read_active) --session->receive_demand;
   return SALTS_OK;
@@ -666,6 +670,46 @@ static int cnet_owner_submit_request(cnet_owner_impl *impl, cnet_owner_request *
   index = (size_t)(request - impl->request_records);
   if (index >= impl->request_capacity) return SALTS_EPROTO;
 
+  if (request->vector_write) {
+    native_io_buffer_span spans[NATIVE_IO_VECTOR_MAX];
+    native_io_vector_operation vector_operation;
+    size_t span_count = 0u;
+    size_t submitted_size = 0u;
+    size_t limit = request->write.remaining;
+#if defined(CNET_INTERNAL_TESTING)
+    if (impl->test_send_chunk_bytes != 0u && limit > impl->test_send_chunk_bytes)
+      limit = impl->test_send_chunk_bytes;
+#endif
+    if (!request->write.vector_write || limit == 0u) return SALTS_EPROTO;
+    status = cnet_write_queue_build_vector(&impl->writes, &request->write, limit, spans,
+                                           &span_count, &submitted_size);
+    if (status != SALTS_OK) return status;
+    vector_operation = (native_io_vector_operation){
+        .kind = request->operation.kind,
+        .endpoint = request->operation.endpoint,
+        .spans = spans,
+        .span_count = span_count,
+        .user_data = (uintptr_t)(index + 1u)};
+    request->submitted_size = submitted_size;
+#if defined(CNET_INTERNAL_PROFILING)
+    {
+      const uint64_t profile_started = cnet_owner_profile_start(impl);
+      status = native_io_backend_submit_vector(&impl->backend, &vector_operation, &native_request);
+      if (first_submit)
+        cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_start_ns,
+                                  &impl->profile.request_start_calls);
+      else
+        cnet_owner_profile_finish(impl, profile_started, &impl->profile.request_resubmit_ns,
+                                  &impl->profile.request_resubmit_calls);
+    }
+#else
+    status = native_io_backend_submit_vector(&impl->backend, &vector_operation, &native_request);
+    (void)first_submit;
+#endif
+    if (status == SALTS_OK) request->native_request = native_request;
+    return status;
+  }
+
   submitted = request->operation;
   submitted.user_data = (uintptr_t)(index + 1u);
 #if defined(CNET_INTERNAL_TESTING)
@@ -698,7 +742,8 @@ static int cnet_owner_submit_request(cnet_owner_impl *impl, cnet_owner_request *
 static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *session,
                                     cnet_command_view *command, cnet_write_view *write,
                                     cnet_owner_request_role role,
-                                    const native_io_operation *operation, bool close_after_send) {
+                                    const native_io_operation *operation, bool close_after_send,
+                                    bool vector_write) {
   cnet_owner_request *request;
   const uint32_t timeout_ms = cnet_owner_request_timeout(session, role);
   const cnet_session_stage stage = cnet_owner_request_stage(session, role);
@@ -728,6 +773,7 @@ static int cnet_owner_start_request(cnet_owner_impl *impl, cnet_owner_session *s
   request->role = role;
   request->stage = stage;
   request->close_after_send = close_after_send;
+  request->vector_write = vector_write;
   if (command != NULL) {
     request->command = *command;
     memset(command, 0, sizeof(*command));
@@ -788,7 +834,7 @@ static int cnet_owner_tls_start_write(cnet_owner_impl *impl, cnet_owner_session 
                                     .buffer = session->tls.write_buffer,
                                     .length = size};
   status = cnet_owner_start_request(impl, session, NULL, NULL, CNET_OWNER_REQUEST_TLS_WRITE, &operation,
-                                    false);
+                                    false, false);
   if (status == SALTS_OK) *out_started = true;
   return status;
 }
@@ -805,7 +851,7 @@ static int cnet_owner_tls_start_read(cnet_owner_impl *impl, cnet_owner_session *
                                     .buffer = session->tls.read_buffer,
                                     .length = capacity};
   return cnet_owner_start_request(impl, session, NULL, NULL, CNET_OWNER_REQUEST_TLS_READ, &operation,
-                                  false);
+                                  false, false);
 }
 
 static int cnet_owner_tls_begin_peer_close(cnet_owner_impl *impl,
@@ -1057,7 +1103,7 @@ static int cnet_owner_start_transport(cnet_owner_impl *impl, cnet_owner_session 
                                                   CNET_SESSION_STAGE_CONNECT)
                : cnet_owner_fail_session(impl, session, status, CNET_SESSION_STAGE_CONNECT);
   return cnet_owner_start_request(impl, session, command, NULL, CNET_OWNER_REQUEST_CONNECT, &operation,
-                                  false);
+                                  false, false);
 }
 
 static bool cnet_owner_connect_endpoint_valid(const cnet_owner_connect_payload *payload,
@@ -1333,7 +1379,7 @@ static int cnet_owner_send(cnet_owner_impl *impl, cnet_command_view *command,
                                     .buffer = (void *)command->data,
                                     .length = command->size};
   return cnet_owner_start_request(impl, session, command, NULL, CNET_OWNER_REQUEST_SEND, &operation,
-                                  close_after_send);
+                                  close_after_send, false);
 }
 
 static int cnet_owner_receive(cnet_owner_impl *impl, cnet_command_view *command) {
@@ -1738,9 +1784,17 @@ static int cnet_owner_route_completion(cnet_owner_impl *impl,
     if (request->completed_size < request->requested_size) {
       if (request->operation.kind == NATIVE_IO_OPERATION_UDP_SEND_TO)
         return cnet_owner_fail_direct_request(impl, request, SALTS_EIO);
-      request->operation.buffer =
-          (unsigned char *)request->operation.buffer + completion->bytes;
-      request->operation.length -= completion->bytes;
+      if (request->vector_write) {
+        if (!cnet_write_handle_valid(request->write.handle) ||
+            !request->write.vector_write || request->write.remaining == 0u)
+          return cnet_owner_fail_direct_request(impl, request, SALTS_EPROTO);
+        request->operation.buffer = NULL;
+        request->operation.length = request->write.remaining;
+      } else {
+        request->operation.buffer =
+            (unsigned char *)request->operation.buffer + completion->bytes;
+        request->operation.length -= completion->bytes;
+      }
       status = cnet_owner_submit_request(impl, request, false);
       return status == SALTS_OK ? SALTS_OK
                                 : cnet_owner_fail_direct_request(impl, request, status);
@@ -2171,6 +2225,26 @@ int cnet_owner_send_slice_direct(cnet_owner *owner, cnet_session_handle session_
   return cnet_owner_finish_write_admission(impl, session, handle);
 }
 
+int cnet_owner_send_slicev_direct(cnet_owner *owner,
+                                  cnet_session_handle session_handle,
+                                  const mem_slice_t *segments, size_t segment_count) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  cnet_owner_session *session;
+  cnet_write_handle handle = {0};
+  native_io_endpoint endpoint;
+  int status = cnet_owner_send_direct_ready(impl, session_handle, &session);
+  if (status != SALTS_OK) return status;
+  if (session->peer.scheme == CNET_URI_TLS || session->peer.scheme == CNET_URI_UDP)
+    return SALTS_ENOTSUP;
+  endpoint = cnet_transport_write_endpoint(&session->transport);
+  if (!native_io_backend_endpoint_supports_vector_write(&impl->backend, endpoint))
+    return SALTS_ENOTSUP;
+  status = cnet_write_queue_enqueue_slicev(&impl->writes, session_handle, segments,
+                                           segment_count, false, &handle);
+  if (status != SALTS_OK) return status;
+  return cnet_owner_finish_write_admission(impl, session, handle);
+}
+
 int cnet_owner_sendv_direct(cnet_owner *owner, cnet_session_handle session_handle,
                             const cnet_const_buffer *segments, size_t segment_count) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
@@ -2308,6 +2382,11 @@ int cnet_owner_test_force_cancel_ealready_once(cnet_owner *owner) {
 int cnet_owner_test_process_deadlines(cnet_owner *owner) {
   cnet_owner_impl *impl = cnet_owner_get(owner);
   return impl != NULL ? cnet_owner_process_deadlines(impl) : SALTS_EINVAL;
+}
+
+int cnet_owner_test_process_session_work(cnet_owner *owner) {
+  cnet_owner_impl *impl = cnet_owner_get(owner);
+  return impl != NULL ? cnet_owner_process_session_work(impl) : SALTS_EINVAL;
 }
 
 int cnet_owner_test_set_send_chunk_bytes(cnet_owner *owner, size_t bytes) {

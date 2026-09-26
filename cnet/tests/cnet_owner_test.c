@@ -589,6 +589,124 @@ static void cnet_owner_test_expired_partial_send(native_io_backend_kind backend_
   check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
 }
 
+static void cnet_owner_test_expired_partial_vector_send(
+    native_io_backend_kind backend_kind) {
+  enum { PAYLOAD_BYTES = 8, WRITE_TIMEOUT_MS = 10 };
+  cnet_session_table sessions = {0};
+  cnet_command_queue commands = {0};
+  cnet_event_queue events = {0};
+  cnet_owner owner = {0};
+  mem_pool_t pool;
+  cnet_owner_test_clock clock = {.now_ms = 100u, .next_ms = 100u};
+  const cnet_command_queue_config command_config = {8u, sizeof(cnet_owner_connect_payload)};
+  const cnet_event_queue_config event_config = {8u, 2u, 64u};
+  const cnet_owner_config config = {.backend_kind = backend_kind,
+                                   .connection_capacity = 1u,
+                                   .request_capacity = 2u,
+                                   .completion_batch_capacity = 2u,
+                                   .receive_buffer_bytes = 64u,
+                                   .receive_buffer_count = 1u,
+                                   .write_capacity = 8u,
+                                   .max_write_bytes = 256u,
+                                   .write_buffer_bytes = 2048u,
+                                   .sessions = &sessions,
+                                   .commands = &commands,
+                                   .events = &events,
+                                   .now_ms = cnet_owner_test_now,
+                                   .clock_context = &clock};
+  cnet_owner_test_socket listener = CNET_OWNER_TEST_INVALID_SOCKET;
+  cnet_owner_test_socket accepted = CNET_OWNER_TEST_INVALID_SOCKET;
+  struct sockaddr_in address;
+  cnet_session_handle session = {0};
+  cnet_owner_connect_payload connect_payload = {.scheme = CNET_URI_TCP,
+                                               .write_timeout_ms = WRITE_TIMEOUT_MS};
+  cnet_event_view event = {0};
+  cnet_session_terminal terminal = {0};
+  native_io_completion completion = {0};
+  native_io_backend_stats before = {0}, after = {0};
+  native_io_coroutine_stats coroutine = NATIVE_IO_COROUTINE_STATS_V1_INITIALIZER;
+  mem_buffer_t *buffer = NULL;
+  mem_slice_t slices[2] = {{0}};
+  size_t count = 0u;
+
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+  check_equal(cnet_owner_init(&owner, &config), SALTS_OK);
+  check_equal(mem_init(&pool, 0u), 0);
+  check_equal(cnet_owner_test_listener(&listener, &address), SALTS_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
+  connect_payload.address_length = sizeof(address);
+  memcpy(connect_payload.address, &address, sizeof(address));
+  {
+    const cnet_command command =
+        (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload,
+                       sizeof(connect_payload), 0u};
+    check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  }
+  check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
+              SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  accepted = accept(listener, NULL, NULL);
+  check_true(accepted != CNET_OWNER_TEST_INVALID_SOCKET);
+
+  buffer = mem_get_buffer(&pool, PAYLOAD_BYTES);
+  check_true(buffer != NULL);
+  memset(mem_buffer_data(buffer), 0x5au, PAYLOAD_BYTES);
+  mem_set_used(buffer, PAYLOAD_BYTES);
+  slices[0] = mem_slice(buffer, 0u, 3u);
+  slices[1] = mem_slice(buffer, 3u, 5u);
+  check_equal(mem_buffer_ref_count(buffer), UINT32_C(3));
+  check_equal(cnet_owner_test_set_send_chunk_bytes(&owner, 1u), SALTS_OK);
+  check_equal(cnet_owner_send_slicev_direct(&owner, session, slices, 2u), SALTS_OK);
+  check_equal(mem_buffer_ref_count(buffer), UINT32_C(4));
+  mem_slice_release(&slices[0]);
+  mem_slice_release(&slices[1]);
+  check_equal(mem_buffer_ref_count(buffer), UINT32_C(2));
+
+  check_equal(cnet_owner_test_process_session_work(&owner), SALTS_OK);
+  check_equal(cnet_owner_test_observe_raw(&owner, &completion, 1u,
+                                         CNET_OWNER_TEST_TIMEOUT_MS, &count),
+              SALTS_OK);
+  check_equal(count, 1u);
+  check_equal(completion.kind, NATIVE_IO_COMPLETION_OK);
+  check_equal(completion.bytes, 1u);
+  check_true(cnet_owner_test_backend_stats(&owner, &before, &coroutine));
+
+  clock.now_ms += WRITE_TIMEOUT_MS + 1u;
+  clock.next_ms = clock.now_ms;
+  check_equal(cnet_owner_test_process_deadlines(&owner), SALTS_ENOENT);
+  check_equal(cnet_owner_test_process_completion_batch(&owner, &completion, count), SALTS_OK);
+  check_true(cnet_owner_test_backend_stats(&owner, &after, &coroutine));
+  check_equal(after.submitted, before.submitted);
+  check_equal(after.active_requests, 0u);
+  check_equal(mem_buffer_ref_count(buffer), UINT32_C(1));
+
+  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
+  check_equal(terminal.status, SALTS_ETIMEDOUT);
+  check_equal(terminal.stage, CNET_SESSION_STAGE_WRITE);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.state, CNET_EVENT_STATE_FAILED);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+  check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
+
+  mem_buffer_release(buffer);
+  buffer = NULL;
+  check_equal(cnet_owner_test_set_send_chunk_bytes(&owner, 0u), SALTS_OK);
+  cnet_owner_test_close_socket(accepted);
+  cnet_owner_test_close_socket(listener);
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_owner_close(&owner), SALTS_OK);
+  check_equal(cnet_owner_destroy(&owner), SALTS_OK);
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
+  mem_destroy(&pool);
+}
+
 static void cnet_owner_test_cancel_ealready(native_io_backend_kind backend_kind) {
   cnet_session_table sessions = {0};
   cnet_command_queue commands = {0};
@@ -784,6 +902,7 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   cnet_command_queue commands = {0};
   cnet_event_queue events = {0};
   cnet_owner owner = {0};
+  mem_pool_t vector_pool;
   const cnet_command_queue_config command_config = {8u, sizeof(cnet_owner_connect_payload)};
   const cnet_event_queue_config event_config = {8u, 2u, 64u};
   const cnet_owner_config owner_config = {.backend_kind = backend_kind,
@@ -807,12 +926,15 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   cnet_command command = {0};
   cnet_event_view event = {0};
   cnet_session_terminal terminal = {0};
+  mem_buffer_t *unsupported_buffer = NULL;
+  mem_slice_t unsupported_slices[2] = {{0}};
   int echo_start_status;
 
   check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
   check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
   check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
   check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
+  check_equal(mem_init(&vector_pool, 0u), 0);
   check_equal(cnet_owner_test_udp_peer(&peer, &peer_address), SALTS_OK);
   check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
 
@@ -830,6 +952,24 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   check_equal(event.session.slot, session.slot);
   check_equal(event.session.generation, session.generation);
   check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+
+  unsupported_buffer = mem_get_buffer(&vector_pool, 4u);
+  check_true(unsupported_buffer != NULL);
+  if (unsupported_buffer != NULL) {
+    memset(mem_buffer_data(unsupported_buffer), 0x5au, 4u);
+    mem_set_used(unsupported_buffer, 4u);
+    unsupported_slices[0] = mem_slice(unsupported_buffer, 0u, 2u);
+    unsupported_slices[1] = mem_slice(unsupported_buffer, 2u, 2u);
+    check_equal(mem_buffer_ref_count(unsupported_buffer), UINT32_C(3));
+    check_equal(cnet_owner_send_slicev_direct(&owner, session, unsupported_slices, 2u),
+                SALTS_ENOTSUP);
+    check_equal(mem_buffer_ref_count(unsupported_buffer), UINT32_C(3));
+    mem_slice_release(&unsupported_slices[0]);
+    mem_slice_release(&unsupported_slices[1]);
+    check_equal(mem_buffer_ref_count(unsupported_buffer), UINT32_C(1));
+    mem_buffer_release(unsupported_buffer);
+    unsupported_buffer = NULL;
+  }
 
   echo = (cnet_owner_test_udp_echo){peer,    outbound,        sizeof(outbound),
                                     inbound, sizeof(inbound), SALTS_EIO};
@@ -886,6 +1026,7 @@ static void cnet_owner_test_udp(native_io_backend_kind backend_kind) {
   check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
   check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
   check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
+  mem_destroy(&vector_pool);
 }
 
 static void cnet_owner_test_resolve_failure(native_io_backend_kind backend_kind) {
@@ -1102,6 +1243,11 @@ static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
   cnet_command command = {0};
   cnet_event_view event = {0};
   cnet_session_terminal terminal = {0};
+  mem_pool_t vector_pool;
+  mem_buffer_t *vector_buffer = NULL;
+  mem_slice_t vector_slices[2] = {{0}};
+  unsigned char vector_received[3] = {0};
+  const unsigned char vector_expected[3] = {0x71u, 0x72u, 0x75u};
   unsigned char received[sizeof(outbound)] = {0};
 
   check_equal(cnet_shared_test_named_pipe_start(&pipe), SALTS_OK);
@@ -1109,6 +1255,7 @@ static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
   check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
   check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
   check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
+  check_equal(mem_init(&vector_pool, 0u), 0);
   check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
 
   connect_payload.scheme = CNET_URI_PIPE;
@@ -1123,6 +1270,44 @@ static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
   check_equal(event.kind, CNET_EVENT_STATE);
   check_equal(event.state, CNET_EVENT_STATE_CONNECTED);
   check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+
+  vector_buffer = mem_get_buffer(&vector_pool, 8u);
+  check_true(vector_buffer != NULL);
+  for (size_t index = 0u; index < 8u; ++index)
+    mem_buffer_data(vector_buffer)[index] = (char)(0x70u + index);
+  mem_set_used(vector_buffer, 8u);
+  vector_slices[0] = mem_slice(vector_buffer, 1u, 2u);
+  vector_slices[1] = mem_slice(vector_buffer, 5u, 1u);
+  check_equal(mem_buffer_ref_count(vector_buffer), UINT32_C(3));
+  {
+    const int vector_status =
+        cnet_owner_send_slicev_direct(&owner, session, vector_slices, 2u);
+#if defined(_WIN32)
+    check_equal(vector_status, SALTS_ENOTSUP);
+    check_equal(mem_buffer_ref_count(vector_buffer), UINT32_C(3));
+#else
+    check_equal(vector_status, SALTS_OK);
+    check_equal(mem_buffer_ref_count(vector_buffer), UINT32_C(4));
+#endif
+  }
+  for (size_t index = 0u; index < 2u; ++index) mem_slice_release(&vector_slices[index]);
+#if defined(_WIN32)
+  check_equal(mem_buffer_ref_count(vector_buffer), UINT32_C(1));
+#else
+  check_equal(mem_buffer_ref_count(vector_buffer), UINT32_C(2));
+  check_equal(cnet_owner_drive(&owner, CNET_OWNER_TEST_TIMEOUT_MS), SALTS_OK);
+  check_equal(cnet_shared_test_named_pipe_peer_read(&pipe, vector_received,
+                                                    sizeof(vector_received)),
+              SALTS_OK);
+  check_equal(vector_received, vector_expected, sizeof(vector_expected));
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.kind, CNET_EVENT_SEND);
+  check_equal(event.argument, sizeof(vector_expected));
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(mem_buffer_ref_count(vector_buffer), UINT32_C(1));
+#endif
+  mem_buffer_release(vector_buffer);
+  vector_buffer = NULL;
 
   command = (cnet_command){CNET_COMMAND_SEND, session, outbound, sizeof(outbound), 0u};
   check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
@@ -1166,7 +1351,121 @@ static void cnet_owner_test_pipe(native_io_backend_kind backend_kind) {
   check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
   check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
   check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
+  mem_destroy(&vector_pool);
 }
+
+#if defined(CNET_INTERNAL_TESTING) && defined(CNET_INTERNAL_PROFILING)
+static void cnet_owner_test_retained_vector_partial_send(native_io_backend_kind backend_kind) {
+  cnet_session_table sessions = {0};
+  cnet_command_queue commands = {0};
+  cnet_event_queue events = {0};
+  cnet_owner owner = {0};
+  mem_pool_t pool;
+  const cnet_command_queue_config command_config = {8u, sizeof(cnet_owner_connect_payload)};
+  const cnet_event_queue_config event_config = {8u, 2u, 64u};
+  const cnet_owner_config owner_config = {
+      .backend_kind = backend_kind,
+      .connection_capacity = 1u,
+      .request_capacity = 4u,
+      .completion_batch_capacity = 4u,
+      .receive_buffer_bytes = 64u,
+      .receive_buffer_count = 1u,
+      .write_capacity = 8u,
+      .max_write_bytes = 256u,
+      .write_buffer_bytes = 2048u,
+      .sessions = &sessions,
+      .commands = &commands,
+      .events = &events};
+  cnet_owner_test_socket listener = CNET_OWNER_TEST_INVALID_SOCKET;
+  cnet_owner_test_socket accepted = CNET_OWNER_TEST_INVALID_SOCKET;
+  struct sockaddr_in address;
+  cnet_session_handle session = {0};
+  cnet_owner_connect_payload connect_payload = {0};
+  cnet_command command = {0};
+  cnet_event_view event = {0};
+  cnet_session_terminal terminal = {0};
+  cnet_owner_profile profile = {0};
+  mem_buffer_t *buffer = NULL;
+  mem_slice_t slices[3] = {{0}};
+  unsigned char received[8] = {0};
+  const unsigned char expected[8] = {0x31u, 0x32u, 0x33u, 0x34u,
+                                     0x35u, 0x36u, 0x37u, 0x38u};
+
+  check_equal(cnet_session_table_init(&sessions, 1u), SALTS_OK);
+  check_equal(cnet_command_queue_init(&commands, &command_config), SALTS_OK);
+  check_equal(cnet_event_queue_init(&events, &event_config), SALTS_OK);
+  check_equal(cnet_owner_init(&owner, &owner_config), SALTS_OK);
+  check_equal(mem_init(&pool, 0u), 0);
+  check_equal(cnet_owner_test_listener(&listener, &address), SALTS_OK);
+  check_equal(cnet_session_table_reserve(&sessions, &session), SALTS_OK);
+
+  connect_payload.scheme = CNET_URI_TCP;
+  connect_payload.address_length = sizeof(address);
+  memcpy(connect_payload.address, &address, sizeof(address));
+  command =
+      (cnet_command){CNET_COMMAND_CONNECT, session, &connect_payload, sizeof(connect_payload), 0u};
+  check_equal(cnet_command_queue_publish(&commands, &command), SALTS_OK);
+  check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_OPEN),
+              SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.kind, CNET_EVENT_STATE);
+  check_equal(event.state, CNET_EVENT_STATE_CONNECTED);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  accepted = accept(listener, NULL, NULL);
+  check_true(accepted != CNET_OWNER_TEST_INVALID_SOCKET);
+
+  buffer = mem_get_buffer(&pool, sizeof(expected));
+  check_true(buffer != NULL);
+  memcpy(mem_buffer_data(buffer), expected, sizeof(expected));
+  mem_set_used(buffer, sizeof(expected));
+  slices[0] = mem_slice(buffer, 0u, 3u);
+  slices[1] = mem_slice(buffer, 3u, 2u);
+  slices[2] = mem_slice(buffer, 5u, 3u);
+  check_equal(cnet_owner_test_set_send_chunk_bytes(&owner, 2u), SALTS_OK);
+  check_equal(cnet_owner_profile_begin(&owner), SALTS_OK);
+  check_equal(cnet_owner_send_slicev_direct(&owner, session, slices, 3u), SALTS_OK);
+  for (size_t index = 0u; index < 3u; ++index) mem_slice_release(&slices[index]);
+  mem_buffer_release(buffer);
+  buffer = NULL;
+
+  check_equal(cnet_owner_test_drive_to_event(&owner, &events, &event), SALTS_OK);
+  check_equal(event.kind, CNET_EVENT_SEND);
+  check_equal(event.argument, sizeof(expected));
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_owner_profile_take(&owner, &profile), SALTS_OK);
+  check_equal(profile.request_start_calls, UINT64_C(1));
+  check_equal(profile.request_resubmit_calls, UINT64_C(3));
+  check_equal(profile.request_completion_calls, UINT64_C(1));
+  check_equal(cnet_owner_test_set_send_chunk_bytes(&owner, 0u), SALTS_OK);
+  check_equal(cnet_owner_test_receive_all(accepted, received, sizeof(received)), SALTS_OK);
+  check_equal(memcmp(received, expected, sizeof(expected)), 0);
+
+  check_equal(cnet_owner_close_direct(&owner, session), SALTS_OK);
+  check_equal(cnet_owner_test_drive_to_state(&owner, &sessions, session, CNET_SESSION_TERMINAL),
+              SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.state, CNET_EVENT_STATE_CLOSING);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_event_queue_take(&events, &event), SALTS_OK);
+  check_equal(event.state, CNET_EVENT_STATE_CLOSED);
+  check_equal(cnet_event_queue_release(&events, &event), SALTS_OK);
+  check_equal(cnet_session_table_take_terminal(&sessions, session, &terminal), SALTS_OK);
+  check_equal(terminal.kind, CNET_SESSION_TERMINAL_CLOSED);
+  check_equal(cnet_session_table_recycle(&sessions, session), SALTS_OK);
+  check_equal(cnet_owner_release_session(&owner, session), SALTS_OK);
+
+  cnet_owner_test_close_socket(accepted);
+  cnet_owner_test_close_socket(listener);
+  check_equal(cnet_command_queue_close(&commands), SALTS_OK);
+  check_equal(cnet_owner_close(&owner), SALTS_OK);
+  check_equal(cnet_owner_destroy(&owner), SALTS_OK);
+  check_equal(cnet_event_queue_close(&events), SALTS_OK);
+  check_equal(cnet_event_queue_destroy(&events), SALTS_OK);
+  check_equal(cnet_command_queue_destroy(&commands), SALTS_OK);
+  check_equal(cnet_session_table_destroy(&sessions), SALTS_OK);
+  mem_destroy(&pool);
+}
+#endif
 
 spec("CNet owner shard") {
   it("owns a TCP session from command admission through terminal recycle") {
@@ -1189,6 +1488,17 @@ spec("CNet owner shard") {
     check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 
+#if defined(CNET_INTERNAL_TESTING) && defined(CNET_INTERNAL_PROFILING)
+  it("resubmits retained vector partial writes through the same logical request") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    check_equal(cnet_module_init(), SALTS_OK);
+    for (size_t index = 0u; index < count; ++index)
+      cnet_owner_test_retained_vector_partial_send(backends[index]);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
+  }
+#endif
+
 #if defined(CNET_INTERNAL_TESTING)
   it("does not resubmit a partial success after the write deadline expired") {
     native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
@@ -1196,6 +1506,15 @@ spec("CNet owner shard") {
     check_equal(cnet_module_init(), SALTS_OK);
     for (size_t index = 0u; index < count; ++index)
       cnet_owner_test_expired_partial_send(backends[index]);
+    check_equal(cnet_module_shutdown(), SALTS_OK);
+  }
+
+  it("releases retained vector ownership when a partial send deadline expires") {
+    native_io_backend_kind backends[CNET_OWNER_TEST_MAX_BACKENDS];
+    const size_t count = cnet_owner_test_backends(backends);
+    check_equal(cnet_module_init(), SALTS_OK);
+    for (size_t index = 0u; index < count; ++index)
+      cnet_owner_test_expired_partial_vector_send(backends[index]);
     check_equal(cnet_module_shutdown(), SALTS_OK);
   }
 

@@ -707,6 +707,22 @@ int cnet_send_buffer(cnet_client *client, cnet_connection connection, mem_buffer
 int cnet_send_slice(cnet_client *client, cnet_connection connection, const mem_slice_t *slice);
 
 /**
+ * Retains 1..NATIVE_IO_VECTOR_MAX canonical slice backing buffers on successful
+ * admission and preserves their ordered ranges into NativeIO scatter/gather
+ * without copying payload bytes. The slice descriptor array is borrowed only
+ * for this call; after SALTS_OK the caller may immediately release every slice
+ * and other caller references, but admitted backing bytes and buffer
+ * data/used/capacity must remain immutable until terminal send settlement.
+ *
+ * TLS and endpoint/backend combinations without NativeIO vector-write
+ * capability return SALTS_ENOTSUP without retaining or flattening. Invalid,
+ * empty, forged, out-of-range, or over-limit vectors are rejected without
+ * lasting ownership.
+ */
+int cnet_send_slicev(cnet_client *client, cnet_connection connection,
+                     const mem_slice_t *segments, size_t segment_count);
+
+/**
  * Copies the ordered concatenation of immutable, non-empty `segments` into
  * one bounded write slot before returning success. The descriptor array and
  * its backing ranges are borrowed only for this call. Completion, ordering,

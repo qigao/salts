@@ -18,8 +18,15 @@ typedef enum cnet_write_entry_state {
 
 typedef enum cnet_write_payload_kind {
   CNET_WRITE_PAYLOAD_COPIED = 0,
-  CNET_WRITE_PAYLOAD_RETAINED
+  CNET_WRITE_PAYLOAD_RETAINED,
+  CNET_WRITE_PAYLOAD_RETAINED_VECTOR
 } cnet_write_payload_kind;
+
+typedef struct cnet_write_range {
+  mem_buffer_t *buffer;
+  size_t base_offset;
+  size_t length;
+} cnet_write_range;
 
 typedef struct cnet_write_entry {
   cnet_session_handle connection;
@@ -28,6 +35,10 @@ typedef struct cnet_write_entry {
   size_t base_offset;
   size_t offset;
   size_t copied_bytes;
+  cnet_write_range ranges[NATIVE_IO_VECTOR_MAX];
+  mem_buffer_t *owners[NATIVE_IO_VECTOR_MAX];
+  size_t range_count;
+  size_t owner_count;
   uint32_t generation;
   uint32_t next;
   cnet_write_entry_state state;
@@ -125,6 +136,8 @@ static int cnet_write_enqueue_owned(cnet_write_queue_impl *impl, cnet_session_ha
   entry->base_offset = base_offset;
   entry->offset = 0u;
   entry->copied_bytes = copied_bytes;
+  entry->range_count = 0u;
+  entry->owner_count = 0u;
   entry->next = CNET_WRITE_SLOT_NONE;
   entry->payload_kind = payload_kind;
   entry->close_after_send = close_after_send;
@@ -341,6 +354,112 @@ int cnet_write_queue_enqueue_slice(cnet_write_queue *queue, cnet_session_handle 
   return status;
 }
 
+int cnet_write_queue_enqueue_slicev(cnet_write_queue *queue,
+                                    cnet_session_handle connection,
+                                    const mem_slice_t *segments, size_t segment_count,
+                                    bool close_after_send, cnet_write_handle *out_handle) {
+  cnet_write_queue_impl *impl = cnet_write_impl(queue);
+  const size_t connection_index =
+      impl != NULL ? cnet_write_connection_index(impl, connection) : SIZE_MAX;
+  size_t base_offsets[NATIVE_IO_VECTOR_MAX];
+  size_t total = 0u;
+  uint32_t slot;
+  uint32_t tail;
+  cnet_write_entry *entry;
+  int status;
+
+  if (out_handle == NULL) return SALTS_EINVAL;
+  *out_handle = (cnet_write_handle){0};
+  if (impl == NULL || segments == NULL || segment_count == 0u ||
+      segment_count > NATIVE_IO_VECTOR_MAX)
+    return SALTS_EINVAL;
+
+  for (size_t index = 0u; index < segment_count; ++index) {
+    status = cnet_write_slice_canonical(&segments[index], &base_offsets[index]);
+    if (status != SALTS_OK) return status;
+    if (segments[index].length > SIZE_MAX - total) return SALTS_EMSGSIZE;
+    total += segments[index].length;
+  }
+  status = cnet_write_validate_payload(impl, connection, total);
+  if (status != SALTS_OK) return status;
+  if (connection_index == SIZE_MAX) return SALTS_EINVAL;
+  if (impl->heads[connection_index] != CNET_WRITE_SLOT_NONE) {
+    const cnet_write_entry *head = &impl->entries[impl->heads[connection_index]];
+    if (!cnet_write_entry_matches(head, connection)) return SALTS_EBUSY;
+  }
+
+  slot = impl->free_slots[--impl->free_count];
+  entry = &impl->entries[slot];
+  if (entry->state != CNET_WRITE_ENTRY_FREE) {
+    ++impl->free_count;
+    return SALTS_EPROTO;
+  }
+
+  entry->owner_count = 0u;
+  for (size_t index = 0u; index < segment_count; ++index) {
+    size_t owner_index = 0u;
+    while (owner_index < entry->owner_count &&
+           entry->owners[owner_index] != segments[index].buffer)
+      ++owner_index;
+    if (owner_index == entry->owner_count) {
+      mem_buffer_t *retained = mem_buffer_retain(segments[index].buffer);
+      if (retained == NULL) {
+        for (size_t release = 0u; release < entry->owner_count; ++release)
+          mem_buffer_release(entry->owners[release]);
+        memset(entry->owners, 0, sizeof(entry->owners));
+        memset(entry->ranges, 0, sizeof(entry->ranges));
+        entry->owner_count = 0u;
+        ++impl->free_count;
+        return SALTS_EINVAL;
+      }
+      entry->owners[entry->owner_count++] = retained;
+    }
+    entry->ranges[index] =
+        (cnet_write_range){segments[index].buffer, base_offsets[index], segments[index].length};
+  }
+
+  entry->generation = cnet_write_next_generation(entry->generation);
+  entry->connection = connection;
+  entry->payload = NULL;
+  entry->size = total;
+  entry->base_offset = 0u;
+  entry->offset = 0u;
+  entry->copied_bytes = 0u;
+  entry->range_count = segment_count;
+  entry->next = CNET_WRITE_SLOT_NONE;
+  entry->payload_kind = CNET_WRITE_PAYLOAD_RETAINED_VECTOR;
+  entry->close_after_send = close_after_send;
+  entry->state = CNET_WRITE_ENTRY_QUEUED;
+
+  tail = impl->tails[connection_index];
+  if (tail == CNET_WRITE_SLOT_NONE) {
+    impl->heads[connection_index] = slot;
+  } else {
+    if (tail >= impl->capacity || impl->entries[tail].state != CNET_WRITE_ENTRY_QUEUED) {
+      for (size_t index = 0u; index < entry->owner_count; ++index)
+        mem_buffer_release(entry->owners[index]);
+      memset(entry->owners, 0, sizeof(entry->owners));
+      memset(entry->ranges, 0, sizeof(entry->ranges));
+      entry->owner_count = 0u;
+      entry->range_count = 0u;
+      entry->connection = (cnet_session_handle){0};
+      entry->size = 0u;
+      entry->payload_kind = CNET_WRITE_PAYLOAD_RETAINED;
+      entry->state = CNET_WRITE_ENTRY_FREE;
+      impl->free_slots[impl->free_count++] = slot;
+      return SALTS_EPROTO;
+    }
+    impl->entries[tail].next = slot;
+  }
+
+  impl->tails[connection_index] = slot;
+  ++impl->counts[connection_index];
+  ++impl->live_writes;
+  if (impl->peak_writes < impl->live_writes) impl->peak_writes = impl->live_writes;
+  *out_handle = (cnet_write_handle){slot + 1u, entry->generation};
+  return SALTS_OK;
+}
+
 int cnet_write_queue_peek(cnet_write_queue *queue, cnet_session_handle connection,
                           cnet_write_view *out_view) {
   cnet_write_queue_impl *impl = cnet_write_impl(queue);
@@ -363,13 +482,77 @@ int cnet_write_queue_peek(cnet_write_queue *queue, cnet_session_handle connectio
   *out_view = (cnet_write_view){
       .handle = {slot + 1u, entry->generation},
       .connection = entry->connection,
-      .data = (const unsigned char *)mem_buffer_const_data(entry->payload) +
-              entry->base_offset + entry->offset,
       .size = entry->size,
       .offset = entry->offset,
       .remaining = entry->size - entry->offset,
       .close_after_send = entry->close_after_send,
       ._token = cnet_write_token(slot, entry->generation)};
+
+  if (entry->payload_kind == CNET_WRITE_PAYLOAD_RETAINED_VECTOR) {
+    if (entry->range_count == 0u || entry->owner_count == 0u) return SALTS_EPROTO;
+    out_view->vector_write = true;
+  } else {
+    if (entry->payload == NULL) return SALTS_EPROTO;
+    out_view->data = (const unsigned char *)mem_buffer_const_data(entry->payload) +
+                     entry->base_offset + entry->offset;
+  }
+  return SALTS_OK;
+}
+
+int cnet_write_queue_build_vector(cnet_write_queue *queue,
+                                  const cnet_write_view *view, size_t max_bytes,
+                                  native_io_buffer_span out_spans[NATIVE_IO_VECTOR_MAX],
+                                  size_t *out_count, size_t *out_bytes) {
+  cnet_write_queue_impl *impl = cnet_write_impl(queue);
+  cnet_write_entry *entry;
+  size_t connection_index;
+  uint32_t slot;
+  size_t consumed;
+  size_t output = 0u;
+  size_t bytes = 0u;
+
+  if (out_count == NULL || out_bytes == NULL) return SALTS_EINVAL;
+  *out_count = 0u;
+  *out_bytes = 0u;
+  if (impl == NULL || view == NULL || out_spans == NULL || max_bytes == 0u ||
+      !view->vector_write || !cnet_write_handle_valid(view->handle))
+    return SALTS_EINVAL;
+  slot = view->handle.slot - 1u;
+  if ((size_t)slot >= impl->capacity) return SALTS_ENOENT;
+  entry = &impl->entries[slot];
+  connection_index = cnet_write_connection_index(impl, view->connection);
+  if (connection_index == SIZE_MAX || impl->heads[connection_index] != slot ||
+      entry->generation != view->handle.generation ||
+      view->_token != cnet_write_token(slot, entry->generation) ||
+      !cnet_write_entry_matches(entry, view->connection) ||
+      entry->payload_kind != CNET_WRITE_PAYLOAD_RETAINED_VECTOR ||
+      entry->offset != view->offset || entry->offset > entry->size)
+    return SALTS_ENOENT;
+
+  consumed = entry->offset;
+  if (max_bytes > entry->size - consumed) max_bytes = entry->size - consumed;
+  for (size_t index = 0u; index < entry->range_count && bytes < max_bytes; ++index) {
+    const cnet_write_range *range = &entry->ranges[index];
+    size_t local;
+    size_t take;
+    const char *data;
+    if (consumed >= range->length) {
+      consumed -= range->length;
+      continue;
+    }
+    local = consumed;
+    consumed = 0u;
+    take = range->length - local;
+    if (take > max_bytes - bytes) take = max_bytes - bytes;
+    data = mem_buffer_const_data(range->buffer);
+    if (data == NULL || take == 0u || output >= NATIVE_IO_VECTOR_MAX) return SALTS_EPROTO;
+    out_spans[output++] =
+        (native_io_buffer_span){(void *)(data + range->base_offset + local), take};
+    bytes += take;
+  }
+  if (output == 0u || bytes == 0u) return SALTS_EPROTO;
+  *out_count = output;
+  *out_bytes = bytes;
   return SALTS_OK;
 }
 
@@ -409,13 +592,22 @@ static int cnet_write_release_slot(cnet_write_queue_impl *impl, size_t connectio
 
   impl->copied_bytes -= entry->copied_bytes;
   --impl->live_writes;
-  mem_buffer_release(entry->payload);
+  if (entry->payload_kind == CNET_WRITE_PAYLOAD_RETAINED_VECTOR) {
+    for (size_t index = 0u; index < entry->owner_count; ++index)
+      mem_buffer_release(entry->owners[index]);
+    memset(entry->owners, 0, sizeof(entry->owners));
+    memset(entry->ranges, 0, sizeof(entry->ranges));
+  } else {
+    mem_buffer_release(entry->payload);
+  }
   entry->connection = (cnet_session_handle){0};
   entry->payload = NULL;
   entry->size = 0u;
   entry->base_offset = 0u;
   entry->offset = 0u;
   entry->copied_bytes = 0u;
+  entry->range_count = 0u;
+  entry->owner_count = 0u;
   entry->next = CNET_WRITE_SLOT_NONE;
   entry->close_after_send = false;
   entry->state = CNET_WRITE_ENTRY_FREE;

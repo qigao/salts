@@ -666,6 +666,12 @@ jobs:
           if (-not (Test-Path -LiteralPath "$env:CNET_IO_BENCHMARK_OUTPUT.sg.csv" -PathType Leaf)) {
             throw "SG comparison CSV was not produced"
           }
+          $evidence = $output | Where-Object { $_ -match '^SG delta payload=' }
+          if (@($evidence).Count -ne 16) {
+            throw "Expected 16 SG paired-delta evidence rows, got $(@($evidence).Count)"
+          }
+          Write-Host "SG paired-delta evidence: $env:CNET_IO_BENCHMARK_BACKEND"
+          $evidence | ForEach-Object { Write-Host $_ }
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## Flatten versus NativeIO SG: $env:CNET_IO_BENCHMARK_BACKEND"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""

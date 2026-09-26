@@ -281,6 +281,259 @@ spec("CNet bounded write ownership queue") {
     check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
   }
 
+  it("retains bounded vector slices without copying and rebuilds partial spans") {
+    cnet_write_queue queue = {0};
+    const cnet_write_queue_config config = {1u, 2u, 32u, 32u};
+    const cnet_session_handle connection = {1u, 12u};
+    cnet_write_queue_free_probe first_free;
+    cnet_write_queue_free_probe second_free;
+    mem_buffer_t *first;
+    mem_buffer_t *second;
+    mem_slice_t slices[3];
+    cnet_write_handle handle = {0};
+    cnet_write_view view = {0};
+    native_io_buffer_span spans[NATIVE_IO_VECTOR_MAX] = {{0}};
+    size_t span_count = 0u;
+    size_t span_bytes = 0u;
+    cnet_write_queue_stats stats = {0};
+
+    atomic_init(&first_free.freed, 0);
+    atomic_init(&second_free.freed, 0);
+    check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
+
+    first = cnet_write_queue_external(8u, 0u, &first_free);
+    second = cnet_write_queue_external(8u, 0u, &second_free);
+    check_true(first != NULL);
+    check_true(second != NULL);
+    for (size_t index = 0u; index < 8u; ++index) {
+      mem_buffer_data(first)[index] = (char)(0x10u + index);
+      mem_buffer_data(second)[index] = (char)(0x20u + index);
+    }
+
+    slices[0] = mem_slice(first, 1u, 3u);
+    slices[1] = mem_slice(first, 5u, 2u);
+    slices[2] = mem_slice(second, 2u, 3u);
+    check_equal(mem_buffer_ref_count(first), UINT32_C(3));
+    check_equal(mem_buffer_ref_count(second), UINT32_C(2));
+
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, slices, 3u, false, &handle),
+                SALTS_OK);
+    check_equal(mem_buffer_ref_count(first), UINT32_C(4));
+    check_equal(mem_buffer_ref_count(second), UINT32_C(3));
+    for (size_t index = 0u; index < 3u; ++index) mem_slice_release(&slices[index]);
+    check_equal(mem_buffer_ref_count(first), UINT32_C(2));
+    check_equal(mem_buffer_ref_count(second), UINT32_C(2));
+    mem_buffer_release(first);
+    mem_buffer_release(second);
+    check_equal(atomic_load_explicit(&first_free.freed, memory_order_acquire), 0);
+    check_equal(atomic_load_explicit(&second_free.freed, memory_order_acquire), 0);
+
+    check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
+    check_equal(view.size, (size_t)8u);
+    check_equal(view.remaining, (size_t)8u);
+    check_true(view.vector_write);
+    check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining, spans,
+                                              &span_count, &span_bytes),
+                SALTS_OK);
+    check_equal(span_count, (size_t)3u);
+    check_equal(span_bytes, (size_t)8u);
+    check_equal(((const unsigned char *)spans[0].data)[0], 0x11u);
+    check_equal(spans[0].length, (size_t)3u);
+    check_equal(((const unsigned char *)spans[1].data)[0], 0x15u);
+    check_equal(spans[1].length, (size_t)2u);
+    check_equal(((const unsigned char *)spans[2].data)[0], 0x22u);
+    check_equal(spans[2].length, (size_t)3u);
+
+    check_equal(cnet_write_queue_advance(&queue, &view, 4u), SALTS_OK);
+    check_equal(view.offset, (size_t)4u);
+    check_equal(view.remaining, (size_t)4u);
+    check_true(view.vector_write);
+    span_count = 0u;
+    span_bytes = 0u;
+    check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining, spans,
+                                              &span_count, &span_bytes),
+                SALTS_OK);
+    check_equal(span_count, (size_t)2u);
+    check_equal(span_bytes, (size_t)4u);
+    check_equal(((const unsigned char *)spans[0].data)[0], 0x16u);
+    check_equal(spans[0].length, (size_t)1u);
+    check_equal(((const unsigned char *)spans[1].data)[0], 0x22u);
+    check_equal(spans[1].length, (size_t)3u);
+    check_true(cnet_write_queue_get_stats(&queue, &stats));
+    check_equal(stats.copied_bytes, (size_t)0u);
+
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+    check_equal(atomic_load_explicit(&first_free.freed, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&second_free.freed, memory_order_acquire), 1);
+    check_equal(cnet_write_queue_close(&queue), SALTS_OK);
+    check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
+  }
+
+  it("rejects invalid retained vectors without acquiring backing references") {
+    cnet_write_queue queue = {0};
+    const cnet_write_queue_config config = {1u, 1u, 16u, 16u};
+    const cnet_session_handle connection = {1u, 13u};
+    cnet_write_queue_free_probe free_probe;
+    mem_buffer_t *buffer;
+    mem_slice_t segments[2];
+    cnet_write_handle handle = {1u, 1u};
+
+    atomic_init(&free_probe.freed, 0);
+    check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
+    buffer = cnet_write_queue_external(8u, 0x33u, &free_probe);
+    check_true(buffer != NULL);
+    segments[0] = (mem_slice_t){mem_buffer_data(buffer), 2u, buffer};
+    segments[1] = (mem_slice_t){mem_buffer_data(buffer) + 8u, 1u, buffer};
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(1));
+
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, segments, 2u, false, &handle),
+                SALTS_EINVAL);
+    check_false(cnet_write_handle_valid(handle));
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(1));
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, segments, 0u, false, &handle),
+                SALTS_EINVAL);
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, segments,
+                                                NATIVE_IO_VECTOR_MAX + 1u, false, &handle),
+                SALTS_EINVAL);
+    check_equal(mem_buffer_ref_count(buffer), UINT32_C(1));
+
+    mem_buffer_release(buffer);
+    check_equal(atomic_load_explicit(&free_probe.freed, memory_order_acquire), 1);
+    check_equal(cnet_write_queue_close(&queue), SALTS_OK);
+    check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
+  }
+
+  it("preserves FIFO across copied retained and retained-vector writes") {
+    cnet_write_queue queue = {0};
+    const cnet_write_queue_config config = {1u, 4u, 32u, 64u};
+    const cnet_session_handle connection = {1u, 14u};
+    const unsigned char copied[] = {0x01u, 0x02u};
+    cnet_write_queue_free_probe retained_free;
+    cnet_write_queue_free_probe vector_free;
+    mem_buffer_t *retained;
+    mem_buffer_t *vector_buffer;
+    mem_slice_t vector_slices[2];
+    cnet_write_handle handle = {0};
+    cnet_write_view view = {0};
+    native_io_buffer_span spans[NATIVE_IO_VECTOR_MAX] = {{0}};
+    size_t span_count = 0u;
+    size_t span_bytes = 0u;
+
+    atomic_init(&retained_free.freed, 0);
+    atomic_init(&vector_free.freed, 0);
+    check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
+
+    retained = cnet_write_queue_external(2u, 0x22u, &retained_free);
+    vector_buffer = cnet_write_queue_external(4u, 0u, &vector_free);
+    check_true(retained != NULL);
+    check_true(vector_buffer != NULL);
+    mem_buffer_data(vector_buffer)[0] = 0x31;
+    mem_buffer_data(vector_buffer)[1] = 0x32;
+    mem_buffer_data(vector_buffer)[2] = 0x33;
+    mem_buffer_data(vector_buffer)[3] = 0x34;
+    vector_slices[0] = mem_slice(vector_buffer, 0u, 2u);
+    vector_slices[1] = mem_slice(vector_buffer, 2u, 2u);
+
+    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, copied, sizeof(copied), false,
+                                              &handle),
+                SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_buffer(&queue, connection, retained, false, &handle),
+                SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, vector_slices, 2u, false,
+                                                &handle),
+                SALTS_OK);
+    mem_buffer_release(retained);
+    for (size_t index = 0u; index < 2u; ++index) mem_slice_release(&vector_slices[index]);
+    mem_buffer_release(vector_buffer);
+
+    check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
+    check_false(view.vector_write);
+    check_equal(view.size, sizeof(copied));
+    check_equal(((const unsigned char *)view.data)[0], 0x01u);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+
+    check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
+    check_false(view.vector_write);
+    check_equal(view.size, (size_t)2u);
+    check_equal(((const unsigned char *)view.data)[0], 0x22u);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+    check_equal(atomic_load_explicit(&retained_free.freed, memory_order_acquire), 1);
+
+    check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
+    check_true(view.vector_write);
+    check_equal(cnet_write_queue_build_vector(&queue, &view, view.remaining, spans,
+                                              &span_count, &span_bytes),
+                SALTS_OK);
+    check_equal(span_count, (size_t)2u);
+    check_equal(span_bytes, (size_t)4u);
+    check_equal(((const unsigned char *)spans[0].data)[0], 0x31u);
+    check_equal(((const unsigned char *)spans[1].data)[0], 0x33u);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+    check_equal(atomic_load_explicit(&vector_free.freed, memory_order_acquire), 1);
+
+    check_equal(cnet_write_queue_close(&queue), SALTS_OK);
+    check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
+  }
+
+  it("releases retained-vector ownership exactly once on tail cancel and discard") {
+    cnet_write_queue queue = {0};
+    const cnet_write_queue_config config = {1u, 4u, 32u, 64u};
+    const cnet_session_handle connection = {1u, 15u};
+    const unsigned char head_byte = 0x41u;
+    cnet_write_queue_free_probe first_free;
+    cnet_write_queue_free_probe second_free;
+    mem_buffer_t *first;
+    mem_buffer_t *second;
+    mem_slice_t first_slices[2];
+    mem_slice_t second_slices[2];
+    cnet_write_handle head = {0};
+    cnet_write_handle first_handle = {0};
+    cnet_write_handle second_handle = {0};
+    cnet_write_view view = {0};
+    size_t discarded = 0u;
+
+    atomic_init(&first_free.freed, 0);
+    atomic_init(&second_free.freed, 0);
+    check_equal(cnet_write_queue_init(&queue, &config), SALTS_OK);
+    first = cnet_write_queue_external(4u, 0x51u, &first_free);
+    second = cnet_write_queue_external(4u, 0x61u, &second_free);
+    check_true(first != NULL);
+    check_true(second != NULL);
+    first_slices[0] = mem_slice(first, 0u, 2u);
+    first_slices[1] = mem_slice(first, 2u, 2u);
+    second_slices[0] = mem_slice(second, 0u, 2u);
+    second_slices[1] = mem_slice(second, 2u, 2u);
+
+    check_equal(cnet_write_queue_enqueue_copy(&queue, connection, &head_byte, 1u, false, &head),
+                SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, first_slices, 2u, false,
+                                                &first_handle),
+                SALTS_OK);
+    check_equal(cnet_write_queue_enqueue_slicev(&queue, connection, second_slices, 2u, false,
+                                                &second_handle),
+                SALTS_OK);
+    for (size_t index = 0u; index < 2u; ++index) {
+      mem_slice_release(&first_slices[index]);
+      mem_slice_release(&second_slices[index]);
+    }
+    mem_buffer_release(first);
+    mem_buffer_release(second);
+
+    check_equal(cnet_write_queue_cancel_tail(&queue, connection, second_handle), SALTS_OK);
+    check_equal(atomic_load_explicit(&second_free.freed, memory_order_acquire), 1);
+    check_equal(atomic_load_explicit(&first_free.freed, memory_order_acquire), 0);
+
+    check_equal(cnet_write_queue_discard(&queue, connection, true, &discarded), SALTS_OK);
+    check_equal(discarded, (size_t)1u);
+    check_equal(atomic_load_explicit(&first_free.freed, memory_order_acquire), 1);
+
+    check_equal(cnet_write_queue_peek(&queue, connection, &view), SALTS_OK);
+    check_equal(view.handle.slot, head.slot);
+    check_equal(cnet_write_queue_settle(&queue, &view), SALTS_OK);
+    check_equal(cnet_write_queue_close(&queue), SALTS_OK);
+    check_equal(cnet_write_queue_destroy(&queue), SALTS_OK);
+  }
+
   it("copies vectors today without claiming native scatter gather") {
     cnet_write_queue queue = {0};
     const cnet_write_queue_config config = {1u, 2u, 16u, 16u};
