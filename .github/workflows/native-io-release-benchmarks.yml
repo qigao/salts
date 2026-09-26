@@ -268,7 +268,7 @@ jobs:
               cnet_benchmark_stats_test cnet_io_benchmark_config_test \
               concurrency_deadline_queue_test native_io_queue_depth_benchmark \
               native_io_idle_observe_benchmark native_io_sharded_routing_benchmark native_io_pipe_styles_benchmark \
-              native_io_stream_styles_benchmark cnet_scaling_benchmark
+              native_io_stream_styles_benchmark native_io_vsock_styles_benchmark cnet_scaling_benchmark
 
       - name: Configure Windows Release
         if: matrix.family == 'windows'
@@ -465,6 +465,43 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO TCP STREAM execution styles: $env:NATIVE_IO_STREAM_STYLE_BACKEND"
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
           $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Run NativeIO AF_VSOCK execution-style benchmark
+        if: matrix.family == 'linux' && steps.scope.outputs.adapted == 'true'
+        shell: pwsh
+        env:
+          NATIVE_IO_VSOCK_STYLE_EXECUTABLE: ${{ matrix.build_dir }}/bin/native_io_vsock_styles_benchmark
+          NATIVE_IO_VSOCK_STYLE_BACKEND: ${{ matrix.backend }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $resultDir = Join-Path $env:GITHUB_WORKSPACE "native-io-results"
+          New-Item -ItemType Directory -Force -Path $resultDir | Out-Null
+          $benchmark = Join-Path $env:GITHUB_WORKSPACE $env:NATIVE_IO_VSOCK_STYLE_EXECUTABLE
+          if (-not (Test-Path -LiteralPath $benchmark -PathType Leaf)) {
+            throw "NativeIO AF_VSOCK style benchmark executable not found: $benchmark"
+          }
+          $env:NATIVE_IO_VSOCK_STYLE_OUTPUT = Join-Path $resultDir "native-io-vsock-styles"
+          $output = & $benchmark 2>&1 |
+            Tee-Object -FilePath (Join-Path $resultDir "native-io-vsock-styles.md")
+          $benchmarkExit = $LASTEXITCODE
+          if ($benchmarkExit -eq 77) {
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO AF_VSOCK execution styles: $env:NATIVE_IO_VSOCK_STYLE_BACKEND"
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+            $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+            Write-Host "AF_VSOCK unavailable on this runtime; no TCP fallback was attempted."
+          } elseif ($benchmarkExit -ne 0) {
+            exit $benchmarkExit
+          } else {
+            & ./native-io/benchmarks/verify_vsock_styles_benchmark.ps1 `
+              -Path "$env:NATIVE_IO_VSOCK_STYLE_OUTPUT.csv" `
+              -Backend $env:NATIVE_IO_VSOCK_STYLE_BACKEND
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "## NativeIO AF_VSOCK execution styles: $env:NATIVE_IO_VSOCK_STYLE_BACKEND"
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ""
+            $output | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          }
 
       - name: Run libuv versus NativeIO direct/coroutine versus CNet retained benchmark
         if: steps.scope.outputs.adapted == 'true'
