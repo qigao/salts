@@ -108,8 +108,14 @@ io_uring 每个 SQE 单独 enter。公共 operation/completion 契约不要求�
   不依赖“再来一个边沿”。kqueue 保持既有注册策略，不强行继承 epoll ET 规则。
 - **io_uring**：prepare 将有界描述符放入原 request 槽位；只有每个 read/write lane 的 head
   进入待提交链，flush 批量发布 SQE。observe 在等待或交回 completion 前提交 eligible heads。
-  enter 后立即检查 CQ，避免为了已完成的 send 再调用 poll；CQ 推进后的新 lane head
-  在同一 owner 轮次合并。普通 submit 的空闲 lane 仍立即提交。
+  wake eventfd 由 ring 内部的 `IORING_OP_POLL_ADD` 观察；支持 EXT_ARG 的内核直接用
+  `io_uring_enter(GETEVENTS)` 完成等待，不再额外 `poll(ring_fd, wake_fd)`。CQ 推进后的新
+  lane head 在同一 owner 轮次合并，普通 submit 的空闲 lane 仍立即提交。Linux 构建与内核
+  能力允许时，ring 以 `SINGLE_ISSUER | DEFER_TASKRUN` 表达既有单 owner 契约，并把 completion
+  task-work 收敛到 owner 的 GETEVENTS progress 边界；不支持 DEFER 时退到 SINGLE_ISSUER，
+  再不支持则退到无 setup flag 的同一 io_uring backend，绝不隐式切换 epoll。DEFER 模式下
+  `observe(0)` 使用非阻塞 `GETEVENTS(min_complete=0)` 推进 task-work，已有 CQE 则保持
+  零额外 enter 的直接返回 fast path。
 - **IOCP**：prepare 使用既有 overlapped submit；没有待提交 SQ，flush 无额外工作。
   不把 readiness/io_uring 的“取消一个本地排队请求后继续使用 socket”保证扩展到 Winsock。
   Microsoft 明确说明取消未完成 overlapped I/O 后继续使用 socket 的行为未定义，
