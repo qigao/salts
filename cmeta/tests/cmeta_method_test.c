@@ -46,7 +46,7 @@ static const cmeta_receiver_method method_entries[] = {
 
 static const cmeta_receiver_method_set method_set = {
     sizeof(cmeta_receiver_method_set), &method_box_type,
-    method_entries, 1u
+    method_entries, 1u, "Box"
 };
 
 spec("CMeta receiver method set") {
@@ -54,6 +54,7 @@ spec("CMeta receiver method set") {
         const cmeta_receiver_method *method;
 
         check_true(cmeta_receiver_method_set_valid(&method_set));
+        check_equal(method_set.owner_name, "Box");
         method = cmeta_receiver_method_find(&method_set, "add");
         check_not_null(method);
         check_equal(method->name, "add");
@@ -70,7 +71,7 @@ spec("CMeta receiver method set") {
         cmeta_receiver_resolve_status status;
 
         status = cmeta_receiver_method_resolve(
-            &method_set, &method_box_type, "add",
+            &method_set, &method_box_type, NULL, "add",
             one_int, 1u, &resolution);
         check_equal(status, CMETA_RECEIVER_RESOLVE_OK);
         check_true(resolution.method == &method_entries[0]);
@@ -78,20 +79,33 @@ spec("CMeta receiver method set") {
 
         resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
         status = cmeta_receiver_method_resolve(
-            &method_set, &method_box_type, "missing",
+            &method_set, &method_box_type, "Box", "add",
+            one_int, 1u, &resolution);
+        check_equal(status, CMETA_RECEIVER_RESOLVE_OK);
+        check_true(resolution.method == &method_entries[0]);
+
+        resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
+        status = cmeta_receiver_method_resolve(
+            &method_set, &method_box_type, "Other", "add",
+            one_int, 1u, &resolution);
+        check_equal(status, CMETA_RECEIVER_RESOLVE_OWNER_MISMATCH);
+
+        resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
+        status = cmeta_receiver_method_resolve(
+            &method_set, &method_box_type, NULL, "missing",
             one_int, 1u, &resolution);
         check_equal(status, CMETA_RECEIVER_RESOLVE_METHOD_NOT_FOUND);
         check_null(resolution.method);
 
         resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
         status = cmeta_receiver_method_resolve(
-            &method_set, &method_box_type, "add",
+            &method_set, &method_box_type, NULL, "add",
             NULL, 0u, &resolution);
         check_equal(status, CMETA_RECEIVER_RESOLVE_ARITY_MISMATCH);
 
         resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
         status = cmeta_receiver_method_resolve(
-            &method_set, &method_box_type, "add",
+            &method_set, &method_box_type, NULL, "add",
             one_long, 1u, &resolution);
         check_equal(status, CMETA_RECEIVER_RESOLVE_ARGUMENT_TYPE_MISMATCH);
         check_equal(resolution.argument_index, (size_t)0u);
@@ -100,7 +114,7 @@ spec("CMeta receiver method set") {
         other_type.name = "other_method_box";
         resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
         status = cmeta_receiver_method_resolve(
-            &method_set, &other_type, "add",
+            &method_set, &other_type, NULL, "add",
             one_int, 1u, &resolution);
         check_equal(status, CMETA_RECEIVER_RESOLVE_RECEIVER_TYPE_MISMATCH);
     }
@@ -113,21 +127,21 @@ spec("CMeta receiver method set") {
         invalid_set.size = 0u;
         check_equal(
             cmeta_receiver_method_resolve(
-                &invalid_set, &method_box_type, "add",
+                &invalid_set, &method_box_type, NULL, "add",
                 NULL, 0u, &resolution),
             CMETA_RECEIVER_RESOLVE_INVALID_METHOD_SET);
 
         resolution = (cmeta_receiver_resolution)CMETA_RECEIVER_RESOLUTION_INIT;
         check_equal(
             cmeta_receiver_method_resolve(
-                &method_set, &method_box_type, "add",
+                &method_set, &method_box_type, NULL, "add",
                 bad_args, 1u, &resolution),
             CMETA_RECEIVER_RESOLVE_INVALID_ARGUMENT);
 
         resolution.size = 0u;
         check_equal(
             cmeta_receiver_method_resolve(
-                &method_set, &method_box_type, "add",
+                &method_set, &method_box_type, NULL, "add",
                 NULL, 0u, &resolution),
             CMETA_RECEIVER_RESOLVE_INVALID_ARGUMENT);
     }
@@ -147,6 +161,10 @@ spec("CMeta receiver method set") {
         other_type.name = "other_box";
         invalid = method_set;
         invalid.receiver_type = &other_type;
+        check_false(cmeta_receiver_method_set_valid(&invalid));
+
+        invalid = method_set;
+        invalid.owner_name = NULL;
         check_false(cmeta_receiver_method_set_valid(&invalid));
     }
 

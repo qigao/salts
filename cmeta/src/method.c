@@ -30,7 +30,8 @@ bool cmeta_receiver_method_set_valid(const cmeta_receiver_method_set *set) {
     size_t j;
 
     if (set == NULL || set->size < sizeof(*set) ||
-        !cmeta_type_desc_valid(set->receiver_type))
+        !cmeta_type_desc_valid(set->receiver_type) ||
+        set->owner_name == NULL || set->owner_name[0] == '\0')
         return false;
 
     if (set->method_count != 0u && set->methods == NULL)
@@ -67,6 +68,7 @@ cmeta_receiver_resolve_status
 cmeta_receiver_method_resolve(
     const cmeta_receiver_method_set *set,
     const cmeta_type_desc *receiver_type,
+    const char *owner_name,
     const char *method_name,
     const cmeta_type_desc *const *argument_types,
     size_t argument_count,
@@ -90,6 +92,10 @@ cmeta_receiver_method_resolve(
 
     if (!cmeta_type_equal(set->receiver_type, receiver_type))
         return CMETA_RECEIVER_RESOLVE_RECEIVER_TYPE_MISMATCH;
+
+    if (owner_name != NULL &&
+        (owner_name[0] == '\0' || strcmp(owner_name, set->owner_name) != 0))
+        return CMETA_RECEIVER_RESOLVE_OWNER_MISMATCH;
 
     method = cmeta_receiver_method_find(set, method_name);
     if (method == NULL)

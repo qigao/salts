@@ -136,12 +136,16 @@ spec("CSTL typed schema") {
             cmeta_function_param(map_put, 2u)->type, &cmeta_type_long));
     }
 
-    it("resolves reflected receiver methods through generic method sets") {
+    it("separates generic operation owners from concrete typed symbols") {
         const cmeta_receiver_method_set *set;
         const cmeta_receiver_method *method;
+        const cmeta_type_desc *int_args[] = {&cmeta_type_int};
+        cmeta_receiver_resolution receiver = CMETA_RECEIVER_RESOLUTION_INIT;
+        cmeta_receiver_resolution generic = CMETA_RECEIVER_RESOLUTION_INIT;
 
         set = IntVec_receiver_method_set();
         check_true(cmeta_receiver_method_set_valid(set));
+        check_equal(set->owner_name, "Vec");
         method = cmeta_receiver_method_find(set, "push");
         check_not_null(method);
         check_true(method->function == IntVec_push_function());
@@ -149,13 +153,27 @@ spec("CSTL typed schema") {
 
         set = IntList_receiver_method_set();
         check_true(cmeta_receiver_method_set_valid(set));
+        check_equal(set->owner_name, "List");
         method = cmeta_receiver_method_find(set, "add");
         check_not_null(method);
         check_true(method->function == IntList_add_function());
         check_true(method->abi == IntList_add_function_abi());
 
+        check_equal(
+            cmeta_receiver_method_resolve(
+                set, &IntList_cmeta_type, NULL, "add",
+                int_args, 1u, &receiver),
+            CMETA_RECEIVER_RESOLVE_OK);
+        check_equal(
+            cmeta_receiver_method_resolve(
+                set, &IntList_cmeta_type, "List", "add",
+                int_args, 1u, &generic),
+            CMETA_RECEIVER_RESOLVE_OK);
+        check_true(receiver.method == generic.method);
+
         set = IntSet_receiver_method_set();
         check_true(cmeta_receiver_method_set_valid(set));
+        check_equal(set->owner_name, "Set");
         method = cmeta_receiver_method_find(set, "add");
         check_not_null(method);
         check_true(method->function == IntSet_add_function());
@@ -163,6 +181,7 @@ spec("CSTL typed schema") {
 
         set = IntLongMap_receiver_method_set();
         check_true(cmeta_receiver_method_set_valid(set));
+        check_equal(set->owner_name, "Map");
         method = cmeta_receiver_method_find(set, "put");
         check_not_null(method);
         check_true(method->function == IntLongMap_put_function());

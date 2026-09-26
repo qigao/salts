@@ -81,7 +81,7 @@ set_target_properties(cstl_method_lower_poc PROPERTIES
 
 set(CSTL_METHOD_LOWER_DIR "${CMAKE_CURRENT_BINARY_DIR}/method_lower")
 
-function(cstl_add_method_lowering_case name fixture expected_call)
+function(cstl_add_method_lowering_case name fixture expected_canonical expected_call)
   set(lowered_source "${CSTL_METHOD_LOWER_DIR}/${name}.c")
   add_custom_command(
     OUTPUT "${lowered_source}"
@@ -91,7 +91,7 @@ function(cstl_add_method_lowering_case name fixture expected_call)
             "${lowered_source}"
     DEPENDS cstl_method_lower_poc
             "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/method_lower/${fixture}"
-    COMMENT "Lowering ${fixture} to a direct typed CSTL call"
+    COMMENT "Lowering ${fixture} through canonical CSTL semantics"
     VERBATIM)
 
   add_executable(${name} "${lowered_source}")
@@ -107,6 +107,7 @@ function(cstl_add_method_lowering_case name fixture expected_call)
     NAME ${name}_shape
     COMMAND ${CMAKE_COMMAND}
             -DGENERATED=${lowered_source}
+            "-DEXPECTED_CANONICAL=${expected_canonical}"
             "-DEXPECTED_CALL=${expected_call}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_method_lowering.cmake")
 endfunction()
@@ -114,18 +115,42 @@ endfunction()
 cstl_add_method_lowering_case(
   cstl_method_vec_push
   vec_push.cmeta
+  "Vec_push(&vec, 10)"
+  "rc = IntVec_push(&vec, 10)")
+cstl_add_method_lowering_case(
+  cstl_method_vec_push_generic
+  vec_push_generic.cmeta
+  "Vec_push(&vec, 10)"
   "rc = IntVec_push(&vec, 10)")
 cstl_add_method_lowering_case(
   cstl_method_list_add
   list_add.cmeta
+  "List_add(&list, 10)"
+  "rc = IntList_add(&list, 10)")
+cstl_add_method_lowering_case(
+  cstl_method_list_add_generic
+  list_add_generic.cmeta
+  "List_add(&list, 10)"
   "rc = IntList_add(&list, 10)")
 cstl_add_method_lowering_case(
   cstl_method_set_add
   set_add.cmeta
+  "Set_add(&set, 10)"
+  "rc = IntSet_add(&set, 10)")
+cstl_add_method_lowering_case(
+  cstl_method_set_add_generic
+  set_add_generic.cmeta
+  "Set_add(&set, 10)"
   "rc = IntSet_add(&set, 10)")
 cstl_add_method_lowering_case(
   cstl_method_map_put
   map_put.cmeta
+  "Map_put(&map, 1, 20)"
+  "rc = IntMap_put(&map, 1, 20)")
+cstl_add_method_lowering_case(
+  cstl_method_map_put_generic
+  map_put_generic.cmeta
+  "Map_put(&map, 1, 20)"
   "rc = IntMap_put(&map, 1, 20)")
 
 function(cstl_add_method_rejection_test name fixture diagnostic)
@@ -155,6 +180,10 @@ cstl_add_method_rejection_test(
   cstl_method_lower_wrong_arity_test
   wrong_arity.cmeta
   "map.put arity does not match reflected signature")
+cstl_add_method_rejection_test(
+  cstl_method_lower_wrong_owner_test
+  wrong_owner.cmeta
+  "generic owner 'Vec' does not match IntList owner 'List'")
 endif()
 
 
