@@ -268,6 +268,8 @@ typedef struct native_io_sharded_owned_state {
   int wrong_submit_status;
   int invalid_owner_status;
   int submit_status;
+  int prepare_status;
+  int flush_status;
   int cancel_status;
   int observe_status;
   size_t observe_count;
@@ -429,6 +431,18 @@ static void native_io_sharded_owned_submit(native_io_sharded_context *context, v
       native_io_sharded_context_submit_owned(context, &operation, &ownership, &state->request);
 }
 
+static void native_io_sharded_owned_prepare(native_io_sharded_context *context, void *arg) {
+  native_io_sharded_owned_state *state = (native_io_sharded_owned_state *)arg;
+  native_io_sharded_operation operation = native_io_sharded_owned_read_operation(state);
+  native_io_sharded_ownership ownership = {
+      native_io_sharded_owned_terminal, native_io_sharded_owned_finalize, state};
+  state->prepare_status =
+      native_io_sharded_context_prepare_owned(context, &operation, &ownership, &state->request);
+  state->flush_status = state->prepare_status == SALTS_OK
+                            ? native_io_sharded_context_flush(context)
+                            : state->prepare_status;
+}
+
 static void native_io_sharded_owned_cancel(native_io_sharded_context *context, void *arg) {
   native_io_sharded_owned_state *state = (native_io_sharded_owned_state *)arg;
   state->cancel_status = native_io_sharded_context_cancel(context, state->request);
@@ -458,6 +472,8 @@ spec("NativeIO bounded sharded routing") {
         native_io_sharded_owned_wrong_submit, NULL, NULL, &state};
     native_io_sharded_task submit_task = {
         native_io_sharded_owned_submit, NULL, NULL, &state};
+    native_io_sharded_task prepare_task = {
+        native_io_sharded_owned_prepare, NULL, NULL, &state};
     native_io_sharded_task cancel_task = {
         native_io_sharded_owned_cancel, NULL, NULL, &state};
     native_io_sharded_task observe_task = {
@@ -533,6 +549,33 @@ spec("NativeIO bounded sharded routing") {
       check_equal(atomic_load(&state.finalizes), 2);
       check_equal(state.terminal_finalizes_seen, 1);
       check_equal(state.terminal_kind, NATIVE_IO_COMPLETION_CANCELLED);
+      check_equal(state.terminal_shard, (size_t)1);
+
+      state.byte = 0u;
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &prepare_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.prepare_status, SALTS_OK);
+      check_equal(state.flush_status, SALTS_OK);
+      check_true(native_io_sharded_request_valid(state.request));
+      check_equal(atomic_load(&state.finalizes), 2);
+
+      {
+        const unsigned char payload = 0x7du;
+        state.peer_write_status =
+            native_io_sharded_test_pipe_write(state.peer, &payload, sizeof(payload));
+      }
+      check_equal(state.peer_write_status, SALTS_OK);
+      check_equal(native_io_sharded_try_submit_to(runtime, 1u, &observe_task), SALTS_OK);
+      check_equal(native_io_sharded_wait(runtime), SALTS_OK);
+      check_equal(state.observe_status, SALTS_OK);
+      check_equal(state.observe_count, (size_t)1);
+      check_equal(state.completion.kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(atomic_load(&state.terminals), 3);
+      check_equal(atomic_load(&state.finalizes), 3);
+      check_equal(state.terminal_finalizes_seen, 2);
+      check_equal(state.terminal_kind, NATIVE_IO_COMPLETION_OK);
+      check_equal(state.terminal_bytes, (size_t)1);
+      check_equal(state.terminal_byte, (unsigned char)0x7du);
       check_equal(state.terminal_shard, (size_t)1);
 
       native_io_sharded_test_pipe_close_handle(&pipe_endpoint.handle);
