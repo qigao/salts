@@ -222,6 +222,33 @@ static const cmeta_object_method_provider object_method_provider = {
     .bind = object_box_method_bind
 };
 
+typedef struct object_lifecycle_counts {
+    int retains;
+    int releases;
+    int destroys;
+    bool fail_retain;
+} object_lifecycle_counts;
+
+static cmeta_status object_test_retain(void *context, void *object) {
+    object_lifecycle_counts *counts = (object_lifecycle_counts *)context;
+    if (counts == NULL || object == NULL)
+        return CMETA_INVALID_ARGUMENT;
+    counts->retains += 1;
+    return counts->fail_retain ? CMETA_CALLBACK_ERROR : CMETA_OK;
+}
+
+static void object_test_release(void *context, void *object) {
+    object_lifecycle_counts *counts = (object_lifecycle_counts *)context;
+    if (counts != NULL && object != NULL)
+        counts->releases += 1;
+}
+
+static void object_test_destroy(void *context, void *object) {
+    object_lifecycle_counts *counts = (object_lifecycle_counts *)context;
+    if (counts != NULL && object != NULL)
+        counts->destroys += 1;
+}
+
 spec("CMeta canonical borrowed object") {
     it("preserves one native identity without taking ownership") {
         object_box box = {7};
@@ -251,6 +278,95 @@ spec("CMeta canonical borrowed object") {
         check_null(object.method_provider);
         check_equal(object.lifetime, CMETA_OBJECT_LIFETIME_NONE);
         check_equal(box.value, 16);
+    }
+
+    it("retains and releases shared object ownership exactly once") {
+        object_box box = {4};
+        object_lifecycle_counts counts = {0};
+        cmeta_object_lifecycle lifecycle = {
+            .size = sizeof(cmeta_object_lifecycle),
+            .context = &counts,
+            .retain = object_test_retain,
+            .release = object_test_release,
+            .destroy = NULL
+        };
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+
+        check_true(cmeta_object_lifecycle_valid(&lifecycle));
+        check_equal(cmeta_object_borrow(
+                        &object, &box, &object_box_data, NULL),
+                    CMETA_OK);
+        check_equal(cmeta_object_share(&object, &lifecycle), CMETA_OK);
+        check_true(cmeta_object_ref_valid(&object));
+        check_equal(object.lifetime, CMETA_OBJECT_LIFETIME_SHARED);
+        check_true(object.lifecycle == &lifecycle);
+        check_equal(counts.retains, 1);
+        check_equal(counts.releases, 0);
+
+        cmeta_object_release(&object);
+        check_equal(counts.retains, 1);
+        check_equal(counts.releases, 1);
+        check_equal(counts.destroys, 0);
+        cmeta_object_release(&object);
+        check_equal(counts.releases, 1);
+    }
+
+    it("destroys transferred owned object exactly once") {
+        object_box box = {5};
+        object_lifecycle_counts counts = {0};
+        cmeta_object_lifecycle lifecycle = {
+            .size = sizeof(cmeta_object_lifecycle),
+            .context = &counts,
+            .retain = NULL,
+            .release = NULL,
+            .destroy = object_test_destroy
+        };
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+
+        check_true(cmeta_object_lifecycle_valid(&lifecycle));
+        check_equal(cmeta_object_borrow(
+                        &object, &box, &object_box_data, NULL),
+                    CMETA_OK);
+        check_equal(cmeta_object_take(&object, &lifecycle), CMETA_OK);
+        check_true(cmeta_object_ref_valid(&object));
+        check_equal(object.lifetime, CMETA_OBJECT_LIFETIME_OWNED);
+        check_equal(counts.destroys, 0);
+
+        cmeta_object_release(&object);
+        check_equal(counts.destroys, 1);
+        cmeta_object_release(&object);
+        check_equal(counts.destroys, 1);
+    }
+
+    it("keeps a borrowed handle unchanged when shared retain fails") {
+        object_box box = {6};
+        object_lifecycle_counts counts = {
+            .retains = 0,
+            .releases = 0,
+            .destroys = 0,
+            .fail_retain = true
+        };
+        cmeta_object_lifecycle lifecycle = {
+            .size = sizeof(cmeta_object_lifecycle),
+            .context = &counts,
+            .retain = object_test_retain,
+            .release = object_test_release,
+            .destroy = NULL
+        };
+        cmeta_object_ref object = CMETA_OBJECT_REF_INIT;
+
+        check_equal(cmeta_object_borrow(
+                        &object, &box, &object_box_data, NULL),
+                    CMETA_OK);
+        check_equal(cmeta_object_share(&object, &lifecycle),
+                    CMETA_CALLBACK_ERROR);
+        check_true(cmeta_object_ref_valid(&object));
+        check_equal(object.lifetime, CMETA_OBJECT_LIFETIME_BORROWED);
+        check_null(object.lifecycle);
+        check_equal(counts.retains, 1);
+
+        cmeta_object_release(&object);
+        check_equal(counts.releases, 0);
     }
 
     it("reads reflected fields without copying native state") {
