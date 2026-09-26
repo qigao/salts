@@ -28,7 +28,7 @@
       "name": "boringssl"
     }
   ],
-  "builtin-baseline": "b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01",
+  "builtin-baseline": "118bba14b94bc040c098c0c15e63c142148c05ca",
   "features": {
     "lua-bindings": {
       "description": "Build and test the optional Salts CMeta Lua binding",
@@ -42,5 +42,11 @@
         "quickjs-ng"
       ]
     }
-  }
+  },
+  "overrides": [
+    {
+      "name": "quickjs-ng",
+      "version": "0.16.2"
+    }
+  ]
 }
