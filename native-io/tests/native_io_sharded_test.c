@@ -11,6 +11,7 @@
 #if defined(_WIN32)
   #include <windows.h>
 #else
+  #include <errno.h>
   #include <fcntl.h>
   #include <unistd.h>
 #endif
