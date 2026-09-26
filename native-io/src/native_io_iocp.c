@@ -36,6 +36,8 @@ typedef struct salts_iocp_endpoint_record {
 typedef struct salts_iocp_request_record {
   OVERLAPPED overlapped;
   WSABUF buffer;
+  WSABUF vector_buffers[NATIVE_IO_VECTOR_MAX];
+  DWORD vector_buffer_count;
   salts_iocp_record_phase phase;
   native_io_request request;
   native_io_endpoint endpoint;
@@ -276,6 +278,7 @@ static void iocp_release_request(salts_iocp_impl *impl, salts_iocp_request_recor
   request->phase = SALTS_IOCP_RECORD_FREE;
   request->native_handle = UINTPTR_MAX;
   request->flags = 0u;
+  request->vector_buffer_count = 0u;
   request->address = NULL;
   request->address_length = 0;
   request->user_data = 0u;
@@ -351,6 +354,7 @@ static int iocp_submit(salts_io_impl *base, const native_io_operation *operation
   memset(&request->overlapped, 0, sizeof(request->overlapped));
   request->buffer.buf = (CHAR *)operation->buffer;
   request->buffer.len = (ULONG)operation->length;
+  request->vector_buffer_count = 0u;
   request->phase = SALTS_IOCP_RECORD_PENDING;
   request->request = (native_io_request){index + 1u, generation};
   request->endpoint = operation->endpoint;
@@ -464,6 +468,87 @@ static int iocp_submit(salts_io_impl *base, const native_io_operation *operation
   iocp_release_request(impl, request, index);
   iocp_counter_increment(&impl->native_submit_errors);
   return iocp_native_error(native_error);
+}
+
+static int iocp_submit_vector(salts_io_impl *base,
+                              const native_io_vector_operation *operation,
+                              native_io_request *out_request) {
+  salts_iocp_impl *impl = (salts_iocp_impl *)base;
+  salts_iocp_endpoint_record *endpoint;
+  salts_iocp_request_record *request;
+  uint32_t index;
+  uint32_t generation;
+  DWORD immediate_bytes = 0u;
+  int native_status;
+  DWORD native_error;
+
+  if (!impl->admission_open) return SALTS_ESHUTDOWN;
+  endpoint = iocp_endpoint(impl, operation->endpoint);
+  if (endpoint == NULL) return SALTS_ENOENT;
+  if (operation->kind == NATIVE_IO_OPERATION_PIPE_WRITE &&
+      endpoint->resource_kind == SALTS_IO_RESOURCE_BYTE_PIPE)
+    return SALTS_ENOTSUP;
+  if (operation->kind != NATIVE_IO_OPERATION_STREAM_SEND ||
+      endpoint->resource_kind != SALTS_IO_RESOURCE_STREAM_SOCKET)
+    return SALTS_EINVAL;
+  if (endpoint->connect_active) return SALTS_EBUSY;
+  if (!endpoint->connected) return SALTS_EINVAL;
+  if (impl->free_request_count == 0u) {
+    iocp_counter_increment(&impl->rejected_full);
+    return SALTS_ENOBUFS;
+  }
+
+  index = impl->free_requests[impl->free_request_count - 1u];
+  request = &impl->requests[index];
+  generation = iocp_next_generation(request->request.generation);
+  memset(&request->overlapped, 0, sizeof(request->overlapped));
+  request->vector_buffer_count = (DWORD)operation->span_count;
+  for (DWORD cursor = 0u; cursor < request->vector_buffer_count; ++cursor) {
+    request->vector_buffers[cursor].buf = (CHAR *)operation->spans[cursor].data;
+    request->vector_buffers[cursor].len = (ULONG)operation->spans[cursor].length;
+  }
+  request->phase = SALTS_IOCP_RECORD_PENDING;
+  request->request = (native_io_request){index + 1u, generation};
+  request->endpoint = operation->endpoint;
+  request->operation_kind = operation->kind;
+  request->native_handle = endpoint->native_handle;
+  request->flags = 0u;
+  request->address = NULL;
+  request->address_length = 0;
+  request->user_data = operation->user_data;
+  --impl->free_request_count;
+  ++endpoint->active_requests;
+  ++impl->active_requests;
+
+  native_status = WSASend((SOCKET)request->native_handle, request->vector_buffers,
+                          request->vector_buffer_count, &immediate_bytes, 0u,
+                          &request->overlapped, NULL);
+  if (native_status == 0) {
+    iocp_counter_increment(&impl->submitted);
+    *out_request = request->request;
+    return SALTS_OK;
+  }
+  native_error = (DWORD)WSAGetLastError();
+  if (native_error == WSA_IO_PENDING) {
+    iocp_counter_increment(&impl->submitted);
+    *out_request = request->request;
+    return SALTS_OK;
+  }
+  iocp_release_request(impl, request, index);
+  iocp_counter_increment(&impl->native_submit_errors);
+  return iocp_native_error(native_error);
+}
+
+static bool iocp_supports_vector_write(const salts_io_impl *base,
+                                       native_io_endpoint endpoint_handle) {
+  const salts_iocp_impl *impl = (const salts_iocp_impl *)base;
+  const salts_iocp_endpoint_record *endpoint;
+  if (!native_io_endpoint_valid(endpoint_handle) ||
+      endpoint_handle.slot > impl->endpoint_capacity)
+    return false;
+  endpoint = &impl->endpoints[endpoint_handle.slot - 1u];
+  return endpoint->active && endpoint->generation == endpoint_handle.generation &&
+         endpoint->resource_kind == SALTS_IO_RESOURCE_STREAM_SOCKET;
 }
 
 static int iocp_cancel(salts_io_impl *base, native_io_request request_handle) {
@@ -639,7 +724,8 @@ static bool iocp_get_stats(const salts_io_impl *base, native_io_backend_stats *o
 static const salts_io_impl_ops iocp_ops = {
     iocp_attach_socket, iocp_release_socket, iocp_submit,    iocp_cancel,      iocp_observe,
     iocp_wake,          iocp_close,           iocp_destroy,  iocp_get_stats,   iocp_attach_pipe,
-    iocp_release_pipe,  iocp_submit,          NULL};
+    iocp_release_pipe,  iocp_submit,          NULL,              iocp_submit_vector,
+    iocp_supports_vector_write};
 
 bool native_io_platform_backend_supported(native_io_backend_kind kind) {
   return kind == NATIVE_IO_BACKEND_IOCP;
