@@ -37,6 +37,13 @@
   #define SALTS_IO_URING_HAS_SINGLE_ISSUER 0
 #endif
 
+#if SALTS_IO_URING_HAS_SINGLE_ISSUER && SALTS_IO_URING_HAS_EXT_ARG_WAIT && \
+    defined(IORING_SETUP_DEFER_TASKRUN)
+  #define SALTS_IO_URING_HAS_DEFER_TASKRUN 1
+#else
+  #define SALTS_IO_URING_HAS_DEFER_TASKRUN 0
+#endif
+
 typedef enum salts_io_uring_phase {
   SALTS_IO_URING_FREE = 0,
   SALTS_IO_URING_PENDING,
@@ -125,6 +132,7 @@ typedef struct salts_io_uring_impl {
   struct io_uring_cqe *cqes;
   bool single_mmap;
   bool ring_native_wait;
+  bool defer_taskrun;
   bool wake_poll_in_flight;
   bool admission_open;
   atomic_bool wake_pending;
@@ -1006,6 +1014,24 @@ static int uring_observe(salts_io_impl *base, native_io_completion *events, size
   }
 
   if (timeout_ms == 0u) {
+    if (impl->defer_taskrun) {
+      if (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
+        status = uring_flush(&impl->base);
+        if (status != SALTS_OK) return status;
+      }
+      status = uring_enter(impl, 0u, 0u, IORING_ENTER_GETEVENTS);
+      if (status < 0) return status;
+      saw_wake = false;
+      status = uring_progress_cq(impl, &saw_wake);
+      if (status != SALTS_OK) return status;
+      if (impl->terminal_count != 0u || saw_wake) {
+        status = uring_flush_promoted(impl, &saw_wake);
+        if (status != SALTS_OK) return status;
+        uring_drain_terminals(impl, events, limit, out_count);
+        if (*out_count != 0u || saw_wake) return SALTS_OK;
+      }
+      return SALTS_ETIMEDOUT;
+    }
     if (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
       status = uring_flush(&impl->base);
       if (status != SALTS_OK) return status;
@@ -1243,9 +1269,31 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
 #if SALTS_IO_URING_HAS_SINGLE_ISSUER
   params.flags = IORING_SETUP_SINGLE_ISSUER;
 #endif
+#if SALTS_IO_URING_HAS_DEFER_TASKRUN
+  params.flags |= IORING_SETUP_DEFER_TASKRUN;
+#endif
   impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
-#if SALTS_IO_URING_HAS_SINGLE_ISSUER
+#if SALTS_IO_URING_HAS_DEFER_TASKRUN
   if (impl->ring_fd < 0 && errno == EINVAL) {
+    /* Linux 6.0 supports SINGLE_ISSUER before DEFER_TASKRUN (6.1). */
+    memset(&params, 0, sizeof(params));
+    params.flags = IORING_SETUP_SINGLE_ISSUER;
+    impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+  }
+  if (impl->ring_fd >= 0 && (params.flags & IORING_SETUP_DEFER_TASKRUN) != 0u &&
+      (params.features & IORING_FEAT_EXT_ARG) == 0u) {
+    /* DEFER_TASKRUN needs an owner-driven GETEVENTS path for finite waits and
+     * nonblocking progress. Recreate without defer if EXT_ARG wait support is
+     * unexpectedly absent. */
+    (void)close(impl->ring_fd);
+    impl->ring_fd = -1;
+    memset(&params, 0, sizeof(params));
+    params.flags = IORING_SETUP_SINGLE_ISSUER;
+    impl->ring_fd = (int)syscall(__NR_io_uring_setup, entries, &params);
+  }
+#endif
+#if SALTS_IO_URING_HAS_SINGLE_ISSUER
+  if (impl->ring_fd < 0 && errno == EINVAL && params.flags != 0u) {
     /* Older kernels reject unknown setup flags with EINVAL. Retry the same
      * explicitly selected io_uring backend conservatively; never fall back
      * to a readiness backend. */
@@ -1267,6 +1315,11 @@ int salts_io_uring_backend_init(native_io_backend *backend, const native_io_back
   impl->ring_native_wait = (params.features & IORING_FEAT_EXT_ARG) != 0u;
 #else
   impl->ring_native_wait = false;
+#endif
+#if SALTS_IO_URING_HAS_DEFER_TASKRUN
+  impl->defer_taskrun = (params.flags & IORING_SETUP_DEFER_TASKRUN) != 0u;
+#else
+  impl->defer_taskrun = false;
 #endif
   if (impl->ring_native_wait) {
     status = uring_arm_wake_poll(impl);
