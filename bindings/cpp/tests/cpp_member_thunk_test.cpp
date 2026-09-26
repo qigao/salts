@@ -23,6 +23,8 @@ struct member_other {
 };
 
 struct member_virtual_base {
+  virtual ~member_virtual_base() = default;
+
   virtual int scale(int value) const {
     return value;
   }
@@ -387,7 +389,7 @@ spec("C++ exact member-function thunk") {
     int delta = 4;
     const void *args[] = {&delta};
     int result = 0;
-    cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+    cmeta_invokable invokable{};
 
     check_equal(
         cmeta_object_method_invokable_bind(
@@ -403,7 +405,7 @@ spec("C++ exact member-function thunk") {
 
     delta = 3;
     result = 0;
-    invokable = (cmeta_invokable)CMETA_INVOKABLE_INIT;
+    invokable = cmeta_invokable{};
     check_equal(
         cmeta_object_method_invokable_bind(
             &object, &member_counter_methods[1], &invokable),
@@ -453,7 +455,7 @@ spec("C++ exact member-function thunk") {
     int value = 4;
     const void *args[] = {&value};
     int result = 0;
-    cmeta_invokable invokable = CMETA_INVOKABLE_INIT;
+    cmeta_invokable invokable{};
 
     check_equal(
         cmeta_object_method_invokable_bind(
