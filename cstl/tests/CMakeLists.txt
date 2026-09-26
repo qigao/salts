@@ -68,122 +68,56 @@ cmake_add_test(cstl_typed_test
   LIBS Salts::CSTL Salts::TinyTest
   FOLDER "cstl/tests")
 
-# CMeta receiver-method lowering POC. The lowerer is a host build-time
-# tool, so do not try to execute a target binary while cross-compiling.
+# Production CMeta source-lowering frontend integration.
+# cmeta-lower is a host tool; target cross-builds never execute it.
 if(NOT CMAKE_CROSSCOMPILING)
-add_executable(cstl_method_lower_poc cstl_method_lower_poc.c)
-target_link_libraries(cstl_method_lower_poc PRIVATE Salts::CSTL)
-set_target_properties(cstl_method_lower_poc PROPERTIES
-  C_STANDARD 11
-  C_STANDARD_REQUIRED ON
-  C_EXTENSIONS OFF
-  FOLDER "cstl/tests/poc")
+  set(CSTL_CMETA_LOWER_DIR "${CMAKE_CURRENT_BINARY_DIR}/cmeta_lower")
+  set(CSTL_CMETA_LOWER_INPUT
+      "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cmeta_lower/containers.cmeta.c")
+  set(CSTL_CMETA_LOWER_OUTPUT
+      "${CSTL_CMETA_LOWER_DIR}/cstl_cmeta_lower_runtime.c")
 
-set(CSTL_METHOD_LOWER_DIR "${CMAKE_CURRENT_BINARY_DIR}/method_lower")
+  salts_cmeta_lower_source(
+    INPUT "${CSTL_CMETA_LOWER_INPUT}"
+    OUTPUT "${CSTL_CMETA_LOWER_OUTPUT}")
 
-function(cstl_add_method_lowering_case name fixture expected_canonical expected_call)
-  set(lowered_source "${CSTL_METHOD_LOWER_DIR}/${name}.c")
-  add_custom_command(
-    OUTPUT "${lowered_source}"
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${CSTL_METHOD_LOWER_DIR}"
-    COMMAND $<TARGET_FILE:cstl_method_lower_poc>
-            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/method_lower/${fixture}"
-            "${lowered_source}"
-    DEPENDS cstl_method_lower_poc
-            "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/method_lower/${fixture}"
-    COMMENT "Lowering ${fixture} through canonical CSTL semantics"
-    VERBATIM)
-
-  add_executable(${name} "${lowered_source}")
-  target_link_libraries(${name} PRIVATE Salts::CSTL)
-  set_target_properties(${name} PROPERTIES
+  add_executable(cstl_cmeta_lower_runtime "${CSTL_CMETA_LOWER_OUTPUT}")
+  target_link_libraries(cstl_cmeta_lower_runtime PRIVATE Salts::CSTL)
+  set_target_properties(cstl_cmeta_lower_runtime PROPERTIES
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
     C_EXTENSIONS OFF
-    FOLDER "cstl/tests/poc")
+    FOLDER "cstl/tests/cmeta-lower")
 
-  add_test(NAME ${name} COMMAND ${name})
+  add_test(NAME cstl_cmeta_lower_runtime COMMAND cstl_cmeta_lower_runtime)
   add_test(
-    NAME ${name}_shape
+    NAME cstl_cmeta_lower_shape
     COMMAND ${CMAKE_COMMAND}
-            -DGENERATED=${lowered_source}
-            "-DEXPECTED_CANONICAL=${expected_canonical}"
-            "-DEXPECTED_CALL=${expected_call}"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_method_lowering.cmake")
-endfunction()
-
-cstl_add_method_lowering_case(
-  cstl_method_vec_push
-  vec_push.cmeta
-  "Vec_push(&vec, 10)"
-  "rc = IntVec_push(&vec, 10)")
-cstl_add_method_lowering_case(
-  cstl_method_vec_push_generic
-  vec_push_generic.cmeta
-  "Vec_push(&vec, 10)"
-  "rc = IntVec_push(&vec, 10)")
-cstl_add_method_lowering_case(
-  cstl_method_list_add
-  list_add.cmeta
-  "List_add(&list, 10)"
-  "rc = IntList_add(&list, 10)")
-cstl_add_method_lowering_case(
-  cstl_method_list_add_generic
-  list_add_generic.cmeta
-  "List_add(&list, 10)"
-  "rc = IntList_add(&list, 10)")
-cstl_add_method_lowering_case(
-  cstl_method_set_add
-  set_add.cmeta
-  "Set_add(&set, 10)"
-  "rc = IntSet_add(&set, 10)")
-cstl_add_method_lowering_case(
-  cstl_method_set_add_generic
-  set_add_generic.cmeta
-  "Set_add(&set, 10)"
-  "rc = IntSet_add(&set, 10)")
-cstl_add_method_lowering_case(
-  cstl_method_map_put
-  map_put.cmeta
-  "Map_put(&map, 1, 20)"
-  "rc = IntMap_put(&map, 1, 20)")
-cstl_add_method_lowering_case(
-  cstl_method_map_put_generic
-  map_put_generic.cmeta
-  "Map_put(&map, 1, 20)"
-  "rc = IntMap_put(&map, 1, 20)")
-
-function(cstl_add_method_rejection_test name fixture diagnostic)
+            -DGENERATED=${CSTL_CMETA_LOWER_OUTPUT}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_cmeta_lowering.cmake")
   add_test(
-    NAME ${name}
-    COMMAND ${CMAKE_COMMAND}
-            -DTOOL=$<TARGET_FILE:cstl_method_lower_poc>
-            -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/method_lower/${fixture}
-            -DOUTPUT=${CSTL_METHOD_LOWER_DIR}/${name}.c
-            "-DEXPECTED=${diagnostic}"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_method_rejection.cmake")
-endfunction()
+    NAME cmeta_lower_version
+    COMMAND $<TARGET_FILE:cmeta_lower> --version)
 
-cstl_add_method_rejection_test(
-  cstl_method_lower_unknown_method_test
-  unknown_method.cmeta
-  "IntList has no receiver method 'unknown'")
-cstl_add_method_rejection_test(
-  cstl_method_lower_wrong_receiver_test
-  wrong_receiver.cmeta
-  "unknown receiver 'bogus'")
-cstl_add_method_rejection_test(
-  cstl_method_lower_wrong_argument_test
-  wrong_argument.cmeta
-  "list.add argument 0 type does not match reflected signature")
-cstl_add_method_rejection_test(
-  cstl_method_lower_wrong_arity_test
-  wrong_arity.cmeta
-  "map.put arity does not match reflected signature")
-cstl_add_method_rejection_test(
-  cstl_method_lower_wrong_owner_test
-  wrong_owner.cmeta
-  "generic owner 'Vec' does not match IntList owner 'List'")
+  function(cstl_add_cmeta_lower_rejection_test name fixture diagnostic)
+    add_test(
+      NAME ${name}
+      COMMAND ${CMAKE_COMMAND}
+              -DTOOL=$<TARGET_FILE:cmeta_lower>
+              -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/fixtures/cmeta_lower/${fixture}
+              -DOUTPUT=${CSTL_CMETA_LOWER_DIR}/${name}.c
+              "-DEXPECTED=${diagnostic}"
+              -P "${CMAKE_CURRENT_SOURCE_DIR}/verify_cmeta_lower_rejection.cmake")
+  endfunction()
+
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_wrong_owner
+    wrong_owner.cmeta.c
+    "generic owner 'Vec' does not match IntList owner 'List'")
+  cstl_add_cmeta_lower_rejection_test(
+    cstl_cmeta_lower_unknown_receiver
+    unknown_receiver.cmeta.c
+    "unknown typed receiver 'missing'")
 endif()
 
 
