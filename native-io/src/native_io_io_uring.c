@@ -478,22 +478,17 @@ static bool uring_would_block(int status) {
   return status == -EAGAIN || status == -EWOULDBLOCK;
 }
 
-static int uring_try_staged_stream(salts_io_uring_endpoint *endpoint,
-                                   salts_io_uring_request_record *request,
-                                   size_t *out_bytes) {
+static int uring_try_staged_send(salts_io_uring_endpoint *endpoint,
+                                 salts_io_uring_request_record *request,
+                                 size_t *out_bytes) {
   ssize_t result;
-  int flags = MSG_DONTWAIT;
   if (endpoint == NULL || endpoint->resource_kind != SALTS_IO_RESOURCE_STREAM_SOCKET ||
+      request->operation.kind != NATIVE_IO_OPERATION_STREAM_SEND ||
       request->operation.length > (size_t)INT_MAX)
     return -EAGAIN;
-  if (request->operation.kind == NATIVE_IO_OPERATION_STREAM_SEND)
-    flags |= MSG_NOSIGNAL;
-  else if (request->operation.kind != NATIVE_IO_OPERATION_STREAM_RECV)
-    return -EAGAIN;
   do {
-    result = request->operation.kind == NATIVE_IO_OPERATION_STREAM_SEND
-                 ? send(endpoint->fd, request->operation.buffer, request->operation.length, flags)
-                 : recv(endpoint->fd, request->operation.buffer, request->operation.length, flags);
+    result = send(endpoint->fd, request->operation.buffer, request->operation.length,
+                  MSG_DONTWAIT | MSG_NOSIGNAL);
   } while (result < 0 && errno == EINTR);
   if (result < 0) return -errno;
   *out_bytes = (size_t)result;
@@ -501,17 +496,19 @@ static int uring_try_staged_stream(salts_io_uring_endpoint *endpoint,
 }
 
 /* Speculate only at a progress boundary. prepare() remains cancelable before
- * flush/observe, while an eligible staged stream head may avoid SQ/CQ machinery
- * when the nonblocking operation is already ready. Each staged head is tried at
- * most once per progress pass; EAGAIN remains staged for the normal ring batch. */
-static void uring_speculate_staged_streams(salts_io_uring_impl *impl) {
+ * flush/observe, while an eligible staged stream send may avoid SQ/CQ machinery
+ * when the socket is already writable. Receives remain ring-only: probing before
+ * the peer response commonly adds an EAGAIN syscall without reducing ring waits.
+ * Each staged send is tried at most once per progress pass; EAGAIN remains staged
+ * for the normal ring batch. */
+static void uring_speculate_staged_sends(salts_io_uring_impl *impl) {
   uint32_t index = impl->staged_head;
   while (index != SALTS_IO_URING_INDEX_NONE) {
     salts_io_uring_request_record *request = &impl->requests[index];
     const uint32_t next = request->staged_next;
     salts_io_uring_endpoint *endpoint = uring_endpoint(impl, request->endpoint);
     size_t direct_bytes = 0u;
-    const int status = uring_try_staged_stream(endpoint, request, &direct_bytes);
+    const int status = uring_try_staged_send(endpoint, request, &direct_bytes);
     if (!uring_would_block(status)) {
       salts_io_uring_lane *lane = uring_lane(endpoint, request->write_lane);
       uring_unstage(impl, index);
@@ -529,7 +526,7 @@ static void uring_speculate_staged_streams(salts_io_uring_impl *impl) {
 static int uring_flush(salts_io_impl *base) {
   salts_io_uring_impl *impl = (salts_io_uring_impl *)base;
   while (impl->staged_head != SALTS_IO_URING_INDEX_NONE) {
-    uring_speculate_staged_streams(impl);
+    uring_speculate_staged_sends(impl);
     if (impl->staged_head == SALTS_IO_URING_INDEX_NONE) break;
     const unsigned head = atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
     const unsigned tail = atomic_load_explicit((_Atomic unsigned *)impl->sq_tail, memory_order_relaxed);
@@ -908,7 +905,7 @@ static int uring_submit_staged_and_wait(salts_io_uring_impl *impl, uint32_t time
   int status;
 
   *timed_out = false;
-  uring_speculate_staged_streams(impl);
+  uring_speculate_staged_sends(impl);
   terminal_ready = impl->terminal_count != 0u;
   head = atomic_load_explicit((_Atomic unsigned *)impl->sq_head, memory_order_acquire);
   {
