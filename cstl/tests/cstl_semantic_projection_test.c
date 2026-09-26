@@ -317,6 +317,118 @@ spec("CSTL semantic projection") {
     check_equal(explicit_owned_live, (size_t)0u);
   }
 
+  it("materializes canonical sequence semantic zero on first mutation") {
+    meta_vec vec = {0};
+    meta_list list = {0};
+    meta_vec raw_vec = {0};
+    meta_list raw_list = {0};
+    cmeta_data_collection_borrow_cursor vec_cursor = {0};
+    cmeta_data_collection_borrow_cursor list_cursor = {0};
+    size_t size = 99u;
+    const int *value;
+
+    check_equal(cmeta_data_value_init_zero(
+                    &meta_vec_collection_data, &vec), CMETA_OK);
+    check_equal(cmeta_data_value_init_zero(
+                    &meta_list_collection_data, &list), CMETA_OK);
+    check_false(vec.raw.initialized);
+    check_null(vec.raw.data);
+    check_null(list.raw.impl);
+
+    check_equal(cmeta_data_collection_borrow_begin(
+                    &meta_vec_collection_data, &vec, &vec_cursor), CMETA_OK);
+    check_equal(cmeta_data_collection_borrow_size(&vec_cursor, &size), CMETA_OK);
+    check_equal(size, (size_t)0u);
+    check_equal(cmeta_data_collection_borrow_begin(
+                    &meta_list_collection_data, &list, &list_cursor), CMETA_OK);
+    check_equal(cmeta_data_collection_borrow_size(&list_cursor, &size), CMETA_OK);
+    check_equal(size, (size_t)0u);
+
+    check_equal(meta_vec_push(&vec, 3), STL_OK);
+    check_equal(meta_list_add(&list, 5), STL_OK);
+    check_true(vec.raw.initialized);
+    check_not_null(vec.raw.data);
+    check_equal(vec.raw.element_limit, (size_t)SIZE_MAX);
+    check_not_null(list.raw.impl);
+    check_equal(meta_vec_size(&vec), (size_t)1u);
+    check_equal(meta_list_size(&list), (size_t)1u);
+    value = meta_vec_at_const(&vec, 0u);
+    check_not_null(value);
+    check_equal(*value, 3);
+    value = meta_list_front_const(&list);
+    check_not_null(value);
+    check_equal(*value, 5);
+
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_vec_collection_data, &vec), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_list_collection_data, &list), CMETA_OK);
+    check_false(vec.raw.initialized);
+    check_null(vec.raw.data);
+    check_null(list.raw.impl);
+
+    check_equal(meta_vec_push(&vec, 7), STL_OK);
+    check_equal(meta_list_add(&list, 9), STL_OK);
+    check_equal(meta_vec_size(&vec), (size_t)1u);
+    check_equal(meta_list_size(&list), (size_t)1u);
+
+    check_equal(meta_vec_push(&raw_vec, 1), STL_INVALID_ARGUMENT);
+    check_equal(meta_list_add(&raw_list, 1), STL_INVALID_ARGUMENT);
+
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_vec_collection_data, &vec), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_list_collection_data, &list), CMETA_OK);
+  }
+
+  it("materializes canonical Set and Map zero with an unbounded default limit") {
+    meta_set set = {0};
+    meta_map map = {0};
+    meta_set raw_set = {0};
+    meta_map raw_map = {0};
+    const long *value;
+
+    check_equal(cmeta_data_value_init_zero(
+                    &meta_set_collection_data, &set), CMETA_OK);
+    check_equal(cmeta_data_value_init_zero(
+                    &meta_map_map_data, &map), CMETA_OK);
+    check_null(set.raw.map.impl);
+    check_null(map.raw.impl);
+    check_equal(meta_set_size(&set), (size_t)0u);
+    check_equal(meta_map_size(&map), (size_t)0u);
+
+    check_equal(meta_set_add(&set, 3), STL_OK);
+    check_equal(meta_map_put(&map, 7, 70L), STL_OK);
+    check_not_null(set.raw.map.impl);
+    check_not_null(map.raw.impl);
+    check_equal(set_element_limit(&set.raw), (size_t)SIZE_MAX);
+    check_equal(map_entry_limit(&map.raw), (size_t)SIZE_MAX);
+    check_true(meta_set_contains(&set, 3));
+    value = meta_map_get_const(&map, 7);
+    check_not_null(value);
+    check_equal(*value, 70L);
+
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_set_collection_data, &set), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_map_map_data, &map), CMETA_OK);
+    check_null(set.raw.map.impl);
+    check_null(map.raw.impl);
+
+    check_equal(meta_set_add(&set, 5), STL_OK);
+    check_equal(meta_map_put(&map, 9, 90L), STL_OK);
+    check_equal(meta_set_size(&set), (size_t)1u);
+    check_equal(meta_map_size(&map), (size_t)1u);
+
+    check_equal(meta_set_add(&raw_set, 1), STL_INVALID_ARGUMENT);
+    check_equal(meta_map_put(&raw_map, 1, 1L), STL_INVALID_ARGUMENT);
+
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_set_collection_data, &set), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_map_map_data, &map), CMETA_OK);
+  }
+
   it("keeps typed tree container semantic zero resource-free") {
     meta_set set = {0};
     meta_map source = {0};
@@ -363,14 +475,23 @@ spec("CSTL semantic projection") {
     check_not_null(destination.raw.impl);
     check_equal(meta_map_size(&source), (size_t)0u);
     check_equal(meta_map_size(&destination), (size_t)1u);
+    check_equal(meta_map_put(&source, 8, 80L), STL_OK);
+    check_equal(meta_map_size(&source), (size_t)1u);
+    value = meta_map_get_const(&source, 8);
+    check_not_null(value);
+    check_equal(*value, 80L);
     value = meta_map_get_const(&destination, 7);
     check_not_null(value);
     check_equal(*value, 70L);
 
     check_equal(cmeta_data_value_restore_zero(
                     &meta_map_map_data, &destination), CMETA_OK);
+    check_equal(cmeta_data_value_restore_zero(
+                    &meta_map_map_data, &source), CMETA_OK);
     check_null(destination.raw.impl);
+    check_null(source.raw.impl);
     check_equal(meta_map_size(&destination), (size_t)0u);
+    check_equal(meta_map_size(&source), (size_t)0u);
   }
 
   it("copies typed collection and map values through canonical CMeta") {
