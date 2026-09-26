@@ -170,6 +170,29 @@ static void native_io_sharded_restore_after_shutdown_attempt(native_io_sharded *
   salts_mutex_unlock(&runtime->admission_lock);
 }
 
+static void native_io_sharded_finish_fatal_shutdown_attempt(native_io_sharded *runtime) {
+  if (runtime == NULL) return;
+  /*
+   * A fatal probe/drain error means the quiescence invariant itself could not
+   * be established. Keep both public and owner-local new I/O closed; callers
+   * may retry shutdown, but must not resume ordinary work on uncertain state.
+   */
+  for (size_t index = 0u; index < runtime->shard_count; ++index)
+    atomic_store(&runtime->shards[index].draining, 1);
+  salts_mutex_lock(&runtime->admission_lock);
+  atomic_store(&runtime->accepting, 0);
+  runtime->shutdown_active = 0;
+  salts_mutex_unlock(&runtime->admission_lock);
+}
+
+static int native_io_sharded_finish_shutdown_error(native_io_sharded *runtime, int status) {
+  if (status == SALTS_EBUSY)
+    native_io_sharded_restore_after_shutdown_attempt(runtime);
+  else
+    native_io_sharded_finish_fatal_shutdown_attempt(runtime);
+  return status;
+}
+
 static native_io_operation
 native_io_sharded_native_operation(const native_io_sharded_operation *operation) {
   native_io_operation native_operation = {0};
@@ -884,10 +907,8 @@ int native_io_sharded_shutdown(native_io_sharded *runtime) {
     }
     first_status = probe_status;
   }
-  if (first_status != SALTS_OK) {
-    native_io_sharded_restore_after_shutdown_attempt(runtime);
-    return first_status;
-  }
+  if (first_status != SALTS_OK)
+    return native_io_sharded_finish_shutdown_error(runtime, first_status);
 
   for (size_t shard_index = 0u; shard_index < runtime->shard_count; ++shard_index)
     atomic_store(&runtime->shards[shard_index].draining, 1);
@@ -931,10 +952,8 @@ int native_io_sharded_shutdown(native_io_sharded *runtime) {
     first_status = drain_status != SALTS_OK ? drain_status
                                            : endpoint_busy ? SALTS_EBUSY : SALTS_OK;
   }
-  if (first_status != SALTS_OK) {
-    native_io_sharded_restore_after_shutdown_attempt(runtime);
-    return first_status;
-  }
+  if (first_status != SALTS_OK)
+    return native_io_sharded_finish_shutdown_error(runtime, first_status);
 
   /* Request and endpoint quiescence is now proven on every owner. */
   for (size_t shard_index = 0u; shard_index < runtime->shard_count; ++shard_index) {
