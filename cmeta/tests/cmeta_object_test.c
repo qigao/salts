@@ -204,6 +204,7 @@ static cmeta_status object_box_method_bind(
 
     *out = (cmeta_object_method_binding)CMETA_OBJECT_METHOD_BINDING_INIT;
     callable.invoke = object_box_bound_add_invoke;
+    callable.dispatch = CMETA_CALLABLE_DISPATCH_ADAPTER;
     callable.capture_size = sizeof(receiver);
     memcpy(callable.capture.bytes, &receiver, sizeof(receiver));
     callable.meta.effects = object_add_projected_function.effects;
