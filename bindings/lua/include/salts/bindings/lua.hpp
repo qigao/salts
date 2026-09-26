@@ -4,7 +4,9 @@
 #include <salts/bindings/object.hpp>
 #include <salts/bindings/lua/cmeta.h>
 
+extern "C" {
 #include <lua.h>
+}
 
 namespace Salts::Lua {
 
