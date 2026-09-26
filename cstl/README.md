@@ -150,17 +150,11 @@ container declarations and emits ordinary C:
 cmeta-lower app.cmeta.c app.c
 ```
 
-For CMake consumers, the installed package exposes the same operation without
-hard-coding the executable path:
-
-```cmake
-salts_cmeta_lower_source(
-  INPUT  app.cmeta.c
-  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/app.c)
-
-add_executable(app ${CMAKE_CURRENT_BINARY_DIR}/app.c)
-target_link_libraries(app PRIVATE Salts::CSTL)
-```
+`cmeta-lower` is a source-tree host development tool, not part of the
+published Salts native SDK. `Salts.Native` contains target headers, libraries,
+and package metadata only; it does not install `cmeta-lower` or expose a
+lowering helper through `SaltsConfig.cmake`. Repository builds and tests may
+use the internal source-tree lowering integration before ordinary C compilation.
 
 The first frontend slice deliberately recognizes direct typed object variables,
 receiver calls such as `list.add(...)`, and generic calls such as

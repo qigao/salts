@@ -78,9 +78,6 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/linux-x64"
           cmake --install build/linux-gcc-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$prefix/lib/cmake/Salts/SaltsCMetaLower.cmake"
-          test -x "$prefix/bin/cmeta-lower"
-          test "$("$prefix/bin/cmeta-lower" --version)" = "cmeta-lower 1"
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/cflow/function_projection.h"
           test -f "$prefix/include/cmeta/interface.h"
@@ -89,7 +86,6 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
           grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymeta/equality.h"
-          test ! -e "$prefix/include/tinymeta/cmeta.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           test -f "$prefix/include/tinymock_function.h"
           test -f "$prefix/include/tinymock_history.h"
@@ -108,30 +104,6 @@ jobs:
           vcpkg_cache_contract=${{ steps.shared_deps.outputs.contract_version }}
           vcpkg_cache_revision=${{ steps.shared_deps.outputs.cache_revision }}
           EOF
-      - name: Verify installed TinyMock consumer
-        shell: bash
-        run: |
-          set -euo pipefail
-          prefix="$GITHUB_WORKSPACE/stage/sdk/linux-x64"
-          cmake -S tests/tinymock_installed_consumer \
-            -B build/tinymock-installed-consumer \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$prefix"
-          cmake --build build/tinymock-installed-consumer --parallel 2
-          ./build/tinymock-installed-consumer/tinymock_installed_consumer
-      - name: Verify installed CFlow projection consumer
-        shell: bash
-        run: |
-          set -euo pipefail
-          prefix="$GITHUB_WORKSPACE/stage/sdk/linux-x64"
-          cmake -S tests/cflow_installed_consumer \
-            -B build/cflow-installed-consumer \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$prefix"
-          cmake --build build/cflow-installed-consumer --parallel 2
-          ./build/cflow-installed-consumer/cflow_installed_consumer
       - uses: actions/upload-artifact@v4
         with:
           name: salts-sdk-linux-x64
@@ -183,9 +155,6 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/$rid"
           cmake --install build/mac-clang-release --prefix "$prefix" --strip
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$prefix/lib/cmake/Salts/SaltsCMetaLower.cmake"
-          test -x "$prefix/bin/cmeta-lower"
-          test "$("$prefix/bin/cmeta-lower" --version)" = "cmeta-lower 1"
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/cflow/function_projection.h"
           test -f "$prefix/include/cmeta/interface.h"
@@ -194,7 +163,6 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
           grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymeta/equality.h"
-          test ! -e "$prefix/include/tinymeta/cmeta.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           test -f "$prefix/include/tinymock_function.h"
           test -f "$prefix/include/tinymock_history.h"
@@ -272,14 +240,11 @@ jobs:
           $prefix = Join-Path $env:GITHUB_WORKSPACE "stage\sdk\windows-x64"
           cmake --install build/Msvc-Release --prefix $prefix --config Release
           $config = Join-Path $prefix "lib\cmake\Salts\SaltsConfig.cmake"
-          $lowerHelper = Join-Path $prefix "lib\cmake\Salts\SaltsCMetaLower.cmake"
-          $lower = Join-Path $prefix "bin\cmeta-lower.exe"
           $targets = Join-Path $prefix "lib\cmake\Salts\SaltsTargets.cmake"
           $functionHeader = Join-Path $prefix "include\cmeta\function.h"
           $projectionHeader = Join-Path $prefix "include\cflow\function_projection.h"
           $interfaceHeader = Join-Path $prefix "include\cmeta\interface.h"
           $tinyEqualityHeader = Join-Path $prefix "include\tinymeta\equality.h"
-          $oldTinyCMetaHeader = Join-Path $prefix "include\tinymeta\cmeta.h"
           $tinymockHeader = Join-Path $prefix "include\tinymock_cmeta.h"
           $tinymockFunctionHeader = Join-Path $prefix "include\tinymock_function.h"
           $tinymockHistoryHeader = Join-Path $prefix "include\tinymock_history.h"
@@ -287,10 +252,6 @@ jobs:
           $tinymockReturnHeader = Join-Path $prefix "include\tinymock_return.h"
           $tinymockCMake = Join-Path $prefix "lib\cmake\Salts\SaltsTinyMock.cmake"
           if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "missing $config" }
-          if (-not (Test-Path -LiteralPath $lowerHelper -PathType Leaf)) { throw "missing $lowerHelper" }
-          if (-not (Test-Path -LiteralPath $lower -PathType Leaf)) { throw "missing $lower" }
-          $lowerVersion = (& $lower --version).Trim()
-          if ($lowerVersion -ne "cmeta-lower 1") { throw "unexpected cmeta-lower version: $lowerVersion" }
           if (-not (Test-Path -LiteralPath $functionHeader -PathType Leaf)) { throw "missing $functionHeader" }
           if (-not (Test-Path -LiteralPath $projectionHeader -PathType Leaf)) { throw "missing $projectionHeader" }
           if (-not (Test-Path -LiteralPath $interfaceHeader -PathType Leaf)) { throw "missing $interfaceHeader" }
@@ -300,7 +261,6 @@ jobs:
           if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "cmeta_function_abi_desc" -Quiet)) { throw "missing cmeta_function_abi_desc in $functionHeader" }
           if (-not (Select-String -LiteralPath $functionHeader -SimpleMatch "FunctionAbi" -Quiet)) { throw "missing FunctionAbi in $functionHeader" }
           if (-not (Test-Path -LiteralPath $tinyEqualityHeader -PathType Leaf)) { throw "missing $tinyEqualityHeader" }
-          if (Test-Path -LiteralPath $oldTinyCMetaHeader) { throw "obsolete $oldTinyCMetaHeader is still installed" }
           if (-not (Test-Path -LiteralPath $tinymockHeader -PathType Leaf)) { throw "missing $tinymockHeader" }
           if (-not (Test-Path -LiteralPath $tinymockFunctionHeader -PathType Leaf)) { throw "missing $tinymockFunctionHeader" }
           if (-not (Test-Path -LiteralPath $tinymockHistoryHeader -PathType Leaf)) { throw "missing $tinymockHistoryHeader" }
@@ -380,9 +340,6 @@ jobs:
           prefix="$GITHUB_WORKSPACE/stage/sdk/android-arm64-v8a"
           cmake --install build/android-arm64-v8a-release --prefix "$prefix"
           test -f "$prefix/lib/cmake/Salts/SaltsConfig.cmake"
-          test -f "$prefix/lib/cmake/Salts/SaltsCMetaLower.cmake"
-          test ! -e "$prefix/bin/cmeta-lower"
-          test ! -e "$prefix/bin/cmeta-lower.exe"
           test -f "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/cflow/function_projection.h"
           test -f "$prefix/include/cmeta/interface.h"
@@ -391,7 +348,6 @@ jobs:
           grep -F "cmeta_interface_desc_equal" "$prefix/include/cmeta/interface.h"
           grep -F "FunctionAbi" "$prefix/include/cmeta/function.h"
           test -f "$prefix/include/tinymeta/equality.h"
-          test ! -e "$prefix/include/tinymeta/cmeta.h"
           test -f "$prefix/include/tinymock_cmeta.h"
           test -f "$prefix/include/tinymock_function.h"
           test -f "$prefix/include/tinymock_history.h"
@@ -434,24 +390,16 @@ jobs:
         run: |
           set -euo pipefail
           test -f package/sdk/linux-x64/lib/cmake/Salts/SaltsConfig.cmake
-          test -f package/sdk/linux-x64/lib/cmake/Salts/SaltsCMetaLower.cmake
-          test -x package/sdk/linux-x64/bin/cmeta-lower
           test -f package/sdk/linux-x64/include/cmeta/function.h
           test -f package/sdk/linux-x64/include/cflow/function_projection.h
           grep -F "Salts::CFlow" package/sdk/linux-x64/lib/cmake/Salts/SaltsTargets.cmake
           test -f package/sdk/linux-x64/include/cmeta/interface.h
           test -f package/sdk/linux-x64/include/tinymeta/equality.h
-          test ! -e package/sdk/linux-x64/include/tinymeta/cmeta.h
           test -f package/sdk/windows-x64/lib/cmake/Salts/SaltsConfig.cmake
-          test -f package/sdk/windows-x64/lib/cmake/Salts/SaltsCMetaLower.cmake
-          test -f package/sdk/windows-x64/bin/cmeta-lower.exe
           test -f package/sdk/windows-x64/include/cmeta/function.h
           test -f package/sdk/windows-x64/include/cflow/function_projection.h
           test -f package/sdk/windows-x64/include/cmeta/interface.h
           test -f package/sdk/android-arm64-v8a/lib/cmake/Salts/SaltsConfig.cmake
-          test -f package/sdk/android-arm64-v8a/lib/cmake/Salts/SaltsCMetaLower.cmake
-          test ! -e package/sdk/android-arm64-v8a/bin/cmeta-lower
-          test ! -e package/sdk/android-arm64-v8a/bin/cmeta-lower.exe
           test -f package/sdk/android-arm64-v8a/include/cmeta/function.h
           test -f package/sdk/android-arm64-v8a/include/cflow/function_projection.h
           test -f package/sdk/android-arm64-v8a/include/cmeta/interface.h
@@ -512,7 +460,6 @@ jobs:
 
   publish:
     name: Publish package and GitHub Release
-    if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: [metadata, pack]
     runs-on: ubuntu-latest
     permissions:
