@@ -58,11 +58,19 @@ struct native_io_sharded_shard {
   native_io_backend backend;
   native_io_sharded_context context;
   native_io_completion *completion_scratch;
+  native_io_sharded_completion *shutdown_events;
   native_io_sharded_ownership_settlement *ownership_settlements;
   size_t completion_capacity;
   native_io_sharded_request_ownership *request_ownerships;
   size_t request_ownership_capacity;
+  size_t owned_request_count;
   int observe_active;
+  atomic_int draining;
+  atomic_int shutdown_probe_done;
+  atomic_int shutdown_probe_status;
+  atomic_int shutdown_drain_done;
+  atomic_int shutdown_drain_status;
+  atomic_size_t shutdown_endpoint_count;
 
   native_io_sharded_slot *slots;
   size_t *free_slots;
@@ -393,6 +401,66 @@ static void native_io_sharded_bootstrap(coro_t *coroutine, void *arg) {
   atomic_store(&shard->bootstrap_done, 1);
 }
 
+static void native_io_sharded_shutdown_probe(coro_t *coroutine, void *arg) {
+  native_io_sharded_shard *shard = (native_io_sharded_shard *)arg;
+  native_io_backend_stats stats = {0};
+  int status = SALTS_OK;
+  (void)coroutine;
+
+  if (atomic_load(&shard->backend_initialized)) {
+    if (!native_io_backend_get_stats(&shard->backend, &stats)) {
+      status = SALTS_EIO;
+    } else if (stats.active_requests < shard->owned_request_count) {
+      status = SALTS_EPROTO;
+    } else if (stats.active_requests != shard->owned_request_count) {
+      status = SALTS_EBUSY;
+    }
+  }
+  atomic_store(&shard->shutdown_probe_status, status);
+  atomic_store(&shard->shutdown_probe_done, 1);
+}
+
+static int native_io_sharded_cancel_owned(native_io_sharded_shard *shard) {
+  for (size_t index = 0u; index < shard->request_ownership_capacity; ++index) {
+    native_io_sharded_request_ownership *record = &shard->request_ownerships[index];
+    native_io_request request;
+    int status;
+    if (!record->active) continue;
+    request = (native_io_request){(uint32_t)(index + 1u), record->generation};
+    status = native_io_backend_cancel(&shard->backend, request);
+    if (status != SALTS_OK && status != SALTS_EALREADY) return status;
+  }
+  return SALTS_OK;
+}
+
+static void native_io_sharded_shutdown_drain(coro_t *coroutine, void *arg) {
+  native_io_sharded_shard *shard = (native_io_sharded_shard *)arg;
+  native_io_backend_stats stats = {0};
+  int status = SALTS_OK;
+  (void)coroutine;
+
+  if (atomic_load(&shard->backend_initialized)) {
+    status = native_io_sharded_cancel_owned(shard);
+    while (status == SALTS_OK && shard->owned_request_count != 0u) {
+      size_t count = 0u;
+      status = native_io_sharded_context_observe(
+          &shard->context, shard->shutdown_events, shard->completion_capacity,
+          UINT32_MAX, &count);
+    }
+    if (status == SALTS_OK) {
+      if (!native_io_backend_get_stats(&shard->backend, &stats)) {
+        status = SALTS_EIO;
+      } else if (stats.active_requests != 0u) {
+        status = SALTS_EPROTO;
+      }
+    }
+  }
+
+  atomic_store(&shard->shutdown_endpoint_count, stats.endpoint_count);
+  atomic_store(&shard->shutdown_drain_status, status);
+  atomic_store(&shard->shutdown_drain_done, 1);
+}
+
 static void native_io_sharded_teardown(coro_t *coroutine, void *arg) {
   native_io_sharded_shard *shard = (native_io_sharded_shard *)arg;
   int status = SALTS_OK;
@@ -424,6 +492,7 @@ static void native_io_sharded_destroy_storage(native_io_sharded *runtime) {
       native_io_sharded_shard *shard = &runtime->shards[index];
       free(shard->request_ownerships);
       free(shard->ownership_settlements);
+      free(shard->shutdown_events);
       free(shard->completion_scratch);
       free(shard->free_owned_routes);
       free(shard->owned_routes);
@@ -484,6 +553,8 @@ int native_io_sharded_create(const native_io_sharded_config *config,
       (config->backend.completion_batch_capacity != 0u &&
        (config->backend.completion_batch_capacity > SIZE_MAX / sizeof(native_io_completion) ||
         config->backend.completion_batch_capacity >
+            SIZE_MAX / sizeof(native_io_sharded_completion) ||
+        config->backend.completion_batch_capacity >
             SIZE_MAX / sizeof(native_io_sharded_ownership_settlement))) ||
       (config->backend.request_capacity != 0u &&
        config->backend.request_capacity >
@@ -534,6 +605,8 @@ int native_io_sharded_create(const native_io_sharded_config *config,
     if (shard->completion_capacity != 0u) {
       shard->completion_scratch = (native_io_completion *)calloc(
           shard->completion_capacity, sizeof(*shard->completion_scratch));
+      shard->shutdown_events = (native_io_sharded_completion *)calloc(
+          shard->completion_capacity, sizeof(*shard->shutdown_events));
       shard->ownership_settlements = (native_io_sharded_ownership_settlement *)calloc(
           shard->completion_capacity, sizeof(*shard->ownership_settlements));
     }
@@ -544,7 +617,8 @@ int native_io_sharded_create(const native_io_sharded_config *config,
         shard->free_slots == NULL || shard->owned_routes == NULL ||
         shard->free_owned_routes == NULL ||
         (shard->completion_capacity != 0u &&
-         (shard->completion_scratch == NULL || shard->ownership_settlements == NULL)) ||
+         (shard->completion_scratch == NULL || shard->shutdown_events == NULL ||
+          shard->ownership_settlements == NULL)) ||
         (shard->request_ownership_capacity != 0u && shard->request_ownerships == NULL)) {
       native_io_sharded_cleanup_failed_create(runtime);
       return SALTS_ENOMEM;
@@ -734,18 +808,89 @@ int native_io_sharded_try_submit_owned(native_io_sharded *runtime,
       runtime, operation, ownership, admission, admission_arg, 0);
 }
 
+static void native_io_sharded_reopen_after_busy(native_io_sharded *runtime) {
+  for (size_t index = 0u; index < runtime->shard_count; ++index)
+    atomic_store(&runtime->shards[index].draining, 0);
+  salts_mutex_lock(&runtime->admission_lock);
+  atomic_store(&runtime->accepting, 1);
+  salts_mutex_unlock(&runtime->admission_lock);
+  native_io_sharded_wake_slot_waiters(runtime);
+}
+
 int native_io_sharded_shutdown(native_io_sharded *runtime) {
   int first_status = SALTS_OK;
-  int all_teardowns_submitted = 1;
+  int endpoint_busy = 0;
 
   if (runtime == NULL) return SALTS_EINVAL;
   if (native_io_sharded_in_callback(runtime)) return SALTS_EBUSY;
+  if (runtime->executor_shutdown) return SALTS_OK;
 
   salts_mutex_lock(&runtime->admission_lock);
   atomic_store(&runtime->accepting, 0);
   native_io_sharded_wake_slot_waiters(runtime);
   while (runtime->inflight_dispatches != 0u)
     salts_cond_wait(&runtime->admission_idle, &runtime->admission_lock);
+  salts_mutex_unlock(&runtime->admission_lock);
+
+  /*
+   * Probe is queued behind every command accepted before public admission
+   * closed. It prevents shutdown from consuming a caller-managed/unowned raw
+   * completion.
+   */
+  for (size_t shard_index = 0u; shard_index < runtime->shard_count; ++shard_index) {
+    native_io_sharded_shard *shard = &runtime->shards[shard_index];
+    const salts_coro_executor_task_t task = {
+        native_io_sharded_shutdown_probe, NULL, NULL, shard};
+    int status;
+    atomic_store(&shard->shutdown_probe_done, 0);
+    atomic_store(&shard->shutdown_probe_status, SALTS_EIO);
+    status = salts_coro_executor_submit_to(runtime->executor, shard_index, &task);
+    if (status != SALTS_OK && first_status == SALTS_OK) first_status = status;
+  }
+
+  if (first_status == SALTS_OK) first_status = salts_coro_executor_wait(runtime->executor);
+  if (first_status == SALTS_OK) {
+    for (size_t shard_index = 0u; shard_index < runtime->shard_count; ++shard_index) {
+      native_io_sharded_shard *shard = &runtime->shards[shard_index];
+      int status = atomic_load(&shard->shutdown_probe_status);
+      if (!atomic_load(&shard->shutdown_probe_done)) status = SALTS_EIO;
+      if (status != SALTS_OK && first_status == SALTS_OK) first_status = status;
+    }
+  }
+  if (first_status != SALTS_OK) {
+    native_io_sharded_reopen_after_busy(runtime);
+    return first_status;
+  }
+
+  for (size_t shard_index = 0u; shard_index < runtime->shard_count; ++shard_index)
+    atomic_store(&runtime->shards[shard_index].draining, 1);
+
+  for (size_t shard_index = 0u; shard_index < runtime->shard_count; ++shard_index) {
+    native_io_sharded_shard *shard = &runtime->shards[shard_index];
+    const salts_coro_executor_task_t task = {
+        native_io_sharded_shutdown_drain, NULL, NULL, shard};
+    int status;
+    atomic_store(&shard->shutdown_drain_done, 0);
+    atomic_store(&shard->shutdown_drain_status, SALTS_EIO);
+    atomic_store(&shard->shutdown_endpoint_count, 0u);
+    status = salts_coro_executor_submit_to(runtime->executor, shard_index, &task);
+    if (status != SALTS_OK && first_status == SALTS_OK) first_status = status;
+  }
+
+  if (first_status == SALTS_OK) first_status = salts_coro_executor_wait(runtime->executor);
+  if (first_status == SALTS_OK) {
+    for (size_t shard_index = 0u; shard_index < runtime->shard_count; ++shard_index) {
+      native_io_sharded_shard *shard = &runtime->shards[shard_index];
+      int status = atomic_load(&shard->shutdown_drain_status);
+      if (!atomic_load(&shard->shutdown_drain_done)) status = SALTS_EIO;
+      if (status != SALTS_OK && first_status == SALTS_OK) first_status = status;
+      if (atomic_load(&shard->shutdown_endpoint_count) != 0u) endpoint_busy = 1;
+    }
+  }
+  if (first_status != SALTS_OK || endpoint_busy) {
+    native_io_sharded_reopen_after_busy(runtime);
+    return first_status != SALTS_OK ? first_status : SALTS_EBUSY;
+  }
 
   for (size_t shard_index = 0u; shard_index < runtime->shard_count; ++shard_index) {
     native_io_sharded_shard *shard = &runtime->shards[shard_index];
@@ -765,20 +910,18 @@ int native_io_sharded_shutdown(native_io_sharded *runtime) {
     }
     if (status == SALTS_OK) {
       shard->teardown_submitted = 1;
-    } else {
-      all_teardowns_submitted = 0;
-      if (first_status == SALTS_OK) first_status = status;
+    } else if (first_status == SALTS_OK) {
+      first_status = status;
     }
   }
 
-  if (all_teardowns_submitted && !runtime->executor_shutdown) {
+  if (first_status == SALTS_OK) {
     const int status = salts_coro_executor_shutdown(runtime->executor);
     if (status == SALTS_OK)
       runtime->executor_shutdown = 1;
-    else if (first_status == SALTS_OK)
+    else
       first_status = status;
   }
-  salts_mutex_unlock(&runtime->admission_lock);
   return first_status;
 }
 
@@ -859,6 +1002,7 @@ int native_io_sharded_context_attach_socket(native_io_sharded_context *context,
   int status;
   if (out_endpoint != NULL) *out_endpoint = (native_io_sharded_endpoint){0};
   if (shard == NULL || out_endpoint == NULL) return SALTS_EINVAL;
+  if (atomic_load(&shard->draining)) return SALTS_ESHUTDOWN;
   status = native_io_backend_attach_socket(&shard->backend, native_socket, &endpoint);
   if (status == SALTS_OK) {
     out_endpoint->owner_identity = shard->runtime->identity;
@@ -876,6 +1020,7 @@ int native_io_sharded_context_attach_pipe(native_io_sharded_context *context,
   int status;
   if (out_endpoint != NULL) *out_endpoint = (native_io_sharded_endpoint){0};
   if (shard == NULL || out_endpoint == NULL) return SALTS_EINVAL;
+  if (atomic_load(&shard->draining)) return SALTS_ESHUTDOWN;
   status = native_io_backend_attach_pipe(&shard->backend, native_handle, flags, &endpoint);
   if (status == SALTS_OK) {
     out_endpoint->owner_identity = shard->runtime->identity;
@@ -915,6 +1060,7 @@ static int native_io_sharded_context_admit(native_io_sharded_context *context,
     return SALTS_EINVAL;
   status = native_io_sharded_endpoint_access(context, operation->endpoint, &shard);
   if (status != SALTS_OK) return status;
+  if (atomic_load(&shard->draining)) return SALTS_ESHUTDOWN;
   native_operation = native_io_sharded_native_operation(operation);
   status = prepared ? native_io_backend_prepare(&shard->backend, &native_operation, &request)
                     : native_io_backend_submit(&shard->backend, &native_operation, &request);
@@ -928,6 +1074,7 @@ static int native_io_sharded_context_admit(native_io_sharded_context *context,
       record->ownership = *ownership;
       record->generation = request.generation;
       record->active = 1;
+      shard->owned_request_count++;
     }
   }
   return status;
@@ -961,7 +1108,9 @@ int native_io_sharded_context_prepare_owned(native_io_sharded_context *context,
 
 int native_io_sharded_context_flush(native_io_sharded_context *context) {
   native_io_sharded_shard *shard = native_io_sharded_context_owner(context);
-  return shard == NULL ? SALTS_EINVAL : native_io_backend_flush(&shard->backend);
+  if (shard == NULL) return SALTS_EINVAL;
+  if (atomic_load(&shard->draining)) return SALTS_ESHUTDOWN;
+  return native_io_backend_flush(&shard->backend);
 }
 
 int native_io_sharded_context_cancel(native_io_sharded_context *context,
@@ -1028,6 +1177,7 @@ int native_io_sharded_context_observe(native_io_sharded_context *context,
         settlement->ownership = record->ownership;
         settlement->active = 1;
         memset(record, 0, sizeof(*record));
+        if (shard->owned_request_count != 0u) shard->owned_request_count--;
       }
     }
   }
