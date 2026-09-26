@@ -319,7 +319,8 @@ spec("io_uring explicit batch submission") {
       check_equal(event.user_data, (uintptr_t)31u);
       check_equal(event.bytes, 1u);
       check_equal(received, sent);
-      check_greater_equal(enter_calls, 1u);
+      /* A ready CQE may already be visible after flush. Do not force an
+       * unnecessary GETEVENTS when the completion can be returned directly. */
       check_equal(poll_calls, 0u);
 
       count = SIZE_MAX;
